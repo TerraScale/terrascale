@@ -11,8 +11,11 @@ public static class ApiKeyScopes
     /// <summary>Create databases and write or delete documents.</summary>
     public const string DocumentsWrite = "documents:write";
 
+    /// <summary>Read shapes: CDN-cacheable snapshots and change logs of a collection and filter.</summary>
+    public const string ShapesRead = "shapes:read";
+
     /// <summary>Every known scope.</summary>
-    public static IReadOnlyList<string> All { get; } = [DocumentsRead, DocumentsWrite];
+    public static IReadOnlyList<string> All { get; } = [DocumentsRead, DocumentsWrite, ShapesRead];
 }
 
 /// <summary>A stored API key, without its secret.</summary>

@@ -32,8 +32,9 @@ public sealed class TenantIsolationTests
     public async Task A_tenant_reaches_nothing_of_another_tenant_through_any_client_route()
     {
         await using var api = await ManagementApi.StartAsync();
-        using var a = await api.CreateTenantAsync("documents:read", "documents:write");
-        using var b = await api.CreateTenantAsync("documents:read", "documents:write");
+        // Every client scope, shapes:read included, so each route answers past its scope check.
+        using var a = await api.CreateTenantAsync("documents:read", "documents:write", "shapes:read");
+        using var b = await api.CreateTenantAsync("documents:read", "documents:write", "shapes:read");
         using var aDashboard = api.As(a.User);
         using var bDashboard = api.As(b.User);
         // Both have a database "secret" with a document, a pending invitation and an ownership transfer: everything a route can name.
@@ -86,8 +87,9 @@ public sealed class TenantIsolationTests
     public async Task Two_organizations_each_have_their_own_database_of_the_same_name()
     {
         await using var api = await ManagementApi.StartAsync();
-        using var a = await api.CreateTenantAsync("documents:read", "documents:write");
-        using var b = await api.CreateTenantAsync("documents:read", "documents:write");
+        // Every client scope, shapes:read included, so each route answers past its scope check.
+        using var a = await api.CreateTenantAsync("documents:read", "documents:write", "shapes:read");
+        using var b = await api.CreateTenantAsync("documents:read", "documents:write", "shapes:read");
         var document = $"/collections/people/documents/{DocumentId}";
 
         var aApp = await CreateDatabaseAsync(a, "app");

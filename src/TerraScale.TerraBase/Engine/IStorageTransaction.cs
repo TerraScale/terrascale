@@ -21,10 +21,27 @@ public sealed record DocumentPage(IReadOnlyList<StoredDocument> Documents, bool 
 /// <param name="Deleted">Whether the document is a tombstone.</param>
 public readonly record struct DocumentVersion(long Version, bool Deleted);
 
+/// <summary>One page of a snapshot at an offset.</summary>
+/// <param name="Rows">Matching live documents in id order.</param>
+/// <param name="HasMore">Whether documents after <paramref name="ResumeAfter"/> remain to be examined.</param>
+/// <param name="ResumeAfter">
+/// Id to continue after: the last document of <paramref name="Rows"/> when the page filled, or the last id examined
+/// when the page's work limit stopped it (possibly with no rows); <see langword="null"/> without <paramref name="HasMore"/>.
+/// </param>
+/// <param name="Expired">
+/// Whether the page would have to step over too many ids first written after the offset: the snapshot is too old to
+/// read within bounded work, and the reader must start a new one. Rows are then empty.
+/// </param>
+public sealed record SnapshotPage(IReadOnlyList<QueryRow> Rows, bool HasMore, string? ResumeAfter, bool Expired = false);
+
 /// <summary>A collection of one database.</summary>
 /// <param name="Name">Collection name.</param>
 /// <param name="CreatedAt">Creation time in Unix milliseconds.</param>
-public sealed record CollectionInfo(string Name, long CreatedAt);
+/// <param name="Generation">
+/// Random 64-bit value the engine draws on every creation, so a dropped and recreated collection is a
+/// different lineage; set by the engine, ignored on create.
+/// </param>
+public sealed record CollectionInfo(string Name, long CreatedAt, long Generation = 0);
 
 /// <summary>Document and collection operations inside one engine transaction.</summary>
 public interface IStorageTransaction : IAsyncDisposable
@@ -41,7 +58,12 @@ public interface IStorageTransaction : IAsyncDisposable
     /// </summary>
     ValueTask<DocumentVersion?> GetVersionAsync(string collection, string id, CancellationToken cancellationToken);
 
-    /// <summary>Inserts or replaces a document and returns its new version, the offset of this transaction.</summary>
+    /// <summary>
+    /// Inserts or replaces a document in an existing collection and returns its new version, the offset of this
+    /// transaction. A transaction writes at most 1024 documents of at most 1 MiB with ids of 1 to 1024 UTF-8 bytes,
+    /// 7 MiB in total with operation framing, so one commit fits a shape log chunk; a rejected write throws
+    /// <see cref="StorageWriteLimitException"/> and the transaction can no longer commit.
+    /// </summary>
     ValueTask<long> PutAsync(string collection, string id, ReadOnlyMemory<byte> json, CancellationToken cancellationToken);
 
     /// <summary>Removes a document or its tombstone without a trace; <see langword="false"/> when there was none.</summary>
@@ -64,13 +86,34 @@ public interface IStorageTransaction : IAsyncDisposable
     ValueTask<QueryPage> QueryAsync(DocumentQuery query, CancellationToken cancellationToken);
 
     /// <summary>
+    /// Reads a page of the live documents of one collection as they were at commit <paramref name="offset"/>, in id
+    /// order after <see cref="DocumentQuery.After"/>, from the retained change history. Sort keys are ignored. A page
+    /// examines a bounded number of ids, so a sparse filter can return a page without rows that still continues.
+    /// </summary>
+    ValueTask<SnapshotPage> SnapshotAsync(DocumentQuery query, long offset, CancellationToken cancellationToken);
+
+    /// <summary>Oldest offset for which a complete snapshot and every later change are retained.</summary>
+    ValueTask<long> GetHistoryFloorAsync(CancellationToken cancellationToken);
+
+    /// <summary>The latest committed offset this transaction sees, without committing it.</summary>
+    ValueTask<long> GetOffsetAsync(CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Streams every retained write and tombstone of the current generation of one collection whose version is in
+    /// (<paramref name="after"/>, <paramref name="through"/>], in (version, write) order. A live document that does
+    /// not match <paramref name="filter"/> comes back as a tombstone, so it reads as leaving the filtered view.
+    /// </summary>
+    IAsyncEnumerable<StoredDocument> ChangesAsync(
+        string collection, DocumentFilter? filter, long after, long through, CancellationToken cancellationToken);
+
+    /// <summary>
     /// Counts live documents matching <paramref name="filter"/> while reading at most <paramref name="maxExamined"/> + 1
     /// rows (documents and tombstones) in id order. <c>Complete</c> is <see langword="false"/> when the collection holds
     /// more rows, so the count is a lower bound.
     /// </summary>
     ValueTask<(long Count, bool Complete)> CountAsync(string collection, DocumentFilter? filter, long maxExamined, CancellationToken cancellationToken);
 
-    /// <summary>Creates a collection; <see langword="false"/> when it already exists.</summary>
+    /// <summary>Creates a collection, a commit of its own offset; <see langword="false"/> when it already exists.</summary>
     ValueTask<bool> CreateCollectionAsync(CollectionInfo collection, CancellationToken cancellationToken);
 
     /// <summary>Reads a collection, or <see langword="null"/> when it does not exist.</summary>
@@ -80,12 +123,15 @@ public interface IStorageTransaction : IAsyncDisposable
     ValueTask<(IReadOnlyList<CollectionInfo> Collections, bool HasMore)> ListCollectionsAsync(
         string? afterName, int limit, CancellationToken cancellationToken);
 
-    /// <summary>Drops a collection with every document and tombstone in it; <see langword="false"/> when it does not exist.</summary>
+    /// <summary>
+    /// Drops a collection with every document and tombstone in it, a commit of its own offset; its change history keeps
+    /// only tombstones. <see langword="false"/> when it does not exist.
+    /// </summary>
     ValueTask<bool> DropCollectionAsync(string name, CancellationToken cancellationToken);
 
     /// <summary>
     /// Makes every change of this transaction visible atomically and returns the database offset:
-    /// this transaction's when it wrote documents, otherwise the latest committed one.
+    /// this transaction's when it wrote documents or created or dropped a collection, otherwise the latest committed one.
     /// </summary>
     ValueTask<long> CommitAsync(CancellationToken cancellationToken);
 }

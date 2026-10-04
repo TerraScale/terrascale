@@ -11,4 +11,13 @@ public interface IDatabaseStore
     /// a consistent snapshot. Dispose without <see cref="IStorageTransaction.CommitAsync"/> to roll back.
     /// </summary>
     ValueTask<IStorageTransaction> BeginTransactionAsync(bool write, CancellationToken cancellationToken);
+
+    /// <summary>Counts this process's write commits to this database; read it before a read to wait for later commits.</summary>
+    long CommitSequence { get; }
+
+    /// <summary>
+    /// Completes once <see cref="CommitSequence"/> exceeds <paramref name="sequence"/>: right away when a
+    /// write transaction committed since it was read, otherwise at the next one. Callers re-read to see what changed.
+    /// </summary>
+    Task WaitForCommitAsync(long sequence, CancellationToken cancellationToken);
 }

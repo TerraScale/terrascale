@@ -133,4 +133,55 @@ public sealed class CountBoundTests
         await Assert.That((tooManyToSort.StatusCode, sortError.GetProperty("code").GetString()))
             .IsEqualTo((HttpStatusCode.BadRequest, "sort_requires_index"));
     }
+
+    [Test]
+    public async Task Query_count_is_exact_up_to_100000_documents_and_a_lower_bound_beyond()
+    {
+        await using var api = await ManagementApi.StartAsync();
+        using var tenant = await api.CreateTenantAsync("documents:read", "documents:write");
+        var client = tenant.Data;
+        (await client.PutAsync(tenant.Database("db"), null)).EnsureSuccessStatusCode();
+        (await client.PostAsJsonAsync(tenant.Database("db", "/collections"), new { name = "items" })).EnsureSuccessStatusCode();
+        var transactions = tenant.Database("db", "/transactions");
+        // Ids in index order, so the document written last is also the last one count examines.
+        static string Id(int index)
+        {
+            return $"00000000-0000-7000-8000-{index:D12}";
+        }
+
+        for (var start = 0; start < 100_000; start += 1000)
+        {
+            var ops = Enumerable.Range(start, 1000).Select(index => new { op = "put", collection = "items", id = Id(index), document = new { n = 1 } });
+            (await client.PostAsJsonAsync(transactions, new { ops })).EnsureSuccessStatusCode();
+        }
+
+        async Task<(long Value, bool Exact)> CountAsync(object? filter)
+        {
+            using var response = await client.PostAsJsonAsync(
+                tenant.Database("db", "/collections/items/query"), new { filter, limit = 1, count = true });
+            var count = (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("count");
+            return (long.Parse(count.GetProperty("value").GetString()!, System.Globalization.CultureInfo.InvariantCulture), count.GetProperty("exact").GetBoolean());
+        }
+
+        var matches = new { eq = new object[] { "/n", 1 } };
+        var atLimit = await CountAsync(null);
+        var atLimitFiltered = await CountAsync(matches);
+
+        // One document beyond the bound, which the selective filter does not match.
+        (await client.PutAsJsonAsync(tenant.Database("db", $"/collections/items/documents/{Id(100_000)}"), new { n = 2 }))
+            .EnsureSuccessStatusCode();
+        var (beyondValue, beyondExact) = await CountAsync(null);
+        var beyondFiltered = await CountAsync(matches);
+        var (noneValue, noneExact) = await CountAsync(new { eq = new object[] { "/n", 2 } });
+
+        // Exact up to the bound; beyond it, exact is false and value is a lower bound of the true count
+        // (100001, 100000 and 1 here) that covers at least the first 100000 documents.
+        await Assert.That(atLimit).IsEqualTo((100_000L, true));
+        await Assert.That(atLimitFiltered).IsEqualTo((100_000L, true));
+        await Assert.That(beyondExact).IsFalse();
+        await Assert.That(beyondValue is >= 100_000 and <= 100_001).IsTrue();
+        await Assert.That(beyondFiltered).IsEqualTo((100_000L, false));
+        await Assert.That(noneExact).IsFalse();
+        await Assert.That(noneValue is >= 0 and <= 1).IsTrue();
+    }
 }

@@ -11,10 +11,12 @@ public sealed record ErrorBody(ErrorDetail Error);
 /// <param name="Code">Stable machine-readable code, such as <c>not_found</c>.</param>
 /// <param name="Message">Human-readable rule that failed; never echoes client input.</param>
 /// <param name="Op">Index of the failing transaction operation.</param>
+/// <param name="Handle">Current shape handle of a <c>must_refetch</c> error.</param>
 public sealed record ErrorDetail(
     string Code,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Message = null,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? Op = null);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? Op = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Handle = null);
 
 /// <summary>A request that fails with an API error; answered by <see cref="BadRequests"/>.</summary>
 public sealed class ApiException : Exception
@@ -60,6 +62,9 @@ public sealed class ApiException : Exception
 
     /// <summary>Index of the failing transaction operation, when the request was a transaction.</summary>
     public int? Op { get; set; }
+
+    /// <summary>Version sent as the error's <c>ETag</c>, such as a deleted document's tombstone.</summary>
+    public string? ETag { get; init; }
 }
 
 /// <summary>
@@ -77,6 +82,9 @@ public static partial class BadRequests
         app.UseStatusCodePages(context =>
         {
             var status = context.HttpContext.Response.StatusCode;
+            // Not cleared: authentication challenges keep their headers. Still never cached (a 404 is
+            // heuristically cacheable and would outlive a route that appears later).
+            context.HttpContext.Response.Headers.CacheControl = "no-store";
             return WriteAsync(context.HttpContext, status, CodeFor(status), message: null, op: null);
         });
         app.Use(async (context, next) =>
@@ -87,20 +95,22 @@ public static partial class BadRequests
             }
             catch (ApiException error) when (!context.Response.HasStarted)
             {
+                Replace(context.Response, error.ETag);
                 await WriteAsync(context, error.StatusCode, error.Code, error.Detail, error.Op).ConfigureAwait(false);
             }
             catch (BadHttpRequestException error) when (!context.Response.HasStarted)
             {
                 // The message describes the rule that failed and never echoes client input.
+                Replace(context.Response);
                 await WriteAsync(context, error.StatusCode, CodeFor(error.StatusCode), error.Message, op: null).ConfigureAwait(false);
             }
-            catch (Exception error) when (!context.Response.HasStarted && !context.RequestAborted.IsCancellationRequested
-                && error is not OperationCanceledException)
+            catch (Exception error) when (!context.Response.HasStarted && !context.RequestAborted.IsCancellationRequested)
             {
                 // A server fault: log it, and answer without its details.
                 LogUnhandled(
                     context.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger(typeof(BadRequests)),
                     error, context.Request.Method, context.GetEndpoint()?.DisplayName);
+                Replace(context.Response);
                 await WriteAsync(context, StatusCodes.Status500InternalServerError, "internal_error", message: null, op: null).ConfigureAwait(false);
             }
         });
@@ -121,6 +131,18 @@ public static partial class BadRequests
         >= 500 => "internal_error",
         _ => "invalid_request",
     };
+
+    // An endpoint may have prepared a success response (a shape's cache policy, validators, framing)
+    // before it threw: clear it, and never let a cache keep the error.
+    private static void Replace(HttpResponse response, string? etag = null)
+    {
+        response.Clear();
+        response.Headers.CacheControl = "no-store";
+        if (etag is not null)
+        {
+            response.Headers.ETag = $"\"{etag}\"";
+        }
+    }
 
     private static Task WriteAsync(HttpContext context, int status, string code, string? message, int? op)
     {

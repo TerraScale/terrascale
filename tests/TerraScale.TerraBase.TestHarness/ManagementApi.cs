@@ -34,7 +34,9 @@ public sealed class ManagementApi : IAsyncDisposable
     /// <summary>A dashboard client acting as <see cref="User"/>.</summary>
     public HttpClient Client { get; }
 
-    public static async Task<ManagementApi> StartAsync(Action<Dictionary<string, string>>? configure = null)
+    /// <summary>Starts a server; <paramref name="services"/> replaces services as in <see cref="TerraBaseTestServer.StartAsync"/>.</summary>
+    public static async Task<ManagementApi> StartAsync(
+        Action<Dictionary<string, string>>? configure = null, Action<Microsoft.Extensions.DependencyInjection.IServiceCollection>? services = null)
     {
         var directory = Directory.CreateTempSubdirectory("terrabase-dashboard-").FullName;
         var tls = new ClientTls();
@@ -47,7 +49,7 @@ public sealed class ManagementApi : IAsyncDisposable
                 tls.Apply(settings);
                 settings["dashboard-credential-file"] = credentialFile;
                 configure?.Invoke(settings);
-            });
+            }, services);
             return new ManagementApi(server, tls, directory, Guid.NewGuid().ToString());
         }
         catch

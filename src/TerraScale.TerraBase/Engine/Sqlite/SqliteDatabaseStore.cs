@@ -8,7 +8,7 @@ namespace TerraScale.TerraBase.Engine.Sqlite;
 internal sealed class SqliteDatabaseStore(string name, string path, SqliteSessionPool pool) : IDatabaseStore, IDisposable
 {
     /// <summary>On-disk schema version, stored in <c>PRAGMA user_version</c>.</summary>
-    private const int SchemaVersion = 4;
+    private const int SchemaVersion = 5;
 
     // Migrations[n] moves user_version n to n + 1.
     private static readonly string[] Migrations =
@@ -47,7 +47,38 @@ internal sealed class SqliteDatabaseStore(string name, string path, SqliteSessio
         """
         ALTER TABLE commit_offset ADD COLUMN incarnation TEXT NOT NULL DEFAULT '';
         """,
+        // Version 5: shape history. Every write is retained in change_log so shape snapshots at an
+        // offset and closed log chunks never change (docs/shape-reads.md). Collections get a random
+        // generation per creation. Existing files start history at their head, with their current
+        // rows as the baseline: older offsets are below the floor and answer 409 must_refetch.
+        """
+        ALTER TABLE collections ADD COLUMN generation INTEGER NOT NULL DEFAULT 0;
+        UPDATE collections SET generation = random();
+        CREATE TABLE shape_history (id INTEGER PRIMARY KEY CHECK (id = 1), floor INTEGER NOT NULL);
+        INSERT INTO shape_history (id, floor) SELECT 1, value FROM commit_offset;
+        CREATE TABLE change_log (
+            sequence INTEGER PRIMARY KEY,
+            collection TEXT NOT NULL,
+            generation INTEGER NOT NULL,
+            id TEXT NOT NULL,
+            version INTEGER NOT NULL,
+            body TEXT
+        );
+        CREATE INDEX change_log_by_offset ON change_log (collection, generation, version, sequence);
+        CREATE INDEX change_log_by_document ON change_log (collection, generation, id, version, sequence);
+        INSERT INTO collections (name, created_at, generation)
+            SELECT collection, CAST(unixepoch('subsec') * 1000 AS INTEGER), random() FROM documents
+            WHERE collection NOT IN (SELECT name FROM collections) GROUP BY collection;
+        """,
     ];
+
+    // Version 5's history baseline, for client databases only: _system keeps no shape history, so its
+    // existing records (invitations, audit events) must not be copied where its deletes never reach.
+    private const string ShapeBaseline = """
+        INSERT INTO change_log (collection, generation, id, version, body)
+            SELECT d.collection, c.generation, d.id, d.version, d.body FROM documents d JOIN collections c ON c.name = d.collection
+            ORDER BY d.version, d.collection, d.id;
+        """;
 
     private readonly string _connectionString = new SqliteConnectionStringBuilder
     {
@@ -59,6 +90,41 @@ internal sealed class SqliteDatabaseStore(string name, string path, SqliteSessio
         // Seconds a statement waits on a locked database before failing.
         DefaultTimeout = 30,
     }.ToString();
+
+    // Signals every write commit, collection-only ones included, to WaitForCommitAsync.
+    private readonly Lock _commits = new();
+    private long _sequence;
+    private TaskCompletionSource _signal = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    /// <summary>Whether this is TerraBase's own database, which keeps no shape history.</summary>
+    internal bool IsSystem => name == SqliteStorageEngine.SystemName;
+
+    public long CommitSequence
+    {
+        get
+        {
+            lock (_commits)
+            {
+                return _sequence;
+            }
+        }
+    }
+
+    public Task WaitForCommitAsync(long sequence, CancellationToken cancellationToken)
+    {
+        Task signal;
+        lock (_commits)
+        {
+            if (_sequence > sequence)
+            {
+                return Task.CompletedTask;
+            }
+
+            signal = _signal.Task;
+        }
+
+        return signal.WaitAsync(cancellationToken);
+    }
 
     public Guid Incarnation { get; private set; }
 
@@ -74,13 +140,26 @@ internal sealed class SqliteDatabaseStore(string name, string path, SqliteSessio
         try
         {
             // Writers take the lock up front (BEGIN IMMEDIATE) so they wait instead of failing on upgrade.
-            return new SqliteStorageTransaction(this, session, session.Connection.BeginTransaction(deferred: !write));
+            return new SqliteStorageTransaction(this, session, session.Connection.BeginTransaction(deferred: !write), write, write ? Committed : null);
         }
         catch
         {
             pool.Discard(session);
             throw;
         }
+    }
+
+    private void Committed()
+    {
+        TaskCompletionSource signal;
+        lock (_commits)
+        {
+            _sequence++;
+            signal = _signal;
+            _signal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        }
+
+        signal.SetResult();
     }
 
     /// <summary>Writes a consistent snapshot of this database to a new file at <paramref name="path"/>.</summary>
@@ -208,6 +287,11 @@ internal sealed class SqliteDatabaseStore(string name, string path, SqliteSessio
                 if (version == 3)
                 {
                     await RenewIncarnationAsync(connection, transaction, cancellationToken).ConfigureAwait(false);
+                }
+
+                if (version == 4 && name != SqliteStorageEngine.SystemName)
+                {
+                    await ScalarAsync(connection, transaction, ShapeBaseline, cancellationToken).ConfigureAwait(false);
                 }
             }
 

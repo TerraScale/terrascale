@@ -44,7 +44,8 @@ public sealed class GetDocumentEndpoint(IDocumentService documents, ITenantDirec
 
         return document is { Deleted: false }
             ? TypedResults.Ok(Body(key.Collection, document, cancellationToken: cancellationToken))
-            : throw new ApiException(StatusCodes.Status404NotFound, "not_found", "the document does not exist");
+            // The error path clears the prepared response, so the tombstone's version travels with the error.
+            : throw new ApiException(StatusCodes.Status404NotFound, "not_found", "the document does not exist") { ETag = version };
     }
 
     internal static DocumentBody Body(

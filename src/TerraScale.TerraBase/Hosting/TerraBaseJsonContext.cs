@@ -18,6 +18,7 @@ namespace TerraScale.TerraBase.Hosting;
 [JsonSerializable(typeof(CreatedApiKeyBody))]
 [JsonSerializable(typeof(CreatedInvitation))]
 [JsonSerializable(typeof(ErrorBody))]
+[JsonSerializable(typeof(ShapeBody))]
 [JsonSerializable(typeof(DatabaseBody))]
 [JsonSerializable(typeof(CollectionBody))]
 [JsonSerializable(typeof(CollectionPageBody))]

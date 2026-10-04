@@ -702,4 +702,30 @@ public sealed class DocumentApiTests
 
     private static long Offset(ApiResponse response) =>
         long.Parse(response.Json.GetProperty("offset").GetString()!, NumberStyles.None, CultureInfo.InvariantCulture);
+
+    [Test]
+    public async Task Patch_media_type_with_leading_whitespace_executes_operations()
+    {
+        await using var api = await DocumentApi.StartAsync();
+        var id = DocumentApi.NewId();
+        await api.PutAsync(id, new { name = "before", keep = true });
+
+        // The format follows the parsed media type, not a prefix of the raw header.
+        var patched = await api.SendRawAsync(
+            HttpMethod.Patch, api.Document(id), """{"ops":[{"op":"set","path":"/name","value":"after"}]}""",
+            "application/vnd.terrabase.ops+json", request =>
+            {
+                request.Version = HttpVersion.Version20;
+                request.VersionPolicy = HttpVersionPolicy.RequestVersionExact;
+                request.Content!.Headers.Remove("Content-Type");
+                request.Content.Headers.TryAddWithoutValidation("Content-Type", " application/vnd.terrabase.ops+json; charset=utf-8");
+            });
+        var read = await api.GetAsync(id);
+
+        await Assert.That(patched.Status).IsEqualTo(HttpStatusCode.OK);
+        var document = read.Json.GetProperty("document");
+        await Assert.That(document.GetProperty("name").GetString()).IsEqualTo("after");
+        await Assert.That(document.GetProperty("keep").GetBoolean()).IsTrue();
+        await Assert.That(document.TryGetProperty("ops", out _)).IsFalse();
+    }
 }

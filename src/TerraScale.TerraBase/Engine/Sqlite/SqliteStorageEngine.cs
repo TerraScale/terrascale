@@ -23,7 +23,7 @@ namespace TerraScale.TerraBase.Engine.Sqlite;
 internal sealed partial class SqliteStorageEngine(string dataDirectory, TimeSpan shutdownGrace, ILogger<SqliteStorageEngine> logger) : IStorageEngine
 {
     private const string FileExtension = ".db";
-    private const string SystemName = "_system";
+    internal const string SystemName = "_system";
     // Recorded in the lock file: the layout of this build, one directory per tenant.
     private const byte LayoutVersion = 1;
     private const string PreTenancyLayout = "data directory uses the pre-tenancy layout; start with an empty data directory (no automatic migration)";

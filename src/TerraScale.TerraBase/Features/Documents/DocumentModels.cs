@@ -125,3 +125,34 @@ public sealed record TransactionResultBody(
 /// <param name="Durability">Always <c>local_durable</c>.</param>
 /// <param name="Results">One result per operation, in order.</param>
 public sealed record TransactionBody(string Offset, string Durability, IReadOnlyList<TransactionResultBody> Results);
+
+/// <summary>A shape snapshot page or log chunk (docs/shape-reads.md).</summary>
+/// <param name="ShapeId">32 lowercase hex characters naming the shape.</param>
+/// <param name="Handle">Log lineage; a different one answers <c>409 must_refetch</c>.</param>
+/// <param name="Offset">The requested offset.</param>
+/// <param name="NextOffset">Offset to request next.</param>
+/// <param name="UpToDate">Whether <paramref name="NextOffset"/> is the head.</param>
+/// <param name="Changes">Commits with changes to the shape, in offset order; a snapshot page has exactly one.</param>
+public sealed record ShapeBody(
+    [property: JsonPropertyName("shape_id")] string ShapeId,
+    string Handle,
+    string Offset,
+    [property: JsonPropertyName("next_offset")] string NextOffset,
+    [property: JsonPropertyName("up_to_date")] bool UpToDate,
+    IReadOnlyList<ShapeChangeBody> Changes);
+
+/// <summary>The changes of one commit.</summary>
+/// <param name="Offset">Decimal commit offset; the snapshot head for a snapshot page.</param>
+/// <param name="Ops">Operations in document id order.</param>
+public sealed record ShapeChangeBody(string Offset, IReadOnlyList<ShapeOpBody> Ops);
+
+/// <summary>One document entering or leaving the shape.</summary>
+/// <param name="Op"><c>upsert</c> or <c>delete</c> (deleted, or no longer matching).</param>
+/// <param name="Id">Document id.</param>
+/// <param name="Version">Version of an upserted document.</param>
+/// <param name="Document">The upserted JSON object.</param>
+public sealed record ShapeOpBody(
+    string Op,
+    string Id,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Version = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] JsonElement? Document = null);

@@ -45,14 +45,33 @@ internal static class SqliteStatements
 
     public const string RenewIncarnation = "UPDATE commit_offset SET incarnation = $incarnation WHERE id = 1;";
 
-    public const string CreateCollection = "INSERT INTO collections (name, created_at) VALUES ($collection, $created) ON CONFLICT (name) DO NOTHING;";
+    // Every creation draws a new generation, so a recreated collection starts a new shape lineage.
+    public const string CreateCollection = """
+        INSERT INTO collections (name, created_at, generation) VALUES ($collection, $created, random())
+        ON CONFLICT (name) DO NOTHING;
+        """;
 
-    public const string GetCollection = "SELECT name, created_at FROM collections WHERE name = $collection;";
+    public const string GetCollection = "SELECT name, created_at, generation FROM collections WHERE name = $collection;";
 
     // The first page walks the primary key in order and stops at the limit.
-    public const string ListCollectionsFirst = "SELECT name, created_at FROM collections ORDER BY name LIMIT $limit;";
+    public const string ListCollectionsFirst = "SELECT name, created_at, generation FROM collections ORDER BY name LIMIT $limit;";
 
-    public const string ListCollectionsAfter = "SELECT name, created_at FROM collections WHERE name > $after ORDER BY name LIMIT $limit;";
+    public const string ListCollectionsAfter = "SELECT name, created_at, generation FROM collections WHERE name > $after ORDER BY name LIMIT $limit;";
+
+    // Shape history: every write of a client database, a NULL body for a tombstone. No row is
+    // inserted when the collection has no metadata, which the writer refuses.
+    public const string AppendChange = """
+        INSERT INTO change_log (collection, generation, id, version, body)
+        SELECT name, generation, $id, $version, $body FROM collections WHERE name = $collection;
+        """;
+
+    public const string HistoryFloor = "SELECT floor FROM shape_history WHERE id = 1;";
+
+    // A dropped collection keeps only tombstones of its history: no body outlives the drop.
+    public const string DropHistory = """
+        UPDATE change_log SET body = NULL
+        WHERE collection = $collection AND generation = (SELECT generation FROM collections WHERE name = $collection) AND body IS NOT NULL;
+        """;
 
     public const string DropDocuments = "DELETE FROM documents WHERE collection = $collection;";
 
@@ -78,5 +97,8 @@ internal static class SqliteStatements
         [nameof(ListCollectionsAfter)] = ListCollectionsAfter,
         [nameof(DropDocuments)] = DropDocuments,
         [nameof(DropCollection)] = DropCollection,
+        [nameof(AppendChange)] = AppendChange,
+        [nameof(HistoryFloor)] = HistoryFloor,
+        [nameof(DropHistory)] = DropHistory,
     };
 }

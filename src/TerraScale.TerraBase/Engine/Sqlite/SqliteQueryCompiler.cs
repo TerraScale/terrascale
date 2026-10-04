@@ -85,6 +85,55 @@ internal sealed class SqliteQueryCompiler(SqliteParameterCollection parameters)
         );
         """;
 
+    /// <summary>
+    /// One step of a snapshot at commit <paramref name="offset"/>, re-run with <c>$after</c> set to the id it returned.
+    /// Columns: the next document id of the collection's generation after <c>$after</c> (no row past the last) and the
+    /// version it was first written at (its first index entry, so a later id's revisions are never walked: the caller
+    /// skips an id born after the offset with one more seek); the version
+    /// of its last write at or before the offset, and that write's body and JSON byte length when it is a live document
+    /// that matches <paramref name="filter"/> (NULL otherwise). Both lookups seek <c>change_log_by_document</c>: the next
+    /// id takes the index's first entry after <c>$after</c>, the last write its last entry at or before the offset.
+    /// </summary>
+    public string CompileSnapshotStep(DocumentFilter? filter, long generation, long offset)
+    {
+        var at = Parameter(offset);
+        var lineage = Parameter(generation);
+        return $"""
+            SELECT next.id, next.born, write.version, CASE WHEN write.matches THEN write.body END, write.size
+            FROM (
+                SELECT id, version AS born FROM change_log INDEXED BY change_log_by_document
+                WHERE collection = $collection AND generation = {lineage} AND id > $after
+                ORDER BY id, version LIMIT 1
+            ) next
+            LEFT JOIN (
+                SELECT sequence, version, body, length(CAST(body AS BLOB)) AS size, body IS NOT NULL AND {Filter(filter)} AS matches
+                FROM change_log
+            ) write ON write.sequence = (
+                SELECT last.sequence FROM change_log last INDEXED BY change_log_by_document
+                WHERE last.collection = $collection AND last.generation = {lineage} AND last.id = next.id AND last.version <= {at}
+                ORDER BY last.version DESC, last.sequence DESC LIMIT 1
+            );
+            """;
+    }
+
+    /// <summary>
+    /// Columns: id, version, body. Each document's last write in every commit (one version, one state) of the
+    /// collection's current generation with a version in
+    /// (<paramref name="after"/>, <paramref name="through"/>], in (version, write) order; the body is NULL for
+    /// tombstones and for documents <paramref name="filter"/> rejects.
+    /// </summary>
+    public string CompileChanges(DocumentFilter? filter, long after, long through) =>
+        $"""
+        SELECT id, version, CASE WHEN matches THEN body END FROM (
+            SELECT id, version, body, body IS NOT NULL AND {Filter(filter)} AS matches, sequence FROM change_log c
+            WHERE collection = $collection AND generation = (SELECT generation FROM collections WHERE name = $collection)
+                AND version > {Parameter(after)} AND version <= {Parameter(through)}
+                AND sequence = (
+                    SELECT max(last.sequence) FROM change_log last INDEXED BY change_log_by_document
+                    WHERE last.collection = c.collection AND last.generation = c.generation AND last.id = c.id AND last.version = c.version)
+        ) ORDER BY version, sequence;
+        """;
+
     private string Filter(DocumentFilter? filter) => filter switch
     {
         null => "1",

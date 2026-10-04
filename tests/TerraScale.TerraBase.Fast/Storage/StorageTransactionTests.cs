@@ -32,6 +32,7 @@ public sealed class StorageTransactionTests
         await Assert.That(store.IdleCount).IsEqualTo(0);
 
         await using var writer = await store.BeginTransactionAsync(write: true, CancellationToken.None);
+        await writer.CreateCollectionAsync(new CollectionInfo("items", 0), CancellationToken.None);
         var version = await writer.PutAsync("items", "a", Encoding.UTF8.GetBytes("""{"n":1}"""), CancellationToken.None);
         await writer.CommitAsync(CancellationToken.None);
         await Assert.That(version).IsEqualTo(1);

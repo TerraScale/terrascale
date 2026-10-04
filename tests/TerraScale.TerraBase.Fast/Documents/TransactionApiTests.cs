@@ -220,14 +220,48 @@ public sealed class TransactionApiTests
 
         var assertion = await DocumentApi.SendAsync(
             writer, HttpMethod.Post, api.Transactions,
-            JsonContent.Create(new { ops = new object[] { new { op = "assert", collection = "items", id = DocumentApi.NewId(), absent = true } } }));
+            JsonContent.Create(new
+            {
+                ops = new object[]
+                {
+                    new { op = "create", collection = "items", document = new { } },
+                    new { op = "assert", collection = "items", id = DocumentApi.NewId(), absent = true },
+                },
+            }));
         var write = await DocumentApi.SendAsync(
             writer, HttpMethod.Post, api.Transactions,
             JsonContent.Create(new { ops = new object[] { new { op = "create", collection = "items", document = new { } } } }));
 
-        await Assert.That((assertion.Status, assertion.Code)).IsEqualTo((HttpStatusCode.Forbidden, "forbidden_scope"));
+        // Like every operation-specific failure, it names the operation: the first assertion.
+        await Assert.That((assertion.Status, assertion.Code, assertion.Op)).IsEqualTo((HttpStatusCode.Forbidden, "forbidden_scope", (int?)1));
         await Assert.That(write.Status).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(write.Json.GetProperty("offset").ValueKind).IsEqualTo(JsonValueKind.String);
+    }
+
+    [Test]
+    public async Task Storage_framing_limits_return_an_indexed_413_and_roll_back_the_transaction()
+    {
+        await using var api = await DocumentApi.StartAsync();
+        var ids = Enumerable.Range(0, 7).Select(_ => DocumentApi.NewId()).ToArray();
+        var document = "{\"padding\":\"" + new string('x', (1024 * 1024) - "{\"padding\":\"\"}".Length) + "\"}";
+        ApiResponse? last = null;
+        string? firstVersion = null;
+        foreach (var id in ids)
+        {
+            last = await api.SendRawAsync(HttpMethod.Put, api.Document(id), document, "application/json");
+            last.Status.ShouldBe(HttpStatusCode.Created);
+            firstVersion ??= last.Version;
+        }
+
+        // The documents total exactly 7 MiB; operation framing must count toward the storage limit, so one
+        // commit always fits a shape log chunk.
+        var failed = await api.TransactAsync([.. ids.Select(id => new { op = "patch", collection = "items", id, merge = new { } })]);
+        var unchanged = await api.GetAsync(ids[0]);
+        var next = await api.PutAsync(DocumentApi.NewId(), new { });
+
+        await Assert.That((failed.Status, failed.Code, failed.Op)).IsEqualTo((HttpStatusCode.RequestEntityTooLarge, "payload_too_large", (int?)6));
+        await Assert.That(unchanged.Version).IsEqualTo(firstVersion);
+        await Assert.That(Offset(next)).IsEqualTo(Offset(last!) + 1);
     }
 
     private static long Offset(ApiResponse response) =>

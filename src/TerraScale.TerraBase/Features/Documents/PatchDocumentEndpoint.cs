@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.Net.Http.Headers;
 using TerraScale.Endpoints;
 using TerraScale.TerraBase.Features.ApiKeys;
 using TerraScale.TerraBase.Hosting;
@@ -36,7 +37,9 @@ public sealed class PatchDocumentEndpoint(IDocumentService documents, ITenantDir
         var precondition = ETags.Precondition(HttpContext);
         var body = await DocumentRoute.ReadBodyAsync(
             HttpContext, DocumentRoute.MaxRequestBytes, "invalid_patch", cancellationToken, DocumentPatch.MergeMediaType, DocumentPatch.OpsMediaType);
-        var patch = HttpContext.Request.ContentType!.StartsWith(DocumentPatch.OpsMediaType, StringComparison.OrdinalIgnoreCase)
+        // ReadBodyAsync accepted one of the two media types; compare the parsed type, not a prefix of the header.
+        var mediaType = MediaTypeHeaderValue.Parse(HttpContext.Request.ContentType!).MediaType.Value;
+        var patch = string.Equals(mediaType, DocumentPatch.OpsMediaType, StringComparison.OrdinalIgnoreCase)
             ? DocumentPatch.Ops(RequestJson.Deserialize<PatchOpsRequest>(body, "invalid_patch").Ops)
             : DocumentPatch.Merge(RequestJson.Deserialize<JsonElement>(body, "invalid_patch"));
 

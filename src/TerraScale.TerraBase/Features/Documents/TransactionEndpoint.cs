@@ -74,10 +74,11 @@ public sealed class TransactionEndpoint(IDocumentService documents, IAuthorizati
             }
         }
 
-        if (operations.Any(operation => operation is AssertOperation or AssertCountOperation)
-            && !(await authorization.AuthorizeAsync(HttpContext.User, ApiKeyScopes.DocumentsRead)).Succeeded)
+        var firstAssertion = operations.FindIndex(operation => operation is AssertOperation or AssertCountOperation);
+        if (firstAssertion >= 0 && !(await authorization.AuthorizeAsync(HttpContext.User, ApiKeyScopes.DocumentsRead)).Succeeded)
         {
-            throw new ApiException(StatusCodes.Status403Forbidden, "forbidden_scope", "assertions need the documents:read scope");
+            // Like every operation-specific failure, it names the operation: the first assertion.
+            throw new ApiException(StatusCodes.Status403Forbidden, "forbidden_scope", "assertions need the documents:read scope") { Op = firstAssertion };
         }
 
         var written = await documents.WriteAsync(database, operations, indexErrors: true, cancellationToken);

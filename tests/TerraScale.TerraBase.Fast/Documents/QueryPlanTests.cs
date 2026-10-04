@@ -31,6 +31,10 @@ public sealed class QueryPlanTests
         ["ListCollectionsAfter"] = "SEARCH collections USING PRIMARY KEY (name>?)",
         ["DropDocuments"] = "SEARCH documents USING PRIMARY KEY (collection=?)",
         ["DropCollection"] = "SEARCH collections USING PRIMARY KEY (name=?)",
+        // Shape history: an insert reads its collection row; the drop seeks the dropped generation.
+        ["AppendChange"] = "SEARCH collections USING PRIMARY KEY (name=?)",
+        ["HistoryFloor"] = "SEARCH shape_history USING INTEGER PRIMARY KEY (rowid=?)",
+        ["DropHistory"] = "SEARCH change_log USING INDEX change_log_by_offset (collection=? AND generation=?) | SCALAR SUBQUERY 1 | SEARCH collections USING PRIMARY KEY (name=?)",
     };
 
     [Test]
@@ -109,5 +113,37 @@ public sealed class QueryPlanTests
         var tombstone = await api.GetAsync(ids[0]);
         await Assert.That(tombstone.Status).IsEqualTo(System.Net.HttpStatusCode.NotFound);
         await Assert.That(tombstone.ETag is not null).IsTrue();
+    }
+
+    [Test]
+    public async Task Shape_snapshot_and_change_reads_seek_the_history_indexes_without_sorting()
+    {
+        await using var api = await DocumentApi.StartAsync();
+        (await api.PutAsync(DocumentApi.NewId(), new { status = "open" })).Status.ShouldBe(System.Net.HttpStatusCode.Created);
+        var path = await api.DatabaseFileAsync();
+        var filter = new TerraScale.TerraBase.Engine.CompareFilter(
+            new TerraScale.TerraBase.Engine.DocumentPath(["status"]), TerraScale.TerraBase.Engine.Comparison.Equal,
+            new TerraScale.TerraBase.Engine.ScalarValue(TerraScale.TerraBase.Engine.ScalarKind.Text, "open"));
+        using (var command = new Microsoft.Data.Sqlite.SqliteCommand())
+        {
+            var sql = new SqliteQueryCompiler(command.Parameters).CompileSnapshotStep(filter, 1, 10);
+            var plan = await QueryPlan.ExplainAsync(path, sql);
+            Console.WriteLine($"snapshot step: {plan}");
+            // The next id and its last write at the offset are both index seeks; the write is a primary-key lookup.
+            await Assert.That(plan).Contains("USING COVERING INDEX change_log_by_document (collection=? AND generation=? AND id>?)");
+            await Assert.That(plan).Contains("USING COVERING INDEX change_log_by_document (collection=? AND generation=? AND id=? AND version<?)");
+            await Assert.That(plan).Contains("USING INTEGER PRIMARY KEY (rowid=?)");
+            // "SCAN next" reads the one-row min(id) co-routine; change_log itself is never scanned.
+            await Assert.That(plan.Contains("SCAN change_log", StringComparison.Ordinal) || plan.Contains("TEMP B-TREE", StringComparison.Ordinal)).IsFalse();
+        }
+
+        using var changes = new Microsoft.Data.Sqlite.SqliteCommand();
+        var changeSql = new SqliteQueryCompiler(changes.Parameters).CompileChanges(filter, 1, 4097);
+        var changePlan = await QueryPlan.ExplainAsync(path, changeSql);
+        Console.WriteLine($"changes: {changePlan}");
+        await Assert.That(changePlan).StartsWith("SEARCH c USING INDEX change_log_by_offset (collection=? AND generation=? AND version>? AND version<?)");
+        // Each document's last write of a commit is one seek to its (id, version) range end.
+        await Assert.That(changePlan).Contains("SEARCH last USING COVERING INDEX change_log_by_document (collection=? AND generation=? AND id=? AND version=?)");
+        await Assert.That(changePlan.Contains("SCAN", StringComparison.Ordinal) || changePlan.Contains("TEMP B-TREE", StringComparison.Ordinal)).IsFalse();
     }
 }

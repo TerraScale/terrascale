@@ -116,6 +116,14 @@ internal sealed class DocumentService(IStorageEngine engine, TimeProvider time) 
 
                         results[i] = await ApplyAsync(transaction, operation, cancellationToken).ConfigureAwait(false);
                     }
+                    catch (StorageWriteLimitException)
+                    {
+                        // One commit must fit one shape log chunk (docs/shape-reads.md).
+                        throw new ApiException(StatusCodes.Status413PayloadTooLarge, "payload_too_large", "a transaction exceeds the storage write limits")
+                        {
+                            Op = indexErrors ? i : null,
+                        };
+                    }
                     catch (OverflowException)
                     {
                         throw new ApiException(StatusCodes.Status503ServiceUnavailable, "capacity", "the commit offset is exhausted")
