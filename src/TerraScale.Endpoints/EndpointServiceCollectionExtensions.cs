@@ -191,15 +191,17 @@ public static class EndpointServiceCollectionExtensions
         var properties = metadata.Properties ?? [];
         var route = RoutePatternFactory.Parse("/" + description.RelativePath);
         var routeBound = new HashSet<JsonPropertyInfo>();
+        var routeOptional = new HashSet<JsonPropertyInfo>();
         foreach (var routeParameter in route.Parameters)
         {
             var property = Find(properties, routeParameter.Name) is { } match && RequestValues.CanBindFromString(match) ? match : null;
 
             // An optional segment ({id?} or with a default) may be absent, and then the binder takes
-            // the value from the query string, so that property stays a query parameter too.
-            if (property is not null && !routeParameter.IsOptional && routeParameter.Default is null)
+            // the value from the query string, so that property stays a query parameter too. The
+            // segment (or its default) can still supply it, so that query parameter is never required.
+            if (property is not null)
             {
-                routeBound.Add(property);
+                (routeParameter.IsOptional || routeParameter.Default is not null ? routeOptional : routeBound).Add(property);
             }
 
             // OpenAPI requires every path parameter to be required, even optional route segments.
@@ -222,7 +224,7 @@ public static class EndpointServiceCollectionExtensions
         {
             // The binder merges body, query and route values before checking required members, so
             // with a body kept a required member may come from the body instead of the query.
-            var mustSend = property.IsRequired || (metadata.Validated && HasRequiredAttribute(property));
+            var mustSend = IsRequired(property, metadata) && !routeOptional.Contains(property);
             await AddAsync(property.Name, ParameterLocation.Query, property, mustSend && !bodyKept).ConfigureAwait(false);
         }
 
@@ -230,6 +232,14 @@ public static class EndpointServiceCollectionExtensions
         {
             operation.RequestBody = null;
             return;
+        }
+
+        // Routing accepts a missing body for object requests, but a required member that only the
+        // body can supply (a nested object or dictionary) makes this operation's body required.
+        if (operation.RequestBody is OpenApiRequestBody body
+            && remaining.Exists(property => !RequestValues.CanBindFromString(property) && IsRequired(property, metadata)))
+        {
+            body.Required = true;
         }
 
         // The binder merges route and query values before checking required members, so members
@@ -262,6 +272,9 @@ public static class EndpointServiceCollectionExtensions
             operation.Parameters.Add(new OpenApiParameter { Name = name, In = location, Required = required, Schema = schema });
         }
     }
+
+    private static bool IsRequired(JsonPropertyInfo property, RequestParametersMetadata metadata) =>
+        property.IsRequired || (metadata.Validated && HasRequiredAttribute(property));
 
     // Data annotation [Required] on the property or its constructor parameter, as AddValidation() checks it.
     private static bool HasRequiredAttribute(JsonPropertyInfo property) =>

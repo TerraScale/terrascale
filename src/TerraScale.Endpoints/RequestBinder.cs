@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.ComponentModel.DataAnnotations;
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
@@ -8,6 +9,7 @@ using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using System.Text.Json.Serialization.Metadata;
 using Microsoft.AspNetCore.Http.Features;
+using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Primitives;
 using Microsoft.Extensions.Validation;
@@ -206,28 +208,49 @@ internal sealed class RequestBinder<TRequest>
         return false;
     }
 
+    // The body is streamed through unchanged except for the top-level members that route or query
+    // values override, so duplicates, Populate, dictionary keys and converters see exactly what direct
+    // deserialization would; only the overridden members are replaced, then the serializer runs once.
     private async ValueTask<TRequest> MergeAsync(HttpRequest request, bool hasJson, CancellationToken cancellationToken)
     {
+        var overrides = this.CollectParameters(request);
         var options = this.typeInfo.Options;
-        var nodeOptions = new JsonNodeOptions { PropertyNameCaseInsensitive = options.PropertyNameCaseInsensitive };
-        var json = hasJson ? await ReadObjectAsync(request, options, nodeOptions, cancellationToken).ConfigureAwait(false) : new JsonObject(nodeOptions);
+        using var document = hasJson ? await ReadDocumentAsync(request, options, cancellationToken).ConfigureAwait(false) : null;
 
-        if (request.QueryString.HasValue)
+        var buffer = new ArrayBufferWriter<byte>();
+        using (var writer = new Utf8JsonWriter(buffer))
         {
-            foreach (var (key, values) in request.Query)
+            writer.WriteStartObject();
+            if (document is not null)
             {
-                this.Set(json, key, values, fromRoute: false);
+                foreach (var member in document.RootElement.EnumerateObject())
+                {
+                    if (!IsOverridden(member.Name, overrides, options))
+                    {
+                        member.WriteTo(writer);
+                    }
+                }
             }
-        }
 
-        foreach (var (key, value) in request.RouteValues)
-        {
-            this.Set(json, key, value?.ToString(), fromRoute: true);
+            foreach (var (property, value) in overrides)
+            {
+                writer.WritePropertyName(property.Name);
+                if (value is null)
+                {
+                    writer.WriteNullValue();
+                }
+                else
+                {
+                    value.WriteTo(writer);
+                }
+            }
+
+            writer.WriteEndObject();
         }
 
         try
         {
-            return json.Deserialize(this.typeInfo)
+            return JsonSerializer.Deserialize(buffer.WrittenSpan, this.typeInfo)
                 ?? throw new BadHttpRequestException("A request is required.", StatusCodes.Status400BadRequest);
         }
         catch (JsonException exception)
@@ -243,11 +266,62 @@ internal sealed class RequestBinder<TRequest>
         }
     }
 
-    private static async ValueTask<JsonObject> ReadObjectAsync(
-        HttpRequest request,
-        JsonSerializerOptions options,
-        JsonNodeOptions nodeOptions,
-        CancellationToken cancellationToken)
+    // Query values are read from the raw query string because HttpRequest.Query merges keys that
+    // differ only by case, which would lose one of "id" and "ID" in a case-sensitive contract. Keys
+    // resolving to the same member are combined in order; route values (one per slot) win.
+    private Dictionary<JsonPropertyInfo, JsonNode?> CollectParameters(HttpRequest request)
+    {
+        var overrides = new Dictionary<JsonPropertyInfo, JsonNode?>(ReferenceEqualityComparer.Instance);
+        if (request.QueryString.HasValue)
+        {
+            var queried = new Dictionary<JsonPropertyInfo, List<string>>(ReferenceEqualityComparer.Instance);
+            foreach (var pair in new QueryStringEnumerable(request.QueryString.Value))
+            {
+                if (this.TryFind(pair.DecodeName().ToString(), out var property))
+                {
+                    if (!queried.TryGetValue(property, out var values))
+                    {
+                        queried[property] = values = [];
+                    }
+
+                    values.Add(pair.DecodeValue().ToString());
+                }
+            }
+
+            foreach (var (property, values) in queried)
+            {
+                overrides[property] = RequestValues.ToJson(property, new StringValues([.. values]), fromRoute: false);
+            }
+        }
+
+        foreach (var (key, value) in request.RouteValues)
+        {
+            if (this.TryFind(key, out var property))
+            {
+                overrides[property] = RequestValues.ToJson(property, value?.ToString(), fromRoute: true);
+            }
+        }
+
+        return overrides;
+    }
+
+    // A body member is replaced when the serializer would bind it to an overridden property:
+    // its exact name, or any casing when the contract matches names case-insensitively.
+    private static bool IsOverridden(string name, Dictionary<JsonPropertyInfo, JsonNode?> overrides, JsonSerializerOptions options)
+    {
+        var comparison = options.PropertyNameCaseInsensitive ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        foreach (var property in overrides.Keys)
+        {
+            if (string.Equals(property.Name, name, comparison))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static async ValueTask<JsonDocument> ReadDocumentAsync(HttpRequest request, JsonSerializerOptions options, CancellationToken cancellationToken)
     {
         // Like ReadFromJsonAsync, honor a non-UTF-8 charset by transcoding the body to UTF-8.
         var encoding = EndpointJson.GetEncoding(request) ?? throw EndpointJson.UnsupportedCharset();
@@ -273,58 +347,21 @@ internal sealed class RequestBinder<TRequest>
                 throw new BadHttpRequestException("The JSON request body is invalid.", StatusCodes.Status400BadRequest, exception);
             }
 
-            using (document)
+            if (document.RootElement.ValueKind == JsonValueKind.Object)
             {
-                return document.RootElement.ValueKind switch
-                {
-                    JsonValueKind.Object => (JsonObject)Copy(document.RootElement, nodeOptions)!,
-                    JsonValueKind.Null => throw new BadHttpRequestException("A JSON request body is required.", StatusCodes.Status400BadRequest),
-                    _ => throw new BadHttpRequestException("The JSON request body must be an object.", StatusCodes.Status400BadRequest),
-                };
+                return document;
             }
-        }
-    }
 
-    // Copies by indexer, so a repeated property (allowed unless AllowDuplicateProperties is false,
-    // which the parser already enforced) overwrites the earlier one at every depth: the same
-    // last-wins rule as deserializing the body directly.
-    private static JsonNode? Copy(JsonElement element, JsonNodeOptions options)
-    {
-        switch (element.ValueKind)
-        {
-            case JsonValueKind.Object:
-                var obj = new JsonObject(options);
-                foreach (var property in element.EnumerateObject())
-                {
-                    obj[property.Name] = Copy(property.Value, options);
-                }
-
-                return obj;
-            case JsonValueKind.Array:
-                var array = new JsonArray(options);
-                foreach (var item in element.EnumerateArray())
-                {
-                    array.Add(Copy(item, options));
-                }
-
-                return array;
-            case JsonValueKind.Null:
-                return null;
-            default:
-                return JsonValue.Create(element.Clone(), options);
+            var kind = document.RootElement.ValueKind;
+            document.Dispose();
+            throw kind == JsonValueKind.Null
+                ? new BadHttpRequestException("A JSON request body is required.", StatusCodes.Status400BadRequest)
+                : new BadHttpRequestException("The JSON request body must be an object.", StatusCodes.Status400BadRequest);
         }
     }
 
     private bool TryFind(string key, [NotNullWhen(true)] out JsonPropertyInfo? property) =>
         this.exact!.TryGetValue(key, out property) || this.folded!.TryGetValue(key, out property);
-
-    private void Set(JsonObject json, string key, StringValues values, bool fromRoute)
-    {
-        if (this.TryFind(key, out var property))
-        {
-            json[property.Name] = RequestValues.ToJson(property, values, fromRoute);
-        }
-    }
 
     private static bool HasBody(HttpContext context) =>
         context.Request.ContentLength > 0

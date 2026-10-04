@@ -1319,3 +1319,149 @@ public sealed class ValidatedQueryEndpoint : Endpoint<ValidatedQuery, string>
 
     public override ValueTask<string> HandleAsync(ValidatedQuery request, CancellationToken cancellationToken) => ValueTask.FromResult(request.Name);
 }
+
+/// <summary>Regressions for the tenth ts-reviewer pass on PR #8.</summary>
+public sealed class TenthPassBindingTests
+{
+    [Test]
+    public async Task RequiredBodyOnlyMembersMakeTheBodyRequired()
+    {
+        await using var app = await StartAsync(_ => { }, EndpointRegistration.Create<RequiredNestedEndpoint>());
+        using var client = Client(app);
+        using var document = JsonDocument.Parse(await client.GetStringAsync("/openapi/v1.json"));
+        var body = document.RootElement.GetProperty("paths").GetProperty("/tenth/required-nested").GetProperty("get").GetProperty("requestBody");
+        await Assert.That(body.GetProperty("required").GetBoolean()).IsTrue();
+    }
+
+    [Test]
+    [Arguments("/tenth/optional/{id}")]
+    [Arguments("/tenth/defaulted/{id}")]
+    public async Task OptionalRouteSlotsDoNotMakeTheQueryFallbackRequired(string path)
+    {
+        await using var app = await StartAsync(
+            _ => { },
+            EndpointRegistration.Create<RequiredOptionalIdEndpoint>(),
+            EndpointRegistration.Create<RequiredDefaultedIdEndpoint>());
+        using var client = Client(app);
+        await Assert.That(await client.GetStringAsync("/tenth/optional/7")).IsEqualTo("7");
+        await Assert.That(await client.GetStringAsync("/tenth/defaulted")).IsEqualTo("5");
+        using var document = JsonDocument.Parse(await client.GetStringAsync("/openapi/v1.json"));
+        var query = document.RootElement.GetProperty("paths").GetProperty(path).GetProperty("get").GetProperty("parameters")
+            .EnumerateArray().Single(parameter => parameter.GetProperty("in").GetString() == "query");
+        await Assert.That(query.TryGetProperty("required", out var required) && required.GetBoolean()).IsFalse();
+    }
+
+    [Test]
+    public async Task MergedBodiesKeepRepeatedPopulatedMembers()
+    {
+        await using var app = await StartAsync(
+            builder => builder.Services.ConfigureHttpJsonOptions(options =>
+                options.SerializerOptions.PreferredObjectCreationHandling = JsonObjectCreationHandling.Populate),
+            EndpointRegistration.Create<PopulateBodyEndpoint>());
+        using var client = Client(app);
+        const string body = """{"tags":["a"],"tags":["b"]}""";
+        using var direct = await client.PostAsync("/tenth/populate", new StringContent(body, Encoding.UTF8, "application/json"));
+        using var merged = await client.PostAsync("/tenth/populate?page=2", new StringContent(body, Encoding.UTF8, "application/json"));
+        await Assert.That(await direct.Content.ReadAsStringAsync()).IsEqualTo("1:a,b");
+        await Assert.That(await merged.Content.ReadAsStringAsync()).IsEqualTo("2:a,b");
+    }
+
+    [Test]
+    public async Task MergedBodiesKeepDictionaryKeysThatDifferByCase()
+    {
+        await using var app = await StartAsync(_ => { }, EndpointRegistration.Create<DataBodyEndpoint>());
+        using var client = Client(app);
+        const string body = """{"page":1,"data":{"a":1,"A":2}}""";
+        using var direct = await client.PostAsync("/tenth/data", new StringContent(body, Encoding.UTF8, "application/json"));
+        using var merged = await client.PostAsync("/tenth/data?page=2", new StringContent(body, Encoding.UTF8, "application/json"));
+        await Assert.That(await direct.Content.ReadAsStringAsync()).IsEqualTo("1:a=1,A=2");
+        await Assert.That(await merged.Content.ReadAsStringAsync()).IsEqualTo("2:a=1,A=2");
+    }
+
+    [Test]
+    [Arguments("/case?id=1&ID=2")]
+    [Arguments("/case?ID=2&id=1")]
+    public async Task QueryKeysThatDifferByCaseBindTheirOwnMembers(string url)
+    {
+        await using var app = await StartAsync(
+            builder => builder.Services.ConfigureHttpJsonOptions(options => options.SerializerOptions.PropertyNameCaseInsensitive = false),
+            EndpointRegistration.Create<CaseEndpoint>());
+        using var client = Client(app);
+        await Assert.That(await client.GetStringAsync(url)).IsEqualTo("""{"id":1,"ID":2}""");
+    }
+
+    private static async Task<WebApplication> StartAsync(Action<WebApplicationBuilder> configure, params EndpointRegistration[] endpoints)
+    {
+        var builder = WebApplication.CreateBuilder();
+        builder.WebHost.UseUrls("http://127.0.0.1:0");
+        builder.Services.AddTerraScaleEndpoints(endpoints);
+        configure(builder);
+        var app = builder.Build();
+        app.MapTerraScaleEndpoints();
+        app.MapTerraScaleOpenApi();
+        await app.StartAsync();
+        return app;
+    }
+
+    private static HttpClient Client(WebApplication app) => new() { BaseAddress = new Uri(app.Urls.Single()) };
+}
+
+public sealed class RequiredNestedQuery
+{
+    public int Page { get; init; } = 1;
+
+    public required NestedFilter Filter { get; init; }
+}
+
+public sealed class RequiredNestedEndpoint : Endpoint<RequiredNestedQuery, string>
+{
+    public override void Configure() => Get("/tenth/required-nested");
+
+    public override ValueTask<string> HandleAsync(RequiredNestedQuery request, CancellationToken cancellationToken) => ValueTask.FromResult(request.Filter.Name);
+}
+
+public sealed class RequiredIdQuery
+{
+    public required int Id { get; init; }
+}
+
+public sealed class RequiredOptionalIdEndpoint : Endpoint<RequiredIdQuery, string>
+{
+    public override void Configure() => Get("/tenth/optional/{id?}");
+
+    public override ValueTask<string> HandleAsync(RequiredIdQuery request, CancellationToken cancellationToken) =>
+        ValueTask.FromResult(request.Id.ToString(System.Globalization.CultureInfo.InvariantCulture));
+}
+
+public sealed class RequiredDefaultedIdEndpoint : Endpoint<RequiredIdQuery, string>
+{
+    public override void Configure() => Get("/tenth/defaulted/{id=5}");
+
+    public override ValueTask<string> HandleAsync(RequiredIdQuery request, CancellationToken cancellationToken) =>
+        ValueTask.FromResult(request.Id.ToString(System.Globalization.CultureInfo.InvariantCulture));
+}
+
+public sealed class PopulateBody
+{
+    public int Page { get; set; } = 1;
+
+    public List<string> Tags { get; } = [];
+}
+
+public sealed class PopulateBodyEndpoint : Endpoint<PopulateBody, string>
+{
+    public override void Configure() => Post("/tenth/populate");
+
+    public override ValueTask<string> HandleAsync(PopulateBody request, CancellationToken cancellationToken) =>
+        ValueTask.FromResult($"{request.Page}:{string.Join(',', request.Tags)}");
+}
+
+public sealed record DataBody(int Page, Dictionary<string, int>? Data);
+
+public sealed class DataBodyEndpoint : Endpoint<DataBody, string>
+{
+    public override void Configure() => Post("/tenth/data");
+
+    public override ValueTask<string> HandleAsync(DataBody request, CancellationToken cancellationToken) =>
+        ValueTask.FromResult($"{request.Page}:{string.Join(',', request.Data!.Select(pair => $"{pair.Key}={pair.Value}"))}");
+}
