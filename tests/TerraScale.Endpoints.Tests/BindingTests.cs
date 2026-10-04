@@ -258,14 +258,13 @@ public sealed class BindingEdgeTests
     [Test]
     [Arguments("""{"name":"a","name":"b"}""")]
     [Arguments("""{"name":"a","Name":"b"}""")]
-    public async Task DuplicateBodyPropertiesAreRejectedWhenMerging(string body)
+    public async Task DuplicateBodyPropertiesFollowTheSerializerPolicyWhenMerging(string body)
     {
+        // AllowDuplicateProperties defaults to true: the last value wins, as in direct deserialization.
         await using var app = await StartAsync(mapInGroup: false);
         using var client = Client(app);
         using var response = await client.PutAsync("/items/7", new StringContent(body, Encoding.UTF8, "application/json"));
-        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
-        using var problem = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
-        await Assert.That(problem.RootElement.GetProperty("detail").GetString()).IsEqualTo("The JSON request body contains duplicate properties.");
+        await Assert.That(await response.Content.ReadAsStringAsync()).IsEqualTo("""{"id":7,"page":1,"name":"b","tags":[]}""");
     }
 
     [Test]
@@ -1240,4 +1239,83 @@ public sealed class PopulateEndpoint : Endpoint<PopulateQuery, string>
 
     public override ValueTask<string> HandleAsync(PopulateQuery request, CancellationToken cancellationToken) =>
         ValueTask.FromResult($"{request.Page}:{string.Join(',', request.Tags)}:{request.Id}");
+}
+
+/// <summary>Regressions for the ninth ts-reviewer pass on PR #8.</summary>
+public sealed class NinthPassBindingTests
+{
+    [Test]
+    [Arguments(true, 200)]
+    [Arguments(false, 400)]
+    public async Task DuplicatePropertiesBehaveTheSameWithAndWithoutParameters(bool allowDuplicates, int expected)
+    {
+        await using var app = await StartAsync(
+            builder => builder.Services.ConfigureHttpJsonOptions(options => options.SerializerOptions.AllowDuplicateProperties = allowDuplicates),
+            EndpointRegistration.Create<NestedEchoEndpoint>());
+        using var client = Client(app);
+        const string body = """{"page":1,"page":2,"filter":{"name":"a","name":"b"}}""";
+        using var direct = await client.PostAsync("/nested-echo", new StringContent(body, Encoding.UTF8, "application/json"));
+        using var merged = await client.PostAsync("/nested-echo?page=3", new StringContent(body, Encoding.UTF8, "application/json"));
+        await Assert.That((int)direct.StatusCode).IsEqualTo(expected);
+        await Assert.That((int)merged.StatusCode).IsEqualTo(expected);
+        if (allowDuplicates)
+        {
+            await Assert.That(await direct.Content.ReadAsStringAsync()).IsEqualTo("""{"page":2,"filter":{"name":"b"}}""");
+            await Assert.That(await merged.Content.ReadAsStringAsync()).IsEqualTo("""{"page":3,"filter":{"name":"b"}}""");
+        }
+    }
+
+    [Test]
+    public async Task OptionalRouteSegmentsKeepTheQueryFallback()
+    {
+        await using var app = await StartAsync(_ => { }, EndpointRegistration.Create<OptionalItemEndpoint>());
+        using var client = Client(app);
+        await Assert.That(await client.GetStringAsync("/optional?id=7")).IsEqualTo("""{"id":7}""");
+        using var document = JsonDocument.Parse(await client.GetStringAsync("/openapi/v1.json"));
+        var parameters = document.RootElement.GetProperty("paths").GetProperty("/optional/{id}").GetProperty("get").GetProperty("parameters")
+            .EnumerateArray().Select(parameter => $"{parameter.GetProperty("in").GetString()}:{parameter.GetProperty("name").GetString()}").ToArray();
+        await Assert.That(parameters).IsEquivalentTo(["path:id", "query:id"]);
+    }
+
+    [Test]
+    public async Task ValidatedRequiredMembersAreRequiredQueryParameters()
+    {
+        await using var app = await StartAsync(builder => builder.Services.AddValidation(), EndpointRegistration.Create<ValidatedQueryEndpoint>());
+        using var client = Client(app);
+        using var missing = await client.GetAsync("/ninth/validated");
+        await Assert.That(missing.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+        using var document = JsonDocument.Parse(await client.GetStringAsync("/openapi/v1.json"));
+        var name = document.RootElement.GetProperty("paths").GetProperty("/ninth/validated").GetProperty("get").GetProperty("parameters")
+            .EnumerateArray().Single(parameter => parameter.GetProperty("name").GetString() == "name");
+        await Assert.That(name.GetProperty("required").GetBoolean()).IsTrue();
+    }
+
+    private static async Task<WebApplication> StartAsync(Action<WebApplicationBuilder> configure, params EndpointRegistration[] endpoints)
+    {
+        var builder = WebApplication.CreateBuilder();
+        builder.WebHost.UseUrls("http://127.0.0.1:0");
+        builder.Services.AddTerraScaleEndpoints(endpoints);
+        configure(builder);
+        var app = builder.Build();
+        app.MapTerraScaleEndpoints();
+        app.MapTerraScaleOpenApi();
+        await app.StartAsync();
+        return app;
+    }
+
+    private static HttpClient Client(WebApplication app) => new() { BaseAddress = new Uri(app.Urls.Single()) };
+}
+
+[ValidatableType]
+public sealed class ValidatedQuery
+{
+    [Required]
+    public string Name { get; set; } = "";
+}
+
+public sealed class ValidatedQueryEndpoint : Endpoint<ValidatedQuery, string>
+{
+    public override void Configure() => Get("/ninth/validated");
+
+    public override ValueTask<string> HandleAsync(ValidatedQuery request, CancellationToken cancellationToken) => ValueTask.FromResult(request.Name);
 }

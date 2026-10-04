@@ -228,7 +228,8 @@ public sealed class EndpointDefinition
         MethodInfo signature,
         Type? requestType,
         Type responseType,
-        IReadOnlyList<JsonPropertyInfo>? requestProperties = null)
+        IReadOnlyList<JsonPropertyInfo>? requestProperties = null,
+        bool validated = false)
     {
         this.EnsureMappable();
 
@@ -255,7 +256,7 @@ public sealed class EndpointDefinition
             builder.WithDescription(this.Description);
         }
 
-        builder.WithMetadata(new RequestParametersMetadata(requestType, requestProperties));
+        builder.WithMetadata(new RequestParametersMetadata(requestType, requestProperties, validated));
 
         // Without tags OpenAPI would group the operation under the generic base class name.
         if (this.tags.Count > 0)
@@ -316,7 +317,8 @@ public sealed class EndpointDefinition
 /// The properties of an object request bound by the default binder, possibly empty; null when the
 /// request is not an object or a BindAsync override binds it, which keeps the body required.
 /// </param>
-internal sealed record RequestParametersMetadata(Type? RequestType, IReadOnlyList<JsonPropertyInfo>? Properties);
+/// <param name="Validated">True when AddValidation() validates the request, so [Required] members are required inputs.</param>
+internal sealed record RequestParametersMetadata(Type? RequestType, IReadOnlyList<JsonPropertyInfo>? Properties, bool Validated);
 
 /// <summary>Marker request used by endpoints without a request body.</summary>
 public readonly record struct EmptyRequest;

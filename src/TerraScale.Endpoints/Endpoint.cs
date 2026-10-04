@@ -70,7 +70,8 @@ public abstract class Endpoint<TRequest, TResponse> : EndpointBase
             Signature,
             typeof(TRequest),
             typeof(TResponse),
-            this.UsesDefaultBinding(typeof(Endpoint<TRequest, TResponse>)) ? binder.Properties : null);
+            this.UsesDefaultBinding(typeof(Endpoint<TRequest, TResponse>)) ? binder.Properties : null,
+            binder.Validates);
     }
 
     private static async Task CompleteAsync(
@@ -199,7 +200,8 @@ public abstract class Endpoint<TRequest> : EndpointBase
             Signature,
             typeof(TRequest),
             typeof(IResult),
-            this.UsesDefaultBinding(typeof(Endpoint<TRequest>)) ? binder.Properties : null);
+            this.UsesDefaultBinding(typeof(Endpoint<TRequest>)) ? binder.Properties : null,
+            binder.Validates);
     }
 
     private static async Task CompleteAsync(

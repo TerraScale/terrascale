@@ -1,3 +1,4 @@
+using System.ComponentModel.DataAnnotations;
 using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using System.Text.Json.Serialization.Metadata;
@@ -193,7 +194,10 @@ public static class EndpointServiceCollectionExtensions
         foreach (var routeParameter in route.Parameters)
         {
             var property = Find(properties, routeParameter.Name) is { } match && RequestValues.CanBindFromString(match) ? match : null;
-            if (property is not null)
+
+            // An optional segment ({id?} or with a default) may be absent, and then the binder takes
+            // the value from the query string, so that property stays a query parameter too.
+            if (property is not null && !routeParameter.IsOptional && routeParameter.Default is null)
             {
                 routeBound.Add(property);
             }
@@ -218,7 +222,8 @@ public static class EndpointServiceCollectionExtensions
         {
             // The binder merges body, query and route values before checking required members, so
             // with a body kept a required member may come from the body instead of the query.
-            await AddAsync(property.Name, ParameterLocation.Query, property, property.IsRequired && !bodyKept).ConfigureAwait(false);
+            var mustSend = property.IsRequired || (metadata.Validated && HasRequiredAttribute(property));
+            await AddAsync(property.Name, ParameterLocation.Query, property, mustSend && !bodyKept).ConfigureAwait(false);
         }
 
         if (!bodyKept)
@@ -257,6 +262,11 @@ public static class EndpointServiceCollectionExtensions
             operation.Parameters.Add(new OpenApiParameter { Name = name, In = location, Required = required, Schema = schema });
         }
     }
+
+    // Data annotation [Required] on the property or its constructor parameter, as AddValidation() checks it.
+    private static bool HasRequiredAttribute(JsonPropertyInfo property) =>
+        property.AttributeProvider?.IsDefined(typeof(RequiredAttribute), inherit: true) == true
+        || property.AssociatedParameter?.AttributeProvider?.IsDefined(typeof(RequiredAttribute), inherit: true) == true;
 
     // Same resolution as the binder: exact JSON name first, then the only case-insensitive match.
     private static JsonPropertyInfo? Find(IReadOnlyList<JsonPropertyInfo> properties, string name) =>

@@ -212,26 +212,17 @@ internal sealed class RequestBinder<TRequest>
         var nodeOptions = new JsonNodeOptions { PropertyNameCaseInsensitive = options.PropertyNameCaseInsensitive };
         var json = hasJson ? await ReadObjectAsync(request, options, nodeOptions, cancellationToken).ConfigureAwait(false) : new JsonObject(nodeOptions);
 
-        try
+        if (request.QueryString.HasValue)
         {
-            if (request.QueryString.HasValue)
+            foreach (var (key, values) in request.Query)
             {
-                foreach (var (key, values) in request.Query)
-                {
-                    this.Set(json, key, values, fromRoute: false);
-                }
-            }
-
-            foreach (var (key, value) in request.RouteValues)
-            {
-                this.Set(json, key, value?.ToString(), fromRoute: true);
+                this.Set(json, key, values, fromRoute: false);
             }
         }
-        catch (ArgumentException exception)
+
+        foreach (var (key, value) in request.RouteValues)
         {
-            // JsonObject builds its property dictionary on the first write and rejects duplicate
-            // names (or names equal under case-insensitive matching) in the body at that point.
-            throw new BadHttpRequestException("The JSON request body contains duplicate properties.", StatusCodes.Status400BadRequest, exception);
+            this.Set(json, key, value?.ToString(), fromRoute: true);
         }
 
         try
@@ -268,25 +259,59 @@ internal sealed class RequestBinder<TRequest>
             var documentOptions = new JsonDocumentOptions
             {
                 AllowTrailingCommas = options.AllowTrailingCommas,
+                AllowDuplicateProperties = options.AllowDuplicateProperties,
                 CommentHandling = options.ReadCommentHandling,
                 MaxDepth = options.MaxDepth,
             };
-            JsonNode? body;
+            JsonDocument document;
             try
             {
-                body = await JsonNode.ParseAsync(transcoded ?? request.Body, nodeOptions, documentOptions, cancellationToken).ConfigureAwait(false);
+                document = await JsonDocument.ParseAsync(transcoded ?? request.Body, documentOptions, cancellationToken).ConfigureAwait(false);
             }
             catch (JsonException exception)
             {
                 throw new BadHttpRequestException("The JSON request body is invalid.", StatusCodes.Status400BadRequest, exception);
             }
 
-            return body switch
+            using (document)
             {
-                JsonObject value => value,
-                null => throw new BadHttpRequestException("A JSON request body is required.", StatusCodes.Status400BadRequest),
-                _ => throw new BadHttpRequestException("The JSON request body must be an object.", StatusCodes.Status400BadRequest),
-            };
+                return document.RootElement.ValueKind switch
+                {
+                    JsonValueKind.Object => (JsonObject)Copy(document.RootElement, nodeOptions)!,
+                    JsonValueKind.Null => throw new BadHttpRequestException("A JSON request body is required.", StatusCodes.Status400BadRequest),
+                    _ => throw new BadHttpRequestException("The JSON request body must be an object.", StatusCodes.Status400BadRequest),
+                };
+            }
+        }
+    }
+
+    // Copies by indexer, so a repeated property (allowed unless AllowDuplicateProperties is false,
+    // which the parser already enforced) overwrites the earlier one at every depth: the same
+    // last-wins rule as deserializing the body directly.
+    private static JsonNode? Copy(JsonElement element, JsonNodeOptions options)
+    {
+        switch (element.ValueKind)
+        {
+            case JsonValueKind.Object:
+                var obj = new JsonObject(options);
+                foreach (var property in element.EnumerateObject())
+                {
+                    obj[property.Name] = Copy(property.Value, options);
+                }
+
+                return obj;
+            case JsonValueKind.Array:
+                var array = new JsonArray(options);
+                foreach (var item in element.EnumerateArray())
+                {
+                    array.Add(Copy(item, options));
+                }
+
+                return array;
+            case JsonValueKind.Null:
+                return null;
+            default:
+                return JsonValue.Create(element.Clone(), options);
         }
     }
 
