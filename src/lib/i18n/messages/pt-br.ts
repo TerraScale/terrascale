@@ -145,7 +145,7 @@ export const ptBr: Messages = {
     eyebrow: 'Preços',
     titleLead: 'Preços simples',
     titleAccent: 'que escalam com VOCÊ',
-    subtitle: 'Três planos para o Public Alpha. Enterprise continua indisponível.',
+    subtitle: 'Hobby, Starter e Pro para o Public Alpha. Enterprise continua indisponível.',
     badge: 'Mais popular',
     toggleLabel: 'Ciclo de cobrança',
     monthly: 'Mensal',
@@ -154,14 +154,16 @@ export const ptBr: Messages = {
     suffixMonthly: '/mês',
     suffixAnnual: '/ano',
     plans: {
+      hobby: {
+        description: 'Plano gratuito para construir e avaliar',
+        cta: 'Começar com Hobby',
+      },
       starter: {
         description: 'Plano mensal com um teste elegível de 30 dias',
-        features: ['5 projetos', '5 bancos de dados', '5 membros', '5 GB entre regiões', '1.000.000 unidades de operação/mês'],
         cta: 'Escolher Starter',
       },
       pro: {
         description: 'Plano mensal com um teste elegível de 30 dias',
-        features: ['25 projetos', '25 bancos de dados', '25 membros', '25 GB entre regiões', '100.000.000 unidades de operação/mês'],
         cta: 'Escolher Pro',
       },
       enterprise: {
@@ -170,9 +172,16 @@ export const ptBr: Messages = {
         cta: 'Contato para acesso futuro',
       },
     },
+    limits: {
+      projects: ['{n} projeto', '{n} projetos'],
+      databases: ['{n} banco de dados', '{n} bancos de dados'],
+      members: ['{n} membro', '{n} membros'],
+      storage: '{n} entre regiões',
+      operationUnits: '{n} unidades de operação/mês',
+    },
     triad: [
       { title: 'Armazenamento entre regiões', text: 'Os bytes contam uma vez em cada região selecionada' },
-      { title: 'Unidades de operação', text: 'Cada 4 KiB iniciados de documento contam como uma unidade' },
+      { title: 'Unidades de operação', text: 'Cada 4 KiB iniciados lidos ou gravados contam como uma unidade' },
       { title: 'Limites rígidos', text: 'Leituras, exportações, exclusão e redução de uso continuam disponíveis' },
     ],
     detailed: {
@@ -209,7 +218,7 @@ export const ptBr: Messages = {
       items: [
         {
           q: 'O que é uma unidade de operação?',
-          a: 'Cada 4 KiB iniciados de dados não compactados de documento contam como uma unidade. Gravações contam em cada região selecionada. Documentos em lote são arredondados separadamente.',
+          a: 'Uma unidade de operação é cada 4 KiB (4.096 bytes) iniciados de um objeto lógico lido ou gravado com sucesso. Listas, consultas e lotes contam cada item separadamente. Gravações contam uma vez por região selecionada; leituras contam apenas na região que as atende. Solicitações com falha, negadas, inválidas, limitadas e não encontradas não são cobradas.',
         },
         {
           q: 'O que acontece ao atingir um limite?',
@@ -225,7 +234,7 @@ export const ptBr: Messages = {
         },
         {
           q: 'O que inclui o plano Enterprise?',
-          a: 'Enterprise tem uma base mensal de suporte de US$ 500 mais uso medido, mas está indisponível durante o Public Alpha.',
+          a: 'Enterprise tem uma base mensal de suporte de US$ {enterprisePriceUsd} mais uso medido, mas está indisponível durante o Public Alpha.',
         },
       ],
       footerTitle: 'Ainda tem dúvidas?',
@@ -309,7 +318,6 @@ export const ptBr: Messages = {
     bandTitle: 'Preços regionais fixos, medidos pelo uso real.',
     bandText:
       'O armazenamento soma os bytes em cada região selecionada. Distância de rede estimada, latência medida da API e saúde da replicação continuam separadas.',
-    regions: ['São Paulo', 'San Jose', 'Frankfurt'],
   },
 
   notFound: {

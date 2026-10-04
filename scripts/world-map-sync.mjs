@@ -7,11 +7,11 @@ import DottedMap from 'dotted-map'
 const here = path.dirname(fileURLToPath(import.meta.url))
 const root = path.resolve(here, '..')
 
-const regions = [
-  { id: 'san-jose', city: 'San Jose', lat: 37.34, lng: -121.89 },
-  { id: 'sao-paulo', city: 'São Paulo', lat: -23.55, lng: -46.63 },
-  { id: 'frankfurt', city: 'Frankfurt', lat: 50.11, lng: 8.68 },
-]
+// Pins come from the canonical launch-region catalog published at
+// https://terrascale.tech/regions.json.
+const regions = JSON.parse(fs.readFileSync(path.join(root, 'static/regions.json'), 'utf8')).regions.map(
+  ({ id, name, lat, lng }) => ({ id, city: name, lat, lng }),
+)
 
 const SENTINEL = '#FF00AA'
 
