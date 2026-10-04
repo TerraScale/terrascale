@@ -1,6 +1,7 @@
 using System.Net;
 using TerraScale.Endpoints;
 using TerraScale.TerraBase.Configuration;
+using TerraScale.TerraBase.Features.Replication;
 using TerraScale.TerraBase.Hosting;
 
 namespace TerraScale.TerraBase;
@@ -35,10 +36,12 @@ public static class App
             endpoints.Version = "v1";
         });
         builder.Services.AddTerraBaseTelemetry();
+        builder.AddTerraBaseReplication(options);
 
         configure?.Invoke(builder);
 
         var app = builder.Build();
+        app.MapTerraBaseReplication();
         app.MapTerraScaleEndpoints();
         app.MapTerraScaleOpenApi();
         app.MapTerraBaseMetrics();

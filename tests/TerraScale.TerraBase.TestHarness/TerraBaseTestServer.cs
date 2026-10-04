@@ -12,10 +12,11 @@ namespace TerraScale.TerraBase.Testing;
 /// </summary>
 public sealed class TerraBaseTestServer : IAsyncDisposable
 {
-    private TerraBaseTestServer(WebApplication app, Uri baseAddress)
+    private TerraBaseTestServer(WebApplication app, Uri baseAddress, Uri? peerAddress)
     {
         App = app;
         BaseAddress = baseAddress;
+        PeerAddress = peerAddress;
         Client = new HttpClient(new SocketsHttpHandler { AllowAutoRedirect = false, UseCookies = false })
         {
             BaseAddress = baseAddress,
@@ -28,6 +29,12 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
 
     /// <summary>The loopback origin of the administrative listener.</summary>
     public Uri BaseAddress { get; }
+
+    /// <summary>
+    /// The <c>https://localhost</c> origin of the inter-node gRPC listener, or <see langword="null"/>
+    /// when the test did not enable it (see <see cref="PeerTls"/>).
+    /// </summary>
+    public Uri? PeerAddress { get; }
 
     /// <summary>A client that never follows redirects and never stores cookies.</summary>
     public HttpClient Client { get; }
@@ -48,8 +55,12 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
         await app.StartAsync();
         var addresses = app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()
             ?? throw new InvalidOperationException("the server did not report its listening addresses");
-        var address = addresses.Addresses.Single();
-        return new TerraBaseTestServer(app, new Uri(address));
+        var listeners = addresses.Addresses.Select(address => new Uri(address)).ToList();
+        var admin = listeners.Single(address => address.Scheme == Uri.UriSchemeHttp);
+        var peer = listeners.SingleOrDefault(address => address.Scheme == Uri.UriSchemeHttps);
+        // The peer certificate is issued for localhost; the listener itself binds every interface.
+        var peerAddress = peer is null ? null : new UriBuilder(peer) { Host = "localhost" }.Uri;
+        return new TerraBaseTestServer(app, admin, peerAddress);
     }
 
     /// <inheritdoc />

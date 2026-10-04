@@ -1,5 +1,7 @@
 using System.Collections.Frozen;
 using System.Globalization;
+using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
 
 namespace TerraScale.TerraBase.Configuration;
 
@@ -18,10 +20,25 @@ public sealed record TerraBaseOptions
 
     private const string EnvironmentPrefix = "TERRABASE_";
 
-    private static readonly FrozenSet<string> Keys = FrozenSet.Create(StringComparer.Ordinal, "admin-port");
+    private static readonly FrozenSet<string> Keys = FrozenSet.Create(
+        StringComparer.Ordinal, "admin-port", "peer-port", "peer-certificate", "peer-private-key", "peer-client-ca");
+
+    private static readonly string[] PeerTlsKeys = ["peer-certificate", "peer-private-key", "peer-client-ca"];
 
     /// <summary>Port of the loopback administrative listener; <c>0</c> picks a free port.</summary>
     public required int AdminPort { get; init; }
+
+    /// <summary>
+    /// Port of the inter-node gRPC listener (mutual TLS, HTTP/2); <c>0</c> picks a free port.
+    /// <see langword="null"/> disables the listener.
+    /// </summary>
+    public int? PeerPort { get; init; }
+
+    /// <summary>Server certificate with its private key for the peer listener.</summary>
+    public X509Certificate2? PeerCertificate { get; init; }
+
+    /// <summary>Certificate authority that every connecting peer's client certificate must chain to.</summary>
+    public X509Certificate2? PeerClientCa { get; init; }
 
     /// <summary>Reads and validates the configuration of this process.</summary>
     public static TerraBaseOptions FromProcess(IReadOnlyList<string> args)
@@ -63,13 +80,59 @@ public sealed record TerraBaseOptions
             }
         }
 
-        var adminPort = DefaultAdminPort;
-        if (values.TryGetValue("admin-port", out var rawPort)
-            && (!int.TryParse(rawPort, NumberStyles.None, CultureInfo.InvariantCulture, out adminPort) || adminPort > ushort.MaxValue))
+        var adminPort = ParsePort(values, "admin-port") ?? DefaultAdminPort;
+        var peerPort = ParsePort(values, "peer-port");
+        if (peerPort is null)
         {
-            throw new TerraBaseConfigurationException("admin-port must be an integer between 0 and 65535");
+            if (PeerTlsKeys.Any(values.ContainsKey))
+            {
+                throw new TerraBaseConfigurationException("peer-certificate, peer-private-key and peer-client-ca require peer-port");
+            }
+
+            return new TerraBaseOptions { AdminPort = adminPort };
         }
 
-        return new TerraBaseOptions { AdminPort = adminPort };
+        if (!PeerTlsKeys.All(values.ContainsKey))
+        {
+            throw new TerraBaseConfigurationException("peer-port requires peer-certificate, peer-private-key and peer-client-ca");
+        }
+
+        return new TerraBaseOptions
+        {
+            AdminPort = adminPort,
+            PeerPort = peerPort,
+            PeerCertificate = LoadPem(() => X509Certificate2.CreateFromPemFile(values["peer-certificate"], values["peer-private-key"]),
+                "peer-certificate and peer-private-key must name a readable PEM certificate and its private key"),
+            PeerClientCa = LoadPem(() => X509CertificateLoader.LoadCertificateFromFile(values["peer-client-ca"]),
+                "peer-client-ca must name a readable PEM certificate"),
+        };
+    }
+
+    private static int? ParsePort(IReadOnlyDictionary<string, string> values, string key)
+    {
+        if (!values.TryGetValue(key, out var raw))
+        {
+            return null;
+        }
+
+        if (!int.TryParse(raw, NumberStyles.None, CultureInfo.InvariantCulture, out var port) || port > ushort.MaxValue)
+        {
+            throw new TerraBaseConfigurationException($"{key} must be an integer between 0 and 65535");
+        }
+
+        return port;
+    }
+
+    // Messages name the settings, never the paths or file contents.
+    private static X509Certificate2 LoadPem(Func<X509Certificate2> load, string message)
+    {
+        try
+        {
+            return load();
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or CryptographicException or ArgumentException)
+        {
+            throw new TerraBaseConfigurationException(message);
+        }
     }
 }
