@@ -36,7 +36,13 @@ internal sealed class RequestBinder<TRequest>
         this.typeInfo = EndpointJson.GetRequestTypeInfo<TRequest>(services);
         if (this.typeInfo.Kind == JsonTypeInfoKind.Object)
         {
-            this.properties = [.. this.typeInfo.Properties];
+            // Only members the deserializer can fill are inputs: a getter-only `int Id => 42` would
+            // silently drop ?id=7, so it is neither bound nor advertised.
+            var populate = this.typeInfo.PreferredPropertyObjectCreationHandling ?? this.typeInfo.Options.PreferredObjectCreationHandling;
+            this.properties = [.. this.typeInfo.Properties.Where(property =>
+                property.Set is not null
+                || property.AssociatedParameter is not null
+                || (property.Get is not null && (property.ObjectCreationHandling ?? populate) == JsonObjectCreationHandling.Populate))];
             this.exact = new(StringComparer.Ordinal);
             this.folded = new(StringComparer.OrdinalIgnoreCase);
             var ambiguous = this.properties
@@ -297,14 +303,16 @@ internal static class RequestValues
     /// <summary>True when the binder can fill the property from a route or query string.</summary>
     internal static bool CanBindFromString(JsonPropertyInfo property)
     {
-        if (property.CustomConverter is not null || !property.Options.TryGetTypeInfo(property.PropertyType, out var info))
+        var options = property.Options;
+        if (property.CustomConverter is not null || !options.TryGetTypeInfo(property.PropertyType, out var info))
         {
             return true; // Receives the raw string.
         }
 
+        // Nullable<T> reports the kind of T (Object for a struct with members), so Filter? stays body-only.
         return info.Kind == JsonTypeInfoKind.None
             || (info.Kind == JsonTypeInfoKind.Enumerable
-                && (!property.Options.TryGetTypeInfo(info.ElementType!, out var element) || element.Kind == JsonTypeInfoKind.None));
+                && (!options.TryGetTypeInfo(info.ElementType!, out var element) || element.Kind == JsonTypeInfoKind.None));
     }
 
     internal static JsonNode? ToJson(JsonPropertyInfo property, StringValues values, bool fromRoute)

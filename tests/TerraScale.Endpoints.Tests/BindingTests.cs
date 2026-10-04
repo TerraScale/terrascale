@@ -848,3 +848,113 @@ public sealed class StrictNumbersEndpoint : Endpoint<StrictNumbersQuery, StrictN
     public override ValueTask<StrictNumbersQuery> HandleAsync(StrictNumbersQuery request, CancellationToken cancellationToken) =>
         ValueTask.FromResult(request);
 }
+
+/// <summary>Regressions for the fifth ts-reviewer pass on PR #8.</summary>
+public sealed class FifthPassBindingTests
+{
+    [Test]
+    public async Task RouteSuppliedRequiredMembersAreOptionalInTheBodySchema()
+    {
+        await using var app = await StartAsync();
+        using var client = Client(app);
+        using var response = await client.PostAsync("/fifth/items/7", new StringContent("""{"name":"x"}""", Encoding.UTF8, "application/json"));
+        await Assert.That(await response.Content.ReadAsStringAsync()).IsEqualTo("""{"id":"7","name":"x"}""");
+
+        using var document = JsonDocument.Parse(await client.GetStringAsync("/openapi/v1.json"));
+        var schema = document.RootElement.GetProperty("paths").GetProperty("/fifth/items/{id}").GetProperty("post")
+            .GetProperty("requestBody").GetProperty("content").GetProperty("application/json").GetProperty("schema");
+        // Both members can come from parameters (id from the route, name from ?name=), so this
+        // operation's body requires neither; the shared component schema keeps both required.
+        var component = document.RootElement.GetProperty("components").GetProperty("schemas").GetProperty("RequiredItem");
+        var effective = schema.TryGetProperty("$ref", out _) ? component : schema;
+        await Assert.That(effective.TryGetProperty("required", out var required) && required.GetArrayLength() > 0).IsFalse();
+        await Assert.That(component.GetProperty("required").EnumerateArray().Select(name => name.GetString()!).ToArray()).IsEquivalentTo(["id", "name"]);
+    }
+
+    [Test]
+    public async Task MembersTheDeserializerCannotSetAreNotInputs()
+    {
+        await using var app = await StartAsync();
+        using var client = Client(app);
+        using var document = JsonDocument.Parse(await client.GetStringAsync("/openapi/v1.json"));
+        var names = document.RootElement.GetProperty("paths").GetProperty("/fifth/getter").GetProperty("get").GetProperty("parameters")
+            .EnumerateArray().Select(parameter => parameter.GetProperty("name").GetString()!).ToArray();
+        await Assert.That(names).IsEquivalentTo(["page"]);
+    }
+
+    [Test]
+    public async Task NullableComplexStructsStayBodyOnly()
+    {
+        await using var app = await StartAsync();
+        using var client = Client(app);
+        using var response = await client.PostAsync(
+            "/fifth/struct-echo?filter=x&page=2",
+            new StringContent("""{"filter":{"name":"body"}}""", Encoding.UTF8, "application/json"));
+        await Assert.That(await response.Content.ReadAsStringAsync()).IsEqualTo("""{"page":2,"filter":{"name":"body"}}""");
+
+        using var document = JsonDocument.Parse(await client.GetStringAsync("/openapi/v1.json"));
+        var names = document.RootElement.GetProperty("paths").GetProperty("/fifth/struct-echo").GetProperty("post").GetProperty("parameters")
+            .EnumerateArray().Select(parameter => parameter.GetProperty("name").GetString()!).ToArray();
+        await Assert.That(names).IsEquivalentTo(["page"]);
+    }
+
+    private static async Task<WebApplication> StartAsync()
+    {
+        var builder = WebApplication.CreateBuilder();
+        builder.WebHost.UseUrls("http://127.0.0.1:0");
+        builder.Services.AddTerraScaleEndpoints([
+            EndpointRegistration.Create<RequiredItemEndpoint>(),
+            EndpointRegistration.Create<GetterOnlyEndpoint>(),
+            EndpointRegistration.Create<NullableStructEndpoint>()]);
+        var app = builder.Build();
+        app.MapTerraScaleEndpoints();
+        app.MapTerraScaleOpenApi();
+        await app.StartAsync();
+        return app;
+    }
+
+    private static HttpClient Client(WebApplication app) => new() { BaseAddress = new Uri(app.Urls.Single()) };
+}
+
+public sealed class RequiredItem
+{
+    public required string Id { get; init; }
+
+    public required string Name { get; init; }
+}
+
+public sealed class RequiredItemEndpoint : Endpoint<RequiredItem, RequiredItem>
+{
+    public override void Configure() => Post("/fifth/items/{id}");
+
+    public override ValueTask<RequiredItem> HandleAsync(RequiredItem request, CancellationToken cancellationToken) => ValueTask.FromResult(request);
+}
+
+public sealed class GetterOnlyQuery
+{
+    public int Page { get; init; } = 1;
+
+    public int Id => 42;
+
+    [JsonIgnore]
+    public int Hidden { get; set; }
+}
+
+public sealed class GetterOnlyEndpoint : Endpoint<GetterOnlyQuery, string>
+{
+    public override void Configure() => Get("/fifth/getter");
+
+    public override ValueTask<string> HandleAsync(GetterOnlyQuery request, CancellationToken cancellationToken) => ValueTask.FromResult("getter");
+}
+
+public readonly record struct FilterStruct(string Name);
+
+public sealed record NullableStructQuery(int Page = 1, FilterStruct? Filter = null);
+
+public sealed class NullableStructEndpoint : Endpoint<NullableStructQuery, NullableStructQuery>
+{
+    public override void Configure() => Post("/fifth/struct-echo");
+
+    public override ValueTask<NullableStructQuery> HandleAsync(NullableStructQuery request, CancellationToken cancellationToken) =>
+        ValueTask.FromResult(request);
+}

@@ -217,6 +217,22 @@ public static class EndpointServiceCollectionExtensions
         if (!bodyKept)
         {
             operation.RequestBody = null;
+            return;
+        }
+
+        // The binder merges route and query values before checking required members, so members
+        // they can supply are optional in this operation's body. The shared component stays as is.
+        var supplied = routeBound.Concat(remaining.Where(RequestValues.CanBindFromString)).Select(property => property.Name).ToHashSet(StringComparer.Ordinal);
+        if (requestSchema is OpenApiSchema { Required: { } required } schema
+            && required.Overlaps(supplied)
+            && operation.RequestBody is OpenApiRequestBody { Content: { } content })
+        {
+            var relaxed = (OpenApiSchema)schema.CreateShallowCopy();
+            relaxed.Required = new HashSet<string>(required.Where(name => !supplied.Contains(name)), StringComparer.Ordinal);
+            foreach (var media in content.Values.OfType<OpenApiMediaType>())
+            {
+                media.Schema = relaxed;
+            }
         }
 
         async Task AddAsync(string name, ParameterLocation location, JsonPropertyInfo? property, bool required)
