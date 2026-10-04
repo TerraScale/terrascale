@@ -173,33 +173,52 @@ public static class EndpointServiceCollectionExtensions
             return;
         }
 
-        var properties = metadata.Properties;
+        // Property schemas come from the request schema so property-level converters (for example a
+        // string enum converter) are described the way the binder reads them.
+        var requestSchema = metadata is { RequestType: { } requestType, Properties: not null }
+            ? await context.GetOrCreateSchemaAsync(requestType, null, cancellationToken).ConfigureAwait(false)
+            : null;
+        var properties = metadata.Properties ?? [];
         var route = RoutePatternFactory.Parse("/" + description.RelativePath);
         foreach (var routeParameter in route.Parameters)
         {
-            var type = Find(properties, routeParameter.Name)?.PropertyType ?? typeof(string);
-
             // OpenAPI requires every path parameter to be required, even optional route segments.
-            await AddAsync(routeParameter.Name, ParameterLocation.Path, type, required: true).ConfigureAwait(false);
+            await AddAsync(routeParameter.Name, ParameterLocation.Path, Find(properties, routeParameter.Name), required: true).ConfigureAwait(false);
         }
 
         var method = description.HttpMethod ?? string.Empty;
         var bodyless = HttpMethods.IsGet(method) || HttpMethods.IsHead(method) || HttpMethods.IsDelete(method) || HttpMethods.IsOptions(method);
-        if (properties.Count == 0 || !bodyless)
+        if (metadata.Properties is null || !bodyless)
         {
             return;
         }
 
-        operation.RequestBody = null;
+        // Properties the binder cannot read from a query string (nested objects, dictionaries) can
+        // still come from a JSON body, so the body is only dropped when every property is covered.
+        var needsBody = false;
         foreach (var property in properties)
         {
-            if (!route.Parameters.Any(parameter => string.Equals(parameter.Name, property.Name, StringComparison.OrdinalIgnoreCase)))
+            if (route.Parameters.Any(parameter => string.Equals(parameter.Name, property.Name, StringComparison.OrdinalIgnoreCase)))
             {
-                await AddAsync(property.Name, ParameterLocation.Query, property.PropertyType, property.IsRequired).ConfigureAwait(false);
+                continue;
+            }
+
+            if (RequestValues.CanBindFromString(property))
+            {
+                await AddAsync(property.Name, ParameterLocation.Query, property, property.IsRequired).ConfigureAwait(false);
+            }
+            else
+            {
+                needsBody = true;
             }
         }
 
-        async Task AddAsync(string name, ParameterLocation location, Type type, bool required)
+        if (!needsBody)
+        {
+            operation.RequestBody = null;
+        }
+
+        async Task AddAsync(string name, ParameterLocation location, JsonPropertyInfo? property, bool required)
         {
             operation.Parameters ??= [];
             if (operation.Parameters.Any(parameter => parameter.In == location && string.Equals(parameter.Name, name, StringComparison.OrdinalIgnoreCase)))
@@ -207,13 +226,10 @@ public static class EndpointServiceCollectionExtensions
                 return;
             }
 
-            operation.Parameters.Add(new OpenApiParameter
-            {
-                Name = name,
-                In = location,
-                Required = required,
-                Schema = await context.GetOrCreateSchemaAsync(type, null, cancellationToken).ConfigureAwait(false),
-            });
+            var schema = property is not null && requestSchema?.Properties?.TryGetValue(property.Name, out var propertySchema) == true
+                ? propertySchema
+                : await context.GetOrCreateSchemaAsync(property?.PropertyType ?? typeof(string), null, cancellationToken).ConfigureAwait(false);
+            operation.Parameters.Add(new OpenApiParameter { Name = name, In = location, Required = required, Schema = schema });
         }
     }
 

@@ -1,3 +1,6 @@
+using System.Diagnostics.CodeAnalysis;
+using System.Reflection;
+
 namespace TerraScale.Endpoints;
 
 /// <summary>Shared configuration surface and request state for the endpoint base classes.</summary>
@@ -5,6 +8,8 @@ namespace TerraScale.Endpoints;
 /// Endpoints are registered as transient services, so every request gets its own instance and
 /// per-request state lives in plain fields instead of async locals.
 /// </remarks>
+// NonPublicMethods keeps protected overrides such as BindAsync visible to UsesDefaultBinding under trimming.
+[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.NonPublicMethods)]
 public abstract class EndpointBase : IEndpoint
 {
     private EndpointDefinition? definition;
@@ -83,6 +88,13 @@ public abstract class EndpointBase : IEndpoint
     // Goes through IProblemDetailsService when the app registers one, so error bodies stay customizable.
     private protected static Task Reject(HttpContext context, BadHttpRequestException exception) =>
         TypedResults.Problem(exception.Message, statusCode: exception.StatusCode).ExecuteAsync(context);
+
+    /// <summary>
+    /// True unless the endpoint overrides <c>BindAsync</c>. A custom binder owns the request, so the
+    /// endpoint is described with a required body and no route or query parameters for its properties.
+    /// </summary>
+    private protected bool UsesDefaultBinding(Type bindingBase) =>
+        this.GetType().GetMethod("BindAsync", BindingFlags.Instance | BindingFlags.NonPublic, [typeof(CancellationToken)])?.DeclaringType == bindingBase;
 
     private protected static TEndpoint Activate<TEndpoint>(HttpContext context, Type endpointType)
         where TEndpoint : EndpointBase

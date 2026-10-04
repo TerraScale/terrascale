@@ -1,6 +1,7 @@
 using System.ComponentModel.DataAnnotations;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.Json.Serialization;
 using System.Text.Json.Serialization.Metadata;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.Extensions.Options;
@@ -252,42 +253,82 @@ internal sealed class RequestBinder<TRequest>
 
     private void Set(JsonObject json, string key, StringValues values)
     {
-        if (!this.properties!.TryGetValue(key, out var property))
+        if (this.properties!.TryGetValue(key, out var property))
         {
-            return;
-        }
-
-        // A property-level [JsonConverter] decides its own token shape, so it always gets the raw string.
-        var custom = property.CustomConverter is not null;
-        var info = property.Options.GetTypeInfo(property.PropertyType);
-        if (info.Kind == JsonTypeInfoKind.Enumerable && property.PropertyType != typeof(string))
-        {
-            var array = new JsonArray();
-            foreach (var value in values)
-            {
-                array.Add((JsonNode?)ToNode(value, info.ElementType!, custom));
-            }
-
-            json[property.Name] = array;
-        }
-        else
-        {
-            json[property.Name] = ToNode(values.Count == 0 ? null : values[^1], property.PropertyType, custom);
+            json[property.Name] = RequestValues.ToJson(property, values);
         }
     }
 
-    // Picks the JSON token the target type's built-in converter reads: numbers (and numeric enum
-    // values) as number literals, booleans as literals, any Guid format TryParse accepts (route
-    // constraints allow compact ones) re-written in the "D" format System.Text.Json expects.
-    // Everything else, including char, dates, enum names and custom converters, stays a string.
-    private static JsonValue? ToNode(string? raw, Type type, bool customConverter)
+    private static bool HasBody(HttpContext context) =>
+        context.Request.ContentLength > 0
+        || context.Features.Get<IHttpRequestBodyDetectionFeature>()?.CanHaveBody == true;
+}
+
+/// <summary>Turns route and query strings into the JSON tokens a request property's converter reads.</summary>
+internal static class RequestValues
+{
+    /// <summary>True when the binder can fill the property from a route or query string.</summary>
+    internal static bool CanBindFromString(JsonPropertyInfo property)
+    {
+        if (property.CustomConverter is not null || !property.Options.TryGetTypeInfo(property.PropertyType, out var info))
+        {
+            return true; // Receives the raw string.
+        }
+
+        return info.Kind == JsonTypeInfoKind.None
+            || (info.Kind == JsonTypeInfoKind.Enumerable
+                && (!property.Options.TryGetTypeInfo(info.ElementType!, out var element) || element.Kind == JsonTypeInfoKind.None));
+    }
+
+    internal static JsonNode? ToJson(JsonPropertyInfo property, StringValues values)
+    {
+        var type = property.PropertyType;
+        var last = values.Count == 0 ? null : values[^1];
+
+        // A property-level converter supplies the contract; the property type may have no standalone
+        // metadata (source generation without reflection), so do not ask for it.
+        if (property.CustomConverter is { } custom)
+        {
+            return ToScalar(last, type, IsBuiltIn(custom));
+        }
+
+        if (!property.Options.TryGetTypeInfo(type, out var info))
+        {
+            return ToScalar(last, type, builtIn: false);
+        }
+
+        if (info.Kind != JsonTypeInfoKind.Enumerable || type == typeof(string) || !IsBuiltIn(info.Converter))
+        {
+            return ToScalar(last, type, IsBuiltIn(info.Converter));
+        }
+
+        var elementType = info.ElementType!;
+        var elementBuiltIn = property.Options.TryGetTypeInfo(elementType, out var element) && IsBuiltIn(element.Converter);
+        var array = new JsonArray();
+        foreach (var value in values)
+        {
+            array.Add((JsonNode?)ToScalar(value, elementType, elementBuiltIn));
+        }
+
+        return array;
+    }
+
+    // Application, type and property converters may read any token shape, so they get the raw
+    // string; only System.Text.Json's own converters get typed tokens.
+    private static bool IsBuiltIn(JsonConverter converter) => converter.GetType().Assembly == typeof(JsonSerializer).Assembly;
+
+    // Picks the token a built-in converter reads: numbers (and numeric enum values) as number
+    // literals, booleans as literals, any Guid format TryParse accepts (route constraints allow
+    // compact ones) in the "D" format System.Text.Json expects. Everything else, including char,
+    // dates and enum names, stays a string.
+    private static JsonValue? ToScalar(string? raw, Type type, bool builtIn)
     {
         if (raw is null)
         {
             return null;
         }
 
-        if (customConverter)
+        if (!builtIn)
         {
             return JsonValue.Create(raw);
         }
@@ -303,10 +344,7 @@ internal sealed class RequestBinder<TRequest>
             return JsonValue.Create(guid);
         }
 
-        // TypeCode SByte..Decimal covers every built-in number type and enums (by their underlying type).
-        if (Type.GetTypeCode(target) is >= TypeCode.SByte and <= TypeCode.Decimal
-            && raw.Length > 0
-            && (char.IsAsciiDigit(raw[0]) || raw[0] == '-'))
+        if (IsNumber(target) && raw.Length > 0 && (char.IsAsciiDigit(raw[0]) || raw[0] == '-'))
         {
             try
             {
@@ -323,7 +361,9 @@ internal sealed class RequestBinder<TRequest>
         return JsonValue.Create(raw);
     }
 
-    private static bool HasBody(HttpContext context) =>
-        context.Request.ContentLength > 0
-        || context.Features.Get<IHttpRequestBodyDetectionFeature>()?.CanHaveBody == true;
+    // TypeCode SByte..Decimal covers the classic number types and enums (by their underlying type);
+    // the newer number types report TypeCode.Object.
+    private static bool IsNumber(Type type) =>
+        Type.GetTypeCode(type) is >= TypeCode.SByte and <= TypeCode.Decimal
+        || type == typeof(Half) || type == typeof(Int128) || type == typeof(UInt128);
 }

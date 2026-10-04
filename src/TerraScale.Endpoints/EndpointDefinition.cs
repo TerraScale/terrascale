@@ -255,7 +255,7 @@ public sealed class EndpointDefinition
             builder.WithDescription(this.Description);
         }
 
-        builder.WithMetadata(new RequestParametersMetadata(requestProperties ?? []));
+        builder.WithMetadata(new RequestParametersMetadata(requestType, requestProperties));
 
         // Without tags OpenAPI would group the operation under the generic base class name.
         if (this.tags.Count > 0)
@@ -310,8 +310,13 @@ public sealed class EndpointDefinition
     }
 }
 
-/// <summary>Marks a TerraScale endpoint and lists the request properties bindable from route and query values.</summary>
-internal sealed record RequestParametersMetadata(IReadOnlyList<JsonPropertyInfo> Properties);
+/// <summary>Marks a TerraScale endpoint for the OpenAPI parameter transformer.</summary>
+/// <param name="RequestType">The request model, whose schema supplies property schemas (converters included).</param>
+/// <param name="Properties">
+/// The properties of an object request bound by the default binder, possibly empty; null when the
+/// request is not an object or a BindAsync override binds it, which keeps the body required.
+/// </param>
+internal sealed record RequestParametersMetadata(Type? RequestType, IReadOnlyList<JsonPropertyInfo>? Properties);
 
 /// <summary>Marker request used by endpoints without a request body.</summary>
 public readonly record struct EmptyRequest;

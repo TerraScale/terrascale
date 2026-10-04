@@ -2,6 +2,7 @@ using System.ComponentModel.DataAnnotations;
 using System.Net;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Microsoft.Extensions.Validation;
 
 namespace TerraScale.Endpoints.Tests;
@@ -426,3 +427,187 @@ public sealed class OnceBoundEndpoint : Endpoint<string>
             System.Threading.Tasks.Sources.ValueTaskSourceOnCompletedFlags flags) => continuation(state);
     }
 }
+
+/// <summary>Regressions for the second ts-reviewer pass on PR #8: converters, body shapes and custom binders.</summary>
+public sealed class ConverterBindingTests
+{
+    [Test]
+    public async Task OpenApiKeepsBodiesOnlyWhereTheBinderNeedsThem()
+    {
+        await using var app = await StartAsync(builder => { });
+        using var client = Client(app);
+        using var document = JsonDocument.Parse(await client.GetStringAsync("/openapi/v1.json"));
+        var paths = document.RootElement.GetProperty("paths");
+
+        // An object request with no properties binds without a body.
+        await Assert.That(paths.GetProperty("/empty").GetProperty("get").TryGetProperty("requestBody", out _)).IsFalse();
+
+        // Nested objects cannot come from the query string, so they keep the body.
+        var filtered = paths.GetProperty("/filtered").GetProperty("get");
+        await Assert.That(Parameters(filtered)).IsEquivalentTo(["query:page"]);
+        await Assert.That(filtered.TryGetProperty("requestBody", out _)).IsTrue();
+
+        // A BindAsync override owns binding: no query parameters and a required body.
+        await Assert.That(Parameters(paths.GetProperty("/custom-bind").GetProperty("get"))).IsEmpty();
+        await Assert.That(paths.GetProperty("/custom-bind").GetProperty("post").GetProperty("requestBody").GetProperty("required").GetBoolean()).IsTrue();
+    }
+
+    [Test]
+    public async Task PropertyLevelStringEnumConvertersBindAndDescribeNames()
+    {
+        await using var app = await StartAsync(builder => { });
+        using var client = Client(app);
+        await Assert.That(await client.GetStringAsync("/colors?color=Green")).IsEqualTo("""{"color":"Green"}""");
+
+        using var document = JsonDocument.Parse(await client.GetStringAsync("/openapi/v1.json"));
+        var parameter = document.RootElement.GetProperty("paths").GetProperty("/colors").GetProperty("get").GetProperty("parameters")[0];
+        await Assert.That(parameter.GetProperty("schema").GetRawText()).Contains("Green");
+    }
+
+    [Test]
+    public async Task ApplicationConvertersAndNewNumberTypesBindUnderStrictNumbers()
+    {
+        await using var app = await StartAsync(builder => builder.Services.ConfigureHttpJsonOptions(options =>
+        {
+            options.SerializerOptions.NumberHandling = JsonNumberHandling.Strict;
+            options.SerializerOptions.Converters.Add(new StringOnlyIntConverter());
+        }));
+        using var client = Client(app);
+        await Assert.That(await client.GetStringAsync("/converted/123?page=3&ratio=1.5"))
+            .IsEqualTo("""{"page":3,"count":123,"ratio":1.5}""");
+    }
+
+    [Test]
+    public async Task PropertyConvertersBindWithoutStandaloneTypeMetadata()
+    {
+        await using var app = await StartAsync(
+            builder => builder.Services.ConfigureHttpJsonOptions(options =>
+                options.SerializerOptions.TypeInfoResolver = MoneyJsonContext.Default),
+            EndpointRegistration.Create<MoneyEndpoint>());
+        using var client = Client(app);
+        await Assert.That(await client.GetStringAsync("/money?amount=12.5")).IsEqualTo("12.5");
+    }
+
+    private static string[] Parameters(JsonElement operation) =>
+        operation.TryGetProperty("parameters", out var parameters)
+            ? [.. parameters.EnumerateArray().Select(item => $"{item.GetProperty("in").GetString()}:{item.GetProperty("name").GetString()}")]
+            : [];
+
+    private static async Task<WebApplication> StartAsync(Action<WebApplicationBuilder> configure, params EndpointRegistration[] endpoints)
+    {
+        var builder = WebApplication.CreateBuilder();
+        builder.WebHost.UseUrls("http://127.0.0.1:0");
+        builder.Services.AddTerraScaleEndpoints(endpoints.Length > 0
+            ? endpoints
+            : [
+                EndpointRegistration.Create<EmptyRequestEndpoint>(),
+                EndpointRegistration.Create<FilteredEndpoint>(),
+                EndpointRegistration.Create<CustomBindEndpoint>(),
+                EndpointRegistration.Create<ColorEndpoint>(),
+                EndpointRegistration.Create<ConvertedEndpoint>()]);
+        configure(builder);
+        var app = builder.Build();
+        app.MapTerraScaleEndpoints();
+        app.MapTerraScaleOpenApi();
+        await app.StartAsync();
+        return app;
+    }
+
+    private static HttpClient Client(WebApplication app) => new() { BaseAddress = new Uri(app.Urls.Single()) };
+}
+
+public sealed record EmptyRequest;
+
+public sealed class EmptyRequestEndpoint : Endpoint<EmptyRequest, string>
+{
+    public override void Configure() => Get("/empty");
+
+    public override ValueTask<string> HandleAsync(EmptyRequest request, CancellationToken cancellationToken) => ValueTask.FromResult("empty");
+}
+
+public sealed record NestedFilter(string Name);
+
+public sealed record FilteredQuery(int Page = 1, NestedFilter? Filter = null);
+
+public sealed class FilteredEndpoint : Endpoint<FilteredQuery, string>
+{
+    public override void Configure() => Get("/filtered");
+
+    public override ValueTask<string> HandleAsync(FilteredQuery request, CancellationToken cancellationToken) => ValueTask.FromResult("filtered");
+}
+
+public sealed class CustomBindEndpoint : Endpoint<ItemQuery, string>
+{
+    public override void Configure()
+    {
+        Verbs("GET", "POST");
+        Route("/custom-bind");
+    }
+
+    protected override ValueTask<ItemQuery> BindAsync(CancellationToken cancellationToken) => ValueTask.FromResult(new ItemQuery(1));
+
+    public override ValueTask<string> HandleAsync(ItemQuery request, CancellationToken cancellationToken) => ValueTask.FromResult("custom");
+}
+
+public enum Color
+{
+    Red,
+    Green,
+}
+
+public sealed record ColorQuery([property: JsonConverter(typeof(JsonStringEnumConverter<Color>))] Color Color);
+
+public sealed class ColorEndpoint : Endpoint<ColorQuery, ColorQuery>
+{
+    public override void Configure() => Get("/colors");
+
+    public override ValueTask<ColorQuery> HandleAsync(ColorQuery request, CancellationToken cancellationToken) => ValueTask.FromResult(request);
+}
+
+/// <summary>An application converter that only reads string tokens, like a legacy wire format.</summary>
+public sealed class StringOnlyIntConverter : JsonConverter<int>
+{
+    public override int Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) =>
+        reader.TokenType == JsonTokenType.String
+            ? int.Parse(reader.GetString()!, System.Globalization.CultureInfo.InvariantCulture)
+            : throw new JsonException("Expected a string.");
+
+    public override void Write(Utf8JsonWriter writer, int value, JsonSerializerOptions options) => writer.WriteNumberValue(value);
+}
+
+public sealed record ConvertedQuery(int Page, Int128 Count, Half Ratio);
+
+public sealed class ConvertedEndpoint : Endpoint<ConvertedQuery, ConvertedQuery>
+{
+    public override void Configure() => Get("/converted/{count}");
+
+    public override ValueTask<ConvertedQuery> HandleAsync(ConvertedQuery request, CancellationToken cancellationToken) => ValueTask.FromResult(request);
+}
+
+public sealed class Money(decimal value)
+{
+    public decimal Value { get; } = value;
+}
+
+public sealed class MoneyConverter : JsonConverter<Money>
+{
+    public override Money Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) =>
+        new(decimal.Parse(reader.GetString()!, System.Globalization.CultureInfo.InvariantCulture));
+
+    public override void Write(Utf8JsonWriter writer, Money value, JsonSerializerOptions options) =>
+        writer.WriteStringValue(value.Value.ToString(System.Globalization.CultureInfo.InvariantCulture));
+}
+
+public sealed record MoneyQuery([property: JsonConverter(typeof(MoneyConverter))] Money Amount);
+
+public sealed class MoneyEndpoint : Endpoint<MoneyQuery, string>
+{
+    public override void Configure() => Get("/money");
+
+    public override ValueTask<string> HandleAsync(MoneyQuery request, CancellationToken cancellationToken) =>
+        ValueTask.FromResult(request.Amount.Value.ToString(System.Globalization.CultureInfo.InvariantCulture));
+}
+
+/// <summary>Source-generated only, so there is no reflection fallback for types it does not list.</summary>
+[JsonSerializable(typeof(MoneyQuery))]
+internal sealed partial class MoneyJsonContext : JsonSerializerContext;
