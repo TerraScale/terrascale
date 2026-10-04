@@ -37,12 +37,17 @@ internal sealed class RequestBinder<TRequest>
         if (this.typeInfo.Kind == JsonTypeInfoKind.Object)
         {
             // Only members the deserializer can fill are inputs: a getter-only `int Id => 42` would
-            // silently drop ?id=7, so it is neither bound nor advertised.
+            // silently drop ?id=7, so it is neither bound nor advertised. Populate only fills
+            // getter-only members whose value is a mutable reference (a List<T>, not an int or array).
             var populate = this.typeInfo.PreferredPropertyObjectCreationHandling ?? this.typeInfo.Options.PreferredObjectCreationHandling;
             this.properties = [.. this.typeInfo.Properties.Where(property =>
                 property.Set is not null
                 || property.AssociatedParameter is not null
-                || (property.Get is not null && (property.ObjectCreationHandling ?? populate) == JsonObjectCreationHandling.Populate))];
+                || (property.Get is not null
+                    && (property.ObjectCreationHandling ?? populate) == JsonObjectCreationHandling.Populate
+                    && property.PropertyType is { IsValueType: false, IsArray: false }
+                    && property.Options.TryGetTypeInfo(property.PropertyType, out var member)
+                    && member.Kind != JsonTypeInfoKind.None))];
             this.exact = new(StringComparer.Ordinal);
             this.folded = new(StringComparer.OrdinalIgnoreCase);
             var ambiguous = this.properties
@@ -240,6 +245,10 @@ internal sealed class RequestBinder<TRequest>
                 ? "The request is invalid."
                 : $"The value of '{exception.Path[2..]}' is invalid.";
             throw new BadHttpRequestException(detail, StatusCodes.Status400BadRequest, exception);
+        }
+        catch (Exception exception) when (EndpointJson.IsConverterFailure(exception))
+        {
+            throw new BadHttpRequestException("The request is invalid.", StatusCodes.Status400BadRequest, exception);
         }
     }
 

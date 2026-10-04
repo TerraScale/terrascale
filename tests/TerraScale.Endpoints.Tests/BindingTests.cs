@@ -1144,3 +1144,100 @@ public sealed class ColorsEndpoint : Endpoint<ColorsQuery, ColorsQuery>
 
     public override ValueTask<ColorsQuery> HandleAsync(ColorsQuery request, CancellationToken cancellationToken) => ValueTask.FromResult(request);
 }
+
+/// <summary>Regressions for the eighth ts-reviewer pass on PR #8.</summary>
+public sealed class EighthPassBindingTests
+{
+    [Test]
+    public async Task RequiredConstructorParametersAreRequiredQueryParameters()
+    {
+        await using var app = await StartAsync(
+            builder => builder.Services.ConfigureHttpJsonOptions(options => options.SerializerOptions.RespectRequiredConstructorParameters = true),
+            EndpointRegistration.Create<RequiredCtorEndpoint>());
+        using var client = Client(app);
+        using var document = JsonDocument.Parse(await client.GetStringAsync("/openapi/v1.json"));
+        var parameters = document.RootElement.GetProperty("paths").GetProperty("/eighth/required-ctor").GetProperty("get").GetProperty("parameters");
+        var page = parameters.EnumerateArray().Single(parameter => parameter.GetProperty("name").GetString() == "page");
+        var size = parameters.EnumerateArray().Single(parameter => parameter.GetProperty("name").GetString() == "size");
+        await Assert.That(page.GetProperty("required").GetBoolean()).IsTrue();
+        await Assert.That(size.TryGetProperty("required", out var optional) && optional.GetBoolean()).IsFalse();
+    }
+
+    [Test]
+    public async Task MalformedApplicationConverterInputIsABadRequest()
+    {
+        await using var merged = await StartAsync(
+            builder => builder.Services.ConfigureHttpJsonOptions(options => options.SerializerOptions.TypeInfoResolver = MoneyJsonContext.Default),
+            EndpointRegistration.Create<MoneyEndpoint>());
+        using (var client = Client(merged))
+        {
+            using var response = await client.GetAsync("/money?amount=abc");
+            await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+        }
+
+        await using var direct = await StartAsync(
+            builder => builder.Services.ConfigureHttpJsonOptions(options => options.SerializerOptions.Converters.Add(new StringOnlyIntConverter())),
+            EndpointRegistration.Create<NestedEchoEndpoint>());
+        using (var client = Client(direct))
+        {
+            using var response = await client.PostAsync("/nested-echo", new StringContent("""{"page":"abc"}""", Encoding.UTF8, "application/json"));
+            await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+        }
+    }
+
+    [Test]
+    public async Task GlobalPopulateDoesNotMakeGetterOnlyScalarsInputs()
+    {
+        await using var app = await StartAsync(
+            builder => builder.Services.ConfigureHttpJsonOptions(options =>
+                options.SerializerOptions.PreferredObjectCreationHandling = JsonObjectCreationHandling.Populate),
+            EndpointRegistration.Create<PopulateEndpoint>());
+        using var client = Client(app);
+        using var document = JsonDocument.Parse(await client.GetStringAsync("/openapi/v1.json"));
+        var names = document.RootElement.GetProperty("paths").GetProperty("/eighth/populate").GetProperty("get").GetProperty("parameters")
+            .EnumerateArray().Select(parameter => parameter.GetProperty("name").GetString()!).ToArray();
+        await Assert.That(names).IsEquivalentTo(["page", "tags"]);
+        await Assert.That(await client.GetStringAsync("/eighth/populate?page=2&tags=a&tags=b&id=7")).IsEqualTo("2:a,b:42");
+    }
+
+    private static async Task<WebApplication> StartAsync(Action<WebApplicationBuilder> configure, params EndpointRegistration[] endpoints)
+    {
+        var builder = WebApplication.CreateBuilder();
+        builder.WebHost.UseUrls("http://127.0.0.1:0");
+        builder.Services.AddTerraScaleEndpoints(endpoints);
+        configure(builder);
+        var app = builder.Build();
+        app.MapTerraScaleEndpoints();
+        app.MapTerraScaleOpenApi();
+        await app.StartAsync();
+        return app;
+    }
+
+    private static HttpClient Client(WebApplication app) => new() { BaseAddress = new Uri(app.Urls.Single()) };
+}
+
+public sealed record RequiredCtorQuery(int Page, int Size = 10);
+
+public sealed class RequiredCtorEndpoint : Endpoint<RequiredCtorQuery, RequiredCtorQuery>
+{
+    public override void Configure() => Get("/eighth/required-ctor");
+
+    public override ValueTask<RequiredCtorQuery> HandleAsync(RequiredCtorQuery request, CancellationToken cancellationToken) => ValueTask.FromResult(request);
+}
+
+public sealed class PopulateQuery
+{
+    public int Page { get; set; } = 1;
+
+    public List<string> Tags { get; } = [];
+
+    public int Id => 42;
+}
+
+public sealed class PopulateEndpoint : Endpoint<PopulateQuery, string>
+{
+    public override void Configure() => Get("/eighth/populate");
+
+    public override ValueTask<string> HandleAsync(PopulateQuery request, CancellationToken cancellationToken) =>
+        ValueTask.FromResult($"{request.Page}:{string.Join(',', request.Tags)}:{request.Id}");
+}

@@ -50,6 +50,10 @@ internal static class EndpointJson
         {
             throw new BadHttpRequestException("The JSON request body is invalid.", StatusCodes.Status400BadRequest, exception);
         }
+        catch (Exception exception) when (IsConverterFailure(exception))
+        {
+            throw new BadHttpRequestException("The JSON request body is invalid.", StatusCodes.Status400BadRequest, exception);
+        }
         catch (InvalidOperationException exception) when (GetEncoding(context.Request) is null)
         {
             // ReadFromJsonAsync throws InvalidOperationException for an unknown charset; the filter
@@ -59,6 +63,12 @@ internal static class EndpointJson
 
         return request ?? throw new BadHttpRequestException("A JSON request body is required.", StatusCodes.Status400BadRequest);
     }
+
+    /// <summary>
+    /// Parsing failures that application converters commonly let escape instead of throwing
+    /// JsonException (decimal.Parse, int.Parse, checked conversions). They come from client input.
+    /// </summary>
+    internal static bool IsConverterFailure(Exception exception) => exception is FormatException or OverflowException;
 
     /// <summary>The body encoding, UTF-8 when no charset is given, or null for an unknown charset.</summary>
     internal static Encoding? GetEncoding(HttpRequest request) =>
