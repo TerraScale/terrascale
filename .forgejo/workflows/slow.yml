@@ -1,0 +1,71 @@
+name: Slow integration
+
+# The Slow suite runs beside every main push (in parallel with fast.yml),
+# nightly and on demand. It is never a required check and never blocks merges,
+# deployments or releases. A failure files the open "Slow test suite failed"
+# issue, or comments on it, with fj (scripts/ci/report-slow-failure.sh).
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+
+# One Slow run at a time, so two failures cannot both find no open report and
+# file duplicate issues.
+concurrency:
+  group: terrabase-slow
+  cancel-in-progress: false
+
+env:
+  CI: "true"
+  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+  DOTNET_NOLOGO: "1"
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: "1"
+  # Keep in sync with fast.yml.
+  TS_LIBS_REV: 14674be372abd4809392343084f2de9238aff919
+
+jobs:
+  slow:
+    name: slow
+    runs-on: terrascale-builder
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Check out the event revision
+        uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          github-server-url: "https://git.terrascale.tech"
+          ref: ${{ forgejo.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Check out the pinned ts-libs revision
+        env:
+          ORG_READ_TOKEN: ${{ secrets.ORG_READ_TOKEN }}
+        run: bash scripts/ci/checkout-deps.sh
+
+      - name: Use the persistent NuGet cache
+        run: bash scripts/ci/nuget-cache.sh
+
+      # The reporter only runs after a failure, so prove now that it can: fj is
+      # installed, and a dry-run report renders, redacts and stays bounded.
+      - name: Check the failure reporter
+        run: |
+          fj version
+          bash scripts/ci/check-reporter.sh
+
+      - name: Slow integration suite
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          timeout --signal=TERM --kill-after=2m 75m make test-slow CONFIGURATION=Release 2>&1 | tee artifacts/slow.log
+
+      - name: File the failure as a Forgejo issue
+        if: failure()
+        env:
+          FORGEJO_TOKEN: ${{ forgejo.token }}
+        run: bash scripts/ci/report-slow-failure.sh artifacts/slow.log

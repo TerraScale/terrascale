@@ -23,4 +23,23 @@ public sealed class ConfigurationTests
         await Assert.That(() => TerraBaseOptions.FromProcess([$"--admin-port={port}"]))
             .Throws<TerraBaseConfigurationException>();
     }
+
+    [Test]
+    public async Task Invalid_data_directories_are_rejected_without_echoing_them()
+    {
+        var error = await Assert.That(() => TerraBaseOptions.FromProcess(["--data-directory=secret\0path"]))
+            .Throws<TerraBaseConfigurationException>();
+
+        await Assert.That(error!.Message).Contains("data-directory");
+        await Assert.That(error.Message).DoesNotContain("secret");
+    }
+
+    [Test]
+    public async Task An_empty_argument_clears_a_setting()
+    {
+        var options = TerraBaseOptions.FromProcess(["--peer-port=", "--admin-port=0"]);
+
+        await Assert.That(options.PeerPort).IsNull();
+        await Assert.That(options.AdminPort).IsEqualTo(0);
+    }
 }

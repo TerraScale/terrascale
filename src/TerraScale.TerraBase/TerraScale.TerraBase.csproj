@@ -22,5 +22,19 @@
     <PackageReference Include="OpenTelemetry.Exporter.Prometheus.AspNetCore" />
     <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" />
     <PackageReference Include="OpenTelemetry.Instrumentation.Runtime" />
+    <PackageReference Include="Google.Protobuf" />
+    <PackageReference Include="Grpc.AspNetCore" />
+    <PackageReference Include="Grpc.Net.Client" />
+    <PackageReference Include="Grpc.Net.ClientFactory" />
+    <PackageReference Include="Grpc.Tools" PrivateAssets="all" />
+    <PackageReference Include="Microsoft.Data.Sqlite" />
+    <PackageReference Include="NativeCompressions" />
+    <PackageReference Include="Ulid" />
+    <PackageReference Include="ZString" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Checked-in, versioned inter-node contract (wire-compatible with terrabase-rust/proto). -->
+    <Protobuf Include="Features/Replication/Protos/**/*.proto" ProtoRoot="Features/Replication/Protos" GrpcServices="Both" />
   </ItemGroup>
 </Project>

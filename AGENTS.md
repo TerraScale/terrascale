@@ -32,7 +32,7 @@ When interacting with Forgejo, always use the `fj` CLI.
 - Use `System.Text.Json` with source-generated `JsonSerializerContext` metadata; register every request/response type in `Hosting/TerraBaseJsonContext.cs`.
 - **Newtonsoft.Json is banned.** Its APIs are listed in `BannedSymbols.txt` (enforced by the global `Microsoft.CodeAnalysis.BannedApiAnalyzers`, `RS0030` as an error), and `Directory.Build.targets` fails the build if any Newtonsoft package enters the graph, directly or transitively. Never remove these guards; choose a dependency that does not need Newtonsoft.
 - Add newly banned APIs to `BannedSymbols.txt` with a reason that names the replacement.
-- HTTP endpoints MUST use **`TerraScale.Endpoints`** from `../ts-libs` (one endpoint class per file, compile-time registration via `AddTerraScaleEndpoints()` / `MapTerraScaleEndpoints()` / `MapTerraScaleOpenApi()`). Do not use raw minimal-API `Map*` calls or controllers for feature endpoints.
+- **Every** HTTP endpoint — client, administrative, health, examples — MUST use **`TerraScale.Endpoints`** from `../ts-libs` (one endpoint class per file, compile-time registration via `AddTerraScaleEndpoints()` / `MapTerraScaleEndpoints()` / `MapTerraScaleOpenApi()`). Never use raw minimal-API `Map*` calls or controllers for endpoints. The only exceptions are framework-provided endpoints with no TerraScale.Endpoints equivalent: the gRPC services (`MapGrpcService`), the Prometheus scrape and the OpenAPI/Scalar documents.
 - All public HTTP APIs MUST have **OpenAPI** documentation rendered through **Scalar**.
 
 ## General
@@ -64,48 +64,19 @@ When interacting with Forgejo, always use the `fj` CLI.
 
 The project MUST follow a **feature-sliced design** so related and dependent files and services are kept together.
 
-```
-src/
-  TerraScale.TerraBase/            # the server: one single-file binary
-    Program.cs                     # process entry: parse options, build, run
-    App.cs                         # composition root: services, middleware, endpoints
-    Configuration/                 # validated process options (TERRABASE_* / --name=value)
-    Hosting/                       # cross-cutting host concerns: telemetry, JSON context, version
-    Features/
-      <Feature>/                   # one folder per vertical slice
-  Tests/
-    TerraScale.TerraBase.Fast/     # fast integration suite
-    TerraScale.TerraBase.Slow/     # slow integration suite
-    TestHarness/                   # shared test source, linked into both suites (not a project)
-TerraScale.TerraBase.slnx
-```
-
 - **All projects live in `src/`**; test projects live in `src/Tests/`. All are listed in `TerraScale.TerraBase.slnx` at the repository root.
 - A feature folder owns its endpoints, request/response records, services, options, storage access, metrics and `IServiceCollection` registration extension. Namespaces follow folders (`TerraScale.TerraBase.Features.<Feature>`).
 - Features talk to each other through small, explicit public types. Do not reach into another feature’s internals; prefer `internal` for anything not used across slices.
 - Truly shared primitives (validated IDs, typed errors, memory admission, versioned binary formats) go in a dedicated shared folder only once at least two features need them.
+- **Program over interfaces.** Every service, store, engine and adapter is consumed through an interface (`IStorageEngine`, `IDocumentService`, `IApiKeyStore`, …) registered in DI; implementations are `internal`. Swapping an implementation (for example SQLite for Turso) means adding a new implementation of the same interface, never changing its callers.
+- `Program.cs` is the only composition root and uses top-level statements with `WebApplication.CreateSlimBuilder`. Do not reintroduce an `App` class or `Startup`.
 - Keep one server project by default. Extract a separate project only for a real boundary (native interop, generated gRPC contracts, a library consumed elsewhere), and ask a human first.
-
-Expected slices, mapped from the Rust crates (create each only when its first real behavior lands — no empty placeholders):
-
-| Slice | Responsibility | Rust reference |
-| --- | --- | --- |
-| `Health` | Liveness/readiness probes | `tb-server` |
-| `Memory` | Process/tenant/worker memory budgets and admission | `tb-core` |
-| `Storage` | Local engine adapter, transactions, shard open, cold open | `tb-storage`, `tb-engine-io` |
-| `ObjectTier` | S3-compatible immutable objects, manifests, verified range reads | `tb-object` |
-| `Documents` | Document catalog, HTTPS/JSON document API, queries, subscriptions | `tb-document`, `tb-server` |
-| `Sql` | PostgreSQL-wire endpoint for the supported SQL subset | `tb-server` (`sql_*`) |
-| `Replication` | Leaderless replication, journals, cursors, merge, gRPC transport | `tb-replication`, `tb-protocol` |
-| `Membership` | Signed membership authority, epochs, member lifecycle | `tb-replication`, `tb-server` |
-| `Catalog` | Offline catalog and schema administration | `tb-server` (`catalog_admin`) |
-| `Backup` | Backup, restore and archival | `tb-object`, `tb-server` |
-| `Indexing` | Deterministic initial index decisions, Von/JEV advisors, workload adaptation | `docs/auto-index.md` |
-| `ApiKeys` | Scoped API keys and client authorization | `tb-server` (`client_auth`, `terrabase_keygen`) |
 
 ### Storage engine
 
-- The storage substrate for the C# implementation is an **open decision**. The Rust implementation uses a pinned Turso engine. Do not select, embed or bind a storage engine without explicit human approval.
+- The storage engine is **SQLite** (`Microsoft.Data.Sqlite`), decided by a human on 2026-10-04 (`docs/decisions/0002-sqlite-storage-engine.md`): TerraBase is a database-as-a-service that stores JSON documents in SQLite, one file per database.
+- All storage access goes through the `Engine/` interfaces. Code outside `Engine/<Implementation>/` never references SQLite types. Adding another engine (for example Turso) requires explicit human approval and is a new `Engine/<Name>/` implementation of the same interfaces.
+- Every on-disk schema is versioned (`PRAGMA user_version`); refuse to open a newer version.
 - Do not build a TerraBase-owned B-tree/LSM storage engine.
 
 ### Configuration
@@ -117,7 +88,9 @@ Expected slices, mapped from the Rust crates (create each only when its first re
 ### Listeners
 
 - The administrative listener (health, metrics) is **loopback-only** by construction (default port `9464`).
-- Client-facing listeners MUST use TLS and scoped API keys.
+- Client-facing listeners MUST use TLS and scoped API keys. The client listener (`client-port`) serves only endpoints that declare `Metadata(ListenerMetadata.Client)` and `RequireAuthorization(<scope>)`.
+- The peer listener (`peer-port`) serves only gRPC over mutual TLS.
+- Endpoints without listener metadata belong to the administrative listener. Requests that arrive on the wrong listener get 404 (`Hosting/Listeners.cs`).
 
 ### Async, memory and resources
 
@@ -143,7 +116,13 @@ Expected slices, mapped from the Rust crates (create each only when its first re
 ## Build
 
 - Always use the repository `Makefile` when an equivalent Make target exists.
-- Analyzers and code style run in the build with warnings as errors (`Directory.Build.props`, `.editorconfig`). Do not suppress warnings without a documented justification next to the suppression.
+- Analyzers and code style run in the build with warnings as errors (`Directory.Build.props`, `.editorconfig`). `TreatWarningsAsErrors` MUST always be `true` for every project and configuration; never disable it, override it per project, or use `WarningsNotAsErrors`.
+- `NoWarn` is closed. The only allowed entries are:
+  - `NU1507;NU1801;EXTEXP0001;IDE0007;IDE0008` in `Directory.Build.props`;
+  - `CA1515;CA1707;CA2007;CS1591` for test projects in `Directory.Build.targets`.
+
+  Each entry has its reason in a comment next to it. Never add another `NoWarn` entry anywhere without asking a human first.
+- Never suppress warnings globally by other means either: no `GlobalSuppressions.cs` or assembly-level `[SuppressMessage]`, no `.editorconfig` severity lowered to `none`/`silent`/`suggestion` for a rule that is currently enforced, no `<WarningLevel>` reduction, and no `#pragma warning disable` outside generated code. When a single local suppression is truly required, ask a human first and document the justification next to it.
 - `make check` (formatting, build, fast suite) MUST pass before pushing.
 
 ## Benchmarks
@@ -187,7 +166,7 @@ Maintain exactly two integration test suites:
 ### Testing Constraints
 
 - Do NOT create unit tests.
-- All tests MUST validate behavior through integration or end-to-end testing: drive the real application over its real listeners (`src/Tests/TestHarness/TerraBaseTestServer.cs`).
+- All tests MUST validate behavior through integration or end-to-end testing: drive the real application over its real listeners (`src/Tests/TestHarness/TerraBaseTestServer.cs`, which starts the top-level `Program` through `WebApplicationFactory<Program>.UseKestrel()` with its own data directory).
 - Shared test utilities live in `src/Tests/TestHarness` and are linked as source; they MUST NOT become a third suite.
 - New functionality MUST be covered by the appropriate integration test suite.
 - Critical or commonly used functionality SHOULD be covered by the **Fast** suite.

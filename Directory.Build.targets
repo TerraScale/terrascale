@@ -38,6 +38,8 @@
     <ProjectReference Include="$(MSBuildThisFileDirectory)src/TerraScale.TerraBase/TerraScale.TerraBase.csproj" />
     <PackageReference Include="TUnit" />
     <PackageReference Include="Bogus" />
+    <!-- Starts the top-level Program on real Kestrel listeners (WebApplicationFactory.UseKestrel). -->
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" />
     <!-- Shared harness source; deliberately not a third test project. -->
     <Compile Include="$(MSBuildThisFileDirectory)src/Tests/TestHarness/**/*.cs" Link="TestHarness/%(RecursiveDir)%(Filename)%(Extension)" />
   </ItemGroup>

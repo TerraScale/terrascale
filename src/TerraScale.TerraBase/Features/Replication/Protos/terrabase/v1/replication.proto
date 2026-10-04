@@ -1,0 +1,227 @@
+syntax = "proto3";
+
+package terrabase.v1;
+
+option csharp_namespace = "TerraScale.TerraBase.Features.Replication.V1";
+
+// Internal, versioned member-to-member replication over one reused gRPC stream.
+// Application payloads use the bounded envelope described by `codec` below;
+// gRPC transport compression stays disabled for these messages.
+service Replication {
+  // The first request on every stream must be Hello. A stream transfers only
+  // complete committed transaction groups and distinct stage acknowledgments.
+  rpc Sync(stream SyncRequest) returns (stream SyncResponse);
+}
+
+// Stable identity and current certified configuration for one member.
+message PeerIdentity {
+  // Canonical 16-byte ULID.
+  bytes tenant_id = 1;
+  // Canonical 16-byte ULID.
+  bytes database_id = 2;
+  uint64 shard_id = 3;
+  // Canonical 16-byte ULID.
+  bytes member_id = 4;
+  // 16-byte incarnation; changes when this member's causal history is reset.
+  bytes member_incarnation = 5;
+  uint64 membership_epoch = 6;
+  // Nonzero SHA-256 identity of the certified configuration.
+  bytes configuration_id = 7;
+}
+
+message ProtocolVersion {
+  uint32 major = 1;
+  uint32 minor = 2;
+}
+
+message VersionRange {
+  ProtocolVersion minimum = 1;
+  ProtocolVersion maximum = 2;
+}
+
+enum PayloadCodec {
+  // Versioned application envelope stores the payload unchanged.
+  PAYLOAD_CODEC_IDENTITY = 0;
+  // Version 1 raw LZ4 block inside the checked tb-format envelope.
+  PAYLOAD_CODEC_LZ4_BLOCK_V1 = 1;
+}
+
+// Limits are negotiated by minimum. Values are wire bytes/counts, never hints.
+message TransferLimits {
+  uint32 max_encoded_application_bytes = 1;
+  uint32 max_decoded_application_bytes = 2;
+  uint32 max_transaction_group_bytes = 3;
+  uint32 max_event_metadata_bytes = 4;
+  uint32 max_changes_per_group = 5;
+  uint32 max_grpc_message_bytes = 6;
+  uint32 max_in_flight_batches = 7;
+  uint32 max_open_streams = 8;
+  uint64 byte_credit = 9;
+}
+
+message OriginIdentity {
+  // Canonical 16-byte stable member ULID.
+  bytes replica_id = 1;
+  // 16-byte origin incarnation.
+  bytes incarnation = 2;
+}
+
+// Every value is a contiguous per-origin prefix. Absence means no known prefix.
+message PeerFrontier {
+  OriginIdentity origin = 1;
+  optional uint64 received_sequence = 2;
+  optional uint64 durable_sequence = 3;
+  optional uint64 applied_sequence = 4;
+}
+
+message Hello {
+  PeerIdentity local_identity = 1;
+  // The expected remote member, independently checked against authenticated
+  // certificate identity by the receiving service.
+  bytes expected_remote_member_id = 2;
+  VersionRange protocol_versions = 3;
+  VersionRange event_format_versions = 4;
+  VersionRange record_format_versions = 5;
+  repeated PayloadCodec codecs = 8;
+  TransferLimits limits = 9;
+  repeated PeerFrontier frontiers = 10;
+  uint32 minimum_merge_policy_version = 11;
+  uint32 maximum_merge_policy_version = 12;
+  reserved 6, 7;
+}
+
+message Welcome {
+  PeerIdentity local_identity = 1;
+  ProtocolVersion protocol_version = 2;
+  uint32 event_format_version = 3;
+  uint32 record_format_version = 4;
+  uint32 merge_policy_version = 6;
+  // Negotiated allow-set; the sender may choose any listed application codec.
+  repeated PayloadCodec codecs = 7;
+  TransferLimits limits = 8;
+  repeated PeerFrontier frontiers = 9;
+  reserved 5;
+}
+
+// One sequenced event key. A group message below is exactly one complete
+// committed transaction, so no receiver can apply a partial local transaction.
+message CommittedEventId {
+  bytes database_id = 1;
+  uint64 shard_id = 2;
+  OriginIdentity origin = 3;
+  uint64 sequence = 4;
+}
+
+// A single complete committed transaction group, never a partial chunk.
+// `application_envelope` is a tb-format identity/LZ4 envelope around exactly
+// one complete local WAL group. `distributed_metadata` is carried separately;
+// the bounded decoded/encoded application sizes include both fields.
+message CommittedGroupBatch {
+  uint32 protocol_major = 1;
+  uint32 event_format_version = 2;
+  uint32 record_format_version = 3;
+  uint32 merge_policy_version = 5;
+  uint64 membership_epoch = 6;
+  bytes configuration_id = 7;
+  CommittedEventId event_id = 8;
+  // Canonical 24-byte TransactionId.
+  bytes transaction_id = 9;
+  PayloadCodec codec = 11;
+  // Exact complete WAL frame length, distinct from logical document changes.
+  uint32 wal_group_bytes = 12;
+  // Must equal the actual distributed_metadata length.
+  uint32 event_metadata_bytes = 13;
+  // Logical document-change count; it need not equal total WAL operation count.
+  uint32 change_count = 14;
+  // Each application size includes distributed_metadata and its WAL frame.
+  uint32 encoded_application_bytes = 15;
+  uint32 decoded_application_bytes = 16;
+  // Complete WAL frame: checked format, sequence, txid, commit marker, and CRC.
+  bytes application_envelope = 17;
+  // Exact v1 distributed event metadata, bounded by event_metadata_bytes.
+  bytes distributed_metadata = 18;
+  // Authoritative committed-event digest: SHA-256 of the domain tag
+  // "TBREPL-EVENT-V1\0", u32 little-endian metadata length,
+  // distributed_metadata, u32 little-endian WAL frame length, and the complete
+  // decoded WAL frame, in that order.
+  bytes event_digest_sha256 = 19;
+  reserved 4, 10;
+}
+
+// All ACKs bind progress to the responding peer and the same certified epoch.
+message AckContext {
+  PeerIdentity acknowledging_peer = 1;
+  uint64 membership_epoch = 2;
+  bytes configuration_id = 3;
+  CommittedEventId event_id = 4;
+}
+
+// This ACK means only that bounded bytes reached transient receive/staging
+// state. It MUST NOT be interpreted as evidence of a local WAL sync.
+message ReceivedAck {
+  AckContext context = 1;
+  uint64 received_prefix = 2;
+}
+
+// This ACK may be emitted only after the complete event and deduplication
+// identity have passed the receiver's durable append+sync barrier.
+message DurableAck {
+  AckContext context = 1;
+  uint64 durable_prefix = 2;
+}
+
+// This ACK may be emitted only after atomic transaction visibility is applied.
+message AppliedAck {
+  AckContext context = 1;
+  uint64 applied_prefix = 2;
+}
+
+// Explicit application-level byte credits, separate from HTTP/2 flow control.
+// Credits cover queued, blocked, encoded, decoded, and in-flight application
+// bytes; cancellation/rejection releases local reservations without moving a
+// durable frontier. A receiver returns credit after durable staging or explicit
+// rejection; a ReceivedAck alone is not a durable-stage credit return.
+message CreditUpdate {
+  uint64 granted_bytes = 1;
+}
+
+message KeepAlive {
+  uint64 nonce = 1;
+}
+
+enum StreamErrorCode {
+  STREAM_ERROR_UNSPECIFIED = 0;
+  STREAM_ERROR_INCOMPATIBLE_VERSION = 1;
+  STREAM_ERROR_UNAUTHORIZED = 2;
+  STREAM_ERROR_STALE_EPOCH = 3;
+  STREAM_ERROR_UNSUPPORTED_FORMAT = 4;
+  STREAM_ERROR_INVALID_BATCH = 5;
+  STREAM_ERROR_RESOURCE_EXHAUSTED = 6;
+  STREAM_ERROR_RESNAPSHOT_REQUIRED = 7;
+}
+
+message StreamError {
+  StreamErrorCode code = 1;
+  bool retryable = 2;
+}
+
+message SyncRequest {
+  oneof frame {
+    Hello hello = 1;
+    CommittedGroupBatch committed_group = 2;
+    CreditUpdate credit = 3;
+    KeepAlive keep_alive = 4;
+  }
+}
+
+message SyncResponse {
+  oneof frame {
+    Welcome welcome = 1;
+    ReceivedAck received = 2;
+    DurableAck durable = 3;
+    AppliedAck applied = 4;
+    CreditUpdate credit = 5;
+    KeepAlive keep_alive = 6;
+    StreamError error = 7;
+  }
+}
