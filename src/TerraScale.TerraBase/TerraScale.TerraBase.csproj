@@ -3,9 +3,13 @@
     <RootNamespace>TerraScale.TerraBase</RootNamespace>
     <AssemblyName>terrabase</AssemblyName>
     <Version>0.1.0</Version>
-    <!-- Native AOT keeps the idle footprint small and turns on the trim and AOT
-         analyzers for every build, so incompatible code fails early. -->
-    <PublishAot>true</PublishAot>
+    <!-- Release artifact: one self-contained, single-file executable running on the
+         JIT (no native AOT, no trimming). Native libraries are bundled into the file.
+         Self-contained is set only for publish (make publish): the test suites
+         reference this project and cannot reference a self-contained executable. -->
+    <PublishSingleFile>true</PublishSingleFile>
+    <PublishDocumentationFile>false</PublishDocumentationFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
     <UserSecretsId />
     <!-- HTTP endpoints, OpenAPI and Scalar from ../ts-libs (Directory.Build.targets). -->
     <UseTerraScaleEndpoints>true</UseTerraScaleEndpoints>

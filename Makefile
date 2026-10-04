@@ -34,9 +34,9 @@ check: lint test-fast
 run:
 	dotnet run --project src/TerraScale.TerraBase --configuration $(CONFIGURATION)
 
-# Native AOT single binary: artifacts/publish/terrabase
+# Self-contained single-file binary (JIT): artifacts/publish/terrabase
 publish:
-	dotnet publish src/TerraScale.TerraBase --configuration Release --runtime $(RUNTIME) --output artifacts/publish --nologo
+	dotnet publish src/TerraScale.TerraBase --configuration Release --runtime $(RUNTIME) --self-contained --output artifacts/publish --nologo
 
 clean:
 	dotnet clean $(SOLUTION) --configuration $(CONFIGURATION) --nologo

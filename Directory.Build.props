@@ -13,6 +13,12 @@
     <InvariantGlobalization>true</InvariantGlobalization>
     <Deterministic>true</Deterministic>
     <Authors>TerraScale</Authors>
+    <!-- The release is a self-contained single-file linux-x64 executable. Declaring the
+         runtime and the single-file analyzer here makes build and publish restore the
+         same graph, so one set of lock files serves both in locked mode, and single-file
+         incompatibilities surface at build time. -->
+    <RuntimeIdentifiers>linux-x64</RuntimeIdentifiers>
+    <EnableSingleFileAnalyzer>true</EnableSingleFileAnalyzer>
     <!-- Reproducible restores: lock files are committed and CI restores in locked mode. -->
     <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
     <RestoreLockedMode Condition="'$(CI)' == 'true'">true</RestoreLockedMode>

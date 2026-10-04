@@ -10,7 +10,6 @@ implementation; product goals and contracts are in `../terrabase-rust`
 - .NET SDK pinned in `global.json`
 - `../ts-libs` checked out next to this repository (or pass
   `-p:TerraScaleRoot=<dir containing ts-libs>`)
-- clang/lld for the native AOT `make publish`
 
 ## Usage
 

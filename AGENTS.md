@@ -28,7 +28,7 @@ When interacting with Forgejo, always use the `fj` CLI.
 ## Language and Stack
 
 - This repository MUST use **C#** on **.NET 11** (`net11.0`, SDK pinned in `global.json`).
-- Ship a **single native AOT binary** (`terrabase`). Code MUST stay trim- and AOT-compatible; do not suppress trim/AOT warnings without a documented reason.
+- Ship a **single self-contained binary** (`terrabase`): `PublishSingleFile` on the **JIT**. Do not enable native AOT or trimming. Code MUST stay single-file compatible (no `Assembly.Location` or reliance on files next to the assembly); the single-file analyzer runs in every build.
 - Use `System.Text.Json` with source-generated `JsonSerializerContext` metadata; register every request/response type in `Hosting/TerraBaseJsonContext.cs`.
 - **Newtonsoft.Json is banned.** Its APIs are listed in `BannedSymbols.txt` (enforced by the global `Microsoft.CodeAnalysis.BannedApiAnalyzers`, `RS0030` as an error), and `Directory.Build.targets` fails the build if any Newtonsoft package enters the graph, directly or transitively. Never remove these guards; choose a dependency that does not need Newtonsoft.
 - Add newly banned APIs to `BannedSymbols.txt` with a reason that names the replacement.
@@ -66,7 +66,7 @@ The project MUST follow a **feature-sliced design** so related and dependent fil
 
 ```
 src/
-  TerraScale.TerraBase/            # the server: one native AOT binary
+  TerraScale.TerraBase/            # the server: one single-file binary
     Program.cs                     # process entry: parse options, build, run
     App.cs                         # composition root: services, middleware, endpoints
     Configuration/                 # validated process options (TERRABASE_* / --name=value)
