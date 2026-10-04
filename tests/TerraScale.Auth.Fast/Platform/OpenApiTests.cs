@@ -70,6 +70,10 @@ public sealed partial class OpenApiTests
             app.MapGet("/{slug}/oauth/userinfo", () => Results.Ok()).WithName("test_userinfo").WithTags("Admin");
             app.MapPost("/v1/instances", () => Results.Ok()).WithName("test_instances").WithTags("Admin");
             app.MapGet("/v1/{slug}/__test/public", () => Results.Ok()).WithName("test_public").WithTags("Admin").AllowAnonymous();
+            var group = app.MapGroup("/scim/{directory}/__group").WithMetadata(new TerraScale.Auth.Hosting.RequiresSecurity("bearerAuth"));
+            group.MapGet("/open", () => Results.Ok()).WithName("test_group_open").WithTags("Admin").AllowAnonymous();
+            group.MapGet("/operator", () => Results.Ok()).WithName("test_group_operator").WithTags("Admin")
+                .WithMetadata(new TerraScale.Auth.Hosting.RequiresSecurity("OperatorBearer"));
             app.MapPost("/scim/{directory}/__test", () => Results.Ok()).WithName("test_scim").WithTags("Admin")
                 .WithMetadata(new TerraScale.Auth.Hosting.RequiresSecurity("bearerAuth"));
         });
@@ -85,6 +89,10 @@ public sealed partial class OpenApiTests
         await Assert.That(Scheme(paths.GetProperty("/{slug}/oauth/userinfo").GetProperty("get"))).IsEqualTo("OAuthAccessBearer");
         await Assert.That(Scheme(paths.GetProperty("/v1/instances").GetProperty("post"))).IsEqualTo("OperatorBearer");
         await Assert.That(Scheme(paths.GetProperty("/scim/{directory}/__test").GetProperty("post"))).IsEqualTo("bearerAuth");
+        // An endpoint's own declaration beats its group's; AllowAnonymous beats both.
+        var groupOpen = paths.GetProperty("/scim/{directory}/__group/open").GetProperty("get").GetProperty("security");
+        await Assert.That(groupOpen.EnumerateArray().Single().EnumerateObject().Any()).IsFalse();
+        await Assert.That(Scheme(paths.GetProperty("/scim/{directory}/__group/operator").GetProperty("get"))).IsEqualTo("OperatorBearer");
         // An explicitly anonymous endpoint under a protected prefix stays anonymous.
         var publicSecurity = paths.GetProperty("/v1/{slug}/__test/public").GetProperty("get").GetProperty("security");
         await Assert.That(publicSecurity.EnumerateArray().Single().EnumerateObject().Any()).IsFalse();

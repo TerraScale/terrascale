@@ -104,7 +104,16 @@ public sealed partial class ReadinessProbe(IStorageHealth health, TimeProvider c
         }
         catch (Exception exception) when (exception is not OutOfMemoryException)
         {
-            LogProbeFailed(logger, exception);
+            try
+            {
+                LogProbeFailed(logger, exception);
+            }
+            catch (Exception logFailure) when (logFailure is not OutOfMemoryException)
+            {
+                // Logging is best effort: a failing provider must not leave the shared probe
+                // faulted, which would turn every later /readyz into a 500.
+                _ = logFailure;
+            }
             observation = new ReadinessObservation(false, null);
             // Observe a late failure so it is not reported as unobserved.
             _ = check?.ContinueWith(static task => task.Exception, TaskScheduler.Default);

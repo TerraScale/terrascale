@@ -6,8 +6,11 @@
 #   scripts/ci/report-slow-failure.sh <slow-suite-log>
 #
 # The report carries the commit, run URL, environment, reproduction steps,
-# failing test names and a redacted log tail. Suspected vulnerabilities belong
-# in the private security channel, not in this public issue.
+# expected/actual behaviour and the names of the failing tests. It contains no
+# log text at all: test output can hold arbitrary values, and no redactor can
+# prove free text safe. The complete log stays in the linked Forgejo run, behind
+# the repository's own permissions. Suspected vulnerabilities belong in the
+# private security channel, not in this public issue.
 #
 # Environment: FORGEJO_TOKEN (job token with issue write) and the GITHUB_*
 # variables every Actions job gets. REPORT_DRY_RUN=1 prints instead of filing.
@@ -24,53 +27,18 @@ run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/${GITHUB_RUN_NUMBER:
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
-# Tests only use synthetic credentials, but logs are still masked before they
-# leave the runner. The whole log is redacted at once (quoted values may span
-# lines or never close) before failures are extracted or the tail is taken, so
-# truncation can never separate a secret from the key that marks it. A value may
-# start on the line after its separator (pretty-printed JSON); an unquoted
-# sensitive value is redacted to the end of its line. Excerpts are then capped
-# in bytes so one huge line cannot produce an issue body Forgejo rejects. Every
-# pattern is linear: keys start at a token boundary with bounded affixes.
-redact() {
-  python3 -c '
-import re, sys
-text = sys.stdin.read()
-rules = [
-    (r"\x1b\[[0-9;]*[A-Za-z]", ""),
-    (r"((?<![A-Za-z0-9+.-])[A-Za-z][A-Za-z0-9+.-]{0,31}://)[^/@\s]{1,2048}@", r"\1[REDACTED]@"),
-    (r"(?is)((?<![A-Za-z0-9_-])[A-Za-z0-9_-]{0,64}?(?:SECRET|TOKEN|AUTHORIZATION|PASSWORD|PASSWD|API[_-]KEY|MASTER[_-]KEY|SIGNING[_-]KEY|OPERATOR[_-]KEY|SESSION|COOKIE|DSN)[A-Za-z0-9_-]{0,64}[\"\x27]?[ \t]*[:=][ \t\r\n]*(?:(?:bearer|basic|digest|token)[ \t]+)?)"
-     r"(?:\"(?:[^\"\\]|\\.)*(?:\"|\Z)|\x27(?:[^\x27\\]|\\.)*(?:\x27|\Z)|[^\r\n]*)", r"\1[REDACTED]"),
-    (r"(?i)((?:proxy-)?authorization|set-cookie|cookie|x-api-key|api-key)([\"\x27]?[ \t]*[:=][ \t]*)[^\n]*", r"\1\2[REDACTED]"),
-    (r"(?i)\b(bearer|basic|digest)([ \t]+)\S+", r"\1\2[REDACTED]"),
-    (r"eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]+", "[REDACTED-JWT]"),
-    (r"\b(sk|kub)_[A-Za-z0-9_-]{16,}", "[REDACTED]"),
-    (r"`{3,}", "` ` `"),
-]
-for pattern, replacement in rules:
-    text = re.sub(pattern, replacement, text)
-sys.stdout.write(text)
-'
+# Failing tests by method name only, and only names of real slow-suite test
+# methods (read from the test sources), so arbitrary output that merely looks
+# like "failed <identifier>" can never reach the issue.
+repo=$(cd "$(dirname "$0")/../.." && pwd)
+inventory="$work/test-inventory"
+grep -rhoE 'public async Task [A-Za-z_][A-Za-z0-9_]*\(' "$repo/tests/TerraScale.Auth.Slow" --include='*.cs' |
+  sed -E 's/public async Task ([A-Za-z0-9_]+)\(/\1/' | sort -u >"$inventory" || true
+failing_tests() {
+  [[ -f $log && -s $inventory ]] || return 0
+  LC_ALL=C grep -aoE '^failed [A-Za-z_][A-Za-z0-9_]{0,200}' "$log" | cut -c8- | grep -Fxf "$inventory" | sort | uniq -c |
+    awk '{ printf "- %s%s\n", $2, ($1 > 1 ? " (" $1 " cases)" : "") }' | head -n 100 || true
 }
-
-# cap <bytes>: pass at most that many bytes through, then say what was cut.
-cap() {
-  python3 -c '
-import sys
-limit = int(sys.argv[1])
-data = sys.stdin.buffer.read()
-# Cut on a character boundary so the body stays valid UTF-8.
-sys.stdout.buffer.write(data[:limit].decode("utf-8", errors="ignore").encode("utf-8"))
-if len(data) > limit:
-    sys.stdout.write(f"\n[truncated {len(data) - limit} bytes]\n")
-' "$1"
-}
-
-if [[ -f $log ]]; then
-  redact <"$log" >"$work/redacted.log"
-else
-  : >"$work/redacted.log"
-fi
 
 {
   echo "**Commit:** [\`$GITHUB_SHA\`]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/commit/$GITHUB_SHA) on \`${GITHUB_REF_NAME:-unknown}\` (${GITHUB_EVENT_NAME:-unknown})"
@@ -86,23 +54,12 @@ fi
   echo '```'
   echo
   echo "### Failing tests"
-  echo '```text'
-  if [[ -f $log ]]; then
-    # sed reads all of its input, so no upstream command dies of SIGPIPE under pipefail.
-    grep -E '^failed |AssertionException|Expected |but (received|found)' "$work/redacted.log" | sed -n '1,60p' | cap 20000 || echo "(none recognized; see the log tail)"
-  else
-    echo "(the suite produced no log; see the run)"
-  fi
-  echo '```'
+  tests=$(failing_tests)
+  if [[ -n $tests ]]; then printf '%s\n' "$tests"; else echo "- (none recognized; see the run)"; fi
   echo
-  echo "Expected: every slow test passes. Actual: the failures above."
+  echo "Expected: every slow test passes. Actual: the tests above failed."
   echo
-  echo "<details><summary>Last 80 log lines (redacted)</summary>"
-  echo
-  echo '```text'
-  tail -n 80 "$work/redacted.log" | cap 40000
-  echo '```'
-  echo "</details>"
+  echo "The full output, including assertion messages, is in the run log: $run_url"
   echo
   echo "_Filed by scripts/ci/report-slow-failure.sh. The slow suite never blocks merges or releases; close this issue once it is fixed._"
 } >"$work/body.md"

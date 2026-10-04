@@ -48,7 +48,7 @@ jobs:
         run: bash scripts/ci/checkout-dotnet-deps.sh
 
       # The reporter only runs after a failure, so prove now that it can: fj is
-      # installed and a dry-run report renders and redacts.
+      # installed, and a dry-run report renders without any log text.
       - name: Check the failure reporter
         run: |
           set -euo pipefail

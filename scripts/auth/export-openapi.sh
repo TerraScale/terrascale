@@ -11,12 +11,25 @@ output=$2
 log=$(mktemp)
 # Only the throwaway settings below apply: inherited TS_AUTH_*, OTEL_* and
 # SENTRY_* values could fail validation or send this run's telemetry somewhere,
-# and inherited Logging__* filters could hide the startup line read below.
-inherited=$(env | sed -nE 's/^((TS_AUTH|OTEL|SENTRY)_[A-Za-z0-9_]*|Logging__[A-Za-z0-9_.]*)=.*/-u \1/p' | tr '\n' ' ')
+# inherited Logging__* filters could hide the startup line read below, and
+# inherited Kestrel__*, ASPNETCORE_*, DOTNET_*__* (host configuration with its
+# prefix stripped), URLS or HTTP(S)_PORTS settings could add listeners beyond
+# the loopback one. .NET configuration keys are case-insensitive, so the match is too.
+# Names are matched case-insensitively and may contain any character (.NET also
+# accepts hyphenated endpoint names and colon-separated keys), so python reads them.
+# Fail closed: if the filter cannot run, the export does not start at all.
+names=$(python3 -c '
+import os, re
+hosting = re.compile(r"^(ts_auth_|otel_|sentry_|aspnetcore_|kestrel|logging|allowedhosts)|^dotnet_.*(__|:)|^dotnet_(urls|https?_ports|environment)$|^(urls|https?_ports)$")
+for name in os.environ:
+    if hosting.search(name.lower()):
+        print("-u"); print(name)
+') || { echo "could not compute the inherited settings to remove" >&2; exit 1; }
+inherited=()
+if [[ -n $names ]]; then mapfile -t inherited <<<"$names"; fi
 # Port 0: the kernel picks a free port at bind time, and the address is read
 # back from this process's own startup log, so no other listener can answer.
-# shellcheck disable=SC2086 # $inherited is a list of separate -u options
-env $inherited \
+env "${inherited[@]}" \
   TS_AUTH_LISTEN="http://127.0.0.1:0" \
   TS_AUTH_PUBLIC_ORIGIN="https://auth.example.invalid" \
   TS_AUTH_TERRASCALE_API_URL="http://127.0.0.1:9" \

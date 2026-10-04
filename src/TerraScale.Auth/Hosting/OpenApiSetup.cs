@@ -51,15 +51,18 @@ public static class OpenApiSetup
         {
             options.AddOperationTransformer((operation, context, _) =>
             {
+                // Same precedence as ASP.NET authorization: AllowAnonymous anywhere wins;
+                // otherwise the most specific (last) declaration, the endpoint's own over its
+                // group's, decides.
                 var metadata = context.Description.ActionDescriptor.EndpointMetadata;
-                if (metadata.OfType<RequiresSecurity>().FirstOrDefault() is { } declared)
-                {
-                    operation.Security = [Requirement(declared.Scheme, context.Document)];
-                }
-                else if (metadata.OfType<Microsoft.AspNetCore.Authorization.IAllowAnonymous>().Any())
+                if (metadata.OfType<Microsoft.AspNetCore.Authorization.IAllowAnonymous>().Any())
                 {
                     // Explicitly anonymous: an empty list, never replaced by a path default.
                     operation.Security = [];
+                }
+                else if (metadata.OfType<RequiresSecurity>().LastOrDefault() is { } declared)
+                {
+                    operation.Security = [Requirement(declared.Scheme, context.Document)];
                 }
 
                 return Task.CompletedTask;

@@ -236,7 +236,7 @@ public sealed partial record AuthOptions
             SmtpUsername = smtp[1],
             SmtpPassword = smtp[2],
             SmtpFromAddress = smtp[3],
-            SentryDsn = Optional("sentry-dsn"),
+            SentryDsn = Optional("sentry-dsn") is { } dsn ? ValidateDsn(dsn) : null,
             Development = development,
         };
         options.EnforceProductionGuards();
@@ -248,6 +248,13 @@ public sealed partial record AuthOptions
         if (!this.Development && this.AuditSigningKey is null)
         {
             throw Invalid("TS_AUTH_AUDIT_SIGNING_KEY is required outside Development");
+        }
+
+        // Clients, issuers and the Secure session cookie all depend on the public origin
+        // being HTTPS; plain HTTP is only for local Development.
+        if (!this.Development && this.PublicOrigin.Scheme != Uri.UriSchemeHttps)
+        {
+            throw Invalid("TS_AUTH_PUBLIC_ORIGIN must use HTTPS outside Development");
         }
 
         var loopback = this.TerraScaleApiUrl.IsLoopback;
@@ -277,6 +284,20 @@ public sealed partial record AuthOptions
 
         return url;
     }
+
+    // scheme://public-key[:secret]@host[:port]/[path/]project-id with a non-empty public key;
+    // the message never repeats the value.
+    private static string ValidateDsn(string raw) =>
+        Uri.TryCreate(raw, UriKind.Absolute, out var dsn)
+            && dsn.Scheme is "http" or "https"
+            && dsn.UserInfo.Split(':')[0] is { Length: > 0 }
+            && !string.IsNullOrEmpty(dsn.Host)
+            && string.IsNullOrEmpty(dsn.Query)
+            && string.IsNullOrEmpty(dsn.Fragment)
+            && dsn.AbsolutePath.TrimEnd('/').Split('/')[^1] is { Length: > 0 } project
+            && project.All(char.IsAsciiDigit)
+            ? raw
+            : throw Invalid("TS_AUTH_SENTRY_DSN must be a valid DSN (scheme://key@host/project)");
 
     private static byte[] DecodeKey(string key, string raw)
     {

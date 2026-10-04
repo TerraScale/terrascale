@@ -77,6 +77,10 @@ else
 fi
 reservation="$reservations/$https_port"
 echo $$ >"$reservation"
+# Until the full cleanup below is installed, any exit still releases the reservation.
+trap 'rm -f "$reservation"' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 flock -u "$lock_fd"
 
 dns_name=$(tailscale status --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["Self"]["DNSName"].rstrip("."))')
@@ -143,7 +147,7 @@ set +m
 # already held the port is never exposed to the tailnet.
 for _ in $(seq 1 300); do
   kill -0 "$watch_pid" 2>/dev/null || { echo "dotnet watch exited before the server started" >&2; exit 1; }
-  served=$(curl -fsS --connect-timeout 1 --max-time 3 "$target/openapi/v1.json" 2>/dev/null |
+  served=$(curl -fsS --noproxy '*' --connect-timeout 1 --max-time 3 "$target/openapi/v1.json" 2>/dev/null |
     python3 -c 'import json,sys; print(json.load(sys.stdin)["servers"][0]["url"])' 2>/dev/null || true)
   [[ $served == "$origin" ]] && break
   sleep 1

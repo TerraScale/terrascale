@@ -359,4 +359,4 @@ than 30 days.
 
 `.forgejo/workflows/slow.yml` runs the slow suite after pushes, nightly and on
 demand. It never blocks merges or releases. A failure files or updates the
-open "Slow test suite failed" Forgejo issue with `fj`, redacting the log first.
+open "Slow test suite failed" Forgejo issue with `fj`. The issue lists the failing test names and links the run; it never contains log text, which stays in the run behind the repository's permissions.

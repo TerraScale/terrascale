@@ -19,6 +19,36 @@ public sealed class ConfigurationTests
     }
 
     [Test]
+    public async Task Production_requires_an_https_public_origin()
+    {
+        var exception = await Assert.ThrowsAsync<AuthConfigurationException>(() => AuthTestServer.StartAsync(settings: values =>
+        {
+            values.Remove("environment");
+            values["terrascale-api-url"] = "https://api.terrascale.tech";
+            values["public-origin"] = "http://auth.example.invalid";
+        }));
+
+        await Assert.That(exception!.Message).IsEqualTo("TS_AUTH_PUBLIC_ORIGIN must use HTTPS outside Development");
+    }
+
+    [Test]
+    [Arguments("not a dsn secretvalue")]
+    [Arguments("https://glitchtip.example/secretvalue")]
+    [Arguments("ftp://secretvalue@glitchtip.example/3")]
+    [Arguments("https://:secretvalue@glitchtip.example/3")]
+    public async Task The_service_binary_rejects_a_malformed_dsn_without_echoing_it(string dsn)
+    {
+        var settings = AuthTestServer.DefaultSettings();
+        settings["sentry-dsn"] = dsn;
+        var (exitCode, output) = await RunBinaryAsync("--rate-limit=1000", settings);
+
+        await Assert.That(exitCode).IsEqualTo(2);
+        await Assert.That(output).Contains("TS_AUTH_SENTRY_DSN must be a valid DSN");
+        await Assert.That(output).DoesNotContain("secretvalue");
+        await Assert.That(output).DoesNotContain("   at ");
+    }
+
+    [Test]
     public async Task Production_requires_an_audit_signing_key()
     {
         var exception = await Assert.ThrowsAsync<AuthConfigurationException>(() => AuthTestServer.StartAsync(settings: values =>

@@ -104,4 +104,47 @@ public sealed class HealthTests
     {
         public Task<StorageHealthResult> CheckAsync(CancellationToken cancellationToken) => Task.FromException<StorageHealthResult>(exception);
     }
+
+    [Test]
+    public async Task A_log_provider_that_throws_never_breaks_readiness()
+    {
+        await using var server = await AuthTestServer.StartAsync(services: services =>
+        {
+            services.AddSingleton<ILoggerProvider>(new ThrowingWarningLogs());
+            services.AddSingleton<IStorageHealth>(new ThrowingStorageHealth(new IOException("storage down")));
+        });
+
+        using var first = await server.Client.GetAsync("/readyz");
+        await Task.Delay(TimeSpan.FromMilliseconds(1100));
+        using var second = await server.Client.GetAsync("/readyz");
+
+        // Not ready, and still answering: the failed log write did not fault the shared probe.
+        await Assert.That(first.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+        await Assert.That(second.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+    }
+
+    private sealed class ThrowingWarningLogs : ILoggerProvider
+    {
+        public ILogger CreateLogger(string categoryName) => new Logger();
+
+        public void Dispose()
+        {
+        }
+
+        private sealed class Logger : ILogger
+        {
+            public IDisposable? BeginScope<TState>(TState state)
+                where TState : notnull => null;
+
+            public bool IsEnabled(LogLevel logLevel) => true;
+
+            public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+            {
+                if (logLevel == LogLevel.Warning)
+                {
+                    throw new InvalidOperationException("log provider failure");
+                }
+            }
+        }
+    }
 }
