@@ -178,34 +178,43 @@ public static class EndpointServiceCollectionExtensions
         var requestSchema = metadata is { RequestType: { } requestType, Properties: not null }
             ? await context.GetOrCreateSchemaAsync(requestType, null, cancellationToken).ConfigureAwait(false)
             : null;
+        // Only properties the binder can fill from a string bind from route slots; any other slot
+        // (no matching property, or a nested object) is described as a plain string.
         var properties = metadata.Properties ?? [];
         var route = RoutePatternFactory.Parse("/" + description.RelativePath);
+        var routeBound = new HashSet<JsonPropertyInfo>();
         foreach (var routeParameter in route.Parameters)
         {
+            var property = Find(properties, routeParameter.Name) is { } match && RequestValues.CanBindFromString(match) ? match : null;
+            if (property is not null)
+            {
+                routeBound.Add(property);
+            }
+
             // OpenAPI requires every path parameter to be required, even optional route segments.
-            await AddAsync(routeParameter.Name, ParameterLocation.Path, Find(properties, routeParameter.Name), required: true).ConfigureAwait(false);
+            await AddAsync(routeParameter.Name, ParameterLocation.Path, property, required: true).ConfigureAwait(false);
         }
 
-        var method = description.HttpMethod ?? string.Empty;
-        var bodyless = HttpMethods.IsGet(method) || HttpMethods.IsHead(method) || HttpMethods.IsDelete(method) || HttpMethods.IsOptions(method);
-        if (metadata.Properties is null || !bodyless)
+        if (metadata.Properties is null)
         {
             return;
         }
 
-        // Properties the binder cannot read from a query string (nested objects, dictionaries) can
-        // still come from a JSON body, so the body is only dropped when every property is covered.
-        var routeBound = route.Parameters.Select(parameter => Find(properties, parameter.Name)).ToHashSet();
-        var queryable = properties.Where(property => !routeBound.Contains(property) && RequestValues.CanBindFromString(property)).ToList();
-        var needsBody = properties.Any(property => !routeBound.Contains(property) && !RequestValues.CanBindFromString(property));
-        foreach (var property in queryable)
+        // The default binder merges query values for every method. Body-less methods drop the body
+        // when every remaining property can come from the query; nested objects and dictionaries
+        // cannot, so they keep it.
+        var method = description.HttpMethod ?? string.Empty;
+        var bodyless = HttpMethods.IsGet(method) || HttpMethods.IsHead(method) || HttpMethods.IsDelete(method) || HttpMethods.IsOptions(method);
+        var remaining = properties.Where(property => !routeBound.Contains(property)).ToList();
+        var bodyKept = !bodyless || remaining.Exists(property => !RequestValues.CanBindFromString(property));
+        foreach (var property in remaining.Where(RequestValues.CanBindFromString))
         {
             // The binder merges body, query and route values before checking required members, so
             // with a body kept a required member may come from the body instead of the query.
-            await AddAsync(property.Name, ParameterLocation.Query, property, property.IsRequired && !needsBody).ConfigureAwait(false);
+            await AddAsync(property.Name, ParameterLocation.Query, property, property.IsRequired && !bodyKept).ConfigureAwait(false);
         }
 
-        if (!needsBody)
+        if (!bodyKept)
         {
             operation.RequestBody = null;
         }
@@ -213,7 +222,8 @@ public static class EndpointServiceCollectionExtensions
         async Task AddAsync(string name, ParameterLocation location, JsonPropertyInfo? property, bool required)
         {
             operation.Parameters ??= [];
-            if (operation.Parameters.Any(parameter => parameter.In == location && string.Equals(parameter.Name, name, StringComparison.OrdinalIgnoreCase)))
+            // OpenAPI parameter names are case-sensitive, like case-sensitive JSON contracts (id and ID).
+            if (operation.Parameters.Any(parameter => parameter.In == location && string.Equals(parameter.Name, name, StringComparison.Ordinal)))
             {
                 return;
             }

@@ -299,7 +299,8 @@ public sealed class BindingEdgeTests
         var mixed = paths.GetProperty("/tenants/{tenantId}/mixed");
         await Assert.That(Parameters(mixed.GetProperty("get"))).IsEquivalentTo(["path:tenantId", "query:page"]);
         await Assert.That(mixed.GetProperty("get").TryGetProperty("requestBody", out _)).IsFalse();
-        await Assert.That(Parameters(mixed.GetProperty("post"))).IsEquivalentTo(["path:tenantId"]);
+        // POST keeps the body and documents query values as optional, since the binder merges them too.
+        await Assert.That(Parameters(mixed.GetProperty("post"))).IsEquivalentTo(["path:tenantId", "query:page"]);
         await Assert.That(mixed.GetProperty("post").TryGetProperty("requestBody", out _)).IsTrue();
 
         var optional = paths.GetProperty("/tenants/{tenantId}/optional/{id}").GetProperty("get").GetProperty("parameters");
@@ -748,4 +749,102 @@ public sealed class CaseEndpoint : Endpoint<CaseQuery, CaseQuery>
     public override void Configure() => Get("/case");
 
     public override ValueTask<CaseQuery> HandleAsync(CaseQuery request, CancellationToken cancellationToken) => ValueTask.FromResult(request);
+}
+
+/// <summary>Regressions for the fourth ts-reviewer pass on PR #8.</summary>
+public sealed class FourthPassBindingTests
+{
+    [Test]
+    public async Task BodyMethodsDocumentOptionalQueryParameters()
+    {
+        await using var app = await StartAsync(_ => { });
+        using var client = Client(app);
+        using var document = JsonDocument.Parse(await client.GetStringAsync("/openapi/v1.json"));
+        var post = document.RootElement.GetProperty("paths").GetProperty("/fourth/nested-echo").GetProperty("post");
+        var page = post.GetProperty("parameters").EnumerateArray().Single(parameter => parameter.GetProperty("name").GetString() == "page");
+        await Assert.That(page.GetProperty("in").GetString()).IsEqualTo("query");
+        await Assert.That(page.TryGetProperty("required", out var required) && required.GetBoolean()).IsFalse();
+        await Assert.That(post.TryGetProperty("requestBody", out _)).IsTrue();
+    }
+
+    [Test]
+    public async Task RouteSlotsNamedAfterNestedObjectsKeepTheBody()
+    {
+        await using var app = await StartAsync(_ => { });
+        using var client = Client(app);
+        using var document = JsonDocument.Parse(await client.GetStringAsync("/openapi/v1.json"));
+        var get = document.RootElement.GetProperty("paths").GetProperty("/fourth/by-filter/{filter}").GetProperty("get");
+        var filter = get.GetProperty("parameters").EnumerateArray().Single(parameter => parameter.GetProperty("name").GetString() == "filter");
+        await Assert.That(filter.GetProperty("schema").GetProperty("type").GetString()).IsEqualTo("string");
+        await Assert.That(get.TryGetProperty("requestBody", out _)).IsTrue();
+    }
+
+    [Test]
+    public async Task CaseSensitiveContractsDocumentBothParameters()
+    {
+        await using var app = await StartAsync(
+            builder => builder.Services.ConfigureHttpJsonOptions(options => options.SerializerOptions.PropertyNameCaseInsensitive = false),
+            EndpointRegistration.Create<CaseEndpoint>());
+        using var client = Client(app);
+        using var document = JsonDocument.Parse(await client.GetStringAsync("/openapi/v1.json"));
+        var names = document.RootElement.GetProperty("paths").GetProperty("/case").GetProperty("get").GetProperty("parameters")
+            .EnumerateArray().Select(parameter => parameter.GetProperty("name").GetString()!).ToArray();
+        await Assert.That(names).IsEquivalentTo(["id", "ID"]);
+    }
+
+    [Test]
+    public async Task StrictNumbersAcceptParameterSyntax()
+    {
+        await using var app = await StartAsync(builder => builder.Services.ConfigureHttpJsonOptions(options =>
+            options.SerializerOptions.NumberHandling = JsonNumberHandling.Strict));
+        using var client = Client(app);
+        await Assert.That(await client.GetStringAsync("/fourth/strict/007?page=01&ids=%2B1&ids=%202%20&price=%2B2.5&ratio=01.5"))
+            .IsEqualTo("""{"big":7,"page":1,"ids":[1,2],"price":2.5,"ratio":1.5}""");
+        using var outOfRange = await client.GetAsync("/fourth/strict/1?page=1.5");
+        await Assert.That(outOfRange.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+    }
+
+    private static async Task<WebApplication> StartAsync(Action<WebApplicationBuilder> configure, params EndpointRegistration[] endpoints)
+    {
+        var builder = WebApplication.CreateBuilder();
+        builder.WebHost.UseUrls("http://127.0.0.1:0");
+        builder.Services.AddTerraScaleEndpoints(endpoints.Length > 0
+            ? endpoints
+            : [
+                EndpointRegistration.Create<FourthNestedEchoEndpoint>(),
+                EndpointRegistration.Create<ByFilterEndpoint>(),
+                EndpointRegistration.Create<StrictNumbersEndpoint>()]);
+        configure(builder);
+        var app = builder.Build();
+        app.MapTerraScaleEndpoints();
+        app.MapTerraScaleOpenApi();
+        await app.StartAsync();
+        return app;
+    }
+
+    private static HttpClient Client(WebApplication app) => new() { BaseAddress = new Uri(app.Urls.Single()) };
+}
+
+public sealed class FourthNestedEchoEndpoint : Endpoint<FilteredQuery, FilteredQuery>
+{
+    public override void Configure() => Post("/fourth/nested-echo");
+
+    public override ValueTask<FilteredQuery> HandleAsync(FilteredQuery request, CancellationToken cancellationToken) => ValueTask.FromResult(request);
+}
+
+public sealed class ByFilterEndpoint : Endpoint<FilteredQuery, string>
+{
+    public override void Configure() => Get("/fourth/by-filter/{filter}");
+
+    public override ValueTask<string> HandleAsync(FilteredQuery request, CancellationToken cancellationToken) => ValueTask.FromResult("by-filter");
+}
+
+public sealed record StrictNumbersQuery(Int128 Big, int Page, long[] Ids, decimal Price, double Ratio);
+
+public sealed class StrictNumbersEndpoint : Endpoint<StrictNumbersQuery, StrictNumbersQuery>
+{
+    public override void Configure() => Get("/fourth/strict/{big}");
+
+    public override ValueTask<StrictNumbersQuery> HandleAsync(StrictNumbersQuery request, CancellationToken cancellationToken) =>
+        ValueTask.FromResult(request);
 }

@@ -1,5 +1,7 @@
 using System.ComponentModel.DataAnnotations;
 using System.Diagnostics.CodeAnalysis;
+using System.Globalization;
+using System.Numerics;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
@@ -382,26 +384,43 @@ internal static class RequestValues
             return JsonValue.Create(guid);
         }
 
-        if (IsNumber(target) && raw.Length > 0 && (char.IsAsciiDigit(raw[0]) || raw[0] == '-'))
+        if (ToNumber(raw, target) is { } number)
         {
-            try
-            {
-                if (JsonNode.Parse(raw) is JsonValue { } number && number.GetValueKind() == JsonValueKind.Number)
-                {
-                    return number;
-                }
-            }
-            catch (JsonException)
-            {
-            }
+            return number;
         }
 
         return JsonValue.Create(raw);
     }
 
-    // TypeCode SByte..Decimal covers the classic number types and enums (by their underlying type);
-    // the newer number types report TypeCode.Object.
-    private static bool IsNumber(Type type) =>
-        Type.GetTypeCode(type) is >= TypeCode.SByte and <= TypeCode.Decimal
-        || type == typeof(Half) || type == typeof(Int128) || type == typeof(UInt128);
+    // Parses like ASP.NET Core parameter binding (invariant culture; leading zeros, a sign and
+    // surrounding whitespace allowed) and emits a canonical JSON number, so strict number handling
+    // reads it. Range checks stay with the target converter: 300 for a byte is still a 400.
+    private static JsonValue? ToNumber(string raw, Type type)
+    {
+        var culture = CultureInfo.InvariantCulture;
+        switch (Type.GetTypeCode(type))
+        {
+            // Integer types and enums (by their underlying type).
+            case >= TypeCode.SByte and <= TypeCode.UInt64:
+                return BigInteger.TryParse(raw, NumberStyles.Integer, culture, out var integer) ? Parse(integer.ToString(culture)) : null;
+            case TypeCode.Decimal:
+                return decimal.TryParse(raw, NumberStyles.Float, culture, out var money) ? JsonValue.Create(money) : null;
+            case TypeCode.Single or TypeCode.Double:
+                return double.TryParse(raw, NumberStyles.Float, culture, out var real) && double.IsFinite(real) ? JsonValue.Create(real) : null;
+        }
+
+        if (type == typeof(Int128) || type == typeof(UInt128))
+        {
+            return BigInteger.TryParse(raw, NumberStyles.Integer, culture, out var wide) ? Parse(wide.ToString(culture)) : null;
+        }
+
+        if (type == typeof(Half))
+        {
+            return double.TryParse(raw, NumberStyles.Float, culture, out var half) && double.IsFinite(half) ? JsonValue.Create(half) : null;
+        }
+
+        return null;
+
+        static JsonValue Parse(string canonical) => (JsonValue)JsonNode.Parse(canonical)!;
+    }
 }
