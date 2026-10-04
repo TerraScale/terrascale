@@ -33,38 +33,63 @@ internal sealed class SqliteDatabaseStore(DatabaseName name, string path) : IDat
         }
     }
 
+    /// <summary>
+    /// Creates and migrates a new database file at <paramref name="path"/> on an unpooled
+    /// connection, so no handle stays open once this returns and the file can be moved.
+    /// </summary>
+    internal static async Task InitializeAsync(DatabaseName name, string path, CancellationToken cancellationToken)
+    {
+        var connectionString = new SqliteConnectionStringBuilder
+        {
+            DataSource = path,
+            Mode = SqliteOpenMode.ReadWriteCreate,
+            Pooling = false,
+        }.ToString();
+        var connection = new SqliteConnection(connectionString);
+        await using (connection.ConfigureAwait(false))
+        {
+            await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+            await new SqliteDatabaseStore(name, path).MigrateAsync(connection, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
     internal async Task MigrateAsync(CancellationToken cancellationToken)
     {
         var connection = await OpenAsync(cancellationToken).ConfigureAwait(false);
         await using (connection.ConfigureAwait(false))
         {
-            if (await IsCurrentAsync(connection, transaction: null, cancellationToken).ConfigureAwait(false))
+            await MigrateAsync(connection, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private async Task MigrateAsync(SqliteConnection connection, CancellationToken cancellationToken)
+    {
+        if (await IsCurrentAsync(connection, transaction: null, cancellationToken).ConfigureAwait(false))
+        {
+            return;
+        }
+
+        // journal_mode cannot change inside a transaction; it is persistent and idempotent.
+        await ScalarAsync(connection, null, "PRAGMA journal_mode = WAL;", cancellationToken).ConfigureAwait(false);
+        var transaction = connection.BeginTransaction(deferred: false);
+        await using (transaction.ConfigureAwait(false))
+        {
+            // Another process or caller may have migrated while this one waited for the lock.
+            if (!await IsCurrentAsync(connection, transaction, cancellationToken).ConfigureAwait(false))
             {
-                return;
+                await ScalarAsync(connection, transaction, """
+                    CREATE TABLE IF NOT EXISTS documents (
+                        collection TEXT NOT NULL,
+                        id TEXT NOT NULL,
+                        version INTEGER NOT NULL,
+                        body TEXT NOT NULL,
+                        PRIMARY KEY (collection, id)
+                    ) WITHOUT ROWID;
+                    PRAGMA user_version = 1;
+                    """, cancellationToken).ConfigureAwait(false);
             }
 
-            // journal_mode cannot change inside a transaction; it is persistent and idempotent.
-            await ScalarAsync(connection, null, "PRAGMA journal_mode = WAL;", cancellationToken).ConfigureAwait(false);
-            var transaction = connection.BeginTransaction(deferred: false);
-            await using (transaction.ConfigureAwait(false))
-            {
-                // Another process or caller may have migrated while this one waited for the lock.
-                if (!await IsCurrentAsync(connection, transaction, cancellationToken).ConfigureAwait(false))
-                {
-                    await ScalarAsync(connection, transaction, """
-                        CREATE TABLE IF NOT EXISTS documents (
-                            collection TEXT NOT NULL,
-                            id TEXT NOT NULL,
-                            version INTEGER NOT NULL,
-                            body TEXT NOT NULL,
-                            PRIMARY KEY (collection, id)
-                        ) WITHOUT ROWID;
-                        PRAGMA user_version = 1;
-                        """, cancellationToken).ConfigureAwait(false);
-                }
-
-                await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
-            }
+            await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
         }
     }
 

@@ -33,4 +33,13 @@ public sealed class ConfigurationTests
         await Assert.That(error!.Message).Contains("data-directory");
         await Assert.That(error.Message).DoesNotContain("secret");
     }
+
+    [Test]
+    public async Task An_empty_argument_clears_a_setting()
+    {
+        var options = TerraBaseOptions.FromProcess(["--peer-port=", "--admin-port=0"]);
+
+        await Assert.That(options.PeerPort).IsNull();
+        await Assert.That(options.AdminPort).IsEqualTo(0);
+    }
 }

@@ -10,7 +10,7 @@ public interface IStorageEngine : IAsyncDisposable
     string Name { get; }
 
     /// <summary>
-    /// Creates a database atomically: among concurrent calls for the same name exactly one returns
+    /// Creates a database atomically within this process: among concurrent calls for the same name exactly one returns
     /// <see langword="true"/>. Returns <see langword="false"/> when it already existed.
     /// </summary>
     ValueTask<bool> CreateDatabaseAsync(DatabaseName name, CancellationToken cancellationToken);

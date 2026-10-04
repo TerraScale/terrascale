@@ -37,7 +37,7 @@ run:
 
 # Self-contained single-file binary (JIT): $(PUBLISH_DIR)/terrabase
 publish:
-	dotnet publish src/TerraScale.TerraBase --configuration Release --runtime $(RUNTIME) --self-contained --output $(PUBLISH_DIR) --nologo
+	dotnet publish src/TerraScale.TerraBase --configuration Release --runtime $(RUNTIME) --self-contained --output "$(PUBLISH_DIR)" --nologo
 
 clean:
 	dotnet clean $(SOLUTION) --configuration $(CONFIGURATION) --nologo

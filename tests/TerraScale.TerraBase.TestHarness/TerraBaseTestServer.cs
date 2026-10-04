@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
+using TerraScale.TerraBase.Configuration;
 
 namespace TerraScale.TerraBase.Testing;
 
@@ -64,8 +65,16 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
             };
             settings?.Invoke(values);
 
-            // UseSetting values reach Program as --name=value entry-point arguments.
-            factory = new Factory(values);
+            // UseSetting values reach Program as --name=value entry-point arguments. Every other
+            // setting is passed empty, which clears it, so ambient TERRABASE_* variables of the
+            // test process never reach a test server.
+            var arguments = TerraBaseOptions.SettingNames.ToDictionary(name => name, _ => string.Empty, StringComparer.Ordinal);
+            foreach (var (key, value) in values)
+            {
+                arguments[key] = value;
+            }
+
+            factory = new Factory(arguments);
             factory.UseKestrel();
             factory.StartServer();
             var addresses = factory.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()

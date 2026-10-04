@@ -25,33 +25,12 @@ work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
 # Tests only use synthetic credentials, but logs are still masked before they
-# leave the runner. The whole log is redacted at once (quoted values may span
-# lines or never close) before failures are extracted or the tail is taken, so
-# truncation can never separate a secret from the key that marks it. A value may
-# start on the line after its separator (pretty-printed JSON); an unquoted
-# sensitive value is redacted to the end of its line. Excerpts are then capped
-# in bytes so one huge line cannot produce an issue body Forgejo rejects. Every
-# pattern is linear: keys start at a token boundary with bounded affixes.
-redact() {
-  python3 -c '
-import re, sys
-text = sys.stdin.read()
-rules = [
-    (r"\x1b\[[0-9;]*[A-Za-z]", ""),
-    (r"((?<![A-Za-z0-9+.-])[A-Za-z][A-Za-z0-9+.-]{0,31}://)[^/@\s]{1,2048}@", r"\1[REDACTED]@"),
-    (r"(?is)((?<![A-Za-z0-9_-])[A-Za-z0-9_-]{0,64}?(?:SECRET|TOKEN|AUTHORIZATION|PASSWORD|PASSWD|API[_-]KEY|MASTER[_-]KEY|SIGNING[_-]KEY|OPERATOR[_-]KEY|SESSION|COOKIE|DSN)[A-Za-z0-9_-]{0,64}[\"\x27]?[ \t]*[:=][ \t\r\n]*(?:(?:bearer|basic|digest|token)[ \t]+)?)"
-     r"(?:\"(?:[^\"\\]|\\.)*(?:\"|\Z)|\x27(?:[^\x27\\]|\\.)*(?:\x27|\Z)|[^\r\n]*)", r"\1[REDACTED]"),
-    (r"(?i)((?:proxy-)?authorization|set-cookie|cookie|x-api-key|api-key)([\"\x27]?[ \t]*[:=][ \t]*)[^\n]*", r"\1\2[REDACTED]"),
-    (r"(?i)\b(bearer|basic|digest)([ \t]+)\S+", r"\1\2[REDACTED]"),
-    (r"eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]+", "[REDACTED-JWT]"),
-    (r"\b(sk|kub)_[A-Za-z0-9_-]{16,}", "[REDACTED]"),
-    (r"`{3,}", "` ` `"),
-]
-for pattern, replacement in rules:
-    text = re.sub(pattern, replacement, text)
-sys.stdout.write(text)
-'
-}
+# leave the runner. scripts/ci/excerpt-log.py redacts the whole log in one
+# bounded-memory, stateful pass (quoted values may span lines; a value may start
+# on the line after its separator) before it selects the failure lines and the
+# tail, so truncation never separates a secret from the key that marks it.
+# Excerpts are then capped in bytes so the issue body stays within Forgejo's limits.
+repo=$(cd "$(dirname "$0")/../.." && pwd)
 
 # cap <bytes>: pass at most that many bytes through, then say what was cut.
 cap() {
@@ -66,15 +45,8 @@ if len(data) > limit:
 ' "$1"
 }
 
-# Memory stays bounded whatever the log size: failure lines are picked by a
-# streaming grep (count and line length capped) and only the last 4 MiB is
-# redacted for the tail, minus its first, possibly partial, line. A secret
-# whose key sits before that cut is not seen with its key; the excerpt is
-# taken from well after it.
 if [[ -f $log ]]; then
-  { grep -E '^failed |AssertionException|Expected |but (received|found)' "$log" || true; } |
-    sed -n '1,60p' | cut -c1-2000 | redact >"$work/failures.log"
-  tail -c 4194304 "$log" | sed '1d' | redact >"$work/redacted.log"
+  python3 "$repo/scripts/ci/excerpt-log.py" "$log" "$work/failures.log" "$work/redacted.log"
 else
   : >"$work/failures.log"
   : >"$work/redacted.log"
@@ -108,7 +80,7 @@ fi
   echo "<details><summary>Last 80 log lines (redacted)</summary>"
   echo
   echo '```text'
-  tail -n 80 "$work/redacted.log" | cap 40000
+  cap 40000 <"$work/redacted.log"
   echo '```'
   echo "</details>"
   echo

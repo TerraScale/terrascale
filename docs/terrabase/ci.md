@@ -16,7 +16,8 @@ Forgejo Actions on the `terrascale-builder` runner (ts-builder image, .NET SDK 1
 - **publish**: runs only after `fast` and `release` both pass. Reads the retained bytes back
   against the release job's manifest and uploads `qualification.json`. A release without
   `qualification.json` is incomplete and must not be deployed.
-- **slow**: `make test-slow CONFIGURATION=Release`. A failure opens the issue "Slow test suite
+- **slow**: `scripts/ci/check-reporter.sh` first proves that the failure reporter redacts and
+  stays within its memory bound, then `make test-slow CONFIGURATION=Release` runs. A failure opens the issue "Slow test suite
   failed", or comments on it if it is already open (`scripts/ci/report-slow-failure.sh`).
 
 Branch protection on `main` should require `Fast integration / fast` and
@@ -25,7 +26,10 @@ Branch protection on `main` should require `Fast integration / fast` and
 ## Speed
 
 - `fast` and `release` run in parallel; `publish` only promotes bytes and never rebuilds.
-- NuGet packages persist in `/cache/nuget/terrabase` on the runner (`scripts/ci/nuget-cache.sh`).
+- NuGet downloads (`.nupkg`) persist in `/cache/nuget/terrabase/http-cache` on the runner.
+  Each job extracts them into its own fresh packages folder, and locked restore checks every
+  `.nupkg` against `packages.lock.json` (NU1403). A pull request therefore cannot plant files that a
+  `main` release reuses (`scripts/ci/nuget-cache.sh`).
 - `release` publishes only the server project; tests are built in `fast` alone.
 
 ## Requirements

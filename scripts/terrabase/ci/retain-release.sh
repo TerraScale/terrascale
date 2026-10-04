@@ -16,7 +16,7 @@ dist=${1:-}
 repo=$(cd "$(dirname "$0")/../.." && pwd)
 cd "$repo"
 
-for tool in base64 dotnet fj jq sha256sum stat; do
+for tool in base64 curl dotnet fj jq sha256sum stat; do
   command -v "$tool" >/dev/null || { echo "$tool is required" >&2; exit 1; }
 done
 [[ ${GITHUB_RUN_ID:-} =~ ^[0-9]+$ ]] || { echo 'Forgejo run ID is required' >&2; exit 1; }
@@ -60,22 +60,51 @@ export XDG_DATA_HOME="$auth_home/write" XDG_CONFIG_HOME="$auth_home/config" FJ_R
 mkdir -m 0700 "$XDG_DATA_HOME" "$XDG_CONFIG_HOME" "$FJ_READ_PROFILE"
 printf '%s' "$FORGEJO_TOKEN" | fj -H "$host" auth add-token >/dev/null
 printf '%s' "$FORGEJO_READ_TOKEN" | XDG_DATA_HOME="$FJ_READ_PROFILE" fj -H "$host" auth add-token >/dev/null
+# curl reads the token from a private header file, never from its arguments.
+printf 'Authorization: token %s\n' "$FORGEJO_READ_TOKEN" > "$auth_home/read-header"
+chmod 600 "$auth_home/read-header"
 unset FORGEJO_TOKEN FORGEJO_READ_TOKEN GITHUB_TOKEN
+
+# release_state TAG: prints "absent", "unqualified" or "qualified" from an
+# authoritative API lookup, retrying transient failures; exits non-zero when the
+# state cannot be established, so callers fail closed.
+release_state() {
+  local tag=$1 code delay=1
+  for attempt in 1 2 3 4 5; do
+    code=$(curl -sS -o "$auth_home/release.json" -w '%{http_code}' -H @"$auth_home/read-header" \
+      "$FORGEJO_SERVER_URL/api/v1/repos/$GITHUB_REPOSITORY/releases/tags/$tag") || code=000
+    case $code in
+      404) echo absent; return 0 ;;
+      200)
+        if jq -e '.assets | type == "array"' "$auth_home/release.json" >/dev/null; then
+          jq -r 'if any(.assets[]; .name == "qualification.json") then "qualified" else "unqualified" end' "$auth_home/release.json"
+          return 0
+        fi
+        ;;
+    esac
+    echo "release lookup for $tag answered HTTP $code (attempt $attempt)" >&2
+    sleep "$delay"
+    delay=$((delay * 2))
+  done
+  echo "cannot establish the state of release $tag" >&2
+  return 1
+}
 
 tag="ci-${GITHUB_SHA}-run-${GITHUB_RUN_ID}"
 # A rerun keeps the run ID. A release left by an earlier attempt that never got
 # its qualification.json was never admitted, so it is replaced; a qualified one
 # is never touched.
-if XDG_DATA_HOME="$FJ_READ_PROFILE" fj -H "$host" release view -r "$GITHUB_REPOSITORY" "$tag" >/dev/null 2>&1; then
-  if XDG_DATA_HOME="$FJ_READ_PROFILE" fj -H "$host" release asset download -r "$GITHUB_REPOSITORY" \
-    "$tag" qualification.json -o "$auth_home/existing-qualification.json" >/dev/null 2>&1; then
-    echo "$tag is already qualified; refusing to replace published bytes" >&2
-    exit 1
-  fi
-  echo "replacing the unqualified release $tag left by an earlier attempt"
-  fj -H "$host" release delete -r "$GITHUB_REPOSITORY" --by-tag "$tag"
-  fj -H "$host" tag delete -r "$GITHUB_REPOSITORY" "$tag" || true
-fi
+state=$(release_state "$tag")
+case $state in
+  qualified) echo "$tag is already qualified; refusing to replace published bytes" >&2; exit 1 ;;
+  unqualified)
+    echo "replacing the unqualified release $tag left by an earlier attempt"
+    fj -H "$host" release delete -r "$GITHUB_REPOSITORY" --by-tag "$tag"
+    fj -H "$host" tag delete -r "$GITHUB_REPOSITORY" "$tag" || true
+    ;;
+  absent) ;;
+  *) echo "unexpected release state '$state'" >&2; exit 1 ;;
+esac
 fj -H "$host" release create -r "$GITHUB_REPOSITORY" "$tag" --create-tag="$tag" --branch "$GITHUB_SHA" \
   --prerelease --attach="$artifact"
 mkdir -m 0700 "$auth_home/readback"

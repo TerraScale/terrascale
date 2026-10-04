@@ -52,21 +52,11 @@ jobs:
         run: bash scripts/ci/nuget-cache.sh
 
       # The reporter only runs after a failure, so prove now that it can: fj is
-      # installed and a dry-run report renders and redacts.
+      # installed, and a dry-run report renders, redacts and stays bounded.
       - name: Check the failure reporter
         run: |
-          set -euo pipefail
           fj version
-          printf '%s\n' 'failed Example (1s)' 'Authorization: Bearer reporter-check-secret' > "$RUNNER_TEMP/reporter-check.log"
-          REPORT_DRY_RUN=1 bash scripts/ci/report-slow-failure.sh "$RUNNER_TEMP/reporter-check.log" > "$RUNNER_TEMP/reporter-check.md"
-          grep -q '^# Slow test suite failed' "$RUNNER_TEMP/reporter-check.md"
-          ! grep -q 'reporter-check-secret' "$RUNNER_TEMP/reporter-check.md"
-          # A runaway log must not exhaust memory: a 256 MiB log renders with a small peak RSS.
-          { yes 'noise line from a runaway test' | head -c 268435456; printf '\n%s\n' 'failed Late (1s)'; } > "$RUNNER_TEMP/reporter-large.log"
-          python3 scripts/ci/peak-rss.py 131072 "$RUNNER_TEMP/reporter-large.md" \
-            env REPORT_DRY_RUN=1 bash scripts/ci/report-slow-failure.sh "$RUNNER_TEMP/reporter-large.log"
-          grep -q '^failed Late' "$RUNNER_TEMP/reporter-large.md"
-          rm -f "$RUNNER_TEMP/reporter-large.log"
+          bash scripts/ci/check-reporter.sh
 
       - name: Slow integration suite
         run: |

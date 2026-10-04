@@ -11,7 +11,8 @@ public sealed class TerraBaseConfigurationException(string message) : Exception(
 /// <summary>
 /// Validated process configuration.
 /// Every setting is <c>TERRABASE_&lt;NAME&gt;</c> or the equivalent <c>--name=value</c> argument;
-/// an argument wins over the environment.
+/// an argument wins over the environment. An empty value means "not set", so <c>--name=</c>
+/// clears a setting inherited from the environment.
 /// </summary>
 public sealed record TerraBaseOptions
 {
@@ -30,6 +31,9 @@ public sealed record TerraBaseOptions
     private static readonly FrozenSet<string> Keys = FrozenSet.Create(
         StringComparer.Ordinal,
         ["admin-port", "data-directory", "client-port", .. ClientTlsKeys, "peer-port", .. PeerTlsKeys]);
+
+    /// <summary>Every setting name, in <c>--name=value</c> form without the dashes.</summary>
+    public static IReadOnlySet<string> SettingNames => Keys;
 
     // Generic-host arguments that WebApplicationFactory passes to the entry point. They are not
     // TerraBase settings and change nothing: the host is built without args.
@@ -86,9 +90,19 @@ public sealed record TerraBaseOptions
             }
 
             var key = arg[2..separator];
-            if (!HostArguments.Contains(key))
+            var value = arg[(separator + 1)..];
+            if (HostArguments.Contains(key))
             {
-                values[key] = arg[(separator + 1)..];
+                continue;
+            }
+
+            if (value.Length == 0)
+            {
+                values.Remove(key);
+            }
+            else
+            {
+                values[key] = value;
             }
         }
 

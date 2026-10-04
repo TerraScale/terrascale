@@ -46,12 +46,13 @@ internal sealed class SqliteStorageTransaction(SqliteConnection connection, Sqli
     {
         var command = Command("""
             SELECT id, version, body, length(CAST(body AS BLOB)) FROM documents
-            WHERE collection = $collection AND id > $after
+            WHERE collection = $collection AND ($after IS NULL OR id > $after)
             ORDER BY id LIMIT $limit;
             """, collection);
         await using (command.ConfigureAwait(false))
         {
-            command.Parameters.AddWithValue("$after", afterId ?? string.Empty);
+            // A missing cursor is NULL, not "", so the first page also holds an empty id.
+            command.Parameters.AddWithValue("$after", (object?)afterId ?? DBNull.Value);
             // One extra row tells whether another page exists without reading its body.
             command.Parameters.AddWithValue("$limit", limit + 1);
             var documents = new List<StoredDocument>();
@@ -81,9 +82,15 @@ internal sealed class SqliteStorageTransaction(SqliteConnection connection, Sqli
 
     public async ValueTask DisposeAsync()
     {
-        // Disposing an uncommitted transaction rolls it back.
-        await transaction.DisposeAsync().ConfigureAwait(false);
-        await connection.DisposeAsync().ConfigureAwait(false);
+        // Disposing an uncommitted transaction rolls it back; the connection is released even if that fails.
+        try
+        {
+            await transaction.DisposeAsync().ConfigureAwait(false);
+        }
+        finally
+        {
+            await connection.DisposeAsync().ConfigureAwait(false);
+        }
     }
 
     private SqliteCommand Command(string sql, string collection)

@@ -19,29 +19,52 @@ internal sealed class SqliteStorageEngine(string dataDirectory) : IStorageEngine
     // Opened (and migrated) stores; a database is migrated once per process.
     private readonly ConcurrentDictionary<DatabaseName, SqliteDatabaseStore> _stores = new();
 
+    // ponytail: one lock for every creation (rare, and the data directory belongs to one process);
+    // per-name locks if creation throughput ever matters.
+    private readonly SemaphoreSlim _creation = new(1, 1);
+
     public string Name => "sqlite";
 
     public async ValueTask<bool> CreateDatabaseAsync(DatabaseName name, CancellationToken cancellationToken)
     {
         Directory.CreateDirectory(dataDirectory);
         var path = PathOf(name);
-        bool created;
+        await _creation.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            // CreateNew is atomic in the file system: exactly one concurrent caller wins.
-            await using (new FileStream(path, FileMode.CreateNew, FileAccess.Write).ConfigureAwait(false))
+            if (!File.Exists(path))
             {
+                await PublishNewAsync(name, path, cancellationToken).ConfigureAwait(false);
+                await OpenStoreAsync(name, path, cancellationToken).ConfigureAwait(false);
+                return true;
             }
-
-            created = true;
         }
-        catch (IOException) when (File.Exists(path))
+        finally
         {
-            created = false;
+            _creation.Release();
         }
 
         await OpenStoreAsync(name, path, cancellationToken).ConfigureAwait(false);
-        return created;
+        return false;
+    }
+
+    // Initializes a private temporary file and then moves it into place, so a database is visible
+    // only once fully initialized and a failed or cancelled creation leaves nothing behind.
+    private async Task PublishNewAsync(DatabaseName name, string path, CancellationToken cancellationToken)
+    {
+        var temporary = Path.Combine(dataDirectory, $".{name.Value}.{Guid.NewGuid():N}.creating");
+        try
+        {
+            await SqliteDatabaseStore.InitializeAsync(name, temporary, cancellationToken).ConfigureAwait(false);
+            File.Move(temporary, path, overwrite: false);
+        }
+        finally
+        {
+            foreach (var file in new[] { temporary, temporary + "-wal", temporary + "-shm", temporary + "-journal" })
+            {
+                File.Delete(file);
+            }
+        }
     }
 
     public async ValueTask<IDatabaseStore?> OpenDatabaseAsync(DatabaseName name, CancellationToken cancellationToken)
@@ -74,6 +97,7 @@ internal sealed class SqliteStorageEngine(string dataDirectory) : IStorageEngine
 
     public ValueTask DisposeAsync()
     {
+        _creation.Dispose();
         // Pooled connections keep files open; release them so the data directory can be removed.
         SqliteConnection.ClearAllPools();
         return ValueTask.CompletedTask;
