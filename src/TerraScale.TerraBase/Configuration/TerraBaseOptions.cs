@@ -18,15 +18,38 @@ public sealed record TerraBaseOptions
     /// <summary>Default port of the loopback administrative and metrics listener.</summary>
     public const int DefaultAdminPort = 9464;
 
+    /// <summary>Default directory for SQLite database files, relative to the working directory.</summary>
+    public const string DefaultDataDirectory = "data";
+
     private const string EnvironmentPrefix = "TERRABASE_";
 
-    private static readonly FrozenSet<string> Keys = FrozenSet.Create(
-        StringComparer.Ordinal, "admin-port", "peer-port", "peer-certificate", "peer-private-key", "peer-client-ca");
+    private static readonly string[] ClientTlsKeys = ["client-certificate", "client-private-key"];
 
     private static readonly string[] PeerTlsKeys = ["peer-certificate", "peer-private-key", "peer-client-ca"];
 
+    private static readonly FrozenSet<string> Keys = FrozenSet.Create(
+        StringComparer.Ordinal,
+        ["admin-port", "data-directory", "client-port", .. ClientTlsKeys, "peer-port", .. PeerTlsKeys]);
+
+    // Generic-host arguments that WebApplicationFactory passes to the entry point. They are not
+    // TerraBase settings and change nothing: the host is built without args.
+    private static readonly FrozenSet<string> HostArguments = FrozenSet.Create(
+        StringComparer.Ordinal, "environment", "applicationName", "contentRoot");
+
     /// <summary>Port of the loopback administrative listener; <c>0</c> picks a free port.</summary>
     public required int AdminPort { get; init; }
+
+    /// <summary>Directory holding one SQLite file per database.</summary>
+    public required string DataDirectory { get; init; }
+
+    /// <summary>
+    /// Port of the client-facing HTTPS listener; <c>0</c> picks a free port.
+    /// <see langword="null"/> disables the listener.
+    /// </summary>
+    public int? ClientPort { get; init; }
+
+    /// <summary>Server certificate with its private key for the client listener.</summary>
+    public X509Certificate2? ClientCertificate { get; init; }
 
     /// <summary>
     /// Port of the inter-node gRPC listener (mutual TLS, HTTP/2); <c>0</c> picks a free port.
@@ -62,7 +85,11 @@ public sealed record TerraBaseOptions
                 throw new TerraBaseConfigurationException($"unrecognized argument '{arg.Split('=')[0]}'; use --name=value");
             }
 
-            values[arg[2..separator]] = arg[(separator + 1)..];
+            var key = arg[2..separator];
+            if (!HostArguments.Contains(key))
+            {
+                values[key] = arg[(separator + 1)..];
+            }
         }
 
         return FromValues(values);
@@ -80,32 +107,48 @@ public sealed record TerraBaseOptions
             }
         }
 
-        var adminPort = ParsePort(values, "admin-port") ?? DefaultAdminPort;
+        var dataDirectory = values.GetValueOrDefault("data-directory", DefaultDataDirectory);
+        if (string.IsNullOrWhiteSpace(dataDirectory))
+        {
+            throw new TerraBaseConfigurationException("data-directory must not be empty");
+        }
+
+        var clientPort = ParsePort(values, "client-port");
+        RequireGroup(values, "client-port", clientPort, ClientTlsKeys);
         var peerPort = ParsePort(values, "peer-port");
-        if (peerPort is null)
-        {
-            if (PeerTlsKeys.Any(values.ContainsKey))
-            {
-                throw new TerraBaseConfigurationException("peer-certificate, peer-private-key and peer-client-ca require peer-port");
-            }
-
-            return new TerraBaseOptions { AdminPort = adminPort };
-        }
-
-        if (!PeerTlsKeys.All(values.ContainsKey))
-        {
-            throw new TerraBaseConfigurationException("peer-port requires peer-certificate, peer-private-key and peer-client-ca");
-        }
+        RequireGroup(values, "peer-port", peerPort, PeerTlsKeys);
 
         return new TerraBaseOptions
         {
-            AdminPort = adminPort,
+            AdminPort = ParsePort(values, "admin-port") ?? DefaultAdminPort,
+            DataDirectory = Path.GetFullPath(dataDirectory),
+            ClientPort = clientPort,
+            ClientCertificate = clientPort is null ? null : LoadPem(
+                () => X509Certificate2.CreateFromPemFile(values["client-certificate"], values["client-private-key"]),
+                "client-certificate and client-private-key must name a readable PEM certificate and its private key"),
             PeerPort = peerPort,
-            PeerCertificate = LoadPem(() => X509Certificate2.CreateFromPemFile(values["peer-certificate"], values["peer-private-key"]),
+            PeerCertificate = peerPort is null ? null : LoadPem(
+                () => X509Certificate2.CreateFromPemFile(values["peer-certificate"], values["peer-private-key"]),
                 "peer-certificate and peer-private-key must name a readable PEM certificate and its private key"),
-            PeerClientCa = LoadPem(() => X509CertificateLoader.LoadCertificateFromFile(values["peer-client-ca"]),
+            PeerClientCa = peerPort is null ? null : LoadPem(
+                () => X509CertificateLoader.LoadCertificateFromFile(values["peer-client-ca"]),
                 "peer-client-ca must name a readable PEM certificate"),
         };
+    }
+
+    // A listener port and its TLS settings are all set or all absent.
+    private static void RequireGroup(IReadOnlyDictionary<string, string> values, string portKey, int? port, string[] tlsKeys)
+    {
+        var tls = string.Join(", ", tlsKeys);
+        if (port is null && tlsKeys.Any(values.ContainsKey))
+        {
+            throw new TerraBaseConfigurationException($"{tls} require {portKey}");
+        }
+
+        if (port is not null && !tlsKeys.All(values.ContainsKey))
+        {
+            throw new TerraBaseConfigurationException($"{portKey} requires {tls}");
+        }
     }
 
     private static int? ParsePort(IReadOnlyDictionary<string, string> values, string key)

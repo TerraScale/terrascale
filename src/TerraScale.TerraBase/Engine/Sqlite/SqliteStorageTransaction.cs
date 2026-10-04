@@ -1,0 +1,92 @@
+using System.Text;
+using Microsoft.Data.Sqlite;
+
+namespace TerraScale.TerraBase.Engine.Sqlite;
+
+internal sealed class SqliteStorageTransaction(SqliteConnection connection, SqliteTransaction transaction) : IStorageTransaction
+{
+    public async ValueTask<StoredDocument?> GetAsync(string collection, string id, CancellationToken cancellationToken)
+    {
+        var command = Command("SELECT id, version, body FROM documents WHERE collection = $collection AND id = $id;", collection);
+        await using (command.ConfigureAwait(false))
+        {
+            command.Parameters.AddWithValue("$id", id);
+            var documents = await ReadAsync(command, cancellationToken).ConfigureAwait(false);
+            return documents.Count == 0 ? null : documents[0];
+        }
+    }
+
+    public async ValueTask<long> PutAsync(string collection, string id, ReadOnlyMemory<byte> json, CancellationToken cancellationToken)
+    {
+        var command = Command("""
+            INSERT INTO documents (collection, id, version, body) VALUES ($collection, $id, 1, $body)
+            ON CONFLICT (collection, id) DO UPDATE SET version = version + 1, body = excluded.body
+            RETURNING version;
+            """, collection);
+        await using (command.ConfigureAwait(false))
+        {
+            command.Parameters.AddWithValue("$id", id);
+            command.Parameters.AddWithValue("$body", Encoding.UTF8.GetString(json.Span));
+            return (long)(await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false))!;
+        }
+    }
+
+    public async ValueTask<bool> DeleteAsync(string collection, string id, CancellationToken cancellationToken)
+    {
+        var command = Command("DELETE FROM documents WHERE collection = $collection AND id = $id;", collection);
+        await using (command.ConfigureAwait(false))
+        {
+            command.Parameters.AddWithValue("$id", id);
+            return await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false) > 0;
+        }
+    }
+
+    public async ValueTask<IReadOnlyList<StoredDocument>> ListAsync(string collection, string? afterId, int limit, CancellationToken cancellationToken)
+    {
+        var command = Command("""
+            SELECT id, version, body FROM documents
+            WHERE collection = $collection AND id > $after
+            ORDER BY id LIMIT $limit;
+            """, collection);
+        await using (command.ConfigureAwait(false))
+        {
+            command.Parameters.AddWithValue("$after", afterId ?? string.Empty);
+            command.Parameters.AddWithValue("$limit", limit);
+            return await ReadAsync(command, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    public async ValueTask CommitAsync(CancellationToken cancellationToken) =>
+        await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+
+    public async ValueTask DisposeAsync()
+    {
+        // Disposing an uncommitted transaction rolls it back.
+        await transaction.DisposeAsync().ConfigureAwait(false);
+        await connection.DisposeAsync().ConfigureAwait(false);
+    }
+
+    private SqliteCommand Command(string sql, string collection)
+    {
+        var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = sql;
+        command.Parameters.AddWithValue("$collection", collection);
+        return command;
+    }
+
+    private static async Task<List<StoredDocument>> ReadAsync(SqliteCommand command, CancellationToken cancellationToken)
+    {
+        var documents = new List<StoredDocument>();
+        var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        await using (reader.ConfigureAwait(false))
+        {
+            while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+            {
+                documents.Add(new StoredDocument(reader.GetString(0), reader.GetInt64(1), Encoding.UTF8.GetBytes(reader.GetString(2))));
+            }
+        }
+
+        return documents;
+    }
+}

@@ -32,7 +32,7 @@ When interacting with Forgejo, always use the `fj` CLI.
 - Use `System.Text.Json` with source-generated `JsonSerializerContext` metadata; register every request/response type in `Hosting/TerraBaseJsonContext.cs`.
 - **Newtonsoft.Json is banned.** Its APIs are listed in `BannedSymbols.txt` (enforced by the global `Microsoft.CodeAnalysis.BannedApiAnalyzers`, `RS0030` as an error), and `Directory.Build.targets` fails the build if any Newtonsoft package enters the graph, directly or transitively. Never remove these guards; choose a dependency that does not need Newtonsoft.
 - Add newly banned APIs to `BannedSymbols.txt` with a reason that names the replacement.
-- HTTP endpoints MUST use **`TerraScale.Endpoints`** from `../ts-libs` (one endpoint class per file, compile-time registration via `AddTerraScaleEndpoints()` / `MapTerraScaleEndpoints()` / `MapTerraScaleOpenApi()`). Do not use raw minimal-API `Map*` calls or controllers for feature endpoints.
+- **Every** HTTP endpoint — client, administrative, health, examples — MUST use **`TerraScale.Endpoints`** from `../ts-libs` (one endpoint class per file, compile-time registration via `AddTerraScaleEndpoints()` / `MapTerraScaleEndpoints()` / `MapTerraScaleOpenApi()`). Never use raw minimal-API `Map*` calls or controllers for endpoints. The only exceptions are framework-provided endpoints with no TerraScale.Endpoints equivalent: the gRPC services (`MapGrpcService`), the Prometheus scrape and the OpenAPI/Scalar documents.
 - All public HTTP APIs MUST have **OpenAPI** documentation rendered through **Scalar**.
 
 ## General
@@ -67,10 +67,11 @@ The project MUST follow a **feature-sliced design** so related and dependent fil
 ```
 src/
   TerraScale.TerraBase/            # the server: one single-file binary
-    Program.cs                     # process entry: parse options, build, run
-    App.cs                         # composition root: services, middleware, endpoints
+    Program.cs                     # top-level statements: parse options, compose services, middleware and endpoints, run
     Configuration/                 # validated process options (TERRABASE_* / --name=value)
-    Hosting/                       # cross-cutting host concerns: telemetry, JSON context, version
+    Hosting/                       # cross-cutting host concerns: listeners, telemetry, JSON context, version
+    Engine/                        # storage engine interfaces (IStorageEngine, IDatabaseStore, IStorageTransaction)
+      Sqlite/                      # the SQLite implementation; one folder per engine implementation
     Features/
       <Feature>/                   # one folder per vertical slice
   Tests/
@@ -84,15 +85,17 @@ TerraScale.TerraBase.slnx
 - A feature folder owns its endpoints, request/response records, services, options, storage access, metrics and `IServiceCollection` registration extension. Namespaces follow folders (`TerraScale.TerraBase.Features.<Feature>`).
 - Features talk to each other through small, explicit public types. Do not reach into another feature’s internals; prefer `internal` for anything not used across slices.
 - Truly shared primitives (validated IDs, typed errors, memory admission, versioned binary formats) go in a dedicated shared folder only once at least two features need them.
+- **Program over interfaces.** Every service, store, engine and adapter is consumed through an interface (`IStorageEngine`, `IDocumentService`, `IApiKeyStore`, …) registered in DI; implementations are `internal`. Swapping an implementation (for example SQLite for Turso) means adding a new implementation of the same interface, never changing its callers.
+- `Program.cs` is the only composition root and uses top-level statements with `WebApplication.CreateSlimBuilder`. Do not reintroduce an `App` class or `Startup`.
 - Keep one server project by default. Extract a separate project only for a real boundary (native interop, generated gRPC contracts, a library consumed elsewhere), and ask a human first.
 
-Expected slices, mapped from the Rust crates (create each only when its first real behavior lands — no empty placeholders):
+Expected slices, mapped from the Rust crates. Each slice starts with its public interface (and records) so the project structure is visible early; an interface without an implementation is marked "Not implemented yet" in its XML docs and is not registered in DI until its first real behavior lands:
 
 | Slice | Responsibility | Rust reference |
 | --- | --- | --- |
 | `Health` | Liveness/readiness probes | `tb-server` |
 | `Memory` | Process/tenant/worker memory budgets and admission | `tb-core` |
-| `Storage` | Local engine adapter, transactions, shard open, cold open | `tb-storage`, `tb-engine-io` |
+| `Engine/` (not under `Features/`) | Storage engine interfaces and implementations (SQLite), transactions, database open | `tb-storage`, `tb-engine-io` |
 | `ObjectTier` | S3-compatible immutable objects, manifests, verified range reads | `tb-object` |
 | `Documents` | Document catalog, HTTPS/JSON document API, queries, subscriptions | `tb-document`, `tb-server` |
 | `Sql` | PostgreSQL-wire endpoint for the supported SQL subset | `tb-server` (`sql_*`) |
@@ -105,7 +108,9 @@ Expected slices, mapped from the Rust crates (create each only when its first re
 
 ### Storage engine
 
-- The storage substrate for the C# implementation is an **open decision**. The Rust implementation uses a pinned Turso engine. Do not select, embed or bind a storage engine without explicit human approval.
+- The storage engine is **SQLite** (`Microsoft.Data.Sqlite`), decided by a human on 2026-10-04 (`docs/decisions/0002-sqlite-storage-engine.md`): TerraBase is a database-as-a-service that stores JSON documents in SQLite, one file per database.
+- All storage access goes through the `Engine/` interfaces. Code outside `Engine/<Implementation>/` never references SQLite types. Adding another engine (for example Turso) requires explicit human approval and is a new `Engine/<Name>/` implementation of the same interfaces.
+- Every on-disk schema is versioned (`PRAGMA user_version`); refuse to open a newer version.
 - Do not build a TerraBase-owned B-tree/LSM storage engine.
 
 ### Configuration
@@ -117,7 +122,9 @@ Expected slices, mapped from the Rust crates (create each only when its first re
 ### Listeners
 
 - The administrative listener (health, metrics) is **loopback-only** by construction (default port `9464`).
-- Client-facing listeners MUST use TLS and scoped API keys.
+- Client-facing listeners MUST use TLS and scoped API keys. The client listener (`client-port`) serves only endpoints that declare `Metadata(ListenerMetadata.Client)` and `RequireAuthorization(<scope>)`.
+- The peer listener (`peer-port`) serves only gRPC over mutual TLS.
+- Endpoints without listener metadata belong to the administrative listener. Requests that arrive on the wrong listener get 404 (`Hosting/Listeners.cs`).
 
 ### Async, memory and resources
 
@@ -187,7 +194,7 @@ Maintain exactly two integration test suites:
 ### Testing Constraints
 
 - Do NOT create unit tests.
-- All tests MUST validate behavior through integration or end-to-end testing: drive the real application over its real listeners (`src/Tests/TestHarness/TerraBaseTestServer.cs`).
+- All tests MUST validate behavior through integration or end-to-end testing: drive the real application over its real listeners (`src/Tests/TestHarness/TerraBaseTestServer.cs`, which starts the top-level `Program` through `WebApplicationFactory<Program>.UseKestrel()` with its own data directory).
 - Shared test utilities live in `src/Tests/TestHarness` and are linked as source; they MUST NOT become a third suite.
 - New functionality MUST be covered by the appropriate integration test suite.
 - Critical or commonly used functionality SHOULD be covered by the **Fast** suite.

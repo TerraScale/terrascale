@@ -27,6 +27,7 @@
     <PackageReference Include="Grpc.Net.Client" />
     <PackageReference Include="Grpc.Net.ClientFactory" />
     <PackageReference Include="Grpc.Tools" PrivateAssets="all" />
+    <PackageReference Include="Microsoft.Data.Sqlite" />
     <PackageReference Include="NativeCompressions" />
     <PackageReference Include="Ulid" />
     <PackageReference Include="ZString" />

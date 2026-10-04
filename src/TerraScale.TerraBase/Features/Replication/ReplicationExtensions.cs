@@ -1,9 +1,9 @@
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
-using Grpc.AspNetCore.Server;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.AspNetCore.Server.Kestrel.Https;
 using TerraScale.TerraBase.Configuration;
+using TerraScale.TerraBase.Hosting;
 
 namespace TerraScale.TerraBase.Features.Replication;
 
@@ -36,6 +36,7 @@ public static class ReplicationExtensions
                 https.ClientCertificateMode = ClientCertificateMode.RequireCertificate;
                 https.ClientCertificateValidation = (certificate, _, _) => ChainsTo(certificate, clientCa);
             });
+            listen.UseTerraBaseListener(TerraBaseListener.Peer);
         }));
 
         builder.Services.AddGrpc(grpc =>
@@ -48,32 +49,15 @@ public static class ReplicationExtensions
         return builder;
     }
 
-    /// <summary>
-    /// Maps the <c>Replication</c> service and keeps the listeners apart: gRPC is served only on
-    /// the TLS peer listener and nothing else is. Call before mapping other endpoints.
-    /// </summary>
+    /// <summary>Maps the <c>Replication</c> service onto the peer listener.</summary>
     public static WebApplication MapTerraBaseReplication(this WebApplication app)
     {
         ArgumentNullException.ThrowIfNull(app);
-        var options = app.Services.GetRequiredService<TerraBaseOptions>();
-        if (options.PeerPort is null)
+        if (app.Services.GetRequiredService<TerraBaseOptions>().PeerPort is not null)
         {
-            return app;
+            app.MapGrpcService<ReplicationService>().WithMetadata(ListenerMetadata.Peer);
         }
 
-        // The admin listener is cleartext loopback by construction; the peer listener is always TLS.
-        app.Use((context, next) =>
-        {
-            var isGrpc = context.GetEndpoint()?.Metadata.GetMetadata<GrpcMethodMetadata>() is not null;
-            if (context.Request.IsHttps != isGrpc)
-            {
-                context.Response.StatusCode = StatusCodes.Status404NotFound;
-                return Task.CompletedTask;
-            }
-
-            return next(context);
-        });
-        app.MapGrpcService<ReplicationService>();
         return app;
     }
 

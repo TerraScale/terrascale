@@ -51,6 +51,10 @@
     <PackageVersion Include="OpenTelemetry.Instrumentation.Runtime" Version="1.15.1" />
     <PackageVersion Include="Sentry.Extensions.Logging" Version="6.4.0" />
   </ItemGroup>
+  <!-- Storage engine (Engine/Sqlite): tracks the .NET 11 train like Microsoft.Extensions. -->
+  <ItemGroup Label="Storage engine">
+    <PackageVersion Include="Microsoft.Data.Sqlite" Version="11.0.0-rc.1.26425.128" />
+  </ItemGroup>
   <!-- Inter-node gRPC (Features/Replication): one release train for every Grpc.* package. -->
   <ItemGroup Label="gRPC">
     <PackageVersion Include="Google.Protobuf" Version="3.36.2" />
@@ -68,6 +72,7 @@
   </ItemGroup>
   <ItemGroup Label="Integration tests">
     <PackageVersion Include="TUnit" Version="1.19.57" />
+    <PackageVersion Include="Microsoft.AspNetCore.Mvc.Testing" Version="11.0.0-rc.1.26425.128" />
     <PackageVersion Include="Bogus" Version="35.6.5" />
   </ItemGroup>
 </Project>
