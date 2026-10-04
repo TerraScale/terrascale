@@ -1,0 +1,37 @@
+<Project>
+  <PropertyGroup>
+    <TargetFramework>net11.0</TargetFramework>
+    <LangVersion>preview</LangVersion>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <EnableNETAnalyzers>true</EnableNETAnalyzers>
+    <AnalysisLevel>latest-recommended</AnalysisLevel>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+    <!-- Required for IDE0005 (unused usings) in the build; public APIs carry XML docs. -->
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <Deterministic>true</Deterministic>
+    <Authors>TerraScale</Authors>
+    <!-- The release is a self-contained single-file linux-x64 executable. Declaring the
+         runtime and the single-file analyzer here makes build and publish restore the
+         same graph, so one set of lock files serves both in locked mode, and single-file
+         incompatibilities surface at build time. -->
+    <RuntimeIdentifiers>linux-x64</RuntimeIdentifiers>
+    <EnableSingleFileAnalyzer>true</EnableSingleFileAnalyzer>
+    <!-- Reproducible restores: lock files are committed and CI restores in locked mode. -->
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+    <RestoreLockedMode Condition="'$(CI)' == 'true'">true</RestoreLockedMode>
+    <ContinuousIntegrationBuild Condition="'$(CI)' == 'true'">true</ContinuousIntegrationBuild>
+    <!-- Sibling TerraScale libraries (wired in Directory.Build.targets); CI checks them out at pinned revisions. -->
+    <!-- Override with -p:TerraScaleRoot=... or the TerraScaleRoot environment variable. -->
+    <TerraScaleRoot Condition="'$(TerraScaleRoot)' == '' and Exists('$(MSBuildThisFileDirectory)../ts-libs')">$(MSBuildThisFileDirectory)..</TerraScaleRoot>
+    <TerraScaleRoot Condition="'$(TerraScaleRoot)' == '' and Exists('$(HOME)/Projects/TerraScale/ts-libs')">$(HOME)/Projects/TerraScale</TerraScaleRoot>
+    <TsLibsRoot Condition="'$(TsLibsRoot)' == ''">$(TerraScaleRoot)/ts-libs</TsLibsRoot>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Banned APIs for Microsoft.CodeAnalysis.BannedApiAnalyzers (RS0030 is an error). -->
+    <AdditionalFiles Include="$(MSBuildThisFileDirectory)BannedSymbols.txt" Link="BannedSymbols.txt" />
+  </ItemGroup>
+</Project>

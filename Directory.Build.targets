@@ -1,0 +1,44 @@
+<Project>
+  <!-- Imported after every project file, so these rules can key on properties the
+       projects set (UseTerraScaleEndpoints, IsTestProject). -->
+
+  <!-- TerraScale.Endpoints from ../ts-libs: opt in with <UseTerraScaleEndpoints>true</UseTerraScaleEndpoints>. -->
+  <ItemGroup Condition="'$(UseTerraScaleEndpoints)' == 'true'">
+    <ProjectReference Include="$(TsLibsRoot)/src/TerraScale.Endpoints/TerraScale.Endpoints.csproj" />
+    <!-- Compile-time endpoint registration; the NuGet package ships this analyzer. -->
+    <ProjectReference Include="$(TsLibsRoot)/src/TerraScale.Endpoints.Generators/TerraScale.Endpoints.Generators.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+  <Target Name="EnsureTsLibs" BeforeTargets="CollectPackageReferences;BeforeBuild" Condition="'$(UseTerraScaleEndpoints)' == 'true' and !Exists('$(TsLibsRoot)/src/TerraScale.Endpoints/TerraScale.Endpoints.csproj')">
+    <Error Text="ts-libs not found at '$(TsLibsRoot)'. Clone it next to terrabase or pass -p:TerraScaleRoot=&lt;dir containing ts-libs&gt;." />
+  </Target>
+
+  <!-- Newtonsoft.Json is not allowed: System.Text.Json (source-generated) only.
+       BannedSymbols.txt blocks its APIs in code; this blocks every Newtonsoft
+       package, direct or transitive, from entering the build. -->
+  <Target Name="BanNewtonsoftJsonPackages" AfterTargets="ResolvePackageAssets" Condition="'@(PackageDependencies)' != '' or '@(PackageReference)' != ''">
+    <ItemGroup>
+      <_NewtonsoftPackage Include="@(PackageReference)" Condition="$([System.String]::Copy('%(Identity)').Contains('Newtonsoft', System.StringComparison.OrdinalIgnoreCase))" />
+      <_NewtonsoftPackage Include="@(RuntimeCopyLocalItems->'%(NuGetPackageId)')" Condition="$([System.String]::Copy('%(RuntimeCopyLocalItems.NuGetPackageId)').Contains('Newtonsoft', System.StringComparison.OrdinalIgnoreCase))" />
+      <_NewtonsoftPackage Include="@(ResolvedCompileFileDefinitions->'%(NuGetPackageId)')" Condition="$([System.String]::Copy('%(ResolvedCompileFileDefinitions.NuGetPackageId)').Contains('Newtonsoft', System.StringComparison.OrdinalIgnoreCase))" />
+    </ItemGroup>
+    <Error Condition="'@(_NewtonsoftPackage)' != ''" Text="Newtonsoft packages are banned in TerraBase ('@(_NewtonsoftPackage->Distinct())'). Use System.Text.Json; remove the package or the dependency that brings it in." />
+  </Target>
+
+  <!-- Integration suites (Fast and Slow): TUnit executables driving the real server. -->
+  <PropertyGroup Condition="'$(IsTestProject)' == 'true'">
+    <IsPackable>false</IsPackable>
+    <!-- CA1515: TUnit discovers public test classes. CA1707: test names use
+         underscores as sentence separators. CA2007: tests have no synchronization
+         context to capture. CS1591: tests are not a public API. -->
+    <NoWarn>$(NoWarn);CA1515;CA1707;CA2007;CS1591</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(IsTestProject)' == 'true'">
+    <ProjectReference Include="$(MSBuildThisFileDirectory)src/TerraScale.TerraBase/TerraScale.TerraBase.csproj" />
+    <PackageReference Include="TUnit" />
+    <PackageReference Include="Bogus" />
+    <!-- Shared harness source; deliberately not a third test project. -->
+    <Compile Include="$(MSBuildThisFileDirectory)src/Tests/TestHarness/**/*.cs" Link="TestHarness/%(RecursiveDir)%(Filename)%(Extension)" />
+  </ItemGroup>
+</Project>

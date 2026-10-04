@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <RootNamespace>TerraScale.TerraBase</RootNamespace>
+    <AssemblyName>terrabase</AssemblyName>
+    <Version>0.1.0</Version>
+    <!-- Release artifact: one self-contained, single-file executable running on the
+         JIT (no native AOT, no trimming). Native libraries are bundled into the file.
+         Self-contained is set only for publish (make publish): the test suites
+         reference this project and cannot reference a self-contained executable. -->
+    <PublishSingleFile>true</PublishSingleFile>
+    <PublishDocumentationFile>false</PublishDocumentationFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <UserSecretsId />
+    <!-- HTTP endpoints, OpenAPI and Scalar from ../ts-libs (Directory.Build.targets). -->
+    <UseTerraScaleEndpoints>true</UseTerraScaleEndpoints>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" />
+    <PackageReference Include="Scalar.AspNetCore" />
+    <PackageReference Include="OpenTelemetry.Extensions.Hosting" />
+    <PackageReference Include="OpenTelemetry.Exporter.Prometheus.AspNetCore" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.Runtime" />
+  </ItemGroup>
+</Project>
