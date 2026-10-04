@@ -43,7 +43,7 @@ internal static class SqliteStatements
 
     public const string Incarnation = "SELECT incarnation FROM commit_offset WHERE id = 1;";
 
-    public const string RenewIncarnation = "UPDATE commit_offset SET incarnation = lower(hex(randomblob(16))) WHERE id = 1;";
+    public const string RenewIncarnation = "UPDATE commit_offset SET incarnation = $incarnation WHERE id = 1;";
 
     public const string CreateCollection = "INSERT INTO collections (name, created_at) VALUES ($collection, $created) ON CONFLICT (name) DO NOTHING;";
 

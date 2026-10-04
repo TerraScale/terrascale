@@ -43,7 +43,7 @@ internal sealed class SqliteDatabaseStore(DatabaseName name, string path, Sqlite
         // Version 4: offsets can restart after database recreation; versions also need a persisted incarnation.
         """
         ALTER TABLE commit_offset ADD COLUMN incarnation TEXT NOT NULL DEFAULT '';
-        """ + SqliteStatements.RenewIncarnation,
+        """,
     ];
 
     private readonly string _connectionString = new SqliteConnectionStringBuilder
@@ -59,7 +59,7 @@ internal sealed class SqliteDatabaseStore(DatabaseName name, string path, Sqlite
 
     public DatabaseName Name => name;
 
-    internal Guid Incarnation { get; private set; }
+    public Guid Incarnation { get; private set; }
 
     /// <summary>Set once the database is deleted or the engine shuts down; guarded by <see cref="SqliteSessionPool"/>.</summary>
     internal bool Closed { get; set; }
@@ -150,8 +150,7 @@ internal sealed class SqliteDatabaseStore(DatabaseName name, string path, Sqlite
             await ScalarAsync(connection, null, "PRAGMA journal_mode = WAL;" + SqliteSession.Pragmas, cancellationToken).ConfigureAwait(false);
             await MigrateAsync(name, connection, cancellationToken).ConfigureAwait(false);
             // Initialize publishes a new database, including a VACUUM copy: give it its own identity.
-            await ScalarAsync(connection, null,
-                SqliteStatements.RenewIncarnation, cancellationToken).ConfigureAwait(false);
+            await RenewIncarnationAsync(connection, null, cancellationToken).ConfigureAwait(false);
         }
     }
 
@@ -192,6 +191,10 @@ internal sealed class SqliteDatabaseStore(DatabaseName name, string path, Sqlite
             {
                 await ScalarAsync(
                     connection, transaction, Migrations[version] + $"PRAGMA user_version = {version + 1};", cancellationToken).ConfigureAwait(false);
+                if (version == 3)
+                {
+                    await RenewIncarnationAsync(connection, transaction, cancellationToken).ConfigureAwait(false);
+                }
             }
 
             await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
@@ -212,6 +215,19 @@ internal sealed class SqliteDatabaseStore(DatabaseName name, string path, Sqlite
         return version > SchemaVersion
             ? throw new InvalidOperationException($"database '{name}' has schema version {version}; this build supports up to {SchemaVersion}")
             : version;
+    }
+
+    private static async Task RenewIncarnationAsync(
+        SqliteConnection connection, SqliteTransaction? transaction, CancellationToken cancellationToken)
+    {
+        var command = connection.CreateCommand();
+        await using (command.ConfigureAwait(false))
+        {
+            command.Transaction = transaction;
+            command.CommandText = SqliteStatements.RenewIncarnation;
+            command.Parameters.AddWithValue("$incarnation", Guid.NewGuid().ToString("N"));
+            await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        }
     }
 
     private static async Task<object?> ScalarAsync(

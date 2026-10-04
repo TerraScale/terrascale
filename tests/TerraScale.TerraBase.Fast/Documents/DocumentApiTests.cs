@@ -24,8 +24,13 @@ public sealed class DocumentApiTests
         // Database deletion has no Documents endpoint; arrange it through the real server's engine.
         var engine = api.Server.Services.GetRequiredService<IStorageEngine>();
         await Assert.That(DatabaseName.TryParse("db", out var database)).IsTrue();
+        var store = (await engine.OpenDatabaseAsync(database, CancellationToken.None))!;
+        await Assert.That(store.Incarnation.Version).IsEqualTo(4);
         await Assert.That(await engine.DeleteDatabaseAsync(database, CancellationToken.None)).IsTrue();
         (await api.SendAsync(HttpMethod.Put, "/v1/databases/db")).Status.ShouldBe(HttpStatusCode.Created);
+        var recreatedStore = (await engine.OpenDatabaseAsync(database, CancellationToken.None))!;
+        await Assert.That(recreatedStore.Incarnation.Version).IsEqualTo(4);
+        await Assert.That(recreatedStore.Incarnation).IsNotEqualTo(store.Incarnation);
         (await api.SendAsync(HttpMethod.Post, "/v1/databases/db/collections", new { name = "items" })).Status.ShouldBe(HttpStatusCode.Created);
         var recreated = await api.PutAsync(id, new { n = 2 });
         recreated.Status.ShouldBe(HttpStatusCode.Created);

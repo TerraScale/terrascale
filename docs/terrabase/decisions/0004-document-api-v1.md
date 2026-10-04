@@ -16,8 +16,10 @@ with `{"error":{"code",…}}` bodies.
   start after its largest version. Migration 2 → 3 adds a partial `(collection, id)` index for
   live documents, so listings do not walk retained tombstones. Existing schema-1 non-UUID ids
   remain readable and writable (including recreation by tombstone version); new ids must be UUIDs.
-  Migration 3 → 4 adds a random 128-bit database incarnation to the one-row `commit_offset`.
+  Migration 3 → 4 adds a random UUIDv4 database incarnation to the one-row `commit_offset`.
   It persists across reopen; each newly created or copied database gets a fresh incarnation.
+  `IDatabaseStore.Incarnation` exposes this single persisted value to versions and database-scoped
+  handle consumers; transactions forward the same store identity.
 - **Versions** are `tbv1-` and the first 16 bytes of SHA-256 over database incarnation, collection, id and the commit
   offset of the document's last write. A single writer per database never has siblings, so
   every document is `state:"value"`. The version hashes local metadata rather than the contract’s

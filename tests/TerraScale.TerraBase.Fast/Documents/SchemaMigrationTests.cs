@@ -37,6 +37,10 @@ public sealed class SchemaMigrationTests
         var route = $"/v1/databases/v3/collections/items/documents/{id}";
         var migrated = await api.SendAsync(HttpMethod.Get, route);
         migrated.Status.ShouldBe(HttpStatusCode.OK);
+        var engine = api.Server.Services.GetRequiredService<IStorageEngine>();
+        await Assert.That(DatabaseName.TryParse("v3", out var source)).IsTrue();
+        var store = (await engine.OpenDatabaseAsync(source, CancellationToken.None))!;
+        await Assert.That(store.Incarnation.Version).IsEqualTo(4);
         await using (var check = new SqliteConnection($"Data Source={path};Pooling=False;Mode=ReadOnly"))
         {
             await check.OpenAsync();
@@ -44,7 +48,8 @@ public sealed class SchemaMigrationTests
             command.CommandText = "PRAGMA user_version;";
             await Assert.That(await command.ExecuteScalarAsync()).IsEqualTo(4L);
             command.CommandText = "SELECT incarnation FROM commit_offset WHERE id = 1;";
-            await Assert.That(Guid.TryParseExact((string?)await command.ExecuteScalarAsync(), "N", out _)).IsTrue();
+            await Assert.That(Guid.TryParseExact((string?)await command.ExecuteScalarAsync(), "N", out var persisted)).IsTrue();
+            await Assert.That(store.Incarnation).IsEqualTo(persisted);
         }
 
         // A second application instance opens the same persisted files with a new engine/store cache.
@@ -59,9 +64,10 @@ public sealed class SchemaMigrationTests
         await Assert.That(afterReopen.Version).IsEqualTo(migrated.Version);
         var unchanged = await DocumentApi.SendAsync(client, HttpMethod.Get, route, configure: DocumentApi.IfNoneMatch(migrated.Version));
         await Assert.That(unchanged.Status).IsEqualTo(HttpStatusCode.NotModified);
+        var reopenedEngine = reopened.Services.GetRequiredService<IStorageEngine>();
+        var reopenedStore = (await reopenedEngine.OpenDatabaseAsync(source, CancellationToken.None))!;
+        await Assert.That(reopenedStore.Incarnation).IsEqualTo(store.Incarnation);
 
-        var engine = api.Server.Services.GetRequiredService<IStorageEngine>();
-        await Assert.That(DatabaseName.TryParse("v3", out var source)).IsTrue();
         await Assert.That(DatabaseName.TryParse("copied", out var target)).IsTrue();
         await Assert.That(await engine.CopyDatabaseAsync(source, target, CancellationToken.None)).IsTrue();
         var copyRoute = $"/v1/databases/copied/collections/items/documents/{id}";
@@ -71,6 +77,11 @@ public sealed class SchemaMigrationTests
         await Assert.That(copied.Json.GetProperty("document").GetRawText()).IsEqualTo(migrated.Json.GetProperty("document").GetRawText());
         var copiedReopened = await DocumentApi.SendAsync(client, HttpMethod.Get, copyRoute);
         await Assert.That(copiedReopened.Version).IsEqualTo(copied.Version);
+        var copiedStore = (await engine.OpenDatabaseAsync(target, CancellationToken.None))!;
+        await Assert.That(copiedStore.Incarnation.Version).IsEqualTo(4);
+        await Assert.That(copiedStore.Incarnation).IsNotEqualTo(store.Incarnation);
+        var copiedReopenedStore = (await reopenedEngine.OpenDatabaseAsync(target, CancellationToken.None))!;
+        await Assert.That(copiedReopenedStore.Incarnation).IsEqualTo(copiedStore.Incarnation);
     }
 
     [Test]

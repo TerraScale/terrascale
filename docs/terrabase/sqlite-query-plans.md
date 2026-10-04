@@ -17,7 +17,7 @@ The plan test runs every statement against both a client database and the `_syst
 Schema v4: `documents (collection, id, version, body)`, `PRIMARY KEY (collection, id)`,
 `WITHOUT ROWID`, where a NULL `body` is a tombstone and `version` is the commit offset of the last
 write; `collections (name PRIMARY KEY, created_at)`, `WITHOUT ROWID`; and the one-row
-`commit_offset (id, value, incarnation)`; the random 128-bit incarnation is persisted and renewed
+`commit_offset (id, value, incarnation)`; the random UUIDv4 incarnation is persisted and renewed
 for newly created/copied databases. The primary keys are clustered B-trees, so every primary-key lookup is covering.
 The partial `documents_live (collection, id) WHERE body IS NOT NULL` index excludes tombstones
 from live listing and query scans. Point reads and tombstone metadata still use the primary key.
