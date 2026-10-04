@@ -9,8 +9,11 @@ public static class ApiKeyScopes
     /// <summary>Create databases and write or delete documents.</summary>
     public const string DocumentsWrite = "documents:write";
 
+    /// <summary>Manage organizations, projects and their databases (the dashboard's scope). Grants no document access.</summary>
+    public const string Management = "management";
+
     /// <summary>Every known scope.</summary>
-    public static IReadOnlyList<string> All { get; } = [DocumentsRead, DocumentsWrite];
+    public static IReadOnlyList<string> All { get; } = [DocumentsRead, DocumentsWrite, Management];
 }
 
 /// <summary>A stored API key, without its secret.</summary>

@@ -3,6 +3,7 @@ using System.Text.Json.Serialization;
 using TerraScale.TerraBase.Features.ApiKeys;
 using TerraScale.TerraBase.Features.Documents;
 using TerraScale.TerraBase.Features.Health;
+using TerraScale.TerraBase.Features.Management;
 
 namespace TerraScale.TerraBase.Hosting;
 
@@ -17,5 +18,13 @@ namespace TerraScale.TerraBase.Hosting;
 [JsonSerializable(typeof(DocumentPageBody))]
 [JsonSerializable(typeof(DocumentVersionBody))]
 [JsonSerializable(typeof(JsonElement))]
+[JsonSerializable(typeof(ManagedDatabase))]
+[JsonSerializable(typeof(ManagementPage<ManagedDatabase>))]
+[JsonSerializable(typeof(ManagementPage<Organization>))]
+[JsonSerializable(typeof(ManagementPage<Project>))]
+[JsonSerializable(typeof(NameRequest))]
+[JsonSerializable(typeof(Organization))]
+[JsonSerializable(typeof(Project))]
+[JsonSerializable(typeof(SwitchOrganizationRequest))]
 [JsonSerializable(typeof(string))]
 internal sealed partial class TerraBaseJsonContext : JsonSerializerContext;
