@@ -8,9 +8,9 @@ const here = path.dirname(fileURLToPath(import.meta.url))
 const root = path.resolve(here, '..')
 
 const regions = [
-  { id: 'san-francisco', city: 'San Francisco', lat: 37.77, lng: -122.42 },
+  { id: 'san-jose', city: 'San Jose', lat: 37.34, lng: -121.89 },
   { id: 'sao-paulo', city: 'São Paulo', lat: -23.55, lng: -46.63 },
-  { id: 'falkenstein', city: 'Falkenstein', lat: 50.48, lng: 12.37 },
+  { id: 'frankfurt', city: 'Frankfurt', lat: 50.11, lng: 8.68 },
 ]
 
 const SENTINEL = '#FF00AA'
