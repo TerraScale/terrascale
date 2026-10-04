@@ -1711,3 +1711,88 @@ public sealed class SetsEndpoint : Endpoint<SetsQuery, string>
     public override ValueTask<string> HandleAsync(SetsQuery request, CancellationToken cancellationToken) =>
         ValueTask.FromResult($"{string.Join(',', request.Ids.Order())}|{string.Join(',', request.Labels.Order())}");
 }
+
+/// <summary>Regressions for the fourteenth ts-reviewer pass on PR #8.</summary>
+public sealed class FourteenthPassBindingTests
+{
+    // Mirrors what System.Text.Json actually populates for a getter-only member under Populate
+    // (probed directly): these collections are inputs, the others are not.
+    [Test]
+    public async Task GetterOnlyCollectionInputsMatchWhatTheSerializerPopulates()
+    {
+        await using var app = await StartAsync(
+            builder => builder.Services.ConfigureHttpJsonOptions(options =>
+                options.SerializerOptions.PreferredObjectCreationHandling = JsonObjectCreationHandling.Populate),
+            EndpointRegistration.Create<CollectionsEndpoint>());
+        using var client = Client(app);
+        using var document = JsonDocument.Parse(await client.GetStringAsync("/openapi/v1.json"));
+        var names = document.RootElement.GetProperty("paths").GetProperty("/fourteenth/collections").GetProperty("get").GetProperty("parameters")
+            .EnumerateArray().Select(parameter => parameter.GetProperty("name").GetString()!).ToArray();
+        await Assert.That(names).IsEquivalentTo([
+            "list", "hashSet", "queue", "stack", "linkedList", "sortedSet", "collection", "observable",
+            "concurrentQueue", "concurrentStack", "iCollection", "iList", "iSet"]);
+        await Assert.That(await client.GetStringAsync("/fourteenth/collections?queue=1&queue=2&stack=3&stack=4&concurrentQueue=5"))
+            .IsEqualTo("1,2|4,3|5");
+    }
+
+    private static async Task<WebApplication> StartAsync(Action<WebApplicationBuilder> configure, params EndpointRegistration[] endpoints)
+    {
+        var builder = WebApplication.CreateBuilder();
+        builder.WebHost.UseUrls("http://127.0.0.1:0");
+        builder.Services.AddTerraScaleEndpoints(endpoints);
+        configure(builder);
+        var app = builder.Build();
+        app.MapTerraScaleEndpoints();
+        app.MapTerraScaleOpenApi();
+        await app.StartAsync();
+        return app;
+    }
+
+    private static HttpClient Client(WebApplication app) => new() { BaseAddress = new Uri(app.Urls.Single()) };
+}
+
+public sealed class CollectionsQuery
+{
+    public List<int> List { get; } = [];
+
+    public HashSet<int> HashSet { get; } = [];
+
+    public Queue<int> Queue { get; } = new();
+
+    public Stack<int> Stack { get; } = new();
+
+    public LinkedList<int> LinkedList { get; } = new();
+
+    public SortedSet<int> SortedSet { get; } = [];
+
+    public System.Collections.ObjectModel.Collection<int> Collection { get; } = [];
+
+    public System.Collections.ObjectModel.ObservableCollection<int> Observable { get; } = [];
+
+    public System.Collections.Concurrent.ConcurrentQueue<int> ConcurrentQueue { get; } = new();
+
+    public System.Collections.Concurrent.ConcurrentStack<int> ConcurrentStack { get; } = new();
+
+    public ICollection<int> ICollection { get; } = new List<int>();
+
+    public IList<int> IList { get; } = new List<int>();
+
+    public ISet<int> ISet { get; } = new HashSet<int>();
+
+    // Not populated by System.Text.Json, so not inputs.
+    public System.Collections.Concurrent.ConcurrentBag<int> Bag { get; } = [];
+
+    public IReadOnlyList<int> ReadOnlyList { get; } = new List<int>();
+
+    public IEnumerable<int> Enumerable { get; } = new List<int>();
+
+    public System.Collections.Immutable.ImmutableList<int> Immutable { get; } = [];
+}
+
+public sealed class CollectionsEndpoint : Endpoint<CollectionsQuery, string>
+{
+    public override void Configure() => Get("/fourteenth/collections");
+
+    public override ValueTask<string> HandleAsync(CollectionsQuery request, CancellationToken cancellationToken) =>
+        ValueTask.FromResult($"{string.Join(',', request.Queue)}|{string.Join(',', request.Stack)}|{string.Join(',', request.ConcurrentQueue)}");
+}

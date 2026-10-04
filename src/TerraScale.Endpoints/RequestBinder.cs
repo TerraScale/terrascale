@@ -391,8 +391,9 @@ internal sealed class RequestBinder<TRequest>
 
     // Populate fills an existing instance only when its converter can add to it: objects, and mutable
     // collections (ICollection<T>, ISet<T>, IList<T>, IDictionary<TKey, TValue> and their concrete
-    // types such as List<T> and HashSet<T>). IReadOnlyList<T>/IEnumerable<T>, arrays and read-only or
-    // immutable collections are silently replaced or ignored instead, so they are not inputs.
+    // types such as List<T> and HashSet<T>, plus queues and stacks). IReadOnlyList<T>/IEnumerable<T>,
+    // ConcurrentBag<T>, arrays and read-only or immutable collections are silently replaced or ignored
+    // instead, so they are not inputs.
     [UnconditionalSuppressMessage("Trimming", "IL2075", Justification = "A trimmed interface list only hides a mutable collection interface, which makes the check conservative.")]
     private static bool IsPopulatable(JsonPropertyInfo property)
     {
@@ -418,11 +419,18 @@ internal sealed class RequestBinder<TRequest>
 
         return IsMutableCollection(type) || (!type.IsInterface && type.GetInterfaces().Any(IsMutableCollection));
 
+        // Queues and stacks implement none of the mutable interfaces but System.Text.Json populates
+        // them through Enqueue/Push; ConcurrentBag<T> it does not. Checked against the serializer.
         static bool IsMutableCollection(Type candidate) =>
             candidate == typeof(System.Collections.IList)
             || candidate == typeof(System.Collections.IDictionary)
+            || candidate == typeof(System.Collections.Queue)
+            || candidate == typeof(System.Collections.Stack)
             || (candidate.IsGenericType && candidate.GetGenericTypeDefinition() is var generic
-                && (generic == typeof(ICollection<>) || generic == typeof(IList<>) || generic == typeof(ISet<>) || generic == typeof(IDictionary<,>)));
+                && (generic == typeof(ICollection<>) || generic == typeof(IList<>) || generic == typeof(ISet<>) || generic == typeof(IDictionary<,>)
+                    || generic == typeof(Queue<>) || generic == typeof(Stack<>)
+                    || generic == typeof(System.Collections.Concurrent.ConcurrentQueue<>)
+                    || generic == typeof(System.Collections.Concurrent.ConcurrentStack<>)));
     }
 
     private bool TryFind(string key, [NotNullWhen(true)] out JsonPropertyInfo? property) =>
