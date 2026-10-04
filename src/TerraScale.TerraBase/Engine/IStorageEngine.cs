@@ -18,6 +18,15 @@ public interface IStorageEngine : IAsyncDisposable
     /// <summary>Opens an existing database, or <see langword="null"/> when it does not exist.</summary>
     ValueTask<IDatabaseStore?> OpenDatabaseAsync(DatabaseName name, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Creates <paramref name="target"/> as a consistent snapshot copy of <paramref name="source"/>. Returns
+    /// <see langword="false"/> when <paramref name="source"/> does not exist; throws when <paramref name="target"/> already exists.
+    /// </summary>
+    ValueTask<bool> CopyDatabaseAsync(DatabaseName source, DatabaseName target, CancellationToken cancellationToken);
+
+    /// <summary>Deletes a database and its files; <see langword="false"/> when it did not exist.</summary>
+    ValueTask<bool> DeleteDatabaseAsync(DatabaseName name, CancellationToken cancellationToken);
+
     /// <summary>Lists client databases (never <see cref="DatabaseName.System"/>) in name order.</summary>
     IAsyncEnumerable<DatabaseName> ListDatabasesAsync(CancellationToken cancellationToken);
 }

@@ -10,7 +10,8 @@ internal sealed class SqliteDatabaseStore(DatabaseName name, string path) : IDat
     private readonly string _connectionString = new SqliteConnectionStringBuilder
     {
         DataSource = path,
-        Mode = SqliteOpenMode.ReadWriteCreate,
+        // Never recreate a deleted database: only InitializeAsync creates files.
+        Mode = SqliteOpenMode.ReadWrite,
         Pooling = true,
         // Seconds a statement waits on a locked database before failing.
         DefaultTimeout = 30,
@@ -33,8 +34,34 @@ internal sealed class SqliteDatabaseStore(DatabaseName name, string path) : IDat
         }
     }
 
+    /// <summary>Writes a consistent snapshot of this database to a new file at <paramref name="path"/>.</summary>
+    internal async Task CopyToAsync(string path, CancellationToken cancellationToken)
+    {
+        var connection = await OpenAsync(cancellationToken).ConfigureAwait(false);
+        await using (connection.ConfigureAwait(false))
+        {
+            var command = connection.CreateCommand();
+            await using (command.ConfigureAwait(false))
+            {
+                command.CommandText = "VACUUM INTO $path;";
+                command.Parameters.AddWithValue("$path", path);
+                await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+            }
+        }
+
+        // InitializeAsync switches the copy to WAL and refuses an unsupported schema version.
+        await InitializeAsync(name, path, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>Closes idle pooled connections to this file and discards busy ones when they are returned.</summary>
+    internal void ClearPool()
+    {
+        using var connection = new SqliteConnection(_connectionString);
+        SqliteConnection.ClearPool(connection);
+    }
+
     /// <summary>
-    /// Creates and migrates a new database file at <paramref name="path"/> on an unpooled
+    /// Creates (or adopts a copied) and migrates a new database file at <paramref name="path"/> on an unpooled
     /// connection, so no handle stays open once this returns and the file can be moved.
     /// </summary>
     internal static async Task InitializeAsync(DatabaseName name, string path, CancellationToken cancellationToken)
@@ -49,6 +76,8 @@ internal sealed class SqliteDatabaseStore(DatabaseName name, string path) : IDat
         await using (connection.ConfigureAwait(false))
         {
             await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+            // A copy made by VACUUM INTO may already be current, so set WAL here and not only in a migration.
+            await ScalarAsync(connection, null, "PRAGMA journal_mode = WAL;", cancellationToken).ConfigureAwait(false);
             await new SqliteDatabaseStore(name, path).MigrateAsync(connection, cancellationToken).ConfigureAwait(false);
         }
     }

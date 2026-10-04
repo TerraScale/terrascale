@@ -4,6 +4,7 @@ using TerraScale.TerraBase.Configuration;
 using TerraScale.TerraBase.Engine;
 using TerraScale.TerraBase.Features.ApiKeys;
 using TerraScale.TerraBase.Features.Documents;
+using TerraScale.TerraBase.Features.Management;
 using TerraScale.TerraBase.Features.Replication;
 using TerraScale.TerraBase.Hosting;
 
@@ -46,6 +47,7 @@ builder.Services.AddTerraBaseTelemetry();
 builder.Services.AddTerraBaseEngine(options);
 builder.Services.AddTerraBaseApiKeys();
 builder.Services.AddTerraBaseDocuments();
+builder.Services.AddTerraBaseManagement();
 builder.AddTerraBaseReplication(options);
 
 var app = builder.Build();
