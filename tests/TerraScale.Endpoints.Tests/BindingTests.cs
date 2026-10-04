@@ -1545,3 +1545,106 @@ public sealed class EleventhPassBindingTests
 
     private static HttpClient Client(WebApplication app) => new() { BaseAddress = new Uri(app.Urls.Single()) };
 }
+
+/// <summary>Regressions for the twelfth ts-reviewer pass on PR #8.</summary>
+public sealed class TwelfthPassBindingTests
+{
+    [Test]
+    public async Task DeepBodiesWithinTheConfiguredMaxDepthMergeLikeTheyDeserialize()
+    {
+        await using var app = await StartAsync(
+            builder => builder.Services.ConfigureHttpJsonOptions(options => options.SerializerOptions.MaxDepth = 2000),
+            EndpointRegistration.Create<DeepBodyEndpoint>());
+        using var client = Client(app);
+        var body = """{"data":""" + new string('[', 1500) + new string(']', 1500) + "}";
+        using var direct = await client.PostAsync("/twelfth/deep", new StringContent(body, Encoding.UTF8, "application/json"));
+        using var merged = await client.PostAsync("/twelfth/deep?page=2", new StringContent(body, Encoding.UTF8, "application/json"));
+        await Assert.That(await direct.Content.ReadAsStringAsync()).IsEqualTo("0");
+        await Assert.That(await merged.Content.ReadAsStringAsync()).IsEqualTo("2");
+    }
+
+    [Test]
+    public async Task TypedRouteValuesBindIndependentlyOfTheCulture()
+    {
+        var builder = WebApplication.CreateBuilder();
+        builder.WebHost.UseUrls("http://127.0.0.1:0");
+        builder.Services.AddTerraScaleEndpoints([EndpointRegistration.Create<PriceEndpoint>()]);
+        await using var app = builder.Build();
+        app.Use(async (context, next) =>
+        {
+            // Middleware may store typed route values; formatting them must not follow fr-FR's "1,5".
+            System.Globalization.CultureInfo.CurrentCulture = new System.Globalization.CultureInfo("fr-FR");
+            context.Request.RouteValues["price"] = 1.5m;
+            await next(context);
+        });
+        app.MapTerraScaleEndpoints();
+        await app.StartAsync();
+        using var client = Client(app);
+        await Assert.That(await client.GetStringAsync("/twelfth/price")).IsEqualTo("1.5");
+    }
+
+    [Test]
+    public async Task GetterOnlyReadOnlyCollectionsAreNotPopulatedInputs()
+    {
+        await using var app = await StartAsync(
+            builder => builder.Services.ConfigureHttpJsonOptions(options =>
+                options.SerializerOptions.PreferredObjectCreationHandling = JsonObjectCreationHandling.Populate),
+            EndpointRegistration.Create<ReadOnlyIdsEndpoint>());
+        using var client = Client(app);
+        using var document = JsonDocument.Parse(await client.GetStringAsync("/openapi/v1.json"));
+        var names = document.RootElement.GetProperty("paths").GetProperty("/twelfth/read-only").GetProperty("get").GetProperty("parameters")
+            .EnumerateArray().Select(parameter => parameter.GetProperty("name").GetString()!).ToArray();
+        await Assert.That(names).IsEquivalentTo(["page", "tags"]);
+    }
+
+    private static async Task<WebApplication> StartAsync(Action<WebApplicationBuilder> configure, params EndpointRegistration[] endpoints)
+    {
+        var builder = WebApplication.CreateBuilder();
+        builder.WebHost.UseUrls("http://127.0.0.1:0");
+        builder.Services.AddTerraScaleEndpoints(endpoints);
+        configure(builder);
+        var app = builder.Build();
+        app.MapTerraScaleEndpoints();
+        app.MapTerraScaleOpenApi();
+        await app.StartAsync();
+        return app;
+    }
+
+    private static HttpClient Client(WebApplication app) => new() { BaseAddress = new Uri(app.Urls.Single()) };
+}
+
+public sealed record DeepBody(int Page, JsonElement Data);
+
+public sealed class DeepBodyEndpoint : Endpoint<DeepBody, string>
+{
+    public override void Configure() => Post("/twelfth/deep");
+
+    public override ValueTask<string> HandleAsync(DeepBody request, CancellationToken cancellationToken) =>
+        ValueTask.FromResult(request.Page.ToString(System.Globalization.CultureInfo.InvariantCulture));
+}
+
+public sealed record PriceQuery(decimal Price);
+
+public sealed class PriceEndpoint : Endpoint<PriceQuery, string>
+{
+    public override void Configure() => Get("/twelfth/price");
+
+    public override ValueTask<string> HandleAsync(PriceQuery request, CancellationToken cancellationToken) =>
+        ValueTask.FromResult(request.Price.ToString(System.Globalization.CultureInfo.InvariantCulture));
+}
+
+public sealed class ReadOnlyIdsQuery
+{
+    public int Page { get; set; } = 1;
+
+    public List<string> Tags { get; } = [];
+
+    public IReadOnlyList<int> Ids { get; } = new List<int>();
+}
+
+public sealed class ReadOnlyIdsEndpoint : Endpoint<ReadOnlyIdsQuery, string>
+{
+    public override void Configure() => Get("/twelfth/read-only");
+
+    public override ValueTask<string> HandleAsync(ReadOnlyIdsQuery request, CancellationToken cancellationToken) => ValueTask.FromResult("read-only");
+}

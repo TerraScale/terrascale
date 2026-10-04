@@ -51,9 +51,7 @@ internal sealed class RequestBinder<TRequest>
                 || property.AssociatedParameter is not null
                 || (property.Get is not null
                     && (property.ObjectCreationHandling ?? populate) == JsonObjectCreationHandling.Populate
-                    && property.PropertyType is { IsValueType: false, IsArray: false }
-                    && property.Options.TryGetTypeInfo(property.PropertyType, out var member)
-                    && member.Kind != JsonTypeInfoKind.None))];
+                    && IsPopulatable(property)))];
             this.exact = new(StringComparer.Ordinal);
             this.folded = new(StringComparer.OrdinalIgnoreCase);
             this.memberNames = new(this.typeInfo.Properties.Select(static property => property.Name), StringComparer.OrdinalIgnoreCase);
@@ -225,7 +223,9 @@ internal sealed class RequestBinder<TRequest>
         using var document = hasJson ? await ReadDocumentAsync(request, options, cancellationToken).ConfigureAwait(false) : null;
 
         var buffer = new ArrayBufferWriter<byte>();
-        using (var writer = new Utf8JsonWriter(buffer))
+        // The reader honored options.MaxDepth; the writer must allow the same depth or a body the direct
+        // path accepts would fail here (its default is 1000, an app may configure more).
+        using (var writer = new Utf8JsonWriter(buffer, new JsonWriterOptions { MaxDepth = options.MaxDepth }))
         {
             writer.WriteStartObject();
             if (document is not null)
@@ -306,7 +306,8 @@ internal sealed class RequestBinder<TRequest>
         {
             if (this.TryFind(key, out var property))
             {
-                overrides[property] = RequestValues.ToJson(property, value?.ToString(), fromRoute: true);
+                // Route defaults and middleware can store typed values; format them like the strings parsed below.
+                overrides[property] = RequestValues.ToJson(property, Convert.ToString(value, CultureInfo.InvariantCulture), fromRoute: true);
             }
         }
 
@@ -386,6 +387,30 @@ internal sealed class RequestBinder<TRequest>
                 ? new BadHttpRequestException("A JSON request body is required.", StatusCodes.Status400BadRequest)
                 : new BadHttpRequestException("The JSON request body must be an object.", StatusCodes.Status400BadRequest);
         }
+    }
+
+    // Populate fills an existing instance only when its converter can add to it: objects, and mutable
+    // collections. Interfaces such as IReadOnlyList<T>/IEnumerable<T>, arrays and read-only or
+    // immutable collections are silently replaced or ignored instead.
+    // ponytail: mutable collections are recognized through IList/IDictionary, so a getter-only
+    // HashSet<T> is conservatively not an input; widen if populated sets show up.
+    private static bool IsPopulatable(JsonPropertyInfo property)
+    {
+        var type = property.PropertyType;
+        if (type.IsValueType || type.IsArray || type.IsInterface || !property.Options.TryGetTypeInfo(type, out var contract))
+        {
+            return false;
+        }
+
+        return contract.Kind switch
+        {
+            JsonTypeInfoKind.Object => true,
+            JsonTypeInfoKind.Enumerable or JsonTypeInfoKind.Dictionary =>
+                (typeof(System.Collections.IList).IsAssignableFrom(type) || typeof(System.Collections.IDictionary).IsAssignableFrom(type))
+                && !(type.IsGenericType && type.GetGenericTypeDefinition() == typeof(System.Collections.ObjectModel.ReadOnlyCollection<>))
+                && type.Namespace != "System.Collections.Immutable",
+            _ => false,
+        };
     }
 
     private bool TryFind(string key, [NotNullWhen(true)] out JsonPropertyInfo? property) =>
