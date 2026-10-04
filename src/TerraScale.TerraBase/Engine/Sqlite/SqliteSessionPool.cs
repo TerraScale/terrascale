@@ -19,8 +19,30 @@ internal sealed class SqliteSessionPool(int maxIdle, int maxIdlePerDatabase)
     // Least recently pooled first.
     private readonly LinkedList<(SqliteDatabaseStore Store, SqliteSession Session)> _idle = new();
 
+    // Every connection outside _idle: held by a transaction, being opened for one, or being closed outside _gate
+    // (evicted, discarded, or idle when its store or the pool closed). After StopAsync, the last of them to go
+    // completes the stop; until then the engine keeps its data directory.
+    private readonly HashSet<SqliteSession> _rented = [];
+    private int _opening;
+    private int _closing;
+    private bool _stopped;
+    private Action? _onClosed;
+    private TaskCompletionSource? _closed;
+
     /// <summary>The engine-wide bound on idle sessions.</summary>
     public int MaxIdle => maxIdle;
+
+    /// <summary>Connections not idle in the pool: held by transactions, being opened, or being closed.</summary>
+    public int OpenCount
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _rented.Count + _opening + _closing;
+            }
+        }
+    }
 
     /// <summary>Idle sessions of every database.</summary>
     public int IdleCount
@@ -45,63 +67,140 @@ internal sealed class SqliteSessionPool(int maxIdle, int maxIdlePerDatabase)
 
     /// <summary>
     /// Takes the most recently pooled idle session of <paramref name="store"/>, or <see langword="null"/>
-    /// when it has none. Throws when the store is closed.
+    /// when it has none; the caller then opens one and passes it to <see cref="Adopt"/>, or calls
+    /// <see cref="OpenFailed"/>. Throws when the store is closed or the pool stopped.
     /// </summary>
     public SqliteSession? Rent(SqliteDatabaseStore store)
     {
         lock (_gate)
         {
-            ObjectDisposedException.ThrowIf(store.Closed, store);
+            ObjectDisposedException.ThrowIf(_stopped || store.Closed, store);
             for (var node = _idle.Last; node is not null; node = node.Previous)
             {
                 if (node.Value.Store == store)
                 {
                     _idle.Remove(node);
+                    _rented.Add(node.Value.Session);
                     return node.Value.Session;
                 }
             }
 
+            _opening++;
             return null;
         }
     }
 
     /// <summary>
     /// Hands a newly opened <paramref name="session"/> to its renter, or closes it and throws when
-    /// <paramref name="store"/> was closed while it opened.
+    /// <paramref name="store"/> was closed, or the pool stopped, while it opened.
     /// </summary>
     public SqliteSession Adopt(SqliteDatabaseStore store, SqliteSession session)
     {
         lock (_gate)
         {
-            if (!store.Closed)
+            if (!_stopped && !store.Closed)
             {
+                _opening--;
+                _rented.Add(session);
                 return session;
             }
         }
 
-        session.Dispose();
+        try
+        {
+            session.Dispose();
+        }
+        finally
+        {
+            Update(() => _opening--);
+        }
+
         throw new ObjectDisposedException(store.GetType().FullName);
     }
+
+    /// <summary>Ends an opening that <see cref="Rent"/> started and that produced no session.</summary>
+    public void OpenFailed() => Update(() => _opening--);
 
     /// <summary>Pools a session whose work has ended, or closes it; may close the least recently pooled session.</summary>
     public void Return(SqliteDatabaseStore store, SqliteSession session)
     {
-        SqliteSession? close = session;
+        SqliteSession? evicted = null;
+        var pooled = false;
         lock (_gate)
         {
-            if (!store.Closed && CountOf(store) < maxIdlePerDatabase)
+            _rented.Remove(session);
+            if (!_stopped && !store.Closed && CountOf(store) < maxIdlePerDatabase)
             {
                 _idle.AddLast((store, session));
-                close = null;
+                pooled = true;
                 if (_idle.Count > maxIdle)
                 {
-                    close = _idle.First!.Value.Session;
+                    evicted = _idle.First!.Value.Session;
                     _idle.RemoveFirst();
+                    _closing++;
                 }
+            }
+            else
+            {
+                _closing++;
             }
         }
 
-        close?.Dispose();
+        if (evicted is not null)
+        {
+            Close(evicted);
+        }
+
+        if (!pooled)
+        {
+            Close(session);
+        }
+    }
+
+    /// <summary>Closes a rented session instead of pooling it.</summary>
+    public void Discard(SqliteSession session)
+    {
+        lock (_gate)
+        {
+            _rented.Remove(session);
+            _closing++;
+        }
+
+        Close(session);
+    }
+
+    /// <summary>
+    /// Stops the pool: it rents no more and closes its idle sessions. The returned task completes, and
+    /// <paramref name="onClosed"/> runs first on the thread that closes it, once no connection of the pool is open:
+    /// every rented session returned and closed, and every opening finished. Nothing is closed by force, so a
+    /// transaction still running keeps its connection, and its connection keeps the stop from completing.
+    /// </summary>
+    public Task StopAsync(Action onClosed)
+    {
+        List<SqliteSession> idle;
+        Task closed;
+        lock (_gate)
+        {
+            _stopped = true;
+            idle = [.. _idle.Select(entry => entry.Session)];
+            _idle.Clear();
+            _closing += idle.Count;
+            _onClosed = onClosed;
+            _closed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            closed = _closed.Task;
+        }
+
+        try
+        {
+            CloseAll(idle);
+        }
+        finally
+        {
+            // Completes the stop now when nothing was open, even if closing an idle session failed.
+            Update(() => { });
+        }
+
+        return closed;
     }
 
     /// <summary>Closes <paramref name="store"/>: its idle sessions are closed and it rents and pools no more.</summary>
@@ -122,11 +221,74 @@ internal sealed class SqliteSessionPool(int maxIdle, int maxIdlePerDatabase)
 
                 node = next;
             }
+
+            _closing += closing.Count;
         }
 
-        foreach (var session in closing)
+        CloseAll(closing);
+    }
+
+    // Closes every session of a batch counted in _closing, even when some fail, so none is left uncounted and
+    // unclosed; the failures are reported once all were attempted.
+    private void CloseAll(List<SqliteSession> sessions)
+    {
+        List<Exception>? failures = null;
+        foreach (var session in sessions)
+        {
+            try
+            {
+                Close(session);
+            }
+            catch (Exception error)
+            {
+                // Whatever the failure: the next session must still be closed, or it stays open and counted forever.
+                (failures ??= []).Add(error);
+            }
+        }
+
+        if (failures is not null)
+        {
+            throw new AggregateException("closing database connections failed", failures);
+        }
+    }
+
+    // Closes a session counted in _closing outside _gate, and stops counting it once it is closed, even if closing failed.
+    private void Close(SqliteSession session)
+    {
+        try
         {
             session.Dispose();
+        }
+        finally
+        {
+            Update(() => _closing--);
+        }
+    }
+
+    // Applies change under _gate. When the pool is stopped and no connection is left, the one caller that sees it
+    // first releases what waits on the stop: onClosed runs before the stop task completes.
+    private void Update(Action change)
+    {
+        Action? onClosed = null;
+        TaskCompletionSource? closed = null;
+        lock (_gate)
+        {
+            change();
+            if (_onClosed is not null && _rented.Count == 0 && _opening == 0 && _closing == 0)
+            {
+                onClosed = _onClosed;
+                closed = _closed;
+                _onClosed = null;
+            }
+        }
+
+        try
+        {
+            onClosed?.Invoke();
+        }
+        finally
+        {
+            closed?.TrySetResult();
         }
     }
 

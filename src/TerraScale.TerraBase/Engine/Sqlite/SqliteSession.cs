@@ -63,13 +63,31 @@ internal sealed class SqliteSession(SqliteConnection connection) : IDisposable
         return command;
     }
 
+    /// <summary>
+    /// Closes the connection. The native database handle is closed even when disposing a command or the provider's
+    /// own close throws, so once this returns, or throws, the session holds no file open.
+    /// </summary>
     public void Dispose()
     {
-        foreach (var command in _commands.Values)
+        var handle = connection.Handle;
+        try
         {
-            command.Dispose();
+            foreach (var command in _commands.Values)
+            {
+                command.Dispose();
+            }
         }
-
-        connection.Dispose();
+        finally
+        {
+            try
+            {
+                connection.Dispose();
+            }
+            finally
+            {
+                // A no-op when the provider already closed it.
+                handle?.Dispose();
+            }
+        }
     }
 }

@@ -3,11 +3,12 @@ using System.Text;
 using TerraScale.Endpoints;
 using TerraScale.TerraBase.Features.ApiKeys;
 using TerraScale.TerraBase.Hosting;
+using TerraScale.TerraBase.Tenancy;
 
 namespace TerraScale.TerraBase.Features.Documents;
 
-/// <summary><c>GET /v1/databases/{database}/collections?limit=&amp;cursor=</c>: lists collections in name order.</summary>
-public sealed class ListCollectionsEndpoint(IDocumentService documents) : EndpointWithoutRequest<IResult>
+/// <summary><c>GET /v1/projects/{project}/databases/{database}/collections?limit=&amp;cursor=</c>: lists collections in name order.</summary>
+public sealed class ListCollectionsEndpoint(IDocumentService documents, ITenantDirectory tenants) : EndpointWithoutRequest<IResult>
 {
     private const int DefaultLimit = 50;
     private const int MaxLimit = 200;
@@ -29,7 +30,7 @@ public sealed class ListCollectionsEndpoint(IDocumentService documents) : Endpoi
     /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
-        var database = DocumentRoute.Database(HttpContext);
+        var database = await DocumentRoute.TenantAsync(HttpContext, tenants, cancellationToken);
         var query = DocumentRoute.Parameters(HttpContext, "limit", "cursor");
         var after = query.TryGetValue("cursor", out var cursor) ? AfterName(cursor!) : null;
         var (collections, hasMore) = await documents.ListCollectionsAsync(

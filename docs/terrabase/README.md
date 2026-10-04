@@ -50,6 +50,7 @@ Every setting is `TERRABASE_<NAME>` or `--name=value`.
 | Setting | Default | Meaning |
 | --- | --- | --- |
 | `admin-port` | `9464` | Loopback administrative listener (`/healthz`, `/metrics`, OpenAPI) |
+| `shutdown-grace-seconds` | `10` | Seconds shutdown waits for transactions to return their database connections (0 to 3600). It never closes them; the data directory stays owned until they do or the process exits |
 
 ## Layout
 

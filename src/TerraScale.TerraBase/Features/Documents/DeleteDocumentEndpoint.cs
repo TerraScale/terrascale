@@ -1,11 +1,12 @@
 using TerraScale.Endpoints;
 using TerraScale.TerraBase.Features.ApiKeys;
 using TerraScale.TerraBase.Hosting;
+using TerraScale.TerraBase.Tenancy;
 
 namespace TerraScale.TerraBase.Features.Documents;
 
 /// <summary><c>DELETE …/documents/{id}</c>: deletes one JSON document.</summary>
-public sealed class DeleteDocumentEndpoint(IDocumentService documents) : EndpointWithoutRequest<IResult>
+public sealed class DeleteDocumentEndpoint(IDocumentService documents, ITenantDirectory tenants) : EndpointWithoutRequest<IResult>
 {
     /// <inheritdoc />
     public override void Configure()
@@ -25,7 +26,7 @@ public sealed class DeleteDocumentEndpoint(IDocumentService documents) : Endpoin
     /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
-        var key = DocumentRoute.Key(HttpContext);
+        var key = await DocumentRoute.KeyAsync(HttpContext, tenants, cancellationToken);
         DocumentRoute.Parameters(HttpContext);
         DocumentRoute.RejectIdempotencyKey(HttpContext);
         var (body, _) = await DocumentRoute.WriteAsync(

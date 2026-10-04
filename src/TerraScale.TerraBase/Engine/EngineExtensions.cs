@@ -11,6 +11,7 @@ public static class EngineExtensions
     {
         ArgumentNullException.ThrowIfNull(options);
         // A factory registration lets the container own, and dispose, the engine.
-        return services.AddSingleton<IStorageEngine>(_ => new SqliteStorageEngine(options.DataDirectory));
+        return services.AddSingleton<IStorageEngine>(provider => new SqliteStorageEngine(
+            options.DataDirectory, options.ShutdownGrace, provider.GetRequiredService<ILogger<SqliteStorageEngine>>()));
     }
 }

@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 using TerraScale.TerraBase.Engine;
 using TerraScale.TerraBase.Hosting;
+using TerraScale.TerraBase.Tenancy;
 
 namespace TerraScale.TerraBase.Features.Documents;
 
@@ -34,7 +35,7 @@ internal static class QueryParser
     private const int MaxSegments = 16;
     private const int MaxPathLength = 4096;
 
-    public static ParsedQuery Parse(DatabaseName database, string collection, QueryRequest request)
+    public static ParsedQuery Parse(TenantContext database, string collection, QueryRequest request)
     {
         if (request.Explain.ValueKind != JsonValueKind.Undefined)
         {
@@ -127,10 +128,14 @@ internal static class QueryParser
         return segments;
     }
 
-    /// <summary>Binds a cursor to a query: SHA-256 over its scope and normalized members.</summary>
-    public static string Digest(DatabaseName database, string collection, params string[] members)
+    /// <summary>
+    /// Binds a cursor to a query: SHA-256 over its scope and normalized members. The scope is the database's id, unique
+    /// across tenants, so a cursor never applies to another tenant's database of the same name.
+    /// </summary>
+    public static string Digest(TenantContext database, string collection, params string[] members)
     {
-        var text = string.Join('\0', [database.Value, collection, .. members]);
+        ArgumentNullException.ThrowIfNull(database);
+        var text = string.Join('\0', [database.DatabaseId!, collection, .. members]);
         return Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(text))[..16]);
     }
 

@@ -1,13 +1,16 @@
+using TerraScale.TerraBase.Tenancy;
+
 namespace TerraScale.TerraBase.Features.Management;
 
-/// <summary>An organization: the top-level owner of projects.</summary>
+/// <summary>An organization: the tenant, which owns billing, and the top-level owner of projects.</summary>
 /// <param name="Id">Lowercase hyphenated UUID.</param>
 /// <param name="Name">Display name, unique among the organizations created by <paramref name="CreatedBy"/> (case-insensitive).</param>
 /// <param name="CreatedBy">User id (from ts-auth) of the creator, its first member.</param>
 /// <param name="CreatedAt">Creation time.</param>
-public sealed record Organization(string Id, string Name, string CreatedBy, DateTimeOffset CreatedAt);
+/// <param name="Plan">The organization's plan; <see cref="PlanTier.Hobby"/> until set.</param>
+public sealed record Organization(string Id, string Name, string CreatedBy, DateTimeOffset CreatedAt, PlanTier Plan = PlanTier.Hobby);
 
-/// <summary>A project inside an organization; it owns databases.</summary>
+/// <summary>A project inside an organization: a folder of databases.</summary>
 /// <param name="Id">Lowercase hyphenated UUID.</param>
 /// <param name="OrganizationId">Owning organization.</param>
 /// <param name="Name">Display name, unique within the organization (case-insensitive).</param>
@@ -17,11 +20,13 @@ public sealed record Project(string Id, string OrganizationId, string Name, Date
 /// <summary>A database registered in a project.</summary>
 /// <param name="Id">Lowercase hyphenated UUID.</param>
 /// <param name="ProjectId">Owning project.</param>
-/// <param name="Name">Database name (same rules as data API database names), unique within the project.</param>
-/// <param name="StorageName">The name the data API (<c>/v1/databases/{database}</c>) addresses this database by.</param>
+/// <param name="Name">
+/// Database name (same rules as data API database names), unique within the project. The data API addresses the
+/// database as <c>/v1/projects/{ProjectId}/databases/{Name}</c>.
+/// </param>
 /// <param name="BranchedFrom">Id of the database this one was branched from, if any.</param>
 /// <param name="CreatedAt">Creation time.</param>
-public sealed record ManagedDatabase(string Id, string ProjectId, string Name, string StorageName, string? BranchedFrom, DateTimeOffset CreatedAt);
+public sealed record ManagedDatabase(string Id, string ProjectId, string Name, string? BranchedFrom, DateTimeOffset CreatedAt);
 
 /// <summary>Why a management operation did not succeed.</summary>
 public enum ManagementError
@@ -104,6 +109,9 @@ public interface IManagementService
     /// <summary>Renames an organization. Needs <see cref="OrganizationRole.Admin"/>.</summary>
     ValueTask<ManagementResult<Organization>> RenameOrganizationAsync(
         string userId, string organizationId, string name, CancellationToken cancellationToken);
+
+    /// <summary>Sets the plan of an organization. Needs <see cref="OrganizationRole.Owner"/>.</summary>
+    ValueTask<ManagementResult<Organization>> SetPlanAsync(string userId, string organizationId, PlanTier plan, CancellationToken cancellationToken);
 
     /// <summary>
     /// Deletes an organization that has no projects, with its memberships, invitations, ownership transfer and

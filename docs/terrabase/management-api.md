@@ -123,8 +123,10 @@ unique names. That is catalog version 1. This release uses version 3 and records
   `404` for an unknown resource or parent (or an organization the user is not a member of), `409` for a
   duplicate name, a non-empty delete or a rule in [Members and roles](#members-and-roles). Bodies are a plain
   message that never echoes input.
-- Every database gets a generated `storageName` (`db-<32 hex>`), which is the name the data API
-  uses: `/v1/databases/{storageName}/collections/…`.
+- The data API addresses a database as `/v1/projects/{projectId}/databases/{name}/collections/…`,
+  with the database name from this API. The API key's organization selects the tenant.
+- Every organization has a `plan`: `hobby` (default), `pro` or `enterprise`. It is stored only;
+  nothing enforces it yet.
 
 ## Endpoints
 
@@ -136,6 +138,7 @@ Base path: `/v1/management`.
 | `GET` | `/organizations` | page of the acting user's organizations |
 | `GET` | `/organizations/{organization}` | organization |
 | `PATCH` | `/organizations/{organization}` | `{name}` → renamed organization, `409` name taken; needs `admin` |
+| `PUT` | `/organizations/{organization}/plan` | `{plan}` (`hobby`, `pro` or `enterprise`) → organization; `400` for any other value; needs `owner`. Recorded in the audit log as `settings.plan_updated` |
 | `DELETE` | `/organizations/{organization}` | `204`; `409` while it has projects; needs `owner`. Also deletes its members, invitations, transfer and audit log |
 | `GET` | `/current-organization` | the organization the acting user last switched to; `404` if none or no longer a member |
 | `PUT` | `/current-organization` | `{organizationId}` → organization; `404` if the user is not a member |
@@ -153,9 +156,9 @@ Base path: `/v1/management`.
 Shapes:
 
 ```json
-{"id":"0199…","name":"Acme","createdBy":"<ts-auth user id>","createdAt":"2026-10-04T12:00:00+00:00"}
+{"id":"0199…","name":"Acme","createdBy":"<ts-auth user id>","createdAt":"2026-10-04T12:00:00+00:00","plan":"hobby"}
 {"id":"0199…","organizationId":"0199…","name":"Production","createdAt":"…"}
-{"id":"0199…","projectId":"0199…","name":"main","storageName":"db-0199…","branchedFrom":null,"createdAt":"…"}
+{"id":"0199…","projectId":"0199…","name":"main","branchedFrom":null,"createdAt":"…"}
 ```
 
 ## Members and roles
@@ -201,8 +204,9 @@ Rules:
 - **Audit events** record every change above as `{id, actor, action, target, detail, occurredAt}`.
   Actions: `member.role_changed`, `member.removed`, `member.left`, `invitation.created`,
   `invitation.revoked`, `invitation.accepted`, `ownership.transfer_started`,
-  `ownership.transfer_confirmed`, `ownership.transfer_cancelled`, `settings.audit_retention_updated`.
-  `target` is a user id or an invitation email; `detail` is the new role or the number of days. Retention
+  `ownership.transfer_confirmed`, `ownership.transfer_cancelled`, `settings.audit_retention_updated`,
+  `settings.plan_updated`. `target` is a user id or an invitation email; `detail` is the new role, the
+  number of days or the new plan. Retention
   is measured on each event's exact `occurredAt`: events older than the retention stop being listed at once
   and are deleted, oldest first, as new events are recorded.
 - **Order:** invitations list in creation order and audit events newest first, by a per-organization
@@ -261,7 +265,7 @@ for organization, project and database changes.
 | Project switcher (current project) | `POST /api/v1/dashboard/switch-project` |
 | Backups, backup policy, restore | `/api/v1/dashboard/backups[/policy\|/restore]`, `/api/v1/dashboard/settings/backup-policy\|backup-now\|restore` |
 | Collections, schema, indexes, index recommendations | `/api/v1/dashboard/schema`, `/api/v1/dashboard/indexes[/recommendations/apply]` |
-| Documents and SQL console | `/api/v1/dashboard/data/documents`, `/api/v1/dashboard/data/sql[/check]` (document routes exist at `/v1/databases/…`; SQL does not yet) |
+| Documents and SQL console | `/api/v1/dashboard/data/documents`, `/api/v1/dashboard/data/sql[/check]` (document routes exist at `/v1/projects/{project}/databases/{database}/…`; SQL does not yet) |
 | Saved queries, live-query subscriptions | `/api/v1/dashboard/data/saved-queries[/delete]`, `/api/v1/dashboard/subscriptions/attach\|pause\|resume\|detach` |
 | Usage and spending controls | `GET /usage`, `/api/v1/dashboard/usage/spending-controls` |
 | API keys and M2M credentials | `/api/v1/dashboard/credentials/key\|m2m\|rotate\|revoke`, `/api/v1/projects/{projectID}/auth/api-keys[…]` |
@@ -292,27 +296,21 @@ only health and docs today, and its planned organizations are per-instance end-u
 organizations (`/v1/{slug}/organizations`), not TerraScale's platform organizations. Neither service
 duplicates this API.
 
-## Ownership conflict
+## Ownership and tenancy
 
-`terrabase-rust/docs/control-plane-v1.md` says **the dashboard owns organizations, projects,
-users, plans and billing**, and one TerraBase *tenant* corresponds to one dashboard project. This
-feature moves organizations and projects into TerraBase, as this task requested. A human must decide
-which way it goes:
-
-1. Keep it here, and update control-plane-v1 so that TerraBase owns organizations and projects
-   and a project is the tenant boundary.
-2. Or move organizations and projects back to the dashboard (or ts-auth), and reduce this API
-   to tenants and databases as control-plane-v1 describes.
-
-Until that decision, this API does not implement the control-plane-v1 tenant routes
-(`/v1/dashboard/tenants…`), and control-plane-v1 does not cover branches.
+Decided by a human on 2026-10-04 (see [0005](decisions/0005-multi-tenancy.md)): TerraBase owns
+organizations and projects. The organization is the tenant, because it owns billing; a project is a
+folder of databases inside it. `terrabase-rust/docs/control-plane-v1.md` still says the dashboard
+owns them and that a tenant is a project; it needs updating in that repository. This API still does
+not implement the control-plane-v1 tenant routes (`/v1/dashboard/tenants…`), and control-plane-v1 does
+not cover branches.
 
 ## Differences from other contracts
 
 | Topic | This API | Elsewhere |
 | --- | --- | --- |
 | Paths | `/v1/management/…` | ts-go SDK calls `/api/v1/databases…`; control-plane-v1 uses `/v1/dashboard/tenants/{tenant}/databases` |
-| Tenant | Projects own databases | SDK sends the dashboard **organization** id as `X-TerraScale-Tenant-ID`; control-plane-v1 says tenant = project |
+| Tenant | The organization is the tenant; projects group its databases | SDK sends the dashboard **organization** id as `X-TerraScale-Tenant-ID`; control-plane-v1 says tenant = project |
 | IDs | UUIDv7 strings | dashboard uses `org_`, `prj_`, `db_` + 32 hex |
 | Database names | `^[a-z][a-z0-9_-]{0,62}$` | dashboard and SDK use `^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$` (leading digit allowed, no `_`, no trailing `-`) |
 | JSON | camelCase, ISO 8601 timestamps | control-plane-v1 uses snake_case, Unix-ms strings and `next_cursor` |

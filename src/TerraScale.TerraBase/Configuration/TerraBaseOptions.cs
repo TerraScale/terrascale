@@ -20,6 +20,11 @@ public sealed record TerraBaseOptions
     /// <summary>Default port of the loopback administrative and metrics listener.</summary>
     public const int DefaultAdminPort = 9464;
 
+    /// <summary>Default seconds shutdown waits for transactions to return their database connections.</summary>
+    public const int DefaultShutdownGraceSeconds = 10;
+
+    private const int MaxShutdownGraceSeconds = 3600;
+
     /// <summary>Default directory for SQLite database files, relative to the working directory.</summary>
     public const string DefaultDataDirectory = "data";
 
@@ -35,7 +40,7 @@ public sealed record TerraBaseOptions
 
     private static readonly FrozenSet<string> Keys = FrozenSet.Create(
         StringComparer.Ordinal,
-        ["admin-port", "data-directory", "client-port", .. ClientTlsKeys, "dashboard-credential-file", "management-legacy-owner", "peer-port", .. PeerTlsKeys]);
+        ["admin-port", "data-directory", "client-port", .. ClientTlsKeys, "dashboard-credential-file", "management-legacy-owner", "peer-port", .. PeerTlsKeys, "shutdown-grace-seconds"]);
 
     /// <summary>Every setting name, in <c>--name=value</c> form without the dashes.</summary>
     public static IReadOnlySet<string> SettingNames => Keys;
@@ -80,6 +85,12 @@ public sealed record TerraBaseOptions
 
     /// <summary>Server certificate with its private key for the peer listener.</summary>
     public X509Certificate2? PeerCertificate { get; init; }
+
+    /// <summary>
+    /// How long shutdown waits for transactions to return their database connections. When it expires, shutdown
+    /// returns but keeps the data directory owned until they do (or the process exits); it never closes them.
+    /// </summary>
+    public TimeSpan ShutdownGrace { get; init; } = TimeSpan.FromSeconds(DefaultShutdownGraceSeconds);
 
     /// <summary>Certificate authority that every connecting peer's client certificate must chain to.</summary>
     public X509Certificate2? PeerClientCa { get; init; }
@@ -189,6 +200,7 @@ public sealed record TerraBaseOptions
             PeerClientCa = peerPort is null ? null : LoadPem(
                 () => X509CertificateLoader.LoadCertificateFromFile(values["peer-client-ca"]),
                 "peer-client-ca must name a readable PEM certificate"),
+            ShutdownGrace = TimeSpan.FromSeconds(ParseShutdownGraceSeconds(values)),
         };
     }
 
@@ -220,6 +232,18 @@ public sealed record TerraBaseOptions
         }
 
         return port;
+    }
+
+    private static int ParseShutdownGraceSeconds(IReadOnlyDictionary<string, string> values)
+    {
+        if (!values.TryGetValue("shutdown-grace-seconds", out var raw))
+        {
+            return DefaultShutdownGraceSeconds;
+        }
+
+        return int.TryParse(raw, NumberStyles.None, CultureInfo.InvariantCulture, out var seconds) && seconds <= MaxShutdownGraceSeconds
+            ? seconds
+            : throw new TerraBaseConfigurationException($"shutdown-grace-seconds must be an integer between 0 and {MaxShutdownGraceSeconds}");
     }
 
     // The file holds the secret alone; surrounding whitespace (a trailing newline) is ignored.

@@ -3,11 +3,12 @@ using System.Text.Json.Serialization.Metadata;
 using TerraScale.TerraBase.Configuration;
 using TerraScale.TerraBase.Engine;
 using TerraScale.TerraBase.Hosting;
+using TerraScale.TerraBase.Tenancy;
 
 namespace TerraScale.TerraBase.Features.Management;
 
 /// <summary>
-/// Keeps the management catalog as documents in the <see cref="DatabaseName.System"/> database. Every
+/// Keeps the management catalog as documents in the system database (<see cref="IStorageEngine.OpenSystemDatabaseAsync"/>). Every
 /// change runs in one write transaction, which the engine serializes, so membership checks, name checks
 /// and writes are atomic. Names are unique per parent through <c>*_names</c> collections keyed by the
 /// lowercased name; organization names are unique per creator, so they reveal nothing across tenants.
@@ -25,9 +26,14 @@ namespace TerraScale.TerraBase.Features.Management;
 /// Version 2 stored members without roles; they all become owners. Any other version is unsupported: the API
 /// answers 503 and the catalog is left unchanged.
 /// </para>
+/// <para>
+/// Each organization is a tenant. Storage is addressed by a <see cref="TenantContext"/> resolved in the same transaction
+/// as the membership check (or, for API keys, from the key's organization; see <see cref="ITenantDirectory"/>).
+/// </para>
 /// </remarks>
 internal sealed partial class EngineManagementService(
-    IStorageEngine engine, TimeProvider time, TerraBaseOptions options, ILogger<EngineManagementService> logger) : IManagementService, IAccessService
+    IStorageEngine engine, TimeProvider time, TerraBaseOptions options, ILogger<EngineManagementService> logger)
+    : IManagementService, IAccessService, ITenantDirectory
 {
     private const string Organizations = "organizations";
     private const string CurrentOrganizations = "current_organizations";
@@ -83,10 +89,10 @@ internal sealed partial class EngineManagementService(
             }
 
             return new ManagementPage<Organization>(organizations, page.HasMore ? page.Documents[^1].Id : null);
-        }, new ManagementPage<Organization>([], null), cancellationToken);
+        }, cancellationToken);
 
     public ValueTask<Organization?> GetOrganizationAsync(string userId, string organizationId, CancellationToken cancellationToken) =>
-        ReadAsync(transaction => GetOrganizationAsync(transaction, userId, organizationId, cancellationToken), null, cancellationToken);
+        ReadAsync(transaction => GetOrganizationAsync(transaction, userId, organizationId, cancellationToken), cancellationToken);
 
     public async ValueTask<ManagementResult<Organization>> RenameOrganizationAsync(
         string userId, string organizationId, string name, CancellationToken cancellationToken) =>
@@ -111,6 +117,27 @@ internal sealed partial class EngineManagementService(
             organization = organization with { Name = name };
             await PutAsync(transaction, Organizations, organization.Id, organization, TerraBaseJsonContext.Default.Organization, cancellationToken)
                 .ConfigureAwait(false);
+            return organization;
+        }, cancellationToken).ConfigureAwait(false);
+
+    public async ValueTask<ManagementResult<Organization>> SetPlanAsync(
+        string userId, string organizationId, PlanTier plan, CancellationToken cancellationToken) =>
+        await WriteAsync<ManagementResult<Organization>>(async transaction =>
+        {
+            // The plan is billing, which belongs to the owners.
+            var actor = await AuthorizeAsync(transaction, userId, organizationId, OrganizationRole.Owner, cancellationToken).ConfigureAwait(false);
+            if (actor.Error != ManagementError.None)
+            {
+                return actor.Error;
+            }
+
+            // Written with the membership, removed with the organization: always present.
+            var organization = await GetOrganizationAsync(transaction, userId, organizationId, cancellationToken).ConfigureAwait(false)
+                ?? throw new InvalidOperationException("a membership names a missing organization");
+            organization = organization with { Plan = plan };
+            await PutAsync(transaction, Organizations, organization.Id, organization, TerraBaseJsonContext.Default.Organization, cancellationToken)
+                .ConfigureAwait(false);
+            await RecordAsync(transaction, organizationId, userId, "settings.plan_updated", null, PlanName(plan), cancellationToken).ConfigureAwait(false);
             return organization;
         }, cancellationToken).ConfigureAwait(false);
 
@@ -157,7 +184,6 @@ internal sealed partial class EngineManagementService(
             await GetAsync(transaction, CurrentOrganizations, userId, Id, cancellationToken).ConfigureAwait(false) is { } organizationId
                 ? await GetOrganizationAsync(transaction, userId, organizationId, cancellationToken).ConfigureAwait(false)
                 : null,
-            null,
             cancellationToken);
 
     public async ValueTask<ManagementResult<Organization>> SetCurrentOrganizationAsync(
@@ -203,11 +229,10 @@ internal sealed partial class EngineManagementService(
                 ? null
                 : await ListAsync(transaction, Projects(organizationId), after, limit, TerraBaseJsonContext.Default.Project, project => project.Id, cancellationToken)
                     .ConfigureAwait(false),
-            null,
             cancellationToken);
 
     public ValueTask<Project?> GetProjectAsync(string userId, string organizationId, string projectId, CancellationToken cancellationToken) =>
-        ReadAsync(transaction => GetProjectAsync(transaction, userId, organizationId, projectId, cancellationToken), null, cancellationToken);
+        ReadAsync(transaction => GetProjectAsync(transaction, userId, organizationId, projectId, cancellationToken), cancellationToken);
 
     public async ValueTask<ManagementResult<Project>> RenameProjectAsync(
         string userId, string organizationId, string projectId, string name, CancellationToken cancellationToken) =>
@@ -248,9 +273,14 @@ internal sealed partial class EngineManagementService(
             return ManagementError.None;
         }, cancellationToken).ConfigureAwait(false);
 
-    public ValueTask<ManagementResult<ManagedDatabase>> CreateDatabaseAsync(
-        string userId, string organizationId, string projectId, string name, CancellationToken cancellationToken) =>
-        AddDatabaseAsync(userId, organizationId, projectId, name, source: null, cancellationToken);
+    public async ValueTask<ManagementResult<ManagedDatabase>> CreateDatabaseAsync(
+        string userId, string organizationId, string projectId, string name, CancellationToken cancellationToken)
+    {
+        var added = await AddDatabaseAsync(
+            transaction => MemberProjectAsync(transaction, userId, organizationId, projectId, cancellationToken), name, source: null, cancellationToken)
+            .ConfigureAwait(false);
+        return added.Value is { } value ? value.Database : added.Error;
+    }
 
     public ValueTask<ManagementPage<ManagedDatabase>?> ListDatabasesAsync(
         string userId, string organizationId, string projectId, string? after, int limit, CancellationToken cancellationToken) =>
@@ -260,84 +290,93 @@ internal sealed partial class EngineManagementService(
                 : await ListAsync(
                     transaction, Databases(projectId), after, limit, TerraBaseJsonContext.Default.ManagedDatabase, database => database.Id, cancellationToken)
                     .ConfigureAwait(false),
-            null,
             cancellationToken);
 
     public ValueTask<ManagedDatabase?> GetDatabaseAsync(
         string userId, string organizationId, string projectId, string databaseId, CancellationToken cancellationToken) =>
-        ReadAsync(transaction => GetDatabaseAsync(transaction, userId, organizationId, projectId, databaseId, cancellationToken), null, cancellationToken);
+        ReadAsync(transaction => GetDatabaseAsync(transaction, userId, organizationId, projectId, databaseId, cancellationToken), cancellationToken);
 
     public async ValueTask<ManagementError> DeleteDatabaseAsync(
         string userId, string organizationId, string projectId, string databaseId, CancellationToken cancellationToken)
     {
-        var database = await WriteAsync(async transaction =>
+        var storage = await WriteAsync<TenantContext?>(async transaction =>
         {
-            if (await GetDatabaseAsync(transaction, userId, organizationId, projectId, databaseId, cancellationToken).ConfigureAwait(false) is not { } database)
+            if (await MemberProjectAsync(transaction, userId, organizationId, projectId, cancellationToken).ConfigureAwait(false) is not { } project
+                || await GetAsync(transaction, Databases(projectId), databaseId, TerraBaseJsonContext.Default.ManagedDatabase, cancellationToken)
+                    .ConfigureAwait(false) is not { } database)
             {
                 return null;
             }
 
             await transaction.DeleteAsync(DatabaseNames(projectId), database.Name, cancellationToken).ConfigureAwait(false);
             await transaction.DeleteAsync(Databases(projectId), database.Id, cancellationToken).ConfigureAwait(false);
-            return database;
+            return project with { DatabaseId = database.Id };
         }, cancellationToken).ConfigureAwait(false);
-        if (database is null)
+        if (storage is null)
         {
             return ManagementError.NotFound;
         }
 
         // The catalog no longer names it: finish even if the caller goes away, or the file leaks.
-        await engine.DeleteDatabaseAsync(Storage(database), CancellationToken.None).ConfigureAwait(false);
+        await engine.DeleteDatabaseAsync(storage, CancellationToken.None).ConfigureAwait(false);
         return ManagementError.None;
     }
 
     public async ValueTask<ManagementResult<ManagedDatabase>> BranchDatabaseAsync(
-        string userId, string organizationId, string projectId, string databaseId, string name, CancellationToken cancellationToken) =>
-        await GetDatabaseAsync(userId, organizationId, projectId, databaseId, cancellationToken).ConfigureAwait(false) is { } source
-            ? await AddDatabaseAsync(userId, organizationId, projectId, name, source, cancellationToken).ConfigureAwait(false)
-            : ManagementError.NotFound;
-
-    // Creates (or copies) the storage first and registers it after, deleting it again when registration
-    // fails, so the catalog never names a database that does not exist.
-    private async ValueTask<ManagementResult<ManagedDatabase>> AddDatabaseAsync(
-        string userId, string organizationId, string projectId, string name, ManagedDatabase? source, CancellationToken cancellationToken)
+        string userId, string organizationId, string projectId, string databaseId, string name, CancellationToken cancellationToken)
     {
-        // Checked again when registering; this avoids creating storage for a request that cannot succeed.
-        var precheck = await ReadAsync(
-            transaction => CanAddDatabaseAsync(transaction, userId, organizationId, projectId, name, cancellationToken),
-            ManagementError.NotFound,
-            cancellationToken).ConfigureAwait(false);
-        if (precheck != ManagementError.None)
+        if (await GetDatabaseAsync(userId, organizationId, projectId, databaseId, cancellationToken).ConfigureAwait(false) is not { } source)
         {
-            return precheck;
-        }
-
-        var id = NewId();
-        var database = new ManagedDatabase(id, projectId, name, "db-" + id.Replace("-", "", StringComparison.Ordinal), source?.Id, time.GetUtcNow());
-        var storage = Storage(database);
-        var created = source is null
-            ? await engine.CreateDatabaseAsync(storage, cancellationToken).ConfigureAwait(false)
-            : await engine.CopyDatabaseAsync(Storage(source), storage, cancellationToken).ConfigureAwait(false);
-        if (!created)
-        {
-            // A new random name always creates; only a branch source deleted meanwhile gets here.
             return ManagementError.NotFound;
         }
 
+        var added = await AddDatabaseAsync(
+            transaction => MemberProjectAsync(transaction, userId, organizationId, projectId, cancellationToken), name, source, cancellationToken)
+            .ConfigureAwait(false);
+        return added.Value is { } value ? value.Database : added.Error;
+    }
+
+    // Creates (or copies) the storage first and registers it after, deleting it again when registration
+    // fails, so the catalog never names a database that does not exist. project resolves the tenant of the
+    // project to add to (null when it is not found) inside each transaction.
+    private async ValueTask<ManagementResult<AddedDatabase>> AddDatabaseAsync(
+        Func<IStorageTransaction, ValueTask<TenantContext?>> project, string name, ManagedDatabase? source, CancellationToken cancellationToken)
+    {
+        // Checked again when registering; this avoids creating storage for a request that cannot succeed.
+        var precheck = await ReadAsync(transaction => CanAddDatabaseAsync(transaction, project, name, cancellationToken), cancellationToken)
+            .ConfigureAwait(false);
+        if (precheck.Value is not { } tenant)
+        {
+            return precheck.Error;
+        }
+
+        var database = new ManagedDatabase(NewId(), tenant.ProjectId!, name, source?.Id, time.GetUtcNow());
+        var storage = tenant with { DatabaseId = database.Id };
         ManagementError error;
         try
         {
+            // Inside the try: the file may be in place even when creating fails or is cancelled afterwards.
+            var created = source is null
+                ? await engine.CreateDatabaseAsync(storage, cancellationToken).ConfigureAwait(false)
+                : await engine.CopyDatabaseAsync(tenant with { DatabaseId = source.Id }, storage, cancellationToken).ConfigureAwait(false);
+            if (!created)
+            {
+                // A new random id always creates; only a branch source deleted meanwhile gets here.
+                return ManagementError.NotFound;
+            }
+
             error = await WriteAsync(async transaction =>
             {
-                var check = await CanAddDatabaseAsync(transaction, userId, organizationId, projectId, name, cancellationToken).ConfigureAwait(false);
-                if (check == ManagementError.None)
+                var check = await CanAddDatabaseAsync(transaction, project, name, cancellationToken).ConfigureAwait(false);
+                if (check.Error == ManagementError.None)
                 {
-                    await PutAsync(transaction, DatabaseNames(projectId), name, database.Id, Id, cancellationToken).ConfigureAwait(false);
-                    await PutAsync(transaction, Databases(projectId), database.Id, database, TerraBaseJsonContext.Default.ManagedDatabase, cancellationToken)
+                    await PutAsync(transaction, DatabaseNames(database.ProjectId), name, database.Id, Id, cancellationToken).ConfigureAwait(false);
+                    await PutAsync(
+                        transaction, Databases(database.ProjectId), database.Id, database, TerraBaseJsonContext.Default.ManagedDatabase, cancellationToken)
                         .ConfigureAwait(false);
                 }
 
-                return check;
+                return check.Error;
             }, cancellationToken).ConfigureAwait(false);
         }
         catch
@@ -352,21 +391,37 @@ internal sealed partial class EngineManagementService(
             return error;
         }
 
-        return database;
+        return new AddedDatabase(database, storage);
     }
 
-    private static async ValueTask<ManagementError> CanAddDatabaseAsync(
-        IStorageTransaction transaction, string userId, string organizationId, string projectId, string name, CancellationToken cancellationToken)
+    // The project's tenant when the project exists and the name is free in it.
+    private static async ValueTask<ManagementResult<TenantContext>> CanAddDatabaseAsync(
+        IStorageTransaction transaction, Func<IStorageTransaction, ValueTask<TenantContext?>> project, string name, CancellationToken cancellationToken)
     {
-        if (await GetProjectAsync(transaction, userId, organizationId, projectId, cancellationToken).ConfigureAwait(false) is null)
+        if (await project(transaction).ConfigureAwait(false) is not { } tenant)
         {
             return ManagementError.NotFound;
         }
 
-        return await GetAsync(transaction, DatabaseNames(projectId), name, Id, cancellationToken).ConfigureAwait(false) is null
-            ? ManagementError.None
+        return await GetAsync(transaction, DatabaseNames(tenant.ProjectId!), name, Id, cancellationToken).ConfigureAwait(false) is null
+            ? tenant
             : ManagementError.NameTaken;
     }
+
+    // A project of the organization as a tenant: null when there is no organization or the project is not one of its projects.
+    private static async ValueTask<TenantContext?> ProjectTenantAsync(
+        IStorageTransaction transaction, Organization? organization, string projectId, CancellationToken cancellationToken) =>
+        organization is not null
+        && await GetAsync(transaction, Projects(organization.Id), projectId, TerraBaseJsonContext.Default.Project, cancellationToken).ConfigureAwait(false) is not null
+            ? new TenantContext(organization.Id, organization.Plan, projectId)
+            : null;
+
+    // The tenant of a project the user reaches through membership of its organization.
+    private static async ValueTask<TenantContext?> MemberProjectAsync(
+        IStorageTransaction transaction, string userId, string organizationId, string projectId, CancellationToken cancellationToken) =>
+        await ProjectTenantAsync(
+            transaction, await GetOrganizationAsync(transaction, userId, organizationId, cancellationToken).ConfigureAwait(false), projectId, cancellationToken)
+            .ConfigureAwait(false);
 
     // The single authorization point: non-members get null, exactly like a missing organization.
     private static async ValueTask<Organization?> GetOrganizationAsync(
@@ -427,15 +482,16 @@ internal sealed partial class EngineManagementService(
         IStorageTransaction transaction, string collection, string id, T value, JsonTypeInfo<T> type, CancellationToken cancellationToken) =>
         await transaction.PutAsync(collection, id, JsonSerializer.SerializeToUtf8Bytes(value, type), cancellationToken).ConfigureAwait(false);
 
-    // Reads see a snapshot; before the first write the system database may not exist yet.
-    private async ValueTask<T> ReadAsync<T>(Func<IStorageTransaction, ValueTask<T>> read, T empty, CancellationToken cancellationToken)
+    // Reads see a snapshot.
+    private async ValueTask<T> ReadAsync<T>(Func<IStorageTransaction, ValueTask<T>> read, CancellationToken cancellationToken)
     {
         await EnsureCatalogAsync(cancellationToken).ConfigureAwait(false);
-        if (await engine.OpenDatabaseAsync(DatabaseName.System, cancellationToken).ConfigureAwait(false) is not { } store)
-        {
-            return empty;
-        }
+        return await ReadCatalogAsync(read, cancellationToken).ConfigureAwait(false);
+    }
 
+    private async ValueTask<T> ReadCatalogAsync<T>(Func<IStorageTransaction, ValueTask<T>> read, CancellationToken cancellationToken)
+    {
+        var store = await engine.OpenSystemDatabaseAsync(cancellationToken).ConfigureAwait(false);
         var transaction = await store.BeginTransactionAsync(write: false, cancellationToken).ConfigureAwait(false);
         await using (transaction.ConfigureAwait(false))
         {
@@ -452,9 +508,7 @@ internal sealed partial class EngineManagementService(
 
     private async ValueTask<T> WriteCatalogAsync<T>(Func<IStorageTransaction, ValueTask<T>> write, CancellationToken cancellationToken)
     {
-        await engine.CreateDatabaseAsync(DatabaseName.System, cancellationToken).ConfigureAwait(false);
-        var store = await engine.OpenDatabaseAsync(DatabaseName.System, cancellationToken).ConfigureAwait(false)
-            ?? throw new InvalidOperationException("the system database disappeared after creation");
+        var store = await engine.OpenSystemDatabaseAsync(cancellationToken).ConfigureAwait(false);
         var transaction = await store.BeginTransactionAsync(write: true, cancellationToken).ConfigureAwait(false);
         await using (transaction.ConfigureAwait(false))
         {
@@ -564,9 +618,6 @@ internal sealed partial class EngineManagementService(
     [LoggerMessage(Level = LogLevel.Information, Message = "Migrated the management catalog: assigned {Count} organizations to management-legacy-owner")]
     private static partial void LogLegacyCatalogMigrated(ILogger logger, int count);
 
-    private static DatabaseName Storage(ManagedDatabase database) =>
-        DatabaseName.TryParse(database.StorageName, out var name) ? name : throw new InvalidOperationException("invalid storage name in the catalog");
-
     private string NewId() => Guid.CreateVersion7(time.GetUtcNow()).ToString();
 
     private static string Key(string name) => name.ToLowerInvariant();
@@ -584,4 +635,7 @@ internal sealed partial class EngineManagementService(
     private static string Databases(string projectId) => $"projects/{projectId}/databases";
 
     private static string DatabaseNames(string projectId) => $"projects/{projectId}/database_names";
+
+    // A database just added to the catalog, with the tenant its storage is addressed by.
+    private sealed record AddedDatabase(ManagedDatabase Database, TenantContext Tenant);
 }

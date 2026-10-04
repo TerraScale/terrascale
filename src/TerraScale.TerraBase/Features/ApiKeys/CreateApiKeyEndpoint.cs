@@ -1,24 +1,33 @@
 using TerraScale.Endpoints;
+using TerraScale.TerraBase.Tenancy;
 
 namespace TerraScale.TerraBase.Features.ApiKeys;
 
 /// <summary>A key to issue.</summary>
 /// <param name="Name">Operator-chosen label, 1 to 100 characters.</param>
 /// <param name="Scopes">Scopes to grant; see <see cref="ApiKeyScopes"/>.</param>
-public sealed record CreateApiKeyRequest(string Name, IReadOnlyList<string> Scopes);
+/// <param name="OrganizationId">The organization (tenant) the key acts for.</param>
+/// <param name="ProjectId">Narrows the key to one project of the organization.</param>
+/// <param name="DatabaseId">Narrows the key to one database of <paramref name="ProjectId"/>, which it then requires.</param>
+public sealed record CreateApiKeyRequest(
+    string Name, IReadOnlyList<string> Scopes, string? OrganizationId = null, string? ProjectId = null, string? DatabaseId = null);
 
 /// <summary>An issued key. <paramref name="Secret"/> is shown only in this response.</summary>
 /// <param name="Id">Public identifier.</param>
 /// <param name="Name">Label.</param>
 /// <param name="Scopes">Granted scopes.</param>
+/// <param name="OrganizationId">The organization the key acts for.</param>
+/// <param name="ProjectId">The only project it reaches, if narrowed.</param>
+/// <param name="DatabaseId">The only database it reaches, if narrowed.</param>
 /// <param name="Secret">The bearer secret for <c>Authorization: Bearer</c>.</param>
-public sealed record CreatedApiKeyBody(string Id, string Name, IReadOnlyList<string> Scopes, string Secret);
+public sealed record CreatedApiKeyBody(
+    string Id, string Name, IReadOnlyList<string> Scopes, string OrganizationId, string? ProjectId, string? DatabaseId, string Secret);
 
 /// <summary>
-/// <c>POST /admin/api-keys</c>: issues a scoped client API key. Served only on the loopback
+/// <c>POST /admin/api-keys</c>: issues a scoped client API key for one organization. Served only on the loopback
 /// administrative listener, so it trusts the local operator.
 /// </summary>
-public sealed class CreateApiKeyEndpoint(IApiKeyStore keys) : Endpoint<CreateApiKeyRequest, IResult>
+public sealed class CreateApiKeyEndpoint(IApiKeyStore keys, ITenantDirectory tenants) : Endpoint<CreateApiKeyRequest, IResult>
 {
     private const int MaxNameLength = 100;
 
@@ -28,6 +37,7 @@ public sealed class CreateApiKeyEndpoint(IApiKeyStore keys) : Endpoint<CreateApi
         Post("/admin/api-keys");
         Name("createApiKey");
         Summary("Issues a scoped client API key");
+        Description("organizationId is required: the key reaches only that organization's databases. projectId narrows it to one of its projects, and databaseId (which requires projectId) to one database of that project.");
         Tags("Administration");
         Produces<CreatedApiKeyBody>(StatusCodes.Status201Created);
         AllowAnonymous();
@@ -47,7 +57,16 @@ public sealed class CreateApiKeyEndpoint(IApiKeyStore keys) : Endpoint<CreateApi
             return TypedResults.BadRequest($"scopes must be a non-empty subset of: {string.Join(", ", ApiKeyScopes.All)}");
         }
 
-        var (key, secret) = await keys.CreateAsync(request.Name, [.. request.Scopes.Distinct()], cancellationToken);
-        return TypedResults.Created($"/admin/api-keys/{key.Id}", new CreatedApiKeyBody(key.Id, key.Name, key.Scopes, secret));
+        if (string.IsNullOrEmpty(request.OrganizationId) || (request.DatabaseId is not null && request.ProjectId is null)
+            || !await tenants.ExistsAsync(request.OrganizationId, request.ProjectId, request.DatabaseId, cancellationToken))
+        {
+            return TypedResults.BadRequest(
+                "organizationId must name an organization, projectId one of its projects and databaseId (only with projectId) one of that project's databases");
+        }
+
+        var (key, secret) = await keys.CreateAsync(
+            request.Name, [.. request.Scopes.Distinct()], request.OrganizationId, request.ProjectId, request.DatabaseId, cancellationToken);
+        return TypedResults.Created(
+            $"/admin/api-keys/{key.Id}", new CreatedApiKeyBody(key.Id, key.Name, key.Scopes, key.OrganizationId, key.ProjectId, key.DatabaseId, secret));
     }
 }

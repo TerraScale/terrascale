@@ -52,6 +52,18 @@ builder.Services.AddTerraBaseManagement();
 builder.AddTerraBaseReplication(options);
 
 var app = builder.Build();
+try
+{
+    // The engine takes the data directory's lock and checks its layout before anything is served.
+    _ = app.Services.GetRequiredService<IStorageEngine>();
+}
+catch (TerraBaseConfigurationException error)
+{
+    await Console.Error.WriteLineAsync($"terrabase: {error.Message}");
+    await app.DisposeAsync();
+    return 2;
+}
+
 // Error bodies first, so they also cover the listener check's 404.
 app.UseTerraBaseBadRequests();
 app.UseTerraBaseListeners();

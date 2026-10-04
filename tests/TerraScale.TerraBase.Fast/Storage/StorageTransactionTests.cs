@@ -2,6 +2,7 @@ using System.Text;
 using Microsoft.Extensions.DependencyInjection;
 using TerraScale.TerraBase.Engine;
 using TerraScale.TerraBase.Engine.Sqlite;
+using TerraScale.TerraBase.Tenancy;
 using TerraScale.TerraBase.Testing;
 
 namespace TerraScale.TerraBase.Fast.Storage;
@@ -12,7 +13,8 @@ namespace TerraScale.TerraBase.Fast.Storage;
 /// </summary>
 public sealed class StorageTransactionTests
 {
-    private static readonly DatabaseName Database = DatabaseName.TryParse("pool", out var name) ? name : default;
+    // Every test runs its own server and data directory, so they can share the ids.
+    private static readonly TenantContext Database = Tenant(Guid.NewGuid().ToString());
 
     [Test]
     public async Task Disposing_a_transaction_twice_returns_its_session_once()
@@ -98,7 +100,7 @@ public sealed class StorageTransactionTests
         var stores = new List<SqliteDatabaseStore>();
         for (var i = 0; i < engine.Pool.MaxIdle + 8; i++)
         {
-            await Assert.That(DatabaseName.TryParse($"many-{i}", out var name)).IsTrue();
+            var name = Database with { DatabaseId = Guid.NewGuid().ToString() };
             await engine.CreateDatabaseAsync(name, CancellationToken.None);
             var store = (SqliteDatabaseStore)(await engine.OpenDatabaseAsync(name, CancellationToken.None))!;
             await (await store.BeginTransactionAsync(write: false, CancellationToken.None)).DisposeAsync();
@@ -127,6 +129,7 @@ public sealed class StorageTransactionTests
     {
         await using var server = await TerraBaseTestServer.StartAsync();
         var (engine, _) = await OpenAsync(server);
+        await engine.OpenSystemDatabaseAsync(CancellationToken.None);
 
         // The server disposes the engine again when it stops; the second call is a no-op.
         await engine.DisposeAsync();
@@ -134,7 +137,10 @@ public sealed class StorageTransactionTests
         // Even a database that was opened, and so cached, before the shutdown.
         await Assert.ThrowsAsync<ObjectDisposedException>(() => engine.OpenDatabaseAsync(Database, CancellationToken.None).AsTask());
         await Assert.ThrowsAsync<ObjectDisposedException>(() => engine.CreateDatabaseAsync(Database, CancellationToken.None).AsTask());
+        await Assert.ThrowsAsync<ObjectDisposedException>(() => engine.OpenSystemDatabaseAsync(CancellationToken.None).AsTask());
     }
+
+    private static TenantContext Tenant(string database) => new(Guid.NewGuid().ToString(), PlanTier.Hobby, Guid.NewGuid().ToString(), database);
 
     private static async Task<(IStorageEngine Engine, SqliteDatabaseStore Store)> OpenAsync(TerraBaseTestServer server)
     {

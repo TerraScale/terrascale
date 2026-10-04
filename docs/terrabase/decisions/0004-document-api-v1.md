@@ -8,7 +8,7 @@
 
 The client listener serves the Documents API v1 routes for one SQLite file per database:
 point reads and writes (`GET`/`PUT`/`POST`/`PATCH`/`DELETE …/documents`), listing, queries
-(`POST …/collections/{collection}/query`) and transactions (`POST /v1/databases/{db}/transactions`),
+(`POST …/collections/{collection}/query`) and transactions (`POST /v1/projects/{project}/databases/{db}/transactions`),
 with `{"error":{"code",…}}` bodies.
 
 - **Schema v4** (`PRAGMA user_version = 4`): migration 1 → 2 adds a `collections` table, tombstones (`body`
@@ -36,7 +36,7 @@ with `{"error":{"code",…}}` bodies.
 ## Divergences from the contracts
 
 1. Collections are created, listed, read and dropped on the client listener
-   (`/v1/databases/{db}/collections…`, `documents:read`/`documents:write` scopes). The contract
+   (`/v1/projects/{project}/databases/{db}/collections…` since [0005](0005-multi-tenancy.md), `documents:read`/`documents:write` scopes). The contract
    puts collection management in the control plane (`/v1/dashboard`, control keys) and makes
    `DELETE` return `202` with an operation; here `DELETE` drops synchronously and returns `200`.
    Collections are schemaless; `schema`, `ttl_path`, `unique`, `indexes` and `advisor` fail as

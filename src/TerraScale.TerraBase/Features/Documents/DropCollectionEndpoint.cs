@@ -1,11 +1,12 @@
 using TerraScale.Endpoints;
 using TerraScale.TerraBase.Features.ApiKeys;
 using TerraScale.TerraBase.Hosting;
+using TerraScale.TerraBase.Tenancy;
 
 namespace TerraScale.TerraBase.Features.Documents;
 
-/// <summary><c>DELETE /v1/databases/{database}/collections/{collection}</c>: drops a collection.</summary>
-public sealed class DropCollectionEndpoint(IDocumentService documents) : EndpointWithoutRequest<IResult>
+/// <summary><c>DELETE /v1/projects/{project}/databases/{database}/collections/{collection}</c>: drops a collection.</summary>
+public sealed class DropCollectionEndpoint(IDocumentService documents, ITenantDirectory tenants) : EndpointWithoutRequest<IResult>
 {
     /// <inheritdoc />
     public override void Configure()
@@ -24,7 +25,7 @@ public sealed class DropCollectionEndpoint(IDocumentService documents) : Endpoin
     /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
-        var database = DocumentRoute.Database(HttpContext);
+        var database = await DocumentRoute.TenantAsync(HttpContext, tenants, cancellationToken);
         var name = DocumentRoute.CollectionName(HttpContext);
         DocumentRoute.Parameters(HttpContext);
         DocumentRoute.RejectIdempotencyKey(HttpContext);

@@ -2,11 +2,12 @@ using System.Text.Json;
 using TerraScale.Endpoints;
 using TerraScale.TerraBase.Features.ApiKeys;
 using TerraScale.TerraBase.Hosting;
+using TerraScale.TerraBase.Tenancy;
 
 namespace TerraScale.TerraBase.Features.Documents;
 
 /// <summary><c>PATCH …/documents/{id}</c>: patches an existing JSON document.</summary>
-public sealed class PatchDocumentEndpoint(IDocumentService documents) : EndpointWithoutRequest<IResult>
+public sealed class PatchDocumentEndpoint(IDocumentService documents, ITenantDirectory tenants) : EndpointWithoutRequest<IResult>
 {
     /// <inheritdoc />
     public override void Configure()
@@ -29,7 +30,7 @@ public sealed class PatchDocumentEndpoint(IDocumentService documents) : Endpoint
     /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
-        var key = DocumentRoute.Key(HttpContext);
+        var key = await DocumentRoute.KeyAsync(HttpContext, tenants, cancellationToken);
         DocumentRoute.Parameters(HttpContext);
         DocumentRoute.RejectIdempotencyKey(HttpContext);
         var precondition = ETags.Precondition(HttpContext);

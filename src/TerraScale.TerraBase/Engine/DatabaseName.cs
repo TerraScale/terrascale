@@ -15,9 +15,6 @@ public readonly partial record struct DatabaseName
         Value = value;
     }
 
-    /// <summary>The internal database that holds TerraBase's own state (API keys); clients cannot name it.</summary>
-    public static DatabaseName System { get; } = new("_system");
-
     /// <summary>The name.</summary>
     public string Value { get; }
 

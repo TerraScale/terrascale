@@ -7,7 +7,7 @@ using TerraScale.TerraBase.Hosting;
 namespace TerraScale.TerraBase.Features.ApiKeys;
 
 /// <summary>
-/// Keeps keys as documents in the <see cref="DatabaseName.System"/> database, keyed by the
+/// Keeps keys as documents in the system database (<see cref="IStorageEngine.OpenSystemDatabaseAsync"/>), keyed by the
 /// SHA-256 of the secret. Secrets are 256 random bits, so an unsalted hash is sufficient.
 /// </summary>
 internal sealed class EngineApiKeyStore(IStorageEngine engine) : IApiKeyStore
@@ -16,13 +16,12 @@ internal sealed class EngineApiKeyStore(IStorageEngine engine) : IApiKeyStore
     /// <summary>Every API key secret starts with this; other bearer tokens (the dashboard credential) are not API keys.</summary>
     internal const string SecretPrefix = "tb_";
 
-    public async ValueTask<(ApiKey Key, string Secret)> CreateAsync(string name, IReadOnlyList<string> scopes, CancellationToken cancellationToken)
+    public async ValueTask<(ApiKey Key, string Secret)> CreateAsync(
+        string name, IReadOnlyList<string> scopes, string organizationId, string? projectId, string? databaseId, CancellationToken cancellationToken)
     {
         var secret = SecretPrefix + Base64Url(RandomNumberGenerator.GetBytes(32));
-        var key = new ApiKey(Base64Url(RandomNumberGenerator.GetBytes(12)), name, scopes);
-        await engine.CreateDatabaseAsync(DatabaseName.System, cancellationToken).ConfigureAwait(false);
-        var store = await engine.OpenDatabaseAsync(DatabaseName.System, cancellationToken).ConfigureAwait(false)
-            ?? throw new InvalidOperationException("the system database disappeared after creation");
+        var key = new ApiKey(Base64Url(RandomNumberGenerator.GetBytes(12)), name, scopes, organizationId, projectId, databaseId);
+        var store = await engine.OpenSystemDatabaseAsync(cancellationToken).ConfigureAwait(false);
         var transaction = await store.BeginTransactionAsync(write: true, cancellationToken).ConfigureAwait(false);
         await using (transaction.ConfigureAwait(false))
         {
@@ -41,17 +40,15 @@ internal sealed class EngineApiKeyStore(IStorageEngine engine) : IApiKeyStore
             return null;
         }
 
-        var store = await engine.OpenDatabaseAsync(DatabaseName.System, cancellationToken).ConfigureAwait(false);
-        if (store is null)
-        {
-            return null;
-        }
-
+        var store = await engine.OpenSystemDatabaseAsync(cancellationToken).ConfigureAwait(false);
         var transaction = await store.BeginTransactionAsync(write: false, cancellationToken).ConfigureAwait(false);
         await using (transaction.ConfigureAwait(false))
         {
             var document = await transaction.GetAsync(Collection, Hash(secret), cancellationToken).ConfigureAwait(false);
-            return document is null ? null : JsonSerializer.Deserialize(document.Json.Span, TerraBaseJsonContext.Default.ApiKey);
+            // A key stored before tenancy names no organization: it reaches nothing, so it does not authenticate.
+            return document is null || JsonSerializer.Deserialize(document.Json.Span, TerraBaseJsonContext.Default.ApiKey) is not { OrganizationId: not null } key
+                ? null
+                : key;
         }
     }
 

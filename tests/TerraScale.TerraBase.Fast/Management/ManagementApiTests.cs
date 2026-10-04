@@ -1,5 +1,4 @@
 using System.Net;
-using System.Net.Http.Headers;
 using System.Text.Json;
 using Bogus;
 using Microsoft.Data.Sqlite;
@@ -9,8 +8,8 @@ namespace TerraScale.TerraBase.Fast.Management;
 
 public sealed class ManagementApiTests
 {
-    private const string UserHeader = "X-TerraBase-User-Id";
-    private const string OrganizationHeader = "X-TerraBase-Organization-Id";
+    private const string UserHeader = ManagementApi.UserHeader;
+    private const string OrganizationHeader = ManagementApi.OrganizationHeader;
 
     private static readonly Faker Faker = new();
 
@@ -35,6 +34,7 @@ public sealed class ManagementApiTests
         await Assert.That(created.Headers.Location!.ToString()).IsEqualTo($"/v1/management/organizations/{id}");
         await Assert.That(organization.GetProperty("name").GetString()).IsEqualTo(name);
         await Assert.That(organization.GetProperty("createdBy").GetString()).IsEqualTo(api.User);
+        await Assert.That(organization.GetProperty("plan").GetString()).IsEqualTo("hobby");
         await Assert.That(Guid.TryParse(id, out _)).IsTrue();
         await Assert.That(read.StatusCode).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(list.RootElement.GetProperty("items").EnumerateArray().Select(item => item.GetProperty("id").GetString()!)).IsEquivalentTo([id]);
@@ -43,6 +43,39 @@ public sealed class ManagementApiTests
         await Assert.That(deleted.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
         await Assert.That(gone.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
         await Assert.That(listAfterDelete.RootElement.GetProperty("items").GetArrayLength()).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task An_organization_plan_defaults_to_hobby_and_is_set_only_by_owners()
+    {
+        await using var api = await ManagementApi.StartAsync();
+        using var other = api.As("other-user");
+        var organization = await api.CreateOrganizationAsync("Acme");
+        var plan = $"/v1/management/organizations/{organization}/plan";
+
+        var initial = await api.Client.GetFromJsonAsync<JsonElement>(Uri($"/v1/management/organizations/{organization}"));
+        using var pro = await api.Client.PutAsJsonAsync(Uri(plan), new { plan = "pro" });
+        using var enterprise = await api.Client.PutAsJsonAsync(Uri(plan), new { plan = "enterprise" });
+        var read = await api.Client.GetFromJsonAsync<JsonElement>(Uri($"/v1/management/organizations/{organization}"));
+        using var listed = JsonDocument.Parse(await api.Client.GetStringAsync(Uri("/v1/management/organizations")));
+        using var nonMember = await other.PutAsJsonAsync(Uri(plan), new { plan = "hobby" });
+        using var admin = api.As(await api.AddMemberAsync(api.Client, organization, "admin"));
+        using var member = api.As(await api.AddMemberAsync(api.Client, organization, "member"));
+        using var byAdmin = await admin.PutAsJsonAsync(Uri(plan), new { plan = "hobby" });
+        using var byMember = await member.PutAsJsonAsync(Uri(plan), new { plan = "hobby" });
+        var afterRefused = await member.GetFromJsonAsync<JsonElement>(Uri($"/v1/management/organizations/{organization}"));
+
+        await Assert.That(initial.GetProperty("plan").GetString()).IsEqualTo("hobby");
+        await Assert.That(pro.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That((await pro.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("plan").GetString()).IsEqualTo("pro");
+        await Assert.That(enterprise.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(read.GetProperty("plan").GetString()).IsEqualTo("enterprise");
+        await Assert.That(listed.RootElement.GetProperty("items")[0].GetProperty("plan").GetString()).IsEqualTo("enterprise");
+        await Assert.That(nonMember.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+        // The plan is billing: admins and members may not change it.
+        await Assert.That(byAdmin.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
+        await Assert.That(byMember.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
+        await Assert.That(afterRefused.GetProperty("plan").GetString()).IsEqualTo("enterprise");
     }
 
     [Test]
@@ -138,30 +171,29 @@ public sealed class ManagementApiTests
     public async Task Databases_are_created_branched_and_deleted_with_their_data()
     {
         await using var api = await ManagementApi.StartAsync();
-        using var data = api.Tls.CreateClient(api.Server.ClientAddress!, await api.Server.IssueAsync("documents:read", "documents:write"));
         var organization = await api.CreateOrganizationAsync("Acme");
         var project = await api.CreateProjectAsync(organization, "Shop");
+        using var data = api.DataClient(await api.Server.IssueAsync(organization, "documents:read", "documents:write"));
         var databases = $"/v1/management/organizations/{organization}/projects/{project}/databases";
+        var dataApi = $"/v1/projects/{project}/databases";
         var person = new { name = Faker.Name.FullName() };
         var (p1, p2) = (Guid.CreateVersion7().ToString(), Guid.CreateVersion7().ToString());
 
         using var created = await api.Client.PostAsJsonAsync(Uri(databases), new { name = "main" });
         var main = await created.Content.ReadFromJsonAsync<JsonElement>();
         var mainId = main.GetProperty("id").GetString()!;
-        var mainStorage = main.GetProperty("storageName").GetString()!;
-        (await data.PostAsJsonAsync(Uri($"/v1/databases/{mainStorage}/collections"), new { name = "people" })).EnsureSuccessStatusCode();
-        (await data.PutAsJsonAsync(Uri($"/v1/databases/{mainStorage}/collections/people/documents/{p1}"), person)).EnsureSuccessStatusCode();
+        (await data.PostAsJsonAsync(Uri($"{dataApi}/main/collections"), new { name = "people" })).EnsureSuccessStatusCode();
+        (await data.PutAsJsonAsync(Uri($"{dataApi}/main/collections/people/documents/{p1}"), person)).EnsureSuccessStatusCode();
         using var branched = await api.Client.PostAsJsonAsync(Uri($"{databases}/{mainId}/branches"), new { name = "preview" });
         var branch = await branched.Content.ReadFromJsonAsync<JsonElement>();
-        var branchStorage = branch.GetProperty("storageName").GetString()!;
-        (await data.PutAsJsonAsync(Uri($"/v1/databases/{branchStorage}/collections/people/documents/{p2}"), person)).EnsureSuccessStatusCode();
-        using var mainWithoutBranchWrite = await data.GetAsync(Uri($"/v1/databases/{mainStorage}/collections/people/documents/{p2}"));
+        (await data.PutAsJsonAsync(Uri($"{dataApi}/preview/collections/people/documents/{p2}"), person)).EnsureSuccessStatusCode();
+        using var mainWithoutBranchWrite = await data.GetAsync(Uri($"{dataApi}/main/collections/people/documents/{p2}"));
         using var list = JsonDocument.Parse(await api.Client.GetStringAsync(Uri(databases)));
         using var projectNotEmpty = await api.Client.DeleteAsync(Uri($"/v1/management/organizations/{organization}/projects/{project}"));
         using var deleted = await api.Client.DeleteAsync(Uri($"{databases}/{mainId}"));
         using var gone = await api.Client.GetAsync(Uri($"{databases}/{mainId}"));
-        using var dataGone = await data.GetAsync(Uri($"/v1/databases/{mainStorage}/collections/people/documents/{p1}"));
-        using var branchKeepsCopy = await data.GetAsync(Uri($"/v1/databases/{branchStorage}/collections/people/documents/{p1}"));
+        using var dataGone = await data.GetAsync(Uri($"{dataApi}/main/collections/people/documents/{p1}"));
+        using var branchKeepsCopy = await data.GetAsync(Uri($"{dataApi}/preview/collections/people/documents/{p1}"));
 
         await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created);
         await Assert.That(main.GetProperty("name").GetString()).IsEqualTo("main");
@@ -174,7 +206,8 @@ public sealed class ManagementApiTests
         await Assert.That(deleted.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
         await Assert.That(gone.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
         await Assert.That(dataGone.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
-        await Assert.That(File.Exists(Path.Combine(api.Server.DataDirectory, mainStorage + ".db"))).IsFalse();
+        await Assert.That(File.Exists(Path.Combine(api.Server.DataDirectory, organization, project, mainId + ".db"))).IsFalse();
+        await Assert.That(File.Exists(Path.Combine(api.Server.DataDirectory, organization, project, branch.GetProperty("id").GetString() + ".db"))).IsTrue();
         await Assert.That(branchKeepsCopy.StatusCode).IsEqualTo(HttpStatusCode.OK);
     }
 
@@ -215,7 +248,7 @@ public sealed class ManagementApiTests
         // A rejected create or branch leaves no database behind.
         await Assert.That(list.RootElement.GetProperty("items").GetArrayLength()).IsEqualTo(1);
         // Database files only: an open database also has SQLite -wal and -shm files.
-        await Assert.That(Directory.EnumerateFiles(api.Server.DataDirectory, "db-*.db").Count()).IsEqualTo(1);
+        await Assert.That(Directory.EnumerateFiles(Path.Combine(api.Server.DataDirectory, acme, project), "*.db").Count()).IsEqualTo(1);
     }
 
     [Test]
@@ -230,7 +263,7 @@ public sealed class ManagementApiTests
         statuses.AddRange(await AllStatusesAsync(api.Client, $"/v1/management/organizations/{organization}", unknown.ToString(), unknown.ToString(), Level.Project));
         statuses.AddRange(await AllStatusesAsync(api.Client, $"/v1/management/organizations/{organization}", project, unknown.ToString(), Level.Database));
 
-        await Assert.That(statuses).Count().IsEqualTo(13 + 8 + 3);
+        await Assert.That(statuses).Count().IsEqualTo(14 + 8 + 3);
         await Assert.That(statuses.Distinct()).IsEquivalentTo([HttpStatusCode.NotFound]);
     }
 
@@ -245,7 +278,7 @@ public sealed class ManagementApiTests
         var database = (await created.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString()!;
 
         var statuses = await AllStatusesAsync(intruder, $"/v1/management/organizations/{organization}", project, database);
-        await Assert.That(statuses).Count().IsEqualTo(13);
+        await Assert.That(statuses).Count().IsEqualTo(14);
         using var intruderList = JsonDocument.Parse(await intruder.GetStringAsync(Uri("/v1/management/organizations")));
         using var stillThere = await api.Client.GetAsync(Uri($"/v1/management/organizations/{organization}/projects/{project}/databases/{database}"));
         var unchanged = await api.Client.GetFromJsonAsync<JsonElement>(Uri($"/v1/management/organizations/{organization}"));
@@ -255,6 +288,7 @@ public sealed class ManagementApiTests
         await Assert.That(intruderList.RootElement.GetProperty("items").GetArrayLength()).IsEqualTo(0);
         await Assert.That(stillThere.StatusCode).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(unchanged.GetProperty("name").GetString()).IsEqualTo("Acme");
+        await Assert.That(unchanged.GetProperty("plan").GetString()).IsEqualTo("hobby");
     }
 
     [Test]
@@ -282,6 +316,12 @@ public sealed class ManagementApiTests
             statuses.Add(await StatusAsync(api.Client.PostAsJsonAsync(Uri(databases), body)));
         }
 
+        foreach (var body in new object[] { new { }, new { plan = "Pro" }, new { plan = "free" }, new { plan = "1" } })
+        {
+            statuses.Add(await StatusAsync(api.Client.PutAsJsonAsync(Uri($"/v1/management/organizations/{organization}/plan"), body)));
+        }
+
+        statuses.Add(await StatusAsync(api.Client.PutAsync(Uri($"/v1/management/organizations/{organization}/plan"), new StringContent("""{"plan":1}""", null, "application/json"))));
         statuses.Add(await StatusAsync(api.Client.GetAsync(Uri("/v1/management/organizations?limit=0"))));
         statuses.Add(await StatusAsync(api.Client.GetAsync(Uri("/v1/management/organizations?limit=101"))));
         statuses.Add(await StatusAsync(api.Client.PostAsync(Uri("/v1/management/organizations"), new StringContent("{oops", null, "application/json"))));
@@ -313,7 +353,7 @@ public sealed class ManagementApiTests
         await using var api = await ManagementApi.StartAsync();
         using var anonymous = api.Tls.CreateClient(api.Server.ClientAddress!);
         using var wrongCredential = api.Tls.CreateClient(api.Server.ClientAddress!, ManagementApi.Credential + "x");
-        using var apiKey = api.Tls.CreateClient(api.Server.ClientAddress!, await api.Server.IssueAsync("documents:read", "documents:write"));
+        using var apiKey = api.DataClient(await api.Server.IssueAsync(await api.CreateOrganizationAsync("Acme"), "documents:read", "documents:write"));
         using var dashboard = api.Tls.CreateClient(api.Server.ClientAddress!, ManagementApi.Credential);
         foreach (var client in new[] { anonymous, wrongCredential, apiKey })
         {
@@ -324,7 +364,7 @@ public sealed class ManagementApiTests
         using var wrong = await wrongCredential.GetAsync(Uri("/v1/management/organizations"));
         using var withApiKey = await apiKey.GetAsync(Uri("/v1/management/organizations"));
         using var onAdmin = await api.Server.Client.GetAsync(Uri("/v1/management/organizations"));
-        using var noDocumentAccess = await dashboard.PutAsync(Uri("/v1/databases/x"), null);
+        using var noDocumentAccess = await dashboard.PutAsync(Uri($"/v1/projects/{Guid.NewGuid()}/databases/x"), null);
 
         await Assert.That(noCredential.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
         await Assert.That(wrong.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
@@ -532,46 +572,16 @@ public sealed class ManagementApiTests
     }
 
     // Writes a schema-version-1 _system database holding exactly these documents.
+    // In a data directory a server of this build already started on: an unprepared directory with files is refused.
     private static async Task WriteSystemDocumentsAsync(string dataDirectory, params (string Collection, string Id, string Body)[] documents)
     {
-        await using var connection = new SqliteConnection($"Data Source={Path.Combine(dataDirectory, "_system.db")};Pooling=False");
-        await connection.OpenAsync();
-        await using (var schema = connection.CreateCommand())
-        {
-            schema.CommandText = """
-                CREATE TABLE documents (collection TEXT NOT NULL, id TEXT NOT NULL, version INTEGER NOT NULL, body TEXT NOT NULL, PRIMARY KEY (collection, id)) WITHOUT ROWID;
-                PRAGMA user_version = 1;
-                """;
-            await schema.ExecuteNonQueryAsync();
-        }
-
-        foreach (var (collection, id, body) in documents)
-        {
-            await using var insert = connection.CreateCommand();
-            insert.CommandText = "INSERT INTO documents VALUES ($collection, $id, 1, $body);";
-            insert.Parameters.AddWithValue("$collection", collection);
-            insert.Parameters.AddWithValue("$id", id);
-            insert.Parameters.AddWithValue("$body", body);
-            await insert.ExecuteNonQueryAsync();
-        }
+        await TerraBaseTestServer.InitializeDataDirectoryAsync(dataDirectory);
+        await DocumentFiles.WriteAsync(Path.Combine(dataDirectory, "_system.db"), documents);
     }
 
     // Every document of the _system database, as "collection|id|body" lines in key order.
-    private static async Task<List<string>> ReadSystemDocumentsAsync(string dataDirectory)
-    {
-        await using var connection = new SqliteConnection($"Data Source={Path.Combine(dataDirectory, "_system.db")};Mode=ReadOnly;Pooling=False");
-        await connection.OpenAsync();
-        await using var command = connection.CreateCommand();
-        command.CommandText = "SELECT collection, id, body FROM documents ORDER BY collection, id;";
-        await using var reader = await command.ExecuteReaderAsync();
-        var documents = new List<string>();
-        while (await reader.ReadAsync())
-        {
-            documents.Add($"{reader.GetString(0)}|{reader.GetString(1)}|{reader.GetString(2)}");
-        }
-
-        return documents;
-    }
+    private static Task<List<string>> ReadSystemDocumentsAsync(string dataDirectory) =>
+        DocumentFiles.ReadAsync(Path.Combine(dataDirectory, "_system.db"));
 
     private static async Task<HttpStatusCode> StatusAsync(Task<HttpResponseMessage> request)
     {
@@ -590,6 +600,7 @@ public sealed class ManagementApiTests
         [
             (Level.Organization, () => client.GetAsync(Uri(organization))),
             (Level.Organization, () => client.PatchAsJsonAsync(Uri(organization), named)),
+            (Level.Organization, () => client.PutAsJsonAsync(Uri($"{organization}/plan"), new { plan = "pro" })),
             (Level.Organization, () => client.DeleteAsync(Uri(organization))),
             (Level.Organization, () => client.GetAsync(Uri($"{organization}/projects"))),
             (Level.Organization, () => client.PostAsJsonAsync(Uri($"{organization}/projects"), named)),
@@ -616,107 +627,5 @@ public sealed class ManagementApiTests
         Organization,
         Project,
         Database,
-    }
-
-    /// <summary>
-    /// A server with the client listener and the dashboard credential, and clients that send it like
-    /// ts-dashboard: the acting user on every request and, on organization routes, the organization from the path.
-    /// </summary>
-    private sealed class ManagementApi : IAsyncDisposable
-    {
-        public const string Credential = "test-dashboard-credential-0123456789abcdef";
-
-        private readonly string _directory;
-
-        private ManagementApi(TerraBaseTestServer server, ClientTls tls, string directory, string user)
-        {
-            Server = server;
-            Tls = tls;
-            _directory = directory;
-            User = user;
-            Client = As(user);
-        }
-
-        public TerraBaseTestServer Server { get; }
-
-        public ClientTls Tls { get; }
-
-        public string User { get; }
-
-        public HttpClient Client { get; }
-
-        public static async Task<ManagementApi> StartAsync(Action<Dictionary<string, string>>? configure = null)
-        {
-            var directory = Directory.CreateTempSubdirectory("terrabase-dashboard-").FullName;
-            var credentialFile = Path.Combine(directory, "credential");
-            await File.WriteAllTextAsync(credentialFile, Credential + "\n");
-            var tls = new ClientTls();
-            var server = await TerraBaseTestServer.StartAsync(settings =>
-            {
-                tls.Apply(settings);
-                settings["dashboard-credential-file"] = credentialFile;
-                configure?.Invoke(settings);
-            });
-            return new ManagementApi(server, tls, directory, Faker.Random.Guid().ToString());
-        }
-
-        public HttpClient As(string user)
-        {
-            var client = new HttpClient(new DashboardHeaders(user) { InnerHandler = Tls.CreateHandler() })
-            {
-                BaseAddress = Server.ClientAddress,
-                Timeout = TimeSpan.FromSeconds(30),
-            };
-            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", Credential);
-            return client;
-        }
-
-        /// <summary>Sends a request after <paramref name="edit"/> changes its final headers.</summary>
-        public async Task<HttpStatusCode> SendAsync(HttpMethod method, string path, Action<HttpRequestHeaders> edit)
-        {
-            using var client = new HttpClient(new DashboardHeaders(User, edit) { InnerHandler = Tls.CreateHandler() }) { BaseAddress = Server.ClientAddress };
-            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", Credential);
-            using var request = new HttpRequestMessage(method, Uri(path));
-            using var response = await client.SendAsync(request);
-            return response.StatusCode;
-        }
-
-        public async Task<string> CreateOrganizationAsync(string name, HttpClient? client = null)
-        {
-            using var response = await (client ?? Client).PostAsJsonAsync(Uri("/v1/management/organizations"), new { name });
-            response.EnsureSuccessStatusCode();
-            return (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString()!;
-        }
-
-        public async Task<string> CreateProjectAsync(string organization, string name)
-        {
-            using var response = await Client.PostAsJsonAsync(Uri($"/v1/management/organizations/{organization}/projects"), new { name });
-            response.EnsureSuccessStatusCode();
-            return (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString()!;
-        }
-
-        public async ValueTask DisposeAsync()
-        {
-            Client.Dispose();
-            await Server.DisposeAsync();
-            Tls.Dispose();
-            Directory.Delete(_directory, recursive: true);
-        }
-    }
-
-    private sealed class DashboardHeaders(string user, Action<HttpRequestHeaders>? edit = null) : DelegatingHandler
-    {
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
-        {
-            request.Headers.Add(UserHeader, user);
-            var segments = request.RequestUri!.AbsolutePath.Split('/');
-            if (segments.Length > 4 && segments[3] == "organizations")
-            {
-                request.Headers.Add(OrganizationHeader, segments[4]);
-            }
-
-            edit?.Invoke(request.Headers);
-            return base.SendAsync(request, cancellationToken);
-        }
     }
 }

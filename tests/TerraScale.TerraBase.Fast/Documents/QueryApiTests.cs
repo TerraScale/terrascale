@@ -198,7 +198,7 @@ public sealed class QueryApiTests
         var mismatches = new List<string>();
         foreach (var (filter, expected) in FilterCases)
         {
-            var result = await api.SendRawAsync(HttpMethod.Post, DocumentApi.Query, $$"""{"filter":{{filter}}}""", "application/json");
+            var result = await api.SendRawAsync(HttpMethod.Post, api.Query, $$"""{"filter":{{filter}}}""", "application/json");
             var actual = result.Status == HttpStatusCode.OK ? Letters(result) : result.Status.ToString();
             if (actual != expected)
             {
@@ -214,11 +214,11 @@ public sealed class QueryApiTests
     {
         await using var api = await SeedAsync();
 
-        var ascending = await api.SendRawAsync(HttpMethod.Post, DocumentApi.Query, """{"sort":[{"path":"/n"}]}""", "application/json");
-        var descending = await api.SendRawAsync(HttpMethod.Post, DocumentApi.Query, """{"sort":[{"path":"/n","order":"desc"}]}""", "application/json");
+        var ascending = await api.SendRawAsync(HttpMethod.Post, api.Query, """{"sort":[{"path":"/n"}]}""", "application/json");
+        var descending = await api.SendRawAsync(HttpMethod.Post, api.Query, """{"sort":[{"path":"/n","order":"desc"}]}""", "application/json");
         var twoKeys = await api.SendRawAsync(
-            HttpMethod.Post, DocumentApi.Query, """{"sort":[{"path":"/nested/k","order":"desc"},{"path":"/s"}]}""", "application/json");
-        var byId = await api.SendRawAsync(HttpMethod.Post, DocumentApi.Query, """{"sort":[{"path":"$id","order":"desc"}]}""", "application/json");
+            HttpMethod.Post, api.Query, """{"sort":[{"path":"/nested/k","order":"desc"},{"path":"/s"}]}""", "application/json");
+        var byId = await api.SendRawAsync(HttpMethod.Post, api.Query, """{"sort":[{"path":"$id","order":"desc"}]}""", "application/json");
 
         // missing < numbers < strings
         await Assert.That(Letters(ascending)).IsEqualTo("EABDC");
@@ -234,7 +234,7 @@ public sealed class QueryApiTests
         await using var api = await SeedAsync();
 
         var result = await api.SendRawAsync(
-            HttpMethod.Post, DocumentApi.Query,
+            HttpMethod.Post, api.Query,
             """{"filter":{"in":["$id",["00000000-0000-7000-8000-00000000000a","00000000-0000-7000-8000-00000000000c"]]},"project":["/s","/nested/depth/x","/missing","$id"]}""",
             "application/json");
         var documents = result.Json.GetProperty("items").EnumerateArray().Select(item => item.GetProperty("document").GetRawText()).ToList();
@@ -248,7 +248,7 @@ public sealed class QueryApiTests
         await using var api = await DocumentApi.StartAsync();
         var id = DocumentApi.NewId();
         var created = await api.SendRawAsync(
-            HttpMethod.Put, DocumentApi.Document(id),
+            HttpMethod.Put, api.Document(id),
             """{"obj":{"a":1,"A":2,"child":{"x":3,"X":4}},"Obj":{"a":5,"A":6},"arr":[{"a":7,"A":8}],"omitted":true}""",
             "application/json");
         created.Status.ShouldBe(HttpStatusCode.Created);
@@ -273,7 +273,7 @@ public sealed class QueryApiTests
         await using var api = await DocumentApi.StartAsync();
         var id = DocumentApi.NewId();
         (await api.SendRawAsync(
-            HttpMethod.Put, DocumentApi.Document(id), """{"a":1,"A":2,"obj":{"a":3,"A":4}}""", "application/json"))
+            HttpMethod.Put, api.Document(id), """{"a":1,"A":2,"obj":{"a":3,"A":4}}""", "application/json"))
             .Status.ShouldBe(HttpStatusCode.Created);
 
         (string[] Project, string Expected)[] cases =
@@ -341,7 +341,7 @@ public sealed class QueryApiTests
         foreach (var sort in new string?[] { null, """[{"path":"/n","order":"desc"}]""", """[{"path":"/nested/k"},{"path":"/b","order":"desc"}]""" })
         {
             var sortJson = sort is null ? "" : $",\"sort\":{sort}";
-            var all = await api.SendRawAsync(HttpMethod.Post, DocumentApi.Query, $$"""{"limit":1000{{sortJson}}}""", "application/json");
+            var all = await api.SendRawAsync(HttpMethod.Post, api.Query, $$"""{"limit":1000{{sortJson}}}""", "application/json");
 
             var seen = new StringBuilder();
             string? cursor = null;
@@ -349,7 +349,7 @@ public sealed class QueryApiTests
             do
             {
                 var cursorJson = cursor is null ? "" : $",\"cursor\":\"{cursor}\"";
-                var page = await api.SendRawAsync(HttpMethod.Post, DocumentApi.Query, $$"""{"limit":2{{sortJson}}{{cursorJson}}}""", "application/json");
+                var page = await api.SendRawAsync(HttpMethod.Post, api.Query, $$"""{"limit":2{{sortJson}}{{cursorJson}}}""", "application/json");
                 seen.Append(Letters(page));
                 cursor = page.Json.GetProperty("next_cursor").GetString();
                 pages++;
@@ -366,17 +366,17 @@ public sealed class QueryApiTests
     public async Task Cursors_only_resume_their_own_query()
     {
         await using var api = await SeedAsync();
-        var first = await api.SendRawAsync(HttpMethod.Post, DocumentApi.Query, """{"limit":1,"filter":{"exists":"/s"}}""", "application/json");
+        var first = await api.SendRawAsync(HttpMethod.Post, api.Query, """{"limit":1,"filter":{"exists":"/s"}}""", "application/json");
         var cursor = first.Json.GetProperty("next_cursor").GetString();
 
         var sameQuery = await api.SendRawAsync(
-            HttpMethod.Post, DocumentApi.Query, $$"""{"limit":4,"filter":{"exists":"/s"},"cursor":"{{cursor}}"}""", "application/json");
+            HttpMethod.Post, api.Query, $$"""{"limit":4,"filter":{"exists":"/s"},"cursor":"{{cursor}}"}""", "application/json");
         var otherFilter = await api.SendRawAsync(
-            HttpMethod.Post, DocumentApi.Query, $$"""{"limit":1,"filter":{"exists":"/n"},"cursor":"{{cursor}}"}""", "application/json");
+            HttpMethod.Post, api.Query, $$"""{"limit":1,"filter":{"exists":"/n"},"cursor":"{{cursor}}"}""", "application/json");
         var otherSort = await api.SendRawAsync(
-            HttpMethod.Post, DocumentApi.Query, $$"""{"limit":1,"filter":{"exists":"/s"},"sort":[{"path":"/s"}],"cursor":"{{cursor}}"}""", "application/json");
-        var listCursor = await api.SendAsync(HttpMethod.Get, $"{DocumentApi.Documents}?cursor={cursor}");
-        var garbage = await api.SendRawAsync(HttpMethod.Post, DocumentApi.Query, """{"cursor":"%%%"}""", "application/json");
+            HttpMethod.Post, api.Query, $$"""{"limit":1,"filter":{"exists":"/s"},"sort":[{"path":"/s"}],"cursor":"{{cursor}}"}""", "application/json");
+        var listCursor = await api.SendAsync(HttpMethod.Get, $"{api.Documents}?cursor={cursor}");
+        var garbage = await api.SendRawAsync(HttpMethod.Post, api.Query, """{"cursor":"%%%"}""", "application/json");
 
         await Assert.That(Letters(sameQuery)).IsEqualTo("BCDE");
         await Assert.That(sameQuery.Json.GetProperty("next_cursor").ValueKind).IsEqualTo(JsonValueKind.Null);
@@ -391,8 +391,8 @@ public sealed class QueryApiTests
     {
         await using var api = await SeedAsync();
 
-        var counted = await api.SendRawAsync(HttpMethod.Post, DocumentApi.Query, """{"filter":{"exists":"/n"},"limit":1,"count":true}""", "application/json");
-        var uncounted = await api.SendRawAsync(HttpMethod.Post, DocumentApi.Query, """{"filter":{"exists":"/n"}}""", "application/json");
+        var counted = await api.SendRawAsync(HttpMethod.Post, api.Query, """{"filter":{"exists":"/n"},"limit":1,"count":true}""", "application/json");
+        var uncounted = await api.SendRawAsync(HttpMethod.Post, api.Query, """{"filter":{"exists":"/n"}}""", "application/json");
 
         await Assert.That(counted.Ids.Count).IsEqualTo(1);
         await Assert.That(counted.Json.GetProperty("count").GetRawText()).IsEqualTo("""{"value":"4","exact":true}""");
@@ -435,7 +435,7 @@ public sealed class QueryApiTests
         var accepted = new List<string>();
         foreach (var query in InvalidQueries)
         {
-            var result = await api.SendRawAsync(HttpMethod.Post, DocumentApi.Query, query, "application/json");
+            var result = await api.SendRawAsync(HttpMethod.Post, api.Query, query, "application/json");
             if ((result.Status, result.Code) != (HttpStatusCode.BadRequest, "invalid_query"))
             {
                 accepted.Add($"{query} -> {(int)result.Status} {result.Code}");
@@ -451,12 +451,12 @@ public sealed class QueryApiTests
         await using var api = await DocumentApi.StartAsync();
         var id = DocumentApi.NewId();
         await api.SendRawAsync(
-            HttpMethod.Put, DocumentApi.Document(id), """{"a\"b":{"c\\d":1},"s":"a\u0000b","x.y":{"[0]":true},"n\u0000m":1,"t\tb":{"l\nf":"x"}}""", "application/json");
+            HttpMethod.Put, api.Document(id), """{"a\"b":{"c\\d":1},"s":"a\u0000b","x.y":{"[0]":true},"n\u0000m":1,"t\tb":{"l\nf":"x"}}""", "application/json");
         await api.PutAsync(DocumentApi.NewId(), new { s = "a" });
 
         async Task<int> CountAsync(string filter)
         {
-            return (await api.SendRawAsync(HttpMethod.Post, DocumentApi.Query, $$"""{"filter":{{filter}}}""", "application/json")).Ids.Count;
+            return (await api.SendRawAsync(HttpMethod.Post, api.Query, $$"""{"filter":{{filter}}}""", "application/json")).Ids.Count;
         }
 
         await Assert.That(await CountAsync("""{"eq":["/a\"b/c\\d",1]}""")).IsEqualTo(1);
@@ -464,9 +464,9 @@ public sealed class QueryApiTests
         // Control characters in member names, NUL included, are ordinary names.
         await Assert.That(await CountAsync("""{"eq":["/n\u0000m",1]}""")).IsEqualTo(1);
         await Assert.That(await CountAsync("""{"eq":["/t\tb/l\nf","x"]}""")).IsEqualTo(1);
-        var sorted = await api.SendRawAsync(HttpMethod.Post, DocumentApi.Query, """{"sort":[{"path":"/n\u0000m","order":"desc"}]}""", "application/json");
+        var sorted = await api.SendRawAsync(HttpMethod.Post, api.Query, """{"sort":[{"path":"/n\u0000m","order":"desc"}]}""", "application/json");
         await Assert.That(sorted.Ids[0]).IsEqualTo(id);
-        var exactNul = await api.SendRawAsync(HttpMethod.Post, DocumentApi.Query, """{"filter":{"eq":["/s","a\u0000b"]}}""", "application/json");
+        var exactNul = await api.SendRawAsync(HttpMethod.Post, api.Query, """{"filter":{"eq":["/s","a\u0000b"]}}""", "application/json");
         await Assert.That(exactNul.Ids).IsEquivalentTo([id]);
         await Assert.That(await CountAsync("""{"prefix":["/s","a\u0000"]}""")).IsEqualTo(1);
         await Assert.That(await CountAsync("""{"prefix":["/s","a\u0000c"]}""")).IsEqualTo(0);
@@ -488,7 +488,7 @@ public sealed class QueryApiTests
         var group = "{\"and\":[" + string.Join(',', Enumerable.Repeat($$"""{"in":["/n",[{{values}}]]}""", 64)) + "]}";
         var filter = "{\"and\":[" + string.Join(',', Enumerable.Repeat(group, 3)) + "]}";
 
-        var result = await api.SendRawAsync(HttpMethod.Post, DocumentApi.Query, $$"""{"filter":{{filter}}}""", "application/json");
+        var result = await api.SendRawAsync(HttpMethod.Post, api.Query, $$"""{"filter":{{filter}}}""", "application/json");
 
         // 49152 values in 192 in filters: A (1) and D (10) match; B (2.5) and C ("10") do not.
         await Assert.That(result.Status).IsEqualTo(HttpStatusCode.OK);
@@ -500,7 +500,7 @@ public sealed class QueryApiTests
     {
         await using var api = await DocumentApi.StartAsync();
 
-        var result = await api.SendRawAsync(HttpMethod.Post, "/v1/databases/db/collections/nope/query", "{}", "application/json");
+        var result = await api.SendRawAsync(HttpMethod.Post, $"{api.Project}/databases/db/collections/nope/query", "{}", "application/json");
 
         await Assert.That((result.Status, result.Code)).IsEqualTo((HttpStatusCode.NotFound, "unknown_collection"));
     }
@@ -511,11 +511,11 @@ public sealed class QueryApiTests
         try
         {
             var ops = string.Join(',', Seed.Select(pair => $$"""{"op":"create","collection":"items","id":"{{Ids[pair.Key]}}","document":{{pair.Value}}}"""));
-            (await api.SendRawAsync(HttpMethod.Post, DocumentApi.Transactions, $$"""{"ops":[{{ops}}]}""", "application/json")).Status.ShouldBe(HttpStatusCode.OK);
+            (await api.SendRawAsync(HttpMethod.Post, api.Transactions, $$"""{"ops":[{{ops}}]}""", "application/json")).Status.ShouldBe(HttpStatusCode.OK);
             // A deleted document never matches.
             var deleted = DocumentApi.NewId();
             await api.PutAsync(deleted, new { n = 1, s = "apple" });
-            await api.SendAsync(HttpMethod.Delete, DocumentApi.Document(deleted));
+            await api.SendAsync(HttpMethod.Delete, api.Document(deleted));
             return api;
         }
         catch

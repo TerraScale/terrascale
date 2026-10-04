@@ -47,6 +47,7 @@ namespace TerraScale.TerraBase.Hosting;
 [JsonSerializable(typeof(Organization))]
 [JsonSerializable(typeof(OrganizationMember))]
 [JsonSerializable(typeof(OwnershipTransfer))]
+[JsonSerializable(typeof(PlanRequest))]
 [JsonSerializable(typeof(Project))]
 [JsonSerializable(typeof(RoleRequest))]
 [JsonSerializable(typeof(StatusBody))]

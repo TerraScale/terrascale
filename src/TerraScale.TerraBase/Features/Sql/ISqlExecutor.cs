@@ -1,4 +1,4 @@
-using TerraScale.TerraBase.Engine;
+using TerraScale.TerraBase.Tenancy;
 
 namespace TerraScale.TerraBase.Features.Sql;
 
@@ -15,5 +15,5 @@ public sealed record SqlResult(IReadOnlyList<string> Columns, IReadOnlyList<IRea
 public interface ISqlExecutor
 {
     /// <summary>Executes one statement with positional parameters.</summary>
-    ValueTask<SqlResult> ExecuteAsync(DatabaseName database, string statement, IReadOnlyList<object?> parameters, CancellationToken cancellationToken);
+    ValueTask<SqlResult> ExecuteAsync(TenantContext database, string statement, IReadOnlyList<object?> parameters, CancellationToken cancellationToken);
 }

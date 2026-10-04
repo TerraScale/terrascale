@@ -10,16 +10,16 @@ public sealed class StorageShutdownTests
     [Test]
     public async Task Stopping_under_load_closes_every_database_file()
     {
-        using var tls = new ClientTls();
-        var server = await TerraBaseTestServer.StartAsync(tls.Apply);
-        var dataDirectory = server.DataDirectory;
+        var api = await ManagementApi.StartAsync();
+        var dataDirectory = api.Server.DataDirectory;
         var serverDisposed = false;
-        HttpClient? client = null;
+        Tenant? tenant = null;
         using var stop = new CancellationTokenSource();
         var load = new List<Task>();
         try
         {
-            var http = client = tls.CreateClient(server.ClientAddress!, await server.IssueAsync("documents:read", "documents:write"));
+            tenant = await api.CreateTenantAsync("documents:read", "documents:write");
+            var (http, project) = (tenant.Data, tenant.ProjectId);
 
             // Writers keep opening new databases, so first opens race the shutdown. Only writes that
             // succeeded count, and the server stops once enough have, while the writers still run.
@@ -32,11 +32,11 @@ public sealed class StorageShutdownTests
                     var database = $"load-{worker}-{round}";
                     try
                     {
-                        using var created = await http.PutAsync(new Uri($"/v1/databases/{database}", UriKind.Relative), null, stop.Token);
+                        using var created = await http.PutAsync(new Uri($"/v1/projects/{project}/databases/{database}", UriKind.Relative), null, stop.Token);
                         using var collection = await http.PostAsJsonAsync(
-                            new Uri($"/v1/databases/{database}/collections", UriKind.Relative), new { name = "items" }, stop.Token);
+                            new Uri($"/v1/projects/{project}/databases/{database}/collections", UriKind.Relative), new { name = "items" }, stop.Token);
                         using var put = await http.PutAsJsonAsync(
-                            new Uri($"/v1/databases/{database}/collections/items/documents/{Guid.CreateVersion7()}", UriKind.Relative),
+                            new Uri($"/v1/projects/{project}/databases/{database}/collections/items/documents/{Guid.CreateVersion7()}", UriKind.Relative),
                             new { title = Faker.Commerce.ProductName() },
                             stop.Token);
                         if (created.IsSuccessStatusCode && collection.IsSuccessStatusCode && put.IsSuccessStatusCode
@@ -56,7 +56,7 @@ public sealed class StorageShutdownTests
             // The pool keeps database files open while the server runs, so the final check is not vacuous.
             await Assert.That(OpenFiles(dataDirectory)).IsNotEmpty();
             serverDisposed = true;
-            await server.DisposeAsync();
+            await api.DisposeAsync();
         }
         finally
         {
@@ -64,10 +64,10 @@ public sealed class StorageShutdownTests
             // so nothing outlives this test.
             await stop.CancelAsync();
             await Task.WhenAll(load);
-            client?.Dispose();
+            tenant?.Dispose();
             if (!serverDisposed)
             {
-                await server.DisposeAsync();
+                await api.DisposeAsync();
             }
         }
 

@@ -1,6 +1,9 @@
 using System.Net;
 using System.Text.Json;
 using Microsoft.Data.Sqlite;
+using Microsoft.Extensions.DependencyInjection;
+using TerraScale.TerraBase.Engine;
+using TerraScale.TerraBase.Tenancy;
 using TerraScale.TerraBase.Testing;
 
 namespace TerraScale.TerraBase.Slow.Documents;
@@ -12,11 +15,18 @@ public sealed class CountBoundTests
     [Arguments(false)]
     public async Task Public_count_excludes_the_overflow_row_whether_or_not_it_matches(bool overflowMatches)
     {
-        using var tls = new ClientTls();
-        await using var server = await TerraBaseTestServer.StartAsync(tls.Apply);
-        using var client = tls.CreateClient(server.ClientAddress!, await server.IssueAsync("documents:read"));
-        // Seed an isolated schema-1 database, then exercise migration and bounded count through the listener.
-        await using (var connection = new SqliteConnection($"Data Source={Path.Combine(server.DataDirectory, "count.db")};Pooling=False"))
+        await using var api = await ManagementApi.StartAsync();
+        using var tenant = await api.CreateTenantAsync("documents:read", "documents:write");
+        var client = tenant.Data;
+        // Seed an isolated schema-1 database in the tenant's project, then exercise migration and bounded count through
+        // the listener: register it, have the engine forget its file, and write the schema-1 file in its place.
+        using var registered = await client.PutAsync(tenant.Database("count"), null);
+        var id = (await registered.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString()!;
+        var database = new TenantContext(tenant.OrganizationId, PlanTier.Hobby, tenant.ProjectId, id);
+        await api.Server.Services.GetRequiredService<IStorageEngine>().DeleteDatabaseAsync(database, CancellationToken.None);
+        var path = Path.Combine(api.Server.DataDirectory, tenant.OrganizationId, tenant.ProjectId, id + ".db");
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        await using (var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = path, Pooling = false }.ToString()))
         {
             await connection.OpenAsync();
             await using var command = connection.CreateCommand();
@@ -32,7 +42,7 @@ public sealed class CountBoundTests
             await command.ExecuteNonQueryAsync();
         }
 
-        using var response = await client.PostAsJsonAsync(new Uri("/v1/databases/count/collections/items/query", UriKind.Relative),
+        using var response = await client.PostAsJsonAsync(tenant.Database("count", "/collections/items/query"),
             new { filter = new { eq = new object[] { "/n", 1 } }, limit = 1, count = true });
         await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
         var body = await response.Content.ReadFromJsonAsync<JsonElement>();
@@ -42,12 +52,12 @@ public sealed class CountBoundTests
     [Test]
     public async Task Assert_count_examines_at_most_10000_rows_whatever_it_matches()
     {
-        using var tls = new ClientTls();
-        await using var server = await TerraBaseTestServer.StartAsync(tls.Apply);
-        using var client = tls.CreateClient(server.ClientAddress!, await server.IssueAsync("documents:read", "documents:write"));
-        (await client.PutAsync(new Uri("/v1/databases/db", UriKind.Relative), null)).EnsureSuccessStatusCode();
-        (await client.PostAsJsonAsync(new Uri("/v1/databases/db/collections", UriKind.Relative), new { name = "items" })).EnsureSuccessStatusCode();
-        var transactions = new Uri("/v1/databases/db/transactions", UriKind.Relative);
+        await using var api = await ManagementApi.StartAsync();
+        using var tenant = await api.CreateTenantAsync("documents:read", "documents:write");
+        var client = tenant.Data;
+        (await client.PutAsync(tenant.Database("db"), null)).EnsureSuccessStatusCode();
+        (await client.PostAsJsonAsync(tenant.Database("db", "/collections"), new { name = "items" })).EnsureSuccessStatusCode();
+        var transactions = tenant.Database("db", "/transactions");
         string? someId = null;
         for (var batch = 0; batch < 10; batch++)
         {
@@ -69,7 +79,7 @@ public sealed class CountBoundTests
         (await client.PostAsJsonAsync(transactions, new { ops = churn })).EnsureSuccessStatusCode();
         using var pastBound = await client.PostAsJsonAsync(transactions, sparse);
         using var counted = await client.PostAsJsonAsync(
-            new Uri("/v1/databases/db/collections/items/query", UriKind.Relative), new { limit = 1, count = true });
+            tenant.Database("db", "/collections/items/query"), new { limit = 1, count = true });
         var error = (await pastBound.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("error");
         var count = (await counted.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("count");
 
@@ -82,7 +92,7 @@ public sealed class CountBoundTests
                 and = new object[] { new { exists = "/n" }, new { eq = new object[] { "/n", 999 } } },
             }),
         };
-        var query = new Uri("/v1/databases/db/collections/items/query", UriKind.Relative);
+        var query = tenant.Database("db", "/collections/items/query");
         using var exhausted = await client.PostAsJsonAsync(query, new { filter = expensive, limit = 1 });
         using var exhaustedSorted = await client.PostAsJsonAsync(query, new { filter = expensive, sort = new[] { new { path = "$id" } }, limit = 1 });
         using var exhaustedCount = await client.PostAsJsonAsync(transactions,

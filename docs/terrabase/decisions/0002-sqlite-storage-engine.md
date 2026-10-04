@@ -11,14 +11,15 @@ Turso engine. TerraBase is a database-as-a-service: clients store JSON documents
 ## Decision
 
 - TerraBase stores JSON documents in **SQLite** through `Microsoft.Data.Sqlite`, one database
-  file per TerraBase database (`<data-directory>/<name>.db`), WAL journal mode.
+  file per TerraBase database (`<data-directory>/<name>.db`; [0005](0005-multi-tenancy.md)
+  supersedes this layout with one directory per tenant), WAL journal mode.
 - Every caller uses the interfaces in `Engine/`: `IStorageEngine` (open and list databases),
   `IDatabaseStore` (transactions) and `IStorageTransaction` (document reads and writes).
   `Engine/Sqlite/` is the only code that references SQLite.
 - Schema v1 is one `documents (collection, id, version, body)` table, `WITHOUT ROWID`, with
   `PRAGMA user_version = 1`. A file with a newer version is refused.
 - TerraBase's own state (API key hashes) lives in the reserved `_system` database, which clients
-  cannot name.
+  cannot name. It stays at `<data-directory>/_system.db` under 0005.
 
 ## Consequences
 

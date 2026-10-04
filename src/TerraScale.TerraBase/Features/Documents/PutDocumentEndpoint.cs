@@ -2,11 +2,12 @@ using System.Text.Json;
 using TerraScale.Endpoints;
 using TerraScale.TerraBase.Features.ApiKeys;
 using TerraScale.TerraBase.Hosting;
+using TerraScale.TerraBase.Tenancy;
 
 namespace TerraScale.TerraBase.Features.Documents;
 
 /// <summary><c>PUT …/documents/{id}</c>: inserts or replaces a JSON document.</summary>
-public sealed class PutDocumentEndpoint(IDocumentService documents) : EndpointWithoutRequest<IResult>
+public sealed class PutDocumentEndpoint(IDocumentService documents, ITenantDirectory tenants) : EndpointWithoutRequest<IResult>
 {
     /// <inheritdoc />
     public override void Configure()
@@ -28,13 +29,13 @@ public sealed class PutDocumentEndpoint(IDocumentService documents) : EndpointWi
     /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
-        var key = DocumentRoute.Key(HttpContext);
+        var key = await DocumentRoute.KeyAsync(HttpContext, tenants, cancellationToken);
         DocumentRoute.Parameters(HttpContext);
         DocumentRoute.RejectIdempotencyKey(HttpContext);
         var precondition = ETags.Precondition(HttpContext);
         var json = await DocumentRoute.ReadDocumentAsync(HttpContext, cancellationToken);
         var (body, created) = await DocumentRoute.WriteAsync(
             HttpContext, documents, key, new PutOperation(key.Collection, key.Id, json, precondition), cancellationToken);
-        return created ? TypedResults.Created(DocumentRoute.Location(key), body) : TypedResults.Ok(body);
+        return created ? TypedResults.Created(DocumentRoute.Location(HttpContext, key), body) : TypedResults.Ok(body);
     }
 }

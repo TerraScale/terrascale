@@ -26,6 +26,26 @@ public sealed class ConfigurationTests
     }
 
     [Test]
+    [Arguments("-1")]
+    [Arguments("3601")]
+    [Arguments("10s")]
+    public async Task Invalid_shutdown_grace_periods_are_rejected(string seconds)
+    {
+        var error = await Assert.That(() => TerraBaseOptions.FromValues(new Dictionary<string, string> { ["shutdown-grace-seconds"] = seconds }))
+            .Throws<TerraBaseConfigurationException>();
+
+        await Assert.That(error!.Message).Contains("shutdown-grace-seconds");
+    }
+
+    [Test]
+    public async Task The_shutdown_grace_period_defaults_to_ten_seconds_and_can_be_zero()
+    {
+        await Assert.That(TerraBaseOptions.FromValues(new Dictionary<string, string>()).ShutdownGrace).IsEqualTo(TimeSpan.FromSeconds(10));
+        await Assert.That(TerraBaseOptions.FromValues(new Dictionary<string, string> { ["shutdown-grace-seconds"] = "0" }).ShutdownGrace)
+            .IsEqualTo(TimeSpan.Zero);
+    }
+
+    [Test]
     public async Task Invalid_data_directories_are_rejected_without_echoing_them()
     {
         var error = await Assert.That(() => TerraBaseOptions.FromProcess(["--data-directory=secret\0path"]))

@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using TerraScale.TerraBase.Configuration;
 using TerraScale.TerraBase.Engine;
+using TerraScale.TerraBase.Engine.Sqlite;
 
 namespace TerraScale.TerraBase.Testing;
 
@@ -18,11 +19,15 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
 {
     private readonly WebApplicationFactory<Program> _factory;
 
+    // The temporary directory this harness created, deleted on dispose even when a test chose another data directory.
+    private readonly string _temporaryDirectory;
+
     private TerraBaseTestServer(
-        WebApplicationFactory<Program> factory, string dataDirectory, IReadOnlyList<Uri> listeners, IReadOnlyDictionary<string, string> settings)
+        WebApplicationFactory<Program> factory, string temporaryDirectory, IReadOnlyList<Uri> listeners, IReadOnlyDictionary<string, string> settings)
     {
         _factory = factory;
-        DataDirectory = dataDirectory;
+        _temporaryDirectory = temporaryDirectory;
+        DataDirectory = Path.GetFullPath(settings["data-directory"]);
         BaseAddress = listeners.Single(address => address.Scheme == Uri.UriSchemeHttp);
         Client = new HttpClient(new SocketsHttpHandler { AllowAutoRedirect = false, UseCookies = false })
         {
@@ -38,7 +43,10 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
         PeerAddress = settings.ContainsKey("peer-port") ? https[^1] : null;
     }
 
-    /// <summary>This server's own temporary data directory, deleted on dispose.</summary>
+    /// <summary>
+    /// The server's data directory: its own temporary one, deleted on dispose, unless the test set <c>data-directory</c>
+    /// (which the test then owns).
+    /// </summary>
     public string DataDirectory { get; }
 
     /// <summary>The loopback origin of the administrative listener.</summary>
@@ -53,8 +61,38 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
     /// <summary>A client for the administrative listener that never follows redirects and never stores cookies.</summary>
     public HttpClient Client { get; }
 
-    /// <summary>The running server's services, for checks no listener exposes (for example engine transactions).</summary>
+    /// <summary>The running server's services, for checks no listener exposes (for example engine transactions or its endpoints).</summary>
     public IServiceProvider Services => _factory.Services;
+
+    /// <summary>
+    /// Whether a process (this one included) owns <paramref name="dataDirectory"/>: tries the exclusive lock an engine
+    /// holds on its <c>.terrabase.lock</c>, and gives it back at once.
+    /// </summary>
+    public static bool IsDataDirectoryOwned(string dataDirectory)
+    {
+        try
+        {
+            using var attempt = new FileStream(Path.Combine(dataDirectory, ".terrabase.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+            return false;
+        }
+        catch (IOException error) when (SqliteStorageEngine.IsLockConflict(error))
+        {
+            // Only the lock being held, the same test the engine applies. Every other failure (a missing directory, a
+            // full disk, a broken lock file) propagates, so a broken probe never reads as an owned directory.
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// Prepares an empty directory as a data directory of this build, as a server's first start does, so a test can
+    /// seed it with files (such as the system database) before starting a server on it.
+    /// </summary>
+    public static async Task InitializeDataDirectoryAsync(string dataDirectory)
+    {
+        await using (await StartAsync(settings => settings["data-directory"] = dataDirectory))
+        {
+        }
+    }
 
     /// <summary>
     /// Starts a server. <paramref name="settings"/> edits the <c>--name=value</c> settings;
@@ -86,9 +124,25 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
 
             factory = new Factory(arguments, services);
             factory.UseKestrel();
-            factory.StartServer();
-            var addresses = factory.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()
-                ?? throw new InvalidOperationException("the server did not report its listening addresses");
+            IServerAddressesFeature addresses;
+            try
+            {
+                factory.StartServer();
+                addresses = factory.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()
+                    ?? throw new InvalidOperationException("the server did not report its listening addresses");
+            }
+            catch (ObjectDisposedException error) when (string.Equals(error.ObjectName, "IServiceProvider", StringComparison.Ordinal))
+            {
+                // Program disposes the host before returning on a failed startup, releasing its directory lock.
+                throw new InvalidOperationException("the server exited before it listened; see its error output", error);
+            }
+
+            if (addresses.Addresses.Count == 0)
+            {
+                // Program returned (for example with exit code 2 and a message on stderr) instead of running.
+                throw new InvalidOperationException("the server exited before it listened; see its error output");
+            }
+
             return new TerraBaseTestServer(factory, dataDirectory, [.. addresses.Addresses.Select(address => new Uri(address))], values);
         }
         catch
@@ -114,7 +168,7 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
         // files when the factory returns. Disposing the engine again is a no-op that returns only once
         // its files are closed (or closes them first).
         await engine.DisposeAsync();
-        Directory.Delete(DataDirectory, recursive: true);
+        Directory.Delete(_temporaryDirectory, recursive: true);
     }
 
     private sealed class Factory(IReadOnlyDictionary<string, string> settings, Action<IServiceCollection>? services) : WebApplicationFactory<Program>

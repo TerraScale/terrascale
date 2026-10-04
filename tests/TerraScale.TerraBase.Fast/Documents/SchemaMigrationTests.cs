@@ -3,6 +3,7 @@ using System.Net;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using TerraScale.TerraBase.Engine;
+using TerraScale.TerraBase.Tenancy;
 using TerraScale.TerraBase.Testing;
 
 namespace TerraScale.TerraBase.Fast.Documents;
@@ -12,85 +13,106 @@ public sealed class SchemaMigrationTests
     [Test]
     public async Task A_version_3_database_persists_its_incarnation_across_reopen_and_gives_copies_new_identities()
     {
-        await using var api = await DocumentApi.StartAsync();
-        var id = DocumentApi.NewId();
-        var path = Path.Combine(api.Server.DataDirectory, "v3.db");
-        await using (var connection = new SqliteConnection($"Data Source={path};Pooling=False"))
+        // Its own data directory: a second server reopens it once the first stopped.
+        var dataDirectory = Directory.CreateTempSubdirectory("terrabase-v3-").FullName;
+        try
         {
-            await connection.OpenAsync();
-            await using var command = connection.CreateCommand();
-            command.CommandText = """
-                CREATE TABLE documents (collection TEXT NOT NULL, id TEXT NOT NULL, version INTEGER NOT NULL, body TEXT,
-                    PRIMARY KEY (collection, id)) WITHOUT ROWID;
-                CREATE TABLE collections (name TEXT PRIMARY KEY, created_at INTEGER NOT NULL) WITHOUT ROWID;
-                CREATE TABLE commit_offset (id INTEGER PRIMARY KEY CHECK (id = 1), value INTEGER NOT NULL);
-                CREATE INDEX documents_live ON documents (collection, id) WHERE body IS NOT NULL;
-                INSERT INTO collections VALUES ('items', 1);
-                INSERT INTO commit_offset VALUES (1, 7);
-                INSERT INTO documents VALUES ('items', $id, 7, '{"n":1}');
-                PRAGMA user_version = 3;
-                """;
-            command.Parameters.AddWithValue("$id", id);
-            await command.ExecuteNonQueryAsync();
+            var id = DocumentApi.NewId();
+            string route, copyRoute, migratedVersion, copiedVersion, copiedDocument, organization;
+            TenantContext sourceTenant, copyTenant;
+            Guid sourceIncarnation, copyIncarnation;
+            await using (var api = await DocumentApi.StartAsync(settings => settings["data-directory"] = dataDirectory))
+            {
+                organization = api.Tenant.OrganizationId;
+                var path = await api.ReplaceWithOlderFileAsync("v3", async path =>
+                {
+                    await using var connection = new SqliteConnection(DocumentApi.ConnectionString(path));
+                    await connection.OpenAsync();
+                    await using var command = connection.CreateCommand();
+                    command.CommandText = """
+                        CREATE TABLE documents (collection TEXT NOT NULL, id TEXT NOT NULL, version INTEGER NOT NULL, body TEXT,
+                            PRIMARY KEY (collection, id)) WITHOUT ROWID;
+                        CREATE TABLE collections (name TEXT PRIMARY KEY, created_at INTEGER NOT NULL) WITHOUT ROWID;
+                        CREATE TABLE commit_offset (id INTEGER PRIMARY KEY CHECK (id = 1), value INTEGER NOT NULL);
+                        CREATE INDEX documents_live ON documents (collection, id) WHERE body IS NOT NULL;
+                        INSERT INTO collections VALUES ('items', 1);
+                        INSERT INTO commit_offset VALUES (1, 7);
+                        INSERT INTO documents VALUES ('items', $id, 7, '{"n":1}');
+                        PRAGMA user_version = 3;
+                        """;
+                    command.Parameters.AddWithValue("$id", id);
+                    await command.ExecuteNonQueryAsync();
+                });
+
+                route = $"{api.DatabasePath("v3")}/collections/items/documents/{id}";
+                var migrated = await api.SendAsync(HttpMethod.Get, route);
+                migrated.Status.ShouldBe(HttpStatusCode.OK);
+                migratedVersion = migrated.Version;
+                var engine = api.Server.Services.GetRequiredService<IStorageEngine>();
+                sourceTenant = await api.TenantOfAsync("v3");
+                var store = (await engine.OpenDatabaseAsync(sourceTenant, CancellationToken.None))!;
+                await Assert.That(store.Incarnation.Version).IsEqualTo(4);
+                sourceIncarnation = store.Incarnation;
+                await using (var check = new SqliteConnection(DocumentApi.ConnectionString(path, readOnly: true)))
+                {
+                    await check.OpenAsync();
+                    await using var command = check.CreateCommand();
+                    command.CommandText = "PRAGMA user_version;";
+                    await Assert.That(await command.ExecuteScalarAsync()).IsEqualTo(4L);
+                    command.CommandText = "SELECT incarnation FROM commit_offset WHERE id = 1;";
+                    await Assert.That(Guid.TryParseExact((string?)await command.ExecuteScalarAsync(), "N", out var persisted)).IsTrue();
+                    await Assert.That(store.Incarnation).IsEqualTo(persisted);
+                }
+
+                // A copy (a branch, through the Management API) gets its own identity.
+                var source = (await api.SendAsync(HttpMethod.Put, api.DatabasePath("v3"))).Json.GetProperty("id").GetString();
+                using var owner = api.Management.As(api.Tenant.User);
+                using var branched = await owner.PostAsJsonAsync(
+                    new Uri($"/v1/management/organizations/{organization}/projects/{api.Tenant.ProjectId}/databases/{source}/branches", UriKind.Relative),
+                    new { name = "copied" });
+                branched.StatusCode.ShouldBe(HttpStatusCode.Created);
+                copyRoute = $"{api.DatabasePath("copied")}/collections/items/documents/{id}";
+                var copied = await api.SendAsync(HttpMethod.Get, copyRoute);
+                await Assert.That(copied.Status).IsEqualTo(HttpStatusCode.OK);
+                await Assert.That(copied.Version).IsNotEqualTo(migratedVersion);
+                await Assert.That(copied.Json.GetProperty("document").GetRawText()).IsEqualTo(migrated.Json.GetProperty("document").GetRawText());
+                copiedVersion = copied.Version;
+                copyTenant = await api.TenantOfAsync("copied");
+                var copiedStore = (await engine.OpenDatabaseAsync(copyTenant, CancellationToken.None))!;
+                await Assert.That(copiedStore.Incarnation.Version).IsEqualTo(4);
+                await Assert.That(copiedStore.Incarnation).IsNotEqualTo(sourceIncarnation);
+                copyIncarnation = copiedStore.Incarnation;
+                copiedDocument = copied.Json.GetProperty("document").GetRawText();
+            }
+
+            // Another server opens the same persisted files with a new engine and store cache.
+            await using var reopened = await ManagementApi.StartAsync(settings => settings["data-directory"] = dataDirectory);
+            using var client = reopened.DataClient(await reopened.Server.IssueAsync(organization, "documents:read", "documents:write"));
+            var afterReopen = await DocumentApi.SendAsync(client, HttpMethod.Get, route);
+            await Assert.That(afterReopen.Version).IsEqualTo(migratedVersion);
+            var unchanged = await DocumentApi.SendAsync(client, HttpMethod.Get, route, configure: DocumentApi.IfNoneMatch(migratedVersion));
+            await Assert.That(unchanged.Status).IsEqualTo(HttpStatusCode.NotModified);
+            var copiedReopened = await DocumentApi.SendAsync(client, HttpMethod.Get, copyRoute);
+            await Assert.That(copiedReopened.Version).IsEqualTo(copiedVersion);
+            await Assert.That(copiedReopened.Json.GetProperty("document").GetRawText()).IsEqualTo(copiedDocument);
+            // Incarnations are persisted: the new engine reads the same ones, the copy's distinct from its source's.
+            var reopenedEngine = reopened.Server.Services.GetRequiredService<IStorageEngine>();
+            await Assert.That((await reopenedEngine.OpenDatabaseAsync(sourceTenant, CancellationToken.None))!.Incarnation).IsEqualTo(sourceIncarnation);
+            await Assert.That((await reopenedEngine.OpenDatabaseAsync(copyTenant, CancellationToken.None))!.Incarnation).IsEqualTo(copyIncarnation);
         }
-
-        var route = $"/v1/databases/v3/collections/items/documents/{id}";
-        var migrated = await api.SendAsync(HttpMethod.Get, route);
-        migrated.Status.ShouldBe(HttpStatusCode.OK);
-        var engine = api.Server.Services.GetRequiredService<IStorageEngine>();
-        await Assert.That(DatabaseName.TryParse("v3", out var source)).IsTrue();
-        var store = (await engine.OpenDatabaseAsync(source, CancellationToken.None))!;
-        await Assert.That(store.Incarnation.Version).IsEqualTo(4);
-        await using (var check = new SqliteConnection($"Data Source={path};Pooling=False;Mode=ReadOnly"))
+        finally
         {
-            await check.OpenAsync();
-            await using var command = check.CreateCommand();
-            command.CommandText = "PRAGMA user_version;";
-            await Assert.That(await command.ExecuteScalarAsync()).IsEqualTo(4L);
-            command.CommandText = "SELECT incarnation FROM commit_offset WHERE id = 1;";
-            await Assert.That(Guid.TryParseExact((string?)await command.ExecuteScalarAsync(), "N", out var persisted)).IsTrue();
-            await Assert.That(store.Incarnation).IsEqualTo(persisted);
+            Directory.Delete(dataDirectory, recursive: true);
         }
-
-        // A second application instance opens the same persisted files with a new engine/store cache.
-        using var tls = new ClientTls();
-        await using var reopened = await TerraBaseTestServer.StartAsync(settings =>
-        {
-            tls.Apply(settings);
-            settings["data-directory"] = api.Server.DataDirectory;
-        });
-        using var client = tls.CreateClient(reopened.ClientAddress!, await reopened.IssueAsync("documents:read", "documents:write"));
-        var afterReopen = await DocumentApi.SendAsync(client, HttpMethod.Get, route);
-        await Assert.That(afterReopen.Version).IsEqualTo(migrated.Version);
-        var unchanged = await DocumentApi.SendAsync(client, HttpMethod.Get, route, configure: DocumentApi.IfNoneMatch(migrated.Version));
-        await Assert.That(unchanged.Status).IsEqualTo(HttpStatusCode.NotModified);
-        var reopenedEngine = reopened.Services.GetRequiredService<IStorageEngine>();
-        var reopenedStore = (await reopenedEngine.OpenDatabaseAsync(source, CancellationToken.None))!;
-        await Assert.That(reopenedStore.Incarnation).IsEqualTo(store.Incarnation);
-
-        await Assert.That(DatabaseName.TryParse("copied", out var target)).IsTrue();
-        await Assert.That(await engine.CopyDatabaseAsync(source, target, CancellationToken.None)).IsTrue();
-        var copyRoute = $"/v1/databases/copied/collections/items/documents/{id}";
-        var copied = await api.SendAsync(HttpMethod.Get, copyRoute);
-        await Assert.That(copied.Status).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(copied.Version).IsNotEqualTo(migrated.Version);
-        await Assert.That(copied.Json.GetProperty("document").GetRawText()).IsEqualTo(migrated.Json.GetProperty("document").GetRawText());
-        var copiedReopened = await DocumentApi.SendAsync(client, HttpMethod.Get, copyRoute);
-        await Assert.That(copiedReopened.Version).IsEqualTo(copied.Version);
-        var copiedStore = (await engine.OpenDatabaseAsync(target, CancellationToken.None))!;
-        await Assert.That(copiedStore.Incarnation.Version).IsEqualTo(4);
-        await Assert.That(copiedStore.Incarnation).IsNotEqualTo(store.Incarnation);
-        var copiedReopenedStore = (await reopenedEngine.OpenDatabaseAsync(target, CancellationToken.None))!;
-        await Assert.That(copiedReopenedStore.Incarnation).IsEqualTo(copiedStore.Incarnation);
     }
 
     [Test]
     public async Task A_migrated_maximum_version_refuses_writes_without_changing_data_or_offset()
     {
         await using var api = await DocumentApi.StartAsync();
-        var path = Path.Combine(api.Server.DataDirectory, "exhausted.db");
-        await using (var connection = new SqliteConnection($"Data Source={path};Pooling=False"))
+        var path = await api.ReplaceWithOlderFileAsync("exhausted", async path =>
         {
+            await using var connection = new SqliteConnection(DocumentApi.ConnectionString(path));
             await connection.OpenAsync();
             await using var command = connection.CreateCommand();
             command.CommandText = """
@@ -100,13 +122,13 @@ public sealed class SchemaMigrationTests
                 PRAGMA user_version = 1;
                 """;
             await command.ExecuteNonQueryAsync();
-        }
+        });
 
-        const string route = "/v1/databases/exhausted/collections/items/documents/Legacy";
+        var route = $"{api.DatabasePath("exhausted")}/collections/items/documents/Legacy";
         var original = await api.SendAsync(HttpMethod.Get, route);
         var put = await api.SendAsync(HttpMethod.Put, route, new { n = 2 });
         var deleted = await api.SendAsync(HttpMethod.Delete, route);
-        var transaction = await api.SendAsync(HttpMethod.Post, "/v1/databases/exhausted/transactions", new
+        var transaction = await api.SendAsync(HttpMethod.Post, $"{api.DatabasePath("exhausted")}/transactions", new
         {
             ops = new[] { new { op = "put", collection = "items", id = "Legacy", document = new { n = 3 } } },
         });
@@ -119,7 +141,7 @@ public sealed class SchemaMigrationTests
         var unchanged = await api.SendAsync(HttpMethod.Get, route);
         await Assert.That(unchanged.Version).IsEqualTo(original.Version);
         await Assert.That(unchanged.Json.GetProperty("document").GetProperty("n").GetInt32()).IsEqualTo(1);
-        await using var check = new SqliteConnection($"Data Source={path};Pooling=False;Mode=ReadOnly");
+        await using var check = new SqliteConnection(DocumentApi.ConnectionString(path, readOnly: true));
         await check.OpenAsync();
         await using var counter = check.CreateCommand();
         counter.CommandText = "SELECT value FROM commit_offset WHERE id = 1;";
@@ -130,9 +152,9 @@ public sealed class SchemaMigrationTests
     public async Task A_version_2_database_gains_the_live_document_index_on_first_open()
     {
         await using var api = await DocumentApi.StartAsync();
-        var path = Path.Combine(api.Server.DataDirectory, "v2.db");
-        await using (var connection = new SqliteConnection($"Data Source={path};Pooling=False"))
+        var path = await api.ReplaceWithOlderFileAsync("v2", async path =>
         {
+            await using var connection = new SqliteConnection(DocumentApi.ConnectionString(path));
             await connection.OpenAsync();
             await using var command = connection.CreateCommand();
             command.CommandText = """
@@ -146,9 +168,9 @@ public sealed class SchemaMigrationTests
                 PRAGMA user_version = 2;
                 """;
             await command.ExecuteNonQueryAsync();
-        }
+        });
 
-        var result = await api.SendAsync(HttpMethod.Get, "/v1/databases/v2/collections/people/documents/customer-1");
+        var result = await api.SendAsync(HttpMethod.Get, $"{api.DatabasePath("v2")}/collections/people/documents/customer-1");
         await Assert.That(result.Status).IsEqualTo(HttpStatusCode.OK);
         var plan = await QueryPlan.ExplainAsync(path,
             "SELECT id FROM documents INDEXED BY documents_live WHERE collection = $collection AND body IS NOT NULL ORDER BY id LIMIT $limit;");
@@ -163,29 +185,28 @@ public sealed class SchemaMigrationTests
     {
         await using var api = await DocumentApi.StartAsync();
         // The schema-1 layout: no collections table, per-document version counters.
-        var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+        await api.ReplaceWithOlderFileAsync("legacy", async file =>
         {
-            DataSource = Path.Combine(api.Server.DataDirectory, "legacy.db"),
-            Pooling = false,
-        }.ToString());
-        await using (connection)
-        {
-            await connection.OpenAsync();
-            var command = connection.CreateCommand();
-            await using (command)
+            var connection = new SqliteConnection(DocumentApi.ConnectionString(file));
+            await using (connection)
             {
-                command.CommandText = $$"""
-                    CREATE TABLE documents (collection TEXT NOT NULL, id TEXT NOT NULL, version INTEGER NOT NULL, body TEXT NOT NULL,
-                        PRIMARY KEY (collection, id)) WITHOUT ROWID;
-                    INSERT INTO documents VALUES ('people', '{{id}}', 7, '{"name":"Ana"}');
-                    PRAGMA user_version = 1;
-                    """;
-                await command.ExecuteNonQueryAsync();
+                await connection.OpenAsync();
+                var command = connection.CreateCommand();
+                await using (command)
+                {
+                    command.CommandText = $$"""
+                        CREATE TABLE documents (collection TEXT NOT NULL, id TEXT NOT NULL, version INTEGER NOT NULL, body TEXT NOT NULL,
+                            PRIMARY KEY (collection, id)) WITHOUT ROWID;
+                        INSERT INTO documents VALUES ('people', '{{id}}', 7, '{"name":"Ana"}');
+                        PRAGMA user_version = 1;
+                        """;
+                    await command.ExecuteNonQueryAsync();
+                }
             }
-        }
+        });
 
-        var path = $"/v1/databases/legacy/collections/people/documents/{Uri.EscapeDataString(id)}";
-        var collections = await api.SendAsync(HttpMethod.Get, "/v1/databases/legacy/collections");
+        var path = $"{api.DatabasePath("legacy")}/collections/people/documents/{Uri.EscapeDataString(id)}";
+        var collections = await api.SendAsync(HttpMethod.Get, $"{api.DatabasePath("legacy")}/collections");
         var read = await api.SendAsync(HttpMethod.Get, path);
         var written = await api.SendAsync(HttpMethod.Put, path, new { name = "Bia" });
 
@@ -202,14 +223,14 @@ public sealed class SchemaMigrationTests
         var tombstone = await api.SendAsync(HttpMethod.Get, path);
         var recreated = await api.SendAsync(HttpMethod.Put, path, new { name = "Dani" }, DocumentApi.IfMatch(deleted.Version));
         var followLocation = await api.SendAsync(HttpMethod.Get, recreated.Location!.OriginalString);
-        var transacted = await api.SendAsync(HttpMethod.Post, "/v1/databases/legacy/transactions", new
+        var transacted = await api.SendAsync(HttpMethod.Post, $"{api.DatabasePath("legacy")}/transactions", new
         {
             ops = new object[] { new { op = "put", collection = "people", id, document = new { name = "Eva" }, if_match = recreated.Version } },
         });
-        var listed = await api.SendAsync(HttpMethod.Get, "/v1/databases/legacy/collections/people/documents");
-        var queried = await api.SendAsync(HttpMethod.Post, "/v1/databases/legacy/collections/people/query", new { filter = new { eq = new[] { "$id", id } } });
-        var newLegacy = await api.SendAsync(HttpMethod.Put, "/v1/databases/legacy/collections/people/documents/customer-2", new { name = "new" });
-        var newLegacyTransaction = await api.SendAsync(HttpMethod.Post, "/v1/databases/legacy/transactions", new
+        var listed = await api.SendAsync(HttpMethod.Get, $"{api.DatabasePath("legacy")}/collections/people/documents");
+        var queried = await api.SendAsync(HttpMethod.Post, $"{api.DatabasePath("legacy")}/collections/people/query", new { filter = new { eq = new[] { "$id", id } } });
+        var newLegacy = await api.SendAsync(HttpMethod.Put, $"{api.DatabasePath("legacy")}/collections/people/documents/customer-2", new { name = "new" });
+        var newLegacyTransaction = await api.SendAsync(HttpMethod.Post, $"{api.DatabasePath("legacy")}/transactions", new
         {
             ops = new object[] { new { op = "create", collection = "people", id = "customer-2", document = new { } } },
         });

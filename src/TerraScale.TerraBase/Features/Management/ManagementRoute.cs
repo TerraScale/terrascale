@@ -1,11 +1,16 @@
 using System.Globalization;
 using System.Net.Mail;
+using TerraScale.TerraBase.Tenancy;
 
 namespace TerraScale.TerraBase.Features.Management;
 
 /// <summary>A body that carries only a name: create, rename and branch.</summary>
 /// <param name="Name">Organization or project display name, or database name.</param>
 public sealed record NameRequest(string? Name);
+
+/// <summary>The plan to set.</summary>
+/// <param name="Plan"><c>hobby</c>, <c>pro</c> or <c>enterprise</c>.</param>
+public sealed record PlanRequest(string? Plan);
 
 /// <summary>Routes, validation and error mapping shared by the management endpoints.</summary>
 internal static class ManagementRoute
@@ -98,6 +103,14 @@ internal static class ManagementRoute
             ? throw new BadHttpRequestException("name must be 1 to 128 characters, include a letter or digit and have no control characters")
             : name;
     }
+
+    public static PlanTier Plan(PlanRequest request) => request.Plan switch
+    {
+        "hobby" => PlanTier.Hobby,
+        "pro" => PlanTier.Pro,
+        "enterprise" => PlanTier.Enterprise,
+        _ => throw new BadHttpRequestException("plan must be hobby, pro or enterprise"),
+    };
 
     public static string DatabaseName(NameRequest request) =>
         Engine.DatabaseName.TryParse(request.Name, out var name)

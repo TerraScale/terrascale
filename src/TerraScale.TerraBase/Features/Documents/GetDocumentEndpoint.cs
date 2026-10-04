@@ -3,11 +3,12 @@ using TerraScale.Endpoints;
 using TerraScale.TerraBase.Engine;
 using TerraScale.TerraBase.Features.ApiKeys;
 using TerraScale.TerraBase.Hosting;
+using TerraScale.TerraBase.Tenancy;
 
 namespace TerraScale.TerraBase.Features.Documents;
 
 /// <summary><c>GET …/documents/{id}</c>: reads one JSON document.</summary>
-public sealed class GetDocumentEndpoint(IDocumentService documents) : EndpointWithoutRequest<IResult>
+public sealed class GetDocumentEndpoint(IDocumentService documents, ITenantDirectory tenants) : EndpointWithoutRequest<IResult>
 {
     /// <inheritdoc />
     public override void Configure()
@@ -26,7 +27,7 @@ public sealed class GetDocumentEndpoint(IDocumentService documents) : EndpointWi
     /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
-        var key = DocumentRoute.Key(HttpContext);
+        var key = await DocumentRoute.KeyAsync(HttpContext, tenants, cancellationToken);
         DocumentRoute.Parameters(HttpContext);
         var document = await documents.GetAsync(key, cancellationToken);
         var version = document is null ? null : ETags.Version(document.Incarnation, key.Collection, document.Id, document.Version);

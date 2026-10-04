@@ -3,11 +3,12 @@ using TerraScale.Endpoints;
 using TerraScale.TerraBase.Engine;
 using TerraScale.TerraBase.Features.ApiKeys;
 using TerraScale.TerraBase.Hosting;
+using TerraScale.TerraBase.Tenancy;
 
 namespace TerraScale.TerraBase.Features.Documents;
 
 /// <summary><c>POST …/collections/{collection}/query</c>: filters, sorts and projects documents (query v1).</summary>
-public sealed class QueryDocumentsEndpoint(IDocumentService documents) : EndpointWithoutRequest<IResult>
+public sealed class QueryDocumentsEndpoint(IDocumentService documents, ITenantDirectory tenants) : EndpointWithoutRequest<IResult>
 {
     // count examines at most this many documents; beyond, it is a lower bound.
     private const long MaxCount = 100_000;
@@ -34,7 +35,7 @@ public sealed class QueryDocumentsEndpoint(IDocumentService documents) : Endpoin
     /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
-        var database = DocumentRoute.Database(HttpContext);
+        var database = await DocumentRoute.TenantAsync(HttpContext, tenants, cancellationToken);
         var collection = DocumentRoute.CollectionName(HttpContext);
         DocumentRoute.Parameters(HttpContext);
         var body = await DocumentRoute.ReadBodyAsync(HttpContext, DocumentRoute.MaxRequestBytes, "invalid_query", cancellationToken, DocumentRoute.JsonMediaType);

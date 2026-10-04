@@ -1,11 +1,12 @@
 using TerraScale.Endpoints;
 using TerraScale.TerraBase.Features.ApiKeys;
 using TerraScale.TerraBase.Hosting;
+using TerraScale.TerraBase.Tenancy;
 
 namespace TerraScale.TerraBase.Features.Documents;
 
-/// <summary><c>GET /v1/databases/{database}/collections/{collection}</c>: reads a collection.</summary>
-public sealed class GetCollectionEndpoint(IDocumentService documents) : EndpointWithoutRequest<IResult>
+/// <summary><c>GET /v1/projects/{project}/databases/{database}/collections/{collection}</c>: reads a collection.</summary>
+public sealed class GetCollectionEndpoint(IDocumentService documents, ITenantDirectory tenants) : EndpointWithoutRequest<IResult>
 {
     /// <inheritdoc />
     public override void Configure()
@@ -23,7 +24,7 @@ public sealed class GetCollectionEndpoint(IDocumentService documents) : Endpoint
     /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
-        var database = DocumentRoute.Database(HttpContext);
+        var database = await DocumentRoute.TenantAsync(HttpContext, tenants, cancellationToken);
         var name = DocumentRoute.CollectionName(HttpContext);
         DocumentRoute.Parameters(HttpContext);
         return TypedResults.Ok(CreateCollectionEndpoint.Body(await documents.GetCollectionAsync(database, name, cancellationToken)));

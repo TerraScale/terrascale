@@ -1,4 +1,4 @@
-using TerraScale.TerraBase.Engine;
+using TerraScale.TerraBase.Tenancy;
 
 namespace TerraScale.TerraBase.Features.Indexing;
 
@@ -12,5 +12,5 @@ public sealed record IndexRecommendation(string Collection, IReadOnlyList<string
 public interface IIndexAdvisor
 {
     /// <summary>Returns recommendations for a database, most valuable first.</summary>
-    ValueTask<IReadOnlyList<IndexRecommendation>> RecommendAsync(DatabaseName database, CancellationToken cancellationToken);
+    ValueTask<IReadOnlyList<IndexRecommendation>> RecommendAsync(TenantContext database, CancellationToken cancellationToken);
 }

@@ -382,12 +382,13 @@ public sealed class AccessApiTests
     {
         await using var api = await AccessApi.StartAsync();
         var ownerId = User();
-        var org = Org(await api.CreateOrganizationAsync(ownerId));
+        var organizationId = await api.CreateOrganizationAsync(ownerId);
+        var org = Org(organizationId);
         var members = Uri($"{org}/members");
         using var owner = api.As(ownerId);
         using var noCredential = api.Connect(null, ownerId);
         using var wrongCredential = api.Connect(AccessApi.Credential + "x", ownerId);
-        using var documentsKey = api.Connect(await api.Server.IssueAsync("documents:read"), ownerId);
+        using var documentsKey = api.Connect(await api.Server.IssueAsync(organizationId, "documents:read"), ownerId);
         using var noUser = api.Connect(AccessApi.Credential, null);
         using var noOrganization = api.Connect(AccessApi.Credential, ownerId, headers => headers.Remove(OrganizationHeader));
         using var otherOrganization = api.Connect(AccessApi.Credential, ownerId, headers =>

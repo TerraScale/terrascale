@@ -2,11 +2,12 @@ using System.Text.Json;
 using TerraScale.Endpoints;
 using TerraScale.TerraBase.Features.ApiKeys;
 using TerraScale.TerraBase.Hosting;
+using TerraScale.TerraBase.Tenancy;
 
 namespace TerraScale.TerraBase.Features.Documents;
 
 /// <summary><c>POST …/documents</c>: creates a JSON document with a server-generated UUIDv7 id.</summary>
-public sealed class CreateDocumentEndpoint(IDocumentService documents) : EndpointWithoutRequest<IResult>
+public sealed class CreateDocumentEndpoint(IDocumentService documents, ITenantDirectory tenants) : EndpointWithoutRequest<IResult>
 {
     /// <inheritdoc />
     public override void Configure()
@@ -29,7 +30,7 @@ public sealed class CreateDocumentEndpoint(IDocumentService documents) : Endpoin
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         var key = new DocumentKey(
-            DocumentRoute.Database(HttpContext), DocumentRoute.CollectionName(HttpContext), Guid.CreateVersion7().ToString("D"));
+            await DocumentRoute.TenantAsync(HttpContext, tenants, cancellationToken), DocumentRoute.CollectionName(HttpContext), Guid.CreateVersion7().ToString("D"));
         DocumentRoute.Parameters(HttpContext);
         DocumentRoute.RejectIdempotencyKey(HttpContext);
         var precondition = ETags.Precondition(HttpContext) with { IfNoneMatch = true };
@@ -37,6 +38,6 @@ public sealed class CreateDocumentEndpoint(IDocumentService documents) : Endpoin
         var json = await DocumentRoute.ReadDocumentAsync(HttpContext, cancellationToken);
         var (body, _) = await DocumentRoute.WriteAsync(
             HttpContext, documents, key, new PutOperation(key.Collection, key.Id, json, precondition), cancellationToken);
-        return TypedResults.Created(DocumentRoute.Location(key), body);
+        return TypedResults.Created(DocumentRoute.Location(HttpContext, key), body);
     }
 }

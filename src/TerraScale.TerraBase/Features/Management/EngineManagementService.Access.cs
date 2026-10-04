@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 using TerraScale.TerraBase.Engine;
 using TerraScale.TerraBase.Hosting;
+using TerraScale.TerraBase.Tenancy;
 
 namespace TerraScale.TerraBase.Features.Management;
 
@@ -46,7 +47,7 @@ internal sealed partial class EngineManagementService : IAccessService
             return actor.Error != ManagementError.None
                 ? actor.Error
                 : await ListAsync(transaction, Members(organizationId), after, limit, TerraBaseJsonContext.Default.OrganizationMember, member => member.UserId, cancellationToken).ConfigureAwait(false);
-        }, ManagementError.NotFound, cancellationToken);
+        }, cancellationToken);
 
     public async ValueTask<ManagementResult<OrganizationMember>> ChangeRoleAsync(
         string userId, string organizationId, string memberId, OrganizationRole role, CancellationToken cancellationToken) =>
@@ -196,7 +197,7 @@ internal sealed partial class EngineManagementService : IAccessService
             }
 
             return new ManagementPage<Invitation>(invitations, page.HasMore ? page.Documents[^1].Id : null);
-        }, ManagementError.NotFound, cancellationToken);
+        }, cancellationToken);
 
     public async ValueTask<ManagementError> RevokeInvitationAsync(string userId, string organizationId, string invitationId, CancellationToken cancellationToken) =>
         await WriteAsync(async transaction =>
@@ -270,7 +271,7 @@ internal sealed partial class EngineManagementService : IAccessService
             return await GetTransferAsync(transaction, organizationId, cancellationToken).ConfigureAwait(false) is { } transfer
                 ? transfer
                 : ManagementError.NotFound;
-        }, ManagementError.NotFound, cancellationToken);
+        }, cancellationToken);
 
     public async ValueTask<ManagementResult<OwnershipTransfer>> StartTransferAsync(
         string userId, string organizationId, string memberId, CancellationToken cancellationToken) =>
@@ -363,7 +364,7 @@ internal sealed partial class EngineManagementService : IAccessService
             return actor.Error != ManagementError.None
                 ? actor.Error
                 : await GetAuditRetentionAsync(transaction, organizationId, cancellationToken).ConfigureAwait(false);
-        }, ManagementError.NotFound, cancellationToken);
+        }, cancellationToken);
 
     public async ValueTask<ManagementResult<AuditRetention>> SetAuditRetentionAsync(
         string userId, string organizationId, int days, CancellationToken cancellationToken) =>
@@ -397,7 +398,7 @@ internal sealed partial class EngineManagementService : IAccessService
             var page = await transaction.ListAsync(Audit(organizationId), after, limit, MaxPageBytes, cancellationToken).ConfigureAwait(false);
             var events = page.Documents.Select(document => JsonSerializer.Deserialize(document.Json.Span, TerraBaseJsonContext.Default.AuditEvent)!);
             return new ManagementPage<AuditEvent>([.. events.Where(auditEvent => auditEvent.OccurredAt >= cutoff)], page.HasMore ? page.Documents[^1].Id : null);
-        }, ManagementError.NotFound, cancellationToken);
+        }, cancellationToken);
 
     // The acting member, or why it may not act: NotFound for a non-member, exactly like a missing organization
     // (members are deleted with their organization), Forbidden for a role below minimum.
@@ -541,6 +542,13 @@ internal sealed partial class EngineManagementService : IAccessService
     private static string DescendingKey(long sequence) => AscendingKey(long.MaxValue - sequence);
 
     private static string TicksKey(DateTimeOffset time) => AscendingKey(time.UtcTicks);
+
+    private static string PlanName(PlanTier plan) => plan switch
+    {
+        PlanTier.Enterprise => "enterprise",
+        PlanTier.Pro => "pro",
+        _ => "hobby",
+    };
 
     private static string RoleName(OrganizationRole role) => role switch
     {

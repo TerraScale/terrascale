@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using TerraScale.TerraBase.Engine;
 using TerraScale.TerraBase.Hosting;
+using TerraScale.TerraBase.Tenancy;
 
 namespace TerraScale.TerraBase.Features.Documents;
 
@@ -10,10 +11,7 @@ internal sealed class DocumentService(IStorageEngine engine, TimeProvider time) 
     // assert_count examines at most this many documents.
     private const long MaxAssertCount = 10_000;
 
-    public ValueTask<bool> CreateDatabaseAsync(DatabaseName database, CancellationToken cancellationToken) =>
-        engine.CreateDatabaseAsync(database, cancellationToken);
-
-    public async ValueTask<CollectionInfo> CreateCollectionAsync(DatabaseName database, string name, CancellationToken cancellationToken)
+    public async ValueTask<CollectionInfo> CreateCollectionAsync(TenantContext database, string name, CancellationToken cancellationToken)
     {
         var transaction = await BeginAsync(database, write: true, cancellationToken).ConfigureAwait(false);
         await using (transaction.ConfigureAwait(false))
@@ -29,7 +27,7 @@ internal sealed class DocumentService(IStorageEngine engine, TimeProvider time) 
         }
     }
 
-    public async ValueTask<CollectionInfo> GetCollectionAsync(DatabaseName database, string name, CancellationToken cancellationToken)
+    public async ValueTask<CollectionInfo> GetCollectionAsync(TenantContext database, string name, CancellationToken cancellationToken)
     {
         var transaction = await BeginAsync(database, write: false, cancellationToken).ConfigureAwait(false);
         await using (transaction.ConfigureAwait(false))
@@ -39,7 +37,7 @@ internal sealed class DocumentService(IStorageEngine engine, TimeProvider time) 
     }
 
     public async ValueTask<(IReadOnlyList<CollectionInfo> Collections, bool HasMore)> ListCollectionsAsync(
-        DatabaseName database, string? afterName, int limit, CancellationToken cancellationToken)
+        TenantContext database, string? afterName, int limit, CancellationToken cancellationToken)
     {
         var transaction = await BeginAsync(database, write: false, cancellationToken).ConfigureAwait(false);
         await using (transaction.ConfigureAwait(false))
@@ -48,7 +46,7 @@ internal sealed class DocumentService(IStorageEngine engine, TimeProvider time) 
         }
     }
 
-    public async ValueTask<CollectionInfo> DropCollectionAsync(DatabaseName database, string name, CancellationToken cancellationToken)
+    public async ValueTask<CollectionInfo> DropCollectionAsync(TenantContext database, string name, CancellationToken cancellationToken)
     {
         var transaction = await BeginAsync(database, write: true, cancellationToken).ConfigureAwait(false);
         await using (transaction.ConfigureAwait(false))
@@ -76,7 +74,7 @@ internal sealed class DocumentService(IStorageEngine engine, TimeProvider time) 
     }
 
     public async ValueTask<(QueryPage Page, (long Count, bool Complete)? Count)> QueryAsync(
-        DatabaseName database, DocumentQuery query, long? countLimit, CancellationToken cancellationToken)
+        TenantContext database, DocumentQuery query, long? countLimit, CancellationToken cancellationToken)
     {
         var transaction = await BeginAsync(database, write: false, cancellationToken).ConfigureAwait(false);
         await using (transaction.ConfigureAwait(false))
@@ -91,7 +89,7 @@ internal sealed class DocumentService(IStorageEngine engine, TimeProvider time) 
     }
 
     public async ValueTask<WriteResult> WriteAsync(
-        DatabaseName database, IReadOnlyList<DocumentOperation> operations, bool indexErrors, CancellationToken cancellationToken)
+        TenantContext database, IReadOnlyList<DocumentOperation> operations, bool indexErrors, CancellationToken cancellationToken)
     {
         var transaction = await BeginAsync(database, write: true, cancellationToken).ConfigureAwait(false);
         await using (transaction.ConfigureAwait(false))
@@ -283,10 +281,10 @@ internal sealed class DocumentService(IStorageEngine engine, TimeProvider time) 
         await transaction.GetCollectionAsync(name, cancellationToken).ConfigureAwait(false)
             ?? throw new ApiException(StatusCodes.Status404NotFound, "unknown_collection", "the collection does not exist");
 
-    private async ValueTask<IStorageTransaction> BeginAsync(DatabaseName database, bool write, CancellationToken cancellationToken)
+    private async ValueTask<IStorageTransaction> BeginAsync(TenantContext database, bool write, CancellationToken cancellationToken)
     {
         var store = await engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false)
-            ?? throw new ApiException(StatusCodes.Status404NotFound, "unknown_database", "the database does not exist");
+            ?? throw DocumentRoute.UnknownDatabase();
         return await store.BeginTransactionAsync(write, cancellationToken).ConfigureAwait(false);
     }
 }

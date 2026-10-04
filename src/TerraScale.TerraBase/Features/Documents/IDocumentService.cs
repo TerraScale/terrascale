@@ -1,4 +1,5 @@
 using TerraScale.TerraBase.Engine;
+using TerraScale.TerraBase.Tenancy;
 
 namespace TerraScale.TerraBase.Features.Documents;
 
@@ -6,7 +7,7 @@ namespace TerraScale.TerraBase.Features.Documents;
 /// <param name="Database">Owning database.</param>
 /// <param name="Collection">Collection name (same rules as database names).</param>
 /// <param name="Id">Document id: a lowercase hyphenated UUID, or an existing schema-1 legacy id.</param>
-public sealed record DocumentKey(DatabaseName Database, string Collection, string Id);
+public sealed record DocumentKey(TenantContext Database, string Collection, string Id);
 
 /// <summary>Write preconditions (see <c>ETags</c>).</summary>
 /// <param name="IfMatch">Versions one of which must be current (strong comparison); <see langword="null"/> for none.</param>
@@ -74,21 +75,18 @@ public sealed record WriteResult(long Offset, IReadOnlyList<OperationResult> Res
 /// </summary>
 public interface IDocumentService
 {
-    /// <summary>Creates a database; <see langword="false"/> when it already existed.</summary>
-    ValueTask<bool> CreateDatabaseAsync(DatabaseName database, CancellationToken cancellationToken);
-
     /// <summary>Creates a collection; fails with <c>name_taken</c> when it exists.</summary>
-    ValueTask<CollectionInfo> CreateCollectionAsync(DatabaseName database, string name, CancellationToken cancellationToken);
+    ValueTask<CollectionInfo> CreateCollectionAsync(TenantContext database, string name, CancellationToken cancellationToken);
 
     /// <summary>Reads a collection.</summary>
-    ValueTask<CollectionInfo> GetCollectionAsync(DatabaseName database, string name, CancellationToken cancellationToken);
+    ValueTask<CollectionInfo> GetCollectionAsync(TenantContext database, string name, CancellationToken cancellationToken);
 
     /// <summary>Lists collections in name order after <paramref name="afterName"/>.</summary>
     ValueTask<(IReadOnlyList<CollectionInfo> Collections, bool HasMore)> ListCollectionsAsync(
-        DatabaseName database, string? afterName, int limit, CancellationToken cancellationToken);
+        TenantContext database, string? afterName, int limit, CancellationToken cancellationToken);
 
     /// <summary>Drops a collection and every document in it.</summary>
-    ValueTask<CollectionInfo> DropCollectionAsync(DatabaseName database, string name, CancellationToken cancellationToken);
+    ValueTask<CollectionInfo> DropCollectionAsync(TenantContext database, string name, CancellationToken cancellationToken);
 
     /// <summary>Reads a document or its tombstone; <see langword="null"/> when it was never written.</summary>
     ValueTask<StoredDocument?> GetAsync(DocumentKey key, CancellationToken cancellationToken);
@@ -98,12 +96,12 @@ public interface IDocumentService
     /// documents (<c>Complete</c> is <see langword="false"/> when more exist).
     /// </summary>
     ValueTask<(QueryPage Page, (long Count, bool Complete)? Count)> QueryAsync(
-        DatabaseName database, DocumentQuery query, long? countLimit, CancellationToken cancellationToken);
+        TenantContext database, DocumentQuery query, long? countLimit, CancellationToken cancellationToken);
 
     /// <summary>
     /// Applies <paramref name="operations"/> atomically: assertions first, against the state before
     /// any write, then writes in order. With <paramref name="indexErrors"/>, a failure names its operation.
     /// </summary>
     ValueTask<WriteResult> WriteAsync(
-        DatabaseName database, IReadOnlyList<DocumentOperation> operations, bool indexErrors, CancellationToken cancellationToken);
+        TenantContext database, IReadOnlyList<DocumentOperation> operations, bool indexErrors, CancellationToken cancellationToken);
 }

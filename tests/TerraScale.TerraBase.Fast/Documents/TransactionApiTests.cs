@@ -30,7 +30,7 @@ public sealed class TransactionApiTests
         await api.PutAsync(patched, new { count = 1 });
         await api.PutAsync(merged, new { name = "old", legacy = true });
         var toRemove = await api.PutAsync(removed, new { a = 1 });
-        (await api.SendAsync(HttpMethod.Post, "/v1/databases/db/collections", new { name = "other" })).Status.ShouldBe(HttpStatusCode.Created);
+        (await api.SendAsync(HttpMethod.Post, $"{api.Project}/databases/db/collections", new { name = "other" })).Status.ShouldBe(HttpStatusCode.Created);
         var elsewhere = DocumentApi.NewId();
         var before = await api.PutAsync(kept, new { visible = true });
 
@@ -47,7 +47,7 @@ public sealed class TransactionApiTests
             new { op = "assert_count", collection = "items", filter = new { exists = "/a" }, gte = 1, lte = 1 });
         var after = await api.PutAsync(DocumentApi.NewId(), new { a = 2 });
         var results = result.Json.GetProperty("results").EnumerateArray().Skip(1).ToList();
-        var readElsewhere = await api.SendAsync(HttpMethod.Get, $"/v1/databases/db/collections/other/documents/{elsewhere}");
+        var readElsewhere = await api.SendAsync(HttpMethod.Get, $"{api.Project}/databases/db/collections/other/documents/{elsewhere}");
         var readCreated = await api.GetAsync(created);
         var readPatched = await api.GetAsync(patched);
         var readMerged = await api.GetAsync(merged);
@@ -80,7 +80,7 @@ public sealed class TransactionApiTests
         var (existing, fresh) = (DocumentApi.NewId(), DocumentApi.NewId());
         var original = await api.PutAsync(existing, new { n = 1, a = 1 });
 
-        (await api.SendAsync(HttpMethod.Post, "/v1/databases/db/collections", new { name = "other" })).Status.ShouldBe(HttpStatusCode.Created);
+        (await api.SendAsync(HttpMethod.Post, $"{api.Project}/databases/db/collections", new { name = "other" })).Status.ShouldBe(HttpStatusCode.Created);
         var stale = await api.TransactAsync(
             new { op = "create", collection = "other", id = fresh, document = new { a = 1 } },
             new { op = "create", collection = "items", id = fresh, document = new { a = 1 } },
@@ -116,7 +116,7 @@ public sealed class TransactionApiTests
             new { op = "patch", collection = "items", id = existing, ops = new object?[] { null } });
         var readExisting = await api.GetAsync(existing);
         var readFresh = await api.GetAsync(fresh);
-        var otherFresh = await api.SendAsync(HttpMethod.Get, $"/v1/databases/db/collections/other/documents/{fresh}");
+        var otherFresh = await api.SendAsync(HttpMethod.Get, $"{api.Project}/databases/db/collections/other/documents/{fresh}");
 
         await Assert.That((stale.Status, stale.Code, stale.Op)).IsEqualTo((HttpStatusCode.PreconditionFailed, "precondition_failed", 2));
         await Assert.That((exists.Status, exists.Code, exists.Op)).IsEqualTo((HttpStatusCode.PreconditionFailed, "precondition_failed", 1));
@@ -183,14 +183,14 @@ public sealed class TransactionApiTests
         var mismatches = new List<string>();
         foreach (var (body, op) in InvalidTransactions)
         {
-            var result = await api.SendRawAsync(HttpMethod.Post, DocumentApi.Transactions, body, "application/json");
+            var result = await api.SendRawAsync(HttpMethod.Post, api.Transactions, body, "application/json");
             if ((result.Status, result.Code, result.Op) != (HttpStatusCode.BadRequest, "invalid_request", op))
             {
                 mismatches.Add($"{body} -> {(int)result.Status} {result.Code} op {result.Op}");
             }
         }
 
-        var listed = await api.SendAsync(HttpMethod.Get, DocumentApi.Documents);
+        var listed = await api.SendAsync(HttpMethod.Get, api.Documents);
 
         await Assert.That(mismatches).IsEmpty();
         await Assert.That(listed.Ids).IsEmpty();
@@ -204,7 +204,7 @@ public sealed class TransactionApiTests
         var tooMany = await api.TransactAsync([.. Enumerable.Range(0, 1025).Select(_ => new { op = "create", collection = "items", document = new { } })]);
         var counts = await api.TransactAsync([.. Enumerable.Range(0, 17).Select(_ => new { op = "assert_count", collection = "items", lte = 1 })]);
         var maximum = await api.TransactAsync([.. Enumerable.Range(0, 1024).Select(_ => new { op = "create", collection = "items", document = new { } })]);
-        var listed = await api.SendAsync(HttpMethod.Post, DocumentApi.Query, new { limit = 1, count = true });
+        var listed = await api.SendAsync(HttpMethod.Post, api.Query, new { limit = 1, count = true });
 
         await Assert.That((tooMany.Status, tooMany.Code)).IsEqualTo((HttpStatusCode.BadRequest, "invalid_request"));
         await Assert.That((counts.Status, counts.Op)).IsEqualTo((HttpStatusCode.BadRequest, 16));
@@ -219,10 +219,10 @@ public sealed class TransactionApiTests
         using var writer = await api.ClientWithScopesAsync("documents:write");
 
         var assertion = await DocumentApi.SendAsync(
-            writer, HttpMethod.Post, DocumentApi.Transactions,
+            writer, HttpMethod.Post, api.Transactions,
             JsonContent.Create(new { ops = new object[] { new { op = "assert", collection = "items", id = DocumentApi.NewId(), absent = true } } }));
         var write = await DocumentApi.SendAsync(
-            writer, HttpMethod.Post, DocumentApi.Transactions,
+            writer, HttpMethod.Post, api.Transactions,
             JsonContent.Create(new { ops = new object[] { new { op = "create", collection = "items", document = new { } } } }));
 
         await Assert.That((assertion.Status, assertion.Code)).IsEqualTo((HttpStatusCode.Forbidden, "forbidden_scope"));

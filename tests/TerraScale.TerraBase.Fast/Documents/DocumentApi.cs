@@ -2,6 +2,10 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
+using Microsoft.Data.Sqlite;
+using Microsoft.Extensions.DependencyInjection;
+using TerraScale.TerraBase.Engine;
+using TerraScale.TerraBase.Tenancy;
 using TerraScale.TerraBase.Testing;
 
 namespace TerraScale.TerraBase.Fast.Documents;
@@ -21,66 +25,129 @@ internal sealed record ApiResponse(HttpStatusCode Status, JsonElement Json, stri
 }
 
 /// <summary>
-/// One test's own server with a client-listener key, database <c>db</c> and collection
-/// <c>items</c>, plus helpers that send JSON and read whole responses.
+/// One test's own server with a tenant (an organization with one project), a key of that organization, database
+/// <c>db</c> and collection <c>items</c>, plus helpers that send JSON and read whole responses.
 /// </summary>
 internal sealed class DocumentApi : IAsyncDisposable
 {
     public const string Database = "db";
     public const string Collection = "items";
-    public const string Documents = $"/v1/databases/{Database}/collections/{Collection}/documents";
-    public const string Query = $"/v1/databases/{Database}/collections/{Collection}/query";
-    public const string Transactions = $"/v1/databases/{Database}/transactions";
 
-    private readonly ClientTls _tls;
-
-    private DocumentApi(ClientTls tls, TerraBaseTestServer server, HttpClient client)
+    private DocumentApi(ManagementApi management, Tenant tenant)
     {
-        _tls = tls;
-        Server = server;
-        Client = client;
+        Management = management;
+        Tenant = tenant;
     }
 
-    public TerraBaseTestServer Server { get; }
+    public ManagementApi Management { get; }
 
-    public HttpClient Client { get; }
+    public Tenant Tenant { get; }
 
-    /// <summary>Starts a server and creates <c>db</c> and <c>items</c> with a read and write key.</summary>
-    public static async Task<DocumentApi> StartAsync()
+    public TerraBaseTestServer Server => Management.Server;
+
+    public HttpClient Client => Tenant.Data;
+
+    /// <summary>The data API root of the tenant's project.</summary>
+    public string Project => $"/v1/projects/{Tenant.ProjectId}";
+
+    public string Collections => $"{DatabasePath()}/collections";
+
+    public string Documents => $"{Collections}/{Collection}/documents";
+
+    public string Query => $"{DatabasePath()}/collections/{Collection}/query";
+
+    public string Transactions => $"{DatabasePath()}/transactions";
+
+    /// <summary>Starts a server and creates <c>db</c> and <c>items</c> in a new tenant, with a read and write key.</summary>
+    public static async Task<DocumentApi> StartAsync(Action<Dictionary<string, string>>? configure = null)
     {
-        var tls = new ClientTls();
-        TerraBaseTestServer? server = null;
-        HttpClient? client = null;
+        var management = await ManagementApi.StartAsync(configure);
+        Tenant? tenant = null;
         try
         {
-            server = await TerraBaseTestServer.StartAsync(tls.Apply);
-            client = tls.CreateClient(server.ClientAddress!, await server.IssueAsync("documents:read", "documents:write"));
-            var api = new DocumentApi(tls, server, client);
-            (await api.SendAsync(HttpMethod.Put, $"/v1/databases/{Database}")).Status.ShouldBe(HttpStatusCode.Created);
-            (await api.SendAsync(HttpMethod.Post, $"/v1/databases/{Database}/collections", new { name = Collection })).Status.ShouldBe(HttpStatusCode.Created);
+            tenant = await management.CreateTenantAsync("documents:read", "documents:write");
+            var api = new DocumentApi(management, tenant);
+            (await api.SendAsync(HttpMethod.Put, api.DatabasePath())).Status.ShouldBe(HttpStatusCode.Created);
+            (await api.SendAsync(HttpMethod.Post, $"{api.DatabasePath()}/collections", new { name = Collection })).Status.ShouldBe(HttpStatusCode.Created);
             return api;
         }
         catch
         {
-            client?.Dispose();
-            if (server is not null)
-            {
-                await server.DisposeAsync();
-            }
-
-            tls.Dispose();
+            // The tenant's client is not the management API's to dispose.
+            tenant?.Dispose();
+            await management.DisposeAsync();
             throw;
         }
     }
 
+    /// <summary>The data API route of the database named <paramref name="name"/> in the tenant's project.</summary>
+    public string DatabasePath(string name = Database) => $"{Project}/databases/{name}";
+
+    /// <summary>Deletes a database of the tenant's project through the Management API, as the tenant's owner.</summary>
+    public async Task DeleteDatabaseAsync(string name = Database)
+    {
+        // Creating an existing database is idempotent and returns its id.
+        var database = await SendAsync(HttpMethod.Put, DatabasePath(name));
+        database.Status.ShouldBe(HttpStatusCode.OK);
+        using var owner = Management.As(Tenant.User);
+        using var deleted = await owner.DeleteAsync(new Uri(
+            $"/v1/management/organizations/{Tenant.OrganizationId}/projects/{Tenant.ProjectId}/databases/{database.Json.GetProperty("id").GetString()}",
+            UriKind.Relative));
+        deleted.StatusCode.ShouldBe(HttpStatusCode.NoContent);
+    }
+
+    /// <summary>
+    /// Registers database <paramref name="name"/> in the tenant's project, then has the engine forget its store and
+    /// file and lets <paramref name="write"/> write a file of an older build at its path; the next request opens and
+    /// migrates that file. Returns the path.
+    /// </summary>
+    public async Task<string> ReplaceWithOlderFileAsync(string name, Func<string, Task> write)
+    {
+        ArgumentNullException.ThrowIfNull(write);
+        var created = await SendAsync(HttpMethod.Put, DatabasePath(name));
+        var id = created.Json.GetProperty("id").GetString()!;
+        var database = new TenantContext(Tenant.OrganizationId, PlanTier.Hobby, Tenant.ProjectId, id);
+        await Server.Services.GetRequiredService<IStorageEngine>().DeleteDatabaseAsync(database, CancellationToken.None);
+        var path = Path.Combine(Server.DataDirectory, Tenant.OrganizationId, Tenant.ProjectId, id + ".db");
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        await write(path);
+        return path;
+    }
+
+    /// <summary>The tenant context of database <paramref name="name"/> of the tenant's project, as the engine addresses it.</summary>
+    public async Task<TenantContext> TenantOfAsync(string name = Database)
+    {
+        // Creating an existing database is idempotent and returns its id.
+        var database = await SendAsync(HttpMethod.Put, DatabasePath(name));
+        database.Status.ShouldBe(HttpStatusCode.OK);
+        return new TenantContext(Tenant.OrganizationId, PlanTier.Hobby, Tenant.ProjectId, database.Json.GetProperty("id").GetString());
+    }
+
+    /// <summary>The file of database <paramref name="name"/> of the tenant's project, under its tenant's directory.</summary>
+    public async Task<string> DatabaseFileAsync(string name = Database)
+    {
+        // Creating an existing database is idempotent and returns its id.
+        var database = await SendAsync(HttpMethod.Put, DatabasePath(name));
+        database.Status.ShouldBe(HttpStatusCode.OK);
+        return Path.Combine(Server.DataDirectory, Tenant.OrganizationId, Tenant.ProjectId, database.Json.GetProperty("id").GetString() + ".db");
+    }
+
+    /// <summary>A connection string for a file at <paramref name="path"/>, built rather than interpolated.</summary>
+    public static string ConnectionString(string path, bool readOnly = false) => new SqliteConnectionStringBuilder
+    {
+        DataSource = path,
+        Mode = readOnly ? SqliteOpenMode.ReadOnly : SqliteOpenMode.ReadWriteCreate,
+        Pooling = false,
+    }.ToString();
+
     /// <summary>A new document id.</summary>
     public static string NewId() => Guid.CreateVersion7().ToString();
 
-    public static string Document(string id) => $"{Documents}/{id}";
+    public string Document(string id) => $"{Documents}/{id}";
 
-    /// <summary>A client for the same server with other scopes.</summary>
+    /// <summary>A client for the same server and tenant with other scopes.</summary>
     public async Task<HttpClient> ClientWithScopesAsync(params string[] scopes) =>
-        _tls.CreateClient(Server.ClientAddress!, await Server.IssueAsync(scopes));
+        Management.DataClient(await Server.IssueAsync(Tenant.OrganizationId, scopes));
 
     public Task<ApiResponse> PutAsync(string id, object document, Action<HttpRequestMessage>? configure = null) =>
         SendAsync(HttpMethod.Put, Document(id), document, configure);
@@ -123,9 +190,8 @@ internal sealed class DocumentApi : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
-        Client.Dispose();
-        await Server.DisposeAsync();
-        _tls.Dispose();
+        Tenant.Dispose();
+        await Management.DisposeAsync();
     }
 }
 

@@ -70,12 +70,18 @@ public sealed class ClientTls : IDisposable
 /// <summary>Issues API keys through the administrative listener.</summary>
 public static class ApiKeyIssuer
 {
-    /// <summary>Issues a key with <paramref name="scopes"/> and returns its secret.</summary>
-    public static async Task<string> IssueAsync(this TerraBaseTestServer server, params string[] scopes)
+    /// <summary>Issues a key of <paramref name="organization"/> with <paramref name="scopes"/> and returns its secret.</summary>
+    public static Task<string> IssueAsync(this TerraBaseTestServer server, string organization, params string[] scopes) =>
+        server.IssueNarrowedAsync(organization, project: null, database: null, scopes);
+
+    /// <summary>Issues a key of <paramref name="organization"/>, optionally narrowed, and returns its secret.</summary>
+    public static async Task<string> IssueNarrowedAsync(
+        this TerraBaseTestServer server, string organization, string? project, string? database, params string[] scopes)
     {
         ArgumentNullException.ThrowIfNull(server);
         using var response = await server.Client.PostAsJsonAsync(
-            new Uri("/admin/api-keys", UriKind.Relative), new { name = "test", scopes });
+            new Uri("/admin/api-keys", UriKind.Relative),
+            new { name = "test", scopes, organizationId = organization, projectId = project, databaseId = database });
         response.EnsureSuccessStatusCode();
         var body = await response.Content.ReadFromJsonAsync<IssuedKey>();
         return body!.Secret;

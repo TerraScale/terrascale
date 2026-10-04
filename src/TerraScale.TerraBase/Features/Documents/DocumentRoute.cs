@@ -2,15 +2,20 @@ using System.Globalization;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.Net.Http.Headers;
 using TerraScale.TerraBase.Engine;
+using TerraScale.TerraBase.Features.ApiKeys;
 using TerraScale.TerraBase.Hosting;
+using TerraScale.TerraBase.Tenancy;
 
 namespace TerraScale.TerraBase.Features.Documents;
 
 /// <summary>Route, header and body handling shared by the document endpoints (Documents API v1).</summary>
 internal static class DocumentRoute
 {
+    /// <summary>Route of one database: a project of the API key's organization, and a database name unique in it.</summary>
+    public const string DatabaseRoute = "/v1/projects/{project}/databases/{database}";
+
     /// <summary>Base route of one database's collections.</summary>
-    public const string Collections = "/v1/databases/{database}/collections";
+    public const string Collections = DatabaseRoute + "/collections";
 
     /// <summary>Base route of one collection's documents.</summary>
     public const string Collection = Collections + "/{collection}/documents";
@@ -29,10 +34,30 @@ internal static class DocumentRoute
 
     public const string JsonMediaType = "application/json";
 
+    public static string Project(HttpContext context) => (string)context.Request.RouteValues["project"]!;
+
     public static DatabaseName Database(HttpContext context) =>
         DatabaseName.TryParse(context.Request.RouteValues["database"] as string, out var name)
             ? name
             : throw new ApiException("database must be a lowercase name of at most 63 characters");
+
+    /// <summary>
+    /// Resolves the request's tenant: the route's database, in the route's project of the API key's organization.
+    /// A database that does not exist and one the key does not reach both answer 404 <c>unknown_database</c>, so a key
+    /// learns nothing about other tenants.
+    /// </summary>
+    public static async ValueTask<TenantContext> TenantAsync(HttpContext context, ITenantDirectory tenants, CancellationToken cancellationToken)
+    {
+        var name = Database(context);
+        var key = ApiKey.Of(context);
+        return await tenants.FindDatabaseAsync(key.OrganizationId, Project(context), name.Value, cancellationToken).ConfigureAwait(false) is { } tenant
+            && key.Reaches(tenant)
+            ? tenant
+            : throw UnknownDatabase();
+    }
+
+    /// <summary>The one answer for a database that does not exist, or that the caller's tenant does not reach.</summary>
+    public static ApiException UnknownDatabase() => new(StatusCodes.Status404NotFound, "unknown_database", "the database does not exist");
 
     public static string CollectionName(HttpContext context) => CollectionName(context.Request.RouteValues["collection"] as string);
 
@@ -41,8 +66,13 @@ internal static class DocumentRoute
             ? parsed.Value
             : throw new ApiException("collection must be a lowercase name of at most 63 characters");
 
-    public static DocumentKey Key(HttpContext context) =>
-        new(Database(context), CollectionName(context), DocumentId(context.Request.RouteValues["id"] as string));
+    public static async ValueTask<DocumentKey> KeyAsync(HttpContext context, ITenantDirectory tenants, CancellationToken cancellationToken)
+    {
+        // Malformed collection and id first (400), then the tenant (404).
+        var collection = CollectionName(context);
+        var id = DocumentId(context.Request.RouteValues["id"] as string);
+        return new DocumentKey(await TenantAsync(context, tenants, cancellationToken).ConfigureAwait(false), collection, id);
+    }
 
     /// <summary>Bounds an address; the service permits a non-UUID only when that legacy id already exists.</summary>
     public static string DocumentId(string? id) =>
@@ -51,8 +81,8 @@ internal static class DocumentRoute
             : throw new ApiException("id must be 1 to 256 characters without control characters");
 
     /// <summary>A document URI built from escaped route values, preserving legacy identities.</summary>
-    public static string Location(DocumentKey key) =>
-        $"/v1/databases/{Uri.EscapeDataString(key.Database.Value)}/collections/{Uri.EscapeDataString(key.Collection)}/documents/{Uri.EscapeDataString(key.Id)}";
+    public static string Location(HttpContext context, DocumentKey key) =>
+        $"/v1/projects/{Uri.EscapeDataString(Project(context))}/databases/{Uri.EscapeDataString(Database(context).Value)}/collections/{Uri.EscapeDataString(key.Collection)}/documents/{Uri.EscapeDataString(key.Id)}";
 
     public static bool IsUuid(string id) =>
         Guid.TryParseExact(id, "D", out var guid) && string.Equals(guid.ToString("D"), id, StringComparison.Ordinal);

@@ -2,11 +2,12 @@ using TerraScale.Endpoints;
 using TerraScale.TerraBase.Engine;
 using TerraScale.TerraBase.Features.ApiKeys;
 using TerraScale.TerraBase.Hosting;
+using TerraScale.TerraBase.Tenancy;
 
 namespace TerraScale.TerraBase.Features.Documents;
 
 /// <summary><c>GET …/documents?limit=&amp;cursor=</c>: lists a collection in id order.</summary>
-public sealed class ListDocumentsEndpoint(IDocumentService documents) : EndpointWithoutRequest<IResult>
+public sealed class ListDocumentsEndpoint(IDocumentService documents, ITenantDirectory tenants) : EndpointWithoutRequest<IResult>
 {
     /// <inheritdoc />
     public override void Configure()
@@ -25,7 +26,7 @@ public sealed class ListDocumentsEndpoint(IDocumentService documents) : Endpoint
     /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
-        var database = DocumentRoute.Database(HttpContext);
+        var database = await DocumentRoute.TenantAsync(HttpContext, tenants, cancellationToken);
         var collection = DocumentRoute.CollectionName(HttpContext);
         var query = DocumentRoute.Parameters(HttpContext, "limit", "cursor");
         var digest = QueryParser.Digest(database, collection, "list");

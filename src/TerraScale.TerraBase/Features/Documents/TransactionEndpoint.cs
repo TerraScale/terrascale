@@ -4,11 +4,12 @@ using Microsoft.AspNetCore.Authorization;
 using TerraScale.Endpoints;
 using TerraScale.TerraBase.Features.ApiKeys;
 using TerraScale.TerraBase.Hosting;
+using TerraScale.TerraBase.Tenancy;
 
 namespace TerraScale.TerraBase.Features.Documents;
 
-/// <summary><c>POST /v1/databases/{database}/transactions</c>: applies up to 1024 operations atomically.</summary>
-public sealed class TransactionEndpoint(IDocumentService documents, IAuthorizationService authorization) : EndpointWithoutRequest<IResult>
+/// <summary><c>POST /v1/projects/{project}/databases/{database}/transactions</c>: applies up to 1024 operations atomically.</summary>
+public sealed class TransactionEndpoint(IDocumentService documents, IAuthorizationService authorization, ITenantDirectory tenants) : EndpointWithoutRequest<IResult>
 {
     private const int MaxOps = 1024;
     private const int MaxAssertCounts = 16;
@@ -16,7 +17,7 @@ public sealed class TransactionEndpoint(IDocumentService documents, IAuthorizati
     /// <inheritdoc />
     public override void Configure()
     {
-        Post("/v1/databases/{database}/transactions");
+        Post(DocumentRoute.DatabaseRoute + "/transactions");
         Name("transaction");
         Summary("Applies document operations atomically");
         Description("""
@@ -37,7 +38,7 @@ public sealed class TransactionEndpoint(IDocumentService documents, IAuthorizati
     /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
-        var database = DocumentRoute.Database(HttpContext);
+        var database = await DocumentRoute.TenantAsync(HttpContext, tenants, cancellationToken);
         DocumentRoute.Parameters(HttpContext);
         DocumentRoute.RejectIdempotencyKey(HttpContext);
         var body = await DocumentRoute.ReadBodyAsync(HttpContext, DocumentRoute.MaxRequestBytes, "invalid_request", cancellationToken, DocumentRoute.JsonMediaType);

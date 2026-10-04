@@ -36,21 +36,25 @@ public sealed class QueryPlanTests
     [Test]
     public async Task Every_document_statement_seeks_the_primary_key()
     {
-        using var tls = new ClientTls();
-        await using var server = await TerraBaseTestServer.StartAsync(tls.Apply);
-        using var client = tls.CreateClient(server.ClientAddress!, await server.IssueAsync("documents:write"));
-        (await client.PutAsync(new Uri("/v1/databases/plans", UriKind.Relative), null)).EnsureSuccessStatusCode();
-        (await client.PostAsJsonAsync(new Uri("/v1/databases/plans/collections", UriKind.Relative), new { name = "items" })).EnsureSuccessStatusCode();
-        (await client.PutAsJsonAsync(
-            new Uri($"/v1/databases/plans/collections/items/documents/{Guid.CreateVersion7()}", UriKind.Relative),
+        await using var api = await ManagementApi.StartAsync();
+        using var tenant = await api.CreateTenantAsync("documents:write");
+        using var created = await tenant.Data.PutAsync(tenant.Database("plans"), null);
+        created.EnsureSuccessStatusCode();
+        var plans = (await created.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>()).GetProperty("id").GetString()!;
+        (await tenant.Data.PostAsJsonAsync(tenant.Database("plans", "/collections"), new { name = "items" })).EnsureSuccessStatusCode();
+        (await tenant.Data.PutAsJsonAsync(
+            tenant.Database("plans", $"/collections/items/documents/{Guid.CreateVersion7()}"),
             new { title = Faker.Commerce.ProductName() })).EnsureSuccessStatusCode();
         // Every statement the engine runs must have a recorded plan.
         await Assert.That(SqliteStatements.All.Keys).IsEquivalentTo(Expected.Keys);
         // _system (created by issuing the key) holds API keys and Management documents with the same
         // statements. Plans depend on the schema, not on the rows, so an almost empty file is enough.
-        foreach (var database in new[] { "plans", "_system" })
+        foreach (var (database, path) in new[]
         {
-            var path = Path.Combine(server.DataDirectory, database + ".db");
+            ("plans", Path.Combine(api.Server.DataDirectory, tenant.OrganizationId, tenant.ProjectId, plans + ".db")),
+            ("_system", Path.Combine(api.Server.DataDirectory, "_system.db")),
+        })
+        {
             foreach (var (name, sql) in SqliteStatements.All)
             {
                 var plan = await QueryPlan.ExplainAsync(path, sql);
@@ -70,15 +74,16 @@ public sealed class QueryPlanTests
             .Status.ShouldBe(System.Net.HttpStatusCode.OK);
         var live = "ffffffff-ffff-7fff-8fff-ffffffffffff";
         (await api.PutAsync(live, new { n = 2 })).Status.ShouldBe(System.Net.HttpStatusCode.Created);
-        var listed = await api.SendAsync(HttpMethod.Get, DocumentApi.Documents + "?limit=1");
+        var listed = await api.SendAsync(HttpMethod.Get, api.Documents + "?limit=1");
         var queried = await api.QueryAsync(new { limit = 1 });
         await Assert.That(listed.Ids).IsEquivalentTo([live]);
         await Assert.That(queried.Ids).IsEquivalentTo([live]);
 
+        var databaseFile = await api.DatabaseFileAsync();
         using var command = new Microsoft.Data.Sqlite.SqliteCommand();
         var sql = new SqliteQueryCompiler(command.Parameters).Compile(new TerraScale.TerraBase.Engine.DocumentQuery(
             "items", null, [], null, 1, 1024));
-        var plan = await QueryPlan.ExplainAsync(Path.Combine(api.Server.DataDirectory, "db.db"), sql);
+        var plan = await QueryPlan.ExplainAsync(databaseFile, sql);
         await Assert.That(plan.Contains("USING INDEX documents_live", StringComparison.Ordinal)).IsTrue();
         await Assert.That(plan.Contains("SCAN documents", StringComparison.Ordinal)).IsFalse();
         foreach (var descending in new[] { false, true })
@@ -93,7 +98,7 @@ public sealed class QueryPlanTests
                     var position = cursor ? new TerraScale.TerraBase.Engine.QueryPosition(duplicate ? [5L, live, 5L, live] : [5L, live], live) : null;
                     var idSql = new SqliteQueryCompiler(idCommand.Parameters).Compile(new TerraScale.TerraBase.Engine.DocumentQuery(
                         "items", null, keys, position, 1, 1024));
-                    var idPlan = await QueryPlan.ExplainAsync(Path.Combine(api.Server.DataDirectory, "db.db"), idSql);
+                    var idPlan = await QueryPlan.ExplainAsync(databaseFile, idSql);
                     var range = cursor ? (descending ? " AND id<?" : " AND id>?") : "";
                     await Assert.That(idPlan).IsEqualTo($"SEARCH documents USING INDEX documents_live (collection=?{range})");
                     await Assert.That(idPlan.Contains("TEMP B-TREE", StringComparison.Ordinal)).IsFalse();

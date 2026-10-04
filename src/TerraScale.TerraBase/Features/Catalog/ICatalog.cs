@@ -1,4 +1,4 @@
-using TerraScale.TerraBase.Engine;
+using TerraScale.TerraBase.Tenancy;
 
 namespace TerraScale.TerraBase.Features.Catalog;
 
@@ -10,9 +10,6 @@ public sealed record CollectionInfo(string Name, long DocumentCount);
 /// <summary>Database and collection administration (offline catalog, schema metadata). Not implemented yet.</summary>
 public interface ICatalog
 {
-    /// <summary>Lists client databases.</summary>
-    IAsyncEnumerable<DatabaseName> ListDatabasesAsync(CancellationToken cancellationToken);
-
     /// <summary>Lists the collections of a database; empty when the database does not exist.</summary>
-    ValueTask<IReadOnlyList<CollectionInfo>> ListCollectionsAsync(DatabaseName database, CancellationToken cancellationToken);
+    ValueTask<IReadOnlyList<CollectionInfo>> ListCollectionsAsync(TenantContext database, CancellationToken cancellationToken);
 }

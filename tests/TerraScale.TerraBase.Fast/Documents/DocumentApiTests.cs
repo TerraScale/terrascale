@@ -18,26 +18,25 @@ public sealed class DocumentApiTests
         var deletedId = DocumentApi.NewId();
         var original = await api.PutAsync(id, new { n = 1 });
         (await api.PutAsync(deletedId, new { n = 1 })).Status.ShouldBe(HttpStatusCode.Created);
-        var oldTombstone = await api.SendAsync(HttpMethod.Delete, DocumentApi.Document(deletedId));
+        var oldTombstone = await api.SendAsync(HttpMethod.Delete, api.Document(deletedId));
         oldTombstone.Status.ShouldBe(HttpStatusCode.OK);
 
-        // Database deletion has no Documents endpoint; arrange it through the real server's engine.
+        // Database deletion has no Documents endpoint; it goes through the Management API.
         var engine = api.Server.Services.GetRequiredService<IStorageEngine>();
-        await Assert.That(DatabaseName.TryParse("db", out var database)).IsTrue();
-        var store = (await engine.OpenDatabaseAsync(database, CancellationToken.None))!;
+        var store = (await engine.OpenDatabaseAsync(await api.TenantOfAsync(), CancellationToken.None))!;
         await Assert.That(store.Incarnation.Version).IsEqualTo(4);
-        await Assert.That(await engine.DeleteDatabaseAsync(database, CancellationToken.None)).IsTrue();
-        (await api.SendAsync(HttpMethod.Put, "/v1/databases/db")).Status.ShouldBe(HttpStatusCode.Created);
-        var recreatedStore = (await engine.OpenDatabaseAsync(database, CancellationToken.None))!;
+        await api.DeleteDatabaseAsync();
+        (await api.SendAsync(HttpMethod.Put, api.DatabasePath())).Status.ShouldBe(HttpStatusCode.Created);
+        var recreatedStore = (await engine.OpenDatabaseAsync(await api.TenantOfAsync(), CancellationToken.None))!;
         await Assert.That(recreatedStore.Incarnation.Version).IsEqualTo(4);
         await Assert.That(recreatedStore.Incarnation).IsNotEqualTo(store.Incarnation);
-        (await api.SendAsync(HttpMethod.Post, "/v1/databases/db/collections", new { name = "items" })).Status.ShouldBe(HttpStatusCode.Created);
+        (await api.SendAsync(HttpMethod.Post, api.Collections, new { name = "items" })).Status.ShouldBe(HttpStatusCode.Created);
         var recreated = await api.PutAsync(id, new { n = 2 });
         recreated.Status.ShouldBe(HttpStatusCode.Created);
         await Assert.That(Offset(recreated)).IsEqualTo(Offset(original));
         await Assert.That(recreated.Version).IsNotEqualTo(original.Version);
         (await api.PutAsync(deletedId, new { n = 2 })).Status.ShouldBe(HttpStatusCode.Created);
-        var newTombstone = await api.SendAsync(HttpMethod.Delete, DocumentApi.Document(deletedId));
+        var newTombstone = await api.SendAsync(HttpMethod.Delete, api.Document(deletedId));
         await Assert.That(Offset(newTombstone)).IsEqualTo(Offset(oldTombstone));
         await Assert.That(newTombstone.Version).IsNotEqualTo(oldTombstone.Version);
 
@@ -48,8 +47,8 @@ public sealed class DocumentApiTests
         {
             await api.GetAsync(id, DocumentApi.IfMatch(original.Version)),
             await api.PutAsync(id, new { n = 3 }, DocumentApi.IfMatch(original.Version)),
-            await api.SendRawAsync(HttpMethod.Patch, DocumentApi.Document(id), """{"n":3}""", "application/merge-patch+json", DocumentApi.IfMatch(original.Version)),
-            await api.SendAsync(HttpMethod.Delete, DocumentApi.Document(id), configure: DocumentApi.IfMatch(original.Version)),
+            await api.SendRawAsync(HttpMethod.Patch, api.Document(id), """{"n":3}""", "application/merge-patch+json", DocumentApi.IfMatch(original.Version)),
+            await api.SendAsync(HttpMethod.Delete, api.Document(id), configure: DocumentApi.IfMatch(original.Version)),
             await api.PutAsync(deletedId, new { n = 3 }, DocumentApi.IfMatch(oldTombstone.Version)),
         })
         {
@@ -61,7 +60,7 @@ public sealed class DocumentApiTests
         var read = await api.GetAsync(id);
         await Assert.That(read.Version).IsEqualTo(recreated.Version);
         await Assert.That(read.Json.GetProperty("document").GetProperty("n").GetInt32()).IsEqualTo(2);
-        foreach (var response in new[] { await api.QueryAsync(new { }), await api.SendAsync(HttpMethod.Get, DocumentApi.Documents) })
+        foreach (var response in new[] { await api.QueryAsync(new { }), await api.SendAsync(HttpMethod.Get, api.Documents) })
         {
             await Assert.That(response.Json.GetProperty("items")[0].GetProperty("version").GetString()).IsEqualTo(recreated.Version);
         }
@@ -89,13 +88,13 @@ public sealed class DocumentApiTests
             ("If-None-Match", "", HttpStatusCode.BadRequest, "invalid_request"),
         })
         {
-            var result = await api.SendAsync(HttpMethod.Post, DocumentApi.Documents, new { n = 1 },
+            var result = await api.SendAsync(HttpMethod.Post, api.Documents, new { n = 1 },
                 request => request.Headers.TryAddWithoutValidation(header, value));
             await Assert.That((result.Status, result.Code)).IsEqualTo((status, code));
         }
 
         await Assert.That((await api.QueryAsync(new { })).Ids.Count).IsEqualTo(0);
-        var created = await api.SendAsync(HttpMethod.Post, DocumentApi.Documents, new { n = 2 }, DocumentApi.IfNoneMatch("*"));
+        var created = await api.SendAsync(HttpMethod.Post, api.Documents, new { n = 2 }, DocumentApi.IfNoneMatch("*"));
         await Assert.That(created.Status).IsEqualTo(HttpStatusCode.Created);
         await Assert.That((await api.SendAsync(HttpMethod.Get, created.Location!.OriginalString)).Status).IsEqualTo(HttpStatusCode.OK);
         await Assert.That((await api.QueryAsync(new { })).Ids.Count).IsEqualTo(1);
@@ -109,12 +108,12 @@ public sealed class DocumentApiTests
         var original = await api.PutAsync(id, new { n = 1 });
         var cases = new (HttpMethod Method, string Route, string Body, string MediaType, string Code)[]
         {
-            (HttpMethod.Put, DocumentApi.Document(id), "{\"s\":\"BAD\"}", "application/json", "invalid_request"),
-            (HttpMethod.Put, DocumentApi.Document(id), "{\"BAD\":1}", "application/json", "invalid_request"),
-            (HttpMethod.Patch, DocumentApi.Document(id), "{\"s\":\"BAD\"}", "application/merge-patch+json", "invalid_patch"),
-            (HttpMethod.Patch, DocumentApi.Document(id), "{\"ops\":[{\"op\":\"set\",\"path\":\"/s\",\"value\":\"BAD\"}]}", "application/vnd.terrabase.ops+json", "invalid_patch"),
-            (HttpMethod.Post, DocumentApi.Query, "{\"filter\":{\"eq\":[\"/s\",\"BAD\"]}}", "application/json", "invalid_query"),
-            (HttpMethod.Post, DocumentApi.Transactions, "{\"ops\":[{\"op\":\"create\",\"collection\":\"items\",\"document\":{\"s\":\"BAD\"}}]}", "application/json", "invalid_request"),
+            (HttpMethod.Put, api.Document(id), "{\"s\":\"BAD\"}", "application/json", "invalid_request"),
+            (HttpMethod.Put, api.Document(id), "{\"BAD\":1}", "application/json", "invalid_request"),
+            (HttpMethod.Patch, api.Document(id), "{\"s\":\"BAD\"}", "application/merge-patch+json", "invalid_patch"),
+            (HttpMethod.Patch, api.Document(id), "{\"ops\":[{\"op\":\"set\",\"path\":\"/s\",\"value\":\"BAD\"}]}", "application/vnd.terrabase.ops+json", "invalid_patch"),
+            (HttpMethod.Post, api.Query, "{\"filter\":{\"eq\":[\"/s\",\"BAD\"]}}", "application/json", "invalid_query"),
+            (HttpMethod.Post, api.Transactions, "{\"ops\":[{\"op\":\"create\",\"collection\":\"items\",\"document\":{\"s\":\"BAD\"}}]}", "application/json", "invalid_request"),
         };
         foreach (var (method, route, body, mediaType, code) in cases)
         {
@@ -169,7 +168,7 @@ public sealed class DocumentApiTests
         var created = await api.PutAsync(id, person);
         var replaced = await api.PutAsync(id, person with { age = person.age + 1 });
         var read = await api.GetAsync(id);
-        var deleted = await api.SendAsync(HttpMethod.Delete, DocumentApi.Document(id));
+        var deleted = await api.SendAsync(HttpMethod.Delete, api.Document(id));
         var gone = await api.GetAsync(id);
 
         await Assert.That(created.Status).IsEqualTo(HttpStatusCode.Created);
@@ -193,7 +192,8 @@ public sealed class DocumentApiTests
         await Assert.That(gone.Code).IsEqualTo("not_found");
         await Assert.That(gone.ETag).IsEqualTo(deleted.Version);
         // The settings reached Program: the database lives in this server's own data directory.
-        await Assert.That(File.Exists(Path.Combine(api.Server.DataDirectory, "db.db"))).IsTrue();
+        // The database lives in its tenant's directory.
+        await Assert.That(File.Exists(await api.DatabaseFileAsync())).IsTrue();
     }
 
     [Test]
@@ -201,14 +201,14 @@ public sealed class DocumentApiTests
     {
         await using var api = await DocumentApi.StartAsync();
 
-        var created = await api.SendAsync(HttpMethod.Post, DocumentApi.Documents, new { title = Faker.Commerce.ProductName() });
+        var created = await api.SendAsync(HttpMethod.Post, api.Documents, new { title = Faker.Commerce.ProductName() });
         var id = created.Json.GetProperty("id").GetString()!;
         var read = await api.SendAsync(HttpMethod.Get, created.Location!.OriginalString);
 
         await Assert.That(created.Status).IsEqualTo(HttpStatusCode.Created);
         await Assert.That(Guid.Parse(id).Version).IsEqualTo(7);
         await Assert.That(id).IsEqualTo(id.ToLowerInvariant());
-        await Assert.That(created.Location.OriginalString).IsEqualTo(DocumentApi.Document(id));
+        await Assert.That(created.Location.OriginalString).IsEqualTo(api.Document(id));
         await Assert.That(read.Status).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(read.Version).IsEqualTo(created.Version);
     }
@@ -219,15 +219,15 @@ public sealed class DocumentApiTests
         await using var api = await DocumentApi.StartAsync();
         var id = DocumentApi.NewId();
 
-        var noDatabase = await api.SendAsync(HttpMethod.Get, $"/v1/databases/nope/collections/items/documents/{id}");
-        var noCollection = await api.SendAsync(HttpMethod.Put, $"/v1/databases/db/collections/nope/documents/{id}", new { a = 1 });
+        var noDatabase = await api.SendAsync(HttpMethod.Get, $"{api.Project}/databases/nope/collections/items/documents/{id}");
+        var noCollection = await api.SendAsync(HttpMethod.Put, $"{api.Project}/databases/db/collections/nope/documents/{id}", new { a = 1 });
         var noDocument = await api.GetAsync(id);
-        var deleteAbsent = await api.SendAsync(HttpMethod.Delete, DocumentApi.Document(id));
-        var patchAbsent = await api.SendRawAsync(HttpMethod.Patch, DocumentApi.Document(id), """{"a":1}""", "application/merge-patch+json");
+        var deleteAbsent = await api.SendAsync(HttpMethod.Delete, api.Document(id));
+        var patchAbsent = await api.SendRawAsync(HttpMethod.Patch, api.Document(id), """{"a":1}""", "application/merge-patch+json");
         await api.PutAsync(id, new { a = 1 });
-        await api.SendAsync(HttpMethod.Delete, DocumentApi.Document(id));
-        var deleteTwice = await api.SendAsync(HttpMethod.Delete, DocumentApi.Document(id));
-        var patchDeleted = await api.SendRawAsync(HttpMethod.Patch, DocumentApi.Document(id), """{"a":1}""", "application/merge-patch+json");
+        await api.SendAsync(HttpMethod.Delete, api.Document(id));
+        var deleteTwice = await api.SendAsync(HttpMethod.Delete, api.Document(id));
+        var patchDeleted = await api.SendRawAsync(HttpMethod.Patch, api.Document(id), """{"a":1}""", "application/merge-patch+json");
         var unknownRoute = await api.SendAsync(HttpMethod.Get, "/v1/nothing");
 
         await Assert.That((noDatabase.Status, noDatabase.Code)).IsEqualTo((HttpStatusCode.NotFound, "unknown_database"));
@@ -252,8 +252,8 @@ public sealed class DocumentApiTests
         var second = await api.PutAsync(id, new { n = 2 }, DocumentApi.IfMatch(first.Version));
         var stale = await api.PutAsync(id, new { n = 3 }, DocumentApi.IfMatch(first.Version));
         var stalePatch = await api.SendRawAsync(
-            HttpMethod.Patch, DocumentApi.Document(id), """{"n":3}""", "application/merge-patch+json", DocumentApi.IfMatch(first.Version));
-        var staleDelete = await api.SendAsync(HttpMethod.Delete, DocumentApi.Document(id), configure: DocumentApi.IfMatch(first.Version));
+            HttpMethod.Patch, api.Document(id), """{"n":3}""", "application/merge-patch+json", DocumentApi.IfMatch(first.Version));
+        var staleDelete = await api.SendAsync(HttpMethod.Delete, api.Document(id), configure: DocumentApi.IfMatch(first.Version));
         var notModified = await api.GetAsync(id, DocumentApi.IfNoneMatch(second.Version));
         var modified = await api.GetAsync(id, DocumentApi.IfNoneMatch(first.Version));
         var weakNotModified = await api.GetAsync(
@@ -267,7 +267,7 @@ public sealed class DocumentApiTests
         var starInList = await api.PutAsync(id, new { n = 3 }, request => request.Headers.TryAddWithoutValidation("If-Match", $"*, \"{second.Version}\""));
         var anyNotModified = await api.GetAsync(id, DocumentApi.IfNoneMatch("*"));
         var anyExisting = await api.PutAsync(id, new { n = 4 }, DocumentApi.IfMatch("*"));
-        var deleted = await api.SendAsync(HttpMethod.Delete, DocumentApi.Document(id), configure: DocumentApi.IfMatch(anyExisting.Version));
+        var deleted = await api.SendAsync(HttpMethod.Delete, api.Document(id), configure: DocumentApi.IfMatch(anyExisting.Version));
         // The tombstone's version recreates the document.
         var recreated = await api.PutAsync(id, new { n = 5 }, DocumentApi.IfMatch(deleted.Version));
         var other = DocumentApi.NewId();
@@ -318,10 +318,10 @@ public sealed class DocumentApiTests
         await api.PutAsync(id, new { name = "Ana", legacy = true, profile = new { city = "Lisbon", zip = "1000" }, tags = SingleTag });
 
         var patched = await api.SendRawAsync(
-            HttpMethod.Patch, DocumentApi.Document(id), """{"legacy":null,"profile":{"zip":null,"country":"PT"},"tags":["b"],"new":{"x":1}}""",
+            HttpMethod.Patch, api.Document(id), """{"legacy":null,"profile":{"zip":null,"country":"PT"},"tags":["b"],"new":{"x":1}}""",
             "application/merge-patch+json");
         var read = await api.GetAsync(id);
-        var notObject = await api.SendRawAsync(HttpMethod.Patch, DocumentApi.Document(id), "[1]", "application/merge-patch+json");
+        var notObject = await api.SendRawAsync(HttpMethod.Patch, api.Document(id), "[1]", "application/merge-patch+json");
 
         await Assert.That(patched.Status).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(read.ETag).IsEqualTo(patched.Version);
@@ -338,7 +338,7 @@ public sealed class DocumentApiTests
         await api.PutAsync(id, new { legacy = 1, total = 0.1, name = "x", tags = SingleTag });
         const string ops = "application/vnd.terrabase.ops+json";
 
-        var patched = await api.SendRawAsync(HttpMethod.Patch, DocumentApi.Document(id), """
+        var patched = await api.SendRawAsync(HttpMethod.Patch, api.Document(id), """
             {"ops":[{"op":"set","path":"/profile/name","value":"Ana"},
                     {"op":"unset","path":"/legacy"},
                     {"op":"unset","path":"/missing/deeper"},
@@ -349,33 +349,33 @@ public sealed class DocumentApiTests
                     {"op":"set","path":"/a~1b","value":null}]}
             """, ops);
         var read = await api.GetAsync(id);
-        var incString = await api.SendRawAsync(HttpMethod.Patch, DocumentApi.Document(id), """{"ops":[{"op":"inc","path":"/name","by":1}]}""", ops);
-        var appendObject = await api.SendRawAsync(HttpMethod.Patch, DocumentApi.Document(id), """{"ops":[{"op":"append","path":"/profile","value":1}]}""", ops);
-        var throughScalar = await api.SendRawAsync(HttpMethod.Patch, DocumentApi.Document(id), """{"ops":[{"op":"set","path":"/name/x","value":1}]}""", ops);
-        var unsetThroughScalar = await api.SendRawAsync(HttpMethod.Patch, DocumentApi.Document(id), """{"ops":[{"op":"unset","path":"/name/x"}]}""", ops);
-        var unsetThroughNull = await api.SendRawAsync(HttpMethod.Patch, DocumentApi.Document(id), """{"ops":[{"op":"unset","path":"/a~1b/x"}]}""", ops);
-        var unsetThroughArray = await api.SendRawAsync(HttpMethod.Patch, DocumentApi.Document(id), """{"ops":[{"op":"unset","path":"/tags/0"}]}""", ops);
+        var incString = await api.SendRawAsync(HttpMethod.Patch, api.Document(id), """{"ops":[{"op":"inc","path":"/name","by":1}]}""", ops);
+        var appendObject = await api.SendRawAsync(HttpMethod.Patch, api.Document(id), """{"ops":[{"op":"append","path":"/profile","value":1}]}""", ops);
+        var throughScalar = await api.SendRawAsync(HttpMethod.Patch, api.Document(id), """{"ops":[{"op":"set","path":"/name/x","value":1}]}""", ops);
+        var unsetThroughScalar = await api.SendRawAsync(HttpMethod.Patch, api.Document(id), """{"ops":[{"op":"unset","path":"/name/x"}]}""", ops);
+        var unsetThroughNull = await api.SendRawAsync(HttpMethod.Patch, api.Document(id), """{"ops":[{"op":"unset","path":"/a~1b/x"}]}""", ops);
+        var unsetThroughArray = await api.SendRawAsync(HttpMethod.Patch, api.Document(id), """{"ops":[{"op":"unset","path":"/tags/0"}]}""", ops);
         var chainedInc = await api.SendRawAsync(
-            HttpMethod.Patch, DocumentApi.Document(id), """{"ops":[{"op":"set","path":"/big","value":1e300},{"op":"inc","path":"/big","by":1},{"op":"inc","path":"/big","by":1}]}""", ops);
-        var surrogateValue = await api.SendRawAsync(HttpMethod.Patch, DocumentApi.Document(id), """{"ops":[{"op":"set","path":"/s","value":"\udc00"}]}""", ops);
-        var surrogateMerge = await api.SendRawAsync(HttpMethod.Patch, DocumentApi.Document(id), """{"s":"\ud800"}""", "application/merge-patch+json");
+            HttpMethod.Patch, api.Document(id), """{"ops":[{"op":"set","path":"/big","value":1e300},{"op":"inc","path":"/big","by":1},{"op":"inc","path":"/big","by":1}]}""", ops);
+        var surrogateValue = await api.SendRawAsync(HttpMethod.Patch, api.Document(id), """{"ops":[{"op":"set","path":"/s","value":"\udc00"}]}""", ops);
+        var surrogateMerge = await api.SendRawAsync(HttpMethod.Patch, api.Document(id), """{"s":"\ud800"}""", "application/merge-patch+json");
         var outOfRange = await api.SendRawAsync(
-            HttpMethod.Patch, DocumentApi.Document(id), """{"ops":[{"op":"set","path":"/big","value":9e307},{"op":"inc","path":"/big","by":9e307}]}""", ops);
-        var nullOp = await api.SendRawAsync(HttpMethod.Patch, DocumentApi.Document(id), """{"ops":[null]}""", ops);
+            HttpMethod.Patch, api.Document(id), """{"ops":[{"op":"set","path":"/big","value":9e307},{"op":"inc","path":"/big","by":9e307}]}""", ops);
+        var nullOp = await api.SendRawAsync(HttpMethod.Patch, api.Document(id), """{"ops":[null]}""", ops);
         var minExponentBy = await api.SendRawAsync(
-            HttpMethod.Patch, DocumentApi.Document(id), """{"ops":[{"op":"inc","path":"/count","by":1e-9223372036854775808}]}""", ops);
-        var hugeBy = await api.SendRawAsync(HttpMethod.Patch, DocumentApi.Document(id), """{"ops":[{"op":"inc","path":"/count","by":1e400}]}""", ops);
+            HttpMethod.Patch, api.Document(id), """{"ops":[{"op":"inc","path":"/count","by":1e-9223372036854775808}]}""", ops);
+        var hugeBy = await api.SendRawAsync(HttpMethod.Patch, api.Document(id), """{"ops":[{"op":"inc","path":"/count","by":1e400}]}""", ops);
         var deepValue = string.Concat(Enumerable.Repeat("""{"a":""", 55)) + "1" + new string('}', 55);
         var tooDeep = await api.SendRawAsync(
-            HttpMethod.Patch, DocumentApi.Document(id), $$"""{"ops":[{"op":"set","path":"/a/b/c/d/e/f/g/h/i/j/k/l/m/n/o/p","value":{{deepValue}}}]}""", ops);
+            HttpMethod.Patch, api.Document(id), $$"""{"ops":[{"op":"set","path":"/a/b/c/d/e/f/g/h/i/j/k/l/m/n/o/p","value":{{deepValue}}}]}""", ops);
         // A value within the limits under a 16-segment path: the patched document is too deep, a 400 rather than a 500.
         var deepResult = await api.SendRawAsync(
-            HttpMethod.Patch, DocumentApi.Document(id), $$"""{"ops":[{"op":"set","path":"/a/b/c/d/e/f/g/h/i/j/k/l/m/n/o/p","value":{{Nested(16)}}}]}""", ops);
-        var unknownOp = await api.SendRawAsync(HttpMethod.Patch, DocumentApi.Document(id), """{"ops":[{"op":"move","path":"/a"}]}""", ops);
-        var noOps = await api.SendRawAsync(HttpMethod.Patch, DocumentApi.Document(id), """{"ops":[]}""", ops);
-        var extraMember = await api.SendRawAsync(HttpMethod.Patch, DocumentApi.Document(id), """{"ops":[{"op":"unset","path":"/a","value":1}]}""", ops);
-        var badPath = await api.SendRawAsync(HttpMethod.Patch, DocumentApi.Document(id), """{"ops":[{"op":"unset","path":"a"}]}""", ops);
-        var plainJson = await api.SendRawAsync(HttpMethod.Patch, DocumentApi.Document(id), """{"a":1}""", "application/json");
+            HttpMethod.Patch, api.Document(id), $$"""{"ops":[{"op":"set","path":"/a/b/c/d/e/f/g/h/i/j/k/l/m/n/o/p","value":{{Nested(16)}}}]}""", ops);
+        var unknownOp = await api.SendRawAsync(HttpMethod.Patch, api.Document(id), """{"ops":[{"op":"move","path":"/a"}]}""", ops);
+        var noOps = await api.SendRawAsync(HttpMethod.Patch, api.Document(id), """{"ops":[]}""", ops);
+        var extraMember = await api.SendRawAsync(HttpMethod.Patch, api.Document(id), """{"ops":[{"op":"unset","path":"/a","value":1}]}""", ops);
+        var badPath = await api.SendRawAsync(HttpMethod.Patch, api.Document(id), """{"ops":[{"op":"unset","path":"a"}]}""", ops);
+        var plainJson = await api.SendRawAsync(HttpMethod.Patch, api.Document(id), """{"a":1}""", "application/json");
         var after = await api.GetAsync(id);
 
         await Assert.That(patched.Status).IsEqualTo(HttpStatusCode.OK);
@@ -434,9 +434,9 @@ public sealed class DocumentApiTests
         foreach (var (start, by, expected) in IncCases)
         {
             var id = DocumentApi.NewId();
-            await api.SendRawAsync(HttpMethod.Put, DocumentApi.Document(id), $$"""{"n":{{start}}}""", "application/json");
+            await api.SendRawAsync(HttpMethod.Put, api.Document(id), $$"""{"n":{{start}}}""", "application/json");
             var patched = await api.SendRawAsync(
-                HttpMethod.Patch, DocumentApi.Document(id), $$"""{"ops":[{"op":"inc","path":"/n","by":{{by}}}]}""", "application/vnd.terrabase.ops+json");
+                HttpMethod.Patch, api.Document(id), $$"""{"ops":[{"op":"inc","path":"/n","by":{{by}}}]}""", "application/vnd.terrabase.ops+json");
             var actual = (await api.GetAsync(id)).Json.GetProperty("document").GetProperty("n").GetRawText();
             if (patched.Status != HttpStatusCode.OK || actual != expected)
             {
@@ -452,26 +452,29 @@ public sealed class DocumentApiTests
     {
         await using var api = await DocumentApi.StartAsync();
         // A database file from a newer TerraBase: opening it fails on the server side.
-        var connection = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={Path.Combine(api.Server.DataDirectory, "future.db")};Pooling=False");
-        await using (connection)
+        var path = await api.ReplaceWithOlderFileAsync("future", async file =>
         {
-            await connection.OpenAsync();
-            var command = connection.CreateCommand();
-            await using (command)
+            var connection = new Microsoft.Data.Sqlite.SqliteConnection(DocumentApi.ConnectionString(file));
+            await using (connection)
             {
-                command.CommandText = "PRAGMA user_version = 99;";
-                await command.ExecuteNonQueryAsync();
+                await connection.OpenAsync();
+                var command = connection.CreateCommand();
+                await using (command)
+                {
+                    command.CommandText = "PRAGMA user_version = 99;";
+                    await command.ExecuteNonQueryAsync();
+                }
             }
-        }
+        });
 
-        var result = await api.SendAsync(HttpMethod.Get, "/v1/databases/future/collections");
+        var result = await api.SendAsync(HttpMethod.Get, $"{api.DatabasePath("future")}/collections");
 
         await Assert.That((result.Status, result.Code)).IsEqualTo((HttpStatusCode.InternalServerError, "internal_error"));
         await Assert.That(result.Json.GetProperty("error").TryGetProperty("message", out _)).IsFalse();
         // The failed first open published no store, and left no handle on the file.
         await Assert.That(new DirectoryInfo("/proc/self/fd").EnumerateFileSystemInfos()
             .Select(descriptor => descriptor.LinkTarget)
-            .Where(target => target?.StartsWith(Path.Combine(api.Server.DataDirectory, "future.db"), StringComparison.Ordinal) == true)).IsEmpty();
+            .Where(target => target?.StartsWith(path, StringComparison.Ordinal) == true)).IsEmpty();
     }
 
     [Test]
@@ -486,7 +489,7 @@ public sealed class DocumentApiTests
         }
 
         // Tombstones are not listed.
-        await api.SendAsync(HttpMethod.Delete, DocumentApi.Document(ids[2]));
+        await api.SendAsync(HttpMethod.Delete, api.Document(ids[2]));
         ids.RemoveAt(2);
 
         var seen = new List<string>();
@@ -495,19 +498,19 @@ public sealed class DocumentApiTests
         do
         {
             pages++;
-            var page = await api.SendAsync(HttpMethod.Get, $"{DocumentApi.Documents}?limit=2" + (cursor is null ? "" : $"&cursor={cursor}"));
+            var page = await api.SendAsync(HttpMethod.Get, $"{api.Documents}?limit=2" + (cursor is null ? "" : $"&cursor={cursor}"));
             seen.AddRange(page.Ids);
             cursor = page.Json.GetProperty("next_cursor").GetString();
         }
         while (cursor is not null);
 
-        var defaults = await api.SendAsync(HttpMethod.Get, DocumentApi.Documents);
-        var badCursor = await api.SendAsync(HttpMethod.Get, $"{DocumentApi.Documents}?cursor=bm90LWEtY3Vyc29y");
-        var tooSmall = await api.SendAsync(HttpMethod.Get, $"{DocumentApi.Documents}?limit=0");
-        var tooLarge = await api.SendAsync(HttpMethod.Get, $"{DocumentApi.Documents}?limit=1001");
-        var unknown = await api.SendAsync(HttpMethod.Get, $"{DocumentApi.Documents}?after=x");
-        var duplicate = await api.SendAsync(HttpMethod.Get, $"{DocumentApi.Documents}?limit=1&limit=2");
-        var empty = await api.SendAsync(HttpMethod.Get, $"{DocumentApi.Documents}?limit=");
+        var defaults = await api.SendAsync(HttpMethod.Get, api.Documents);
+        var badCursor = await api.SendAsync(HttpMethod.Get, $"{api.Documents}?cursor=bm90LWEtY3Vyc29y");
+        var tooSmall = await api.SendAsync(HttpMethod.Get, $"{api.Documents}?limit=0");
+        var tooLarge = await api.SendAsync(HttpMethod.Get, $"{api.Documents}?limit=1001");
+        var unknown = await api.SendAsync(HttpMethod.Get, $"{api.Documents}?after=x");
+        var duplicate = await api.SendAsync(HttpMethod.Get, $"{api.Documents}?limit=1&limit=2");
+        var empty = await api.SendAsync(HttpMethod.Get, $"{api.Documents}?limit=");
 
         await Assert.That(pages).IsEqualTo(2);
         await Assert.That(seen).IsEquivalentTo(ids);
@@ -528,35 +531,35 @@ public sealed class DocumentApiTests
         await using var api = await DocumentApi.StartAsync();
         var id = DocumentApi.NewId();
 
-        var badName = await api.SendAsync(HttpMethod.Put, "/v1/databases/Not_Valid");
-        var deviceName = await api.SendAsync(HttpMethod.Put, "/v1/databases/con");
-        var trailingNewline = await api.SendAsync(HttpMethod.Put, "/v1/databases/valid%0A");
+        var badName = await api.SendAsync(HttpMethod.Put, $"{api.Project}/databases/Not_Valid");
+        var deviceName = await api.SendAsync(HttpMethod.Put, $"{api.Project}/databases/con");
+        var trailingNewline = await api.SendAsync(HttpMethod.Put, $"{api.Project}/databases/valid%0A");
         var notUuid = await api.PutAsync("p1", new { a = 1 });
         var upperUuid = await api.PutAsync(id.ToUpperInvariant(), new { a = 1 });
-        var notObject = await api.SendAsync(HttpMethod.Put, DocumentApi.Document(id), JsonArray);
-        var notJson = await api.SendRawAsync(HttpMethod.Put, DocumentApi.Document(id), "{oops", "application/json");
-        var duplicate = await api.SendRawAsync(HttpMethod.Put, DocumentApi.Document(id), """{"a":1,"a":2}""", "application/json");
-        var deepest = await api.SendRawAsync(HttpMethod.Put, DocumentApi.Document(id), Nested(16), "application/json");
-        var tooDeep = await api.SendRawAsync(HttpMethod.Put, DocumentApi.Document(id), Nested(17), "application/json");
-        var tooManyValues = await api.SendAsync(HttpMethod.Put, DocumentApi.Document(id), new { values = new int[4096] });
-        var longNumber = await api.SendRawAsync(HttpMethod.Put, DocumentApi.Document(id), $$"""{"n":{{new string('7', 129)}}}""", "application/json");
-        var infinite = await api.SendRawAsync(HttpMethod.Put, DocumentApi.Document(id), """{"n":1e400}""", "application/json");
-        var tooBig = await api.SendRawAsync(HttpMethod.Put, DocumentApi.Document(id), """{"n":-1e308}""", "application/json");
-        var tooSmall = await api.SendRawAsync(HttpMethod.Put, DocumentApi.Document(id), """{"n":1e-400}""", "application/json");
-        var loneSurrogate = await api.SendRawAsync(HttpMethod.Put, DocumentApi.Document(id), """{"s":"\ud800"}""", "application/json");
-        var surrogateName = await api.SendRawAsync(HttpMethod.Put, DocumentApi.Document(id), """{"\udc00":1}""", "application/json");
+        var notObject = await api.SendAsync(HttpMethod.Put, api.Document(id), JsonArray);
+        var notJson = await api.SendRawAsync(HttpMethod.Put, api.Document(id), "{oops", "application/json");
+        var duplicate = await api.SendRawAsync(HttpMethod.Put, api.Document(id), """{"a":1,"a":2}""", "application/json");
+        var deepest = await api.SendRawAsync(HttpMethod.Put, api.Document(id), Nested(16), "application/json");
+        var tooDeep = await api.SendRawAsync(HttpMethod.Put, api.Document(id), Nested(17), "application/json");
+        var tooManyValues = await api.SendAsync(HttpMethod.Put, api.Document(id), new { values = new int[4096] });
+        var longNumber = await api.SendRawAsync(HttpMethod.Put, api.Document(id), $$"""{"n":{{new string('7', 129)}}}""", "application/json");
+        var infinite = await api.SendRawAsync(HttpMethod.Put, api.Document(id), """{"n":1e400}""", "application/json");
+        var tooBig = await api.SendRawAsync(HttpMethod.Put, api.Document(id), """{"n":-1e308}""", "application/json");
+        var tooSmall = await api.SendRawAsync(HttpMethod.Put, api.Document(id), """{"n":1e-400}""", "application/json");
+        var loneSurrogate = await api.SendRawAsync(HttpMethod.Put, api.Document(id), """{"s":"\ud800"}""", "application/json");
+        var surrogateName = await api.SendRawAsync(HttpMethod.Put, api.Document(id), """{"\udc00":1}""", "application/json");
         // Underflow and exponent overflow are 400s, decided on the decimal text.
-        var underflows = await Task.WhenAll(OutOfRangeNumbers.Select(number => api.SendRawAsync(HttpMethod.Put, DocumentApi.Document(id), $$"""{"n":{{number}}}""", "application/json")));
-        var duplicateDecoded = await api.SendRawAsync(HttpMethod.Put, DocumentApi.Document(id), """{"a":1,"\u0061":2}""", "application/json");
-        var surrogatePair = await api.SendRawAsync(HttpMethod.Put, DocumentApi.Document(DocumentApi.NewId()), """{"s":"\ud83d\ude00"}""", "application/json");
+        var underflows = await Task.WhenAll(OutOfRangeNumbers.Select(number => api.SendRawAsync(HttpMethod.Put, api.Document(id), $$"""{"n":{{number}}}""", "application/json")));
+        var duplicateDecoded = await api.SendRawAsync(HttpMethod.Put, api.Document(id), """{"a":1,"\u0061":2}""", "application/json");
+        var surrogatePair = await api.SendRawAsync(HttpMethod.Put, api.Document(DocumentApi.NewId()), """{"s":"\ud83d\ude00"}""", "application/json");
         var hugeTransaction = await api.SendRawAsync(
-            HttpMethod.Post, DocumentApi.Transactions, $$"""{"ops":[],"pad":"{{new string('x', 4 * 1024 * 1024)}}"}""", "application/json");
-        var tooLarge = await api.SendAsync(HttpMethod.Put, DocumentApi.Document(id), new { blob = new string('x', 1024 * 1024) });
-        var text = await api.SendRawAsync(HttpMethod.Put, DocumentApi.Document(id), """{"a":1}""", "text/plain");
+            HttpMethod.Post, api.Transactions, $$"""{"ops":[],"pad":"{{new string('x', 4 * 1024 * 1024)}}"}""", "application/json");
+        var tooLarge = await api.SendAsync(HttpMethod.Put, api.Document(id), new { blob = new string('x', 1024 * 1024) });
+        var text = await api.SendRawAsync(HttpMethod.Put, api.Document(id), """{"a":1}""", "text/plain");
         var encoded = await api.SendRawAsync(
-            HttpMethod.Put, DocumentApi.Document(id), """{"a":1}""", "application/json", request => request.Content!.Headers.ContentEncoding.Add("gzip"));
+            HttpMethod.Put, api.Document(id), """{"a":1}""", "application/json", request => request.Content!.Headers.ContentEncoding.Add("gzip"));
         var idempotent = await api.PutAsync(id, new { a = 1 }, request => request.Headers.Add("Idempotency-Key", "k1"));
-        var query = await api.SendAsync(HttpMethod.Put, DocumentApi.Document(id) + "?x=1", new { a = 1 });
+        var query = await api.SendAsync(HttpMethod.Put, api.Document(id) + "?x=1", new { a = 1 });
         var absent = await api.GetAsync(id);
 
         await Assert.That((badName.Status, badName.Code)).IsEqualTo((HttpStatusCode.BadRequest, "invalid_request"));
@@ -595,18 +598,19 @@ public sealed class DocumentApiTests
     [Test]
     public async Task Concurrent_creates_report_exactly_one_creation()
     {
-        using var tls = new ClientTls();
-        await using var server = await TerraBaseTestServer.StartAsync(tls.Apply);
-        using var client = tls.CreateClient(server.ClientAddress!, await server.IssueAsync("documents:write"));
+        await using var api = await DocumentApi.StartAsync();
 
         var statuses = await Task.WhenAll(Enumerable.Range(0, 16).Select(async _ =>
         {
-            using var response = await client.PutAsync(new Uri("/v1/databases/race", UriKind.Relative), null);
+            using var response = await api.Client.PutAsync(new Uri(api.DatabasePath("race"), UriKind.Relative), null);
             return response.StatusCode;
         }));
 
         await Assert.That(statuses.Count(status => status == HttpStatusCode.Created)).IsEqualTo(1);
         await Assert.That(statuses.Count(status => status == HttpStatusCode.OK)).IsEqualTo(15);
+        // Every losing creation removed its storage again: the tenant's project holds db and race only.
+        await Assert.That(Directory.GetFiles(Path.Combine(api.Server.DataDirectory, api.Tenant.OrganizationId, api.Tenant.ProjectId), "*.db"))
+            .Count().IsEqualTo(2);
     }
 
     [Test]
@@ -623,13 +627,12 @@ public sealed class DocumentApiTests
     [Test]
     public async Task The_bearer_scheme_name_is_case_insensitive()
     {
-        using var tls = new ClientTls();
-        await using var server = await TerraBaseTestServer.StartAsync(tls.Apply);
-        var key = await server.IssueAsync("documents:write");
-        using var client = tls.CreateClient(server.ClientAddress!);
+        await using var api = await DocumentApi.StartAsync();
+        var key = await api.Server.IssueAsync(api.Tenant.OrganizationId, "documents:write");
+        using var client = api.Management.DataClient();
         client.DefaultRequestHeaders.TryAddWithoutValidation("Authorization", $"bEaReR {key}");
 
-        using var response = await client.PutAsync(new Uri("/v1/databases/cased", UriKind.Relative), null);
+        using var response = await client.PutAsync(new Uri(api.DatabasePath("cased"), UriKind.Relative), null);
 
         await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Created);
     }
@@ -644,10 +647,10 @@ public sealed class DocumentApiTests
         unknown.DefaultRequestHeaders.Authorization = new("Bearer", "tb_not-a-real-key");
         using var reader = await api.ClientWithScopesAsync("documents:read");
 
-        var noKey = await DocumentApi.SendAsync(anonymous, HttpMethod.Get, DocumentApi.Documents);
-        var badKey = await DocumentApi.SendAsync(unknown, HttpMethod.Get, DocumentApi.Documents);
-        var readOnlyWrite = await DocumentApi.SendAsync(reader, HttpMethod.Put, DocumentApi.Document(DocumentApi.NewId()), JsonContent.Create(new { a = 1 }));
-        var readOnlyRead = await DocumentApi.SendAsync(reader, HttpMethod.Get, DocumentApi.Documents);
+        var noKey = await DocumentApi.SendAsync(anonymous, HttpMethod.Get, api.Documents);
+        var badKey = await DocumentApi.SendAsync(unknown, HttpMethod.Get, api.Documents);
+        var readOnlyWrite = await DocumentApi.SendAsync(reader, HttpMethod.Put, api.Document(DocumentApi.NewId()), JsonContent.Create(new { a = 1 }));
+        var readOnlyRead = await DocumentApi.SendAsync(reader, HttpMethod.Get, api.Documents);
 
         await Assert.That((noKey.Status, noKey.Code)).IsEqualTo((HttpStatusCode.Unauthorized, "invalid_key"));
         await Assert.That((badKey.Status, badKey.Code)).IsEqualTo((HttpStatusCode.Unauthorized, "invalid_key"));
@@ -658,13 +661,12 @@ public sealed class DocumentApiTests
     [Test]
     public async Task Client_and_admin_endpoints_stay_on_their_listeners()
     {
-        using var tls = new ClientTls();
-        await using var server = await TerraBaseTestServer.StartAsync(tls.Apply);
-        using var client = tls.CreateClient(server.ClientAddress!, await server.IssueAsync("documents:write"));
+        await using var api = await DocumentApi.StartAsync();
+        var client = api.Client;
 
-        using var documentsOnAdmin = await server.Client.PutAsync(new Uri("/v1/databases/x", UriKind.Relative), null);
+        using var documentsOnAdmin = await api.Server.Client.PutAsync(new Uri(api.DatabasePath("x"), UriKind.Relative), null);
         using var keysOnClient = await client.PostAsJsonAsync(
-            new Uri("/admin/api-keys", UriKind.Relative), new { name = "escalate", scopes = WriteScope });
+            new Uri("/admin/api-keys", UriKind.Relative), new { name = "escalate", scopes = WriteScope, organizationId = api.Tenant.OrganizationId });
         using var healthOnClient = await client.GetAsync(new Uri("/healthz", UriKind.Relative));
 
         await Assert.That(documentsOnAdmin.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
@@ -689,8 +691,8 @@ public sealed class DocumentApiTests
         ];
         await Assert.That(expected.Where(operation => !operations.Contains(operation))).IsEmpty();
         var paths = openApi.RootElement.GetProperty("paths");
-        var query = paths.GetProperty("/v1/databases/{database}/collections/{collection}/query").GetProperty("post");
-        var patch = paths.GetProperty("/v1/databases/{database}/collections/{collection}/documents/{id}").GetProperty("patch");
+        var query = paths.GetProperty("/v1/projects/{project}/databases/{database}/collections/{collection}/query").GetProperty("post");
+        var patch = paths.GetProperty("/v1/projects/{project}/databases/{database}/collections/{collection}/documents/{id}").GetProperty("patch");
         await Assert.That(query.GetProperty("requestBody").GetProperty("content").TryGetProperty("application/json", out _)).IsTrue();
         await Assert.That(patch.GetProperty("requestBody").GetProperty("content").EnumerateObject().Select(media => media.Name))
             .IsEquivalentTo(["application/merge-patch+json", "application/vnd.terrabase.ops+json"]);

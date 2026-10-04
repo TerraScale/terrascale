@@ -350,7 +350,7 @@ internal sealed class SqliteStorageTransaction(SqliteDatabaseStore store, Sqlite
         }
         catch
         {
-            session.Dispose();
+            store.Discard(session);
             throw;
         }
 
