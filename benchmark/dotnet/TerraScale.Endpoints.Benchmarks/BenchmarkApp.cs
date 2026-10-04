@@ -1,6 +1,6 @@
-using Microsoft.AspNetCore.Mvc;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Microsoft.AspNetCore.Mvc;
 
 namespace TerraScale.Endpoints.Benchmarks;
 
@@ -75,29 +75,37 @@ internal sealed partial class BenchJsonContext : JsonSerializerContext;
 public sealed class HealthEndpoint : EndpointWithoutRequest<HealthResponse>
 {
     public override void Configure() => Get("/ts/health");
-    public override ValueTask<HealthResponse> HandleAsync(CancellationToken cancellationToken) => ValueTask.FromResult(new HealthResponse("ok"));
+
+    public override ValueTask<HealthResponse> HandleAsync(CancellationToken cancellationToken) =>
+        ValueTask.FromResult(new HealthResponse("ok"));
 }
 
 public sealed class EchoEndpoint : Endpoint<EchoRequest, EchoResponse>
 {
     public override void Configure() => Post("/ts/echo");
-    public override ValueTask<EchoResponse> HandleAsync(EchoRequest request, CancellationToken cancellationToken) => ValueTask.FromResult(new EchoResponse(request.Name));
+
+    public override ValueTask<EchoResponse> HandleAsync(EchoRequest request, CancellationToken cancellationToken) =>
+        ValueTask.FromResult(new EchoResponse(request.Name));
 }
 
 public sealed class SendEndpoint : Endpoint<EchoRequest>
 {
     public override void Configure() => Post("/ts/send");
-    public override ValueTask HandleAsync(EchoRequest request, CancellationToken cancellationToken) => Send.OkAsync(new EchoResponse(request.Name), cancellationToken);
+
+    public override ValueTask HandleAsync(EchoRequest request, CancellationToken cancellationToken) =>
+        Send.OkAsync(new EchoResponse(request.Name), cancellationToken);
 }
 
 public sealed class ScopedEndpoint(ScopedDependency dependency) : EndpointWithoutRequest<string>
 {
     public override void Configure() => Get("/ts/scoped");
+
     public override ValueTask<string> HandleAsync(CancellationToken cancellationToken) => ValueTask.FromResult(dependency.Value);
 }
 
 public sealed class TextEndpoint : EndpointWithoutRequest<string>
 {
     public override void Configure() => Get("/ts/text");
+
     public override ValueTask<string> HandleAsync(CancellationToken cancellationToken) => ValueTask.FromResult("ok");
 }

@@ -146,7 +146,6 @@ public sealed class EndpointRegistrationGenerator : IIncrementalGenerator
                     public static global::System.Collections.Generic.IReadOnlyList<global::TerraScale.Endpoints.EndpointRegistration> All { get; } =
                         new global::TerraScale.Endpoints.EndpointRegistration[]
                         {
-
             """);
         foreach (var endpoint in endpoints)
         {

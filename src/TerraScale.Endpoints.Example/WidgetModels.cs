@@ -4,15 +4,29 @@ public sealed class WidgetStore
 {
     private readonly Dictionary<Guid, Widget> widgets = [];
 
-    public Widget Create(string name)
+    /// <summary>Creates a widget unless the name is taken; the check and insert happen under one lock.</summary>
+    public bool TryCreate(string name, out Widget widget)
     {
-        var widget = new Widget(Guid.NewGuid(), name);
         lock (widgets)
         {
-            widgets[widget.Id] = widget;
-        }
+            if (widgets.Values.Any(existing => existing.Name == name))
+            {
+                widget = null!;
+                return false;
+            }
 
-        return widget;
+            widget = new Widget(Guid.NewGuid(), name);
+            widgets[widget.Id] = widget;
+            return true;
+        }
+    }
+
+    public bool NameExists(string name)
+    {
+        lock (widgets)
+        {
+            return widgets.Values.Any(widget => widget.Name == name);
+        }
     }
 
     public Widget? Find(Guid id)

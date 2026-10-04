@@ -54,27 +54,99 @@ constructor injection of scoped services just works.
 `Configure()` exposes `Get`, `Post`, `Put`, `Patch`, `Delete`, `Verbs`,
 `Route`, `Name`, `Summary`, `Description`, `Tags`, `Produces<T>`,
 `ProducesSse`, `Accepts<T>`, `AllowAnonymous`, `RequireAuthorization`, and
-`Metadata`. OpenAPI is served at `/openapi/v1.json`; Scalar is served at
+`Metadata`. Endpoints without `Tags` are tagged with their first route segment.
+OpenAPI is served at `/openapi/v1.json`; Scalar is served at
 `/scalar`.
 
 ## Binding and serialization
 
-Request models are read from the JSON body. A non-JSON content type is answered
-with 415, and malformed or `null` JSON with 400. Override `BindAsync` to bind
-from somewhere else. Throw `BadHttpRequestException` to reject the request with
-its status code:
+Object request models bind from the JSON body, the query string, and route
+values, matched to the model's JSON property names (route wins over query, query
+over body). Values are converted by the model's own JSON contract, so `Guid`,
+numbers, enums, and arrays (`?tag=a&tag=b`) just work:
 
 ```csharp
-public sealed class GetOrderEndpoint : Endpoint<int, Order>
+public sealed record GetOrderRequest(Guid Id, int Page = 1, string[]? Tags = null);
+
+public sealed class GetOrderEndpoint : Endpoint<GetOrderRequest, Order>
 {
-    public override void Configure() => Get("/orders/{id}");
+    public override void Configure() => Get("/orders/{id:guid}");
+    public override ValueTask<Order> HandleAsync(GetOrderRequest request, CancellationToken ct) => /* ... */;
+}
+```
+
+On `GET`, `HEAD`, `DELETE`, and `OPTIONS` the properties are documented in
+OpenAPI as path and query parameters; other verbs keep the JSON body and the body
+becomes optional when route or query values supply the model. A non-JSON body is
+answered with 415, malformed JSON or an unconvertible value with 400. Every
+rejection carries an `application/problem+json` body. A UTF-8 body is assumed
+when route or query values are merged in.
+
+Non-object models (`int`, arrays) still bind from the JSON body only. Override
+`BindAsync` to bind from somewhere else, and throw `BadHttpRequestException` to
+reject the request with its status code:
+
+```csharp
+public sealed class GetOrderByNumberEndpoint : Endpoint<int, Order>
+{
+    public override void Configure() => Get("/orders/by-number/{number}");
 
     protected override ValueTask<int> BindAsync(CancellationToken ct) =>
-        int.TryParse(HttpContext.Request.RouteValues["id"] as string, out var id)
-            ? ValueTask.FromResult(id)
-            : throw new BadHttpRequestException("id must be an integer");
+        int.TryParse(HttpContext.Request.RouteValues["number"] as string, out var number)
+            ? ValueTask.FromResult(number)
+            : throw new BadHttpRequestException("number must be an integer");
 
-    public override ValueTask<Order> HandleAsync(int id, CancellationToken ct) => /* ... */;
+    public override ValueTask<Order> HandleAsync(int number, CancellationToken ct) => /* ... */;
+}
+```
+
+## Validation
+
+Validation runs after binding (also after a custom `BindAsync`) and before
+`HandleAsync`. Every error from every source is collected into one 400
+validation problem. Endpoints that validate nothing keep a synchronous,
+allocation-free pipeline.
+
+**Data annotations.** Call `builder.Services.AddValidation()` and mark request
+types with `[ValidatableType]`. The validation source generator ships with the
+`Microsoft.NET.Sdk.Web` SDK and is AOT safe. The .NET 11 async validation
+types are awaited, never run synchronously: `AsyncValidationAttribute`
+subclasses and `IAsyncValidatableObject` models. Both get the request's services
+through `ValidationContext.GetService`:
+
+```csharp
+public sealed class UniqueEmailAttribute : AsyncValidationAttribute
+{
+    protected override ValidationResult? IsValid(object? value, ValidationContext context) =>
+        throw new NotSupportedException("Validate asynchronously.");
+
+    protected override async Task<ValidationResult?> IsValidAsync(object? value, ValidationContext context, CancellationToken ct) =>
+        await context.GetRequiredService<UserStore>().EmailExistsAsync((string)value!, ct)
+            ? new ValidationResult("Email is taken.", [context.MemberName!])
+            : ValidationResult.Success;
+}
+
+[ValidatableType]
+public sealed record SignUpRequest([property: Required, EmailAddress, UniqueEmail] string Email);
+```
+
+**Endpoint rules.** Override `ValidateAsync` for checks that need the endpoint's
+injected services. It has the same shape as `IAsyncValidatableObject.ValidateAsync`,
+works without `AddValidation()`, and its errors merge with the attribute errors:
+
+```csharp
+public sealed class CreateWidgetEndpoint(WidgetStore store) : Endpoint<CreateWidgetRequest, Widget>
+{
+    public override void Configure() => Post("/widgets");
+
+    protected override async IAsyncEnumerable<ValidationResult> ValidateAsync(
+        CreateWidgetRequest request, [EnumeratorCancellation] CancellationToken ct)
+    {
+        if (await store.NameExistsAsync(request.Name, ct))
+            yield return new ValidationResult("Name is taken.", [nameof(request.Name)]);
+    }
+
+    public override ValueTask<Widget> HandleAsync(CreateWidgetRequest request, CancellationToken ct) => /* ... */;
 }
 ```
 
@@ -112,7 +184,9 @@ public sealed record EchoResponse(string Value);
 ```
 
 `Send` is request-scoped and supports `OkAsync`, `CreatedAsync`,
-`AcceptedAsync`, `NotFoundAsync`, `NoContentAsync`, and `ResponseAsync`. A
+`AcceptedAsync`, `NotFoundAsync`, `NoContentAsync`, `BadRequestAsync`,
+`UnauthorizedAsync`, `ForbiddenAsync`, `ConflictAsync`, `StatusCodeAsync`,
+`RedirectAsync`, `ProblemAsync`, `ValidationProblemAsync`, and `ResponseAsync`. A
 handler that never calls `Send` answers 204. The `Send` methods return
 `ValueTask`, so `=> Send.OkAsync(...)` works as an expression-bodied handler and
 `await Send.OkAsync(...)` works inside `async` ones.

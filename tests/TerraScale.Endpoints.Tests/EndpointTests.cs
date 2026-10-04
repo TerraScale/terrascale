@@ -1,10 +1,5 @@
-using Microsoft.AspNetCore.Builder;
-using Microsoft.AspNetCore.Hosting;
-using Microsoft.AspNetCore.Http;
-using Microsoft.AspNetCore.Http.Metadata;
-using Microsoft.AspNetCore.Routing;
-using Microsoft.Extensions.DependencyInjection;
 using System.Text.Json;
+using Microsoft.AspNetCore.Http.Metadata;
 
 namespace TerraScale.Endpoints.Tests;
 
@@ -19,7 +14,8 @@ public sealed class EndpointTests
         var second = EndpointDiscovery.Discover(typeof(EndpointTests).Assembly);
         await Assert.That(first.Count).IsGreaterThanOrEqualTo(2);
         await Assert.That(ReferenceEquals(first, second)).IsTrue();
-        await Assert.That(first.Select(t => t.FullName).ToArray()).IsEquivalentTo(first.Select(t => t.FullName).OrderBy(t => t, StringComparer.Ordinal).ToArray());
+        var names = first.Select(t => t.FullName).ToArray();
+        await Assert.That(names).IsEquivalentTo(names.OrderBy(t => t, StringComparer.Ordinal).ToArray());
     }
 
     [Test]
@@ -185,9 +181,18 @@ public sealed class EndpointTests
 
 public sealed class ProbeEndpoint : EndpointWithoutRequest<string>
 {
-    public override void Configure() { Get("/probe"); Name("probe"); Summary("Probe"); Tags("Tests"); AllowAnonymous(); }
+    public override void Configure()
+    {
+        Get("/probe");
+        Name("probe");
+        Summary("Probe");
+        Tags("Tests");
+        AllowAnonymous();
+    }
+
     public override ValueTask<string> HandleAsync(CancellationToken cancellationToken) => ValueTask.FromResult("ok");
 }
+
 public sealed class InvalidEndpoint : EndpointWithoutRequest<string>
 {
     public override void Configure() { }
@@ -196,20 +201,34 @@ public sealed class InvalidEndpoint : EndpointWithoutRequest<string>
 
 public sealed class SenderProbeEndpoint : Endpoint<SenderProbeRequest>
 {
-    public override void Configure() { Post("/sender-probe"); AllowAnonymous(); Produces<SenderProbeResponse>(); }
+    public override void Configure()
+    {
+        Post("/sender-probe");
+        AllowAnonymous();
+        Produces<SenderProbeResponse>();
+    }
+
     public override async ValueTask HandleAsync(SenderProbeRequest request, CancellationToken cancellationToken)
     {
         await Send.OkAsync(new SenderProbeResponse(request.Value), cancellationToken);
     }
 }
+
 public sealed record SenderProbeRequest(string Value);
 public sealed record SenderProbeResponse(string Value);
 
 public sealed class RequestProbeEndpoint : Endpoint<RequestProbe, string>
 {
-    public override void Configure() { Post("/request-probe"); Accepts<RequestProbe>("application/json", "application/problem+json"); }
-    public override ValueTask<string> HandleAsync(RequestProbe request, CancellationToken cancellationToken) => ValueTask.FromResult(request.Value);
+    public override void Configure()
+    {
+        Post("/request-probe");
+        Accepts<RequestProbe>("application/json", "application/problem+json");
+    }
+
+    public override ValueTask<string> HandleAsync(RequestProbe request, CancellationToken cancellationToken) =>
+        ValueTask.FromResult(request.Value);
 }
+
 public sealed record RequestProbe(string Value);
 
 public sealed class ScopedProbeDependency
@@ -220,6 +239,7 @@ public sealed class ScopedProbeDependency
 public sealed class ScopedProbeEndpoint(ScopedProbeDependency dependency) : EndpointWithoutRequest<string>
 {
     public override void Configure() => Get("/scoped-probe");
+
     public override ValueTask<string> HandleAsync(CancellationToken cancellationToken) => ValueTask.FromResult(dependency.Id.ToString());
 }
 
