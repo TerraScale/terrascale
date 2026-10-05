@@ -145,7 +145,7 @@ func New(cfg config.Config) (*Application, error) {
 	deviceAuthorization := auth.NewDeviceAuthorization(deps, grants, cfg.SecureCookies, cfg.PublicURL)
 	deviceAuthorization.MountBrowser(mux)
 	admin.Mount(mux, deps)
-	authentication.Mount(mux, deps)
+	authentication.Mount(mux, deps, cfg.TSAuthOrigin)
 	onboarding.Mount(mux, deps, billing)
 	profile.Mount(mux, deps)
 	settings.Mount(mux, deps)

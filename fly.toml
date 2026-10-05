@@ -8,6 +8,9 @@ swap_size_mb = 900
   # GlitchTip project; the DSN key only permits sending events.
   SENTRY_DSN = "https://116f3420d22b471e905488aecd859878@glitchtip.mariogk.com/1"
   DASHBOARD_CSP_REPORT_URL = "https://glitchtip.mariogk.com/api/1/security/?glitchtip_key=116f3420d22b471e905488aecd859878"
+  # ts-auth sign-in takes TS_AUTH_ISSUER, TS_AUTH_CLIENT_ID and
+  # TS_AUTH_CLIENT_SECRET as secrets; the issuer is regional:
+  # https://gru.auth.terrascale.tech/<instance>.
 
 [http_service]
   internal_port = 8080

@@ -13,6 +13,9 @@ import (
 // incident and maintenance banner.
 const defaultStatusURL = "https://status.terrascale.tech/api/v2/summary.json"
 
+// defaultTSAuthOrigin is production ts-auth's regional public origin.
+const defaultTSAuthOrigin = "https://gru.auth.terrascale.tech"
+
 type Config struct {
 	PublicURL          string
 	Addr               string
@@ -51,6 +54,9 @@ type Config struct {
 	// TSAuth signs users in through ts-auth when its Issuer is set; unset,
 	// the dashboard keeps its own password sign-in.
 	TSAuth TSAuth
+	// TSAuthOrigin is ts-auth's public origin, under which every project's
+	// auth instance lives: TS_AUTH_ISSUER's origin, else production's.
+	TSAuthOrigin string
 }
 
 // TSAuth is the dashboard's OpenID Connect client registration at ts-auth.
@@ -175,6 +181,7 @@ func (c *Config) loadTSAuth() error {
 		ClientSecret: os.Getenv("TS_AUTH_CLIENT_SECRET"),
 		RedirectURL:  strings.TrimSpace(os.Getenv("TS_AUTH_REDIRECT_URL")),
 	}
+	c.TSAuthOrigin = defaultTSAuthOrigin
 	if c.TSAuth == (TSAuth{}) {
 		return nil
 	}
@@ -185,9 +192,11 @@ func (c *Config) loadTSAuth() error {
 	if !c.Dev && !c.SecureCookies {
 		return errors.New("signing in through ts-auth needs secure cookies: serve the dashboard over HTTPS (DASHBOARD_PUBLIC_URL) or set DASHBOARD_SECURE_COOKIES=1")
 	}
-	if u, err := url.Parse(c.TSAuth.Issuer); err != nil || !c.allowedScheme(u.Scheme) || u.Hostname() == "" || u.User != nil || strings.ContainsAny(c.TSAuth.Issuer, "?#") {
+	u, err := url.Parse(c.TSAuth.Issuer)
+	if err != nil || !c.allowedScheme(u.Scheme) || u.Hostname() == "" || u.User != nil || strings.ContainsAny(c.TSAuth.Issuer, "?#") {
 		return errors.New("TS_AUTH_ISSUER must be an HTTPS URL")
 	}
+	c.TSAuthOrigin = u.Scheme + "://" + u.Host
 	if c.TSAuth.RedirectURL == "" && c.PublicURL != "" {
 		c.TSAuth.RedirectURL = c.PublicURL + "/login/callback"
 	}

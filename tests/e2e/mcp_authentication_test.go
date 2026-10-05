@@ -133,7 +133,7 @@ func TestMCPAuthenticationConsoleManagesInstance(t *testing.T) {
 	}
 	callTool(t, session, "auth_get_overview", nil, &overview)
 	if overview.InstanceName != "Acme Login" || overview.Branding.ThemeColor != "#4f46e5" || overview.BlockedUsers != 1 ||
-		overview.Counts["users"] != 1 || !strings.HasPrefix(overview.Issuer, "https://auth.terrascale.tech/") {
+		overview.Counts["users"] != 1 || !strings.HasPrefix(overview.Issuer, "https://gru.auth.terrascale.tech/") {
 		t.Errorf("auth_get_overview = %+v, want the saved branding, one blocked user, and the issuer", overview)
 	}
 

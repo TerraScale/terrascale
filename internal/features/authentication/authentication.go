@@ -14,17 +14,14 @@ import (
 	"terrascale.tech/dashboard/internal/core"
 )
 
-// issuerOrigin is ts-auth's single global public origin; every instance's
-// issuer, hosted pages, and Management API live under it.
-const issuerOrigin = "https://auth.terrascale.tech"
-
 // Mount registers the authentication console pages, their mutations, and
-// the matching MCP tools.
-func Mount(mux *http.ServeMux, deps core.Deps) {
-	service := Service{deps: deps}
+// the matching MCP tools. origin is ts-auth's public origin; every
+// instance's issuer, hosted pages, and Management API live under it.
+func Mount(mux *http.ServeMux, deps core.Deps, origin string) {
+	service := Service{deps: deps, origin: origin}
 	mountTools(deps.Tools, service)
-	mux.HandleFunc("GET /auth", func(w http.ResponseWriter, r *http.Request) { renderPage(w, r, deps, "overview") })
-	mux.HandleFunc("GET /auth/{section}", func(w http.ResponseWriter, r *http.Request) { renderPage(w, r, deps, r.PathValue("section")) })
+	mux.HandleFunc("GET /auth", func(w http.ResponseWriter, r *http.Request) { renderPage(w, r, deps, origin, "overview") })
+	mux.HandleFunc("GET /auth/{section}", func(w http.ResponseWriter, r *http.Request) { renderPage(w, r, deps, origin, r.PathValue("section")) })
 	mux.HandleFunc("POST /api/v1/auth-management/instance", func(w http.ResponseWriter, r *http.Request) {
 		p, ok := authorize(deps, w, r)
 		if !ok {
@@ -88,7 +85,7 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 	})
 }
 
-func renderPage(w http.ResponseWriter, r *http.Request, deps core.Deps, key string) {
+func renderPage(w http.ResponseWriter, r *http.Request, deps core.Deps, origin, key string) {
 	current, exists := findSection(key)
 	if !exists {
 		http.NotFound(w, r)
@@ -110,7 +107,7 @@ func renderPage(w http.ResponseWriter, r *http.Request, deps core.Deps, key stri
 		return
 	}
 	query := r.URL.Query()
-	data := buildPage(current, project, org.CanManage(p.UserID), strings.TrimSpace(query.Get("q")), query.Get("page"))
+	data := buildPage(current, project, origin, org.CanManage(p.UserID), strings.TrimSpace(query.Get("q")), query.Get("page"))
 	data.Saved, data.Error = query.Get("saved") == "1", query.Get("error")
 	title := "Authentication"
 	if key != "overview" {

@@ -21,6 +21,7 @@ const pageSize = 10
 
 type pageData struct {
 	Section      section
+	Origin       string
 	Slug         string
 	InstanceName string
 	Instance     core.AuthInstance
@@ -93,10 +94,10 @@ type checkStep struct {
 }
 
 // buildPage assembles everything a section needs from the project instance.
-func buildPage(current section, project core.Project, manage bool, search, rawPage string) pageData {
+func buildPage(current section, project core.Project, origin string, manage bool, search, rawPage string) pageData {
 	instance := project.AuthInstance
 	data := pageData{
-		Section: current, Slug: cmp.Or(project.Slug, project.ID), InstanceName: cmp.Or(instance.Name, project.Name),
+		Section: current, Origin: origin, Slug: cmp.Or(project.Slug, project.ID), InstanceName: cmp.Or(instance.Name, project.Name),
 		Instance: instance, Settings: effectiveSettings(instance), CanManage: manage, Search: search,
 		Page: 1, PageCount: 1, Counts: make(map[string]int),
 	}
@@ -124,7 +125,7 @@ func buildPage(current section, project core.Project, manage bool, search, rawPa
 		result := make([]resourceRow, 0)
 		for _, resource := range instance.Resources {
 			if resource.Section == key && keep(resource) {
-				result = append(result, describe(section, resource, names, data.Slug))
+				result = append(result, describe(section, resource, names, data.Origin, data.Slug))
 			}
 		}
 		slices.SortFunc(result, func(a, b resourceRow) int { return strings.Compare(strings.ToLower(a.Name), strings.ToLower(b.Name)) })
@@ -159,7 +160,7 @@ func buildPage(current section, project core.Project, manage bool, search, rawPa
 }
 
 // describe turns a stored record into its table row.
-func describe(current section, resource core.AuthResource, names map[string]string, slug string) resourceRow {
+func describe(current section, resource core.AuthResource, names map[string]string, origin, slug string) resourceRow {
 	v := resource.Values
 	row := resourceRow{
 		ID: resource.ID, Name: names[resource.ID], Status: cmp.Or(resource.Status, "Active"),
@@ -202,7 +203,7 @@ func describe(current section, resource core.AuthResource, names map[string]stri
 		if org := names[v["organization"]]; org != "" {
 			row.Chips = append(row.Chips, org)
 		}
-		row.Callback = callbackURL(slug, resource.ID, v["protocol"])
+		row.Callback = callbackURL(origin, slug, resource.ID, v["protocol"])
 		action := rowAction{Key: "toggle", Label: "Disable connection", Icon: icons.Power}
 		if row.Status == "Disabled" {
 			action = rowAction{Key: "toggle", Label: "Enable connection", Icon: icons.Power}
@@ -210,7 +211,7 @@ func describe(current section, resource core.AuthResource, names map[string]stri
 		row.Actions = append(row.Actions, action)
 	case "directories":
 		row.Name = cmp.Or(names[v["organization"]], "Instance-wide directory")
-		row.Subtitle = issuerOrigin + "/scim/" + resource.ID
+		row.Subtitle = origin + "/scim/" + resource.ID
 		if rotated, err := time.Parse(time.RFC3339, v["token_rotated_at"]); err == nil {
 			row.Chips = append(row.Chips, "Token rotated "+rotated.Format("Jan 2, 2006"))
 		} else {
@@ -337,9 +338,9 @@ func (d pageData) completedSteps() int {
 	return done
 }
 
-func (d pageData) issuer() string { return issuerOrigin + "/" + d.Slug }
+func (d pageData) issuer() string { return d.Origin + "/" + d.Slug }
 
-func (d pageData) hosted(path string) string { return issuerOrigin + "/ui/" + d.Slug + path }
+func (d pageData) hosted(path string) string { return d.Origin + "/ui/" + d.Slug + path }
 
 func (d pageData) pageURL(page int) string {
 	query := "?page=" + strconv.Itoa(page)
@@ -350,14 +351,14 @@ func (d pageData) pageURL(page int) string {
 }
 
 // callbackURL is the redirect URL to register with the upstream provider.
-func callbackURL(slug, id, protocol string) string {
+func callbackURL(origin, slug, id, protocol string) string {
 	switch protocol {
 	case "GitHub":
-		return issuerOrigin + "/ui/" + slug + "/connections/" + id + "/github/callback"
+		return origin + "/ui/" + slug + "/connections/" + id + "/github/callback"
 	case "SAML":
-		return issuerOrigin + "/" + slug + "/connections/" + id + "/saml/acs"
+		return origin + "/" + slug + "/connections/" + id + "/saml/acs"
 	}
-	return issuerOrigin + "/ui/" + slug + "/connections/" + id + "/oidc/callback"
+	return origin + "/ui/" + slug + "/connections/" + id + "/oidc/callback"
 }
 
 func initials(name string) string {

@@ -261,8 +261,8 @@ func formOf(current section, values map[string]string) url.Values {
 	return form
 }
 
-func resourceViewOf(current section, resource core.AuthResource, names map[string]string, slug string) resourceView {
-	row := describe(current, resource, names, slug)
+func resourceViewOf(current section, resource core.AuthResource, names map[string]string, origin, slug string) resourceView {
+	row := describe(current, resource, names, origin, slug)
 	view := resourceView{
 		ID: row.ID, Section: current.Key, Name: row.Name, Detail: row.Subtitle, Tags: row.Chips, Status: row.Status,
 		Values: maps.Clone(resource.Values), CallbackURL: row.Callback, CreatedAt: row.Created,

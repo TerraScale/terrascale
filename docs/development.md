@@ -257,7 +257,11 @@ Set these to sign users in through ts-auth with OpenID Connect (authorization
 code flow with PKCE). The dashboard is a confidential client.
 
 - `TS_AUTH_ISSUER`: the issuer exactly as ts-auth's discovery document names
-  it. It must use HTTPS, or HTTP when `DASHBOARD_DEV=1`.
+  it. It must use HTTPS, or HTTP when `DASHBOARD_DEV=1`. ts-auth's issuers are
+  regional (`https://<region>.auth.terrascale.tech/<instance>`, so
+  `https://gru.auth.terrascale.tech/<instance>` in production). Discovery
+  through the `auth.terrascale.tech` proxy names the regional issuer too, so
+  the proxy URL fails the issuer check.
 - `TS_AUTH_CLIENT_ID` and `TS_AUTH_CLIENT_SECRET`: the client registered at
   ts-auth. The issuer, client ID and secret must all be set, or startup fails.
 - `TS_AUTH_REDIRECT_URL` (optional): defaults to `DASHBOARD_PUBLIC_URL` plus
@@ -266,6 +270,10 @@ code flow with PKCE). The dashboard is a confidential client.
 Outside `DASHBOARD_DEV=1` the cookies must be secure (an HTTPS
 `DASHBOARD_PUBLIC_URL`, Fly, or `DASHBOARD_SECURE_COOKIES=1`), or startup
 fails.
+
+The Authentication console builds each project's instance URLs (issuer,
+hosted pages, callbacks, Management API) under `TS_AUTH_ISSUER`'s origin, or
+`https://gru.auth.terrascale.tech` when it is unset.
 
 Register the redirect URI and the post-logout redirect URI (the dashboard's
 origin plus `/login`) at ts-auth. Discovery must list `S256` in
