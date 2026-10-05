@@ -211,8 +211,10 @@ logged and counted as unknown while management requests keep returning `503`.
   Either way, pass `next` back as `after`.
 - **Errors:** `400` for invalid input, `403` when the acting member's role does not allow the request,
   `404` for an unknown resource or parent (or an organization the user is not a member of), `409` for a
-  duplicate name, a non-empty delete or a rule in [Members and roles](#members-and-roles). Bodies are a plain
-  message that never echoes input.
+  duplicate name, a non-empty delete or a rule in [Members and roles](#members-and-roles). Bodies are
+  `{"error":{"code","message"}}` with a stable code (`invalid_request`, `forbidden_role`, `not_found`,
+  `name_taken`, `not_empty`, `last_owner`, `already_member`, `invitation_pending`, `already_owner`,
+  `invitation_expired`) and a message that never echoes input ([error handling](error-handling.md)).
 - The data API addresses a database as `/v1/projects/{projectId}/databases/{name}/collections/…`,
   with the database name from this API. The API key's organization selects the tenant.
 - Every organization has a `plan`: `hobby` (default), `pro` or `enterprise`. It is stored only;

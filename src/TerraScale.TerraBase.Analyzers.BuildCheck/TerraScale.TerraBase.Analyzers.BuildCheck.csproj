@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <TargetFramework>net11.0</TargetFramework>
+    <IsPackable>false</IsPackable>
+    <!-- The project is in the solution for formatting and restore, but its source intentionally fails
+         with TB0001. The dedicated Make target enables analyzers when it checks those diagnostics. -->
+    <RunAnalyzers Condition="'$(TB0001BuildCheck)' != 'true'">false</RunAnalyzers>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Condition="'$(TB0001BuildCheck)' == 'true'" Include="../TerraScale.TerraBase.Analyzers/TerraScale.TerraBase.Analyzers.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" PrivateAssets="all" />
+  </ItemGroup>
+</Project>

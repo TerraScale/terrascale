@@ -10,6 +10,11 @@
   <ItemGroup Label="Global analyzers">
     <GlobalPackageReference Include="Microsoft.CodeAnalysis.BannedApiAnalyzers" Version="4.14.0" />
   </ItemGroup>
+  <!-- Roslyn for src/TerraScale.TerraBase.Analyzers: keep at or below the compiler in the pinned SDK
+       (5.11 on 11.0.100-rc.1), or the analyzer fails to load (CS8032). -->
+  <ItemGroup Label="Analyzer authoring">
+    <PackageVersion Include="Microsoft.CodeAnalysis.CSharp" Version="5.9.0" />
+  </ItemGroup>
   <!-- Microsoft.Extensions track the .NET 11 SDK and shared framework; lower pins
        downgrade what ASP.NET Core 11 requires (NU1109). Resilience and service
        discovery ship on their own 10.x train, which supports net11.0. -->

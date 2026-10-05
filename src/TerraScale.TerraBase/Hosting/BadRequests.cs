@@ -129,6 +129,7 @@ public static partial class BadRequests
         StatusCodes.Status413PayloadTooLarge => "payload_too_large",
         StatusCodes.Status415UnsupportedMediaType => "unsupported_media_type",
         StatusCodes.Status421MisdirectedRequest => "misdirected_request",
+        StatusCodes.Status503ServiceUnavailable => "unavailable",
         >= 500 => "internal_error",
         _ => "invalid_request",
     };
@@ -145,7 +146,7 @@ public static partial class BadRequests
         }
     }
 
-    private static Task WriteAsync(HttpContext context, int status, string code, string? message, int? op)
+    internal static Task WriteAsync(HttpContext context, int status, string code, string? message, int? op)
     {
         context.Response.StatusCode = status;
         context.Response.ContentType = "application/json";

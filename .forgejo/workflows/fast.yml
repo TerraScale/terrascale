@@ -59,6 +59,9 @@ jobs:
       - name: Build Release with analyzers as errors
         run: make build CONFIGURATION=Release
 
+      - name: TB0001 analyzer build check
+        run: make analyzer-check CONFIGURATION=Release
+
       - name: Fast integration suite
         run: make test-fast CONFIGURATION=Release
 

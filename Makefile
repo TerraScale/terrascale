@@ -2,14 +2,16 @@
 # `nice -n 19 make test-fast`; CI runs them at full priority. Nothing here
 # applies nice itself.
 SOLUTION := TerraScale.TerraBase.slnx
+ANALYZER_CHECK_PROJECT := src/TerraScale.TerraBase.Analyzers.BuildCheck/TerraScale.TerraBase.Analyzers.BuildCheck.csproj
 CONFIGURATION ?= Debug
 RUNTIME ?= linux-x64
 PUBLISH_DIR ?= artifacts/publish
 
-.PHONY: restore build fmt fmt-check lint test-fast test-slow check run publish clean
+.PHONY: restore build fmt fmt-check lint analyzer-check test-fast test-slow check run publish clean
 
 restore:
 	dotnet restore $(SOLUTION)
+	dotnet restore $(ANALYZER_CHECK_PROJECT)
 
 build:
 	dotnet build $(SOLUTION) --configuration $(CONFIGURATION) --nologo
@@ -23,6 +25,16 @@ fmt-check:
 # Analyzers and code style run in the build with warnings as errors.
 lint: fmt-check build
 
+analyzer-check:
+	@set -eu; log=$$(mktemp); trap 'rm -f "$$log"' EXIT; \
+	if dotnet build $(ANALYZER_CHECK_PROJECT) --configuration $(CONFIGURATION) --no-restore -p:TB0001BuildCheck=true --nologo >"$$log" 2>&1; then \
+		cat "$$log"; echo 'TB0001 build check unexpectedly succeeded' >&2; exit 1; \
+	fi; \
+	cat "$$log"; \
+	test "$$(grep -E 'BuildCheck.cs\([0-9]+,[0-9]+\): error TB0001' "$$log" | sort -u | wc -l)" -eq 15; \
+	for line in 35 36 37 38 39 40 41 42 43 53 54 55 56 65 71; do grep -q "BuildCheck.cs($$line," "$$log"; done; \
+	if grep -v 'error TB0001' "$$log" | grep -q ': error '; then echo 'unexpected compiler error in TB0001 build check' >&2; exit 1; fi
+
 test-fast: build
 	dotnet run --project src/Tests/TerraScale.TerraBase.Fast --configuration $(CONFIGURATION) --no-build
 
@@ -30,7 +42,7 @@ test-slow: build
 	dotnet run --project src/Tests/TerraScale.TerraBase.Slow --configuration $(CONFIGURATION) --no-build
 
 # Everything required before a push.
-check: lint test-fast
+check: lint analyzer-check test-fast
 
 run:
 	dotnet run --project src/TerraScale.TerraBase --configuration $(CONFIGURATION)
