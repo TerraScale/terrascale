@@ -54,6 +54,10 @@ The deploy step reads two repository Actions secrets:
 - `CLOUDFLARE_API_TOKEN` — Pages edit access on the account
 - `CLOUDFLARE_ACCOUNT_ID` — the account that owns the Pages project
 
+Create or rotate that token, and do any other Cloudflare account work (DNS,
+zone and cache settings), with the `cf` CLI rather than the dashboard; see
+"Cloudflare: use the `cf` CLI" in `AGENTS.md`.
+
 The `wrangler.toml` in this working tree pins the Pages project name for
 the local preview and plays no part in the pipeline.
 
