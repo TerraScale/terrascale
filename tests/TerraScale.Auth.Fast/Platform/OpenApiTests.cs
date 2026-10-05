@@ -10,7 +10,7 @@ namespace TerraScale.Auth.Fast.Platform;
 
 public sealed partial class OpenApiTests
 {
-    private static readonly string[] ExpectedSchemes = ["ManagementBearer", "OAuthAccessBearer", "OperatorBearer", "SessionCookie", "bearerAuth"];
+    private static readonly string[] ExpectedSchemes = ["ManagementBearer", "OAuthAccessBearer", "OperatorBearer", "SessionCookie", "bearerAuth", "clientBasic"];
     private static readonly string[] Methods = ["get", "put", "post", "delete", "patch", "head", "options", "trace"];
 
     [Test]
@@ -30,6 +30,11 @@ public sealed partial class OpenApiTests
         await Assert.That(paths.TryGetProperty("/healthz", out _)).IsTrue();
         await Assert.That(paths.TryGetProperty("/readyz", out _)).IsTrue();
         await Assert.That(paths.TryGetProperty("/admin/{asset}", out _)).IsTrue();
+        foreach (var oidcPath in new[] { "/{slug}/.well-known/openid-configuration", "/{slug}/.well-known/jwks.json", "/{slug}/oauth/authorize", "/{slug}/oauth/token", "/{slug}/oauth/userinfo", "/{slug}/oauth/logout", "/ui/{slug}/sign-in", "/ui/{slug}/sign-in/verify" })
+        {
+            await Assert.That(paths.TryGetProperty(oidcPath, out _)).IsTrue();
+        }
+
         // /metrics was replaced by OTLP push; it must not come back unannounced.
         await Assert.That(paths.TryGetProperty("/metrics", out _)).IsFalse();
 
@@ -67,7 +72,6 @@ public sealed partial class OpenApiTests
         {
             app.MapGet("/v1/{slug}/__test/users", () => Results.Ok()).WithName("test_management").WithTags("Admin");
             app.MapGet("/ui/{slug}/admin/__test", () => Results.Ok()).WithName("test_admin").WithTags("Admin");
-            app.MapGet("/{slug}/oauth/userinfo", () => Results.Ok()).WithName("test_userinfo").WithTags("Admin");
             app.MapPost("/v1/instances", () => Results.Ok()).WithName("test_instances").WithTags("Admin");
             app.MapGet("/v1/{slug}/__test/public", () => Results.Ok()).WithName("test_public").WithTags("Admin").AllowAnonymous();
             var group = app.MapGroup("/scim/{directory}/__group").WithMetadata(new TerraScale.Auth.Hosting.RequiresSecurity("bearerAuth"));
@@ -87,6 +91,7 @@ public sealed partial class OpenApiTests
         await Assert.That(Scheme(paths.GetProperty("/v1/{slug}/__test/users").GetProperty("get"))).IsEqualTo("ManagementBearer");
         await Assert.That(Scheme(paths.GetProperty("/ui/{slug}/admin/__test").GetProperty("get"))).IsEqualTo("SessionCookie");
         await Assert.That(Scheme(paths.GetProperty("/{slug}/oauth/userinfo").GetProperty("get"))).IsEqualTo("OAuthAccessBearer");
+        await Assert.That(Scheme(paths.GetProperty("/{slug}/oauth/token").GetProperty("post"))).IsEqualTo("clientBasic");
         await Assert.That(Scheme(paths.GetProperty("/v1/instances").GetProperty("post"))).IsEqualTo("OperatorBearer");
         await Assert.That(Scheme(paths.GetProperty("/scim/{directory}/__test").GetProperty("post"))).IsEqualTo("bearerAuth");
         // An endpoint's own declaration beats its group's; AllowAnonymous beats both.
@@ -104,6 +109,7 @@ public sealed partial class OpenApiTests
         await Assert.That(schemes.GetProperty("SessionCookie").GetProperty("in").GetString()).IsEqualTo("cookie");
         await Assert.That(schemes.GetProperty("SessionCookie").GetProperty("name").GetString()).IsEqualTo("tsauth_session");
         await Assert.That(schemes.GetProperty("ManagementBearer").GetProperty("scheme").GetString()).IsEqualTo("bearer");
+        await Assert.That(schemes.GetProperty("clientBasic").GetProperty("scheme").GetString()).IsEqualTo("basic");
     }
 
     [Test]

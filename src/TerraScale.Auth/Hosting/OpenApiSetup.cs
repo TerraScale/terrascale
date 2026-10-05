@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.OpenApi;
 using Microsoft.OpenApi;
 using TerraScale.Auth.Configuration;
@@ -38,7 +39,7 @@ public sealed record RequiresSecurity(string Scheme);
 /// security schemes, per-route security that matches enforcement, and a default response
 /// for operations that declare none.
 /// </summary>
-public static class OpenApiSetup
+public static partial class OpenApiSetup
 {
     /// <summary>
     /// Adds ts-auth's transformers to the <c>v1</c> document registered by TerraScale.Endpoints,
@@ -79,6 +80,8 @@ public static class OpenApiSetup
     {
         ["Observability"] = "Liveness and readiness probes.",
         ["Admin"] = "Hosted administrator portal and its bundled assets.",
+        ["OAuth"] = "OpenID Connect provider for the issuer {public origin}/{slug} (authorization code with S256 PKCE, rotating refresh tokens).",
+        ["Sign-in"] = "Hosted email passcode sign-in pages.",
     };
 
     private static readonly Dictionary<string, Func<OpenApiSecurityScheme>> SchemeDefinitions = new(StringComparer.Ordinal)
@@ -107,6 +110,21 @@ public static class OpenApiSetup
 
             foreach (var operation in item.Operations.Values)
             {
+                // Endpoints that read a route value from the request (rather than binding it) still take it in the path.
+                foreach (var name in RouteParameter().Matches(path).Select(match => match.Groups["name"].Value))
+                {
+                    if (operation.Parameters?.Any(parameter => parameter.In == ParameterLocation.Path && parameter.Name == name) != true)
+                    {
+                        (operation.Parameters ??= []).Add(new OpenApiParameter
+                        {
+                            Name = name,
+                            In = ParameterLocation.Path,
+                            Required = true,
+                            Schema = new OpenApiSchema { Type = JsonSchemaType.String },
+                        });
+                    }
+                }
+
                 if (operation.Security is null)
                 {
                     // Unspecified: the credential the route's prefix requires, or anonymous.
@@ -158,6 +176,9 @@ public static class OpenApiSetup
                 : throw new InvalidOperationException($"Add a description for OpenAPI tag '{name}'."),
         }));
     }
+
+    [GeneratedRegex(@"\{(?<name>[^{}]+)\}")]
+    private static partial Regex RouteParameter();
 
     private static OpenApiSecurityRequirement Requirement(string scheme, OpenApiDocument? document) =>
         new() { [new OpenApiSecuritySchemeReference(scheme, document)] = [] };

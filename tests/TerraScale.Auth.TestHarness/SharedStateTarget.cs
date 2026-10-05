@@ -33,7 +33,8 @@ public sealed class SharedStateTarget
     {
         ArgumentNullException.ThrowIfNull(fixture);
         var (tenant, database) = await fixture.CreateDatabaseAsync();
-        foreach (var collection in new[] { KeyRing.Collection, AttemptLimiter.Collection })
+        // ProvisionAsync already creates the collections readiness requires, the key ring's among them.
+        foreach (var collection in new[] { KeyRing.Collection, AttemptLimiter.Collection }.Except(AuthStore.RequiredCollections))
         {
             await database.CreateCollectionAsync(collection);
         }

@@ -118,7 +118,7 @@ public sealed class AuthStoreTests(TerraBaseFixture fixture)
         await store.ProvisionAsync();
         await store.ProvisionAsync();
         await Assert.That((await database.ListCollectionsAsync()).Items.Select(collection => collection.Name))
-            .IsEquivalentTo(["passcodes", "sessions", "storage_health", "uniques", "users", "verification_tokens"]);
+            .IsEquivalentTo(["oidc_applications", "oidc_authorizations", "oidc_tokens", "passcodes", "sessions", "signing_key_rings", "storage_health", "uniques", "users", "verification_tokens"]);
 
         var missing = fixture.Server.Documents(tenant.ApiKey).Database(tenant.Project.Id, "missing");
         await Assert.ThrowsAsync<TerraBaseNotFoundException>(() => new AuthStore(missing, TimeProvider.System).ProvisionAsync());

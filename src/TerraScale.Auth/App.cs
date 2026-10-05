@@ -1,8 +1,10 @@
 using TerraScale.Auth.Configuration;
-using TerraScale.Auth.Features.Identity;
 using TerraScale.Auth.Features.Email;
+using TerraScale.Auth.Features.Identity;
 using TerraScale.Auth.Features.Observability;
+using TerraScale.Auth.Features.Oidc;
 using TerraScale.Auth.Features.RateLimiting;
+using TerraScale.Auth.Features.SignIn;
 using TerraScale.Auth.Features.SigningKeys;
 using TerraScale.Auth.Hosting;
 using TerraScale.Auth.Store;
@@ -57,6 +59,10 @@ public static partial class App
             builder.Services.AddSingleton<IEmailSender, SmtpEmailSender>();
         }
 
+        builder.Services.AddSingleton<SignInMail>();
+        builder.Services.AddHostedService(services => services.GetRequiredService<SignInMail>());
+        builder.Services.AddOidc(options);
+
         builder.Services.AddTerraScaleEndpoints(typeof(App).Assembly, endpoints =>
         {
             endpoints.Title = ApiTitle;
@@ -74,6 +80,8 @@ public static partial class App
         }
 
         app.UseMiddleware<ErrorEnvelopeMiddleware>();
+        // OpenIddict answers discovery, JWKS and protocol errors here and validates passthrough requests first.
+        app.UseAuthentication();
         app.MapTerraScaleEndpoints();
         app.MapTerraScaleOpenApi();
         return app;

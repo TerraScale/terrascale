@@ -1,7 +1,9 @@
 using System.Globalization;
+using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using TerraScale.DotNet.TerraBase;
 
@@ -37,16 +39,30 @@ public sealed class AuthStore(TerraBaseDatabase database, TimeProvider clock)
     /// <summary>Email passcodes, one per user, addressed by instance and user id.</summary>
     public const string PasscodeCollection = "passcodes";
 
-    /// <summary>Every collection the service needs; provisioning creates them and readiness requires them.</summary>
+    /// <summary>OpenID Connect clients, addressed by instance and client id.</summary>
+    public const string OidcApplicationCollection = "oidc_applications";
+
+    /// <summary>OpenID Connect authorizations (one per sign-in), addressed by instance and id.</summary>
+    public const string OidcAuthorizationCollection = "oidc_authorizations";
+
+    /// <summary>OpenID Connect token entries, addressed by instance and id.</summary>
+    public const string OidcTokenCollection = "oidc_tokens";
+
+    /// <summary>
+    /// Every collection the service needs; provisioning creates them and readiness requires them. <c>signing_key_rings</c>
+    /// belongs to the TS-488 key ring, which signs OpenID Connect tokens.
+    /// </summary>
     public static IReadOnlyList<string> RequiredCollections { get; } =
-        [UniqueCollection, ChallengeCollection, HealthCollection, UserCollection, SessionCollection, PasscodeCollection];
+    [
+        UniqueCollection, ChallengeCollection, HealthCollection, UserCollection, SessionCollection, PasscodeCollection,
+        "signing_key_rings", OidcApplicationCollection, OidcAuthorizationCollection, OidcTokenCollection,
+    ];
 
     private static readonly UTF8Encoding StrictUtf8 = new(false, true);
 
     /// <summary>
-    /// Explicit operator/test setup of the infrastructure and identity (TS-490) collections in an already
-    /// provisioned database. Never called automatically by the host or readiness probe; missing state fails closed.
-    /// Later feature collections are provisioned by their owning port stream.
+    /// Explicit operator/test setup of <see cref="RequiredCollections"/> in an already provisioned database. Never
+    /// called automatically by the host or readiness probe; missing state fails closed.
     /// </summary>
     public async Task ProvisionAsync(CancellationToken cancellationToken = default)
     {
@@ -99,18 +115,71 @@ public sealed class AuthStore(TerraBaseDatabase database, TimeProvider clock)
     }
 
     /// <summary>Replaces only the version read by the caller; false means another writer won.</summary>
-    public async Task<bool> CompareAndPutAsync(string collection, string instanceId, string key, JsonElement record, string expectedVersion, CancellationToken cancellationToken = default)
+    public async Task<bool> CompareAndPutAsync(string collection, string instanceId, string key, JsonElement record, string expectedVersion, CancellationToken cancellationToken = default) =>
+        await this.ReplaceAsync(collection, instanceId, key, record, expectedVersion, cancellationToken).ConfigureAwait(false) is not null;
+
+    /// <summary>Replaces only the version read by the caller and returns the new version; null means another writer won.</summary>
+    public async Task<string?> ReplaceAsync(string collection, string instanceId, string key, JsonElement record, string expectedVersion, CancellationToken cancellationToken = default)
     {
         RequireEntityCollection(collection);
         try
         {
-            await database.PutDocumentAsync(collection, NaturalKeyId(instanceId, collection, key), record, TerraBasePrecondition.Matches(expectedVersion), cancellationToken).ConfigureAwait(false);
-            return true;
+            return (await database.PutDocumentAsync(collection, NaturalKeyId(instanceId, collection, key), record, TerraBasePrecondition.Matches(expectedVersion), cancellationToken).ConfigureAwait(false)).Version;
         }
         catch (TerraBasePreconditionFailedException error) when (error.ErrorCode == "precondition_failed")
         {
-            return false;
+            return null;
         }
+    }
+
+    /// <summary>
+    /// Replaces only the version read by the caller and, in the same transaction, reserves a scoped natural key owned by
+    /// <paramref name="key"/>. Returns the new version, or null when another writer changed the record. A natural key
+    /// that is already taken throws, so a pointer never silently resolves to another record.
+    /// </summary>
+    public async Task<string?> ReplaceClaimedAsync(string collection, string instanceId, string key, JsonElement record, string expectedVersion, string kind, string normalizedKey, CancellationToken cancellationToken = default)
+    {
+        RequireEntityCollection(collection);
+        var claim = JsonSerializer.SerializeToElement(new UniqueClaim(instanceId, kind, key), StoreJsonContext.Default.UniqueClaim);
+        try
+        {
+            var result = await database.TransactAsync(
+            [
+                TerraBaseTransactionOperation.Put(collection, NaturalKeyId(instanceId, collection, key), record, expectedVersion),
+                TerraBaseTransactionOperation.Create(UniqueCollection, claim, NaturalKeyId(instanceId, kind, normalizedKey)),
+            ], cancellationToken).ConfigureAwait(false);
+            return result.Results[0].Version ?? throw new InvalidOperationException("TerraBase returned no version for a committed write.");
+        }
+        catch (TerraBasePreconditionFailedException error) when (error.ErrorCode == "precondition_failed" && error.OperationIndex == 0)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Every document of the instance in <paramref name="collection"/> whose string field at the JSON Pointer
+    /// <paramref name="field"/> equals <paramref name="value"/>. Callers recheck what they read.
+    /// </summary>
+    public async IAsyncEnumerable<TerraBaseDocument> QueryAsync(string collection, string instanceId, string field, string value, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        var condition = new JsonObject
+        {
+            ["and"] = new JsonArray(new JsonObject { ["eq"] = new JsonArray("/instanceId", instanceId) }, new JsonObject { ["eq"] = new JsonArray(field, value) }),
+        };
+        using var parsed = JsonDocument.Parse(condition.ToJsonString());
+        var filter = parsed.RootElement.Clone();
+        string? cursor = null;
+        do
+        {
+            var page = await database.QueryAsync(collection, new TerraBaseQuery { Filter = filter, Cursor = cursor, Limit = 100 }, cancellationToken).ConfigureAwait(false);
+            foreach (var item in page.Items)
+            {
+                yield return item;
+            }
+
+            cursor = page.NextCursor;
+        }
+        while (cursor is not null);
     }
 
     /// <summary>Deletes only the version read by the caller; false means absent or another writer won.</summary>

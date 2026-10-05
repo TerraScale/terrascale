@@ -15,9 +15,12 @@ Nothing here implies acceptance against a live TerraBase deployment.
 | Security primitives (Argon2id, AES-GCM, JWT/JWK, TOTP, WebAuthn) | TS-427 | Partly ported (TS-488): Argon2id via libsodium (PHC, m=19456, t=2, p=1; verification refuses hashes above 64 MiB or above the memory × passes cost of the RFC 9106 64 MiB, t=3 profile), the AES-256-GCM secret box under the master key with record-bound associated data, random tokens, SHA-256, HMAC and fixed-time comparison, ES256 keys, public JWKs and JWT signing and validation (Microsoft.IdentityModel, ES256 only; kid, issuer, exact audience, `typ` and expiry enforced). Token lifetimes are capped at 24 hours; Rust JWT templates allowed any lifetime, so the template port (TS-439) adopts the cap. Fast tests cover reference vectors, malformed hashes, tampering, unknown or missing kids, ES384 and HS256 headers, and wrong `typ`, audience or lifetime. Not ported: importing untrusted JWKs, RS256 and kid-less verification for upstream OIDC (TS-495 federation), HS256 keys, PKCE (TS-491), TOTP and WebAuthn (TS-495) |
 | TerraBase Documents v1 persistence, uniqueness and single-use challenges | TS-489 (TS-428 design) | Implemented through ts-dotnet; create-only and ETag/If-Match CAS, deterministic scoped UUIDs, owner-checked release and retained consumed challenges. Local Release checks pass (100 fast, 21 slow, zero skips); live production activation gated on durability/recovery and TS-470 |
 | Key ring, email, operator instances, rate limiting | TS-431 | Partly ported (TS-488): per-instance ES256 key ring with rotation (every key retained; at most 16 keys, further rotations answer 409 regardless of elapsed replica time; automatic retirement disabled until an approved trustworthy-time design exists), the shared attempt limiter (one-minute windows), SMTP with mandatory STARTTLS and the logging fallback; observability landed in TS-426. Lookup and rotation validate the complete original ring's count, valid timestamps and strict creation order; rotation restores every original key before checking capacity or writing. Malformed, oversized and unreadable rings fail closed unchanged. The key ring and limiter use conditional writes on the TS-489 store (`signing_key_rings`, `rate_limits` collections); any storage failure other than caller cancellation answers 503. Fast and slow tests run against the real pinned TerraBase, including two replicas racing. Limiter bucket ids are HMAC-keyed from the master key; callers pass identifiers the service already holds, and a caller limiting by attacker-chosen text (Rust's guest-mailbox folding) ports with that caller. Without SMTP outside Development, email is logged and a startup warning is emitted; whether flows that need delivery must refuse to start is decided with the first flow (TS-490). Operator instances, the management-key gate (with management keys, TS-490) and Data Protection keys in TerraBase are not yet ported |
-| Users, sessions and email passcodes (internal services) | TS-490 (TS-432 design) | Implemented on the TerraBase store and registered in DI; no route serves them yet (see below) |
-| Hosted sign-in pages, email links, password sign-in and recovery, management users/sessions/keys | TS-432 design (not in TS-490) | Not implemented |
-| OAuth 2.0/OIDC provider on OpenIddict, device flow, guest accounts, CORS | TS-491 (TS-433 design) | Not implemented |
+| Users, sessions and email passcodes | TS-490 (TS-432 design) | Implemented on the TerraBase store; served only through the TS-491 hosted sign-in page (see below) |
+| Hosted email-passcode sign-in for existing accounts | TS-491 | Served at `/ui/terrascale/sign-in` for the `terrascale` instance; fast test covers a passcode sign-in that resumes `authorize` |
+| Sign-up, email links, password sign-in and recovery, management users/sessions/keys | TS-432 design (not in TS-490/TS-491) | Not implemented |
+| OAuth 2.0/OIDC provider on OpenIddict: authorization code with S256 PKCE, rotating refresh tokens, discovery, JWKS, userinfo, RP-initiated logout | TS-491 (TS-433 design) | Served for one issuer, `{public origin}/terrascale`, and the `ts-dashboard` client. ES256 access tokens (`at+jwt`, configured audiences, email claims) and identity tokens from the key ring; client credentials for configured service clients; exactly-once code and refresh redemption with reuse revocation. Fast test covers sign-in, code redemption, token verification with IdentityModel, userinfo and identity-token rejection (see below) |
+| Introspection, revocation endpoint, per-instance issuers, client management API, token pruning, token-endpoint rate limiting | TS-433 design (not in TS-491) | Not implemented |
+| Device flow, guest accounts, browser CORS | TS-495 (TS-433 design) | Not implemented |
 | MFA (TOTP, recovery codes, step-up) | TS-434 | Not yet ported; email passcodes moved to TS-490 |
 | Passkeys | TS-435 | Not yet ported |
 | OIDC, GitHub and SAML federation | TS-436 | Not yet ported |
@@ -92,10 +95,10 @@ through S3.
 
 Users, server-side sessions and email passcodes are internal services in
 `src/TerraScale.Auth/Features/Identity/`, registered in DI on the TerraBase
-store. No hosted page, JSON route or management API serves them yet: routes need
-instance resolution and the email sender from TS-488 (PR #32, not merged). The
-fast suite drives sign-in, rotation and sign-out over real HTTP through
-test-only routes.
+store. The TS-491 hosted sign-in page is the only route that serves them, for
+the `terrascale` instance; there is no JSON route or management API. The fast
+suite drives sign-in, rotation and sign-out over real HTTP through test-only
+routes.
 
 Users are `{id, instanceId, email, authEpoch, createdAt}` in `users`, with a
 random UUID id. Emails are trimmed and lowercased invariantly, then checked
@@ -147,14 +150,47 @@ Differences from Rust: Rust stored SHA-256 of the code and had a 30-second resen
 throttle. C# stores the keyed HMAC and uses the hourly issue cap instead.
 
 Per-user limits live on the passcode document. The TS-488 `AttemptLimiter` is not
-on `main`; per-client and per-route limits, generic responses and timing
-equalization belong to the routes that will expose these flows.
+on `main` and not carried by TS-491, so the hosted sign-in routes have no
+per-client or per-route limit yet. They give the same response whether or not
+an account exists and send email after the response.
 
 `AuthStore.ProvisionAsync` now also creates `users`, `sessions` and
 `passcodes`, and `/readyz` requires them: a database provisioned before TS-490
 reports 503 until an operator runs `ProvisionAsync` again.
 
-Not in TS-490 (remaining TS-432 surface): hosted sign-in and sign-up pages,
-password sign-in and reset, magic links, email verification, account and
+Not in TS-490 (remaining TS-432 surface; TS-491 adds the hosted sign-in page):
+sign-up pages, password sign-in and reset, magic links, email verification, account and
 session-list pages, the management API for users, sessions, impersonation,
 instances and API keys.
+
+## TS-491 OpenID Connect
+
+TS-491 serves an OpenIddict 7.7.1 provider for one issuer,
+`{TS_AUTH_PUBLIC_ORIGIN}/terrascale`, so ts-dashboard can sign in. There is no
+instance registry yet; other slugs answer 404. The issuer and every advertised
+URL derive only from `TS_AUTH_PUBLIC_ORIGIN`, never the Host header.
+
+Implemented: the authorization code flow with S256 PKCE required for every
+client, scopes `openid`, `email`, `profile` and `offline_access`, 1-minute
+codes, 1-hour ES256 access and identity tokens signed by the instance's key
+ring, opaque refresh tokens that rotate on every use with a fixed 14-day
+lifetime, discovery, a JWKS read from TerraBase on each request, userinfo,
+RP-initiated logout and the hosted email-passcode sign-in. A code or refresh
+token is redeemed with a version-conditional write, so concurrent redemptions
+have exactly one winner; a losing or later redemption revokes the sign-in's
+authorization, which rejects every token issued under it. The confidential client `ts-dashboard` is registered
+from `TS_AUTH_DASHBOARD_*` at startup.
+
+Stores live in `oidc_applications`, `oidc_authorizations` and `oidc_tokens`,
+with create-only or version-conditional writes. `AuthStore.ProvisionAsync` now
+also creates them and the TS-488 `signing_key_rings`; `/readyz` requires all
+of them.
+
+Client credentials are served for configured service clients only.
+
+Not implemented: introspection, the revocation endpoint, device flow, guest
+accounts, CORS, sign-up, forced reauthentication for `prompt=login` or
+`max_age`, per-instance issuers, token and authorization
+pruning, and a token-endpoint rate limit. After sign-out everywhere or logout,
+access tokens already issued stay valid until they expire (at most 1 hour).
+The [port guide](csharp-port.md#openid-connect-ts-491) has the details.

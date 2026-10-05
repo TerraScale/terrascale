@@ -103,6 +103,36 @@ public sealed class ConfigurationTests
         await Assert.That(exception!.Message).IsEqualTo(message);
     }
 
+    private const string DashboardSecret = "dashboard-config-secret-0123456789abcdef";
+
+    [Test]
+    [Arguments(DashboardSecret, null, null, "TS_AUTH_DASHBOARD_CLIENT_SECRET and TS_AUTH_DASHBOARD_REDIRECT_URIS are required together")]
+    [Arguments(null, "https://dash.example/cb", null, "TS_AUTH_DASHBOARD_CLIENT_SECRET and TS_AUTH_DASHBOARD_REDIRECT_URIS are required together")]
+    [Arguments(null, null, "https://dash.example/out", "TS_AUTH_DASHBOARD_CLIENT_SECRET and TS_AUTH_DASHBOARD_REDIRECT_URIS are required together")]
+    [Arguments("too-short-dashboard-secret", "https://dash.example/cb", null, "TS_AUTH_DASHBOARD_CLIENT_SECRET must contain 32 to 512 characters without whitespace or controls")]
+    [Arguments("dashboard secret with spaces 0123456789", "https://dash.example/cb", null, "TS_AUTH_DASHBOARD_CLIENT_SECRET must contain 32 to 512 characters without whitespace or controls")]
+    [Arguments(DashboardSecret, "http://dash.example/cb", null, "TS_AUTH_DASHBOARD_REDIRECT_URIS must hold absolute HTTPS URIs (HTTP only for loopback) without credentials or fragments")]
+    [Arguments(DashboardSecret, "https://dash.example/cb#fragment", null, "TS_AUTH_DASHBOARD_REDIRECT_URIS must hold absolute HTTPS URIs (HTTP only for loopback) without credentials or fragments")]
+    [Arguments(DashboardSecret, "https://user:pass@dash.example/cb", null, "TS_AUTH_DASHBOARD_REDIRECT_URIS must hold absolute HTTPS URIs (HTTP only for loopback) without credentials or fragments")]
+    [Arguments(DashboardSecret, "/relative/cb", null, "TS_AUTH_DASHBOARD_REDIRECT_URIS must hold absolute HTTPS URIs (HTTP only for loopback) without credentials or fragments")]
+    [Arguments(DashboardSecret, "https://a.example/1;https://a.example/2;https://a.example/3;https://a.example/4;https://a.example/5;https://a.example/6;https://a.example/7;https://a.example/8;https://a.example/9;https://a.example/10;https://a.example/11", null, "TS_AUTH_DASHBOARD_REDIRECT_URIS may contain at most 10 URIs")]
+    [Arguments(DashboardSecret, "https://dash.example/cb", "http://dash.example/out", "TS_AUTH_DASHBOARD_POST_LOGOUT_REDIRECT_URIS must hold absolute HTTPS URIs (HTTP only for loopback) without credentials or fragments")]
+    public async Task The_dashboard_client_settings_are_validated_together(string? secret, string? redirects, string? postLogoutRedirects, string message)
+    {
+        var exception = await Assert.ThrowsAsync<AuthConfigurationException>(() => AuthTestServer.StartAsync(settings: values =>
+        {
+            foreach (var (key, value) in new[] { ("dashboard-client-secret", secret), ("dashboard-redirect-uris", redirects), ("dashboard-post-logout-redirect-uris", postLogoutRedirects) })
+            {
+                if (value is not null)
+                {
+                    values[key] = value;
+                }
+            }
+        }));
+
+        await Assert.That(exception!.Message).IsEqualTo(message);
+    }
+
     private const string ArgumentSecret = "sktestvaluethatmustnotbeprinted";
 
     [Test]

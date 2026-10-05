@@ -13,10 +13,14 @@ TUnit and Playwright integration tests.
 > harness and CI. TS-489 adds the Documents v1 storage boundary and real
 > storage readiness, validated locally against the pinned binary. Live production
 > activation remains gated (see provisioning below). TS-490 adds users,
-> server-side sessions and email passcodes as internal services on that store;
-> no page or route serves them yet. OIDC (TS-491) is not implemented. The
-> identity features below are being ported stream by stream. Until a stream
-> lands, its routes are not served.
+> server-side sessions and email passcodes as internal services on that store.
+> TS-491 adds an OpenID Connect provider on OpenIddict 7.7.1 for one issuer,
+> `{TS_AUTH_PUBLIC_ORIGIN}/terrascale`, so ts-dashboard can sign in: the
+> authorization code flow with S256 PKCE, rotating refresh tokens, discovery,
+> JWKS, userinfo, RP-initiated logout and a hosted email-passcode sign-in page
+> for existing accounts. Device flow, guest accounts, CORS and SAML are
+> follow-up TS-495. The other identity features below are being ported stream
+> by stream. Until a stream lands, its routes are not served.
 > [`docs/parity.md`](docs/parity.md) tracks each capability, and
 > [`docs/csharp-port.md`](docs/csharp-port.md) describes the layout, commands
 > and intentional changes. The Rust implementation remains in Git history
@@ -134,6 +138,11 @@ nice -n 19 dotnet run --project src/TerraScale.Auth
 | `TS_AUTH_PRICE_PRO` / `TS_AUTH_PRICE_ENTERPRISE` | Stripe price ids for the plans |
 | `TS_AUTH_STRIPE_API_URL` | Stripe API origin (default `https://api.stripe.com`; test override) |
 | `TS_AUTH_SMTP_HOST` / `_PORT` / `_USERNAME` / `_PASSWORD` / `_FROM_ADDRESS` | SMTP delivery; host, username, password and from address are all or nothing, port defaults to 587 |
+| `TS_AUTH_DASHBOARD_CLIENT_SECRET` | Optional secret of the confidential OIDC client `ts-dashboard`, 32 to 512 characters without whitespace. Required together with the redirect URIs; only OpenIddict's PBKDF2 hash is stored |
+| `TS_AUTH_DASHBOARD_REDIRECT_URIS` | Semicolon-separated exact callback URIs for `ts-dashboard` (at most 10), e.g. `https://dash.terrascale.tech/auth/callback;http://localhost:5173/auth/callback`. HTTPS, or HTTP only for `localhost` or a loopback IP; no credentials or fragment |
+| `TS_AUTH_DASHBOARD_POST_LOGOUT_REDIRECT_URIS` | Optional semicolon-separated exact post-logout URIs for `ts-dashboard`, with the same rules |
+| `TS_AUTH_ACCESS_TOKEN_AUDIENCES` | Optional semicolon-separated `aud` values put in every access token, kept exactly as written (e.g. `https://gru.api.terrascale.tech`, TerraBase's `auth-audience`); at most 10 absolute HTTPS URIs without credentials, query or fragment |
+| `TS_AUTH_SERVICE_CLIENTS` | Optional semicolon-separated `id:secret` service clients allowed only the client-credentials grant; ids are 3 to 64 lowercase letters, digits or `-`, start with a letter, are not UUIDs or `ts-dashboard`; secrets 32 to 512 characters. Registered at startup like `ts-dashboard` |
 | `TS_AUTH_SENTRY_DSN` | GlitchTip/Sentry DSN for error reporting; a deployment secret, never committed. Off when unset |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` (or the per-signal `OTEL_EXPORTER_OTLP_*_ENDPOINT`), `OTEL_SERVICE_NAME`, `OTEL_EXPORTER_OTLP_HEADERS` | Standard OpenTelemetry settings; traces, metrics and logs are pushed over OTLP only when an endpoint is set |
 
@@ -186,21 +195,38 @@ claims for that instance, within a 1.5-second budget that never delays the
 sign-in further. Each delete is version-conditional. Claims created
 before expiries were recorded have no expiry, so cleanup never removes them.
 
-The OAuth provider advertises and accepts `openid`, `profile`, and `email`.
-OAuth clients register `none`, `client_secret_basic`, or
-`client_secret_post`; endpoints enforce the registered method. Method `none`
-makes a client public, and public clients cannot register either secret-based
-method. Redirect URIs must use HTTPS except `localhost` or a loopback IP over
-HTTP, and authorization requests must exactly match a registered URI without a
-fragment or credentials.
+The paragraphs above describe the target admin portal and federation surface,
+which is not ported yet.
+
+The TS-491 OAuth provider accepts `openid`, `email`, `profile` and
+`offline_access`; each client's scope permissions bound what it may request.
+`profile` adds no claims yet. Access tokens follow TerraBase decision 0007
+(TS-519): signed, unencrypted ES256 JWTs with `typ` `at+jwt`, `aud` holding
+every `TS_AUTH_ACCESS_TOKEN_AUDIENCES` value, and a user's `email` and
+`email_verified` whatever the scopes. Identity tokens keep `typ` `JWT` and
+`aud` = the client id, and carry the email claims only with the `email` scope,
+as userinfo does. The user-facing client is the confidential `ts-dashboard`,
+registered from `TS_AUTH_DASHBOARD_*`. It authenticates at the token endpoint
+with `client_secret_basic` or `client_secret_post`, must use PKCE with S256
+(`plain` is disabled for every client), and gets implicit consent. Service
+clients from `TS_AUTH_SERVICE_CLIENTS` may use only the client-credentials
+grant: their access token has `sub` = the client id, the same `typ` and `aud`,
+no scopes and no email, and they get no identity or refresh token. Authorization requests must exactly match a registered redirect URI;
+the configured URIs use HTTPS except `localhost` or a loopback IP over HTTP,
+without a fragment or credentials. Public clients and self-service client
+registration are target behaviour.
 `prompt=none` uses only an active session and returns `login_required` when none
 exists. Forced reauthentication, consent, and account selection are unsupported:
 `prompt=login`, `prompt=consent`, and `prompt=select_account` return
-`login_required`, `consent_required`, and `account_selection_required`. The
-combined `prompt=login consent` returns `interaction_required`. Empty, duplicate,
-unknown, or `none` combined with another prompt value returns `invalid_request`.
+`login_required`, `consent_required`, and `account_selection_required`. A
+`max_age` that the session has exceeded returns `login_required` instead of
+forcing a new sign-in. OpenIddict validates the `prompt` parameter first; the
+endpoint then checks `login`, `consent` and `select_account` in that order, so
+`prompt=login consent` returns `login_required`. The Rust service answered it
+with `interaction_required`; that is not ported.
 
-Upstream OIDC connections request `openid email profile` by default. A custom
+Target behaviour: upstream OIDC connections request `openid email profile` by
+default. A custom
 OIDC scope list must contain `openid` and `email`; valid configured scopes are
 stored on the connection and sent to the provider.
 
@@ -281,16 +307,17 @@ member's HTTPS origin and set `TS_AUTH_ENVIRONMENT=Development`, a valid
 `tb_…` key and `TS_AUTH_DATABASE=<project-uuid>/<database-name>`. The application
 does not start or embed TerraBase; the integration-test fixture starts the
 SDK-pinned binary. `/readyz` checks the existing `uniques`,
-`verification_tokens`, `storage_health`, `users`, `sessions` and `passcodes`
-collections, then creates, reads
+`verification_tokens`, `storage_health`, `users`, `sessions`, `passcodes`,
+`signing_key_rings`, `oidc_applications`, `oidc_authorizations` and
+`oidc_tokens` collections, then creates, reads
 and conditionally deletes a synthetic document in `storage_health`. It returns
 200 only on success, otherwise 503, without provisioning, repair or in-memory
 fallback. Observations coalesce and are cached for one second after
 completion, with a two-second deadline; unknown `region` is omitted.
 
-The broader `scripts/smoke-real-stack.sh` still targets identity flows that
-TS-490/TS-491 and later streams have not implemented; it is not evidence of
-TS-489 acceptance.
+The broader `scripts/smoke-real-stack.sh` still targets Rust identity flows
+that later streams have not implemented; it is not evidence of TS-489 or
+TS-491 acceptance.
 
 ## Provisioning the global auth dataset
 
@@ -305,10 +332,13 @@ the provisioning plan; live production execution belongs to TS-470:
    auth project/database with `documents:read` and `documents:write`.
 3. Explicitly call `AuthStore.ProvisionAsync` with the pinned SDK against that
    existing database. It creates `uniques`, `verification_tokens` and
-   `storage_health`, plus the TS-490 `users`, `sessions` and `passcodes`
-   collections; later feature streams own their other collections. `/readyz`
-   requires all six, so a database provisioned before TS-490 reports 503 until
-   this step is repeated. Run it before rolling out TS-490.
+   `storage_health`, the TS-490 `users`, `sessions` and `passcodes`, the
+   TS-488 `signing_key_rings`, and the TS-491 `oidc_applications`,
+   `oidc_authorizations` and `oidc_tokens` collections. Then create the TS-488
+   `rate_limits` collection; later feature streams own their other collections. `/readyz` requires all ten, so a database
+   provisioned before TS-491 reports 503 until this step is repeated. Run it
+   before rolling out TS-491; a configured dashboard or service client also
+   stops startup while its collection is missing.
 4. Configure every replica with `<auth-project-uuid>/auth` and the same
    explicitly resolved HTTPS storage authority and shared auth settings.
 
@@ -327,9 +357,23 @@ links the exact pinned decisions. No live production validation is claimed.
 ## API surface
 
 Currently served: `GET /healthz`, `GET /readyz`, `GET /openapi/v1.json`,
-`GET /scalar`, `GET /admin/{asset}` and `GET /fonts/{asset}`. The target
-surface below is the contract the port streams restore (from the Rust service);
-each stream keeps its paths, methods and operation ids.
+`GET /scalar`, `GET /admin/{asset}` and `GET /fonts/{asset}`, plus the TS-491
+OpenID Connect routes for the slug `terrascale` (other slugs answer 404):
+
+- `GET /terrascale/.well-known/openid-configuration` and
+  `GET /terrascale/.well-known/jwks.json`
+- `GET /terrascale/oauth/authorize`, `POST /terrascale/oauth/token`,
+  `GET /terrascale/oauth/userinfo` and `GET /terrascale/oauth/logout`
+  (RP-initiated logout)
+- `GET` and `POST /ui/terrascale/sign-in`, `POST /ui/terrascale/sign-in/verify`
+  (hosted email-passcode sign-in)
+
+All of them appear in `/openapi/v1.json` under the `OAuth` and `Sign-in` tags.
+Introspection, the revocation endpoint and device authorization are not
+served. The target surface below is the contract the
+port streams restore (from the Rust service); each stream keeps its paths,
+methods and operation ids. [The port guide](docs/csharp-port.md#openid-connect-ts-491)
+describes the TS-491 behaviour and its limits.
 
 
 - Hosted UI: `/ui/S/sign-in`, `/sign-up`, `/account`, `/account/sessions`,

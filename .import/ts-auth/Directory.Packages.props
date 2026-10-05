@@ -15,6 +15,7 @@
   <ItemGroup Label="Identity and cryptography">
     <PackageVersion Include="OpenIddict.AspNetCore" Version="7.7.1" />
     <PackageVersion Include="OpenIddict.Core" Version="7.7.1" />
+    <PackageVersion Include="OpenIddict.Server.AspNetCore" Version="7.7.1" />
     <PackageVersion Include="Microsoft.IdentityModel.JsonWebTokens" Version="8.23.0" />
     <PackageVersion Include="Microsoft.IdentityModel.Protocols.OpenIdConnect" Version="8.23.0" />
     <PackageVersion Include="Fido2" Version="4.2.0" />

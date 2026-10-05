@@ -4,9 +4,10 @@ ts-auth is a C# service on .NET 10. Epic TS-424 (ku.mariogk.com) tracks the
 port. The Rust workspace was removed in TS-442; its source in Git history
 before `8dd2874` is the behavioural reference for each port stream, including
 the original TS-428 storage design. TS-489 implements the Documents v1 storage
-boundary. TS-490 adds users, sessions and email passcodes as internal services
-that no route serves yet; OIDC (TS-491) is not implemented. `docs/parity.md`
-tracks what has landed.
+boundary. TS-490 adds users, sessions and email passcodes on that store.
+TS-491 adds an OpenID Connect provider for ts-dashboard, with a hosted
+email-passcode sign-in page that serves those TS-490 services.
+`docs/parity.md` tracks what has landed.
 
 ## Layout
 
@@ -152,20 +153,23 @@ probe.
 The application and probe never provision or repair state. An operator/test
 can explicitly call `AuthStore.ProvisionAsync` to create those three
 infrastructure collections, plus `users`, `sessions` and `passcodes` (TS-490),
-in an already existing database; repeated setup accepts an existing collection.
-Later feature streams must provision their own collections. Readiness requires
-the same list, so a database provisioned before TS-490 reports 503 until
-`ProvisionAsync` runs again. This is not production project/database provisioning or a migration of
-Rust documents.
+`signing_key_rings` (TS-488) and `oidc_applications`, `oidc_authorizations`
+and `oidc_tokens` (TS-491), in an already existing database; repeated setup
+accepts an existing collection. Later feature streams must provision their own
+collections. Readiness requires the same list (`AuthStore.RequiredCollections`),
+so a database provisioned before TS-491 reports 503 until `ProvisionAsync`
+runs again. This is not production project/database provisioning or a
+migration of Rust documents.
 
 ## Users, sessions and passcodes (TS-490)
 
 `Users`, `Sessions` and `Passcodes` in `src/TerraScale.Auth/Features/Identity/`
-are singletons registered in `App.Build` over `AuthStore`. No hosted page, JSON
-route or management API serves them yet: routes need instance resolution and the
-email sender from TS-488 (PR #32, not merged). Callers authorize the instance
-before using them. The fast suite drives sign-in, rotation and sign-out over real
-HTTP through test-only routes (`tests/TerraScale.Auth.Fast/Identity/`).
+are singletons registered in `App.Build` over `AuthStore`. TS-491's hosted
+sign-in page is the only route that serves them, for the single instance
+`terrascale` (see below); there is no JSON route or management API for them.
+Callers authorize the instance before using them. The fast suite drives
+sign-in, rotation and sign-out over real HTTP through test-only routes
+(`tests/TerraScale.Auth.Fast/Identity/`).
 
 - **Users** (`users`): creating an account writes the email claim and the user
   document in one TerraBase transaction, both create-only, so a claim never
@@ -193,13 +197,193 @@ HTTP through test-only routes (`tests/TerraScale.Auth.Fast/Identity/`).
   concurrent requests cannot exceed the limit or redeem a code twice. A code is
   consumed before its session is written.
 
-Per-user limits live on the passcode document. Per-client and per-route limits,
-generic responses and timing equalization belong to the routes that will expose
-these flows, with the TS-488 `AttemptLimiter`, which is not on `main`. Rust
+Per-user limits live on the passcode document. The TS-488 `AttemptLimiter` is
+not on `main` and not carried by TS-491, so the hosted sign-in routes have no
+per-client or per-route limit yet; they do give generic responses and send
+email after the response. Rust
 stored SHA-256 of the code and throttled resends to one per 30 seconds; C# uses
 the keyed HMAC and the hourly issue cap instead. Password sign-in and reset,
 magic links, email verification, account pages and the management API remain in
 TS-432's later work.
+
+## OpenID Connect (TS-491)
+
+TS-491 is phase 1 of the OAuth/OIDC port: enough for ts-dashboard to sign
+users in. Device authorization, guest accounts, browser CORS and SAML are
+follow-up TS-495. The code is in `src/TerraScale.Auth/Features/Oidc/` and
+`Features/SignIn/`.
+
+### Design
+
+The provider runs on OpenIddict 7.7.1 (`OidcIssuer.AddOidc`). There is no
+instance registry yet, so there is one issuer, `{TS_AUTH_PUBLIC_ORIGIN}/terrascale`,
+owned by the instance `terrascale`; per-slug issuers wait for that registry,
+and other slugs answer 404. The `TrustPublicOrigin` handler resolves OpenIddict's
+base and request URIs against `TS_AUTH_PUBLIC_ORIGIN`, so the issuer, every
+advertised URL and endpoint matching never use the request's Host header or
+scheme. TLS terminates in front of the service.
+
+Routes: discovery, JWKS, `authorize`, `token`, `userinfo` and `logout` under
+`/terrascale/`, and the hosted sign-in at `/ui/terrascale/sign-in` and
+`/ui/terrascale/sign-in/verify`. Each is a TerraScale.Endpoints class, so it
+appears in `/openapi/v1.json` (tags `OAuth` and `Sign-in`); OpenIddict
+validates the request first and answers protocol errors itself.
+
+- Only the authorization code flow, with PKCE required for every client and
+  `plain` removed, so S256 is the only method. Codes live 1 minute.
+- Scopes: `openid`, `email`, `profile` and `offline_access`. There is no scope
+  store; each client's scope permissions bound its requests. `profile` adds no
+  claims yet. `email` adds `email` and `email_verified` (always true: sign-in
+  proves the address).
+- Access and identity tokens are ES256 JWTs that live 1 hour. Access tokens
+  follow TerraBase decision 0007 (TS-519): not encrypted, `typ` `at+jwt`,
+  `aud` = every `TS_AUTH_ACCESS_TOKEN_AUDIENCES` value (set as OpenIddict
+  resources, kept as written), and a user's `email` and `email_verified`
+  whatever the scopes. Identity tokens keep `typ` `JWT` and `aud` = the client
+  id. The private `ts_auth_epoch` claim stays inside codes and refresh tokens.
+- Client credentials: service clients from `TS_AUTH_SERVICE_CLIENTS` have only
+  the token endpoint and client-credentials permissions. Their access token has
+  `sub` = the client id (ids can never be UUIDs, so they cannot collide with a
+  user id), the configured audiences, no scopes and no email; `offline_access`
+  is refused, so no refresh or identity token is issued. The dashboard client
+  cannot use this grant.
+- Key rotation: decision 0007 asks ts-auth to publish a new key before signing
+  with it. The TS-488 ring signs with a new key at once, and nothing in this
+  branch rotates it; the publish delay belongs with the first rotation trigger.
+- `userinfo` accepts only an access token from this issuer that is not
+  revoked; an identity token is rejected.
+- `authorize` signs in the user of a live `tsauth_session` cookie. Without one
+  it redirects to the hosted sign-in page with the request in `next`.
+  `prompt=none` without a session, and a `max_age` the session has exceeded,
+  answer `login_required`. `prompt=login`, `consent` and `select_account`
+  answer `login_required`, `consent_required` and `account_selection_required`.
+- `logout` is RP-initiated logout: it revokes the hosted session, clears the
+  cookie, then returns to a registered `post_logout_redirect_uri` or shows a
+  signed-out page.
+
+Not implemented: introspection, the revocation endpoint, device authorization, forced reauthentication for `max_age`, and the
+OpenIddict validation stack. No ts-auth API other than `userinfo` accepts
+access tokens, and the server stack validates those.
+
+### Hosted sign-in
+
+The page uses the TS-490 email passcodes: six digits, 10 minutes, 5 wrong
+guesses, 5 codes per account per hour. It signs in existing accounts only;
+there is no sign-up route, and how accounts are created is an open product
+decision. The page is the same whether or not the address has an account, and
+the email is sent after the response, so its timing does not reveal it either.
+`SignInMail`, a hosted service, queues at most 256 codes and sends them one at
+a time, so a slow relay holds at most one SMTP connection. Codes still queued
+when the host stops are sent within its shutdown timeout; a full queue drops
+a code and logs that (the user can request another). Delivery uses `SmtpEmailSender` when `TS_AUTH_SMTP_*` is set; otherwise
+`LoggingEmailSender` delivers nothing and logs only message sizes. Both are
+copied from TS-488.
+
+Form posts must carry an `Origin` header naming the public origin, which
+refuses login CSRF. Scheme, ASCII (punycode) host and effective port are
+compared, so `:443` or letter case in `TS_AUTH_PUBLIC_ORIGIN` does not refuse
+a browser's serialized origin. Success sets `tsauth_session` (`Secure`, `HttpOnly`,
+`SameSite=Lax`). `next` is honoured only when it is a
+`/terrascale/oauth/authorize?…` path. The page resumes it with a navigation
+(`meta refresh`) rather than a redirect, because CSP `form-action 'self'`
+would block the redirect chain from the form post to the client.
+
+### Dashboard client
+
+`TS_AUTH_DASHBOARD_CLIENT_SECRET` and `TS_AUTH_DASHBOARD_REDIRECT_URIS` are
+required together; `TS_AUTH_DASHBOARD_POST_LOGOUT_REDIRECT_URIS` is optional.
+The secret has 32 to 512 characters. URI lists are semicolon-separated exact
+URIs, at most 10, HTTPS or HTTP only for `localhost` or a loopback IP, without
+credentials or a fragment. For example
+`https://dash.terrascale.tech/auth/callback` plus
+`http://localhost:<port>/auth/callback` for development.
+
+When they are set, `DashboardClientRegistration` registers or updates the
+confidential client `ts-dashboard` at startup: `client_secret_basic` or
+`client_secret_post`, PKCE required, implicit consent, and only OpenIddict's
+PBKDF2 hash of the secret stored. Writes are create-only or conditional, so
+concurrent replicas converge. If TerraBase is unavailable, startup fails
+instead of serving without the client.
+
+### Stores and consistency
+
+OpenIddict's application, authorization and token stores are replaced with
+TerraBase Documents v1 stores in `oidc_applications`, `oidc_authorizations`
+and `oidc_tokens`. Every write is create-only or names the version it read
+(`AuthStore.ReplaceAsync`, `If-Match`). The only cache is OpenIddict's
+request-scoped entity cache. LINQ queries, counting, paging and pruning are
+not supported.
+
+Codes and refresh tokens are reference tokens. A token entry's reference
+digest (SHA-256, computed by OpenIddict) is reserved in `uniques` in the same
+transaction that stores or updates the entry (`AuthStore.CreateClaimedAsync`
+and `ReplaceClaimedAsync`); lookups by handle go through that claim, and the
+handle itself is never stored.
+
+`RedeemExactlyOnce` replaces OpenIddict's redemption step, which ignores a lost
+redemption for refresh tokens. A code or refresh token is redeemed with a
+conditional write on the version the request validated, so of concurrent
+redemptions exactly one succeeds. A loser answers `invalid_grant` and revokes
+the sign-in's authorization. OpenIddict checks the authorization whenever it
+validates one of its codes, refresh tokens or (at userinfo) access tokens, so
+this rejects every token of the sign-in, including the winner's new ones and
+any still being created. Token entries are not rewritten: rewriting them broke
+the winner's own conditional writes and turned a won race into a 500. A later
+replay is rejected and revokes the authorization the same way. Access JWTs
+validated offline, as TerraBase does, stay valid until they expire (at most
+1 hour). The token endpoint
+also refuses a code or refresh token when the user no longer exists or has
+signed out everywhere (`authEpoch` advanced).
+
+Lookups by subject or client and the post-logout redirect lookup use
+`AuthStore.QueryAsync`, a filtered TerraBase query in pages of 100 that scans
+the instance's documents in the collection. No OpenID Connect flow sweeps
+token entries.
+
+### Keys
+
+Access and identity tokens are signed with the current key of the TS-488 key
+ring for the instance `terrascale`. The JWKS lists every key in the ring,
+read from TerraBase on each request, so a rotation is visible to every replica
+at once and tokens signed before it keep validating: the ring retains every
+key and refuses rotation at 16 keys until a trustworthy-time retirement design
+exists (TS-488). A ring out of strict creation order, empty or over the
+bound fails closed. No route rotates the ring in this branch.
+OpenIddict's startup ECDSA key is a public-only placeholder that never signs
+or validates a token.
+
+Codes and refresh tokens are signed and encrypted with keys derived with
+HKDF-SHA256 from `TS_AUTH_MASTER_KEY`. A key-ring rotation never invalidates
+them; changing the master key invalidates every outstanding code and refresh
+token.
+
+### Expiry and revocation
+
+- Refresh tokens (with `offline_access`) are opaque, rotate on every use and
+  have no reuse leeway. Sliding expiration is off, so the 14-day lifetime is
+  fixed when the first refresh token is issued and rotation never extends it.
+  The window starts at code redemption, not at the hosted sign-in, so a token
+  family can outlive the session that started it by up to 14 days.
+- After sign-out everywhere, refresh is refused, but access tokens already
+  issued stay valid until they expire, at most 1 hour.
+- Logout revokes the hosted session and clears the cookie. Tokens already
+  issued to the client stay valid until they expire or are revoked.
+
+### Limitations and follow-ups
+
+- No rate limit on the token endpoint, and none on the sign-in routes beyond
+  the per-account passcode limits. A single per-client bucket would serialize
+  every dashboard refresh through one document.
+- Expired tokens and authorizations are not pruned.
+- No sign-up; accounts must already exist.
+- Per-instance issuers wait for the instance registry.
+
+The fast suite drives a browser-style passcode sign-in through `authorize`
+and redeems the PKCE code at `token` over real HTTP against the real TerraBase
+binary. It checks discovery, JWKS and both tokens with IdentityModel rather
+than OpenIddict, calls `userinfo`, and checks that an identity token is
+rejected there. No interoperability with a third-party client library or
+production validation is claimed.
 
 ## Production activation gate
 
@@ -244,7 +428,9 @@ replicas.
 
 Their collections, `signing_key_rings` and `rate_limits`, are provisioned
 with the other collections (`scripts/provision.sh`); while one is missing the
-feature answers 503.
+feature answers 503. Since TS-491, `signing_key_rings` is also one of
+`AuthStore.RequiredCollections`, because OpenID Connect signs every token with
+the ring, so `/readyz` reports 503 while it is missing.
 
 Signing keys live in one document per instance, so a rotation is one
 conditional replace. Each key's d ‖ X ‖ Y is sealed under `TS_AUTH_MASTER_KEY`
