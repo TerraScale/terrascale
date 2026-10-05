@@ -28,16 +28,29 @@ public sealed class AuthStore(TerraBaseDatabase database, TimeProvider clock)
     /// <summary>Dedicated synthetic storage probes, separate from identity state.</summary>
     public const string HealthCollection = "storage_health";
 
+    /// <summary>User accounts, addressed by instance and user id.</summary>
+    public const string UserCollection = "users";
+
+    /// <summary>Browser sessions, addressed by instance and the SHA-256 of the bearer token.</summary>
+    public const string SessionCollection = "sessions";
+
+    /// <summary>Email passcodes, one per user, addressed by instance and user id.</summary>
+    public const string PasscodeCollection = "passcodes";
+
+    /// <summary>Every collection the service needs; provisioning creates them and readiness requires them.</summary>
+    public static IReadOnlyList<string> RequiredCollections { get; } =
+        [UniqueCollection, ChallengeCollection, HealthCollection, UserCollection, SessionCollection, PasscodeCollection];
+
     private static readonly UTF8Encoding StrictUtf8 = new(false, true);
 
     /// <summary>
-    /// Explicit operator/test setup of infrastructure collections in an already provisioned database.
-    /// Never called automatically by the host or readiness probe; missing state fails closed.
-    /// Feature collections are provisioned by their owning port stream.
+    /// Explicit operator/test setup of the infrastructure and identity (TS-490) collections in an already
+    /// provisioned database. Never called automatically by the host or readiness probe; missing state fails closed.
+    /// Later feature collections are provisioned by their owning port stream.
     /// </summary>
     public async Task ProvisionAsync(CancellationToken cancellationToken = default)
     {
-        foreach (var collection in new[] { UniqueCollection, ChallengeCollection, HealthCollection })
+        foreach (var collection in RequiredCollections)
         {
             try
             {
@@ -73,6 +86,10 @@ public sealed class AuthStore(TerraBaseDatabase database, TimeProvider clock)
     /// <summary>Reads a document and its opaque ETag version. Missing parents and outages propagate.</summary>
     public Task<TerraBaseDocument?> GetAsync(string collection, string instanceId, string key, CancellationToken cancellationToken = default) =>
         database.GetDocumentAsync(collection, NaturalKeyId(instanceId, collection, key), cancellationToken);
+
+    /// <summary>Up to <paramref name="limit"/> documents matching a TerraBase query filter, in id order.</summary>
+    public async Task<IReadOnlyList<TerraBaseDocument>> QueryAsync(string collection, JsonElement filter, int limit, CancellationToken cancellationToken = default) =>
+        (await database.QueryAsync(collection, new TerraBaseQuery { Filter = filter, Limit = limit }, cancellationToken).ConfigureAwait(false)).Items;
 
     /// <summary>Creates only; a taken address throws a precondition failure.</summary>
     public Task<TerraBaseWriteResult> CreateAsync(string collection, string instanceId, string key, JsonElement record, CancellationToken cancellationToken = default)
@@ -127,6 +144,37 @@ public sealed class AuthStore(TerraBaseDatabase database, TimeProvider clock)
         {
             return false;
         }
+    }
+
+    /// <summary>
+    /// Atomically reserves a scoped natural key for <paramref name="key"/> and creates the record that owns it, so a
+    /// claim never exists without its owner. False means the natural key is taken and nothing was written.
+    /// </summary>
+    public async Task<bool> CreateClaimedAsync(string collection, string instanceId, string key, JsonElement record, string kind, string normalizedKey, CancellationToken cancellationToken = default)
+    {
+        RequireEntityCollection(collection);
+        var claim = JsonSerializer.SerializeToElement(new UniqueClaim(instanceId, kind, key), StoreJsonContext.Default.UniqueClaim);
+        try
+        {
+            await database.TransactAsync(
+            [
+                TerraBaseTransactionOperation.Create(UniqueCollection, claim, NaturalKeyId(instanceId, kind, normalizedKey)),
+                TerraBaseTransactionOperation.Create(collection, record, NaturalKeyId(instanceId, collection, key)),
+            ], cancellationToken).ConfigureAwait(false);
+            return true;
+        }
+        catch (TerraBasePreconditionFailedException error) when (error.ErrorCode == "precondition_failed" && error.OperationIndex == 0)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>The owner of a scoped natural key, or <see langword="null"/> when it is unclaimed.</summary>
+    public async Task<string?> FindUniqueOwnerAsync(string instanceId, string kind, string normalizedKey, CancellationToken cancellationToken = default)
+    {
+        var document = await database.GetDocumentAsync(UniqueCollection, NaturalKeyId(instanceId, kind, normalizedKey), cancellationToken).ConfigureAwait(false);
+        var claim = document?.Document.Deserialize(StoreJsonContext.Default.UniqueClaim);
+        return claim is not null && claim.InstanceId == instanceId && claim.Kind == kind ? claim.OwnerId : null;
     }
 
     /// <summary>Explicit owner-checked CAS release; never use compensation after an ambiguous write.</summary>

@@ -118,7 +118,7 @@ public sealed class AuthStoreTests(TerraBaseFixture fixture)
         await store.ProvisionAsync();
         await store.ProvisionAsync();
         await Assert.That((await database.ListCollectionsAsync()).Items.Select(collection => collection.Name))
-            .IsEquivalentTo(["storage_health", "uniques", "verification_tokens"]);
+            .IsEquivalentTo(["passcodes", "sessions", "storage_health", "uniques", "users", "verification_tokens"]);
 
         var missing = fixture.Server.Documents(tenant.ApiKey).Database(tenant.Project.Id, "missing");
         await Assert.ThrowsAsync<TerraBaseNotFoundException>(() => new AuthStore(missing, TimeProvider.System).ProvisionAsync());
@@ -170,5 +170,30 @@ public sealed class AuthStoreTests(TerraBaseFixture fixture)
             await Assert.That(await store.ConsumeChallengeAsync("tenant", collection, key, "subject")).IsNull();
             await Assert.ThrowsAsync<TerraBasePreconditionFailedException>(() => store.CreateChallengeAsync("tenant", collection, key, "subject", clock.UtcNow.AddHours(1)));
         }
+    }
+
+    [Test]
+    public async Task A_claimed_create_writes_neither_document_when_either_address_is_taken()
+    {
+        var (_, database) = await fixture.CreateDatabaseAsync();
+        var store = new AuthStore(database, TimeProvider.System);
+        await store.CreateAsync("users", "tenant", "owner", Json("""{"original":true}"""));
+        var before = (await store.GetAsync("users", "tenant", "owner"))!;
+
+        // The owner address is taken: the claim (operation 0) must not survive the failed transaction.
+        var ownerTaken = await Assert.ThrowsAsync<TerraBasePreconditionFailedException>(() =>
+            store.CreateClaimedAsync("users", "tenant", "owner", Json("""{"replacement":true}"""), "email", "fresh@example.test"));
+        await Assert.That(ownerTaken!.OperationIndex).IsEqualTo(1);
+        await Assert.That(await store.FindUniqueOwnerAsync("tenant", "email", "fresh@example.test")).IsNull();
+        await Assert.That((await database.ListDocumentsAsync("uniques")).Items.Count).IsEqualTo(0);
+        var after = (await store.GetAsync("users", "tenant", "owner"))!;
+        await Assert.That(after.Version).IsEqualTo(before.Version);
+        await Assert.That(after.Document.GetRawText()).Contains("original");
+
+        // The claim is taken: the new owner record must not be written.
+        await Assert.That(await store.CreateClaimedAsync("users", "tenant", "first", Json("""{"n":1}"""), "email", "taken@example.test")).IsTrue();
+        await Assert.That(await store.CreateClaimedAsync("users", "tenant", "second", Json("""{"n":2}"""), "email", "taken@example.test")).IsFalse();
+        await Assert.That(await store.GetAsync("users", "tenant", "second")).IsNull();
+        await Assert.That(await store.FindUniqueOwnerAsync("tenant", "email", "taken@example.test")).IsEqualTo("first");
     }
 }

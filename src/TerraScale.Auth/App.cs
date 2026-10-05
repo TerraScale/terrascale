@@ -1,4 +1,5 @@
 using TerraScale.Auth.Configuration;
+using TerraScale.Auth.Features.Identity;
 using TerraScale.Auth.Features.Observability;
 using TerraScale.Auth.Hosting;
 using TerraScale.Auth.Store;
@@ -35,6 +36,10 @@ public static class App
             ApiKey = options.TerraScaleApiKey,
         }).Database(options.StorageProject, options.StorageDatabase));
         builder.Services.AddSingleton<AuthStore>();
+        builder.Services.AddSingleton<Users>();
+        builder.Services.AddSingleton<Sessions>();
+        builder.Services.AddSingleton<Passcodes>();
+        builder.Services.AddHostedService<SessionPruner>();
         builder.Services.AddSingleton<IStorageHealth, TerraBaseStorageHealth>();
         builder.Services.AddSingleton<ReadinessProbe>();
 

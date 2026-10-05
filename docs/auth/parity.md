@@ -15,9 +15,10 @@ Nothing here implies acceptance against a live TerraBase deployment.
 | Security primitives (Argon2id, AES-GCM, JWT/JWK, TOTP, WebAuthn) | TS-427 | Not yet ported |
 | TerraBase Documents v1 persistence, uniqueness and single-use challenges | TS-489 (TS-428 design) | Implemented through ts-dotnet; create-only and ETag/If-Match CAS, deterministic scoped UUIDs, owner-checked release and retained consumed challenges. Local Release checks pass (100 fast, 21 slow, zero skips); live production activation gated on durability/recovery and TS-470 |
 | Key ring, email, operator instances, rate limiting | TS-431 | Not yet ported |
-| Hosted users, sessions, email links, password recovery, management users/keys | TS-490 (TS-432 design) | Not implemented; the generic storage boundary does not serve these flows |
+| Users, sessions and email passcodes (internal services) | TS-490 (TS-432 design) | Implemented on the TerraBase store and registered in DI; no route serves them yet (see below) |
+| Hosted sign-in pages, email links, password sign-in and recovery, management users/sessions/keys | TS-432 design (not in TS-490) | Not implemented |
 | OAuth 2.0/OIDC provider on OpenIddict, device flow, guest accounts, CORS | TS-491 (TS-433 design) | Not implemented |
-| MFA and email passcodes | TS-434 | Not yet ported |
+| MFA (TOTP, recovery codes, step-up) | TS-434 | Not yet ported; email passcodes moved to TS-490 |
 | Passkeys | TS-435 | Not yet ported |
 | OIDC, GitHub and SAML federation | TS-436 | Not yet ported |
 | Organizations, invitations, domains, roles and authorization checks | TS-437 | Not yet ported |
@@ -45,7 +46,7 @@ Retaining that record rejects replay and reissue at the same address. No
 identity routes, users, sessions or OIDC token flows are added by this storage work.
 
 `/readyz` checks that `uniques`, `verification_tokens` and `storage_health`
-exist in the configured database, then creates, reads and conditionally
+(and, since TS-490, `users`, `sessions` and `passcodes`) exist in the configured database, then creates, reads and conditionally
 deletes a synthetic `storage_health` document. Missing state, insufficient
 credential scopes and storage failures return 503; there is no provisioning,
 repair or in-memory fallback. The existing one-second completed-observation
@@ -86,3 +87,74 @@ links the pinned decisions.
 Persistent uploaded files are not implemented; admin assets and fonts are
 embedded in the executable. If persistent files are added, they use RustFS
 through S3.
+
+## TS-490 users, sessions and email passcodes
+
+Users, server-side sessions and email passcodes are internal services in
+`src/TerraScale.Auth/Features/Identity/`, registered in DI on the TerraBase
+store. No hosted page, JSON route or management API serves them yet: routes need
+instance resolution and the email sender from TS-488 (PR #32, not merged). The
+fast suite drives sign-in, rotation and sign-out over real HTTP through
+test-only routes.
+
+Users are `{id, instanceId, email, authEpoch, createdAt}` in `users`, with a
+random UUID id. Emails are trimmed and lowercased invariantly, then checked
+for plausibility: at most 254 characters, no whitespace or control characters,
+exactly one `@` after a non-empty local part, and a domain of at least two
+non-empty dot-separated labels (stricter than Rust, which accepted `a@.`).
+Creation writes the email claim and the user in one TerraBase transaction, both
+create-only, so a claim never exists without its account. A taken email returns
+null. Lookup goes from claim to user and rechecks instance and email.
+
+Sessions (`sessions`) use a 48-character alphanumeric CSPRNG token. Only its
+SHA-256 is stored, and it is the document address. The lifetime is an absolute
+14 days from authentication. Resolution checks the instance, the revoked flag, a
+fixed-time hash comparison and expiry, then that the user exists in the
+instance with an `authEpoch` equal to the session's. Every resolution reads
+TerraBase, with no cache, so revocation is immediate on every replica. Rotation
+conditionally revokes the old session first, then issues a successor with the
+same expiry, so it never extends the lifetime; concurrent rotations yield one
+successor. Sign-out sets `revoked` with a conditional write and is idempotent.
+Sign-out everywhere advances the user's `authEpoch` with a conditional write,
+which also voids outstanding passcodes. Every ten minutes each replica's
+`SessionPruner` deletes revoked and expired session documents of every instance
+in batches of 500, continuing while a batch comes back full and deletes something.
+Each delete is version-conditional, so competing replicas share the backlog
+safely; a dead session grants nothing while it waits.
+
+The cookie is the existing `tsauth_session` (`BrowserSecurity.SetSessionCookie`,
+declared in OpenAPI as `SessionCookie`): `Secure`, `HttpOnly`, `SameSite=Lax`,
+`Path=/` and a browser-session lifetime. The server enforces expiry. The
+test-only sign-in route revokes the presented session before setting the new
+cookie.
+
+Passcodes (`passcodes`, one document per user) are six CSPRNG digits that last
+10 minutes, work once and die after 5 wrong guesses. At most 5 codes are issued
+per user per hour, using a fixed window stored on the same document and updated
+with conditional writes. A new code replaces the previous one. Only an
+HMAC-SHA256 is stored, keyed by HKDF-SHA256 of the master key (info
+`ts-auth passcode digests`) and bound to instance and user, so a database copy
+alone cannot be brute-forced offline. Changing `TS_AUTH_MASTER_KEY` makes
+outstanding codes fail. Comparison is fixed-time. A wrong guess is charged, and a
+correct one consumed, in a conditional write that must win, so concurrent
+guesses cannot exceed the limit and concurrent redemptions have exactly one
+winner. Malformed codes are rejected without charging an attempt. A code is
+bound to the user's email and `authEpoch` at issue. It is consumed before the
+session is written: a failed session write costs the user a new code and never
+yields two sessions. Unknown emails write nothing.
+
+Differences from Rust: Rust stored SHA-256 of the code and had a 30-second resend
+throttle. C# stores the keyed HMAC and uses the hourly issue cap instead.
+
+Per-user limits live on the passcode document. The TS-488 `AttemptLimiter` is not
+on `main`; per-client and per-route limits, generic responses and timing
+equalization belong to the routes that will expose these flows.
+
+`AuthStore.ProvisionAsync` now also creates `users`, `sessions` and
+`passcodes`, and `/readyz` requires them: a database provisioned before TS-490
+reports 503 until an operator runs `ProvisionAsync` again.
+
+Not in TS-490 (remaining TS-432 surface): hosted sign-in and sign-up pages,
+password sign-in and reset, magic links, email verification, account and
+session-list pages, the management API for users, sessions, impersonation,
+instances and API keys.

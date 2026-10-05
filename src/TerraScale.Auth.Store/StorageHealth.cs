@@ -28,7 +28,7 @@ public sealed class TerraBaseStorageHealth(TerraBaseDatabase database) : IStorag
     /// <inheritdoc />
     public async Task<StorageHealthResult> CheckAsync(CancellationToken cancellationToken)
     {
-        foreach (var collection in new[] { AuthStore.UniqueCollection, AuthStore.ChallengeCollection, AuthStore.HealthCollection })
+        foreach (var collection in AuthStore.RequiredCollections)
         {
             await database.GetCollectionAsync(collection, cancellationToken).ConfigureAwait(false);
         }

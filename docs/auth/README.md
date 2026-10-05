@@ -12,9 +12,11 @@ TUnit and Playwright integration tests.
 > readiness, OpenAPI and Scalar, the hosted-page shell, telemetry, the test
 > harness and CI. TS-489 adds the Documents v1 storage boundary and real
 > storage readiness, validated locally against the pinned binary. Live production
-> activation remains gated (see provisioning below). Users/sessions (TS-490)
-> and OIDC (TS-491) are not implemented. The identity features below are being
-> ported stream by stream. Until a stream lands, its routes are not served.
+> activation remains gated (see provisioning below). TS-490 adds users,
+> server-side sessions and email passcodes as internal services on that store;
+> no page or route serves them yet. OIDC (TS-491) is not implemented. The
+> identity features below are being ported stream by stream. Until a stream
+> lands, its routes are not served.
 > [`docs/parity.md`](docs/parity.md) tracks each capability, and
 > [`docs/csharp-port.md`](docs/csharp-port.md) describes the layout, commands
 > and intentional changes. The Rust implementation remains in Git history
@@ -271,7 +273,8 @@ member's HTTPS origin and set `TS_AUTH_ENVIRONMENT=Development`, a valid
 `tb_…` key and `TS_AUTH_DATABASE=<project-uuid>/<database-name>`. The application
 does not start or embed TerraBase; the integration-test fixture starts the
 SDK-pinned binary. `/readyz` checks the existing `uniques`,
-`verification_tokens` and `storage_health` collections, then creates, reads
+`verification_tokens`, `storage_health`, `users`, `sessions` and `passcodes`
+collections, then creates, reads
 and conditionally deletes a synthetic document in `storage_health`. It returns
 200 only on success, otherwise 503, without provisioning, repair or in-memory
 fallback. Observations coalesce and are cached for one second after
@@ -293,8 +296,11 @@ the provisioning plan; live production execution belongs to TS-470:
 2. Provision the `auth` database and a `tb_…` credential restricted to the
    auth project/database with `documents:read` and `documents:write`.
 3. Explicitly call `AuthStore.ProvisionAsync` with the pinned SDK against that
-   existing database. It creates only `uniques`, `verification_tokens` and
-   `storage_health`; feature streams own their other collections.
+   existing database. It creates `uniques`, `verification_tokens` and
+   `storage_health`, plus the TS-490 `users`, `sessions` and `passcodes`
+   collections; later feature streams own their other collections. `/readyz`
+   requires all six, so a database provisioned before TS-490 reports 503 until
+   this step is repeated. Run it before rolling out TS-490.
 4. Configure every replica with `<auth-project-uuid>/auth` and the same
    explicitly resolved HTTPS storage authority and shared auth settings.
 

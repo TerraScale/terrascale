@@ -4,8 +4,9 @@ ts-auth is a C# service on .NET 10. Epic TS-424 (ku.mariogk.com) tracks the
 port. The Rust workspace was removed in TS-442; its source in Git history
 before `8dd2874` is the behavioural reference for each port stream, including
 the original TS-428 storage design. TS-489 implements the Documents v1 storage
-boundary; users/sessions (TS-490) and OIDC (TS-491) are not implemented, and
-`docs/parity.md` tracks what has landed.
+boundary. TS-490 adds users, sessions and email passcodes as internal services
+that no route serves yet; OIDC (TS-491) is not implemented. `docs/parity.md`
+tracks what has landed.
 
 ## Layout
 
@@ -138,8 +139,9 @@ marks the record consumed with CAS and returns `Consumed=true` on success.
 The record remains to reject replay and reissue; a write completing after
 expiry cannot grant authorization.
 
-`TerraBaseStorageHealth` checks the configured database's `uniques`,
-`verification_tokens` and `storage_health` collections, then performs a
+`TerraBaseStorageHealth` checks that every collection in
+`AuthStore.RequiredCollections` exists (`uniques`, `verification_tokens`,
+`storage_health`, and since TS-490 `users`, `sessions` and `passcodes`), then performs a
 synthetic create-only write, version/content-checked read and conditional
 delete in `storage_health`. `/readyz` returns 200 only on success and 503 on
 missing state, permission failure, outage or timeout. Concurrent observations
@@ -148,11 +150,56 @@ deadline is two seconds. `region` is omitted when unknown, as it is for this
 probe.
 
 The application and probe never provision or repair state. An operator/test
-can explicitly call `AuthStore.ProvisionAsync` to create only those three
-infrastructure collections in an already existing database; repeated setup
-accepts an existing collection. Feature streams must provision their own
-collections. This is not production project/database provisioning or a
-migration of Rust documents.
+can explicitly call `AuthStore.ProvisionAsync` to create those three
+infrastructure collections, plus `users`, `sessions` and `passcodes` (TS-490),
+in an already existing database; repeated setup accepts an existing collection.
+Later feature streams must provision their own collections. Readiness requires
+the same list, so a database provisioned before TS-490 reports 503 until
+`ProvisionAsync` runs again. This is not production project/database provisioning or a migration of
+Rust documents.
+
+## Users, sessions and passcodes (TS-490)
+
+`Users`, `Sessions` and `Passcodes` in `src/TerraScale.Auth/Features/Identity/`
+are singletons registered in `App.Build` over `AuthStore`. No hosted page, JSON
+route or management API serves them yet: routes need instance resolution and the
+email sender from TS-488 (PR #32, not merged). Callers authorize the instance
+before using them. The fast suite drives sign-in, rotation and sign-out over real
+HTTP through test-only routes (`tests/TerraScale.Auth.Fast/Identity/`).
+
+- **Users** (`users`): creating an account writes the email claim and the user
+  document in one TerraBase transaction, both create-only, so a claim never
+  outlives a failed creation. A taken email returns null. Emails are trimmed,
+  lowercased and checked for plausibility (one `@`, no whitespace or control
+  characters, at least two non-empty domain labels).
+- **Sessions** (`sessions`): the 48-character token is never stored; its
+  SHA-256 is the document address. The lifetime is an absolute 14 days. Each
+  resolution reads TerraBase and checks instance, revoked flag, expiry and the
+  user's `authEpoch`, so revocation is immediate on every replica. Rotation
+  revokes the old session with a conditional write before issuing a successor
+  with the same expiry. Sign-out everywhere advances `authEpoch`. Every ten
+  minutes each replica's `SessionPruner` deletes revoked and expired documents
+  with version-conditional deletes in batches of 500, continuing while a batch
+  comes back full and deletes something; competing replicas share the backlog.
+  A dead session grants nothing while it waits. A failed pass logs a warning and
+  retries.
+- **Cookie**: the existing `tsauth_session` from `BrowserSecurity` (`Secure`,
+  `HttpOnly`, `SameSite=Lax`, `Path=/`, browser-session lifetime).
+- **Passcodes** (`passcodes`, one document per user): six digits, 10 minutes,
+  single use, 5 wrong guesses, 5 issued codes per user per hour. Only an
+  HMAC-SHA256 keyed by HKDF-SHA256 of `TS_AUTH_MASTER_KEY` and bound to instance
+  and user is stored, so changing the master key invalidates outstanding codes.
+  Each wrong guess or redemption is a conditional write that must win, so
+  concurrent requests cannot exceed the limit or redeem a code twice. A code is
+  consumed before its session is written.
+
+Per-user limits live on the passcode document. Per-client and per-route limits,
+generic responses and timing equalization belong to the routes that will expose
+these flows, with the TS-488 `AttemptLimiter`, which is not on `main`. Rust
+stored SHA-256 of the code and throttled resends to one per 30 seconds; C# uses
+the keyed HMAC and the hourly issue cap instead. Password sign-in and reset,
+magic links, email verification, account pages and the management API remain in
+TS-432's later work.
 
 ## Production activation gate
 

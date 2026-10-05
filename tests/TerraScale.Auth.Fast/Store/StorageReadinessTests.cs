@@ -48,7 +48,7 @@ public sealed class StorageReadinessTests(TerraBaseFixture fixture)
         using var unavailable = await missing.Client.GetAsync("/readyz");
         await Assert.That(unavailable.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
         await Assert.That((await database.ListCollectionsAsync()).Items.Select(collection => collection.Name))
-            .IsEquivalentTo(["storage_health", "uniques", "verification_tokens"]);
+            .IsEquivalentTo(["passcodes", "sessions", "storage_health", "uniques", "users", "verification_tokens"]);
     }
 
     [Test]
@@ -71,6 +71,9 @@ public sealed class StorageReadinessTests(TerraBaseFixture fixture)
     [Arguments("uniques")]
     [Arguments("verification_tokens")]
     [Arguments("storage_health")]
+    [Arguments("users")]
+    [Arguments("sessions")]
+    [Arguments("passcodes")]
     public async Task Missing_required_collection_fails_closed_without_reprovisioning(string collection)
     {
         var (tenant, database) = await fixture.CreateDatabaseAsync();
