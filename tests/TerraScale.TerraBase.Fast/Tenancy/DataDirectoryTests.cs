@@ -368,6 +368,7 @@ public sealed class DataDirectoryTests
             {
                 "admin-port" => "0",
                 "data-directory" => dataDirectory,
+                "region" => "test-region",
                 _ => string.Empty,
             };
             start.ArgumentList.Add($"--{name}={value}");

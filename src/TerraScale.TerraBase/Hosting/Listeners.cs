@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Connections.Features;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
+using Microsoft.OpenApi;
 using TerraScale.TerraBase.Configuration;
 
 namespace TerraScale.TerraBase.Hosting;
@@ -36,6 +37,46 @@ public sealed record ListenerMetadata(TerraBaseListener Listener)
 public static class Listeners
 {
     private static readonly object ListenerKey = typeof(TerraBaseListener);
+
+    /// <summary>Documents the client listener's region headers and pin rejection in OpenAPI.</summary>
+    public static IServiceCollection AddTerraBaseRegionOpenApi(this IServiceCollection services)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        services.AddOpenApi("v1", options => options.AddOperationTransformer(async (operation, context, cancellationToken) =>
+        {
+            if (context.Description.ActionDescriptor.EndpointMetadata.OfType<ListenerMetadata>()
+                .Any(metadata => metadata.Listener == TerraBaseListener.Client))
+            {
+                operation.Parameters ??= [];
+                operation.Parameters.Add(new OpenApiParameter
+                {
+                    Name = "X-TerraScale-Region-Pin",
+                    In = ParameterLocation.Header,
+                    Description = "Optional single raw region ID. An empty, duplicate or mismatched pin returns 421 before execution; re-resolve through Atlas.",
+                    Schema = new OpenApiSchema { Type = JsonSchemaType.String },
+                });
+                operation.Responses ??= [];
+                operation.Responses["421"] = new OpenApiResponse
+                {
+                    Description = "Misdirected Request; X-TerraBase-Region identifies the serving node.",
+                    Content = new Dictionary<string, IOpenApiMediaType>(StringComparer.Ordinal)
+                    {
+                        ["application/json"] = new OpenApiMediaType { Schema = await context.GetOrCreateSchemaAsync(typeof(ErrorBody), cancellationToken: cancellationToken) },
+                    },
+                };
+                foreach (var response in operation.Responses.Values.OfType<OpenApiResponse>())
+                {
+                    response.Headers ??= new Dictionary<string, IOpenApiHeader>(StringComparer.Ordinal);
+                    response.Headers["X-TerraBase-Region"] = new OpenApiHeader
+                    {
+                        Description = "Region of the serving TerraBase node (client listener only).",
+                        Schema = new OpenApiSchema { Type = JsonSchemaType.String },
+                    };
+                }
+            }
+        }));
+        return services;
+    }
 
     /// <summary>Tags every connection accepted by <paramref name="listen"/> with its listener.</summary>
     public static ListenOptions UseTerraBaseListener(this ListenOptions listen, TerraBaseListener listener)
@@ -74,12 +115,29 @@ public static class Listeners
     public static WebApplication UseTerraBaseListeners(this WebApplication app)
     {
         ArgumentNullException.ThrowIfNull(app);
+        var region = app.Services.GetRequiredService<TerraBaseOptions>().Region;
         app.UseRouting();
         app.Use((context, next) =>
         {
             var arrivedOn = context.Features.Get<IConnectionItemsFeature>()?.Items.TryGetValue(ListenerKey, out var tag) == true
                 ? tag as TerraBaseListener?
                 : null;
+            if (arrivedOn == TerraBaseListener.Client)
+            {
+                // OnStarting survives Response.Clear() in the error middleware.
+                context.Response.OnStarting(() =>
+                {
+                    context.Response.Headers["X-TerraBase-Region"] = region;
+                    return Task.CompletedTask;
+                });
+                if (context.Request.Headers.TryGetValue("X-TerraScale-Region-Pin", out var pin)
+                    && (pin.Count != 1 || !string.Equals(pin[0], region, StringComparison.Ordinal)))
+                {
+                    context.Response.StatusCode = StatusCodes.Status421MisdirectedRequest;
+                    return Task.CompletedTask;
+                }
+            }
+
             var servedBy = context.GetEndpoint()?.Metadata.GetMetadata<ListenerMetadata>()?.Listener ?? TerraBaseListener.Admin;
             if (arrivedOn != servedBy)
             {

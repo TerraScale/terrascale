@@ -158,8 +158,12 @@ Shapes:
 ```json
 {"id":"0199…","name":"Acme","createdBy":"<ts-auth user id>","createdAt":"2026-10-04T12:00:00+00:00","plan":"hobby"}
 {"id":"0199…","organizationId":"0199…","name":"Production","createdAt":"…"}
-{"id":"0199…","projectId":"0199…","name":"main","branchedFrom":null,"createdAt":"…"}
+{"id":"0199…","projectId":"0199…","name":"main","branchedFrom":null,"createdAt":"…","region":"gru-1"}
 ```
+
+Database create, branch, get and list responses report the serving node's `region`,
+also returned in `X-TerraBase-Region`. It is response metadata, not persisted
+placement. See [region identity](region-identity.md) for Atlas session pins and `421` responses.
 
 ## Members and roles
 

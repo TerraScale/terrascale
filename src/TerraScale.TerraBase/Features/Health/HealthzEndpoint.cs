@@ -1,5 +1,6 @@
 using System.Text.Json.Serialization;
 using TerraScale.Endpoints;
+using TerraScale.TerraBase.Configuration;
 using TerraScale.TerraBase.Hosting;
 
 namespace TerraScale.TerraBase.Features.Health;
@@ -7,12 +8,14 @@ namespace TerraScale.TerraBase.Features.Health;
 /// <summary>Liveness body.</summary>
 /// <param name="Status">Always <c>ok</c>.</param>
 /// <param name="Version">Service version of the running build.</param>
+/// <param name="Region">Region of this node.</param>
 public sealed record StatusBody(
     [property: JsonPropertyName("status")] string Status,
-    [property: JsonPropertyName("version")] string Version);
+    [property: JsonPropertyName("version")] string Version,
+    [property: JsonPropertyName("region")] string Region);
 
 /// <summary><c>GET /healthz</c>: the process is serving requests.</summary>
-public sealed class HealthzEndpoint : EndpointWithoutRequest<StatusBody>
+public sealed class HealthzEndpoint(TerraBaseOptions options) : EndpointWithoutRequest<StatusBody>
 {
     /// <inheritdoc />
     public override void Configure()
@@ -26,5 +29,5 @@ public sealed class HealthzEndpoint : EndpointWithoutRequest<StatusBody>
 
     /// <inheritdoc />
     public override ValueTask<StatusBody> HandleAsync(CancellationToken cancellationToken) =>
-        ValueTask.FromResult(new StatusBody("ok", ServiceVersion.Value));
+        ValueTask.FromResult(new StatusBody("ok", ServiceVersion.Value, options.Region));
 }

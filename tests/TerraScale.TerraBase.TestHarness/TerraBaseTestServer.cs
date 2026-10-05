@@ -98,9 +98,10 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
     /// Starts a server. <paramref name="settings"/> edits the <c>--name=value</c> settings;
     /// <paramref name="services"/> replaces services after the application registered its own
     /// (for example a <see cref="TimeProvider"/> that tests move forward).
+    /// <paramref name="environmentName"/> selects the host environment without changing process-wide variables.
     /// </summary>
     public static async Task<TerraBaseTestServer> StartAsync(
-        Action<Dictionary<string, string>>? settings = null, Action<IServiceCollection>? services = null)
+        Action<Dictionary<string, string>>? settings = null, Action<IServiceCollection>? services = null, string environmentName = "Development")
     {
         var dataDirectory = Directory.CreateTempSubdirectory("terrabase-test-").FullName;
         WebApplicationFactory<Program>? factory = null;
@@ -110,6 +111,7 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
             {
                 ["admin-port"] = "0",
                 ["data-directory"] = dataDirectory,
+                ["region"] = "test-region",
             };
             settings?.Invoke(values);
 
@@ -122,12 +124,13 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
                 arguments[key] = value;
             }
 
-            factory = new Factory(arguments, services);
+            factory = new Factory(arguments, services, environmentName);
             factory.UseKestrel();
             IServerAddressesFeature addresses;
             try
             {
-                factory.StartServer();
+                // Factory startup blocks waiting for the host; keep parallel starts off request workers.
+                await Task.Factory.StartNew(factory.StartServer, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
                 addresses = factory.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()
                     ?? throw new InvalidOperationException("the server did not report its listening addresses");
             }
@@ -171,10 +174,11 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
         Directory.Delete(_temporaryDirectory, recursive: true);
     }
 
-    private sealed class Factory(IReadOnlyDictionary<string, string> settings, Action<IServiceCollection>? services) : WebApplicationFactory<Program>
+    private sealed class Factory(IReadOnlyDictionary<string, string> settings, Action<IServiceCollection>? services, string environmentName) : WebApplicationFactory<Program>
     {
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
+            builder.UseEnvironment(environmentName);
             foreach (var (key, value) in settings)
             {
                 builder.UseSetting(key, value);

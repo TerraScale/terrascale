@@ -128,6 +128,7 @@ public static partial class BadRequests
         StatusCodes.Status405MethodNotAllowed => "method_not_allowed",
         StatusCodes.Status413PayloadTooLarge => "payload_too_large",
         StatusCodes.Status415UnsupportedMediaType => "unsupported_media_type",
+        StatusCodes.Status421MisdirectedRequest => "misdirected_request",
         >= 500 => "internal_error",
         _ => "invalid_request",
     };

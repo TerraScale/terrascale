@@ -44,7 +44,7 @@ set -e
 expected_version=$(sed -n 's:.*<Version>\(.*\)</Version>.*:\1:p' src/TerraScale.TerraBase/TerraScale.TerraBase.csproj)
 port=$(python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')
 mkdir -p "$work/data"
-"$staged" --admin-port="$port" --data-directory="$work/data" >"$work/smoke.log" 2>&1 &
+"$staged" --region=ci --admin-port="$port" --data-directory="$work/data" >"$work/smoke.log" 2>&1 &
 pid=$!
 body=
 for _ in $(seq 1 100); do
@@ -52,7 +52,7 @@ for _ in $(seq 1 100); do
   kill -0 "$pid" 2>/dev/null || break
   sleep 0.1
 done
-[[ $body == *"\"status\":\"ok\""* && $body == *"\"version\":\"$expected_version\""* ]] || {
+[[ $body == *"\"status\":\"ok\""* && $body == *"\"version\":\"$expected_version\""* && $body == *"\"region\":\"ci\""* ]] || {
   echo "smoke run failed: /healthz answered '${body:-nothing}'" >&2
   cat "$work/smoke.log" >&2
   exit 1

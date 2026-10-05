@@ -8,10 +8,24 @@ using TerraScale.TerraBase.Features.Management;
 using TerraScale.TerraBase.Features.Replication;
 using TerraScale.TerraBase.Hosting;
 
+// Match the slim host's environment precedence; WebApplicationFactory supplies an argument override.
+var environmentName = args.LastOrDefault(argument => argument.StartsWith("--environment=", StringComparison.Ordinal))?[14..]
+    ?? Environment.GetEnvironmentVariable("DOTNET_ENVIRONMENT")
+    ?? Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT")
+    ?? Environments.Production;
 TerraBaseOptions options;
 try
 {
     options = TerraBaseOptions.FromProcess(args);
+    if (options.Region.Length == 0)
+    {
+        options = options with
+        {
+            Region = string.Equals(environmentName, Environments.Development, StringComparison.OrdinalIgnoreCase)
+                ? "development"
+                : throw new TerraBaseConfigurationException("region is required outside Development (TERRABASE_REGION or --region=value)"),
+        };
+    }
 }
 catch (TerraBaseConfigurationException error)
 {
@@ -23,7 +37,7 @@ catch (TerraBaseConfigurationException error)
 // Settings come only from TerraBaseOptions. The slim builder still adds environment variables
 // and appsettings files, and Kestrel would bind listeners from a "Kestrel" section in them
 // (for example Kestrel__Endpoints__X__Url): drop every configuration source.
-var builder = WebApplication.CreateSlimBuilder(new WebApplicationOptions { Args = [] });
+var builder = WebApplication.CreateSlimBuilder(new WebApplicationOptions { Args = [], EnvironmentName = environmentName });
 builder.Configuration.Sources.Clear();
 builder.WebHost.ConfigureKestrel(kestrel =>
 {
@@ -43,6 +57,7 @@ builder.Services.AddTerraScaleEndpoints(endpoints =>
     endpoints.Title = "TerraBase API";
     endpoints.Version = "v1";
 });
+builder.Services.AddTerraBaseRegionOpenApi();
 builder.Services.AddTerraBaseRequestBodies("v1");
 builder.Services.AddTerraBaseTelemetry();
 builder.Services.AddTerraBaseEngine(options);

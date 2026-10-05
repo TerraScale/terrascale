@@ -40,7 +40,7 @@ public sealed record TerraBaseOptions
 
     private static readonly FrozenSet<string> Keys = FrozenSet.Create(
         StringComparer.Ordinal,
-        ["admin-port", "data-directory", "client-port", .. ClientTlsKeys, "dashboard-credential-file", "management-legacy-owner", "peer-port", .. PeerTlsKeys, "shutdown-grace-seconds"]);
+        ["admin-port", "data-directory", "region", "client-port", .. ClientTlsKeys, "dashboard-credential-file", "management-legacy-owner", "peer-port", .. PeerTlsKeys, "shutdown-grace-seconds"]);
 
     /// <summary>Every setting name, in <c>--name=value</c> form without the dashes.</summary>
     public static IReadOnlySet<string> SettingNames => Keys;
@@ -55,6 +55,9 @@ public sealed record TerraBaseOptions
 
     /// <summary>Directory holding one SQLite file per database.</summary>
     public required string DataDirectory { get; init; }
+
+    /// <summary>Node region. Startup requires it outside Development, where it defaults to <c>development</c>.</summary>
+    public string Region { get; init; } = string.Empty;
 
     /// <summary>
     /// Port of the client-facing HTTPS listener; <c>0</c> picks a free port.
@@ -149,6 +152,13 @@ public sealed record TerraBaseOptions
             }
         }
 
+        var region = values.GetValueOrDefault("region", string.Empty);
+        if (values.ContainsKey("region") && (region.Length is < 1 or > 63 || region[0] is < 'a' or > 'z'
+            || region[^1] == '-' || region.Any(character => character is not (>= 'a' and <= 'z' or >= '0' and <= '9' or '-'))))
+        {
+            throw new TerraBaseConfigurationException("region must be a lowercase letter followed by lowercase letters, digits or hyphens, at most 63 characters, without a trailing hyphen");
+        }
+
         var dataDirectory = values.GetValueOrDefault("data-directory", DefaultDataDirectory);
         if (string.IsNullOrWhiteSpace(dataDirectory))
         {
@@ -185,6 +195,7 @@ public sealed record TerraBaseOptions
         {
             AdminPort = ParsePort(values, "admin-port") ?? DefaultAdminPort,
             DataDirectory = dataDirectory,
+            Region = region,
             ClientPort = clientPort,
             ClientCertificate = clientPort is null ? null : LoadPem(
                 () => X509Certificate2.CreateFromPemFile(values["client-certificate"], values["client-private-key"]),

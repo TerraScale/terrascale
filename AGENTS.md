@@ -109,6 +109,7 @@ The project MUST follow a **feature-sliced design** so related and dependent fil
 
 ## Networking
 
+- Resolve client regions/endpoints through ts-atlas, allow an explicit static override, and pin sessions; never hardcode regional endpoints in client code. Follow the landed Atlas pin contract and `docs/region-identity.md`.
 - TerraBase-to-TerraBase communication MUST use **gRPC** with checked-in, versioned `.proto` contracts.
 - Inter-node gRPC communication MUST use **LZ4 compression** to reduce bandwidth usage.
 - Do not introduce alternative inter-node protocols without explicit human approval.
