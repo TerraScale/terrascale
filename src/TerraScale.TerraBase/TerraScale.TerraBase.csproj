@@ -28,6 +28,7 @@
     <PackageReference Include="Grpc.Net.ClientFactory" />
     <PackageReference Include="Grpc.Tools" PrivateAssets="all" />
     <PackageReference Include="Microsoft.Data.Sqlite" />
+    <PackageReference Include="Microsoft.IdentityModel.Protocols.OpenIdConnect" />
     <PackageReference Include="NativeCompressions" />
     <PackageReference Include="Ulid" />
     <PackageReference Include="ZString" />

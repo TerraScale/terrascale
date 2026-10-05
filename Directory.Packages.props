@@ -42,6 +42,10 @@
     <PackageVersion Include="Scalar.AspNetCore" Version="2.17.13" />
     <PackageVersion Include="AspNetCore.HealthChecks.UI.Client" Version="9.0.0" />
   </ItemGroup>
+  <!-- ts-auth OIDC discovery, JWKS and JWT validation (Features/UserAuth). -->
+  <ItemGroup Label="Authentication">
+    <PackageVersion Include="Microsoft.IdentityModel.Protocols.OpenIdConnect" Version="8.23.0" />
+  </ItemGroup>
   <!-- OpenTelemetry: keep every package on the same release train. The Prometheus
        exporter is only published as beta; it serves the required /metrics scrape. -->
   <ItemGroup Label="OpenTelemetry">

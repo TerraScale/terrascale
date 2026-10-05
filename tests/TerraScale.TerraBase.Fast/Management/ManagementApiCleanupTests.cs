@@ -12,9 +12,7 @@ public sealed class ManagementApiCleanupTests
     [Arguments(true)]
     public async Task Disposal_cleans_independent_resources_when_server_or_tls_cleanup_fails(bool tlsCleanupFails)
     {
-        var credentialDirectory = string.Empty;
-        var api = await ManagementApi.StartAsync(settings =>
-            credentialDirectory = Path.GetDirectoryName(settings["dashboard-credential-file"])!);
+        var api = await ManagementApi.StartAsync();
         var tlsSettings = new Dictionary<string, string>(StringComparer.Ordinal);
         api.Tls.Apply(tlsSettings);
         var tlsDirectory = Path.GetDirectoryName(tlsSettings["client-certificate"])!;
@@ -41,7 +39,8 @@ public sealed class ManagementApiCleanupTests
             await Assert.That(Directory.Exists(tlsDirectory)).IsFalse();
             await Assert.That(File.Exists(tlsSettings["client-certificate"])).IsFalse();
             await Assert.That(File.Exists(tlsSettings["client-private-key"])).IsFalse();
-            await Assert.That(Directory.Exists(credentialDirectory)).IsFalse();
+            // The issuer's signing keys were disposed too.
+            await Assert.That(() => api.Issuer.Mint("user")).Throws<ObjectDisposedException>();
         }
         finally
         {
@@ -65,10 +64,7 @@ public sealed class ManagementApiCleanupTests
                 }
                 finally
                 {
-                    if (Directory.Exists(credentialDirectory))
-                    {
-                        Directory.Delete(credentialDirectory, recursive: true);
-                    }
+                    api.Issuer.Dispose();
                 }
             }
         }

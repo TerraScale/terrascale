@@ -1,26 +1,19 @@
-using System.Net;
 using System.Net.Http.Headers;
 using System.Text.Json;
 
 namespace TerraScale.TerraBase.Testing;
 
 /// <summary>
-/// A server with the client listener and the dashboard credential, and clients that send it like
-/// ts-dashboard: the acting user on every request and, on organization routes, the organization from the path.
+/// A server with the client listener that trusts a <see cref="TestIssuer"/>, and clients that call it like ts-dashboard
+/// forwarding a signed-in user's ts-auth access token.
 /// </summary>
 public sealed class ManagementApi : IAsyncDisposable
 {
-    public const string Credential = "test-dashboard-credential-0123456789abcdef";
-    public const string UserHeader = "X-TerraBase-User-Id";
-    public const string OrganizationHeader = "X-TerraBase-Organization-Id";
-
-    private readonly string _directory;
-
-    private ManagementApi(TerraBaseTestServer server, ClientTls tls, string directory, string user)
+    private ManagementApi(TerraBaseTestServer server, ClientTls tls, TestIssuer issuer, string user)
     {
         Server = server;
         Tls = tls;
-        _directory = directory;
+        Issuer = issuer;
         User = user;
         Client = As(user);
     }
@@ -29,28 +22,34 @@ public sealed class ManagementApi : IAsyncDisposable
 
     public ClientTls Tls { get; }
 
+    /// <summary>The ts-auth stand-in whose tokens the server accepts.</summary>
+    public TestIssuer Issuer { get; }
+
     public string User { get; }
 
-    /// <summary>A dashboard client acting as <see cref="User"/>.</summary>
+    /// <summary>A client acting as <see cref="User"/>.</summary>
     public HttpClient Client { get; }
 
     /// <summary>Starts a server; <paramref name="services"/> replaces services as in <see cref="TerraBaseTestServer.StartAsync"/>.</summary>
     public static async Task<ManagementApi> StartAsync(
         Action<Dictionary<string, string>>? configure = null, Action<Microsoft.Extensions.DependencyInjection.IServiceCollection>? services = null)
     {
-        var directory = Directory.CreateTempSubdirectory("terrabase-dashboard-").FullName;
         var tls = new ClientTls();
+        var issuer = new TestIssuer();
         try
         {
-            var credentialFile = Path.Combine(directory, "credential");
-            await File.WriteAllTextAsync(credentialFile, Credential + "\n");
             var server = await TerraBaseTestServer.StartAsync(settings =>
             {
                 tls.Apply(settings);
-                settings["dashboard-credential-file"] = credentialFile;
+                TestIssuer.Configure(settings);
                 configure?.Invoke(settings);
-            }, services);
-            return new ManagementApi(server, tls, directory, Guid.NewGuid().ToString());
+            }, collection =>
+            {
+                issuer.Route(collection);
+                services?.Invoke(collection);
+            });
+            // Startup waited for the issuer's keys, so tokens work from the first request.
+            return new ManagementApi(server, tls, issuer, Guid.NewGuid().ToString());
         }
         catch
         {
@@ -60,37 +59,22 @@ public sealed class ManagementApi : IAsyncDisposable
             }
             finally
             {
-                Directory.Delete(directory, recursive: true);
+                issuer.Dispose();
             }
 
             throw;
         }
     }
 
-    /// <summary>A dashboard client acting as <paramref name="user"/>.</summary>
-    public HttpClient As(string user)
-    {
-        var client = new HttpClient(new DashboardHeaders(user) { InnerHandler = Tls.CreateHandler() })
-        {
-            BaseAddress = Server.ClientAddress,
-            Timeout = TimeSpan.FromSeconds(30),
-        };
-        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", Credential);
-        return client;
-    }
+    /// <summary>A client acting as <paramref name="user"/>, with <paramref name="email"/> as its verified email when set.</summary>
+    public HttpClient As(string user, string? email = null) =>
+        Authorized(() => email is null ? Issuer.Mint(user) : Issuer.MintWithEmail(user, email));
+
+    /// <summary>A client that sends <paramref name="token"/> as its bearer token, or no token when it is null.</summary>
+    public HttpClient WithToken(string? token) => Tls.CreateClient(Server.ClientAddress!, token);
 
     /// <summary>A data API client for the client listener that sends <paramref name="apiKey"/>, if any.</summary>
     public HttpClient DataClient(string? apiKey = null) => Tls.CreateClient(Server.ClientAddress!, apiKey);
-
-    /// <summary>Sends a request after <paramref name="edit"/> changes its final headers.</summary>
-    public async Task<HttpStatusCode> SendAsync(HttpMethod method, string path, Action<HttpRequestHeaders> edit)
-    {
-        using var client = new HttpClient(new DashboardHeaders(User, edit) { InnerHandler = Tls.CreateHandler() }) { BaseAddress = Server.ClientAddress };
-        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", Credential);
-        using var request = new HttpRequestMessage(method, new Uri(path, UriKind.Relative));
-        using var response = await client.SendAsync(request);
-        return response.StatusCode;
-    }
 
     public async Task<string> CreateOrganizationAsync(string name, HttpClient? client = null) =>
         await CreateAsync(client, "/v1/management/organizations", name);
@@ -124,8 +108,8 @@ public sealed class ManagementApi : IAsyncDisposable
             new Uri($"/v1/management/organizations/{organization}/invitations", UriKind.Relative), new { email, role });
         invited.EnsureSuccessStatusCode();
         var token = (await invited.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("token").GetString();
-        using var member = As(user);
-        using var accepted = await member.PostAsJsonAsync(new Uri("/v1/management/invitations/accept", UriKind.Relative), new { token, email });
+        using var member = As(user, email);
+        using var accepted = await member.PostAsJsonAsync(new Uri("/v1/management/invitations/accept", UriKind.Relative), new { token });
         accepted.EnsureSuccessStatusCode();
         return user;
     }
@@ -150,7 +134,7 @@ public sealed class ManagementApi : IAsyncDisposable
                 }
                 finally
                 {
-                    Directory.Delete(_directory, recursive: true);
+                    Issuer.Dispose();
                 }
             }
         }
@@ -163,18 +147,19 @@ public sealed class ManagementApi : IAsyncDisposable
         return (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString()!;
     }
 
-    private sealed class DashboardHeaders(string user, Action<HttpRequestHeaders>? edit = null) : DelegatingHandler
+    // A fresh token on every request, so a long test never sends an expired one.
+    private HttpClient Authorized(Func<string> token) =>
+        new(new BearerToken(token) { InnerHandler = Tls.CreateHandler() })
+        {
+            BaseAddress = Server.ClientAddress,
+            Timeout = TimeSpan.FromSeconds(30),
+        };
+
+    private sealed class BearerToken(Func<string> token) : DelegatingHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
-            request.Headers.Add(UserHeader, user);
-            var segments = request.RequestUri!.AbsolutePath.Split('/');
-            if (segments.Length > 4 && segments[3] == "organizations")
-            {
-                request.Headers.Add(OrganizationHeader, segments[4]);
-            }
-
-            edit?.Invoke(request.Headers);
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token());
             return base.SendAsync(request, cancellationToken);
         }
     }

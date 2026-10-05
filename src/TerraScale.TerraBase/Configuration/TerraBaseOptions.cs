@@ -35,9 +35,9 @@ public sealed record TerraBaseOptions
 
     private const string EnvironmentPrefix = "TERRABASE_";
 
-    private const int MinDashboardCredentialLength = 32;
-
     private const int MaxUserIdLength = 256;
+
+    private const int MinManagementCredentialLength = 32;
 
     private static readonly string[] ClientTlsKeys = ["client-certificate", "client-private-key"];
 
@@ -45,7 +45,7 @@ public sealed record TerraBaseOptions
 
     private static readonly FrozenSet<string> Keys = FrozenSet.Create(
         StringComparer.Ordinal,
-        ["admin-port", "data-directory", "region", "node-name", "memory-budget", "client-port", .. ClientTlsKeys, "dashboard-credential-file", "management-legacy-owner", "peer-port", .. PeerTlsKeys, "shutdown-grace-seconds", "readiness-cache-seconds"]);
+        ["admin-port", "data-directory", "region", "node-name", "memory-budget", "client-port", .. ClientTlsKeys, "auth-issuer", "auth-audience", "management-credential-file", "management-legacy-owner", "peer-port", .. PeerTlsKeys, "shutdown-grace-seconds", "readiness-cache-seconds"]);
 
     /// <summary>Every setting name, in <c>--name=value</c> form without the dashes.</summary>
     public static IReadOnlySet<string> SettingNames => Keys;
@@ -80,10 +80,21 @@ public sealed record TerraBaseOptions
     public X509Certificate2? ClientCertificate { get; init; }
 
     /// <summary>
-    /// SHA-256 of the dashboard service credential that authorizes the Management API, read from
-    /// <c>dashboard-credential-file</c>. Empty disables the Management API. The secret itself is not kept.
+    /// Issuer (<c>iss</c>) of the ts-auth access tokens that authenticate Management API users, an absolute HTTPS URL.
+    /// Its signing keys come from <c>{issuer}/.well-known/openid-configuration</c>. <see langword="null"/> authenticates
+    /// no user, so the Management API answers 401.
     /// </summary>
-    public ReadOnlyMemory<byte> DashboardCredentialHash { get; init; }
+    public string? AuthIssuer { get; init; }
+
+    /// <summary>Accepted audiences (<c>aud</c>) of those tokens; a token must name at least one. Set with <see cref="AuthIssuer"/>.</summary>
+    public IReadOnlyList<string> AuthAudiences { get; init; } = [];
+
+    /// <summary>
+    /// SHA-256 of the management service credential, read from <c>management-credential-file</c>. It authorizes the Management
+    /// API on the loopback administrative listener only, acting as the user named in <c>X-TerraBase-User-Id</c>. Empty
+    /// disables it. The secret itself is not kept.
+    /// </summary>
+    public ReadOnlyMemory<byte> ManagementCredentialHash { get; init; }
 
     /// <summary>
     /// User id (from ts-auth) that becomes the creator and only member of organizations stored before the
@@ -206,10 +217,7 @@ public sealed record TerraBaseOptions
 
         var clientPort = ParsePort(values, "client-port");
         RequireGroup(values, "client-port", clientPort, ClientTlsKeys);
-        if (clientPort is null && values.ContainsKey("dashboard-credential-file"))
-        {
-            throw new TerraBaseConfigurationException("dashboard-credential-file requires client-port");
-        }
+        var (authIssuer, authAudiences) = ParseAuth(values, clientPort);
 
         var legacyOwner = values.GetValueOrDefault("management-legacy-owner");
         if (legacyOwner is not null && (string.IsNullOrWhiteSpace(legacyOwner) || legacyOwner.Length > MaxUserIdLength || legacyOwner.Any(char.IsControl)))
@@ -232,8 +240,10 @@ public sealed record TerraBaseOptions
             ClientCertificate = clientPort is null ? null : LoadPem(
                 () => X509Certificate2.CreateFromPemFile(values["client-certificate"], values["client-private-key"]),
                 "client-certificate and client-private-key must name a readable PEM certificate and its private key"),
-            DashboardCredentialHash = values.TryGetValue("dashboard-credential-file", out var credentialFile)
-                ? ReadDashboardCredentialHash(credentialFile)
+            AuthIssuer = authIssuer,
+            AuthAudiences = authAudiences,
+            ManagementCredentialHash = values.TryGetValue("management-credential-file", out var credentialFile)
+                ? ReadCredentialHash(credentialFile)
                 : ReadOnlyMemory<byte>.Empty,
             ManagementLegacyOwner = legacyOwner,
             PeerPort = peerPort,
@@ -302,8 +312,44 @@ public sealed record TerraBaseOptions
             : throw new TerraBaseConfigurationException($"readiness-cache-seconds must be an integer between 1 and {MaxReadinessCacheSeconds}");
     }
 
+    // ts-auth tokens authenticate Management API users, which only the client listener serves.
+    private static (string? Issuer, string[] Audiences) ParseAuth(IReadOnlyDictionary<string, string> values, int? clientPort)
+    {
+        var issuer = values.GetValueOrDefault("auth-issuer");
+        var audience = values.GetValueOrDefault("auth-audience");
+        if (issuer is null && audience is null)
+        {
+            return (null, []);
+        }
+
+        if (issuer is null || audience is null)
+        {
+            throw new TerraBaseConfigurationException("auth-issuer and auth-audience must be set together");
+        }
+
+        if (clientPort is null)
+        {
+            throw new TerraBaseConfigurationException("auth-issuer requires client-port");
+        }
+
+        // iss is compared exactly, so whitespace Uri parsing would forgive (" https://…") is refused, not trimmed.
+        if (issuer.Any(character => char.IsWhiteSpace(character) || char.IsControl(character))
+            || !Uri.TryCreate(issuer, UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps
+            || uri.UserInfo.Length > 0 || uri.Query.Length > 0 || uri.Fragment.Length > 0)
+        {
+            throw new TerraBaseConfigurationException(
+                "auth-issuer must be an absolute https URL without whitespace, user information, query or fragment");
+        }
+
+        // Control characters are checked before trimming, which would drop them at the edges of an entry.
+        var audiences = audience.Split(',', StringSplitOptions.TrimEntries);
+        return audience.Any(char.IsControl) || audiences.Any(value => value.Length == 0)
+            ? throw new TerraBaseConfigurationException("auth-audience must be a comma-separated list of non-empty audiences without control characters")
+            : (issuer, audiences);
+    }
+
     // The file holds the secret alone; surrounding whitespace (a trailing newline) is ignored.
-    private static byte[] ReadDashboardCredentialHash(string path)
+    private static byte[] ReadCredentialHash(string path)
     {
         string secret;
         try
@@ -312,11 +358,11 @@ public sealed record TerraBaseOptions
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
         {
-            throw new TerraBaseConfigurationException("dashboard-credential-file must name a readable file");
+            throw new TerraBaseConfigurationException("management-credential-file must name a readable file");
         }
 
-        return secret.Length < MinDashboardCredentialLength
-            ? throw new TerraBaseConfigurationException("dashboard-credential-file must hold a secret of at least 32 characters")
+        return secret.Length < MinManagementCredentialLength
+            ? throw new TerraBaseConfigurationException("management-credential-file must hold a secret of at least 32 characters")
             : SHA256.HashData(Encoding.UTF8.GetBytes(secret));
     }
 

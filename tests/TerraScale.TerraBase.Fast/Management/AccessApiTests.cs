@@ -1,5 +1,4 @@
 using System.Net;
-using System.Net.Http.Headers;
 using System.Text.Json;
 using Bogus;
 using TerraScale.TerraBase.Testing;
@@ -10,8 +9,6 @@ public sealed class AccessApiTests
 {
     private const string Organizations = "/v1/management/organizations";
     private const string Accept = "/v1/management/invitations/accept";
-    private const string UserHeader = "X-TerraBase-User-Id";
-    private const string OrganizationHeader = "X-TerraBase-Organization-Id";
     private static readonly Faker Faker = new();
 
     private static readonly string[] DocumentedPaths =
@@ -56,13 +53,18 @@ public sealed class AccessApiTests
         var org = Org(await api.CreateOrganizationAsync(ownerId));
         using var owner = api.As(ownerId);
         var inviteeId = User();
-        using var invitee = api.As(inviteeId);
-        using var stranger = api.As(User());
         var invitations = Uri($"{org}/invitations");
         var accept = Uri(Accept);
         var email = Email();
         var revokedEmail = Email();
         var laterEmail = Email();
+        // The invitee's access token names its email; matching ignores case.
+        using var invitee = api.As(inviteeId, email.ToUpperInvariant());
+        using var inviteeElsewhere = api.As(inviteeId, Email());
+        using var inviteeUnverified = api.WithToken(api.Issuer.MintWithEmail(inviteeId, email, verified: false));
+        using var inviteeWithoutEmail = api.As(inviteeId);
+        using var inviteeLater = api.As(inviteeId, laterEmail);
+        using var stranger = api.As(User(), revokedEmail);
 
         using var created = await owner.PostAsJsonAsync(invitations, new { email, role = "admin" });
         var body = await created.Content.ReadFromJsonAsync<JsonElement>();
@@ -74,17 +76,20 @@ public sealed class AccessApiTests
         var revoked = await defaultRole.Content.ReadFromJsonAsync<JsonElement>();
         var revokedId = revoked.GetProperty("invitation").GetProperty("id").GetString()!;
         var pendingIds = Strings(await owner.GetFromJsonAsync<JsonElement>(invitations), "id").ToList();
-        using var wrongEmail = await invitee.PostAsJsonAsync(accept, new { token, email = Email() });
-        using var forged = await invitee.PostAsJsonAsync(accept, new { token = token[..^8] + Faker.Random.AlphaNumeric(8), email });
-        using var accepted = await invitee.PostAsJsonAsync(accept, new { token, email = email.ToUpperInvariant() });
+        // An email in the body is ignored: only the access token's verified email counts.
+        using var wrongEmail = await inviteeElsewhere.PostAsJsonAsync(accept, new { token, email });
+        using var unverified = await inviteeUnverified.PostAsJsonAsync(accept, new { token });
+        using var noEmail = await inviteeWithoutEmail.PostAsJsonAsync(accept, new { token });
+        using var forged = await invitee.PostAsJsonAsync(accept, new { token = token[..^8] + Faker.Random.AlphaNumeric(8) });
+        using var accepted = await invitee.PostAsJsonAsync(accept, new { token });
         var member = await accepted.Content.ReadFromJsonAsync<JsonElement>();
-        using var acceptedAgain = await invitee.PostAsJsonAsync(accept, new { token, email });
+        using var acceptedAgain = await invitee.PostAsJsonAsync(accept, new { token });
         var afterAccept = await owner.GetFromJsonAsync<JsonElement>(invitations);
         using var revoke = await owner.DeleteAsync(Uri($"{org}/invitations/{revokedId}"));
         using var revokeUnknown = await owner.DeleteAsync(Uri($"{org}/invitations/{Guid.NewGuid()}"));
-        using var acceptRevoked = await stranger.PostAsJsonAsync(accept, new { token = revoked.GetProperty("token").GetString(), email = revokedEmail });
+        using var acceptRevoked = await stranger.PostAsJsonAsync(accept, new { token = revoked.GetProperty("token").GetString() });
         var laterToken = await InviteAsync(owner, org, laterEmail, "member");
-        using var alreadyMember = await invitee.PostAsJsonAsync(accept, new { token = laterToken, email = laterEmail });
+        using var alreadyMember = await inviteeLater.PostAsJsonAsync(accept, new { token = laterToken });
 
         await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created);
         await Assert.That(created.Headers.Location!.ToString()).IsEqualTo($"{org}/invitations/{id}");
@@ -99,6 +104,8 @@ public sealed class AccessApiTests
         await Assert.That(pendingIds).IsEquivalentTo([id, revokedId]);
         await Assert.That(pendingIds[0]).IsEqualTo(id);
         await Assert.That(wrongEmail.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
+        await Assert.That(unverified.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
+        await Assert.That(noEmail.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
         await Assert.That(forged.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
         await Assert.That(accepted.StatusCode).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(member.GetProperty("userId").GetString()).IsEqualTo(inviteeId);
@@ -378,60 +385,48 @@ public sealed class AccessApiTests
     }
 
     [Test]
-    public async Task Access_needs_the_dashboard_credential_and_both_headers_on_the_client_listener()
+    public async Task Access_needs_a_user_token_on_the_client_listener()
     {
         await using var api = await AccessApi.StartAsync();
         var ownerId = User();
         var organizationId = await api.CreateOrganizationAsync(ownerId);
-        var org = Org(organizationId);
-        var members = Uri($"{org}/members");
+        var members = Uri($"{Org(organizationId)}/members");
         using var owner = api.As(ownerId);
-        using var noCredential = api.Connect(null, ownerId);
-        using var wrongCredential = api.Connect(AccessApi.Credential + "x", ownerId);
-        using var documentsKey = api.Connect(await api.Server.IssueAsync(organizationId, "documents:read"), ownerId);
-        using var noUser = api.Connect(AccessApi.Credential, null);
-        using var noOrganization = api.Connect(AccessApi.Credential, ownerId, headers => headers.Remove(OrganizationHeader));
-        using var otherOrganization = api.Connect(AccessApi.Credential, ownerId, headers =>
-        {
-            headers.Remove(OrganizationHeader);
-            headers.Add(OrganizationHeader, Guid.NewGuid().ToString());
-        });
+        using var noToken = api.WithToken(null);
+        using var notAToken = api.WithToken(Faker.Random.AlphaNumeric(40));
+        using var documentsKey = api.WithToken(await api.Server.IssueAsync(organizationId, "documents:read"));
+        using var noSubject = api.WithToken(api.Issuer.Mint(null));
         using var adminRequest = new HttpRequestMessage(HttpMethod.Get, members);
-        adminRequest.Headers.Authorization = new("Bearer", AccessApi.Credential);
-        adminRequest.Headers.Add(UserHeader, ownerId);
-        adminRequest.Headers.Add(OrganizationHeader, org[(Organizations.Length + 1)..]);
+        adminRequest.Headers.Authorization = new("Bearer", api.Issuer.Mint(ownerId));
 
         using var allowed = await owner.GetAsync(members);
-        using var anonymous = await noCredential.GetAsync(members);
-        using var anonymousAccept = await noCredential.PostAsJsonAsync(Uri(Accept), new { token = "token", email = Email() });
-        using var badCredential = await wrongCredential.GetAsync(members);
+        using var anonymous = await noToken.GetAsync(members);
+        using var anonymousAccept = await noToken.PostAsJsonAsync(Uri(Accept), new { token = "token" });
+        using var badToken = await notAToken.GetAsync(members);
         using var apiKey = await documentsKey.GetAsync(members);
-        using var missingUser = await noUser.GetAsync(members);
-        using var missingOrganization = await noOrganization.GetAsync(members);
-        using var mismatchedOrganization = await otherOrganization.GetAsync(members);
+        using var missingUser = await noSubject.GetAsync(members);
         using var onAdmin = await api.Server.Client.SendAsync(adminRequest);
 
         await Assert.That(allowed.StatusCode).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(anonymous.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
         await Assert.That(anonymousAccept.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
-        await Assert.That(badCredential.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+        await Assert.That(badToken.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
         await Assert.That(apiKey.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
-        await Assert.That(missingUser.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
-        await Assert.That(missingOrganization.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
-        await Assert.That(mismatchedOrganization.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
-        await Assert.That(onAdmin.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+        await Assert.That(missingUser.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+        // The admin listener takes only the management service credential, never a ts-auth token.
+        await Assert.That(onAdmin.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
     }
 
     [Test]
-    public async Task Access_is_closed_without_a_dashboard_credential()
+    public async Task Access_is_closed_without_an_auth_issuer()
     {
         using var tls = new ClientTls();
-        await using var server = await TerraBaseTestServer.StartAsync(tls.Apply);
-        using var client = new HttpClient(new DashboardHeaders(User()) { InnerHandler = tls.CreateHandler() }) { BaseAddress = server.ClientAddress };
-        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", AccessApi.Credential);
+        using var issuer = new TestIssuer();
+        await using var server = await TerraBaseTestServer.StartAsync(tls.Apply, issuer.Route);
+        using var client = tls.CreateClient(server.ClientAddress!, issuer.MintWithEmail(User(), Email()));
 
         using var members = await client.GetAsync(Uri($"{Org(Guid.NewGuid().ToString())}/members"));
-        using var accept = await client.PostAsJsonAsync(Uri(Accept), new { token = "token", email = Email() });
+        using var accept = await client.PostAsJsonAsync(Uri(Accept), new { token = "token" });
 
         await Assert.That(members.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
         await Assert.That(accept.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
@@ -445,7 +440,7 @@ public sealed class AccessApiTests
         var org = Org(await api.CreateOrganizationAsync(ownerId));
         using var owner = api.As(ownerId);
         var memberId = await api.AddMemberAsync(owner, org, "member");
-        using var invitee = api.As(User());
+        using var invitee = api.As(User(), Email());
         var role = Uri($"{org}/members/{memberId}/role");
         var invitations = Uri($"{org}/invitations");
         var accept = Uri(Accept);
@@ -462,8 +457,7 @@ public sealed class AccessApiTests
             await StatusAsync(owner.PostAsJsonAsync(invitations, new { email = "Bob <b@x.com>" })),
             await StatusAsync(owner.PostAsJsonAsync(invitations, new { })),
             await StatusAsync(invitee.PostAsJsonAsync(accept, new { })),
-            await StatusAsync(invitee.PostAsJsonAsync(accept, new { email })),
-            await StatusAsync(invitee.PostAsJsonAsync(accept, new { token = "token" })),
+            await StatusAsync(invitee.PostAsJsonAsync(accept, new { token = "" })),
         ];
         var members = await owner.GetFromJsonAsync<JsonElement>(Uri($"{org}/members"));
         var pending = await owner.GetFromJsonAsync<JsonElement>(invitations);
@@ -527,77 +521,41 @@ public sealed class AccessApiTests
     private static string? Text(JsonElement item, string property) =>
         item.TryGetProperty(property, out var value) ? value.GetString() : null;
 
-    /// <summary>
-    /// A server with the client listener and the dashboard credential, and clients that send it like
-    /// ts-dashboard: the acting user on every request and, on organization routes, the organization from the path.
-    /// </summary>
+    /// <summary>A <see cref="ManagementApi"/> whose users join organizations, addressed by path, with their own verified email.</summary>
     private sealed class AccessApi : IAsyncDisposable
     {
-        public const string Credential = "test-dashboard-credential-0123456789abcdef";
+        private readonly ManagementApi _api;
 
-        private readonly ClientTls _tls;
-        private readonly string _directory;
-
-        private AccessApi(ClientTls tls, TerraBaseTestServer server, string directory)
+        private AccessApi(ManagementApi api)
         {
-            _tls = tls;
-            _directory = directory;
-            Server = server;
+            _api = api;
         }
 
-        public TerraBaseTestServer Server { get; }
+        public TerraBaseTestServer Server => _api.Server;
 
-        public static async Task<AccessApi> StartAsync()
-        {
-            var directory = Directory.CreateTempSubdirectory("terrabase-dashboard-").FullName;
-            var credentialFile = Path.Combine(directory, "credential");
-            await File.WriteAllTextAsync(credentialFile, Credential + "\n");
-            var tls = new ClientTls();
-            var server = await TerraBaseTestServer.StartAsync(settings =>
-            {
-                tls.Apply(settings);
-                settings["dashboard-credential-file"] = credentialFile;
-            });
-            return new AccessApi(tls, server, directory);
-        }
+        public TestIssuer Issuer => _api.Issuer;
+
+        public static async Task<AccessApi> StartAsync() => new(await ManagementApi.StartAsync());
 
         /// <summary>Creates an organization whose first owner is <paramref name="owner"/>; returns its id.</summary>
         public async Task<string> CreateOrganizationAsync(string owner)
         {
             using var client = As(owner);
-            using var response = await client.PostAsJsonAsync(Uri(Organizations), new { name = Faker.Company.CompanyName() });
-            response.EnsureSuccessStatusCode();
-            return (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString()!;
+            return await _api.CreateOrganizationAsync(Faker.Company.CompanyName(), client);
         }
 
-        /// <summary>
-        /// A client-listener client that sends <paramref name="bearer"/> and, when set, <paramref name="user"/> and
-        /// the organization from the path; <paramref name="edit"/> then changes the final headers.
-        /// </summary>
-        public HttpClient Connect(string? bearer, string? user, Action<HttpRequestHeaders>? edit = null)
-        {
-            var client = new HttpClient(new DashboardHeaders(user, edit) { InnerHandler = _tls.CreateHandler() })
-            {
-                BaseAddress = Server.ClientAddress,
-                Timeout = TimeSpan.FromSeconds(30),
-            };
-            if (bearer is not null)
-            {
-                client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", bearer);
-            }
+        /// <summary>A client acting as <paramref name="user"/>, with <paramref name="email"/> as its verified email when set.</summary>
+        public HttpClient As(string user, string? email = null) => _api.As(user, email);
 
-            return client;
-        }
-
-        /// <summary>A dashboard client acting as <paramref name="user"/>.</summary>
-        public HttpClient As(string user) => Connect(Credential, user);
+        /// <summary>A client that sends <paramref name="token"/> as its bearer token, or no token when it is null.</summary>
+        public HttpClient WithToken(string? token) => _api.WithToken(token);
 
         /// <summary>Has <paramref name="user"/> join <paramref name="org"/> through an invitation for <paramref name="email"/> from <paramref name="inviter"/>.</summary>
         public async Task JoinAsync(HttpClient inviter, string org, string user, string email, string role)
         {
             var token = await InviteAsync(inviter, org, email, role);
-            using var client = As(user);
-            using var response = await client.PostAsJsonAsync(Uri(Accept), new { token, email });
+            using var client = As(user, email);
+            using var response = await client.PostAsJsonAsync(Uri(Accept), new { token });
             response.EnsureSuccessStatusCode();
         }
 
@@ -609,31 +567,6 @@ public sealed class AccessApiTests
             return user;
         }
 
-        public async ValueTask DisposeAsync()
-        {
-            await Server.DisposeAsync();
-            _tls.Dispose();
-            Directory.Delete(_directory, recursive: true);
-        }
-    }
-
-    private sealed class DashboardHeaders(string? user, Action<HttpRequestHeaders>? edit = null) : DelegatingHandler
-    {
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
-        {
-            if (user is not null)
-            {
-                request.Headers.Add(UserHeader, user);
-            }
-
-            var segments = request.RequestUri!.AbsolutePath.Split('/');
-            if (segments.Length > 4 && segments[3] == "organizations")
-            {
-                request.Headers.Add(OrganizationHeader, segments[4]);
-            }
-
-            edit?.Invoke(request.Headers);
-            return base.SendAsync(request, cancellationToken);
-        }
+        public ValueTask DisposeAsync() => _api.DisposeAsync();
     }
 }

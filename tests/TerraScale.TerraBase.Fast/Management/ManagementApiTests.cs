@@ -8,9 +8,6 @@ namespace TerraScale.TerraBase.Fast.Management;
 
 public sealed class ManagementApiTests
 {
-    private const string UserHeader = ManagementApi.UserHeader;
-    private const string OrganizationHeader = ManagementApi.OrganizationHeader;
-
     private static readonly Faker Faker = new();
 
     [Test]
@@ -292,12 +289,11 @@ public sealed class ManagementApiTests
     }
 
     [Test]
-    public async Task Invalid_names_queries_and_identity_headers_are_rejected()
+    public async Task Invalid_names_and_queries_are_rejected()
     {
         await using var api = await ManagementApi.StartAsync();
         var organization = await api.CreateOrganizationAsync("Acme");
         var project = await api.CreateProjectAsync(organization, "Web");
-        var other = await api.CreateOrganizationAsync("Other");
         var databases = $"/v1/management/organizations/{organization}/projects/{project}/databases";
         object[] badDisplayNames = [new { }, new { name = "" }, new { name = "   " }, new { name = "--" }, new { name = new string('a', 129) }, new { name = "a\nb" }];
         object[] badDatabaseNames = [new { }, new { name = "Main" }, new { name = "1db" }, new { name = "con" }, new { name = new string('a', 64) }];
@@ -325,21 +321,6 @@ public sealed class ManagementApiTests
         statuses.Add(await StatusAsync(api.Client.GetAsync(Uri("/v1/management/organizations?limit=0"))));
         statuses.Add(await StatusAsync(api.Client.GetAsync(Uri("/v1/management/organizations?limit=101"))));
         statuses.Add(await StatusAsync(api.Client.PostAsync(Uri("/v1/management/organizations"), new StringContent("{oops", null, "application/json"))));
-        // Identity headers: the user is required and single-valued; the organization header must match the path.
-        statuses.Add(await api.SendAsync(HttpMethod.Get, "/v1/management/organizations", headers => headers.Remove(UserHeader)));
-        statuses.Add(await api.SendAsync(HttpMethod.Get, "/v1/management/organizations", headers =>
-        {
-            headers.Remove(UserHeader);
-            headers.Add(UserHeader, new string('u', 257));
-        }));
-        statuses.Add(await api.SendAsync(HttpMethod.Get, "/v1/management/organizations", headers => headers.Add(UserHeader, "bad\u0001user")));
-        statuses.Add(await api.SendAsync(HttpMethod.Get, $"/v1/management/organizations/{organization}", headers => headers.Remove(OrganizationHeader)));
-        statuses.Add(await api.SendAsync(HttpMethod.Get, $"/v1/management/organizations/{organization}", headers => headers.Add(OrganizationHeader, other)));
-        statuses.Add(await api.SendAsync(HttpMethod.Get, $"/v1/management/organizations/{organization}/projects", headers =>
-        {
-            headers.Remove(OrganizationHeader);
-            headers.Add(OrganizationHeader, other);
-        }));
 
         await Assert.That(statuses).All().Satisfy(status => status.IsEqualTo(HttpStatusCode.BadRequest));
         // Names are trimmed rather than rejected for surrounding spaces.
@@ -348,70 +329,41 @@ public sealed class ManagementApiTests
     }
 
     [Test]
-    public async Task Management_needs_the_dashboard_credential_on_the_client_listener()
+    public async Task Management_needs_a_user_token_on_the_client_listener()
     {
         await using var api = await ManagementApi.StartAsync();
-        using var anonymous = api.Tls.CreateClient(api.Server.ClientAddress!);
-        using var wrongCredential = api.Tls.CreateClient(api.Server.ClientAddress!, ManagementApi.Credential + "x");
+        using var anonymous = api.WithToken(null);
+        using var garbage = api.WithToken(Faker.Random.AlphaNumeric(40));
         using var apiKey = api.DataClient(await api.Server.IssueAsync(await api.CreateOrganizationAsync("Acme"), "documents:read", "documents:write"));
-        using var dashboard = api.Tls.CreateClient(api.Server.ClientAddress!, ManagementApi.Credential);
-        foreach (var client in new[] { anonymous, wrongCredential, apiKey })
-        {
-            client.DefaultRequestHeaders.Add(UserHeader, api.User);
-        }
+        using var adminRequest = new HttpRequestMessage(HttpMethod.Get, Uri("/v1/management/organizations"));
+        adminRequest.Headers.Authorization = new("Bearer", api.Issuer.Mint(api.User));
 
-        using var noCredential = await anonymous.GetAsync(Uri("/v1/management/organizations"));
-        using var wrong = await wrongCredential.GetAsync(Uri("/v1/management/organizations"));
+        using var noToken = await anonymous.GetAsync(Uri("/v1/management/organizations"));
+        using var notAToken = await garbage.GetAsync(Uri("/v1/management/organizations"));
         using var withApiKey = await apiKey.GetAsync(Uri("/v1/management/organizations"));
-        using var onAdmin = await api.Server.Client.GetAsync(Uri("/v1/management/organizations"));
-        using var noDocumentAccess = await dashboard.PutAsync(Uri($"/v1/projects/{Guid.NewGuid()}/databases/x"), null);
+        using var onAdmin = await api.Server.Client.SendAsync(adminRequest);
+        using var noDocumentAccess = await api.Client.PutAsync(Uri($"/v1/projects/{Guid.NewGuid()}/databases/x"), null);
 
-        await Assert.That(noCredential.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
-        await Assert.That(wrong.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+        await Assert.That(noToken.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+        await Assert.That(notAToken.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
         await Assert.That(withApiKey.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
-        await Assert.That(onAdmin.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+        // The admin listener takes only the management service credential, never a ts-auth token.
+        await Assert.That(onAdmin.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+        // A user token is not an API key: the data API refuses it.
         await Assert.That(noDocumentAccess.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
     }
 
     [Test]
-    public async Task Management_is_disabled_without_a_configured_credential()
+    public async Task Management_is_disabled_without_an_auth_issuer()
     {
         using var tls = new ClientTls();
-        await using var server = await TerraBaseTestServer.StartAsync(tls.Apply);
-        using var client = tls.CreateClient(server.ClientAddress!, ManagementApi.Credential);
-        client.DefaultRequestHeaders.Add(UserHeader, "user");
+        using var issuer = new TestIssuer();
+        await using var server = await TerraBaseTestServer.StartAsync(tls.Apply, issuer.Route);
+        using var client = tls.CreateClient(server.ClientAddress!, issuer.Mint(Faker.Random.Guid().ToString()));
 
         using var response = await client.GetAsync(Uri("/v1/management/organizations"));
 
         await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
-    }
-
-    [Test]
-    public async Task The_dashboard_credential_file_is_trimmed_like_the_presented_secret()
-    {
-        var directory = Directory.CreateTempSubdirectory("terrabase-dashboard-").FullName;
-        try
-        {
-            var secret = Faker.Random.AlphaNumeric(40);
-            var credentialFile = Path.Combine(directory, "credential");
-            await File.WriteAllTextAsync(credentialFile, "  " + secret + "  \n");
-            using var tls = new ClientTls();
-            await using var server = await TerraBaseTestServer.StartAsync(settings =>
-            {
-                tls.Apply(settings);
-                settings["dashboard-credential-file"] = credentialFile;
-            });
-            using var client = tls.CreateClient(server.ClientAddress!, secret);
-            client.DefaultRequestHeaders.Add(UserHeader, Faker.Random.Guid().ToString());
-
-            using var response = await client.GetAsync(Uri("/v1/management/organizations"));
-
-            await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        }
-        finally
-        {
-            Directory.Delete(directory, recursive: true);
-        }
     }
 
     [Test]

@@ -1,5 +1,6 @@
 using TerraScale.Endpoints;
 using TerraScale.TerraBase.Configuration;
+using TerraScale.TerraBase.Features.UserAuth;
 using TerraScale.TerraBase.Hosting;
 
 namespace TerraScale.TerraBase.Features.Management;
@@ -17,8 +18,8 @@ public sealed class GetManagedDatabaseEndpoint(IManagementService management, Te
         Tags(ManagementRoute.Tag);
         Produces<ManagedDatabaseBody>();
         Produces<string>(StatusCodes.Status404NotFound);
-        RequireAuthorization(DashboardAuthenticationHandler.PolicyName);
-        Metadata(ListenerMetadata.Client);
+        RequireAuthorization(UserAuthExtensions.PolicyName);
+        Metadata(ListenerMetadata.Management);
     }
 
     /// <inheritdoc />

@@ -1,4 +1,5 @@
 using TerraScale.Endpoints;
+using TerraScale.TerraBase.Features.UserAuth;
 using TerraScale.TerraBase.Hosting;
 
 namespace TerraScale.TerraBase.Features.Management;
@@ -16,8 +17,8 @@ public sealed class GetCurrentOrganizationEndpoint(IManagementService management
         Tags(ManagementRoute.Tag);
         Produces<Organization>();
         Produces<string>(StatusCodes.Status404NotFound);
-        RequireAuthorization(DashboardAuthenticationHandler.PolicyName);
-        Metadata(ListenerMetadata.Client);
+        RequireAuthorization(UserAuthExtensions.PolicyName);
+        Metadata(ListenerMetadata.Management);
     }
 
     /// <inheritdoc />

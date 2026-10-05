@@ -21,39 +21,81 @@ ts-orchestrator and ts-auth.
 
 ## Access and authorization
 
-Decided by a human on 2026-10-04: only the ts-dashboard backend calls this API. It authenticates
-with a dashboard service credential and names the acting user in headers. TerraBase authorizes
-every request against the organizations that user belongs to.
+Decided by a human on 2026-10-04: only the ts-dashboard backend calls this API, with a dashboard
+service credential and the acting user in headers. Superseded on 2026-10-05 (TS-519,
+[0007](decisions/0007-ts-auth-user-tokens.md)): public calls carry the user's ts-auth access token, and a
+management service credential works only on the loopback admin listener, for bootstrap before ts-auth
+exists. TerraBase authorizes every request against the organizations the acting user belongs to.
 
-### Service credential
+### Access tokens
 
-- The endpoints are served only on the **client listener** (TLS). Requests to them on the
-  admin listener get `404`.
-- Configure `TERRABASE_DASHBOARD_CREDENTIAL_FILE` (or `--dashboard-credential-file=`). It is the
-  path of a file that holds the secret, at least 32 characters; surrounding whitespace is ignored.
-  It requires `client-port`. A missing, unreadable or short secret stops the process with exit
-  code `2`, and the error names the setting, never the path or the secret.
-- TerraBase keeps only the SHA-256 of the secret. Each request presents
-  `Authorization: Bearer <secret>`, and TerraBase compares the two SHA-256 hashes with
-  `CryptographicOperations.FixedTimeEquals`. That is constant-time, and because both hashes are
-  32 bytes it does not reveal the secret's length either.
-- With no credential configured, the Management API answers `401` to everything.
-- The credential grants no document access. API keys (`tb_…`) grant no management access.
-  Either one used on the other's routes gets `401`.
-- Rotating the secret means restarting with a new file. A credential store with overlapping
-  secrets is a follow-up.
+- The endpoints are served on the **client listener** (TLS), which accepts only ts-auth access tokens,
+  and on the loopback **admin listener**, which accepts only the
+  [management service credential](#management-service-credential). A token on the admin listener, or
+  the credential on the client listener, gets `401`.
+- Configure `TERRABASE_AUTH_ISSUER` (or `--auth-issuer=`) and `TERRABASE_AUTH_AUDIENCE` (or
+  `--auth-audience=`), together; they require `client-port`. Without them the client listener answers
+  `401` to every Management call. `dashboard-credential-file` no longer exists: it is an unknown
+  setting (exit code `2`).
+- Each request presents `Authorization: Bearer <ts-auth access token>`. The token must:
+  - be a JWT with header `typ` `at+jwt` or `application/at+jwt` (RFC 9068). ID tokens and other
+    JWTs from the same issuer are refused;
+  - be signed with ES256/384/512, RS256/384/512 or PS256/384/512 (`none` and HS* are refused), by
+    the cached key its `kid` names;
+  - have `iss` equal to `auth-issuer` exactly and an `aud` that includes one of `auth-audience`, compared exactly (a trailing `/` makes another audience);
+  - have an `exp`. `exp` and `nbf` are checked with 30 seconds of clock skew;
+  - have a `sub` of 1 to 256 characters without control characters;
+  - not be a ts-auth guest's: `is_anonymous` `true` is refused.
+- Any failure answers `401` with no body. The recorded failure reason is a type name or a fixed message, never the token.
+- The token grants no document access. API keys (`tb_…`) grant no management access. Either one
+  used on the other's routes gets `401`.
+- ts-dashboard calls with the signed-in user's token. A ts-auth client-credentials token (`sub` =
+  client id) for an accepted audience acts as a user whose id is that client id: it reaches only
+  organizations that id is a member of.
+
+### Signing keys
+
+- TerraBase reads `{auth-issuer without a trailing /}/.well-known/openid-configuration`, then its
+  `jwks_uri`. Both must be `https` and answer `2xx`; redirects are not followed. A discovery document whose `issuer` is not exactly `auth-issuer`
+  is not used, and its `jwks_uri` is never requested. Only RSA and EC keys are kept; symmetric (`oct`) keys are ignored. A document over
+  1 MiB fails. One 10-second deadline covers both requests of a fetch, and shutdown cancels it.
+- Keys are cached in memory. Startup waits up to 10 seconds for the first fetch. Until it succeeds,
+  every token gets `401`, `/readyz` answers `503`, and a background loop retries every 2 seconds.
+  After that the loop refreshes every 10 minutes. A failed refresh keeps the cached keys, so ts-auth
+  being down after startup does not stop validation.
+- Requests never fetch keys, with one exception: a token whose `kid` is not cached triggers one
+  refresh, shared by concurrent requests and at most once per 30 seconds. If the keys changed, the
+  token is validated once more.
+- Counter `terrabase.auth.key_fetches`, label `outcome` (`success` or `failure`). TerraBase's fetch
+  failure logs name the setting (`auth-issuer`) and the failure type, never the issuer URL or the audiences.
+
+### Management service credential
+
+Decided by COS on 2026-10-05: the TS-529 bootstrap creates the `terrascale` organization (projects
+`ts-auth`, `ts-dashboard`) before ts-auth exists, because ts-auth itself persists there.
+
+- Configure `TERRABASE_MANAGEMENT_CREDENTIAL_FILE` (or `--management-credential-file=`): a file holding a
+  secret of at least 32 characters; surrounding whitespace is ignored and only its SHA-256 is kept. It
+  needs no `client-port`. Unset, the credential authenticates no one. A missing, unreadable or short
+  secret stops the process with exit code `2`, naming the setting, never the path.
+- Accepted **only on the loopback admin listener**, never on the public client listener.
+- Each request presents `Authorization: Bearer <secret>` and `X-TerraBase-User-Id: <user id>` (one value,
+  1 to 256 characters, no control characters). TerraBase compares the two SHA-256 hashes with
+  `CryptographicOperations.FixedTimeEquals`. A wrong secret or a missing or invalid user answers `401`.
+- The named user then acts exactly like a token's `sub`: membership and roles apply as for anyone.
+  The credential carries no verified email, so it cannot accept invitations (`403`).
+- Every use is logged: `Management service credential acted as user <id>: <method> <path>` at
+  Information, and `Management service credential rejected: <method> <path>` at Warning. The secret is
+  never logged.
+- Rotating the secret means restarting with a new file.
 
 ### Acting user and organization
 
-| Header | Required on | Rule |
-| --- | --- | --- |
-| `X-TerraBase-User-Id` | every route | The ts-auth user id: one value, 1 to 256 characters, no control characters. Otherwise `400`. |
-| `X-TerraBase-Organization-Id` | every `/organizations/{organization}/…` route | One value equal to `{organization}` in the path. Otherwise `400`. |
-
-- TerraBase trusts these headers only because the service credential authenticated the caller.
-  The dashboard must take the user id from its ts-auth session and never from browser input.
-- The organization header states which organization the user is acting in. A mismatch with the
-  path is a dashboard bug, so it fails with `400` instead of being resolved one way or the other.
+- The acting user is the token's `sub`, or the user the management service credential names on the
+  admin listener: the ts-auth user id stored in memberships, `createdBy` and audit `actor`. On the
+  client listener no request header names the user; `X-TerraBase-Organization-Id` is no longer read.
+- The organization comes from the route. TerraBase reads no organization or tenant claim: ts-auth
+  issues none for TerraScale's platform organizations. The exact `iss` pins the ts-auth instance.
 
 ### Membership
 
@@ -233,9 +275,10 @@ a user who is not a member gets `404`, and a member whose role is too low gets `
 | `GET` | `/audit-events` | admin | page of audit events, newest first, within the retention; `after` is the previous page's `next` |
 
 Accepting is the one route outside an organization: `POST /v1/management/invitations/accept` with
-`{token, email}`, the acting user in `X-TerraBase-User-Id` and no organization header (the token names the
-organization). It answers the new membership; `403` when `email` differs from the invitation, `404` for an
-unknown token, `409` when the invitation expired or the user is already a member.
+`{token}`; the invitation token names the organization. The email is the access token's `email` claim, used
+only when `email_verified` is `true`; the body never supplies it, because the caller may be the user itself.
+It answers the new membership; `403` when the access token has no verified email or it differs from the
+invitation, `404` for an unknown token, `409` when the invitation expired or the user is already a member.
 
 Rules:
 
@@ -244,8 +287,7 @@ Rules:
 - **Invitations** expire after 7 days. The token (`<organization>.<invitation>.<secret>`) is returned
   only by the create call; TerraBase stores the SHA-256 of its secret and compares it in constant time.
   Inviting an address whose invitation expired replaces it. TerraBase sends no email: the dashboard delivers
-  the link and, on accept, passes the signed-in user's verified email, which must match the invitation
-  ignoring case.
+  the link. On accept, the access token's verified email must match the invitation ignoring case.
 - **Ownership transfer** follows the dashboard: one pending transfer per organization, valid for 7 days.
   Only the nominee confirms. The offer lapses (`404`) as soon as its starter stops being an owner or
   either side leaves, even if the starter later regains ownership.
@@ -363,7 +405,7 @@ not cover branches.
 | Database names | `^[a-z][a-z0-9_-]{0,62}$` | dashboard and SDK use `^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$` (leading digit allowed, no `_`, no trailing `-`) |
 | JSON | camelCase, ISO 8601 timestamps | control-plane-v1 uses snake_case, Unix-ms strings and `next_cursor` |
 | Idempotency | none | control-plane-v1 requires `Idempotency-Key` on mutations |
-| Authentication | dashboard service credential plus user and organization headers | control-plane-v1 uses a `control`-role `tbk1.` key with no user identity |
+| Authentication | ts-auth access token (`at+jwt`); `sub` is the user, the route names the organization | control-plane-v1 uses a `control`-role `tbk1.` key with no user identity |
 | Regions, placement, residency | not modeled | dashboard and SDK send them on project and database create; ts-orchestrator places partitions |
 | Organization delete | deletes an empty organization | dashboard only marks `deletionRequested` and keeps the data |
 | Project delete | refuses a project that still has databases | dashboard refuses the default or last project |

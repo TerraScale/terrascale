@@ -27,4 +27,6 @@ administrative and client listeners and on no other.
   anonymous requests cannot multiply disk work. A probe still running after 2 seconds means a
   stalled volume, and `/readyz` answers 503. Shutdown immediately answers 503 regardless of cached
   or in-flight results; engine closure bypasses the filesystem result cache on every request.
-- Any other endpoint on the client listener still requires a scoped API key.
+- Any other endpoint on the client listener still requires a scoped API key, or a ts-auth access
+  token on the Management API. With `auth-issuer` set, `/readyz` also answers 503 until ts-auth's
+  signing keys have been fetched once ([0007](0007-ts-auth-user-tokens.md)).

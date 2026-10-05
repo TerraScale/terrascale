@@ -7,6 +7,7 @@ using TerraScale.TerraBase.Features.Documents;
 using TerraScale.TerraBase.Features.Management;
 using TerraScale.TerraBase.Features.Pressure;
 using TerraScale.TerraBase.Features.Replication;
+using TerraScale.TerraBase.Features.UserAuth;
 using TerraScale.TerraBase.Hosting;
 
 // Match the slim host's environment precedence; WebApplicationFactory supplies an argument override.
@@ -64,6 +65,7 @@ builder.Services.AddTerraBaseTelemetry();
 builder.Services.AddTerraBaseEngine(options);
 builder.Services.AddTerraBaseApiKeys();
 builder.Services.AddTerraBaseDocuments();
+builder.Services.AddTerraBaseUserAuth();
 builder.Services.AddTerraBaseManagement();
 builder.Services.AddTerraBasePressure();
 builder.AddTerraBaseReplication(options);

@@ -22,7 +22,7 @@ public enum PlanTier
 /// <summary>
 /// The tenant a request acts for: an organization (the tenant, which owns billing) and its plan and, when the
 /// request addresses them, one of its projects and one database of that project. It is resolved once per
-/// request, from the API key on the data plane or from the dashboard credential and the acting user's
+/// request, from the API key on the data plane or from the acting ts-auth user's
 /// membership on the Management API, and every engine call takes one: storage is addressed by tenant,
 /// never by a database id alone.
 /// </summary>

@@ -1,5 +1,4 @@
 using System.Net;
-using System.Net.Http.Headers;
 using System.Text.Json;
 using Bogus;
 using Microsoft.Data.Sqlite;
@@ -24,20 +23,20 @@ public sealed class AccessExpiryTests
         var ownerId = User();
         var org = Org(await api.CreateOrganizationAsync(ownerId));
         using var owner = api.As(ownerId);
-        using var invitee = api.As(User());
+        var email = Email();
+        using var invitee = api.As(User(), email);
         var invitations = Uri($"{org}/invitations");
         var accept = Uri(Accept);
-        var email = Email();
         var expiredToken = await InviteAsync(owner, org, email);
 
         using var stillPending = await owner.PostAsJsonAsync(invitations, new { email });
         api.Clock.Offset += PastExpiry;
-        using var expired = await invitee.PostAsJsonAsync(accept, new { token = expiredToken, email });
+        using var expired = await invitee.PostAsJsonAsync(accept, new { token = expiredToken });
         using var reinvited = await owner.PostAsJsonAsync(invitations, new { email });
         var fresh = await reinvited.Content.ReadFromJsonAsync<JsonElement>();
         var pending = await owner.GetFromJsonAsync<JsonElement>(invitations);
-        using var replaced = await invitee.PostAsJsonAsync(accept, new { token = expiredToken, email });
-        using var accepted = await invitee.PostAsJsonAsync(accept, new { token = fresh.GetProperty("token").GetString(), email });
+        using var replaced = await invitee.PostAsJsonAsync(accept, new { token = expiredToken });
+        using var accepted = await invitee.PostAsJsonAsync(accept, new { token = fresh.GetProperty("token").GetString() });
 
         await Assert.That(stillPending.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
         await Assert.That(expired.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
@@ -283,71 +282,47 @@ public sealed class AccessExpiryTests
         public override DateTimeOffset GetUtcNow() => (FrozenAt ?? base.GetUtcNow()) + Offset;
     }
 
-    /// <summary>A server with the client listener, the dashboard credential and a clock that tests move or freeze.</summary>
+    /// <summary>
+    /// A <see cref="ManagementApi"/> with a clock that tests move or freeze. Access tokens are checked against the
+    /// real clock, so they stay valid however far the server's clock moves.
+    /// </summary>
     private sealed class ShiftedApi : IAsyncDisposable
     {
-        private const string Credential = "test-dashboard-credential-0123456789abcdef";
+        private readonly ManagementApi _api;
 
-        private readonly ClientTls _tls;
-        private readonly string _directory;
-
-        private ShiftedApi(ClientTls tls, string directory, TerraBaseTestServer server, ShiftedTime clock)
+        private ShiftedApi(ManagementApi api, ShiftedTime clock)
         {
-            _tls = tls;
-            _directory = directory;
-            Server = server;
+            _api = api;
             Clock = clock;
         }
-
-        public TerraBaseTestServer Server { get; }
 
         public ShiftedTime Clock { get; }
 
         /// <summary>Starts a server, on <paramref name="dataDirectory"/> when set and with <paramref name="clock"/> when set.</summary>
         public static async Task<ShiftedApi> StartAsync(string? dataDirectory = null, ShiftedTime? clock = null)
         {
-            var directory = Directory.CreateTempSubdirectory("terrabase-dashboard-").FullName;
-            var credentialFile = Path.Combine(directory, "credential");
-            await File.WriteAllTextAsync(credentialFile, Credential + "\n");
-            var tls = new ClientTls();
             clock ??= new ShiftedTime();
-            var server = await TerraBaseTestServer.StartAsync(
+            var api = await ManagementApi.StartAsync(
                 settings =>
                 {
-                    tls.Apply(settings);
-                    settings["dashboard-credential-file"] = credentialFile;
                     if (dataDirectory is not null)
                     {
                         settings["data-directory"] = dataDirectory;
                     }
                 },
                 services => services.AddSingleton<TimeProvider>(clock));
-            return new ShiftedApi(tls, directory, server, clock);
+            return new ShiftedApi(api, clock);
         }
 
         /// <summary>Creates an organization whose first owner is <paramref name="owner"/>; returns its id.</summary>
         public async Task<string> CreateOrganizationAsync(string owner)
         {
             using var client = As(owner);
-            using var response = await client.PostAsJsonAsync(Uri(Organizations), new { name = Faker.Company.CompanyName() });
-            response.EnsureSuccessStatusCode();
-            return (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString()!;
+            return await _api.CreateOrganizationAsync(Faker.Company.CompanyName(), client);
         }
 
-        /// <summary>
-        /// A dashboard client acting as <paramref name="user"/> that, like ts-dashboard, also sends the organization
-        /// from the path on organization routes.
-        /// </summary>
-        public HttpClient As(string user)
-        {
-            var client = new HttpClient(new DashboardHeaders(user) { InnerHandler = _tls.CreateHandler() })
-            {
-                BaseAddress = Server.ClientAddress,
-                Timeout = TimeSpan.FromSeconds(30),
-            };
-            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", Credential);
-            return client;
-        }
+        /// <summary>A client acting as <paramref name="user"/>, with <paramref name="email"/> as its verified email when set.</summary>
+        public HttpClient As(string user, string? email = null) => _api.As(user, email);
 
         /// <summary>Has a new user join <paramref name="org"/> as a member through an invitation from <paramref name="inviter"/>; returns its id.</summary>
         public async Task<string> AddMemberAsync(HttpClient inviter, string org)
@@ -355,32 +330,12 @@ public sealed class AccessExpiryTests
             var user = User();
             var email = Email();
             var token = await InviteAsync(inviter, org, email);
-            using var client = As(user);
-            using var response = await client.PostAsJsonAsync(Uri(Accept), new { token, email });
+            using var client = As(user, email);
+            using var response = await client.PostAsJsonAsync(Uri(Accept), new { token });
             response.EnsureSuccessStatusCode();
             return user;
         }
 
-        public async ValueTask DisposeAsync()
-        {
-            await Server.DisposeAsync();
-            _tls.Dispose();
-            Directory.Delete(_directory, recursive: true);
-        }
-    }
-
-    private sealed class DashboardHeaders(string user) : DelegatingHandler
-    {
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
-        {
-            request.Headers.Add("X-TerraBase-User-Id", user);
-            var segments = request.RequestUri!.AbsolutePath.Split('/');
-            if (segments.Length > 4 && segments[3] == "organizations")
-            {
-                request.Headers.Add("X-TerraBase-Organization-Id", segments[4]);
-            }
-
-            return base.SendAsync(request, cancellationToken);
-        }
+        public ValueTask DisposeAsync() => _api.DisposeAsync();
     }
 }

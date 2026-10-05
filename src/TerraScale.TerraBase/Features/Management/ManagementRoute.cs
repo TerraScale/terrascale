@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Net.Mail;
+using TerraScale.TerraBase.Features.UserAuth;
 using TerraScale.TerraBase.Tenancy;
 
 namespace TerraScale.TerraBase.Features.Management;
@@ -33,15 +34,9 @@ internal static class ManagementRoute
     public const string AuditRetention = Organization + "/audit-retention";
     public const string AuditEvents = Organization + "/audit-events";
 
-    /// <summary>The acting user's id from ts-auth, sent by the dashboard on every request.</summary>
-    public const string UserHeader = "X-TerraBase-User-Id";
-
-    /// <summary>The organization the user acts in; required on, and equal to, every <c>/organizations/{organization}/…</c> route.</summary>
-    public const string OrganizationHeader = "X-TerraBase-Organization-Id";
-
     public const string IdentityDescription =
-        "Authorization: Bearer <dashboard credential>. " + UserHeader + " names the acting user; " + OrganizationHeader
-        + " must equal {organization} on organization routes. Organizations the user is not a member of answer 404.";
+        "Authorization: Bearer <ts-auth access token>; its sub is the acting user. On the loopback administrative listener only, the "
+        + "management service credential instead, with X-TerraBase-User-Id naming the acting user. Organizations the user is not a member of answer 404.";
     public const string PageDescription = "Query: after (exclusive id cursor from the previous page's next), limit (1 to 100, default 20). Items are in creation order.";
 
     private const int MaxDisplayNameLength = 128;
@@ -52,24 +47,14 @@ internal static class ManagementRoute
 
     public static string Value(HttpContext context, string name) => (string)context.Request.RouteValues[name]!;
 
-    public static string UserId(HttpContext context)
-    {
-        var values = context.Request.Headers[UserHeader];
-        var user = values.Count == 1 ? values[0] : null;
-        return string.IsNullOrEmpty(user) || user.Length > MaxUserIdLength || user.Any(char.IsControl)
-            ? throw new BadHttpRequestException(UserHeader + " must be one value of 1 to 256 characters without control characters")
-            : user;
-    }
+    /// <summary>
+    /// The acting user: the <c>sub</c> of the caller's ts-auth access token, or the user named with the management service
+    /// credential on the administrative listener. A request header alone never names it.
+    /// </summary>
+    public static string UserId(HttpContext context) => context.User.UserId();
 
-    /// <summary>The route's organization, which must match <see cref="OrganizationHeader"/>.</summary>
-    public static string OrganizationId(HttpContext context)
-    {
-        var organization = Value(context, "organization");
-        var values = context.Request.Headers[OrganizationHeader];
-        return values.Count == 1 && string.Equals(values[0], organization, StringComparison.Ordinal)
-            ? organization
-            : throw new BadHttpRequestException(OrganizationHeader + " must be one value equal to the organization in the path");
-    }
+    /// <summary>The route's organization. Membership, checked by the service, decides whether the user reaches it.</summary>
+    public static string OrganizationId(HttpContext context) => Value(context, "organization");
 
     /// <summary>The member addressed by the <c>{user}</c> route value.</summary>
     public static string MemberId(HttpContext context) => ValidUserId(Value(context, "user"), "user");

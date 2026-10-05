@@ -1,5 +1,6 @@
 using TerraScale.Endpoints;
 using TerraScale.TerraBase.Configuration;
+using TerraScale.TerraBase.Features.UserAuth;
 using TerraScale.TerraBase.Hosting;
 
 namespace TerraScale.TerraBase.Features.Management;
@@ -19,8 +20,8 @@ public sealed class BranchManagedDatabaseEndpoint(IManagementService management,
         Produces<string>(StatusCodes.Status400BadRequest);
         Produces<string>(StatusCodes.Status404NotFound);
         Produces<string>(StatusCodes.Status409Conflict);
-        RequireAuthorization(DashboardAuthenticationHandler.PolicyName);
-        Metadata(ListenerMetadata.Client);
+        RequireAuthorization(UserAuthExtensions.PolicyName);
+        Metadata(ListenerMetadata.Management);
     }
 
     /// <inheritdoc />

@@ -1,4 +1,5 @@
 using TerraScale.Endpoints;
+using TerraScale.TerraBase.Features.UserAuth;
 using TerraScale.TerraBase.Hosting;
 
 namespace TerraScale.TerraBase.Features.Management;
@@ -15,8 +16,8 @@ public sealed class DeleteManagedDatabaseEndpoint(IManagementService management)
         Description("Branches of the database are independent copies and are not deleted." + " " + ManagementRoute.IdentityDescription);
         Tags(ManagementRoute.Tag);
         Produces<string>(StatusCodes.Status404NotFound);
-        RequireAuthorization(DashboardAuthenticationHandler.PolicyName);
-        Metadata(ListenerMetadata.Client);
+        RequireAuthorization(UserAuthExtensions.PolicyName);
+        Metadata(ListenerMetadata.Management);
     }
 
     /// <inheritdoc />

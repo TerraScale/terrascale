@@ -41,6 +41,12 @@ public sealed record ListenerMetadata(params IReadOnlyList<TerraBaseListener> Li
     /// client listener. They never answer with tenant data.
     /// </summary>
     public static ListenerMetadata Probe { get; } = new(TerraBaseListener.Admin, TerraBaseListener.Client);
+
+    /// <summary>
+    /// Metadata for the Management API: ts-auth access tokens on the client listener, and the management service credential
+    /// on the loopback administrative listener only (for bootstrap before ts-auth exists).
+    /// </summary>
+    public static ListenerMetadata Management { get; } = new(TerraBaseListener.Admin, TerraBaseListener.Client);
 }
 
 /// <summary>Binds listeners and keeps each endpoint on its own listener.</summary>

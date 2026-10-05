@@ -1,15 +1,16 @@
 using TerraScale.Endpoints;
 using TerraScale.TerraBase.Configuration;
 using TerraScale.TerraBase.Engine;
+using TerraScale.TerraBase.Features.UserAuth;
 using TerraScale.TerraBase.Hosting;
 
 namespace TerraScale.TerraBase.Features.Health;
 
 /// <summary>
-/// <c>GET /readyz</c>: 200 only while the storage engine is open, the data directory is writable and the server is not
-/// shutting down; 503 otherwise. Unauthenticated, on the administrative and client listeners, for load balancers.
+/// <c>GET /readyz</c>: 200 only while the storage engine is open, the data directory is writable, ts-auth's signing keys
+/// are loaded (when <c>auth-issuer</c> is set) and the server is not shutting down; 503 otherwise. Unauthenticated, on the administrative and client listeners, for load balancers.
 /// </summary>
-public sealed class ReadyzEndpoint(IStorageEngine engine, IHostApplicationLifetime lifetime, TerraBaseOptions options) : EndpointWithoutRequest<IResult>
+public sealed class ReadyzEndpoint(IStorageEngine engine, IIssuerKeys issuerKeys, IHostApplicationLifetime lifetime, TerraBaseOptions options) : EndpointWithoutRequest<IResult>
 {
     /// <inheritdoc />
     public override void Configure()
@@ -17,7 +18,7 @@ public sealed class ReadyzEndpoint(IStorageEngine engine, IHostApplicationLifeti
         Get("/readyz");
         Name("readyz");
         Summary("Readiness probe");
-        Description("503 while the storage engine is closed, the data directory is not writable or the server is shutting down.");
+        Description("503 while the storage engine is closed, the data directory is not writable, ts-auth's signing keys have not been fetched yet (when auth-issuer is set) or the server is shutting down.");
         Tags("Health");
         Produces<StatusBody>();
         Produces<StatusBody>(StatusCodes.Status503ServiceUnavailable);
@@ -28,8 +29,9 @@ public sealed class ReadyzEndpoint(IStorageEngine engine, IHostApplicationLifeti
     /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
+        // Until ts-auth's keys are fetched no user can authenticate: not ready, rather than accepting no tokens.
         var ready = false;
-        if (!lifetime.ApplicationStopping.IsCancellationRequested)
+        if (issuerKeys.IsReady && !lifetime.ApplicationStopping.IsCancellationRequested)
         {
             using var stopping = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, lifetime.ApplicationStopping);
             try
