@@ -35,14 +35,14 @@ func mountTools(tools *core.Tools, service Service) {
 	core.AddTool(tools, core.ToolSpec{
 		Name: "list_api_keys", Title: "List API keys", ReadOnly: true,
 		Description: "List a project's API keys and machine-to-machine (M2M) clients without their secrets.",
-	}, func(_ context.Context, p core.Principal, in listCredentialsInput) (credentialList, error) {
+	}, func(ctx context.Context, p core.Principal, in listCredentialsInput) (credentialList, error) {
 		if in.Kind != "" && in.Kind != kindAPIKey && in.Kind != kindM2M {
 			return credentialList{}, core.Invalid("kind must be api-key or m2m")
 		}
 		if in.Status != "" && in.Status != "active" && in.Status != "inactive" {
 			return credentialList{}, core.Invalid("status must be active or inactive")
 		}
-		list, err := service.List(p, credentialFilter{Kind: in.Kind, Status: in.Status, DatabaseID: in.DatabaseID, Search: in.Search})
+		list, err := service.List(ctx, p, credentialFilter{Kind: in.Kind, Status: in.Status, DatabaseID: in.DatabaseID, Search: in.Search})
 		return credentialList{Credentials: list}, err
 	})
 	core.AddTool(tools, core.ToolSpec{

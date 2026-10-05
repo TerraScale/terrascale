@@ -199,6 +199,8 @@ func redirectPageError(w http.ResponseWriter, r *http.Request, err error, create
 		message = "Only organization owners and admins can manage credentials."
 	case errors.Is(err, errLiveCredentials):
 		message = "Credentials cannot be issued, rotated, or revoked here yet."
+	case errors.Is(err, core.ErrUnavailable):
+		message = "The credential service is unavailable right now. Try again in a moment."
 	default:
 		slog.Error("change credential", "path", r.URL.Path, "error", err)
 	}
@@ -225,7 +227,8 @@ func renderPage(w http.ResponseWriter, r *http.Request, deps core.Deps, service 
 		core.RedirectToLogin(w, r)
 		return
 	}
-	a, project, err := service.selected(p)
+	ctx := r.Context()
+	a, project, err := service.selected(ctx, p)
 	if err != nil {
 		if errors.Is(err, core.ErrUnauthorized) {
 			core.RedirectToLogin(w, r)
@@ -242,7 +245,7 @@ func renderPage(w http.ResponseWriter, r *http.Request, deps core.Deps, service 
 		data.Create = ""
 	}
 	filter := credentialFilter{Kind: controlsFor(data.Kind).CredentialKind, Status: data.Status, DatabaseID: data.DatabaseID, Search: data.Search}
-	credentials, err := service.List(p, filter)
+	credentials, err := service.List(ctx, p, filter)
 	if err != nil {
 		writeError(w, err)
 		return

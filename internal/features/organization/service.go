@@ -1,12 +1,14 @@
 package organization
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/mail"
 	"slices"
 	"strings"
@@ -44,17 +46,17 @@ var (
 // tools both call it. Persistence and atomic account scoping remain owned by
 // core.Store.
 type Service struct {
-	store    *core.Store
+	store    core.Store
 	sessions core.Sessions
 	now      func() time.Time
 }
 
-func NewService(store *core.Store, sessions core.Sessions) Service {
+func NewService(store core.Store, sessions core.Sessions) Service {
 	return Service{store: store, sessions: sessions, now: func() time.Time { return time.Now().UTC() }}
 }
 
-func (s Service) Snapshot(p core.Principal) (core.Account, core.Organization, error) {
-	a, err := s.store.SnapshotAs(p)
+func (s Service) Snapshot(ctx context.Context, p core.Principal) (core.Account, core.Organization, error) {
+	a, err := s.store.SnapshotAs(ctx, p)
 	if err != nil {
 		return core.Account{}, core.Organization{}, err
 	}
@@ -69,8 +71,8 @@ func (s Service) Snapshot(p core.Principal) (core.Account, core.Organization, er
 // confirming that the same signed-in account is a member. Store.UpdateAs
 // checks that membership again under its mutation lock, so wizard form fields
 // cannot grant cross-organization access.
-func (s Service) ForOrganization(p core.Principal, organizationID string) (core.Principal, error) {
-	a, err := s.store.SnapshotAs(p)
+func (s Service) ForOrganization(ctx context.Context, p core.Principal, organizationID string) (core.Principal, error) {
+	a, err := s.store.SnapshotAs(ctx, p)
 	if err != nil {
 		return core.Principal{}, err
 	}
@@ -86,13 +88,13 @@ func (s Service) ForOrganization(p core.Principal, organizationID string) (core.
 
 // CreateBusiness creates or resumes the caller's same-name pending tenant and
 // selects it in the account. Checkout and plan changes are owned by billing.
-func (s Service) CreateBusiness(p core.Principal, name string) (core.Organization, error) {
+func (s Service) CreateBusiness(ctx context.Context, p core.Principal, name string) (core.Organization, error) {
 	name = strings.TrimSpace(name)
 	if name == "" || utf8.RuneCountInString(name) > 128 || slug(name) == "" {
 		return core.Organization{}, errNameRequired
 	}
 	var result core.Organization
-	err := s.store.UpdateAs(p, func(a *core.Account) error {
+	err := s.store.UpdateAs(ctx, p, func(a *core.Account) error {
 		for id, org := range a.Organizations {
 			if org.Kind == kindBusiness && org.Status == statusActive && org.BillingStatus == "billing_required" && org.OwnerUserID == p.UserID && strings.EqualFold(org.Name, name) {
 				a.ActiveOrganizationID = id
@@ -126,11 +128,11 @@ func (s Service) CreateBusiness(p core.Principal, name string) (core.Organizatio
 	return result, err
 }
 
-func (s Service) SwitchOrganization(p core.Principal, organizationID string) error {
+func (s Service) SwitchOrganization(ctx context.Context, p core.Principal, organizationID string) error {
 	if organizationID == "" {
 		return core.Invalid("organizationId is required")
 	}
-	return s.store.UpdateAs(p, func(a *core.Account) error {
+	return s.store.UpdateAs(ctx, p, func(a *core.Account) error {
 		org, err := a.OrganizationFor(p, organizationID)
 		if err != nil {
 			return err
@@ -144,12 +146,12 @@ func (s Service) SwitchOrganization(p core.Principal, organizationID string) err
 	})
 }
 
-func (s Service) RenameOrganization(p core.Principal, name string) error {
+func (s Service) RenameOrganization(ctx context.Context, p core.Principal, name string) error {
 	name = strings.TrimSpace(name)
 	if name == "" || utf8.RuneCountInString(name) > 128 || slug(name) == "" {
 		return errNameRequired
 	}
-	return s.store.UpdateAs(p, func(a *core.Account) error {
+	return s.store.UpdateAs(ctx, p, func(a *core.Account) error {
 		org, err := editableOrganization(a, p)
 		if err != nil {
 			return err
@@ -163,7 +165,7 @@ func (s Service) RenameOrganization(p core.Principal, name string) error {
 
 // CreateProject adds a project to the principal's organization. Regions
 // default to the primary region when none are listed.
-func (s Service) CreateProject(p core.Principal, name, region, backupRegion string, regions []string) (core.Project, error) {
+func (s Service) CreateProject(ctx context.Context, p core.Principal, name, region, backupRegion string, regions []string) (core.Project, error) {
 	name = strings.TrimSpace(name)
 	if name == "" || utf8.RuneCountInString(name) > 128 || slug(name) == "" {
 		return core.Project{}, errNameRequired
@@ -187,7 +189,7 @@ func (s Service) CreateProject(p core.Principal, name, region, backupRegion stri
 		backup = validatedRegions[0]
 	}
 	var result core.Project
-	err = s.store.UpdateAs(p, func(a *core.Account) error {
+	err = s.store.UpdateAs(ctx, p, func(a *core.Account) error {
 		org, err := editableOrganization(a, p)
 		if err != nil {
 			return err
@@ -218,7 +220,7 @@ func (s Service) CreateProject(p core.Principal, name, region, backupRegion stri
 	return result, err
 }
 
-func (s Service) RenameProject(p core.Principal, projectID, name, region, backupRegion string, regions []string) error {
+func (s Service) RenameProject(ctx context.Context, p core.Principal, projectID, name, region, backupRegion string, regions []string) error {
 	name = strings.TrimSpace(name)
 	if projectID == "" {
 		return core.Invalid("projectId is required")
@@ -234,7 +236,7 @@ func (s Service) RenameProject(p core.Principal, projectID, name, region, backup
 			return err
 		}
 	}
-	return s.store.UpdateAs(p, func(a *core.Account) error {
+	return s.store.UpdateAs(ctx, p, func(a *core.Account) error {
 		org, err := editableOrganization(a, p)
 		if err != nil {
 			return err
@@ -271,11 +273,11 @@ func (s Service) RenameProject(p core.Principal, projectID, name, region, backup
 
 // SwitchProject selects a project in any organization the principal belongs
 // to, together with that organization.
-func (s Service) SwitchProject(p core.Principal, projectID string) error {
+func (s Service) SwitchProject(ctx context.Context, p core.Principal, projectID string) error {
 	if projectID == "" {
 		return core.Invalid("projectId is required")
 	}
-	return s.store.UpdateAs(p, func(a *core.Account) error {
+	return s.store.UpdateAs(ctx, p, func(a *core.Account) error {
 		for id, candidate := range a.Organizations {
 			project, ok := candidate.Projects[projectID]
 			if !ok || project.OrganizationID != id {
@@ -296,7 +298,7 @@ func (s Service) SwitchProject(p core.Principal, projectID string) error {
 	})
 }
 
-func (s Service) UpdateMemberRole(p core.Principal, userID, role string) error {
+func (s Service) UpdateMemberRole(ctx context.Context, p core.Principal, userID, role string) error {
 	role = strings.ToLower(strings.TrimSpace(role))
 	if role != roleMember && role != roleViewer {
 		return errMemberRole
@@ -304,7 +306,7 @@ func (s Service) UpdateMemberRole(p core.Principal, userID, role string) error {
 	if userID == "" || userID == p.UserID {
 		return core.Invalid("choose another member than yourself")
 	}
-	return s.store.UpdateAs(p, func(a *core.Account) error {
+	return s.store.UpdateAs(ctx, p, func(a *core.Account) error {
 		org, err := editableOrganization(a, p)
 		if err != nil {
 			return err
@@ -322,12 +324,12 @@ func (s Service) UpdateMemberRole(p core.Principal, userID, role string) error {
 
 // RemoveMember removes a member from the principal's organization and ends
 // the removed user's dashboard sessions.
-func (s Service) RemoveMember(p core.Principal, userID string) error {
+func (s Service) RemoveMember(ctx context.Context, p core.Principal, userID string) error {
 	if userID == "" || userID == p.UserID {
 		return core.Invalid("choose another member than yourself")
 	}
 	var removed core.Member
-	err := s.store.UpdateAs(p, func(a *core.Account) error {
+	err := s.store.UpdateAs(ctx, p, func(a *core.Account) error {
 		org, err := editableOrganization(a, p)
 		if err != nil {
 			return err
@@ -344,13 +346,29 @@ func (s Service) RemoveMember(p core.Principal, userID string) error {
 	if err != nil {
 		return err
 	}
-	if target, found := s.store.FindByEmail(removed.Email); found && s.sessions != nil {
-		s.sessions.RevokeUser(target.ID, userID)
+	// The removal is committed. Ending the removed user's sessions is
+	// best-effort, like profile.go and session.Manager.forget: their
+	// principal is re-resolved per request, so organization access is
+	// already gone, and leftover sessions expire on their own. Failing here
+	// would report a committed removal as failed, and a retry could never
+	// reach revocation again.
+	if s.sessions == nil {
+		return nil
+	}
+	target, err := s.store.FindByEmail(ctx, removed.Email)
+	if err != nil {
+		if !errors.Is(err, core.ErrNotFound) {
+			slog.Warn("find removed member for session revocation", "user_id", userID, "error", err)
+		}
+		return nil
+	}
+	if err := s.sessions.RevokeUser(ctx, target.ID, userID); err != nil {
+		slog.Warn("revoke removed member sessions", "user_id", userID, "error", err)
 	}
 	return nil
 }
 
-func (s Service) CreateInvitation(p core.Principal, email, role string) (core.Invitation, string, error) {
+func (s Service) CreateInvitation(ctx context.Context, p core.Principal, email, role string) (core.Invitation, string, error) {
 	email = core.NormalizeEmail(email)
 	role = strings.ToLower(strings.TrimSpace(role))
 	parsed, err := mail.ParseAddress(email)
@@ -360,15 +378,11 @@ func (s Service) CreateInvitation(p core.Principal, email, role string) (core.In
 	if role != roleMember && role != roleViewer {
 		return core.Invitation{}, "", errMemberRole
 	}
-	account, err := s.store.SnapshotAs(p)
+	account, err := s.store.SnapshotAs(ctx, p)
 	if err != nil {
 		return core.Invitation{}, "", err
 	}
 	selected, ok := account.Organizations[p.OrganizationID]
-	if !ok {
-		return core.Invitation{}, "", core.ErrNotFound
-	}
-	plan, ok := s.store.Plan(selected.PlanID)
 	if !ok {
 		return core.Invitation{}, "", core.ErrNotFound
 	}
@@ -378,7 +392,9 @@ func (s Service) CreateInvitation(p core.Principal, email, role string) (core.In
 		ID: core.NewID("inv"), Email: email, Role: role, Status: statusPending,
 		TokenHash: hex.EncodeToString(digest[:]), ExpiresAt: s.now().Add(7 * 24 * time.Hour), CreatedAt: s.now(),
 	}
-	err = s.store.UpdateAs(p, func(a *core.Account) error {
+	// The plan is read in the mutation's transaction so the member limit is
+	// checked against the plan that is current at commit.
+	err = s.store.UpdateAsWithPlan(ctx, p, selected.PlanID, func(a *core.Account, plan core.Plan) error {
 		org, err := editableOrganization(a, p)
 		if err != nil {
 			return err
@@ -427,14 +443,14 @@ func (s Service) CreateInvitation(p core.Principal, email, role string) (core.In
 	return invitation, token, nil
 }
 
-func (s Service) ResendInvitation(p core.Principal, invitationID string) (core.Invitation, string, error) {
+func (s Service) ResendInvitation(ctx context.Context, p core.Principal, invitationID string) (core.Invitation, string, error) {
 	if invitationID == "" {
 		return core.Invitation{}, "", core.Invalid("invitationId is required")
 	}
 	token := newToken()
 	digest := sha256.Sum256([]byte(token))
 	var invitation core.Invitation
-	err := s.store.UpdateAs(p, func(a *core.Account) error {
+	err := s.store.UpdateAs(ctx, p, func(a *core.Account) error {
 		org, err := editableOrganization(a, p)
 		if err != nil {
 			return err
@@ -454,8 +470,8 @@ func (s Service) ResendInvitation(p core.Principal, invitationID string) (core.I
 	return invitation, token, err
 }
 
-func (s Service) RevokeInvitation(p core.Principal, invitationID string) error {
-	return s.store.UpdateAs(p, func(a *core.Account) error {
+func (s Service) RevokeInvitation(ctx context.Context, p core.Principal, invitationID string) error {
+	return s.store.UpdateAs(ctx, p, func(a *core.Account) error {
 		org, err := editableOrganization(a, p)
 		if err != nil {
 			return err
@@ -471,11 +487,11 @@ func (s Service) RevokeInvitation(p core.Principal, invitationID string) error {
 	})
 }
 
-func (s Service) RequestOwnershipTransfer(p core.Principal, targetUserID string) error {
+func (s Service) RequestOwnershipTransfer(ctx context.Context, p core.Principal, targetUserID string) error {
 	if targetUserID == "" || targetUserID == p.UserID {
 		return core.Invalid("choose another active member as the new owner")
 	}
-	return s.store.UpdateAs(p, func(a *core.Account) error {
+	return s.store.UpdateAs(ctx, p, func(a *core.Account) error {
 		org, err := editableOrganization(a, p)
 		if err != nil {
 			return err
@@ -494,8 +510,8 @@ func (s Service) RequestOwnershipTransfer(p core.Principal, targetUserID string)
 // ConfirmOwnershipTransfer requires the nominated active member to confirm.
 // The owner and target roles change together, so this operation cannot leave a
 // live organization without an owner.
-func (s Service) ConfirmOwnershipTransfer(p core.Principal) error {
-	return s.store.UpdateAs(p, func(a *core.Account) error {
+func (s Service) ConfirmOwnershipTransfer(ctx context.Context, p core.Principal) error {
+	return s.store.UpdateAs(ctx, p, func(a *core.Account) error {
 		org, err := a.OrganizationFor(p, p.OrganizationID)
 		if err != nil {
 			return err
@@ -525,8 +541,8 @@ func (s Service) ConfirmOwnershipTransfer(p core.Principal) error {
 
 // CancelOwnershipTransfer withdraws a pending transfer: the owner cancels it,
 // or the nominated member declines it.
-func (s Service) CancelOwnershipTransfer(p core.Principal) error {
-	return s.store.UpdateAs(p, func(a *core.Account) error {
+func (s Service) CancelOwnershipTransfer(ctx context.Context, p core.Principal) error {
+	return s.store.UpdateAs(ctx, p, func(a *core.Account) error {
 		org, err := a.OrganizationFor(p, p.OrganizationID)
 		if err != nil {
 			return err
@@ -544,8 +560,8 @@ func (s Service) CancelOwnershipTransfer(p core.Principal) error {
 	})
 }
 
-func (s Service) RequestDeletion(p core.Principal, confirmation string) error {
-	return s.store.UpdateAs(p, func(a *core.Account) error {
+func (s Service) RequestDeletion(ctx context.Context, p core.Principal, confirmation string) error {
+	return s.store.UpdateAs(ctx, p, func(a *core.Account) error {
 		org, err := editableOrganization(a, p)
 		if err != nil {
 			return err
@@ -562,8 +578,8 @@ func (s Service) RequestDeletion(p core.Principal, confirmation string) error {
 	})
 }
 
-func (s Service) LeaveOrganization(p core.Principal) error {
-	return s.store.UpdateAs(p, func(a *core.Account) error {
+func (s Service) LeaveOrganization(ctx context.Context, p core.Principal) error {
+	return s.store.UpdateAs(ctx, p, func(a *core.Account) error {
 		org, err := a.OrganizationFor(p, p.OrganizationID)
 		if err != nil {
 			return err
@@ -696,8 +712,8 @@ func newToken() string {
 
 // Context returns the signed-in user, the saved dashboard selection, and
 // every organization and project the user can access.
-func (s Service) Context(p core.Principal) (contextView, error) {
-	a, err := s.store.SnapshotAs(p)
+func (s Service) Context(ctx context.Context, p core.Principal) (contextView, error) {
+	a, err := s.store.SnapshotAs(ctx, p)
 	if err != nil {
 		return contextView{}, err
 	}
@@ -706,9 +722,21 @@ func (s Service) Context(p core.Principal) (contextView, error) {
 		Selection:     selectionView{OrganizationID: a.ActiveOrganizationID, ProjectID: a.ActiveProjectID},
 		Organizations: []organizationSummary{},
 	}
+	// One catalog read names every organization's plan; an unknown plan
+	// leaves PlanName empty, as in summary.
+	plans, err := s.store.Plans(ctx)
+	if err != nil {
+		return contextView{}, err
+	}
+	planNames := make(map[string]string, len(plans))
+	for _, plan := range plans {
+		planNames[plan.ID] = plan.Name
+	}
 	for _, org := range a.Organizations {
 		if _, err := a.OrganizationFor(p, org.ID); err == nil {
-			result.Organizations = append(result.Organizations, s.summary(org, p.UserID))
+			summary := describeOrganization(org, p.UserID)
+			summary.PlanName = planNames[org.PlanID]
+			result.Organizations = append(result.Organizations, summary)
 		}
 	}
 	slices.SortFunc(result.Organizations, func(a, b organizationSummary) int { return strings.Compare(a.Name, b.Name) })
@@ -717,13 +745,17 @@ func (s Service) Context(p core.Principal) (contextView, error) {
 
 // Overview returns the principal's organization with its projects, member
 // and invitation counts, and ownership transfer state.
-func (s Service) Overview(p core.Principal) (organizationDetail, error) {
-	_, org, err := s.Snapshot(p)
+func (s Service) Overview(ctx context.Context, p core.Principal) (organizationDetail, error) {
+	_, org, err := s.Snapshot(ctx, p)
+	if err != nil {
+		return organizationDetail{}, err
+	}
+	summary, err := s.summary(ctx, org, p.UserID)
 	if err != nil {
 		return organizationDetail{}, err
 	}
 	detail := organizationDetail{
-		organizationSummary: s.summary(org, p.UserID), Slug: org.Slug, CreatedAt: org.CreatedAt,
+		organizationSummary: summary, Slug: org.Slug, CreatedAt: org.CreatedAt,
 		CanLeave:            org.Kind != kindPersonal && org.OwnerUserID != p.UserID,
 		PendingOwnerUserID:  org.PendingOwnerUserID,
 		CanConfirmOwnership: org.PendingOwnerUserID == p.UserID && org.PendingOwnerExpiresAt.After(s.now()),
@@ -744,15 +776,28 @@ func (s Service) Overview(p core.Principal) (organizationDetail, error) {
 	return detail, nil
 }
 
-func (s Service) summary(org core.Organization, userID string) organizationSummary {
+// summary describes org for userID. A plan the store does not know leaves
+// PlanName empty; any other plan lookup failure is returned.
+func (s Service) summary(ctx context.Context, org core.Organization, userID string) (organizationSummary, error) {
+	summary := describeOrganization(org, userID)
+	plan, err := s.store.Plan(ctx, org.PlanID)
+	switch {
+	case err == nil:
+		summary.PlanName = plan.Name
+	case !errors.Is(err, core.ErrNotFound):
+		return organizationSummary{}, err
+	}
+	return summary, nil
+}
+
+// describeOrganization is the summary of org for userID without its plan
+// name, which needs a store read.
+func describeOrganization(org core.Organization, userID string) organizationSummary {
 	summary := organizationSummary{
 		ID: org.ID, Name: org.Name, Kind: org.Kind, Status: org.Status, Role: roleFor(org, userID),
 		PlanID: org.PlanID, BillingStatus: org.BillingStatus, CanManage: org.OwnerUserID == userID,
 		CanProvision: canProvision(org, userID), DeletionRequested: org.DeletionRequested,
 		Projects: []projectSummary{},
-	}
-	if plan, ok := s.store.Plan(org.PlanID); ok {
-		summary.PlanName = plan.Name
 	}
 	for _, project := range org.Projects {
 		if project.OrganizationID != org.ID {

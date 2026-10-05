@@ -73,7 +73,7 @@ type ToolHandler[In, Out any] func(ctx context.Context, p Principal, input In) (
 // Tools collects the MCP tools that feature slices expose next to their HTTP
 // routes. The MCP platform registers them on one server per audience.
 type Tools struct {
-	store *Store
+	store Store
 	tools []registeredTool
 }
 
@@ -83,7 +83,7 @@ type registeredTool struct {
 	register func(*mcp.Server)
 }
 
-func NewTools(store *Store) *Tools {
+func NewTools(store Store) *Tools {
 	return &Tools{store: store}
 }
 
@@ -106,7 +106,7 @@ func AddTool[In, Out any](t *Tools, spec ToolSpec, handler ToolHandler[In, Out])
 	t.tools = append(t.tools, registeredTool{name: spec.Name, admin: spec.Admin, register: func(server *mcp.Server) {
 		mcp.AddTool(server, tool, func(ctx context.Context, req *mcp.CallToolRequest, input In) (*mcp.CallToolResult, Out, error) {
 			var zero Out
-			p, err := t.principal(req, input)
+			p, err := t.principal(ctx, req, input)
 			if err != nil {
 				return nil, zero, err
 			}
@@ -163,7 +163,7 @@ func ToolPrincipal(info *auth.TokenInfo) (Principal, bool) {
 	return p, ok
 }
 
-func (t *Tools) principal(req *mcp.CallToolRequest, input any) (Principal, error) {
+func (t *Tools) principal(ctx context.Context, req *mcp.CallToolRequest, input any) (Principal, error) {
 	p, ok := ToolPrincipal(req.Extra.TokenInfo)
 	if !ok {
 		return Principal{}, toolError(ErrUnauthorized)
@@ -172,7 +172,7 @@ func (t *Tools) principal(req *mcp.CallToolRequest, input any) (Principal, error
 	if s, ok := input.(scoped); ok {
 		scope = s.toolScope()
 	}
-	p, err := t.store.ScopedPrincipal(p, scope)
+	p, err := t.store.ScopedPrincipal(ctx, p, scope)
 	if err != nil {
 		return Principal{}, toolError(err)
 	}
@@ -193,18 +193,11 @@ func toolError(err error) error {
 	return err
 }
 
-// ScopedPrincipal narrows p to the organization and project scope names,
-// checking membership against the stored account. It never changes the
-// account's saved dashboard selection.
-func (s *Store) ScopedPrincipal(p Principal, scope Scope) (Principal, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	a, ok := s.accounts[p.AccountID]
-	if !ok {
-		return Principal{}, ErrUnauthorized
-	}
-	view := s.viewLocked(a)
-	if err := authorize(view, p); err != nil {
+// ScopePrincipal narrows p to the organization and project scope names,
+// checking membership against view, the principal's account with its live
+// organizations. It never changes the account's saved dashboard selection.
+func ScopePrincipal(view Account, p Principal, scope Scope) (Principal, error) {
+	if err := AuthorizeAccount(view, p); err != nil {
 		return Principal{}, err
 	}
 	organizationID, projectID := p.OrganizationID, p.ProjectID
@@ -230,7 +223,7 @@ func (s *Store) ScopedPrincipal(p Principal, scope Scope) (Principal, error) {
 		projectID = scope.ProjectID
 	}
 	next := view.scopedPrincipal(organizationID, projectID)
-	if err := authorize(view, next); err != nil {
+	if err := AuthorizeAccount(view, next); err != nil {
 		return Principal{}, fmt.Errorf("%w: project %q", err, projectID)
 	}
 	return next, nil

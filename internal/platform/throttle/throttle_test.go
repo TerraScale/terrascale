@@ -18,6 +18,11 @@ func newLimiter(opts Options) (*Limiter, *time.Time) {
 	return l, &now
 }
 
+// buckets returns the memory store's bucket map.
+func buckets(l *Limiter) map[string]time.Time {
+	return l.store.(*MemoryStore).due
+}
+
 func from(remoteAddr string) *http.Request {
 	r := httptest.NewRequest(http.MethodPost, "/api/v1/auth/password/login", nil)
 	r.RemoteAddr = remoteAddr
@@ -102,8 +107,8 @@ func TestForgiveCountsOnlyFailures(t *testing.T) {
 	if _, ok := l.Allow(r, "ana@example.test"); ok {
 		t.Fatal("failed attempts did not spend the budget")
 	}
-	if len(l.due) != 2 {
-		t.Fatalf("tracking %d buckets, want the client and the account", len(l.due))
+	if len(buckets(l)) != 2 {
+		t.Fatalf("tracking %d buckets, want the client and the account", len(buckets(l)))
 	}
 }
 
@@ -141,7 +146,7 @@ func TestClientKey(t *testing.T) {
 func TestMemoryStaysBounded(t *testing.T) {
 	l, now := newLimiter(Options{Client: Budget{Burst: 1, Interval: time.Minute}})
 	for i := range maxKeys {
-		l.due[fmt.Sprintf("client %d", i)] = now.Add(time.Minute)
+		buckets(l)[fmt.Sprintf("client %d", i)] = now.Add(time.Minute)
 	}
 	if wait, ok := l.Allow(from("192.0.2.1:1"), ""); ok || wait != time.Minute {
 		t.Fatalf("new client while every bucket is in use = %v, %t; want refused", wait, ok)
@@ -150,7 +155,7 @@ func TestMemoryStaysBounded(t *testing.T) {
 	if _, ok := l.Allow(from("192.0.2.1:1"), ""); !ok {
 		t.Fatal("new client refused after the buckets refilled")
 	}
-	if len(l.due) != 1 {
-		t.Fatalf("tracking %d buckets after pruning, want 1", len(l.due))
+	if len(buckets(l)) != 1 {
+		t.Fatalf("tracking %d buckets after pruning, want 1", len(buckets(l)))
 	}
 }

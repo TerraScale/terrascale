@@ -1,6 +1,7 @@
 package payments
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"net/url"
@@ -19,22 +20,22 @@ var ErrInvalidReturnPath = core.Invalid("return path must stay inside the dashbo
 // BillingFlow is implemented by the subscriptions slice. It keeps provider
 // callbacks behind the state owner while this package owns the HTTP boundary.
 type BillingFlow interface {
-	BeginDemoCheckout(core.Principal, string, string, string) (core.CheckoutSession, error)
-	Checkout(core.Principal, string) (core.CheckoutSession, error)
-	CompleteDemoCheckout(core.Principal, string, bool) (string, error)
-	RecordCustomer(core.Principal, string) (string, error)
-	RecordExternalCheckout(core.Principal, string, string, string, CheckoutSession) error
-	ExpireExternalCheckout(core.Principal, string) error
+	BeginDemoCheckout(context.Context, core.Principal, string, string, string) (core.CheckoutSession, error)
+	Checkout(context.Context, core.Principal, string) (core.CheckoutSession, error)
+	CompleteDemoCheckout(context.Context, core.Principal, string, bool) (string, error)
+	RecordCustomer(context.Context, core.Principal, string) (string, error)
+	RecordExternalCheckout(context.Context, core.Principal, string, string, string, CheckoutSession) error
+	ExpireExternalCheckout(context.Context, core.Principal, string) error
 	// CheckoutPrincipal scopes a browser principal to the organization that
 	// owns a checkout session, which MCP may start outside the selection.
-	CheckoutPrincipal(core.Principal, string) (core.Principal, error)
+	CheckoutPrincipal(context.Context, core.Principal, string) (core.Principal, error)
 	// CheckoutOutcome reports where the owner returns after a checkout and
 	// whether it succeeded, from the organization's projected state.
-	CheckoutOutcome(core.Principal, string) (string, string, error)
+	CheckoutOutcome(context.Context, core.Principal, string) (string, string, error)
 	// PendingCheckoutID returns the organization's open Checkout Session.
-	PendingCheckoutID(organizationID string) (string, error)
+	PendingCheckoutID(ctx context.Context, organizationID string) (string, error)
 	// ProjectCustomerState applies synced Stripe state to the organization.
-	ProjectCustomerState(CustomerState, *CheckoutSession) error
+	ProjectCustomerState(context.Context, CustomerState, *CheckoutSession) error
 }
 
 // Mount registers billing provider routes and tools. In demo mode billing is
@@ -108,14 +109,17 @@ func requestPrincipal(deps core.Deps, w http.ResponseWriter, r *http.Request) (c
 	return core.Principal{}, false
 }
 
-func selectedPlan(store *core.Store, key, interval string) (core.Plan, error) {
+func selectedPlan(ctx context.Context, store core.Store, key, interval string) (core.Plan, error) {
 	key = NormalizePlanKey(key)
 	unavailable := core.Invalid("choose an available paid plan and a monthly or annual interval")
 	if key == "" || (interval != IntervalMonthly && interval != IntervalAnnual) {
 		return core.Plan{}, unavailable
 	}
-	plan, ok := store.Plan(key)
-	if !ok || !plan.Visible || plan.PriceCents <= 0 || (interval == IntervalAnnual && plan.AnnualPriceCents <= 0) {
+	plan, err := store.Plan(ctx, key)
+	if err != nil && !errors.Is(err, core.ErrNotFound) {
+		return core.Plan{}, err
+	}
+	if err != nil || !plan.Visible || plan.PriceCents <= 0 || (interval == IntervalAnnual && plan.AnnualPriceCents <= 0) {
 		return core.Plan{}, unavailable
 	}
 	return plan, nil

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"terrascale.tech/dashboard/internal/core"
+	"terrascale.tech/dashboard/internal/core/memstore"
 	"terrascale.tech/dashboard/internal/features/payments"
 	"terrascale.tech/dashboard/internal/features/subscriptions"
 
@@ -70,11 +71,11 @@ func (sessions fixtureSessions) Principal(*http.Request) (core.Principal, bool) 
 func (sessions fixtureSessions) BearerPrincipal(*http.Request) (core.Principal, bool) {
 	return core.Principal{}, false
 }
-func (sessions fixtureSessions) End(http.ResponseWriter, *http.Request) {}
-func (sessions fixtureSessions) RevokeUser(string, string)              {}
+func (sessions fixtureSessions) End(http.ResponseWriter, *http.Request) error     { return nil }
+func (sessions fixtureSessions) RevokeUser(context.Context, string, string) error { return nil }
 
 type billingFixture struct {
-	store     *core.Store
+	store     core.Store
 	principal core.Principal
 	provider  *fakeProvider
 	state     payments.StateStore
@@ -103,8 +104,8 @@ func newBillingFixture(t *testing.T) billingFixture {
 
 func newBillingFixtureWithStore(t *testing.T, state payments.StateStore) billingFixture {
 	t.Helper()
-	store := core.NewStore()
-	account, err := store.CreateAccount(core.User{Name: "Owner", Email: "billing@example.test", PasswordHash: "unused"})
+	store := memstore.New()
+	account, err := store.CreateAccount(t.Context(), core.User{Name: "Owner", Email: "billing@example.test", PasswordHash: "unused"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,10 +114,10 @@ func newBillingFixtureWithStore(t *testing.T, state payments.StateStore) billing
 	if _, err := state.BindCustomer(t.Context(), principal.OrganizationID, "cus_test"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := service.RecordCustomer(principal, "cus_test"); err != nil {
+	if _, err := service.RecordCustomer(t.Context(), principal, "cus_test"); err != nil {
 		t.Fatal(err)
 	}
-	if err := service.RecordExternalCheckout(principal, payments.PlanPro, payments.IntervalMonthly, "/usage?tab=billing", payments.CheckoutSession{
+	if err := service.RecordExternalCheckout(t.Context(), principal, payments.PlanPro, payments.IntervalMonthly, "/usage?tab=billing", payments.CheckoutSession{
 		ID: "cs_test", CustomerID: "cus_test", ClientReferenceID: principal.OrganizationID, ExpiresAt: time.Now().Add(time.Hour),
 	}); err != nil {
 		t.Fatal(err)
@@ -152,7 +153,7 @@ func activeSubscription(priceID string) payments.SubscriptionSnapshot {
 
 func (fixture billingFixture) organization(t *testing.T) core.Organization {
 	t.Helper()
-	account, err := fixture.store.SnapshotAs(fixture.principal)
+	account, err := fixture.store.SnapshotAs(t.Context(), fixture.principal)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -308,7 +309,7 @@ func TestWebhookRejectsUntrustedEvents(t *testing.T) {
 
 func TestWebhookUnavailableInDemoMode(t *testing.T) {
 	mux := http.NewServeMux()
-	store := core.NewStore()
+	store := memstore.New()
 	payments.Mount(mux, core.Deps{Store: store, Demo: true}, subscriptions.NewBillingService(store), nil)
 	response := httptest.NewRecorder()
 	mux.ServeHTTP(response, httptest.NewRequest(http.MethodPost, payments.WebhookPath, bytes.NewReader([]byte("{}"))))

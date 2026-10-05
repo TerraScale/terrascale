@@ -1,6 +1,7 @@
 package payments
 
 import (
+	"context"
 	"net/http"
 	"time"
 
@@ -10,9 +11,9 @@ import (
 // planChangeFlow is the demo counterpart of the Stripe plan-change calls.
 // Live changes are applied in Stripe and then synced like any other change.
 type planChangeFlow interface {
-	ChangeDemoPlan(core.Principal, string, string) error
-	ScheduleDemoChange(core.Principal, string, string, time.Time) error
-	UndoDemoChange(core.Principal) error
+	ChangeDemoPlan(context.Context, core.Principal, string, string) error
+	ScheduleDemoChange(context.Context, core.Principal, string, string, time.Time) error
+	UndoDemoChange(context.Context, core.Principal) error
 }
 
 func mountPlanChanges(mux *http.ServeMux, deps core.Deps, flow BillingFlow, service Service) {

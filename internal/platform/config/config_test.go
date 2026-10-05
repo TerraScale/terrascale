@@ -9,6 +9,7 @@ func TestPublicURLConfiguration(t *testing.T) {
 	t.Setenv("DASHBOARD_SECURE_COOKIES", "")
 	t.Setenv("DASHBOARD_DEMO_ADMIN_EMAIL", "")
 	t.Setenv("DASHBOARD_DEMO_ADMIN_PASSWORD", "")
+	t.Setenv("TS_DASHBOARD_CSRF_SECRET", "")
 	for _, tc := range []struct {
 		input, origin string
 		invalid       bool
@@ -57,6 +58,7 @@ func TestErrorTrackingConfiguration(t *testing.T) {
 	t.Setenv("SENTRY_DSN", " https://key@glitchtip.example/1 ")
 	t.Setenv("SENTRY_ENVIRONMENT", "")
 	t.Setenv("DASHBOARD_CSP_REPORT_URL", "")
+	t.Setenv("TS_DASHBOARD_CSRF_SECRET", "")
 	t.Setenv("FLY_APP_NAME", "")
 	cfg, err := Load()
 	if err != nil || cfg.SentryDSN != "https://key@glitchtip.example/1" || cfg.SentryEnvironment != "development" || cfg.CSPReportURL != "" {
@@ -88,6 +90,36 @@ func TestErrorTrackingConfiguration(t *testing.T) {
 			cfg, err := Load()
 			if (err != nil) != tc.invalid || (!tc.invalid && cfg.CSPReportURL != tc.input) {
 				t.Fatalf("report URL=%q error=%v", cfg.CSPReportURL, err)
+			}
+		})
+	}
+}
+
+func TestCSRFSecretConfiguration(t *testing.T) {
+	t.Setenv("FLY_APP_NAME", "")
+	t.Setenv("DASHBOARD_CSP_REPORT_URL", "")
+	t.Setenv("DASHBOARD_PUBLIC_URL", "")
+	t.Setenv("DASHBOARD_DEMO_ADMIN_EMAIL", "")
+	t.Setenv("DASHBOARD_DEMO_ADMIN_PASSWORD", "")
+	secret := "0123456789abcdef0123456789abcdef"
+	for _, tc := range []struct {
+		name, demo, secret string
+		want               string
+		invalid            bool
+	}{
+		{name: "demo draws a random key", demo: "1"},
+		{name: "demo shares a configured key", demo: "1", secret: secret, want: secret},
+		{name: "short key", demo: "1", secret: "short", invalid: true},
+		{name: "one byte short of the minimum", demo: "1", secret: secret[:31], invalid: true},
+		{name: "exactly the minimum", demo: "1", secret: secret[:32], want: secret[:32]},
+		{name: "required outside the demo", demo: "", invalid: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("TS_DASHBOARD_PRODUCTION_DEMO", tc.demo)
+			t.Setenv("TS_DASHBOARD_CSRF_SECRET", tc.secret)
+			cfg, err := Load()
+			if (err != nil) != tc.invalid || string(cfg.CSRFSecret) != tc.want {
+				t.Fatalf("secret=%q error=%v", cfg.CSRFSecret, err)
 			}
 		})
 	}

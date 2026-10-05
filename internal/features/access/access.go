@@ -119,7 +119,7 @@ func accessPage(deps core.Deps, service organization.Service) http.HandlerFunc {
 }
 
 func renderAccessPage(w http.ResponseWriter, r *http.Request, deps core.Deps, service organization.Service, p core.Principal, inviteURL, message string) {
-	account, org, err := service.Snapshot(p)
+	account, org, err := service.Snapshot(r.Context(), p)
 	if err != nil {
 		writeProblem(w, err)
 		return
@@ -440,7 +440,7 @@ func createInvitation(deps core.Deps, service Service) http.HandlerFunc {
 		if !ok {
 			return
 		}
-		_, link, err := service.Invite(p, form.Get("email"), form.Get("role"))
+		_, link, err := service.Invite(r.Context(), p, form.Get("email"), form.Get("role"))
 		if err != nil {
 			redirectAccessError(w, r, err)
 			return
@@ -456,7 +456,7 @@ func resendInvitation(deps core.Deps, service Service) http.HandlerFunc {
 		if !ok {
 			return
 		}
-		_, link, err := service.Resend(p, r.PathValue("invitationID"))
+		_, link, err := service.Resend(r.Context(), p, r.PathValue("invitationID"))
 		if err != nil {
 			redirectAccessError(w, r, err)
 			return
@@ -472,7 +472,7 @@ func revokeInvitation(deps core.Deps, service organization.Service) http.Handler
 		if !ok {
 			return
 		}
-		if err := service.RevokeInvitation(p, r.PathValue("invitationID")); err != nil {
+		if err := service.RevokeInvitation(r.Context(), p, r.PathValue("invitationID")); err != nil {
 			redirectAccessError(w, r, err)
 			return
 		}
@@ -486,7 +486,7 @@ func updateMemberRole(deps core.Deps, service organization.Service) http.Handler
 		if !ok {
 			return
 		}
-		if err := service.UpdateMemberRole(p, r.PathValue("userID"), form.Get("role")); err != nil {
+		if err := service.UpdateMemberRole(r.Context(), p, r.PathValue("userID"), form.Get("role")); err != nil {
 			redirectAccessError(w, r, err)
 			return
 		}
@@ -500,7 +500,7 @@ func revokeMember(deps core.Deps, service organization.Service) http.HandlerFunc
 		if !ok {
 			return
 		}
-		if err := service.RemoveMember(p, r.PathValue("userID")); err != nil {
+		if err := service.RemoveMember(r.Context(), p, r.PathValue("userID")); err != nil {
 			redirectAccessError(w, r, err)
 			return
 		}
@@ -540,6 +540,8 @@ func redirectAccessError(w http.ResponseWriter, r *http.Request, err error) {
 		message = "Only the organization owner can make that change."
 	case errors.Is(err, core.ErrNotFound):
 		message = "The selected member or invitation was not found."
+	case errors.Is(err, core.ErrUnavailable):
+		message = "The team service is unavailable right now. Try again in a moment."
 	}
 	query := url.Values{"error": {message}}
 	if tab := r.URL.Query().Get("tab"); slices.Contains(listTabs, tab) {
@@ -559,6 +561,8 @@ func writeProblem(w http.ResponseWriter, err error) {
 		status = http.StatusNotFound
 	case errors.Is(err, core.ErrConflict):
 		status = http.StatusConflict
+	case errors.Is(err, core.ErrUnavailable):
+		status = http.StatusServiceUnavailable
 	}
 	http.Error(w, http.StatusText(status), status)
 }

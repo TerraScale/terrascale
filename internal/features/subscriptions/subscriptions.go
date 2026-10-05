@@ -2,6 +2,8 @@ package subscriptions
 
 import (
 	"cmp"
+	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -98,16 +100,25 @@ func Mount(mux *http.ServeMux, deps core.Deps, billing *payments.Stripe) {
 		if !ok {
 			return
 		}
-		view, err := service.Snapshot(principal)
+		ctx := r.Context()
+		view, err := service.Snapshot(ctx, principal)
 		if err != nil {
-			http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
+			if !core.WriteAccessError(w, err) {
+				http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+			}
 			return
 		}
 		interval := intervalMonthly
 		if r.URL.Query().Get("interval") == intervalAnnual {
 			interval = intervalAnnual
 		}
-		data := billingPage(deps.Store, principal, view, interval)
+		data, err := billingPage(ctx, deps.Store, principal, view, interval)
+		if err != nil {
+			if !core.WriteAccessError(w, err) {
+				http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+			}
+			return
+		}
 		data.PaymentNotice = paymentNotice(r.URL.Query().Get("payment"))
 		if err := deps.Render.Page(w, r, core.Page{
 			Layout: "shell", Title: "Billing | TerraScale", Principal: principal,
@@ -128,14 +139,15 @@ func Mount(mux *http.ServeMux, deps core.Deps, billing *payments.Stripe) {
 		if !ok {
 			return
 		}
-		session, err := service.Checkout(principal, r.PathValue("sessionID"))
+		ctx := r.Context()
+		session, err := service.Checkout(ctx, principal, r.PathValue("sessionID"))
 		if err != nil {
-			http.Error(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
+			writeCheckoutError(w, err)
 			return
 		}
-		plan, ok := deps.Store.Plan(session.PlanID)
-		if !ok {
-			http.Error(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
+		plan, err := deps.Store.Plan(ctx, session.PlanID)
+		if err != nil {
+			writeCheckoutError(w, err)
 			return
 		}
 		data := checkoutPage{
@@ -168,7 +180,13 @@ func Mount(mux *http.ServeMux, deps core.Deps, billing *payments.Stripe) {
 		if !ok {
 			return
 		}
-		view, err := service.Snapshot(principal)
+		view, err := service.Snapshot(r.Context(), principal)
+		if err != nil && !errors.Is(err, core.ErrForbidden) && !errors.Is(err, core.ErrNotFound) {
+			if !core.WriteAccessError(w, err) {
+				http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+			}
+			return
+		}
 		if err != nil || view.Organization.OwnerUserID != principal.UserID || view.Organization.Archived || view.Organization.DeletionRequested {
 			http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
 			return
@@ -195,8 +213,12 @@ var planTones = []string{"cyan", "violet", "amber", "rose"}
 
 // billingPage describes the organization's plan and prices every available
 // plan against it for the billing interval the page shows.
-func billingPage(store *core.Store, principal core.Principal, view BillingSnapshot, interval string) subscriptionsPage {
+func billingPage(ctx context.Context, store core.Store, principal core.Principal, view BillingSnapshot, interval string) (subscriptionsPage, error) {
 	org := view.Organization
+	change, err := upcomingChange(ctx, store, org.Billing)
+	if err != nil {
+		return subscriptionsPage{}, err
+	}
 	hasSubscription := org.Billing.SubscriptionID != "" && org.Billing.Status != "canceled" && org.Billing.Status != "incomplete_expired"
 	// Billing routes accept changes only from the owner of an active
 	// organization.
@@ -215,7 +237,7 @@ func billingPage(store *core.Store, principal core.Principal, view BillingSnapsh
 		AwaitingPayment:  !hasSubscription && org.BillingStatus == "billing_required",
 		CanManage:        owner,
 		ShowPortal:       owner && (hasSubscription || org.Billing.CustomerID != ""),
-		Change:           upcomingChange(store, org.Billing),
+		Change:           change,
 		Interval:         interval,
 		Plans:            make([]planView, 0, len(view.Plans)),
 	}
@@ -234,12 +256,12 @@ func billingPage(store *core.Store, principal core.Principal, view BillingSnapsh
 			data.AnnualSavings = max(data.AnnualSavings, int(100-plan.AnnualPriceCents*100/(plan.PriceCents*12)))
 		}
 	}
-	return data
+	return data, nil
 }
 
 // upcomingChange reads the plan change billing accepted but has not applied.
 // Billing holds at most one: a pending upgrade or a scheduled downgrade.
-func upcomingChange(store *core.Store, billing core.Billing) upcomingPlanChange {
+func upcomingChange(ctx context.Context, store core.Store, billing core.Billing) (upcomingPlanChange, error) {
 	// Until Stripe reports the period end, the change applies at the next
 	// renewal.
 	change := upcomingPlanChange{Key: billing.ScheduledPlanKey, Interval: billing.ScheduledInterval, Date: "the next renewal"}
@@ -250,13 +272,17 @@ func upcomingChange(store *core.Store, billing core.Billing) upcomingPlanChange 
 		change = upcomingPlanChange{Key: billing.PendingPlanKey, Interval: billing.PendingInterval, Pending: true}
 	}
 	if change.Key == "" {
-		return upcomingPlanChange{}
+		return upcomingPlanChange{}, nil
 	}
 	change.PlanName = humanizePlanKey(change.Key)
-	if plan, ok := store.Plan(change.Key); ok {
+	plan, err := store.Plan(ctx, change.Key)
+	switch {
+	case err == nil:
 		change.PlanName = plan.Name
+	case !errors.Is(err, core.ErrNotFound):
+		return upcomingPlanChange{}, err
 	}
-	return change
+	return change, nil
 }
 
 func humanizePlanKey(key string) string {
@@ -414,9 +440,9 @@ func completeDemoCheckout(deps core.Deps, service BillingService, w http.Respons
 	if !ok {
 		return
 	}
-	returnTo, err := service.CompleteDemoCheckout(principal, r.PathValue("sessionID"), canceled)
+	returnTo, err := service.CompleteDemoCheckout(r.Context(), principal, r.PathValue("sessionID"), canceled)
 	if err != nil {
-		http.Error(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
+		writeCheckoutError(w, err)
 		return
 	}
 	http.Redirect(w, r, returnTo, http.StatusSeeOther)
@@ -429,12 +455,29 @@ func checkoutPrincipal(deps core.Deps, service BillingService, w http.ResponseWr
 	if !ok {
 		return core.Principal{}, false
 	}
-	principal, err := service.CheckoutPrincipal(principal, r.PathValue("sessionID"))
+	principal, err := service.CheckoutPrincipal(r.Context(), principal, r.PathValue("sessionID"))
 	if err != nil {
-		http.Error(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
+		writeCheckoutError(w, err)
 		return core.Principal{}, false
 	}
 	return principal, true
+}
+
+// writeCheckoutError answers a failed demo checkout request. A session the
+// caller cannot use reads as not found, so checkout session IDs reveal
+// nothing about other organizations; store outages are 503 and conflicts
+// 409.
+func writeCheckoutError(w http.ResponseWriter, err error) {
+	status := http.StatusInternalServerError
+	switch {
+	case errors.Is(err, core.ErrUnavailable):
+		status = http.StatusServiceUnavailable
+	case errors.Is(err, core.ErrNotFound), errors.Is(err, core.ErrForbidden), errors.Is(err, core.ErrUnauthorized), errors.Is(err, core.ErrInvalid):
+		status = http.StatusNotFound
+	case errors.Is(err, core.ErrConflict):
+		status = http.StatusConflict
+	}
+	http.Error(w, http.StatusText(status), status)
 }
 
 func requestPrincipal(deps core.Deps, w http.ResponseWriter, r *http.Request) (core.Principal, bool) {

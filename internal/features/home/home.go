@@ -45,7 +45,7 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 		if !ok {
 			return
 		}
-		summary, err := service.Overview(p, r.URL.Query().Get("range"))
+		summary, err := service.Overview(r.Context(), p, r.URL.Query().Get("range"))
 		switch {
 		case errors.Is(err, errFirstProjectNeeded):
 			http.Redirect(w, r, "/organization?newOrganization=project", http.StatusSeeOther)
@@ -104,12 +104,7 @@ func signedIn(deps core.Deps, w http.ResponseWriter, r *http.Request) (core.Prin
 }
 
 func writeError(w http.ResponseWriter, err error) {
-	switch {
-	case errors.Is(err, core.ErrForbidden):
-		http.Error(w, "forbidden", http.StatusForbidden)
-	case errors.Is(err, core.ErrNotFound):
-		http.Error(w, "not found", http.StatusNotFound)
-	default:
+	if !core.WriteAccessError(w, err) {
 		http.Error(w, "invalid request", http.StatusBadRequest)
 	}
 }

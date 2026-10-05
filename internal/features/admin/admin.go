@@ -148,7 +148,7 @@ func adminPage(deps core.Deps, service Service, section string) http.HandlerFunc
 		if !ok {
 			return
 		}
-		data, err := service.page(principal, section, r.URL.Query().Get("q"))
+		data, err := service.page(r.Context(), principal, section, r.URL.Query().Get("q"))
 		if err != nil {
 			writeAdminError(w, err)
 			return
@@ -192,7 +192,7 @@ func updateUser(deps core.Deps, service Service) http.HandlerFunc {
 			return
 		}
 		updatedAdmin := r.FormValue("platformAdmin") == "true"
-		if err := service.UpdateUser(principal, r.PathValue("accountID"), r.FormValue("name"), updatedAdmin); err != nil {
+		if err := service.UpdateUser(r.Context(), principal, r.PathValue("accountID"), r.FormValue("name"), updatedAdmin); err != nil {
 			writeMutationError(w, r, "/admin/users", err)
 			return
 		}
@@ -214,7 +214,7 @@ func renameOrganization(deps core.Deps, service Service) http.HandlerFunc {
 			http.Error(w, "invalid admin form", http.StatusBadRequest)
 			return
 		}
-		if err := service.RenameOrganization(principal, r.PathValue("accountID"), r.PathValue("organizationID"), r.FormValue("name")); err != nil {
+		if err := service.RenameOrganization(r.Context(), principal, r.PathValue("accountID"), r.PathValue("organizationID"), r.FormValue("name")); err != nil {
 			writeMutationError(w, r, "/admin/organizations", err)
 			return
 		}
@@ -232,7 +232,7 @@ func renameProject(deps core.Deps, service Service) http.HandlerFunc {
 			http.Error(w, "invalid admin form", http.StatusBadRequest)
 			return
 		}
-		if err := service.RenameProject(principal, r.PathValue("accountID"), r.PathValue("organizationID"), r.PathValue("projectID"), r.FormValue("name")); err != nil {
+		if err := service.RenameProject(r.Context(), principal, r.PathValue("accountID"), r.PathValue("organizationID"), r.PathValue("projectID"), r.FormValue("name")); err != nil {
 			writeMutationError(w, r, "/admin/projects", err)
 			return
 		}
@@ -251,6 +251,7 @@ func recordEstateAction(deps core.Deps, service Service) http.HandlerFunc {
 			return
 		}
 		if err := service.RecordEstateAction(
+			r.Context(),
 			principal,
 			r.FormValue("action"),
 			r.FormValue("targetId"),
@@ -291,7 +292,7 @@ func savePlan(deps core.Deps, service Service) http.HandlerFunc {
 			PriceCents: price, AnnualPriceCents: annualPrice, TrialDays: trialDays,
 			Visible: r.FormValue("visible") == "true", StorageMiB: storage, MonthlyRequests: requests,
 		}
-		if _, err := service.SavePlan(principal, plan); err != nil {
+		if _, err := service.SavePlan(r.Context(), principal, plan); err != nil {
 			writeMutationError(w, r, "/admin/plans", err)
 			return
 		}
@@ -309,7 +310,7 @@ func setPlanVisibility(deps core.Deps, service Service) http.HandlerFunc {
 			http.Error(w, "invalid admin form", http.StatusBadRequest)
 			return
 		}
-		if err := service.SetPlanVisibility(principal, r.PathValue("planID"), r.FormValue("visible") == "true"); err != nil {
+		if err := service.SetPlanVisibility(r.Context(), principal, r.PathValue("planID"), r.FormValue("visible") == "true"); err != nil {
 			writeMutationError(w, r, "/admin/plans", err)
 			return
 		}
@@ -323,7 +324,7 @@ func deletePlan(deps core.Deps, service Service) http.HandlerFunc {
 		if !ok {
 			return
 		}
-		if err := service.DeletePlan(principal, r.PathValue("planID")); err != nil {
+		if err := service.DeletePlan(r.Context(), principal, r.PathValue("planID")); err != nil {
 			writeMutationError(w, r, "/admin/plans", err)
 			return
 		}
@@ -341,7 +342,7 @@ func requireAdminRoute(deps core.Deps, w http.ResponseWriter, r *http.Request) (
 		core.RedirectToLogin(w, r)
 		return core.Principal{}, false
 	}
-	if err := deps.Store.AuthorizePlatformAdmin(principal); err != nil {
+	if err := deps.Store.AuthorizePlatformAdmin(r.Context(), principal); err != nil {
 		writeAdminError(w, err)
 		return core.Principal{}, false
 	}
@@ -367,6 +368,8 @@ func writeAdminError(w http.ResponseWriter, err error) {
 		http.Error(w, "not found", http.StatusNotFound)
 	case errors.Is(err, core.ErrInvalid):
 		http.Error(w, "invalid admin request", http.StatusBadRequest)
+	case errors.Is(err, core.ErrUnavailable):
+		http.Error(w, "service unavailable", http.StatusServiceUnavailable)
 	default:
 		http.Error(w, "could not load admin data", http.StatusInternalServerError)
 	}
@@ -382,6 +385,8 @@ func writeMutationError(w http.ResponseWriter, r *http.Request, path string, err
 		redirectError(w, r, path, "That change conflicts with existing data.")
 	case errors.Is(err, core.ErrInvalid):
 		redirectError(w, r, path, "Enter valid values for the selected fields.")
+	case errors.Is(err, core.ErrUnavailable):
+		http.Error(w, "service unavailable", http.StatusServiceUnavailable)
 	default:
 		http.Error(w, "could not update admin data", http.StatusInternalServerError)
 	}

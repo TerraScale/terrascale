@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -151,7 +152,9 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 func loginPage(deps core.Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if principal, ok := currentPrincipal(deps.Sessions, r); ok {
-			if account, err := deps.Store.SnapshotAs(principal); err == nil {
+			// A session whose account cannot be read signs in again
+			// rather than failing the login page.
+			if account, err := deps.Store.SnapshotAs(r.Context(), principal); err == nil {
 				location := "/"
 				if !account.OnboardingCompleted {
 					location = "/onboarding"
@@ -250,7 +253,7 @@ func oauthConsent(deps core.Deps) http.HandlerFunc {
 			redirectToLogin(w, r)
 			return
 		}
-		if err := deps.Store.Authorize(principal); err != nil {
+		if err := core.Authorize(r.Context(), deps.Store, principal); err != nil {
 			redirectToLogin(w, r)
 			return
 		}
@@ -287,7 +290,7 @@ func renderAuthStatus(w http.ResponseWriter, r *http.Request, deps core.Deps, da
 // RegisterAccount validates and creates one independently authenticated account.
 // The store enforces email uniqueness again while committing, so concurrent
 // requests cannot create duplicate accounts after this early duplicate check.
-func RegisterAccount(deps core.Deps, input RegistrationInput) (core.Account, error) {
+func RegisterAccount(ctx context.Context, deps core.Deps, input RegistrationInput) (core.Account, error) {
 	name := strings.TrimSpace(input.DisplayName)
 	if name == "" {
 		return core.Account{}, InputError{"displayName", "Enter your full name."}
@@ -327,15 +330,17 @@ func RegisterAccount(deps core.Deps, input RegistrationInput) (core.Account, err
 	if !input.AcceptedTerms {
 		return core.Account{}, InputError{"terms", "Accept the Terms of Service to continue."}
 	}
-	if _, exists := deps.Store.FindByEmail(email); exists {
+	if _, err := deps.Store.FindByEmail(ctx, email); err == nil {
 		return core.Account{}, core.ErrConflict
+	} else if !errors.Is(err, core.ErrNotFound) {
+		return core.Account{}, err
 	}
 
 	passwordHash, err := HashPassword(input.Password)
 	if err != nil {
 		return core.Account{}, err
 	}
-	return deps.Store.CreateAccount(core.User{
+	return deps.Store.CreateAccount(ctx, core.User{
 		Email:        email,
 		Name:         name,
 		PasswordHash: passwordHash,
@@ -420,7 +425,11 @@ func startPasswordSession(w http.ResponseWriter, r *http.Request, deps core.Deps
 	if wait, allowed := deps.Throttle.Allow(r, email); !allowed {
 		return core.Account{}, tooManyAttempts{wait: wait}
 	}
-	account, exists := deps.Store.FindByEmail(email)
+	account, err := deps.Store.FindByEmail(r.Context(), email)
+	if err != nil && !errors.Is(err, core.ErrNotFound) {
+		return core.Account{}, err
+	}
+	exists := err == nil
 	passwordHash := dummyPasswordHash()
 	if exists {
 		passwordHash = account.User.PasswordHash
@@ -446,7 +455,10 @@ func startPasswordSession(w http.ResponseWriter, r *http.Request, deps core.Deps
 
 func logout(deps core.Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		deps.Sessions.End(w, r)
+		if err := deps.Sessions.End(w, r); err != nil {
+			http.Error(w, "sign-out could not finish; retry logout", http.StatusServiceUnavailable)
+			return
+		}
 		http.Redirect(w, r, "/login", http.StatusSeeOther)
 	}
 }
@@ -458,7 +470,7 @@ func currentUser(deps core.Deps) http.HandlerFunc {
 			writeJSON(w, http.StatusUnauthorized, apiError{Error: "unauthorized"})
 			return
 		}
-		account, err := deps.Store.SnapshotAs(principal)
+		account, err := deps.Store.SnapshotAs(r.Context(), principal)
 		if err != nil {
 			writeJSON(w, http.StatusUnauthorized, apiError{Error: "unauthorized"})
 			return

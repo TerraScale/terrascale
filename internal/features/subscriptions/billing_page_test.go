@@ -8,19 +8,20 @@ import (
 	"time"
 
 	"terrascale.tech/dashboard/internal/core"
+	"terrascale.tech/dashboard/internal/core/memstore"
 )
 
 // billingFixture is one Personal organization owner and its billing service.
 type billingFixture struct {
-	store     *core.Store
+	store     core.Store
 	service   BillingService
 	principal core.Principal
 }
 
 func newBillingFixture(t *testing.T) billingFixture {
 	t.Helper()
-	store := core.NewStore()
-	account, err := store.CreateAccount(core.User{Name: "Owner", Email: "billing-page@example.test", PasswordHash: "unused"})
+	store := memstore.New()
+	account, err := store.CreateAccount(t.Context(), core.User{Name: "Owner", Email: "billing-page@example.test", PasswordHash: "unused"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -30,22 +31,26 @@ func newBillingFixture(t *testing.T) billingFixture {
 // subscribe completes a local demo checkout for the plan.
 func (fixture billingFixture) subscribe(t *testing.T, planKey, interval string) {
 	t.Helper()
-	session, err := fixture.service.BeginDemoCheckout(fixture.principal, planKey, interval, "/billing")
+	session, err := fixture.service.BeginDemoCheckout(t.Context(), fixture.principal, planKey, interval, "/billing")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := fixture.service.CompleteDemoCheckout(fixture.principal, session.ID, false); err != nil {
+	if _, err := fixture.service.CompleteDemoCheckout(t.Context(), fixture.principal, session.ID, false); err != nil {
 		t.Fatal(err)
 	}
 }
 
 func (fixture billingFixture) page(t *testing.T, principal core.Principal, interval string) subscriptionsPage {
 	t.Helper()
-	view, err := fixture.service.Snapshot(fixture.principal)
+	view, err := fixture.service.Snapshot(t.Context(), fixture.principal)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return billingPage(fixture.store, principal, view, interval)
+	page, err := billingPage(t.Context(), fixture.store, principal, view, interval)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return page
 }
 
 func (page subscriptionsPage) card(t *testing.T, key string) planView {
@@ -128,7 +133,7 @@ func TestBillingPageShowsTheScheduledChangeAndLocksOtherPlans(t *testing.T) {
 	fixture := newBillingFixture(t)
 	fixture.subscribe(t, "pro", intervalMonthly)
 	renewal := time.Date(2026, time.October, 27, 0, 0, 0, 0, time.UTC)
-	if err := fixture.service.ScheduleDemoChange(fixture.principal, "starter", intervalMonthly, renewal); err != nil {
+	if err := fixture.service.ScheduleDemoChange(t.Context(), fixture.principal, "starter", intervalMonthly, renewal); err != nil {
 		t.Fatal(err)
 	}
 
@@ -160,7 +165,7 @@ func TestBillingPageExplainsScheduledFreeChangeWithoutAFreeCard(t *testing.T) {
 	fixture := newBillingFixture(t)
 	fixture.subscribe(t, "pro", intervalMonthly)
 	renewal := time.Date(2026, time.October, 27, 0, 0, 0, 0, time.UTC)
-	if err := fixture.service.ScheduleDemoChange(fixture.principal, "free", "", renewal); err != nil {
+	if err := fixture.service.ScheduleDemoChange(t.Context(), fixture.principal, "free", "", renewal); err != nil {
 		t.Fatal(err)
 	}
 
@@ -184,7 +189,7 @@ func TestBillingPageExplainsScheduledFreeChangeWithoutAFreeCard(t *testing.T) {
 func TestBillingPageNamesTheNextRenewalWhenTheScheduledDateIsUnknown(t *testing.T) {
 	fixture := newBillingFixture(t)
 	fixture.subscribe(t, "pro", intervalMonthly)
-	if err := fixture.store.UpdateAs(fixture.principal, func(account *core.Account) error {
+	if err := fixture.store.UpdateAs(t.Context(), fixture.principal, func(account *core.Account) error {
 		org := account.Organizations[fixture.principal.OrganizationID]
 		org.Billing.ScheduledPlanKey = "starter"
 		org.Billing.ScheduledInterval = intervalMonthly
@@ -202,7 +207,10 @@ func TestBillingPageNamesTheNextRenewalWhenTheScheduledDateIsUnknown(t *testing.
 
 func TestUpcomingChangeHumanizesMissingPlanKey(t *testing.T) {
 	fixture := newBillingFixture(t)
-	change := upcomingChange(fixture.store, core.Billing{ScheduledPlanKey: "missing_plan-key"})
+	change, err := upcomingChange(t.Context(), fixture.store, core.Billing{ScheduledPlanKey: "missing_plan-key"})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if change.PlanName != "Missing plan key" {
 		t.Fatalf("missing plan name = %q, want Missing plan key", change.PlanName)
 	}
@@ -211,7 +219,7 @@ func TestUpcomingChangeHumanizesMissingPlanKey(t *testing.T) {
 func TestBillingPageShowsAPendingUpgrade(t *testing.T) {
 	fixture := newBillingFixture(t)
 	fixture.subscribe(t, "starter", intervalMonthly)
-	if err := fixture.store.UpdateAs(fixture.principal, func(account *core.Account) error {
+	if err := fixture.store.UpdateAs(t.Context(), fixture.principal, func(account *core.Account) error {
 		org := account.Organizations[fixture.principal.OrganizationID]
 		org.Billing.PendingPlanKey = "business"
 		org.Billing.PendingInterval = intervalAnnual
@@ -232,7 +240,7 @@ func TestBillingPageShowsAPendingUpgrade(t *testing.T) {
 
 func TestCheckoutActionsStayDisabledForAnExpiredSubscriptionWithAPendingChange(t *testing.T) {
 	fixture := newBillingFixture(t)
-	if err := fixture.store.UpdateAs(fixture.principal, func(account *core.Account) error {
+	if err := fixture.store.UpdateAs(t.Context(), fixture.principal, func(account *core.Account) error {
 		org := account.Organizations[fixture.principal.OrganizationID]
 		org.Billing.SubscriptionID = "sub_expired"
 		org.Billing.Status = "incomplete_expired"
@@ -256,7 +264,7 @@ func TestCheckoutActionsStayDisabledForAnExpiredSubscriptionWithAPendingChange(t
 
 func TestBillingPageForAnOrganizationAwaitingItsFirstPayment(t *testing.T) {
 	fixture := newBillingFixture(t)
-	if err := fixture.store.UpdateAs(fixture.principal, func(account *core.Account) error {
+	if err := fixture.store.UpdateAs(t.Context(), fixture.principal, func(account *core.Account) error {
 		org := account.Organizations[fixture.principal.OrganizationID]
 		org.Kind, org.PlanID, org.BillingStatus = "business", "plan_starter", "billing_required"
 		account.Organizations[org.ID] = org
@@ -304,7 +312,7 @@ func TestBillingPageLinksThePortalOnlyWithABillingAccount(t *testing.T) {
 	if page := fixture.page(t, fixture.principal, intervalMonthly); page.ShowPortal {
 		t.Fatal("Free organization without a billing account links the billing portal")
 	}
-	if err := fixture.store.UpdateAs(fixture.principal, func(account *core.Account) error {
+	if err := fixture.store.UpdateAs(t.Context(), fixture.principal, func(account *core.Account) error {
 		org := account.Organizations[fixture.principal.OrganizationID]
 		org.Billing.CustomerID = "cus_canceled"
 		account.Organizations[org.ID] = org

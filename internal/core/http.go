@@ -44,8 +44,9 @@ func (d Deps) FormPrincipal(w http.ResponseWriter, r *http.Request) (Principal, 
 }
 
 // WriteAccessError writes the plain-text response for authentication,
-// authorization, and missing-resource errors. It writes nothing and reports
-// false for any other error, which the feature maps itself.
+// authorization, and missing-resource errors, and for a store that is
+// unavailable. It writes nothing and reports false for any other error, which
+// the feature maps itself.
 func WriteAccessError(w http.ResponseWriter, err error) bool {
 	switch {
 	case errors.Is(err, ErrUnauthorized):
@@ -54,6 +55,8 @@ func WriteAccessError(w http.ResponseWriter, err error) bool {
 		http.Error(w, "forbidden", http.StatusForbidden)
 	case errors.Is(err, ErrNotFound):
 		http.Error(w, "not found", http.StatusNotFound)
+	case errors.Is(err, ErrUnavailable):
+		http.Error(w, "service unavailable", http.StatusServiceUnavailable)
 	default:
 		return false
 	}

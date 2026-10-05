@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"slices"
@@ -31,16 +32,16 @@ var estateRegionDefinitions = [...]estateRegionDefinition{
 // Service applies platform administrator actions through the store's guarded
 // cross-account operations. Authorization always comes from persisted state.
 type Service struct {
-	store      *core.Store
+	store      core.Store
 	mutationMu *sync.Mutex
 }
 
-func NewService(store *core.Store) Service {
+func NewService(store core.Store) Service {
 	return Service{store: store, mutationMu: new(sync.Mutex)}
 }
 
-func (s Service) page(principal core.Principal, section, rawQuery string) (pageData, error) {
-	accounts, err := s.platformAccounts(principal)
+func (s Service) page(ctx context.Context, principal core.Principal, section, rawQuery string) (pageData, error) {
+	accounts, err := s.platformAccounts(ctx, principal)
 	if err != nil {
 		return pageData{}, err
 	}
@@ -218,7 +219,7 @@ func (s Service) page(principal core.Principal, section, rawQuery string) (pageD
 				data.Regions = append(data.Regions, *region)
 			}
 		}
-		data.EstateActions, err = s.store.PlatformAdminActions(principal)
+		data.EstateActions, err = s.store.PlatformAdminActions(ctx, principal)
 		if err != nil {
 			return pageData{}, err
 		}
@@ -228,7 +229,11 @@ func (s Service) page(principal core.Principal, section, rawQuery string) (pageD
 		data.Title = "Usage"
 	case "plans":
 		data.Title = "Plans"
-		for _, plan := range s.store.Plans() {
+		plans, err := s.store.Plans(ctx)
+		if err != nil {
+			return pageData{}, err
+		}
+		for _, plan := range plans {
 			if matching(query, plan.ID, plan.Key, plan.Name) {
 				data.Plans = append(data.Plans, plan)
 			}
@@ -284,10 +289,10 @@ func observedRegion(regions map[string]*estateRow, code string) *estateRow {
 	return region
 }
 
-func (s Service) UpdateUser(principal core.Principal, accountID, name string, platformAdmin bool) error {
+func (s Service) UpdateUser(ctx context.Context, principal core.Principal, accountID, name string, platformAdmin bool) error {
 	unlock := s.lockMutations()
 	defer unlock()
-	accounts, err := s.platformAccounts(principal)
+	accounts, err := s.platformAccounts(ctx, principal)
 	if err != nil {
 		return err
 	}
@@ -311,7 +316,7 @@ func (s Service) UpdateUser(principal core.Principal, accountID, name string, pl
 	if target.User.PlatformAdmin && !platformAdmin && adminCount <= 1 {
 		return fmt.Errorf("%w: the last platform administrator cannot be demoted", core.ErrConflict)
 	}
-	return s.store.UpdateAccountAsAdmin(principal, accountID, func(account *core.Account) error {
+	return s.store.UpdateAccountAsAdmin(ctx, principal, accountID, func(account *core.Account) error {
 		account.User.Name = name
 		account.User.PlatformAdmin = platformAdmin
 		return nil
@@ -320,8 +325,8 @@ func (s Service) UpdateUser(principal core.Principal, accountID, name string, pl
 
 // RecordEstateAction validates and records a product action without changing
 // estate, billing, tenant, or infrastructure state.
-func (s Service) RecordEstateAction(principal core.Principal, action, target, reason string) error {
-	if err := s.requireAdmin(principal); err != nil {
+func (s Service) RecordEstateAction(ctx context.Context, principal core.Principal, action, target, reason string) error {
+	if err := s.requireAdmin(ctx, principal); err != nil {
 		return err
 	}
 	if !slices.Contains(estateActionKinds[:], action) {
@@ -336,18 +341,18 @@ func (s Service) RecordEstateAction(principal core.Principal, action, target, re
 	if reasonLength < 3 || reasonLength > 1000 {
 		return core.Invalid("provide a reason between 3 and 1000 characters")
 	}
-	return s.store.RecordPlatformAdminAction(principal, action, target, reason)
+	return s.store.RecordPlatformAdminAction(ctx, principal, action, target, reason)
 }
 
-func (s Service) RenameOrganization(principal core.Principal, accountID, organizationID, name string) error {
-	if err := s.requireAdmin(principal); err != nil {
+func (s Service) RenameOrganization(ctx context.Context, principal core.Principal, accountID, organizationID, name string) error {
+	if err := s.requireAdmin(ctx, principal); err != nil {
 		return err
 	}
 	name, err := validName(name)
 	if err != nil {
 		return err
 	}
-	return s.store.UpdateAccountAsAdmin(principal, accountID, func(account *core.Account) error {
+	return s.store.UpdateAccountAsAdmin(ctx, principal, accountID, func(account *core.Account) error {
 		org, ok := account.Organizations[organizationID]
 		if !ok {
 			return fmt.Errorf("%w: organization %q", core.ErrNotFound, organizationID)
@@ -358,15 +363,15 @@ func (s Service) RenameOrganization(principal core.Principal, accountID, organiz
 	})
 }
 
-func (s Service) RenameProject(principal core.Principal, accountID, organizationID, projectID, name string) error {
-	if err := s.requireAdmin(principal); err != nil {
+func (s Service) RenameProject(ctx context.Context, principal core.Principal, accountID, organizationID, projectID, name string) error {
+	if err := s.requireAdmin(ctx, principal); err != nil {
 		return err
 	}
 	name, err := validName(name)
 	if err != nil {
 		return err
 	}
-	return s.store.UpdateAccountAsAdmin(principal, accountID, func(account *core.Account) error {
+	return s.store.UpdateAccountAsAdmin(ctx, principal, accountID, func(account *core.Account) error {
 		org, ok := account.Organizations[organizationID]
 		if !ok {
 			return fmt.Errorf("%w: organization %q", core.ErrNotFound, organizationID)
@@ -385,10 +390,10 @@ func (s Service) RenameProject(principal core.Principal, accountID, organization
 // SavePlan creates a plan when plan.ID is empty and otherwise updates the
 // catalog fields the administrator edits. Limits the editor does not manage,
 // such as database and member caps, keep their saved values.
-func (s Service) SavePlan(principal core.Principal, plan core.Plan) (core.Plan, error) {
+func (s Service) SavePlan(ctx context.Context, principal core.Principal, plan core.Plan) (core.Plan, error) {
 	unlock := s.lockMutations()
 	defer unlock()
-	if err := s.requireAdmin(principal); err != nil {
+	if err := s.requireAdmin(ctx, principal); err != nil {
 		return core.Plan{}, err
 	}
 	var err error
@@ -401,7 +406,10 @@ func (s Service) SavePlan(principal core.Principal, plan core.Plan) (core.Plan, 
 	if plan.PriceCents < 0 || plan.AnnualPriceCents < 0 || plan.TrialDays < 0 || plan.StorageMiB < 0 || plan.MonthlyRequests < 0 {
 		return core.Plan{}, core.Invalid("plan prices and limits must be non-negative")
 	}
-	plans := s.store.Plans()
+	plans, err := s.store.Plans(ctx)
+	if err != nil {
+		return core.Plan{}, err
+	}
 	if plan.ID == "" {
 		plan.ID = core.NewID("plan")
 	} else {
@@ -418,35 +426,38 @@ func (s Service) SavePlan(principal core.Principal, plan core.Plan) (core.Plan, 
 			return core.Plan{}, fmt.Errorf("%w: plan key %q is already used", core.ErrConflict, plan.Key)
 		}
 	}
-	if err := s.store.UpsertPlanAs(principal, plan); err != nil {
+	if err := s.store.UpsertPlanAs(ctx, principal, plan); err != nil {
 		return core.Plan{}, err
 	}
 	return plan, nil
 }
 
-func (s Service) SetPlanVisibility(principal core.Principal, planID string, visible bool) error {
+func (s Service) SetPlanVisibility(ctx context.Context, principal core.Principal, planID string, visible bool) error {
 	unlock := s.lockMutations()
 	defer unlock()
-	if err := s.requireAdmin(principal); err != nil {
+	if err := s.requireAdmin(ctx, principal); err != nil {
 		return err
 	}
-	plans := s.store.Plans()
+	plans, err := s.store.Plans(ctx)
+	if err != nil {
+		return err
+	}
 	for _, plan := range plans {
 		if plan.ID == planID {
 			plan.Visible = visible
-			return s.store.UpsertPlanAs(principal, plan)
+			return s.store.UpsertPlanAs(ctx, principal, plan)
 		}
 	}
 	return fmt.Errorf("%w: plan %q", core.ErrNotFound, planID)
 }
 
-func (s Service) DeletePlan(principal core.Principal, planID string) error {
+func (s Service) DeletePlan(ctx context.Context, principal core.Principal, planID string) error {
 	unlock := s.lockMutations()
 	defer unlock()
-	if err := s.requireAdmin(principal); err != nil {
+	if err := s.requireAdmin(ctx, principal); err != nil {
 		return err
 	}
-	err := s.store.DeletePlanAs(principal, planID)
+	err := s.store.DeletePlanAs(ctx, principal, planID)
 	switch {
 	case errors.Is(err, core.ErrNotFound):
 		return fmt.Errorf("%w: plan %q", core.ErrNotFound, planID)
@@ -456,18 +467,18 @@ func (s Service) DeletePlan(principal core.Principal, planID string) error {
 	return err
 }
 
-func (s Service) platformAccounts(principal core.Principal) ([]core.Account, error) {
-	if err := s.requireAdmin(principal); err != nil {
+func (s Service) platformAccounts(ctx context.Context, principal core.Principal) ([]core.Account, error) {
+	if err := s.requireAdmin(ctx, principal); err != nil {
 		return nil, err
 	}
-	return s.store.PlatformAccounts(principal)
+	return s.store.PlatformAccounts(ctx, principal)
 }
 
-func (s Service) requireAdmin(principal core.Principal) error {
+func (s Service) requireAdmin(ctx context.Context, principal core.Principal) error {
 	if s.store == nil {
 		return core.ErrUnauthorized
 	}
-	return s.store.AuthorizePlatformAdmin(principal)
+	return s.store.AuthorizePlatformAdmin(ctx, principal)
 }
 
 func (s Service) lockMutations() func() {

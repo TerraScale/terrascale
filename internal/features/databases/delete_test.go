@@ -9,18 +9,19 @@ import (
 	"time"
 
 	"terrascale.tech/dashboard/internal/core"
+	"terrascale.tech/dashboard/internal/core/memstore"
 	"terrascale.tech/dashboard/internal/platform/csrf"
 	"terrascale.tech/dashboard/internal/platform/session"
 )
 
 func TestDeleteDatabaseRevokesItsKeysAndDropsItsConfigurations(t *testing.T) {
-	store := core.NewStore()
-	account, err := store.CreateAccount(core.User{Name: "Owner", Email: "delete-owner@example.test", PasswordHash: "unused"})
+	store := memstore.New()
+	account, err := store.CreateAccount(t.Context(), core.User{Name: "Owner", Email: "delete-owner@example.test", PasswordHash: "unused"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	p := account.Principal()
-	if err := store.UpdateAs(p, func(a *core.Account) error {
+	if err := store.UpdateAs(t.Context(), p, func(a *core.Account) error {
 		org := a.Organizations[p.OrganizationID]
 		project := org.Projects[p.ProjectID]
 		project.Databases["db_tmp"] = core.Database{ID: "db_tmp", ProjectID: project.ID, Name: "tmp", Status: "ready"}
@@ -56,7 +57,7 @@ func TestDeleteDatabaseRevokesItsKeysAndDropsItsConfigurations(t *testing.T) {
 		t.Fatalf("delete = %d %s, want 204", response.Code, response.Body)
 	}
 
-	snapshot, err := store.SnapshotAs(p)
+	snapshot, err := store.SnapshotAs(t.Context(), p)
 	if err != nil {
 		t.Fatal(err)
 	}

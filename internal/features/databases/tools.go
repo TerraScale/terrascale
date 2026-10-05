@@ -54,15 +54,15 @@ func mountTools(tools *core.Tools, service Service) {
 	core.AddTool(tools, core.ToolSpec{
 		Name: "list_databases", Title: "List databases", ReadOnly: true,
 		Description: "List the databases in a project with their status and region.",
-	}, func(_ context.Context, p core.Principal, _ core.Scope) (databaseList, error) {
-		list, err := service.List(p)
+	}, func(ctx context.Context, p core.Principal, _ core.Scope) (databaseList, error) {
+		list, err := service.List(ctx, p)
 		return databaseList{Databases: list}, err
 	})
 	core.AddTool(tools, core.ToolSpec{
 		Name: "get_database", Title: "Get database", ReadOnly: true,
 		Description: "Show one database's status, regions, storage totals, and backup state.",
-	}, func(_ context.Context, p core.Principal, in databaseInput) (databaseDetail, error) {
-		return service.Detail(p, in.DatabaseID)
+	}, func(ctx context.Context, p core.Principal, in databaseInput) (databaseDetail, error) {
+		return service.Detail(ctx, p, in.DatabaseID)
 	})
 	core.AddTool(tools, core.ToolSpec{
 		Name: "create_database", Title: "Create database",

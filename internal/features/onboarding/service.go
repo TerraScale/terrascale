@@ -60,16 +60,18 @@ func (e stepError) Error() string        { return string(e) }
 func (e stepError) Is(target error) bool { return target == core.ErrInvalid }
 
 // Status returns the account's setup progress and the paid plans on offer.
-func (s Service) Status(p core.Principal) (status, error) {
-	account, err := s.deps.Store.SnapshotAs(p)
+func (s Service) Status(ctx context.Context, p core.Principal) (status, error) {
+	account, err := s.deps.Store.SnapshotAs(ctx, p)
 	if err != nil {
 		return status{}, err
 	}
-	result := status{Completed: account.OnboardingCompleted, Step: account.OnboardingStep, Steps: steps(account.OnboardingStep), Plans: []planView{}}
-	if account.OnboardingCompleted {
-		result.Step = ""
+	progress := accountProgress(account)
+	result := status{Completed: progress.Completed, Step: progress.Step, Steps: steps(account.OnboardingStep), Plans: []planView{}}
+	plans, err := paidPlans(ctx, s.deps.Store)
+	if err != nil {
+		return status{}, err
 	}
-	for _, plan := range paidPlans(s.deps.Store) {
+	for _, plan := range plans {
 		result.Plans = append(result.Plans, planView{
 			Key: plan.Key, Name: plan.Name, PriceCents: plan.PriceCents, AnnualPriceCents: plan.AnnualPriceCents, TrialDays: plan.TrialDays,
 		})
@@ -79,8 +81,8 @@ func (s Service) Status(p core.Principal) (status, error) {
 
 // ConfirmPayment advances the payment step once the account's onboarding
 // checkout has completed, and leaves it unchanged otherwise.
-func (s Service) ConfirmPayment(p core.Principal) error {
-	err := s.deps.Store.UpdateAs(p, func(current *core.Account) error {
+func (s Service) ConfirmPayment(ctx context.Context, p core.Principal) error {
+	err := s.deps.Store.UpdateAs(ctx, p, func(current *core.Account) error {
 		if current.OnboardingStep != "payment-method" {
 			return core.ErrConflict
 		}
@@ -106,7 +108,7 @@ func (s Service) ConfirmPayment(p core.Principal) error {
 // SaveStep saves one setup step. A paid payment step returns the checkout
 // the user must finish in a browser.
 func (s Service) SaveStep(ctx context.Context, p core.Principal, in stepInput) (stepResult, error) {
-	account, err := s.deps.Store.SnapshotAs(p)
+	account, err := s.deps.Store.SnapshotAs(ctx, p)
 	if err != nil {
 		return stepResult{}, err
 	}
@@ -116,25 +118,35 @@ func (s Service) SaveStep(ctx context.Context, p core.Principal, in stepInput) (
 	var checkoutURL string
 	switch in.Step {
 	case "account-information":
-		err = s.saveName(p, in.DisplayName)
+		err = s.saveName(ctx, p, in.DisplayName)
 	case "payment-method":
 		checkoutURL, err = s.savePayment(ctx, p, account, in)
 	case "project":
-		err = s.saveProject(p, account, in.Name, in.Region)
+		err = s.saveProject(ctx, p, account, in.Name, in.Region)
 	default:
 		err = stepError("Choose a valid setup step.")
 	}
 	if err != nil {
 		return stepResult{}, err
 	}
-	next, err := s.Status(p)
+	account, err = s.deps.Store.SnapshotAs(ctx, p)
 	if err != nil {
 		return stepResult{}, err
 	}
-	return stepResult{Completed: next.Completed, Step: next.Step, CheckoutURL: checkoutURL}, nil
+	result := accountProgress(account)
+	result.CheckoutURL = checkoutURL
+	return result, nil
 }
 
-func (s Service) saveName(p core.Principal, name string) error {
+func accountProgress(account core.Account) stepResult {
+	result := stepResult{Completed: account.OnboardingCompleted, Step: account.OnboardingStep}
+	if result.Completed {
+		result.Step = ""
+	}
+	return result
+}
+
+func (s Service) saveName(ctx context.Context, p core.Principal, name string) error {
 	name = strings.TrimSpace(name)
 	switch {
 	case name == "":
@@ -144,7 +156,7 @@ func (s Service) saveName(p core.Principal, name string) error {
 	case utf8.RuneCountInString(name) > 128:
 		return stepError("Use a name with 128 characters or fewer.")
 	}
-	return s.deps.Store.UpdateAs(p, func(account *core.Account) error {
+	return s.deps.Store.UpdateAs(ctx, p, func(account *core.Account) error {
 		account.User.Name = name
 		if account.OnboardingStep == "account-information" {
 			account.OnboardingStep = "payment-method"
@@ -158,7 +170,7 @@ func (s Service) savePayment(ctx context.Context, p core.Principal, account core
 		return "", stepError("Complete the current setup step first.")
 	}
 	if in.Bypass {
-		return "", s.deps.Store.UpdateAs(p, func(account *core.Account) error {
+		return "", s.deps.Store.UpdateAs(ctx, p, func(account *core.Account) error {
 			if account.OnboardingStep != "payment-method" {
 				return core.ErrConflict
 			}
@@ -176,7 +188,7 @@ func (s Service) savePayment(ctx context.Context, p core.Principal, account core
 	return checkoutURL, err
 }
 
-func (s Service) saveProject(p core.Principal, account core.Account, name, region string) error {
+func (s Service) saveProject(ctx context.Context, p core.Principal, account core.Account, name, region string) error {
 	name = strings.TrimSpace(name)
 	switch {
 	case account.OnboardingStep != "project":
@@ -190,7 +202,7 @@ func (s Service) saveProject(p core.Principal, account core.Account, name, regio
 	if region == "" {
 		return stepError("Choose a supported project region.")
 	}
-	return s.deps.Store.UpdateAs(p, func(account *core.Account) error {
+	return s.deps.Store.UpdateAs(ctx, p, func(account *core.Account) error {
 		organization, ok := account.Organizations[p.OrganizationID]
 		if !ok {
 			return core.ErrNotFound
@@ -213,9 +225,13 @@ func (s Service) saveProject(p core.Principal, account core.Account, name, regio
 }
 
 // paidPlans lists the visible paid plans in tier order.
-func paidPlans(store *core.Store) []core.Plan {
+func paidPlans(ctx context.Context, store core.Store) ([]core.Plan, error) {
+	catalog, err := store.Plans(ctx)
+	if err != nil {
+		return nil, err
+	}
 	var plans []core.Plan
-	for _, plan := range store.Plans() {
+	for _, plan := range catalog {
 		if plan.Visible && plan.PriceCents > 0 {
 			plans = append(plans, plan)
 		}
@@ -230,7 +246,7 @@ func paidPlans(store *core.Store) []core.Plan {
 	slices.SortFunc(plans, func(a, b core.Plan) int {
 		return cmp.Or(cmp.Compare(rank(a), rank(b)), cmp.Compare(a.Key, b.Key))
 	})
-	return plans
+	return plans, nil
 }
 
 func normalizedRegion(region string) string {

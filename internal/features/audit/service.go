@@ -1,6 +1,7 @@
 package audit
 
 import (
+	"context"
 	"time"
 
 	"terrascale.tech/dashboard/internal/core"
@@ -9,13 +10,13 @@ import (
 // Service reads the audit history of a principal's selected organization and
 // project. HTTP handlers and MCP tools both call it.
 type Service struct {
-	store *core.Store
+	store core.Store
 }
 
 // Page returns one filtered page of audit events with size rows per page.
-func (s Service) Page(p core.Principal, search, action, severity, rawRange, rawPage string, size int) (pageData, error) {
+func (s Service) Page(ctx context.Context, p core.Principal, search, action, severity, rawRange, rawPage string, size int) (pageData, error) {
 	now := time.Now().UTC()
-	events, retention, err := s.history(p, now)
+	events, retention, err := s.history(ctx, p, now)
 	if err != nil {
 		return pageData{}, err
 	}
@@ -23,8 +24,8 @@ func (s Service) Page(p core.Principal, search, action, severity, rawRange, rawP
 }
 
 // Export returns every retained audit event that matches f, newest first.
-func (s Service) Export(p core.Principal, f filters, now time.Time) ([]core.AuditEvent, error) {
-	events, retention, err := s.history(p, now)
+func (s Service) Export(ctx context.Context, p core.Principal, f filters, now time.Time) ([]core.AuditEvent, error) {
+	events, retention, err := s.history(ctx, p, now)
 	if err != nil {
 		return nil, err
 	}
@@ -33,8 +34,8 @@ func (s Service) Export(p core.Principal, f filters, now time.Time) ([]core.Audi
 
 // history returns the scope's retained events and its effective retention
 // in days.
-func (s Service) history(p core.Principal, now time.Time) ([]core.AuditEvent, int, error) {
-	account, err := s.store.SnapshotAs(p)
+func (s Service) history(ctx context.Context, p core.Principal, now time.Time) ([]core.AuditEvent, int, error) {
+	account, err := s.store.SnapshotAs(ctx, p)
 	if err != nil {
 		return nil, 0, err
 	}

@@ -50,14 +50,14 @@ func mountTools(tools *core.Tools, service Service) {
 	core.AddTool(tools, core.ToolSpec{
 		Name: "create_backup", Title: "Create backup",
 		Description: "Take an on-demand backup of a database's documents, schemas, and indexes. Requires an owner or admin role.",
-	}, func(_ context.Context, p core.Principal, in databaseInput) (backupView, error) {
-		return service.Create(p, in.DatabaseID)
+	}, func(ctx context.Context, p core.Principal, in databaseInput) (backupView, error) {
+		return service.Create(ctx, p, in.DatabaseID)
 	})
 	core.AddTool(tools, core.ToolSpec{
 		Name: "set_backup_policy", Title: "Set backup policy", Idempotent: true,
 		Description: "Save a database's backup schedule and retention. Requires an owner or admin role.",
-	}, func(_ context.Context, p core.Principal, in setPolicyInput) (policyView, error) {
-		saved, err := service.SetPolicy(p, in.DatabaseID, PolicyInput{
+	}, func(ctx context.Context, p core.Principal, in setPolicyInput) (policyView, error) {
+		saved, err := service.SetPolicy(ctx, p, in.DatabaseID, PolicyInput{
 			FullBackupCron: in.FullBackupCron, IncrementalBackupCron: in.IncrementalBackupCron,
 			RetentionDays: in.RetentionDays, Disabled: in.Disabled,
 		})

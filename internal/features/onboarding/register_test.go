@@ -9,13 +9,14 @@ import (
 	"testing"
 
 	"terrascale.tech/dashboard/internal/core"
+	"terrascale.tech/dashboard/internal/core/memstore"
 	"terrascale.tech/dashboard/internal/platform/csrf"
 	renderer "terrascale.tech/dashboard/internal/platform/render"
 	"terrascale.tech/dashboard/internal/platform/session"
 )
 
 func newRegistrationMux() *http.ServeMux {
-	store := core.NewStore()
+	store := memstore.New()
 	sessions := session.New(store, session.Options{})
 	guard := csrf.New(sessions, csrf.Options{})
 	mux := http.NewServeMux()

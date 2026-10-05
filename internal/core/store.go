@@ -1,43 +1,166 @@
 package core
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"maps"
-	"reflect"
 	"slices"
 	"strings"
-	"sync"
 	"time"
 )
 
-// Store is one process's demo state. Updates commit an isolated copy under a
-// lock, so failed callbacks cannot publish partial mutations.
+// ErrUnavailable wraps a failure of the backing database itself, such as a
+// lost connection or an exhausted retry budget, as opposed to the domain
+// errors above, which describe the request. Store implementations backed by
+// an external database wrap transport and server failures with it; the
+// in-memory store never returns it.
+var ErrUnavailable = errors.New("store unavailable")
+
+// Store is the dashboard's persistent state: accounts with their users,
+// organization memberships, personal access tokens, notifications and audit
+// events; organizations with their projects, databases, keys, invitations,
+// billing and checkout sessions; the plan catalog; and the platform admin
+// action log. memstore.Store keeps it in process memory for the demo; see
+// docs/store-contract.md for how each invariant maps onto TerraBase.
 //
-// Organizations live only in organizations; an entry in accounts records the
-// account's own fields and the IDs of the organizations it belongs to, so
-// shared tenants are stored and copied once.
-type Store struct {
-	mu            sync.RWMutex
-	accounts      map[string]Account
-	byEmail       map[string]string
-	organizations map[string]Organization
-	byAccessToken map[string]string
-	plans         map[string]Plan
-	adminActions  []AdminAction
+// Conventions every implementation follows:
+//
+//   - Every method takes the request context first.
+//   - A lookup that finds nothing returns ErrNotFound; there are no (T, bool)
+//     results. Domain failures use the sentinel errors in this package
+//     (ErrNotFound, ErrConflict, ErrForbidden, ErrUnauthorized, ErrInvalid,
+//     ErrDatabaseLimit); database failures wrap ErrUnavailable.
+//   - Values returned are isolated copies the caller may keep and modify.
+//   - The mutate and read callbacks of the aggregate methods (Update,
+//     UpdateAs, UpdateAsWithPlan, UpdateAccountAsAdmin, UpdateOrganization,
+//     ViewAs) are pure functions of the aggregate they receive and of values
+//     the caller captured before the call. They must not call the Store,
+//     perform I/O, or keep references to their argument, and a mutate
+//     callback may run more than once: an implementation may load the
+//     aggregate, apply mutate to a copy and commit it conditionally,
+//     retrying from a fresh load when another writer committed first. The
+//     side effects of a mutate run that did not commit must be discarded by
+//     the caller, so mutate should only write to the aggregate and to
+//     variables it overwrites (never appends to) on every run.
+type Store interface {
+	// InsertAccount loads a complete account fixture. It enforces unique
+	// account, email and organization identities.
+	InsertAccount(ctx context.Context, a Account) error
+	// CreateAccount registers user with a Personal organization and project,
+	// as NewAccount builds them, and returns the stored account.
+	CreateAccount(ctx context.Context, user User) (Account, error)
+	// FindByEmail returns the account registered with email, compared after
+	// NormalizeEmail.
+	FindByEmail(ctx context.Context, email string) (Account, error)
+
+	// SnapshotAs returns the principal's account after AuthorizeAccount.
+	SnapshotAs(ctx context.Context, p Principal) (Account, error)
+	// ViewAs calls read with the principal's authorized account. The account
+	// may share the store's memory, so read must not retain or modify
+	// anything reachable from it.
+	ViewAs(ctx context.Context, p Principal, read func(Account) error) error
+	// ScopedPrincipal narrows p to the organization and project scope names,
+	// as ScopePrincipal does, without changing the saved selection.
+	ScopedPrincipal(ctx context.Context, p Principal, scope Scope) (Principal, error)
+	// CurrentPrincipal returns the principal for the account's saved
+	// selection when the account still belongs to userID.
+	CurrentPrincipal(ctx context.Context, accountID, userID string) (Principal, error)
+	// SessionPrincipal resolves a session issued for authVersion to the
+	// account's current principal; it fails with ErrUnauthorized once the
+	// credentials changed or the selection no longer authorizes.
+	SessionPrincipal(ctx context.Context, accountID, userID string, authVersion uint64) (Principal, error)
+
+	// Update applies a trusted change to an account and every organization
+	// it belongs to. It is for authentication and server integrations; HTTP
+	// handlers use UpdateAs.
+	Update(ctx context.Context, accountID string, mutate func(*Account) error) error
+	// UpdateAs applies the principal's change after AuthorizeAccount and
+	// rejects, with ErrForbidden, any change to an organization other than
+	// the principal's selected one, except creating organizations the
+	// principal owns.
+	UpdateAs(ctx context.Context, p Principal, mutate func(*Account) error) error
+	// UpdateAsWithPlan is UpdateAs with the canonical plan planID read in the
+	// same transaction, so the plan cannot change or disappear between
+	// validation and commit.
+	UpdateAsWithPlan(ctx context.Context, p Principal, planID string, mutate func(*Account, Plan) error) error
+	// ChangeEmailAs changes the account email and its unique index if the
+	// password hash still equals expectedPasswordHash.
+	ChangeEmailAs(ctx context.Context, p Principal, email, expectedPasswordHash string) error
+
+	// FindInvitation returns a pending, unexpired invitation by its token
+	// hash, with its token hash cleared, and the organization's identity
+	// only.
+	FindInvitation(ctx context.Context, tokenHash string) (Organization, Invitation, error)
+	// AcceptInvitation joins the principal's account to the invitation's
+	// organization and selects it, within the plan's member limit.
+	AcceptInvitation(ctx context.Context, p Principal, tokenHash string) (Organization, error)
+	// DeclineInvitation marks the principal's invitation declined.
+	DeclineInvitation(ctx context.Context, p Principal, tokenHash string) (Organization, error)
+
+	// Organization returns one organization for trusted integrations that
+	// act without a principal, such as Stripe syncs.
+	Organization(ctx context.Context, organizationID string) (Organization, error)
+	// UpdateOrganization applies a trusted change to one organization. The
+	// callback receives the plan catalog keyed by both plan ID and key.
+	UpdateOrganization(ctx context.Context, organizationID string, mutate func(*Organization, map[string]Plan) error) error
+
+	// Plans returns the plan catalog in no particular order.
+	Plans(ctx context.Context) ([]Plan, error)
+	// Plan returns the plan whose ID or key is idOrKey.
+	Plan(ctx context.Context, idOrKey string) (Plan, error)
+	// UpsertPlanAs creates or replaces a plan; plan keys never change and
+	// never collide with another plan's ID or key.
+	UpsertPlanAs(ctx context.Context, p Principal, plan Plan) error
+	// DeletePlanAs deletes a plan no organization or open checkout uses.
+	DeletePlanAs(ctx context.Context, p Principal, planID string) error
+
+	// AuthorizePlatformAdmin reports whether the principal is authorized and
+	// a platform administrator.
+	AuthorizePlatformAdmin(ctx context.Context, p Principal) error
+	// PlatformAccounts returns every account for a platform administrator.
+	PlatformAccounts(ctx context.Context, p Principal) ([]Account, error)
+	// UpdateAccountAsAdmin is Update on any account for a platform
+	// administrator.
+	UpdateAccountAsAdmin(ctx context.Context, p Principal, targetAccountID string, mutate func(*Account) error) error
+	// RecordPlatformAdminAction appends one record to the admin action log.
+	RecordPlatformAdminAction(ctx context.Context, p Principal, action, target, reason string) error
+	// PlatformAdminActions returns the admin action log, oldest first.
+	PlatformAdminActions(ctx context.Context, p Principal) ([]AdminAction, error)
+
+	// CreateAccessToken issues a personal access token, as NewAccessToken
+	// builds it, and returns it with its one-time secret. An account holds
+	// at most MaxAccessTokens unexpired tokens.
+	CreateAccessToken(ctx context.Context, p Principal, name string, lifetime time.Duration) (AccessToken, string, error)
+	// RevokeAccessToken deletes one of the principal's tokens.
+	RevokeAccessToken(ctx context.Context, p Principal, id string) error
+	// AccessTokenPrincipal resolves an unexpired token secret to its
+	// account's current principal, or fails with ErrUnauthorized.
+	AccessTokenPrincipal(ctx context.Context, secret string) (Principal, error)
 }
 
-func NewStore() *Store {
-	return &Store{
-		accounts: make(map[string]Account), byEmail: make(map[string]string),
-		organizations: make(map[string]Organization), byAccessToken: make(map[string]string),
-		plans: map[string]Plan{
-			"plan_free":     {ID: "plan_free", Key: "free", Name: "Free", Visible: true, MaxDatabases: 1},
-			"plan_starter":  {ID: "plan_starter", Key: "starter", Name: "Starter", PriceCents: 500, AnnualPriceCents: 5000, TrialDays: 30, Visible: true, MaxDatabases: 5, MaxMembers: 5, OperationsPerMonth: 1_000_000, StorageLabel: "5 GB-region storage"},
-			"plan_pro":      {ID: "plan_pro", Key: "pro", Name: "Pro", PriceCents: 5000, AnnualPriceCents: 50000, TrialDays: 30, Visible: true, MaxDatabases: 25, MaxMembers: 25, OperationsPerMonth: 100_000_000, StorageLabel: "25 GB-region storage"},
-			"plan_business": {ID: "plan_business", Key: "business", Name: "Business", PriceCents: 9900, AnnualPriceCents: 99000, TrialDays: 30, Visible: true, MaxDatabases: 100, MaxMembers: 100, OperationsPerMonth: 50_000_000, StorageLabel: "5 TB-region storage"},
-		},
+// Authorize reports whether the principal still matches its account and
+// selected scope.
+func Authorize(ctx context.Context, s Store, p Principal) error {
+	return s.ViewAs(ctx, p, func(Account) error { return nil })
+}
+
+// Can returns nil when the principal is authorized and its selected
+// organization satisfies allow, such as Organization.CanManage. Every domain
+// failure, including a stale principal, is reported as ErrForbidden; only a
+// database failure (ErrUnavailable) is returned as is.
+func Can(ctx context.Context, s Store, p Principal, allow func(Organization, string) bool) error {
+	err := s.ViewAs(ctx, p, func(a Account) error {
+		if !allow(a.Organizations[p.OrganizationID], p.UserID) {
+			return ErrForbidden
+		}
+		return nil
+	})
+	if err != nil && !errors.Is(err, ErrUnavailable) {
+		return ErrForbidden
 	}
+	return err
 }
 
 func NewID(prefix string) string {
@@ -46,7 +169,9 @@ func NewID(prefix string) string {
 	return prefix + "_" + hex.EncodeToString(b[:])
 }
 
-func (s *Store) CreateAccount(user User) (Account, error) {
+// NewAccount builds the account Store.CreateAccount registers: the user with
+// a Personal organization, its default Personal project, and both selected.
+func NewAccount(user User) (Account, error) {
 	user.Email = NormalizeEmail(user.Email)
 	if user.Email == "" || strings.TrimSpace(user.Name) == "" || user.PasswordHash == "" {
 		return Account{}, ErrInvalid
@@ -77,185 +202,27 @@ func (s *Store) CreateAccount(user User) (Account, error) {
 		CreatedAt:      time.Now().UTC(),
 	}
 	org.Projects[project.ID] = project
-	a := Account{
+	return Account{
 		ID: NewID("acct"), User: user, Organizations: map[string]Organization{org.ID: org},
 		ActiveOrganizationID: org.ID, ActiveProjectID: project.ID,
 		OnboardingStep: "payment-method", CreatedAt: time.Now().UTC(),
-	}
-	if err := s.InsertAccount(a); err != nil {
-		return Account{}, err
-	}
-	return cloneAccount(a), nil
+	}, nil
 }
 
-// InsertAccount loads a complete fixture. It enforces unique account and email
-// identities and never retains caller-owned maps or slices.
-func (s *Store) InsertAccount(a Account) error {
-	a.User.Email = NormalizeEmail(a.User.Email)
-	if a.ID == "" || a.User.ID == "" || a.User.Email == "" {
-		return ErrInvalid
+// DefaultPlans is the catalog a new store starts with.
+func DefaultPlans() []Plan {
+	return []Plan{
+		{ID: "plan_free", Key: "free", Name: "Free", Visible: true, MaxDatabases: 1},
+		{ID: "plan_starter", Key: "starter", Name: "Starter", PriceCents: 500, AnnualPriceCents: 5000, TrialDays: 30, Visible: true, MaxDatabases: 5, MaxMembers: 5, OperationsPerMonth: 1_000_000, StorageLabel: "5 GB-region storage"},
+		{ID: "plan_pro", Key: "pro", Name: "Pro", PriceCents: 5000, AnnualPriceCents: 50000, TrialDays: 30, Visible: true, MaxDatabases: 25, MaxMembers: 25, OperationsPerMonth: 100_000_000, StorageLabel: "25 GB-region storage"},
+		{ID: "plan_business", Key: "business", Name: "Business", PriceCents: 9900, AnnualPriceCents: 99000, TrialDays: 30, Visible: true, MaxDatabases: 100, MaxMembers: 100, OperationsPerMonth: 50_000_000, StorageLabel: "5 TB-region storage"},
 	}
-	if a.Organizations == nil {
-		a.Organizations = make(map[string]Organization)
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if _, ok := s.accounts[a.ID]; ok {
-		return ErrConflict
-	}
-	if _, ok := s.byEmail[a.User.Email]; ok {
-		return ErrConflict
-	}
-	for id := range a.Organizations {
-		if _, exists := s.organizations[id]; exists {
-			return ErrConflict
-		}
-	}
-	s.putLocked(a)
-	s.byEmail[a.User.Email] = a.ID
-	return nil
 }
 
-func (s *Store) FindByEmail(email string) (Account, bool) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	a, ok := s.accounts[s.byEmail[NormalizeEmail(email)]]
-	if !ok {
-		return Account{}, false
-	}
-	return s.materialize(a), true
-}
-
-func (s *Store) SnapshotAs(p Principal) (Account, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	a, ok := s.accounts[p.AccountID]
-	if !ok {
-		return Account{}, ErrNotFound
-	}
-	if err := authorize(s.viewLocked(a), p); err != nil {
-		return Account{}, err
-	}
-	return s.materialize(a), nil
-}
-
-// ViewAs calls read with the principal's authorized account while holding the
-// read lock. The account shares the store's maps and slices, so read must not
-// retain or modify anything reachable from it.
-func (s *Store) ViewAs(p Principal, read func(Account) error) error {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	a, ok := s.accounts[p.AccountID]
-	if !ok {
-		return ErrNotFound
-	}
-	view := s.viewLocked(a)
-	if err := authorize(view, p); err != nil {
-		return err
-	}
-	return read(view)
-}
-
-// Authorize reports whether the principal still matches its account and
-// selected scope.
-func (s *Store) Authorize(p Principal) error {
-	return s.ViewAs(p, func(Account) error { return nil })
-}
-
-// Can reports whether the principal is authorized and its selected
-// organization satisfies allow, such as Organization.CanManage.
-func (s *Store) Can(p Principal, allow func(Organization, string) bool) bool {
-	return s.ViewAs(p, func(a Account) error {
-		if !allow(a.Organizations[p.OrganizationID], p.UserID) {
-			return ErrForbidden
-		}
-		return nil
-	}) == nil
-}
-
-// CurrentPrincipal returns the account's principal for its current selection
-// when the account still belongs to userID.
-func (s *Store) CurrentPrincipal(accountID, userID string) (Principal, bool) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	a, ok := s.accounts[accountID]
-	if !ok || a.User.ID != userID {
-		return Principal{}, false
-	}
-	return s.viewLocked(a).Principal(), true
-}
-
-// SessionPrincipal resolves a session's principal for the credential version
-// it was issued with, without copying the account.
-func (s *Store) SessionPrincipal(accountID, userID string, authVersion uint64) (Principal, bool) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	a, ok := s.accounts[accountID]
-	if !ok || a.User.ID != userID || a.AuthVersion != authVersion {
-		return Principal{}, false
-	}
-	view := s.viewLocked(a)
-	p := view.Principal()
-	if authorize(view, p) != nil {
-		return Principal{}, false
-	}
-	return p, true
-}
-
-// Update is for authentication and trusted server integration. HTTP feature
-// handlers should use UpdateAs, which rechecks principal scope under this lock.
-func (s *Store) Update(accountID string, mutate func(*Account) error) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.updateLocked(accountID, mutate)
-}
-
-func (s *Store) UpdateAs(p Principal, mutate func(*Account) error) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.updateAsLocked(p, mutate)
-}
-
-// ChangeEmailAs updates the account email and its lookup index in one scoped
-// transaction. The expected hash binds the change to the password verified by
-// the caller even if that credential changes between verification and commit.
-func (s *Store) ChangeEmailAs(p Principal, email, expectedPasswordHash string) error {
-	email = NormalizeEmail(email)
-	if email == "" || expectedPasswordHash == "" {
-		return ErrInvalid
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	current, ok := s.accounts[p.AccountID]
-	if !ok {
-		return ErrNotFound
-	}
-	if err := authorize(s.viewLocked(current), p); err != nil {
-		return err
-	}
-	next := s.materialize(current)
-	if next.User.PasswordHash != expectedPasswordHash {
-		return ErrConflict
-	}
-	if accountID, exists := s.byEmail[email]; exists && accountID != next.ID {
-		return ErrConflict
-	}
-	oldEmail := next.User.Email
-	if oldEmail == email {
-		return nil
-	}
-	next.User.Email = email
-	syncMemberships(&next)
-	s.putLocked(next)
-	delete(s.byEmail, oldEmail)
-	s.byEmail[email] = next.ID
-	return nil
-}
-
-// syncMemberships copies the user's current name and email into their member
+// SyncMemberships copies the user's current name and email into their member
 // record in each of their organizations, which keep them for display, so a
 // change made in one organization reaches every other.
-func syncMemberships(a *Account) {
+func SyncMemberships(a *Account) {
 	for _, org := range a.Organizations {
 		if member, ok := org.Members[a.User.ID]; ok {
 			member.Name, member.Email = a.User.Name, a.User.Email
@@ -264,171 +231,9 @@ func syncMemberships(a *Account) {
 	}
 }
 
-// UpdateAsWithPlan resolves a canonical plan under the same lock as the scoped
-// account update. A caller can validate the plan and commit its account change
-// without a plan edit or deletion occurring between those operations.
-func (s *Store) UpdateAsWithPlan(p Principal, planID string, mutate func(*Account, Plan) error) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.updateAsLocked(p, func(account *Account) error {
-		plan, ok := s.plans[planID]
-		if !ok {
-			return ErrNotFound
-		}
-		return mutate(account, plan)
-	})
-}
-
-func (s *Store) updateAsLocked(p Principal, mutate func(*Account) error) error {
-	a, ok := s.accounts[p.AccountID]
-	if !ok {
-		return ErrNotFound
-	}
-	if err := authorize(s.viewLocked(a), p); err != nil {
-		return err
-	}
-	// The committed organizations are the state mutate started from, so they
-	// serve as the "before" image without copying the account again.
-	existed := func(id string) bool {
-		_, member := a.Organizations[id]
-		_, live := s.organizations[id]
-		return member && live
-	}
-	return s.updateLocked(p.AccountID, func(next *Account) error {
-		if err := mutate(next); err != nil {
-			return err
-		}
-		for id := range a.Organizations {
-			old, live := s.organizations[id]
-			if id == p.OrganizationID || !live {
-				continue
-			}
-			updated, ok := next.Organizations[id]
-			if !ok || !reflect.DeepEqual(old, updated) {
-				return ErrForbidden
-			}
-		}
-		for id, added := range next.Organizations {
-			if existed(id) {
-				continue
-			}
-			member, ok := added.Members[p.UserID]
-			if added.ID != id || added.OwnerUserID != p.UserID || !ok || member.Role != "owner" {
-				return ErrForbidden
-			}
-		}
-		return nil
-	})
-}
-
-func (s *Store) updateLocked(accountID string, mutate func(*Account) error) error {
-	current, ok := s.accounts[accountID]
-	if !ok {
-		return ErrNotFound
-	}
-	next := s.materialize(current)
-	if err := mutate(&next); err != nil {
-		return err
-	}
-	if next.ID != current.ID || next.User.ID != current.User.ID || NormalizeEmail(next.User.Email) != current.User.Email {
-		return ErrInvalid
-	}
-	if next.User.PasswordHash == "" {
-		return ErrInvalid
-	}
-	syncMemberships(&next)
-	if next.User.PasswordHash != current.User.PasswordHash {
-		// A credential change ends every personal access token along with
-		// the sessions the new AuthVersion invalidates.
-		next.AuthVersion = current.AuthVersion + 1
-		next.AccessTokens = nil
-	} else {
-		next.AuthVersion = current.AuthVersion
-	}
-	for id, org := range next.Organizations {
-		if !s.providerUniqueLocked(id, org) {
-			return ErrConflict
-		}
-		if !s.withinDatabaseLimitLocked(id, org) {
-			return ErrDatabaseLimit
-		}
-	}
-	s.putLocked(next)
-	s.repairSelectionsLocked()
-	return nil
-}
-
-// withinDatabaseLimitLocked reports whether org may be committed with its
-// databases. Whatever route adds a database, the organization must stay
-// within its plan's MaxDatabases; one already past it, such as after a
-// downgrade, keeps what it has but cannot gain more.
-func (s *Store) withinDatabaseLimitLocked(id string, org Organization) bool {
-	limit := s.plans[org.PlanID].MaxDatabases
-	count := org.DatabaseCount()
-	return limit <= 0 || count <= limit || count <= s.organizations[id].DatabaseCount()
-}
-
-func (s *Store) providerUniqueLocked(id string, org Organization) bool {
-	for otherID, other := range s.organizations {
-		if otherID == id {
-			continue
-		}
-		if org.Billing.CustomerID != "" && other.Billing.CustomerID == org.Billing.CustomerID {
-			return false
-		}
-		if org.Billing.SubscriptionID != "" && other.Billing.SubscriptionID == org.Billing.SubscriptionID {
-			return false
-		}
-	}
-	return true
-}
-
-func (s *Store) repairSelectionsLocked() {
-	for accountID, a := range s.accounts {
-		if a.ActiveOrganizationID == "" {
-			continue
-		}
-		changed := false
-		for id := range a.Organizations {
-			org, ok := s.organizations[id]
-			if !ok || !memberActive(org, a.User.ID) {
-				delete(a.Organizations, id)
-				changed = true
-			}
-		}
-		if _, ok := a.Organizations[a.ActiveOrganizationID]; !ok {
-			a.ActiveOrganizationID = ""
-			a.ActiveProjectID = ""
-			for id := range a.Organizations {
-				if s.organizations[id].Kind == "personal" {
-					a.ActiveOrganizationID = id
-					break
-				}
-			}
-			if a.ActiveOrganizationID == "" {
-				for id := range a.Organizations {
-					a.ActiveOrganizationID = id
-					break
-				}
-			}
-			a.ActiveProjectID = s.organizations[a.ActiveOrganizationID].DefaultProjectID()
-			changed = true
-		}
-		// A project another member deleted must not stay selected: the
-		// session and every later sign-in would fail to authorize it.
-		if org, ok := s.organizations[a.ActiveOrganizationID]; ok && a.ActiveProjectID != "" {
-			if project, exists := org.Projects[a.ActiveProjectID]; !exists || project.OrganizationID != org.ID {
-				a.ActiveProjectID = org.DefaultProjectID()
-				changed = true
-			}
-		}
-		if changed {
-			s.accounts[accountID] = detachAccount(a)
-		}
-	}
-}
-
-func memberActive(org Organization, userID string) bool {
+// MemberActive reports whether userID is an active member, or the owner, of
+// org.
+func MemberActive(org Organization, userID string) bool {
 	member, ok := org.Members[userID]
 	if !ok {
 		return org.OwnerUserID == userID
@@ -436,48 +241,10 @@ func memberActive(org Organization, userID string) bool {
 	return member.Status == "" || strings.EqualFold(member.Status, "active")
 }
 
-// putLocked commits a's own fields and memberships to accounts, a copy of
-// each of its organizations to organizations, and its access token digests
-// to the token index.
-func (s *Store) putLocked(a Account) {
-	for _, token := range s.accounts[a.ID].AccessTokens {
-		delete(s.byAccessToken, token.SecretHash)
-	}
-	for _, token := range a.AccessTokens {
-		s.byAccessToken[token.SecretHash] = a.ID
-	}
-	s.accounts[a.ID] = detachAccount(a)
-	for id, org := range a.Organizations {
-		s.organizations[id] = cloneOrganization(org)
-	}
-}
-
-// materialize returns an isolated copy of a stored account with its live
+// AuthorizeAccount reports whether p still matches a, its credential version
+// and its selected organization and project. a holds the account's live
 // organizations.
-func (s *Store) materialize(a Account) Account {
-	n := cloneAccountFields(a)
-	n.Organizations = make(map[string]Organization, len(a.Organizations))
-	for id := range a.Organizations {
-		if org, ok := s.organizations[id]; ok {
-			n.Organizations[id] = cloneOrganization(org)
-		}
-	}
-	return n
-}
-
-// viewLocked is materialize without copies, for read-only use under the lock.
-func (s *Store) viewLocked(a Account) Account {
-	n := a
-	n.Organizations = make(map[string]Organization, len(a.Organizations))
-	for id := range a.Organizations {
-		if org, ok := s.organizations[id]; ok {
-			n.Organizations[id] = org
-		}
-	}
-	return n
-}
-
-func authorize(a Account, p Principal) error {
+func AuthorizeAccount(a Account, p Principal) error {
 	if p.AccountID == "" || a.ID != p.AccountID || a.User.ID != p.UserID {
 		return ErrForbidden
 	}
@@ -502,26 +269,19 @@ func authorize(a Account, p Principal) error {
 	return nil
 }
 
-func cloneAccount(a Account) Account {
-	n := cloneAccountFields(a)
+// CloneAccount deep-copies an account and its organizations.
+func CloneAccount(a Account) Account {
+	n := CloneAccountFields(a)
 	n.Organizations = make(map[string]Organization, len(a.Organizations))
 	for id, org := range a.Organizations {
-		n.Organizations[id] = cloneOrganization(org)
+		n.Organizations[id] = CloneOrganization(org)
 	}
 	return n
 }
 
-// detachAccount copies a's own fields and keeps only its organization IDs.
-func detachAccount(a Account) Account {
-	n := cloneAccountFields(a)
-	n.Organizations = make(map[string]Organization, len(a.Organizations))
-	for id := range a.Organizations {
-		n.Organizations[id] = Organization{ID: id}
-	}
-	return n
-}
-
-func cloneAccountFields(a Account) Account {
+// CloneAccountFields deep-copies an account's own fields and leaves its
+// Organizations nil.
+func CloneAccountFields(a Account) Account {
 	n := a
 	n.DemoSecurity.PendingRecoveryCodes = slices.Clone(a.DemoSecurity.PendingRecoveryCodes)
 	n.DemoSecurity.Passkeys = slices.Clone(a.DemoSecurity.Passkeys)
@@ -532,7 +292,10 @@ func cloneAccountFields(a Account) Account {
 	return n
 }
 
-func cloneOrganization(org Organization) Organization {
+// CloneOrganization deep-copies an organization. Its maps are never nil in
+// the copy, so cloned organizations compare equal with reflect.DeepEqual
+// exactly when their contents are equal.
+func CloneOrganization(org Organization) Organization {
 	o := org
 	o.CheckoutSessions = cloneMap(org.CheckoutSessions)
 	o.Members = cloneMap(org.Members)
@@ -590,8 +353,8 @@ func cloneAuthInstance(instance AuthInstance) AuthInstance {
 	return copyInstance
 }
 
-// cloneMap copies m into a map that is never nil, which keeps every stored
-// organization in the same shape for Store.updateAsLocked's comparison.
+// cloneMap copies m into a map that is never nil, which keeps every cloned
+// organization in the same shape for UpdateAs's comparison.
 func cloneMap[K comparable, V any](m map[K]V) map[K]V {
 	out := make(map[K]V, len(m))
 	maps.Copy(out, m)

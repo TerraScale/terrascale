@@ -36,7 +36,7 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 		if !ok {
 			return
 		}
-		data, err := service.Inbox(p, r.URL.Query().Get("status"), r.URL.Query().Get("page"))
+		data, err := service.Inbox(r.Context(), p, r.URL.Query().Get("status"), r.URL.Query().Get("page"))
 		if err != nil {
 			writeError(w, err)
 			return
@@ -52,7 +52,7 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 		if !ok {
 			return
 		}
-		if _, err := service.MarkRead(p, r.PathValue("notificationID")); err != nil {
+		if _, err := service.MarkRead(r.Context(), p, r.PathValue("notificationID")); err != nil {
 			writeError(w, err)
 			return
 		}
@@ -67,7 +67,7 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 		if !ok {
 			return
 		}
-		if _, err := service.MarkAllRead(p); err != nil {
+		if _, err := service.MarkAllRead(r.Context(), p); err != nil {
 			writeError(w, err)
 			return
 		}

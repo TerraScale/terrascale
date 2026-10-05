@@ -2,6 +2,7 @@ package subscriptions
 
 import (
 	"cmp"
+	"context"
 	"errors"
 	"fmt"
 	"slices"
@@ -36,16 +37,16 @@ type BillingSnapshot struct {
 // BillingService owns billing state transitions while core.Store remains the
 // sole owner of account and organization persistence.
 type BillingService struct {
-	store *core.Store
+	store core.Store
 	now   func() time.Time
 }
 
-func NewBillingService(store *core.Store) BillingService {
+func NewBillingService(store core.Store) BillingService {
 	return BillingService{store: store, now: func() time.Time { return time.Now().UTC() }}
 }
 
-func (service BillingService) Snapshot(principal core.Principal) (BillingSnapshot, error) {
-	account, err := service.store.SnapshotAs(principal)
+func (service BillingService) Snapshot(ctx context.Context, principal core.Principal) (BillingSnapshot, error) {
+	account, err := service.store.SnapshotAs(ctx, principal)
 	if err != nil {
 		return BillingSnapshot{}, err
 	}
@@ -53,20 +54,26 @@ func (service BillingService) Snapshot(principal core.Principal) (BillingSnapsho
 	if err != nil {
 		return BillingSnapshot{}, err
 	}
-	plan, _ := service.store.Plan(organization.PlanID)
-	plans := service.availablePlans()
+	plan, err := service.store.Plan(ctx, organization.PlanID)
+	if err != nil && !errors.Is(err, core.ErrNotFound) {
+		return BillingSnapshot{}, err
+	}
+	plans, err := service.availablePlans(ctx)
+	if err != nil {
+		return BillingSnapshot{}, err
+	}
 	return BillingSnapshot{Account: account, Organization: organization, Plan: plan, Plans: plans}, nil
 }
 
 // ScheduleDemoChange records a downgrade the demo applies at renewal. Live
 // scheduled changes come from Stripe through ProjectCustomerState.
-func (service BillingService) ScheduleDemoChange(principal core.Principal, planKey, interval string, effectiveAt time.Time) error {
+func (service BillingService) ScheduleDemoChange(ctx context.Context, principal core.Principal, planKey, interval string, effectiveAt time.Time) error {
 	if planKey != "free" {
-		if _, err := service.selectedPlan(planKey, interval); err != nil {
+		if _, err := service.selectedPlan(ctx, planKey, interval); err != nil {
 			return err
 		}
 	}
-	return service.store.UpdateAs(principal, func(account *core.Account) error {
+	return service.store.UpdateAs(ctx, principal, func(account *core.Account) error {
 		org, ok := account.Organizations[principal.OrganizationID]
 		if !ok || org.OwnerUserID != principal.UserID || org.Archived || org.DeletionRequested {
 			return ErrBillingOwnerRequired
@@ -80,14 +87,16 @@ func (service BillingService) ScheduleDemoChange(principal core.Principal, planK
 			}
 			return core.ErrConflict
 		}
+		// The callback may run again, so the captured interval stays as given.
+		scheduledInterval := interval
 		if planKey == "free" {
 			if org.Kind != "personal" {
 				return ErrPlanUnavailable
 			}
-			interval = ""
+			scheduledInterval = ""
 		}
 		org.Billing.ScheduledPlanKey = planKey
-		org.Billing.ScheduledInterval = interval
+		org.Billing.ScheduledInterval = scheduledInterval
 		org.Billing.ScheduledAt = effectiveAt
 		org.Billing.ChangeVersion++
 		account.Organizations[org.ID] = org
@@ -96,8 +105,8 @@ func (service BillingService) ScheduleDemoChange(principal core.Principal, planK
 }
 
 // UndoDemoChange clears the demo's scheduled downgrade.
-func (service BillingService) UndoDemoChange(principal core.Principal) error {
-	return service.store.UpdateAs(principal, func(account *core.Account) error {
+func (service BillingService) UndoDemoChange(ctx context.Context, principal core.Principal) error {
+	return service.store.UpdateAs(ctx, principal, func(account *core.Account) error {
 		org, ok := account.Organizations[principal.OrganizationID]
 		if !ok || org.OwnerUserID != principal.UserID {
 			return ErrBillingOwnerRequired
@@ -113,12 +122,12 @@ func (service BillingService) UndoDemoChange(principal core.Principal) error {
 
 // ChangeDemoPlan applies an upgrade at once in the in-memory preview without
 // contacting Stripe. Downgrades, including Free, are scheduled instead.
-func (service BillingService) ChangeDemoPlan(principal core.Principal, planKey, interval string) error {
-	target, err := service.selectedPlan(planKey, interval)
+func (service BillingService) ChangeDemoPlan(ctx context.Context, principal core.Principal, planKey, interval string) error {
+	target, err := service.selectedPlan(ctx, planKey, interval)
 	if err != nil {
 		return err
 	}
-	return service.store.UpdateAs(principal, func(account *core.Account) error {
+	return service.store.UpdateAs(ctx, principal, func(account *core.Account) error {
 		org, ok := account.Organizations[principal.OrganizationID]
 		if !ok || org.OwnerUserID != principal.UserID || org.Archived || org.DeletionRequested {
 			return ErrBillingOwnerRequired
@@ -140,22 +149,25 @@ func (service BillingService) ChangeDemoPlan(principal core.Principal, planKey, 
 	})
 }
 
-func (service BillingService) availablePlans() []core.Plan {
-	plans := service.store.Plans()
+func (service BillingService) availablePlans(ctx context.Context) ([]core.Plan, error) {
+	plans, err := service.store.Plans(ctx)
+	if err != nil {
+		return nil, err
+	}
 	plans = slices.DeleteFunc(plans, func(plan core.Plan) bool {
 		return !plan.Visible || plan.PriceCents <= 0 || normalizePlanKey(plan.Key) == ""
 	})
 	slices.SortFunc(plans, func(left, right core.Plan) int {
 		return cmp.Or(cmp.Compare(left.PriceCents, right.PriceCents), strings.Compare(normalizePlanKey(left.Key), normalizePlanKey(right.Key)))
 	})
-	return plans
+	return plans, nil
 }
 
 // BeginDemoCheckout creates a one-use, tenant-owned local checkout. It stores
 // only a plan selection and safe return path; the demo never collects card
 // data and never calls Stripe.
-func (service BillingService) BeginDemoCheckout(principal core.Principal, planKey, interval, returnPath string) (core.CheckoutSession, error) {
-	planID, planKey, err := service.planCandidate(planKey, interval)
+func (service BillingService) BeginDemoCheckout(ctx context.Context, principal core.Principal, planKey, interval, returnPath string) (core.CheckoutSession, error) {
+	planID, planKey, err := service.planCandidate(ctx, planKey, interval)
 	if err != nil {
 		return core.CheckoutSession{}, err
 	}
@@ -170,7 +182,7 @@ func (service BillingService) BeginDemoCheckout(principal core.Principal, planKe
 		ReturnPath: returnPath, Status: checkoutOpen, Demo: true, CreatedAt: now,
 		ExpiresAt: now.Add(30 * time.Minute),
 	}
-	err = service.store.UpdateAsWithPlan(principal, planID, func(account *core.Account, plan core.Plan) error {
+	err = service.store.UpdateAsWithPlan(ctx, principal, planID, func(account *core.Account, plan core.Plan) error {
 		if err := validatePlanSelection(plan, planKey, interval); err != nil {
 			return err
 		}
@@ -200,14 +212,14 @@ func (service BillingService) BeginDemoCheckout(principal core.Principal, planKe
 // CheckoutPrincipal scopes a browser principal to the organization that owns
 // the checkout session. MCP tools start checkouts in any organization the
 // owner names, not only the one selected in the dashboard.
-func (service BillingService) CheckoutPrincipal(principal core.Principal, sessionID string) (core.Principal, error) {
-	account, err := service.store.SnapshotAs(principal)
+func (service BillingService) CheckoutPrincipal(ctx context.Context, principal core.Principal, sessionID string) (core.Principal, error) {
+	account, err := service.store.SnapshotAs(ctx, principal)
 	if err != nil {
 		return core.Principal{}, err
 	}
 	for id, organization := range account.Organizations {
 		if _, ok := organization.CheckoutSessions[sessionID]; ok && id != principal.OrganizationID {
-			return service.store.ScopedPrincipal(principal, core.Scope{OrganizationID: id})
+			return service.store.ScopedPrincipal(ctx, principal, core.Scope{OrganizationID: id})
 		}
 	}
 	return principal, nil
@@ -215,11 +227,11 @@ func (service BillingService) CheckoutPrincipal(principal core.Principal, sessio
 
 // Checkout returns only the principal organization's own open checkout, so a
 // session ID cannot cross tenant boundaries.
-func (service BillingService) Checkout(principal core.Principal, sessionID string) (core.CheckoutSession, error) {
+func (service BillingService) Checkout(ctx context.Context, principal core.Principal, sessionID string) (core.CheckoutSession, error) {
 	if sessionID == "" {
 		return core.CheckoutSession{}, core.ErrNotFound
 	}
-	account, err := service.store.SnapshotAs(principal)
+	account, err := service.store.SnapshotAs(ctx, principal)
 	if err != nil {
 		return core.CheckoutSession{}, err
 	}
@@ -236,8 +248,11 @@ func (service BillingService) Checkout(principal core.Principal, sessionID strin
 
 // CompleteDemoCheckout consumes the current demo session exactly once. The
 // session is looked up and the organization is updated in one scoped commit.
-func (service BillingService) CompleteDemoCheckout(principal core.Principal, sessionID string, canceled bool) (string, error) {
-	pending, err := service.Checkout(principal, sessionID)
+func (service BillingService) CompleteDemoCheckout(ctx context.Context, principal core.Principal, sessionID string, canceled bool) (string, error) {
+	pending, err := service.Checkout(ctx, principal, sessionID)
+	if errors.Is(err, core.ErrUnavailable) {
+		return "", err
+	}
 	if err != nil {
 		return "", ErrCheckoutUnavailable
 	}
@@ -286,9 +301,9 @@ func (service BillingService) CompleteDemoCheckout(principal core.Principal, ses
 		return nil
 	}
 	if canceled {
-		err = service.store.UpdateAs(principal, func(account *core.Account) error { return mutate(account, core.Plan{}) })
+		err = service.store.UpdateAs(ctx, principal, func(account *core.Account) error { return mutate(account, core.Plan{}) })
 	} else {
-		err = service.store.UpdateAsWithPlan(principal, pending.PlanID, mutate)
+		err = service.store.UpdateAsWithPlan(ctx, principal, pending.PlanID, mutate)
 		if errors.Is(err, core.ErrNotFound) {
 			err = ErrPlanUnavailable
 		}
@@ -302,12 +317,12 @@ func (service BillingService) CompleteDemoCheckout(principal core.Principal, ses
 // RecordCustomer stores the canonical Stripe customer ID only on the scoped
 // owner organization. It returns an ID already stored by a concurrent request
 // when another request won the same idempotent customer creation.
-func (service BillingService) RecordCustomer(principal core.Principal, createdID string) (string, error) {
+func (service BillingService) RecordCustomer(ctx context.Context, principal core.Principal, createdID string) (string, error) {
 	if strings.TrimSpace(createdID) == "" {
 		return "", core.ErrInvalid
 	}
 	var customerID string
-	err := service.store.UpdateAs(principal, func(account *core.Account) error {
+	err := service.store.UpdateAs(ctx, principal, func(account *core.Account) error {
 		organization, ok := account.Organizations[principal.OrganizationID]
 		if !ok || organization.OwnerUserID != principal.UserID || organization.Archived || organization.DeletionRequested {
 			return ErrBillingOwnerRequired
@@ -324,8 +339,8 @@ func (service BillingService) RecordCustomer(principal core.Principal, createdID
 
 // RecordExternalCheckout binds the remote checkout ID to the exact tenant,
 // selected plan, interval, and return path before the customer can pay.
-func (service BillingService) RecordExternalCheckout(principal core.Principal, planKey, interval, returnPath string, providerSession payments.CheckoutSession) error {
-	planID, planKey, err := service.planCandidate(planKey, interval)
+func (service BillingService) RecordExternalCheckout(ctx context.Context, principal core.Principal, planKey, interval, returnPath string, providerSession payments.CheckoutSession) error {
+	planID, planKey, err := service.planCandidate(ctx, planKey, interval)
 	if err != nil {
 		return err
 	}
@@ -342,7 +357,7 @@ func (service BillingService) RecordExternalCheckout(principal core.Principal, p
 		Interval: interval, ReturnPath: returnPath, Status: checkoutOpen,
 		CreatedAt: now, ExpiresAt: providerSession.ExpiresAt,
 	}
-	err = service.store.UpdateAsWithPlan(principal, planID, func(account *core.Account, plan core.Plan) error {
+	err = service.store.UpdateAsWithPlan(ctx, principal, planID, func(account *core.Account, plan core.Plan) error {
 		if err := validatePlanSelection(plan, planKey, interval); err != nil {
 			return err
 		}
@@ -379,8 +394,8 @@ func (service BillingService) RecordExternalCheckout(principal core.Principal, p
 
 // ExpireExternalCheckout consumes the current local checkout only after the
 // provider confirms that the matching remote Checkout Session has expired.
-func (service BillingService) ExpireExternalCheckout(principal core.Principal, sessionID string) error {
-	return service.store.UpdateAs(principal, func(account *core.Account) error {
+func (service BillingService) ExpireExternalCheckout(ctx context.Context, principal core.Principal, sessionID string) error {
+	return service.store.UpdateAs(ctx, principal, func(account *core.Account) error {
 		organization, ok := account.Organizations[principal.OrganizationID]
 		if !ok || organization.OwnerUserID != principal.UserID || organization.Archived || organization.DeletionRequested {
 			return ErrBillingOwnerRequired
@@ -404,8 +419,8 @@ func (service BillingService) ExpireExternalCheckout(principal core.Principal, s
 // CheckoutOutcome reports the return path and payment outcome of the owner's
 // checkout once its customer has been synced. Sessions are looked up only in
 // the current organization, so a session ID cannot reveal another tenant.
-func (service BillingService) CheckoutOutcome(principal core.Principal, sessionID string) (string, string, error) {
-	account, err := service.store.SnapshotAs(principal)
+func (service BillingService) CheckoutOutcome(ctx context.Context, principal core.Principal, sessionID string) (string, string, error) {
+	account, err := service.store.SnapshotAs(ctx, principal)
 	if err != nil {
 		return "", "", err
 	}
@@ -429,10 +444,10 @@ func (service BillingService) CheckoutOutcome(principal core.Principal, sessionI
 
 // PendingCheckoutID returns the organization's open Checkout Session, which
 // the Stripe sync reads so the projection can complete or release it.
-func (service BillingService) PendingCheckoutID(organizationID string) (string, error) {
-	organization, ok := service.store.Organization(organizationID)
-	if !ok {
-		return "", core.ErrNotFound
+func (service BillingService) PendingCheckoutID(ctx context.Context, organizationID string) (string, error) {
+	organization, err := service.store.Organization(ctx, organizationID)
+	if err != nil {
+		return "", err
 	}
 	return organization.Billing.CheckoutID, nil
 }
@@ -442,8 +457,8 @@ func (service BillingService) PendingCheckoutID(organizationID string) (string, 
 // applying the same state twice is harmless. Concurrent syncs save in order
 // but can project out of order, so a state read from Stripe before the
 // projected one is ignored.
-func (service BillingService) ProjectCustomerState(state payments.CustomerState, checkout *payments.CheckoutSession) error {
-	return service.store.UpdateOrganization(state.OrganizationID, func(organization *core.Organization, plans map[string]core.Plan) error {
+func (service BillingService) ProjectCustomerState(ctx context.Context, state payments.CustomerState, checkout *payments.CheckoutSession) error {
+	return service.store.UpdateOrganization(ctx, state.OrganizationID, func(organization *core.Organization, plans map[string]core.Plan) error {
 		switch organization.Billing.CustomerID {
 		case state.CustomerID:
 		case "":
@@ -566,14 +581,17 @@ func clearScheduledChange(billing *core.Billing) {
 	billing.ScheduleID = ""
 }
 
-func (service BillingService) selectedPlan(planKey, interval string) (core.Plan, error) {
-	planID, planKey, err := service.planCandidate(planKey, interval)
+func (service BillingService) selectedPlan(ctx context.Context, planKey, interval string) (core.Plan, error) {
+	planID, planKey, err := service.planCandidate(ctx, planKey, interval)
 	if err != nil {
 		return core.Plan{}, err
 	}
-	plan, ok := service.store.Plan(planID)
-	if !ok {
+	plan, err := service.store.Plan(ctx, planID)
+	if errors.Is(err, core.ErrNotFound) {
 		return core.Plan{}, ErrPlanUnavailable
+	}
+	if err != nil {
+		return core.Plan{}, err
 	}
 	if err := validatePlanSelection(plan, planKey, interval); err != nil {
 		return core.Plan{}, err
@@ -581,7 +599,7 @@ func (service BillingService) selectedPlan(planKey, interval string) (core.Plan,
 	return plan, nil
 }
 
-func (service BillingService) planCandidate(planKey, interval string) (string, string, error) {
+func (service BillingService) planCandidate(ctx context.Context, planKey, interval string) (string, string, error) {
 	planKey = normalizePlanKey(planKey)
 	if planKey == "" {
 		return "", "", ErrPlanUnavailable
@@ -589,9 +607,12 @@ func (service BillingService) planCandidate(planKey, interval string) (string, s
 	if interval != intervalMonthly && interval != intervalAnnual {
 		return "", "", core.ErrInvalid
 	}
-	plan, ok := service.store.Plan(planKey)
-	if !ok {
+	plan, err := service.store.Plan(ctx, planKey)
+	if errors.Is(err, core.ErrNotFound) {
 		return "", "", ErrPlanUnavailable
+	}
+	if err != nil {
+		return "", "", err
 	}
 	return plan.ID, planKey, nil
 }

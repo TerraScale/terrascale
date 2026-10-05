@@ -51,11 +51,11 @@ type Service struct {
 	issuer CredentialIssuer
 }
 
-func (s Service) selected(p core.Principal) (core.Account, core.Project, error) {
+func (s Service) selected(ctx context.Context, p core.Principal) (core.Account, core.Project, error) {
 	if p.ProjectID == "" {
 		return core.Account{}, core.Project{}, core.ErrNotFound
 	}
-	a, err := s.deps.Store.SnapshotAs(p)
+	a, err := s.deps.Store.SnapshotAs(ctx, p)
 	if err != nil {
 		return core.Account{}, core.Project{}, err
 	}
@@ -64,8 +64,8 @@ func (s Service) selected(p core.Principal) (core.Account, core.Project, error) 
 }
 
 // List returns the project's credentials matching filter by name.
-func (s Service) List(p core.Principal, filter credentialFilter) ([]credential, error) {
-	a, project, err := s.selected(p)
+func (s Service) List(ctx context.Context, p core.Principal, filter credentialFilter) ([]credential, error) {
+	a, project, err := s.selected(ctx, p)
 	if err != nil {
 		return nil, err
 	}
@@ -87,12 +87,12 @@ func (s Service) List(p core.Principal, filter credentialFilter) ([]credential, 
 
 // Create issues a credential of kind and returns its one-time secret.
 func (s Service) Create(ctx context.Context, p core.Principal, kind string, input sdk.CreateProjectAPIKeyRequest) (sdk.ProjectAPIKeySecret, error) {
-	a, project, err := s.selected(p)
+	a, project, err := s.selected(ctx, p)
 	if err != nil {
 		return sdk.ProjectAPIKeySecret{}, err
 	}
-	if !s.deps.Store.Can(p, core.Organization.CanManage) {
-		return sdk.ProjectAPIKeySecret{}, core.ErrForbidden
+	if err := core.Can(ctx, s.deps.Store, p, core.Organization.CanManage); err != nil {
+		return sdk.ProjectAPIKeySecret{}, err
 	}
 	if err := validateInput(project, input); err != nil {
 		return sdk.ProjectAPIKeySecret{}, err
@@ -117,7 +117,7 @@ func (s Service) Create(ctx context.Context, p core.Principal, kind string, inpu
 		Prefix: secret[:min(len(secret), 16)], LastFour: secret[len(secret)-4:], SecretHash: hash(secret),
 		Scopes: slices.Clone(input.Scopes), CreatedAt: time.Now().UTC(),
 	}
-	err = s.update(p, func(project *core.Project) error {
+	err = s.update(ctx, p, func(project *core.Project) error {
 		if err := validateInput(*project, input); err != nil {
 			return err
 		}
@@ -136,7 +136,7 @@ func (s Service) Create(ctx context.Context, p core.Principal, kind string, inpu
 // Rotate replaces a live credential's secret and returns the new one. A
 // non-empty kind restricts which credential kind may be rotated.
 func (s Service) Rotate(ctx context.Context, p core.Principal, keyID, kind string) (sdk.ProjectAPIKeySecret, error) {
-	a, existing, err := s.existing(p, keyID, kind)
+	a, existing, err := s.existing(ctx, p, keyID, kind)
 	if err != nil {
 		return sdk.ProjectAPIKeySecret{}, err
 	}
@@ -153,7 +153,7 @@ func (s Service) Rotate(ctx context.Context, p core.Principal, keyID, kind strin
 	}
 	var key core.APIKey
 	var secret string
-	err = s.update(p, func(project *core.Project) error {
+	err = s.update(ctx, p, func(project *core.Project) error {
 		current, ok := project.APIKeys[keyID]
 		if !ok || !current.RevokedAt.IsZero() {
 			return fmt.Errorf("%w: active credential %q", core.ErrNotFound, keyID)
@@ -179,7 +179,7 @@ func (s Service) Rotate(ctx context.Context, p core.Principal, keyID, kind strin
 // Revoke permanently disables a credential. A non-empty kind restricts which
 // credential kind may be revoked.
 func (s Service) Revoke(ctx context.Context, p core.Principal, keyID, kind string) (sdk.ProjectAPIKeyRevocation, error) {
-	_, existing, err := s.existing(p, keyID, kind)
+	_, existing, err := s.existing(ctx, p, keyID, kind)
 	if err != nil {
 		return sdk.ProjectAPIKeyRevocation{}, err
 	}
@@ -193,7 +193,7 @@ func (s Service) Revoke(ctx context.Context, p core.Principal, keyID, kind strin
 		}
 		return *result, nil
 	}
-	err = s.update(p, func(project *core.Project) error {
+	err = s.update(ctx, p, func(project *core.Project) error {
 		key, ok := project.APIKeys[keyID]
 		if !ok {
 			return core.ErrNotFound
@@ -210,13 +210,13 @@ func (s Service) Revoke(ctx context.Context, p core.Principal, keyID, kind strin
 
 // existing checks that the principal may manage credentials and returns the
 // credential keyID names, which must be of kind when kind is not empty.
-func (s Service) existing(p core.Principal, keyID, kind string) (core.Account, core.APIKey, error) {
-	a, project, err := s.selected(p)
+func (s Service) existing(ctx context.Context, p core.Principal, keyID, kind string) (core.Account, core.APIKey, error) {
+	a, project, err := s.selected(ctx, p)
 	if err != nil {
 		return core.Account{}, core.APIKey{}, err
 	}
-	if !s.deps.Store.Can(p, core.Organization.CanManage) {
-		return core.Account{}, core.APIKey{}, core.ErrForbidden
+	if err := core.Can(ctx, s.deps.Store, p, core.Organization.CanManage); err != nil {
+		return core.Account{}, core.APIKey{}, err
 	}
 	key, ok := project.APIKeys[keyID]
 	if !ok || kind != "" && key.Kind != kind {
@@ -227,8 +227,8 @@ func (s Service) existing(p core.Principal, keyID, kind string) (core.Account, c
 
 // update applies mutate to the selected project after rechecking that the
 // principal manages its organization.
-func (s Service) update(p core.Principal, mutate func(*core.Project) error) error {
-	return s.deps.Store.UpdateAs(p, func(a *core.Account) error {
+func (s Service) update(ctx context.Context, p core.Principal, mutate func(*core.Project) error) error {
+	return s.deps.Store.UpdateAs(ctx, p, func(a *core.Account) error {
 		project, err := a.ProjectFor(p, p.OrganizationID, p.ProjectID)
 		if err != nil {
 			return err

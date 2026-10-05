@@ -1,6 +1,7 @@
 package profile
 
 import (
+	"context"
 	"slices"
 	"strings"
 	"time"
@@ -45,8 +46,8 @@ type passkeyView struct {
 }
 
 // Profile returns the signed-in user's profile for the principal's scope.
-func (s Service) Profile(p core.Principal) (profileSummary, error) {
-	account, err := s.deps.Store.SnapshotAs(p)
+func (s Service) Profile(ctx context.Context, p core.Principal) (profileSummary, error) {
+	account, err := s.deps.Store.SnapshotAs(ctx, p)
 	if err != nil {
 		return profileSummary{}, err
 	}
@@ -73,7 +74,7 @@ func (s Service) Profile(p core.Principal) (profileSummary, error) {
 
 // UpdateProfile saves the display name and phone number. An empty name keeps
 // the current name, and a nil phone keeps the current number.
-func (s Service) UpdateProfile(p core.Principal, name string, phone *string) error {
+func (s Service) UpdateProfile(ctx context.Context, p core.Principal, name string, phone *string) error {
 	name = strings.TrimSpace(name)
 	if !utf8.ValidString(name) || strings.ContainsFunc(name, unicode.IsControl) {
 		return profileError("Enter a valid name.")
@@ -88,7 +89,7 @@ func (s Service) UpdateProfile(p core.Principal, name string, phone *string) err
 		}
 		phone = &trimmed
 	}
-	return s.deps.Store.UpdateAs(p, func(account *core.Account) error {
+	return s.deps.Store.UpdateAs(ctx, p, func(account *core.Account) error {
 		if name != "" {
 			account.User.Name = name
 		}
@@ -100,19 +101,19 @@ func (s Service) UpdateProfile(p core.Principal, name string, phone *string) err
 }
 
 // SetLanguage saves the interface language.
-func (s Service) SetLanguage(p core.Principal, locale string) error {
+func (s Service) SetLanguage(ctx context.Context, p core.Principal, locale string) error {
 	if !slices.Contains(locales, locale) {
 		return profileError("Choose an available language.")
 	}
-	return s.deps.Store.UpdateAs(p, func(account *core.Account) error {
+	return s.deps.Store.UpdateAs(ctx, p, func(account *core.Account) error {
 		account.User.Locale = locale
 		return nil
 	})
 }
 
 // AccessTokens lists the user's live personal access tokens, newest first.
-func (s Service) AccessTokens(p core.Principal) ([]accessTokenView, error) {
-	account, err := s.deps.Store.SnapshotAs(p)
+func (s Service) AccessTokens(ctx context.Context, p core.Principal) ([]accessTokenView, error) {
+	account, err := s.deps.Store.SnapshotAs(ctx, p)
 	if err != nil {
 		return nil, err
 	}
@@ -121,12 +122,12 @@ func (s Service) AccessTokens(p core.Principal) ([]accessTokenView, error) {
 
 // CreateAccessToken issues a personal access token that expires after the
 // chosen number of days, returning its one-time secret.
-func (s Service) CreateAccessToken(p core.Principal, name, expiresInDays string) (createdAccessToken, error) {
+func (s Service) CreateAccessToken(ctx context.Context, p core.Principal, name, expiresInDays string) (createdAccessToken, error) {
 	lifetime, err := accessTokenLifetime(expiresInDays)
 	if err != nil {
 		return createdAccessToken{}, err
 	}
-	token, secret, err := s.deps.Store.CreateAccessToken(p, name, lifetime)
+	token, secret, err := s.deps.Store.CreateAccessToken(ctx, p, name, lifetime)
 	if err != nil {
 		return createdAccessToken{}, err
 	}
@@ -135,8 +136,8 @@ func (s Service) CreateAccessToken(p core.Principal, name, expiresInDays string)
 }
 
 // RevokeAccessToken deletes one of the user's personal access tokens.
-func (s Service) RevokeAccessToken(p core.Principal, id string) error {
-	return s.deps.Store.RevokeAccessToken(p, id)
+func (s Service) RevokeAccessToken(ctx context.Context, p core.Principal, id string) error {
+	return s.deps.Store.RevokeAccessToken(ctx, p, id)
 }
 
 // profileError is a validation failure whose text is shown to the user as is.

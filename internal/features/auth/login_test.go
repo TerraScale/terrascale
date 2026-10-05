@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"terrascale.tech/dashboard/internal/core"
+	"terrascale.tech/dashboard/internal/core/memstore"
 	"terrascale.tech/dashboard/internal/platform/csrf"
 	"terrascale.tech/dashboard/internal/platform/render"
 	"terrascale.tech/dashboard/internal/platform/session"
@@ -25,14 +26,14 @@ const (
 // failed sign-ins with limits (zero budgets use the defaults).
 func newLoginMux(t *testing.T, limits throttle.Options) *http.ServeMux {
 	t.Helper()
-	store := core.NewStore()
+	store := memstore.New()
 	sessions := session.New(store, session.Options{})
 	guard := csrf.New(sessions, csrf.Options{})
 	deps := core.Deps{
 		Store: store, Sessions: sessions, CSRF: guard, Render: render.New(store, guard, nil, false),
 		Throttle: throttle.New(limits),
 	}
-	if _, err := RegisterAccount(deps, RegistrationInput{
+	if _, err := RegisterAccount(t.Context(), deps, RegistrationInput{
 		DisplayName: "Ada Lovelace", Email: testEmail, Password: testPassword,
 		ConfirmPassword: testPassword, AcceptedTerms: true,
 	}); err != nil {
@@ -174,7 +175,7 @@ func TestLoginAPIAcceptsOnlyJSON(t *testing.T) {
 
 func TestRegisterAccountNamesTheInvalidField(t *testing.T) {
 	t.Parallel()
-	store := core.NewStore()
+	store := memstore.New()
 	deps := core.Deps{Store: store}
 	valid := RegistrationInput{DisplayName: "Ada Lovelace", Email: testEmail, Password: testPassword, ConfirmPassword: testPassword, AcceptedTerms: true}
 	for _, tc := range []struct {
@@ -196,7 +197,7 @@ func TestRegisterAccountNamesTheInvalidField(t *testing.T) {
 			t.Parallel()
 			input := valid
 			tc.edit(&input)
-			_, err := RegisterAccount(deps, input)
+			_, err := RegisterAccount(t.Context(), deps, input)
 			inputError, ok := errors.AsType[InputError](err)
 			if !ok || inputError.Field != tc.field || inputError.Message == "" {
 				t.Fatalf("RegisterAccount error = %#v, want an InputError for %q", err, tc.field)

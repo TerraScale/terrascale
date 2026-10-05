@@ -27,20 +27,27 @@ const maxFormBody = 2 << 20
 type Options struct {
 	CookieName string
 	Secure     bool
+	// Secret keys the HMAC that makes tokens unforgeable. Every process
+	// serving the dashboard must share it; when it is empty, New draws a
+	// random one, which only suits a single-process demo.
+	Secret []byte
 }
 
 type Guard struct {
 	sessions core.Sessions
 	opts     Options
-	secret   [32]byte
+	secret   []byte
 }
 
 func New(sessions core.Sessions, opts Options) *Guard {
 	if opts.CookieName == "" {
 		opts.CookieName = "ts_dashboard_csrf"
 	}
-	g := &Guard{sessions: sessions, opts: opts}
-	rand.Read(g.secret[:])
+	g := &Guard{sessions: sessions, opts: opts, secret: append([]byte(nil), opts.Secret...)}
+	if len(g.secret) == 0 {
+		g.secret = make([]byte, 32)
+		rand.Read(g.secret)
+	}
 	return g
 }
 
@@ -50,7 +57,7 @@ func (g *Guard) Token(w http.ResponseWriter, r *http.Request) string {
 	}
 	var random [32]byte
 	rand.Read(random[:])
-	mac := hmac.New(sha256.New, g.secret[:])
+	mac := hmac.New(sha256.New, g.secret)
 	_, _ = mac.Write(random[:])
 	token := base64.RawURLEncoding.EncodeToString(append(random[:], mac.Sum(nil)...))
 	http.SetCookie(w, &http.Cookie{
@@ -122,7 +129,7 @@ func (g *Guard) validToken(value string) bool {
 	if n, err := base64.RawURLEncoding.Decode(data[:], []byte(value)); err != nil || n != len(data) {
 		return false
 	}
-	mac := hmac.New(sha256.New, g.secret[:])
+	mac := hmac.New(sha256.New, g.secret)
 	_, _ = mac.Write(data[:32])
 	var sum [sha256.Size]byte
 	return hmac.Equal(mac.Sum(sum[:0]), data[32:])

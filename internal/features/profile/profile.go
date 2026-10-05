@@ -108,8 +108,13 @@ func getProfile(deps core.Deps) http.HandlerFunc {
 }
 
 func renderProfile(w http.ResponseWriter, r *http.Request, deps core.Deps, principal core.Principal, request profileRequest) {
-	account, err := deps.Store.SnapshotAs(principal)
+	ctx := r.Context()
+	account, err := deps.Store.SnapshotAs(ctx, principal)
 	if err != nil {
+		if errors.Is(err, core.ErrUnavailable) {
+			writeUpdateError(w, err)
+			return
+		}
 		http.Error(w, "account scope is no longer available", http.StatusUnauthorized)
 		return
 	}
@@ -121,12 +126,14 @@ func renderProfile(w http.ResponseWriter, r *http.Request, deps core.Deps, princ
 	var recoveryCodes []string
 	if deps.Demo && tab == tabSecurity {
 		if token := request.Enroll; token != "" || len(account.DemoSecurity.PendingRecoveryCodes) != 0 {
-			if err := deps.Store.UpdateAs(principal, func(current *core.Account) error {
+			if err := deps.Store.UpdateAs(ctx, principal, func(current *core.Account) error {
+				// The callback may run again, so each run starts afresh.
+				totpSecret = ""
 				if token != "" && current.DemoSecurity.PendingTOTPToken == token {
 					totpSecret = current.DemoSecurity.PendingTOTPSecret
 					current.DemoSecurity.PendingTOTPSecret = ""
 				}
-				recoveryCodes = current.DemoSecurity.PendingRecoveryCodes
+				recoveryCodes = slices.Clone(current.DemoSecurity.PendingRecoveryCodes)
 				current.DemoSecurity.PendingRecoveryCodes = nil
 				return nil
 			}); err != nil {
@@ -241,7 +248,7 @@ func updateProfile(deps core.Deps, service Service) http.HandlerFunc {
 			http.Redirect(w, r, "/login", http.StatusSeeOther)
 			return
 		}
-		if err := service.UpdateProfile(principal, r.Form.Get("name"), new(r.Form.Get("phoneNumber"))); err != nil {
+		if err := service.UpdateProfile(r.Context(), principal, r.Form.Get("name"), new(r.Form.Get("phoneNumber"))); err != nil {
 			writeServiceError(w, r, tabProfile, err)
 			return
 		}
@@ -260,8 +267,13 @@ func changePassword(deps core.Deps) http.HandlerFunc {
 			http.Redirect(w, r, "/login", http.StatusSeeOther)
 			return
 		}
-		account, err := deps.Store.SnapshotAs(principal)
+		ctx := r.Context()
+		account, err := deps.Store.SnapshotAs(ctx, principal)
 		if err != nil {
+			if errors.Is(err, core.ErrUnavailable) {
+				writeUpdateError(w, err)
+				return
+			}
 			http.Error(w, "account scope is no longer available", http.StatusUnauthorized)
 			return
 		}
@@ -290,7 +302,7 @@ func changePassword(deps core.Deps) http.HandlerFunc {
 			return
 		}
 		previousHash := account.User.PasswordHash
-		if err := deps.Store.UpdateAs(principal, func(account *core.Account) error {
+		if err := deps.Store.UpdateAs(ctx, principal, func(account *core.Account) error {
 			if account.User.PasswordHash != previousHash {
 				return core.ErrConflict
 			}
@@ -298,15 +310,23 @@ func changePassword(deps core.Deps) http.HandlerFunc {
 			return nil
 		}); err != nil {
 			if errors.Is(err, core.ErrConflict) {
-				deps.Sessions.End(w, r)
+				if err := deps.Sessions.End(w, r); err != nil {
+					http.Error(w, "Your account changed; sign-out could not finish. Retry logout.", http.StatusServiceUnavailable)
+					return
+				}
 				http.Redirect(w, r, "/login", http.StatusSeeOther)
 				return
 			}
 			writeUpdateError(w, err)
 			return
 		}
-		deps.Sessions.RevokeUser(principal.AccountID, principal.UserID)
-		deps.Sessions.End(w, r)
+		// The new credential version already ends every session, so a
+		// failure to delete them only leaves records that no longer sign in.
+		_ = deps.Sessions.RevokeUser(r.Context(), principal.AccountID, principal.UserID)
+		if err := deps.Sessions.End(w, r); err != nil {
+			http.Error(w, "Password updated; sign-out could not finish. Retry logout.", http.StatusServiceUnavailable)
+			return
+		}
 		http.Redirect(w, r, "/login", http.StatusSeeOther)
 	}
 }
@@ -327,7 +347,7 @@ func changeEmail(deps core.Deps) http.HandlerFunc {
 		if !ok {
 			return
 		}
-		if err := deps.Store.ChangeEmailAs(principal, email, account.User.PasswordHash); err != nil {
+		if err := deps.Store.ChangeEmailAs(r.Context(), principal, email, account.User.PasswordHash); err != nil {
 			if errors.Is(err, core.ErrConflict) {
 				redirectProfileError(w, r, "profile", "Email is already in use or your account changed.")
 				return
@@ -345,7 +365,7 @@ func changeLanguage(deps core.Deps, service Service) http.HandlerFunc {
 		if !ok {
 			return
 		}
-		if err := service.SetLanguage(principal, r.Form.Get("locale")); err != nil {
+		if err := service.SetLanguage(r.Context(), principal, r.Form.Get("locale")); err != nil {
 			writeServiceError(w, r, tabProfile, err)
 			return
 		}
@@ -368,7 +388,7 @@ func beginTOTP(deps core.Deps) http.HandlerFunc {
 		secret := strings.ToUpper(hex.EncodeToString(random[:]))
 		secret = strings.Join([]string{secret[:4], secret[4:8], secret[8:12], secret[12:16], secret[16:]}, " ")
 		token := core.NewID("enr")
-		if err := deps.Store.UpdateAs(principal, func(current *core.Account) error {
+		if err := deps.Store.UpdateAs(r.Context(), principal, func(current *core.Account) error {
 			if current.User.PasswordHash != account.User.PasswordHash {
 				return core.ErrConflict
 			}
@@ -403,7 +423,7 @@ func verifyTOTP(deps core.Deps) http.HandlerFunc {
 			return
 		}
 		codes := newDemoRecoveryCodes()
-		if err := deps.Store.UpdateAs(principal, func(account *core.Account) error {
+		if err := deps.Store.UpdateAs(r.Context(), principal, func(account *core.Account) error {
 			if account.DemoSecurity.PendingTOTPToken != token || account.DemoSecurity.MFAEnabled {
 				return core.ErrNotFound
 			}
@@ -434,7 +454,7 @@ func removeTOTP(deps core.Deps) http.HandlerFunc {
 		if !ok {
 			return
 		}
-		if err := deps.Store.UpdateAs(principal, func(current *core.Account) error {
+		if err := deps.Store.UpdateAs(r.Context(), principal, func(current *core.Account) error {
 			if current.User.PasswordHash != account.User.PasswordHash {
 				return core.ErrConflict
 			}
@@ -462,7 +482,7 @@ func regenerateRecoveryCodes(deps core.Deps) http.HandlerFunc {
 			return
 		}
 		codes := newDemoRecoveryCodes()
-		if err := deps.Store.UpdateAs(principal, func(current *core.Account) error {
+		if err := deps.Store.UpdateAs(r.Context(), principal, func(current *core.Account) error {
 			if current.User.PasswordHash != account.User.PasswordHash || !current.DemoSecurity.MFAEnabled {
 				return core.ErrConflict
 			}
@@ -487,7 +507,7 @@ func registerPasskey(deps core.Deps) http.HandlerFunc {
 			redirectProfileError(w, r, "security", "Enter a valid passkey label.")
 			return
 		}
-		if err := deps.Store.UpdateAs(principal, func(account *core.Account) error {
+		if err := deps.Store.UpdateAs(r.Context(), principal, func(account *core.Account) error {
 			account.DemoSecurity.Passkeys = append(account.DemoSecurity.Passkeys, core.DemoPasskey{
 				ID: core.NewID("pas"), Name: name, CreatedAt: time.Now().UTC(),
 			})
@@ -511,7 +531,7 @@ func removePasskey(deps core.Deps) http.HandlerFunc {
 			redirectProfileError(w, r, "security", "Choose a demo passkey record.")
 			return
 		}
-		if err := deps.Store.UpdateAs(principal, func(account *core.Account) error {
+		if err := deps.Store.UpdateAs(r.Context(), principal, func(account *core.Account) error {
 			index := slices.IndexFunc(account.DemoSecurity.Passkeys, func(passkey core.DemoPasskey) bool { return passkey.ID == id })
 			if index < 0 {
 				return core.ErrNotFound
@@ -544,8 +564,12 @@ func demoProfileForm(deps core.Deps, w http.ResponseWriter, r *http.Request) (co
 }
 
 func verifiedProfilePassword(deps core.Deps, w http.ResponseWriter, r *http.Request, principal core.Principal, tab string) (core.Account, bool) {
-	account, err := deps.Store.SnapshotAs(principal)
+	account, err := deps.Store.SnapshotAs(r.Context(), principal)
 	if err != nil {
+		if errors.Is(err, core.ErrUnavailable) {
+			writeUpdateError(w, err)
+			return core.Account{}, false
+		}
 		http.Error(w, "account scope is no longer available", http.StatusUnauthorized)
 		return core.Account{}, false
 	}
@@ -614,6 +638,10 @@ func writeServiceError(w http.ResponseWriter, r *http.Request, tab string, err e
 func writeUpdateError(w http.ResponseWriter, err error) {
 	if errors.Is(err, core.ErrForbidden) || errors.Is(err, core.ErrNotFound) {
 		http.Error(w, "account scope is no longer available", http.StatusUnauthorized)
+		return
+	}
+	if errors.Is(err, core.ErrUnavailable) {
+		http.Error(w, "service unavailable", http.StatusServiceUnavailable)
 		return
 	}
 	http.Error(w, "could not update profile", http.StatusInternalServerError)

@@ -2,6 +2,7 @@ package authentication
 
 import (
 	"cmp"
+	"context"
 	"fmt"
 	"maps"
 	"net/url"
@@ -28,11 +29,11 @@ type Service struct {
 }
 
 // scope returns the principal's selected organization and project.
-func (s Service) scope(p core.Principal) (core.Organization, core.Project, error) {
+func (s Service) scope(ctx context.Context, p core.Principal) (core.Organization, core.Project, error) {
 	if p.ProjectID == "" {
 		return core.Organization{}, core.Project{}, core.ErrNotFound
 	}
-	account, err := s.deps.Store.SnapshotAs(p)
+	account, err := s.deps.Store.SnapshotAs(ctx, p)
 	if err != nil {
 		return core.Organization{}, core.Project{}, err
 	}
@@ -46,8 +47,8 @@ func (s Service) scope(p core.Principal) (core.Organization, core.Project, error
 
 // Overview summarizes the instance: endpoints, strategies, branding,
 // totals, setup progress, and the latest changes.
-func (s Service) Overview(p core.Principal) (overviewView, error) {
-	org, project, err := s.scope(p)
+func (s Service) Overview(ctx context.Context, p core.Principal) (overviewView, error) {
+	org, project, err := s.scope(ctx, p)
 	if err != nil {
 		return overviewView{}, err
 	}
@@ -77,12 +78,12 @@ func (s Service) Overview(p core.Principal) (overviewView, error) {
 
 // ListResources returns the records of one list section, optionally
 // filtered by a case-insensitive search over their values.
-func (s Service) ListResources(p core.Principal, key, search string) (resourcePage, error) {
+func (s Service) ListResources(ctx context.Context, p core.Principal, key, search string) (resourcePage, error) {
 	current, err := listSection(key)
 	if err != nil {
 		return resourcePage{}, err
 	}
-	org, project, err := s.scope(p)
+	org, project, err := s.scope(ctx, p)
 	if err != nil {
 		return resourcePage{}, err
 	}
@@ -104,13 +105,13 @@ func (s Service) ListResources(p core.Principal, key, search string) (resourcePa
 // SaveResource creates a record, or updates the mutable fields of the
 // record id names. Form keys are the section's field keys; connections also
 // carry their provider in "protocol".
-func (s Service) SaveResource(p core.Principal, key, id string, form url.Values) (resourceView, error) {
+func (s Service) SaveResource(ctx context.Context, p core.Principal, key, id string, form url.Values) (resourceView, error) {
 	current, err := listSection(key)
 	if err != nil {
 		return resourceView{}, err
 	}
 	now := time.Now().UTC()
-	target, err := s.update(p, now, func(instance *core.AuthInstance) (string, string, error) {
+	target, err := s.update(ctx, p, now, func(instance *core.AuthInstance) (string, string, error) {
 		if id != "" {
 			return updateRecord(instance, current, id, form)
 		}
@@ -119,18 +120,18 @@ func (s Service) SaveResource(p core.Principal, key, id string, form url.Values)
 	if err != nil {
 		return resourceView{}, err
 	}
-	return s.resource(p, current, target)
+	return s.resource(ctx, p, current, target)
 }
 
 // DeleteResource revokes a revocable record (invitations and management
 // keys) and deletes any other, cascading to records that depend on it.
-func (s Service) DeleteResource(p core.Principal, key, id string) (deletion, error) {
+func (s Service) DeleteResource(ctx context.Context, p core.Principal, key, id string) (deletion, error) {
 	current, err := listSection(key)
 	if err != nil {
 		return deletion{}, err
 	}
 	outcome := "deleted"
-	_, err = s.update(p, time.Now().UTC(), func(instance *core.AuthInstance) (string, string, error) {
+	_, err = s.update(ctx, p, time.Now().UTC(), func(instance *core.AuthInstance) (string, string, error) {
 		index := slices.IndexFunc(instance.Resources, func(item core.AuthResource) bool { return item.Section == key && item.ID == id })
 		if index < 0 {
 			return "", "", fmt.Errorf("%w: %s record %q", core.ErrNotFound, key, id)
@@ -153,13 +154,13 @@ func (s Service) DeleteResource(p core.Principal, key, id string) (deletion, err
 
 // RunAction toggles a user's block, toggles a connection on or off, or
 // rotates a directory's SCIM token.
-func (s Service) RunAction(p core.Principal, key, id, action string) (resourceView, error) {
+func (s Service) RunAction(ctx context.Context, p core.Principal, key, id, action string) (resourceView, error) {
 	current, err := listSection(key)
 	if err != nil {
 		return resourceView{}, err
 	}
 	now := time.Now().UTC()
-	target, err := s.update(p, now, func(instance *core.AuthInstance) (string, string, error) {
+	target, err := s.update(ctx, p, now, func(instance *core.AuthInstance) (string, string, error) {
 		index := slices.IndexFunc(instance.Resources, func(item core.AuthResource) bool { return item.Section == key && item.ID == id })
 		if index < 0 {
 			return "", "", fmt.Errorf("%w: %s record %q", core.ErrNotFound, key, id)
@@ -190,18 +191,18 @@ func (s Service) RunAction(p core.Principal, key, id, action string) (resourceVi
 	if err != nil {
 		return resourceView{}, err
 	}
-	return s.resource(p, current, target)
+	return s.resource(ctx, p, current, target)
 }
 
 // SetStrategy switches one sign-in or multi-factor strategy, keeping at
 // least one first factor and turning off strategies that required it.
-func (s Service) SetStrategy(p core.Principal, key string, on bool) (strategyList, error) {
+func (s Service) SetStrategy(ctx context.Context, p core.Principal, key string, on bool) (strategyList, error) {
 	if _, _, exists := findStrategy(key); !exists {
 		return strategyList{}, fmt.Errorf("%w: strategy %q", core.ErrNotFound, key)
 	}
 	now := time.Now().UTC()
 	var settings core.AuthSettings
-	_, err := s.update(p, now, func(instance *core.AuthInstance) (string, string, error) {
+	_, err := s.update(ctx, p, now, func(instance *core.AuthInstance) (string, string, error) {
 		next, message := applyStrategy(effectiveSettings(*instance), key, on)
 		if message != "" {
 			return "", "", formError(message)
@@ -221,10 +222,10 @@ func (s Service) SetStrategy(p core.Principal, key string, on bool) (strategyLis
 }
 
 // SaveBranding sets the hosted pages' name, logo, and theme color.
-func (s Service) SaveBranding(p core.Principal, name, logo, color string) (brandingView, error) {
+func (s Service) SaveBranding(ctx context.Context, p core.Principal, name, logo, color string) (brandingView, error) {
 	name, logo = strings.TrimSpace(name), strings.TrimSpace(logo)
 	color = strings.ToLower(strings.TrimSpace(color))
-	_, err := s.update(p, time.Now().UTC(), func(instance *core.AuthInstance) (string, string, error) {
+	_, err := s.update(ctx, p, time.Now().UTC(), func(instance *core.AuthInstance) (string, string, error) {
 		if name == "" || utf8.RuneCountInString(name) > 128 || (logo != "" && !validHTTPSURL(logo)) || (color != "" && !themeColorPattern.MatchString(color)) {
 			return "", "", formError("Enter a name, an HTTPS logo URL, and a six-digit hex theme color.")
 		}
@@ -238,16 +239,16 @@ func (s Service) SaveBranding(p core.Principal, name, logo, color string) (brand
 }
 
 // AuditEvents lists the instance's authentication changes, newest first.
-func (s Service) AuditEvents(p core.Principal) (eventList, error) {
-	_, project, err := s.scope(p)
+func (s Service) AuditEvents(ctx context.Context, p core.Principal) (eventList, error) {
+	_, project, err := s.scope(ctx, p)
 	if err != nil {
 		return eventList{}, err
 	}
 	return eventList{Events: eventViews(events(project.AuthInstance, 0))}, nil
 }
 
-func (s Service) resource(p core.Principal, current section, id string) (resourceView, error) {
-	_, project, err := s.scope(p)
+func (s Service) resource(ctx context.Context, p core.Principal, current section, id string) (resourceView, error) {
+	_, project, err := s.scope(ctx, p)
 	if err != nil {
 		return resourceView{}, err
 	}
@@ -262,9 +263,9 @@ func (s Service) resource(p core.Principal, current section, id string) (resourc
 // update applies change to the principal's project instance and records
 // the audit event it names, all in one store update. It returns the
 // event's target.
-func (s Service) update(p core.Principal, now time.Time, change func(*core.AuthInstance) (action, target string, err error)) (string, error) {
+func (s Service) update(ctx context.Context, p core.Principal, now time.Time, change func(*core.AuthInstance) (action, target string, err error)) (string, error) {
 	var target string
-	err := s.deps.Store.UpdateAs(p, func(account *core.Account) error {
+	err := s.deps.Store.UpdateAs(ctx, p, func(account *core.Account) error {
 		org, err := account.OrganizationFor(p, p.OrganizationID)
 		if err != nil {
 			return err

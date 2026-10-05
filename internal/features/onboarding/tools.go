@@ -10,8 +10,8 @@ func mountTools(tools *core.Tools, service Service) {
 	core.AddTool(tools, core.ToolSpec{
 		Name: "get_onboarding", Title: "Get onboarding", ReadOnly: true,
 		Description: "Show your account setup progress: the current step, every step's state, and the paid plans the payment step offers.",
-	}, func(_ context.Context, p core.Principal, _ struct{}) (status, error) {
-		return service.Status(p)
+	}, func(ctx context.Context, p core.Principal, _ struct{}) (status, error) {
+		return service.Status(ctx, p)
 	})
 	core.AddTool(tools, core.ToolSpec{
 		Name: "save_onboarding_step", Title: "Save onboarding step", OpenWorld: true,

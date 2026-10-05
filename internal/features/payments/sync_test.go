@@ -2,6 +2,7 @@ package payments_test
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"reflect"
 	"testing"
@@ -46,7 +47,7 @@ func TestSyncIgnoresOlderStateProjectedLate(t *testing.T) {
 		CustomerID: "cus_test", OrganizationID: fixture.principal.OrganizationID, Status: payments.StatusNone,
 		SyncedAt: newer.Billing.SyncedAt.Add(-time.Second),
 	}
-	if err := fixture.service.ProjectCustomerState(stale, nil); err != nil {
+	if err := fixture.service.ProjectCustomerState(t.Context(), stale, nil); err != nil {
 		t.Fatal(err)
 	}
 	if org := fixture.organization(t); !reflect.DeepEqual(org, newer) {
@@ -110,7 +111,7 @@ func TestSyncProjectsScheduledPendingAndCanceledChanges(t *testing.T) {
 
 func TestSyncRequiresBillingForBusinessWithoutSubscription(t *testing.T) {
 	fixture := newBillingFixture(t)
-	if err := fixture.store.UpdateAs(fixture.principal, func(account *core.Account) error {
+	if err := fixture.store.UpdateAs(t.Context(), fixture.principal, func(account *core.Account) error {
 		org := account.Organizations[fixture.principal.OrganizationID]
 		org.Kind = "business"
 		account.Organizations[org.ID] = org
@@ -195,7 +196,7 @@ func TestSyncRereadsStripeAfterConcurrentSave(t *testing.T) {
 func TestUndoSyncsWhenStripeAlreadyReleasedSchedule(t *testing.T) {
 	fixture := newBillingFixture(t)
 	fixture.sync(t)
-	if err := fixture.store.UpdateAs(fixture.principal, func(account *core.Account) error {
+	if err := fixture.store.UpdateAs(t.Context(), fixture.principal, func(account *core.Account) error {
 		org := account.Organizations[fixture.principal.OrganizationID]
 		org.Billing.ScheduledPlanKey, org.Billing.ScheduledInterval = payments.PlanStarter, payments.IntervalMonthly
 		org.Billing.ScheduledAt, org.Billing.ScheduleID = testPeriodEnd, "sub_sched_released"
@@ -209,5 +210,20 @@ func TestUndoSyncsWhenStripeAlreadyReleasedSchedule(t *testing.T) {
 	org := fixture.organization(t)
 	if response.Code != http.StatusSeeOther || fixture.provider.releases != 0 || org.Billing.ScheduledPlanKey != "" || org.Billing.ScheduleID != "" {
 		t.Fatalf("undo = %d, releases = %d, billing = %#v", response.Code, fixture.provider.releases, org.Billing)
+	}
+}
+
+// unavailableStore fails every save as a database outage would.
+type unavailableStore struct{ payments.StateStore }
+
+func (unavailableStore) Save(context.Context, payments.CustomerState, string) error {
+	return fmt.Errorf("save: %w", core.ErrUnavailable)
+}
+
+func TestCheckoutReturnReportsStoreOutageAsUnavailable(t *testing.T) {
+	fixture := newBillingFixtureWithStore(t, unavailableStore{payments.NewMemoryStateStore()})
+	response := fixture.request(http.MethodGet, "/billing/checkout/return?session_id=cs_test")
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("return during a store outage = %d, want 503", response.Code)
 	}
 }

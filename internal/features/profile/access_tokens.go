@@ -75,16 +75,20 @@ func mountAccessTokens(mux *http.ServeMux, deps core.Deps, service Service) {
 		}
 		// A token outlives the session that creates it, so creating one asks
 		// for the password like the other credential changes.
-		account, err := deps.Store.SnapshotAs(principal)
+		ctx := r.Context()
+		account, err := deps.Store.SnapshotAs(ctx, principal)
 		if err != nil {
-			writeAccessTokenError(w, r, core.ErrUnauthorized)
+			if !errors.Is(err, core.ErrUnavailable) {
+				err = core.ErrUnauthorized
+			}
+			writeAccessTokenError(w, r, err)
 			return
 		}
 		if !auth.VerifyPassword(account.User.PasswordHash, r.Form.Get("password")) {
 			writeAccessTokenError(w, r, errIncorrectPassword)
 			return
 		}
-		created, err := service.CreateAccessToken(principal, r.Form.Get("name"), r.Form.Get("expiresInDays"))
+		created, err := service.CreateAccessToken(ctx, principal, r.Form.Get("name"), r.Form.Get("expiresInDays"))
 		if err != nil {
 			writeAccessTokenError(w, r, err)
 			return
@@ -105,7 +109,7 @@ func mountAccessTokens(mux *http.ServeMux, deps core.Deps, service Service) {
 			core.WriteAccessError(w, core.ErrUnauthorized)
 			return
 		}
-		if err := service.RevokeAccessToken(principal, r.PathValue("tokenID")); err != nil {
+		if err := service.RevokeAccessToken(r.Context(), principal, r.PathValue("tokenID")); err != nil {
 			writeAccessTokenError(w, r, err)
 			return
 		}
@@ -130,6 +134,8 @@ func writeAccessTokenError(w http.ResponseWriter, r *http.Request, err error) {
 		message, status = "Access token limit reached. Revoke an unused token first.", http.StatusConflict
 	case errors.Is(err, core.ErrInvalid):
 		message, status = err.Error(), http.StatusBadRequest
+	case errors.Is(err, core.ErrUnavailable):
+		message, status = "Access tokens are unavailable right now. Try again in a moment.", http.StatusServiceUnavailable
 	}
 	if core.WantsHTML(r) {
 		redirectProfileError(w, r, tabAccessTokens, message)

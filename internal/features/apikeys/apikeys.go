@@ -35,7 +35,7 @@ func MountWithIssuer(mux *http.ServeMux, deps core.Deps, issuer CredentialIssuer
 			writeError(w, err)
 			return
 		}
-		list, err := service.List(p, credentialFilter{Kind: kindAPIKey})
+		list, err := service.List(r.Context(), p, credentialFilter{Kind: kindAPIKey})
 		if err != nil {
 			writeError(w, err)
 			return

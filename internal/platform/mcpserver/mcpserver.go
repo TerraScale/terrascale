@@ -22,7 +22,7 @@ Calls are stateless: pass organizationId and projectId to choose the scope, or o
 
 // New returns the MCP endpoint handler. Platform administrators see the
 // administration tools in addition to the tools every user sees.
-func New(store *core.Store, tools *core.Tools) http.Handler {
+func New(store core.Store, tools *core.Tools) http.Handler {
 	userServer := newServer(tools, false)
 	adminServer := newServer(tools, true)
 	handler := mcp.NewStreamableHTTPHandler(func(r *http.Request) *mcp.Server {
@@ -34,8 +34,8 @@ func New(store *core.Store, tools *core.Tools) http.Handler {
 		Stateless: true, JSONResponse: true,
 		CrossOriginProtection: http.NewCrossOriginProtection(),
 	})
-	verify := func(_ context.Context, token string, _ *http.Request) (*auth.TokenInfo, error) {
-		p, err := store.AccessTokenPrincipal(strings.TrimSpace(token))
+	verify := func(ctx context.Context, token string, _ *http.Request) (*auth.TokenInfo, error) {
+		p, err := store.AccessTokenPrincipal(ctx, strings.TrimSpace(token))
 		if err != nil {
 			return nil, errors.Join(auth.ErrInvalidToken, err)
 		}

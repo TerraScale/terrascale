@@ -5,11 +5,11 @@
 package throttle
 
 import (
+	"log/slog"
 	"net"
 	"net/http"
 	"net/netip"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -21,6 +21,8 @@ type Budget struct {
 
 // Options configure a Limiter. A zero budget uses the default.
 type Options struct {
+	// Store keeps the buckets; nil keeps them in this process's memory.
+	Store Store
 	// ClientHeader names the header in which a trusted reverse proxy reports
 	// the client address, such as Fly-Client-IP. When it is empty or absent,
 	// the connection's remote address identifies the client.
@@ -35,29 +37,17 @@ var (
 )
 
 const (
-	// maxKeys bounds the memory the limiter holds. Once it is reached,
-	// buckets that have refilled are dropped, and a new client or account is
-	// refused while every tracked bucket is still in use.
-	maxKeys = 100_000
-	// pruneEvery spaces out the scans for refilled buckets while the limiter
-	// is full, so a flood of new keys cannot make every request scan.
-	pruneEvery = time.Second
 	// maxAccountKey caps the account part of a key; a longer value is not a
 	// valid email address anyway.
 	maxAccountKey = 320
 )
 
-// Limiter is a set of GCRA token buckets, safe for concurrent use. Like the
-// demo's sessions, the buckets live in this process's memory.
+// Limiter is a set of GCRA token buckets, safe for concurrent use. The
+// buckets live in its Store, by default this process's memory.
 type Limiter struct {
-	opts Options
-	now  func() time.Time
-
-	mu sync.Mutex
-	// due holds each bucket's theoretical arrival time: the bucket is full
-	// once it has passed, and one Interval later per attempt taken.
-	due      map[string]time.Time
-	prunedAt time.Time
+	opts  Options
+	now   func() time.Time
+	store Store
 }
 
 func New(opts Options) *Limiter {
@@ -67,83 +57,40 @@ func New(opts Options) *Limiter {
 	if opts.Account.Burst < 1 || opts.Account.Interval <= 0 {
 		opts.Account = defaultAccount
 	}
-	return &Limiter{opts: opts, now: time.Now, due: make(map[string]time.Time)}
+	store := opts.Store
+	if store == nil {
+		store = NewMemoryStore()
+	}
+	return &Limiter{opts: opts, now: time.Now, store: store}
 }
 
 // Allow reserves one attempt for the request's client and, when account is
 // not empty, for that account. When either budget is spent it reserves
-// nothing and reports how long to wait.
+// nothing and reports how long to wait. A store failure refuses the attempt
+// for one client interval, so an outage never disables the limit.
 func (l *Limiter) Allow(r *http.Request, account string) (time.Duration, bool) {
-	client := l.ClientKey(r)
-	now := l.now()
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	wait := l.waitLocked(client, l.opts.Client, now)
+	buckets := []Bucket{{Key: l.ClientKey(r), Budget: l.opts.Client}}
 	if account != "" {
-		wait = max(wait, l.waitLocked(accountKey(account), l.opts.Account, now))
+		buckets = append(buckets, Bucket{Key: accountKey(account), Budget: l.opts.Account})
 	}
-	if wait > 0 {
-		return wait, false
+	wait, ok, err := l.store.Reserve(r.Context(), l.now(), buckets)
+	if err != nil {
+		// Fail closed: an attempt the limiter cannot count is refused.
+		slog.Warn("throttle: reserve attempt", "error", err)
+		return l.opts.Client.Interval, false
 	}
-	l.takeLocked(client, l.opts.Client, now)
-	if account != "" {
-		l.takeLocked(accountKey(account), l.opts.Account, now)
-	}
-	return 0, true
+	return wait, ok
 }
 
 // Forgive returns the client's reservation and clears the account's budget
 // after a correct password, so only failed attempts count against either.
+// It is best effort: a store failure leaves the attempt counted.
 func (l *Limiter) Forgive(r *http.Request, account string) {
-	client := l.ClientKey(r)
-	now := l.now()
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	if due, ok := l.due[client]; ok {
-		if due = due.Add(-l.opts.Client.Interval); due.After(now) {
-			l.due[client] = due
-		} else {
-			delete(l.due, client)
-		}
-	}
+	ctx := r.Context()
+	_ = l.store.Refund(ctx, l.now(), Bucket{Key: l.ClientKey(r), Budget: l.opts.Client})
 	if account != "" {
-		delete(l.due, accountKey(account))
+		_ = l.store.Reset(ctx, accountKey(account))
 	}
-}
-
-// waitLocked reports how long key must wait for its next attempt.
-func (l *Limiter) waitLocked(key string, budget Budget, now time.Time) time.Duration {
-	due, tracked := l.due[key]
-	if !tracked {
-		if len(l.due) >= maxKeys && !l.pruneLocked(now) {
-			return budget.Interval
-		}
-		return 0
-	}
-	tolerance := time.Duration(budget.Burst-1) * budget.Interval
-	return max(0, due.Sub(now)-tolerance)
-}
-
-func (l *Limiter) takeLocked(key string, budget Budget, now time.Time) {
-	due := l.due[key]
-	if due.Before(now) {
-		due = now
-	}
-	l.due[key] = due.Add(budget.Interval)
-}
-
-// pruneLocked drops refilled buckets, at most once per pruneEvery, and
-// reports whether there is room for another key.
-func (l *Limiter) pruneLocked(now time.Time) bool {
-	if now.Sub(l.prunedAt) >= pruneEvery {
-		l.prunedAt = now
-		for key, due := range l.due {
-			if !due.After(now) {
-				delete(l.due, key)
-			}
-		}
-	}
-	return len(l.due) < maxKeys
 }
 
 // ClientKey identifies the request's client by the address the trusted

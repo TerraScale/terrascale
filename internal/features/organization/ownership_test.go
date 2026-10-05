@@ -8,32 +8,33 @@ import (
 	"time"
 
 	"terrascale.tech/dashboard/internal/core"
+	"terrascale.tech/dashboard/internal/core/memstore"
 )
 
 // sharedOrganization returns an owner whose organization has one more active
 // member, the principal of that member, and the organization's service.
 func sharedOrganization(t *testing.T) (Service, core.Principal, core.Principal) {
 	t.Helper()
-	store := core.NewStore()
+	store := memstore.New()
 	service := NewService(store, nil)
-	ownerAccount, err := store.CreateAccount(core.User{Name: "Olivia Owner", Email: "owner@example.test", PasswordHash: "hash"})
+	ownerAccount, err := store.CreateAccount(t.Context(), core.User{Name: "Olivia Owner", Email: "owner@example.test", PasswordHash: "hash"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	owner := ownerAccount.Principal()
-	_, token, err := service.CreateInvitation(owner, "member@example.test", roleMember)
+	_, token, err := service.CreateInvitation(t.Context(), owner, "member@example.test", roleMember)
 	if err != nil {
 		t.Fatal(err)
 	}
-	memberAccount, err := store.CreateAccount(core.User{Name: "Max Member", Email: "member@example.test", PasswordHash: "hash"})
+	memberAccount, err := store.CreateAccount(t.Context(), core.User{Name: "Max Member", Email: "member@example.test", PasswordHash: "hash"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.AcceptInvitation(memberAccount.Principal(), hashToken(token)); err != nil {
+	if _, err := store.AcceptInvitation(t.Context(), memberAccount.Principal(), hashToken(token)); err != nil {
 		t.Fatal(err)
 	}
-	member, ok := store.CurrentPrincipal(memberAccount.ID, memberAccount.User.ID)
-	if !ok || member.OrganizationID != owner.OrganizationID {
+	member, err := store.CurrentPrincipal(t.Context(), memberAccount.ID, memberAccount.User.ID)
+	if err != nil || member.OrganizationID != owner.OrganizationID {
 		t.Fatalf("member principal = %+v, want organization %s", member, owner.OrganizationID)
 	}
 	return service, owner, member
@@ -49,19 +50,19 @@ func TestOwnershipTransferCanBeCanceledOrDeclined(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			service, owner, member := sharedOrganization(t)
-			if err := service.RequestOwnershipTransfer(owner, member.UserID); err != nil {
+			if err := service.RequestOwnershipTransfer(t.Context(), owner, member.UserID); err != nil {
 				t.Fatal(err)
 			}
-			if err := service.CancelOwnershipTransfer(tc.cancel(owner, member)); err != nil {
+			if err := service.CancelOwnershipTransfer(t.Context(), tc.cancel(owner, member)); err != nil {
 				t.Fatal(err)
 			}
-			if err := service.ConfirmOwnershipTransfer(member); !errors.Is(err, ErrNoTransfer) {
+			if err := service.ConfirmOwnershipTransfer(t.Context(), member); !errors.Is(err, ErrNoTransfer) {
 				t.Fatalf("confirming a withdrawn transfer = %v, want %v", err, ErrNoTransfer)
 			}
-			if err := service.CancelOwnershipTransfer(owner); !errors.Is(err, ErrNoTransfer) {
+			if err := service.CancelOwnershipTransfer(t.Context(), owner); !errors.Is(err, ErrNoTransfer) {
 				t.Fatalf("canceling twice = %v, want %v", err, ErrNoTransfer)
 			}
-			_, org, err := service.Snapshot(owner)
+			_, org, err := service.Snapshot(t.Context(), owner)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -74,11 +75,11 @@ func TestOwnershipTransferCanBeCanceledOrDeclined(t *testing.T) {
 
 func TestOwnershipTransferPageData(t *testing.T) {
 	service, owner, member := sharedOrganization(t)
-	if err := service.RequestOwnershipTransfer(owner, member.UserID); err != nil {
+	if err := service.RequestOwnershipTransfer(t.Context(), owner, member.UserID); err != nil {
 		t.Fatal(err)
 	}
 	now := time.Now()
-	ownerAccount, org, err := service.Snapshot(owner)
+	ownerAccount, org, err := service.Snapshot(t.Context(), owner)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,7 +87,7 @@ func TestOwnershipTransferPageData(t *testing.T) {
 	if ownerPage.PendingOwner.ID != member.UserID || ownerPage.PendingOwner.Name != "Max Member" || ownerPage.TransferExpires == "" || ownerPage.CanConfirmOwnership {
 		t.Fatalf("owner page = pending %+v until %q, can confirm %t", ownerPage.PendingOwner, ownerPage.TransferExpires, ownerPage.CanConfirmOwnership)
 	}
-	memberAccount, memberOrg, err := service.Snapshot(member)
+	memberAccount, memberOrg, err := service.Snapshot(t.Context(), member)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -63,7 +63,7 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			return
 		}
 		query := r.URL.Query()
-		data, err := service.Page(p, query.Get("search"), query.Get("action"), query.Get("severity"), query.Get("range"), query.Get("page"), pageSize)
+		data, err := service.Page(r.Context(), p, query.Get("search"), query.Get("action"), query.Get("severity"), query.Get("range"), query.Get("page"), pageSize)
 		if err != nil {
 			writeError(w, err)
 			return
@@ -82,7 +82,7 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			Range: normalizeRange(query.Get("range")), Severity: normalizeSeverity(query.Get("severity")),
 		}
 		now := time.Now().UTC()
-		filtered, err := service.Export(p, f, now)
+		filtered, err := service.Export(r.Context(), p, f, now)
 		if err != nil {
 			writeError(w, err)
 			return

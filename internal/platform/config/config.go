@@ -2,6 +2,7 @@ package config
 
 import (
 	"errors"
+	"fmt"
 	"net/url"
 	"os"
 	"strings"
@@ -36,7 +37,15 @@ type Config struct {
 	// CSPReportURL receives Content-Security-Policy violation reports; empty
 	// sends none.
 	CSPReportURL string
+	// CSRFSecret keys CSRF tokens, from TS_DASHBOARD_CSRF_SECRET. Every
+	// machine serving the dashboard must share it, so it is required outside
+	// the demo; an empty value in the demo draws a random key per process.
+	CSRFSecret []byte
 }
+
+// minCSRFSecret is the shortest TS_DASHBOARD_CSRF_SECRET accepted, the size
+// of the random key the demo draws.
+const minCSRFSecret = 32
 
 func Load() (Config, error) {
 	c := Config{
@@ -83,6 +92,14 @@ func Load() (Config, error) {
 		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" || u.User != nil || strings.ContainsAny(c.CSPReportURL, " \t\r\n;,'\"") {
 			return Config{}, errors.New("DASHBOARD_CSP_REPORT_URL must be an HTTP(S) URL")
 		}
+	}
+	if secret := os.Getenv("TS_DASHBOARD_CSRF_SECRET"); secret != "" {
+		if len(secret) < minCSRFSecret {
+			return Config{}, fmt.Errorf("TS_DASHBOARD_CSRF_SECRET must be at least %d bytes", minCSRFSecret)
+		}
+		c.CSRFSecret = []byte(secret)
+	} else if !c.Demo {
+		return Config{}, errors.New("TS_DASHBOARD_CSRF_SECRET is required outside the demo")
 	}
 	if !c.Demo {
 		return Config{}, errors.New("live dashboard persistence is not configured; set TS_DASHBOARD_PRODUCTION_DEMO=1")

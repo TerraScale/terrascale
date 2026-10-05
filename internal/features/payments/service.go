@@ -51,7 +51,7 @@ const (
 // the organization owner may change billing. Live changes are applied in
 // Stripe and then synced into the organization like any other change.
 type Service struct {
-	store   *core.Store
+	store   core.Store
 	demo    bool
 	flow    BillingFlow
 	billing *Stripe
@@ -71,8 +71,8 @@ func (s Service) configured() error {
 
 // owner returns the principal's organization when the principal owns it and
 // it is not archived or pending deletion.
-func (s Service) owner(p core.Principal) (core.Account, core.Organization, error) {
-	account, err := s.store.SnapshotAs(p)
+func (s Service) owner(ctx context.Context, p core.Principal) (core.Account, core.Organization, error) {
+	account, err := s.store.SnapshotAs(ctx, p)
 	if err != nil {
 		return core.Account{}, core.Organization{}, err
 	}
@@ -87,8 +87,8 @@ func (s Service) owner(p core.Principal) (core.Account, core.Organization, error
 }
 
 // activeOwner is owner for an organization that must also be active.
-func (s Service) activeOwner(p core.Principal) (core.Account, core.Organization, error) {
-	account, organization, err := s.owner(p)
+func (s Service) activeOwner(ctx context.Context, p core.Principal) (core.Account, core.Organization, error) {
+	account, organization, err := s.owner(ctx, p)
 	if err == nil && organization.Status != "active" {
 		err = fmt.Errorf("%w: the organization is not active", core.ErrForbidden)
 	}
@@ -110,7 +110,7 @@ func (s Service) demoChanges() (planChangeFlow, error) {
 // dashboard pages.
 func (s Service) StartCheckout(ctx context.Context, p core.Principal, planKey, interval, returnPath string) (string, error) {
 	if s.demo {
-		session, err := s.flow.BeginDemoCheckout(p, planKey, interval, returnPath)
+		session, err := s.flow.BeginDemoCheckout(ctx, p, planKey, interval, returnPath)
 		if err != nil {
 			return "", err
 		}
@@ -119,7 +119,7 @@ func (s Service) StartCheckout(ctx context.Context, p core.Principal, planKey, i
 	if err := s.configured(); err != nil {
 		return "", err
 	}
-	account, organization, err := s.activeOwner(p)
+	account, organization, err := s.activeOwner(ctx, p)
 	if err != nil {
 		return "", err
 	}
@@ -129,7 +129,7 @@ func (s Service) StartCheckout(ctx context.Context, p core.Principal, planKey, i
 	if organization.Billing.SubscriptionID == "" && organization.BillingStatus == "active" && organization.PlanID != "plan_free" {
 		return "", conflict("an existing active plan must be managed through its billing account")
 	}
-	plan, err := selectedPlan(s.store, planKey, interval)
+	plan, err := selectedPlan(ctx, s.store, planKey, interval)
 	if err != nil {
 		return "", err
 	}
@@ -148,7 +148,7 @@ func (s Service) StartCheckout(ctx context.Context, p core.Principal, planKey, i
 		slog.Error("bind Stripe customer", "organization_id", organization.ID, "error", err)
 		return "", providerError("Could not start checkout.")
 	}
-	recorded, err := s.flow.RecordCustomer(p, customerID)
+	recorded, err := s.flow.RecordCustomer(ctx, p, customerID)
 	if err != nil {
 		return "", err
 	}
@@ -181,7 +181,9 @@ func (s Service) StartCheckout(ctx context.Context, p core.Principal, planKey, i
 		s.billing.expireUnboundCheckout(ctx, created.ID)
 		return "", providerError("Checkout provider returned an unbound session.")
 	}
-	if err := s.flow.RecordExternalCheckout(p, plan.Key, interval, returnPath, created); err != nil {
+	// Stripe has opened the session, so it is recorded even when the request
+	// is canceled meanwhile; otherwise nothing would track it.
+	if err := s.flow.RecordExternalCheckout(context.WithoutCancel(ctx), p, plan.Key, interval, returnPath, created); err != nil {
 		s.billing.expireUnboundCheckout(ctx, created.ID)
 		return "", err
 	}
@@ -197,8 +199,11 @@ func (s Service) resumeCheckout(ctx context.Context, p core.Principal, organizat
 	if !exists || pending.ID != pendingID || pending.OwnerUserID != p.UserID || pending.OrganizationID != organization.ID || pending.Status != "open" {
 		return "", conflict("a checkout is already in progress for this organization")
 	}
-	pendingPlan, planExists := s.store.Plan(pending.PlanID)
-	if !planExists || NormalizePlanKey(pendingPlan.Key) != NormalizePlanKey(plan.Key) || pending.Interval != interval {
+	pendingPlan, err := s.store.Plan(ctx, pending.PlanID)
+	if err != nil && !errors.Is(err, core.ErrNotFound) {
+		return "", err
+	}
+	if err != nil || NormalizePlanKey(pendingPlan.Key) != NormalizePlanKey(plan.Key) || pending.Interval != interval {
 		return "", conflict("finish or cancel the current checkout before choosing another plan")
 	}
 	remote, err := s.billing.provider.RetrieveCheckoutSession(ctx, pendingID)
@@ -218,7 +223,7 @@ func (s Service) resumeCheckout(ctx context.Context, p core.Principal, organizat
 	case "complete":
 		return "/billing/checkout/return?session_id=" + url.QueryEscape(pendingID), nil
 	case "expired":
-		return "", s.flow.ExpireExternalCheckout(p, pendingID)
+		return "", s.flow.ExpireExternalCheckout(ctx, p, pendingID)
 	default:
 		return "", conflict("the existing checkout has an unsupported state")
 	}
@@ -226,7 +231,7 @@ func (s Service) resumeCheckout(ctx context.Context, p core.Principal, organizat
 
 // CancelCheckout abandons the organization's checkout in progress.
 func (s Service) CancelCheckout(ctx context.Context, p core.Principal) error {
-	_, organization, err := s.owner(p)
+	_, organization, err := s.owner(ctx, p)
 	if err != nil {
 		return err
 	}
@@ -235,7 +240,7 @@ func (s Service) CancelCheckout(ctx context.Context, p core.Principal) error {
 		return fmt.Errorf("%w: no checkout is in progress", core.ErrNotFound)
 	}
 	if s.demo {
-		_, err := s.flow.CompleteDemoCheckout(p, sessionID, true)
+		_, err := s.flow.CompleteDemoCheckout(ctx, p, sessionID, true)
 		return err
 	}
 	if err := s.configured(); err != nil {
@@ -245,7 +250,7 @@ func (s Service) CancelCheckout(ctx context.Context, p core.Principal) error {
 		slog.Error("expire Stripe checkout session", "session_id", sessionID, "error", err)
 		return providerError("Could not cancel the checkout.")
 	}
-	return s.flow.ExpireExternalCheckout(p, sessionID)
+	return s.flow.ExpireExternalCheckout(context.WithoutCancel(ctx), p, sessionID)
 }
 
 // ReturnFromCheckout syncs the organization after its owner returns from
@@ -264,7 +269,10 @@ func (s Service) ReturnFromCheckout(ctx context.Context, p core.Principal, sessi
 	}
 	// MCP starts checkouts in any organization the owner names, so the
 	// return acts on the checkout's organization, not the selected one.
-	p, err := s.flow.CheckoutPrincipal(p, sessionID)
+	p, err := s.flow.CheckoutPrincipal(ctx, p, sessionID)
+	if errors.Is(err, core.ErrUnavailable) {
+		return "", err
+	}
 	if err != nil {
 		return "", core.ErrNotFound
 	}
@@ -280,10 +288,13 @@ func (s Service) ReturnFromCheckout(ctx context.Context, p core.Principal, sessi
 		return "", core.ErrNotFound
 	}
 	if _, err := s.billing.SyncCustomer(ctx, s.flow, customerID); err != nil {
+		if errors.Is(err, core.ErrUnavailable) {
+			return "", err
+		}
 		slog.Error("sync Stripe customer after checkout", "organization_id", p.OrganizationID, "error", err)
 		return "", providerError("Could not verify checkout status.")
 	}
-	returnPath, outcome, err := s.flow.CheckoutOutcome(p, sessionID)
+	returnPath, outcome, err := s.flow.CheckoutOutcome(ctx, p, sessionID)
 	if err != nil {
 		return "", err
 	}
@@ -298,7 +309,7 @@ func (s Service) PortalURL(ctx context.Context, p core.Principal) (string, error
 			return "", err
 		}
 	}
-	_, organization, err := s.owner(p)
+	_, organization, err := s.owner(ctx, p)
 	if err != nil {
 		return "", err
 	}
@@ -321,8 +332,8 @@ func (s Service) PortalURL(ctx context.Context, p core.Principal) (string, error
 
 // planChange validates a requested plan for an owned organization with a
 // subscription. The free plan has no interval and is Personal only.
-func (s Service) planChange(p core.Principal, key, interval string) (core.Organization, string, string, error) {
-	_, org, err := s.activeOwner(p)
+func (s Service) planChange(ctx context.Context, p core.Principal, key, interval string) (core.Organization, string, string, error) {
+	_, org, err := s.activeOwner(ctx, p)
 	if err != nil {
 		return core.Organization{}, "", "", err
 	}
@@ -333,7 +344,7 @@ func (s Service) planChange(p core.Principal, key, interval string) (core.Organi
 			return core.Organization{}, "", "", core.Invalid("Free is available only for Personal workspaces")
 		}
 		interval = ""
-	} else if _, err := selectedPlan(s.store, key, interval); err != nil {
+	} else if _, err := selectedPlan(ctx, s.store, key, interval); err != nil {
 		return core.Organization{}, "", "", err
 	}
 	if org.Billing.SubscriptionID == "" {
@@ -346,7 +357,7 @@ func (s Service) planChange(p core.Principal, key, interval string) (core.Organi
 // reports which happened. Repeating a change already recorded reports it
 // again without calling Stripe.
 func (s Service) ChangePlan(ctx context.Context, p core.Principal, key, interval string) (string, error) {
-	org, key, interval, err := s.planChange(p, key, interval)
+	org, key, interval, err := s.planChange(ctx, p, key, interval)
 	if err != nil {
 		return "", err
 	}
@@ -371,9 +382,9 @@ func (s Service) ChangePlan(ctx context.Context, p core.Principal, key, interval
 			return "", err
 		}
 		if PlanRank(key) > PlanRank(org.Billing.PlanKey) {
-			return OutcomeChanged, changes.ChangeDemoPlan(p, key, interval)
+			return OutcomeChanged, changes.ChangeDemoPlan(ctx, p, key, interval)
 		}
-		return OutcomeScheduled, changes.ScheduleDemoChange(p, key, interval, org.BillingRenewal)
+		return OutcomeScheduled, changes.ScheduleDemoChange(ctx, p, key, interval, org.BillingRenewal)
 	}
 	current, err := s.currentSubscription(ctx, org)
 	if err != nil {
@@ -428,7 +439,7 @@ func (s Service) ChangePlan(ctx context.Context, p core.Principal, key, interval
 // UndoPlanChange cancels a scheduled downgrade. It reports OutcomeCurrent
 // when nothing is scheduled.
 func (s Service) UndoPlanChange(ctx context.Context, p core.Principal) (string, error) {
-	_, org, err := s.activeOwner(p)
+	_, org, err := s.activeOwner(ctx, p)
 	if err != nil {
 		return "", err
 	}
@@ -440,7 +451,7 @@ func (s Service) UndoPlanChange(ctx context.Context, p core.Principal) (string, 
 		if err != nil {
 			return "", err
 		}
-		return OutcomeUndone, changes.UndoDemoChange(p)
+		return OutcomeUndone, changes.UndoDemoChange(ctx, p)
 	}
 	current, err := s.currentSubscription(ctx, org)
 	if err != nil {
@@ -486,7 +497,7 @@ type PlanChangePreview struct {
 
 // PreviewPlanChange estimates a plan change without changing billing.
 func (s Service) PreviewPlanChange(ctx context.Context, p core.Principal, key, interval string) (PlanChangePreview, error) {
-	org, key, interval, err := s.planChange(p, key, interval)
+	org, key, interval, err := s.planChange(ctx, p, key, interval)
 	if err != nil {
 		return PlanChangePreview{}, err
 	}
@@ -531,7 +542,12 @@ func (s Service) currentSubscription(ctx context.Context, org core.Organization)
 // syncAfterChange projects what Stripe accepted, so the scheduled or pending
 // change shown to the owner is Stripe's, not a local guess.
 func (s Service) syncAfterChange(ctx context.Context, org core.Organization) error {
-	if _, err := s.billing.SyncCustomer(ctx, s.flow, org.Billing.CustomerID); err != nil {
+	// Stripe has accepted the change, so it is synced even when the request is
+	// canceled meanwhile.
+	if _, err := s.billing.SyncCustomer(context.WithoutCancel(ctx), s.flow, org.Billing.CustomerID); err != nil {
+		if errors.Is(err, core.ErrUnavailable) {
+			return err
+		}
 		slog.Error("sync Stripe customer after plan change", "organization_id", org.ID, "error", err)
 		return providerError("Stripe accepted the change, but the dashboard could not refresh it yet. Reload in a moment.")
 	}
@@ -566,6 +582,8 @@ func billingErrorStatus(err error) (int, string) {
 		return http.StatusNotFound, err.Error()
 	case errors.Is(err, core.ErrInvalid):
 		return http.StatusBadRequest, err.Error()
+	case errors.Is(err, core.ErrUnavailable):
+		return http.StatusServiceUnavailable, "service unavailable"
 	default:
 		return http.StatusConflict, err.Error()
 	}

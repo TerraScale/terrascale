@@ -39,7 +39,7 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 		if !ok {
 			return
 		}
-		account, project, err := service.selected(p)
+		account, project, err := service.selected(r.Context(), p)
 		if errors.Is(err, core.ErrNotFound) {
 			// Without a project, Overview leads to the project setup.
 			http.Redirect(w, r, "/", http.StatusSeeOther)
@@ -76,7 +76,7 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 		if err != nil {
 			days = 0
 		}
-		if err := service.SetAuditRetention(p, days); err != nil {
+		if err := service.SetAuditRetention(r.Context(), p, days); err != nil {
 			redirectOrError(w, r, err, "audit", "")
 			return
 		}
@@ -89,7 +89,7 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			return
 		}
 		enabled := r.FormValue("enabled") == "true" || r.FormValue("enabled") == "on"
-		if err := service.SetAuthentication(p, enabled); err != nil {
+		if err := service.SetAuthentication(r.Context(), p, enabled); err != nil {
 			writeError(w, err)
 			return
 		}
@@ -106,7 +106,7 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 		if err != nil {
 			retention = 0
 		}
-		_, err = service.backups.SetPolicy(p, databaseID, backups.PolicyInput{
+		_, err = service.backups.SetPolicy(r.Context(), p, databaseID, backups.PolicyInput{
 			FullBackupCron: r.FormValue("fullBackupCron"), IncrementalBackupCron: r.FormValue("incrementalBackupCron"),
 			RetentionDays: retention, Disabled: r.FormValue("disabled") == "on" || r.FormValue("disabled") == "true",
 		})
@@ -123,7 +123,7 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			return
 		}
 		databaseID := r.FormValue("databaseId")
-		if _, err := service.backups.Create(p, databaseID); err != nil {
+		if _, err := service.backups.Create(r.Context(), p, databaseID); err != nil {
 			redirectOrError(w, r, err, "backups", databaseID)
 			return
 		}
@@ -157,7 +157,8 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 		if r.FormValue("projectId") != p.ProjectID {
 			confirmName = ""
 		}
-		if err := service.DeleteProject(p, confirmName); err != nil {
+		ctx := r.Context()
+		if err := service.DeleteProject(ctx, p, confirmName); err != nil {
 			if errors.Is(err, core.ErrConflict) {
 				redirectSettings(w, r, "danger", "", "", msgProtected)
 				return
@@ -165,7 +166,12 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			redirectOrError(w, r, err, "danger", "")
 			return
 		}
-		if refreshed, ok := deps.Store.CurrentPrincipal(p.AccountID, p.UserID); ok && deps.Sessions != nil {
+		refreshed, err := deps.Store.CurrentPrincipal(ctx, p.AccountID, p.UserID)
+		if err != nil && !errors.Is(err, core.ErrNotFound) {
+			http.Error(w, "project deleted, but session could not be refreshed", http.StatusInternalServerError)
+			return
+		}
+		if err == nil && deps.Sessions != nil {
 			if err := deps.Sessions.Start(w, r, refreshed); err != nil {
 				http.Error(w, "project deleted, but session could not be refreshed", http.StatusInternalServerError)
 				return

@@ -62,6 +62,11 @@ test administrator. The development script supplies test-only defaults; set
 both variables to replace them. Do not use those defaults for shared or
 production environments.
 
+`TS_DASHBOARD_CSRF_SECRET` (at least 32 bytes) keys the CSRF tokens. Every
+machine serving one deployment must share it, so it is required outside the
+demo; on Fly.io set it as an app secret. When the demo runs without it, each
+process draws a random key.
+
 Use `make serve PORT=5481` for a plain HTTP server without Air or asset
 watching.
 Set `DASHBOARD_E2E_BASE_URL` when the browser tests should exercise an

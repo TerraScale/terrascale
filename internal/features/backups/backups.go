@@ -42,7 +42,7 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			return
 		}
 		databaseID := r.FormValue("databaseId")
-		created, err := service.Create(p, databaseID)
+		created, err := service.Create(r.Context(), p, databaseID)
 		if err != nil {
 			formFailed(w, r, err, databaseID, nil)
 			return
@@ -66,7 +66,7 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 		if retention, err := strconv.Atoi(strings.TrimSpace(r.FormValue("retentionDays"))); err == nil {
 			in.RetentionDays = retention
 		}
-		saved, err := service.SetPolicy(p, databaseID, in)
+		saved, err := service.SetPolicy(r.Context(), p, databaseID, in)
 		if err != nil {
 			formFailed(w, r, err, databaseID, url.Values{
 				"fullBackupCron": {in.FullBackupCron}, "incrementalBackupCron": {in.IncrementalBackupCron}, "retentionDays": {r.FormValue("retentionDays")},

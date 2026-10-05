@@ -1,8 +1,10 @@
 package access
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net/url"
 	"slices"
@@ -19,22 +21,22 @@ var ErrInvalidInvitationAction = core.Invalid("action must be accept or decline"
 // organization. Member and invitation changes delegate to the organization
 // service so HTTP routes and MCP tools share one implementation.
 type Service struct {
-	store         *core.Store
+	store         core.Store
 	organizations organization.Service
 }
 
-func NewService(store *core.Store, organizations organization.Service) Service {
+func NewService(store core.Store, organizations organization.Service) Service {
 	return Service{store: store, organizations: organizations}
 }
 
 // Members lists the organization's active members matching search (name or
 // email) and role ("", "all", owner, member, or viewer), with the role counts
 // of every active member.
-func (s Service) Members(p core.Principal, search, role string) (memberList, error) {
+func (s Service) Members(ctx context.Context, p core.Principal, search, role string) (memberList, error) {
 	if role != "" && role != "all" && role != "owner" && role != "member" && role != "viewer" {
 		return memberList{}, core.Invalid("role must be owner, member, or viewer")
 	}
-	_, org, err := s.organizations.Snapshot(p)
+	_, org, err := s.organizations.Snapshot(ctx, p)
 	if err != nil {
 		return memberList{}, err
 	}
@@ -53,8 +55,8 @@ func (s Service) Members(p core.Principal, search, role string) (memberList, err
 }
 
 // Invitations lists every invitation of the organization, pending first.
-func (s Service) Invitations(p core.Principal) ([]invitationView, error) {
-	_, org, err := s.organizations.Snapshot(p)
+func (s Service) Invitations(ctx context.Context, p core.Principal) ([]invitationView, error) {
+	_, org, err := s.organizations.Snapshot(ctx, p)
 	if err != nil {
 		return nil, err
 	}
@@ -62,11 +64,11 @@ func (s Service) Invitations(p core.Principal) ([]invitationView, error) {
 }
 
 // Invite creates an invitation and returns it with its one-time link path.
-func (s Service) Invite(p core.Principal, email, role string) (invitationView, string, error) {
+func (s Service) Invite(ctx context.Context, p core.Principal, email, role string) (invitationView, string, error) {
 	if role == "" {
 		role = "member"
 	}
-	invitation, token, err := s.organizations.CreateInvitation(p, email, role)
+	invitation, token, err := s.organizations.CreateInvitation(ctx, p, email, role)
 	if err != nil {
 		return invitationView{}, "", err
 	}
@@ -74,8 +76,8 @@ func (s Service) Invite(p core.Principal, email, role string) (invitationView, s
 }
 
 // Resend replaces a pending invitation's link and extends its expiry.
-func (s Service) Resend(p core.Principal, invitationID string) (invitationView, string, error) {
-	invitation, token, err := s.organizations.ResendInvitation(p, invitationID)
+func (s Service) Resend(ctx context.Context, p core.Principal, invitationID string) (invitationView, string, error) {
+	invitation, token, err := s.organizations.ResendInvitation(ctx, p, invitationID)
 	if err != nil {
 		return invitationView{}, "", err
 	}
@@ -84,12 +86,15 @@ func (s Service) Resend(p core.Principal, invitationID string) (invitationView, 
 
 // Invitation previews the pending invitation a token or link names for the
 // principal.
-func (s Service) Invitation(p core.Principal, token string) (invitationPreview, error) {
-	org, invitation, ok := s.store.FindInvitation(hashInvitationToken(invitationToken(token)))
-	if !ok {
+func (s Service) Invitation(ctx context.Context, p core.Principal, token string) (invitationPreview, error) {
+	org, invitation, err := s.store.FindInvitation(ctx, hashInvitationToken(invitationToken(token)))
+	if errors.Is(err, core.ErrNotFound) {
 		return invitationPreview{}, fmt.Errorf("%w: no pending invitation matches that token", core.ErrNotFound)
 	}
-	account, err := s.store.SnapshotAs(p)
+	if err != nil {
+		return invitationPreview{}, err
+	}
+	account, err := s.store.SnapshotAs(ctx, p)
 	if err != nil {
 		return invitationPreview{}, err
 	}
@@ -102,7 +107,7 @@ func (s Service) Invitation(p core.Principal, token string) (invitationPreview, 
 
 // RespondToInvitation accepts or declines the invitation a token or link
 // names. Accepting selects the joined organization.
-func (s Service) RespondToInvitation(p core.Principal, token, action string) (core.Organization, error) {
+func (s Service) RespondToInvitation(ctx context.Context, p core.Principal, token, action string) (core.Organization, error) {
 	token = invitationToken(token)
 	if token == "" {
 		return core.Organization{}, core.ErrNotFound
@@ -110,9 +115,9 @@ func (s Service) RespondToInvitation(p core.Principal, token, action string) (co
 	hash := hashInvitationToken(token)
 	switch strings.ToLower(strings.TrimSpace(action)) {
 	case "accept":
-		return s.store.AcceptInvitation(p, hash)
+		return s.store.AcceptInvitation(ctx, p, hash)
 	case "decline":
-		return s.store.DeclineInvitation(p, hash)
+		return s.store.DeclineInvitation(ctx, p, hash)
 	default:
 		return core.Organization{}, ErrInvalidInvitationAction
 	}

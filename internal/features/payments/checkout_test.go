@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"terrascale.tech/dashboard/internal/core"
+	"terrascale.tech/dashboard/internal/core/memstore"
 	"terrascale.tech/dashboard/internal/features/payments"
 	"terrascale.tech/dashboard/internal/features/subscriptions"
 )
@@ -42,13 +43,13 @@ func TestLiveCheckoutGatesOnlyPaidPlansWithoutSubscription(t *testing.T) {
 		{name: "paid plan outside Stripe", planID: "plan_pro", status: http.StatusConflict},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			store := core.NewStore()
-			account, err := store.CreateAccount(core.User{Name: "Owner", Email: "checkout-owner@example.test", PasswordHash: "unused"})
+			store := memstore.New()
+			account, err := store.CreateAccount(t.Context(), core.User{Name: "Owner", Email: "checkout-owner@example.test", PasswordHash: "unused"})
 			if err != nil {
 				t.Fatal(err)
 			}
 			principal := account.Principal()
-			if err := store.UpdateAs(principal, func(account *core.Account) error {
+			if err := store.UpdateAs(t.Context(), principal, func(account *core.Account) error {
 				org := account.Organizations[principal.OrganizationID]
 				org.PlanID = tc.planID
 				account.Organizations[org.ID] = org
@@ -77,7 +78,7 @@ func TestLiveCheckoutGatesOnlyPaidPlansWithoutSubscription(t *testing.T) {
 					t.Fatalf("checkout redirected to %q, want the provider session", location)
 				}
 			}
-			snapshot, err := store.SnapshotAs(principal)
+			snapshot, err := store.SnapshotAs(t.Context(), principal)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -85,5 +86,57 @@ func TestLiveCheckoutGatesOnlyPaidPlansWithoutSubscription(t *testing.T) {
 				t.Fatalf("provider sessions = %d, recorded checkout = %q, want %d and %q", provider.sessions, checkoutID, wantSessions, wantCheckoutID)
 			}
 		})
+	}
+}
+
+// cancelingProvider cancels the request once Stripe has opened the session,
+// as a client disconnect would.
+type cancelingProvider struct {
+	checkoutProvider
+	cancel context.CancelFunc
+}
+
+func (provider *cancelingProvider) CreateCheckoutSession(ctx context.Context, request payments.CheckoutRequest) (payments.CheckoutSession, error) {
+	defer provider.cancel()
+	return provider.checkoutProvider.CreateCheckoutSession(ctx, request)
+}
+
+// ctxStore refuses writes on a canceled context, as a database store would.
+type ctxStore struct{ core.Store }
+
+func (store ctxStore) UpdateAs(ctx context.Context, p core.Principal, mutate func(*core.Account) error) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return store.Store.UpdateAs(ctx, p, mutate)
+}
+
+func (store ctxStore) UpdateAsWithPlan(ctx context.Context, p core.Principal, planID string, mutate func(*core.Account, core.Plan) error) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return store.Store.UpdateAsWithPlan(ctx, p, planID, mutate)
+}
+
+func TestCanceledCheckoutStillRecordsTheOpenedSession(t *testing.T) {
+	store := memstore.New()
+	account, err := store.CreateAccount(t.Context(), core.User{Name: "Owner", Email: "checkout-cancel@example.test", PasswordHash: "unused"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	principal := account.Principal()
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	flow := subscriptions.NewBillingService(ctxStore{store})
+	service := payments.NewService(core.Deps{Store: ctxStore{store}}, flow, payments.NewStripeForTest(testConfig, &cancelingProvider{cancel: cancel}, payments.NewMemoryStateStore()))
+	if _, err := service.StartCheckout(ctx, principal, payments.PlanStarter, payments.IntervalMonthly, "/onboarding"); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := store.SnapshotAs(t.Context(), principal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := snapshot.Organizations[principal.OrganizationID].Billing.CheckoutID; got != "cs_test_checkout" {
+		t.Fatalf("checkout ID = %q, want the session Stripe opened", got)
 	}
 }

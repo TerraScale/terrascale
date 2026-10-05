@@ -67,7 +67,14 @@ func Mount(mux *http.ServeMux, deps core.Deps, billing *payments.Stripe) {
 func getOnboarding(deps core.Deps, service Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		query := r.URL.Query()
-		plans := paidPlans(deps.Store)
+		ctx := r.Context()
+		plans, err := paidPlans(ctx, deps.Store)
+		if err != nil {
+			if !core.WriteAccessError(w, err) {
+				http.Error(w, "could not load plans", http.StatusInternalServerError)
+			}
+			return
+		}
 		// Landing pages link with return=; sign-in and the dashboard use returnTo.
 		registration := pageData{Registration: true, Plan: offeredPlan(plans, query.Get("plan")), ReturnTo: returnPath(cmp.Or(query.Get("returnTo"), query.Get("return")))}
 		principal, ok := deps.Sessions.Principal(r)
@@ -75,8 +82,12 @@ func getOnboarding(deps core.Deps, service Service) http.HandlerFunc {
 			render(w, r, deps, http.StatusOK, registration)
 			return
 		}
-		account, err := deps.Store.SnapshotAs(principal)
+		account, err := deps.Store.SnapshotAs(ctx, principal)
 		if err != nil {
+			if errors.Is(err, core.ErrUnavailable) {
+				http.Error(w, "service unavailable", http.StatusServiceUnavailable)
+				return
+			}
 			render(w, r, deps, http.StatusOK, registration)
 			return
 		}
@@ -86,12 +97,20 @@ func getOnboarding(deps core.Deps, service Service) http.HandlerFunc {
 		}
 		paymentOutcome := r.URL.Query().Get("payment")
 		if paymentOutcome == "success" && account.OnboardingStep == "payment-method" {
-			if err := service.ConfirmPayment(principal); err != nil {
+			if err := service.ConfirmPayment(ctx, principal); err != nil {
+				if errors.Is(err, core.ErrUnavailable) {
+					http.Error(w, "service unavailable", http.StatusServiceUnavailable)
+					return
+				}
 				http.Error(w, "could not confirm payment setup", http.StatusInternalServerError)
 				return
 			}
-			account, err = deps.Store.SnapshotAs(principal)
+			account, err = deps.Store.SnapshotAs(ctx, principal)
 			if err != nil {
+				if errors.Is(err, core.ErrUnavailable) {
+					http.Error(w, "service unavailable", http.StatusServiceUnavailable)
+					return
+				}
 				http.Error(w, "account not found", http.StatusUnauthorized)
 				return
 			}
@@ -131,8 +150,16 @@ func register(deps core.Deps) http.HandlerFunc {
 			ConfirmPassword: r.Form.Get("confirmPassword"),
 			AcceptedTerms:   r.Form.Get("terms") == "true",
 		}
-		plan, returnTo := offeredPlan(paidPlans(deps.Store), r.Form.Get("plan")), returnPath(r.Form.Get("returnTo"))
-		account, err := auth.RegisterAccount(deps, input)
+		ctx := r.Context()
+		plans, err := paidPlans(ctx, deps.Store)
+		if err != nil {
+			if !core.WriteAccessError(w, err) {
+				http.Error(w, "could not load plans", http.StatusInternalServerError)
+			}
+			return
+		}
+		plan, returnTo := offeredPlan(plans, r.Form.Get("plan")), returnPath(r.Form.Get("returnTo"))
+		account, err := auth.RegisterAccount(ctx, deps, input)
 		if err != nil {
 			// Render the form again with everything but the passwords kept.
 			data := pageData{
@@ -146,6 +173,9 @@ func register(deps core.Deps) http.HandlerFunc {
 			case errors.Is(err, core.ErrConflict):
 				status = http.StatusConflict
 				data.ErrorField, data.Error = "email", "An account with this email already exists. Sign in to it, or use another email."
+			case errors.Is(err, core.ErrUnavailable):
+				status = http.StatusServiceUnavailable
+				data.Error = "Account creation is unavailable right now. Try again in a moment."
 			default:
 				status = http.StatusInternalServerError
 				data.Error = "Could not create your account. Try again."
@@ -188,7 +218,9 @@ func saveStep(deps core.Deps, service Service) http.HandlerFunc {
 		case isStepError:
 			query := url.Values{"error": {string(message)}}
 			// A refused payment step keeps the plan that was picked.
-			if plan := offeredPlan(paidPlans(deps.Store), r.Form.Get("plan")); r.Form.Get("step") == "payment-method" && plan != "" {
+			// A plan catalog that cannot be read offers no plan to keep.
+			plans, _ := paidPlans(r.Context(), deps.Store)
+			if plan := offeredPlan(plans, r.Form.Get("plan")); r.Form.Get("step") == "payment-method" && plan != "" {
 				query.Set("plan", plan)
 			}
 			http.Redirect(w, r, "/onboarding?"+query.Encode(), http.StatusSeeOther)
@@ -201,6 +233,10 @@ func saveStep(deps core.Deps, service Service) http.HandlerFunc {
 		case err != nil:
 			if status, ok := payments.ProviderStatus(err); ok {
 				http.Error(w, err.Error(), status)
+				return
+			}
+			if errors.Is(err, core.ErrUnavailable) {
+				http.Error(w, "service unavailable", http.StatusServiceUnavailable)
 				return
 			}
 			http.Error(w, "could not save onboarding step", http.StatusInternalServerError)

@@ -4,17 +4,18 @@ import (
 	"testing"
 
 	"terrascale.tech/dashboard/internal/core"
+	"terrascale.tech/dashboard/internal/core/memstore"
 )
 
 func TestUsageAndSpendingControlsSupportOrganizationWithoutProjects(t *testing.T) {
-	store := core.NewStore()
-	account, err := store.CreateAccount(core.User{
+	store := memstore.New()
+	account, err := store.CreateAccount(t.Context(), core.User{
 		ID: "usr_projectless", Email: "projectless@example.test", Name: "Projectless", PasswordHash: "hash",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.Update(account.ID, func(current *core.Account) error {
+	if err := store.Update(t.Context(), account.ID, func(current *core.Account) error {
 		org := current.Organizations[account.ActiveOrganizationID]
 		org.Projects = make(map[string]core.Project)
 		current.Organizations[org.ID] = org
@@ -24,9 +25,9 @@ func TestUsageAndSpendingControlsSupportOrganizationWithoutProjects(t *testing.T
 		t.Fatal(err)
 	}
 
-	principal, ok := store.CurrentPrincipal(account.ID, account.User.ID)
-	if !ok {
-		t.Fatal("principal for projectless account was not available")
+	principal, err := store.CurrentPrincipal(t.Context(), account.ID, account.User.ID)
+	if err != nil {
+		t.Fatalf("principal for projectless account was not available: %v", err)
 	}
 	service := Service{deps: core.Deps{Store: store, Demo: true}}
 
@@ -39,7 +40,7 @@ func TestUsageAndSpendingControlsSupportOrganizationWithoutProjects(t *testing.T
 	}
 
 	cap := int64(1200)
-	if err := service.SetSpendingControls(principal, spendingControls{OrganizationCapCents: &cap}); err != nil {
+	if err := service.SetSpendingControls(t.Context(), principal, spendingControls{OrganizationCapCents: &cap}); err != nil {
 		t.Fatalf("SetSpendingControls without a project: %v", err)
 	}
 	updated, err := service.Usage(t.Context(), principal, "")

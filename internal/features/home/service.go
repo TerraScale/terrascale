@@ -1,6 +1,7 @@
 package home
 
 import (
+	"context"
 	"errors"
 	"strings"
 
@@ -51,8 +52,8 @@ type task struct {
 }
 
 // Overview summarizes the principal's selected project for activityRange.
-func (s Service) Overview(p core.Principal, activityRange string) (overview, error) {
-	account, err := s.deps.Store.SnapshotAs(p)
+func (s Service) Overview(ctx context.Context, p core.Principal, activityRange string) (overview, error) {
+	account, err := s.deps.Store.SnapshotAs(ctx, p)
 	if err != nil {
 		return overview{}, err
 	}

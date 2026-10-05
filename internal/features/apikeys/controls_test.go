@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"terrascale.tech/dashboard/internal/core"
+	"terrascale.tech/dashboard/internal/core/memstore"
 )
 
 func TestCredentialTabControls(t *testing.T) {
@@ -106,14 +107,15 @@ func TestCredentialControlsRespectManagementPermission(t *testing.T) {
 }
 
 func TestCredentialFiltersCombineWithinSelectedProjectAndKind(t *testing.T) {
-	store := core.NewStore()
-	account, err := store.CreateAccount(core.User{Name: "Owner", Email: "filters@example.test", PasswordHash: "hash"})
+	ctx := context.Background()
+	store := memstore.New()
+	account, err := store.CreateAccount(ctx, core.User{Name: "Owner", Email: "filters@example.test", PasswordHash: "hash"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	owner := account.Principal()
 	now := time.Now()
-	err = store.UpdateAs(owner, func(a *core.Account) error {
+	err = store.UpdateAs(ctx, owner, func(a *core.Account) error {
 		org := a.Organizations[owner.OrganizationID]
 		project := org.Projects[owner.ProjectID]
 		project.APIKeys = map[string]core.APIKey{
@@ -145,7 +147,7 @@ func TestCredentialFiltersCombineWithinSelectedProjectAndKind(t *testing.T) {
 		{"key", "inactive", []string{"expired"}},
 		{"m2m", "inactive", []string{"revoked"}},
 	} {
-		items, err := service.List(owner, credentialFilter{Kind: controlsFor(tc.kind).CredentialKind, Status: tc.status, DatabaseID: "db_orders", Search: "DEPLOY"})
+		items, err := service.List(ctx, owner, credentialFilter{Kind: controlsFor(tc.kind).CredentialKind, Status: tc.status, DatabaseID: "db_orders", Search: "DEPLOY"})
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -215,7 +215,12 @@ func Mount(mux *http.ServeMux, deps core.Deps, billing *payments.Stripe) {
 		if _, exists := project.Databases[databaseFilter]; !exists {
 			databaseFilter = ""
 		}
-		data := buildPage(r.Context(), service, p, org, project, tab, databaseFilter)
+		ctx := r.Context()
+		data, err := buildPage(ctx, service, p, org, project, tab, databaseFilter)
+		if err != nil {
+			writeLoadError(w, err)
+			return
+		}
 		data.ExplicitProjectFilter = r.URL.Query().Get("project") == project.ID
 		data.HistoryRange = demovisuals.NormalizeRange(r.URL.Query().Get("range"))
 		data.HistoryRangeLabel = demovisuals.RangeLabel(data.HistoryRange)
@@ -236,15 +241,25 @@ func Mount(mux *http.ServeMux, deps core.Deps, billing *payments.Stripe) {
 		data.BillingPlanKey = org.Billing.PlanKey
 		data.BillingInterval = org.Billing.Interval
 		data.BillingSubscription = org.Billing.SubscriptionID != "" && org.Billing.Status != "canceled" && org.Billing.Status != "incomplete_expired"
-		data.ScheduledPlan = planName(deps.Store, org.Billing.ScheduledPlanKey)
-		data.PendingPlan = planName(deps.Store, org.Billing.PendingPlanKey)
+		if data.ScheduledPlan, err = planName(ctx, deps.Store, org.Billing.ScheduledPlanKey); err != nil {
+			writeLoadError(w, err)
+			return
+		}
+		if data.PendingPlan, err = planName(ctx, deps.Store, org.Billing.PendingPlanKey); err != nil {
+			writeLoadError(w, err)
+			return
+		}
 		data.ScheduledAt = org.Billing.ScheduledAt
 		if data.BillingPlanKey == "" && org.PlanID == "plan_free" {
 			data.BillingPlanKey = "free"
 		}
 		for _, key := range []string{"starter", "pro", "business"} {
-			plan, exists := deps.Store.Plan(key)
-			if !exists || !plan.Visible || plan.PriceCents <= 0 {
+			plan, err := deps.Store.Plan(ctx, key)
+			if err != nil && !errors.Is(err, core.ErrNotFound) {
+				writeLoadError(w, err)
+				return
+			}
+			if err != nil || !plan.Visible || plan.PriceCents <= 0 {
 				continue
 			}
 			data.BillingPlans = append(data.BillingPlans, billingPlanChoice{
@@ -252,7 +267,12 @@ func Mount(mux *http.ServeMux, deps core.Deps, billing *payments.Stripe) {
 				Storage: plan.StorageAllowance(), Requests: plan.OperationsAllowance(), Databases: plan.DatabaseAllowance(), Members: plan.MemberAllowance(),
 			})
 		}
-		if plan, exists := deps.Store.Plan(org.PlanID); exists {
+		plan, err := deps.Store.Plan(ctx, org.PlanID)
+		if err != nil && !errors.Is(err, core.ErrNotFound) {
+			writeLoadError(w, err)
+			return
+		}
+		if err == nil {
 			cents := plan.PriceCents
 			if org.Billing.Interval == "annual" {
 				cents = plan.AnnualPriceCents
@@ -296,8 +316,8 @@ func Mount(mux *http.ServeMux, deps core.Deps, billing *payments.Stripe) {
 		if !ok {
 			return
 		}
-		if !deps.Store.Can(p, core.Organization.CanManage) {
-			http.Error(w, "forbidden", http.StatusForbidden)
+		if err := core.Can(r.Context(), deps.Store, p, core.Organization.CanManage); err != nil {
+			writeError(w, err)
 			return
 		}
 		if err := r.ParseForm(); err != nil {
@@ -322,7 +342,7 @@ func Mount(mux *http.ServeMux, deps core.Deps, billing *payments.Stripe) {
 			redirect(w, r, "invalid")
 			return
 		}
-		if err := service.SetSpendingControls(p, controls); err != nil {
+		if err := service.SetSpendingControls(r.Context(), p, controls); err != nil {
 			writeError(w, err)
 			return
 		}
@@ -336,6 +356,9 @@ func priceUSD(cents int64) string {
 	}
 	return fmt.Sprintf("US$ %d.%02d", cents/100, cents%100)
 }
+
+// planLoadError is shown when a plan review cannot read the plans.
+const planLoadError = "Could not load plans. Please try again."
 
 func reviewBillingPlan(r *http.Request, deps core.Deps, billing *payments.Stripe, org core.Organization, data pageData) billingPlanReview {
 	key, interval := strings.ToLower(r.URL.Query().Get("plan")), strings.ToLower(r.URL.Query().Get("interval"))
@@ -367,9 +390,16 @@ func reviewBillingPlan(r *http.Request, deps core.Deps, billing *payments.Stripe
 			return review
 		}
 		review.Name, review.Price, review.Effect, review.Estimate = "Free", "US$ 0.00", atRenewal(org.BillingRenewal), "No charge today"
-		if free, exists := deps.Store.Plan("free"); exists {
+		free, err := deps.Store.Plan(r.Context(), "free")
+		switch {
+		case err == nil:
 			review.Storage, review.Requests, review.Databases, review.Members = free.StorageAllowance(), free.OperationsAllowance(), free.DatabaseAllowance(), free.MemberAllowance()
 			review.Warnings = limitWarnings(org, free, time.Now())
+		case !errors.Is(err, core.ErrNotFound):
+			// Without the Free plan's limits the review cannot warn about
+			// what the change would block.
+			review.Error = planLoadError
+			return review
 		}
 		review.Ready = true
 		return review
@@ -378,8 +408,12 @@ func reviewBillingPlan(r *http.Request, deps core.Deps, billing *payments.Stripe
 		review.Error = "Choose monthly or annual billing."
 		return review
 	}
-	plan, ok := deps.Store.Plan(key)
-	if !ok || !plan.Visible || plan.PriceCents <= 0 || interval == "annual" && plan.AnnualPriceCents <= 0 {
+	plan, err := deps.Store.Plan(r.Context(), key)
+	if err != nil && !errors.Is(err, core.ErrNotFound) {
+		review.Error = planLoadError
+		return review
+	}
+	if err != nil || !plan.Visible || plan.PriceCents <= 0 || interval == "annual" && plan.AnnualPriceCents <= 0 {
 		review.Error = "Choose an available plan."
 		return review
 	}
@@ -478,15 +512,36 @@ func limitWarnings(org core.Organization, target core.Plan, now time.Time) []lim
 }
 
 // planName is a plan key's display name, or the key when no plan has it.
-func planName(store *core.Store, key string) string {
-	if plan, ok := store.Plan(key); ok {
-		return plan.Name
+// Store failures other than a missing plan are returned.
+func planName(ctx context.Context, store core.Store, key string) (string, error) {
+	if key == "" {
+		return "", nil
 	}
-	return key
+	plan, err := store.Plan(ctx, key)
+	if errors.Is(err, core.ErrNotFound) {
+		return key, nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return plan.Name, nil
 }
 
-func buildPage(ctx context.Context, service Service, p core.Principal, org core.Organization, project core.Project, tab, databaseFilter string) pageData {
-	report := service.report(ctx, p, org, project, databaseFilter)
+// writeLoadError answers a usage page whose data could not be loaded: 503
+// while the store is unavailable, 500 otherwise.
+func writeLoadError(w http.ResponseWriter, err error) {
+	if errors.Is(err, core.ErrUnavailable) {
+		http.Error(w, "service unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	http.Error(w, "could not load usage", http.StatusInternalServerError)
+}
+
+func buildPage(ctx context.Context, service Service, p core.Principal, org core.Organization, project core.Project, tab, databaseFilter string) (pageData, error) {
+	report, err := service.report(ctx, p, org, project, databaseFilter)
+	if err != nil {
+		return pageData{}, err
+	}
 	projects := make([]projectRow, 0, len(report.Projects))
 	for _, item := range report.Projects {
 		projects = append(projects, projectRow{
@@ -519,7 +574,7 @@ func buildPage(ctx context.Context, service Service, p core.Principal, org core.
 		Requests: report.Totals.Requests, Reads: report.Totals.Reads, Writes: report.Totals.Writes,
 		StorageByteSeconds: report.Totals.StorageByteSeconds, UsageSource: report.Totals.Source,
 		UsageError: report.Totals.Error, UsageAvailable: report.Totals.Available,
-	}
+	}, nil
 }
 
 // makeInvoicePage pages invoices for the billing tab. Filter values the
@@ -611,7 +666,7 @@ func signedIn(deps core.Deps, w http.ResponseWriter, r *http.Request) (core.Prin
 		core.RedirectToLogin(w, r)
 		return core.Principal{}, core.Account{}, false
 	}
-	account, err := deps.Store.SnapshotAs(p)
+	account, err := deps.Store.SnapshotAs(r.Context(), p)
 	if err != nil {
 		writeError(w, err)
 		return core.Principal{}, core.Account{}, false

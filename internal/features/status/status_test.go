@@ -7,12 +7,13 @@ import (
 	"testing"
 
 	"terrascale.tech/dashboard/internal/core"
+	"terrascale.tech/dashboard/internal/core/memstore"
 	"terrascale.tech/dashboard/internal/platform/buildinfo"
 )
 
 func TestProbesReportStatusAndBuildVersion(t *testing.T) {
 	ready := http.NewServeMux()
-	Mount(ready, core.Deps{Store: core.NewStore()})
+	Mount(ready, core.Deps{Store: memstore.New()})
 	unready := http.NewServeMux()
 	Mount(unready, core.Deps{})
 	for _, tc := range []struct {

@@ -25,7 +25,7 @@ type StatusNotices interface {
 }
 
 type Engine struct {
-	store  *core.Store
+	store  core.Store
 	csrf   core.CSRF
 	status StatusNotices
 	dev    bool
@@ -35,7 +35,7 @@ type Engine struct {
 }
 
 // New returns the page renderer. A nil status source renders no banner.
-func New(store *core.Store, csrf core.CSRF, status StatusNotices, dev bool) *Engine {
+func New(store core.Store, csrf core.CSRF, status StatusNotices, dev bool) *Engine {
 	return &Engine{store: store, csrf: csrf, status: status, dev: dev}
 }
 
@@ -89,7 +89,7 @@ func (e *Engine) Page(w http.ResponseWriter, r *http.Request, page core.Page) er
 		if e.store == nil {
 			return core.ErrUnauthorized
 		}
-		if err := e.store.ViewAs(page.Principal, func(account core.Account) error {
+		if err := e.store.ViewAs(r.Context(), page.Principal, func(account core.Account) error {
 			if page.Layout == "admin" && !account.User.PlatformAdmin {
 				return core.ErrForbidden
 			}

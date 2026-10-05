@@ -50,22 +50,22 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			Query:      strings.TrimSpace(r.FormValue("query")),
 			Transport:  r.FormValue("transport"),
 		}
-		_, err := service.Attach(p, attachInput{DatabaseID: form.DatabaseID, Name: form.Name, Query: form.Query, Transport: form.Transport})
+		_, err := service.Attach(r.Context(), p, attachInput{DatabaseID: form.DatabaseID, Name: form.Name, Query: form.Query, Transport: form.Transport})
 		redirectAfter(w, r, deps, err, form)
 	})
 	mux.HandleFunc("POST /api/v1/dashboard/subscriptions/pause", func(w http.ResponseWriter, r *http.Request) {
 		if p, ok := formPrincipal(w, r, deps); ok {
-			redirectAfter(w, r, deps, service.Pause(p, r.FormValue("configId")), configForm{})
+			redirectAfter(w, r, deps, service.Pause(r.Context(), p, r.FormValue("configId")), configForm{})
 		}
 	})
 	mux.HandleFunc("POST /api/v1/dashboard/subscriptions/resume", func(w http.ResponseWriter, r *http.Request) {
 		if p, ok := formPrincipal(w, r, deps); ok {
-			redirectAfter(w, r, deps, service.Resume(p, r.FormValue("configId")), configForm{})
+			redirectAfter(w, r, deps, service.Resume(r.Context(), p, r.FormValue("configId")), configForm{})
 		}
 	})
 	mux.HandleFunc("POST /api/v1/dashboard/subscriptions/detach", func(w http.ResponseWriter, r *http.Request) {
 		if p, ok := formPrincipal(w, r, deps); ok {
-			redirectAfter(w, r, deps, service.Detach(p, r.FormValue("configId")), configForm{})
+			redirectAfter(w, r, deps, service.Detach(r.Context(), p, r.FormValue("configId")), configForm{})
 		}
 	})
 }
@@ -93,7 +93,7 @@ func render(w http.ResponseWriter, r *http.Request, deps core.Deps, status int, 
 		writeError(w, err)
 		return
 	}
-	data := pageData{ProjectID: project.ID, CanWrite: deps.Store.Can(p, core.Organization.CanWrite), Form: configForm{Query: "SELECT * FROM documents LIMIT 100", Transport: "http"}}
+	data := pageData{ProjectID: project.ID, CanWrite: core.Can(r.Context(), deps.Store, p, core.Organization.CanWrite) == nil, Form: configForm{Query: "SELECT * FROM documents LIMIT 100", Transport: "http"}}
 	for _, db := range project.Databases {
 		data.Databases = append(data.Databases, databaseChoice{ID: db.ID, Name: db.Name})
 	}
@@ -150,7 +150,7 @@ func selected(deps core.Deps, r *http.Request) (core.Principal, core.Project, er
 	if !ok || p.ProjectID == "" {
 		return core.Principal{}, core.Project{}, core.ErrUnauthorized
 	}
-	account, err := deps.Store.SnapshotAs(p)
+	account, err := deps.Store.SnapshotAs(r.Context(), p)
 	if err != nil {
 		return core.Principal{}, core.Project{}, err
 	}

@@ -2,6 +2,7 @@ package usage
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"slices"
@@ -86,7 +87,7 @@ type Service struct {
 
 // Usage reports the selected project's usage, optionally for one database.
 func (s Service) Usage(ctx context.Context, p core.Principal, databaseID string) (usageReport, error) {
-	account, err := s.deps.Store.SnapshotAs(p)
+	account, err := s.deps.Store.SnapshotAs(ctx, p)
 	if err != nil {
 		return usageReport{}, err
 	}
@@ -108,10 +109,12 @@ func (s Service) Usage(ctx context.Context, p core.Principal, databaseID string)
 	if _, exists := project.Databases[databaseID]; databaseID != "" && !exists {
 		return usageReport{}, fmt.Errorf("%w: database %q", core.ErrNotFound, databaseID)
 	}
-	return s.report(ctx, p, org, project, databaseID), nil
+	return s.report(ctx, p, org, project, databaseID)
 }
 
-func (s Service) report(ctx context.Context, p core.Principal, org core.Organization, project core.Project, databaseFilter string) usageReport {
+// report describes the usage of org and project. A plan the store does not
+// know reads as no billing plan; any other plan lookup failure is returned.
+func (s Service) report(ctx context.Context, p core.Principal, org core.Organization, project core.Project, databaseFilter string) (usageReport, error) {
 	report := usageReport{
 		OrganizationID: org.ID, ProjectID: project.ID, DatabaseID: databaseFilter,
 		PlanName: "No billing plan", PlanStorageAllowance: "Not configured", PlanRequestAllowance: "Not configured",
@@ -121,8 +124,12 @@ func (s Service) report(ctx context.Context, p core.Principal, org core.Organiza
 		Projects:                 make([]projectUsage, 0, len(org.Projects)), Databases: make([]databaseUsage, 0, len(project.Databases)),
 		ActiveDatabases: len(project.Databases), CanManage: org.CanManage(p.UserID),
 	}
-	if plan, ok := s.deps.Store.Plan(org.PlanID); ok {
+	plan, err := s.deps.Store.Plan(ctx, org.PlanID)
+	switch {
+	case err == nil:
 		report.PlanName, report.PlanStorageAllowance, report.PlanRequestAllowance = plan.Name, plan.StorageAllowance(), plan.OperationsAllowance()
+	case !errors.Is(err, core.ErrNotFound):
+		return usageReport{}, err
 	}
 	var projectStoredBytes, databaseStoredBytes int64
 	for _, item := range org.Projects {
@@ -165,7 +172,7 @@ func (s Service) report(ctx context.Context, p core.Principal, org core.Organiza
 	slices.SortFunc(report.Projects, func(a, b projectUsage) int { return strings.Compare(a.Name, b.Name) })
 	slices.SortFunc(report.Databases, func(a, b databaseUsage) int { return strings.Compare(a.Name, b.Name) })
 	s.totals(ctx, p, project, databaseFilter, &report)
-	return report
+	return report, nil
 }
 
 // totals fills the usage totals from sample data in demo mode or from the
@@ -239,13 +246,13 @@ func (s Service) totals(ctx context.Context, p core.Principal, project core.Proj
 
 // SetSpendingControls updates the organization's, its projects', and its
 // databases' spend caps in one change.
-func (s Service) SetSpendingControls(p core.Principal, controls spendingControls) error {
+func (s Service) SetSpendingControls(ctx context.Context, p core.Principal, controls spendingControls) error {
 	for _, cap := range controls.capValues() {
 		if cap < 0 {
 			return core.Invalid("spend caps must be zero or positive US cents")
 		}
 	}
-	return s.deps.Store.UpdateAs(p, func(current *core.Account) error {
+	return s.deps.Store.UpdateAs(ctx, p, func(current *core.Account) error {
 		org, err := current.OrganizationFor(p, p.OrganizationID)
 		if err != nil {
 			return err

@@ -2,6 +2,7 @@ package organization
 
 import (
 	"context"
+	"log/slog"
 	"time"
 
 	"terrascale.tech/dashboard/internal/core"
@@ -121,102 +122,109 @@ func mountTools(tools *core.Tools, service Service) {
 	core.AddTool(tools, core.ToolSpec{
 		Name: "get_context", Title: "Get context", ReadOnly: true,
 		Description: "Show the signed-in user, the saved dashboard selection, and every organization and project the user can access with their IDs. Call this first to find the organizationId and projectId other tools accept.",
-	}, func(_ context.Context, p core.Principal, _ noInput) (contextView, error) {
-		return service.Context(p)
+	}, func(ctx context.Context, p core.Principal, _ noInput) (contextView, error) {
+		return service.Context(ctx, p)
 	})
 	core.AddTool(tools, core.ToolSpec{
 		Name: "get_organization", Title: "Get organization", ReadOnly: true,
 		Description: "Show an organization's plan, billing status, projects, member and invitation counts, and pending ownership transfer.",
-	}, func(_ context.Context, p core.Principal, _ core.Scope) (organizationDetail, error) {
-		return service.Overview(p)
+	}, func(ctx context.Context, p core.Principal, _ core.Scope) (organizationDetail, error) {
+		return service.Overview(ctx, p)
 	})
 	core.AddTool(tools, core.ToolSpec{
 		Name: "create_organization", Title: "Create organization",
 		Description: "Create a business organization owned by the caller and select it. It starts with billing_required; complete checkout with the billing tools before creating projects.",
-	}, func(_ context.Context, p core.Principal, in nameInput) (organizationSummary, error) {
-		org, err := service.CreateBusiness(p, in.Name)
+	}, func(ctx context.Context, p core.Principal, in nameInput) (organizationSummary, error) {
+		org, err := service.CreateBusiness(ctx, p, in.Name)
 		if err != nil {
 			return organizationSummary{}, err
 		}
-		return service.summary(org, p.UserID), nil
+		summary, err := service.summary(ctx, org, p.UserID)
+		if err != nil {
+			// The organization is created; describe it without its plan
+			// name rather than report the creation as failed.
+			slog.Warn("describe created organization", "organization_id", org.ID, "error", err)
+			summary = describeOrganization(org, p.UserID)
+		}
+		return summary, nil
 	})
 	core.AddTool(tools, core.ToolSpec{
 		Name: "rename_organization", Title: "Rename organization", Idempotent: true,
 		Description: "Rename an organization. Requires the owner role.",
-	}, func(_ context.Context, p core.Principal, in scopedNameInput) (done, error) {
-		return done{OK: true}, service.RenameOrganization(p, in.Name)
+	}, func(ctx context.Context, p core.Principal, in scopedNameInput) (done, error) {
+		return done{OK: true}, service.RenameOrganization(ctx, p, in.Name)
 	})
 	core.AddTool(tools, core.ToolSpec{
 		Name: "select_organization", Title: "Select organization", Idempotent: true,
 		Description: "Save an organization and its default project as the dashboard selection, which tools use when a call omits organizationId and projectId.",
-	}, func(_ context.Context, p core.Principal, in selectOrganizationInput) (selectionView, error) {
-		if err := service.SwitchOrganization(p, in.OrganizationID); err != nil {
+	}, func(ctx context.Context, p core.Principal, in selectOrganizationInput) (selectionView, error) {
+		if err := service.SwitchOrganization(ctx, p, in.OrganizationID); err != nil {
 			return selectionView{}, err
 		}
-		return service.selection(p)
+		return service.selection(ctx, p)
 	})
 	core.AddTool(tools, core.ToolSpec{
 		Name: "select_project", Title: "Select project", Idempotent: true,
 		Description: "Save a project and its organization as the dashboard selection, which tools use when a call omits organizationId and projectId.",
-	}, func(_ context.Context, p core.Principal, in selectProjectInput) (selectionView, error) {
-		if err := service.SwitchProject(p, in.ProjectID); err != nil {
+	}, func(ctx context.Context, p core.Principal, in selectProjectInput) (selectionView, error) {
+		if err := service.SwitchProject(ctx, p, in.ProjectID); err != nil {
 			return selectionView{}, err
 		}
-		return service.selection(p)
+		return service.selection(ctx, p)
 	})
 	core.AddTool(tools, core.ToolSpec{
 		Name: "create_project", Title: "Create project",
 		Description: "Create a project in an organization. Requires the owner role and, for business organizations, active billing.",
-	}, func(_ context.Context, p core.Principal, in projectInput) (projectResult, error) {
-		project, err := service.CreateProject(p, in.Name, in.Region, in.BackupRegion, in.Regions)
+	}, func(ctx context.Context, p core.Principal, in projectInput) (projectResult, error) {
+		project, err := service.CreateProject(ctx, p, in.Name, in.Region, in.BackupRegion, in.Regions)
 		return projectResultFrom(project), err
 	})
 	core.AddTool(tools, core.ToolSpec{
 		Name: "update_project", Title: "Update project", Idempotent: true,
 		Description: "Rename the project projectId selects and optionally change its regions. Requires the owner role.",
-	}, func(_ context.Context, p core.Principal, in projectInput) (done, error) {
-		return done{OK: true}, service.RenameProject(p, p.ProjectID, in.Name, in.Region, in.BackupRegion, in.Regions)
+	}, func(ctx context.Context, p core.Principal, in projectInput) (done, error) {
+		return done{OK: true}, service.RenameProject(ctx, p, p.ProjectID, in.Name, in.Region, in.BackupRegion, in.Regions)
 	})
 	core.AddTool(tools, core.ToolSpec{
 		Name: "update_member_role", Title: "Update member role", Idempotent: true,
 		Description: "Change a member's role to member or viewer. Requires the owner role.",
-	}, func(_ context.Context, p core.Principal, in memberRoleInput) (done, error) {
-		return done{OK: true}, service.UpdateMemberRole(p, in.UserID, in.Role)
+	}, func(ctx context.Context, p core.Principal, in memberRoleInput) (done, error) {
+		return done{OK: true}, service.UpdateMemberRole(ctx, p, in.UserID, in.Role)
 	})
 	core.AddTool(tools, core.ToolSpec{
 		Name: "remove_member", Title: "Remove member", Destructive: true,
 		Description: "Remove a member from an organization and sign them out. Requires the owner role.",
-	}, func(_ context.Context, p core.Principal, in memberInput) (done, error) {
-		return done{OK: true}, service.RemoveMember(p, in.UserID)
+	}, func(ctx context.Context, p core.Principal, in memberInput) (done, error) {
+		return done{OK: true}, service.RemoveMember(ctx, p, in.UserID)
 	})
 	core.AddTool(tools, core.ToolSpec{
 		Name: "request_ownership_transfer", Title: "Request ownership transfer", Idempotent: true,
 		Description: "Nominate an active member as the next owner. The member must confirm with confirm_ownership_transfer within 7 days. Requires the owner role.",
-	}, func(_ context.Context, p core.Principal, in memberInput) (done, error) {
-		return done{OK: true}, service.RequestOwnershipTransfer(p, in.UserID)
+	}, func(ctx context.Context, p core.Principal, in memberInput) (done, error) {
+		return done{OK: true}, service.RequestOwnershipTransfer(ctx, p, in.UserID)
 	})
 	core.AddTool(tools, core.ToolSpec{
 		Name: "confirm_ownership_transfer", Title: "Confirm ownership transfer", Destructive: true,
 		Description: "Accept a pending ownership transfer nominated to the caller. The previous owner becomes a member.",
-	}, func(_ context.Context, p core.Principal, _ core.Scope) (done, error) {
-		return done{OK: true}, service.ConfirmOwnershipTransfer(p)
+	}, func(ctx context.Context, p core.Principal, _ core.Scope) (done, error) {
+		return done{OK: true}, service.ConfirmOwnershipTransfer(ctx, p)
 	})
 	core.AddTool(tools, core.ToolSpec{
 		Name: "request_organization_deletion", Title: "Request organization deletion", Destructive: true, Idempotent: true,
 		Description: "Request deletion of a business organization. Requires the owner role and confirmName equal to the organization name.",
-	}, func(_ context.Context, p core.Principal, in deletionInput) (done, error) {
-		return done{OK: true}, service.RequestDeletion(p, in.ConfirmName)
+	}, func(ctx context.Context, p core.Principal, in deletionInput) (done, error) {
+		return done{OK: true}, service.RequestDeletion(ctx, p, in.ConfirmName)
 	})
 	core.AddTool(tools, core.ToolSpec{
 		Name: "leave_organization", Title: "Leave organization", Destructive: true,
 		Description: "Leave a business organization the caller does not own. The dashboard selection moves to another organization.",
-	}, func(_ context.Context, p core.Principal, _ core.Scope) (done, error) {
-		return done{OK: true}, service.LeaveOrganization(p)
+	}, func(ctx context.Context, p core.Principal, _ core.Scope) (done, error) {
+		return done{OK: true}, service.LeaveOrganization(ctx, p)
 	})
 }
 
-func (s Service) selection(p core.Principal) (selectionView, error) {
-	a, err := s.store.SnapshotAs(core.Principal{UserID: p.UserID, AccountID: p.AccountID, AuthVersion: p.AuthVersion})
+func (s Service) selection(ctx context.Context, p core.Principal) (selectionView, error) {
+	a, err := s.store.SnapshotAs(ctx, core.Principal{UserID: p.UserID, AccountID: p.AccountID, AuthVersion: p.AuthVersion})
 	if err != nil {
 		return selectionView{}, err
 	}

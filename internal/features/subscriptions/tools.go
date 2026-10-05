@@ -88,8 +88,8 @@ type invoiceList struct {
 }
 
 // PlanList lists the purchasable plans, marking the organization's current one.
-func (service BillingService) PlanList(principal core.Principal) (planList, error) {
-	view, err := service.Snapshot(principal)
+func (service BillingService) PlanList(ctx context.Context, principal core.Principal) (planList, error) {
+	view, err := service.Snapshot(ctx, principal)
 	if err != nil {
 		return planList{}, err
 	}
@@ -108,8 +108,8 @@ func (service BillingService) PlanList(principal core.Principal) (planList, erro
 
 // Summary describes the organization's plan, subscription, and pending
 // changes as the billing page shows them.
-func (service BillingService) Summary(principal core.Principal) (billingSummary, error) {
-	view, err := service.Snapshot(principal)
+func (service BillingService) Summary(ctx context.Context, principal core.Principal) (billingSummary, error) {
+	view, err := service.Snapshot(ctx, principal)
 	if err != nil {
 		return billingSummary{}, err
 	}
@@ -139,8 +139,8 @@ func (service BillingService) Summary(principal core.Principal) (billingSummary,
 
 // Invoices pages the organization's invoices newest first, filtered like the
 // billing tab.
-func (service BillingService) Invoices(principal core.Principal, status, issued string, page int) (invoiceList, error) {
-	view, err := service.Snapshot(principal)
+func (service BillingService) Invoices(ctx context.Context, principal core.Principal, status, issued string, page int) (invoiceList, error) {
+	view, err := service.Snapshot(ctx, principal)
 	if err != nil {
 		return invoiceList{}, err
 	}
@@ -163,19 +163,19 @@ func mountTools(tools *core.Tools, service BillingService) {
 	core.AddTool(tools, core.ToolSpec{
 		Name: "list_plans", Title: "List plans", ReadOnly: true,
 		Description: "List the paid plans an organization can subscribe to, with prices in cents, limits, and which plan is current.",
-	}, func(_ context.Context, p core.Principal, _ core.Scope) (planList, error) {
-		return service.PlanList(p)
+	}, func(ctx context.Context, p core.Principal, _ core.Scope) (planList, error) {
+		return service.PlanList(ctx, p)
 	})
 	core.AddTool(tools, core.ToolSpec{
 		Name: "get_billing", Title: "Get billing", ReadOnly: true,
 		Description: "Show an organization's plan, billing interval and status, renewal date, scheduled or pending plan changes, checkout state, and (for the owner) payment method summary.",
-	}, func(_ context.Context, p core.Principal, _ core.Scope) (billingSummary, error) {
-		return service.Summary(p)
+	}, func(ctx context.Context, p core.Principal, _ core.Scope) (billingSummary, error) {
+		return service.Summary(ctx, p)
 	})
 	core.AddTool(tools, core.ToolSpec{
 		Name: "list_invoices", Title: "List invoices", ReadOnly: true,
 		Description: fmt.Sprintf("List an organization's invoices newest first, %d per page, optionally filtered by status and issue date.", InvoicePageSize),
-	}, func(_ context.Context, p core.Principal, in invoiceInput) (invoiceList, error) {
-		return service.Invoices(p, in.Status, in.Issued, in.Page)
+	}, func(ctx context.Context, p core.Principal, in invoiceInput) (invoiceList, error) {
+		return service.Invoices(ctx, p, in.Status, in.Issued, in.Page)
 	})
 }

@@ -58,7 +58,7 @@ func mountTools(tools *core.Tools, service Service) {
 		if err := addCaps(controls.DatabaseCaps, in.DatabaseCaps, "database"); err != nil {
 			return usageReport{}, err
 		}
-		if err := service.SetSpendingControls(p, controls); err != nil {
+		if err := service.SetSpendingControls(ctx, p, controls); err != nil {
 			return usageReport{}, err
 		}
 		return service.Usage(ctx, p, "")

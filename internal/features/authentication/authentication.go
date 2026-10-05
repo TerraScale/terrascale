@@ -30,7 +30,7 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 		if !ok {
 			return
 		}
-		_, err := service.SaveBranding(p, r.Form.Get("name"), r.Form.Get("logo_url"), r.Form.Get("theme_color"))
+		_, err := service.SaveBranding(r.Context(), p, r.Form.Get("name"), r.Form.Get("logo_url"), r.Form.Get("theme_color"))
 		finish(w, r, "branding", err)
 	})
 	mux.HandleFunc("POST /api/v1/auth-management/settings", func(w http.ResponseWriter, r *http.Request) {
@@ -44,7 +44,7 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			http.NotFound(w, r)
 			return
 		}
-		_, err := service.SetStrategy(p, key, r.Form.Get("enabled") == "true")
+		_, err := service.SetStrategy(r.Context(), p, key, r.Form.Get("enabled") == "true")
 		finish(w, r, group.Page, err)
 	})
 	mux.HandleFunc("POST /api/v1/auth-management/{section}", func(w http.ResponseWriter, r *http.Request) {
@@ -57,7 +57,7 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 		if !ok {
 			return
 		}
-		_, err := service.SaveResource(p, key, strings.TrimSpace(r.Form.Get("id")), r.Form)
+		_, err := service.SaveResource(r.Context(), p, key, strings.TrimSpace(r.Form.Get("id")), r.Form)
 		finish(w, r, key, err)
 	})
 	mux.HandleFunc("POST /api/v1/auth-management/{section}/{resourceID}/delete", func(w http.ResponseWriter, r *http.Request) {
@@ -70,7 +70,7 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 		if !ok {
 			return
 		}
-		_, err := service.DeleteResource(p, key, r.PathValue("resourceID"))
+		_, err := service.DeleteResource(r.Context(), p, key, r.PathValue("resourceID"))
 		finish(w, r, key, err)
 	})
 	mux.HandleFunc("POST /api/v1/auth-management/{section}/{resourceID}/actions/{action}", func(w http.ResponseWriter, r *http.Request) {
@@ -83,7 +83,7 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 		if !ok {
 			return
 		}
-		_, err := service.RunAction(p, key, r.PathValue("resourceID"), r.PathValue("action"))
+		_, err := service.RunAction(r.Context(), p, key, r.PathValue("resourceID"), r.PathValue("action"))
 		finish(w, r, key, err)
 	})
 }
@@ -155,7 +155,7 @@ func signedIn(deps core.Deps, w http.ResponseWriter, r *http.Request) (core.Prin
 		core.RedirectToLogin(w, r)
 		return core.Principal{}, core.Account{}, false
 	}
-	account, err := deps.Store.SnapshotAs(p)
+	account, err := deps.Store.SnapshotAs(r.Context(), p)
 	if err != nil {
 		writeError(w, err)
 		return core.Principal{}, core.Account{}, false

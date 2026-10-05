@@ -1,6 +1,7 @@
 package access
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"net/url"
@@ -28,7 +29,11 @@ type invitationPageData struct {
 func invitationPage(deps core.Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		p, signedIn := deps.Sessions.Principal(r)
-		data, status := invitationState(deps, p, signedIn, r.PathValue("token"))
+		data, status := invitationState(r.Context(), deps, p, signedIn, r.PathValue("token"))
+		if status == http.StatusServiceUnavailable {
+			http.Error(w, "service unavailable", status)
+			return
+		}
 		renderInvitation(w, r, deps, p, status, data)
 	}
 }
@@ -50,8 +55,12 @@ func respondToInvitation(deps core.Deps, service Service) http.HandlerFunc {
 			return
 		}
 		action := strings.ToLower(strings.TrimSpace(r.Form.Get("action")))
-		if _, err := service.RespondToInvitation(p, token, action); err != nil {
-			data, status := invitationState(deps, p, true, token)
+		if _, err := service.RespondToInvitation(r.Context(), p, token, action); err != nil {
+			data, status := invitationState(r.Context(), deps, p, true, token)
+			if status == http.StatusServiceUnavailable {
+				http.Error(w, "service unavailable", http.StatusServiceUnavailable)
+				return
+			}
 			if !data.Unavailable {
 				data.Error, status = respondError(err, data.OrganizationName)
 			}
@@ -62,9 +71,15 @@ func respondToInvitation(deps core.Deps, service Service) http.HandlerFunc {
 			http.Redirect(w, r, "/access?invitation=declined", http.StatusSeeOther)
 			return
 		}
-		refreshed, ok := deps.Store.CurrentPrincipal(p.AccountID, p.UserID)
-		if !ok {
+		refreshed, err := deps.Store.CurrentPrincipal(r.Context(), p.AccountID, p.UserID)
+		if errors.Is(err, core.ErrNotFound) {
 			writeProblem(w, core.ErrForbidden)
+			return
+		}
+		if err != nil {
+			if !core.WriteAccessError(w, err) {
+				http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+			}
 			return
 		}
 		if err := deps.Sessions.Start(w, r, refreshed); err != nil {
@@ -82,22 +97,33 @@ func switchInvitationAccount(deps core.Deps) http.HandlerFunc {
 		if !deps.VerifyCSRF(w, r) {
 			return
 		}
-		deps.Sessions.End(w, r)
+		if err := deps.Sessions.End(w, r); err != nil {
+			http.Error(w, "Sign-out could not finish. Retry switching accounts.", http.StatusServiceUnavailable)
+			return
+		}
 		http.Redirect(w, r, invitationLoginURL(r.PathValue("token")), http.StatusSeeOther)
 	}
 }
 
 // invitationState loads the invitation behind token for the visitor and the
-// HTTP status of its page.
-func invitationState(deps core.Deps, p core.Principal, signedIn bool, token string) (invitationPageData, int) {
+// HTTP status of its page. A store failure other than a missing invitation
+// is StatusServiceUnavailable, which callers answer without the page.
+func invitationState(ctx context.Context, deps core.Deps, p core.Principal, signedIn bool, token string) (invitationPageData, int) {
 	data := invitationPageData{Token: token}
 	if signedIn {
-		if account, err := deps.Store.SnapshotAs(p); err == nil {
+		account, err := deps.Store.SnapshotAs(ctx, p)
+		switch {
+		case err == nil:
 			data.HasSession, data.CurrentEmail = true, account.User.Email
+		case errors.Is(err, core.ErrUnavailable):
+			return data, http.StatusServiceUnavailable
 		}
 	}
-	org, invitation, ok := deps.Store.FindInvitation(hashInvitationToken(token))
-	if !ok {
+	org, invitation, err := deps.Store.FindInvitation(ctx, hashInvitationToken(token))
+	if err != nil {
+		if !errors.Is(err, core.ErrNotFound) {
+			return data, http.StatusServiceUnavailable
+		}
 		data.Unavailable = true
 		return data, http.StatusNotFound
 	}
@@ -121,6 +147,8 @@ func respondError(err error, organizationName string) (string, int) {
 		return organizationName + " cannot add members right now. It may have reached its plan's member limit or be closing. Ask an organization owner, then try again.", http.StatusConflict
 	case errors.Is(err, ErrInvalidInvitationAction):
 		return "Choose whether to accept or decline the invitation.", http.StatusBadRequest
+	case errors.Is(err, core.ErrUnavailable):
+		return "The invitation could not be answered right now. Try again.", http.StatusServiceUnavailable
 	default:
 		return "The invitation could not be answered. Try again.", http.StatusInternalServerError
 	}

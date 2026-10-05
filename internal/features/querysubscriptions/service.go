@@ -1,6 +1,7 @@
 package querysubscriptions
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"regexp"
@@ -43,11 +44,11 @@ type Service struct {
 	deps core.Deps
 }
 
-func (s Service) project(p core.Principal) (core.Project, error) {
+func (s Service) project(ctx context.Context, p core.Principal) (core.Project, error) {
 	if p.ProjectID == "" {
 		return core.Project{}, core.ErrNotFound
 	}
-	account, err := s.deps.Store.SnapshotAs(p)
+	account, err := s.deps.Store.SnapshotAs(ctx, p)
 	if err != nil {
 		return core.Project{}, err
 	}
@@ -56,11 +57,11 @@ func (s Service) project(p core.Principal) (core.Project, error) {
 
 // update commits mutate to the selected project once the principal may write
 // in the selected organization. Only the in-memory demo stores configurations.
-func (s Service) update(p core.Principal, mutate func(*core.Project) error) error {
+func (s Service) update(ctx context.Context, p core.Principal, mutate func(*core.Project) error) error {
 	if !s.deps.Demo {
 		return errLive
 	}
-	return s.deps.Store.UpdateAs(p, func(account *core.Account) error {
+	return s.deps.Store.UpdateAs(ctx, p, func(account *core.Account) error {
 		project, err := account.ProjectFor(p, p.OrganizationID, p.ProjectID)
 		if err != nil {
 			return err
@@ -79,8 +80,8 @@ func (s Service) update(p core.Principal, mutate func(*core.Project) error) erro
 }
 
 // List returns the project's configurations by name.
-func (s Service) List(p core.Principal) ([]subscriptionView, error) {
-	project, err := s.project(p)
+func (s Service) List(ctx context.Context, p core.Principal) ([]subscriptionView, error) {
+	project, err := s.project(ctx, p)
 	if err != nil {
 		return nil, err
 	}
@@ -97,7 +98,7 @@ func (s Service) List(p core.Principal) ([]subscriptionView, error) {
 
 // Attach saves a shared-result configuration for one of the project's
 // databases.
-func (s Service) Attach(p core.Principal, in attachInput) (subscriptionView, error) {
+func (s Service) Attach(ctx context.Context, p core.Principal, in attachInput) (subscriptionView, error) {
 	if !s.deps.Demo {
 		return subscriptionView{}, errLive
 	}
@@ -116,7 +117,7 @@ func (s Service) Attach(p core.Principal, in attachInput) (subscriptionView, err
 		Transport: in.Transport, Status: "saved", CreatedAt: time.Now().UTC(),
 	}
 	var databaseName string
-	err := s.update(p, func(project *core.Project) error {
+	err := s.update(ctx, p, func(project *core.Project) error {
 		db, ok := project.Databases[in.DatabaseID]
 		if !ok || db.ProjectID != project.ID {
 			return core.Invalid("Choose a database in this project.")
@@ -143,17 +144,17 @@ func (s Service) Attach(p core.Principal, in attachInput) (subscriptionView, err
 }
 
 // Pause marks a configuration paused.
-func (s Service) Pause(p core.Principal, id string) error {
-	return s.setStatus(p, id, "paused")
+func (s Service) Pause(ctx context.Context, p core.Principal, id string) error {
+	return s.setStatus(ctx, p, id, "paused")
 }
 
 // Resume saves a paused configuration again.
-func (s Service) Resume(p core.Principal, id string) error {
-	return s.setStatus(p, id, "saved")
+func (s Service) Resume(ctx context.Context, p core.Principal, id string) error {
+	return s.setStatus(ctx, p, id, "saved")
 }
 
-func (s Service) setStatus(p core.Principal, id, status string) error {
-	return s.update(p, func(project *core.Project) error {
+func (s Service) setStatus(ctx context.Context, p core.Principal, id, status string) error {
+	return s.update(ctx, p, func(project *core.Project) error {
 		config, ok := project.SharedResultConfigs[id]
 		if !ok {
 			return fmt.Errorf("%w: configuration %q", core.ErrNotFound, id)
@@ -165,8 +166,8 @@ func (s Service) setStatus(p core.Principal, id, status string) error {
 }
 
 // Detach deletes a configuration.
-func (s Service) Detach(p core.Principal, id string) error {
-	return s.update(p, func(project *core.Project) error {
+func (s Service) Detach(ctx context.Context, p core.Principal, id string) error {
+	return s.update(ctx, p, func(project *core.Project) error {
 		if _, ok := project.SharedResultConfigs[id]; !ok {
 			return fmt.Errorf("%w: configuration %q", core.ErrNotFound, id)
 		}

@@ -48,8 +48,8 @@ func mountTools(tools *core.Tools, service Service) {
 	core.AddTool(tools, core.ToolSpec{
 		Name: "list_notifications", Title: "List notifications", ReadOnly: true,
 		Description: "List the notification inbox of an organization and project, newest first, with unread and critical counts.",
-	}, func(_ context.Context, p core.Principal, in listNotificationsInput) (notificationsOutput, error) {
-		data, err := service.Inbox(p, in.Status, strconv.Itoa(in.Page))
+	}, func(ctx context.Context, p core.Principal, in listNotificationsInput) (notificationsOutput, error) {
+		data, err := service.Inbox(ctx, p, in.Status, strconv.Itoa(in.Page))
 		if err != nil {
 			return notificationsOutput{}, err
 		}
@@ -69,8 +69,8 @@ func mountTools(tools *core.Tools, service Service) {
 	core.AddTool(tools, core.ToolSpec{
 		Name: "mark_notification_read", Title: "Mark notification read", Idempotent: true,
 		Description: "Mark one notification as read.",
-	}, func(_ context.Context, p core.Principal, in notificationInput) (markedRead, error) {
-		marked, err := service.MarkRead(p, in.NotificationID)
+	}, func(ctx context.Context, p core.Principal, in notificationInput) (markedRead, error) {
+		marked, err := service.MarkRead(ctx, p, in.NotificationID)
 		if err != nil {
 			return markedRead{}, err
 		}
@@ -82,8 +82,8 @@ func mountTools(tools *core.Tools, service Service) {
 	core.AddTool(tools, core.ToolSpec{
 		Name: "mark_all_notifications_read", Title: "Mark all notifications read", Idempotent: true,
 		Description: "Mark every notification in an organization and project as read.",
-	}, func(_ context.Context, p core.Principal, _ core.Scope) (markedRead, error) {
-		marked, err := service.MarkAllRead(p)
+	}, func(ctx context.Context, p core.Principal, _ core.Scope) (markedRead, error) {
+		marked, err := service.MarkAllRead(ctx, p)
 		return markedRead{Marked: marked}, err
 	})
 }

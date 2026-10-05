@@ -48,3 +48,17 @@ func TestDefaultProjectID(t *testing.T) {
 		})
 	}
 }
+
+func TestValidDatabaseName(t *testing.T) {
+	for name, want := range map[string]bool{
+		"orders": true, "a": true, "core-primary-2": true, "0-9": true,
+		"": false, "-orders": false, "orders-": false, "Orders": false, "orders_v2": false,
+		"core primary": false, "a/b": false, "Restored_UPPER!": false,
+		"abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijk":  true,
+		"abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijkl": false,
+	} {
+		if got := ValidDatabaseName(name); got != want {
+			t.Errorf("ValidDatabaseName(%q) = %v, want %v", name, got, want)
+		}
+	}
+}

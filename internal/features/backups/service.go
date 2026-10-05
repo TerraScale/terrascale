@@ -94,11 +94,11 @@ func NewService(deps core.Deps) Service {
 	return Service{deps: deps}
 }
 
-func (s Service) database(p core.Principal, databaseID string) (core.Project, core.Database, error) {
+func (s Service) database(ctx context.Context, p core.Principal, databaseID string) (core.Project, core.Database, error) {
 	if p.ProjectID == "" {
 		return core.Project{}, core.Database{}, core.ErrNotFound
 	}
-	a, err := s.deps.Store.SnapshotAs(p)
+	a, err := s.deps.Store.SnapshotAs(ctx, p)
 	if err != nil {
 		return core.Project{}, core.Database{}, err
 	}
@@ -114,21 +114,21 @@ func (s Service) database(p core.Principal, databaseID string) (core.Project, co
 }
 
 // managedDatabase resolves a database the principal may manage.
-func (s Service) managedDatabase(p core.Principal, databaseID string) (core.Database, error) {
-	_, db, err := s.database(p, databaseID)
+func (s Service) managedDatabase(ctx context.Context, p core.Principal, databaseID string) (core.Database, error) {
+	_, db, err := s.database(ctx, p, databaseID)
 	if err != nil {
 		return core.Database{}, err
 	}
-	if !s.deps.Store.Can(p, core.Organization.CanManage) {
-		return core.Database{}, core.ErrForbidden
+	if err := core.Can(ctx, s.deps.Store, p, core.Organization.CanManage); err != nil {
+		return core.Database{}, err
 	}
 	return db, nil
 }
 
 // update commits mutate to the selected project once allow grants the
 // principal's role in the selected organization.
-func (s Service) update(p core.Principal, allow func(core.Organization, string) bool, mutate func(*core.Account, *core.Project) error) error {
-	return s.deps.Store.UpdateAs(p, func(a *core.Account) error {
+func (s Service) update(ctx context.Context, p core.Principal, allow func(core.Organization, string) bool, mutate func(*core.Account, *core.Project) error) error {
+	return s.deps.Store.UpdateAs(ctx, p, func(a *core.Account) error {
 		project, err := a.ProjectFor(p, p.OrganizationID, p.ProjectID)
 		if err != nil {
 			return err
@@ -148,7 +148,7 @@ func (s Service) update(p core.Principal, allow func(core.Organization, string) 
 
 // List returns a database's backups, newest first, with its policy.
 func (s Service) List(ctx context.Context, p core.Principal, databaseID string) (backupListing, error) {
-	project, db, err := s.database(p, databaseID)
+	project, db, err := s.database(ctx, p, databaseID)
 	if err != nil {
 		return backupListing{}, err
 	}
@@ -172,8 +172,8 @@ func (s Service) List(ctx context.Context, p core.Principal, databaseID string) 
 }
 
 // Create snapshots a database's documents, schemas, and indexes.
-func (s Service) Create(p core.Principal, databaseID string) (backupView, error) {
-	db, err := s.managedDatabase(p, databaseID)
+func (s Service) Create(ctx context.Context, p core.Principal, databaseID string) (backupView, error) {
+	db, err := s.managedDatabase(ctx, p, databaseID)
 	if err != nil {
 		return backupView{}, err
 	}
@@ -181,7 +181,7 @@ func (s Service) Create(p core.Principal, databaseID string) (backupView, error)
 		return backupView{}, ErrUnavailable
 	}
 	var created core.Backup
-	err = s.update(p, core.Organization.CanManage, func(a *core.Account, project *core.Project) error {
+	err = s.update(ctx, p, core.Organization.CanManage, func(a *core.Account, project *core.Project) error {
 		current, ok := project.Databases[db.ID]
 		if !ok {
 			return core.ErrNotFound
@@ -207,8 +207,8 @@ func (s Service) Create(p core.Principal, databaseID string) (backupView, error)
 }
 
 // SetPolicy saves a database's backup schedule and retention.
-func (s Service) SetPolicy(p core.Principal, databaseID string, in PolicyInput) (core.BackupPolicy, error) {
-	db, err := s.managedDatabase(p, databaseID)
+func (s Service) SetPolicy(ctx context.Context, p core.Principal, databaseID string, in PolicyInput) (core.BackupPolicy, error) {
+	db, err := s.managedDatabase(ctx, p, databaseID)
 	if err != nil {
 		return core.BackupPolicy{}, err
 	}
@@ -225,7 +225,7 @@ func (s Service) SetPolicy(p core.Principal, databaseID string, in PolicyInput) 
 	if !validCron(saved.FullBackupCron) || !validCron(saved.IncrementalBackupCron) {
 		return core.BackupPolicy{}, errSchedule
 	}
-	err = s.update(p, core.Organization.CanManage, func(a *core.Account, project *core.Project) error {
+	err = s.update(ctx, p, core.Organization.CanManage, func(a *core.Account, project *core.Project) error {
 		if _, ok := project.Databases[db.ID]; !ok {
 			return core.ErrNotFound
 		}
@@ -244,7 +244,7 @@ func (s Service) SetPolicy(p core.Principal, databaseID string, in PolicyInput) 
 
 // Restore creates a new database from a backup of databaseID.
 func (s Service) Restore(ctx context.Context, p core.Principal, databaseID string, in RestoreInput) (restoreResult, error) {
-	db, err := s.managedDatabase(p, databaseID)
+	db, err := s.managedDatabase(ctx, p, databaseID)
 	if err != nil {
 		return restoreResult{}, err
 	}
@@ -259,7 +259,7 @@ func (s Service) Restore(ctx context.Context, p core.Principal, databaseID strin
 	if s.deps.Demo {
 		target.Status = "ready"
 	}
-	err = s.update(p, core.Organization.CanProvisionResources, func(a *core.Account, project *core.Project) error {
+	err = s.update(ctx, p, core.Organization.CanProvisionResources, func(a *core.Account, project *core.Project) error {
 		current, ok := project.Databases[db.ID]
 		if !ok {
 			return core.ErrNotFound
@@ -294,18 +294,21 @@ func (s Service) Restore(ctx context.Context, p core.Principal, databaseID strin
 	if s.deps.Demo {
 		return result, nil
 	}
+	// The restore record is committed, so its outcome is saved even when the
+	// request is canceled meanwhile; otherwise it would stay provisioning.
+	statusCtx := context.WithoutCancel(ctx)
 	client, err := s.deps.DataPlane(p)
 	if err != nil {
-		_ = s.setStatus(p, target.ID, "failed")
+		_ = s.setStatus(statusCtx, p, target.ID, "failed")
 		return restoreResult{}, err
 	}
 	operation, err := client.Backups.RestoreBackup(ctx, db.Name, sdk.RestoreBackupRequest{Name: target.Name, At: in.AtMillis, OperationID: target.ID}, sdk.WithIdempotencyKey(target.ID))
 	if err != nil {
-		_ = s.setStatus(p, target.ID, "failed")
+		_ = s.setStatus(statusCtx, p, target.ID, "failed")
 		return restoreResult{}, core.ProviderError{Action: "restore", Err: err}
 	}
 	result.Operation, result.Status = operation, operation.State
-	return result, s.setStatus(p, target.ID, operation.State)
+	return result, s.setStatus(statusCtx, p, target.ID, operation.State)
 }
 
 // validCron accepts an empty schedule, which leaves that backup kind
@@ -326,8 +329,8 @@ func normalizeCron(schedule string) string {
 	return strings.Join(strings.Fields(schedule), " ")
 }
 
-func (s Service) setStatus(p core.Principal, databaseID, status string) error {
-	return s.update(p, func(core.Organization, string) bool { return true }, func(_ *core.Account, project *core.Project) error {
+func (s Service) setStatus(ctx context.Context, p core.Principal, databaseID, status string) error {
+	return s.update(ctx, p, func(core.Organization, string) bool { return true }, func(_ *core.Account, project *core.Project) error {
 		db, ok := project.Databases[databaseID]
 		if !ok {
 			return core.ErrNotFound

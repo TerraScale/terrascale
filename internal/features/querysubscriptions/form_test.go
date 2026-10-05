@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"terrascale.tech/dashboard/internal/core"
+	"terrascale.tech/dashboard/internal/core/memstore"
 	"terrascale.tech/dashboard/internal/platform/csrf"
 	"terrascale.tech/dashboard/internal/platform/session"
 )
@@ -15,7 +16,7 @@ import (
 // A browser whose session ended posts a valid form: it must be sent to sign in
 // again, as every other form does, not shown a bare 401.
 func TestSignedOutFormPostReturnsToLogin(t *testing.T) {
-	store := core.NewStore()
+	store := memstore.New()
 	sessions := session.New(store, session.Options{})
 	guard := csrf.New(sessions, csrf.Options{})
 	mux := http.NewServeMux()

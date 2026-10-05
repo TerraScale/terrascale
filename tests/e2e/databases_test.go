@@ -137,7 +137,10 @@ func TestCreateDatabaseRegionsWorkWithoutScripts(t *testing.T) {
 	must(t, expect.Locator(dialog.Locator(`#database-region input[value="SFO"]`)).ToBeChecked())
 	must(t, expect.Locator(dialog.Locator(`#database-region input[value="FRA"]`)).ToBeChecked())
 	fill(t, dialog.Locator("#database-name"), uniqueName("native-regions"))
-	submitAndExpect(t, nativePage, "/api/v1/dashboard/databases", 303, byRole(dialog, *playwright.AriaRoleButton, "Create database").Click)
+	// Native keyboard submission avoids waiting for the animated dialog's bounds to stabilize.
+	submitAndExpect(t, nativePage, "/api/v1/dashboard/databases", 303, func(...playwright.LocatorClickOptions) error {
+		return byRole(dialog, *playwright.AriaRoleButton, "Create database").Press("Enter")
+	})
 	waitForPath(t, nativePage, func(u *url.URL) bool { return strings.HasPrefix(u.Path, "/databases/db_") })
 	must(t, expect.Locator(nativePage.Locator("main")).ToContainText("SFO · San Francisco"))
 	must(t, expect.Locator(nativePage.Locator("main")).ToContainText("FRA · Frankfurt"))

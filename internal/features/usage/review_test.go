@@ -1,6 +1,8 @@
 package usage
 
 import (
+	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -8,6 +10,7 @@ import (
 	"time"
 
 	"terrascale.tech/dashboard/internal/core"
+	"terrascale.tech/dashboard/internal/core/memstore"
 	"terrascale.tech/dashboard/internal/features/subscriptions"
 )
 
@@ -22,8 +25,8 @@ func (sessions reviewSessions) Principal(*http.Request) (core.Principal, bool) {
 func (sessions reviewSessions) BearerPrincipal(*http.Request) (core.Principal, bool) {
 	return core.Principal{}, false
 }
-func (sessions reviewSessions) End(http.ResponseWriter, *http.Request) {}
-func (sessions reviewSessions) RevokeUser(string, string)              {}
+func (sessions reviewSessions) End(http.ResponseWriter, *http.Request) error     { return nil }
+func (sessions reviewSessions) RevokeUser(context.Context, string, string) error { return nil }
 
 // viewRenderer writes the feature view without the shell layout.
 type viewRenderer struct{}
@@ -35,7 +38,7 @@ func (viewRenderer) Page(w http.ResponseWriter, r *http.Request, page core.Page)
 // reviewFixture is a Personal organization owner on a demo Starter
 // subscription with the usage page mounted.
 type reviewFixture struct {
-	store     *core.Store
+	store     core.Store
 	billing   subscriptions.BillingService
 	principal core.Principal
 	mux       *http.ServeMux
@@ -43,17 +46,17 @@ type reviewFixture struct {
 
 func newReviewFixture(t *testing.T) reviewFixture {
 	t.Helper()
-	store := core.NewStore()
-	account, err := store.CreateAccount(core.User{Name: "Owner", Email: "plan-review@example.test", PasswordHash: "unused"})
+	store := memstore.New()
+	account, err := store.CreateAccount(t.Context(), core.User{Name: "Owner", Email: "plan-review@example.test", PasswordHash: "unused"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	fixture := reviewFixture{store: store, billing: subscriptions.NewBillingService(store), principal: account.Principal(), mux: http.NewServeMux()}
-	session, err := fixture.billing.BeginDemoCheckout(fixture.principal, "starter", "monthly", "/usage?tab=billing")
+	session, err := fixture.billing.BeginDemoCheckout(t.Context(), fixture.principal, "starter", "monthly", "/usage?tab=billing")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := fixture.billing.CompleteDemoCheckout(fixture.principal, session.ID, false); err != nil {
+	if _, err := fixture.billing.CompleteDemoCheckout(t.Context(), fixture.principal, session.ID, false); err != nil {
 		t.Fatal(err)
 	}
 	Mount(fixture.mux, core.Deps{Store: store, Sessions: reviewSessions{principal: fixture.principal}, Render: viewRenderer{}, Tools: core.NewTools(store), Demo: true}, nil)
@@ -72,7 +75,7 @@ func (fixture reviewFixture) review(t *testing.T, plan, interval string) string 
 
 func (fixture reviewFixture) update(t *testing.T, change func(*core.Organization)) {
 	t.Helper()
-	if err := fixture.store.UpdateAs(fixture.principal, func(account *core.Account) error {
+	if err := fixture.store.UpdateAs(t.Context(), fixture.principal, func(account *core.Account) error {
 		org := account.Organizations[fixture.principal.OrganizationID]
 		change(&org)
 		account.Organizations[org.ID] = org
@@ -125,7 +128,7 @@ func TestPlanReviewWarnsWhenTheOrganizationExceedsTheTargetPlan(t *testing.T) {
 func TestPlanReviewBlocksChangesWhileAChangeIsScheduled(t *testing.T) {
 	fixture := newReviewFixture(t)
 	renewal := time.Date(2026, time.October, 27, 0, 0, 0, 0, time.UTC)
-	if err := fixture.billing.ScheduleDemoChange(fixture.principal, "free", "", renewal); err != nil {
+	if err := fixture.billing.ScheduleDemoChange(t.Context(), fixture.principal, "free", "", renewal); err != nil {
 		t.Fatal(err)
 	}
 	html := fixture.review(t, "business", "monthly")
@@ -208,5 +211,26 @@ func TestLimitWarningsCountMembersAndPendingInvitations(t *testing.T) {
 	}
 	if warnings := limitWarnings(org, core.Plan{Name: "Free", MaxDatabases: 1}, now); len(warnings) != 0 {
 		t.Fatalf("a plan without a member limit warned: %q", warnings)
+	}
+}
+
+// unavailablePlans is a store whose plan lookups fail like a database outage.
+type unavailablePlans struct{ core.Store }
+
+func (unavailablePlans) Plan(context.Context, string) (core.Plan, error) {
+	return core.Plan{}, fmt.Errorf("%w: database down", core.ErrUnavailable)
+}
+
+func TestUsagePageReportsAnUnavailableStore(t *testing.T) {
+	fixture := newReviewFixture(t)
+	mux := http.NewServeMux()
+	store := unavailablePlans{fixture.store}
+	Mount(mux, core.Deps{Store: store, Sessions: reviewSessions{principal: fixture.principal}, Render: viewRenderer{}, Tools: core.NewTools(store), Demo: true}, nil)
+	for _, path := range []string{"/usage?tab=billing", "/usage?tab=billing&review=1&plan=pro&interval=monthly"} {
+		response := httptest.NewRecorder()
+		mux.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
+		if response.Code != http.StatusServiceUnavailable {
+			t.Fatalf("GET %s = %d, want %d: %s", path, response.Code, http.StatusServiceUnavailable, response.Body.String())
+		}
 	}
 }

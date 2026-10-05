@@ -151,7 +151,7 @@ func organizationPage(deps core.Deps, service Service) http.HandlerFunc {
 			writeProblem(w, err)
 			return
 		}
-		account, org, err := service.Snapshot(p)
+		account, org, err := service.Snapshot(r.Context(), p)
 		if err != nil {
 			writeProblem(w, err)
 			return
@@ -160,7 +160,12 @@ func organizationPage(deps core.Deps, service Service) http.HandlerFunc {
 		data.NewOrganizationID = org.ID
 		data.PaymentCanceled = paymentVerified && r.URL.Query().Get("payment") == "canceled" && data.NewOrganization == "payment"
 		data.OpenCreateProject = r.URL.Query().Get("newProject") == "1"
-		data.Plans = wizardPlans(deps.Store.Plans(), org)
+		plans, err := deps.Store.Plans(r.Context())
+		if err != nil {
+			writeProblem(w, err)
+			return
+		}
+		data.Plans = wizardPlans(plans, org)
 		data.Demo = deps.Demo
 		page := core.Page{
 			Layout: "shell", Title: "Organization · TerraScale",
@@ -184,12 +189,18 @@ func resumeCheckoutOrganization(deps core.Deps, service Service, w http.Response
 	if organizationID == "" {
 		return p, false, nil
 	}
-	target, err := service.ForOrganization(p, organizationID)
-	if err != nil {
-		return p, false, nil
+	target, err := service.ForOrganization(r.Context(), p, organizationID)
+	var organization core.Organization
+	if err == nil {
+		_, organization, err = service.Snapshot(r.Context(), target)
 	}
-	_, organization, err := service.Snapshot(target)
-	if err != nil || organization.Kind != kindBusiness || organization.OwnerUserID != p.UserID {
+	if err != nil {
+		if errors.Is(err, core.ErrNotFound) || errors.Is(err, core.ErrForbidden) || errors.Is(err, core.ErrUnauthorized) {
+			return p, false, nil
+		}
+		return p, false, err
+	}
+	if organization.Kind != kindBusiness || organization.OwnerUserID != p.UserID {
 		return p, false, nil
 	}
 	checkoutStatus := "complete"
@@ -211,15 +222,12 @@ func resumeCheckoutOrganization(deps core.Deps, service Service, w http.Response
 	if p.OrganizationID == organizationID {
 		return p, true, nil
 	}
-	if err := service.SwitchOrganization(p, organizationID); err != nil {
+	if err := service.SwitchOrganization(r.Context(), p, organizationID); err != nil {
 		return core.Principal{}, false, err
 	}
-	if err := refreshPrincipal(deps, w, r, p); err != nil {
+	refreshed, err := refreshPrincipal(deps, w, r, p)
+	if err != nil {
 		return core.Principal{}, false, err
-	}
-	refreshed, ok := deps.Store.CurrentPrincipal(p.AccountID, p.UserID)
-	if !ok {
-		return core.Principal{}, false, core.ErrForbidden
 	}
 	return refreshed, true, nil
 }
@@ -317,12 +325,12 @@ func newOrganization(deps core.Deps, service Service) http.HandlerFunc {
 		}
 		switch form.Get("step") {
 		case "organization":
-			_, err := service.CreateBusiness(p, form.Get("name"))
+			_, err := service.CreateBusiness(r.Context(), p, form.Get("name"))
 			if err != nil {
 				redirectWithError(w, r, "/organization?newOrganization=organization", err)
 				return
 			}
-			if err := refreshPrincipal(deps, w, r, p); err != nil {
+			if _, err := refreshPrincipal(deps, w, r, p); err != nil {
 				writeProblem(w, err)
 				return
 			}
@@ -332,19 +340,35 @@ func newOrganization(deps core.Deps, service Service) http.HandlerFunc {
 			if organizationID == "" {
 				organizationID = p.OrganizationID
 			}
-			target, err := service.ForOrganization(p, organizationID)
+			target, err := service.ForOrganization(r.Context(), p, organizationID)
 			if err != nil {
+				if !errors.Is(err, core.ErrNotFound) && !errors.Is(err, core.ErrForbidden) && !errors.Is(err, core.ErrUnauthorized) {
+					writeProblem(w, err)
+					return
+				}
 				redirectWithError(w, r, "/organization?newOrganization=organization", err)
 				return
 			}
-			_, org, err := service.Snapshot(target)
-			if err != nil || org.Kind != kindBusiness || org.BillingStatus != "billing_required" || org.OwnerUserID != target.UserID {
+			_, org, err := service.Snapshot(r.Context(), target)
+			if err != nil {
+				if errors.Is(err, core.ErrNotFound) {
+					redirectWithError(w, r, "/organization?newOrganization=organization", core.ErrForbidden)
+				} else {
+					writeProblem(w, err)
+				}
+				return
+			}
+			if org.Kind != kindBusiness || org.BillingStatus != "billing_required" || org.OwnerUserID != target.UserID {
 				redirectWithError(w, r, "/organization?newOrganization=organization", core.ErrForbidden)
 				return
 			}
 			planKey := strings.TrimSpace(form.Get("plan"))
-			plan, exists := deps.Store.Plan(planKey)
-			if !exists || !plan.Visible || plan.PriceCents <= 0 {
+			plan, err := deps.Store.Plan(r.Context(), planKey)
+			if err != nil && !errors.Is(err, core.ErrNotFound) {
+				writeProblem(w, err)
+				return
+			}
+			if err != nil || !plan.Visible || plan.PriceCents <= 0 {
 				redirectWithError(w, r, "/organization?newOrganization=payment", core.ErrInvalid)
 				return
 			}
@@ -355,11 +379,11 @@ func newOrganization(deps core.Deps, service Service) http.HandlerFunc {
 			// Checkout reads the request principal to choose its tenant. Restore the
 			// wizard's server-validated organization first so a stale tab cannot
 			// charge a different workspace after an organization switch.
-			if err := service.SwitchOrganization(p, organizationID); err != nil {
+			if err := service.SwitchOrganization(r.Context(), p, organizationID); err != nil {
 				writeProblem(w, err)
 				return
 			}
-			if err := refreshPrincipal(deps, w, r, p); err != nil {
+			if _, err := refreshPrincipal(deps, w, r, p); err != nil {
 				writeProblem(w, err)
 				return
 			}
@@ -372,26 +396,38 @@ func newOrganization(deps core.Deps, service Service) http.HandlerFunc {
 			if organizationID == "" {
 				organizationID = p.OrganizationID
 			}
-			target, err := service.ForOrganization(p, organizationID)
+			target, err := service.ForOrganization(r.Context(), p, organizationID)
 			if err != nil {
+				if !errors.Is(err, core.ErrNotFound) && !errors.Is(err, core.ErrForbidden) && !errors.Is(err, core.ErrUnauthorized) {
+					writeProblem(w, err)
+					return
+				}
 				redirectWithError(w, r, "/organization?newOrganization=organization", err)
 				return
 			}
-			_, org, err := service.Snapshot(target)
-			if err != nil || org.Kind != kindBusiness || org.BillingStatus != "active" || org.OwnerUserID != target.UserID {
+			_, org, err := service.Snapshot(r.Context(), target)
+			if err != nil {
+				if errors.Is(err, core.ErrNotFound) {
+					redirectWithError(w, r, "/organization?newOrganization=payment", ErrBillingNeeded)
+				} else {
+					writeProblem(w, err)
+				}
+				return
+			}
+			if org.Kind != kindBusiness || org.BillingStatus != "active" || org.OwnerUserID != target.UserID {
 				redirectWithError(w, r, "/organization?newOrganization=payment", ErrBillingNeeded)
 				return
 			}
-			_, err = service.CreateProject(target, form.Get("name"), form.Get("region"), form.Get("backupRegion"), form["regions"])
+			_, err = service.CreateProject(r.Context(), target, form.Get("name"), form.Get("region"), form.Get("backupRegion"), form["regions"])
 			if err != nil {
 				redirectWithError(w, r, "/organization?newOrganization=project", err)
 				return
 			}
-			if err := service.SwitchOrganization(p, target.OrganizationID); err != nil {
+			if err := service.SwitchOrganization(r.Context(), p, target.OrganizationID); err != nil {
 				writeProblem(w, err)
 				return
 			}
-			if err := refreshPrincipal(deps, w, r, p); err != nil {
+			if _, err := refreshPrincipal(deps, w, r, p); err != nil {
 				writeProblem(w, err)
 				return
 			}
@@ -408,11 +444,11 @@ func switchOrganization(deps core.Deps, service Service) http.HandlerFunc {
 		if !ok {
 			return
 		}
-		if err := service.SwitchOrganization(p, form.Get("organizationId")); err != nil {
+		if err := service.SwitchOrganization(r.Context(), p, form.Get("organizationId")); err != nil {
 			writeProblem(w, err)
 			return
 		}
-		if err := refreshPrincipal(deps, w, r, p); err != nil {
+		if _, err := refreshPrincipal(deps, w, r, p); err != nil {
 			writeProblem(w, err)
 			return
 		}
@@ -430,11 +466,11 @@ func switchProject(deps core.Deps, service Service) http.HandlerFunc {
 		if !ok {
 			return
 		}
-		if err := service.SwitchProject(p, form.Get("projectId")); err != nil {
+		if err := service.SwitchProject(r.Context(), p, form.Get("projectId")); err != nil {
 			writeProblem(w, err)
 			return
 		}
-		if err := refreshPrincipal(deps, w, r, p); err != nil {
+		if _, err := refreshPrincipal(deps, w, r, p); err != nil {
 			writeProblem(w, err)
 			return
 		}
@@ -443,14 +479,14 @@ func switchProject(deps core.Deps, service Service) http.HandlerFunc {
 }
 
 func renameOrganization(deps core.Deps, service Service) http.HandlerFunc {
-	return organizationMutation(deps, "/organization", func(p core.Principal, _ *http.Request, form url.Values) error {
-		return service.RenameOrganization(p, form.Get("name"))
+	return organizationMutation(deps, "/organization", func(p core.Principal, r *http.Request, form url.Values) error {
+		return service.RenameOrganization(r.Context(), p, form.Get("name"))
 	})
 }
 
 func createProject(deps core.Deps, service Service) http.HandlerFunc {
-	return organizationMutation(deps, "/organization", func(p core.Principal, _ *http.Request, form url.Values) error {
-		_, err := service.CreateProject(p, form.Get("name"), form.Get("region"), form.Get("backupRegion"), form["regions"])
+	return organizationMutation(deps, "/organization", func(p core.Principal, r *http.Request, form url.Values) error {
+		_, err := service.CreateProject(r.Context(), p, form.Get("name"), form.Get("region"), form.Get("backupRegion"), form["regions"])
 		return err
 	})
 }
@@ -461,7 +497,7 @@ func renameProject(deps core.Deps, service Service) http.HandlerFunc {
 		if !ok {
 			return
 		}
-		if err := service.RenameProject(p, r.PathValue("projectID"), form.Get("name"), form.Get("region"), form.Get("backupRegion"), form["regions"]); err != nil {
+		if err := service.RenameProject(r.Context(), p, r.PathValue("projectID"), form.Get("name"), form.Get("region"), form.Get("backupRegion"), form["regions"]); err != nil {
 			redirectWithError(w, r, "/organization", err)
 			return
 		}
@@ -475,7 +511,7 @@ func updateMemberRole(deps core.Deps, service Service) http.HandlerFunc {
 		if !ok {
 			return
 		}
-		if err := service.UpdateMemberRole(p, r.PathValue("userID"), form.Get("role")); err != nil {
+		if err := service.UpdateMemberRole(r.Context(), p, r.PathValue("userID"), form.Get("role")); err != nil {
 			redirectWithError(w, r, "/organization", err)
 			return
 		}
@@ -489,7 +525,7 @@ func removeMember(deps core.Deps, service Service) http.HandlerFunc {
 		if !ok {
 			return
 		}
-		if err := service.RemoveMember(p, r.PathValue("userID")); err != nil {
+		if err := service.RemoveMember(r.Context(), p, r.PathValue("userID")); err != nil {
 			redirectWithError(w, r, "/organization", err)
 			return
 		}
@@ -503,7 +539,7 @@ func requestOwnershipTransfer(deps core.Deps, service Service) http.HandlerFunc 
 		if !ok {
 			return
 		}
-		if err := service.RequestOwnershipTransfer(p, form.Get("userID")); err != nil {
+		if err := service.RequestOwnershipTransfer(r.Context(), p, form.Get("userID")); err != nil {
 			redirectWithError(w, r, "/organization", err)
 			return
 		}
@@ -517,11 +553,11 @@ func confirmOwnershipTransfer(deps core.Deps, service Service) http.HandlerFunc 
 		if !ok {
 			return
 		}
-		if err := service.ConfirmOwnershipTransfer(p); err != nil {
+		if err := service.ConfirmOwnershipTransfer(r.Context(), p); err != nil {
 			redirectWithError(w, r, "/organization", err)
 			return
 		}
-		if err := refreshPrincipal(deps, w, r, p); err != nil {
+		if _, err := refreshPrincipal(deps, w, r, p); err != nil {
 			writeProblem(w, err)
 			return
 		}
@@ -530,8 +566,8 @@ func confirmOwnershipTransfer(deps core.Deps, service Service) http.HandlerFunc 
 }
 
 func cancelOwnershipTransfer(deps core.Deps, service Service) http.HandlerFunc {
-	return organizationMutation(deps, "/organization", func(p core.Principal, _ *http.Request, _ url.Values) error {
-		return service.CancelOwnershipTransfer(p)
+	return organizationMutation(deps, "/organization", func(p core.Principal, r *http.Request, _ url.Values) error {
+		return service.CancelOwnershipTransfer(r.Context(), p)
 	})
 }
 
@@ -541,7 +577,7 @@ func requestDeletion(deps core.Deps, service Service) http.HandlerFunc {
 		if !ok {
 			return
 		}
-		if err := service.RequestDeletion(p, form.Get("confirmation")); err != nil {
+		if err := service.RequestDeletion(r.Context(), p, form.Get("confirmation")); err != nil {
 			redirectWithError(w, r, "/organization", err)
 			return
 		}
@@ -555,11 +591,11 @@ func leaveOrganization(deps core.Deps, service Service) http.HandlerFunc {
 		if !ok {
 			return
 		}
-		if err := service.LeaveOrganization(p); err != nil {
+		if err := service.LeaveOrganization(r.Context(), p); err != nil {
 			redirectWithError(w, r, "/organization", err)
 			return
 		}
-		if err := refreshPrincipal(deps, w, r, p); err != nil {
+		if _, err := refreshPrincipal(deps, w, r, p); err != nil {
 			writeProblem(w, err)
 			return
 		}
@@ -598,15 +634,24 @@ func parseMutation(w http.ResponseWriter, r *http.Request, deps core.Deps) (core
 	return p, r.Form, true
 }
 
-func refreshPrincipal(deps core.Deps, w http.ResponseWriter, r *http.Request, p core.Principal) error {
-	refreshed, ok := deps.Store.CurrentPrincipal(p.AccountID, p.UserID)
-	if !ok {
-		return core.ErrForbidden
+// refreshPrincipal re-resolves p from the account and starts a session for
+// the result, which it returns.
+func refreshPrincipal(deps core.Deps, w http.ResponseWriter, r *http.Request, p core.Principal) (core.Principal, error) {
+	refreshed, err := deps.Store.CurrentPrincipal(r.Context(), p.AccountID, p.UserID)
+	if errors.Is(err, core.ErrNotFound) {
+		return core.Principal{}, core.ErrForbidden
 	}
-	return deps.Sessions.Start(w, r, refreshed)
+	if err != nil {
+		return core.Principal{}, err
+	}
+	return refreshed, deps.Sessions.Start(w, r, refreshed)
 }
 
 func redirectWithError(w http.ResponseWriter, r *http.Request, path string, err error) {
+	if errors.Is(err, core.ErrUnavailable) {
+		writeProblem(w, err)
+		return
+	}
 	message := "The organization change could not be completed."
 	switch {
 	case errors.Is(err, core.ErrInvalid):
@@ -644,6 +689,8 @@ func writeProblem(w http.ResponseWriter, err error) {
 		status = http.StatusNotFound
 	case errors.Is(err, core.ErrConflict):
 		status = http.StatusConflict
+	case errors.Is(err, core.ErrUnavailable):
+		status = http.StatusServiceUnavailable
 	}
 	http.Error(w, http.StatusText(status), status)
 }

@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"errors"
 	"maps"
 	"net/http"
@@ -393,8 +394,10 @@ type Sessions interface {
 	Start(http.ResponseWriter, *http.Request, Principal) error
 	Principal(*http.Request) (Principal, bool)
 	BearerPrincipal(*http.Request) (Principal, bool)
-	End(http.ResponseWriter, *http.Request)
-	RevokeUser(accountID, userID string)
+	// End revokes the supplied sessions and clears the cookie only on success.
+	End(http.ResponseWriter, *http.Request) error
+	// RevokeUser ends every session of the user in the account.
+	RevokeUser(ctx context.Context, accountID, userID string) error
 }
 
 // CredentialSessions binds a password login to the credential version that
@@ -405,8 +408,13 @@ type CredentialSessions interface {
 
 // CLIGrantSessions binds device approval to a live browser session without
 // exposing or retaining its bearer secret in the authorization feature.
+// BindCLIGrant returns an opaque, storable binding to the request's live
+// session; CLIGrantPrincipal resolves it to the session's current principal
+// for as long as that session lives. Resolution errors preserve transient
+// storage failures so a caller can retry instead of invalidating an approval.
 type CLIGrantSessions interface {
-	BindCLIGrant(*http.Request) (func() (Principal, bool), bool)
+	BindCLIGrant(*http.Request) (string, bool)
+	CLIGrantPrincipal(ctx context.Context, binding string) (Principal, bool, error)
 }
 
 // Throttle bounds password guessing. Allow reserves one attempt for the
@@ -551,7 +559,7 @@ type SDKFactory interface {
 // Deps is shared across independent feature packages. The implementation of
 // each interface lives in platform packages; feature packages import core only.
 type Deps struct {
-	Store    *Store
+	Store    Store
 	Sessions Sessions
 	CSRF     CSRF
 	Render   Renderer

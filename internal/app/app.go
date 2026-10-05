@@ -11,6 +11,7 @@ import (
 	"github.com/CAFxX/httpcompression"
 	"terrascale.tech/dashboard/internal/adapters/tsgo"
 	"terrascale.tech/dashboard/internal/core"
+	"terrascale.tech/dashboard/internal/core/memstore"
 	"terrascale.tech/dashboard/internal/features/access"
 	"terrascale.tech/dashboard/internal/features/admin"
 	"terrascale.tech/dashboard/internal/features/apikeys"
@@ -51,20 +52,22 @@ func New(cfg config.Config) (*Application, error) {
 	if !cfg.Demo {
 		return nil, errors.New("live dashboard state is not configured")
 	}
-	store := core.NewStore()
-	if err := seedAdmin(store, cfg.AdminEmail, cfg.AdminPassword); err != nil {
+	// The demo keeps every account in this process's memory.
+	ctx := context.Background()
+	store := memstore.New()
+	if err := seedAdmin(ctx, store, cfg.AdminEmail, cfg.AdminPassword); err != nil {
 		return nil, err
 	}
-	if err := seedDemoAccount(store); err != nil {
+	if err := seedDemoAccount(ctx, store); err != nil {
 		return nil, err
 	}
 	sdkFactory := tsgo.Factory{APIBaseURL: cfg.SDKBaseURL, AccessToken: cfg.SDKAccessToken}
-	billing, err := payments.New(context.Background(), cfg.Demo, os.Getenv, sdkFactory)
+	billing, err := payments.New(ctx, cfg.Demo, os.Getenv, sdkFactory)
 	if err != nil {
 		return nil, err
 	}
 	sessions := session.New(store, session.Options{Secure: cfg.SecureCookies})
-	guard := csrf.New(sessions, csrf.Options{Secure: cfg.SecureCookies})
+	guard := csrf.New(sessions, csrf.Options{Secure: cfg.SecureCookies, Secret: cfg.CSRFSecret})
 	var notices render.StatusNotices
 	if cfg.StatusURL != "" {
 		client, err := statuspage.New(cfg.StatusURL)
@@ -85,7 +88,7 @@ func New(cfg config.Config) (*Application, error) {
 	}
 	status.Mount(mux, deps)
 	auth.Mount(mux, deps)
-	deviceAuthorization := auth.NewDeviceAuthorization(deps, cfg.SecureCookies, cfg.PublicURL)
+	deviceAuthorization := auth.NewDeviceAuthorization(deps, auth.NewMemoryDeviceGrants(), cfg.SecureCookies, cfg.PublicURL)
 	deviceAuthorization.MountBrowser(mux)
 	admin.Mount(mux, deps)
 	authentication.Mount(mux, deps)
@@ -152,7 +155,7 @@ func invalidatePrefetch(next http.Handler) http.Handler {
 	})
 }
 
-func seedAdmin(store *core.Store, email, password string) error {
+func seedAdmin(ctx context.Context, store core.Store, email, password string) error {
 	if email == "" && password == "" {
 		return nil
 	}
@@ -164,11 +167,11 @@ func seedAdmin(store *core.Store, email, password string) error {
 	if err != nil {
 		return err
 	}
-	a, err := store.CreateAccount(core.User{Name: "Demo administrator", Email: email, PasswordHash: hash, PlatformAdmin: true})
+	a, err := store.CreateAccount(ctx, core.User{Name: "Demo administrator", Email: email, PasswordHash: hash, PlatformAdmin: true})
 	if err != nil {
 		return err
 	}
-	return store.Update(a.ID, func(a *core.Account) error {
+	return store.Update(ctx, a.ID, func(a *core.Account) error {
 		a.OnboardingCompleted = true
 		a.OnboardingStep = "complete"
 		return nil
@@ -180,22 +183,24 @@ const (
 	demoAccountPassword = "terrascale"
 )
 
-func seedDemoAccount(store *core.Store) error {
-	if _, exists := store.FindByEmail(demoAccountEmail); exists {
+func seedDemoAccount(ctx context.Context, store core.Store) error {
+	if _, err := store.FindByEmail(ctx, demoAccountEmail); err == nil {
 		return nil
+	} else if !errors.Is(err, core.ErrNotFound) {
+		return err
 	}
 	hash, err := auth.HashPassword(demoAccountPassword)
 	if err != nil {
 		return err
 	}
-	account, err := store.CreateAccount(core.User{
+	account, err := store.CreateAccount(ctx, core.User{
 		ID: "usr_01JC9Q7T4N8Y2M3P5R7V9X1ZAB", Name: "Mario Kraus",
 		Email: demoAccountEmail, PasswordHash: hash, Role: "owner", PlatformAdmin: true,
 	})
 	if err != nil {
 		return err
 	}
-	return store.Update(account.ID, func(current *core.Account) error {
+	return store.Update(ctx, account.ID, func(current *core.Account) error {
 		seedMarioDemoFixture(current)
 		return nil
 	})

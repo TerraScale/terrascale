@@ -1,6 +1,7 @@
 package settings
 
 import (
+	"context"
 	"fmt"
 	"maps"
 	"slices"
@@ -71,11 +72,11 @@ type Service struct {
 	backups backups.Service
 }
 
-func (s Service) selected(p core.Principal) (core.Account, core.Project, error) {
+func (s Service) selected(ctx context.Context, p core.Principal) (core.Account, core.Project, error) {
 	if p.ProjectID == "" {
 		return core.Account{}, core.Project{}, core.ErrNotFound
 	}
-	account, err := s.deps.Store.SnapshotAs(p)
+	account, err := s.deps.Store.SnapshotAs(ctx, p)
 	if err != nil {
 		return core.Account{}, core.Project{}, err
 	}
@@ -84,8 +85,8 @@ func (s Service) selected(p core.Principal) (core.Account, core.Project, error) 
 }
 
 // Settings returns the selected project's settings.
-func (s Service) Settings(p core.Principal) (projectSettings, error) {
-	account, project, err := s.selected(p)
+func (s Service) Settings(ctx context.Context, p core.Principal) (projectSettings, error) {
+	account, project, err := s.selected(ctx, p)
 	if err != nil {
 		return projectSettings{}, err
 	}
@@ -139,14 +140,14 @@ func settingsFor(account core.Account, project core.Project, p core.Principal) p
 }
 
 // SetAuditRetention keeps the organization's audit events for days.
-func (s Service) SetAuditRetention(p core.Principal, days int) error {
-	if _, err := s.managed(p); err != nil {
+func (s Service) SetAuditRetention(ctx context.Context, p core.Principal, days int) error {
+	if _, err := s.managed(ctx, p); err != nil {
 		return err
 	}
 	if days < 1 || days > 90 {
 		return core.Invalid(msgAuditRetention)
 	}
-	return s.deps.Store.UpdateAs(p, func(account *core.Account) error {
+	return s.deps.Store.UpdateAs(ctx, p, func(account *core.Account) error {
 		org, err := account.OrganizationFor(p, p.OrganizationID)
 		if err != nil {
 			return err
@@ -162,12 +163,12 @@ func (s Service) SetAuditRetention(p core.Principal, days int) error {
 }
 
 // SetAuthentication turns the project's authentication integration on or off.
-func (s Service) SetAuthentication(p core.Principal, enabled bool) error {
-	if _, err := s.managed(p); err != nil {
+func (s Service) SetAuthentication(ctx context.Context, p core.Principal, enabled bool) error {
+	if _, err := s.managed(ctx, p); err != nil {
 		return err
 	}
 	now := time.Now().UTC()
-	return s.update(p, func(account *core.Account, project *core.Project) error {
+	return s.update(ctx, p, func(account *core.Account, project *core.Project) error {
 		project.AuthenticationEnabled = enabled
 		project.SecuritySettingsUpdatedAt = now
 		account.RecordAudit(p, "settings.authentication_updated", project.Name, "setting", now)
@@ -178,15 +179,15 @@ func (s Service) SetAuthentication(p core.Principal, enabled bool) error {
 // DeleteProject deletes the selected project once confirmName repeats its
 // name. If it was the account's saved project, another project in the
 // organization is selected instead.
-func (s Service) DeleteProject(p core.Principal, confirmName string) error {
-	project, err := s.managed(p)
+func (s Service) DeleteProject(ctx context.Context, p core.Principal, confirmName string) error {
+	project, err := s.managed(ctx, p)
 	if err != nil {
 		return err
 	}
 	if strings.TrimSpace(confirmName) != project.Name {
 		return core.Invalid(msgConfirmDelete)
 	}
-	return s.deps.Store.UpdateAs(p, func(account *core.Account) error {
+	return s.deps.Store.UpdateAs(ctx, p, func(account *core.Account) error {
 		org, err := account.OrganizationFor(p, p.OrganizationID)
 		if err != nil {
 			return err
@@ -213,8 +214,8 @@ func (s Service) DeleteProject(p core.Principal, confirmName string) error {
 
 // managed returns the selected project once the principal is confirmed to
 // manage its organization.
-func (s Service) managed(p core.Principal) (core.Project, error) {
-	account, project, err := s.selected(p)
+func (s Service) managed(ctx context.Context, p core.Principal) (core.Project, error) {
+	account, project, err := s.selected(ctx, p)
 	if err != nil {
 		return core.Project{}, err
 	}
@@ -226,8 +227,8 @@ func (s Service) managed(p core.Principal) (core.Project, error) {
 
 // update applies mutate to the selected project after rechecking that the
 // principal manages its organization.
-func (s Service) update(p core.Principal, mutate func(*core.Account, *core.Project) error) error {
-	return s.deps.Store.UpdateAs(p, func(account *core.Account) error {
+func (s Service) update(ctx context.Context, p core.Principal, mutate func(*core.Account, *core.Project) error) error {
+	return s.deps.Store.UpdateAs(ctx, p, func(account *core.Account) error {
 		project, err := account.ProjectFor(p, p.OrganizationID, p.ProjectID)
 		if err != nil {
 			return err

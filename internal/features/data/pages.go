@@ -109,7 +109,8 @@ func renderSection(w http.ResponseWriter, r *http.Request, deps core.Deps, datab
 		return
 	}
 	service := Service{deps: deps}
-	a, project, err := service.project(p)
+	ctx := r.Context()
+	a, project, err := service.project(ctx, p)
 	if err != nil {
 		if errors.Is(err, core.ErrUnauthorized) {
 			core.RedirectToLogin(w, r)
@@ -153,7 +154,7 @@ func renderSection(w http.ResponseWriter, r *http.Request, deps core.Deps, datab
 	if deps.Demo {
 		loadDemo(&data, a, p, db)
 	} else {
-		loadLive(r.Context(), service, p, &data)
+		loadLive(ctx, service, p, &data)
 	}
 	data.Queries = slices.SortedFunc(maps.Values(project.SavedQueries), func(a, b core.SavedQuery) int { return strings.Compare(a.Name, b.Name) })
 	if section == "sql" {

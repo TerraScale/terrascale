@@ -11,6 +11,7 @@ import (
 	"unicode/utf8"
 
 	"terrascale.tech/dashboard/internal/core"
+	"terrascale.tech/dashboard/internal/core/memstore"
 	sdk "terrascale.tech/sdk"
 )
 
@@ -33,8 +34,8 @@ func TestDatabaseFilterKeepsFullSelectedName(t *testing.T) {
 }
 
 func TestRotateReturnsTheRotatedKey(t *testing.T) {
-	store := core.NewStore()
-	account, err := store.CreateAccount(core.User{Name: "Owner", Email: "owner@example.test", PasswordHash: "hash"})
+	store := memstore.New()
+	account, err := store.CreateAccount(t.Context(), core.User{Name: "Owner", Email: "owner@example.test", PasswordHash: "hash"})
 	if err != nil {
 		t.Fatal(err)
 	}

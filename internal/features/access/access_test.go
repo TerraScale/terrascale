@@ -3,6 +3,7 @@ package access
 import (
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"testing"
 	"time"
@@ -117,5 +118,17 @@ func TestRespondError(t *testing.T) {
 		if status != tc.status || (message != "") != tc.message {
 			t.Errorf("respondError(%v) = %q, %d; want status %d, message %t", tc.err, message, status, tc.status, tc.message)
 		}
+	}
+}
+
+func TestRedirectAccessErrorNamesAStoreOutage(t *testing.T) {
+	response := httptest.NewRecorder()
+	redirectAccessError(response, httptest.NewRequest(http.MethodPost, "/access?tab=members", nil), fmt.Errorf("revoke: %w", core.ErrUnavailable))
+	location, err := url.Parse(response.Header().Get("Location"))
+	if err != nil || response.Code != http.StatusSeeOther {
+		t.Fatalf("redirect = %d %q", response.Code, response.Header().Get("Location"))
+	}
+	if got := location.Query().Get("error"); got != "The team service is unavailable right now. Try again in a moment." {
+		t.Errorf("outage message = %q", got)
 	}
 }

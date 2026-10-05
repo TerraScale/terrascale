@@ -256,28 +256,28 @@ func mountTools(tools *core.Tools, service Service) {
 	core.AddTool(tools, core.ToolSpec{
 		Name: "list_index_recommendations", Title: "List index recommendations", ReadOnly: true,
 		Description: "List suggested indexes for a database and whether each was applied.",
-	}, func(_ context.Context, p core.Principal, in recommendationsInput) (recommendationList, error) {
-		recommendations, err := service.Recommendations(p, in.DatabaseID, in.Collection)
+	}, func(ctx context.Context, p core.Principal, in recommendationsInput) (recommendationList, error) {
+		recommendations, err := service.Recommendations(ctx, p, in.DatabaseID, in.Collection)
 		return recommendationList{Recommendations: recommendations}, err
 	})
 	core.AddTool(tools, core.ToolSpec{
 		Name: "apply_index_recommendation", Title: "Apply index recommendation", Idempotent: true,
 		Description: "Build the indexes an index recommendation suggests. Requires an owner or admin role.",
-	}, func(_ context.Context, p core.Principal, in applyRecommendationInput) (recommendationResult, error) {
-		return service.ApplyRecommendation(p, in.DatabaseID, in.Collection, in.RecommendationID)
+	}, func(ctx context.Context, p core.Principal, in applyRecommendationInput) (recommendationResult, error) {
+		return service.ApplyRecommendation(ctx, p, in.DatabaseID, in.Collection, in.RecommendationID)
 	})
 	core.AddTool(tools, core.ToolSpec{
 		Name: "get_index_migration", Title: "Get index migration", ReadOnly: true,
 		Description: "Show the index backfill progress for a collection, if one is running.",
-	}, func(_ context.Context, p core.Principal, in collectionRef) (indexMigration, error) {
-		migration, err := service.Migration(p, in.DatabaseID, in.Collection)
+	}, func(ctx context.Context, p core.Principal, in collectionRef) (indexMigration, error) {
+		migration, err := service.Migration(ctx, p, in.DatabaseID, in.Collection)
 		return indexMigration{Migration: migration}, err
 	})
 	core.AddTool(tools, core.ToolSpec{
 		Name: "check_sql", Title: "Check SQL", ReadOnly: true,
 		Description: "Validate a read-only SQL statement without running it and suggest indexes for it.",
-	}, func(_ context.Context, p core.Principal, in sqlInput) (sqlAnalysis, error) {
-		return service.CheckSQL(p, in.DatabaseID, in.SQL)
+	}, func(ctx context.Context, p core.Principal, in sqlInput) (sqlAnalysis, error) {
+		return service.CheckSQL(ctx, p, in.DatabaseID, in.SQL)
 	})
 	core.AddTool(tools, core.ToolSpec{
 		Name: "run_sql", Title: "Run SQL", ReadOnly: true,
@@ -289,21 +289,21 @@ func mountTools(tools *core.Tools, service Service) {
 	core.AddTool(tools, core.ToolSpec{
 		Name: "list_saved_queries", Title: "List saved queries", ReadOnly: true,
 		Description: "List the SQL queries saved in a project.",
-	}, func(_ context.Context, p core.Principal, _ core.Scope) (savedQueryList, error) {
-		queries, err := service.SavedQueries(p)
+	}, func(ctx context.Context, p core.Principal, _ core.Scope) (savedQueryList, error) {
+		queries, err := service.SavedQueries(ctx, p)
 		return savedQueryList{Queries: queries}, err
 	})
 	core.AddTool(tools, core.ToolSpec{
 		Name: "save_query", Title: "Save query",
 		Description: "Save a read-only SQL query for everyone in the project. Requires write access.",
-	}, func(_ context.Context, p core.Principal, in saveQueryInput) (savedQueryView, error) {
-		return service.SaveQuery(p, in.Name, in.SQL)
+	}, func(ctx context.Context, p core.Principal, in saveQueryInput) (savedQueryView, error) {
+		return service.SaveQuery(ctx, p, in.Name, in.SQL)
 	})
 	core.AddTool(tools, core.ToolSpec{
 		Name: "delete_saved_query", Title: "Delete saved query", Destructive: true,
 		Description: "Delete a saved query from the project. Requires write access.",
-	}, func(_ context.Context, p core.Principal, in savedQueryInput) (deleted, error) {
-		err := service.DeleteSavedQuery(p, in.QueryID)
+	}, func(ctx context.Context, p core.Principal, in savedQueryInput) (deleted, error) {
+		err := service.DeleteSavedQuery(ctx, p, in.QueryID)
 		return deleted{Deleted: err == nil}, err
 	})
 }

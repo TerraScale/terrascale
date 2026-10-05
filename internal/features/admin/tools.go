@@ -118,28 +118,28 @@ type done struct {
 
 func mountTools(tools *core.Tools, service Service) {
 	core.AddTool(tools, adminRead("admin_list_users", "List users", "List every dashboard account with its organization and project counts."),
-		func(_ context.Context, p core.Principal, in searchInput) (usersOutput, error) {
-			data, err := service.page(p, "users", in.Query)
+		func(ctx context.Context, p core.Principal, in searchInput) (usersOutput, error) {
+			data, err := service.page(ctx, p, "users", in.Query)
 			return usersOutput{Users: nonNil(data.Users)}, err
 		})
 	core.AddTool(tools, adminRead("admin_list_organizations", "List organizations", "List every organization with its owner, status, and project count."),
-		func(_ context.Context, p core.Principal, in searchInput) (organizationsOutput, error) {
-			data, err := service.page(p, "organizations", in.Query)
+		func(ctx context.Context, p core.Principal, in searchInput) (organizationsOutput, error) {
+			data, err := service.page(ctx, p, "organizations", in.Query)
 			return organizationsOutput{Organizations: nonNil(data.Organizations)}, err
 		})
 	core.AddTool(tools, adminRead("admin_list_projects", "List projects", "List every project with its organization, region, status, and database count."),
-		func(_ context.Context, p core.Principal, in searchInput) (projectsOutput, error) {
-			data, err := service.page(p, "projects", in.Query)
+		func(ctx context.Context, p core.Principal, in searchInput) (projectsOutput, error) {
+			data, err := service.page(ctx, p, "projects", in.Query)
 			return projectsOutput{Projects: nonNil(data.Projects)}, err
 		})
 	core.AddTool(tools, adminRead("admin_list_databases", "List databases", "List every database across all tenants with its project, region, and status."),
-		func(_ context.Context, p core.Principal, in searchInput) (databasesOutput, error) {
-			data, err := service.page(p, "databases", in.Query)
+		func(ctx context.Context, p core.Principal, in searchInput) (databasesOutput, error) {
+			data, err := service.page(ctx, p, "databases", in.Query)
 			return databasesOutput{Databases: nonNil(data.Databases)}, err
 		})
 	core.AddTool(tools, adminRead("admin_get_estate", "Get estate", "Show the platform estate: regions with observed projects and databases, every database, and the recorded estate actions."),
-		func(_ context.Context, p core.Principal, in searchInput) (estateOutput, error) {
-			data, err := service.page(p, "estate", in.Query)
+		func(ctx context.Context, p core.Principal, in searchInput) (estateOutput, error) {
+			data, err := service.page(ctx, p, "estate", in.Query)
 			if err != nil {
 				return estateOutput{}, err
 			}
@@ -156,13 +156,13 @@ func mountTools(tools *core.Tools, service Service) {
 			return out, nil
 		})
 	core.AddTool(tools, adminRead("admin_get_usage", "Get platform usage", "Show platform-wide totals of accounts, organizations, projects, and databases."),
-		func(_ context.Context, p core.Principal, _ struct{}) (usageOutput, error) {
-			data, err := service.page(p, "usage", "")
+		func(ctx context.Context, p core.Principal, _ struct{}) (usageOutput, error) {
+			data, err := service.page(ctx, p, "usage", "")
 			return usageOutput{Inventory: data.Inventory}, err
 		})
 	core.AddTool(tools, adminRead("admin_list_plans", "List plans", "List every pricing plan, including hidden plans, with prices and limits."),
-		func(_ context.Context, p core.Principal, in searchInput) (plansOutput, error) {
-			data, err := service.page(p, "plans", in.Query)
+		func(ctx context.Context, p core.Principal, in searchInput) (plansOutput, error) {
+			data, err := service.page(ctx, p, "plans", in.Query)
 			out := plansOutput{Plans: make([]planView, 0, len(data.Plans))}
 			for _, plan := range data.Plans {
 				out.Plans = append(out.Plans, viewPlan(plan))
@@ -173,32 +173,32 @@ func mountTools(tools *core.Tools, service Service) {
 	core.AddTool(tools, core.ToolSpec{
 		Name: "admin_update_user", Title: "Update user", Admin: true, Idempotent: true,
 		Description: "Change a user's display name and platform administrator flag.",
-	}, func(_ context.Context, p core.Principal, in updateUserInput) (done, error) {
-		return done{OK: true}, service.UpdateUser(p, in.AccountID, in.Name, in.PlatformAdmin)
+	}, func(ctx context.Context, p core.Principal, in updateUserInput) (done, error) {
+		return done{OK: true}, service.UpdateUser(ctx, p, in.AccountID, in.Name, in.PlatformAdmin)
 	})
 	core.AddTool(tools, core.ToolSpec{
 		Name: "admin_rename_organization", Title: "Rename organization", Admin: true, Idempotent: true,
 		Description: "Rename any tenant's organization.",
-	}, func(_ context.Context, p core.Principal, in renameOrganizationInput) (done, error) {
-		return done{OK: true}, service.RenameOrganization(p, in.AccountID, in.OrganizationID, in.Name)
+	}, func(ctx context.Context, p core.Principal, in renameOrganizationInput) (done, error) {
+		return done{OK: true}, service.RenameOrganization(ctx, p, in.AccountID, in.OrganizationID, in.Name)
 	})
 	core.AddTool(tools, core.ToolSpec{
 		Name: "admin_rename_project", Title: "Rename project", Admin: true, Idempotent: true,
 		Description: "Rename any tenant's project.",
-	}, func(_ context.Context, p core.Principal, in renameProjectInput) (done, error) {
-		return done{OK: true}, service.RenameProject(p, in.AccountID, in.OrganizationID, in.ProjectID, in.Name)
+	}, func(ctx context.Context, p core.Principal, in renameProjectInput) (done, error) {
+		return done{OK: true}, service.RenameProject(ctx, p, in.AccountID, in.OrganizationID, in.ProjectID, in.Name)
 	})
 	core.AddTool(tools, core.ToolSpec{
 		Name: "admin_record_estate_action", Title: "Record estate action", Admin: true,
 		Description: "Record an estate operation with its reason in the platform audit log. No infrastructure change is made.",
-	}, func(_ context.Context, p core.Principal, in estateActionInput) (done, error) {
-		return done{OK: true}, service.RecordEstateAction(p, in.Action, in.TargetID, in.Reason)
+	}, func(ctx context.Context, p core.Principal, in estateActionInput) (done, error) {
+		return done{OK: true}, service.RecordEstateAction(ctx, p, in.Action, in.TargetID, in.Reason)
 	})
 	core.AddTool(tools, core.ToolSpec{
 		Name: "admin_save_plan", Title: "Save plan", Admin: true,
 		Description: "Create a pricing plan, or update an existing plan's name, prices, trial, visibility, storage, and request limits.",
-	}, func(_ context.Context, p core.Principal, in savePlanInput) (planView, error) {
-		plan, err := service.SavePlan(p, core.Plan{
+	}, func(ctx context.Context, p core.Principal, in savePlanInput) (planView, error) {
+		plan, err := service.SavePlan(ctx, p, core.Plan{
 			ID: in.PlanID, Key: in.Key, Name: in.Name, PriceCents: in.PriceCents, AnnualPriceCents: in.AnnualPriceCents,
 			TrialDays: in.TrialDays, Visible: in.Visible, StorageMiB: in.StorageMiB, MonthlyRequests: in.MonthlyRequests,
 		})
@@ -207,14 +207,14 @@ func mountTools(tools *core.Tools, service Service) {
 	core.AddTool(tools, core.ToolSpec{
 		Name: "admin_set_plan_visibility", Title: "Set plan visibility", Admin: true, Idempotent: true,
 		Description: "Show or hide a pricing plan for customers.",
-	}, func(_ context.Context, p core.Principal, in planVisibilityInput) (done, error) {
-		return done{OK: true}, service.SetPlanVisibility(p, in.PlanID, in.Visible)
+	}, func(ctx context.Context, p core.Principal, in planVisibilityInput) (done, error) {
+		return done{OK: true}, service.SetPlanVisibility(ctx, p, in.PlanID, in.Visible)
 	})
 	core.AddTool(tools, core.ToolSpec{
 		Name: "admin_delete_plan", Title: "Delete plan", Admin: true, Destructive: true,
 		Description: "Delete a pricing plan that no organization or open checkout uses.",
-	}, func(_ context.Context, p core.Principal, in planInput) (done, error) {
-		return done{OK: true}, service.DeletePlan(p, in.PlanID)
+	}, func(ctx context.Context, p core.Principal, in planInput) (done, error) {
+		return done{OK: true}, service.DeletePlan(ctx, p, in.PlanID)
 	})
 }
 

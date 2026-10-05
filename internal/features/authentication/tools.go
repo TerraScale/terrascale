@@ -182,8 +182,8 @@ func mountTools(tools *core.Tools, service Service) {
 	core.AddTool(tools, core.ToolSpec{
 		Name: "auth_get_overview", Title: "Get authentication overview", ReadOnly: true,
 		Description: "Summarize a project's ts-auth instance: issuer and hosted page URLs, enabled sign-in strategies, branding, record totals, setup checklist, and recent changes.",
-	}, func(_ context.Context, p core.Principal, _ core.Scope) (overviewView, error) {
-		return service.Overview(p)
+	}, func(ctx context.Context, p core.Principal, _ core.Scope) (overviewView, error) {
+		return service.Overview(ctx, p)
 	})
 	core.AddTool(tools, core.ToolSpec{
 		Name: "auth_describe_sections", Title: "Describe authentication sections", ReadOnly: true,
@@ -195,26 +195,26 @@ func mountTools(tools *core.Tools, service Service) {
 		Name: "auth_list_resources", Title: "List authentication records", ReadOnly: true,
 		Enums:       sectionEnum,
 		Description: "List a ts-auth record section, such as users, organizations, memberships, invitations, enrollment domains, SSO connections, SCIM directories, OAuth applications, JWT templates, management keys, or webhooks.",
-	}, func(_ context.Context, p core.Principal, in sectionInput) (resourcePage, error) {
-		return service.ListResources(p, in.Section, in.Search)
+	}, func(ctx context.Context, p core.Principal, in sectionInput) (resourcePage, error) {
+		return service.ListResources(ctx, p, in.Section, in.Search)
 	})
 	core.AddTool(tools, core.ToolSpec{
 		Name: "auth_save_resource", Title: "Save authentication record",
 		Enums:       sectionEnum,
 		Description: "Create a ts-auth record, or update an editable record's mutable fields when id is given. " + sectionHelp + " Requires an owner or admin role.",
-	}, func(_ context.Context, p core.Principal, in saveResourceInput) (resourceView, error) {
+	}, func(ctx context.Context, p core.Principal, in saveResourceInput) (resourceView, error) {
 		current, err := listSection(in.Section)
 		if err != nil {
 			return resourceView{}, err
 		}
-		return service.SaveResource(p, in.Section, strings.TrimSpace(in.ID), formOf(current, in.Values))
+		return service.SaveResource(ctx, p, in.Section, strings.TrimSpace(in.ID), formOf(current, in.Values))
 	})
 	core.AddTool(tools, core.ToolSpec{
 		Name: "auth_delete_resource", Title: "Delete authentication record", Destructive: true,
 		Enums:       sectionEnum,
 		Description: "Revoke an invitation or management key, or delete any other ts-auth record. Deleting a user removes their memberships; deleting an organization removes its memberships, invitations, domains, directories, and connections.",
-	}, func(_ context.Context, p core.Principal, in resourceInput) (deletion, error) {
-		return service.DeleteResource(p, in.Section, in.ID)
+	}, func(ctx context.Context, p core.Principal, in resourceInput) (deletion, error) {
+		return service.DeleteResource(ctx, p, in.Section, in.ID)
 	})
 	core.AddTool(tools, core.ToolSpec{
 		Name: "auth_run_resource_action", Title: "Run authentication record action",
@@ -222,27 +222,27 @@ func mountTools(tools *core.Tools, service Service) {
 			"section": slices.Sorted(maps.Values(actionSections)), "action": slices.Sorted(maps.Keys(actionSections)),
 		},
 		Description: "Block or unblock a user, enable or disable an SSO connection, or rotate a SCIM directory's bearer token.",
-	}, func(_ context.Context, p core.Principal, in actionInput) (resourceView, error) {
-		return service.RunAction(p, in.Section, in.ID, in.Action)
+	}, func(ctx context.Context, p core.Principal, in actionInput) (resourceView, error) {
+		return service.RunAction(ctx, p, in.Section, in.ID, in.Action)
 	})
 	core.AddTool(tools, core.ToolSpec{
 		Name: "auth_set_strategy", Title: "Set sign-in strategy", Idempotent: true,
 		Enums:       map[string][]string{"strategy": strategyKeys()},
 		Description: "Enable or disable a sign-in or multi-factor strategy. At least one first factor stays enabled, and disabling a strategy disables those that require it.",
-	}, func(_ context.Context, p core.Principal, in strategyInput) (strategyList, error) {
-		return service.SetStrategy(p, in.Strategy, in.Enabled)
+	}, func(ctx context.Context, p core.Principal, in strategyInput) (strategyList, error) {
+		return service.SetStrategy(ctx, p, in.Strategy, in.Enabled)
 	})
 	core.AddTool(tools, core.ToolSpec{
 		Name: "auth_update_branding", Title: "Update hosted page branding", Idempotent: true,
 		Description: "Set the name, logo, and theme color of the instance's hosted sign-in pages.",
-	}, func(_ context.Context, p core.Principal, in brandingInput) (brandingView, error) {
-		return service.SaveBranding(p, in.Name, in.LogoURL, in.ThemeColor)
+	}, func(ctx context.Context, p core.Principal, in brandingInput) (brandingView, error) {
+		return service.SaveBranding(ctx, p, in.Name, in.LogoURL, in.ThemeColor)
 	})
 	core.AddTool(tools, core.ToolSpec{
 		Name: "auth_list_audit_events", Title: "List authentication audit events", ReadOnly: true,
 		Description: "List the authentication console changes made in a project, newest first.",
-	}, func(_ context.Context, p core.Principal, _ core.Scope) (eventList, error) {
-		return service.AuditEvents(p)
+	}, func(ctx context.Context, p core.Principal, _ core.Scope) (eventList, error) {
+		return service.AuditEvents(ctx, p)
 	})
 }
 

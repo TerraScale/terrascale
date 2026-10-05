@@ -42,13 +42,14 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 		if !ok {
 			return
 		}
-		db, err := service.database(p, r.FormValue("databaseId"))
+		ctx := r.Context()
+		db, err := service.database(ctx, p, r.FormValue("databaseId"))
 		if err != nil {
 			writeError(w, err)
 			return
 		}
-		if !deps.Store.Can(p, core.Organization.CanWrite) {
-			writeError(w, core.ErrForbidden)
+		if err := core.Can(ctx, deps.Store, p, core.Organization.CanWrite); err != nil {
+			writeError(w, err)
 			return
 		}
 		collection, operation := strings.TrimSpace(r.FormValue("collection")), strings.TrimSpace(r.FormValue("operation"))
@@ -89,7 +90,7 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			failed(http.StatusBadRequest, "A patch must be a JSON object; its fields are merged into the document.")
 			return
 		}
-		result, err := service.WriteDocument(r.Context(), p, db.ID, collection, operation, id, body)
+		result, err := service.WriteDocument(ctx, p, db.ID, collection, operation, id, body)
 		if err != nil {
 			status, message := documentFailure(err, id, collection)
 			failed(status, message)
@@ -119,13 +120,14 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 		if !ok {
 			return
 		}
-		db, err := service.database(p, r.FormValue("databaseId"))
+		ctx := r.Context()
+		db, err := service.database(ctx, p, r.FormValue("databaseId"))
 		if err != nil {
 			writeError(w, err)
 			return
 		}
-		if !deps.Store.Can(p, core.Organization.CanManage) {
-			writeError(w, core.ErrForbidden)
+		if err := core.Can(ctx, deps.Store, p, core.Organization.CanManage); err != nil {
+			writeError(w, err)
 			return
 		}
 		collection, body := strings.TrimSpace(r.FormValue("collection")), []byte(r.FormValue("schema"))
@@ -136,7 +138,7 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			failed(http.StatusBadRequest, problem)
 			return
 		}
-		if err := service.SetSchema(r.Context(), p, db.ID, collection, body); err != nil {
+		if err := service.SetSchema(ctx, p, db.ID, collection, body); err != nil {
 			status, message := failure(err, "The data plane rejected the schema")
 			failed(status, message)
 			return
@@ -165,7 +167,7 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 		if !ok {
 			return
 		}
-		result, err := service.ApplyRecommendation(p, strings.TrimSpace(r.FormValue("databaseId")),
+		result, err := service.ApplyRecommendation(r.Context(), p, strings.TrimSpace(r.FormValue("databaseId")),
 			strings.TrimSpace(r.FormValue("collection")), strings.TrimSpace(r.FormValue("recommendationId")))
 		if err != nil {
 			writeError(w, err)
@@ -182,13 +184,14 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 		if !ok {
 			return
 		}
-		db, err := service.database(p, r.FormValue("databaseId"))
+		ctx := r.Context()
+		db, err := service.database(ctx, p, r.FormValue("databaseId"))
 		if err != nil {
 			writeError(w, err)
 			return
 		}
-		if !deps.Store.Can(p, core.Organization.CanManage) {
-			writeError(w, core.ErrForbidden)
+		if err := core.Can(ctx, deps.Store, p, core.Organization.CanManage); err != nil {
+			writeError(w, err)
 			return
 		}
 		collection, field := strings.TrimSpace(r.FormValue("collection")), strings.TrimSpace(r.FormValue("field"))
@@ -199,7 +202,7 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			failed(http.StatusBadRequest, "Enter a field name of at most 128 characters.")
 			return
 		}
-		if err := service.CreateIndex(r.Context(), p, db.ID, collection, field); err != nil {
+		if err := service.CreateIndex(ctx, p, db.ID, collection, field); err != nil {
 			status, message := failure(err, "The data plane could not create the index")
 			failed(status, message)
 			return
@@ -292,6 +295,8 @@ func failure(err error, action string) (int, string) {
 		return http.StatusConflict, "This change conflicts with the current data. Reload the page and try again."
 	case errors.Is(err, core.ErrInvalid):
 		return http.StatusBadRequest, "Check the values you entered."
+	case errors.Is(err, core.ErrUnavailable):
+		return http.StatusServiceUnavailable, "The dashboard is unavailable right now. Try again in a moment."
 	default:
 		return http.StatusBadGateway, action + ": " + err.Error()
 	}

@@ -15,7 +15,7 @@ func mountTools(tools *core.Tools, service Service) {
 	core.AddTool(tools, core.ToolSpec{
 		Name: "get_overview", Title: "Get overview", ReadOnly: true,
 		Description: "Summarize a project like the dashboard home page: database, member, notification, and credential counts, recent activity, and getting-started progress.",
-	}, func(_ context.Context, p core.Principal, in overviewInput) (overview, error) {
-		return service.Overview(p, in.Range)
+	}, func(ctx context.Context, p core.Principal, in overviewInput) (overview, error) {
+		return service.Overview(ctx, p, in.Range)
 	})
 }

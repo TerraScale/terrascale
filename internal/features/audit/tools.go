@@ -56,7 +56,7 @@ func mountTools(tools *core.Tools, service Service) {
 			"range":    {"24h", "7d", "30d", "90d"},
 		},
 		Description: "List the audit history of a project, newest first, with the same filters and pagination as the audit page and export.",
-	}, func(_ context.Context, p core.Principal, in auditEventsInput) (auditEventsOutput, error) {
+	}, func(ctx context.Context, p core.Principal, in auditEventsInput) (auditEventsOutput, error) {
 		size := pageSize
 		if in.PageSize != 0 {
 			if in.PageSize < 1 || in.PageSize > maxToolPageSize {
@@ -64,7 +64,7 @@ func mountTools(tools *core.Tools, service Service) {
 			}
 			size = in.PageSize
 		}
-		data, err := service.Page(p, in.Search, in.Action, in.Severity, in.Range, strconv.Itoa(in.Page), size)
+		data, err := service.Page(ctx, p, in.Search, in.Action, in.Severity, in.Range, strconv.Itoa(in.Page), size)
 		if err != nil {
 			return auditEventsOutput{}, err
 		}

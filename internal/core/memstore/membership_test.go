@@ -1,26 +1,28 @@
-package core
+package memstore
 
 import (
 	"crypto/sha256"
 	"encoding/hex"
 	"testing"
 	"time"
+
+	"terrascale.tech/dashboard/internal/core"
 )
 
 // joinedMember returns a Personal account that also belongs to owner's
 // organization through an accepted invitation, with that organization
 // selected, and the owner's principal.
-func joinedMember(t *testing.T, store *Store) (member Account, owner Principal) {
+func joinedMember(t *testing.T, store *Store) (member core.Account, owner core.Principal) {
 	t.Helper()
-	ownerAccount, err := store.CreateAccount(User{Name: "Owner", Email: "owner@example.test", PasswordHash: "unused"})
+	ownerAccount, err := store.CreateAccount(ctx, core.User{Name: "Owner", Email: "owner@example.test", PasswordHash: "unused"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	owner = ownerAccount.Principal()
 	digest := sha256.Sum256([]byte("invitation-token"))
-	if err := store.UpdateAs(owner, func(a *Account) error {
+	if err := store.UpdateAs(ctx, owner, func(a *core.Account) error {
 		org := a.Organizations[owner.OrganizationID]
-		org.Invitations["inv_member"] = Invitation{
+		org.Invitations["inv_member"] = core.Invitation{
 			ID: "inv_member", Email: "member@example.test", Role: "member", Status: "pending",
 			TokenHash: hex.EncodeToString(digest[:]), ExpiresAt: time.Now().Add(time.Hour),
 		}
@@ -29,20 +31,22 @@ func joinedMember(t *testing.T, store *Store) (member Account, owner Principal) 
 	}); err != nil {
 		t.Fatal(err)
 	}
-	member, err = store.CreateAccount(User{Name: "Old Name", Email: "member@example.test", PasswordHash: "unused"})
+	member, err = store.CreateAccount(ctx, core.User{Name: "Old Name", Email: "member@example.test", PasswordHash: "unused"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.AcceptInvitation(member.Principal(), hex.EncodeToString(digest[:])); err != nil {
+	if _, err := store.AcceptInvitation(ctx, member.Principal(), hex.EncodeToString(digest[:])); err != nil {
 		t.Fatal(err)
 	}
-	member, _ = store.FindByEmail("member@example.test")
+	if member, err = store.FindByEmail(ctx, "member@example.test"); err != nil {
+		t.Fatal(err)
+	}
 	return member, owner
 }
 
-func memberName(t *testing.T, store *Store, p Principal, userID string) string {
+func memberName(t *testing.T, store *Store, p core.Principal, userID string) string {
 	t.Helper()
-	a, err := store.SnapshotAs(p)
+	a, err := store.SnapshotAs(ctx, p)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,9 +54,9 @@ func memberName(t *testing.T, store *Store, p Principal, userID string) string {
 }
 
 func TestRenameReachesEveryOrganizationOfTheUser(t *testing.T) {
-	store := NewStore()
+	store := New()
 	member, owner := joinedMember(t, store)
-	var personal Principal
+	var personal core.Principal
 	for id, org := range member.Organizations {
 		if org.Kind == "personal" {
 			personal = member.Principal()
@@ -60,7 +64,7 @@ func TestRenameReachesEveryOrganizationOfTheUser(t *testing.T) {
 		}
 	}
 
-	if err := store.UpdateAs(personal, func(a *Account) error {
+	if err := store.UpdateAs(ctx, personal, func(a *core.Account) error {
 		a.User.Name = "New Name"
 		return nil
 	}); err != nil {
@@ -75,13 +79,13 @@ func TestRenameReachesEveryOrganizationOfTheUser(t *testing.T) {
 }
 
 func TestAdminRenameReachesEveryOrganizationOfTheUser(t *testing.T) {
-	store := NewStore()
+	store := New()
 	member, owner := joinedMember(t, store)
-	admin, err := store.CreateAccount(User{Name: "Admin", Email: "admin@example.test", PasswordHash: "unused", PlatformAdmin: true})
+	admin, err := store.CreateAccount(ctx, core.User{Name: "Admin", Email: "admin@example.test", PasswordHash: "unused", PlatformAdmin: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.UpdateAccountAsAdmin(admin.Principal(), member.ID, func(a *Account) error {
+	if err := store.UpdateAccountAsAdmin(ctx, admin.Principal(), member.ID, func(a *core.Account) error {
 		a.User.Name = "Admin Renamed"
 		return nil
 	}); err != nil {
@@ -93,12 +97,12 @@ func TestAdminRenameReachesEveryOrganizationOfTheUser(t *testing.T) {
 }
 
 func TestChangeEmailReachesEveryOrganizationOfTheUser(t *testing.T) {
-	store := NewStore()
+	store := New()
 	member, owner := joinedMember(t, store)
-	if err := store.ChangeEmailAs(member.Principal(), "renamed@example.test", "unused"); err != nil {
+	if err := store.ChangeEmailAs(ctx, member.Principal(), "renamed@example.test", "unused"); err != nil {
 		t.Fatal(err)
 	}
-	a, err := store.SnapshotAs(owner)
+	a, err := store.SnapshotAs(ctx, owner)
 	if err != nil {
 		t.Fatal(err)
 	}

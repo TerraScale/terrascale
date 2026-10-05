@@ -90,11 +90,11 @@ type Service struct {
 	deps core.Deps
 }
 
-func (s Service) project(p core.Principal) (core.Account, core.Project, error) {
+func (s Service) project(ctx context.Context, p core.Principal) (core.Account, core.Project, error) {
 	if p.ProjectID == "" {
 		return core.Account{}, core.Project{}, core.ErrNotFound
 	}
-	a, err := s.deps.Store.SnapshotAs(p)
+	a, err := s.deps.Store.SnapshotAs(ctx, p)
 	if err != nil {
 		return core.Account{}, core.Project{}, err
 	}
@@ -102,8 +102,8 @@ func (s Service) project(p core.Principal) (core.Account, core.Project, error) {
 	return a, project, err
 }
 
-func (s Service) database(p core.Principal, databaseID string) (core.Database, error) {
-	_, project, err := s.project(p)
+func (s Service) database(ctx context.Context, p core.Principal, databaseID string) (core.Database, error) {
+	_, project, err := s.project(ctx, p)
 	if err != nil {
 		return core.Database{}, err
 	}
@@ -115,8 +115,8 @@ func (s Service) database(p core.Principal, databaseID string) (core.Database, e
 }
 
 // collectionDatabase resolves the database and validates the collection name.
-func (s Service) collectionDatabase(p core.Principal, databaseID, collection string) (core.Database, error) {
-	db, err := s.database(p, databaseID)
+func (s Service) collectionDatabase(ctx context.Context, p core.Principal, databaseID, collection string) (core.Database, error) {
+	db, err := s.database(ctx, p, databaseID)
 	if err != nil {
 		return core.Database{}, err
 	}
@@ -128,8 +128,8 @@ func (s Service) collectionDatabase(p core.Principal, databaseID, collection str
 
 // updateDatabase commits mutate to one demo database once allow grants the
 // principal's role in the selected organization.
-func (s Service) updateDatabase(p core.Principal, databaseID string, allow func(core.Organization, string) bool, mutate func(*core.Database) error) error {
-	return s.deps.Store.UpdateAs(p, func(a *core.Account) error {
+func (s Service) updateDatabase(ctx context.Context, p core.Principal, databaseID string, allow func(core.Organization, string) bool, mutate func(*core.Database) error) error {
+	return s.deps.Store.UpdateAs(ctx, p, func(a *core.Account) error {
 		project, err := a.ProjectFor(p, p.OrganizationID, p.ProjectID)
 		if err != nil {
 			return err
@@ -154,8 +154,8 @@ func (s Service) updateDatabase(p core.Principal, databaseID string, allow func(
 
 // updateProject commits mutate to the selected project once allow grants the
 // principal's role in the selected organization.
-func (s Service) updateProject(p core.Principal, allow func(core.Organization, string) bool, mutate func(*core.Project) error) error {
-	return s.deps.Store.UpdateAs(p, func(a *core.Account) error {
+func (s Service) updateProject(ctx context.Context, p core.Principal, allow func(core.Organization, string) bool, mutate func(*core.Project) error) error {
+	return s.deps.Store.UpdateAs(ctx, p, func(a *core.Account) error {
 		project, err := a.ProjectFor(p, p.OrganizationID, p.ProjectID)
 		if err != nil {
 			return err
@@ -175,7 +175,7 @@ func (s Service) updateProject(p core.Principal, allow func(core.Organization, s
 
 // Collections lists the database's collection names.
 func (s Service) Collections(ctx context.Context, p core.Principal, databaseID string) ([]string, error) {
-	db, err := s.database(p, databaseID)
+	db, err := s.database(ctx, p, databaseID)
 	if err != nil {
 		return nil, err
 	}
@@ -198,7 +198,7 @@ func (s Service) Collections(ctx context.Context, p core.Principal, databaseID s
 // Documents lists one page of a collection, ordered by ID and filtered by a
 // case-insensitive search over IDs and bodies.
 func (s Service) Documents(ctx context.Context, p core.Principal, databaseID string, query documentQuery) ([]documentView, error) {
-	db, err := s.collectionDatabase(p, databaseID, query.Collection)
+	db, err := s.collectionDatabase(ctx, p, databaseID, query.Collection)
 	if err != nil {
 		return nil, err
 	}
@@ -239,7 +239,7 @@ func (s Service) Documents(ctx context.Context, p core.Principal, databaseID str
 
 // Document reads one document.
 func (s Service) Document(ctx context.Context, p core.Principal, databaseID, collection, id string) (documentView, error) {
-	db, err := s.collectionDatabase(p, databaseID, collection)
+	db, err := s.collectionDatabase(ctx, p, databaseID, collection)
 	if err != nil {
 		return documentView{}, err
 	}
@@ -265,12 +265,12 @@ func (s Service) Document(ctx context.Context, p core.Principal, databaseID, col
 // records the new version in its history. Creating without an ID generates
 // one.
 func (s Service) WriteDocument(ctx context.Context, p core.Principal, databaseID, collection, operation, id string, body []byte) (documentWrite, error) {
-	db, err := s.collectionDatabase(p, databaseID, collection)
+	db, err := s.collectionDatabase(ctx, p, databaseID, collection)
 	if err != nil {
 		return documentWrite{}, err
 	}
-	if !s.deps.Store.Can(p, core.Organization.CanWrite) {
-		return documentWrite{}, core.ErrForbidden
+	if err := core.Can(ctx, s.deps.Store, p, core.Organization.CanWrite); err != nil {
+		return documentWrite{}, err
 	}
 	if !slices.Contains(documentOperations, operation) {
 		return documentWrite{}, core.Invalid("operation must be create, replace, patch, or delete")
@@ -287,7 +287,7 @@ func (s Service) WriteDocument(ctx context.Context, p core.Principal, databaseID
 	}
 	result := documentWrite{ID: id, Operation: operation}
 	if s.deps.Demo {
-		return result, s.updateDatabase(p, db.ID, core.Organization.CanWrite, func(current *core.Database) error {
+		return result, s.updateDatabase(ctx, p, db.ID, core.Organization.CanWrite, func(current *core.Database) error {
 			return writeDemoDocument(current, collection, operation, id, body)
 		})
 	}
@@ -357,7 +357,7 @@ func writeDemoDocument(db *core.Database, collection, operation, id string, body
 // History lists a document's recorded versions, oldest first. Demo versions
 // carry their bodies; the live data plane reports revisions only.
 func (s Service) History(ctx context.Context, p core.Principal, databaseID, collection, id string) ([]historyEntry, error) {
-	db, err := s.collectionDatabase(p, databaseID, collection)
+	db, err := s.collectionDatabase(ctx, p, databaseID, collection)
 	if err != nil {
 		return nil, err
 	}
@@ -392,7 +392,7 @@ func (s Service) History(ctx context.Context, p core.Principal, databaseID, coll
 // Schema returns a collection's schema as JSON, in the shape SetSchema
 // accepts.
 func (s Service) Schema(ctx context.Context, p core.Principal, databaseID, collection string) (jsontext.Value, error) {
-	db, err := s.collectionDatabase(p, databaseID, collection)
+	db, err := s.collectionDatabase(ctx, p, databaseID, collection)
 	if err != nil {
 		return nil, err
 	}
@@ -417,19 +417,19 @@ func (s Service) Schema(ctx context.Context, p core.Principal, databaseID, colle
 
 // SetSchema applies a collection schema whose name matches the collection.
 func (s Service) SetSchema(ctx context.Context, p core.Principal, databaseID, collection string, body []byte) error {
-	db, err := s.collectionDatabase(p, databaseID, collection)
+	db, err := s.collectionDatabase(ctx, p, databaseID, collection)
 	if err != nil {
 		return err
 	}
-	if !s.deps.Store.Can(p, core.Organization.CanManage) {
-		return core.ErrForbidden
+	if err := core.Can(ctx, s.deps.Store, p, core.Organization.CanManage); err != nil {
+		return err
 	}
 	var schema sdk.CollectionSchema
 	if len(body) == 0 || len(body) > maxSchemaBytes || json.Unmarshal(body, &schema) != nil || schema.Name != collection || schema.Validate() != nil {
 		return core.Invalid("schema must be valid JSON for the selected collection, with name equal to the collection")
 	}
 	if s.deps.Demo {
-		return s.updateDatabase(p, db.ID, core.Organization.CanManage, func(current *core.Database) error {
+		return s.updateDatabase(ctx, p, db.ID, core.Organization.CanManage, func(current *core.Database) error {
 			if current.Schemas == nil {
 				current.Schemas = make(map[string][]byte)
 			}
@@ -453,7 +453,7 @@ func (s Service) SetSchema(ctx context.Context, p core.Principal, databaseID, co
 
 // Indexes lists a collection's indexed fields and their build state.
 func (s Service) Indexes(ctx context.Context, p core.Principal, databaseID, collection string) ([]indexView, error) {
-	db, err := s.collectionDatabase(p, databaseID, collection)
+	db, err := s.collectionDatabase(ctx, p, databaseID, collection)
 	if err != nil {
 		return nil, err
 	}
@@ -487,19 +487,19 @@ func (s Service) Indexes(ctx context.Context, p core.Principal, databaseID, coll
 
 // CreateIndex adds a single-field index to a collection.
 func (s Service) CreateIndex(ctx context.Context, p core.Principal, databaseID, collection, field string) error {
-	db, err := s.collectionDatabase(p, databaseID, collection)
+	db, err := s.collectionDatabase(ctx, p, databaseID, collection)
 	if err != nil {
 		return err
 	}
-	if !s.deps.Store.Can(p, core.Organization.CanManage) {
-		return core.ErrForbidden
+	if err := core.Can(ctx, s.deps.Store, p, core.Organization.CanManage); err != nil {
+		return err
 	}
 	field = strings.TrimSpace(field)
 	if field == "" || len(field) > 128 {
 		return core.Invalid("index fields use 1-128 characters")
 	}
 	if s.deps.Demo {
-		return s.updateDatabase(p, db.ID, core.Organization.CanManage, func(current *core.Database) error {
+		return s.updateDatabase(ctx, p, db.ID, core.Organization.CanManage, func(current *core.Database) error {
 			if current.Indexes == nil {
 				current.Indexes = make(map[string][]string)
 			}
@@ -521,8 +521,8 @@ func (s Service) CreateIndex(ctx context.Context, p core.Principal, databaseID, 
 
 // Recommendations lists a database's index recommendations, optionally for
 // one collection.
-func (s Service) Recommendations(p core.Principal, databaseID, collection string) ([]recommendationView, error) {
-	db, err := s.database(p, databaseID)
+func (s Service) Recommendations(ctx context.Context, p core.Principal, databaseID, collection string) ([]recommendationView, error) {
+	db, err := s.database(ctx, p, databaseID)
 	if err != nil {
 		return nil, err
 	}
@@ -540,12 +540,12 @@ func (s Service) Recommendations(p core.Principal, databaseID, collection string
 
 // ApplyRecommendation builds a recommendation's indexes. The database and
 // collection are optional filters that must match the recommendation.
-func (s Service) ApplyRecommendation(p core.Principal, databaseID, collection, recommendationID string) (recommendationResult, error) {
-	if _, _, err := s.project(p); err != nil {
+func (s Service) ApplyRecommendation(ctx context.Context, p core.Principal, databaseID, collection, recommendationID string) (recommendationResult, error) {
+	if _, _, err := s.project(ctx, p); err != nil {
 		return recommendationResult{}, err
 	}
-	if !s.deps.Store.Can(p, core.Organization.CanManage) {
-		return recommendationResult{}, core.ErrForbidden
+	if err := core.Can(ctx, s.deps.Store, p, core.Organization.CanManage); err != nil {
+		return recommendationResult{}, err
 	}
 	if (collection != "" && !validCollection(collection)) || recommendationID == "" || len(recommendationID) > 128 {
 		return recommendationResult{}, core.Invalid("a recommendation ID and valid collection are required")
@@ -553,8 +553,10 @@ func (s Service) ApplyRecommendation(p core.Principal, databaseID, collection, r
 	if !s.deps.Demo {
 		return recommendationResult{}, errDemoOnly
 	}
-	result := recommendationResult{RecommendationID: recommendationID, Status: "applied"}
-	err := s.updateProject(p, core.Organization.CanManage, func(project *core.Project) error {
+	var result recommendationResult
+	err := s.updateProject(ctx, p, core.Organization.CanManage, func(project *core.Project) error {
+		// The callback may run again, so each run starts a fresh result.
+		result = recommendationResult{RecommendationID: recommendationID, Status: "applied"}
 		var current core.Database
 		recommendationIndex, matches := -1, 0
 		for id, database := range project.Databases {
@@ -614,8 +616,8 @@ func (s Service) ApplyRecommendation(p core.Principal, databaseID, collection, r
 
 // Migration returns the index backfill progress shown for a collection, or
 // nil when none is running.
-func (s Service) Migration(p core.Principal, databaseID, collection string) (*demoIndexMigration, error) {
-	a, project, err := s.project(p)
+func (s Service) Migration(ctx context.Context, p core.Principal, databaseID, collection string) (*demoIndexMigration, error) {
+	a, project, err := s.project(ctx, p)
 	if err != nil {
 		return nil, err
 	}
@@ -633,8 +635,8 @@ func (s Service) Migration(p core.Principal, databaseID, collection string) (*de
 }
 
 // CheckSQL analyzes one read-only statement without running it.
-func (s Service) CheckSQL(p core.Principal, databaseID, statement string) (sqlAnalysis, error) {
-	if _, err := s.database(p, databaseID); err != nil {
+func (s Service) CheckSQL(ctx context.Context, p core.Principal, databaseID, statement string) (sqlAnalysis, error) {
+	if _, err := s.database(ctx, p, databaseID); err != nil {
 		return sqlAnalysis{}, err
 	}
 	if len(statement) > maxSQLCheckBytes {
@@ -653,7 +655,7 @@ type sqlRun struct {
 // RunSQL runs one read-only statement. The demo supports SELECT * FROM
 // collection [LIMIT n].
 func (s Service) RunSQL(ctx context.Context, p core.Principal, databaseID, statement string) (sqlRun, error) {
-	db, err := s.database(p, databaseID)
+	db, err := s.database(ctx, p, databaseID)
 	if err != nil {
 		return sqlRun{}, err
 	}
@@ -715,8 +717,8 @@ func demoSelect(db core.Database, statement string) ([]documentView, int, error)
 }
 
 // SavedQueries lists the project's saved queries by name.
-func (s Service) SavedQueries(p core.Principal) ([]savedQueryView, error) {
-	_, project, err := s.project(p)
+func (s Service) SavedQueries(ctx context.Context, p core.Principal) ([]savedQueryView, error) {
+	_, project, err := s.project(ctx, p)
 	if err != nil {
 		return nil, err
 	}
@@ -729,12 +731,12 @@ func (s Service) SavedQueries(p core.Principal) ([]savedQueryView, error) {
 }
 
 // SaveQuery shares a read-only query with everyone in the project.
-func (s Service) SaveQuery(p core.Principal, name, statement string) (savedQueryView, error) {
-	if _, _, err := s.project(p); err != nil {
+func (s Service) SaveQuery(ctx context.Context, p core.Principal, name, statement string) (savedQueryView, error) {
+	if _, _, err := s.project(ctx, p); err != nil {
 		return savedQueryView{}, err
 	}
-	if !s.deps.Store.Can(p, core.Organization.CanWrite) {
-		return savedQueryView{}, core.ErrForbidden
+	if err := core.Can(ctx, s.deps.Store, p, core.Organization.CanWrite); err != nil {
+		return savedQueryView{}, err
 	}
 	name, statement = strings.TrimSpace(name), strings.TrimSpace(statement)
 	if name == "" || len(name) > 128 {
@@ -744,7 +746,7 @@ func (s Service) SaveQuery(p core.Principal, name, statement string) (savedQuery
 		return savedQueryView{}, core.Invalid("saved queries hold one read-only SQL query")
 	}
 	query := core.SavedQuery{ID: core.NewID("qry"), Name: name, SQL: statement, CreatedAt: time.Now().UTC()}
-	err := s.updateProject(p, core.Organization.CanWrite, func(project *core.Project) error {
+	err := s.updateProject(ctx, p, core.Organization.CanWrite, func(project *core.Project) error {
 		if project.SavedQueries == nil {
 			project.SavedQueries = make(map[string]core.SavedQuery)
 		}
@@ -758,14 +760,14 @@ func (s Service) SaveQuery(p core.Principal, name, statement string) (savedQuery
 }
 
 // DeleteSavedQuery removes one saved query from the project.
-func (s Service) DeleteSavedQuery(p core.Principal, id string) error {
-	if _, _, err := s.project(p); err != nil {
+func (s Service) DeleteSavedQuery(ctx context.Context, p core.Principal, id string) error {
+	if _, _, err := s.project(ctx, p); err != nil {
 		return err
 	}
-	if !s.deps.Store.Can(p, core.Organization.CanWrite) {
-		return core.ErrForbidden
+	if err := core.Can(ctx, s.deps.Store, p, core.Organization.CanWrite); err != nil {
+		return err
 	}
-	return s.updateProject(p, core.Organization.CanWrite, func(project *core.Project) error {
+	return s.updateProject(ctx, p, core.Organization.CanWrite, func(project *core.Project) error {
 		if _, ok := project.SavedQueries[id]; !ok {
 			return fmt.Errorf("%w: saved query %q", core.ErrNotFound, id)
 		}

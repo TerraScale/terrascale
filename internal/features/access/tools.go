@@ -77,47 +77,47 @@ func mountTools(tools *core.Tools, service Service) {
 	core.AddTool(tools, core.ToolSpec{
 		Name: "list_members", Title: "List members", ReadOnly: true,
 		Description: "List an organization's active members with their roles, optionally filtered by name, email, or role.",
-	}, func(_ context.Context, p core.Principal, in listMembersInput) (memberList, error) {
-		return service.Members(p, in.Search, in.Role)
+	}, func(ctx context.Context, p core.Principal, in listMembersInput) (memberList, error) {
+		return service.Members(ctx, p, in.Search, in.Role)
 	})
 	core.AddTool(tools, core.ToolSpec{
 		Name: "list_invitations", Title: "List invitations", ReadOnly: true,
 		Description: "List an organization's invitations with their status and expiry, pending first.",
-	}, func(_ context.Context, p core.Principal, _ core.Scope) (invitationList, error) {
-		invitations, err := service.Invitations(p)
+	}, func(ctx context.Context, p core.Principal, _ core.Scope) (invitationList, error) {
+		invitations, err := service.Invitations(ctx, p)
 		return invitationList{Invitations: invitations}, err
 	})
 	core.AddTool(tools, core.ToolSpec{
 		Name: "invite_member", Title: "Invite member",
 		Description: "Invite an email address to an organization and return a one-time invitation link. Requires the owner role and plan member capacity.",
-	}, func(_ context.Context, p core.Principal, in inviteInput) (issuedInvitation, error) {
-		invitation, link, err := service.Invite(p, in.Email, in.Role)
+	}, func(ctx context.Context, p core.Principal, in inviteInput) (issuedInvitation, error) {
+		invitation, link, err := service.Invite(ctx, p, in.Email, in.Role)
 		return issuedInvitation{Invitation: invitation, InviteURL: link}, err
 	})
 	core.AddTool(tools, core.ToolSpec{
 		Name: "resend_invitation", Title: "Resend invitation",
 		Description: "Replace a pending invitation's link and extend it by 7 days. The previous link stops working. Requires the owner role.",
-	}, func(_ context.Context, p core.Principal, in invitationInput) (issuedInvitation, error) {
-		invitation, link, err := service.Resend(p, in.InvitationID)
+	}, func(ctx context.Context, p core.Principal, in invitationInput) (issuedInvitation, error) {
+		invitation, link, err := service.Resend(ctx, p, in.InvitationID)
 		return issuedInvitation{Invitation: invitation, InviteURL: link}, err
 	})
 	core.AddTool(tools, core.ToolSpec{
 		Name: "revoke_invitation", Title: "Revoke invitation", Destructive: true,
 		Description: "Cancel a pending invitation so its link no longer works. Requires the owner role.",
-	}, func(_ context.Context, p core.Principal, in invitationInput) (done, error) {
-		return done{OK: true}, service.organizations.RevokeInvitation(p, in.InvitationID)
+	}, func(ctx context.Context, p core.Principal, in invitationInput) (done, error) {
+		return done{OK: true}, service.organizations.RevokeInvitation(ctx, p, in.InvitationID)
 	})
 	core.AddTool(tools, core.ToolSpec{
 		Name: "get_invitation", Title: "Get invitation", ReadOnly: true,
 		Description: "Show the organization, role, and expiry of a pending invitation from its token or link, and whether the caller can respond.",
-	}, func(_ context.Context, p core.Principal, in tokenInput) (invitationPreview, error) {
-		return service.Invitation(p, in.Token)
+	}, func(ctx context.Context, p core.Principal, in tokenInput) (invitationPreview, error) {
+		return service.Invitation(ctx, p, in.Token)
 	})
 	core.AddTool(tools, core.ToolSpec{
 		Name: "respond_to_invitation", Title: "Respond to invitation",
 		Description: "Accept or decline an invitation addressed to the caller's email. Accepting joins and selects the organization.",
-	}, func(_ context.Context, p core.Principal, in respondInput) (invitationResponse, error) {
-		org, err := service.RespondToInvitation(p, in.Token, in.Action)
+	}, func(ctx context.Context, p core.Principal, in respondInput) (invitationResponse, error) {
+		org, err := service.RespondToInvitation(ctx, p, in.Token, in.Action)
 		if err != nil {
 			return invitationResponse{}, err
 		}

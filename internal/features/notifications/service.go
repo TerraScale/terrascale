@@ -1,6 +1,7 @@
 package notifications
 
 import (
+	"context"
 	"fmt"
 	"slices"
 	"strings"
@@ -11,13 +12,13 @@ import (
 // Service owns the notification inbox of a principal's selected scope. HTTP
 // handlers and MCP tools both call it.
 type Service struct {
-	store *core.Store
+	store core.Store
 }
 
 // Inbox returns one page of notifications, newest first. status "unread"
 // limits the page to unread notifications; any other value lists all.
-func (s Service) Inbox(p core.Principal, status, rawPage string) (pageData, error) {
-	account, err := s.store.SnapshotAs(p)
+func (s Service) Inbox(ctx context.Context, p core.Principal, status, rawPage string) (pageData, error) {
+	account, err := s.store.SnapshotAs(ctx, p)
 	if err != nil {
 		return pageData{}, err
 	}
@@ -51,9 +52,9 @@ func (s Service) Inbox(p core.Principal, status, rawPage string) (pageData, erro
 
 // MarkRead marks one notification in the selected scope as read and reports
 // whether it changed from unread to read.
-func (s Service) MarkRead(p core.Principal, notificationID string) (bool, error) {
+func (s Service) MarkRead(ctx context.Context, p core.Principal, notificationID string) (bool, error) {
 	marked := false
-	err := s.store.UpdateAs(p, func(account *core.Account) error {
+	err := s.store.UpdateAs(ctx, p, func(account *core.Account) error {
 		marked = false
 		for i := range account.Notifications {
 			if account.Notifications[i].ID == notificationID && account.Notifications[i].VisibleTo(p) {
@@ -72,9 +73,9 @@ func (s Service) MarkRead(p core.Principal, notificationID string) (bool, error)
 
 // MarkAllRead marks every notification in the selected scope as read and
 // reports how many were unread.
-func (s Service) MarkAllRead(p core.Principal) (int, error) {
+func (s Service) MarkAllRead(ctx context.Context, p core.Principal) (int, error) {
 	marked := 0
-	err := s.store.UpdateAs(p, func(account *core.Account) error {
+	err := s.store.UpdateAs(ctx, p, func(account *core.Account) error {
 		marked = 0
 		for i := range account.Notifications {
 			if account.Notifications[i].VisibleTo(p) {

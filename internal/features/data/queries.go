@@ -20,7 +20,8 @@ func mountQueryRoutes(mux *http.ServeMux, deps core.Deps, service Service) {
 		if !ok {
 			return
 		}
-		db, err := service.database(p, r.FormValue("databaseId"))
+		ctx := r.Context()
+		db, err := service.database(ctx, p, r.FormValue("databaseId"))
 		if err != nil {
 			writeError(w, err)
 			return
@@ -44,7 +45,8 @@ func mountQueryRoutes(mux *http.ServeMux, deps core.Deps, service Service) {
 		if !ok {
 			return
 		}
-		db, err := service.database(p, r.FormValue("databaseId"))
+		ctx := r.Context()
+		db, err := service.database(ctx, p, r.FormValue("databaseId"))
 		if err != nil {
 			writeError(w, err)
 			return
@@ -57,7 +59,7 @@ func mountQueryRoutes(mux *http.ServeMux, deps core.Deps, service Service) {
 			failed(http.StatusBadRequest, cmp.Or(analysis.Error, "The console cannot bind parameters such as $1; replace them with values."))
 			return
 		}
-		run, err := service.RunSQL(r.Context(), p, db.ID, statement)
+		run, err := service.RunSQL(ctx, p, db.ID, statement)
 		if err != nil {
 			reason, invalid := core.InvalidReason(err)
 			switch {
@@ -84,7 +86,7 @@ func mountQueryRoutes(mux *http.ServeMux, deps core.Deps, service Service) {
 		if !ok {
 			return
 		}
-		queries, err := service.SavedQueries(p)
+		queries, err := service.SavedQueries(r.Context(), p)
 		if err != nil {
 			writeError(w, err)
 			return
@@ -96,8 +98,9 @@ func mountQueryRoutes(mux *http.ServeMux, deps core.Deps, service Service) {
 		if !ok {
 			return
 		}
-		if !deps.Store.Can(p, core.Organization.CanWrite) {
-			writeError(w, core.ErrForbidden)
+		ctx := r.Context()
+		if err := core.Can(ctx, deps.Store, p, core.Organization.CanWrite); err != nil {
+			writeError(w, err)
 			return
 		}
 		name, sql := strings.TrimSpace(r.FormValue("name")), strings.TrimSpace(r.FormValue("sql"))
@@ -114,7 +117,7 @@ func mountQueryRoutes(mux *http.ServeMux, deps core.Deps, service Service) {
 			failed(http.StatusBadRequest, cmp.Or(analysis.Error, "Saved queries cannot use parameters such as $1; replace them with values."))
 			return
 		}
-		query, err := service.SaveQuery(p, name, sql)
+		query, err := service.SaveQuery(ctx, p, name, sql)
 		if err != nil {
 			status, message := failure(err, "The query could not be saved")
 			failed(status, message)
@@ -131,11 +134,12 @@ func mountQueryRoutes(mux *http.ServeMux, deps core.Deps, service Service) {
 		if !ok {
 			return
 		}
-		if !deps.Store.Can(p, core.Organization.CanWrite) {
-			writeError(w, core.ErrForbidden)
+		ctx := r.Context()
+		if err := core.Can(ctx, deps.Store, p, core.Organization.CanWrite); err != nil {
+			writeError(w, err)
 			return
 		}
-		if err := service.DeleteSavedQuery(p, r.FormValue("id")); err != nil {
+		if err := service.DeleteSavedQuery(ctx, p, r.FormValue("id")); err != nil {
 			status, message := failure(err, "The query could not be deleted")
 			if errors.Is(err, core.ErrNotFound) {
 				message = "This saved query was already deleted."

@@ -18,6 +18,7 @@ import (
 
 	"terrascale.tech/dashboard/internal/adapters/tsgo"
 	"terrascale.tech/dashboard/internal/core"
+	"terrascale.tech/dashboard/internal/core/memstore"
 	"terrascale.tech/dashboard/internal/features/apikeys"
 	"terrascale.tech/dashboard/internal/features/auth"
 	"terrascale.tech/dashboard/internal/features/databases"
@@ -43,7 +44,7 @@ type sdkFixture struct {
 // startSDKFixture starts both loopback servers; they close with the test.
 func startSDKFixture(t *testing.T) sdkFixture {
 	t.Helper()
-	store := core.NewStore()
+	store := memstore.New()
 	sessions := session.New(store, session.Options{})
 	guard := csrf.New(sessions, csrf.Options{})
 	producer := newFixtureProducer()
@@ -213,12 +214,12 @@ func (p *fixtureProducer) document(w http.ResponseWriter, r *http.Request) {
 // fixtureIssuer mints producer credentials for databases the principal can
 // manage in the dashboard store.
 type fixtureIssuer struct {
-	store    *core.Store
+	store    core.Store
 	producer *fixtureProducer
 }
 
-func (i fixtureIssuer) Create(_ context.Context, principal core.Principal, input sdk.CreateProjectAPIKeyRequest) (*sdk.ProjectAPIKeySecret, error) {
-	databaseName, err := i.authorize(principal, input.DatabaseID)
+func (i fixtureIssuer) Create(ctx context.Context, principal core.Principal, input sdk.CreateProjectAPIKeyRequest) (*sdk.ProjectAPIKeySecret, error) {
+	databaseName, err := i.authorize(ctx, principal, input.DatabaseID)
 	if err != nil {
 		return nil, err
 	}
@@ -234,8 +235,8 @@ func (i fixtureIssuer) Create(_ context.Context, principal core.Principal, input
 	return key.response(), nil
 }
 
-func (i fixtureIssuer) Rotate(_ context.Context, principal core.Principal, keyID string) (*sdk.ProjectAPIKeySecret, error) {
-	if _, err := i.authorize(principal, ""); err != nil {
+func (i fixtureIssuer) Rotate(ctx context.Context, principal core.Principal, keyID string) (*sdk.ProjectAPIKeySecret, error) {
+	if _, err := i.authorize(ctx, principal, ""); err != nil {
 		return nil, err
 	}
 	i.producer.mu.Lock()
@@ -250,8 +251,8 @@ func (i fixtureIssuer) Rotate(_ context.Context, principal core.Principal, keyID
 	return key.response(), nil
 }
 
-func (i fixtureIssuer) Revoke(_ context.Context, principal core.Principal, keyID string) (*sdk.ProjectAPIKeyRevocation, error) {
-	if _, err := i.authorize(principal, ""); err != nil {
+func (i fixtureIssuer) Revoke(ctx context.Context, principal core.Principal, keyID string) (*sdk.ProjectAPIKeyRevocation, error) {
+	if _, err := i.authorize(ctx, principal, ""); err != nil {
 		return nil, err
 	}
 	i.producer.mu.Lock()
@@ -267,8 +268,8 @@ func (i fixtureIssuer) Revoke(_ context.Context, principal core.Principal, keyID
 
 // authorize returns the producer database name behind a dashboard database
 // id, or "" when no database is requested.
-func (i fixtureIssuer) authorize(principal core.Principal, databaseID string) (string, error) {
-	account, err := i.store.SnapshotAs(principal)
+func (i fixtureIssuer) authorize(ctx context.Context, principal core.Principal, databaseID string) (string, error) {
+	account, err := i.store.SnapshotAs(ctx, principal)
 	if err != nil {
 		return "", err
 	}

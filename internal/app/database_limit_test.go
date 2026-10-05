@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"terrascale.tech/dashboard/internal/core"
+	"terrascale.tech/dashboard/internal/core/memstore"
 	"terrascale.tech/dashboard/internal/features/backups"
 	"terrascale.tech/dashboard/internal/features/databases"
 	"terrascale.tech/dashboard/internal/features/settings"
@@ -27,8 +28,8 @@ type databaseRoutes struct {
 
 func newDatabaseRoutes(t *testing.T) databaseRoutes {
 	t.Helper()
-	store := core.NewStore()
-	account, err := store.CreateAccount(core.User{Name: "Owner", Email: "limit-owner@example.test", PasswordHash: "unused"})
+	store := memstore.New()
+	account, err := store.CreateAccount(t.Context(), core.User{Name: "Owner", Email: "limit-owner@example.test", PasswordHash: "unused"})
 	if err != nil {
 		t.Fatal(err)
 	}

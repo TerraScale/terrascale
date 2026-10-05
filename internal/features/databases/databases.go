@@ -49,7 +49,7 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			writeError(w, core.ErrUnauthorized)
 			return
 		}
-		list, err := service.List(p)
+		list, err := service.List(r.Context(), p)
 		if err != nil {
 			writeError(w, err)
 			return
@@ -247,7 +247,14 @@ func renderList(w http.ResponseWriter, r *http.Request, deps core.Deps) {
 	data.Name = truncate(data.Name, 63)
 	org := a.Organizations[p.OrganizationID]
 	data.CanProvision = org.CanProvisionResources(p.UserID)
-	if plan, ok := deps.Store.Plan(org.PlanID); ok && plan.MaxDatabases > 0 && org.DatabaseCount() >= plan.MaxDatabases {
+	plan, err := deps.Store.Plan(r.Context(), org.PlanID)
+	if err != nil && !errors.Is(err, core.ErrNotFound) {
+		if !core.WriteAccessError(w, err) {
+			http.Error(w, "could not render databases", http.StatusInternalServerError)
+		}
+		return
+	}
+	if err == nil && plan.MaxDatabases > 0 && org.DatabaseCount() >= plan.MaxDatabases {
 		data.Limit = &planLimit{Plan: plan.Name, Databases: plan.MaxDatabases}
 	}
 	search := strings.ToLower(data.Search)
@@ -268,7 +275,7 @@ func selected(deps core.Deps, r *http.Request) (core.Principal, core.Account, co
 	if !ok || p.ProjectID == "" {
 		return core.Principal{}, core.Account{}, core.Project{}, core.ErrUnauthorized
 	}
-	a, err := deps.Store.SnapshotAs(p)
+	a, err := deps.Store.SnapshotAs(r.Context(), p)
 	if err != nil {
 		return core.Principal{}, core.Account{}, core.Project{}, err
 	}

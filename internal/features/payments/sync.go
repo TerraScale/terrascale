@@ -52,7 +52,7 @@ func (billing *Stripe) SyncCustomer(ctx context.Context, flow BillingFlow, custo
 		if err != nil {
 			return CustomerState{}, err
 		}
-		if err := flow.ProjectCustomerState(state, checkout); err != nil {
+		if err := flow.ProjectCustomerState(ctx, state, checkout); err != nil {
 			return CustomerState{}, fmt.Errorf("project Stripe state: %w", err)
 		}
 		return state, nil
@@ -107,7 +107,7 @@ func (billing *Stripe) customerState(organizationID string, customer StripeCusto
 // projection can complete or release it. Sessions not bound to this customer
 // and tenant are ignored.
 func (billing *Stripe) pendingCheckout(ctx context.Context, flow BillingFlow, organizationID, customerID string) (*CheckoutSession, error) {
-	checkoutID, err := flow.PendingCheckoutID(organizationID)
+	checkoutID, err := flow.PendingCheckoutID(ctx, organizationID)
 	if err != nil || checkoutID == "" {
 		return nil, err
 	}
