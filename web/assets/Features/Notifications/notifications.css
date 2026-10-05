@@ -6,6 +6,15 @@
   padding-top: var(--ts-s5);
 }
 
+/* The dialog's filter tabs are buttons that fetch the filtered inbox through
+   Datastar instead of links, so they lose the native button chrome. */
+#ts-notifications-body button.ts-tab {
+  appearance: none;
+  border: 0;
+  background: none;
+  cursor: pointer;
+}
+
 /* Read-all sits with the summary instead of the page header; keep the pair
    together as one right-aligned group. */
 .ts-notifications-actions {

@@ -56,11 +56,13 @@ func TestShellNavigationNamesItsCounts(t *testing.T) {
 		count int
 		label string
 	}{
-		"/organization":  {2, "2 organizations"},
-		"/notifications": {120, "99+ unread"},
+		"/organization": {2, "2 organizations"},
 	}
 	for _, group := range shell.Navigation {
 		for _, item := range group.Items {
+			if item.URL == "/notifications" {
+				t.Error("notifications left the sidebar navigation for the account menu")
+			}
 			if expected, ok := want[item.URL]; ok {
 				if item.BadgeCount != expected.count || item.BadgeLabel != expected.label {
 					t.Errorf("%s badge = %d %q, want %d %q", item.URL, item.BadgeCount, item.BadgeLabel, expected.count, expected.label)
@@ -71,6 +73,11 @@ func TestShellNavigationNamesItsCounts(t *testing.T) {
 	}
 	if len(want) > 0 {
 		t.Errorf("navigation lacks %v", slices.Collect(maps.Keys(want)))
+	}
+	// The unread count moved into the shell with the account, feeding the
+	// account-menu entry and the top-bar bell instead of a sidebar badge.
+	if shell.UnreadNotifications != 120 {
+		t.Errorf("UnreadNotifications = %d, want 120", shell.UnreadNotifications)
 	}
 }
 
