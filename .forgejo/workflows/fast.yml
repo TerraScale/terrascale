@@ -5,9 +5,10 @@ name: Fast integration
 #
 # - fast: locked restore, formatting, Release build with analyzers as errors,
 #   and the Fast integration suite (make targets).
-# - release: publishes the self-contained single-file executable and smoke-runs
-#   the exact staged bytes. On a push to main or of a v* tag it attaches them to
-#   a draft release (scripts/ci/release.sh draft).
+# - release: publishes the self-contained single-file linux-amd64 and linux-arm64
+#   executables, smoke-runs the exact staged amd64 bytes and checks the arm64 ELF
+#   header. On a push to main or of a v* tag it attaches them to a draft release
+#   (scripts/ci/release.sh draft).
 # - publish: once both pass, publishes that draft. Nothing is rebuilt.
 #
 # The Slow suite runs separately (slow.yml) and never blocks.
@@ -83,7 +84,7 @@ jobs:
       - name: Check the release script against a fake release API
         run: bash scripts/ci/check-release.sh
 
-      - name: Publish and smoke-run the release executable
+      - name: Publish and check the release executables
         run: bash scripts/ci/stage-release.sh artifacts/dist
 
       # Pull requests get a read-only job token and never reach this step.

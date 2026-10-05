@@ -16,6 +16,14 @@ public interface IStorageEngine : IAsyncDisposable
     string Name { get; }
 
     /// <summary>
+    /// Whether this engine is open and can create files in its data directory, for the readiness probe. A call creates and
+    /// removes an empty probe file there, off the calling thread, reusing completed results for the configured readiness
+    /// cache TTL (one second by default). Concurrent calls await the same probe task; a probe still running after two
+    /// seconds means a stalled volume: not ready. Engine closure is checked on every call.
+    /// </summary>
+    ValueTask<bool> IsReadyAsync(CancellationToken cancellationToken);
+
+    /// <summary>
     /// Creates the database of <paramref name="database"/> atomically within this process: among concurrent calls for the same
     /// database exactly one returns <see langword="true"/>. Returns <see langword="false"/> when it already existed.
     /// </summary>

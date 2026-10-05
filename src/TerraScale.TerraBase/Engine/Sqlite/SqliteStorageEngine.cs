@@ -20,9 +20,14 @@ namespace TerraScale.TerraBase.Engine.Sqlite;
 /// directory owned until it ends (or the process exits); nothing is closed under it.
 /// </param>
 /// <param name="logger">Reports a shutdown that stopped waiting with connections still open.</param>
-internal sealed partial class SqliteStorageEngine(string dataDirectory, TimeSpan shutdownGrace, ILogger<SqliteStorageEngine> logger) : IStorageEngine
+/// <param name="readinessCacheTtl">How long completed filesystem readiness checks are reused.</param>
+internal sealed partial class SqliteStorageEngine(
+    string dataDirectory, TimeSpan shutdownGrace, ILogger<SqliteStorageEngine> logger, TimeSpan readinessCacheTtl) : IStorageEngine
 {
     private const string FileExtension = ".db";
+
+    // A readiness probe still on the disk after this long means a stalled volume: not ready.
+    private static readonly TimeSpan StalledProbe = TimeSpan.FromSeconds(2);
     internal const string SystemName = "_system";
     // Recorded in the lock file: the layout of this build, one directory per tenant.
     private const byte LayoutVersion = 1;
@@ -52,7 +57,88 @@ internal sealed partial class SqliteStorageEngine(string dataDirectory, TimeSpan
     // Published under _creation.
     private SqliteDatabaseStore? _system;
 
+    // Protects only probe bookkeeping, never disk work or an await. Task state distinguishes idle/completed/running,
+    // independently of timestamps (including zero).
+    private readonly Lock _readinessGate = new();
+    private Task<bool>? _probe;
+    private long _probeStarted;
+    private long? _probeCompleted;
+
+    // Instance-scoped clock and barrier for deterministic integration checks of a stalled volume over real listeners.
+    internal TimeProvider ReadinessClock { get; set; } = TimeProvider.System;
+
+    internal Func<Task>? BeforeReadinessProbe { get; set; }
+
+    internal Task ReadinessProbeTask => Volatile.Read(ref _probe) ?? Task.CompletedTask;
+
     public string Name => "sqlite";
+
+    public async ValueTask<bool> IsReadyAsync(CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        Task<bool> probe;
+        TimeSpan remaining;
+        lock (_readinessGate)
+        {
+            if (Volatile.Read(ref _disposed))
+            {
+                return false;
+            }
+
+            var now = ReadinessClock.GetTimestamp();
+            if (_probe is null || (_probe.IsCompleted && _probeCompleted is { } completed
+                && ReadinessClock.GetElapsedTime(completed, now) >= readinessCacheTtl))
+            {
+                _probeStarted = now;
+                _probeCompleted = null;
+                // Off the request thread and outside every storage lock: a stalled volume blocks neither requests nor shutdown.
+                _probe = Task.Run(ProbeAsync, CancellationToken.None);
+            }
+
+            probe = _probe;
+            remaining = StalledProbe - ReadinessClock.GetElapsedTime(_probeStarted, now);
+        }
+
+        try
+        {
+            // Every overlapping caller awaits this same disk task, with the deadline measured from its start.
+            var writable = await probe.WaitAsync(remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero, ReadinessClock, cancellationToken).ConfigureAwait(false);
+            return writable && !Volatile.Read(ref _disposed);
+        }
+        catch (TimeoutException)
+        {
+            return false;
+        }
+    }
+
+    // Creates and removes an empty file in the data directory, then timestamps the completed result.
+    private async Task<bool> ProbeAsync()
+    {
+        try
+        {
+            if (BeforeReadinessProbe is { } beforeProbe)
+            {
+                await beforeProbe().ConfigureAwait(false);
+            }
+
+            // A unique name, so a leftover never blocks a later probe. Not a database file, so even one left by a crash
+            // between create and close never fails the layout check.
+            using var probe = new FileStream(
+                Path.Combine(dataDirectory, $".ready.{Guid.NewGuid():N}.probe"), FileMode.CreateNew, FileAccess.Write, FileShare.None, 1, FileOptions.DeleteOnClose);
+            return true;
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
+        finally
+        {
+            lock (_readinessGate)
+            {
+                _probeCompleted = ReadinessClock.GetTimestamp();
+            }
+        }
+    }
 
     /// <summary>
     /// Idle connections of every database: enough for every core to work on one database, and four

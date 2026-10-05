@@ -667,11 +667,12 @@ public sealed class DocumentApiTests
         using var documentsOnAdmin = await api.Server.Client.PutAsync(new Uri(api.DatabasePath("x"), UriKind.Relative), null);
         using var keysOnClient = await client.PostAsJsonAsync(
             new Uri("/admin/api-keys", UriKind.Relative), new { name = "escalate", scopes = WriteScope, organizationId = api.Tenant.OrganizationId });
-        using var healthOnClient = await client.GetAsync(new Uri("/healthz", UriKind.Relative));
+        // Health probes are the only administrative routes the client listener also serves.
+        using var metricsOnClient = await client.GetAsync(new Uri("/metrics", UriKind.Relative));
 
         await Assert.That(documentsOnAdmin.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
         await Assert.That(keysOnClient.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
-        await Assert.That(healthOnClient.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+        await Assert.That(metricsOnClient.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
     }
 
     [Test]

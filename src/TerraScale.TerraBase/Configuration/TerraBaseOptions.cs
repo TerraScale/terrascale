@@ -25,6 +25,11 @@ public sealed record TerraBaseOptions
 
     private const int MaxShutdownGraceSeconds = 3600;
 
+    /// <summary>Default seconds completed readiness filesystem results are cached.</summary>
+    public const int DefaultReadinessCacheSeconds = 1;
+
+    private const int MaxReadinessCacheSeconds = 60;
+
     /// <summary>Default directory for SQLite database files, relative to the working directory.</summary>
     public const string DefaultDataDirectory = "data";
 
@@ -40,7 +45,7 @@ public sealed record TerraBaseOptions
 
     private static readonly FrozenSet<string> Keys = FrozenSet.Create(
         StringComparer.Ordinal,
-        ["admin-port", "data-directory", "region", "client-port", .. ClientTlsKeys, "dashboard-credential-file", "management-legacy-owner", "peer-port", .. PeerTlsKeys, "shutdown-grace-seconds"]);
+        ["admin-port", "data-directory", "region", "client-port", .. ClientTlsKeys, "dashboard-credential-file", "management-legacy-owner", "peer-port", .. PeerTlsKeys, "shutdown-grace-seconds", "readiness-cache-seconds"]);
 
     /// <summary>Every setting name, in <c>--name=value</c> form without the dashes.</summary>
     public static IReadOnlySet<string> SettingNames => Keys;
@@ -94,6 +99,9 @@ public sealed record TerraBaseOptions
     /// returns but keeps the data directory owned until they do (or the process exits); it never closes them.
     /// </summary>
     public TimeSpan ShutdownGrace { get; init; } = TimeSpan.FromSeconds(DefaultShutdownGraceSeconds);
+
+    /// <summary>How long completed readiness filesystem results are cached; shutdown bypasses this cache.</summary>
+    public TimeSpan ReadinessCacheTtl { get; init; } = TimeSpan.FromSeconds(DefaultReadinessCacheSeconds);
 
     /// <summary>Certificate authority that every connecting peer's client certificate must chain to.</summary>
     public X509Certificate2? PeerClientCa { get; init; }
@@ -212,6 +220,7 @@ public sealed record TerraBaseOptions
                 () => X509CertificateLoader.LoadCertificateFromFile(values["peer-client-ca"]),
                 "peer-client-ca must name a readable PEM certificate"),
             ShutdownGrace = TimeSpan.FromSeconds(ParseShutdownGraceSeconds(values)),
+            ReadinessCacheTtl = TimeSpan.FromSeconds(ParseReadinessCacheSeconds(values)),
         };
     }
 
@@ -255,6 +264,18 @@ public sealed record TerraBaseOptions
         return int.TryParse(raw, NumberStyles.None, CultureInfo.InvariantCulture, out var seconds) && seconds <= MaxShutdownGraceSeconds
             ? seconds
             : throw new TerraBaseConfigurationException($"shutdown-grace-seconds must be an integer between 0 and {MaxShutdownGraceSeconds}");
+    }
+
+    private static int ParseReadinessCacheSeconds(IReadOnlyDictionary<string, string> values)
+    {
+        if (!values.TryGetValue("readiness-cache-seconds", out var raw))
+        {
+            return DefaultReadinessCacheSeconds;
+        }
+
+        return int.TryParse(raw, NumberStyles.None, CultureInfo.InvariantCulture, out var seconds) && seconds is >= 1 and <= MaxReadinessCacheSeconds
+            ? seconds
+            : throw new TerraBaseConfigurationException($"readiness-cache-seconds must be an integer between 1 and {MaxReadinessCacheSeconds}");
     }
 
     // The file holds the secret alone; surrounding whitespace (a trailing newline) is ignored.

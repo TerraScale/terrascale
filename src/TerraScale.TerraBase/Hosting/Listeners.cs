@@ -19,18 +19,27 @@ public enum TerraBaseListener
 }
 
 /// <summary>
-/// Endpoint metadata naming the listener that serves an endpoint. Endpoints without it belong to
+/// Endpoint metadata naming the listeners that serve an endpoint. Endpoints without it belong to
 /// <see cref="TerraBaseListener.Admin"/>. Add it with <c>Metadata(ListenerMetadata.Client)</c>.
 /// Requests on a connection that no TerraBase listener accepted are never served.
 /// </summary>
-/// <param name="Listener">The serving listener.</param>
-public sealed record ListenerMetadata(TerraBaseListener Listener)
+/// <param name="Listeners">The serving listeners.</param>
+public sealed record ListenerMetadata(params IReadOnlyList<TerraBaseListener> Listeners)
 {
+    /// <summary>The listener of endpoints without metadata.</summary>
+    public static ListenerMetadata Admin { get; } = new(TerraBaseListener.Admin);
+
     /// <summary>Metadata for client-facing endpoints.</summary>
     public static ListenerMetadata Client { get; } = new(TerraBaseListener.Client);
 
     /// <summary>Metadata for inter-node endpoints.</summary>
     public static ListenerMetadata Peer { get; } = new(TerraBaseListener.Peer);
+
+    /// <summary>
+    /// Metadata for unauthenticated health probes, served on the administrative listener and, for load balancers, on the
+    /// client listener. They never answer with tenant data.
+    /// </summary>
+    public static ListenerMetadata Probe { get; } = new(TerraBaseListener.Admin, TerraBaseListener.Client);
 }
 
 /// <summary>Binds listeners and keeps each endpoint on its own listener.</summary>
@@ -45,7 +54,7 @@ public static class Listeners
         services.AddOpenApi("v1", options => options.AddOperationTransformer(async (operation, context, cancellationToken) =>
         {
             if (context.Description.ActionDescriptor.EndpointMetadata.OfType<ListenerMetadata>()
-                .Any(metadata => metadata.Listener == TerraBaseListener.Client))
+                .Any(metadata => metadata.Listeners.Contains(TerraBaseListener.Client)))
             {
                 operation.Parameters ??= [];
                 operation.Parameters.Add(new OpenApiParameter
@@ -138,8 +147,8 @@ public static class Listeners
                 }
             }
 
-            var servedBy = context.GetEndpoint()?.Metadata.GetMetadata<ListenerMetadata>()?.Listener ?? TerraBaseListener.Admin;
-            if (arrivedOn != servedBy)
+            var servedBy = context.GetEndpoint()?.Metadata.GetMetadata<ListenerMetadata>()?.Listeners ?? ListenerMetadata.Admin.Listeners;
+            if (arrivedOn is not { } listener || !servedBy.Contains(listener))
             {
                 context.Response.StatusCode = StatusCodes.Status404NotFound;
                 return Task.CompletedTask;

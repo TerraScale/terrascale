@@ -9,10 +9,15 @@ Forgejo Actions on the `terrascale-builder` runner (ts-builder image, .NET SDK 1
 
 - **fast**: `make restore` (locked mode), `make fmt-check`, `make build CONFIGURATION=Release`,
   `make test-fast CONFIGURATION=Release`.
-- **release**: `scripts/ci/stage-release.sh` runs `make publish`, then smoke-runs the staged
-  bytes: `/healthz` must report the csproj version, and an unknown setting must exit with 2.
-  On a push to `main` or of a `v*` tag, `scripts/ci/release.sh draft` attaches those bytes
-  (`terrabase-linux-amd64` and `terrabase-linux-amd64.sha256`) to a draft release:
+- **release**: `scripts/ci/stage-release.sh` runs `make publish` for `linux-x64` and
+  `linux-arm64` and stages `terrabase-linux-amd64` and `terrabase-linux-arm64`. Both must be
+  ELF64 little-endian executables for their machine (`e_machine` x86-64 and aarch64). The amd64
+  bytes are smoke-run: `/healthz` must report the csproj version, `/readyz` must be ready, and
+  an unknown setting must exit with 2. The x86_64 runner cannot run the arm64 bytes, so the ELF
+  header check is all they get before release.
+  On a push to `main` or of a `v*` tag, `scripts/ci/release.sh draft` attaches those bytes and
+  their checksums (`terrabase-linux-amd64`, `terrabase-linux-arm64` and a `.sha256` for each,
+  verifiable with `sha256sum -c`) to a draft release whose notes list both SHA-256 sums:
   - `main`: prerelease `ci-<sha>-run-<run id>`;
   - tag `v<Version>`: release `<tag>` with notes generated from the first-parent history since
     the previous `v*` tag. The tag must match `<Version>` in the csproj and point at a commit on
@@ -37,7 +42,7 @@ Branch protection on `main` should require `Fast integration / fast` and
   Each job extracts them into its own fresh packages folder, and locked restore checks every
   `.nupkg` against `packages.lock.json` (NU1403). A pull request therefore cannot plant files that a
   `main` release reuses (`scripts/ci/nuget-cache.sh`).
-- `release` publishes only the server project; tests are built in `fast` alone.
+- `release` publishes only the server project (once per runtime); tests are built in `fast` alone.
 
 ## Requirements
 

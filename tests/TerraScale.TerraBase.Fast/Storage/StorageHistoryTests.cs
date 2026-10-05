@@ -103,7 +103,8 @@ public sealed class StorageHistoryTests
             }
 
             await using (var engine = new TerraScale.TerraBase.Engine.Sqlite.SqliteStorageEngine(
-                directory, TimeSpan.FromSeconds(5), Microsoft.Extensions.Logging.Abstractions.NullLogger<TerraScale.TerraBase.Engine.Sqlite.SqliteStorageEngine>.Instance))
+                directory, TimeSpan.FromSeconds(5), Microsoft.Extensions.Logging.Abstractions.NullLogger<TerraScale.TerraBase.Engine.Sqlite.SqliteStorageEngine>.Instance,
+                TimeSpan.FromSeconds(1)))
             {
                 await engine.OpenSystemDatabaseAsync(CancellationToken.None);
             }

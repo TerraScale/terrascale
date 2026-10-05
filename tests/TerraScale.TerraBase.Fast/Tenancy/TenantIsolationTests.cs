@@ -21,6 +21,9 @@ public sealed class TenantIsolationTests
 
     private static readonly string[] CallerOnlyRoutes =
     [
+        // Health probes: no tenant data at all.
+        "GET /healthz",
+        "GET /readyz",
         "GET /v1/management/current-organization",
         "GET /v1/management/organizations",
         "POST /v1/management/invitations/accept",
@@ -296,7 +299,7 @@ public sealed class TenantIsolationTests
     [
         .. server.Services.GetRequiredService<EndpointDataSource>().Endpoints
             .OfType<RouteEndpoint>()
-            .Where(endpoint => endpoint.Metadata.GetMetadata<ListenerMetadata>()?.Listener == TerraBaseListener.Client)
+            .Where(endpoint => endpoint.Metadata.GetMetadata<ListenerMetadata>()?.Listeners.Contains(TerraBaseListener.Client) == true)
             .SelectMany(endpoint => (endpoint.Metadata.GetMetadata<HttpMethodMetadata>()?.HttpMethods ?? [])
                 .Select(method => (method, endpoint.RoutePattern.RawText!)))
             .Order(),

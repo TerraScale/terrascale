@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Prove release.sh before it touches real releases: drive it over HTTP against
 # a fake Forgejo release API in a scratch repository and check that it drafts
-# the tested bytes, emits no release_id when an upload fails, replaces only the
+# the tested bytes of both executables with their checksums, refuses a missing
+# executable, emits no release_id when an upload fails, replaces only the
 # draft an earlier attempt of the same run left, never touches a published
 # release or a draft prepared by hand, releases only tags on
 # main's first-parent history and takes the notes baseline from it, and
@@ -141,22 +142,31 @@ commit 'Add B'
 git -C "$repo" merge -q --no-ff -m 'Merge side' side
 commit 'Add C' && git -C "$repo" tag v1.2.3
 git -C "$repo" update-ref refs/remotes/origin/main HEAD
+executables=(terrabase-linux-amd64 terrabase-linux-arm64)
 head -c 65536 /dev/urandom > "$repo/dist/terrabase-linux-amd64"
 
 serve '' ''
+! draft refs/heads/main 2>/dev/null || fail 'a draft without terrabase-linux-arm64 passed'
+! logged '^POST' || fail 'a draft without terrabase-linux-arm64 reached the API'
+head -c 70000 /dev/urandom > "$repo/dist/terrabase-linux-arm64"
+
 draft refs/heads/main >/dev/null || fail 'a main push was not drafted'
 grep -qx 'release_id=7' "$work/out" || fail 'no release_id for a drafted main push'
 jq -e '.draft and .prerelease and (.tag_name | test("^ci-[0-9a-f]{40}-run-13105$"))' "$work/created.json" >/dev/null ||
   fail 'a main push must draft the prerelease ci-<sha>-run-<run id>'
-cmp -s "$repo/dist/terrabase-linux-amd64" "$work/asset-terrabase-linux-amd64" || fail 'uploaded bytes differ'
-(cd "$work" && cp asset-terrabase-linux-amd64.sha256 checksum && mv asset-terrabase-linux-amd64 terrabase-linux-amd64 &&
-  sha256sum -c --quiet checksum) || fail 'the uploaded checksum does not verify the uploaded bytes'
+jq -r .body "$work/created.json" > "$work/notes"
+for name in "${executables[@]}"; do
+  cmp -s "$repo/dist/$name" "$work/asset-$name" || fail "uploaded bytes of $name differ"
+  (cd "$work" && mkdir -p verify && cp "asset-$name.sha256" verify/checksum && cp "asset-$name" "verify/$name" &&
+    cd verify && sha256sum -c --quiet checksum) || fail "the uploaded checksum does not verify the uploaded $name"
+  grep -q "^SHA-256 $name: \`$(cut -d' ' -f1 "$work/asset-$name.sha256")\`" "$work/notes" || fail "the notes miss the SHA-256 of $name"
+done
 bash "$script" publish 7 >/dev/null || fail 'publishing failed'
 logged 'PATCH /api/v1/repos/TerraScale/terrabase/releases/7 200' || fail 'publish did not publish the draft'
 jq -e '.draft == false' "$work/patched.json" >/dev/null || fail 'publish did not set draft to false'
 
 # A failed upload leaves a draft and no release_id; rerunning the run replaces that draft.
-for asset in terrabase-linux-amd64 terrabase-linux-amd64.sha256; do
+for asset in "${executables[@]}" "${executables[@]/%/.sha256}"; do
   serve '' "$asset"
   ! draft refs/heads/main 2>/dev/null || fail "a failed upload of $asset passed"
   [[ ! -s $work/out ]] || fail "release_id emitted after a failed upload of $asset"

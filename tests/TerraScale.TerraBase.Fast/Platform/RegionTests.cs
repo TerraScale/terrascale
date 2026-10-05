@@ -71,7 +71,7 @@ public sealed class RegionTests
         using var unauthorized = await anonymous.GetAsync(new Uri(Organizations, UriKind.Relative));
         using var forbidden = await reader.PutAsync(new Uri($"/v1/projects/{project}/databases/main", UriKind.Relative), null);
         using var unknown = await anonymous.GetAsync(new Uri("/no-such-route", UriKind.Relative));
-        using var wrongListener = await anonymous.GetAsync(new Uri("/healthz", UriKind.Relative));
+        using var wrongListener = await anonymous.GetAsync(new Uri("/metrics", UriKind.Relative));
         using var wrongMethod = await api.Client.PutAsync(new Uri(Organizations, UriKind.Relative), null);
         using var invalid = await api.Client.PostAsJsonAsync(new Uri(Organizations, UriKind.Relative), new { name = "" });
         using var malformed = await api.Client.PostAsync(new Uri(Organizations, UriKind.Relative), new StringContent("{", null, "application/json"));
@@ -194,8 +194,15 @@ public sealed class RegionTests
 
         var schema = document.GetProperty("components").GetProperty("schemas").GetProperty("ManagedDatabaseBody");
         await Assert.That(schema.GetProperty("properties").TryGetProperty("region", out _)).IsTrue();
-        var admin = document.GetProperty("paths").GetProperty("/healthz").GetProperty("get");
+        var admin = document.GetProperty("paths").GetProperty("/admin/api-keys").GetProperty("post");
         await Assert.That(admin.GetRawText()).DoesNotContain(PinHeader);
+        foreach (var path in new[] { "/healthz", "/readyz" })
+        {
+            var probe = document.GetProperty("paths").GetProperty(path).GetProperty("get");
+            await Assert.That(probe.GetProperty("parameters").EnumerateArray().Any(item => item.GetProperty("name").GetString() == PinHeader)).IsTrue();
+            await Assert.That(probe.GetProperty("responses").TryGetProperty("421", out _)).IsTrue();
+            await Assert.That(probe.GetProperty("responses").GetProperty("200").GetProperty("headers").TryGetProperty(RegionHeader, out _)).IsTrue();
+        }
     }
 
     private static async Task AssertMisdirectedAsync(HttpResponseMessage response, string pin)
