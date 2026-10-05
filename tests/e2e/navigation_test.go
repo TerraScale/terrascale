@@ -36,7 +36,7 @@ func TestNavigationContextSwitchStaysInSection(t *testing.T) {
 
 	// The new organization has no project: every project page leads back to
 	// its setup instead of a plain-text error.
-	for _, path := range []string{"/", "/databases", "/auth", "/auth/users", "/usage", "/settings"} {
+	for _, path := range []string{"/", "/databases", "/auth", "/auth/users", "/usage"} {
 		goToOK(t, page, path)
 		waitForPath(t, page, func(u *url.URL) bool {
 			return u.Path == "/organization" && u.Query().Get("newOrganization") == "project"

@@ -29,7 +29,7 @@ func TestPerformance(t *testing.T) {
 
 	page := newPage(t)
 	login(t, page, sampleAccount.Email, sampleAccount.Password)
-	paths := []string{"/login", "/", "/databases", sqlConsolePath(t, page), "/settings", "/usage"}
+	paths := []string{"/login", "/", "/databases", sqlConsolePath(t, page), "/usage"}
 	var samples []perfSample
 	for _, profile := range []string{"desktop", "mobile"} {
 		for _, path := range paths {

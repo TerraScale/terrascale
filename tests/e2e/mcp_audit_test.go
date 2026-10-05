@@ -4,8 +4,6 @@ import (
 	"slices"
 	"strings"
 	"testing"
-
-	"github.com/mxschmitt/playwright-go"
 )
 
 // TestMCPAuditEventsFollowTheAuditPageFilters records a settings change in a
@@ -14,12 +12,8 @@ func TestMCPAuditEventsFollowTheAuditPageFilters(t *testing.T) {
 	t.Parallel()
 	page := newPage(t)
 	registerAndOnboard(t, page, newAccount("mcp-audit"))
-	goToOK(t, page, "/settings?tab=audit")
-	form := page.Locator(`form[action="/api/v1/dashboard/settings/audit-retention"]`)
-	fill(t, form.Locator(`[name="retentionDays"]`), "30")
-	submitAndExpect(t, page, "/api/v1/dashboard/settings/audit-retention", 303, byRole(form, *playwright.AriaRoleButton, "Save retention").Click)
-
 	session := connectMCP(t, createAccessToken(t, page, journeyPassword, "audit assistant"))
+	callTool(t, session, "set_audit_retention", map[string]any{"days": 30}, &struct{ Saved bool }{})
 	type event struct{ ID, Action, Target, Severity, Outcome, ActorType string }
 	var listed struct {
 		Events        []event
