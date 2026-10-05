@@ -41,10 +41,10 @@ func TestShellAnnouncesStatusPageIncidentsAndMaintenance(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{
 			"status": {"indicator": "major", "description": "Partial System Outage"},
-			"incidents": [{"name": "Elevated database API errors", "status": "investigating", "impact": "major",
+			"incidents": [{"id": "e2e", "name": "Elevated database API errors", "status": "investigating", "impact": "major",
 				"shortlink": "https://status.terrascale.tech/incidents/e2e",
 				"incident_updates": [{"body": "` + update + `"}]}],
-			"scheduled_maintenances": [{"name": "Storage engine upgrade", "status": "scheduled",
+			"scheduled_maintenances": [{"id": "e2e-maintenance", "name": "Storage engine upgrade", "status": "scheduled",
 				"scheduled_for": "` + starts.Format(time.RFC3339) + `",
 				"scheduled_until": "` + starts.Add(time.Hour).Format(time.RFC3339) + `",
 				"shortlink": "https://status.terrascale.tech/incidents/e2e-maintenance"}]
@@ -79,6 +79,65 @@ func TestShellAnnouncesStatusPageIncidentsAndMaintenance(t *testing.T) {
 	if box.Height > 280 {
 		t.Fatalf("banner is %.0fpx tall on a 390px wide screen, want at most 280px", box.Height)
 	}
+
+	// Both tabs use the same browser login; another context has its own login.
+	secondTab := watchedPage(t, page.Context())
+	goTo(t, secondTab, "/usage")
+	otherLogin := watchedPage(t, newContext(t, dashboard.URL))
+	login(t, otherLogin, sampleAccount.Email, sampleAccount.Password)
+	goTo(t, otherLogin, "/databases")
+	scope, err := banner.GetAttribute("data-notice-scope")
+	must(t, err)
+	cookies, err := page.Context().Cookies()
+	must(t, err)
+	for _, cookie := range cookies {
+		if cookie.Name == sessionCookie {
+			content, err := page.Content()
+			must(t, err)
+			if strings.Contains(content, cookie.Value) {
+				t.Fatal("banner exposed the session credential in the document")
+			}
+		}
+	}
+
+	closeIncident := pageByRole(page, *playwright.AriaRoleButton, "Dismiss alert: Elevated database API errors")
+	must(t, closeIncident.Focus())
+	must(t, closeIncident.Press("Enter"))
+	must(t, expect.Locator(incident).ToBeHidden())
+	must(t, expect.Locator(maintenance).ToBeVisible())
+	must(t, expect.Locator(secondTab.Locator(`[data-notice-id="incident:e2e"]`)).ToBeHidden())
+	must(t, expect.Locator(otherLogin.Locator(`[data-notice-id="incident:e2e"]`)).ToBeVisible())
+	must(t, expect.Locator(pageByRole(page, *playwright.AriaRoleButton, "Dismiss alert: Storage engine upgrade")).ToBeFocused())
+	screenshot(t, page, "status-banner-incident-dismissed")
+
+	goTo(t, page, "/usage")
+	must(t, expect.Locator(page.Locator(`[data-notice-id="incident:e2e"]`)).ToBeHidden())
+	goTo(t, page, "/databases")
+	_, err = page.Reload()
+	must(t, err)
+	must(t, expect.Locator(incident).ToBeHidden())
+	must(t, expect.Locator(banner).ToHaveAttribute("data-notice-scope", scope))
+	click(t, pageByRole(secondTab, *playwright.AriaRoleButton, "Dismiss alert: Storage engine upgrade"))
+	must(t, expect.Locator(banner).ToBeHidden())
+	must(t, expect.Locator(secondTab.Locator(".ts-status-banner")).ToBeHidden())
+	must(t, expect.Locator(secondTab.Locator("#ts-main")).ToBeFocused())
+	screenshot(t, page, "status-banner-all-dismissed")
+
+	logout(t, page)
+	login(t, page, sampleAccount.Email, sampleAccount.Password)
+	goTo(t, page, "/databases")
+	must(t, expect.Locator(incident).ToBeVisible())
+	must(t, expect.Locator(maintenance).ToBeVisible())
+	must(t, expect.Locator(banner).Not().ToHaveAttribute("data-notice-scope", scope))
+	goTo(t, secondTab, "/usage")
+	must(t, expect.Locator(secondTab.Locator(`[data-notice-id="incident:e2e"]`)).ToBeVisible())
+
+	// Storage restrictions must not break the page or the close control.
+	_, err = page.Evaluate(`() => Object.defineProperty(window, 'localStorage', {get() { throw new DOMException('Blocked', 'SecurityError'); }})`)
+	must(t, err)
+	click(t, pageByRole(page, *playwright.AriaRoleButton, "Dismiss alert: Elevated database API errors"))
+	must(t, expect.Locator(incident).ToBeHidden())
+	must(t, expect.Locator(maintenance).ToBeVisible())
 
 	// The in-process shared dashboard reads no status page, so its shell
 	// shows no banner.

@@ -128,7 +128,7 @@ func New(cfg config.Config) (*Application, error) {
 		}
 		notices = client
 	}
-	renderer := render.New(store, guard, notices, cfg.Dev).ReportCSPViolationsTo(cfg.CSPReportURL)
+	renderer := render.New(store, guard, notices, sessions.NoticeScope, cfg.Dev).ReportCSPViolationsTo(cfg.CSPReportURL)
 	deps := core.Deps{
 		Store: store, Sessions: sessions, CSRF: guard, Render: renderer,
 		Events: datastar.Events{}, Demo: cfg.Demo, Tools: core.NewTools(store),

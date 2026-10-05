@@ -493,6 +493,8 @@ type Shell struct {
 	ReturnURL string
 	// Notices are the status page's active incidents and maintenance.
 	Notices []StatusNotice
+	// NoticeScope separates dismissed banners by browser login. It is not a credential.
+	NoticeScope string
 	// UnreadNotifications counts unread notifications in the selected scope.
 	UnreadNotifications int
 }
@@ -500,6 +502,7 @@ type Shell struct {
 // StatusNotice is one unresolved incident or current or upcoming maintenance
 // window from the public status page, shown as a banner in the shell.
 type StatusNotice struct {
+	ID string
 	// Impact is none, minor, major, critical, or maintenance.
 	Impact  string
 	Label   string

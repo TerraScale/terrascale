@@ -388,3 +388,33 @@ func assertNotices(t *testing.T, got, want []core.StatusNotice) {
 		}
 	}
 }
+
+func TestNoticeIdentitySurvivesUpdatesAndSeparatesNewIncidents(t *testing.T) {
+	read := func(body string) []core.StatusNotice {
+		t.Helper()
+		s, err := parse(strings.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return noticesAt(s, sampleNow, home)
+	}
+	body := `{"status":{"indicator":"major"},"incidents":[
+		{"id":"same-id","name":"Outage","status":"investigating","impact":"major","incident_updates":[{"body":"Investigating"}]}],
+		"scheduled_maintenances":[{"id":"same-id","name":"Maintenance","status":"in_progress"}]}`
+	first := read(body)
+	if len(first) != 2 || first[0].ID != "incident:same-id" || first[1].ID != "maintenance:same-id" {
+		t.Fatalf("notice identities = %+v", first)
+	}
+	updated := read(strings.NewReplacer("Outage", "Renamed outage", "Investigating", "Fix applied", "investigating", "monitoring").Replace(body))
+	if updated[0].ID != first[0].ID || updated[0].Title == first[0].Title || updated[0].Message == first[0].Message {
+		t.Fatalf("updating an incident changed its identity or lost its update: %+v", updated)
+	}
+	newIncident := read(strings.Replace(body, `"id":"same-id"`, `"id":"new-id"`, 1))
+	if newIncident[0].ID == first[0].ID {
+		t.Fatal("a new incident inherited the old incident's identity")
+	}
+	resolved := read(strings.Replace(body, `"status":"investigating"`, `"status":"resolved"`, 1))
+	if len(resolved) != 1 || resolved[0].ID != first[1].ID {
+		t.Fatalf("resolved incident is still announced: %+v", resolved)
+	}
+}

@@ -1,0 +1,40 @@
+package ui
+
+// Runs synchronously after the banner, before it can paint with closed notices.
+templ statusBannerDismissals(nonce string) {
+	<script nonce={ nonce }>
+		(() => {
+			const banner = document.currentScript.previousElementSibling;
+			const prefix = 'ts-status-dismissed:' + banner.dataset.noticeScope + ':';
+			const notices = [...banner.querySelectorAll('[data-notice-id]')];
+			const closed = new Set();
+			const apply = () => {
+				for (const notice of notices) {
+					const id = notice.dataset.noticeId;
+					try {
+						if (id && localStorage.getItem(prefix + id) === '1') closed.add(id);
+					} catch {}
+					notice.hidden = closed.has(id);
+				}
+				banner.hidden = notices.every(notice => notice.hidden);
+			};
+			banner.addEventListener('click', event => {
+				const button = event.target.closest('.ts-status-notice-dismiss');
+				if (!button) return;
+				const notice = button.closest('[data-notice-id]');
+				const id = notice.dataset.noticeId;
+				closed.add(id);
+				try { localStorage.setItem(prefix + id, '1'); } catch {}
+				apply();
+				const next = notices.find(item => !item.hidden);
+				const target = next?.querySelector('.ts-status-notice-dismiss') ?? document.getElementById('ts-main');
+				target?.focus();
+			});
+			window.addEventListener('storage', event => {
+				if (event.key?.startsWith(prefix)) apply();
+			});
+			window.addEventListener('pageshow', apply);
+			apply();
+		})();
+	</script>
+}

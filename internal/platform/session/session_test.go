@@ -237,3 +237,48 @@ func TestEndDeduplicatesAndValidatesBearer(t *testing.T) {
 		})
 	}
 }
+
+func TestNoticeScopeFollowsTheBrowserLogin(t *testing.T) {
+	store := memstore.New()
+	account, err := store.CreateAccount(t.Context(), core.User{Name: "Ada", Email: "ada@example.test", PasswordHash: "test-hash"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := New(store, Options{CookieName: "custom-session"})
+	principal := core.Principal{AccountID: account.ID, UserID: account.User.ID}
+	request := httptest.NewRequest(http.MethodGet, "/", nil)
+	if manager.NoticeScope(request) != "" {
+		t.Fatal("anonymous request received a notice scope")
+	}
+	start := func(request *http.Request) *http.Request {
+		response := httptest.NewRecorder()
+		if err := manager.Start(response, request, principal); err != nil {
+			t.Fatal(err)
+		}
+		next := httptest.NewRequest(http.MethodGet, "/", nil)
+		next.AddCookie(response.Result().Cookies()[0])
+		return next
+	}
+	first := start(request)
+	scope := manager.NoticeScope(first)
+	token, _ := manager.Token(first)
+	if len(scope) != 32 || scope == token || manager.NoticeScope(first) != scope {
+		t.Fatal("notice scope is not stable and separate from the credential")
+	}
+	independent := start(request)
+	if manager.NoticeScope(independent) == scope {
+		t.Fatal("independent logins share a notice scope")
+	}
+	second := start(first)
+	if manager.NoticeScope(second) == scope || manager.NoticeScope(first) != "" {
+		t.Fatal("new login did not replace the notice scope")
+	}
+	manager.End(httptest.NewRecorder(), second)
+	if manager.NoticeScope(second) != "" {
+		t.Fatal("signed-out session still has a notice scope")
+	}
+	manager.RevokeUser(t.Context(), principal.AccountID, principal.UserID)
+	if manager.NoticeScope(independent) != "" {
+		t.Fatal("revoked session still has a notice scope")
+	}
+}
