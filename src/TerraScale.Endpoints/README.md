@@ -5,6 +5,15 @@ A FastEndpoints-inspired authoring layer over ASP.NET Core minimal routing for
 through a bundled source generator; every endpoint is one class in one file.
 The library is trim-safe and works in native AOT apps (`PublishAot`).
 
+CI verifies the packed NuGet package in an isolated `linux-x64` NativeAOT
+consumer, including generated registration and a JSON endpoint round trip.
+To run the same check locally (requires clang and the native linker libraries):
+
+```sh
+nice -n 19 dotnet pack TerraScale.Libs.slnx -c Release -o artifacts/packages
+nice -n 19 bash scripts/check-nativeaot-package.sh artifacts/packages
+```
+
 The authoring model follows the FastEndpoints endpoint definitions documented at
 <https://fast-endpoints.com/docs/get-started> and
 <https://fast-endpoints.com/docs/endpoint-definitions>: configure the verb and

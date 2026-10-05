@@ -85,6 +85,16 @@ jobs:
             exit 1
           fi
 
+      - name: Verify the packed package in a standalone NativeAOT consumer
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Regression: the local feed path must survive XML attribute escaping.
+          feed='artifacts/packages & <"nativeaot">'
+          mkdir -p "$feed"
+          cp artifacts/packages/TerraScale.Endpoints.*.nupkg "$feed/"
+          bash scripts/check-nativeaot-package.sh "$feed"
+
       - name: Publish packages to the Forgejo NuGet registry
         if: forgejo.event_name == 'push' && forgejo.ref == 'refs/heads/main'
         shell: bash
