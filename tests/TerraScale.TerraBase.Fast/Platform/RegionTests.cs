@@ -179,8 +179,10 @@ public sealed class RegionTests
     [Test]
     public async Task Openapi_documents_region_pins_headers_and_database_bodies_on_client_operations()
     {
-        await using var server = await TerraBaseTestServer.StartAsync();
-        var document = await server.Client.GetFromJsonAsync<JsonElement>(new Uri("/openapi/v1.json", UriKind.Relative));
+        using var tls = new ClientTls();
+        await using var server = await TerraBaseTestServer.StartAsync(tls.Apply);
+        using var client = tls.CreateClient(server.ClientAddress!);
+        var document = await client.GetFromJsonAsync<JsonElement>(new Uri("/openapi/v1.json", UriKind.Relative));
         var operation = document.GetProperty("paths").GetProperty(Organizations).GetProperty("get");
         var parameter = operation.GetProperty("parameters").EnumerateArray()
             .Single(item => item.GetProperty("name").GetString() == PinHeader);
@@ -194,8 +196,6 @@ public sealed class RegionTests
 
         var schema = document.GetProperty("components").GetProperty("schemas").GetProperty("ManagedDatabaseBody");
         await Assert.That(schema.GetProperty("properties").TryGetProperty("region", out _)).IsTrue();
-        var admin = document.GetProperty("paths").GetProperty("/admin/api-keys").GetProperty("post");
-        await Assert.That(admin.GetRawText()).DoesNotContain(PinHeader);
         foreach (var path in new[] { "/healthz", "/readyz" })
         {
             var probe = document.GetProperty("paths").GetProperty(path).GetProperty("get");

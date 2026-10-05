@@ -15,11 +15,11 @@ public sealed class RevokeInvitationEndpoint(IAccessService access) : EndpointWi
         Summary("Revokes an invitation");
         Description($"Needs admin. The token stops working. {ManagementRoute.IdentityDescription}");
         Tags(ManagementRoute.AccessTag);
-        Produces<string>(StatusCodes.Status400BadRequest);
-        Produces<string>(StatusCodes.Status403Forbidden);
-        Produces<string>(StatusCodes.Status404NotFound);
+        Produces<ErrorBody>(StatusCodes.Status400BadRequest);
+        Produces<ErrorBody>(StatusCodes.Status403Forbidden);
+        Produces<ErrorBody>(StatusCodes.Status404NotFound);
         RequireAuthorization(UserAuthExtensions.PolicyName);
-        Metadata(ListenerMetadata.Management);
+        Metadata(ListenerMetadata.Management, new ProducesResponseTypeMetadata(StatusCodes.Status204NoContent, typeof(void)));
     }
 
     /// <inheritdoc />

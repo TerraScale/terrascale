@@ -9,7 +9,7 @@ namespace TerraScale.TerraBase.Hosting;
 /// <summary>The listeners TerraBase serves; every endpoint belongs to exactly one.</summary>
 public enum TerraBaseListener
 {
-    /// <summary>Loopback-only administration: health, metrics, OpenAPI and operator endpoints.</summary>
+    /// <summary>Loopback-only administration: health, metrics and operator endpoints.</summary>
     Admin,
 
     /// <summary>Client-facing API over TLS, authorized by scoped API keys.</summary>

@@ -16,9 +16,9 @@ public sealed class ConfirmOwnershipTransferEndpoint(IAccessService access) : En
         Description($"Only the nominee may confirm. It becomes an owner and the owner who started the transfer becomes a member. 404 when none is pending, it expired, or its starter is no longer an owner. {ManagementRoute.IdentityDescription}");
         Tags(ManagementRoute.AccessTag);
         Produces<OrganizationMember>();
-        Produces<string>(StatusCodes.Status400BadRequest);
-        Produces<string>(StatusCodes.Status403Forbidden);
-        Produces<string>(StatusCodes.Status404NotFound);
+        Produces<ErrorBody>(StatusCodes.Status400BadRequest);
+        Produces<ErrorBody>(StatusCodes.Status403Forbidden);
+        Produces<ErrorBody>(StatusCodes.Status404NotFound);
         RequireAuthorization(UserAuthExtensions.PolicyName);
         Metadata(ListenerMetadata.Management);
     }

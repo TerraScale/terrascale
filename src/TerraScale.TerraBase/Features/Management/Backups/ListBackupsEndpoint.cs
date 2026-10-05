@@ -16,8 +16,8 @@ public sealed class ListBackupsEndpoint(IManagementService management, IManagedB
         Description(ManagementRoute.PageDescription + " " + ManagementRoute.IdentityDescription);
         Tags(ManagementRoute.Tag);
         Produces<ManagementPage<DatabaseBackup>>();
-        Produces<string>(StatusCodes.Status400BadRequest);
-        Produces<string>(StatusCodes.Status404NotFound);
+        Produces<ErrorBody>(StatusCodes.Status400BadRequest);
+        Produces<ErrorBody>(StatusCodes.Status404NotFound);
         RequireAuthorization(UserAuthExtensions.PolicyName);
         Metadata(ListenerMetadata.Management);
     }

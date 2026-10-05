@@ -16,8 +16,8 @@ public sealed class SetOrganizationPlanEndpoint(IManagementService management) :
         Description("plan: hobby (the default of every organization), pro or enterprise." + " " + ManagementRoute.IdentityDescription);
         Tags(ManagementRoute.Tag);
         Produces<Organization>();
-        Produces<string>(StatusCodes.Status400BadRequest);
-        Produces<string>(StatusCodes.Status404NotFound);
+        Produces<ErrorBody>(StatusCodes.Status400BadRequest);
+        Produces<ErrorBody>(StatusCodes.Status404NotFound);
         RequireAuthorization(UserAuthExtensions.PolicyName);
         Metadata(ListenerMetadata.Management);
     }

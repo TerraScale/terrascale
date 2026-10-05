@@ -17,8 +17,8 @@ public sealed class CheckSqlEndpoint(IManagementService management, IQueryServic
         Description(QueriesExtensions.SqlDescription + " Invalid SQL returns ok false and the error. suggestions lists filtered or sorted fields that no index of the collection leads with." + " " + ManagementRoute.IdentityDescription);
         Tags(ManagementRoute.Tag);
         Produces<SqlCheckBody>();
-        Produces<string>(StatusCodes.Status400BadRequest);
-        Produces<string>(StatusCodes.Status404NotFound);
+        Produces<ErrorBody>(StatusCodes.Status400BadRequest);
+        Produces<ErrorBody>(StatusCodes.Status404NotFound);
         RequireAuthorization(UserAuthExtensions.PolicyName);
         Metadata(ListenerMetadata.Management);
     }

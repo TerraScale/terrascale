@@ -16,9 +16,9 @@ public sealed class ListInvitationsEndpoint(IAccessService access) : EndpointWit
         Description($"Needs admin. Expired invitations are listed until replaced or revoked; compare expiresAt. Query: after (id cursor), limit (1 to 100, default 20); creation order. {ManagementRoute.IdentityDescription}");
         Tags(ManagementRoute.AccessTag);
         Produces<ManagementPage<Invitation>>();
-        Produces<string>(StatusCodes.Status400BadRequest);
-        Produces<string>(StatusCodes.Status403Forbidden);
-        Produces<string>(StatusCodes.Status404NotFound);
+        Produces<ErrorBody>(StatusCodes.Status400BadRequest);
+        Produces<ErrorBody>(StatusCodes.Status403Forbidden);
+        Produces<ErrorBody>(StatusCodes.Status404NotFound);
         RequireAuthorization(UserAuthExtensions.PolicyName);
         Metadata(ListenerMetadata.Management);
     }

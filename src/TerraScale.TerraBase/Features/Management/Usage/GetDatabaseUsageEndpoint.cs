@@ -22,8 +22,8 @@ public sealed class GetDatabaseUsageEndpoint(IManagementService management, IUsa
         Description("Bytes on disk, collections, live documents, and document reads (gets, list and query pages) and writes (committed puts, patches and deletes, each operation of a transaction) since the database was created. " + CountsDescription + " " + ManagementRoute.IdentityDescription);
         Tags(ManagementRoute.Tag);
         Produces<DatabaseUsage>();
-        Produces<string>(StatusCodes.Status400BadRequest);
-        Produces<string>(StatusCodes.Status404NotFound);
+        Produces<ErrorBody>(StatusCodes.Status400BadRequest);
+        Produces<ErrorBody>(StatusCodes.Status404NotFound);
         RequireAuthorization(UserAuthExtensions.PolicyName);
         Metadata(ListenerMetadata.Management);
     }

@@ -15,10 +15,10 @@ public sealed class DeleteProjectEndpoint(IManagementService management) : Endpo
         Summary("Deletes a project");
         Description("Fails with 409 while the project still has databases or API keys." + " " + ManagementRoute.IdentityDescription);
         Tags(ManagementRoute.Tag);
-        Produces<string>(StatusCodes.Status404NotFound);
-        Produces<string>(StatusCodes.Status409Conflict);
+        Produces<ErrorBody>(StatusCodes.Status404NotFound);
+        Produces<ErrorBody>(StatusCodes.Status409Conflict);
         RequireAuthorization(UserAuthExtensions.PolicyName);
-        Metadata(ListenerMetadata.Management);
+        Metadata(ListenerMetadata.Management, new ProducesResponseTypeMetadata(StatusCodes.Status204NoContent, typeof(void)));
     }
 
     /// <inheritdoc />

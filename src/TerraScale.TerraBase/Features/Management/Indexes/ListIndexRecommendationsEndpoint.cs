@@ -16,7 +16,7 @@ public sealed class ListIndexRecommendationsEndpoint(IManagementService manageme
         Description("One single-field recommendation per collection and field that runSql statements filtered or sorted on while no index of the collection led with it. Most queried first, then by id (collection:field)." + " " + ManagementRoute.IdentityDescription);
         Tags(ManagementRoute.Tag);
         Produces<IndexRecommendationListBody>();
-        Produces<string>(StatusCodes.Status404NotFound);
+        Produces<ErrorBody>(StatusCodes.Status404NotFound);
         RequireAuthorization(UserAuthExtensions.PolicyName);
         Metadata(ListenerMetadata.Management);
     }

@@ -678,9 +678,11 @@ public sealed class DocumentApiTests
     [Test]
     public async Task Every_document_route_is_in_the_openapi_document()
     {
-        await using var server = await TerraBaseTestServer.StartAsync();
+        using var tls = new ClientTls();
+        await using var server = await TerraBaseTestServer.StartAsync(tls.Apply);
+        using var client = tls.CreateClient(server.ClientAddress!);
 
-        using var openApi = JsonDocument.Parse(await server.Client.GetStringAsync(new Uri("/openapi/v1.json", UriKind.Relative)));
+        using var openApi = JsonDocument.Parse(await client.GetStringAsync(new Uri("/openapi/v1.json", UriKind.Relative)));
         var operations = openApi.RootElement.GetProperty("paths").EnumerateObject()
             .SelectMany(path => path.Value.EnumerateObject().Select(operation => operation.Value.GetProperty("operationId").GetString()))
             .ToHashSet();

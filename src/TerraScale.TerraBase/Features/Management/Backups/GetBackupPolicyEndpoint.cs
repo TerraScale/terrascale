@@ -16,7 +16,7 @@ public sealed class GetBackupPolicyEndpoint(IManagementService management, IMana
         Description("Until a policy is saved this returns the default: a full backup daily at 02:00 UTC, kept 7 days, with updatedAt null. The scheduler applies this default from the database's creation, as it applies a saved policy from its save." + " " + ManagementRoute.IdentityDescription);
         Tags(ManagementRoute.Tag);
         Produces<BackupPolicy>();
-        Produces<string>(StatusCodes.Status404NotFound);
+        Produces<ErrorBody>(StatusCodes.Status404NotFound);
         RequireAuthorization(UserAuthExtensions.PolicyName);
         Metadata(ListenerMetadata.Management);
     }

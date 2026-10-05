@@ -16,8 +16,8 @@ public sealed class CreateSavedQueryEndpoint(IManagementService management, IQue
         Description("name: 1 to 128 characters. sql: a statement of the SQL subset (see runSql)." + " " + ManagementRoute.IdentityDescription);
         Tags(ManagementRoute.Tag);
         Produces<SavedQuery>(StatusCodes.Status201Created);
-        Produces<string>(StatusCodes.Status400BadRequest);
-        Produces<string>(StatusCodes.Status404NotFound);
+        Produces<ErrorBody>(StatusCodes.Status400BadRequest);
+        Produces<ErrorBody>(StatusCodes.Status404NotFound);
         RequireAuthorization(UserAuthExtensions.PolicyName);
         Metadata(ListenerMetadata.Management);
     }

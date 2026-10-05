@@ -16,9 +16,9 @@ public sealed class GetAuditRetentionEndpoint(IAccessService access) : EndpointW
         Description($"Needs admin. 90 days unless set. {ManagementRoute.IdentityDescription}");
         Tags(ManagementRoute.AccessTag);
         Produces<AuditRetention>();
-        Produces<string>(StatusCodes.Status400BadRequest);
-        Produces<string>(StatusCodes.Status403Forbidden);
-        Produces<string>(StatusCodes.Status404NotFound);
+        Produces<ErrorBody>(StatusCodes.Status400BadRequest);
+        Produces<ErrorBody>(StatusCodes.Status403Forbidden);
+        Produces<ErrorBody>(StatusCodes.Status404NotFound);
         RequireAuthorization(UserAuthExtensions.PolicyName);
         Metadata(ListenerMetadata.Management);
     }

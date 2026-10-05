@@ -20,10 +20,10 @@ public sealed class AcceptInvitationEndpoint(IAccessService access) : Endpoint<A
         Description("Authorization: Bearer <ts-auth access token>; its sub is the accepting user and the invitation token names the organization. The access token's email, with email_verified true, must match the invitation (403 otherwise; the management service credential carries no verified email, so it cannot accept). 404 for an unknown token, 409 when expired or already a member.");
         Tags(ManagementRoute.AccessTag);
         Produces<OrganizationMember>();
-        Produces<string>(StatusCodes.Status400BadRequest);
-        Produces<string>(StatusCodes.Status403Forbidden);
-        Produces<string>(StatusCodes.Status404NotFound);
-        Produces<string>(StatusCodes.Status409Conflict);
+        Produces<ErrorBody>(StatusCodes.Status400BadRequest);
+        Produces<ErrorBody>(StatusCodes.Status403Forbidden);
+        Produces<ErrorBody>(StatusCodes.Status404NotFound);
+        Produces<ErrorBody>(StatusCodes.Status409Conflict);
         RequireAuthorization(UserAuthExtensions.PolicyName);
         Metadata(ListenerMetadata.Management);
     }

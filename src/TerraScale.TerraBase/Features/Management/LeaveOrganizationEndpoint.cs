@@ -15,12 +15,12 @@ public sealed class LeaveOrganizationEndpoint(IAccessService access) : EndpointW
         Summary("Leaves an organization");
         Description($"Needs member. 409 for the last owner, who must make another member an owner first. {ManagementRoute.IdentityDescription}");
         Tags(ManagementRoute.AccessTag);
-        Produces<string>(StatusCodes.Status400BadRequest);
-        Produces<string>(StatusCodes.Status403Forbidden);
-        Produces<string>(StatusCodes.Status404NotFound);
-        Produces<string>(StatusCodes.Status409Conflict);
+        Produces<ErrorBody>(StatusCodes.Status400BadRequest);
+        Produces<ErrorBody>(StatusCodes.Status403Forbidden);
+        Produces<ErrorBody>(StatusCodes.Status404NotFound);
+        Produces<ErrorBody>(StatusCodes.Status409Conflict);
         RequireAuthorization(UserAuthExtensions.PolicyName);
-        Metadata(ListenerMetadata.Management);
+        Metadata(ListenerMetadata.Management, new ProducesResponseTypeMetadata(StatusCodes.Status204NoContent, typeof(void)));
     }
 
     /// <inheritdoc />

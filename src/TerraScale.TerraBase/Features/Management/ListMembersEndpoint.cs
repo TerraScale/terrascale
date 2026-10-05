@@ -16,9 +16,9 @@ public sealed class ListMembersEndpoint(IAccessService access) : EndpointWithout
         Description($"Needs member. Items are in user id order; query: after (user id cursor), limit (1 to 100, default 20). {ManagementRoute.IdentityDescription}");
         Tags(ManagementRoute.AccessTag);
         Produces<ManagementPage<OrganizationMember>>();
-        Produces<string>(StatusCodes.Status400BadRequest);
-        Produces<string>(StatusCodes.Status403Forbidden);
-        Produces<string>(StatusCodes.Status404NotFound);
+        Produces<ErrorBody>(StatusCodes.Status400BadRequest);
+        Produces<ErrorBody>(StatusCodes.Status403Forbidden);
+        Produces<ErrorBody>(StatusCodes.Status404NotFound);
         RequireAuthorization(UserAuthExtensions.PolicyName);
         Metadata(ListenerMetadata.Management);
     }

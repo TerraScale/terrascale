@@ -473,7 +473,8 @@ public sealed class AccessApiTests
     {
         await using var api = await AccessApi.StartAsync();
 
-        using var response = await api.Server.Client.GetAsync(Uri("/openapi/v1.json"));
+        using var client = api.WithToken(null);
+        using var response = await client.GetAsync(Uri("/openapi/v1.json"));
         using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
         var paths = document.RootElement.GetProperty("paths");
         var missing = DocumentedPaths.Where(path => !paths.TryGetProperty(path, out _)).ToList();

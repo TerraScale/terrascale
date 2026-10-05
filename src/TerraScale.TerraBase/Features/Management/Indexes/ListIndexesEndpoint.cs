@@ -17,8 +17,8 @@ public sealed class ListIndexesEndpoint(IManagementService management, IIndexSer
         Description("Query: collection (optional) keeps the indexes of one collection. Items are in name order; state is always active." + " " + ManagementRoute.IdentityDescription);
         Tags(ManagementRoute.Tag);
         Produces<IndexListBody>();
-        Produces<string>(StatusCodes.Status400BadRequest);
-        Produces<string>(StatusCodes.Status404NotFound);
+        Produces<ErrorBody>(StatusCodes.Status400BadRequest);
+        Produces<ErrorBody>(StatusCodes.Status404NotFound);
         RequireAuthorization(UserAuthExtensions.PolicyName);
         Metadata(ListenerMetadata.Management);
     }

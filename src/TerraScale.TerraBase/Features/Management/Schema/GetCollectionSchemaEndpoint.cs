@@ -17,8 +17,8 @@ public sealed class GetCollectionSchemaEndpoint(IManagementService management, I
         Description("Read-only and inferred: TerraBase has no declared schemas. Samples the first 1000 live documents in id order (at most 8 MiB of JSON) and reports object paths up to depth 8, how many sampled documents contain them and their JSON types. Arrays are not descended into. At most 10000 paths, 1024 UTF-8 bytes per path, 1 MiB of paths total and an 8 MiB response; excess or an exhausted scan budget answers 400 schema too expensive. 404 when the collection does not exist; an empty collection has no fields." + " " + ManagementRoute.IdentityDescription);
         Tags(ManagementRoute.Tag);
         Produces<CollectionSchema>();
-        Produces<string>(StatusCodes.Status400BadRequest);
-        Produces<string>(StatusCodes.Status404NotFound);
+        Produces<ErrorBody>(StatusCodes.Status400BadRequest);
+        Produces<ErrorBody>(StatusCodes.Status404NotFound);
         RequireAuthorization(UserAuthExtensions.PolicyName);
         Metadata(ListenerMetadata.Management);
     }

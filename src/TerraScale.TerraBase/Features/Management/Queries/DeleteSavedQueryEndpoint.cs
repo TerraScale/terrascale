@@ -15,9 +15,9 @@ public sealed class DeleteSavedQueryEndpoint(IManagementService management, IQue
         Summary("Deletes a saved query");
         Description(ManagementRoute.IdentityDescription);
         Tags(ManagementRoute.Tag);
-        Produces<string>(StatusCodes.Status404NotFound);
+        Produces<ErrorBody>(StatusCodes.Status404NotFound);
         RequireAuthorization(UserAuthExtensions.PolicyName);
-        Metadata(ListenerMetadata.Management);
+        Metadata(ListenerMetadata.Management, new ProducesResponseTypeMetadata(StatusCodes.Status204NoContent, typeof(void)));
     }
 
     /// <inheritdoc />

@@ -19,9 +19,9 @@ public sealed class CreateIndexEndpoint(IManagementService management, IIndexSer
         Description("collection: a collection name. fields: 1 to 4 distinct dotted member paths (not _id or _rev, which the primary key already orders). name (optional): a lowercase letter, then lowercase letters, digits or _, at most 63 characters; derived from the collection and fields when omitted. The index is built before the response." + " " + ManagementRoute.IdentityDescription);
         Tags(ManagementRoute.Tag);
         Produces<IndexBody>(StatusCodes.Status201Created);
-        Produces<string>(StatusCodes.Status400BadRequest);
-        Produces<string>(StatusCodes.Status404NotFound);
-        Produces<string>(StatusCodes.Status409Conflict);
+        Produces<ErrorBody>(StatusCodes.Status400BadRequest);
+        Produces<ErrorBody>(StatusCodes.Status404NotFound);
+        Produces<ErrorBody>(StatusCodes.Status409Conflict);
         RequireAuthorization(UserAuthExtensions.PolicyName);
         Metadata(ListenerMetadata.Management);
     }

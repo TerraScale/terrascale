@@ -16,9 +16,9 @@ public sealed class RestoreBackupEndpoint(IManagementService management, IManage
         Description("Restore never overwrites: it creates a new database in the same project holding the backup's data, with branchedFrom set to the backed-up database. name follows the database name rules; without it the first free of <source>-restore, <source>-restore-2, … is used." + " " + ManagementRoute.IdentityDescription);
         Tags(ManagementRoute.Tag);
         Produces<ManagedDatabase>(StatusCodes.Status201Created);
-        Produces<string>(StatusCodes.Status400BadRequest);
-        Produces<string>(StatusCodes.Status404NotFound);
-        Produces<string>(StatusCodes.Status409Conflict);
+        Produces<ErrorBody>(StatusCodes.Status400BadRequest);
+        Produces<ErrorBody>(StatusCodes.Status404NotFound);
+        Produces<ErrorBody>(StatusCodes.Status409Conflict);
         RequireAuthorization(UserAuthExtensions.PolicyName);
         Metadata(ListenerMetadata.Management);
     }

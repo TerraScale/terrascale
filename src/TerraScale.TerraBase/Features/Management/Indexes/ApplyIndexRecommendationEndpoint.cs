@@ -17,8 +17,8 @@ public sealed class ApplyIndexRecommendationEndpoint(IManagementService manageme
         Tags(ManagementRoute.Tag);
         Produces<AppliedIndexRecommendation>(StatusCodes.Status201Created);
         Produces<AppliedIndexRecommendation>();
-        Produces<string>(StatusCodes.Status404NotFound);
-        Produces<string>(StatusCodes.Status409Conflict);
+        Produces<ErrorBody>(StatusCodes.Status404NotFound);
+        Produces<ErrorBody>(StatusCodes.Status409Conflict);
         RequireAuthorization(UserAuthExtensions.PolicyName);
         Metadata(ListenerMetadata.Management);
     }

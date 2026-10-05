@@ -25,8 +25,10 @@ public sealed class TenantIsolationTests
 
     private static readonly string[] CallerOnlyRoutes =
     [
-        // Health probes: no tenant data at all.
+        // Health probes and the API reference: no tenant data at all.
+        "GET /",
         "GET /healthz",
+        "GET /openapi/{documentName}.json",
         "GET /readyz",
         "GET /v1/management/current-organization",
         "GET /v1/management/organizations",
@@ -55,7 +57,8 @@ public sealed class TenantIsolationTests
         var bBefore = await SnapshotAsync(api, b, bDashboard, bSecret);
 
         var routes = ClientRoutes(api.Server);
-        foreach (var (method, pattern) in routes.Where(route => !Addresses(route.Pattern)))
+        // Scalar's page and its embedded assets are static: no tenant data at all.
+        foreach (var (method, pattern) in routes.Where(route => !Addresses(route.Pattern) && !route.Pattern.StartsWith("/scalar", StringComparison.Ordinal)))
         {
             await Assert.That(CallerOnlyRoutes).Contains($"{method} {pattern}");
         }

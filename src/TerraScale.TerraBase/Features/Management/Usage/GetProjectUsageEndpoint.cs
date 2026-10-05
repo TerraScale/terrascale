@@ -17,8 +17,8 @@ public sealed class GetProjectUsageEndpoint(IUsageService usage) : EndpointWitho
         Description("Sums the usage of every database of the project and lists each one, in creation order. A project of more than 100 databases answers 400 \"query too expensive\" before counting; so does one whose counts are still running after 5 seconds, which starts no further count. " + GetDatabaseUsageEndpoint.CountsDescription + " " + ManagementRoute.IdentityDescription);
         Tags(ManagementRoute.Tag);
         Produces<ProjectUsage>();
-        Produces<string>(StatusCodes.Status400BadRequest);
-        Produces<string>(StatusCodes.Status404NotFound);
+        Produces<ErrorBody>(StatusCodes.Status400BadRequest);
+        Produces<ErrorBody>(StatusCodes.Status404NotFound);
         RequireAuthorization(UserAuthExtensions.PolicyName);
         Metadata(ListenerMetadata.Management);
     }

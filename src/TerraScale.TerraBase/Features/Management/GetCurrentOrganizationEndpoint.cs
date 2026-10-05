@@ -16,7 +16,7 @@ public sealed class GetCurrentOrganizationEndpoint(IManagementService management
         Description("404 when the user never switched, or is no longer a member of that organization. " + ManagementRoute.IdentityDescription);
         Tags(ManagementRoute.Tag);
         Produces<Organization>();
-        Produces<string>(StatusCodes.Status404NotFound);
+        Produces<ErrorBody>(StatusCodes.Status404NotFound);
         RequireAuthorization(UserAuthExtensions.PolicyName);
         Metadata(ListenerMetadata.Management);
     }

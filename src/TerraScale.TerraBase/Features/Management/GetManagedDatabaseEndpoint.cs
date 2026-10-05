@@ -17,7 +17,7 @@ public sealed class GetManagedDatabaseEndpoint(IManagementService management, Te
         Description(ManagementRoute.IdentityDescription);
         Tags(ManagementRoute.Tag);
         Produces<ManagedDatabaseBody>();
-        Produces<string>(StatusCodes.Status404NotFound);
+        Produces<ErrorBody>(StatusCodes.Status404NotFound);
         RequireAuthorization(UserAuthExtensions.PolicyName);
         Metadata(ListenerMetadata.Management);
     }

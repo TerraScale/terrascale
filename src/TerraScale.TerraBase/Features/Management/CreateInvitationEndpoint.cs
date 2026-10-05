@@ -21,10 +21,10 @@ public sealed class CreateInvitationEndpoint(IAccessService access) : Endpoint<I
         Description($"email: one address; role: owner, admin or member (default member). Needs admin, and owner to invite an owner. The token is returned only here and expires with the invitation after 7 days. 409 while an unexpired invitation for the email is pending; an expired one is replaced. {ManagementRoute.IdentityDescription}");
         Tags(ManagementRoute.AccessTag);
         Produces<CreatedInvitation>(StatusCodes.Status201Created);
-        Produces<string>(StatusCodes.Status400BadRequest);
-        Produces<string>(StatusCodes.Status403Forbidden);
-        Produces<string>(StatusCodes.Status404NotFound);
-        Produces<string>(StatusCodes.Status409Conflict);
+        Produces<ErrorBody>(StatusCodes.Status400BadRequest);
+        Produces<ErrorBody>(StatusCodes.Status403Forbidden);
+        Produces<ErrorBody>(StatusCodes.Status404NotFound);
+        Produces<ErrorBody>(StatusCodes.Status409Conflict);
         RequireAuthorization(UserAuthExtensions.PolicyName);
         Metadata(ListenerMetadata.Management);
     }

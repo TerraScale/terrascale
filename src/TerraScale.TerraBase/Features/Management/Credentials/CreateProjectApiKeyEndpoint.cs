@@ -25,8 +25,8 @@ public sealed class CreateProjectApiKeyEndpoint(IApiKeyStore keys) : Endpoint<Cr
         Description("name: 1 to 128 characters. scopes: a non-empty subset of documents:read, documents:write. databaseId (optional): a database of this project, else 404. The secret is returned only in this response; only its hash is stored." + " " + ManagementRoute.IdentityDescription);
         Tags(ManagementRoute.Tag);
         Produces<CreatedProjectApiKey>(StatusCodes.Status201Created);
-        Produces<string>(StatusCodes.Status400BadRequest);
-        Produces<string>(StatusCodes.Status404NotFound);
+        Produces<ErrorBody>(StatusCodes.Status400BadRequest);
+        Produces<ErrorBody>(StatusCodes.Status404NotFound);
         RequireAuthorization(UserAuthExtensions.PolicyName);
         Metadata(ListenerMetadata.Management);
     }

@@ -15,9 +15,9 @@ public sealed class DeleteManagedDatabaseEndpoint(IManagementService management)
         Summary("Deletes a database and its data");
         Description("Branches of the database are independent copies and are not deleted." + " " + ManagementRoute.IdentityDescription);
         Tags(ManagementRoute.Tag);
-        Produces<string>(StatusCodes.Status404NotFound);
+        Produces<ErrorBody>(StatusCodes.Status404NotFound);
         RequireAuthorization(UserAuthExtensions.PolicyName);
-        Metadata(ListenerMetadata.Management);
+        Metadata(ListenerMetadata.Management, new ProducesResponseTypeMetadata(StatusCodes.Status204NoContent, typeof(void)));
     }
 
     /// <inheritdoc />

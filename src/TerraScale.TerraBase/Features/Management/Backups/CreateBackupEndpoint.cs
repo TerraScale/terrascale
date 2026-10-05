@@ -16,7 +16,7 @@ public sealed class CreateBackupEndpoint(IManagementService management, IManaged
         Description("Takes a consistent snapshot of the database now; no request body. The backup is kept until the retention of the backup policy expires or the database is deleted." + " " + ManagementRoute.IdentityDescription);
         Tags(ManagementRoute.Tag);
         Produces<DatabaseBackup>(StatusCodes.Status201Created);
-        Produces<string>(StatusCodes.Status404NotFound);
+        Produces<ErrorBody>(StatusCodes.Status404NotFound);
         RequireAuthorization(UserAuthExtensions.PolicyName);
         Metadata(ListenerMetadata.Management);
     }

@@ -17,7 +17,7 @@ public sealed class ListProjectApiKeysEndpoint(IApiKeyStore keys) : EndpointWith
         Description("Query: after (exclusive sequence cursor from the previous page's next), limit (1 to 100, default 20). Items are in committed creation order. " + ManagementRoute.IdentityDescription);
         Tags(ManagementRoute.Tag);
         Produces<ManagementPage<ProjectApiKey>>();
-        Produces<string>(StatusCodes.Status404NotFound);
+        Produces<ErrorBody>(StatusCodes.Status404NotFound);
         RequireAuthorization(UserAuthExtensions.PolicyName);
         Metadata(ListenerMetadata.Management);
     }
