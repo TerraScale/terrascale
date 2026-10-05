@@ -23,34 +23,14 @@
           "arguments": ["run", "typecheck"]
         },
         {
-          "description": "Require exact current producer inputs",
-          "command": "npm",
-          "arguments": ["run", "check:current-contract-inputs"]
-        },
-        {
-          "description": "Native source and canonical vector parity",
-          "command": "npm",
-          "arguments": ["run", "check:current-contract"]
-        },
-        {
           "description": "Generate SDK type declarations",
           "command": "npm",
           "arguments": ["run", "build"]
         },
         {
-          "description": "Public contract fixture",
+          "description": "C# route drift",
           "command": "npm",
-          "arguments": ["run", "check:public-contract-fixture"]
-        },
-        {
-          "description": "OpenAPI contract descriptor",
-          "command": "npm",
-          "arguments": ["run", "check:openapi-contract-descriptor"]
-        },
-        {
-          "description": "Route drift",
-          "command": "npm",
-          "arguments": ["run", "check:route-manifest"]
+          "arguments": ["run", "check:v1-route-manifest"]
         },
         {
           "description": "Forbidden SDK surface",
@@ -74,24 +54,19 @@
           "arguments": ["run", "build"]
         },
         {
-          "description": "Require exact current producer inputs",
+          "description": "C# route drift",
           "command": "npm",
-          "arguments": ["run", "check:current-contract-inputs"]
+          "arguments": ["run", "check:v1-route-manifest"]
         },
         {
-          "description": "Native source and canonical vector parity",
-          "command": "npm",
-          "arguments": ["run", "check:current-contract"]
-        },
-        {
-          "description": "Complete SDK tests",
+          "description": "SDK regressions",
           "command": "npm",
           "arguments": ["test"]
         },
         {
-          "description": "Actual framework lifecycle regressions",
+          "description": "Pinned TerraBase release integration",
           "command": "npm",
-          "arguments": ["run", "check:frameworks"]
+          "arguments": ["run", "test:integration"]
         }
       ]
     },
@@ -110,7 +85,7 @@
           "arguments": ["run", "build"]
         },
         {
-          "description": "Browser transports",
+          "description": "Browser package boundary",
           "command": "npm",
           "arguments": ["run", "test:browser"]
         }
@@ -134,29 +109,19 @@
           "arguments": ["run", "build"]
         },
         {
-          "description": "Require exact current producer inputs",
+          "description": "C# route drift",
           "command": "npm",
-          "arguments": ["run", "check:current-contract-inputs"]
+          "arguments": ["run", "check:v1-route-manifest"]
         },
         {
-          "description": "Native source and canonical vector parity",
-          "command": "npm",
-          "arguments": ["run", "check:current-contract"]
-        },
-        {
-          "description": "Forbidden SDK surface",
-          "command": "npm",
-          "arguments": ["run", "check:forbidden-surface"]
-        },
-        {
-          "description": "Unit and contract regression",
+          "description": "SDK regressions",
           "command": "npm",
           "arguments": ["test"]
         },
         {
-          "description": "Actual framework lifecycle regressions",
+          "description": "Pinned TerraBase release integration",
           "command": "npm",
-          "arguments": ["run", "check:frameworks"]
+          "arguments": ["run", "test:integration"]
         }
       ]
     },
@@ -176,19 +141,19 @@
           "arguments": ["run", "build"]
         },
         {
-          "description": "Require exact current producer inputs",
+          "description": "C# route drift",
           "command": "npm",
-          "arguments": ["run", "check:current-contract-inputs"]
+          "arguments": ["run", "check:v1-route-manifest"]
         },
         {
-          "description": "Native source and canonical vector parity",
+          "description": "SDK regressions",
           "command": "npm",
-          "arguments": ["run", "check:current-contract"]
+          "arguments": ["test"]
         },
         {
-          "description": "Required installed deployed customer journey",
+          "description": "Pinned TerraBase release integration",
           "command": "npm",
-          "arguments": ["run", "qualify:release-e2e"]
+          "arguments": ["run", "test:integration"]
         }
       ]
     }
@@ -210,39 +175,29 @@
           "arguments": ["run", "build"]
         },
         {
-          "description": "Require exact current producer inputs",
+          "description": "C# route drift",
           "command": "npm",
-          "arguments": ["run", "check:current-contract-inputs"]
+          "arguments": ["run", "check:v1-route-manifest"]
         },
         {
-          "description": "Native source and canonical vector parity",
-          "command": "npm",
-          "arguments": ["run", "check:current-contract"]
-        },
-        {
-          "description": "Forbidden SDK surface",
-          "command": "npm",
-          "arguments": ["run", "check:forbidden-surface"]
-        },
-        {
-          "description": "Unit and contract regression",
+          "description": "SDK regressions",
           "command": "npm",
           "arguments": ["test"]
         },
         {
-          "description": "Actual framework lifecycle regressions",
+          "description": "Pinned TerraBase release integration",
           "command": "npm",
-          "arguments": ["run", "check:frameworks"]
+          "arguments": ["run", "test:integration"]
         },
         {
-          "description": "Qualify npm release candidate",
+          "description": "Create package output directory",
           "command": "node",
-          "arguments": [
-            "scripts/qualify-npm-artifact.js",
-            "--release",
-            "--output",
-            "artifacts/candidate"
-          ]
+          "arguments": ["-e", "require(\"node:fs\").mkdirSync(\"artifacts/candidate\", { recursive: true })"]
+        },
+        {
+          "description": "Pack SDK candidate",
+          "command": "npm",
+          "arguments": ["pack", "--pack-destination", "artifacts/candidate"]
         }
       ]
     }

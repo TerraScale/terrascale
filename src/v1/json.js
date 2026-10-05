@@ -222,38 +222,68 @@ export function parseExactJson(text) {
 }
 
 /**
- * @param {unknown} value
- * @param {number} depth
+ * C# ExactNumber bounds: leading zeros do not count, trailing zeros do.
+ * @param {string} text
  * @param {string} where
  * @returns {void}
  */
-function assertJsonInput(value, depth, where) {
+function requireProducerNumber(text, where) {
+  if (!decimalGrammar.test(text)) throw new TypeError(`${where} contains a non-finite number.`);
+  const [mantissa = "", rawExponent = "0"] = text.split(/[eE]/u);
+  const exponent = BigInt(rawExponent);
+  const fraction = mantissa.split(".")[1] ?? "";
+  const digits = mantissa.replace(/[-.]/gu, "").replace(/^0+/u, "");
+  const magnitude = exponent - BigInt(fraction.length) + BigInt(digits.length) - 1n;
+  if (exponent < -1_000_000n || exponent > 1_000_000n || digits.length > 128 ||
+    (digits !== "" && (magnitude < -307n || magnitude > 307n)))
+    throw new TypeError(`${where} numbers have at most 128 significant digits and a magnitude of zero or 1e-307 to below 1e308.`);
+}
+
+/**
+ * Validates a document, merge patch or patch operand against C# RequestJson limits.
+ * @param {unknown} value
+ * @param {string} where
+ * @returns {void}
+ */
+export function assertJsonValue(value, where) {
+  assertJsonInput(value, 0, where, { nodes: 0 });
+}
+
+/**
+ * @param {unknown} value
+ * @param {number} depth
+ * @param {string} where
+ * @param {{ nodes: number }} [budget] Document limits; request envelopes are validated separately.
+ * @returns {void}
+ */
+function assertJsonInput(value, depth, where, budget) {
+  if (budget !== undefined && ++budget.nodes > 4096)
+    throw new TypeError(`${where} holds at most 4096 values.`);
   if (depth > 64) throw new TypeError(`${where} is nested too deeply.`);
-  if (
-    value === null ||
-    typeof value === "boolean" ||
-    typeof value === "string" ||
-    typeof value === "bigint" ||
-    value instanceof ExactDecimal
-  )
-    return;
-  if (typeof value === "number") {
-    if (!Number.isFinite(value))
-      throw new TypeError(`${where} contains a non-finite number.`);
+  if (value === null || typeof value === "boolean") return;
+  if (typeof value === "string") {
+    if (/[\uD800-\uDFFF]/u.test(value)) throw new TypeError(`${where} contains a lone surrogate.`);
     return;
   }
+  if (typeof value === "bigint" || typeof value === "number" || value instanceof ExactDecimal) {
+    requireProducerNumber(String(value), where);
+    return;
+  }
+  if (budget !== undefined && typeof value === "object" && depth >= 16)
+    throw new TypeError(`${where} nests at most 16 levels.`);
   if (Array.isArray(value)) {
-    for (const item of value) assertJsonInput(item, depth + 1, where);
+    for (const item of value) assertJsonInput(item, depth + 1, where, budget);
     return;
   }
   if (typeof value === "object") {
     const prototype = Object.getPrototypeOf(value);
     if (prototype !== Object.prototype && prototype !== null)
       throw new TypeError(`${where} contains a non-plain object.`);
-    for (const item of Object.values(value)) {
+    for (const [key, item] of Object.entries(value)) {
+      if (/[\uD800-\uDFFF]/u.test(key)) throw new TypeError(`${where} contains a lone surrogate member name.`);
       if (item === undefined)
         throw new TypeError(`${where} contains an undefined member.`);
-      assertJsonInput(item, depth + 1, where);
+      assertJsonInput(item, depth + 1, where, budget);
     }
     return;
   }
@@ -288,7 +318,7 @@ export function assertJsonObject(value, where) {
     value instanceof ExactDecimal
   )
     throw new TypeError(`${where} must be a JSON object.`);
-  assertJsonInput(value, 0, where);
+  assertJsonValue(value, where);
 }
 
 /**

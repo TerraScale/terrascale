@@ -4,7 +4,7 @@ import { TerraScaleLocalRouter } from "./local/router.js";
 import { TerraScaleSqliteStore } from "./local/store.js";
 import { randomUUID } from "node:crypto";
 import { test } from "vitest";
-import { createTerraBaseClient } from "./database.js";
+import { createTerraBaseClient } from "./local/legacy-client.js";
 import {
   localSqliteUnitTestsAllowed,
   localFixture,

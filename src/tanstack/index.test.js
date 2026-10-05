@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, test } from "vitest";
 import { createCollection } from "@tanstack/db";
-import { createTerraBaseClient } from "../database.js";
+import { createTerraBaseClient } from "../local/legacy-client.js";
 import { DatabaseSubscriptionView } from "../database-view.js";
 import { TerraScaleTanStackCollectionPublisher, TerraScaleTanStackMutationError, terrascaleCollectionOptions } from "./index.js";
 /** @import { DatabaseViewSnapshot } from "../database-view.js" */
@@ -236,11 +236,11 @@ describe("native TanStack adapter admission", () => {
     const options = terrascaleCollectionOptions({ client, collection, predicate, mapRow, getKey: value => value.id });
     const value = createCollection(options);
     try {
-      await assert.rejects(value.preload(), /discovery_unavailable/u);
+      await assert.rejects(value.preload(), /transport_unavailable/u);
       await value.cleanup();
       assert.equal(value.status, "cleaned-up");
       assert.doesNotThrow(() => value.startSyncImmediate());
-      await assert.rejects(value.preload(), /discovery_unavailable/u);
+      await assert.rejects(value.preload(), /transport_unavailable/u);
       assert.equal(value.status, "error", "missing discovery must still fail closed after restart");
       assert.equal(options.adapter.getCheckpoint(), undefined);
     } finally {
@@ -262,7 +262,7 @@ describe("native TanStack adapter admission", () => {
     const stop = options.sync.sync({ ...output.params, markError: error => { errors.push(error); terminal.resolve(); } });
     await terminal.promise;
     assert.equal(errors.length, 1);
-    assert.match(String(errors[0]), /discovery_unavailable/u);
+    assert.match(String(errors[0]), /transport_unavailable/u);
     await assert.rejects(options.onInsert({ transaction: { id: "never-queued", mutations: [{ key: uuid(10), type: "insert", modified: mapRow(row(10)) }] } }), /current native subscription/u);
     const frameworkTransaction = {
       id: "real-shape-not-cloneable", mutationFn: () => undefined,

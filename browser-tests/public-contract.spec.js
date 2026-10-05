@@ -1,83 +1,34 @@
 import { expect, test } from "@playwright/test";
-/** @import { DatabaseCommit } from "../src/index.js" */
 
-test("packed browser entrypoint preserves exact native values and preparation identity", async ({
-  page,
-}) => {
+test("packed browser exposes the C# client and exact decimal values", async ({ page }) => {
   await page.goto("/browser-tests/fixture.html");
   const observation = await page.evaluate(async () => {
     const candidate = "/candidate/src/index.js";
-    const sdk = /** @type {typeof import("../src/index.js")} */ (
-      await import(candidate)
-    );
-    let dispatches = 0;
+    const sdk = /** @type {typeof import("../src/index.js")} */ (await import(candidate));
     const client = sdk.createTerraBaseClient({
-      tenant: "00000000-0000-0000-0000-000000000001",
-      database: "00000000-0000-0000-0000-000000000002",
-      shard: 1n,
-      endpoint: "https://gru.api.terrascale.tech",
-      apiKey: "browser-unit-only",
-      fetch: async () => {
-        dispatches += 1;
-        throw new Error("Pure browser preparation must not dispatch.");
-      },
+      project: "project", baseUrl: "https://database.example.test", token: `tb_${"a".repeat(43)}`,
     });
-    const bytes = new Uint8Array([0, 255]);
-    /** @type {DatabaseCommit} */
-    const commit = {
-      transaction_id: {
-        expires_at_unix_ms: BigInt(Date.now() + 60_000),
-        nonce: "01".repeat(16),
-      },
-      authority: { mode: "leaderless" },
-      writes: [
-        {
-          collection: "00000000-0000-0000-0000-000000000003",
-          document: "00000000-0000-0000-0000-000000000004",
-          schema_generation: 1n,
-          schema_digest: "ab".repeat(32),
-          condition: { kind: "none" },
-          observed: [],
-          value: {
-            kind: "live",
-            fields: [
-              { id: 1, value: { type: "i64", value: 9_007_199_254_740_993n } },
-              { id: 2, value: { type: "bytes", value: bytes } },
-              { id: 3, value: { type: "null" } },
-            ],
-          },
-        },
-      ],
-    };
-    const prepared = await client.prepareCommit(commit);
-    bytes[0] = 99;
-    const changed = await client.prepareCommit(commit);
+    const collection = client.database("main").collection("users");
     return {
-      dispatches,
-      immutable: Object.isFrozen(prepared),
-      digest: prepared.effect_digest,
-      changed: prepared.effect_digest !== changed.effect_digest,
-      nonce: prepared.transaction_id.nonce,
-      removed: [
-        "createTerraScaleClient",
-        "TerraScaleSyncV1Client",
-        "TerraScaleHttp",
-        "toUlid",
-      ].filter((name) => name in sdk),
-      methods: /** @type {const} */ ([
-        "read",
-        "query",
-        "subscription",
-        "commit",
-        "transactionStatus",
-      ]).every((name) => typeof client[name] === "function"),
+      methods: ["get", "put", "create", "patch", "delete", "query"].every(name =>
+        typeof /** @type {Record<string, unknown>} */ (/** @type {unknown} */ (collection))[name] === "function"),
+      exact: new sdk.ExactDecimal("9007199254740993").toString(),
+      credential: JSON.stringify(client).includes("tb_"),
+      retired: ["TerraBaseDiscoveryRouter", "createDatabaseQuery", "createTerraScaleSqliteRuntime", "PostgresClient"].filter(name => name in sdk),
     };
   });
-  expect(observation.dispatches).toBe(0);
-  expect(observation.immutable).toBe(true);
-  expect(observation.digest).toMatch(/^[0-9a-f]{64}$/u);
-  expect(observation.changed).toBe(true);
-  expect(observation.nonce).toBe("01".repeat(16));
-  expect(observation.removed).toEqual([]);
-  expect(observation.methods).toBe(true);
+  expect(observation).toEqual({ methods: true, exact: "9007199254740993", credential: false, retired: [] });
+});
+
+test("packed shape decoder preserves BOM-prefixed continuation ids", async ({ page }) => {
+  await page.goto("/browser-tests/fixture.html");
+  const preserved = await page.evaluate(async () => {
+    const candidate = "/candidate/src/v1/shapes.js";
+    const shapes = /** @type {typeof import("../src/v1/shapes.js")} */ (await import(candidate));
+    const encoded = btoa(String.fromCharCode(...new TextEncoder().encode("\uFEFFlegacy")))
+      .replace(/\+/gu, "-").replace(/\//gu, "_").replace(/=+$/u, "");
+    const offset = `snap.42.${encoded}`;
+    return shapes.requireShapeOffset(offset) === offset;
+  });
+  expect(preserved).toBe(true);
 });

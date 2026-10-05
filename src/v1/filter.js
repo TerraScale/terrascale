@@ -3,9 +3,8 @@
 import { ExactDecimal } from "./json.js";
 
 /**
- * A filter or sort path: an RFC 6901 JSON Pointer, `"$id"`, or
- * `{ lower: pointer }` for Unicode case-folded comparison.
- * @typedef {string | { readonly lower: string }} V1Path
+ * A filter or sort path: an RFC 6901 JSON Pointer or "$id".
+ * @typedef {string} V1Path
  */
 /**
  * A filter operand: string, exact number, boolean or null.
@@ -43,7 +42,7 @@ function isPointer(pointer) {
  * @returns {pointer is string}
  */
 export function isJsonPointer(pointer) {
-  return typeof pointer === "string" && pointer.length <= 4096 && /^(?:\/(?:[^~/]|~[01])*)+$/u.test(pointer);
+  return typeof pointer === "string" && pointer.length <= 4096 && pointer.split("/").length - 1 <= 16 && !/[\uD800-\uDFFF]/u.test(pointer) && /^(?:\/(?:[^~/]|~[01])*)+$/u.test(pointer);
 }
 
 /**
@@ -52,9 +51,7 @@ export function isJsonPointer(pointer) {
  */
 export function requirePath(path) {
   if (path === "$id" || isPointer(path)) return path;
-  if (typeof path === "object" && path !== null && isPointer(path.lower) && Object.keys(path).length === 1)
-    return Object.freeze({ lower: path.lower });
-  throw new TypeError('A TerraBase path is an RFC 6901 JSON Pointer of 1-16 segments, "$id", or { lower: pointer }.');
+  throw new TypeError('A TerraBase path is an RFC 6901 JSON Pointer of 1-16 segments, "$id".');
 }
 
 /**
@@ -144,12 +141,6 @@ export function requireFilter(filter) {
 export const v1Filter = Object.freeze({
   /** The document ID pseudo-path. */
   id: /** @type {"$id"} */ ("$id"),
-  /**
-   * Compares the path's string values after Unicode default case folding.
-   * @param {string} pointer
-   * @returns {{ readonly lower: string }}
-   */
-  lower: (pointer) => /** @type {{ readonly lower: string }} */ (requirePath({ lower: pointer })),
   /**
    * @param {...V1Filter} filters
    * @returns {V1Filter}

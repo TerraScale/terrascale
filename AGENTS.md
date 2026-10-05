@@ -1,10 +1,27 @@
 AI IS NOT ALLOWED TO EDIT THIS FILE ONLY HUMANS CAN!
 # TerraScale TypeScript SDK rules
 
-# SQLITE
-> terrascale must support an explicitly enabled SQLite backend for local development only. TerraScale.Dashboard must use this SQLite mode for fast local development
-> until TerraBaseV2 is ready. SQLite must never be enabled in production, CI qualification, staging, or deployed environments, and it must not become a public production
-> database contract.
+## TS-498: C# TerraBase, Atlas and Ouroboros
+
+- `terrabase` origin/main (C#/.NET) is the sole database producer. Use project-scoped
+  `/v1/projects/{project}/databases/{db}` documents, query, transactions and collection
+  shape routes with Bearer `tb_` keys and the producer's named scopes. The retired
+  Rust tenant/shard routes, `tbk1` keys and frozen Rust contract inputs are legacy.
+- The root API is v1 only. Configure `project`, `token` and exactly one of `baseUrl`
+  or `endpointResolver`; resolve `{ project, database }` once per database session.
+  Atlas (`ts-atlas`) supplies region/project placement discovery in TS-507; retain
+  the static resolver override and never hardcode a regional host.
+- Ouroboros: TerraScale services use the same production TerraBase as customers.
+  Boundary tests run a real immutable C# release binary pinned by version and
+  SHA-256; fake servers and local SDK SQLite are not producer qualification.
+
+## Deprecated SDK SQLite
+
+The named `local` SQLite and `postgres` entrypoints are deprecated legacy support.
+SDK SQLite stays explicitly opt-in for local development; Dashboard is no longer
+required to use it. Never enable it in production, CI qualification, staging or
+other deployed environments, or present it as the public database contract.
+This restriction concerns the SDK runtime, not the C# producer's internal storage.
 
 ## Local CPU Priority
 
@@ -37,7 +54,7 @@ ownership.
 
 ## Entrypoints
 
-- The root entrypoint contains ordinary customer operations.
+- The root entrypoint contains only the project-scoped C# TerraBase v1 API.
 - The `admin` entrypoint contains typed role-protected public administration.
 - A named server-only `better-auth` entrypoint contains the Better Auth
   database adapter and must be excluded from browser bundles.
@@ -125,8 +142,8 @@ hatches for TerraScale data.
 - Keep real API tests environment-gated. Never commit credentials, tokens,
   cookies, `.env` files, or real tenant data.
 - REST changes require OpenAPI and route-manifest drift checks.
-- Reactive changes require generated schema, byte vectors, and the shared Rust,
-  TypeScript, and .NET semantic corpus.
+- Reactive changes require generated schema, byte vectors, and the current C#
+  producer/TypeScript semantic corpus; frozen Rust inputs are legacy evidence.
 - Better Auth changes require exact-version adapter tests, Region concurrency,
   migration, retry, unique, one-time consume, revocation, and denial cases.
 - Dashboard integration evidence uses the fixed DevHost routes. Authentication

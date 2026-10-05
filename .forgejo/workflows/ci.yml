@@ -1,4 +1,4 @@
-name: JavaScript SDK native checks
+name: JavaScript SDK C# producer checks
 
 on:
   push:
@@ -15,14 +15,14 @@ concurrency:
   cancel-in-progress: ${{ forgejo.ref != 'refs/heads/main' }}
 
 # Node.js 24 (.node-version) and the Playwright 1.63 engines are baked into
-# ts-builder. CI extracts SHA-bound producer source inputs and provisions
+# ts-builder. CI runs the SHA-bound C# release binary and provisions
 # actual stable vendor Chrome and Edge binaries with pinned Nix definitions.
 jobs:
   static:
     name: verify/static-contracts
     runs-on: terrascale-builder
     container:
-      image: git.terrascale.tech/terrascale/ts-builder@sha256:1dadc3d1a395e37143a418e12690cbb6b9692175d77b66e7c1de8f126258b150
+      image: git.terrascale.tech/terrascale/ts-builder@sha256:bbf543e2e2676ca3e560b4807412b5a1912c634ec46c9ef486545a58efda4c46
     timeout-minutes: 45
     steps:
       - name: Check out the exact event revision
@@ -40,12 +40,6 @@ jobs:
       - name: Provision the reviewed npm CLI
         run: node scripts/provision-reviewed-npm.js
 
-      - name: Extract the frozen actual producer source inputs
-        run: bash scripts/ci/provision-current-contract-inputs.sh
-
-      - name: Require the exact current producer contract inputs
-        run: npm run check:current-contract-inputs
-
       - name: Install locked dependencies
         run: npm ci
 
@@ -54,18 +48,6 @@ jobs:
 
       - name: Generate the SDK type declarations
         run: npm run build
-
-      - name: Check native OpenAPI and canonical effect vectors
-        run: npm run check:current-contract
-
-      - name: Check the public contract fixture
-        run: npm run check:public-contract-fixture
-
-      - name: Check native OpenAPI contract identity
-        run: npm run check:openapi-contract-descriptor
-
-      - name: Check the route manifest
-        run: npm run check:route-manifest
 
       - name: Check the v1 route manifest
         run: npm run check:v1-route-manifest
@@ -91,7 +73,7 @@ jobs:
           - node: "24.21.0"
     runs-on: terrascale-builder
     container:
-      image: git.terrascale.tech/terrascale/ts-builder@sha256:1dadc3d1a395e37143a418e12690cbb6b9692175d77b66e7c1de8f126258b150
+      image: git.terrascale.tech/terrascale/ts-builder@sha256:bbf543e2e2676ca3e560b4807412b5a1912c634ec46c9ef486545a58efda4c46
     timeout-minutes: 45
     steps:
       - name: Check out the exact event revision
@@ -136,23 +118,19 @@ jobs:
       - name: Provision the reviewed npm CLI
         run: node scripts/provision-reviewed-npm.js
 
-      - name: Extract the frozen actual producer source inputs
-        run: bash scripts/ci/provision-current-contract-inputs.sh
-
-      - name: Require the exact current producer contract inputs
-        run: npm run check:current-contract-inputs
-
       - name: Install locked dependencies
         run: npm ci
-
-      - name: Check native OpenAPI and canonical effect vectors
-        run: npm run check:current-contract
 
       - name: Generate the SDK type declarations
         run: npm run build
 
-      - name: Run the complete SDK test suite
-        run: npm test
+      - name: Acquire the pinned official C# TerraBase release binary
+        env:
+          FORGEJO_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+        run: node scripts/ci/provision-terrabase.mjs
+
+      - name: Run SDK tests against the real isolated C# TerraBase binary
+        run: node scripts/ci/run-terrabase-integration.mjs npm test
 
       - name: Run actual framework lifecycle regressions
         run: npm run check:frameworks
@@ -167,7 +145,7 @@ jobs:
     name: verify/browser-current-engines
     runs-on: terrascale-builder
     container:
-      image: git.terrascale.tech/terrascale/ts-builder@sha256:1dadc3d1a395e37143a418e12690cbb6b9692175d77b66e7c1de8f126258b150
+      image: git.terrascale.tech/terrascale/ts-builder@sha256:bbf543e2e2676ca3e560b4807412b5a1912c634ec46c9ef486545a58efda4c46
     timeout-minutes: 60
     steps:
       - name: Check out the exact event revision
@@ -210,7 +188,7 @@ jobs:
     if: ${{ forgejo.event_name == 'push' && forgejo.ref == 'refs/heads/main' }}
     runs-on: terrascale-builder
     container:
-      image: git.terrascale.tech/terrascale/ts-builder@sha256:1dadc3d1a395e37143a418e12690cbb6b9692175d77b66e7c1de8f126258b150
+      image: git.terrascale.tech/terrascale/ts-builder@sha256:bbf543e2e2676ca3e560b4807412b5a1912c634ec46c9ef486545a58efda4c46
     timeout-minutes: 15
     concurrency:
       group: ts-js-npm-publish

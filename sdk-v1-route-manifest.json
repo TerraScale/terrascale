@@ -1,26 +1,98 @@
 {
-  "manifestVersion": 1,
-  "contractVersion": "terrabase-documents-v1",
+  "manifestVersion": 2,
+  "contractVersion": "terrabase-csharp-v1",
   "contractSource": {
-    "producer": "terrabase",
-    "branch": "feat/v1-contracts",
-    "revision": "7bc74f9d224167ff2dc6b815965305feca210c00",
-    "status": "frozen contract documents; producer OpenAPI and runtime qualification pending",
-    "documents": {
-      "api-v1.md": "04f494248d8f3221675b26e997f8765b957e2b3f1bb19e6fa091f97b499420d5",
-      "query-v1.md": "c5b0bdf07bd37b62c954526bc17af7cfbf22ed30f5545c5e23da68d2cb3a3e39",
-      "shapes-v1.md": "be919ff760e5793eec5b9e249c4b1e18d0b306aecf418d1a3cd6c48b0b244106"
-    }
+    "registryOrigin": "https://git.terrascale.tech",
+    "producer": "TerraScale/terrabase",
+    "branch": "main",
+    "revision": "0248ad3ac6fb82ac900e38005840a619e5d0beac",
+    "version": "0.1.0",
+    "release": "ci-0248ad3ac6fb82ac900e38005840a619e5d0beac-run-13267",
+    "asset": "terrabase-linux-amd64",
+    "sha256": "8abcedaa6b8487f08ecafe4485862f1f9309154e58ac1a74eda2278b78500968",
+    "openapiSha256": "84f5f84d592c37a0a8dc72ac57692ef6b5a9a190d1ced6593dc354ae3b69b9aa",
+    "inputs": {
+      "0004-document-api-v1.md": {
+        "sourcePath": "docs/decisions/0004-document-api-v1.md",
+        "sha256": "32b91e89c86f91ee26ec9be45837708f14355aa507c0468c40f010268b970907"
+      },
+      "0005-multi-tenancy.md": {
+        "sourcePath": "docs/decisions/0005-multi-tenancy.md",
+        "sha256": "14430b2b46bbfae56b1fc5a426481e0c592186c3f36594211e01656f41ed4d3d"
+      },
+      "shape-reads.md": {
+        "sourcePath": "docs/shape-reads.md",
+        "sha256": "b0aece7c92e11cd0e63912fa520927f686e9cec9edcf97e1ef798091e5241b75"
+      },
+      "DocumentRoute.cs": {
+        "sourcePath": "src/TerraScale.TerraBase/Features/Documents/DocumentRoute.cs",
+        "sha256": "92df91e5e8cdfd016e4a0a8ef871171f67ebc955d34abd420ca4623a18dffd44"
+      },
+      "GetShapeEndpoint.cs": {
+        "sourcePath": "src/TerraScale.TerraBase/Features/Documents/GetShapeEndpoint.cs",
+        "sha256": "8202d64c4d878d6bed371f145dcd1f40d47db691988975403eabf2320168a30c"
+      },
+      "IApiKeyStore.cs": {
+        "sourcePath": "src/TerraScale.TerraBase/Features/ApiKeys/IApiKeyStore.cs",
+        "sha256": "c084cb377c2267abf2cf9aa1565abf95fbc1deeb7176488e3a708ef2798e0a24"
+      },
+      "GetDocumentEndpoint.cs": {
+        "sourcePath": "src/TerraScale.TerraBase/Features/Documents/GetDocumentEndpoint.cs",
+        "sha256": "bcd47ed58009edb8f7c31e2b2edef8109ff28cbe2fc7c9322bee3bc7a702f772"
+      },
+      "PutDocumentEndpoint.cs": {
+        "sourcePath": "src/TerraScale.TerraBase/Features/Documents/PutDocumentEndpoint.cs",
+        "sha256": "5d838cd0556a054794f0da701d46b810815683491fb61572ccfdebb0fee4f98f"
+      },
+      "CreateDocumentEndpoint.cs": {
+        "sourcePath": "src/TerraScale.TerraBase/Features/Documents/CreateDocumentEndpoint.cs",
+        "sha256": "8b99c4222f56cfe74645d687104f0ebae26265c4de3e3df3f4a4f3e88357f364"
+      },
+      "PatchDocumentEndpoint.cs": {
+        "sourcePath": "src/TerraScale.TerraBase/Features/Documents/PatchDocumentEndpoint.cs",
+        "sha256": "c7c8c7d74d048e1d4fedb25e7d7a1a6a6efb475ca999a96d20969cc0a45ae665"
+      },
+      "DeleteDocumentEndpoint.cs": {
+        "sourcePath": "src/TerraScale.TerraBase/Features/Documents/DeleteDocumentEndpoint.cs",
+        "sha256": "cfa0cdafbe9773105b0955401f8b1a8ddabe4b43c04876fd37da465dbebce408"
+      },
+      "TransactionEndpoint.cs": {
+        "sourcePath": "src/TerraScale.TerraBase/Features/Documents/TransactionEndpoint.cs",
+        "sha256": "e923c33de96222d14e134181fc6340964345d664dae024210935ec40e2610064"
+      },
+      "QueryDocumentsEndpoint.cs": {
+        "sourcePath": "src/TerraScale.TerraBase/Features/Documents/QueryDocumentsEndpoint.cs",
+        "sha256": "cb9897891e391d9af7af91cd405268f92538486f8500de7c03e20c99cb6712c5"
+      },
+      "CreateCollectionEndpoint.cs": {
+        "sourcePath": "src/TerraScale.TerraBase/Features/Documents/CreateCollectionEndpoint.cs",
+        "sha256": "87f99316b937f5a1b95d62d456605ece670a1d51096b7a9f50327ea94ccfda86"
+      },
+      "GetCollectionEndpoint.cs": {
+        "sourcePath": "src/TerraScale.TerraBase/Features/Documents/GetCollectionEndpoint.cs",
+        "sha256": "bc754dfd45fd74d5b44d51c5e6e09d015a9c23e2f651ee3fd97f6878c1c3b2fe"
+      },
+      "ListCollectionsEndpoint.cs": {
+        "sourcePath": "src/TerraScale.TerraBase/Features/Documents/ListCollectionsEndpoint.cs",
+        "sha256": "6dd3093c4488fdc1af620c2b09ae290d727aa8981e6f098af3c2cb96b456e885"
+      },
+      "DropCollectionEndpoint.cs": {
+        "sourcePath": "src/TerraScale.TerraBase/Features/Documents/DropCollectionEndpoint.cs",
+        "sha256": "e2685ea491ae6d55235376bf2b58c773e30be2bd55f33fec404e820b3a30ae52"
+      }
+    },
+    "openapiBytesSha256": "87d98df69b657f78aa38554634cf449a0796754285de0c07ad8c86c6c9fecd0e",
+    "openapiNormalization": "JSON.parse, remove generated servers, JSON.stringify"
   },
-  "routeCount": 10,
+  "routeCount": 12,
   "routes": [
     {
-      "producer": "terrabase",
+      "producer": "terrabase-csharp",
       "client": "TerraBaseV1Client",
       "operation": "getDocument",
       "method": "GET",
-      "pathTemplate": "/v1/databases/{db}/collections/{collection}/documents/{id}",
-      "permission": "read",
+      "pathTemplate": "/v1/projects/{project}/databases/{database}/collections/{collection}/documents/{id}",
+      "permission": "documents:read",
       "requestMediaTypes": [],
       "responseMediaType": "application/json",
       "successStatuses": [
@@ -28,19 +100,58 @@
       ],
       "idempotencyKey": "none",
       "replaySafe": true,
-      "contract": "api-v1.md",
-      "contractText": [
-        "Base path: `/v1/databases/{db}/collections/{collection}/documents`",
-        "`GET …/documents/{id}`"
-      ]
+      "producerOperation": {
+        "tags": [
+          "Documents"
+        ],
+        "summary": "Reads a JSON document",
+        "description": "Sends the version as a strong ETag, including a persisted database incarnation so deletion/recreation does not reuse versions. If-None-Match with the current version returns 304. A deleted document returns 404 not_found with its tombstone's ETag, so it can be recreated with If-Match.",
+        "operationId": "getDocument",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/DocumentBody"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorBody"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
     },
     {
-      "producer": "terrabase",
+      "producer": "terrabase-csharp",
       "client": "TerraBaseV1Client",
       "operation": "putDocument",
       "method": "PUT",
-      "pathTemplate": "/v1/databases/{db}/collections/{collection}/documents/{id}",
-      "permission": "write",
+      "pathTemplate": "/v1/projects/{project}/databases/{database}/collections/{collection}/documents/{id}",
+      "permission": "documents:write",
       "requestMediaTypes": [
         "application/json"
       ],
@@ -49,21 +160,102 @@
         200,
         201
       ],
-      "idempotencyKey": "optional",
+      "idempotencyKey": "none",
       "replaySafe": false,
-      "contract": "api-v1.md",
-      "contractText": [
-        "Base path: `/v1/databases/{db}/collections/{collection}/documents`",
-        "`PUT …/documents/{id}`"
-      ]
+      "producerOperation": {
+        "tags": [
+          "Documents"
+        ],
+        "summary": "Inserts or replaces a JSON document",
+        "description": "The body is the complete document: a JSON object of at most 1 MiB, 16 levels and 4096 values. Optional If-Match (current version or *) or If-None-Match: * (absent or deleted). Returns 201 when the document was absent or deleted, 200 otherwise; a failed precondition returns 412 precondition_failed.",
+        "operationId": "putDocument",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {}
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/WriteBody"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/WriteBody"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorBody"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "412": {
+            "description": "Precondition Failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorBody"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
     },
     {
-      "producer": "terrabase",
+      "producer": "terrabase-csharp",
       "client": "TerraBaseV1Client",
       "operation": "createDocument",
       "method": "POST",
-      "pathTemplate": "/v1/databases/{db}/collections/{collection}/documents",
-      "permission": "write",
+      "pathTemplate": "/v1/projects/{project}/databases/{database}/collections/{collection}/documents",
+      "permission": "documents:write",
       "requestMediaTypes": [
         "application/json"
       ],
@@ -71,21 +263,102 @@
       "successStatuses": [
         201
       ],
-      "idempotencyKey": "optional",
+      "idempotencyKey": "none",
       "replaySafe": false,
-      "contract": "api-v1.md",
-      "contractText": [
-        "Base path: `/v1/databases/{db}/collections/{collection}/documents`",
-        "`POST …/documents`"
-      ]
+      "producerOperation": {
+        "tags": [
+          "Documents"
+        ],
+        "summary": "Creates a JSON document with a generated id",
+        "description": "The body is a JSON object of at most 1 MiB. Conditional headers use the same strict parser as PUT: malformed headers return 400; If-Match fails with 412 for the generated absent id; If-None-Match: * permits creation. Returns 201 with Location and the new id, a lowercase UUIDv7.",
+        "operationId": "createDocument",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {}
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/WriteBody"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorBody"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorBody"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "412": {
+            "description": "Precondition Failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorBody"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
     },
     {
-      "producer": "terrabase",
+      "producer": "terrabase-csharp",
       "client": "TerraBaseV1Client",
       "operation": "patchDocument",
       "method": "PATCH",
-      "pathTemplate": "/v1/databases/{db}/collections/{collection}/documents/{id}",
-      "permission": "write",
+      "pathTemplate": "/v1/projects/{project}/databases/{database}/collections/{collection}/documents/{id}",
+      "permission": "documents:write",
       "requestMediaTypes": [
         "application/merge-patch+json",
         "application/vnd.terrabase.ops+json"
@@ -94,41 +367,219 @@
       "successStatuses": [
         200
       ],
-      "idempotencyKey": "optional",
+      "idempotencyKey": "none",
       "replaySafe": false,
-      "contract": "api-v1.md",
-      "contractText": [
-        "Base path: `/v1/databases/{db}/collections/{collection}/documents`",
-        "`PATCH …/documents/{id}`"
-      ]
+      "producerOperation": {
+        "tags": [
+          "Documents"
+        ],
+        "summary": "Patches a JSON document",
+        "description": "application/merge-patch+json applies an RFC 7396 merge patch (null removes members). application/vnd.terrabase.ops+json applies {\"ops\":[…]} in order: set (creates missing parents), unset, inc (missing is 0, exact decimal arithmetic) and append (creates a missing array); paths are JSON Pointers to object members, at most 256 ops. A target of the wrong type fails with 409 patch_conflict. Optional If-Match. The document must exist (404 not_found).",
+        "operationId": "patchDocument",
+        "requestBody": {
+          "content": {
+            "application/merge-patch+json": {
+              "schema": {}
+            },
+            "application/vnd.terrabase.ops+json": {
+              "schema": {
+                "required": [
+                  "ops"
+                ],
+                "type": "object",
+                "properties": {
+                  "ops": {
+                    "type": [
+                      "null",
+                      "array"
+                    ],
+                    "items": {
+                      "required": [
+                        "op",
+                        "path",
+                        "value",
+                        "by"
+                      ],
+                      "type": "object",
+                      "properties": {
+                        "op": {
+                          "type": [
+                            "null",
+                            "string"
+                          ]
+                        },
+                        "path": {
+                          "type": [
+                            "null",
+                            "string"
+                          ]
+                        },
+                        "value": {},
+                        "by": {}
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/WriteBody"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorBody"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorBody"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "412": {
+            "description": "Precondition Failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorBody"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
     },
     {
-      "producer": "terrabase",
+      "producer": "terrabase-csharp",
       "client": "TerraBaseV1Client",
       "operation": "deleteDocument",
       "method": "DELETE",
-      "pathTemplate": "/v1/databases/{db}/collections/{collection}/documents/{id}",
-      "permission": "write",
+      "pathTemplate": "/v1/projects/{project}/databases/{database}/collections/{collection}/documents/{id}",
+      "permission": "documents:write",
       "requestMediaTypes": [],
       "responseMediaType": "application/json",
       "successStatuses": [
         200
       ],
-      "idempotencyKey": "optional",
+      "idempotencyKey": "none",
       "replaySafe": false,
-      "contract": "api-v1.md",
-      "contractText": [
-        "Base path: `/v1/databases/{db}/collections/{collection}/documents`",
-        "`DELETE …/documents/{id}`"
-      ]
+      "producerOperation": {
+        "tags": [
+          "Documents"
+        ],
+        "summary": "Deletes a JSON document",
+        "description": "Optional If-Match. Returns the tombstone's version; deleting an absent or deleted document returns 404 not_found.",
+        "operationId": "deleteDocument",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/WriteBody"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorBody"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "412": {
+            "description": "Precondition Failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorBody"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
     },
     {
-      "producer": "terrabase",
+      "producer": "terrabase-csharp",
       "client": "TerraBaseV1Client",
       "operation": "commitTransaction",
       "method": "POST",
-      "pathTemplate": "/v1/databases/{db}/transactions",
-      "permission": "write",
+      "pathTemplate": "/v1/projects/{project}/databases/{database}/transactions",
+      "permission": "documents:write",
       "requestMediaTypes": [
         "application/json"
       ],
@@ -136,20 +587,256 @@
       "successStatuses": [
         200
       ],
-      "idempotencyKey": "optional",
+      "idempotencyKey": "none",
       "replaySafe": false,
-      "contract": "api-v1.md",
-      "contractText": [
-        "`POST /v1/databases/{db}/transactions`"
-      ]
+      "producerOperation": {
+        "tags": [
+          "Documents"
+        ],
+        "summary": "Applies document operations atomically",
+        "description": "{\"ops\":[…]} with 1 to 1024 operations across the collections of one database: create (put with if_none_match \"*\"; id is generated as a UUIDv7 when omitted), put (document, optional if_match or if_none_match \"*\"), patch (exactly one of merge or ops, optional if_match), delete (optional if_match), assert (filter: the document exists and matches; or absent: true) and assert_count (filter, gte and/or lte; at most 16 per transaction, at most 10000 documents examined). Assertions see the state before this transaction's writes. Two operations may not target the same document. Every failure names the failing operation in error.op. Assertions also need the documents:read scope. Query assertions and counts are interrupted at SQLite progress callbacks after 5 million VM instructions or a 5-second deadline (400 invalid_query, query too expensive). Existing non-UUID legacy document ids remain addressable; new ids must be lowercase hyphenated UUIDs.",
+        "operationId": "transaction",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "required": [
+                  "ops"
+                ],
+                "type": "object",
+                "properties": {
+                  "ops": {
+                    "type": [
+                      "null",
+                      "array"
+                    ],
+                    "items": {
+                      "required": [
+                        "op",
+                        "collection",
+                        "id",
+                        "document",
+                        "if_match",
+                        "if_none_match",
+                        "merge",
+                        "ops",
+                        "filter",
+                        "absent",
+                        "gte",
+                        "lte"
+                      ],
+                      "type": "object",
+                      "properties": {
+                        "op": {
+                          "type": [
+                            "null",
+                            "string"
+                          ]
+                        },
+                        "collection": {
+                          "type": [
+                            "null",
+                            "string"
+                          ]
+                        },
+                        "id": {
+                          "type": [
+                            "null",
+                            "string"
+                          ]
+                        },
+                        "document": {},
+                        "if_match": {
+                          "type": [
+                            "null",
+                            "string"
+                          ]
+                        },
+                        "if_none_match": {
+                          "type": [
+                            "null",
+                            "string"
+                          ]
+                        },
+                        "merge": {},
+                        "ops": {
+                          "type": [
+                            "null",
+                            "array"
+                          ],
+                          "items": {
+                            "required": [
+                              "op",
+                              "path",
+                              "value",
+                              "by"
+                            ],
+                            "type": "object",
+                            "properties": {
+                              "op": {
+                                "type": [
+                                  "null",
+                                  "string"
+                                ]
+                              },
+                              "path": {
+                                "type": [
+                                  "null",
+                                  "string"
+                                ]
+                              },
+                              "value": {},
+                              "by": {}
+                            }
+                          }
+                        },
+                        "filter": {},
+                        "absent": {
+                          "type": [
+                            "null",
+                            "boolean"
+                          ]
+                        },
+                        "gte": {
+                          "pattern": "^-?(?:0|[1-9]\\d*)$",
+                          "type": [
+                            "null",
+                            "integer",
+                            "string"
+                          ],
+                          "format": "int64"
+                        },
+                        "lte": {
+                          "pattern": "^-?(?:0|[1-9]\\d*)$",
+                          "type": [
+                            "null",
+                            "integer",
+                            "string"
+                          ],
+                          "format": "int64"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/TransactionBody"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorBody"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorBody"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorBody"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "412": {
+            "description": "Precondition Failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorBody"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorBody"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
     },
     {
-      "producer": "terrabase",
+      "producer": "terrabase-csharp",
       "client": "TerraBaseV1Client",
       "operation": "queryDocuments",
       "method": "POST",
-      "pathTemplate": "/v1/databases/{db}/collections/{collection}/query",
-      "permission": "read",
+      "pathTemplate": "/v1/projects/{project}/databases/{database}/collections/{collection}/query",
+      "permission": "documents:read",
       "requestMediaTypes": [
         "application/json"
       ],
@@ -159,18 +846,164 @@
       ],
       "idempotencyKey": "none",
       "replaySafe": true,
-      "contract": "query-v1.md",
-      "contractText": [
-        "`POST /v1/databases/{db}/collections/{collection}/query`"
-      ]
+      "producerOperation": {
+        "tags": [
+          "Documents"
+        ],
+        "summary": "Queries JSON documents",
+        "description": "Filters ({\"and\"|\"or\":[F…]} with 1 to 64 children, {\"not\":F}, {\"eq\"|\"ne\"|\"lt\"|\"lte\"|\"gt\"|\"gte\":[P,V]}, {\"in\"|\"nin\":[P,[V…]]} with 1 to 256 values, {\"exists\":P}, {\"prefix\":[P,\"str\"]}, {\"contains\":[P,V]}; at most 8 levels and 256 nodes) run inside SQLite. P is a JSON Pointer of object members (nested paths allowed) or \"$id\"; V is a JSON scalar. Ordered comparisons only match values of V's type and reject null; ne and nin also match missing members. sort has at most 4 {path, order} keys, then id; repeated paths retain only their first occurrence, and keys after the unique $id are omitted; encoded cursors are at most 1 MiB and cursor-producing string values are at most 64 KiB UTF-8 each, and the compact query plus continuation must fit the 4 MiB request limit (400 sort_requires_index beyond); values order missing < null < false < true < numbers < strings < arrays/objects. project keeps at most 64 paths with their parents; duplicate decoded paths and descendants covered by selected ancestors are copied only once, with case-sensitive member names. limit is 1 to 1000 (default 50); a page also stops at 8 MiB of JSON. cursor is the previous page's next_cursor and only works with the same filter, sort and project (400 invalid_cursor). count counts matches among at most 100000 documents (exact is false beyond, and value is a lower bound), on requests without a cursor. Queries and counts are interrupted at SQLite progress callbacks after 5 million VM instructions or a 5-second deadline (400 invalid_query, query too expensive). Cancellation also interrupts SQLite. A field sort requires at most 10000 live candidate documents and at most 8 MiB of candidate JSON, otherwise 400 sort_requires_index. lower and explain are not supported yet.",
+        "operationId": "queryDocuments",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "required": [
+                  "filter",
+                  "sort",
+                  "project",
+                  "limit",
+                  "cursor",
+                  "count",
+                  "explain"
+                ],
+                "type": "object",
+                "properties": {
+                  "filter": {},
+                  "sort": {
+                    "type": [
+                      "null",
+                      "array"
+                    ],
+                    "items": {
+                      "required": [
+                        "path",
+                        "order"
+                      ],
+                      "type": "object",
+                      "properties": {
+                        "path": {},
+                        "order": {
+                          "type": [
+                            "null",
+                            "string"
+                          ]
+                        }
+                      }
+                    }
+                  },
+                  "project": {
+                    "type": [
+                      "null",
+                      "array"
+                    ]
+                  },
+                  "limit": {
+                    "pattern": "^-?(?:0|[1-9]\\d*)$",
+                    "type": [
+                      "null",
+                      "integer",
+                      "string"
+                    ],
+                    "format": "int32"
+                  },
+                  "cursor": {
+                    "type": [
+                      "null",
+                      "string"
+                    ]
+                  },
+                  "count": {
+                    "type": [
+                      "null",
+                      "boolean"
+                    ]
+                  },
+                  "explain": {}
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/DocumentPageBody"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorBody"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorBody"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorBody"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
     },
     {
-      "producer": "terrabase",
+      "producer": "terrabase-csharp",
       "client": "TerraBaseV1Client",
-      "operation": "createShape",
+      "operation": "createCollection",
       "method": "POST",
-      "pathTemplate": "/v1/databases/{db}/shapes",
-      "permission": "shape",
+      "pathTemplate": "/v1/projects/{project}/databases/{database}/collections",
+      "permission": "documents:write",
       "requestMediaTypes": [
         "application/json"
       ],
@@ -179,20 +1012,97 @@
         201
       ],
       "idempotencyKey": "none",
-      "replaySafe": true,
-      "contract": "shapes-v1.md",
-      "contractText": [
-        "`POST /v1/databases/{db}/shapes`",
-        "gatekeeper stores nothing, so clients may retry it like a read"
-      ]
+      "replaySafe": false,
+      "producerOperation": {
+        "tags": [
+          "Collections"
+        ],
+        "summary": "Creates a collection",
+        "description": "Body {\"name\":…}; names match ^[a-z][a-z0-9_-]{0,62}$. Collections are schemaless; schema, ttl_path, unique, indexes and advisor are not supported yet and fail as unknown members. An existing name fails with 409 name_taken.",
+        "operationId": "createCollection",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "required": [
+                  "name"
+                ],
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": [
+                      "null",
+                      "string"
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/CollectionBody"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorBody"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorBody"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
     },
     {
-      "producer": "terrabase",
+      "producer": "terrabase-csharp",
       "client": "TerraBaseV1Client",
-      "operation": "readShape",
+      "operation": "getCollection",
       "method": "GET",
-      "pathTemplate": "/v1/shapes/{shape_id}",
-      "permission": "shape",
+      "pathTemplate": "/v1/projects/{project}/databases/{database}/collections/{collection}",
+      "permission": "documents:read",
       "requestMediaTypes": [],
       "responseMediaType": "application/json",
       "successStatuses": [
@@ -200,67 +1110,1221 @@
       ],
       "idempotencyKey": "none",
       "replaySafe": true,
-      "contract": "shapes-v1.md",
-      "contractText": [
-        "`GET /v1/shapes/{shape_id}?handle=…&offset=…[&live=true&cursor=…]`"
-      ]
+      "producerOperation": {
+        "tags": [
+          "Collections"
+        ],
+        "summary": "Reads a collection",
+        "operationId": "getCollection",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/CollectionBody"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorBody"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
     },
     {
-      "producer": "terrabase",
+      "producer": "terrabase-csharp",
       "client": "TerraBaseV1Client",
-      "operation": "streamShape",
+      "operation": "listCollections",
       "method": "GET",
-      "pathTemplate": "/v1/shapes/{shape_id}/sse",
-      "permission": "shape",
+      "pathTemplate": "/v1/projects/{project}/databases/{database}/collections",
+      "permission": "documents:read",
       "requestMediaTypes": [],
-      "responseMediaType": "text/event-stream",
+      "responseMediaType": "application/json",
       "successStatuses": [
         200
       ],
       "idempotencyKey": "none",
       "replaySafe": true,
-      "contract": "shapes-v1.md",
-      "contractText": [
-        "`GET /v1/shapes/{shape_id}/sse?handle=…&offset=…`"
-      ]
+      "producerOperation": {
+        "tags": [
+          "Collections"
+        ],
+        "summary": "Lists collections in name order",
+        "description": "Query: limit (1 to 200, default 50) and cursor (next_cursor of the previous page).",
+        "operationId": "listCollections",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/CollectionPageBody"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorBody"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "producer": "terrabase-csharp",
+      "client": "TerraBaseV1Client",
+      "operation": "dropCollection",
+      "method": "DELETE",
+      "pathTemplate": "/v1/projects/{project}/databases/{database}/collections/{collection}",
+      "permission": "documents:write",
+      "requestMediaTypes": [],
+      "responseMediaType": "application/json",
+      "successStatuses": [
+        200
+      ],
+      "idempotencyKey": "none",
+      "replaySafe": false,
+      "producerOperation": {
+        "tags": [
+          "Collections"
+        ],
+        "summary": "Drops a collection",
+        "description": "Deletes the collection and every document in it in one transaction, and returns the dropped collection.",
+        "operationId": "dropCollection",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/CollectionBody"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorBody"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "producer": "terrabase-csharp",
+      "client": "TerraBaseV1Client",
+      "operation": "readShape",
+      "method": "GET",
+      "pathTemplate": "/v1/projects/{project}/databases/{database}/collections/{collection}/shape",
+      "permission": "shapes:read",
+      "requestMediaTypes": [],
+      "responseMediaType": "application/json",
+      "successStatuses": [
+        200,
+        307
+      ],
+      "idempotencyKey": "none",
+      "replaySafe": true,
+      "producerOperation": {
+        "tags": [
+          "Shapes"
+        ],
+        "summary": "Reads a shape: a snapshot and change log of a collection and filter",
+        "description": "where is a query v1 filter as JSON (optional; every document without it). offset -1 answers 307 to the first snapshot page snap.<S>.0 of head S, with the shape's handle. Snapshot pages hold at most 1000 documents or 1 MiB in id order (one document may exceed 1 MiB with framing, up to 8 MiB); the last one continues at log position S. A log position O returns the commits after O, at most 4096 of them and 1 MiB, grouped by commit offset; a document that is deleted or stops matching is a delete op, and a delete may name a document the client never received. handle is required unless offset is -1; a stale handle or an offset outside the available history answers 409 must_refetch with the current handle: discard the shape and restart at -1. live=true (log positions only) waits up to 20 seconds for a commit when O is the head, then returns no changes; send the TB-Shape-Cursor of the previous response as cursor; each response advances beyond that cursor, even within one time bucket. Snapshot pages and closed chunks have immutable bytes and stable ETags. Origin responses use private, max-age=0, must-revalidate so every reuse checks current authorization; every response varies on Authorization. Shared CDN caching requires authorization before every cache lookup and is not enabled by these headers. TB-Shape-Handle, TB-Shape-Next-Offset and TB-Shape-Up-To-Date mirror the body; If-None-Match with the ETag returns 304. Treat client state as consistent only when up_to_date is true. At capacity, requests return 429 shape_busy; filters whose canonical continuation URL cannot fit an 8 KiB request line return 414 uri_too_long before redirecting.",
+        "operationId": "getShape",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ShapeBody"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorBody"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorBody"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorBody"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "414": {
+            "description": "URI Too Long",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorBody"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too Many Requests",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorBody"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
     }
   ],
-  "errorCodes": [
-    "assert_requires_index",
-    "capacity",
-    "commit_uncertain",
-    "conflict_unresolved",
-    "dependencies_unavailable",
-    "forbidden_scope",
-    "home_region_required",
-    "idempotency_conflict",
-    "idempotency_expired",
-    "index_limit_exceeded",
-    "internal_error",
-    "invalid_cursor",
-    "invalid_key",
-    "invalid_patch",
-    "invalid_query",
-    "invalid_request",
-    "invalid_token",
-    "method_not_allowed",
-    "must_refetch",
-    "not_found",
-    "patch_conflict",
-    "payload_too_large",
-    "precondition_failed",
-    "rate_limited",
-    "schema_changed",
-    "sort_requires_index",
-    "storage_unavailable",
-    "stored_corruption",
-    "transaction_too_large",
-    "ttl_invalid",
-    "unique_violation",
-    "unknown_collection",
-    "unknown_database",
-    "unknown_route",
-    "unsupported_media_type",
-    "upstream_unavailable"
-  ]
+  "schemas": {
+    "AcceptInvitationRequest": {
+      "required": [
+        "token",
+        "email"
+      ],
+      "type": "object",
+      "properties": {
+        "token": {
+          "type": [
+            "null",
+            "string"
+          ]
+        },
+        "email": {
+          "type": [
+            "null",
+            "string"
+          ]
+        }
+      }
+    },
+    "AuditEvent": {
+      "required": [
+        "id",
+        "actor",
+        "action",
+        "target",
+        "detail",
+        "occurredAt"
+      ],
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "actor": {
+          "type": "string"
+        },
+        "action": {
+          "type": "string"
+        },
+        "target": {
+          "type": [
+            "null",
+            "string"
+          ]
+        },
+        "detail": {
+          "type": [
+            "null",
+            "string"
+          ]
+        },
+        "occurredAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "AuditRetention": {
+      "required": [
+        "days"
+      ],
+      "type": "object",
+      "properties": {
+        "days": {
+          "pattern": "^-?(?:0|[1-9]\\d*)$",
+          "type": [
+            "integer",
+            "string"
+          ],
+          "format": "int32"
+        }
+      }
+    },
+    "CollectionBody": {
+      "required": [
+        "name",
+        "created_at"
+      ],
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "created_at": {
+          "type": "string"
+        }
+      }
+    },
+    "CollectionPageBody": {
+      "required": [
+        "items",
+        "next_cursor"
+      ],
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/components/schemas/CollectionBody"
+          }
+        },
+        "next_cursor": {
+          "type": [
+            "null",
+            "string"
+          ]
+        }
+      }
+    },
+    "CountBody": {
+      "required": [
+        "value",
+        "exact"
+      ],
+      "type": "object",
+      "properties": {
+        "value": {
+          "type": "string"
+        },
+        "exact": {
+          "type": "boolean"
+        }
+      }
+    },
+    "CreateApiKeyRequest": {
+      "required": [
+        "name",
+        "scopes"
+      ],
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "scopes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "organizationId": {
+          "type": [
+            "null",
+            "string"
+          ]
+        },
+        "projectId": {
+          "type": [
+            "null",
+            "string"
+          ]
+        },
+        "databaseId": {
+          "type": [
+            "null",
+            "string"
+          ]
+        }
+      }
+    },
+    "CreatedApiKeyBody": {
+      "required": [
+        "id",
+        "name",
+        "scopes",
+        "organizationId",
+        "projectId",
+        "databaseId",
+        "secret"
+      ],
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "scopes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "organizationId": {
+          "type": "string"
+        },
+        "projectId": {
+          "type": [
+            "null",
+            "string"
+          ]
+        },
+        "databaseId": {
+          "type": [
+            "null",
+            "string"
+          ]
+        },
+        "secret": {
+          "type": "string"
+        }
+      }
+    },
+    "CreatedInvitation": {
+      "required": [
+        "invitation",
+        "token"
+      ],
+      "type": "object",
+      "properties": {
+        "invitation": {
+          "$ref": "#/components/schemas/Invitation"
+        },
+        "token": {
+          "type": "string"
+        }
+      }
+    },
+    "DatabaseBody": {
+      "required": [
+        "id",
+        "projectId",
+        "name"
+      ],
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "projectId": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        }
+      }
+    },
+    "DocumentBody": {
+      "required": [
+        "id",
+        "version",
+        "state",
+        "document"
+      ],
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        },
+        "document": {
+          "$ref": "#/components/schemas/JsonElement"
+        }
+      }
+    },
+    "DocumentPageBody": {
+      "required": [
+        "items",
+        "next_cursor"
+      ],
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/components/schemas/DocumentBody"
+          }
+        },
+        "next_cursor": {
+          "type": [
+            "null",
+            "string"
+          ]
+        },
+        "count": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/components/schemas/CountBody"
+            }
+          ]
+        }
+      }
+    },
+    "ErrorBody": {
+      "required": [
+        "error"
+      ],
+      "type": "object",
+      "properties": {
+        "error": {
+          "$ref": "#/components/schemas/ErrorDetail"
+        }
+      }
+    },
+    "ErrorDetail": {
+      "required": [
+        "code"
+      ],
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "message": {
+          "type": [
+            "null",
+            "string"
+          ]
+        },
+        "op": {
+          "pattern": "^-?(?:0|[1-9]\\d*)$",
+          "type": [
+            "null",
+            "integer",
+            "string"
+          ],
+          "format": "int32"
+        },
+        "handle": {
+          "type": [
+            "null",
+            "string"
+          ]
+        }
+      }
+    },
+    "Invitation": {
+      "required": [
+        "id",
+        "email",
+        "role",
+        "invitedBy",
+        "createdAt",
+        "expiresAt"
+      ],
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "email": {
+          "type": "string"
+        },
+        "role": {
+          "$ref": "#/components/schemas/OrganizationRole"
+        },
+        "invitedBy": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "expiresAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "InvitationRequest": {
+      "required": [
+        "email",
+        "role"
+      ],
+      "type": "object",
+      "properties": {
+        "email": {
+          "type": [
+            "null",
+            "string"
+          ]
+        },
+        "role": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/components/schemas/OrganizationRole"
+            }
+          ]
+        }
+      }
+    },
+    "JsonElement": {},
+    "ManagedDatabase": {
+      "required": [
+        "id",
+        "projectId",
+        "name",
+        "branchedFrom",
+        "createdAt"
+      ],
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "projectId": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "branchedFrom": {
+          "type": [
+            "null",
+            "string"
+          ]
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "ManagementPageOfAuditEvent": {
+      "required": [
+        "items",
+        "next"
+      ],
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/components/schemas/AuditEvent"
+          }
+        },
+        "next": {
+          "type": [
+            "null",
+            "string"
+          ]
+        }
+      }
+    },
+    "ManagementPageOfInvitation": {
+      "required": [
+        "items",
+        "next"
+      ],
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/components/schemas/Invitation"
+          }
+        },
+        "next": {
+          "type": [
+            "null",
+            "string"
+          ]
+        }
+      }
+    },
+    "ManagementPageOfManagedDatabase": {
+      "required": [
+        "items",
+        "next"
+      ],
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/components/schemas/ManagedDatabase"
+          }
+        },
+        "next": {
+          "type": [
+            "null",
+            "string"
+          ]
+        }
+      }
+    },
+    "ManagementPageOfOrganization": {
+      "required": [
+        "items",
+        "next"
+      ],
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/components/schemas/Organization"
+          }
+        },
+        "next": {
+          "type": [
+            "null",
+            "string"
+          ]
+        }
+      }
+    },
+    "ManagementPageOfOrganizationMember": {
+      "required": [
+        "items",
+        "next"
+      ],
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/components/schemas/OrganizationMember"
+          }
+        },
+        "next": {
+          "type": [
+            "null",
+            "string"
+          ]
+        }
+      }
+    },
+    "ManagementPageOfProject": {
+      "required": [
+        "items",
+        "next"
+      ],
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/components/schemas/Project"
+          }
+        },
+        "next": {
+          "type": [
+            "null",
+            "string"
+          ]
+        }
+      }
+    },
+    "NameRequest": {
+      "required": [
+        "name"
+      ],
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": [
+            "null",
+            "string"
+          ]
+        }
+      }
+    },
+    "Organization": {
+      "required": [
+        "id",
+        "name",
+        "createdBy",
+        "createdAt"
+      ],
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "createdBy": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "plan": {
+          "$ref": "#/components/schemas/PlanTier"
+        }
+      }
+    },
+    "OrganizationMember": {
+      "required": [
+        "userId",
+        "role",
+        "joinedAt"
+      ],
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string"
+        },
+        "role": {
+          "$ref": "#/components/schemas/OrganizationRole"
+        },
+        "joinedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "OrganizationRole": {
+      "enum": [
+        "member",
+        "admin",
+        "owner"
+      ]
+    },
+    "OwnershipTransfer": {
+      "required": [
+        "fromUserId",
+        "toUserId",
+        "createdAt",
+        "expiresAt"
+      ],
+      "type": "object",
+      "properties": {
+        "fromUserId": {
+          "type": "string"
+        },
+        "toUserId": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "expiresAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "PlanRequest": {
+      "required": [
+        "plan"
+      ],
+      "type": "object",
+      "properties": {
+        "plan": {
+          "type": [
+            "null",
+            "string"
+          ]
+        }
+      }
+    },
+    "PlanTier": {
+      "enum": [
+        "hobby",
+        "pro",
+        "enterprise"
+      ],
+      "default": "hobby"
+    },
+    "Project": {
+      "required": [
+        "id",
+        "organizationId",
+        "name",
+        "createdAt"
+      ],
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "organizationId": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "RoleRequest": {
+      "required": [
+        "role"
+      ],
+      "type": "object",
+      "properties": {
+        "role": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/components/schemas/OrganizationRole"
+            }
+          ]
+        }
+      }
+    },
+    "ShapeBody": {
+      "required": [
+        "shape_id",
+        "handle",
+        "offset",
+        "next_offset",
+        "up_to_date",
+        "changes"
+      ],
+      "type": "object",
+      "properties": {
+        "shape_id": {
+          "type": "string"
+        },
+        "handle": {
+          "type": "string"
+        },
+        "offset": {
+          "type": "string"
+        },
+        "next_offset": {
+          "type": "string"
+        },
+        "up_to_date": {
+          "type": "boolean"
+        },
+        "changes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/components/schemas/ShapeChangeBody"
+          }
+        }
+      }
+    },
+    "ShapeChangeBody": {
+      "required": [
+        "offset",
+        "ops"
+      ],
+      "type": "object",
+      "properties": {
+        "offset": {
+          "type": "string"
+        },
+        "ops": {
+          "type": "array",
+          "items": {
+            "$ref": "#/components/schemas/ShapeOpBody"
+          }
+        }
+      }
+    },
+    "ShapeOpBody": {
+      "required": [
+        "op",
+        "id"
+      ],
+      "type": "object",
+      "properties": {
+        "op": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "version": {
+          "type": [
+            "null",
+            "string"
+          ]
+        },
+        "document": {}
+      }
+    },
+    "StatusBody": {
+      "required": [
+        "status",
+        "version"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        }
+      }
+    },
+    "SwitchOrganizationRequest": {
+      "required": [
+        "organizationId"
+      ],
+      "type": "object",
+      "properties": {
+        "organizationId": {
+          "type": [
+            "null",
+            "string"
+          ]
+        }
+      }
+    },
+    "TransactionBody": {
+      "required": [
+        "offset",
+        "durability",
+        "results"
+      ],
+      "type": "object",
+      "properties": {
+        "offset": {
+          "type": "string"
+        },
+        "durability": {
+          "type": "string"
+        },
+        "results": {
+          "type": "array",
+          "items": {
+            "$ref": "#/components/schemas/TransactionResultBody"
+          }
+        }
+      }
+    },
+    "TransactionResultBody": {
+      "required": [
+        "id",
+        "version",
+        "asserted",
+        "count"
+      ],
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": [
+            "null",
+            "string"
+          ]
+        },
+        "version": {
+          "type": [
+            "null",
+            "string"
+          ]
+        },
+        "asserted": {
+          "type": [
+            "null",
+            "boolean"
+          ]
+        },
+        "count": {
+          "type": [
+            "null",
+            "string"
+          ]
+        }
+      }
+    },
+    "TransferRequest": {
+      "required": [
+        "userId"
+      ],
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": [
+            "null",
+            "string"
+          ]
+        }
+      }
+    },
+    "WriteBody": {
+      "required": [
+        "id",
+        "version",
+        "offset",
+        "durability"
+      ],
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        },
+        "offset": {
+          "type": "string"
+        },
+        "durability": {
+          "type": "string"
+        }
+      }
+    }
+  },
+  "securityEvidence": [
+    "DocumentRoute.cs",
+    "GetShapeEndpoint.cs",
+    "IApiKeyStore.cs",
+    "GetDocumentEndpoint.cs",
+    "PutDocumentEndpoint.cs",
+    "CreateDocumentEndpoint.cs",
+    "PatchDocumentEndpoint.cs",
+    "DeleteDocumentEndpoint.cs",
+    "TransactionEndpoint.cs",
+    "QueryDocumentsEndpoint.cs",
+    "CreateCollectionEndpoint.cs",
+    "GetCollectionEndpoint.cs",
+    "ListCollectionsEndpoint.cs",
+    "DropCollectionEndpoint.cs"
+  ],
+  "openapiLimitations": "Producer OpenAPI omits security schemes, route/query parameters and some conditional statuses; pinned source and real integration tests supplement it."
 }

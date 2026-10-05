@@ -1,7 +1,6 @@
 // Identifiers for the TerraBase v1 Documents API (api-v1.md).
 
 const namePattern = /^[a-z][a-z0-9_-]{0,62}$/u;
-const idPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u;
 const versionPattern = /^tbv1-[0-9a-f]{32}$/u;
 const offsetPattern = /^(?:0|[1-9]\d{0,19})$/u;
 const maximumU64 = (1n << 64n) - 1n;
@@ -24,12 +23,23 @@ export function requireName(kind, name) {
 }
 
 /**
+ * The producer resolves this opaque catalog project id (normally a UUID), not its display name.
+ * @param {unknown} project
+ * @returns {string}
+ */
+export function requireProject(project) {
+  if (typeof project !== "string" || project === "" || project === "." || project === ".." || /[\p{Cc}\uD800-\uDFFF]/u.test(project))
+    throw new TypeError("project must be a non-empty catalog project ID without control characters or dot path segments.");
+  return project;
+}
+
+/**
  * @param {unknown} id
  * @returns {string}
  */
 export function requireDocumentId(id) {
-  if (typeof id !== "string" || !idPattern.test(id))
-    throw new TypeError("TerraBase document IDs are lowercase hyphenated UUIDs.");
+  if (typeof id !== "string" || id.length < 1 || id.length > 256 || /[\p{Cc}]/u.test(id) || /[\uD800-\uDFFF]/u.test(id) || id === "." || id === "..")
+    throw new TypeError("Document IDs must be 1-256 characters without control characters or dot path segments; new IDs must be lowercase UUIDs.");
   return id;
 }
 
@@ -105,13 +115,4 @@ export async function documentIdFor(collection, key) {
   if (typeof key !== "string") throw new TypeError("The natural key must be a string.");
   const namespace = await uuidV5(namespaceUrl, `terrabase:collection:${collection}`);
   return formatUuid(await uuidV5(namespace, key));
-}
-
-/**
- * A random Idempotency-Key. Keep it and reuse it when retrying the same mutation.
- * @returns {string}
- */
-export function newIdempotencyKey() {
-  const bytes = globalThis.crypto.getRandomValues(new Uint8Array(24));
-  return btoa(String.fromCharCode(...bytes)).replace(/\+/gu, "-").replace(/\//gu, "_").replace(/=+$/u, "");
 }

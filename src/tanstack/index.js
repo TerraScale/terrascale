@@ -1,6 +1,6 @@
 import { createDatabaseQuery, DatabaseSubscriptionError } from "../database-view.js";
 /** @import { DatabaseQueryOptions, DatabaseViewPosition, DatabaseViewSnapshot } from "../database-view.js" */
-/** @import { PreparedDatabaseCommit, TerraBaseClient } from "../database.js" */
+/** @import { PreparedDatabaseCommit, TerraBaseClient } from "../local/legacy-client.js" */
 /** @import { DatabaseCommitReceipt, DatabaseQueryRow, DatabaseResult, DatabaseScope } from "../database-types.js" */
 
 /**
@@ -498,6 +498,7 @@ export class TerraScaleTanStackCollectionSync {
 }
 
 /**
+ * @deprecated Retired SQLite/Rust adapter; no C# shape adapter is provided.
  * Options for `createCollection(terrascaleCollectionOptions(...))`.
  *
  * @template {object} T

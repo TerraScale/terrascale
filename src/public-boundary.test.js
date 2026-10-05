@@ -1,43 +1,18 @@
 import { expect, test } from "vitest";
 import * as sdk from "./index.js";
-test("root exposes current native typed operations and pure builders", () => {
+
+test("root exposes one project-scoped C# client without retired transports", () => {
   const client = sdk.createTerraBaseClient({
-    tenant: "00000000-0000-0000-0000-000000000001",
-    database: "00000000-0000-0000-0000-000000000002",
-    shard: 1n,
-    endpoint: "https://gru.api.terrascale.tech",
-    apiKey: "constructor-only",
+    project: "project", baseUrl: "http://127.0.0.1:18447", token: `tb_${"a".repeat(43)}`,
   });
-  for (const name of [
-    "read",
-    "query",
-    "subscription",
-    "prepareCommit",
-    "commit",
-    "transactionStatus",
-  ])
-    expect(
-      typeof (/** @type {Record<string, unknown>} */ (/** @type {unknown} */ (client)))[
-        name
-      ],
-    ).toBe("function");
-  for (const name of [
-    "http",
-    "request",
-    "documents",
-    "executeSql",
-    "sync",
-    "sessionToken",
-  ])
+  expect(client).toBeInstanceOf(sdk.TerraBaseV1Client);
+  const db = client.database("main");
+  const collection = db.collection("users");
+  for (const name of ["get", "put", "create", "patch", "delete", "query"])
+    expect(typeof /** @type {Record<string, unknown>} */ (/** @type {unknown} */ (collection))[name]).toBe("function");
+  for (const name of ["read", "subscription", "prepareCommit", "transactionStatus", "request", "http"])
     expect(name in client).toBe(false);
-  for (const name of [
-    "createTerraScaleClient",
-    "TerraScaleHttp",
-    "TerraScaleSyncV1Client",
-    "toUlid",
-    "createAuthPersistenceClient",
-  ])
+  for (const name of ["TerraBaseDiscoveryRouter", "createDatabaseQuery", "createTerraScaleSqliteRuntime", "PostgresClient", "raw"])
     expect(name in sdk).toBe(false);
-  expect(typeof sdk.collection).toBe("function");
-  expect(typeof sdk.raw).toBe("function");
+  expect(JSON.stringify(client)).not.toContain("tb_");
 });

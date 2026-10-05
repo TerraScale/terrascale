@@ -1,4 +1,5 @@
-/** Node-only PostgreSQL client for the signed INT8/TEXT point SQL listener. */
+/** @deprecated The C# TerraBase has no PostgreSQL listener.
+ * Node-only PostgreSQL client for the signed INT8/TEXT point SQL listener. */
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
 import { X509Certificate } from "node:crypto";
@@ -229,6 +230,7 @@ function columns(fields) {
 }
 
 /** One driver connection; no automatic reconnect, mutation retry or callback replay. */
+/** @deprecated The C# TerraBase has no PostgreSQL listener. */
 export class PostgresClient {
   /** @type {DriverClient} */
   #driver;

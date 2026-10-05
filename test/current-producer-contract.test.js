@@ -1,62 +1,70 @@
-import { readFile } from "node:fs/promises";
-import { createHash } from "node:crypto";
-import { describe, expect, test } from "vitest";
-import { decodeDatabaseAuthority, decodeDatabaseValue, encodeDatabaseCommit } from "../src/database-codec.js";
+import { execFileSync, spawnSync } from "node:child_process";
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { expect, test } from "vitest";
+import { digest, producerContract, releasePin } from "../scripts/terrabase-contract.mjs";
 
-/**
- * @typedef {object} VectorWrite
- * @property {string} schema_generation
- * @property {{ sequence: string }[]} observed
- * @property {{ kind: "tombstone" } | { kind: "live"; fields: { id: number; value: unknown }[] }} value
- */
-
-const source = process.env.TERRASCALE_CURRENT_OPENAPI;
-const vectors = process.env.TERRASCALE_ATOMIC_VECTORS;
-
-describe("current producer OpenAPI parity", () => {
-  test.skipIf(source === undefined)("actual owning producer supplies every admitted route and atomic field", async () => {
-    const bytes = await readFile(/** @type {string} */ (source));
-    const spec = JSON.parse(bytes.toString("utf8"));
-    const pin = JSON.parse(await readFile(new URL("../sdk-current-contract.json", import.meta.url), "utf8"));
-    expect(createHash("sha256").update(bytes).digest("hex")).toBe(pin.sourceOpenApiSha256);
-    for (const route of pin.routes) {
-      const operation = spec.paths[route.path]?.[route.method.toLowerCase()];
-      expect(operation, route.path).toBeDefined();
-      if (route.request !== undefined) expect(operation.requestBody.content["application/json"].schema.$ref).toBe(`#/components/schemas/${route.request}`);
-      expect(operation.responses["200"].content["application/json"].schema.$ref).toBe(`#/components/schemas/${route.response}`);
-    }
-    expect(spec.components.schemas.PointResponse.required).toContain("state_version");
-    for (const field of ["effect_digest", "authority"]) {
-      expect(spec.components.schemas.CommitRequest.required).toContain(field);
-      expect(spec.components.schemas.CommitResponse.required).toContain(field);
-    }
-    expect(spec.components.schemas.Write.required).toContain("condition");
-    expect(spec.components.schemas.Error.properties.error.properties.code.enum).toEqual(expect.arrayContaining(["precondition_failed", "authority_changed", "authority_unavailable"]));
+test("contract inputs come from one SHA-bound C# release on main", async () => {
+  const spec = await producerContract();
+  expect(releasePin.producer).toBe("TerraScale/terrabase");
+  expect(releasePin.branch).toBe("main");
+  expect(releasePin.release).toContain(releasePin.revision);
+  expect(releasePin.sha256).toMatch(/^[a-f0-9]{64}$/u);
+  expect(spec.components.schemas).toMatchObject({
+    WriteBody: { required: ["id", "version", "offset", "durability"] },
+    DocumentPageBody: { properties: { next_cursor: { type: ["null", "string"] } } },
+    ShapeBody: { required: ["shape_id", "handle", "offset", "next_offset", "up_to_date", "changes"] },
   });
+});
 
-  test.skipIf(vectors === undefined)("matches all producer canonical effect vectors byte-for-byte through SHA-256", async () => {
-    const bytes = await readFile(/** @type {string} */ (vectors));
-    const corpus = JSON.parse(bytes.toString("utf8"));
-    const pin = JSON.parse(await readFile(new URL("../sdk-current-contract.json", import.meta.url), "utf8"));
-    expect(createHash("sha256").update(bytes).digest("hex")).toBe(pin.sourceAtomicVectorsSha256);
-    expect(corpus.vectors).toHaveLength(3);
-    for (const vector of corpus.vectors) {
-      const expected = vector.request;
-      const commit = {
-        transaction_id: { ...expected.transaction_id, expires_at_unix_ms: BigInt(expected.transaction_id.expires_at_unix_ms) },
-        authority: decodeDatabaseAuthority(expected.authority),
-        writes: expected.writes.map((/** @type {VectorWrite} */ write) => ({
-          ...write, schema_generation: BigInt(write.schema_generation),
-          observed: write.observed.map(origin => ({ ...origin, sequence: BigInt(origin.sequence) })),
-          value: write.value.kind === "tombstone" ? { kind: "tombstone" } : {
-            kind: "live", fields: write.value.fields.map(field => ({ id: field.id, value: decodeDatabaseValue(field.value) })),
-          },
-        })),
-      };
-      const encoded = await encodeDatabaseCommit({ ...vector.scope, shard: BigInt(vector.scope.shard) }, commit);
-      expect(createHash("sha256").update(Buffer.from(vector.canonical_effect_hex, "hex")).digest("hex")).toBe(vector.effect_digest);
-      expect(encoded.effect_digest, vector.name).toBe(vector.effect_digest);
-      expect(JSON.parse(encoded.body), vector.name).toEqual(expected);
+test("vendored contracts and security evidence stay bound to the repository-backed release pin", async () => {
+  const fixture = await mkdtemp(path.join(tmpdir(), "terrabase-contract-"));
+  try {
+    for (const file of ["scripts/terrabase-contract.mjs", "scripts/ci/contract-digest.mjs", "src/v1/routes.js"]) {
+      const target = path.join(fixture, file);
+      await mkdir(path.dirname(target), { recursive: true });
+      await cp(new URL(`../${file}`, import.meta.url), target);
     }
-  });
+    await cp(new URL("../contracts/terrabase-csharp", import.meta.url), path.join(fixture, "contracts/terrabase-csharp"), { recursive: true });
+    await writeFile(path.join(fixture, "package.json"), JSON.stringify({ type: "module" }));
+    const repo = path.join(fixture, "producer");
+    await mkdir(repo);
+    for (const [name, input] of Object.entries(releasePin.inputs)) {
+      const bytes = await readFile(new URL(`../contracts/terrabase-csharp/${name}`, import.meta.url));
+      expect(digest(bytes)).toBe(input.sha256);
+      const target = path.join(repo, input.sourcePath);
+      await mkdir(path.dirname(target), { recursive: true });
+      await writeFile(target, bytes);
+    }
+    execFileSync("git", ["init", "--quiet", repo]);
+    execFileSync("git", ["-C", repo, "add", "."]);
+    execFileSync("git", ["-C", repo, "-c", "user.name=Contract Test", "-c", "user.email=contract-test@example.invalid", "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", "commit", "--quiet", "-m", "Exact pinned producer source bytes"]);
+    const revision = execFileSync("git", ["-C", repo, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+    // Only the isolated fixture points at this temporary commit; all source and binary hashes stay pinned.
+    await writeFile(path.join(fixture, "scripts/ci/terrabase-release.json"), JSON.stringify({ ...releasePin, revision }));
+    const run = () => spawnSync(process.execPath, ["--input-type=module", "-e", "import { producerContract } from './scripts/terrabase-contract.mjs'; await producerContract();"], {
+      cwd: fixture, encoding: "utf8",
+      env: { ...process.env, TERRABASE_REPO: repo, TB_V1_REQUIRED: "0", TERRABASE_V1_OPENAPI: undefined },
+    });
+    const baseline = run();
+    expect(baseline.status, baseline.stderr).toBe(0);
+    for (const name of ["IApiKeyStore.cs", "GetDocumentEndpoint.cs"]) {
+      const target = path.join(fixture, "contracts/terrabase-csharp", name);
+      const original = await readFile(target);
+      await writeFile(target, Buffer.concat([original, Buffer.from("\n// Altered vendored security evidence.\n")]));
+      const changed = run();
+      expect(changed.status).not.toBe(0);
+      expect(changed.stderr).toContain(`${name} differs from the pinned C# producer source.`);
+      await writeFile(target, original);
+    }
+    await writeFile(path.join(fixture, "scripts/ci/terrabase-release.json"), JSON.stringify({
+      ...releasePin, revision, openapiSha256: "0".repeat(64),
+    }));
+    const inconsistentPin = run();
+    expect(inconsistentPin.status).not.toBe(0);
+    expect(inconsistentPin.stderr).toContain("Normalized vendored C# OpenAPI differs from the pinned runtime contract.");
+  } finally {
+    await rm(fixture, { recursive: true, force: true });
+  }
 });

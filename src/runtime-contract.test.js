@@ -20,7 +20,5 @@ test("public package keeps Node persistence/SQL and Better Auth server condition
   expect(manifest.peerDependenciesMeta["@tanstack/db"].optional).toBe(true);
   expect(manifest.peerDependencies["@better-auth/core"]).toBe("1.7.2");
   expect(manifest.devDependencies["@better-auth/test-utils"]).toBe("1.7.2");
-  expect(manifest.scripts["qualify:current-producer"]).toContain(
-    "current-producer-consumer.js",
-  );
+  expect(manifest.version).toBe("1.0.0");
 });

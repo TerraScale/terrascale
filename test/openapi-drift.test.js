@@ -1,24 +1,8 @@
-import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import { test } from "vitest";
-import { generateOpenApiContractDescriptor } from "../scripts/openapi-contract-descriptor.js";
-import { currentProducerOpenApi } from "../scripts/openapi-contract-paths.js";
-test.skipIf(process.env.TERRASCALE_CURRENT_OPENAPI === undefined)(
-  "native descriptor matches the exact current producer including security/errors",
-  async () => {
-    const descriptor = await generateOpenApiContractDescriptor({
-      manifestPath: new URL("../sdk-route-manifest.json", import.meta.url)
-        .pathname,
-      specPath: await currentProducerOpenApi(),
-    });
-    assert.deepEqual(
-      descriptor,
-      JSON.parse(
-        await readFile(
-          new URL("../sdk-openapi-contract-descriptor.json", import.meta.url),
-          "utf8",
-        ),
-      ),
-    );
-  },
-);
+import { expect, test } from "vitest";
+import { generateV1Manifest } from "../scripts/terrabase-contract.mjs";
+
+test("manifest preserves C# methods, media, status codes and complete schema nullability", async () => {
+  const expected = JSON.parse(await readFile(new URL("../sdk-v1-route-manifest.json", import.meta.url), "utf8"));
+  expect(await generateV1Manifest()).toEqual(expected);
+});

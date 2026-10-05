@@ -5,7 +5,7 @@ import { expectTypeOf, test } from "vitest";
  *   DatabaseScope,
  *   DatabasePoint,
  *   DatabaseTransactionStatus,
- * } from "./index.js"
+ * } from "./database-types.js"
  */
 
 /** Type-only placeholder: `expectTypeOf` is evaluated statically here. */

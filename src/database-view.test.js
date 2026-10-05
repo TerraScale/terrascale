@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { randomBytes, randomUUID } from "node:crypto";
 import { describe, test } from "vitest";
-import { createTerraBaseClient } from "./database.js";
+import { createTerraBaseClient } from "./local/legacy-client.js";
 import { createDatabaseQuery, DatabaseSubscriptionView } from "./database-view.js";
 /** @import { DatabasePoint, DatabaseQueryPredicate, DatabaseQueryRow, DatabaseResult, DatabaseValue } from "./database-types.js" */
 
@@ -182,7 +182,7 @@ describe("native database view reducer", () => {
     const stop = source.subscribe({ next: () => assert.fail("unavailable discovery cannot publish data"), reset: () => assert.fail("no reset was admitted"), error: error => { errors.push(error); finish(); } }, { signal: new AbortController().signal });
     await terminal;
     assert.equal(errors.length, 1);
-    assert.match(String(errors[0]), /discovery_unavailable/u);
+    assert.match(String(errors[0]), /transport_unavailable/u);
     stop();
     const abort = new AbortController();
     abort.abort();

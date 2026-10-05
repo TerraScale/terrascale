@@ -3,7 +3,7 @@ import { describe, test } from "vitest";
 import { get } from "svelte/store";
 
 import { createDatabaseQuery, createMutation, createQuery } from "./index.js";
-import { createTerraBaseClient } from "../database.js";
+import { createTerraBaseClient } from "../local/legacy-client.js";
 /** @import { SvelteMutation, SvelteQuery } from "./index.js" */
 /** @import { ReactiveQuerySource } from "../react/core.js" */
 
@@ -85,7 +85,7 @@ describe("svelte reactive bindings", () => {
     const bound = bind(query, state => { if (state.status === "error") finish(); });
     await terminal;
     assert.equal(bound.current()?.status, "error");
-    assert.equal(bound.current()?.error?.code, "discovery_unavailable");
+    assert.equal(bound.current()?.error?.code, "transport_unavailable");
     assert.equal(bound.current()?.data, undefined);
     bound.stop();
   });

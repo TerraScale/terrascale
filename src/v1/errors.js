@@ -7,7 +7,6 @@ import { isJsonObject, parseExactJson } from "./json.js";
  * @property {string} code
  * @property {string | undefined} [message]
  * @property {number | undefined} [op]
- * @property {string | undefined} [constraint]
  * @property {string | undefined} [handle]
  * @property {number | undefined} [retryAfter]
  * @property {string | undefined} [etag]
@@ -25,15 +24,13 @@ export class TerraBaseV1Error extends Error {
   code;
   /** @type {number | undefined} Failing transaction op index. */
   op;
-  /** @type {string | undefined} Unique constraint name for `unique_violation`. */
-  constraint;
   /** @type {string | undefined} New shape handle for `must_refetch`. */
   handle;
   /** @type {number | undefined} Parsed `Retry-After`, in seconds. */
   retryAfter;
   /** @type {string | undefined} Unquoted `ETag`; a deleted document's 404 carries its tombstone version. */
   etag;
-  /** @type {JsonObject | undefined} The raw error object, for route-specific members such as `suggested_index`. */
+  /** @type {JsonObject | undefined} The raw error object, for route-specific metadata. */
   details;
 
   /** @param {TerraBaseV1ErrorInit} init */
@@ -41,14 +38,12 @@ export class TerraBaseV1Error extends Error {
     const suffix = [
       init.message === undefined ? "" : `: ${init.message}`,
       init.op === undefined ? "" : ` (op ${init.op})`,
-      init.constraint === undefined ? "" : ` (constraint ${init.constraint})`,
     ].join("");
     super(`TerraBase ${init.status} ${init.code}${suffix}`);
     this.name = "TerraBaseV1Error";
     this.status = init.status;
     this.code = init.code;
     this.op = init.op;
-    this.constraint = init.constraint;
     this.handle = init.handle;
     this.retryAfter = init.retryAfter;
     this.etag = init.etag;
@@ -56,49 +51,16 @@ export class TerraBaseV1Error extends Error {
   }
 }
 
-/**
- * Every `error.code` in the api-v1.md error table, plus the client-side
- * `not_modified` (304). The v1 route manifest check compares this list with
- * the pinned contract table.
- */
+/** Current document, collection and shape producer codes, plus client not_modified. */
 export const V1ErrorCode = Object.freeze({
-  invalidRequest: "invalid_request",
-  invalidQuery: "invalid_query",
-  invalidCursor: "invalid_cursor",
-  invalidPatch: "invalid_patch",
-  ttlInvalid: "ttl_invalid",
-  sortRequiresIndex: "sort_requires_index",
-  assertRequiresIndex: "assert_requires_index",
-  invalidKey: "invalid_key",
-  invalidToken: "invalid_token",
-  forbiddenScope: "forbidden_scope",
-  notFound: "not_found",
-  unknownDatabase: "unknown_database",
-  unknownCollection: "unknown_collection",
-  unknownRoute: "unknown_route",
-  methodNotAllowed: "method_not_allowed",
-  conflictUnresolved: "conflict_unresolved",
-  uniqueViolation: "unique_violation",
-  patchConflict: "patch_conflict",
-  indexLimitExceeded: "index_limit_exceeded",
-  idempotencyConflict: "idempotency_conflict",
-  idempotencyExpired: "idempotency_expired",
-  schemaChanged: "schema_changed",
-  mustRefetch: "must_refetch",
-  preconditionFailed: "precondition_failed",
-  payloadTooLarge: "payload_too_large",
-  transactionTooLarge: "transaction_too_large",
-  unsupportedMediaType: "unsupported_media_type",
-  homeRegionRequired: "home_region_required",
-  rateLimited: "rate_limited",
-  internalError: "internal_error",
-  upstreamUnavailable: "upstream_unavailable",
-  capacity: "capacity",
-  storageUnavailable: "storage_unavailable",
-  storedCorruption: "stored_corruption",
-  commitUncertain: "commit_uncertain",
-  dependenciesUnavailable: "dependencies_unavailable",
-  notModified: "not_modified",
+  invalidRequest: "invalid_request", invalidQuery: "invalid_query", invalidCursor: "invalid_cursor",
+  invalidPatch: "invalid_patch", sortRequiresIndex: "sort_requires_index", assertRequiresIndex: "assert_requires_index",
+  invalidKey: "invalid_key", forbiddenScope: "forbidden_scope", notFound: "not_found",
+  unknownDatabase: "unknown_database", unknownCollection: "unknown_collection", unknownRoute: "unknown_route",
+  methodNotAllowed: "method_not_allowed", patchConflict: "patch_conflict", nameTaken: "name_taken",
+  mustRefetch: "must_refetch", preconditionFailed: "precondition_failed", payloadTooLarge: "payload_too_large",
+  unsupportedMediaType: "unsupported_media_type", uriTooLong: "uri_too_long", shapeBusy: "shape_busy",
+  internalError: "internal_error", capacity: "capacity", notModified: "not_modified",
 });
 
 /** `412 precondition_failed`: an If-Match, If-None-Match, assert or assert_count failed. */
@@ -110,16 +72,7 @@ export class V1PreconditionFailedError extends TerraBaseV1Error {
   }
 }
 
-/** `409 unique_violation`; `constraint` names the violated unique constraint. */
-export class V1UniqueViolationError extends TerraBaseV1Error {
-  /** @param {TerraBaseV1ErrorInit} init */
-  constructor(init) {
-    super(init);
-    this.name = "V1UniqueViolationError";
-  }
-}
-
-/** `401 invalid_key`: the data key is unknown or revoked. */
+/** `401 invalid_key`: the API key is unknown or revoked. */
 export class V1InvalidKeyError extends TerraBaseV1Error {
   /** @param {TerraBaseV1ErrorInit} init */
   constructor(init) {
@@ -128,7 +81,7 @@ export class V1InvalidKeyError extends TerraBaseV1Error {
   }
 }
 
-/** `403 forbidden_scope`: the key's grants do not cover the request. */
+/** `403 forbidden_scope`: the key's scopes do not cover the request. */
 export class V1ForbiddenScopeError extends TerraBaseV1Error {
   /** @param {TerraBaseV1ErrorInit} init */
   constructor(init) {
@@ -137,7 +90,7 @@ export class V1ForbiddenScopeError extends TerraBaseV1Error {
   }
 }
 
-/** `404 not_found`: absent, deleted or expired; `etag` carries a tombstone version. */
+/** `404 not_found`: absent or deleted; `etag` carries a tombstone version. */
 export class V1NotFoundError extends TerraBaseV1Error {
   /** @param {TerraBaseV1ErrorInit} init */
   constructor(init) {
@@ -153,7 +106,6 @@ export class V1NotFoundError extends TerraBaseV1Error {
 function typedError(init) {
   switch (init.code) {
     case "precondition_failed": return new V1PreconditionFailedError(init);
-    case "unique_violation": return new V1UniqueViolationError(init);
     case "invalid_key": return new V1InvalidKeyError(init);
     case "forbidden_scope": return new V1ForbiddenScopeError(init);
     case "not_found": return new V1NotFoundError(init);
@@ -225,7 +177,6 @@ export function parseV1Error(status, headers, text) {
     code,
     message: text_("message"),
     op: typeof op === "number" && Number.isInteger(op) ? op : undefined,
-    constraint: text_("constraint"),
     handle: text_("handle"),
     retryAfter: parseRetryAfter(headers),
     etag: unquoteEtag(headers.get("etag")),

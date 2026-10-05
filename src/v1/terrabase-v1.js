@@ -1,19 +1,18 @@
 // The TerraBase v1 client: documents, transactions, queries and shapes over
-// the name-based Documents API (terrabase docs/api-v1.md, query-v1.md,
-// shapes-v1.md).
+// the project-scoped C# Documents API (decision 0004 and shape-reads.md).
 import {
-  array, boolean, decodeDocument, decodeWrite, durability, malformed, object, string, u64,
+  array, boolean, decodeDocument, decodeWrite, durability, malformed, object, u64,
 } from "./decode.js";
 import { isJsonPointer, requireFilter, requirePath } from "./filter.js";
 import { requireDocumentId, requireName, requireVersion } from "./ids.js";
-import { assertJsonObject, ExactDecimal, stringifyExactJson } from "./json.js";
-import { createShape, encodeShapeRequest, V1ShapeSubscription } from "./shapes.js";
-import { requireIdempotencyKey, V1Transport } from "./transport.js";
+import { assertJsonObject, assertJsonValue, ExactDecimal, stringifyExactJson } from "./json.js";
+import { readShape } from "./shapes.js";
+import { V1Transport } from "./transport.js";
 /**
  * @import { V1Document, V1Durability, V1WriteResult } from "./decode.js"
  * @import { V1Filter, V1Path } from "./filter.js"
  * @import { JsonInput, JsonInputObject, JsonValue } from "./json.js"
- * @import { V1ShapeInfo, V1ShapeRequest, V1SubscribeOptions } from "./shapes.js"
+ * @import { V1ShapePage, V1ShapeRequest } from "./shapes.js"
  * @import { TerraBaseV1ClientConfig } from "./transport.js"
  */
 
@@ -25,13 +24,12 @@ import { requireIdempotencyKey, V1Transport } from "./transport.js";
  */
 /**
  * @typedef {object} V1WriteOptions
- * @property {string | undefined} [ifMatch] Require the current version.
+ * @property {string | undefined} [ifMatch] Require the current version, or "*" for a live document.
  * @property {boolean | undefined} [ifNoneMatchAny] Require the document to be absent or deleted (`If-None-Match: *`).
- * @property {string | undefined} [idempotencyKey] Makes an exact retry return the original response; enables safe retries.
  * @property {AbortSignal | undefined} [signal]
  */
-/** @typedef {{ readonly idempotencyKey?: string | undefined; readonly signal?: AbortSignal | undefined }} V1CreateOptions */
-/** @typedef {{ readonly ifMatch?: string | undefined; readonly idempotencyKey?: string | undefined; readonly signal?: AbortSignal | undefined }} V1ConditionalWriteOptions */
+/** @typedef {V1WriteOptions} V1CreateOptions */
+/** @typedef {{ readonly ifMatch?: string | undefined; readonly signal?: AbortSignal | undefined }} V1ConditionalWriteOptions */
 
 /**
  * One operation of an `application/vnd.terrabase.ops+json` patch. Paths are
@@ -46,25 +44,23 @@ import { requireIdempotencyKey, V1Transport } from "./transport.js";
  * @typedef {{ readonly merge: JsonInputObject } | { readonly ops: readonly V1PatchOp[] }} V1Patch
  */
 
-/** @typedef {{ readonly path: V1Path; readonly order: "asc" | "desc" }} V1SortKey */
+/** @typedef {{ readonly path: V1Path; readonly order?: "asc" | "desc" | undefined }} V1SortKey */
 /**
  * A query-v1 request. Every member is optional.
  * @typedef {object} V1Query
- * @property {V1Filter | undefined} [filter]
+ * @property {V1Filter | null | undefined} [filter]
  * @property {readonly V1SortKey[] | undefined} [sort] At most 4 keys; results are finally ordered by `$id`.
  * @property {readonly string[] | undefined} [project] At most 64 paths.
  * @property {number | undefined} [limit] 1-1000 (server default 50).
  * @property {string | null | undefined} [cursor] A previous page's `nextCursor`.
  * @property {boolean | undefined} [count] Count every match (first page only).
- * @property {"plan" | "analyze" | undefined} [explain] Explain the plan (first page only).
  */
 /** @typedef {{ readonly value: string; readonly exact: boolean }} V1Count */
 /**
  * @typedef {object} V1QueryPage
- * @property {readonly V1Document[]} items May be empty while `nextCursor` is set (bounded scans).
+ * @property {readonly V1Document[]} items Documents in query order.
  * @property {string | null} nextCursor
  * @property {V1Count | undefined} count
- * @property {JsonValue | undefined} explain
  */
 
 /** @typedef {{ readonly ifMatch: string } | { readonly ifNoneMatchAny: true }} V1Precondition */
@@ -81,7 +77,7 @@ import { requireIdempotencyKey, V1Transport } from "./transport.js";
  * @property {readonly V1TransactionOpResult[]} results One per op, in order.
  */
 
-const queryMembers = new Set(["filter", "sort", "project", "limit", "cursor", "count", "explain"]);
+const queryMembers = new Set(["filter", "sort", "project", "limit", "cursor", "count"]);
 
 /**
  * @param {string} path
@@ -97,9 +93,17 @@ function pointer(path) {
  * @returns {Record<string, JsonInput>}
  */
 function patchOp(op) {
-  switch (op?.op) {
+  if (typeof op !== "object" || op === null || Array.isArray(op)) throw new TypeError("A patch op is an object.");
+  let allowed = ["op", "path", "value"];
+  switch (op.op) {
+    case "unset": allowed = ["op", "path"]; break;
+    case "inc": allowed = ["op", "path", "by"]; break;
+  }
+  for (const key of Object.keys(op)) if (!allowed.includes(key)) throw new TypeError(`Unknown patch op member ${key}.`);
+  switch (op.op) {
     case "set":
     case "append":
+      assertJsonValue(op.value, "patch value");
       return { op: op.op, path: pointer(op.path), value: op.value };
     case "unset":
       return { op: "unset", path: pointer(op.path) };
@@ -119,7 +123,8 @@ function patchOp(op) {
  * @returns {{ merge: JsonInputObject } | { ops: Record<string, JsonInput>[] }}
  */
 function normalizePatch(patch) {
-  if (typeof patch !== "object" || patch === null) throw new TypeError("A patch is { merge } or { ops }.");
+  if (typeof patch !== "object" || patch === null || Array.isArray(patch)) throw new TypeError("A patch is { merge } or { ops }.");
+  for (const key of Object.keys(patch)) if (key !== "merge" && key !== "ops") throw new TypeError(`Unknown patch member ${key}.`);
   const hasMerge = Object.hasOwn(patch, "merge");
   const hasOps = Object.hasOwn(patch, "ops");
   if (hasMerge === hasOps) throw new TypeError("A patch has exactly one of merge or ops.");
@@ -141,38 +146,36 @@ function normalizePatch(patch) {
  * @returns {string}
  */
 function encodeQuery(query) {
-  if (typeof query !== "object" || query === null) throw new TypeError("A query is an object.");
+  if (typeof query !== "object" || query === null || Array.isArray(query)) throw new TypeError("A query is an object.");
   for (const key of Object.keys(query))
     if (!queryMembers.has(key)) throw new TypeError(`Unknown query member ${key}.`);
   /** @type {Record<string, unknown>} */
   const body = {};
-  if (query.filter !== undefined) body.filter = requireFilter(query.filter);
+  if (query.filter !== undefined) body.filter = query.filter === null ? null : requireFilter(query.filter);
   if (query.sort !== undefined) {
     if (!Array.isArray(query.sort) || query.sort.length > 4) throw new TypeError("sort has at most 4 keys.");
     body.sort = query.sort.map((key) => {
-      if (key.order !== "asc" && key.order !== "desc") throw new TypeError('Sort order is "asc" or "desc".');
-      return { path: requirePath(key.path), order: key.order };
+      if (key === null || typeof key !== "object") throw new TypeError("Sort keys are objects.");
+      for (const member of Object.keys(key)) if (member !== "path" && member !== "order") throw new TypeError(`Unknown sort member ${member}.`);
+      if (key.order !== undefined && key.order !== "asc" && key.order !== "desc") throw new TypeError('Sort order is "asc" or "desc".');
+      return { path: requirePath(key.path), ...(key.order === undefined ? {} : { order: key.order }) };
     });
   }
   if (query.project !== undefined) {
     if (!Array.isArray(query.project) || query.project.length > 64) throw new TypeError("project lists at most 64 paths.");
-    body.project = query.project.map(pointer);
+    body.project = query.project.map(requirePath);
   }
   if (query.limit !== undefined) {
     if (!Number.isInteger(query.limit) || query.limit < 1 || query.limit > 1000) throw new TypeError("limit is 1-1000.");
     body.limit = query.limit;
   }
   if (query.cursor !== undefined) {
-    if (query.cursor !== null && typeof query.cursor !== "string") throw new TypeError("cursor is a string or null.");
+    if (query.cursor !== null && (typeof query.cursor !== "string" || query.cursor === "")) throw new TypeError("cursor is a string or null.");
     body.cursor = query.cursor;
   }
   if (query.count !== undefined) {
     if (typeof query.count !== "boolean") throw new TypeError("count is a boolean.");
     body.count = query.count;
-  }
-  if (query.explain !== undefined) {
-    if (query.explain !== "plan" && query.explain !== "analyze") throw new TypeError('explain is "plan" or "analyze".');
-    body.explain = query.explain;
   }
   return stringifyExactJson(body, "query");
 }
@@ -184,7 +187,7 @@ function encodeQuery(query) {
 function decodeQueryPage(value) {
   const raw = object(value, "query response");
   const next = raw.next_cursor;
-  if (next !== undefined && next !== null && typeof next !== "string") malformed("next_cursor");
+  if (next !== null && (typeof next !== "string" || next === "")) malformed("next_cursor");
   /** @type {V1Count | undefined} */
   let count;
   if (raw.count !== undefined) {
@@ -195,7 +198,6 @@ function decodeQueryPage(value) {
     items: Object.freeze(array(raw.items, "query items").map(decodeDocument)),
     nextCursor: typeof next === "string" && next !== "" ? next : null,
     count,
-    explain: raw.explain,
   });
 }
 
@@ -207,14 +209,28 @@ function decodeQueryPage(value) {
 function preconditionHeaders(options, allowNoneMatch) {
   /** @type {Record<string, string>} */
   const headers = {};
+  rejectIdempotency(options);
+  if (options.ifNoneMatchAny !== undefined && typeof options.ifNoneMatchAny !== "boolean") throw new TypeError("ifNoneMatchAny is a boolean.");
   if (options.ifMatch !== undefined && options.ifNoneMatchAny === true)
     throw new TypeError("ifMatch and ifNoneMatchAny are mutually exclusive.");
-  if (options.ifMatch !== undefined) headers["if-match"] = `"${requireVersion(options.ifMatch)}"`;
+  if (options.ifMatch !== undefined) headers["if-match"] = options.ifMatch === "*" ? "*" : `"${requireVersion(options.ifMatch)}"`;
   if (options.ifNoneMatchAny === true) {
     if (!allowNoneMatch) throw new TypeError("This operation does not take ifNoneMatchAny.");
     headers["if-none-match"] = "*";
   }
   return headers;
+}
+
+/** @param {object} options @returns {void} */
+function rejectIdempotency(options) {
+  if ("idempotencyKey" in options) throw new TypeError("The current producer does not support Idempotency-Key; mutations are never automatically retried.");
+}
+/** @param {JsonInputObject} document @returns {string} */
+function encodeDocument(document) {
+  assertJsonObject(document, "document");
+  const body = stringifyExactJson(document, "document");
+  if (new TextEncoder().encode(body).byteLength > 1024 * 1024) throw new TypeError("A document is at most 1 MiB.");
+  return body;
 }
 
 /** A collection handle by name. It performs no I/O until an operation runs. */
@@ -237,7 +253,7 @@ export class V1Collection {
     this.#transport = transport;
     this.database = requireName("database", database);
     this.name = requireName("collection", name);
-    this.#params = Object.freeze({ db: this.database, collection: this.name });
+    this.#params = Object.freeze({ database: this.database, collection: this.name });
     Object.freeze(this);
   }
 
@@ -250,7 +266,7 @@ export class V1Collection {
   }
 
   /**
-   * Reads a document. Absent, deleted and expired documents fail with
+   * Reads a document. Absent and deleted documents fail with
    * `not_found`; a deleted document's error carries its tombstone `etag`.
    * @param {string} id
    * @param {V1ReadOptions} [options]
@@ -274,10 +290,8 @@ export class V1Collection {
   async put(id, document, options = {}) {
     const params = this.#document(id);
     const headers = preconditionHeaders(options, true);
-    assertJsonObject(document, "document");
     return decodeWrite(await this.#transport.call("putDocument", params, {
-      body: stringifyExactJson(document, "document"), headers,
-      idempotencyKey: requireIdempotencyKey(options.idempotencyKey), signal: options.signal,
+      body: encodeDocument(document), headers, signal: options.signal,
     }));
   }
 
@@ -288,10 +302,8 @@ export class V1Collection {
    * @returns {Promise<V1WriteResult>}
    */
   async create(document, options = {}) {
-    assertJsonObject(document, "document");
     return decodeWrite(await this.#transport.call("createDocument", this.#params, {
-      body: stringifyExactJson(document, "document"),
-      idempotencyKey: requireIdempotencyKey(options.idempotencyKey), signal: options.signal,
+      body: encodeDocument(document), headers: preconditionHeaders(options, true), signal: options.signal,
     }));
   }
 
@@ -311,7 +323,7 @@ export class V1Collection {
       : ["application/vnd.terrabase.ops+json", stringifyExactJson({ ops: normalized.ops }, "patch ops")];
     return decodeWrite(await this.#transport.call("patchDocument", params, {
       body, contentType, headers,
-      idempotencyKey: requireIdempotencyKey(options.idempotencyKey), signal: options.signal,
+      signal: options.signal,
     }));
   }
 
@@ -325,7 +337,7 @@ export class V1Collection {
     const params = this.#document(id);
     const headers = preconditionHeaders(options, false);
     return decodeWrite(await this.#transport.call("deleteDocument", params, {
-      headers, idempotencyKey: requireIdempotencyKey(options.idempotencyKey), signal: options.signal,
+      headers, signal: options.signal,
     }));
   }
 
@@ -343,8 +355,8 @@ export class V1Collection {
   }
 
   /**
-   * Iterates over every page, following `nextCursor`. `count` and `explain`
-   * are sent with the first page only.
+   * Iterates over every page, following `nextCursor`. `count`
+   * is sent with the first page only.
    * @param {V1Query} [query]
    * @param {V1RequestOptions} [options]
    * @returns {AsyncGenerator<V1QueryPage, void, undefined>}
@@ -356,7 +368,7 @@ export class V1Collection {
       const page = await this.query(current, options);
       yield page;
       if (page.nextCursor === null) return;
-      const { count: _count, explain: _explain, ...rest } = current;
+      const { count: _count, ...rest } = current;
       current = { ...rest, cursor: page.nextCursor };
     }
   }
@@ -370,6 +382,17 @@ export class V1Collection {
   async *items(query = {}, options = {}) {
     for await (const page of this.pages(query, options)) yield* page.items;
   }
+  /**
+   * Reads one C# shape snapshot page or change-log chunk. Bootstrap defaults to offset -1.
+   * Echo handle, nextOffset and cursor on the following read; discard state on must_refetch.
+   * @param {V1ShapeRequest} [request]
+   * @param {V1RequestOptions} [options]
+   * @returns {Promise<V1ShapePage>}
+   */
+  shape(request = {}, options = {}) {
+    return readShape(this.#transport, this.#params, request, options.signal);
+  }
+
 }
 
 /**
@@ -384,6 +407,8 @@ export class V1Transaction {
   #database;
   /** @type {string[]} */
   #ops = [];
+  /** @type {Set<string>} */
+  #targets = new Set();
   #countAsserts = 0;
 
   /**
@@ -406,7 +431,13 @@ export class V1Transaction {
    */
   #add(op) {
     if (this.#ops.length >= 1024) throw new TypeError("A transaction has at most 1024 ops.");
-    this.#ops.push(stringifyExactJson(op, `transaction op ${this.#ops.length}`));
+    const encoded = stringifyExactJson(op, `transaction op ${this.#ops.length}`);
+    const target = op.id === undefined ? undefined : JSON.stringify([op.collection, op.id]);
+    if (target !== undefined) {
+      if (this.#targets.has(target)) throw new TypeError("Two transaction operations cannot target the same document.");
+      this.#targets.add(target);
+    }
+    this.#ops.push(encoded);
     return this;
   }
 
@@ -418,7 +449,7 @@ export class V1Transaction {
   static #precondition(precondition, allowNoneMatch) {
     if (precondition === undefined) return {};
     if ("ifMatch" in precondition && !("ifNoneMatchAny" in precondition))
-      return { if_match: requireVersion(precondition.ifMatch) };
+      return { if_match: precondition.ifMatch === "*" ? "*" : requireVersion(precondition.ifMatch) };
     if ("ifNoneMatchAny" in precondition && precondition.ifNoneMatchAny === true && !("ifMatch" in precondition)) {
       if (!allowNoneMatch) throw new TypeError("This op does not take ifNoneMatchAny.");
       return { if_none_match: "*" };
@@ -435,7 +466,7 @@ export class V1Transaction {
    * @returns {this}
    */
   create(collection, document, id) {
-    assertJsonObject(document, "document");
+    encodeDocument(document);
     return this.#add({
       op: "create", collection: requireName("collection", collection),
       ...(id === undefined ? {} : { id: requireDocumentId(id) }), document,
@@ -450,7 +481,7 @@ export class V1Transaction {
    * @returns {this}
    */
   put(collection, id, document, precondition) {
-    assertJsonObject(document, "document");
+    encodeDocument(document);
     return this.#add({
       op: "put", collection: requireName("collection", collection), id: requireDocumentId(id), document,
       ...V1Transaction.#precondition(precondition, true),
@@ -485,7 +516,7 @@ export class V1Transaction {
   }
 
   /**
-   * Requires the document to exist, be unconflicted and match the filter.
+   * Requires the document to exist and match the filter.
    * @param {string} collection
    * @param {string} id
    * @param {V1Filter} filter
@@ -496,7 +527,7 @@ export class V1Transaction {
   }
 
   /**
-   * Requires the document to be absent, deleted or expired.
+   * Requires the document to be absent or deleted.
    * @param {string} collection
    * @param {string} id
    * @returns {this}
@@ -507,16 +538,16 @@ export class V1Transaction {
 
   /**
    * Requires the number of the collection's documents matching `filter` to
-   * satisfy `gte` and/or `lte`. It is evaluated inside the commit, before
+   * satisfy `gte` and/or `lte`. Omit the filter with null to count all documents. It is evaluated inside the commit, before
    * this transaction's writes, so it is serializable with every other write.
    * At most 16 per transaction; the result carries the `count`.
    * @param {string} collection
-   * @param {V1Filter} filter
+   * @param {V1Filter | null} filter
    * @param {V1CountBounds} bounds
    * @returns {this}
    */
   assertCount(collection, filter, bounds) {
-    requireFilter(filter);
+    if (filter !== null) requireFilter(filter);
     /** @type {Record<string, number>} */
     const limits = {};
     for (const name of /** @type {const} */ (["gte", "lte"])) {
@@ -526,8 +557,9 @@ export class V1Transaction {
       limits[name] = value;
     }
     if (Object.keys(limits).length === 0) throw new TypeError("assertCount needs gte, lte or both.");
+    if (limits.gte !== undefined && limits.lte !== undefined && limits.gte > limits.lte) throw new TypeError("assertCount gte must not exceed lte.");
     if (this.#countAsserts >= 16) throw new TypeError("A transaction has at most 16 assertCount ops.");
-    this.#add({ op: "assert_count", collection: requireName("collection", collection), filter, ...limits });
+    this.#add({ op: "assert_count", collection: requireName("collection", collection), ...(filter === null ? {} : { filter }), ...limits });
     this.#countAsserts++;
     return this;
   }
@@ -535,16 +567,19 @@ export class V1Transaction {
   /**
    * Applies every op atomically. Failures are TerraBaseV1Error values whose
    * `op` names the failing op index.
-   * @param {V1CreateOptions} [options]
+   * @param {V1RequestOptions} [options]
    * @returns {Promise<V1TransactionResult>}
    */
   async commit(options = {}) {
     if (this.#ops.length === 0) throw new TypeError("A transaction needs at least one op.");
-    const response = await this.#transport.call("commitTransaction", { db: this.#database }, {
+    rejectIdempotency(options);
+    const sentCount = this.#ops.length;
+    const response = await this.#transport.call("commitTransaction", { database: this.#database }, {
       body: `{"ops":[${this.#ops.join(",")}]}`,
-      idempotencyKey: requireIdempotencyKey(options.idempotencyKey), signal: options.signal,
+      signal: options.signal,
     });
     const raw = object(response.value, "transaction result");
+    if (array(raw.results, "transaction results").length !== sentCount) malformed("transaction result count");
     return Object.freeze({
       offset: u64(raw.offset, "transaction offset"),
       durability: durability(raw.durability),
@@ -554,14 +589,74 @@ export class V1Transaction {
           return Object.freeze(result.count === undefined
             ? { asserted: /** @type {const} */ (true) }
             : { asserted: /** @type {const} */ (true), count: u64(result.count, "assert_count count") });
-        return Object.freeze({ id: string(result.id, "op result id"), version: string(result.version, "op result version") });
+        return Object.freeze({ id: requireDocumentId(result.id), version: requireVersion(result.version) });
       })),
     });
   }
 }
 
+/** @typedef {{ readonly name: string; readonly createdAt: string }} V1CollectionInfo */
+/** @typedef {{ readonly items: readonly V1CollectionInfo[]; readonly nextCursor: string | null }} V1CollectionPage */
+/** @typedef {{ readonly limit?: number | undefined; readonly cursor?: string | undefined }} V1CollectionListOptions */
+/** @param {JsonValue | undefined} value @returns {V1CollectionInfo} */
+function decodeCollection(value) {
+  const raw = object(value, "collection");
+  return Object.freeze({ name: requireName("collection", raw.name), createdAt: u64(raw.created_at, "collection created_at") });
+}
+/** Collection management on the public client listener. */
+export class V1Collections {
+  /** @type {V1Transport} */
+  #transport;
+  /** @type {string} */
+  #database;
+  /** @param {V1Transport} transport @param {string} database */
+  constructor(transport, database) {
+    this.#transport = transport;
+    this.#database = requireName("database", database);
+    Object.freeze(this);
+  }
+  /** @param {string} name @param {V1RequestOptions} [options] @returns {Promise<V1CollectionInfo>} */
+  async create(name, options = {}) {
+    rejectIdempotency(options);
+    const response = await this.#transport.call("createCollection", { database: this.#database }, {
+      body: stringifyExactJson({ name: requireName("collection", name) }, "collection"), signal: options.signal,
+    });
+    return decodeCollection(response.value);
+  }
+  /** @param {string} name @param {V1RequestOptions} [options] @returns {Promise<V1CollectionInfo>} */
+  async get(name, options = {}) {
+    const response = await this.#transport.call("getCollection", { database: this.#database, collection: requireName("collection", name) }, { signal: options.signal });
+    return decodeCollection(response.value);
+  }
+  /** @param {V1CollectionListOptions} [request] @param {V1RequestOptions} [options] @returns {Promise<V1CollectionPage>} */
+  async list(request = {}, options = {}) {
+    const query = new URLSearchParams();
+    for (const key of Object.keys(request)) if (key !== "limit" && key !== "cursor") throw new TypeError(`Unknown collection list member ${key}.`);
+    if (request.limit !== undefined) {
+      if (!Number.isInteger(request.limit) || request.limit < 1 || request.limit > 200) throw new TypeError("Collection list limit is 1-200.");
+      query.set("limit", String(request.limit));
+    }
+    if (request.cursor !== undefined) {
+      if (typeof request.cursor !== "string" || request.cursor === "") throw new TypeError("Collection cursor is a non-empty string.");
+      query.set("cursor", request.cursor);
+    }
+    const response = await this.#transport.call("listCollections", { database: this.#database }, { query, signal: options.signal });
+    const raw = object(response.value, "collection page");
+    if (raw.next_cursor !== null && (typeof raw.next_cursor !== "string" || raw.next_cursor === "")) malformed("collection next_cursor");
+    return Object.freeze({ items: Object.freeze(array(raw.items, "collections").map(decodeCollection)), nextCursor: raw.next_cursor });
+  }
+  /** @param {string} name @param {V1RequestOptions} [options] @returns {Promise<V1CollectionInfo>} */
+  async drop(name, options = {}) {
+    rejectIdempotency(options);
+    const response = await this.#transport.call("dropCollection", { database: this.#database, collection: requireName("collection", name) }, { signal: options.signal });
+    return decodeCollection(response.value);
+  }
+}
+
 /** A database handle by name. It performs no I/O until an operation runs. */
 export class V1Database {
+  /** @type {V1Collections} */
+  collections;
   /** @type {V1Transport} */
   #transport;
   /** @type {string} */
@@ -574,6 +669,7 @@ export class V1Database {
   constructor(transport, name) {
     this.#transport = transport;
     this.name = requireName("database", name);
+    this.collections = new V1Collections(transport, this.name);
     Object.freeze(this);
   }
 
@@ -590,34 +686,11 @@ export class V1Database {
     return new V1Transaction(this.#transport, this.name);
   }
 
-  /**
-   * Calls the shape gatekeeper. Call it again before `expiresAt` for a fresh
-   * edge token.
-   * @param {V1ShapeRequest} request
-   * @param {V1RequestOptions} [options]
-   * @returns {Promise<V1ShapeInfo>}
-   */
-  createShape(request, options = {}) {
-    return createShape(this.#transport, this.name, encodeShapeRequest(request), options.signal);
-  }
 
-  /**
-   * Creates the shape and returns a subscription positioned at the start of
-   * its snapshot (or at `resume`). Iterate it with `for await`.
-   * @param {V1ShapeRequest} request
-   * @param {V1SubscribeOptions} [options]
-   * @returns {Promise<V1ShapeSubscription>}
-   */
-  async subscribe(request, options = {}) {
-    V1ShapeSubscription.validateOptions(options);
-    const body = encodeShapeRequest(request);
-    const info = await createShape(this.#transport, this.name, body, options.signal);
-    return new V1ShapeSubscription(this.#transport, this.name, body, info, options);
-  }
 }
 
 /**
- * A TerraBase v1 data-plane client for one `tbk1` data key. The key is held
+ * A TerraBase v1 data-plane client for one project and `tb_` API key. The key is held
  * privately; it is never serialized, logged or forwarded to redirects.
  */
 export class TerraBaseV1Client {

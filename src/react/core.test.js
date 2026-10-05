@@ -10,7 +10,7 @@ import {
   createDatabaseQuery,
   createReactiveHttpQuery,
 } from "./core.js";
-import { createTerraBaseClient } from "../database.js";
+import { createTerraBaseClient } from "../local/legacy-client.js";
 /** @import { ReactTestRenderer } from "react-test-renderer" */
 /** @import { ReactiveQueryCallbacks, ReactiveHttpEvent, ReactiveQuerySource } from "./core.js" */
 /** @import { DatabaseCommitReceipt, DatabaseResult } from "../database-types.js" */
@@ -171,7 +171,7 @@ describe("reactive hook core", () => {
     const stop = observer.subscribe(() => { if (observer.getSnapshot().status === "error") finish(); });
     await terminal;
     assert.equal(observer.getSnapshot().status, "error");
-    assert.equal(observer.getSnapshot().error?.code, "discovery_unavailable");
+    assert.equal(observer.getSnapshot().error?.code, "transport_unavailable");
     assert.equal(observer.getSnapshot().data, undefined);
     stop();
   });

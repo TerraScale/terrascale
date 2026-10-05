@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { test } from "vitest";
 
-test("native CI preserves event identity, exact source gates and actual framework/browser checks", async () => {
+test("CI preserves event identity, real C# producer and framework/browser checks", async () => {
   const workflow = await readFile(
     new URL("../.forgejo/workflows/ci.yml", import.meta.url),
     "utf8",
@@ -25,20 +25,13 @@ test("native CI preserves event identity, exact source gates and actual framewor
     assert.match(definition, /npm ci/u);
     assert.match(definition, /npm run build/u);
   }
-  for (const job of ["static", "node"]) {
-    const definition = jobDefinition(workflow, job);
-    assert.match(
-      definition,
-      /bash scripts\/ci\/provision-current-contract-inputs\.sh/u,
-    );
-    assert.ok(
-      definition.indexOf("bash scripts/ci/provision-current-contract-inputs.sh") <
-        definition.indexOf("npm run check:current-contract-inputs"),
-      "Producer inputs must be provisioned before the unchanged digest guard.",
-    );
-    assert.match(definition, /npm run check:current-contract-inputs/u);
-    assert.match(definition, /npm run check:current-contract/u);
-  }
+  const node = jobDefinition(workflow, "node");
+  assert.match(node, /node scripts\/ci\/provision-terrabase\.mjs/u);
+  assert.match(node, /FORGEJO_TOKEN: \$\{\{ secrets\.REGISTRY_TOKEN \}\}/u);
+  assert.match(node, /node scripts\/ci\/run-terrabase-integration\.mjs npm test/u);
+  assert.ok(node.indexOf("provision-terrabase.mjs") < node.indexOf("run-terrabase-integration.mjs"));
+  assert.match(jobDefinition(workflow, "static"), /npm run check:v1-route-manifest/u);
+  assert.doesNotMatch(workflow, /provision-current-contract-inputs|canonical effect vectors|check:current-contract|check:route-manifest|check:openapi-contract-descriptor|nice -n|renice/u);
   assert.match(jobDefinition(workflow, "static"), /npm run typecheck/u);
   assert.match(jobDefinition(workflow, "node"), /npm run check:frameworks/u);
   assert.match(jobDefinition(workflow, "node"), /sha256sum --check --strict/u);

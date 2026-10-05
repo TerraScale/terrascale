@@ -1,12 +1,12 @@
 import { isAbsolute } from "node:path";
 import { randomUUID } from "node:crypto";
-import { createTerraBaseClient } from "../database.js";
+import { createTerraBaseClient } from "./legacy-client.js";
 import { normalizeLocalBearerToken } from "./authentication.js";
 import { assertLocalSqliteEnvironment } from "./environment.js";
 import { TerraScaleLocalRouter } from "./router.js";
 import { TerraScaleLocalHttpServer } from "./server.js";
 import { TerraScaleSqliteStore } from "./store.js";
-/** @import { TerraBaseClient, TerraBaseClientConfig } from "../database.js" */
+/** @import { TerraBaseClient, TerraBaseClientConfig } from "./legacy-client.js" */
 /** @import { CollectionBinding, DatabaseScope } from "../database-types.js" */
 
 /** @typedef {import("./context.js").LocalAuthenticationMode} LocalAuthenticationMode */
@@ -29,7 +29,8 @@ import { TerraScaleSqliteStore } from "./store.js";
  * }} TerraScaleLocalListenOptions
  */
 
-/** Explicit Node development backend. Never load this entrypoint in deployment or qualification. */
+/** @deprecated Retired Rust SQLite emulator; use a local TerraBase release binary.
+ * Explicit Node development backend. Never load this entrypoint in deployment or qualification. */
 export class TerraScaleSqliteRuntime {
   /** @type {TerraScaleSqliteStore} */
   #store;
@@ -196,6 +197,7 @@ export class TerraScaleSqliteRuntime {
   }
 }
 /**
+ * @deprecated Retired Rust emulator; use a local TerraBase release.
  * @param {TerraScaleSqliteRuntimeOptions} options
  * @returns {TerraScaleSqliteRuntime}
  */

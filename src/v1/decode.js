@@ -1,30 +1,12 @@
 // Typed decoding of TerraBase v1 response bodies.
-import { parseU64 } from "./ids.js";
+import { parseU64, requireVersion } from "./ids.js";
 import { isJsonObject } from "./json.js";
 /** @import { JsonObject, JsonValue } from "./json.js" */
 
-/** @typedef {"local_durable" | "object_durable"} V1Durability */
-
+/** @typedef {"local_durable"} V1Durability */
 /**
- * @typedef {object} V1SiblingEvent
- * @property {string} replica Lowercase hyphenated UUID.
- * @property {string} incarnation 32 lowercase hex characters.
- * @property {string} sequence Decimal u64.
- */
-
-/**
- * One concurrent version of a conflicted document.
- * @typedef {object} V1Sibling
- * @property {V1SiblingEvent} event
- * @property {boolean} deleted
- * @property {JsonObject | undefined} document Absent for deleted siblings.
- */
-
-/**
- * A document from GET, a query or a shape. `state:"value"` carries
- * `document`; `state:"conflict"` carries every sibling.
- * @typedef {{ readonly id: string; readonly version: string; readonly state: "value"; readonly document: JsonObject }
- *   | { readonly id: string; readonly version: string; readonly state: "conflict"; readonly siblings: readonly V1Sibling[] }} V1Document
+ * C# single-writer documents always carry a value, never conflict siblings.
+ * @typedef {{ readonly id: string; readonly version: string; readonly state: "value"; readonly document: JsonObject }} V1Document
  */
 
 /**
@@ -96,28 +78,7 @@ export function array(value, what) {
  * @returns {V1Durability}
  */
 export function durability(value) {
-  return value === "local_durable" || value === "object_durable" ? value : malformed("durability");
-}
-
-/**
- * @param {JsonValue | undefined} value
- * @returns {V1Sibling}
- */
-function sibling(value) {
-  const raw = object(value, "sibling");
-  const event = object(raw.event, "sibling event");
-  const deleted = boolean(raw.deleted, "sibling deleted flag");
-  if (deleted && raw.document !== undefined) malformed("deleted sibling with a document");
-  return Object.freeze({
-    event: Object.freeze({
-      replica: string(event.replica, "sibling replica"),
-      incarnation: string(event.incarnation, "sibling incarnation"),
-      sequence: u64(event.sequence, "sibling sequence"),
-    }),
-    deleted,
-    // A live sibling carries its document; a deleted one is a tombstone.
-    document: deleted ? undefined : object(raw.document, "live sibling document"),
-  });
+  return value === "local_durable" ? value : malformed("durability");
 }
 
 /**
@@ -127,9 +88,7 @@ function sibling(value) {
 export function decodeDocument(value) {
   const raw = object(value, "document");
   const id = string(raw.id, "document id");
-  const version = string(raw.version, "document version");
-  if (raw.state === "conflict")
-    return Object.freeze({ id, version, state: "conflict", siblings: Object.freeze(array(raw.siblings, "siblings").map(sibling)) });
+  const version = requireVersion(raw.version);
   if (raw.state !== "value") return malformed("document state");
   return Object.freeze({ id, version, state: "value", document: object(raw.document, "document body") });
 }
@@ -142,7 +101,7 @@ export function decodeWrite(response) {
   const raw = object(response.value, "write result");
   return Object.freeze({
     id: string(raw.id, "write id"),
-    version: string(raw.version, "write version"),
+    version: requireVersion(raw.version),
     offset: u64(raw.offset, "write offset"),
     durability: durability(raw.durability),
     created: response.status === 201,

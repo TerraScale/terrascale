@@ -1,7 +1,7 @@
 // Internal typed transport for the TerraBase v1 client. It is not exported
 // from any package entrypoint: callers reach it only through named operations.
 import { parseV1Error } from "./errors.js";
-import { newIdempotencyKey } from "./ids.js";
+import { requireName, requireProject } from "./ids.js";
 import { parseExactJson } from "./json.js";
 import { v1Route, v1RoutePath } from "./routes.js";
 /**
@@ -13,37 +13,24 @@ import { v1Route, v1RoutePath } from "./routes.js";
 
 /** Server request body limit (api-v1.md). */
 export const maximumRequestBytes = 4 * 1024 * 1024;
+// Query budgets count stored JSON before wrappers and serializer escaping.
 const defaultMaximumResponseBytes = 64 * 1024 * 1024;
-const defaultMaxRetries = 3;
-const maximumRetryWaitMs = 30_000;
-const tokenPattern = /^tbk1\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}$/u;
-const idempotencyKeyPattern = /^[A-Za-z0-9_.-]{1,64}$/u;
-const transient503 = new Set([
-  "capacity",
-  "storage_unavailable",
-  "dependencies_unavailable",
-]);
-
+const tokenPattern = /^tb_[A-Za-z0-9_-]{43}$/u;
 /**
- * - `baseUrl`: the TerraBase origin, for example `https://gru.terrabase.example`.
- *   HTTPS is required; plain HTTP is accepted only for loopback hosts. A path
- *   prefix is kept; credentials, a query or a fragment are rejected.
- * - `token`: the `tbk1.<id>.<secret>` data key. It is held privately and sent
- *   only as the `Authorization` header to `baseUrl`.
- * - `fetch`: a fetch implementation; defaults to `globalThis.fetch`.
- * - `maxRetries`: retry budget for 429 and retryable 503s (default 3, 0 disables).
- * - `maxResponseBytes`: bound for one response body (default 64 MiB).
- * - `autoIdempotencyKey`: give every mutation (put, create, patch, delete,
- *   transaction commit) that has no `idempotencyKey` a fresh random one, so
- *   transport failures, transient 503s, `commit_uncertain` and
- *   `internal_error` are retried with the same key (default false).
+ * Resolver input contains no credential. A successful URL is cached for this client/database.
+ * @typedef {{ readonly project: string; readonly database: string; readonly signal?: AbortSignal | undefined }} V1EndpointContext
+ */
+/** @typedef {(context: V1EndpointContext) => string | Promise<string>} V1EndpointResolver */
+/**
+ * Project-scoped C# Documents API client. Supply exactly one of baseUrl or endpointResolver.
+ * URLs must use HTTPS or loopback HTTP. Mutations are never automatically replayed.
  * @typedef {object} TerraBaseV1ClientConfig
- * @property {string} baseUrl
- * @property {string} token
+ * @property {string} project
+ * @property {string} token A tb_ API key; held privately.
+ * @property {string | undefined} [baseUrl]
+ * @property {V1EndpointResolver | undefined} [endpointResolver]
  * @property {FetchLike | undefined} [fetch]
- * @property {number | undefined} [maxRetries]
- * @property {number | undefined} [maxResponseBytes]
- * @property {boolean | undefined} [autoIdempotencyKey]
+ * @property {number | undefined} [maxResponseBytes] Default 64 MiB, including query framing and escaping.
  */
 
 /**
@@ -51,7 +38,7 @@ const transient503 = new Set([
  * @property {string} [body]
  * @property {string} [contentType]
  * @property {Readonly<Record<string, string>>} [headers] Contract headers only (If-Match, If-None-Match).
- * @property {string | undefined} [idempotencyKey]
+ * @property {URLSearchParams | undefined} [query]
  * @property {AbortSignal | undefined} [signal]
  */
 
@@ -95,6 +82,7 @@ function isLoopbackIpv4(name) {
 export function requireServiceUrl(raw, what) {
   /** @type {URL} */
   let url;
+  if (typeof raw !== "string") throw new TypeError(`${what} must be an absolute URL.`);
   try {
     url = new URL(raw);
   } catch {
@@ -111,82 +99,19 @@ export function requireServiceUrl(raw, what) {
 }
 
 /**
- * @param {string | undefined} key
- * @returns {string | undefined}
+ * An explicitly configured endpoint, with no discovery or hardcoded hosts.
+ * @param {string} baseUrl
+ * @returns {V1EndpointResolver}
  */
-export function requireIdempotencyKey(key) {
-  if (key !== undefined && (typeof key !== "string" || !idempotencyKeyPattern.test(key)))
-    throw new TypeError("Idempotency-Key must be 1-64 characters of [A-Za-z0-9_.-].");
-  return key;
+export function staticBaseUrlResolver(baseUrl) {
+  const base = canonicalBaseUrl(baseUrl);
+  return () => base;
 }
-
-/**
- * @param {number} attempt
- * @returns {number} Milliseconds.
- */
-export function backoffMs(attempt) {
-  const ceiling = Math.min(100 * 2 ** Math.min(attempt, 5), 2000);
-  return ceiling / 2 + Math.random() * (ceiling / 2);
-}
-
-/**
- * @param {number} ms
- * @param {AbortSignal | undefined} signal
- * @returns {Promise<void>}
- */
-export function sleep(ms, signal) {
-  return new Promise((resolve, reject) => {
-    if (signal?.aborted) {
-      reject(signal.reason);
-      return;
-    }
-    /** @returns {void} */
-    const abort = () => {
-      clearTimeout(timer);
-      reject(signal?.reason);
-    };
-    const timer = setTimeout(() => {
-      signal?.removeEventListener("abort", abort);
-      resolve();
-    }, Math.max(0, ms));
-    signal?.addEventListener("abort", abort, { once: true });
-  });
-}
-
-/**
- * The contract retry policy: 429 is always retried (the request was not
- * admitted); capacity, storage_unavailable and dependencies_unavailable only
- * for replay-safe requests (reads, queries, the shape gatekeeper, shape reads
- * and keyed writes); commit_uncertain (503) and internal_error (500) only with
- * an Idempotency-Key. Nothing else is retried here. A `Retry-After` longer
- * than 30 seconds is not shortened: the error is returned with `retryAfter`
- * so the caller can decide whether to wait that long.
- * @param {TerraBaseV1Error} error
- * @param {number} attempt
- * @param {{ readonly replaySafe: boolean; readonly keyed: boolean }} request
- * @returns {number | undefined} Delay in milliseconds, or undefined.
- */
-export function retryDelayMs(error, attempt, request) {
-  const retryable =
-    error.status === 429 ||
-    (error.status === 503 &&
-      ((transient503.has(error.code) && (request.replaySafe || request.keyed)) ||
-        (error.code === "commit_uncertain" && request.keyed))) ||
-    (error.status === 500 && error.code === "internal_error" && request.keyed);
-  return retryable ? retryAfterDelayMs(error, attempt) : undefined;
-}
-
-/**
- * The delay before retrying a retryable error: its `Retry-After`, or backoff.
- * A `Retry-After` above 30 seconds is honored by not retrying at all.
- * @param {TerraBaseV1Error} error
- * @param {number} attempt
- * @returns {number | undefined}
- */
-export function retryAfterDelayMs(error, attempt) {
-  if (error.retryAfter === undefined) return backoffMs(attempt);
-  const requested = error.retryAfter * 1000;
-  return requested > maximumRetryWaitMs ? undefined : requested;
+/** @param {string} raw @returns {string} */
+function canonicalBaseUrl(raw) {
+  const url = requireServiceUrl(raw, "baseUrl");
+  if (url.search !== "") throw new TypeError("baseUrl must not carry a query.");
+  return `${url.origin}${url.pathname.replace(/\/+$/u, "")}`;
 }
 
 /** A response body that failed in transit after its headers arrived. */
@@ -201,84 +126,89 @@ export class BodyTransportError extends Error {
 /** Internal transport bound to one data key. */
 export class V1Transport {
   /** @type {string} */
-  #base;
+  #project;
+  /** @type {V1EndpointResolver} */
+  #resolver;
+  /** @type {Map<string, { promise: Promise<string>; timer: ReturnType<typeof setTimeout>; waiters: number }>} */
+  #bases = new Map();
   /** @type {string} */
   #token;
   /** @type {FetchLike} */
   #fetch;
   /** @type {number} */
-  #maxRetries;
-  /** @type {number} */
   #maxResponseBytes;
-  /** @type {boolean} */
-  #autoIdempotencyKey;
 
   /** @param {TerraBaseV1ClientConfig} config */
   constructor(config) {
-    if (typeof config !== "object" || config === null)
-      throw new TypeError("TerraBase v1 client config is required.");
-    const url = requireServiceUrl(config.baseUrl, "baseUrl");
-    if (url.search !== "") throw new TypeError("baseUrl must not carry a query.");
+    if (typeof config !== "object" || config === null) throw new TypeError("TerraBase v1 client config is required.");
+    this.#project = requireProject(config.project);
+    if ((config.baseUrl === undefined) === (config.endpointResolver === undefined))
+      throw new TypeError("Supply exactly one of baseUrl or endpointResolver.");
+    if (config.endpointResolver !== undefined && typeof config.endpointResolver !== "function")
+      throw new TypeError("endpointResolver must be a function.");
+    this.#resolver = config.endpointResolver ?? staticBaseUrlResolver(/** @type {string} */ (config.baseUrl));
     if (typeof config.token !== "string" || !tokenPattern.test(config.token))
-      throw new TypeError("token must be a tbk1.<id>.<secret> key.");
+      throw new TypeError("token must be a tb_ API key with 43 base64url characters.");
+    if ("autoIdempotencyKey" in config || "maxRetries" in config || "resolver" in config)
+      throw new TypeError("Unsupported client configuration member.");
     const fetchHandler = config.fetch ?? globalThis.fetch?.bind(globalThis);
-    if (typeof fetchHandler !== "function")
-      throw new TypeError("TerraBase v1 client requires a fetch implementation.");
-    const maxRetries = config.maxRetries ?? defaultMaxRetries;
-    if (!Number.isInteger(maxRetries) || maxRetries < 0 || maxRetries > 16)
-      throw new TypeError("maxRetries must be an integer between 0 and 16.");
+    if (typeof fetchHandler !== "function") throw new TypeError("TerraBase v1 client requires a fetch implementation.");
     const maxResponseBytes = config.maxResponseBytes ?? defaultMaximumResponseBytes;
-    if (!Number.isInteger(maxResponseBytes) || maxResponseBytes < 1)
+    if (!Number.isSafeInteger(maxResponseBytes) || maxResponseBytes < 1)
       throw new TypeError("maxResponseBytes must be a positive integer.");
-    if (config.autoIdempotencyKey !== undefined && typeof config.autoIdempotencyKey !== "boolean")
-      throw new TypeError("autoIdempotencyKey must be a boolean.");
-    this.#autoIdempotencyKey = config.autoIdempotencyKey === true;
-    this.#base = `${url.origin}${url.pathname.replace(/\/+$/u, "")}`;
     this.#token = config.token;
     this.#fetch = fetchHandler;
-    this.#maxRetries = maxRetries;
     this.#maxResponseBytes = maxResponseBytes;
-  }
-
-  /** @returns {number} */
-  get maxRetries() {
-    return this.#maxRetries;
   }
 
   /**
    * @param {V1Operation} operation
    * @param {Readonly<Record<string, string>>} params
-   * @returns {string}
+   * @param {AbortSignal | undefined} [signal]
+   * @returns {Promise<string>}
    */
-  url(operation, params) {
-    return `${this.#base}${v1RoutePath(v1Route(operation), params)}`;
-  }
-
-  /**
-   * One HTTP exchange without retries. `token` replaces the data key (edge
-   * shape tokens); redirects are never followed with credentials unless
-   * `redirect` says so.
-   * @param {string} url
-   * @param {{ method: string; accept: string; token?: string | undefined; body?: string | undefined; contentType?: string | undefined; headers?: Readonly<Record<string, string>> | undefined; idempotencyKey?: string | undefined; signal?: AbortSignal | undefined; redirect?: RequestRedirect | undefined }} init
-   * @returns {Promise<Response>}
-   */
-  exchange(url, init) {
-    const headers = new Headers(init.headers);
-    headers.set("authorization", `Bearer ${init.token ?? this.#token}`);
-    headers.set("accept", init.accept);
-    if (init.body !== undefined)
-      headers.set("content-type", init.contentType ?? "application/json");
-    if (init.idempotencyKey !== undefined)
-      headers.set("idempotency-key", init.idempotencyKey);
-    /** @type {RequestInit} */
-    const request = {
-      method: init.method,
-      headers,
-      redirect: init.redirect ?? "manual",
-    };
-    if (init.body !== undefined) request.body = init.body;
-    if (init.signal !== undefined) request.signal = init.signal;
-    return this.#fetch(url, request);
+  async url(operation, params, signal) {
+    signal?.throwIfAborted();
+    const database = requireName("database", params.database);
+    let base = this.#bases.get(database);
+    if (base === undefined) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(new DOMException(
+        "TerraBase endpoint resolution timed out after 30 seconds.", "TimeoutError",
+      )), 30_000);
+      /** @type {Promise<string>} */
+      const promise = new Promise((resolve, reject) => {
+        controller.signal.addEventListener("abort", () => reject(controller.signal.reason), { once: true });
+        void Promise.resolve().then(() => this.#resolver(Object.freeze({
+          project: this.#project, database, signal: controller.signal,
+        }))).then(canonicalBaseUrl).then(resolve, reject).finally(() => clearTimeout(timer));
+      });
+      base = { promise, timer, waiters: 0 };
+      this.#bases.set(database, base);
+      // A failed resolution is not a session; a later operation may resolve again.
+      void promise.catch(() => { if (this.#bases.get(database) === base) this.#bases.delete(database); });
+    }
+    base.waiters++;
+    if (typeof base.timer === "object") base.timer.ref();
+    try {
+      // Each caller cancels its own wait; one caller cannot abort shared session resolution.
+      const resolved = signal === undefined ? await base.promise : await new Promise((resolve, reject) => {
+        const abort = () => reject(signal.reason);
+        signal.addEventListener("abort", abort, { once: true });
+        void base.promise.then(value => {
+          signal.removeEventListener("abort", abort);
+          resolve(value);
+        }, error => {
+          signal.removeEventListener("abort", abort);
+          reject(error);
+        });
+      });
+      signal?.throwIfAborted();
+      return `${resolved}${v1RoutePath(v1Route(operation), { ...params, project: this.#project })}`;
+    } finally {
+      // Keep Node alive only while callers are waiting for this resolution.
+      if (--base.waiters === 0 && typeof base.timer === "object") base.timer.unref();
+    }
   }
 
   /**
@@ -361,7 +291,7 @@ export class V1Transport {
   }
 
   /**
-   * Calls a v1 route with the contract retry policy.
+   * Calls only a named producer route. Redirects and failed mutations are never replayed.
    * @param {V1Operation} operation
    * @param {Readonly<Record<string, string>>} params
    * @param {V1CallOptions} [options]
@@ -369,51 +299,26 @@ export class V1Transport {
    */
   async call(operation, params, options = {}) {
     const route = v1Route(operation);
-    const url = `${this.#base}${v1RoutePath(route, params)}`;
     if (options.body !== undefined && new TextEncoder().encode(options.body).byteLength > maximumRequestBytes)
       throw new TypeError(`TerraBase request bodies are limited to ${maximumRequestBytes} bytes.`);
-    const idempotencyKey = requireIdempotencyKey(options.idempotencyKey) ??
-      (this.#autoIdempotencyKey && route.idempotencyKey === "optional" ? newIdempotencyKey() : undefined);
-    const keyed = idempotencyKey !== undefined;
-    const replaySafe = route.replaySafe || keyed;
-    for (let attempt = 0; ; attempt++) {
-      /** @type {Response} */
-      let response;
-      try {
-        response = await this.exchange(url, {
-          method: route.method,
-          accept: route.responseMediaType,
-          body: options.body,
-          contentType: options.contentType,
-          headers: options.headers,
-          idempotencyKey,
-          signal: options.signal,
-        });
-      } catch (error) {
-        if (options.signal?.aborted || !replaySafe || attempt >= this.#maxRetries) throw error;
-        await sleep(backoffMs(attempt), options.signal);
-        continue;
-      }
-      if (route.successStatuses.includes(response.status)) {
-        /** @type {string} */
-        let text;
-        try {
-          text = await this.readText(response);
-        } catch (error) {
-          // A body cut off in transit is a transport failure: replay-safe
-          // requests retry it; malformed media or JSON below are not retried.
-          if (options.signal?.aborted) throw options.signal.reason;
-          if (!(error instanceof BodyTransportError) || !replaySafe || attempt >= this.#maxRetries) throw error;
-          await sleep(backoffMs(attempt), options.signal);
-          continue;
-        }
-        return { status: response.status, headers: response.headers, value: V1Transport.#decodeJson(response, text) };
-      }
-      const failure = await this.error(response);
-      const delay = retryDelayMs(failure, attempt, { replaySafe: route.replaySafe, keyed });
-      if (delay === undefined || attempt >= this.#maxRetries) throw failure;
-      await sleep(delay, options.signal);
+    let url = await this.url(operation, params, options.signal);
+    if (options.query !== undefined && options.query.size > 0) url += `?${options.query}`;
+    const headers = new Headers(options.headers);
+    headers.set("authorization", `Bearer ${this.#token}`);
+    headers.set("accept", route.responseMediaType);
+    if (options.body !== undefined) headers.set("content-type", options.contentType ?? "application/json");
+    /** @type {RequestInit} */
+    const init = { method: route.method, headers, redirect: "manual" };
+    if (options.body !== undefined) init.body = options.body;
+    if (options.signal !== undefined) init.signal = options.signal;
+    const response = await this.#fetch(url, init);
+    if (response.type === "opaqueredirect")
+      throw new TypeError("Fresh shape bootstrap requires server fetch; obtain a handle and snapshot offset with collection.shape() on your server.");
+    if (!route.successStatuses.includes(response.status)) throw await this.error(response);
+    if (response.status === 307) {
+      await response.body?.cancel();
+      return { status: response.status, headers: response.headers, value: undefined };
     }
+    return { status: response.status, headers: response.headers, value: await this.readJson(response) };
   }
 }
-

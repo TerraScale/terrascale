@@ -1,6 +1,6 @@
 import { encodeDatabaseSubscription, requireDatabaseUuid, requireDatabaseU64 } from "./database-codec.js";
 /**
- * @import { TerraBaseClient } from "./database.js"
+ * @import { TerraBaseClient } from "./local/legacy-client.js"
  * @import {
  *   DatabaseField, DatabasePoint, DatabaseQueryPredicate, DatabaseQueryRow,
  *   DatabaseResult, DatabaseScope, DatabaseSubscriptionRequest,
@@ -355,6 +355,7 @@ async function delay(milliseconds, signal) {
 }
 
 /**
+ * @deprecated Retired SQLite/Rust subscriptions; use the C# client.
  * Native snapshot/poll source shared by React, Svelte and TanStack.
  * @param {TerraBaseClient} client
  * @param {DatabaseQueryOptions} options
