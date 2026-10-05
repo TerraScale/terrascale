@@ -313,8 +313,8 @@ internal sealed class SqliteStorageTransaction(
     // Ids one snapshot page examines at most: about two index seeks each.
     private const int MaxSnapshotSteps = 10_000;
 
-    // Ids first written after the offset one snapshot page steps over at most (one seek each). Beyond, the snapshot
-    // is too old to read within bounded work: the page expires instead of shifting its boundary.
+    // Ids first written after the offset one snapshot page passes over at most (one births entry each). Beyond,
+    // the snapshot is too old to read within bounded work: the page expires instead of shifting its boundary.
     private const int MaxSnapshotSkips = 50_000;
 
     // Time spent in SQLite across a read's steps: a streaming reader pauses it while its consumer works, so the
@@ -458,45 +458,52 @@ internal sealed class SqliteStorageTransaction(
         var command = Uncached(query.Collection);
         await using (command.ConfigureAwait(false))
         {
-            // One step per document id, in id order: the next id after $after and its last write at the
-            // offset, so the cost follows the ids read, never the depth of a document's history.
-            command.CommandText = new SqliteQueryCompiler(command.Parameters).CompileSnapshotStep(query.Filter, collection.Generation, offset);
-            var after = command.Parameters.AddWithValue("$after", query.After?.Id ?? "");
+            // One streamed read of the births key in id order: each id that existed at the offset is a step with
+            // its last write at the offset, so the cost follows the ids read, never the depth of their history.
+            command.CommandText = new SqliteQueryCompiler(command.Parameters).CompileSnapshot(query.Filter, collection.Generation, offset);
+            command.Parameters.AddWithValue("$after", query.After?.Id ?? "");
             var rows = new List<QueryRow>();
             long bytes = 0;
-            // A step may run fewer instructions than the progress handler's interval, so the page also counts
-            // its steps and checks the deadline between them.
+            // A row may run fewer instructions than the progress handler's interval, so the page also counts
+            // its rows and checks the deadline between them.
             var budget = StartQueryBudget(cancellationToken);
             try
             {
-                // Steps count only ids with history at or before the offset, so a replay examines the same ids.
-                var skips = 0;
-                for (var steps = 0; ;)
+                var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+                await using (reader.ConfigureAwait(false))
                 {
-                    if (steps == MaxSnapshotSteps)
+                    // Steps count only ids that existed at the offset, so a replay examines the same ids and ends at
+                    // the same boundary; ids first written later are skips, bounded separately.
+                    string? examined = null;
+                    for (int steps = 0, skips = 0; ;)
                     {
-                        return new SnapshotPage(rows, HasMore: true, ResumeAfter: (string)after.Value!);
-                    }
+                        // A page at its step, row or byte limit ends before reading on: later ids past its boundary
+                        // are the next page's to pass over, so they can neither expire nor delay a complete page.
+                        if (steps == MaxSnapshotSteps)
+                        {
+                            return new SnapshotPage(rows, HasMore: true, ResumeAfter: examined);
+                        }
 
-                    if (budget.Spent >= QueryDeadline)
-                    {
-                        cancellationToken.ThrowIfCancellationRequested();
-                        throw new QueryCapacityException("query execution budget exceeded");
-                    }
+                        if (rows.Count == query.Limit)
+                        {
+                            return new SnapshotPage(rows, HasMore: true, ResumeAfter: rows[^1].Document.Id);
+                        }
 
-                    var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
-                    await using (reader.ConfigureAwait(false))
-                    {
-                        if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false) || reader.IsDBNull(0))
+                        if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
                         {
                             return new SnapshotPage(rows, HasMore: false, ResumeAfter: null);
                         }
 
-                        var id = reader.GetString(0);
-                        after.Value = id;
-                        // Born after the offset: skipped with one seek, its revisions never read, and not a step.
-                        if (reader.GetInt64(1) > offset)
+                        if (budget.Spent >= QueryDeadline)
                         {
+                            cancellationToken.ThrowIfCancellationRequested();
+                            throw new QueryCapacityException("query execution budget exceeded");
+                        }
+
+                        if (!reader.GetBoolean(1))
+                        {
+                            // Too many later ids to pass over within bounded work: the snapshot is too old to read.
+                            // Answering with other boundaries instead would depend on later writes.
                             if (++skips > MaxSnapshotSkips)
                             {
                                 return new SnapshotPage([], HasMore: false, ResumeAfter: null, Expired: true);
@@ -506,20 +513,22 @@ internal sealed class SqliteStorageTransaction(
                         }
 
                         steps++;
+                        var id = reader.GetString(0);
                         // A tombstone at the offset, or rejected by the filter.
                         if (reader.IsDBNull(3))
                         {
+                            examined = id;
                             continue;
                         }
 
-                        var size = reader.GetInt64(4);
-                        if (rows.Count == query.Limit || (rows.Count > 0 && bytes + size > query.MaxBytes))
-                        {
-                            return new SnapshotPage(rows, HasMore: true, ResumeAfter: rows[^1].Document.Id);
-                        }
-
-                        bytes += size;
+                        bytes += reader.GetInt64(4);
                         rows.Add(new QueryRow(new StoredDocument(id, reader.GetInt64(2), reader.GetFieldValue<byte[]>(3), Incarnation), []));
+                        examined = id;
+                        // The last row may cross the byte limit; the caller trims the page to its serialized size.
+                        if (bytes >= query.MaxBytes)
+                        {
+                            return new SnapshotPage(rows, HasMore: true, ResumeAfter: id);
+                        }
                     }
                 }
             }

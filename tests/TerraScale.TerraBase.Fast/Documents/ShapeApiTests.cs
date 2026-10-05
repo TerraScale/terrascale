@@ -150,7 +150,7 @@ public sealed class ShapeApiTests
 
         // Collection commits also advance the offset and wake the poll.
         var poll = GetAsync(shapes, $"{api.Shape}?handle={handle}&offset={head}&live=true");
-        await metrics.WaitingAsync(1);
+        await metrics.LiveAsync(1);
         await api.SendAsync(HttpMethod.Delete, $"{collections}/{DocumentApi.Collection}");
         await api.SendAsync(HttpMethod.Post, collections, new { name = DocumentApi.Collection });
         using var response = await poll.WaitAsync(TimeSpan.FromSeconds(10));
@@ -199,7 +199,7 @@ public sealed class ShapeApiTests
         var (handle, head) = await SnapshotAsync(shapes, $"{api.Shape}?where={Uri.EscapeDataString(Open)}&offset=-1");
 
         var poll = GetAsync(shapes, $"{api.Shape}?where={Uri.EscapeDataString(Open)}&handle={handle}&offset={head}&live=true");
-        await metrics.WaitingAsync(1);
+        await metrics.LiveAsync(1);
         var id = DocumentApi.NewId();
         var written = await PutAsync(api, id, "open");
         using var response = await poll;
@@ -227,6 +227,8 @@ public sealed class ShapeApiTests
         var uri = $"{api.Shape}?handle={handle}&offset={head}&live=true";
         var polls = Enumerable.Range(0, Pollers).Select(_ => GetAsync(shapes, uri)).ToList();
         await metrics.WaitingAsync(Pollers);
+        // The shared read finished and waits for a commit, so the write below wakes it.
+        await metrics.LiveAsync(1);
         var readsWhileWaiting = metrics.Reads - before;
         await PutAsync(api, DocumentApi.NewId(), "open");
         var responses = await Task.WhenAll(polls);
@@ -260,7 +262,7 @@ public sealed class ShapeApiTests
         var before = metrics.Reads;
         var uri = $"{api.Shape}?handle={handle}&offset={current}&live=true&cursor={cursor}";
         var early = GetAsync(client, uri);
-        await metrics.WaitingAsync(1);
+        await metrics.LiveAsync(1);
         // A late requester joins the same wait after the clock moves backwards.
         clock.UnixSeconds = 19999;
         var late = GetAsync(client, uri);
@@ -311,6 +313,7 @@ public sealed class ShapeApiTests
 
             await metrics.WaitingAsync(ShapeService.MaxFlights);
             await metrics.FlightsAsync(ShapeService.MaxFlights);
+            await metrics.LiveAsync(ShapeService.MaxFlights);
             using var newFlight = await GetAsync(client, uris[^1]);
             await Assert.That(newFlight.StatusCode).IsEqualTo(HttpStatusCode.TooManyRequests);
             await Assert.That((await JsonAsync(newFlight)).GetProperty("error").GetProperty("code").GetString()).IsEqualTo("shape_busy");
@@ -335,6 +338,7 @@ public sealed class ShapeApiTests
             polls.Add(GetAsync(client, uris[^1], cancellationToken: allCancel.Token));
             await metrics.FlightsAsync(ShapeService.MaxFlights);
             await metrics.WaitingAsync(ShapeService.MaxRequesters);
+            await metrics.LiveAsync(ShapeService.MaxFlights);
             await Assert.That(metrics.Reads - before).IsEqualTo(ShapeService.MaxFlights + 1);
             await allCancel.CancelAsync();
             await Assert.ThrowsAsync<TaskCanceledException>(() => Task.WhenAll(polls));
@@ -405,6 +409,7 @@ public sealed class ShapeApiTests
         var leaving = GetAsync(shapes, uri, cancellationToken: cancelled.Token);
         var remaining = GetAsync(shapes, uri);
         await metrics.WaitingAsync(2);
+        await metrics.LiveAsync(1);
         await cancelled.CancelAsync();
         await Assert.ThrowsAsync<TaskCanceledException>(() => leaving);
         await metrics.WaitingExactlyAsync(1);
@@ -428,9 +433,13 @@ public sealed class ShapeApiTests
         await Assert.ThrowsAsync<TaskCanceledException>(() => first);
         await Assert.ThrowsAsync<TaskCanceledException>(() => last);
         await metrics.WaitingExactlyAsync(0);
+        // The requesters left; the cancelled flight's cleanup must finish too, or its live count could be read
+        // as the fresh poll's.
+        await metrics.FlightsAsync(0);
+        await metrics.LiveAsync(0);
         var freshBefore = metrics.Reads;
         var fresh = GetAsync(shapes, uri);
-        await metrics.WaitingAsync(1);
+        await metrics.LiveAsync(1);
         await Assert.That(metrics.Reads - freshBefore).IsEqualTo(1);
         var later = DocumentApi.NewId();
         await PutAsync(api, later, "open");
@@ -450,7 +459,7 @@ public sealed class ShapeApiTests
         var (handle, head) = await SnapshotAsync(client, $"{api.Shape}?offset=-1");
         var uri = $"{api.Shape}?handle={handle}&offset={head}&live=true&cursor=1000";
         var quiet = GetAsync(client, uri);
-        await metrics.WaitingAsync(1);
+        await metrics.LiveAsync(1);
         clock.ExpireLiveWait();
         using var quietResponse = await quiet.WaitAsync(TimeSpan.FromSeconds(10));
         var body = await JsonAsync(quietResponse);
@@ -462,7 +471,7 @@ public sealed class ShapeApiTests
         await metrics.WaitingExactlyAsync(0);
 
         var stale = GetAsync(client, uri);
-        await metrics.WaitingAsync(1);
+        await metrics.LiveAsync(1);
         var engine = server.Services.GetRequiredService<IStorageEngine>();
         var database = await api.TenantOfAsync();
 
@@ -576,7 +585,7 @@ public sealed class ShapeApiTests
         await using var writer = await store.BeginTransactionAsync(write: true, CancellationToken.None);
         await writer.PutAsync(DocumentApi.Collection, DocumentApi.NewId(), "{\"status\":\"old-writer\"}"u8.ToArray(), CancellationToken.None);
         var poll = GetAsync(shapes, $"{api.Shape}?handle={handle}&offset={head}&live=true");
-        await metrics.WaitingAsync(1);
+        await metrics.LiveAsync(1);
         await api.DeleteDatabaseAsync();
         await api.SendAsync(HttpMethod.Put, api.DatabasePath());
         await api.SendAsync(HttpMethod.Post, api.Collections, new { name = DocumentApi.Collection });
@@ -864,7 +873,7 @@ public sealed class ShapeApiTests
         using var meanwhile = await GetAsync(shapes, $"{api.Shape}?handle={handle}&offset={head}");
         var before = await JsonAsync(meanwhile);
         var poll = GetAsync(shapes, $"{api.Shape}?handle={handle}&offset={head}&live=true");
-        await metrics.WaitingAsync(1);
+        await metrics.LiveAsync(1);
         await Assert.That(poll.IsCompleted).IsFalse();
 
         await writer.CommitAsync(CancellationToken.None);
@@ -1243,19 +1252,21 @@ public sealed class ShapeApiTests
     /// <summary>Observes this server's own shape instruments: its meter factory scopes them, so parallel servers never mix in.</summary>
     private sealed class ShapeMetrics : IDisposable
     {
+        private const string ReadsName = "terrabase.shape.reads";
+        private const string WaitingName = "terrabase.shape.requests.waiting";
+        private const string FlightsName = "terrabase.shape.flights.active";
+        private const string LiveName = "terrabase.shape.live.waits";
         private readonly MeterListener _listener = new();
         private readonly Lock _gate = new();
-        private readonly List<(long Count, bool Exact, bool Flights, TaskCompletionSource Reached)> _waits = [];
-        private long _reads;
-        private long _waiting;
-        private long _flights;
+        private readonly List<(string Name, long Count, bool Exact, TaskCompletionSource Reached)> _waits = [];
+        private readonly Dictionary<string, long> _counts = new() { [ReadsName] = 0, [WaitingName] = 0, [FlightsName] = 0, [LiveName] = 0 };
 
         public ShapeMetrics(IServiceProvider services)
         {
             var scope = services.GetRequiredService<IMeterFactory>();
             _listener.InstrumentPublished = (instrument, listener) =>
             {
-                if (instrument.Meter.Scope == scope && instrument.Name is "terrabase.shape.reads" or "terrabase.shape.requests.waiting" or "terrabase.shape.flights.active")
+                if (instrument.Meter.Scope == scope && _counts.ContainsKey(instrument.Name))
                 {
                     listener.EnableMeasurementEvents(instrument);
                 }
@@ -1264,25 +1275,10 @@ public sealed class ShapeApiTests
             {
                 lock (_gate)
                 {
-                    if (instrument.Name == "terrabase.shape.reads")
+                    var count = _counts[instrument.Name] += value;
+                    foreach (var (name, expected, exact, reached) in _waits)
                     {
-                        _reads += value;
-                        return;
-                    }
-
-                    if (instrument.Name == "terrabase.shape.flights.active")
-                    {
-                        _flights += value;
-                    }
-                    else
-                    {
-                        _waiting += value;
-                    }
-
-                    foreach (var (expected, exact, flights, reached) in _waits)
-                    {
-                        var count = flights ? _flights : _waiting;
-                        if (exact ? count == expected : count >= expected)
+                        if (name == instrument.Name && (exact ? count == expected : count >= expected))
                         {
                             reached.TrySetResult();
                         }
@@ -1298,30 +1294,36 @@ public sealed class ShapeApiTests
             {
                 lock (_gate)
                 {
-                    return _reads;
+                    return _counts[ReadsName];
                 }
             }
         }
 
         /// <summary>Completes once at least <paramref name="count"/> shape requests wait on a shared read.</summary>
-        public Task WaitingAsync(int count) => WaitAsync(count, exact: false);
+        public Task WaitingAsync(int count) => WaitAsync(WaitingName, count, exact: false);
 
-        public Task WaitingExactlyAsync(int count) => WaitAsync(count, exact: true);
+        public Task WaitingExactlyAsync(int count) => WaitAsync(WaitingName, count, exact: true);
 
-        public Task FlightsAsync(int count) => WaitAsync(count, exact: true, flights: true);
+        public Task FlightsAsync(int count) => WaitAsync(FlightsName, count, exact: true);
 
-        private Task WaitAsync(int count, bool exact, bool flights = false)
+        /// <summary>
+        /// Completes once <paramref name="count"/> live flights finished their read and wait at the head for a
+        /// commit: a write after this wakes them rather than landing in their first read.
+        /// </summary>
+        public Task LiveAsync(int count) => WaitAsync(LiveName, count, exact: true);
+
+        private Task WaitAsync(string name, int count, bool exact)
         {
             var reached = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             lock (_gate)
             {
-                var current = flights ? _flights : _waiting;
+                var current = _counts[name];
                 if (exact ? current == count : current >= count)
                 {
                     return Task.CompletedTask;
                 }
 
-                _waits.Add((count, exact, flights, reached));
+                _waits.Add((name, count, exact, reached));
             }
 
             return reached.Task.WaitAsync(TimeSpan.FromSeconds(15));

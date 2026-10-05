@@ -40,6 +40,7 @@ internal sealed class ShapeService : IShapeService
     private readonly Counter<long> _reads;
     private readonly UpDownCounter<long> _waiting;
     private readonly UpDownCounter<long> _active;
+    private readonly UpDownCounter<long> _live;
     private int _running;
     private int _requesters;
 
@@ -52,6 +53,7 @@ internal sealed class ShapeService : IShapeService
         _reads = meter.CreateCounter<long>("terrabase.shape.reads", "{read}", "Storage reads made for shape requests, after collapsing.");
         _waiting = meter.CreateUpDownCounter<long>("terrabase.shape.requests.waiting", "{request}", "Shape requests waiting on a shared read.");
         _active = meter.CreateUpDownCounter<long>("terrabase.shape.flights.active", "{flight}", "Admitted shape reads, including cancellation cleanup.");
+        _live = meter.CreateUpDownCounter<long>("terrabase.shape.live.waits", "{flight}", "Live shape reads waiting at the head for a commit.");
     }
 
     public async ValueTask<ShapeResult> ReadAsync(ShapeRequest request, CancellationToken cancellationToken)
@@ -180,7 +182,16 @@ internal sealed class ShapeService : IShapeService
             // revalidated by the next read.
             try
             {
-                await store.WaitForCommitAsync(sequence, deadline.Token).ConfigureAwait(false);
+                // Counts only the wait itself, never the fallback read below.
+                _live.Add(1);
+                try
+                {
+                    await store.WaitForCommitAsync(sequence, deadline.Token).ConfigureAwait(false);
+                }
+                finally
+                {
+                    _live.Add(-1);
+                }
             }
             catch (OperationCanceledException) when (timeout.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
             {

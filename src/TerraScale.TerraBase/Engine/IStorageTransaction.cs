@@ -29,7 +29,7 @@ public readonly record struct DocumentVersion(long Version, bool Deleted);
 /// when the page's work limit stopped it (possibly with no rows); <see langword="null"/> without <paramref name="HasMore"/>.
 /// </param>
 /// <param name="Expired">
-/// Whether the page would have to step over too many ids first written after the offset: the snapshot is too old to
+/// Whether the page would have to pass over too many ids first written after the offset: the snapshot is too old to
 /// read within bounded work, and the reader must start a new one. Rows are then empty.
 /// </param>
 public sealed record SnapshotPage(IReadOnlyList<QueryRow> Rows, bool HasMore, string? ResumeAfter, bool Expired = false);
@@ -88,7 +88,10 @@ public interface IStorageTransaction : IAsyncDisposable
     /// <summary>
     /// Reads a page of the live documents of one collection as they were at commit <paramref name="offset"/>, in id
     /// order after <see cref="DocumentQuery.After"/>, from the retained change history. Sort keys are ignored. A page
-    /// examines a bounded number of ids, so a sparse filter can return a page without rows that still continues.
+    /// examines a bounded number of ids, so a sparse filter can return a page without rows that still continues. It
+    /// ends at <see cref="DocumentQuery.Limit"/> rows, after the row that reaches <see cref="DocumentQuery.MaxBytes"/>
+    /// (which may cross it; the caller trims), or at its step limit, without reading on, so it may continue where
+    /// nothing follows.
     /// </summary>
     ValueTask<SnapshotPage> SnapshotAsync(DocumentQuery query, long offset, CancellationToken cancellationToken);
 

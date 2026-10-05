@@ -8,7 +8,7 @@ namespace TerraScale.TerraBase.Engine.Sqlite;
 internal sealed class SqliteDatabaseStore(string name, string path, SqliteSessionPool pool) : IDatabaseStore, IDisposable
 {
     /// <summary>On-disk schema version, stored in <c>PRAGMA user_version</c>.</summary>
-    private const int SchemaVersion = 5;
+    private const int SchemaVersion = 6;
 
     // Migrations[n] moves user_version n to n + 1.
     private static readonly string[] Migrations =
@@ -69,6 +69,47 @@ internal sealed class SqliteDatabaseStore(string name, string path, SqliteSessio
         INSERT INTO collections (name, created_at, generation)
             SELECT collection, CAST(unixepoch('subsec') * 1000 AS INTEGER), random() FROM documents
             WHERE collection NOT IN (SELECT name FROM collections) GROUP BY collection;
+        """,
+        // Version 6: each document's first write per collection generation, so a snapshot finds the ids that
+        // existed at its offset without reading the revisions of later ones, and the generation's highest id
+        // over time (a new row each time a new id sorts above every earlier one), so a snapshot stops at the
+        // highest id at its offset and never walks ids appended later, such as UUIDv7s. Existing history is
+        // backfilled with each id's earliest retained version; the trigger keeps every later write. Offsets
+        // grow in commit order, so the highest id at an offset is that of its latest row at or before it.
+        """
+        CREATE TABLE change_log_births (
+            collection TEXT NOT NULL,
+            generation INTEGER NOT NULL,
+            id TEXT NOT NULL,
+            version INTEGER NOT NULL,
+            PRIMARY KEY (collection, generation, id, version)
+        ) WITHOUT ROWID;
+        INSERT INTO change_log_births (collection, generation, id, version)
+            SELECT collection, generation, id, min(version) FROM change_log GROUP BY collection, generation, id;
+        CREATE TABLE change_log_high (
+            collection TEXT NOT NULL,
+            generation INTEGER NOT NULL,
+            version INTEGER NOT NULL,
+            id TEXT NOT NULL,
+            PRIMARY KEY (collection, generation, version, id)
+        ) WITHOUT ROWID;
+        INSERT INTO change_log_high (collection, generation, version, id)
+            SELECT collection, generation, version, id FROM (
+                SELECT collection, generation, version, id,
+                    max(id) OVER (PARTITION BY collection, generation ORDER BY version, id ROWS UNBOUNDED PRECEDING) AS high
+                FROM change_log_births)
+            WHERE id = high;
+        CREATE TRIGGER change_log_birth AFTER INSERT ON change_log
+        WHEN NOT EXISTS (
+            SELECT 1 FROM change_log_births b WHERE b.collection = NEW.collection AND b.generation = NEW.generation AND b.id = NEW.id)
+        BEGIN
+            INSERT INTO change_log_births (collection, generation, id, version) VALUES (NEW.collection, NEW.generation, NEW.id, NEW.version);
+            INSERT INTO change_log_high (collection, generation, version, id)
+                SELECT NEW.collection, NEW.generation, NEW.version, NEW.id
+                WHERE NEW.id > coalesce((
+                    SELECT h.id FROM change_log_high h WHERE h.collection = NEW.collection AND h.generation = NEW.generation
+                    ORDER BY h.version DESC, h.id DESC LIMIT 1), '');
+        END;
         """,
     ];
 

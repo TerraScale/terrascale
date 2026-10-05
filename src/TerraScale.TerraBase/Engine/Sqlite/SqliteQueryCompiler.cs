@@ -86,33 +86,37 @@ internal sealed class SqliteQueryCompiler(SqliteParameterCollection parameters)
         """;
 
     /// <summary>
-    /// One step of a snapshot at commit <paramref name="offset"/>, re-run with <c>$after</c> set to the id it returned.
-    /// Columns: the next document id of the collection's generation after <c>$after</c> (no row past the last) and the
-    /// version it was first written at (its first index entry, so a later id's revisions are never walked: the caller
-    /// skips an id born after the offset with one more seek); the version
-    /// of its last write at or before the offset, and that write's body and JSON byte length when it is a live document
-    /// that matches <paramref name="filter"/> (NULL otherwise). Both lookups seek <c>change_log_by_document</c>: the next
-    /// id takes the index's first entry after <c>$after</c>, the last write its last entry at or before the offset.
+    /// A snapshot at commit <paramref name="offset"/>, streamed in id order after <c>$after</c>: one row per document id
+    /// of the collection's generation, from <c>change_log_births</c>. Columns: the id; whether it was first written at
+    /// or before the offset; for such an id, the version of its last write at or before the offset, and that write's
+    /// body and JSON byte length when it is a live document that matches <paramref name="filter"/> (NULL otherwise).
+    /// An id first written later costs its births entry only: its last-write lookup is skipped by a constant-false
+    /// term, so its revisions are never read and the filter never runs. The walk stops at the generation's highest
+    /// id at the offset (<c>change_log_high</c>), so ids appended later in id order are never visited. The caller
+    /// bounds rows read.
     /// </summary>
-    public string CompileSnapshotStep(DocumentFilter? filter, long generation, long offset)
+    public string CompileSnapshot(DocumentFilter? filter, long generation, long offset)
     {
         var at = Parameter(offset);
         var lineage = Parameter(generation);
         return $"""
-            SELECT next.id, next.born, write.version, CASE WHEN write.matches THEN write.body END, write.size
-            FROM (
-                SELECT id, version AS born FROM change_log INDEXED BY change_log_by_document
-                WHERE collection = $collection AND generation = {lineage} AND id > $after
-                ORDER BY id, version LIMIT 1
-            ) next
+            SELECT b.id, b.version <= {at}, write.version, CASE WHEN write.matches THEN write.body END, write.size
+            FROM change_log_births b
             LEFT JOIN (
                 SELECT sequence, version, body, length(CAST(body AS BLOB)) AS size, body IS NOT NULL AND {Filter(filter)} AS matches
                 FROM change_log
             ) write ON write.sequence = (
                 SELECT last.sequence FROM change_log last INDEXED BY change_log_by_document
-                WHERE last.collection = $collection AND last.generation = {lineage} AND last.id = next.id AND last.version <= {at}
+                WHERE b.version <= {at} AND last.collection = $collection AND last.generation = {lineage} AND last.id = b.id
+                    AND last.version <= {at}
                 ORDER BY last.version DESC, last.sequence DESC LIMIT 1
-            );
+            )
+            WHERE b.collection = $collection AND b.generation = {lineage} AND b.id > $after
+                AND b.id <= (
+                    SELECT high.id FROM change_log_high high
+                    WHERE high.collection = $collection AND high.generation = {lineage} AND high.version <= {at}
+                    ORDER BY high.version DESC, high.id DESC LIMIT 1)
+            ORDER BY b.id;
             """;
     }
 

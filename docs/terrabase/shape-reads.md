@@ -68,22 +68,32 @@ The current mapping is:
   databases seed their current documents and tombstones as a baseline (`_system` seeds none), repair missing collection metadata, and set
   the floor to the head at migration: earlier states cannot be reconstructed and answer `409`. A new
   database has floor `0`. `IStorageTransaction.GetHistoryFloorAsync` reports the oldest valid offset.
+- Schema v6 adds `change_log_births (collection, generation, id, version)`, a `WITHOUT ROWID` key
+  holding each document's first write per generation, and `change_log_high (collection, generation,
+  version, id)`, a row each time a new id sorts above every earlier id of the generation. The trigger
+  `change_log_birth` adds both on the document's first `change_log` insert. Upgrading from v5
+  backfills them from each id's earliest retained version. Offsets grow in commit order, so the
+  generation's highest id at `S` is that of its latest `change_log_high` row at or before `S`.
 - Handles bind TS-459's persisted database incarnation (`IDatabaseStore.Incarnation`, drawn
   again on every create and copy) and the collection generation, so a recreated collection or
   database under the same name starts a new lineage.
 - Creating or dropping a collection is a commit of its own offset, like a document write. If the
   offset cannot be allocated, the transaction cannot commit: the change and its offset are one unit.
   Read transactions refuse mutations, and a refused or failed write refuses the commit.
-- `IStorageTransaction.SnapshotAsync` reads only the append-only change log, never live tables. It
-  walks document ids in order one step at a time: each step seeks the next id after the previous one
-  and the version it was first written at, then that id's last write at or before `S`, and skips it
-  when it is a tombstone or the filter rejects it. A step costs two index seeks however long the
-  document's history is. An id first written after `S` is skipped with one seek, its revisions never
-  read, and never counts as a step, so later writes cannot change a page, its boundaries or its ETag.
-  A page that would step over more than 50000 such ids answers `409 must_refetch` instead: the
-  snapshot is too old to read within bounded work, and a restart at `-1` snapshots the head, with
-  nothing later to skip. `S` is checked against the head in the same read transaction before the
-  history query: a future `S` also answers `409 must_refetch`. `ChangesAsync` replays
+- `IStorageTransaction.SnapshotAsync` reads only the append-only change log, never live tables, in
+  one streamed statement per page: it walks `change_log_births` in id order after `P`. Each id first
+  written at or before `S` is a step: one seek for its last write at or before `S`, skipped when that
+  is a tombstone or the filter rejects it, so a step costs two index seeks however long the document's
+  history is. An id first written after `S` costs its births entry only (its last-write lookup has a
+  false `version <= S` term): its revisions are never read, the filter never runs, and it is not a
+  step, so later writes cannot change a page, its boundaries or its ETag. The walk stops at the
+  highest id at `S` (one `change_log_high` seek per page), so ids appended after `S` in id order,
+  such as server-generated UUIDv7s, are never visited. Later ids that sort between `S`'s ids
+  (client-chosen ones) are passed over: a page passes over at most 50000 of them; beyond, it
+  answers `409 must_refetch`: the snapshot is too old to read within bounded work, and a restart at
+  `-1` snapshots the head. `S` is checked
+  against the head in the same read transaction before the history query: a future `S` also answers
+  `409 must_refetch`. `ChangesAsync` replays
   operations after `O`; a written document the filter rejects comes back as a delete.
 
 | Offset | Meaning |
@@ -219,6 +229,7 @@ Metrics on the `TerraScale.TerraBase` meter, without tenant labels:
 | `terrabase.shape.reads` | counter | storage reads after collapsing |
 | `terrabase.shape.requests.waiting` | up-down counter | requests waiting on a shared read |
 | `terrabase.shape.flights.active` | up-down counter | admitted running flights, including cancellation cleanup |
+| `terrabase.shape.live.waits` | up-down counter | live flights waiting at the head for a commit (after their read) |
 
 ## Must-refetch
 

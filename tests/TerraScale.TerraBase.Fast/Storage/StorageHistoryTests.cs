@@ -5,6 +5,7 @@ using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using TerraScale.TerraBase.Engine;
 using TerraScale.TerraBase.Fast.Documents;
+using TerraScale.TerraBase.Tenancy;
 
 namespace TerraScale.TerraBase.Fast.Storage;
 
@@ -93,6 +94,8 @@ public sealed class StorageHistoryTests
                 await using var command = connection.CreateCommand();
                 command.CommandText = """
                     DROP TABLE change_log;
+                    DROP TABLE change_log_births;
+                    DROP TABLE change_log_high;
                     DROP TABLE shape_history;
                     ALTER TABLE collections DROP COLUMN generation;
                     INSERT INTO collections VALUES ('invitations', 1);
@@ -111,6 +114,69 @@ public sealed class StorageHistoryTests
 
             // Migrated to version 5, but _system's deletes never reach history, so its records are not copied there.
             await Assert.That(await HistoryRowsAsync(path)).IsEqualTo(0);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Test]
+    public async Task Upgrading_from_schema_5_backfills_births_so_snapshots_keep_their_history()
+    {
+        var directory = Directory.CreateTempSubdirectory("terrabase-upgrade-").FullName;
+        try
+        {
+            // A database as the schema-5 build (#12) left it: history in change_log, no births key.
+            var (early, late, revised) = (DocumentApi.NewId(), DocumentApi.NewId(), DocumentApi.NewId());
+            TenantContext database;
+            string path;
+            long offset;
+            await using (var api = await DocumentApi.StartAsync(settings => settings["data-directory"] = directory))
+            {
+                (await api.PutAsync(early, new { status = "open" })).Status.ShouldBe(HttpStatusCode.Created);
+                (await api.PutAsync(revised, new { status = "first" })).Status.ShouldBe(HttpStatusCode.Created);
+                var written = await api.TransactAsync(new { op = "put", collection = DocumentApi.Collection, id = revised, document = new { status = "at-offset" } });
+                offset = long.Parse(written.Json.GetProperty("offset").GetString()!, CultureInfo.InvariantCulture);
+                (await api.PutAsync(late, new { status = "later" })).Status.ShouldBe(HttpStatusCode.Created);
+                await api.TransactAsync(new { op = "put", collection = DocumentApi.Collection, id = revised, document = new { status = "later" } });
+                database = await api.TenantOfAsync();
+                path = await api.DatabaseFileAsync();
+            }
+
+            await using (var connection = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={path};Pooling=False"))
+            {
+                await connection.OpenAsync();
+                await using var command = connection.CreateCommand();
+                command.CommandText = """
+                    DROP TRIGGER change_log_birth;
+                    DROP TABLE change_log_births;
+                    DROP TABLE change_log_high;
+                    PRAGMA user_version = 5;
+                    """;
+                await command.ExecuteNonQueryAsync();
+            }
+
+            await using var engine = new TerraScale.TerraBase.Engine.Sqlite.SqliteStorageEngine(
+                directory, TimeSpan.FromSeconds(5), Microsoft.Extensions.Logging.Abstractions.NullLogger<TerraScale.TerraBase.Engine.Sqlite.SqliteStorageEngine>.Instance,
+                TimeSpan.FromSeconds(1));
+            var store = (await engine.OpenDatabaseAsync(database, CancellationToken.None))!;
+            var after = DocumentApi.NewId();
+            await using (var writer = await store.BeginTransactionAsync(write: true, CancellationToken.None))
+            {
+                await writer.PutAsync(DocumentApi.Collection, after, Encoding.UTF8.GetBytes("{}"), CancellationToken.None);
+                await writer.CommitAsync(CancellationToken.None);
+            }
+
+            await using var reader = await store.BeginTransactionAsync(write: false, CancellationToken.None);
+            var query = new DocumentQuery(DocumentApi.Collection, null, [], null, 1000, long.MaxValue);
+            var atOffset = await reader.SnapshotAsync(query, offset, CancellationToken.None);
+            var atHead = await reader.SnapshotAsync(query, await reader.GetOffsetAsync(CancellationToken.None), CancellationToken.None);
+
+            // Backfilled births keep the history before the upgrade; the trigger records writes after it.
+            await Assert.That(atOffset.Rows.Select(row => row.Document.Id)).IsEquivalentTo([early, revised]);
+            await Assert.That(Encoding.UTF8.GetString(atOffset.Rows.Single(row => row.Document.Id == revised).Document.Json.Span)).Contains("at-offset");
+            await Assert.That(atHead.Rows.Select(row => row.Document.Id)).IsEquivalentTo([early, revised, late, after]);
         }
         finally
         {

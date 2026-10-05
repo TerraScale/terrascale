@@ -126,15 +126,18 @@ public sealed class QueryPlanTests
             new TerraScale.TerraBase.Engine.ScalarValue(TerraScale.TerraBase.Engine.ScalarKind.Text, "open"));
         using (var command = new Microsoft.Data.Sqlite.SqliteCommand())
         {
-            var sql = new SqliteQueryCompiler(command.Parameters).CompileSnapshotStep(filter, 1, 10);
+            var sql = new SqliteQueryCompiler(command.Parameters).CompileSnapshot(filter, 1, 10);
             var plan = await QueryPlan.ExplainAsync(path, sql);
-            Console.WriteLine($"snapshot step: {plan}");
-            // The next id and its last write at the offset are both index seeks; the write is a primary-key lookup.
-            await Assert.That(plan).Contains("USING COVERING INDEX change_log_by_document (collection=? AND generation=? AND id>?)");
-            await Assert.That(plan).Contains("USING COVERING INDEX change_log_by_document (collection=? AND generation=? AND id=? AND version<?)");
-            await Assert.That(plan).Contains("USING INTEGER PRIMARY KEY (rowid=?)");
-            // "SCAN next" reads the one-row min(id) co-routine; change_log itself is never scanned.
-            await Assert.That(plan.Contains("SCAN change_log", StringComparison.Ordinal) || plan.Contains("TEMP B-TREE", StringComparison.Ordinal)).IsFalse();
+            Console.WriteLine($"snapshot: {plan}");
+            // One walk of the births key in id order, no sort; version <= offset is tested on each key entry. An id
+            // that existed at the offset seeks its last write there and reads that write by primary key.
+            // The walk is bounded above by the highest id at the offset, one seek evaluated once per page.
+            await Assert.That(plan).StartsWith("SEARCH b USING PRIMARY KEY (collection=? AND generation=? AND id>? AND id<?) | SCALAR SUBQUERY");
+            await Assert.That(plan).Contains("SEARCH high USING PRIMARY KEY (collection=? AND generation=? AND version<?)");
+            await Assert.That(plan.Contains("CORRELATED SCALAR SUBQUERY 3", StringComparison.Ordinal)).IsFalse();
+            await Assert.That(plan).Contains("SEARCH last USING COVERING INDEX change_log_by_document (collection=? AND generation=? AND id=? AND version<?)");
+            await Assert.That(plan).Contains("SEARCH change_log USING INTEGER PRIMARY KEY (rowid=?)");
+            await Assert.That(plan.Contains("SCAN", StringComparison.Ordinal) || plan.Contains("TEMP B-TREE", StringComparison.Ordinal)).IsFalse();
         }
 
         using var changes = new Microsoft.Data.Sqlite.SqliteCommand();

@@ -159,12 +159,93 @@ public sealed class ShapeBudgetTests
         var error = (await replay.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("error");
         using var restart = await client.GetAsync(tenant.Database("db", "/collections/items/shape?offset=-1"));
         using var fresh = await client.GetAsync(restart.Headers.Location!);
+        var page = JsonElement.Parse(await fresh.Content.ReadAsStringAsync());
 
-        // Stepping over 200000 later ids exceeds the page's bounded work: never other page boundaries, never a
-        // query-budget error, but must_refetch; the new snapshot at the head has no later ids to step over.
+        // Passing over 200000 later ids exceeds the page's 50000-skip bound: never other page boundaries, never a
+        // query-budget error, but must_refetch; the new snapshot at the head has no later ids to pass over.
         await Assert.That(firstBody.Length).IsGreaterThan(0);
         await Assert.That(replay.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
         await Assert.That(error.GetProperty("code").GetString()).IsEqualTo("must_refetch");
         await Assert.That(fresh.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(page.GetProperty("changes")[0].GetProperty("ops").GetArrayLength()).IsEqualTo(1000);
     }
+
+    [Test]
+    public async Task A_snapshot_replay_never_walks_ids_appended_after_its_offset()
+    {
+        await using var api = await ManagementApi.StartAsync();
+        using var tenant = await api.CreateTenantAsync("documents:write", "shapes:read");
+        var client = tenant.Data;
+        (await client.PutAsync(tenant.Database("db"), null)).EnsureSuccessStatusCode();
+        (await client.PostAsJsonAsync(tenant.Database("db", "/collections"), new { name = "items" })).EnsureSuccessStatusCode();
+        var transactions = tenant.Database("db", "/transactions");
+        (await client.PostAsJsonAsync(transactions, new { ops = new[] { new { op = "create", collection = "items", document = new { n = 1 } } } }))
+            .EnsureSuccessStatusCode();
+        using var start = await client.GetAsync(tenant.Database("db", "/collections/items/shape?offset=-1"));
+        using var first = await client.GetAsync(start.Headers.Location!);
+        var firstBody = await first.Content.ReadAsStringAsync();
+
+        // Server-generated ids are UUIDv7: 200000 later ones all sort after the snapshot's only id, four times
+        // the per-page skip bound.
+        for (var batch = 0; batch < 200; batch++)
+        {
+            var ops = Enumerable.Range(0, 1000).Select(_ => new { op = "create", collection = "items", document = new { n = 2 } });
+            (await client.PostAsJsonAsync(transactions, new { ops })).EnsureSuccessStatusCode();
+        }
+
+        var timer = System.Diagnostics.Stopwatch.StartNew();
+        using var replay = await client.GetAsync(start.Headers.Location!);
+        timer.Stop();
+        Console.WriteLine($"replay before 200000 appended ids: {(int)replay.StatusCode} in {timer.ElapsedMilliseconds} ms");
+
+        // The walk stops at the highest id at S, so ids appended later are never visited: same page, no 409.
+        await Assert.That(replay.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(await replay.Content.ReadAsStringAsync()).IsEqualTo(firstBody);
+    }
+
+    [Test]
+    public async Task A_page_at_its_step_limit_ends_before_later_ids_that_follow_its_boundary()
+    {
+        await using var api = await ManagementApi.StartAsync();
+        using var tenant = await api.CreateTenantAsync("documents:write", "shapes:read");
+        var client = tenant.Data;
+        (await client.PutAsync(tenant.Database("db"), null)).EnsureSuccessStatusCode();
+        (await client.PostAsJsonAsync(tenant.Database("db", "/collections"), new { name = "items" })).EnsureSuccessStatusCode();
+        var transactions = tenant.Database("db", "/transactions");
+        // 10001 ids at S, ordered by their first group: a filter that matches none makes the first page stop at its
+        // 10000-step limit after the id of 9999 (0x270f).
+        for (var batch = 0; batch <= 10; batch++)
+        {
+            var ops = Enumerable.Range(batch * 1000, batch == 10 ? 1 : 1000)
+                .Select(i => new { op = "put", collection = "items", id = Id(i, 0), document = new { n = 1 } });
+            (await client.PostAsJsonAsync(transactions, new { ops })).EnsureSuccessStatusCode();
+        }
+
+        var shape = tenant.Database("db", "/collections/items/shape").OriginalString;
+        var where = Uri.EscapeDataString("""{"eq":["/n",2]}""");
+        using var start = await client.GetAsync(new Uri($"{shape}?where={where}&offset=-1", UriKind.Relative));
+        using var first = await client.GetAsync(start.Headers.Location!);
+        var firstBody = await first.Content.ReadAsStringAsync();
+
+        // More later ids than a page passes over, all between the boundary 9999 and the next id at S, 10000.
+        for (var batch = 0; batch < 51; batch++)
+        {
+            var ops = Enumerable.Range(batch * 1000, 1000)
+                .Select(i => new { op = "put", collection = "items", id = Id(9999, i + 1), document = new { n = 1 } });
+            (await client.PostAsJsonAsync(transactions, new { ops })).EnsureSuccessStatusCode();
+        }
+
+        using var replay = await client.GetAsync(start.Headers.Location!);
+        var page = JsonElement.Parse(await replay.Content.ReadAsStringAsync());
+
+        // The complete page ends at its boundary without reading on, so the gap after it cannot expire or change it.
+        await Assert.That(first.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(replay.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(await replay.Content.ReadAsStringAsync()).IsEqualTo(firstBody);
+        await Assert.That(page.GetProperty("next_offset").GetString()!).EndsWith("." + Base64Url(Id(9999, 0)));
+    }
+
+    private static string Id(int order, int later) => $"{order:x8}-{later:x4}-7000-8000-000000000000";
+
+    private static string Base64Url(string id) => System.Buffers.Text.Base64Url.EncodeToString(System.Text.Encoding.UTF8.GetBytes(id));
 }
