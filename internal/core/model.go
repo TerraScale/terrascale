@@ -48,9 +48,13 @@ type Principal struct {
 }
 
 type User struct {
-	ID            string
-	Email         string
-	Name          string
+	ID    string
+	Email string
+	Name  string
+	// AuthSubject is the user's ts-auth subject, set when they first sign in
+	// through ts-auth and never changed after. TerraBase knows the user by it,
+	// so Management calls on their behalf send it as X-TerraBase-User-Id.
+	AuthSubject   string
 	PasswordHash  string
 	Phone         string
 	Locale        string
@@ -573,6 +577,9 @@ type Deps struct {
 	// TODO(TS-463, TS-521): resource provisioning and unsupported data features
 	// retain their local Store behavior until the Management mapping lands.
 	DocumentsOnly bool
+	// ExternalSignIn is set when ts-auth is the only way to sign in or sign
+	// up, which disables password sign-in and registration.
+	ExternalSignIn bool
 }
 
 func (d Deps) LocalResources() bool { return d.Demo || d.DocumentsOnly }

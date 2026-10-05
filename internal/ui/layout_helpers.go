@@ -219,7 +219,7 @@ const navSubmitPending = "evt.target.hasAttribute('data-submit-once') && $_navPe
 // speculationRules prefetches page links on hover. Routes with side effects
 // (API calls, exports, payment sessions, one-shot links) are never prefetched.
 const speculationRules = `{"prefetch":[{"where":{"and":[{"href_matches":"/*"},` +
-	`{"not":{"href_matches":["/api/*","/__dev/*","/audit/export*","/billing/*","/checkout/*","/invitations/*","/cli/*","/agent/*","/oauth/*"]}},` +
+	`{"not":{"href_matches":["/api/*","/__dev/*","/audit/export*","/billing/*","/checkout/*","/invitations/*","/cli/*","/agent/*","/oauth/*","/login*"]}},` +
 	`{"not":{"selector_matches":"[download], [data-no-prefetch]"}}]},"eagerness":"moderate"}]}`
 
 // speculationScript renders the rules as JSON inside a nonced script tag;

@@ -101,7 +101,9 @@ func switchInvitationAccount(deps core.Deps) http.HandlerFunc {
 			http.Error(w, "Sign-out could not finish. Retry switching accounts.", http.StatusServiceUnavailable)
 			return
 		}
-		http.Redirect(w, r, invitationLoginURL(r.PathValue("token")), http.StatusSeeOther)
+		// prompt=login makes ts-auth ask for credentials even though the
+		// browser is still signed in to it, so another account can be used.
+		http.Redirect(w, r, invitationLoginURL(r.PathValue("token"))+"&prompt=login", http.StatusSeeOther)
 	}
 }
 

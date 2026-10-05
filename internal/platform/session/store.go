@@ -18,6 +18,11 @@ type Record struct {
 	UserID      string
 	AuthVersion uint64
 	ExpiresAt   time.Time
+	// Refresh is what Options.Refresh rechecks the session with once
+	// RefreshAt passes, such as a ts-auth refresh token. It is empty for a
+	// session that is never rechecked.
+	Refresh   string
+	RefreshAt time.Time
 }
 
 // Entry is a stored session with its key.
@@ -33,6 +38,11 @@ type Store interface {
 	Put(ctx context.Context, key [32]byte, rec Record) error
 	// Get returns the unexpired record under key, or ErrNotFound.
 	Get(ctx context.Context, key [32]byte, now time.Time) (Record, error)
+	// Replace stores next under key only if key still holds old, and
+	// returns ErrNotFound otherwise, so a change computed from an earlier
+	// Get never brings back a session deleted or replaced since. An expired
+	// next ends the session.
+	Replace(ctx context.Context, key [32]byte, old, next Record) error
 	// Delete removes the record under key, if any.
 	Delete(ctx context.Context, key [32]byte) error
 	// DeleteUser removes every session of the user in the account.
@@ -77,6 +87,16 @@ func (m *MemoryStore) Get(_ context.Context, key [32]byte, now time.Time) (Recor
 		return Record{}, ErrNotFound
 	}
 	return item, nil
+}
+
+func (m *MemoryStore) Replace(_ context.Context, key [32]byte, old, next Record) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if current, ok := m.items[key]; !ok || current != old {
+		return ErrNotFound
+	}
+	m.items[key] = next
+	return nil
 }
 
 func (m *MemoryStore) Delete(_ context.Context, key [32]byte) error {

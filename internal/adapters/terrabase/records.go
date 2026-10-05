@@ -118,6 +118,11 @@ func encodeCore(state memstore.State, now time.Time) (map[coreKey]coreRecord, er
 		if err := unique("users", a.ID, "user_id", a.User.ID); err != nil {
 			return nil, err
 		}
+		if a.User.AuthSubject != "" {
+			if err := unique("users", a.ID, "auth_subject", a.User.AuthSubject); err != nil {
+				return nil, err
+			}
+		}
 		for _, token := range a.AccessTokens {
 			if err := add("access_tokens", token.SecretHash, token, coreRecord{ID: token.ID, AccountID: a.ID, UserID: a.User.ID, TokenHash: token.SecretHash, AuthVersion: a.AuthVersion, ExpiresAt: token.ExpiresAt, CreatedAt: token.CreatedAt}); err != nil {
 				return nil, err

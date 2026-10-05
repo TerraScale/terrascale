@@ -84,6 +84,17 @@ func (s *Store) FindByEmail(ctx context.Context, email string) (out core.Account
 	return
 }
 
+func (s *Store) FindBySubject(ctx context.Context, subject string) (out core.Account, err error) {
+	if subject == "" {
+		return out, core.ErrNotFound
+	}
+	err = s.readCore(ctx, coreLoad{subject: subject}, func(m *memstore.Store) error {
+		out, err = m.FindBySubject(ctx, subject)
+		return err
+	})
+	return
+}
+
 func (s *Store) SnapshotAs(ctx context.Context, p core.Principal) (out core.Account, err error) {
 	err = s.readCore(ctx, coreLoad{accounts: []string{p.AccountID}}, func(m *memstore.Store) error {
 		out, err = m.SnapshotAs(ctx, p)

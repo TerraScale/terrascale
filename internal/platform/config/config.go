@@ -48,6 +48,21 @@ type Config struct {
 	// machine serving the dashboard must share it, so it is required outside
 	// the demo; an empty value in the demo draws a random key per process.
 	CSRFSecret []byte
+	// TSAuth signs users in through ts-auth when its Issuer is set; unset,
+	// the dashboard keeps its own password sign-in.
+	TSAuth TSAuth
+}
+
+// TSAuth is the dashboard's OpenID Connect client registration at ts-auth.
+type TSAuth struct {
+	// Issuer is TS_AUTH_ISSUER, exactly as ts-auth's discovery document
+	// names it.
+	Issuer       string
+	ClientID     string
+	ClientSecret string
+	// RedirectURL is TS_AUTH_REDIRECT_URL, by default the public origin's
+	// /login/callback.
+	RedirectURL string
 }
 
 // minCSRFSecret is the shortest TS_DASHBOARD_CSRF_SECRET accepted, the size
@@ -126,6 +141,9 @@ func Load() (Config, error) {
 	if os.Getenv("FLY_APP_NAME") != "" {
 		c.ClientIPHeader = "Fly-Client-IP"
 	}
+	if err := c.loadTSAuth(); err != nil {
+		return Config{}, err
+	}
 	if (c.AdminEmail == "") != (c.AdminPassword == "") {
 		return Config{}, errors.New("demo admin email and password must both be set")
 	}
@@ -146,4 +164,41 @@ func (c Config) ValidateBackend() error {
 		return errors.New("TERRABASE_URL, TERRABASE_API_KEY, TERRABASE_PROJECT_ID and TERRABASE_DATABASE must all be set")
 	}
 	return nil
+}
+
+// loadTSAuth reads the ts-auth client registration. ts-auth is a
+// confidential client's issuer, so the secret is required with the rest.
+func (c *Config) loadTSAuth() error {
+	c.TSAuth = TSAuth{
+		Issuer:       strings.TrimSpace(os.Getenv("TS_AUTH_ISSUER")),
+		ClientID:     strings.TrimSpace(os.Getenv("TS_AUTH_CLIENT_ID")),
+		ClientSecret: os.Getenv("TS_AUTH_CLIENT_SECRET"),
+		RedirectURL:  strings.TrimSpace(os.Getenv("TS_AUTH_REDIRECT_URL")),
+	}
+	if c.TSAuth == (TSAuth{}) {
+		return nil
+	}
+	if c.TSAuth.Issuer == "" || c.TSAuth.ClientID == "" || c.TSAuth.ClientSecret == "" {
+		return errors.New("TS_AUTH_ISSUER, TS_AUTH_CLIENT_ID and TS_AUTH_CLIENT_SECRET must be set together")
+	}
+	// The sign-in flow and session cookies carry credentials.
+	if !c.Dev && !c.SecureCookies {
+		return errors.New("signing in through ts-auth needs secure cookies: serve the dashboard over HTTPS (DASHBOARD_PUBLIC_URL) or set DASHBOARD_SECURE_COOKIES=1")
+	}
+	if u, err := url.Parse(c.TSAuth.Issuer); err != nil || !c.allowedScheme(u.Scheme) || u.Hostname() == "" || u.User != nil || strings.ContainsAny(c.TSAuth.Issuer, "?#") {
+		return errors.New("TS_AUTH_ISSUER must be an HTTPS URL")
+	}
+	if c.TSAuth.RedirectURL == "" && c.PublicURL != "" {
+		c.TSAuth.RedirectURL = c.PublicURL + "/login/callback"
+	}
+	if u, err := url.Parse(c.TSAuth.RedirectURL); err != nil || !c.allowedScheme(u.Scheme) || u.Hostname() == "" || u.User != nil || u.EscapedPath() != "/login/callback" || strings.ContainsAny(c.TSAuth.RedirectURL, "?#") {
+		return errors.New("TS_AUTH_REDIRECT_URL, or DASHBOARD_PUBLIC_URL to derive it, must be the dashboard's HTTPS /login/callback URL")
+	}
+	return nil
+}
+
+// allowedScheme reports whether a ts-auth URL may use scheme: HTTPS, or HTTP
+// as well in local development.
+func (c *Config) allowedScheme(scheme string) bool {
+	return scheme == "https" || (c.Dev && scheme == "http")
 }

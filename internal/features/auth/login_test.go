@@ -40,7 +40,7 @@ func newLoginMux(t *testing.T, limits throttle.Options) *http.ServeMux {
 		t.Fatal(err)
 	}
 	mux := http.NewServeMux()
-	Mount(mux, deps)
+	Mount(mux, deps, nil)
 	return mux
 }
 

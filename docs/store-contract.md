@@ -342,11 +342,32 @@ does it on TerraBase v1.
 20. **Admin action log** (`RecordPlatformAdminAction` appends).
     - *v1:* `create` with UUIDv7. Read with sort `/recorded_at`.
 
+21. **Unique ts-auth subject** (`bySubject` index; `FindBySubject`).
+    `User.AuthSubject` is unique when non-empty. It is set once, from empty to
+    a value, and never changed.
+    - *v1:* the subject is in the user record, and the adapter writes a
+      `users` uniqueness claim `["auth_subject", subject]` while it is set.
+      `FindBySubject` reads that claim and loads its owner;
+      `memstore.FromState` indexes it again.
+    - The change-once rule is a pure check on (loaded, mutated), like
+      invariant 17.
+
 ## Sessions, device grants and login throttle
 
-- **`session.Store`** (`Put`, `Get`, `Delete`, `DeleteUser`, `ListUser`):
+- **`session.Store`** (`Put`, `Get`, `Replace`, `Delete`, `DeleteUser`, `ListUser`):
   - Documents are keyed by the token digest, never the token, with TTL
     `/expires_at`.
+  - `Record.Refresh` and `Record.RefreshAt` are stored with the session.
+    `Refresh` is an opaque string that the manager rechecks with
+    `Options.Refresh` once `RefreshAt` passes. For ts-auth it is JSON with the
+    subject and the refresh token, which only the confidential client can
+    redeem. Empty means the session is never rechecked.
+  - `Replace(key, old, next)` stores `next` only while the key still holds
+    `old`, so a refresh that finishes after a sign-out or another machine's
+    refresh does not overwrite it. The adapter rereads the document, compares
+    it with `old` and commits with `if_match` on that version; an expired
+    `next` deletes it with the same `if_match`. A refresh refused by ts-auth
+    and a session rotation end the old record that way.
   - `DeleteUser` (`RevokeUser`) and `ListUser` need the
     (`/account_id`, `/user_id`) index, which the plan table lacks. A user's
     sessions are unbounded, so `DeleteUser` deletes in pages, and

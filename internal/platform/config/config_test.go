@@ -153,3 +153,57 @@ func TestTerraBaseBackendConfiguration(t *testing.T) {
 		t.Fatalf("persistent backend: demo=%v database=%q err=%v", cfg.Demo, cfg.TerraBaseDatabase, err)
 	}
 }
+
+func TestTSAuthConfiguration(t *testing.T) {
+	t.Setenv("TS_DASHBOARD_PRODUCTION_DEMO", "1")
+	t.Setenv("FLY_APP_NAME", "")
+	t.Setenv("DASHBOARD_DEMO_ADMIN_EMAIL", "")
+	t.Setenv("DASHBOARD_DEMO_ADMIN_PASSWORD", "")
+	t.Setenv("TS_DASHBOARD_CSRF_SECRET", "")
+	t.Setenv("DASHBOARD_CSP_REPORT_URL", "")
+	t.Setenv("DASHBOARD_SECURE_COOKIES", "")
+	for _, name := range []string{"TERRABASE_URL", "TERRABASE_API_KEY", "TERRABASE_PROJECT_ID", "TERRABASE_DATABASE"} {
+		t.Setenv(name, "")
+	}
+	const callback = "https://dashboard.example/login/callback"
+	for _, tc := range []struct {
+		name, dev, publicURL, issuer, clientID, secret, redirect string
+		want                                                     TSAuth
+		invalid                                                  bool
+	}{
+		{name: "unset"},
+		{name: "partial", issuer: "https://auth.example", clientID: "dashboard", invalid: true},
+		{name: "secret only", secret: "s3cret", invalid: true},
+		{name: "derived redirect", publicURL: "https://dashboard.example", issuer: "https://auth.example/", clientID: "dashboard", secret: "s3cret",
+			want: TSAuth{Issuer: "https://auth.example/", ClientID: "dashboard", ClientSecret: "s3cret", RedirectURL: callback}},
+		{name: "explicit redirect", publicURL: "https://dashboard.example", issuer: "https://auth.example", clientID: "dashboard", secret: "s3cret", redirect: callback,
+			want: TSAuth{Issuer: "https://auth.example", ClientID: "dashboard", ClientSecret: "s3cret", RedirectURL: callback}},
+		{name: "insecure cookies", publicURL: "http://dashboard.example", issuer: "https://auth.example", clientID: "dashboard", secret: "s3cret", redirect: callback, invalid: true},
+		{name: "no public URL", issuer: "https://auth.example", clientID: "dashboard", secret: "s3cret", redirect: callback, invalid: true},
+		{name: "no redirect or public URL", issuer: "https://auth.example", clientID: "dashboard", secret: "s3cret", invalid: true},
+		{name: "http issuer", issuer: "http://localhost:9000", clientID: "dashboard", secret: "s3cret", redirect: callback, invalid: true},
+		{name: "http issuer in dev", dev: "1", publicURL: "http://localhost:5481", issuer: "http://localhost:9000", clientID: "dashboard", secret: "s3cret",
+			want: TSAuth{Issuer: "http://localhost:9000", ClientID: "dashboard", ClientSecret: "s3cret", RedirectURL: "http://localhost:5481/login/callback"}},
+		{name: "issuer with query", issuer: "https://auth.example?x=1", clientID: "dashboard", secret: "s3cret", redirect: callback, invalid: true},
+		{name: "redirect path", issuer: "https://auth.example", clientID: "dashboard", secret: "s3cret", redirect: "https://dashboard.example/callback", invalid: true},
+		{name: "redirect query", issuer: "https://auth.example", clientID: "dashboard", secret: "s3cret", redirect: callback + "?next=/", invalid: true},
+		{name: "redirect fragment", issuer: "https://auth.example", clientID: "dashboard", secret: "s3cret", redirect: callback + "#top", invalid: true},
+		{name: "issuer empty query", issuer: "https://auth.example?", clientID: "dashboard", secret: "s3cret", redirect: callback, invalid: true},
+		{name: "redirect empty query", issuer: "https://auth.example", clientID: "dashboard", secret: "s3cret", redirect: callback + "?", invalid: true},
+		{name: "redirect empty fragment", issuer: "https://auth.example", clientID: "dashboard", secret: "s3cret", redirect: callback + "#", invalid: true},
+		{name: "redirect escaped path", issuer: "https://auth.example", clientID: "dashboard", secret: "s3cret", redirect: "https://dashboard.example/login/%63allback", invalid: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("DASHBOARD_DEV", tc.dev)
+			t.Setenv("DASHBOARD_PUBLIC_URL", tc.publicURL)
+			t.Setenv("TS_AUTH_ISSUER", tc.issuer)
+			t.Setenv("TS_AUTH_CLIENT_ID", tc.clientID)
+			t.Setenv("TS_AUTH_CLIENT_SECRET", tc.secret)
+			t.Setenv("TS_AUTH_REDIRECT_URL", tc.redirect)
+			cfg, err := Load()
+			if (err != nil) != tc.invalid || cfg.TSAuth != tc.want {
+				t.Fatalf("ts-auth=%+v error=%v", cfg.TSAuth, err)
+			}
+		})
+	}
+}

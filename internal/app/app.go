@@ -105,7 +105,20 @@ func New(cfg config.Config) (*Application, error) {
 	if err != nil {
 		return nil, err
 	}
-	sessions := session.New(store, session.Options{Secure: cfg.SecureCookies, Store: sessionStore})
+	// With TS_AUTH_ISSUER set, ts-auth is the only way to sign in.
+	var tsAuth *auth.TSAuth
+	sessionOptions := session.Options{Secure: cfg.SecureCookies, Store: sessionStore}
+	if cfg.TSAuth.Issuer != "" {
+		tsAuth, err = auth.NewTSAuth(auth.TSAuthConfig{
+			Issuer: cfg.TSAuth.Issuer, ClientID: cfg.TSAuth.ClientID, ClientSecret: cfg.TSAuth.ClientSecret,
+			RedirectURL: cfg.TSAuth.RedirectURL, Secure: cfg.SecureCookies,
+		})
+		if err != nil {
+			return nil, err
+		}
+		sessionOptions.Refresh = tsAuth.RefreshSession
+	}
+	sessions := session.New(store, sessionOptions)
 	guard := csrf.New(sessions, csrf.Options{Secure: cfg.SecureCookies, Secret: cfg.CSRFSecret})
 	var notices render.StatusNotices
 	if cfg.StatusURL != "" {
@@ -120,14 +133,15 @@ func New(cfg config.Config) (*Application, error) {
 		Store: store, Sessions: sessions, CSRF: guard, Render: renderer,
 		Events: datastar.Events{}, Demo: cfg.Demo, Tools: core.NewTools(store),
 		SDK: sdkFactory, DocumentsOnly: db != nil,
-		Throttle: throttle.New(throttle.Options{ClientHeader: cfg.ClientIPHeader, Store: throttleStore}),
+		Throttle:       throttle.New(throttle.Options{ClientHeader: cfg.ClientIPHeader, Store: throttleStore}),
+		ExternalSignIn: tsAuth != nil,
 	}
 	mux := http.NewServeMux()
 	if err := assets.Mount(mux, cfg.Dev); err != nil {
 		return nil, err
 	}
 	status.Mount(mux, deps, probe)
-	auth.Mount(mux, deps)
+	auth.Mount(mux, deps, tsAuth)
 	deviceAuthorization := auth.NewDeviceAuthorization(deps, grants, cfg.SecureCookies, cfg.PublicURL)
 	deviceAuthorization.MountBrowser(mux)
 	admin.Mount(mux, deps)

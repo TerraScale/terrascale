@@ -25,6 +25,7 @@ type Store struct {
 	mu            sync.RWMutex
 	accounts      map[string]core.Account
 	byEmail       map[string]string
+	bySubject     map[string]string
 	organizations map[string]core.Organization
 	byAccessToken map[string]string
 	plans         map[string]core.Plan
@@ -40,7 +41,7 @@ func New() *Store {
 		plans[plan.ID] = plan
 	}
 	return &Store{
-		accounts: make(map[string]core.Account), byEmail: make(map[string]string),
+		accounts: make(map[string]core.Account), byEmail: make(map[string]string), bySubject: make(map[string]string),
 		organizations: make(map[string]core.Organization), byAccessToken: make(map[string]string),
 		plans: plans,
 	}
@@ -75,6 +76,9 @@ func (s *Store) InsertAccount(_ context.Context, a core.Account) error {
 	if _, ok := s.byEmail[a.User.Email]; ok {
 		return core.ErrConflict
 	}
+	if _, ok := s.bySubject[a.User.AuthSubject]; ok {
+		return core.ErrConflict
+	}
 	for id := range a.Organizations {
 		if _, exists := s.organizations[id]; exists {
 			return core.ErrConflict
@@ -82,6 +86,9 @@ func (s *Store) InsertAccount(_ context.Context, a core.Account) error {
 	}
 	s.putLocked(a)
 	s.byEmail[a.User.Email] = a.ID
+	if a.User.AuthSubject != "" {
+		s.bySubject[a.User.AuthSubject] = a.ID
+	}
 	return nil
 }
 
@@ -89,6 +96,16 @@ func (s *Store) FindByEmail(_ context.Context, email string) (core.Account, erro
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	a, ok := s.accounts[s.byEmail[core.NormalizeEmail(email)]]
+	if !ok {
+		return core.Account{}, core.ErrNotFound
+	}
+	return s.materialize(a), nil
+}
+
+func (s *Store) FindBySubject(_ context.Context, subject string) (core.Account, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	a, ok := s.accounts[s.bySubject[subject]]
 	if !ok {
 		return core.Account{}, core.ErrNotFound
 	}
@@ -286,6 +303,16 @@ func (s *Store) updateLocked(accountID string, mutate func(*core.Account) error)
 	if next.User.PasswordHash == "" {
 		return core.ErrInvalid
 	}
+	linked := next.User.AuthSubject != current.User.AuthSubject
+	if linked {
+		// A subject is set once, to one not linked to another account.
+		if current.User.AuthSubject != "" {
+			return core.ErrInvalid
+		}
+		if _, taken := s.bySubject[next.User.AuthSubject]; taken {
+			return core.ErrConflict
+		}
+	}
 	core.SyncMemberships(&next)
 	if next.User.PasswordHash != current.User.PasswordHash {
 		// A credential change ends every personal access token along with
@@ -304,6 +331,9 @@ func (s *Store) updateLocked(accountID string, mutate func(*core.Account) error)
 		}
 	}
 	s.putLocked(next)
+	if linked {
+		s.bySubject[next.User.AuthSubject] = next.ID
+	}
 	s.repairSelectionsLocked()
 	return nil
 }

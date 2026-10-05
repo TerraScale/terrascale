@@ -250,3 +250,59 @@ limited to ten per client address (using the same trusted proxy header and IPv6
 /64 grouping as password throttling) and 1,000 per demo process. An approved
 grant remains available for retry when the account's access-token quota is full;
 revoke an existing token and poll again after the advertised interval.
+
+## Sign-in through ts-auth
+
+Set these to sign users in through ts-auth with OpenID Connect (authorization
+code flow with PKCE). The dashboard is a confidential client.
+
+- `TS_AUTH_ISSUER`: the issuer exactly as ts-auth's discovery document names
+  it. It must use HTTPS, or HTTP when `DASHBOARD_DEV=1`.
+- `TS_AUTH_CLIENT_ID` and `TS_AUTH_CLIENT_SECRET`: the client registered at
+  ts-auth. The issuer, client ID and secret must all be set, or startup fails.
+- `TS_AUTH_REDIRECT_URL` (optional): defaults to `DASHBOARD_PUBLIC_URL` plus
+  `/login/callback`. Its path must be `/login/callback`.
+
+Outside `DASHBOARD_DEV=1` the cookies must be secure (an HTTPS
+`DASHBOARD_PUBLIC_URL`, Fly, or `DASHBOARD_SECURE_COOKIES=1`), or startup
+fails.
+
+Register the redirect URI and the post-logout redirect URI (the dashboard's
+origin plus `/login`) at ts-auth. Discovery must list `S256` in
+`code_challenge_methods_supported`. The dashboard discovers ts-auth on first
+use, so it starts while ts-auth is down.
+
+With the variables set:
+
+- `/login` redirects to ts-auth with the scopes `openid email profile
+  offline_access`, a PKCE S256 challenge, `state` and `nonce`. ts-auth returns
+  to `/login/callback`.
+- Password sign-in (`POST /login`, `POST /api/v1/auth/password/login`) and
+  registration (`POST /onboarding`) are disabled. `GET /onboarding` sends
+  signed-out visitors to `/login`.
+- Signing out also ends the ts-auth session through its
+  `end_session_endpoint`, with `post_logout_redirect_uri` set to the
+  dashboard's origin plus `/login`. Without that endpoint, or with ts-auth
+  unreachable, it goes to `/login?prompt=login`, so ts-auth asks for
+  credentials again.
+
+The account for a sign-in is found by ts-auth subject, else linked by verified
+email, else created. The ID token must carry `email_verified: true`. The
+subject is kept as `User.AuthSubject`, which Management calls will send as
+`X-TerraBase-User-Id`.
+
+Sessions stay in the session store. Each is rechecked with its refresh token
+when ts-auth's access token expires, at most once every 5 minutes. A refused
+refresh token ends the session; while ts-auth is unreachable the session
+stays and the recheck is retried a minute later. A session ts-auth issued no
+refresh token for is not rechecked and lasts its full lifetime. A scope
+change rotates the session only while the old one is still live, carrying its
+refresh token over.
+
+Accounts created through ts-auth have no dashboard password, so actions that
+confirm one (approving a CLI device, creating a personal access token,
+changing the password or email) refuse them until step-up re-authentication
+through ts-auth is added.
+
+Without these variables nothing changes: local password sign-in and the demo
+backend work as before.

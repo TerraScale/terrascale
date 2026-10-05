@@ -1,11 +1,14 @@
 package terrabase
 
 import (
+	"errors"
 	"fmt"
 	"testing"
+	"time"
 
 	"terrascale.tech/dashboard/internal/core"
 	"terrascale.tech/dashboard/internal/core/storetest"
+	"terrascale.tech/dashboard/internal/platform/session"
 	"terrascale.tech/dashboard/internal/platform/terrabasetest"
 	v1 "terrascale.tech/sdk/v1"
 )
@@ -117,5 +120,61 @@ func TestImportOrganizationIsIdempotent(t *testing.T) {
 	}
 	if _, err := ImportOrganization(t.Context(), store, operator, "missing", "owner@example.test"); err == nil {
 		t.Fatal("unknown organization imported")
+	}
+}
+
+// Sessions keep their ts-auth refresh state, and Replace changes or ends one
+// only while it still holds the record the caller read.
+func TestSessionsReplaceOnlyUnchanged(t *testing.T) {
+	if testing.Short() {
+		t.Skip("starts pinned TerraBase release")
+	}
+	tb := terrabasetest.Start(t)
+	db, _ := terrabasetest.Database(t, tb, "sessions")
+	if err := EnsureCollections(t.Context(), db); err != nil {
+		t.Fatal(err)
+	}
+	sessions := NewSessions(db)
+	var key [32]byte
+	key[0] = 1
+	now := time.Now()
+	first := session.Record{
+		AccountID: "acct_1", UserID: "usr_1", AuthVersion: 2, ExpiresAt: now.Add(time.Hour),
+		Refresh: `{"sub":"sub-1","token":"r1"}`, RefreshAt: now.Add(time.Minute),
+	}
+	if err := sessions.Put(t.Context(), key, first); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := sessions.Get(t.Context(), key, time.Now())
+	if err != nil || stored.Refresh != first.Refresh || !stored.RefreshAt.Equal(first.RefreshAt) {
+		t.Fatalf("stored = %+v, %v; want the refresh state kept", stored, err)
+	}
+	next := stored
+	next.Refresh, next.RefreshAt = `{"sub":"sub-1","token":"r2"}`, now.Add(time.Hour)
+	changed := stored
+	changed.Refresh = `{"sub":"sub-1","token":"other"}`
+	if err := sessions.Replace(t.Context(), key, changed, next); !errors.Is(err, session.ErrNotFound) {
+		t.Fatalf("Replace of another record = %v, want session.ErrNotFound", err)
+	}
+	if err := sessions.Replace(t.Context(), key, stored, next); err != nil {
+		t.Fatalf("Replace of the unchanged session = %v", err)
+	}
+	if err := sessions.Replace(t.Context(), key, stored, stored); !errors.Is(err, session.ErrNotFound) {
+		t.Fatalf("Replace from a stale read = %v, want session.ErrNotFound", err)
+	}
+	current, err := sessions.Get(t.Context(), key, time.Now())
+	if err != nil || current.Refresh != next.Refresh {
+		t.Fatalf("current = %+v, %v; want r2", current, err)
+	}
+	ended := current
+	ended.ExpiresAt = time.Time{}
+	if err := sessions.Replace(t.Context(), key, current, ended); err != nil {
+		t.Fatalf("ending the session = %v", err)
+	}
+	if _, err := sessions.Get(t.Context(), key, time.Now()); !errors.Is(err, session.ErrNotFound) {
+		t.Fatalf("ended session lookup = %v, want session.ErrNotFound", err)
+	}
+	if err := sessions.Replace(t.Context(), key, current, next); !errors.Is(err, session.ErrNotFound) {
+		t.Fatalf("Replace of an ended session = %v, want session.ErrNotFound", err)
 	}
 }

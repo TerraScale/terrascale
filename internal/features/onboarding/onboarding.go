@@ -79,7 +79,7 @@ func getOnboarding(deps core.Deps, service Service) http.HandlerFunc {
 		registration := pageData{Registration: true, Plan: offeredPlan(plans, query.Get("plan")), ReturnTo: returnPath(cmp.Or(query.Get("returnTo"), query.Get("return")))}
 		principal, ok := deps.Sessions.Principal(r)
 		if !ok {
-			render(w, r, deps, http.StatusOK, registration)
+			renderRegistration(w, r, deps, registration)
 			return
 		}
 		account, err := deps.Store.SnapshotAs(ctx, principal)
@@ -88,7 +88,7 @@ func getOnboarding(deps core.Deps, service Service) http.HandlerFunc {
 				http.Error(w, "service unavailable", http.StatusServiceUnavailable)
 				return
 			}
-			render(w, r, deps, http.StatusOK, registration)
+			renderRegistration(w, r, deps, registration)
 			return
 		}
 		if account.OnboardingCompleted {
@@ -137,8 +137,22 @@ func getOnboarding(deps core.Deps, service Service) http.HandlerFunc {
 	}
 }
 
+// renderRegistration shows the sign-up form. With ts-auth, signing up is
+// signing in there for the first time, which returns here afterwards.
+func renderRegistration(w http.ResponseWriter, r *http.Request, deps core.Deps, data pageData) {
+	if deps.ExternalSignIn {
+		core.RedirectToLogin(w, r)
+		return
+	}
+	render(w, r, deps, http.StatusOK, data)
+}
+
 func register(deps core.Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if deps.ExternalSignIn {
+			http.Error(w, "sign up through ts-auth", http.StatusForbidden)
+			return
+		}
 		if err := r.ParseForm(); err != nil {
 			http.Error(w, "invalid registration form", http.StatusBadRequest)
 			return

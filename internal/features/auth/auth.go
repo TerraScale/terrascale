@@ -5,6 +5,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math"
 	"mime"
 	"net/http"
@@ -47,6 +48,8 @@ type loginPageData struct {
 }
 
 type authStatusPageData struct {
+	// Status is the response status code; zero means 200 OK.
+	Status        int
 	Title         string
 	Description   string
 	Message       string
@@ -98,11 +101,17 @@ var dummyPasswordHash = sync.OnceValue(func() string {
 	return hash
 })
 
-func Mount(mux *http.ServeMux, deps core.Deps) {
-	_ = dummyPasswordHash()
-
-	mux.HandleFunc("GET /login", loginPage(deps))
-	mux.HandleFunc("POST /login", loginForm(deps))
+// Mount registers sign-in and sign-out. With tsAuth, ts-auth is the only way
+// to sign in; nil keeps the dashboard's own password sign-in.
+func Mount(mux *http.ServeMux, deps core.Deps, tsAuth *TSAuth) {
+	mux.HandleFunc("GET /login", loginPage(deps, tsAuth))
+	if tsAuth != nil {
+		mux.HandleFunc("GET /login/callback", tsAuth.callback(deps))
+	} else {
+		_ = dummyPasswordHash()
+		mux.HandleFunc("POST /login", loginForm(deps))
+		mux.HandleFunc("POST /api/v1/auth/password/login", loginAPI(deps))
+	}
 	mux.HandleFunc("GET /reset-password", func(w http.ResponseWriter, r *http.Request) {
 		renderAuthStatus(w, r, deps, authStatusPageData{
 			Title:         "Reset password",
@@ -144,12 +153,11 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			Flow:        true,
 		})
 	})
-	mux.HandleFunc("POST /api/v1/auth/password/login", loginAPI(deps))
-	mux.HandleFunc("POST /api/v1/auth/logout", logout(deps))
+	mux.HandleFunc("POST /api/v1/auth/logout", logout(deps, tsAuth))
 	mux.HandleFunc("GET /api/v1/auth/me", currentUser(deps))
 }
 
-func loginPage(deps core.Deps) http.HandlerFunc {
+func loginPage(deps core.Deps, tsAuth *TSAuth) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if principal, ok := currentPrincipal(deps.Sessions, r); ok {
 			// A session whose account cannot be read signs in again
@@ -166,6 +174,13 @@ func loginPage(deps core.Deps) http.HandlerFunc {
 		returnTo := r.URL.Query().Get("returnTo")
 		if returnTo == "" {
 			returnTo = r.URL.Query().Get("next")
+		}
+		if tsAuth != nil {
+			if err := tsAuth.signIn(w, r, SafeRedirectTarget(returnTo)); err != nil {
+				slog.Warn("start ts-auth sign-in", "error", err)
+				signInFailed(w, r, deps, http.StatusServiceUnavailable, "ts-auth is unavailable right now. Try again in a moment.")
+			}
+			return
 		}
 		renderLogin(w, r, deps, http.StatusOK, loginPageData{RedirectTo: SafeRedirectTarget(returnTo)})
 	}
@@ -278,6 +293,7 @@ func renderAuthStatus(w http.ResponseWriter, r *http.Request, deps core.Deps, da
 	page := core.Page{
 		Layout: "auth",
 		Title:  data.Title,
+		Status: data.Status,
 		View: func(p core.Page) templ.Component {
 			return authStatusView(data, p.CSRFToken)
 		},
@@ -453,13 +469,19 @@ func startPasswordSession(w http.ResponseWriter, r *http.Request, deps core.Deps
 	return account, nil
 }
 
-func logout(deps core.Deps) http.HandlerFunc {
+// logout ends the dashboard session and, with ts-auth, the browser's ts-auth
+// session too, so the next sign-in asks for credentials again.
+func logout(deps core.Deps, tsAuth *TSAuth) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if err := deps.Sessions.End(w, r); err != nil {
 			http.Error(w, "sign-out could not finish; retry logout", http.StatusServiceUnavailable)
 			return
 		}
-		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		location := "/login"
+		if tsAuth != nil {
+			location = tsAuth.endSessionURL(r.Context())
+		}
+		http.Redirect(w, r, location, http.StatusSeeOther)
 	}
 }
 

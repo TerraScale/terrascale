@@ -54,6 +54,9 @@ type Store interface {
 	// FindByEmail returns the account registered with email, compared after
 	// NormalizeEmail.
 	FindByEmail(ctx context.Context, email string) (Account, error)
+	// FindBySubject returns the account whose user signs in as the ts-auth
+	// subject. Subjects are unique, and once set a user's never changes.
+	FindBySubject(ctx context.Context, subject string) (Account, error)
 
 	// SnapshotAs returns the principal's account after AuthorizeAccount.
 	SnapshotAs(ctx context.Context, p Principal) (Account, error)

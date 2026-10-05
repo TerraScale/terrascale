@@ -63,7 +63,7 @@ func TestLogoutDoesNotReportSuccessWhenRevocationFails(t *testing.T) {
 			}
 			state.deleteErr = errors.New("session database down")
 			response := httptest.NewRecorder()
-			logout(core.Deps{Sessions: sessions})(response, request)
+			logout(core.Deps{Sessions: sessions}, nil)(response, request)
 			if response.Code != http.StatusServiceUnavailable || response.Header().Get("Location") != "" || len(response.Result().Cookies()) != 0 {
 				t.Fatalf("failed revocation = %d, headers %v; want 503 without redirect or cleared cookie", response.Code, response.Header())
 			}
@@ -74,7 +74,7 @@ func TestLogoutDoesNotReportSuccessWhenRevocationFails(t *testing.T) {
 			}
 			state.deleteErr = nil
 			response = httptest.NewRecorder()
-			logout(core.Deps{Sessions: sessions})(response, request)
+			logout(core.Deps{Sessions: sessions}, nil)(response, request)
 			if response.Code != http.StatusSeeOther || response.Header().Get("Location") != "/login" {
 				t.Fatalf("retry logout = %d, headers %v", response.Code, response.Header())
 			}

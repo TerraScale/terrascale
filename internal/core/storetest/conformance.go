@@ -33,6 +33,8 @@ func Run(t *testing.T, newStore func(*testing.T) core.Store) {
 		{"ProviderIdentityUniqueness", TestProviderIdentityUniqueness},
 		{"PlanCatalogAndExternalReferences", TestPlanCatalogAndExternalReferences},
 		{"ScopeGuardAndMembershipRemoval", TestScopeGuardAndMembershipRemoval},
+		{"SubjectIdentity", TestSubjectIdentity},
+		{"SubjectLinksOnce", TestSubjectLinksOnce},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) { tc.run(t, newStore(t)) })

@@ -26,6 +26,9 @@ func FromState(state State) *Store {
 	for _, account := range state.Accounts {
 		s.putLocked(account)
 		s.byEmail[core.NormalizeEmail(account.User.Email)] = account.ID
+		if account.User.AuthSubject != "" {
+			s.bySubject[account.User.AuthSubject] = account.ID
+		}
 	}
 	for id, org := range state.Organizations {
 		s.organizations[id] = core.CloneOrganization(org)

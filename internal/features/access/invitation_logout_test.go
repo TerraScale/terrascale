@@ -60,7 +60,7 @@ func TestSwitchInvitationAccountRetriesFailedLogoutBeforeRedirecting(t *testing.
 	state.err = nil
 	response = httptest.NewRecorder()
 	handler(response, request)
-	if response.Code != http.StatusSeeOther || response.Header().Get("Location") != invitationLoginURL("invite-token") {
+	if response.Code != http.StatusSeeOther || response.Header().Get("Location") != invitationLoginURL("invite-token")+"&prompt=login" {
 		t.Fatalf("switch retry = %d %v", response.Code, response.Header())
 	}
 	if _, valid := sessions.Principal(request); valid {

@@ -22,12 +22,28 @@ type sessionDocument struct {
 	UserID      string    `json:"user_id"`
 	AuthVersion uint64    `json:"auth_version"`
 	ExpiresAt   time.Time `json:"expires_at"`
+	Refresh     string    `json:"refresh,omitempty"`
+	RefreshAt   time.Time `json:"refresh_at,omitzero"`
 }
 
 func NewSessions(db *v1.Database) session.Store { return &sessionsStore{db: db} }
 
 func (d sessionDocument) record() session.Record {
-	return session.Record{AccountID: d.AccountID, UserID: d.UserID, AuthVersion: d.AuthVersion, ExpiresAt: d.ExpiresAt}
+	return session.Record{AccountID: d.AccountID, UserID: d.UserID, AuthVersion: d.AuthVersion, ExpiresAt: d.ExpiresAt, Refresh: d.Refresh, RefreshAt: d.RefreshAt}
+}
+
+func newSessionDocument(key [32]byte, rec session.Record) sessionDocument {
+	return sessionDocument{
+		Kind: "session", TokenHash: digestText(key), AccountID: rec.AccountID, UserID: rec.UserID, AuthVersion: rec.AuthVersion,
+		ExpiresAt: rec.ExpiresAt.UTC(), Refresh: rec.Refresh, RefreshAt: rec.RefreshAt.UTC(),
+	}
+}
+
+// sameSession compares records by value, since a time read back from a
+// document carries no monotonic reading or the caller's location.
+func sameSession(a, b session.Record) bool {
+	return a.AccountID == b.AccountID && a.UserID == b.UserID && a.AuthVersion == b.AuthVersion && a.Refresh == b.Refresh &&
+		a.ExpiresAt.Equal(b.ExpiresAt) && a.RefreshAt.Equal(b.RefreshAt)
 }
 
 func (d sessionDocument) validate(id string) error {
@@ -42,7 +58,7 @@ func (s *sessionsStore) Put(ctx context.Context, key [32]byte, rec session.Recor
 	if rec.AccountID == "" || rec.UserID == "" || rec.ExpiresAt.IsZero() {
 		return core.ErrInvalid
 	}
-	doc := sessionDocument{Kind: "session", TokenHash: digestText(key), AccountID: rec.AccountID, UserID: rec.UserID, AuthVersion: rec.AuthVersion, ExpiresAt: rec.ExpiresAt.UTC()}
+	doc := newSessionDocument(key, rec)
 	id := v1.DocumentIDFor(sessionsCollection, doc.TokenHash)
 	return retryCAS(ctx, func() error {
 		var old sessionDocument
@@ -79,6 +95,35 @@ func (s *sessionsStore) Get(ctx context.Context, key [32]byte, now time.Time) (s
 		return session.Record{}, session.ErrNotFound
 	}
 	return doc.record(), nil
+}
+
+// Replace commits next with if_match on the version that still holds old. An
+// expired next deletes the session the same way.
+func (s *sessionsStore) Replace(ctx context.Context, key [32]byte, old, next session.Record) error {
+	id := v1.DocumentIDFor(sessionsCollection, digestText(key))
+	return retryCAS(ctx, func() error {
+		var doc sessionDocument
+		version, err := readDocument(ctx, s.db, sessionsCollection, id, &doc)
+		if errors.Is(err, core.ErrNotFound) {
+			return session.ErrNotFound
+		}
+		if err != nil {
+			return err
+		}
+		if err := doc.validate(id); err != nil {
+			return err
+		}
+		if !sameSession(doc.record(), old) {
+			return session.ErrNotFound
+		}
+		tx := s.db.Tx()
+		if next.ExpiresAt.After(time.Now()) {
+			tx.Put(sessionsCollection, id, newSessionDocument(key, next), v1.IfMatch(version))
+		} else {
+			tx.Delete(sessionsCollection, id, v1.IfMatch(version))
+		}
+		return commitDocuments(ctx, tx)
+	})
 }
 
 func (s *sessionsStore) Delete(ctx context.Context, key [32]byte) error {

@@ -32,6 +32,7 @@ type coreLoad struct {
 	accounts         []string
 	organizations    []string
 	email            string
+	subject          string
 	invitationHash   string
 	tokenHash        string
 	allAccounts      bool
@@ -269,6 +270,13 @@ func (s *Store) loadCore(ctx context.Context, need coreLoad) (*coreSnapshot, err
 	}
 	if need.email != "" {
 		r, err := a.get(ctx, claimKey("users", "email", core.NormalizeEmail(need.email)))
+		if err != nil {
+			return nil, err
+		}
+		need.accounts = append(need.accounts, r.OwnerID)
+	}
+	if need.subject != "" {
+		r, err := a.get(ctx, claimKey("users", "auth_subject", need.subject))
 		if err != nil {
 			return nil, err
 		}
