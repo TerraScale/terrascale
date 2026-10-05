@@ -1,6 +1,9 @@
 import { resolveAccessToken, resolveTsAuthRuntimeConfig } from "./config.js";
 import { err, ok, sanitizeDiagnostic } from "./result.js";
-import { TsAuthEndpointDiscovery } from "./ts-auth-discovery.js";
+import {
+  regionalIssuerOrigin,
+  TsAuthEndpointDiscovery,
+} from "./ts-auth-discovery.js";
 import { parseDatabaseJson } from "./database-codec.js";
 /** @import { ResolvedTsAuthRuntimeConfig, TsAuthRuntimeConfig, FetchLike } from "./config.js" */
 /** @import { TerraScaleError, TerraScaleErrorCategory, TerraScaleResult, TerraScaleValidationIssue } from "./result.js" */
@@ -18,6 +21,7 @@ import { parseDatabaseJson } from "./database-codec.js";
  *   readonly formBody?: URLSearchParams | string | undefined;
  *   readonly userinfoAccessToken?: string | undefined;
  *   readonly resourceIntrospectionBasic?: string | undefined;
+ *   readonly issuer?: string | undefined; // Behind the Atlas proxy a regional issuer is called on its own host.
  *   readonly signal?: AbortSignal | undefined;
  * }} TsAuthRequest
  */
@@ -85,10 +89,17 @@ export class TsAuthHttp {
         options.body !== undefined
           ? JSON.stringify(options.body)
           : options.formBody?.toString();
-      const endpoints = await withCancellation(
-        this.#discovery?.endpoints(signal) ?? Promise.resolve(undefined),
-        signal,
-      );
+      const issuerOrigin =
+        this.#discovery === undefined || options.issuer === undefined
+          ? undefined
+          : regionalIssuerOrigin(options.issuer);
+      const endpoints =
+        issuerOrigin === undefined
+          ? await withCancellation(
+              this.#discovery?.endpoints(signal) ?? Promise.resolve(undefined),
+              signal,
+            )
+          : [issuerOrigin];
       let endpointIndex = 0;
       let attempt = 0;
       let refreshed = false;

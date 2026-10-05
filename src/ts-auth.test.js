@@ -201,6 +201,119 @@ describe("ts-auth client", () => {
     );
   });
 
+  test("a regional issuer behind the Atlas proxy is introspected on its own host", async () => {
+    const issuer = "https://gru.auth.terrascale.tech/acme";
+    const credentials = {
+      issuer,
+      audience: "https://api.acme.test/management",
+      introspection_client_id: "resource",
+      introspection_secret: "secret",
+    };
+    const now = Math.floor(Date.now() / 1000);
+    const claims = {
+      active: true,
+      token_type: "Bearer",
+      iss: issuer,
+      sub: "user",
+      aud: credentials.audience,
+      client_id: "client",
+      scope: "management:read",
+      exp: now + 60,
+      iat: now - 10,
+      sid: "session",
+      principal_kind: "user",
+    };
+    /**
+     * @param {Record<string, unknown>} overrides
+     * @param {Record<string, unknown>} [response]
+     * @param {string} [configured]
+     */
+    async function introspect(
+      overrides,
+      response = claims,
+      configured = issuer,
+    ) {
+      /** @type {Request[]} */
+      const requests = [];
+      const tsAuth = tsAuthClient(
+        (request) =>
+          new URL(request.url).hostname === "atlas.terrascale.tech"
+            ? json({
+                v: 1,
+                refreshSeconds: 60,
+                endpoints: [
+                  { region: "SFO", url: "https://sfo.auth.terrascale.tech" },
+                  { region: "GRU", url: "https://gru.auth.terrascale.tech" },
+                ],
+              })
+            : json(response),
+        requests,
+        overrides,
+      );
+      const result = await tsAuth.oidc.introspectResource(
+        { ...credentials, issuer: configured },
+        "opaque",
+      );
+      return {
+        ok: result.ok,
+        hosts: requests.map((request) => new URL(request.url).host),
+      };
+    }
+
+    // Atlas ranks SFO first; the GRU issuer is still asked directly.
+    for (const [overrides, host] of /** @type {const} */ ([
+      [
+        { apiBaseUrl: "https://auth.terrascale.tech" },
+        "gru.auth.terrascale.tech",
+      ],
+      [
+        { apiBaseUrl: "https://auth.terrascale.tech", useReverseProxy: true },
+        "auth.terrascale.tech",
+      ],
+      [
+        { apiBaseUrl: "https://gru.auth.terrascale.tech" },
+        "gru.auth.terrascale.tech",
+      ],
+    ]))
+      assert.deepEqual(await introspect(overrides), {
+        ok: true,
+        hosts: [host],
+      });
+
+    // The proxy host and other regions are not the configured issuer.
+    for (const iss of [
+      "https://auth.terrascale.tech/acme",
+      "https://sfo.auth.terrascale.tech/acme",
+    ])
+      assert.equal(
+        (
+          await introspect(
+            { apiBaseUrl: "https://auth.terrascale.tech" },
+            { ...claims, iss },
+          )
+        ).ok,
+        false,
+      );
+
+    // Look-alike issuers never receive credentials; Atlas routing is unchanged.
+    for (const lookalike of [
+      "https://gru.auth.terrascale.tech.evil.example/acme",
+      "https://evil.gru.auth.terrascale.tech/acme",
+      "https://gru.auth.terrascale.tech:8443/acme",
+      "https://evil.example/acme",
+    ])
+      assert.deepEqual(
+        (
+          await introspect(
+            { apiBaseUrl: "https://auth.terrascale.tech" },
+            claims,
+            lookalike,
+          )
+        ).hosts,
+        ["atlas.terrascale.tech", "sfo.auth.terrascale.tech"],
+      );
+  });
+
   test("sends exact management routes, bearer, and JSON bodies", async () => {
     /** @type {Request[]} */
     const requests = [];

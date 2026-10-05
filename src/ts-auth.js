@@ -2358,6 +2358,7 @@ export class TsAuthOidcClient {
         routeName: "tsauth.oidc.resourceIntrospect",
         formBody: form,
         resourceIntrospectionBasic: basic,
+        issuer: expectedIssuer,
       }),
       /** @returns {value is TsAuthOidcResourceIntrospection} */
       (value) => {

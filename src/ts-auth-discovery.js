@@ -3,6 +3,23 @@ const AUTH_DISCOVERY_URL =
 const MAX_ENDPOINTS = 20;
 const MAX_BYTES = 65_536;
 
+/**
+ * ts-auth issues from its regional host, https://<region>.auth.terrascale.tech.
+ * Behind the Atlas proxy that issuer's region is called directly: Atlas could
+ * rank another region, which is another issuer.
+ * @param {string} issuer
+ * @returns {string | undefined}
+ */
+export function regionalIssuerOrigin(issuer) {
+  const region =
+    /^https:\/\/([a-z0-9][a-z0-9-]{0,15})\.auth\.terrascale\.tech\//u.exec(
+      issuer,
+    )?.[1];
+  return region === undefined
+    ? undefined
+    : `https://${region}.auth.terrascale.tech`;
+}
+
 /** The public auth routing document, validated before any credentials are sent. */
 export class TsAuthEndpointDiscovery {
   /**
