@@ -1,0 +1,759 @@
+using System.Net;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
+using Microsoft.Extensions.DependencyInjection;
+using TerraScale.TerraBase.Engine;
+using TerraScale.TerraBase.Engine.Sqlite;
+using TerraScale.TerraBase.Fast.Storage;
+using TerraScale.TerraBase.Features.Documents;
+using TerraScale.TerraBase.Features.Memory;
+using TerraScale.TerraBase.Tenancy;
+using TerraScale.TerraBase.Testing;
+
+namespace TerraScale.TerraBase.Fast.Documents;
+
+// Each test changes the database file behind the server's back (DocumentFiles): a read that still returns
+// the old value was a cache hit, a read that returns the file's value was a miss.
+public sealed class DocumentCacheTests
+{
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task An_old_snapshot_finishing_last_keeps_the_newer_cache_entry(bool page)
+    {
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
+        await using var management = await ManagementApi.StartAsync();
+        using var tenant = await CreateTenantAsync(management, "race", deadline.Token);
+        await PutAsync(tenant, "race", "items", "hot", "old", deadline.Token);
+        var database = await tenant.ContextAsync(management.Server, "race", deadline.Token);
+        var store = (await management.Server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(database, deadline.Token))!;
+        var cache = management.Server.Services.GetRequiredService<DocumentCache>();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var query = new DocumentQuery("items", null, [], null, 50, 8 * 1024 * 1024);
+        var old = ReadOldAsync();
+        Exception? primaryFailure = null;
+        try
+        {
+            await entered.Task.WaitAsync(deadline.Token);
+            await PutAsync(tenant, "race", "items", "hot", "new", deadline.Token);
+            await VerifyAsync("new");
+            // A cache miss would now expose this value; the warmed entry must survive the late snapshot.
+            await StorageFixture.ExecuteAsync(await tenant.FileAsync(management.Server, "race", deadline.Token),
+                """UPDATE documents SET body = '{"name":"disk"}' WHERE collection = 'items';""");
+            release.SetResult();
+            await Assert.That(await old.WaitAsync(deadline.Token)).IsEqualTo("old");
+            await VerifyAsync("new");
+        }
+        catch (Exception error)
+        {
+            primaryFailure = error;
+            throw;
+        }
+        finally
+        {
+            deadline.Cancel();
+            release.TrySetResult();
+            await StoragePoolTests.JoinCleanupAsync([old], primaryFailure);
+        }
+
+        async Task<string> ReadOldAsync()
+        {
+            var document = page
+                ? (await cache.QueryAsync(database, query, null, async () =>
+                {
+                    await using var transaction = await store.BeginTransactionAsync(write: false, deadline.Token);
+                    var rows = await transaction.QueryAsync(query, deadline.Token);
+                    entered.SetResult();
+                    await release.Task.WaitAsync(deadline.Token);
+                    return new CachedQuery(rows, null);
+                })).Page.Rows[0].Document
+                : (await cache.GetAsync(new DocumentKey(database, "items", StorageFixture.Id("hot")), async () =>
+                {
+                    await using var transaction = await store.BeginTransactionAsync(write: false, deadline.Token);
+                    var row = await transaction.GetAsync("items", StorageFixture.Id("hot"), deadline.Token);
+                    entered.SetResult();
+                    await release.Task.WaitAsync(deadline.Token);
+                    return row;
+                }))!;
+            using var body = JsonDocument.Parse(document.Json);
+            return body.RootElement.GetProperty("name").GetString()!;
+        }
+
+        async Task VerifyAsync(string name)
+        {
+            if (page)
+            {
+                await Assert.That(await ListAsync(tenant, "race", "items", deadline.Token))
+                    .IsEquivalentTo([$"{StorageFixture.Id("hot")}:{name}"]);
+            }
+            else
+            {
+                await Assert.That((await GetAsync(tenant, "race", "items", "hot", deadline.Token)).Name).IsEqualTo(name);
+            }
+        }
+    }
+
+    [Test]
+    public async Task Identical_document_ids_and_pages_stay_cached_within_their_tenant()
+    {
+        await using var management = await ManagementApi.StartAsync();
+        using var first = await CreateTenantAsync(management, "shop");
+        using var second = await CreateTenantAsync(management, "shop");
+        var firstFile = await first.FileAsync(management.Server, "shop");
+        var secondFile = await second.FileAsync(management.Server, "shop");
+        var firstVersion = await PutAsync(first, "shop", "items", "same", "first");
+        var secondVersion = await PutAsync(second, "shop", "items", "same", "second");
+        await Assert.That(await GetAsync(first, "shop", "items", "same")).IsEqualTo((firstVersion, "first"));
+        await Assert.That(await GetAsync(second, "shop", "items", "same")).IsEqualTo((secondVersion, "second"));
+        await ListAsync(first, "shop", "items");
+        await ListAsync(second, "shop", "items");
+        await StorageFixture.ExecuteAsync(firstFile, """UPDATE documents SET body = '{"name":"disk-first"}';""");
+        await StorageFixture.ExecuteAsync(secondFile, """UPDATE documents SET body = '{"name":"disk-second"}';""");
+
+        await Assert.That(await GetAsync(first, "shop", "items", "same")).IsEqualTo((firstVersion, "first"));
+        await Assert.That(await GetAsync(second, "shop", "items", "same")).IsEqualTo((secondVersion, "second"));
+        await Assert.That(await ListAsync(first, "shop", "items")).IsEquivalentTo([$"{StorageFixture.Id("same")}:first"]);
+        await Assert.That(await ListAsync(second, "shop", "items")).IsEquivalentTo([$"{StorageFixture.Id("same")}:second"]);
+        // Stamp stripes may conservatively invalidate unrelated entries. Restore the second file before
+        // writing the first tenant so this verifies data isolation without requiring collision-free stamps.
+        await StorageFixture.ExecuteAsync(secondFile, """UPDATE documents SET body = '{"name":"second"}';""");
+        var updated = await PutAsync(first, "shop", "items", "same", "updated");
+        await Assert.That(await GetAsync(first, "shop", "items", "same")).IsEqualTo((updated, "updated"));
+        await Assert.That(await ListAsync(first, "shop", "items")).IsEquivalentTo([$"{StorageFixture.Id("same")}:updated"]);
+        await Assert.That(await GetAsync(second, "shop", "items", "same")).IsEqualTo((secondVersion, "second"));
+        await Assert.That(await ListAsync(second, "shop", "items")).IsEquivalentTo([$"{StorageFixture.Id("same")}:second"]);
+    }
+
+    [Test]
+    public async Task A_plan_change_keeps_old_store_writes_connected_to_current_cache_stamps()
+    {
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
+        await using var management = await ManagementApi.StartAsync();
+        using var tenant = await CreateTenantAsync(management, "shop", deadline.Token);
+        await PutAsync(tenant, "shop", "items", "same", "first", deadline.Token);
+        var database = await tenant.ContextAsync(management.Server, "shop", deadline.Token);
+        await Assert.That(database.Plan).IsEqualTo(PlanTier.Hobby);
+        var store = (await management.Server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(database, deadline.Token))!;
+        using var owner = management.As(tenant.User);
+        foreach (var (plan, tier) in new[] { ("pro", PlanTier.Pro), ("enterprise", PlanTier.Enterprise) })
+        {
+            using var changed = await owner.PutAsJsonAsync(
+                new Uri($"/v1/management/organizations/{tenant.OrganizationId}/plan", UriKind.Relative), new { plan }, deadline.Token);
+            changed.EnsureSuccessStatusCode();
+            await Assert.That((await changed.Content.ReadFromJsonAsync<JsonElement>(deadline.Token)).GetProperty("plan").GetString()).IsEqualTo(plan);
+            await Assert.That(await tenant.ContextAsync(management.Server, "shop", deadline.Token)).IsEqualTo(database with { Plan = tier });
+            await GetAsync(tenant, "shop", "items", "same", deadline.Token);
+            await ListAsync(tenant, "shop", "items", deadline.Token);
+
+            var transaction = await store.BeginTransactionAsync(write: true, deadline.Token);
+            await using (transaction)
+            {
+                await transaction.PutAsync("items", StorageFixture.Id("same"), Encoding.UTF8.GetBytes($"{{\"name\":\"{plan}\"}}"), deadline.Token);
+                await transaction.CommitAsync(deadline.Token);
+            }
+
+            await Assert.That((await GetAsync(tenant, "shop", "items", "same", deadline.Token)).Name).IsEqualTo(plan);
+            await Assert.That(await ListAsync(tenant, "shop", "items", deadline.Token)).IsEquivalentTo([$"{StorageFixture.Id("same")}:" + plan]);
+        }
+    }
+
+    [Test]
+    public async Task Deleting_a_warmed_system_api_key_invalidates_authentication()
+    {
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
+        await using var management = await ManagementApi.StartAsync();
+        using var tenant = await CreateTenantAsync(management, "shop", deadline.Token);
+        await PutAsync(tenant, "shop", "items", "a", "first", deadline.Token);
+        await GetAsync(tenant, "shop", "items", "a", deadline.Token);
+        var secret = tenant.Data.DefaultRequestHeaders.Authorization!.Parameter!;
+        var hash = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(secret)));
+        var system = await management.Server.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(deadline.Token);
+        var transaction = await system.BeginTransactionAsync(write: true, deadline.Token);
+        await using (transaction)
+        {
+            await transaction.DeleteAsync("api_keys", hash, deadline.Token);
+            await transaction.CommitAsync(deadline.Token);
+        }
+
+        using var refused = await tenant.Data.GetAsync(tenant.Database("shop", $"/collections/items/documents/{StorageFixture.Id("a")}"), deadline.Token);
+        await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Warm_cache_reads_observe_an_already_cancelled_token(bool list)
+    {
+        await using var management = await ManagementApi.StartAsync();
+        var server = management.Server;
+        using var tenant = await CreateTenantAsync(management, "cancelled");
+        var client = tenant.Data;
+        var initial = await PutAsync(tenant, "cancelled", "items", "a", "first");
+        await GetAsync(tenant, "cancelled", "items", "a");
+        await ListAsync(tenant, "cancelled", "items");
+        var database = await tenant.ContextAsync(management.Server, "cancelled");
+        var documents = server.Services.GetRequiredService<IDocumentService>();
+        using var cancelled = new CancellationTokenSource();
+        await cancelled.CancelAsync();
+
+        // The listener warmed the real registered service; only direct invocation can supply a
+        // deterministically pre-cancelled token without the HTTP client cancelling before dispatch.
+        if (list)
+        {
+            await Assert.ThrowsAsync<OperationCanceledException>(() => documents.QueryAsync(
+                database, new DocumentQuery("items", null, [], null, 50, 8 * 1024 * 1024), null, cancelled.Token).AsTask());
+        }
+        else
+        {
+            await Assert.ThrowsAsync<OperationCanceledException>(() => documents.GetAsync(
+                new DocumentKey(database, "items", StorageFixture.Id("a")), cancelled.Token).AsTask());
+        }
+
+        await Assert.That(await GetAsync(tenant, "cancelled", "items", "a")).IsEqualTo((initial, "first"));
+        await Assert.That(await ListAsync(tenant, "cancelled", "items")).IsEquivalentTo([$"{StorageFixture.Id("a")}:first"]);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Reads_finishing_after_cache_disposal_return_data_without_reserving_memory(bool list)
+    {
+        using var operationTimeout = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
+        const long Budget = 4 * 1024 * 1024;
+        await using var management = await ManagementApi.StartAsync(settings =>
+        {
+            settings["memory-budget"] = Budget.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        });
+        var server = management.Server;
+        using var tenant = await CreateTenantAsync(management, "closing", operationTimeout.Token);
+        var client = tenant.Data;
+        await PutAsync(tenant, "closing", "items", "a", "first", operationTimeout.Token);
+        var database = await tenant.ContextAsync(management.Server, "closing", operationTimeout.Token);
+        var engine = server.Services.GetRequiredService<SqliteStorageEngine>();
+        var store = (SqliteDatabaseStore)(await engine.OpenDatabaseAsync(database, operationTimeout.Token))!;
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var release = new ManualResetEventSlim();
+        var observing = false;
+        var session = engine.Pool.Rent(store)!;
+        try
+        {
+            session.Connection.CreateFunction<string, string>("paused_body", body =>
+            {
+                if (!observing)
+                {
+                    return body;
+                }
+
+                entered.TrySetResult();
+                if (!release.Wait(TimeSpan.FromSeconds(20), operationTimeout.Token))
+                {
+                    throw new TimeoutException("cache-disposal test did not release the storage read");
+                }
+
+                return body;
+            }, isDeterministic: true);
+            StorageFixture.ObserveBodies(session.Connection, "paused_body");
+            observing = true;
+        }
+        finally
+        {
+            engine.Pool.Return(store, session);
+        }
+
+        var path = $"/v1/projects/{tenant.ProjectId}/databases/closing/collections/items/documents" + (list ? "" : $"/{StorageFixture.Id("a")}");
+        var pending = client.GetAsync(new Uri(path, UriKind.Relative), operationTimeout.Token);
+        HttpResponseMessage? response = null;
+        Exception? primaryFailure = null;
+        try
+        {
+            await entered.Task.WaitAsync(operationTimeout.Token);
+            var cache = server.Services.GetRequiredService<DocumentCache>();
+            cache.Dispose();
+            cache.Dispose();
+            release.Set();
+            response = await pending.WaitAsync(operationTimeout.Token);
+            response.EnsureSuccessStatusCode();
+            using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync(operationTimeout.Token));
+            var document = list ? json.RootElement.GetProperty("items")[0] : json.RootElement;
+            await Assert.That(document.GetProperty("document").GetProperty("name").GetString()).IsEqualTo("first");
+
+            // Authentication also cached an API-key document; wait for Clear's asynchronous eviction
+            // callbacks, then verify the completed read retained no reservation.
+            var budget = server.Services.GetRequiredService<IMemoryBudget>();
+            IMemoryReservation? all;
+            while ((all = budget.TryReserve(MemoryLane.Foreground, Budget)) is null)
+            {
+                await Task.Delay(10, operationTimeout.Token);
+            }
+
+            using var recoveredBudget = all;
+            // Further requests bypass the disposed cache as well.
+            using var subsequent = await client.GetAsync(new Uri(path, UriKind.Relative), operationTimeout.Token);
+            subsequent.EnsureSuccessStatusCode();
+        }
+        catch (Exception error)
+        {
+            primaryFailure = error;
+            throw;
+        }
+        finally
+        {
+            operationTimeout.Cancel();
+            release.Set();
+            response?.Dispose();
+            await StoragePoolTests.JoinCleanupAsync([pending], primaryFailure);
+        }
+    }
+
+    [Test]
+    public async Task Point_reads_are_cached_until_a_write_or_delete()
+    {
+        await using var management = await ManagementApi.StartAsync();
+        var server = management.Server;
+        using var tenant = await CreateTenantAsync(management, "shop");
+        var client = tenant.Data;
+        var file = await tenant.FileAsync(server, "shop");
+        var initial = await PutAsync(tenant, "shop", "people", "p1", "first");
+        var other = await PutAsync(tenant, "shop", "people", "p2", "first");
+
+        var miss = await GetAsync(tenant, "shop", "people", "p1");
+        await StorageFixture.ExecuteAsync(file, """UPDATE documents SET body = '{"name":"disk"}';""");
+        var hit = await GetAsync(tenant, "shop", "people", "p1");
+        var neverRead = await GetAsync(tenant, "shop", "people", "p2");
+        var written = await PutAsync(tenant, "shop", "people", "p1", "second");
+        var afterWrite = await GetAsync(tenant, "shop", "people", "p1");
+        await StorageFixture.ExecuteAsync(file, """UPDATE documents SET body = '{"name":"disk"}';""");
+        var cachedAgain = await GetAsync(tenant, "shop", "people", "p1");
+        using var deleted = await client.DeleteAsync(new Uri($"/v1/projects/{tenant.ProjectId}/databases/shop/collections/people/documents/{StorageFixture.Id("p1")}", UriKind.Relative));
+        using var afterDelete = await client.GetAsync(new Uri($"/v1/projects/{tenant.ProjectId}/databases/shop/collections/people/documents/{StorageFixture.Id("p1")}", UriKind.Relative));
+
+        await Assert.That(miss).IsEqualTo((initial, "first"));
+        await Assert.That(hit).IsEqualTo((initial, "first"));
+        // ETags hash the stored body, so the disk edit also changes the uncached document's version.
+        await Assert.That(neverRead.Name).IsEqualTo("disk");
+        await Assert.That(neverRead.Version).IsNotEqualTo(other);
+        await Assert.That(written).IsNotEqualTo(initial);
+        await Assert.That(afterWrite).IsEqualTo((written, "second"));
+        await Assert.That(cachedAgain).IsEqualTo((written, "second"));
+        await Assert.That(deleted.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(afterDelete.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+    }
+
+    [Test]
+    public async Task List_pages_are_cached_until_the_collection_changes()
+    {
+        await using var management = await ManagementApi.StartAsync();
+        var server = management.Server;
+        using var tenant = await CreateTenantAsync(management, "shop");
+        var client = tenant.Data;
+        var file = await tenant.FileAsync(server, "shop");
+        await PutAsync(tenant, "shop", "items", "a", "first");
+        await PutAsync(tenant, "shop", "items", "b", "first");
+
+        var miss = await ListAsync(tenant, "shop", "items");
+        await StorageFixture.ExecuteAsync(file, """UPDATE documents SET body = '{"name":"disk"}';""");
+        var hit = await ListAsync(tenant, "shop", "items");
+        // A write to another document of the collection invalidates every page of it.
+        await PutAsync(tenant, "shop", "items", "c", "first");
+        var afterWrite = await ListAsync(tenant, "shop", "items");
+        using var deleted = await client.DeleteAsync(new Uri($"/v1/projects/{tenant.ProjectId}/databases/shop/collections/items/documents/{StorageFixture.Id("b")}", UriKind.Relative));
+        deleted.EnsureSuccessStatusCode();
+        var afterDelete = await ListAsync(tenant, "shop", "items");
+
+        await Assert.That(miss).IsEquivalentTo([$"{StorageFixture.Id("a")}:first", $"{StorageFixture.Id("b")}:first"]);
+        await Assert.That(hit).IsEquivalentTo([$"{StorageFixture.Id("a")}:first", $"{StorageFixture.Id("b")}:first"]);
+        await Assert.That(afterWrite).IsEquivalentTo([$"{StorageFixture.Id("a")}:disk", $"{StorageFixture.Id("b")}:disk", $"{StorageFixture.Id("c")}:first"]);
+        await Assert.That(afterDelete).IsEquivalentTo([$"{StorageFixture.Id("a")}:disk", $"{StorageFixture.Id("c")}:first"]);
+    }
+
+    [Test]
+    public async Task Writes_that_bypass_the_document_api_invalidate_the_cache()
+    {
+        using var operationTimeout = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
+        await using var management = await ManagementApi.StartAsync();
+        var server = management.Server;
+        using var tenant = await CreateTenantAsync(management, "shop", operationTimeout.Token);
+        var client = tenant.Data;
+        var initial = await PutAsync(tenant, "shop", "people", "p1", "first", operationTimeout.Token);
+        await GetAsync(tenant, "shop", "people", "p1", operationTimeout.Token);
+        await ListAsync(tenant, "shop", "people", operationTimeout.Token);
+        var engine = server.Services.GetRequiredService<IStorageEngine>();
+        var shop = await tenant.ContextAsync(management.Server, "shop", operationTimeout.Token);
+
+        // Replication applies remote writes through an engine transaction, as this does.
+        var store = (await engine.OpenDatabaseAsync(shop, operationTimeout.Token))!;
+        var transaction = await store.BeginTransactionAsync(write: true, operationTimeout.Token);
+        long committed;
+        await using (transaction)
+        {
+            await transaction.PutAsync("people", StorageFixture.Id("p1"), Encoding.UTF8.GetBytes("""{"name":"applied"}"""), operationTimeout.Token);
+            committed = await transaction.CommitAsync(operationTimeout.Token);
+        }
+
+        var applied = await GetAsync(tenant, "shop", "people", "p1", operationTimeout.Token);
+        var appliedPage = await ListAsync(tenant, "shop", "people", operationTimeout.Token);
+        // A deleted and recreated database starts empty.
+        await engine.DeleteDatabaseAsync(shop, operationTimeout.Token);
+        await Assert.That(await engine.CreateDatabaseAsync(shop, operationTimeout.Token)).IsTrue();
+        using var recreated = await client.GetAsync(new Uri($"/v1/projects/{tenant.ProjectId}/databases/shop/collections/people/documents/{StorageFixture.Id("p1")}", UriKind.Relative), operationTimeout.Token);
+        await StorageFixture.CreateCollectionAsync(tenant, "shop", "people", operationTimeout.Token);
+        var recreatedPage = await ListAsync(tenant, "shop", "people", operationTimeout.Token);
+
+        await Assert.That(applied.Version).IsNotEqualTo(initial);
+        await Assert.That(applied).IsEqualTo((ETags.Version(transaction.Incarnation, "people", StorageFixture.Id("p1"), committed, Encoding.UTF8.GetBytes("""{"name":"applied"}""")), "applied"));
+        await Assert.That(appliedPage).IsEquivalentTo([$"{StorageFixture.Id("p1")}:applied"]);
+        await Assert.That(recreated.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+        await Assert.That(recreatedPage).IsEmpty();
+    }
+
+    [Test]
+    public async Task Repeated_writes_invalidate_each_touched_stamp_once_at_commit()
+    {
+        using var operationTimeout = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
+        const int Writes = 1024;
+        await using var management = await ManagementApi.StartAsync();
+        var server = management.Server;
+        using var tenant = await CreateTenantAsync(management, "shop", operationTimeout.Token);
+        var initial = await PutAsync(tenant, "shop", "items", "hot", "first", operationTimeout.Token);
+        var shop = await tenant.ContextAsync(management.Server, "shop", operationTimeout.Token);
+        var store = (await server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(shop, operationTimeout.Token))!;
+        var stamps = server.Services.GetRequiredService<IWriteStamps>();
+        var transaction = await store.BeginTransactionAsync(write: true, operationTimeout.Token);
+        long committed;
+        await using (transaction)
+        {
+            var json = Encoding.UTF8.GetBytes("""{"name":"applied"}""");
+            for (var i = 0; i < Writes; i++)
+            {
+                await transaction.PutAsync("items", StorageFixture.Id("hot"), json, operationTimeout.Token);
+            }
+
+            // Cache the committed old value while the write is in flight.
+            await Assert.That(await GetAsync(tenant, "shop", "items", "hot", operationTimeout.Token)).IsEqualTo((initial, "first"));
+            await ListAsync(tenant, "shop", "items", operationTimeout.Token);
+            var before = stamps.Collection(shop, "items");
+            committed = await transaction.CommitAsync(operationTimeout.Token);
+            // Tracking is by touched stripe, independent of repeated write count.
+            await Assert.That(stamps.Collection(shop, "items") - before).IsEqualTo(1);
+        }
+
+        await Assert.That(await GetAsync(tenant, "shop", "items", "hot", operationTimeout.Token)).IsEqualTo((ETags.Version(transaction.Incarnation, "items", StorageFixture.Id("hot"), committed, Encoding.UTF8.GetBytes("""{"name":"applied"}""")), "applied"));
+        await Assert.That(await ListAsync(tenant, "shop", "items", operationTimeout.Token)).IsEquivalentTo([$"{StorageFixture.Id("hot")}:applied"]);
+    }
+
+    [Test]
+    public async Task Writes_started_together_in_one_engine_transaction_all_invalidate()
+    {
+        using var operationTimeout = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
+        const int Documents = 32;
+        await using var management = await ManagementApi.StartAsync();
+        var server = management.Server;
+        using var tenant = await CreateTenantAsync(management, "shop", operationTimeout.Token);
+        var ids = Enumerable.Range(0, Documents).Select(i => $"d{i}").ToList();
+        foreach (var id in ids)
+        {
+            await PutAsync(tenant, "shop", "items", id, "first", operationTimeout.Token);
+            await GetAsync(tenant, "shop", "items", id, operationTimeout.Token);
+        }
+
+        var shop = await tenant.ContextAsync(management.Server, "shop", operationTimeout.Token);
+        var store = (await server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(shop, operationTimeout.Token))!;
+        var transaction = await store.BeginTransactionAsync(write: true, operationTimeout.Token);
+        await using (transaction)
+        {
+            var pending = new List<Task>();
+            Exception? primaryFailure = null;
+            try
+            {
+                // Not awaited one by one: every write must still be tracked for the post-commit stamp move,
+                // while readers cache the old values in between.
+                foreach (var id in ids)
+                {
+                    pending.Add(transaction.PutAsync("items", StorageFixture.Id(id), Encoding.UTF8.GetBytes("""{"name":"applied"}"""), operationTimeout.Token).AsTask());
+                }
+
+                foreach (var id in ids)
+                {
+                    pending.Add(GetAsync(tenant, "shop", "items", id, operationTimeout.Token));
+                }
+
+                await Task.WhenAll(pending).WaitAsync(operationTimeout.Token);
+                await transaction.CommitAsync(operationTimeout.Token);
+                var verification = ids.Select(async id => (await GetAsync(tenant, "shop", "items", id, operationTimeout.Token)).Name).ToList();
+                pending.AddRange(verification);
+                var names = await Task.WhenAll(verification).WaitAsync(operationTimeout.Token);
+                await Assert.That(names).All().Satisfy(name => name.IsEqualTo("applied"));
+            }
+            catch (Exception error)
+            {
+                primaryFailure = error;
+                throw;
+            }
+            finally
+            {
+                operationTimeout.Cancel();
+                await StoragePoolTests.JoinCleanupAsync(pending, primaryFailure);
+            }
+        }
+    }
+
+    [Test]
+    public async Task The_cache_stays_within_its_share_of_the_memory_budget()
+    {
+        const int Documents = 48;
+        const int DocumentBytes = 64 * 1024;
+        const long Budget = 4 * 1024 * 1024;
+        // A 4 MiB budget leaves the cache 1 MiB: at most 16 of these 48 documents.
+        await using var management = await ManagementApi.StartAsync(settings =>
+        {
+            settings["memory-budget"] = Budget.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        });
+        var server = management.Server;
+        using var tenant = await CreateTenantAsync(management, "big");
+        var client = tenant.Data;
+        var padding = new string('x', DocumentBytes);
+        for (var i = 0; i < Documents; i++)
+        {
+            using var written = await client.PutAsJsonAsync(
+                new Uri($"/v1/projects/{tenant.ProjectId}/databases/big/collections/blobs/documents/{StorageFixture.Id($"b{i}")}", UriKind.Relative),
+                new { name = "first", padding });
+            written.EnsureSuccessStatusCode();
+        }
+
+        for (var i = 0; i < Documents; i++)
+        {
+            await GetAsync(tenant, "big", "blobs", $"b{i}");
+        }
+
+        // Measured through the budget, which reading would not change: the cache holds entries, and once the
+        // entries it refused have returned their reservations (callbacks run on the thread pool) it holds at
+        // most its quarter.
+        var budget = server.Services.GetRequiredService<IMemoryBudget>();
+        using (var everything = budget.TryReserve(MemoryLane.Foreground, Budget))
+        {
+            await Assert.That(everything).IsNull();
+        }
+
+        IMemoryReservation? rest = null;
+        using (var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken))
+        {
+            while ((rest = budget.TryReserve(MemoryLane.Foreground, Budget - (Budget / 4))) is null && !deadline.IsCancellationRequested)
+            {
+                await Task.Delay(10, TUnit.Core.TestContext.Current!.Execution.CancellationToken);
+            }
+        }
+
+        using var recovered = rest;
+        await Assert.That(recovered).IsNotNull();
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Oversized_reads_bypass_admission_and_preserve_useful_cached_entries(bool list)
+    {
+        const long Budget = 4 * 1024 * 1024;
+        const int CacheBytes = (int)(Budget / 4);
+        await using var management = await ManagementApi.StartAsync(settings =>
+        {
+            settings["memory-budget"] = Budget.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        }, services =>
+        {
+            // Observe admission while retaining the real budget's accounting and limits.
+            var registration = services.Single(service => service.ServiceType == typeof(IMemoryBudget));
+            services.Remove(registration);
+            services.AddSingleton<IMemoryBudget>(provider => new ObservedMemoryBudget(
+                (IMemoryBudget)registration.ImplementationFactory!(provider), CacheBytes));
+        });
+        var server = management.Server;
+        using var tenant = await CreateTenantAsync(management, "oversized");
+        var client = tenant.Data;
+        var file = await tenant.FileAsync(server, "oversized");
+        // Above MemoryCache's 95% compaction target, but below its 1 MiB limit: a rejected oversized
+        // entry would evict this useful entry. Each test warms either a point read or a list page.
+        using (var response = await client.PutAsJsonAsync(
+            new Uri($"/v1/projects/{tenant.ProjectId}/databases/oversized/collections/small/documents/{StorageFixture.Id("a")}", UriKind.Relative),
+            new { name = "first", padding = new string('x', 1000 * 1024) }))
+        {
+            response.EnsureSuccessStatusCode();
+        }
+
+        string[] ids = list ? ["a", "b"] : ["a"];
+        // A legal document's JSON plus cache overhead exceeds 1 MiB; a page exceeds it in aggregate.
+        var padding = new string('x', list ? 600 * 1024 : CacheBytes - 64);
+        foreach (var id in ids)
+        {
+            using var response = await client.PutAsJsonAsync(
+                new Uri($"/v1/projects/{tenant.ProjectId}/databases/oversized/collections/large/documents/{StorageFixture.Id(id)}", UriKind.Relative),
+                new { name = "first", padding });
+            response.EnsureSuccessStatusCode();
+        }
+
+        async Task<List<string>> ReadAsync(string collection)
+        {
+            return list
+                ? await ListAsync(tenant, "oversized", collection)
+                : [$"{StorageFixture.Id("a")}:{(await GetAsync(tenant, "oversized", collection, "a")).Name}"];
+        }
+
+        await Assert.That(await ReadAsync("small")).IsEquivalentTo([$"{StorageFixture.Id("a")}:first"]);
+        await StorageFixture.ExecuteAsync(file,
+            """UPDATE documents SET body = json_set(body, '$.name', 'disk') WHERE collection = 'small';""");
+        var budget = (ObservedMemoryBudget)server.Services.GetRequiredService<IMemoryBudget>();
+        for (var i = 0; i < 5; i++)
+        {
+            await StorageFixture.ExecuteAsync(file,
+                $"UPDATE documents SET body = json_set(body, '$.name', 'disk{i}') WHERE collection = 'large';");
+            await Assert.That(await ReadAsync("large")).IsEquivalentTo(ids.Select(id => $"{StorageFixture.Id(id)}:disk{i}"));
+            // Synchronous admission observation catches guard removal even before asynchronous
+            // compaction runs; no sleep or thread-pool scheduling assumption is needed.
+            await Assert.That(budget.OversizedAttempts).IsEqualTo(0);
+            await Assert.That(await ReadAsync("small")).IsEquivalentTo([$"{StorageFixture.Id("a")}:first"]);
+        }
+    }
+
+    [Test]
+    public async Task Concurrent_reads_never_return_a_version_older_than_an_acknowledged_write()
+    {
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
+        const int Writes = 100;
+        await using var management = await ManagementApi.StartAsync();
+        var server = management.Server;
+        using var tenant = await CreateTenantAsync(management, "race", deadline.Token);
+        var client = tenant.Data;
+        await PutAsync(tenant, "race", "items", "hot", "1", deadline.Token);
+        long acknowledged = 1;
+        var database = await tenant.ContextAsync(management.Server, "race", deadline.Token);
+        var store = (await server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(database, deadline.Token))!;
+        var transaction = await store.BeginTransactionAsync(write: false, deadline.Token);
+        await using var transactionCleanup = transaction;
+        var incarnation = transaction.Incarnation;
+        var initialOffset = (await transaction.GetAsync("items", StorageFixture.Id("hot"), deadline.Token))!.Version;
+        var done = false;
+        var stale = 0;
+        var reads = 0;
+
+        async Task ReadAsync(bool list, CancellationToken cancellationToken)
+        {
+            while (!Volatile.Read(ref done))
+            {
+                var floor = Volatile.Read(ref acknowledged);
+                var document = list
+                    ? await ListedDocumentAsync(tenant, cancellationToken)
+                    : await GetAsync(tenant, "race", "items", "hot", cancellationToken);
+                var version = long.Parse(document.Name, System.Globalization.CultureInfo.InvariantCulture);
+                await Assert.That(document.Version).IsEqualTo(ETags.Version(incarnation, "items", StorageFixture.Id("hot"), initialOffset + version - 1,
+                    Encoding.UTF8.GetBytes($$"""{"name":"{{document.Name}}"}""")));
+                Interlocked.Increment(ref reads);
+                if (version < floor)
+                {
+                    Interlocked.Increment(ref stale);
+                }
+            }
+        }
+
+        var readers = Enumerable.Range(0, 6).Select(i => Task.Run(() => ReadAsync(list: i % 3 == 0, deadline.Token), deadline.Token)).ToList();
+        Exception? primaryFailure = null;
+        try
+        {
+            for (var i = 1; i < Writes; i++)
+            {
+                await PutAsync(tenant, "race", "items", "hot", (i + 1).ToString(System.Globalization.CultureInfo.InvariantCulture), deadline.Token);
+                Volatile.Write(ref acknowledged, i + 1);
+            }
+            Volatile.Write(ref done, true);
+            await Task.WhenAll(readers).WaitAsync(deadline.Token);
+        }
+        catch (Exception error)
+        {
+            primaryFailure = error;
+            throw;
+        }
+        finally
+        {
+            Volatile.Write(ref done, true);
+            deadline.Cancel();
+            await StoragePoolTests.JoinCleanupAsync(readers, primaryFailure);
+        }
+
+        await Assert.That(acknowledged).IsEqualTo(Writes);
+        await Assert.That(reads).IsGreaterThan(0);
+        await Assert.That(stale).IsEqualTo(0);
+    }
+
+    private static async Task<(string Version, string Name)> ListedDocumentAsync(Tenant tenant, CancellationToken cancellationToken)
+    {
+        var client = tenant.Data;
+        using var page = JsonDocument.Parse(await client.GetStringAsync(new Uri($"/v1/projects/{tenant.ProjectId}/databases/race/collections/items/documents", UriKind.Relative), cancellationToken));
+        var document = page.RootElement.GetProperty("items")[0];
+        return (document.GetProperty("version").GetString()!, document.GetProperty("document").GetProperty("name").GetString()!);
+    }
+
+    private static async Task<Tenant> CreateTenantAsync(ManagementApi management, string database, CancellationToken cancellationToken = default)
+    {
+        var tenant = await management.CreateTenantAsync("documents:read", "documents:write");
+        try
+        {
+            await tenant.ContextAsync(management.Server, database, cancellationToken);
+            foreach (var collection in new[] { "items", "people", "blobs", "small", "large" })
+            {
+                await StorageFixture.CreateCollectionAsync(tenant, database, collection, cancellationToken);
+            }
+
+            return tenant;
+        }
+        catch
+        {
+            tenant.Dispose();
+            throw;
+        }
+    }
+
+    private static async Task<string> PutAsync(
+        Tenant tenant, string database, string collection, string id, string name, CancellationToken cancellationToken = default)
+    {
+        var client = tenant.Data;
+        using var response = await client.PutAsJsonAsync(
+            new Uri($"/v1/projects/{tenant.ProjectId}/databases/{database}/collections/{collection}/documents/{StorageFixture.Id(id)}", UriKind.Relative), new { name }, cancellationToken);
+        return (await response.EnsureSuccessStatusCode().Content.ReadFromJsonAsync<JsonElement>(cancellationToken)).GetProperty("version").GetString()!;
+    }
+
+    private static async Task<(string Version, string Name)> GetAsync(
+        Tenant tenant, string database, string collection, string id, CancellationToken cancellationToken = default)
+    {
+        var client = tenant.Data;
+        using var document = JsonDocument.Parse(await client.GetStringAsync(
+            new Uri($"/v1/projects/{tenant.ProjectId}/databases/{database}/collections/{collection}/documents/{StorageFixture.Id(id)}", UriKind.Relative), cancellationToken));
+        return (document.RootElement.GetProperty("version").GetString()!, document.RootElement.GetProperty("document").GetProperty("name").GetString()!);
+    }
+
+    // Each document as "id:name".
+    private static async Task<List<string>> ListAsync(
+        Tenant tenant, string database, string collection, CancellationToken cancellationToken = default)
+    {
+        var client = tenant.Data;
+        using var page = JsonDocument.Parse(await client.GetStringAsync(
+            new Uri($"/v1/projects/{tenant.ProjectId}/databases/{database}/collections/{collection}/documents", UriKind.Relative), cancellationToken));
+        return [.. page.RootElement.GetProperty("items").EnumerateArray().Select(document =>
+            $"{document.GetProperty("id").GetString()}:{document.GetProperty("document").GetProperty("name").GetString()}")];
+    }
+
+    private sealed class ObservedMemoryBudget(IMemoryBudget inner, long cacheLimit) : IMemoryBudget
+    {
+        private int _oversizedAttempts;
+
+        public int OversizedAttempts => Volatile.Read(ref _oversizedAttempts);
+
+        public IMemoryReservation? TryReserve(MemoryLane lane, long bytes)
+        {
+            if (bytes > cacheLimit)
+            {
+                Interlocked.Increment(ref _oversizedAttempts);
+            }
+
+            return inner.TryReserve(lane, bytes);
+        }
+    }
+}

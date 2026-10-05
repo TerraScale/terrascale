@@ -22,7 +22,7 @@ public interface IMemoryReservation : IDisposable
 
 /// <summary>
 /// Process memory admission. Reserve before reading, decoding, queueing or materializing data,
-/// and release on completion, cancellation and error. Not implemented yet.
+/// and release on completion, cancellation and error. Sized by <c>memory-budget</c> (<c>docs/memory.md</c>).
 /// </summary>
 public interface IMemoryBudget
 {

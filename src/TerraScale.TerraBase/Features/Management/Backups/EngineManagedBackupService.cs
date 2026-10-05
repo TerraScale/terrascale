@@ -241,7 +241,7 @@ internal sealed partial class EngineManagedBackupService(
                 {
                     await SnapshotAsync(userId: null, record, cancellationToken).ConfigureAwait(false);
                 }
-                catch (Exception error) when (!cancellationToken.IsCancellationRequested)
+                catch (Exception error) when (error is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
                 {
                     // Already recorded as a failed attempt, or left to a later sweep; the next database still gets its turn.
                     LogScheduleFailed(logger, record.DatabaseId, error);

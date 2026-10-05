@@ -703,7 +703,7 @@ public sealed class DatabaseRecoveryTests
         }
 
         using var external = new RecoveryData();
-        var externalOptions = new TerraBaseOptions { AdminPort = 0, DataDirectory = external.Directory };
+        var externalOptions = new TerraBaseOptions { AdminPort = 0, DataDirectory = external.Directory, MemoryBudget = 64 * 1024 * 1024, StorageThreads = 1, StorageQueue = 16 };
         var externalServices = new ServiceCollection();
         externalServices.AddSingleton(externalOptions);
         externalServices.AddLogging();
@@ -735,7 +735,7 @@ public sealed class DatabaseRecoveryTests
         try
         {
             File.CreateSymbolicLink(link, target);
-            var options = new TerraBaseOptions { AdminPort = 0, DataDirectory = state.Directory };
+            var options = new TerraBaseOptions { AdminPort = 0, DataDirectory = state.Directory, MemoryBudget = 64 * 1024 * 1024, StorageThreads = 1, StorageQueue = 16 };
             var services = new ServiceCollection();
             services.AddSingleton(options);
             services.AddLogging();
@@ -1338,7 +1338,7 @@ public sealed class DatabaseRecoveryTests
         }
 
         var target = state.Faker.Random.Guid().ToString();
-        var options = new TerraBaseOptions { AdminPort = 0, DataDirectory = state.Directory };
+        var options = new TerraBaseOptions { AdminPort = 0, DataDirectory = state.Directory, MemoryBudget = 64 * 1024 * 1024, StorageThreads = 1, StorageQueue = 16 };
         var services = new ServiceCollection();
         services.AddSingleton(options);
         services.AddLogging();

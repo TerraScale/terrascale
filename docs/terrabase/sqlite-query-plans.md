@@ -31,6 +31,9 @@ The partial `changes_deleted (collection, id, version) WHERE body IS NULL` index
 delete/drop merge evidence without changing public document/version reads. Incoming puts and tombstones
 seek at most one deletion at or above their version before creating collection metadata; the shared
 clock still observes every incoming version. A newer state remains eligible for the document merge.
+`shape_history (id, floor)` records the history baseline; `change_log` retains client-database
+changes with collection generation, document id, commit version and sequence. Its two indexes
+support the shape seeks described below. `_system` has the same schema but retains no shape history.
 
 | Statement | Hot path | Plan before | Plan after |
 | --- | --- | --- | --- |
@@ -113,8 +116,9 @@ failure closes the session instead of pooling it.
 | `journal_mode` | `WAL` | Persistent in the file (set at migration). Readers never block the writer. |
 | `synchronous` | `NORMAL` | Decision 0003 (`docs/decisions/0003-sqlite-synchronous-normal.md`). A commit no longer waits for an fsync; SQLite syncs the WAL before each checkpoint. Committed transactions, including acknowledged writes, can be lost after a power loss or an OS crash, but not after a process crash, and the file is never corrupted. Accepted for write throughput. Every connection uses it, including the one that creates a database. |
 | `busy_timeout` | 30 s | SQLite's own busy handler (1–100 ms back-off) instead of Microsoft.Data.Sqlite's retry loop, which sleeps 150 ms between attempts: a writer behind a 20 ms write lock waited 150 ms before, 34 ms after. Same 30 s bound as the command timeout. Cancellable session setup, migration, transaction acquisition and journal reads temporarily use 100 ms native busy backoff and the provider retry loop in 1 s slices, checking cancellation between retries and interrupting active VM work, so native busy waits cannot outlast the replication attempt. |
-| `mmap_size` | 256 MiB | Reads map pages instead of copying them through `read()`: about 5–10 % faster point reads and 25 % faster full listings in the benchmark below. Address space only; pages are the OS page cache. |
-| `cache_size` | default (2 MiB) | With mmap, reads bypass most of the page cache. Per-connection memory stays bounded at 2 MiB × idle connections. |
+| `mmap_size` | `memory-budget`, at least 256 MiB | Reads map pages instead of copying them through `read()`: about 5–10 % faster point reads and 25 % faster full listings in the benchmark below. Address space only; pages are the OS page cache, not the heap, so it can be as large as the budget. SQLite caps it at its compile-time maximum (2 GiB by default). |
+| `cache_size` | ¼ of `memory-budget` ÷ `storage-threads`, at least 2 MiB | The page cache holds pages that writes change and pages mmap does not cover. A quarter of the budget, split across the connections that run at once (one per storage thread). Idle pooled connections keep their cache; it grows only with pages actually read. |
+| `soft_heap_limit` | ¼ of `memory-budget` | Process-wide (`sqlite3_soft_heap_limit64`, set once per engine): SQLite frees page cache to keep its whole heap under the page-cache quarter, so idle connections cannot add up past it. Soft: allocations never fail because of it. Another engine in the same process (tests run several) only raises it. |
 | `temp_store` | default | No fixed statement uses temporary storage (asserted: no `TEMP B-TREE` in any plan); a query sorted on a document field does. |
 | `foreign_keys` | default | The schema has no foreign keys. |
 
@@ -123,8 +127,8 @@ Each idle connection keeps its prepared statements, so a statement is compiled o
 not once per request. At most `ProcessorCount` connections stay idle per database and
 `4 × ProcessorCount` in total, across every database. When the total is reached, pooling a
 connection closes the least recently pooled one, whichever database it belongs to. A node with many
-databases therefore keeps file handles and page caches (at most 2 MiB each, `cache_size`) only for
-the databases in use. An extra connection opened under load is closed when it is returned.
+databases therefore keeps file handles and page caches (`cache_size` each, all of them together under
+`soft_heap_limit`) only for the databases in use. An extra connection opened under load is closed when it is returned.
 
 One lock guards the idle connections, so a connection is idle, rented by one transaction, or
 closed, never two at once. A deleted or shut-down database closes its idle connections, hands out

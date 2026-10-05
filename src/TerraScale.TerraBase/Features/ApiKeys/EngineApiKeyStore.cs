@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using TerraScale.TerraBase.Engine;
+using TerraScale.TerraBase.Features.Documents;
 using TerraScale.TerraBase.Features.Management;
 using TerraScale.TerraBase.Hosting;
 using static TerraScale.TerraBase.Features.Management.SystemCatalog;
@@ -14,7 +15,7 @@ namespace TerraScale.TerraBase.Features.ApiKeys;
 /// A project key is an <see cref="ApiKey"/> narrowed to its project; it also has a <see cref="ProjectKeyEntry"/> in
 /// <see cref="ProjectKeys"/>, written and deleted in the same transaction as its hash document.
 /// </summary>
-internal sealed class EngineApiKeyStore(SystemCatalog catalog, TimeProvider time) : IApiKeyStore
+internal sealed class EngineApiKeyStore(SystemCatalog catalog, TimeProvider time, ISystemDocumentReader documents) : IApiKeyStore
 {
     private const string Collection = "api_keys";
     private const string KeySequence = "api_key_sequence";
@@ -43,14 +44,19 @@ internal sealed class EngineApiKeyStore(SystemCatalog catalog, TimeProvider time
         return key is null ? null : (key, secret);
     }
 
-    public async ValueTask<ApiKey?> FindAsync(string secret, CancellationToken cancellationToken) =>
-        secret.StartsWith(SecretPrefix, StringComparison.Ordinal)
-            // A key stored before tenancy names no organization: it reaches nothing, so it does not authenticate.
-            && await catalog.ReadUncheckedAsync(
-                transaction => GetAsync(transaction, Collection, Hash(secret), TerraBaseJsonContext.Default.ApiKey, cancellationToken),
-                cancellationToken).ConfigureAwait(false) is { OrganizationId: not null } key
-            ? key
-            : null;
+    public async ValueTask<ApiKey?> FindAsync(string secret, CancellationToken cancellationToken)
+    {
+        if (!secret.StartsWith(SecretPrefix, StringComparison.Ordinal))
+        {
+            return null;
+        }
+
+        var document = await documents.GetSystemAsync(Collection, Hash(secret), cancellationToken).ConfigureAwait(false);
+        // Keys predating tenancy authenticate nothing; catalog migration is independent of data-plane reads.
+        return document is null || JsonSerializer.Deserialize(document.Json.Span, TerraBaseJsonContext.Default.ApiKey) is not { OrganizationId: not null } key
+            ? null
+            : key;
+    }
 
     public async ValueTask<ManagementResult<CreatedProjectApiKey>> CreateProjectKeyAsync(
         string userId, string organizationId, string projectId, string name, IReadOnlyList<string> scopes, string? databaseId, CancellationToken cancellationToken)

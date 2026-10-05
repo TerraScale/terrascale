@@ -8,11 +8,7 @@ using TerraScale.TerraBase.Tenancy;
 
 namespace TerraScale.TerraBase.Features.Documents;
 
-/// <remarks>
-/// Usage: a get, and a list or query page (with its optional count), is one read once the engine answered it; each put,
-/// patch and delete is one write once its transaction committed. Rejected and failed requests count nothing.
-/// </remarks>
-internal sealed class DocumentService(IStorageEngine engine, TimeProvider time, IUsageMeter usage) : IDocumentService
+internal sealed class DocumentService(IStorageEngine engine, TimeProvider time, DocumentCache cache, IUsageMeter usage) : IDocumentService, ISystemDocumentReader
 {
     // assert_count examines at most this many documents.
     private const long MaxAssertCount = 10_000;
@@ -73,31 +69,65 @@ internal sealed class DocumentService(IStorageEngine engine, TimeProvider time, 
 
     public async ValueTask<StoredDocument?> GetAsync(DocumentKey key, CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
+        var result = await cache.GetAsync(key, () => ReadAsync(key, cancellationToken)).ConfigureAwait(false);
+        usage.RecordRead(key.Database);
+        return result;
+    }
+
+    public ValueTask<StoredDocument?> GetSystemAsync(string collection, string id, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return cache.GetSystemAsync(collection, id, () => ReadSystemAsync(collection, id, cancellationToken));
+    }
+
+    // Internal system documents use opaque ids and do not require client collection metadata.
+    private async ValueTask<StoredDocument?> ReadSystemAsync(string collection, string id, CancellationToken cancellationToken)
+    {
+        var store = await engine.OpenSystemDatabaseAsync(cancellationToken).ConfigureAwait(false);
+
+        var transaction = await store.BeginTransactionAsync(write: false, cancellationToken).ConfigureAwait(false);
+        await using (transaction.ConfigureAwait(false))
+        {
+            return await transaction.GetAsync(collection, id, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private async ValueTask<StoredDocument?> ReadAsync(DocumentKey key, CancellationToken cancellationToken)
+    {
         var transaction = await BeginAsync(key.Database, write: false, cancellationToken).ConfigureAwait(false);
         await using (transaction.ConfigureAwait(false))
         {
             await CollectionAsync(transaction, key.Collection, cancellationToken).ConfigureAwait(false);
             await RequireAddressAsync(transaction, key.Collection, key.Id, cancellationToken).ConfigureAwait(false);
             // A deleted document comes back as its tombstone, without a body, so its 404 can carry its version.
-            var document = await transaction.GetAsync(key.Collection, key.Id, cancellationToken).ConfigureAwait(false)
+            return await transaction.GetAsync(key.Collection, key.Id, cancellationToken).ConfigureAwait(false)
                 ?? (await transaction.GetVersionAsync(key.Collection, key.Id, cancellationToken).ConfigureAwait(false) is { Deleted: true } tombstone
                     ? new StoredDocument(key.Id, tombstone.Version, ReadOnlyMemory<byte>.Empty, transaction.Incarnation, Deleted: true)
                     : null);
-            usage.RecordRead(key.Database);
-            return document;
         }
     }
 
     public async ValueTask<(QueryPage Page, (long Count, bool Complete)? Count)> QueryAsync(
         TenantContext database, DocumentQuery query, long? countLimit, CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
+        var result = await cache.QueryAsync(database, query, countLimit, () => ReadQueryAsync(database, query, countLimit, cancellationToken))
+            .ConfigureAwait(false);
+        cancellationToken.ThrowIfCancellationRequested();
+        usage.RecordRead(database);
+        return (result.Page, result.Count);
+    }
+
+    private async ValueTask<CachedQuery> ReadQueryAsync(
+        TenantContext database, DocumentQuery query, long? countLimit, CancellationToken cancellationToken)
+    {
         var transaction = await BeginAsync(database, write: false, cancellationToken).ConfigureAwait(false);
         await using (transaction.ConfigureAwait(false))
         {
             await CollectionAsync(transaction, query.Collection, cancellationToken).ConfigureAwait(false);
-            var result = await QueryAsync(transaction, query, countLimit, cancellationToken).ConfigureAwait(false);
-            usage.RecordRead(database);
-            return result;
+            var (page, count) = await QueryAsync(transaction, query, countLimit, cancellationToken).ConfigureAwait(false);
+            return new CachedQuery(page, count);
         }
     }
 
@@ -373,4 +403,11 @@ internal sealed class DocumentService(IStorageEngine engine, TimeProvider time, 
             ?? throw DocumentRoute.UnknownDatabase();
         return await store.BeginTransactionAsync(write, cancellationToken).ConfigureAwait(false);
     }
+}
+
+/// <summary>Cached reads of TerraBase-owned documents; tenant document routes never address system storage.</summary>
+public interface ISystemDocumentReader
+{
+    /// <summary>Reads an opaque document id from system storage without requiring client collection metadata.</summary>
+    ValueTask<StoredDocument?> GetSystemAsync(string collection, string id, CancellationToken cancellationToken);
 }

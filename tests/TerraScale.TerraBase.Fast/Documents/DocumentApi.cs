@@ -63,16 +63,19 @@ internal sealed class DocumentApi : IAsyncDisposable
 
     /// <summary>Starts a server and creates <c>db</c> and <c>items</c> in a new tenant, with a read and write key.</summary>
     public static async Task<DocumentApi> StartAsync(
-        Action<Dictionary<string, string>>? configure = null, Action<Microsoft.Extensions.DependencyInjection.IServiceCollection>? services = null)
+        Action<Dictionary<string, string>>? configure = null, Action<IServiceCollection>? services = null,
+        CancellationToken cancellationToken = default)
     {
-        var management = await ManagementApi.StartAsync(configure, services: services);
+        cancellationToken.ThrowIfCancellationRequested();
+        var management = await ManagementApi.StartAsync(configure, services);
         Tenant? tenant = null;
         try
         {
+            cancellationToken.ThrowIfCancellationRequested();
             tenant = await management.CreateTenantAsync("documents:read", "documents:write");
             var api = new DocumentApi(management, tenant);
-            (await api.SendAsync(HttpMethod.Put, api.DatabasePath())).Status.ShouldBe(HttpStatusCode.Created);
-            (await api.SendAsync(HttpMethod.Post, $"{api.DatabasePath()}/collections", new { name = Collection })).Status.ShouldBe(HttpStatusCode.Created);
+            (await api.SendAsync(HttpMethod.Put, api.DatabasePath(), cancellationToken: cancellationToken)).Status.ShouldBe(HttpStatusCode.Created);
+            (await api.SendAsync(HttpMethod.Post, $"{api.DatabasePath()}/collections", new { name = Collection }, cancellationToken: cancellationToken)).Status.ShouldBe(HttpStatusCode.Created);
             return api;
         }
         catch
@@ -88,15 +91,15 @@ internal sealed class DocumentApi : IAsyncDisposable
     public string DatabasePath(string name = Database) => $"{Project}/databases/{name}";
 
     /// <summary>Deletes a database of the tenant's project through the Management API, as the tenant's owner.</summary>
-    public async Task DeleteDatabaseAsync(string name = Database)
+    public async Task DeleteDatabaseAsync(string name = Database, CancellationToken cancellationToken = default)
     {
         // Creating an existing database is idempotent and returns its id.
-        var database = await SendAsync(HttpMethod.Put, DatabasePath(name));
+        var database = await SendAsync(HttpMethod.Put, DatabasePath(name), cancellationToken: cancellationToken);
         database.Status.ShouldBe(HttpStatusCode.OK);
         using var owner = Management.As(Tenant.User);
         using var deleted = await owner.DeleteAsync(new Uri(
             $"/v1/management/organizations/{Tenant.OrganizationId}/projects/{Tenant.ProjectId}/databases/{database.Json.GetProperty("id").GetString()}",
-            UriKind.Relative));
+            UriKind.Relative), cancellationToken);
         deleted.StatusCode.ShouldBe(HttpStatusCode.NoContent);
     }
 
@@ -119,10 +122,10 @@ internal sealed class DocumentApi : IAsyncDisposable
     }
 
     /// <summary>The tenant context of database <paramref name="name"/> of the tenant's project, as the engine addresses it.</summary>
-    public async Task<TenantContext> TenantOfAsync(string name = Database)
+    public async Task<TenantContext> TenantOfAsync(string name = Database, CancellationToken cancellationToken = default)
     {
         // Creating an existing database is idempotent and returns its id.
-        var database = await SendAsync(HttpMethod.Put, DatabasePath(name));
+        var database = await SendAsync(HttpMethod.Put, DatabasePath(name), cancellationToken: cancellationToken);
         database.Status.ShouldBe(HttpStatusCode.OK);
         return new TenantContext(Tenant.OrganizationId, PlanTier.Hobby, Tenant.ProjectId, database.Json.GetProperty("id").GetString());
     }
@@ -153,29 +156,37 @@ internal sealed class DocumentApi : IAsyncDisposable
     public async Task<HttpClient> ClientWithScopesAsync(params string[] scopes) =>
         Management.DataClient(await Server.IssueAsync(Tenant.OrganizationId, scopes));
 
-    public Task<ApiResponse> PutAsync(string id, object document, Action<HttpRequestMessage>? configure = null) =>
-        SendAsync(HttpMethod.Put, Document(id), document, configure);
+    public Task<ApiResponse> PutAsync(
+        string id, object document, Action<HttpRequestMessage>? configure = null, CancellationToken cancellationToken = default) =>
+        SendAsync(HttpMethod.Put, Document(id), document, configure, cancellationToken);
 
-    public Task<ApiResponse> GetAsync(string id, Action<HttpRequestMessage>? configure = null) =>
-        SendAsync(HttpMethod.Get, Document(id), configure: configure);
+    public Task<ApiResponse> GetAsync(string id, Action<HttpRequestMessage>? configure = null, CancellationToken cancellationToken = default) =>
+        SendAsync(HttpMethod.Get, Document(id), configure: configure, cancellationToken: cancellationToken);
 
-    public Task<ApiResponse> QueryAsync(object query) => SendAsync(HttpMethod.Post, Query, query);
+    public Task<ApiResponse> QueryAsync(object query, CancellationToken cancellationToken = default) =>
+        SendAsync(HttpMethod.Post, Query, query, cancellationToken: cancellationToken);
 
-    public Task<ApiResponse> TransactAsync(params object[] ops) => SendAsync(HttpMethod.Post, Transactions, new { ops });
+    public Task<ApiResponse> TransactAsync(params object[] ops) => TransactAsync(ops, CancellationToken.None);
 
-    public Task<ApiResponse> SendAsync(HttpMethod method, string uri, object? body = null, Action<HttpRequestMessage>? configure = null) =>
-        SendAsync(Client, method, uri, body is null ? null : JsonContent.Create(body), configure);
+    public Task<ApiResponse> TransactAsync(object[] ops, CancellationToken cancellationToken) =>
+        SendAsync(HttpMethod.Post, Transactions, new { ops }, cancellationToken: cancellationToken);
 
-    public Task<ApiResponse> SendRawAsync(HttpMethod method, string uri, string body, string mediaType, Action<HttpRequestMessage>? configure = null) =>
-        SendAsync(Client, method, uri, new StringContent(body, Encoding.UTF8, mediaType), configure);
+    public Task<ApiResponse> SendAsync(
+        HttpMethod method, string uri, object? body = null, Action<HttpRequestMessage>? configure = null, CancellationToken cancellationToken = default) =>
+        SendAsync(Client, method, uri, body is null ? null : JsonContent.Create(body), configure, cancellationToken);
+
+    public Task<ApiResponse> SendRawAsync(
+        HttpMethod method, string uri, string body, string mediaType, Action<HttpRequestMessage>? configure = null, CancellationToken cancellationToken = default) =>
+        SendAsync(Client, method, uri, new StringContent(body, Encoding.UTF8, mediaType), configure, cancellationToken);
 
     public static async Task<ApiResponse> SendAsync(
-        HttpClient client, HttpMethod method, string uri, HttpContent? content = null, Action<HttpRequestMessage>? configure = null)
+        HttpClient client, HttpMethod method, string uri, HttpContent? content = null, Action<HttpRequestMessage>? configure = null,
+        CancellationToken cancellationToken = default)
     {
         using var request = new HttpRequestMessage(method, new Uri(uri, UriKind.Relative)) { Content = content };
         configure?.Invoke(request);
-        using var response = await client.SendAsync(request);
-        var text = await response.Content.ReadAsStringAsync();
+        using var response = await client.SendAsync(request, cancellationToken);
+        var text = await response.Content.ReadAsStringAsync(cancellationToken);
         JsonElement json = default;
         if (text.Length > 0)
         {

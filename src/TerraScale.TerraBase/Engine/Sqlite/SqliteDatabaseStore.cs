@@ -6,19 +6,19 @@ namespace TerraScale.TerraBase.Engine.Sqlite;
 /// <param name="name">Names the database in error messages: its id, or <c>_system</c>.</param>
 /// <param name="path">The database file.</param>
 /// <param name="pool">Idle sessions, shared by every database of the engine.</param>
+/// <param name="io">The bounded SQLite worker pool.</param>
+/// <param name="pragmas">Connection pragmas applied to each session.</param>
 /// <param name="tenant">The storage identity; null for the system database.</param>
 /// <param name="time">The clock of the query deadline.</param>
 /// <param name="changesCommitted">Receives the last captured sequence after a write commits.</param>
 /// <param name="committed">Optional engine notification after a successful commit that changed this database.</param>
 internal sealed class SqliteDatabaseStore(
-    string name, string path, SqliteSessionPool pool, TenantContext? tenant, TimeProvider time,
+    string name, string path, SqliteSessionPool pool, SqliteIoPool io, string pragmas, TenantContext? tenant, TimeProvider? time,
     Action<long>? changesCommitted, Action? committed) : IDatabaseStore, IDisposable
 {
-    internal SqliteDatabaseStore(string name, string path, SqliteSessionPool pool, TimeProvider time, Action? committed = null)
-        : this(name, path, pool, null, time, null, committed) { }
+    internal SqliteDatabaseStore(string name, string path, SqliteSessionPool pool, SqliteIoPool io, string pragmas, TimeProvider? time = null, Action? committed = null)
+        : this(name, path, pool, io, pragmas, null, time, null, committed) { }
 
-    internal SqliteDatabaseStore(string name, string path, SqliteSessionPool pool, TenantContext? tenant = null, Action<long>? changesCommitted = null)
-        : this(name, path, pool, tenant, TimeProvider.System, changesCommitted, null) { }
     /// <summary>On-disk schema version, stored in <c>PRAGMA user_version</c>.</summary>
     private const int SchemaVersion = 8;
 
@@ -207,9 +207,13 @@ internal sealed class SqliteDatabaseStore(
         return signal.WaitAsync(cancellationToken);
     }
 
-    public TenantContext? Tenant { get; } = tenant;
+    // Writers queue here, asynchronously, rather than in BEGIN IMMEDIATE: writers blocked in SQLite's
+    // busy handler would hold every I/O thread while the writer that holds the lock waits for one.
+    private readonly SemaphoreSlim _writer = new(1, 1);
 
     public Guid Incarnation { get; private set; }
+
+    public TenantContext? Tenant { get; } = tenant;
 
     /// <summary>Set once the database is deleted or the engine shuts down; guarded by <see cref="SqliteSessionPool"/>.</summary>
     internal bool Closed
@@ -220,38 +224,70 @@ internal sealed class SqliteDatabaseStore(
 
     public bool IsClosed => Closed;
 
-    internal TimeProvider Time => time;
+    internal TimeProvider Time => time ?? TimeProvider.System;
 
     /// <summary>Idle sessions of this database, for tests.</summary>
     internal int IdleCount => pool.IdleCountOf(this);
 
     public async ValueTask<IStorageTransaction> BeginTransactionAsync(bool write, CancellationToken cancellationToken)
     {
-        var session = await RentAsync(cancellationToken).ConfigureAwait(false);
+        var ownsAdmission = !io.HasAdmission;
+        if (ownsAdmission)
+        {
+            io.Admit();
+        }
+        var writing = false;
+        SqliteSession? session = null;
+        var beginStarted = false;
         try
         {
-            var transaction = await session.ExecuteAsync(async () =>
+            if (write)
             {
+                // The same 30 s bound as busy_timeout, which this wait replaces in-process.
+                if (!await _writer.WaitAsync(TimeSpan.FromSeconds(30), cancellationToken).ConfigureAwait(false))
+                {
+                    throw io.Busy();
+                }
+
+                writing = true;
+            }
+
+            session = await RentAsync(cancellationToken).ConfigureAwait(false);
+            var connection = session.Connection;
+            var transaction = await session.ExecuteAsync(io, () =>
+            {
+                beginStarted = true;
                 // BEGIN DEFERRED alone still permits a write upgrade. SQLite enforces read-only
                 // access before BEGIN; both setup and native lock acquisition share the caller's budget.
                 if (!write)
                 {
-                    var readOnly = session.Connection.CreateCommand();
-                    await using (readOnly.ConfigureAwait(false))
-                    {
-                        readOnly.CommandText = "PRAGMA query_only = ON;";
-                        await readOnly.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
-                    }
+                    using var readOnly = connection.CreateCommand();
+                    readOnly.CommandText = "PRAGMA query_only = ON;";
+                    readOnly.ExecuteNonQuery();
                 }
 
-                // Writers take the lock up front so they wait instead of failing on upgrade.
-                return session.Connection.BeginTransaction(deferred: !write);
+                // Writers take the lock up front (BEGIN IMMEDIATE) so they wait instead of failing on upgrade.
+                return connection.BeginTransaction(deferred: !write);
             }, cancellationToken).ConfigureAwait(false);
-            return new SqliteStorageTransaction(this, session, transaction, write, write ? Committed : null, write ? changesCommitted : null);
+            return new SqliteStorageTransaction(
+                this, session, transaction, io, write, write ? Committed : null, write ? changesCommitted : null, ownsAdmission);
         }
         catch
         {
-            pool.Discard(session);
+            try
+            {
+                if (session is not null && (beginStarted || !pool.TryReturn(this, session)))
+                {
+                    // A never-started BEGIN leaves the session untouched. If it cannot fit back in
+                    // the idle pool, retain admission until its worker-owned close has finished.
+                    await io.RunAsync(() => pool.Discard(session), CancellationToken.None).ConfigureAwait(false);
+                }
+            }
+            finally
+            {
+                End(writing, ownsAdmission);
+            }
+
             throw;
         }
     }
@@ -270,29 +306,43 @@ internal sealed class SqliteDatabaseStore(
         signal.SetResult();
     }
 
-    /// <summary>Writes a consistent snapshot of this database to a new file at <paramref name="path"/>.</summary>
+    /// <summary>Releases what <see cref="BeginTransactionAsync"/> took; called once per transaction.</summary>
+    internal void End(bool write, bool ownsAdmission)
+    {
+        if (write)
+        {
+            _writer.Release();
+        }
+
+        if (ownsAdmission)
+        {
+            io.Release();
+        }
+    }
+
+    /// <summary>Writes a consistent snapshot of this database to a new file at <paramref name="path"/>; the caller holds an admission.</summary>
     internal async Task CopyToAsync(string path, CancellationToken cancellationToken)
     {
         var session = await RentAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            var command = session.Connection.CreateCommand();
-            await using (command.ConfigureAwait(false))
+            await io.RunAsync(() =>
             {
+                using var command = session.Connection.CreateCommand();
                 command.CommandText = "VACUUM INTO $path;";
                 command.Parameters.AddWithValue("$path", path);
-                await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
-            }
+                command.ExecuteNonQuery();
+            }, cancellationToken).ConfigureAwait(false);
         }
         catch
         {
-            pool.Discard(session);
+            await io.RunAsync(() => pool.Discard(session), CancellationToken.None).ConfigureAwait(false);
             throw;
         }
 
-        Return(session);
+        await ReturnAsync(session).ConfigureAwait(false);
         // InitializeAsync switches the copy to WAL and refuses an unsupported schema version.
-        await InitializeAsync(name, path, SqliteStatements.MaterializeRetainedDeletions + """
+        await InitializeAsync(name, path, io, pragmas, SqliteStatements.MaterializeRetainedDeletions + """
             UPDATE replication_state SET complete = 0 WHERE id = 1;
             DELETE FROM changes;
             DELETE FROM journal_prefixes;
@@ -353,10 +403,13 @@ internal sealed class SqliteDatabaseStore(
     }
 
     /// <summary>Takes back a session whose work has ended; the pool keeps it idle or closes it.</summary>
+    /// <remarks>Call on an I/O thread: an eviction can checkpoint the WAL of another database.</remarks>
     internal void Return(SqliteSession session) => pool.Return(this, session);
 
-    /// <summary>Closes a session whose transaction failed instead of pooling it.</summary>
+    /// <summary>Closes a failed rented session; call only on an I/O worker.</summary>
     internal void Discard(SqliteSession session) => pool.Discard(session);
+
+    private Task ReturnAsync(SqliteSession session) => io.RunAsync(() => Return(session), CancellationToken.None);
 
     /// <summary>
     /// Closes idle sessions and refuses new ones; a rented session is closed when it is returned.
@@ -364,6 +417,7 @@ internal sealed class SqliteDatabaseStore(
     /// </summary>
     public void Dispose() => pool.Close(this);
 
+    // The caller holds an admission.
     private async Task<SqliteSession> RentAsync(CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -376,10 +430,11 @@ internal sealed class SqliteDatabaseStore(
         SqliteSession session;
         try
         {
-            session = await SqliteSession.OpenAsync(_connectionString, cancellationToken).ConfigureAwait(false);
+            session = await SqliteSession.OpenAsync(io, _connectionString, pragmas, cancellationToken).ConfigureAwait(false);
         }
         catch (Exception error)
         {
+            // Rent counted an opening even when cancellation removed the queued Open before it started.
             pool.OpenFailed();
             if (Closed && !cancellationToken.IsCancellationRequested)
             {
@@ -390,189 +445,171 @@ internal sealed class SqliteDatabaseStore(
             throw;
         }
 
-        return pool.Adopt(this, session);
+        // Adoption can close a session when shutdown or deletion won; keep it on the worker too.
+        return await io.RunAsync(() => pool.Adopt(this, session), CancellationToken.None).ConfigureAwait(false);
     }
 
     /// <summary>
     /// Creates (or adopts a copied) and migrates a new database file at <paramref name="path"/> on an unpooled
-    /// connection, so no handle stays open once this returns and the file can be moved.
+    /// connection, so no handle stays open once this returns and the file can be moved. The caller holds an admission.
     /// </summary>
-    internal static async Task InitializeAsync(string name, string path, string? afterMigration, CancellationToken cancellationToken)
-    {
-        var connectionString = new SqliteConnectionStringBuilder
+    internal static Task InitializeAsync(
+        string name, string path, SqliteIoPool io, string pragmas, string? afterMigration, CancellationToken cancellationToken) =>
+        io.RunAsync(() =>
         {
-            DataSource = path,
-            Mode = SqliteOpenMode.ReadWriteCreate,
-            Pooling = false,
-        }.ToString();
-        var connection = new SqliteConnection(connectionString);
-        await using (connection.ConfigureAwait(false))
-        {
-            await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+            var connectionString = new SqliteConnectionStringBuilder
+            {
+                DataSource = path,
+                Mode = SqliteOpenMode.ReadWriteCreate,
+                Pooling = false,
+            }.ToString();
+            using var connection = new SqliteConnection(connectionString);
+            connection.Open();
             // A copy made by VACUUM INTO may already be current, so set WAL here and not only in a migration.
             // The creating connection uses the same settings as every pooled one.
-            await ScalarAsync(connection, null, "PRAGMA journal_mode = WAL;" + SqliteSession.Pragmas, cancellationToken).ConfigureAwait(false);
-            await MigrateAsync(name, connection, cancellationToken).ConfigureAwait(false);
+            Scalar(connection, null, "PRAGMA journal_mode = WAL;" + pragmas);
+            Migrate(name, connection, cancellationToken);
             // Publish a fresh identity and prepare the copied baseline atomically, on this file only.
-            var transaction = connection.BeginTransaction(deferred: false);
-            await using (transaction.ConfigureAwait(false))
+            using var transaction = connection.BeginTransaction(deferred: false);
+            RenewIncarnation(connection, transaction);
+            if (afterMigration is not null)
             {
-                await RenewIncarnationAsync(connection, transaction, cancellationToken).ConfigureAwait(false);
-                if (afterMigration is not null)
-                {
-                    await ScalarAsync(connection, transaction, afterMigration, cancellationToken).ConfigureAwait(false);
-                }
-
-                await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+                Scalar(connection, transaction, afterMigration);
             }
-        }
-    }
 
+            cancellationToken.ThrowIfCancellationRequested();
+            transaction.Commit();
+            return true;
+        }, cancellationToken);
+
+    // The caller holds an admission.
     internal async Task MigrateAsync(CancellationToken cancellationToken)
     {
         var session = await RentAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            await session.ExecuteAsync(async () =>
+            await session.ExecuteAsync(io, () =>
             {
                 // A migration is atomic and rolls back before a lock error leaves this scope.
-                await MigrateAsync(name, session.Connection, cancellationToken).ConfigureAwait(false);
+                Migrate(name, session.Connection, cancellationToken);
                 Incarnation = Guid.ParseExact(
-                    (string)(await ScalarAsync(session.Connection, null, SqliteStatements.Incarnation, cancellationToken).ConfigureAwait(false)
+                    (string)(Scalar(session.Connection, null, SqliteStatements.Incarnation)
                         ?? throw new InvalidOperationException("database incarnation is missing")), "N");
-                return 0;
+                return true;
             }, cancellationToken).ConfigureAwait(false);
         }
         catch
         {
-            pool.Discard(session);
+            await io.RunAsync(() => pool.Discard(session), CancellationToken.None).ConfigureAwait(false);
             throw;
         }
 
-        Return(session);
+        await ReturnAsync(session).ConfigureAwait(false);
     }
 
-    private static async Task MigrateAsync(string name, SqliteConnection connection, CancellationToken cancellationToken)
+    private static void Migrate(string name, SqliteConnection connection, CancellationToken cancellationToken)
     {
-        if (await IsCurrentAsync(name, connection, transaction: null, cancellationToken).ConfigureAwait(false))
+        if (Version(name, connection, transaction: null) == SchemaVersion)
         {
             return;
         }
 
         // journal_mode cannot change inside a transaction; it is persistent and idempotent.
-        await ScalarAsync(connection, null, "PRAGMA journal_mode = WAL;", cancellationToken).ConfigureAwait(false);
-        var transaction = connection.BeginTransaction(deferred: false);
-        await using (transaction.ConfigureAwait(false))
+        Scalar(connection, null, "PRAGMA journal_mode = WAL;");
+        using var transaction = connection.BeginTransaction(deferred: false);
+        // Another process or caller may have migrated while this one waited for the lock.
+        var version = Version(name, connection, transaction);
+        for (; version < SchemaVersion; version++)
         {
-            // Another process or caller may have migrated while this one waited for the lock.
-            var version = await VersionAsync(name, connection, transaction, cancellationToken).ConfigureAwait(false);
-            for (; version < SchemaVersion; version++)
+            cancellationToken.ThrowIfCancellationRequested();
+            Scalar(connection, transaction, Migrations[version] + $"PRAGMA user_version = {version + 1};");
+            if (version == 3)
             {
-                await ScalarAsync(
-                    connection, transaction, Migrations[version] + $"PRAGMA user_version = {version + 1};", cancellationToken).ConfigureAwait(false);
-                if (version == 3)
-                {
-                    await RenewIncarnationAsync(connection, transaction, cancellationToken).ConfigureAwait(false);
-                }
-
-                if (version == 4 && name != SqliteStorageEngine.SystemName)
-                {
-                    await ScalarAsync(connection, transaction, ShapeBaseline, cancellationToken).ConfigureAwait(false);
-                }
-
-                if (version == 7)
-                {
-                    await BackfillJournalDigestsAsync(connection, transaction, cancellationToken).ConfigureAwait(false);
-                }
+                RenewIncarnation(connection, transaction);
             }
 
-            await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+            if (version == 4 && name != SqliteStorageEngine.SystemName)
+            {
+                Scalar(connection, transaction, ShapeBaseline);
+            }
+
+            if (version == 7)
+            {
+                BackfillJournalDigests(connection, transaction, cancellationToken);
+            }
         }
+
+        cancellationToken.ThrowIfCancellationRequested();
+        transaction.Commit();
     }
 
     // The migration retains at most one 1024-item/2-MiB group, never the whole journal. The prefix chain
     // and user_version publish together, so interruption cannot leave a partially trusted journal.
-    private static async Task BackfillJournalDigestsAsync(
-        SqliteConnection connection, SqliteTransaction transaction, CancellationToken cancellationToken)
+    private static void BackfillJournalDigests(SqliteConnection connection, SqliteTransaction transaction, CancellationToken cancellationToken)
     {
-        var origin = (byte[])(await ScalarAsync(connection, transaction, SqliteStatements.Origin, cancellationToken).ConfigureAwait(false)
+        var origin = (byte[])(Scalar(connection, transaction, SqliteStatements.Origin)
             ?? throw new InvalidDataException("the journal origin is missing"));
         var previous = JournalDigest.Initial(origin);
-        var head = (long)(await ScalarAsync(connection, transaction, SqliteStatements.LastSequence, cancellationToken).ConfigureAwait(false))!;
-        var read = connection.CreateCommand();
-        var append = connection.CreateCommand();
-        await using (read.ConfigureAwait(false))
-        await using (append.ConfigureAwait(false))
+        var head = (long)Scalar(connection, transaction, SqliteStatements.LastSequence)!;
+        using var read = connection.CreateCommand();
+        using var append = connection.CreateCommand();
+        read.Transaction = append.Transaction = transaction;
+        read.CommandText = SqliteStatements.ReadChanges;
+        read.Parameters.AddWithValue("$sequence", 0L);
+        read.Parameters.AddWithValue("$limit", IStorageTransaction.MaxChangeGroupChanges + 1);
+        read.Parameters.AddWithValue("$maxBytes", IStorageTransaction.MaxChangeGroupBytes);
+        append.CommandText = SqliteStatements.AppendChangeDigest;
+        append.Parameters.AddWithValue("$sequence", 0L);
+        append.Parameters.AddWithValue("$digest", previous);
+        for (var sequence = 1L; sequence <= head;)
         {
-            read.Transaction = append.Transaction = transaction;
-            read.CommandText = SqliteStatements.ReadChanges;
-            read.Parameters.AddWithValue("$sequence", 0L);
-            read.Parameters.AddWithValue("$limit", IStorageTransaction.MaxChangeGroupChanges + 1);
-            read.Parameters.AddWithValue("$maxBytes", IStorageTransaction.MaxChangeGroupBytes);
-            append.CommandText = SqliteStatements.AppendChangeDigest;
-            append.Parameters.AddWithValue("$sequence", 0L);
-            append.Parameters.AddWithValue("$digest", previous);
-            for (var sequence = 1L; sequence <= head;)
+            cancellationToken.ThrowIfCancellationRequested();
+            read.Parameters["$sequence"].Value = sequence;
+            var changes = SqliteStorageTransaction.ReadChanges(read);
+            if (changes.Count == 0)
             {
-                read.Parameters["$sequence"].Value = sequence;
-                var changes = await SqliteStorageTransaction.ReadChangesAsync(read, cancellationToken).ConfigureAwait(false);
-                if (changes.Count == 0)
-                {
-                    throw new InvalidDataException("the captured journal is not contiguous");
-                }
-
-                previous = JournalDigest.Compute(origin, sequence, previous, changes);
-                append.Parameters["$sequence"].Value = sequence;
-                append.Parameters["$digest"].Value = previous;
-                await append.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
-                if (sequence == head)
-                {
-                    break;
-                }
-
-                sequence++;
+                throw new InvalidDataException("the captured journal is not contiguous");
             }
+
+            previous = JournalDigest.Compute(origin, sequence, previous, changes);
+            append.Parameters["$sequence"].Value = sequence;
+            append.Parameters["$digest"].Value = previous;
+            append.ExecuteNonQuery();
+            if (sequence == head)
+            {
+                break;
+            }
+
+            sequence++;
         }
     }
 
-    // True when the schema is current; throws for a newer, unsupported schema.
-    private static async Task<bool> IsCurrentAsync(
-        string name, SqliteConnection connection, SqliteTransaction? transaction, CancellationToken cancellationToken) =>
-        await VersionAsync(name, connection, transaction, cancellationToken).ConfigureAwait(false) == SchemaVersion;
-
-    private static async Task<int> VersionAsync(
-        string name, SqliteConnection connection, SqliteTransaction? transaction, CancellationToken cancellationToken)
+    // Returns the schema version; throws for a newer, unsupported schema.
+    private static int Version(string name, SqliteConnection connection, SqliteTransaction? transaction)
     {
         var version = Convert.ToInt32(
-            await ScalarAsync(connection, transaction, "PRAGMA user_version;", cancellationToken).ConfigureAwait(false),
+            Scalar(connection, transaction, "PRAGMA user_version;"),
             System.Globalization.CultureInfo.InvariantCulture);
         return version > SchemaVersion
             ? throw new InvalidOperationException($"database '{name}' has schema version {version}; this build supports up to {SchemaVersion}")
             : version;
     }
 
-    private static async Task RenewIncarnationAsync(
-        SqliteConnection connection, SqliteTransaction? transaction, CancellationToken cancellationToken)
+    // Called only from the worker that owns this connection, including during migration and copying.
+    private static void RenewIncarnation(SqliteConnection connection, SqliteTransaction? transaction)
     {
-        var command = connection.CreateCommand();
-        await using (command.ConfigureAwait(false))
-        {
-            command.Transaction = transaction;
-            command.CommandText = SqliteStatements.RenewIncarnation;
-            command.Parameters.AddWithValue("$incarnation", Guid.NewGuid().ToString("N"));
-            await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
-        }
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = SqliteStatements.RenewIncarnation;
+        command.Parameters.AddWithValue("$incarnation", Guid.NewGuid().ToString("N"));
+        command.ExecuteNonQuery();
     }
 
-    private static async Task<object?> ScalarAsync(
-        SqliteConnection connection, SqliteTransaction? transaction, string sql, CancellationToken cancellationToken)
+    private static object? Scalar(SqliteConnection connection, SqliteTransaction? transaction, string sql)
     {
-        var command = connection.CreateCommand();
-        await using (command.ConfigureAwait(false))
-        {
-            command.Transaction = transaction;
-            command.CommandText = sql;
-            return await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
-        }
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = sql;
+        return command.ExecuteScalar();
     }
 }

@@ -167,15 +167,16 @@ public sealed class DataDirectoryTests
         await Assert.That(TerraBaseTestServer.IsDataDirectoryOwned(server.DataDirectory)).IsTrue();
         await transaction.CommitAsync(CancellationToken.None);
         await transaction.DisposeAsync();
-        // Its session was the last connection: the background drain can now release the directory.
-        await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(!TerraBaseTestServer.IsDataDirectoryOwned(server.DataDirectory)));
+        await server.Services.GetRequiredService<SqliteStorageEngine>().CleanupCompletion;
+        // Its session was the last connection: returning it released the directory.
+        await Assert.That(TerraBaseTestServer.IsDataDirectoryOwned(server.DataDirectory)).IsFalse();
     }
 
     [Test]
     public async Task Evicted_idle_connections_are_closed_before_shutdown_releases_the_data_directory()
     {
         await using var server = await TerraBaseTestServer.StartAsync(settings => settings["shutdown-grace-seconds"] = "1");
-        var engine = (SqliteStorageEngine)server.Services.GetRequiredService<IStorageEngine>();
+        var engine = server.Services.GetRequiredService<SqliteStorageEngine>();
         var project = new TenantContext(Guid.NewGuid().ToString(), PlanTier.Hobby, Guid.NewGuid().ToString());
         // More databases than the pool keeps idle connections for: returning the later sessions evicts earlier ones.
         for (var i = 0; i < engine.Pool.MaxIdle + 8; i++)
@@ -189,6 +190,7 @@ public sealed class DataDirectoryTests
         await Assert.That(engine.Pool.IdleCount).IsEqualTo(engine.Pool.MaxIdle);
 
         await engine.DisposeAsync();
+        await engine.CleanupCompletion;
 
         // Every eviction was counted until its connection closed, so shutdown completed: nothing is open, no database
         // file of the directory is held, and the directory is free.
@@ -201,7 +203,7 @@ public sealed class DataDirectoryTests
     public async Task Shutdown_closes_every_idle_connection_even_when_one_fails_to_close()
     {
         await using var server = await TerraBaseTestServer.StartAsync(settings => settings["shutdown-grace-seconds"] = "1");
-        var engine = (SqliteStorageEngine)server.Services.GetRequiredService<IStorageEngine>();
+        var engine = server.Services.GetRequiredService<SqliteStorageEngine>();
         var database = new TenantContext(Guid.NewGuid().ToString(), PlanTier.Hobby, Guid.NewGuid().ToString(), Guid.NewGuid().ToString());
         await engine.CreateDatabaseAsync(database, CancellationToken.None);
         var path = Path.Combine(server.DataDirectory, database.OrganizationId, database.ProjectId!, database.DatabaseId + ".db");
@@ -215,7 +217,7 @@ public sealed class DataDirectoryTests
         ];
         foreach (var connection in connections)
         {
-            var store = new SqliteDatabaseStore("probe", path, engine.Pool, engine.Time);
+            var store = new SqliteDatabaseStore("probe", path, engine.Pool, engine.Io, "PRAGMA cache_size = -64; PRAGMA busy_timeout = 30000;");
             var session = await OpenSessionAsync(connection);
             await Assert.That(engine.Pool.Rent(store)).IsNull();
             engine.Pool.Adopt(store, session);

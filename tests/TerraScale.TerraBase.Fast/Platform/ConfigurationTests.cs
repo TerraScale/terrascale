@@ -46,6 +46,21 @@ public sealed class ConfigurationTests
     }
 
     [Test]
+    [Arguments("memory-budget", "1024")]
+    [Arguments("memory-budget", "lots")]
+    [Arguments("storage-threads", "0")]
+    [Arguments("storage-threads", "4096")]
+    [Arguments("storage-queue", "0")]
+    [Arguments("storage-queue", "-1")]
+    public async Task Invalid_memory_and_storage_limits_are_rejected(string setting, string value)
+    {
+        var error = await Assert.That(() => TerraBaseOptions.FromProcess([$"--{setting}={value}"]))
+            .Throws<TerraBaseConfigurationException>();
+
+        await Assert.That(error!.Message).Contains(setting);
+    }
+
+    [Test]
     public async Task Invalid_data_directories_are_rejected_without_echoing_them()
     {
         var error = await Assert.That(() => TerraBaseOptions.FromProcess(["--data-directory=secret\0path"]))

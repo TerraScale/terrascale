@@ -150,6 +150,11 @@ public interface IStorageTransaction : IAsyncDisposable
     /// (<paramref name="after"/>, <paramref name="through"/>], in (history offset, write) order. A live document that does
     /// not match <paramref name="filter"/> comes back as a tombstone, so it reads as leaving the filtered view.
     /// </summary>
+    /// <remarks>
+    /// Enumeration exclusively owns the transaction. Other operations, another stream, and transaction disposal
+    /// fail with <see cref="InvalidOperationException"/> until the enumerator completes or is disposed.
+    /// A write refused during enumeration still makes the transaction rollback-only.
+    /// </remarks>
     IAsyncEnumerable<StoredDocument> ChangesAsync(
         string collection, DocumentFilter? filter, long after, long through, CancellationToken cancellationToken);
 

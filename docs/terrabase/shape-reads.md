@@ -108,6 +108,9 @@ The current mapping is:
   against the head in the same read transaction before the history query: a future `S` also answers
   `409 must_refetch`. `ChangesAsync` replays
   operations after `O`; a written document the filter rejects comes back as a delete.
+  Its active enumerator exclusively owns the transaction: other operations, another stream, and
+  transaction disposal fail promptly with `InvalidOperationException`. Complete or dispose the
+  enumerator before using the transaction again; a refused write still prohibits commit.
 
 | Offset | Meaning |
 | --- | --- |

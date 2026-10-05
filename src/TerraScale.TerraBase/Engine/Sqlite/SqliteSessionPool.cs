@@ -26,8 +26,8 @@ internal sealed class SqliteSessionPool(int maxIdle, int maxIdlePerDatabase)
     private int _opening;
     private int _closing;
     private bool _stopped;
-    private Action? _onClosed;
     private TaskCompletionSource? _closed;
+    private List<Exception>? _stopFailures;
 
     /// <summary>The engine-wide bound on idle sessions.</summary>
     public int MaxIdle => maxIdle;
@@ -106,13 +106,19 @@ internal sealed class SqliteSessionPool(int maxIdle, int maxIdlePerDatabase)
             }
         }
 
+        Exception? failure = null;
         try
         {
             session.Dispose();
         }
+        catch (Exception error)
+        {
+            failure = error;
+            throw;
+        }
         finally
         {
-            Update(() => _opening--);
+            Update(() => _opening--, failure);
         }
 
         throw new ObjectDisposedException(store.GetType().FullName);
@@ -120,6 +126,25 @@ internal sealed class SqliteSessionPool(int maxIdle, int maxIdlePerDatabase)
 
     /// <summary>Ends an opening that <see cref="Rent"/> started and that produced no session.</summary>
     public void OpenFailed() => Update(() => _opening--);
+
+    /// <summary>
+    /// Returns an untouched session without eviction or connection disposal. On failure the caller still owns it.
+    /// Safe on a request thread when cancelled queued work never started using the connection.
+    /// </summary>
+    public bool TryReturn(SqliteDatabaseStore store, SqliteSession session)
+    {
+        lock (_gate)
+        {
+            if (_stopped || store.Closed || _idle.Count >= maxIdle || CountOf(store) >= maxIdlePerDatabase)
+            {
+                return false;
+            }
+
+            _rented.Remove(session);
+            _idle.AddLast((store, session));
+            return true;
+        }
+    }
 
     /// <summary>Pools a session whose work has ended, or closes it; may close the least recently pooled session.</summary>
     public void Return(SqliteDatabaseStore store, SqliteSession session)
@@ -170,12 +195,11 @@ internal sealed class SqliteSessionPool(int maxIdle, int maxIdlePerDatabase)
     }
 
     /// <summary>
-    /// Stops the pool: it rents no more and closes its idle sessions. The returned task completes, and
-    /// <paramref name="onClosed"/> runs first on the thread that closes it, once no connection of the pool is open:
-    /// every rented session returned and closed, and every opening finished. Nothing is closed by force, so a
-    /// transaction still running keeps its connection, and its connection keeps the stop from completing.
+    /// Stops renting and pooling and closes idle sessions on the calling I/O worker. Completes only once every
+    /// rented session is returned and closed and every opening finishes; no active connection is closed by force.
+    /// Closing failures are reported after all counted sessions have ended.
     /// </summary>
-    public Task StopAsync(Action onClosed)
+    public Task StopAsync()
     {
         List<SqliteSession> idle;
         Task closed;
@@ -185,21 +209,24 @@ internal sealed class SqliteSessionPool(int maxIdle, int maxIdlePerDatabase)
             idle = [.. _idle.Select(entry => entry.Session)];
             _idle.Clear();
             _closing += idle.Count;
-            _onClosed = onClosed;
             _closed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             closed = _closed.Task;
         }
 
-        try
+        foreach (var session in idle)
         {
-            CloseAll(idle);
-        }
-        finally
-        {
-            // Completes the stop now when nothing was open, even if closing an idle session failed.
-            Update(() => { });
+            try
+            {
+                Close(session);
+            }
+            catch (Exception)
+            {
+                // Close recorded the failure on the stop task; still attempt every remaining session.
+            }
         }
 
+        // Completes an empty stop too. Later returns/openings also record close failures before completing it.
+        Update(() => { });
         return closed;
     }
 
@@ -255,38 +282,49 @@ internal sealed class SqliteSessionPool(int maxIdle, int maxIdlePerDatabase)
     // Closes a session counted in _closing outside _gate, and stops counting it once it is closed, even if closing failed.
     private void Close(SqliteSession session)
     {
+        Exception? failure = null;
         try
         {
             session.Dispose();
         }
+        catch (Exception error)
+        {
+            failure = error;
+            throw;
+        }
         finally
         {
-            Update(() => _closing--);
+            Update(() => _closing--, failure);
         }
     }
 
-    // Applies change under _gate. When the pool is stopped and no connection is left, the one caller that sees it
-    // first releases what waits on the stop: onClosed runs before the stop task completes.
-    private void Update(Action change)
+    // Completes the stop only after the last native handle is closed, including failed provider closes.
+    private void Update(Action change, Exception? failure = null)
     {
-        Action? onClosed = null;
         TaskCompletionSource? closed = null;
+        AggregateException? errors = null;
         lock (_gate)
         {
             change();
-            if (_onClosed is not null && _rented.Count == 0 && _opening == 0 && _closing == 0)
+            if (_stopped && failure is not null)
             {
-                onClosed = _onClosed;
+                (_stopFailures ??= []).Add(failure);
+            }
+            if (_stopped && _rented.Count == 0 && _opening == 0 && _closing == 0)
+            {
                 closed = _closed;
-                _onClosed = null;
+                if (_stopFailures is not null)
+                {
+                    errors = new AggregateException("closing database connections failed", _stopFailures);
+                }
             }
         }
 
-        try
+        if (errors is not null)
         {
-            onClosed?.Invoke();
+            closed?.TrySetException(errors);
         }
-        finally
+        else
         {
             closed?.TrySetResult();
         }

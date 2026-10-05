@@ -81,7 +81,7 @@ public sealed class ReplicationSlowTests
                 if (broken && !beforeDiscovery && Interlocked.Exchange(ref lockedOnce, 1) == 0)
                 {
                     var node = await started.Task.WaitAsync(context.CancellationToken);
-                    var engine = (SqliteStorageEngine)node.Services.GetRequiredService<IStorageEngine>();
+                    var engine = node.Services.GetRequiredService<SqliteStorageEngine>();
                     var store = (SqliteDatabaseStore)(await engine.OpenDatabaseAsync(tenant.Database("broken"), context.CancellationToken))!;
                     var session = engine.Pool.Rent(store) ?? throw new InvalidOperationException("the sender snapshot left no idle session");
                     try

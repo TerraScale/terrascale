@@ -326,7 +326,7 @@ public sealed class SqlApiTests
 
         await Assert.That(read).IsEqualTo(5);
         // The deadline ran on the faked clock, so the 30 seconds the consumer took were seen and not counted.
-        await Assert.That(((TerraScale.TerraBase.Engine.Sqlite.SqliteStorageEngine)engine).Time).IsSameReferenceAs(time);
+        await Assert.That(api.Server.Services.GetRequiredService<TerraScale.TerraBase.Engine.Sqlite.SqliteStorageEngine>().Time).IsSameReferenceAs(time);
     }
 
     [Test]

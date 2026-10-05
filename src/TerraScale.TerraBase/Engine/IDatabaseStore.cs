@@ -16,7 +16,8 @@ public interface IDatabaseStore
 
     /// <summary>
     /// Starts a transaction. Write transactions are serialized per database; read transactions see
-    /// a consistent snapshot and refuse all mutations. Dispose without <see cref="IStorageTransaction.CommitAsync"/> to roll back.
+    /// a consistent snapshot and refuse all mutations (<see cref="InvalidOperationException"/>). Dispose without
+    /// <see cref="IStorageTransaction.CommitAsync"/> to roll back.
     /// </summary>
     ValueTask<IStorageTransaction> BeginTransactionAsync(bool write, CancellationToken cancellationToken);
 

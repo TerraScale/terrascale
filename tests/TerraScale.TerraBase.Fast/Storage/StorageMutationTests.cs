@@ -4,12 +4,130 @@ using System.Text.Json;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using TerraScale.TerraBase.Engine;
+using TerraScale.TerraBase.Engine.Sqlite;
 using TerraScale.TerraBase.Fast.Documents;
 
 namespace TerraScale.TerraBase.Fast.Storage;
 
 public sealed class StorageMutationTests
 {
+    [Test]
+    [Arguments(false, "queued", "put")]
+    [Arguments(true, "queued", "put")]
+    [Arguments(true, "queued", "delete")]
+    [Arguments(true, "queued", "tombstone")]
+    [Arguments(true, "queued", "create")]
+    [Arguments(true, "queued", "drop")]
+    [Arguments(false, "gate", "put")]
+    [Arguments(true, "gate", "put")]
+    [Arguments(false, "cancelled", "put")]
+    [Arguments(true, "cancelled", "put")]
+    [Arguments(false, "queued", "read")]
+    [Arguments(true, "queued", "read")]
+    public async Task Cancelled_mutations_prevent_commit_but_cancelled_reads_do_not(bool stamped, string phase, string mutation)
+    {
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
+        await using var api = await DocumentApi.StartAsync(settings => settings["storage-threads"] = "1", cancellationToken: deadline.Token);
+        var id = DocumentApi.NewId();
+        await api.PutAsync(id, new { n = 1 }, cancellationToken: deadline.Token);
+        var native = api.Server.Services.GetRequiredService<SqliteStorageEngine>();
+        IStorageEngine engine = stamped ? api.Server.Services.GetRequiredService<IStorageEngine>() : native;
+        var database = await api.TenantOfAsync(cancellationToken: deadline.Token);
+        var store = (await engine.OpenDatabaseAsync(database, deadline.Token))!;
+        var sequence = store.CommitSequence;
+        var history = await HistoryRowsAsync(api);
+        var other = database with { DatabaseId = Guid.NewGuid().ToString() };
+        await native.CreateDatabaseAsync(other, deadline.Token);
+        var blockedStore = (await native.OpenDatabaseAsync(other, deadline.Token))!;
+        var firstId = DocumentApi.NewId();
+        var secondId = DocumentApi.NewId();
+        Task? blocked = null;
+        Task? earlier = null;
+        Task? cancelled = null;
+        Task<long>? commit = null;
+        using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token);
+        await using (var writer = await store.BeginTransactionAsync(write: true, deadline.Token))
+        {
+            await writer.PutAsync(DocumentApi.Collection, firstId, Encoding.UTF8.GetBytes("{\"n\":2}"), deadline.Token);
+            try
+            {
+                await using (await StorageFixture.LockAsync(Path.Combine(api.Server.DataDirectory,
+                    other.OrganizationId, other.ProjectId!, other.DatabaseId + ".db")))
+                {
+                    blocked = BlockAsync();
+                    await UntilAsync(() => native.Io.Running == 1);
+                    if (phase == "gate")
+                    {
+                        earlier = writer.GetAsync(DocumentApi.Collection, id, deadline.Token).AsTask();
+                        await UntilAsync(() => native.Io.Queued == 1);
+                    }
+                    if (phase == "cancelled")
+                    {
+                        cancellation.Cancel();
+                    }
+
+                    cancelled = mutation switch
+                    {
+                        "put" => writer.PutAsync(DocumentApi.Collection, secondId, Encoding.UTF8.GetBytes("{}"), cancellation.Token).AsTask(),
+                        "delete" => writer.DeleteAsync(DocumentApi.Collection, id, cancellation.Token).AsTask(),
+                        "tombstone" => writer.TombstoneAsync(DocumentApi.Collection, id, cancellation.Token).AsTask(),
+                        "create" => writer.CreateCollectionAsync(new CollectionInfo("extra", 0), cancellation.Token).AsTask(),
+                        "drop" => writer.DropCollectionAsync(DocumentApi.Collection, cancellation.Token).AsTask(),
+                        _ => writer.GetAsync(DocumentApi.Collection, id, cancellation.Token).AsTask(),
+                    };
+                    if (phase == "queued")
+                    {
+                        await UntilAsync(() => native.Io.Queued == 1);
+                    }
+                    cancellation.Cancel();
+                    if (phase != "gate")
+                    {
+                        await Assert.ThrowsAsync<OperationCanceledException>(() => cancelled.WaitAsync(deadline.Token));
+                    }
+                    // Accepted before the worker resumes: failure marking must precede this commit.
+                    commit = writer.CommitAsync(deadline.Token).AsTask();
+                }
+
+                await blocked.WaitAsync(deadline.Token);
+                if (earlier is not null)
+                {
+                    await earlier.WaitAsync(deadline.Token);
+                }
+                await Assert.ThrowsAsync<OperationCanceledException>(() => cancelled.WaitAsync(deadline.Token));
+                if (mutation == "read")
+                {
+                    await commit.WaitAsync(deadline.Token);
+                }
+                else
+                {
+                    await Assert.ThrowsAsync<InvalidOperationException>(() => commit.WaitAsync(deadline.Token));
+                }
+            }
+            finally
+            {
+                cancellation.Cancel();
+            }
+        }
+
+        await Assert.That((await api.GetAsync(firstId, cancellationToken: deadline.Token)).Status)
+            .IsEqualTo(mutation == "read" ? HttpStatusCode.OK : HttpStatusCode.NotFound);
+        await Assert.That((await api.GetAsync(secondId, cancellationToken: deadline.Token)).Status).IsEqualTo(HttpStatusCode.NotFound);
+        await Assert.That(store.CommitSequence).IsEqualTo(sequence + (mutation == "read" ? 1 : 0));
+        await Assert.That(await HistoryRowsAsync(api)).IsEqualTo(history + (mutation == "read" ? 1 : 0));
+
+        async Task BlockAsync()
+        {
+            await using var transaction = await blockedStore.BeginTransactionAsync(write: true, deadline.Token);
+        }
+
+        async Task UntilAsync(Func<bool> condition)
+        {
+            while (!condition())
+            {
+                await Task.Delay(10, deadline.Token);
+            }
+        }
+    }
 
     [Test]
     [Arguments("put")]

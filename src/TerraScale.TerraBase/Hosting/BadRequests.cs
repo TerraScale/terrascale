@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using TerraScale.TerraBase.Engine;
 
 namespace TerraScale.TerraBase.Hosting;
 
@@ -103,6 +104,12 @@ public static partial class BadRequests
                 // The message describes the rule that failed and never echoes client input.
                 Replace(context.Response);
                 await WriteAsync(context, error.StatusCode, CodeFor(error.StatusCode), error.Message, op: null).ConfigureAwait(false);
+            }
+            catch (StorageBusyException error) when (!context.Response.HasStarted)
+            {
+                Replace(context.Response);
+                context.Response.Headers.RetryAfter = "1";
+                await WriteAsync(context, StatusCodes.Status503ServiceUnavailable, "storage_busy", error.Message, op: null).ConfigureAwait(false);
             }
             catch (Exception error) when (!context.Response.HasStarted && !context.RequestAborted.IsCancellationRequested)
             {

@@ -1,3 +1,4 @@
+using System.Diagnostics.Metrics;
 using System.Text;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
@@ -272,12 +273,13 @@ public sealed class StorageTransactionTests
         var inserts = 0;
         var inject = true;
         var name = Tenant(Guid.NewGuid().ToString());
-        await using var server = await TerraBaseTestServer.StartAsync(services: services => services.AddSingleton<IStorageEngine>(provider =>
+        await using var server = await TerraBaseTestServer.StartAsync(services: services => services.AddSingleton(provider =>
         {
-            engine = new SqliteStorageEngine(provider.GetRequiredService<TerraBaseOptions>().DataDirectory,
-                provider.GetRequiredService<TerraBaseOptions>().ShutdownGrace,
-                provider.GetRequiredService<ILogger<SqliteStorageEngine>>(), provider.GetRequiredService<TerraBaseOptions>().ReadinessCacheTtl,
-                provider.GetRequiredService<DatabaseLifecycleCheckpoint>(), afterMigration: store =>
+            var options = provider.GetRequiredService<TerraBaseOptions>();
+            engine = new SqliteStorageEngine(options.DataDirectory, options.StorageThreads, options.StorageQueue, options.MemoryBudget,
+                provider.GetRequiredService<IMeterFactory>().Create(Telemetry.MeterName),
+                provider.GetRequiredService<ILogger<SqliteStorageEngine>>(), options.ShutdownGrace, readinessCacheTtl: options.ReadinessCacheTtl,
+                checkpoint: provider.GetRequiredService<DatabaseLifecycleCheckpoint>(), afterMigration: store =>
                 {
                     if (!inject || store.Tenant?.DatabaseId != name.DatabaseId)
                     {
@@ -351,7 +353,7 @@ public sealed class StorageTransactionTests
     [Test]
     public async Task Disposing_a_transaction_twice_returns_its_session_once()
     {
-        await using var server = await TerraBaseTestServer.StartAsync();
+        await using var server = await TerraBaseTestServer.StartAsync(services: ConfigurePool);
         var (_, store) = await OpenAsync(server);
         // Creation leaves the migration session idle.
         await Assert.That(store.IdleCount).IsEqualTo(1);
@@ -374,7 +376,7 @@ public sealed class StorageTransactionTests
     [Test]
     public async Task A_deleted_database_hands_out_and_keeps_no_session()
     {
-        await using var server = await TerraBaseTestServer.StartAsync();
+        await using var server = await TerraBaseTestServer.StartAsync(services: ConfigurePool);
         var (engine, store) = await OpenAsync(server);
         var open = await store.BeginTransactionAsync(write: false, CancellationToken.None);
         await (await store.BeginTransactionAsync(write: false, CancellationToken.None)).DisposeAsync();
@@ -393,7 +395,7 @@ public sealed class StorageTransactionTests
     [Test]
     public async Task A_cancelled_request_takes_no_idle_session()
     {
-        await using var server = await TerraBaseTestServer.StartAsync();
+        await using var server = await TerraBaseTestServer.StartAsync(services: ConfigurePool);
         var (_, store) = await OpenAsync(server);
         await Assert.That(store.IdleCount).IsEqualTo(1);
         using var cancelled = new CancellationTokenSource();
@@ -407,7 +409,7 @@ public sealed class StorageTransactionTests
     [Test]
     public async Task A_disposed_transaction_refuses_every_operation()
     {
-        await using var server = await TerraBaseTestServer.StartAsync();
+        await using var server = await TerraBaseTestServer.StartAsync(services: ConfigurePool);
         var (_, store) = await OpenAsync(server);
         var stale = await store.BeginTransactionAsync(write: true, CancellationToken.None);
         await stale.DisposeAsync();
@@ -428,8 +430,8 @@ public sealed class StorageTransactionTests
     [Test]
     public async Task Idle_connections_stay_bounded_across_many_databases()
     {
-        await using var server = await TerraBaseTestServer.StartAsync();
-        var engine = (SqliteStorageEngine)server.Services.GetRequiredService<IStorageEngine>();
+        await using var server = await TerraBaseTestServer.StartAsync(services: ConfigurePool);
+        var engine = server.Services.GetRequiredService<SqliteStorageEngine>();
         var stores = new List<SqliteDatabaseStore>();
         for (var i = 0; i < engine.Pool.MaxIdle + 8; i++)
         {
@@ -460,7 +462,7 @@ public sealed class StorageTransactionTests
     [Test]
     public async Task A_shut_down_engine_opens_no_database()
     {
-        await using var server = await TerraBaseTestServer.StartAsync();
+        await using var server = await TerraBaseTestServer.StartAsync(services: ConfigurePool);
         var (engine, _) = await OpenAsync(server);
         await engine.OpenSystemDatabaseAsync(CancellationToken.None);
 
@@ -617,6 +619,7 @@ public sealed class StorageTransactionTests
         var engine = api.Server.Services.GetRequiredService<IStorageEngine>();
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         var operations = new List<Task<bool>>(2);
+        var entries = new List<Task>(2);
         var enteredImmediately = true;
         IDatabaseStore? published = null;
         IDatabaseStore? retired = null;
@@ -624,11 +627,13 @@ public sealed class StorageTransactionTests
         var retiredBeforeCallback = false;
         void EnterLifecycle()
         {
-            // No blocking wait in a subscriber. This deletion completes synchronously only when
-            // the lifecycle semaphore is available; its existing, initialized store needs no I/O await.
-            var deletion = engine.DeleteDatabaseAsync(probe, deadline.Token);
-            enteredImmediately &= deletion.IsCompletedSuccessfully;
-            operations.Add(deletion.AsTask());
+            // No blocking wait in a subscriber. Completing an absent intent takes only the lifecycle
+            // semaphore, so it completes synchronously exactly when that semaphore is available. The
+            // deletion's file work runs on the storage pool, so it completes later.
+            var entry = engine.CompleteDatabaseIntentAsync(probe, deadline.Token).AsTask();
+            enteredImmediately &= entry.IsCompletedSuccessfully;
+            entries.Add(entry);
+            operations.Add(engine.DeleteDatabaseAsync(probe, deadline.Token).AsTask());
         }
 
         void OnPublication(object? sender, ChangeGroupCommitted committed)
@@ -686,6 +691,7 @@ public sealed class StorageTransactionTests
             engine.DatabaseDeleted -= ThrowOnRetirement;
             engine.DatabaseDeleted -= OnRetirement;
             await Task.WhenAll(operations);
+            await Task.WhenAll(entries);
         }
     }
 
@@ -725,11 +731,232 @@ public sealed class StorageTransactionTests
         await Assert.That((await reader.GetAsync("items", "a", CancellationToken.None))?.Version).IsEqualTo(1);
     }
 
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Cancelling_after_a_scan_starts_stops_rows_and_leaves_the_connection_usable(bool afterCursor)
+    {
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
+        const int Rows = 32;
+        await using var management = await ManagementApi.StartAsync(services: ConfigurePool);
+        var server = management.Server;
+        using var tenant = await management.CreateTenantAsync("documents:read", "documents:write");
+        var client = tenant.Data;
+        using var created = await client.PutAsync(new Uri($"/v1/projects/{tenant.ProjectId}/databases/pool", UriKind.Relative), null, deadline.Token);
+        created.EnsureSuccessStatusCode();
+        await StorageFixture.CreateCollectionAsync(tenant, "pool", "items", deadline.Token);
+        for (var i = 0; i < Rows; i++)
+        {
+            using var written = await client.PutAsJsonAsync(
+                new Uri($"/v1/projects/{tenant.ProjectId}/databases/pool/collections/items/documents/{StorageFixture.Id($"d{i:D3}")}", UriKind.Relative), new { n = i }, deadline.Token);
+            written.EnsureSuccessStatusCode();
+        }
+
+        var engine = server.Services.GetRequiredService<SqliteStorageEngine>();
+        var database = await tenant.ContextAsync(management.Server, "pool", deadline.Token);
+        var store = (SqliteDatabaseStore)(await engine.OpenDatabaseAsync(database, deadline.Token))!;
+        using var cancelled = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token);
+        var scanned = 0;
+        var observing = false;
+        var session = engine.Pool.Rent(store)!;
+        try
+        {
+            // Cancel from real SQLite row evaluation, after the worker started (not by request timing).
+            session.Connection.CreateFunction<string, string>("observed_body", body =>
+            {
+                if (!observing)
+                {
+                    return body;
+                }
+
+                if (Interlocked.Increment(ref scanned) == 8)
+                {
+                    cancelled.Cancel();
+                }
+
+                return body;
+            }, isDeterministic: true);
+            StorageFixture.ObserveBodies(session.Connection, "observed_body");
+            observing = true;
+        }
+        finally
+        {
+            engine.Pool.Return(store, session);
+        }
+
+        // The generated body observes actual row evaluation while preserving indexed id order.
+        var transaction = await store.BeginTransactionAsync(write: false, deadline.Token);
+        await using (transaction)
+        {
+            await Assert.ThrowsAsync<OperationCanceledException>(() => transaction.ListAsync(
+                "items", afterCursor ? StorageFixture.Id("d000") : null, Rows, 1024 * 1024, cancelled.Token).AsTask());
+            await Assert.That(scanned).IsGreaterThan(0);
+            await Assert.That(scanned).IsLessThan(Rows);
+            // The cancelled scan ended on its worker; the same connection can safely execute again.
+            await Assert.That((await transaction.GetAsync("items", StorageFixture.Id("d000"), deadline.Token))?.Version).IsEqualTo(2);
+        }
+
+        await Assert.That(engine.Io.Admitted).IsEqualTo(0);
+        using var recovered = await client.GetAsync(new Uri($"/v1/projects/{tenant.ProjectId}/databases/pool/collections/items/documents/{StorageFixture.Id("d000")}", UriKind.Relative), deadline.Token);
+        recovered.EnsureSuccessStatusCode();
+    }
+
+    [Test]
+    public async Task A_call_cancelled_while_queued_frees_its_slot_at_once()
+    {
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
+        await using var server = await TerraBaseTestServer.StartAsync(settings =>
+        {
+            settings["storage-threads"] = "1";
+            settings["storage-queue"] = "3";
+        }, ConfigurePool);
+        var (_, store) = await OpenAsync(server);
+        var engine = server.Services.GetRequiredService<SqliteStorageEngine>();
+        var io = engine.Io;
+        await using (var seed = await store.BeginTransactionAsync(write: true, deadline.Token))
+        {
+            await seed.PutAsync("items", "a", Encoding.UTF8.GetBytes("""{"n":1}"""), deadline.Token);
+            await seed.CommitAsync(deadline.Token);
+        }
+
+        // Hold the only worker inside real SQLite row evaluation until released, not by timing.
+        using var release = new ManualResetEventSlim();
+        var holding = 0;
+        var session = engine.Pool.Rent(store)!;
+        try
+        {
+            session.Connection.CreateFunction<string, string>("held_body", body =>
+            {
+                if (Interlocked.CompareExchange(ref holding, 2, 1) == 1)
+                {
+                    release.Wait(TimeSpan.FromSeconds(30));
+                }
+
+                return body;
+            }, isDeterministic: true);
+            StorageFixture.ObserveBodies(session.Connection, "held_body");
+        }
+        finally
+        {
+            engine.Pool.Return(store, session);
+        }
+
+        // The active transaction takes the observed session; the other one opens a second connection.
+        var active = await store.BeginTransactionAsync(write: false, deadline.Token);
+        await using var activeCleanup = active;
+        var other = await store.BeginTransactionAsync(write: false, deadline.Token);
+        await using var otherCleanup = other;
+        using var cancelHeld = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token);
+        using var cancel = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token);
+        Task<StoredDocument?>? held = null;
+        Task<IStorageTransaction>? reader = null;
+        try
+        {
+            Volatile.Write(ref holding, 1);
+            held = active.GetAsync("items", "a", cancelHeld.Token).AsTask();
+            await WaitUntilAsync(() => Volatile.Read(ref holding) == 2 && io.Running == 1, deadline.Token);
+            await cancelHeld.CancelAsync();
+            // Cancellation cannot abandon a call already using its connection on the worker.
+            await Assert.That(held.IsCompleted).IsFalse();
+            // Repeated calls on an existing admission must release their queue nodes too.
+            for (var i = 0; i < 8; i++)
+            {
+                using var cancelledCall = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token);
+                var read = other.GetOffsetAsync(cancelledCall.Token).AsTask();
+                await WaitUntilAsync(() => io.Queued == 1, deadline.Token);
+                await cancelledCall.CancelAsync();
+                await Assert.ThrowsAsync<OperationCanceledException>(() => read);
+                await Assert.That(io.Queued).IsEqualTo(0);
+            }
+
+            // The reader needs a new connection (both are rented): its open is queued behind the held call.
+            reader = store.BeginTransactionAsync(write: false, cancel.Token).AsTask();
+            await WaitUntilAsync(() => io.Admitted == 3 && io.Queued == 1, deadline.Token);
+
+            await cancel.CancelAsync();
+
+            // Cancelled while the thread is still held: the reader gives up its slot now, not after the held call.
+            await Assert.ThrowsAsync<OperationCanceledException>(() => reader);
+            await Assert.That(io.Admitted).IsEqualTo(2);
+            await Assert.That(io.Running).IsEqualTo(1);
+        }
+        finally
+        {
+            release.Set();
+            if (held is not null)
+            {
+                try
+                {
+                    await held;
+                }
+                catch (OperationCanceledException)
+                {
+                    // Cancelled after it finished on the worker; the connection stays usable either way.
+                }
+            }
+
+            await DisposeBeginAsync(reader);
+        }
+
+        await other.DisposeAsync();
+        await active.DisposeAsync();
+        await Assert.That(io.Admitted).IsEqualTo(0);
+        // The explicit idle cap retains both connections; the cancelled open never ran.
+        await Assert.That(store.IdleCount).IsEqualTo(2);
+        var recovered = await store.BeginTransactionAsync(write: false, deadline.Token);
+        await using var recoveredCleanup = recovered;
+        await Assert.That(await recovered.GetOffsetAsync(deadline.Token)).IsEqualTo(1);
+    }
+
+    internal static void ConfigurePool(IServiceCollection services)
+    {
+        // Explicit limits keep pool assertions and fixture size independent of the machine's CPU count.
+        services.AddSingleton(provider =>
+        {
+            var options = provider.GetRequiredService<TerraBaseOptions>();
+            return new SqliteStorageEngine(
+                options.DataDirectory, options.StorageThreads, options.StorageQueue, options.MemoryBudget,
+                provider.GetRequiredService<IMeterFactory>().Create(Telemetry.MeterName),
+                provider.GetRequiredService<ILogger<SqliteStorageEngine>>(), options.ShutdownGrace, maxIdle: 8, maxIdlePerDatabase: 2);
+        });
+    }
+
+    internal static async Task DisposeBeginAsync(Task<IStorageTransaction>? begin)
+    {
+        if (begin is null)
+        {
+            return;
+        }
+
+        IStorageTransaction transaction;
+        try
+        {
+            transaction = await begin;
+        }
+        catch (Exception error) when (error is OperationCanceledException or ObjectDisposedException)
+        {
+            // Refused BEGINs have no transaction to dispose; their assertions run before cleanup.
+            return;
+        }
+
+        await transaction.DisposeAsync();
+    }
+
+    private static async Task WaitUntilAsync(Func<bool> condition, CancellationToken cancellationToken)
+    {
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+
+        while (!condition())
+        {
+            await Task.Delay(10, deadline.Token);
+        }
+    }
+
     private static TenantContext Tenant(string database) => new(Guid.NewGuid().ToString(), PlanTier.Hobby, Guid.NewGuid().ToString(), database);
 
     private static async Task<(IStorageEngine Engine, SqliteDatabaseStore Store)> OpenAsync(TerraBaseTestServer server)
     {
-        var engine = server.Services.GetRequiredService<IStorageEngine>();
+        var engine = server.Services.GetRequiredService<SqliteStorageEngine>();
         await engine.CreateDatabaseAsync(Database, CancellationToken.None);
         return (engine, (SqliteDatabaseStore)(await engine.OpenDatabaseAsync(Database, CancellationToken.None))!);
     }

@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;
+using System.Diagnostics.Metrics;
 using System.IO.Enumeration;
 using System.Runtime.CompilerServices;
 using TerraScale.TerraBase.Configuration;
@@ -16,28 +17,14 @@ namespace TerraScale.TerraBase.Engine.Sqlite;
 /// Write transactions on tenant databases always record change
 /// groups, whether or not peers are configured, so a database's change log never has a hole a peer would miss.
 /// </summary>
-/// <remarks>
-/// ponytail: Microsoft.Data.Sqlite runs async calls synchronously on the caller's thread;
-/// move disk work to a dedicated scheduler when request latency under write load matters.
-/// </remarks>
-/// <param name="dataDirectory">The data directory this engine owns.</param>
-/// <param name="shutdownGrace">
-/// How long shutdown waits for transactions to return their sessions. One still running after that keeps the data
-/// directory owned until it ends (or the process exits); nothing is closed under it.
-/// </param>
-/// <param name="logger">Reports a shutdown that stopped waiting with connections still open.</param>
-/// <param name="readinessCacheTtl">How long completed filesystem readiness checks are reused.</param>
-/// <param name="checkpoint">A per-host lifecycle checkpoint for integration tests.</param>
-/// <param name="time">The clock of the query deadline; the system clock by default.</param>
-/// <param name="afterMigration">Optional integration-test hook before a tenant database's baseline is seeded.</param>
-internal sealed partial class SqliteStorageEngine(
-    string dataDirectory, TimeSpan shutdownGrace, ILogger<SqliteStorageEngine> logger, TimeSpan readinessCacheTtl,
-    DatabaseLifecycleCheckpoint checkpoint, TimeProvider? time = null, Action<SqliteDatabaseStore>? afterMigration = null) : IStorageEngine
+/// <remarks>Every SQLite call runs on one <see cref="SqliteIoPool"/> shared by all databases.</remarks>
+internal sealed partial class SqliteStorageEngine : IStorageEngine
 {
     private const string FileExtension = ".db";
 
     // A readiness probe still on the disk after this long means a stalled volume: not ready.
     private static readonly TimeSpan StalledProbe = TimeSpan.FromSeconds(2);
+    private readonly TimeSpan _readinessCacheTtl;
     internal const string SystemName = "_system";
     // Recorded in the lock file: the layout of this build, one directory per tenant.
     private const byte LayoutVersion = 1;
@@ -61,11 +48,24 @@ internal sealed partial class SqliteStorageEngine(
 
     // Held from construction (at startup, before any store opens) until the last connection closes after disposal:
     // another TerraBase process cannot open, create or delete databases in this data directory meanwhile.
-    private readonly FileStream _ownership = Own(dataDirectory);
+    private readonly FileStream _ownership;
+    private readonly string _dataDirectory;
+    private readonly long _memoryBudget;
+    private readonly ILogger<SqliteStorageEngine> _logger;
+    private readonly TimeSpan _shutdownGrace;
+    private readonly DatabaseLifecycleCheckpoint _checkpoint;
+    private readonly Action<SqliteDatabaseStore>? _afterMigration;
+
+    /// <summary>Runs every SQLite call of this engine.</summary>
+    internal SqliteIoPool Io { get; }
+    private readonly string _pragmas;
+    private bool _heapInitialized;
+
+    private readonly Lock _disposalGate = new();
+    private Task? _disposal;
 
     // Guarded by _creation.
     private bool _disposed;
-    private Task? _shutdown;
 
     // Published under _creation.
     private SqliteDatabaseStore? _system;
@@ -115,8 +115,8 @@ internal sealed partial class SqliteStorageEngine(
             long total = 0;
             // Stream each layout level: one organization's running total and at most ten retained UUIDs.
             // ponytail: metadata is sampled rather than atomic across files; use lifecycle coordination if an exact instant is required.
-            RejectLink(dataDirectory);
-            foreach (var organization in new DirectoryInfo(dataDirectory).EnumerateDirectories())
+            RejectLink(_dataDirectory);
+            foreach (var organization in new DirectoryInfo(_dataDirectory).EnumerateDirectories())
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 if (!IsId(organization.Name))
@@ -217,7 +217,7 @@ internal sealed partial class SqliteStorageEngine(
 
             var now = ReadinessClock.GetTimestamp();
             if (_probe is null || (_probe.IsCompleted && _probeCompleted is { } completed
-                && ReadinessClock.GetElapsedTime(completed, now) >= readinessCacheTtl))
+                && ReadinessClock.GetElapsedTime(completed, now) >= _readinessCacheTtl))
             {
                 _probeStarted = now;
                 _probeCompleted = null;
@@ -254,7 +254,7 @@ internal sealed partial class SqliteStorageEngine(
             // A unique name, so a leftover never blocks a later probe. Not a database file, so even one left by a crash
             // between create and close never fails the layout check.
             using var probe = new FileStream(
-                Path.Combine(dataDirectory, $".ready.{Guid.NewGuid():N}.probe"), FileMode.CreateNew, FileAccess.Write, FileShare.None, 1, FileOptions.DeleteOnClose);
+                Path.Combine(_dataDirectory, $".ready.{Guid.NewGuid():N}.probe"), FileMode.CreateNew, FileAccess.Write, FileShare.None, 1, FileOptions.DeleteOnClose);
             return true;
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException)
@@ -280,9 +280,53 @@ internal sealed partial class SqliteStorageEngine(
     /// Idle connections of every database: enough for every core to work on one database, and four
     /// times that in total.
     /// </summary>
-    internal TimeProvider Time { get; } = time ?? TimeProvider.System;
+    internal TimeProvider Time { get; }
+    internal SqliteSessionPool Pool { get; }
 
-    internal SqliteSessionPool Pool { get; } = new(maxIdle: 4 * Environment.ProcessorCount, maxIdlePerDatabase: Environment.ProcessorCount);
+    /// <summary>Owns the directory only after managed setup; failed worker startup rolls back before releasing it.</summary>
+    /// <param name="dataDirectory">The data directory this engine owns.</param>
+    /// <param name="threads">Dedicated SQLite workers.</param>
+    /// <param name="queue">The bound on admitted storage operations.</param>
+    /// <param name="memoryBudget">Sizes SQLite caches and its process-wide heap limit.</param>
+    /// <param name="meter">Records storage admission and worker metrics.</param>
+    /// <param name="logger">Reports shutdown waiting and expired grace.</param>
+    /// <param name="shutdownGrace">How long disposal waits; cleanup and ownership continue until actual closure.</param>
+    /// <param name="maxIdle">Optional idle session bound.</param>
+    /// <param name="maxIdlePerDatabase">Optional per-database idle session bound.</param>
+    /// <param name="createWorker">Optional worker factory for construction-failure integration tests; returns an unstarted thread.</param>
+    /// <param name="readinessCacheTtl">How long completed filesystem readiness checks are reused.</param>
+    /// <param name="checkpoint">A per-host lifecycle checkpoint for integration tests.</param>
+    /// <param name="time">The clock of the query deadline; the system clock by default.</param>
+    /// <param name="afterMigration">Optional integration-test hook before a tenant database's baseline is seeded.</param>
+    public SqliteStorageEngine(
+        string dataDirectory, int threads, int queue, long memoryBudget, Meter meter, ILogger<SqliteStorageEngine> logger,
+        TimeSpan shutdownGrace, int? maxIdle = null, int? maxIdlePerDatabase = null, Func<ThreadStart, Thread>? createWorker = null,
+        TimeSpan? readinessCacheTtl = null, DatabaseLifecycleCheckpoint? checkpoint = null, TimeProvider? time = null,
+        Action<SqliteDatabaseStore>? afterMigration = null)
+    {
+        _dataDirectory = dataDirectory;
+        _memoryBudget = memoryBudget;
+        _logger = logger;
+        _shutdownGrace = shutdownGrace;
+        _checkpoint = checkpoint ?? (static (_, _) => { });
+        _afterMigration = afterMigration;
+        _readinessCacheTtl = readinessCacheTtl ?? TimeSpan.FromSeconds(1);
+        Time = time ?? TimeProvider.System;
+        // Prepare managed state before taking ownership or starting workers.
+        _pragmas = SqliteSession.Pragmas(memoryBudget, threads);
+        Pool = new(maxIdle: maxIdle ?? 4 * Environment.ProcessorCount, maxIdlePerDatabase: maxIdlePerDatabase ?? Environment.ProcessorCount);
+        _ownership = Own(dataDirectory);
+        try
+        {
+            // Last construction step: the pool owns rollback of any partially started workers.
+            Io = new(threads, queue, meter, createWorker);
+        }
+        catch
+        {
+            _ownership.Dispose();
+            throw;
+        }
+    }
 
     public async ValueTask<bool> CreateDatabaseWithIntentAsync(
         TenantContext database, TenantContext? source, Func<CancellationToken, ValueTask> recordIntent, CancellationToken cancellationToken)
@@ -306,7 +350,7 @@ internal sealed partial class SqliteStorageEngine(
         }
 
         Task<SqliteDatabaseStore> initialization;
-        await _creation.WaitAsync(cancellationToken).ConfigureAwait(false);
+        await EnterCreationAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
@@ -339,7 +383,11 @@ internal sealed partial class SqliteStorageEngine(
             }
 
             ReserveIntent(key);
-            await recordIntent(cancellationToken).ConfigureAwait(false);
+            await Io.WithAdmissionAsync(async () =>
+            {
+                await recordIntent(cancellationToken).ConfigureAwait(false);
+                return true;
+            }).ConfigureAwait(false);
             if (store is not null)
             {
                 _ = Locate(source!);
@@ -355,7 +403,7 @@ internal sealed partial class SqliteStorageEngine(
         }
         finally
         {
-            _creation.Release();
+            ExitCreation();
         }
 
         await initialization.ConfigureAwait(false);
@@ -368,7 +416,7 @@ internal sealed partial class SqliteStorageEngine(
         bool created;
         bool started;
         Task<SqliteDatabaseStore> initialization;
-        await _creation.WaitAsync(cancellationToken).ConfigureAwait(false);
+        await EnterCreationAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
@@ -376,14 +424,14 @@ internal sealed partial class SqliteStorageEngine(
             created = await CreateFileAsync(key.Database, path, cancellationToken).ConfigureAwait(false);
             if (created)
             {
-                checkpoint("create.published", database);
+                _checkpoint("create.published", database);
             }
 
             initialization = GetInitializationLocked(key, path, cancellationToken, out started);
         }
         finally
         {
-            _creation.Release();
+            ExitCreation();
         }
 
         _ = started
@@ -409,7 +457,7 @@ internal sealed partial class SqliteStorageEngine(
         }
 
         Task<SqliteDatabaseStore> initialization;
-        await _creation.WaitAsync(cancellationToken).ConfigureAwait(false);
+        await EnterCreationAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
@@ -421,12 +469,12 @@ internal sealed partial class SqliteStorageEngine(
             }
 
             await CopyDatabaseLockedAsync(store, key, path, cancellationToken).ConfigureAwait(false);
-            checkpoint("create.published", target);
+            _checkpoint("create.published", target);
             initialization = GetInitializationLocked(key, path, cancellationToken, out _);
         }
         finally
         {
-            _creation.Release();
+            ExitCreation();
         }
 
         await initialization.ConfigureAwait(false);
@@ -436,7 +484,7 @@ internal sealed partial class SqliteStorageEngine(
     public async ValueTask CompleteDatabaseIntentAsync(TenantContext database, CancellationToken cancellationToken)
     {
         var (key, _) = Locate(database);
-        await _creation.WaitAsync(cancellationToken).ConfigureAwait(false);
+        await EnterCreationAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
@@ -444,7 +492,7 @@ internal sealed partial class SqliteStorageEngine(
         }
         finally
         {
-            _creation.Release();
+            ExitCreation();
         }
     }
 
@@ -453,7 +501,7 @@ internal sealed partial class SqliteStorageEngine(
     {
         ArgumentNullException.ThrowIfNull(recordIntent);
         var (key, _) = Locate(database);
-        await _creation.WaitAsync(cancellationToken).ConfigureAwait(false);
+        await EnterCreationAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
@@ -463,7 +511,7 @@ internal sealed partial class SqliteStorageEngine(
             }
 
             ReserveIntent(key);
-            if (await recordIntent(cancellationToken).ConfigureAwait(false))
+            if (await Io.WithAdmissionAsync(() => recordIntent(cancellationToken)).ConfigureAwait(false))
             {
                 return true;
             }
@@ -473,7 +521,7 @@ internal sealed partial class SqliteStorageEngine(
         }
         finally
         {
-            _creation.Release();
+            ExitCreation();
         }
     }
 
@@ -509,7 +557,7 @@ internal sealed partial class SqliteStorageEngine(
         {
             Task initialization;
             SqliteDatabaseStore? retired = null;
-            await _creation.WaitAsync(cancellationToken).ConfigureAwait(false);
+            await EnterCreationAsync(cancellationToken).ConfigureAwait(false);
             try
             {
                 ObjectDisposedException.ThrowIf(_disposed, this);
@@ -526,33 +574,36 @@ internal sealed partial class SqliteStorageEngine(
                 if (!_initializing.TryGetValue(key, out var pending))
                 {
                     var existed = File.Exists(path);
-                    if (_stores.TryRemove(key, out var store))
+                    await Io.RunAsync(() =>
                     {
-                        retired = store;
-                        store.Dispose();
-                    }
-
-                    RejectLink(path);
-                    DeleteFileIfPresent(path);
-                    checkpoint("delete.main_file", database);
-                    DeleteSidecars(path);
-                    var directory = Path.GetDirectoryName(path)!;
-                    if (Directory.Exists(directory))
-                    {
-                        // Only exact private names belonging to this intent's database, including orphaned sidecars.
-                        foreach (var file in Directory.EnumerateFiles(directory, $".{key.Database}.*.creating*"))
+                        if (_stores.TryRemove(key, out var store))
                         {
-                            cancellationToken.ThrowIfCancellationRequested();
-                            if (string.Equals(DatabaseIdFromFileName(Path.GetFileName(file)), key.Database, StringComparison.Ordinal))
+                            retired = store;
+                            store.Dispose();
+                        }
+
+                        RejectLink(path);
+                        DeleteFileIfPresent(path);
+                        _checkpoint("delete.main_file", database);
+                        DeleteSidecars(path);
+                        var directory = Path.GetDirectoryName(path)!;
+                        if (Directory.Exists(directory))
+                        {
+                            // Only exact private names belonging to this intent's database, including orphaned sidecars.
+                            foreach (var file in Directory.EnumerateFiles(directory, $".{key.Database}.*.creating*"))
                             {
-                                RejectLink(file);
-                                DeleteFileIfPresent(file);
+                                cancellationToken.ThrowIfCancellationRequested();
+                                if (string.Equals(DatabaseIdFromFileName(Path.GetFileName(file)), key.Database, StringComparison.Ordinal))
+                                {
+                                    RejectLink(file);
+                                    DeleteFileIfPresent(file);
+                                }
                             }
                         }
-                    }
 
-                    DeleteIfEmpty(directory);
-                    DeleteIfEmpty(Path.Combine(dataDirectory, key.Organization));
+                        DeleteIfEmpty(directory);
+                        DeleteIfEmpty(Path.Combine(_dataDirectory, key.Organization));
+                    }, CancellationToken.None).ConfigureAwait(false);
                     return existed;
                 }
 
@@ -560,7 +611,7 @@ internal sealed partial class SqliteStorageEngine(
             }
             finally
             {
-                _creation.Release();
+                ExitCreation();
                 if (retired is not null)
                 {
                     Notify(DatabaseDeleted, retired, key.Database);
@@ -582,7 +633,7 @@ internal sealed partial class SqliteStorageEngine(
     {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed), this);
         cancellationToken.ThrowIfCancellationRequested();
-        var root = Path.GetFullPath(dataDirectory);
+        var root = Path.GetFullPath(_dataDirectory);
         RejectLink(root);
         var files = new FileSystemEnumerable<StoredDatabaseFile>(root, (ref entry) =>
         {
@@ -644,32 +695,35 @@ internal sealed partial class SqliteStorageEngine(
             return system;
         }
 
-        await _creation.WaitAsync(cancellationToken).ConfigureAwait(false);
+        var path = Path.Combine(_dataDirectory, SystemName + FileExtension);
+        await EnterCreationAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
             if (_system is null)
             {
-                var path = LocateSystem();
-                await CreateFileAsync(SystemName, path, cancellationToken).ConfigureAwait(false);
-                system = new SqliteDatabaseStore(SystemName, path, Pool, Time);
+                var created = await CreateFileAsync(SystemName, path, cancellationToken).ConfigureAwait(false);
+                // Once published, complete the opening even if cancellation arrives.
+                var openingToken = created ? CancellationToken.None : cancellationToken;
+                await InitializeHeapAsync(openingToken).ConfigureAwait(false);
+                system = new SqliteDatabaseStore(SystemName, path, Pool, Io, _pragmas, Time, RecordCommittedWrite);
                 try
                 {
-                    await system.MigrateAsync(cancellationToken).ConfigureAwait(false);
-                    Volatile.Write(ref _system, system);
+                    await system.MigrateAsync(openingToken).ConfigureAwait(false);
                 }
                 catch
                 {
-                    system.Dispose();
+                    await Io.RunAsync(system.Dispose, CancellationToken.None).ConfigureAwait(false);
                     throw;
                 }
+                Volatile.Write(ref _system, system);
             }
 
             return _system;
         }
         finally
         {
-            _creation.Release();
+            ExitCreation();
         }
     }
 
@@ -679,7 +733,7 @@ internal sealed partial class SqliteStorageEngine(
         cancellationToken.ThrowIfCancellationRequested();
         // Stream exactly three path components; no sorting or recursive materialization, and no symlink traversal.
         var enumeration = new EnumerationOptions { AttributesToSkip = FileAttributes.ReparsePoint, IgnoreInaccessible = false };
-        foreach (var organizationPath in Enumerate(dataDirectory, directories: true, enumeration))
+        foreach (var organizationPath in Enumerate(_dataDirectory, directories: true, enumeration))
         {
             cancellationToken.ThrowIfCancellationRequested();
             var organization = Path.GetFileName(organizationPath);
@@ -727,73 +781,65 @@ internal sealed partial class SqliteStorageEngine(
         }
     }
 
-    public async ValueTask DisposeAsync()
+    /// <summary>
+    /// Actual shutdown, including session closure, admission drain, worker join and directory release.
+    /// Access starts cleanup if necessary. Faults retain every cleanup failure even after disposal's grace expires.
+    /// </summary>
+    internal Task CleanupCompletion
     {
-        Task shutdown;
-        var reportFailure = false;
+        get
+        {
+            lock (_disposalGate)
+            {
+                return field ??= CleanupAsync();
+            }
+        }
+    }
+
+    public ValueTask DisposeAsync()
+    {
+        lock (_disposalGate)
+        {
+            // Concurrent callers share the grace wait. Once observed, disposal is idempotent; actual failures
+            // remain on CleanupCompletion for callers that need to verify complete resource release.
+            return new(_disposal is { IsCompleted: true } ? Task.CompletedTask : (_disposal ??= WaitForCleanupAsync()));
+        }
+    }
+
+    private async Task WaitForCleanupAsync()
+    {
+        try
+        {
+            await CleanupCompletion.WaitAsync(_shutdownGrace).ConfigureAwait(false);
+        }
+        catch (TimeoutException)
+        {
+            LogShutdownGraceExpired(_logger, (int)_shutdownGrace.TotalSeconds, Pool.OpenCount);
+        }
+    }
+
+    private async Task CleanupAsync()
+    {
+        // Refuse new operations immediately, while admitted transactions and multi-step maintenance can finish.
+        var drained = Io.DrainAdmissionsAsync();
+        if (!drained.IsCompleted)
+        {
+            LogWaitingForDrain(_logger, Io.Admitted);
+        }
+
+        var errors = new List<Exception>();
+        Task[] initializations;
         await _creation.WaitAsync().ConfigureAwait(false);
         try
         {
-            if (_shutdown is null)
-            {
-                reportFailure = true;
-                _disposed = true;
-                _stopping.Cancel();
-                var stores = _stores.Values.Append(_system).OfType<SqliteDatabaseStore>().ToArray();
-                _stores.Clear();
-                // Even connection closure can block. The caller's grace bounds its wait for the
-                // entire drain; actual cleanup keeps directory ownership until its last operation ends.
-                var initializations = _initializing.Values.ToArray();
-                _shutdown = Task.Run(() => FinishShutdownAsync(stores, initializations));
-                _ = ObserveShutdownAsync(_shutdown);
-            }
-
-            shutdown = _shutdown;
+            // No store is published or initialized from here on; running initializations stop at their next step.
+            _disposed = true;
+            _stopping.Cancel();
+            initializations = [.. _initializing.Values];
         }
         finally
         {
             _creation.Release();
-        }
-
-        try
-        {
-            await shutdown.WaitAsync(shutdownGrace).ConfigureAwait(false);
-        }
-        catch (TimeoutException)
-        {
-            LogShutdownGraceExpired(logger, (int)shutdownGrace.TotalSeconds, Pool.OpenCount);
-        }
-        catch (Exception) when (!reportFailure)
-        {
-            // The first disposer reports close failures; repeated disposal still waits for shutdown to finish.
-        }
-    }
-
-    private async Task ObserveShutdownAsync(Task shutdown)
-    {
-        try
-        {
-            await shutdown.ConfigureAwait(false);
-        }
-        catch (Exception error)
-        {
-            LogShutdownFailed(logger, error);
-        }
-    }
-
-    private async Task FinishShutdownAsync(SqliteDatabaseStore[] stores, Task[] initializations)
-    {
-        var failures = new List<Exception>();
-        foreach (var store in stores)
-        {
-            try
-            {
-                store.Dispose();
-            }
-            catch (Exception error)
-            {
-                failures.Add(error);
-            }
         }
 
         try
@@ -810,28 +856,80 @@ internal sealed partial class SqliteStorageEngine(
         }
 
         Task? closed = null;
+        // A copy/create holds this through every step. Let it finish before closing its stores.
+        await _creation.WaitAsync().ConfigureAwait(false);
         try
         {
-            closed = Pool.StopAsync(_ownership.Dispose);
+            closed = await Io.RunAsync(() =>
+            {
+                foreach (var store in _stores.Values.Concat(_system is { } system ? [system] : []))
+                {
+                    try
+                    {
+                        store.Dispose();
+                    }
+                    catch (Exception error)
+                    {
+                        errors.Add(error);
+                    }
+                }
+
+                _stores.Clear();
+                // Includes idle sessions of stores not published in _stores. Active connections stay open,
+                // and their returns close them on workers rather than pooling them after shutdown.
+                return Pool.StopAsync();
+            }, CancellationToken.None).ConfigureAwait(false);
         }
         catch (Exception error)
         {
-            failures.Add(error);
+            errors.Add(error);
+        }
+        finally
+        {
+            _creation.Release();
         }
 
-        if (closed is not null)
+        try
         {
-            await closed.ConfigureAwait(false);
+            if (closed is not null)
+            {
+                await closed.ConfigureAwait(false);
+            }
+        }
+        catch (Exception error)
+        {
+            errors.Add(error);
         }
 
-        if (failures.Count > 0)
+        // Release of the last admission follows pooling/closure, including queued-BEGIN cleanup.
+        await drained.ConfigureAwait(false);
+        try
         {
-            throw new AggregateException("closing database connections failed", failures).Flatten();
+            await Io.DisposeAsync().ConfigureAwait(false);
+        }
+        catch (Exception error)
+        {
+            errors.Add(error);
+        }
+
+        // Even workers that were closing sessions are now gone: only here can another process take over.
+        try
+        {
+            _ownership.Dispose();
+        }
+        catch (Exception error)
+        {
+            errors.Add(error);
+        }
+
+        if (errors.Count != 0)
+        {
+            throw new AggregateException("storage shutdown failed", errors).Flatten();
         }
     }
 
-    [LoggerMessage(Level = LogLevel.Error, Message = "Database shutdown cleanup failed")]
-    private static partial void LogShutdownFailed(ILogger logger, Exception error);
+    [LoggerMessage(Level = LogLevel.Information, Message = "Waiting for {Count} admitted storage operations before shutdown")]
+    private static partial void LogWaitingForDrain(ILogger logger, int count);
 
     // Counts only: no database or tenant names in the log.
     [LoggerMessage(Level = LogLevel.Warning, Message = "Shutdown waited {Seconds} s and stopped waiting with {Count} database connections still open; the data directory stays owned until they close or the process exits")]
@@ -923,14 +1021,14 @@ internal sealed partial class SqliteStorageEngine(
     {
         ArgumentNullException.ThrowIfNull(database);
         (string Organization, string Project, string Database) key = (Id(database.OrganizationId), Id(database.ProjectId), Id(database.DatabaseId));
-        var path = Path.Combine(dataDirectory, key.Organization, key.Project, key.Database + FileExtension);
+        var path = Path.Combine(_dataDirectory, key.Organization, key.Project, key.Database + FileExtension);
         RejectDatabaseLinks(path);
         return (key, path);
     }
 
     private string LocateSystem()
     {
-        var path = Path.Combine(dataDirectory, SystemName + FileExtension);
+        var path = Path.Combine(_dataDirectory, SystemName + FileExtension);
         RejectDatabaseLinks(path);
         return path;
     }
@@ -939,9 +1037,9 @@ internal sealed partial class SqliteStorageEngine(
     // must remain under trusted operator control; path checks cannot isolate hostile concurrent filesystem writers.
     private void RejectDatabaseLinks(string path)
     {
-        RejectLink(dataDirectory);
+        RejectLink(_dataDirectory);
         var directory = Path.GetDirectoryName(path)!;
-        if (Path.GetRelativePath(dataDirectory, directory) != ".")
+        if (Path.GetRelativePath(_dataDirectory, directory) != ".")
         {
             RejectLink(Path.GetDirectoryName(directory)!);
             RejectLink(directory);
@@ -1030,7 +1128,8 @@ internal sealed partial class SqliteStorageEngine(
         }
 
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        await PublishAsync(name, path, temporary => SqliteDatabaseStore.InitializeAsync(name, temporary, afterMigration: null, cancellationToken)).ConfigureAwait(false);
+        await InitializeHeapAsync(cancellationToken).ConfigureAwait(false);
+        await PublishAsync(name, path, temporary => SqliteDatabaseStore.InitializeAsync(name, temporary, Io, _pragmas, afterMigration: null, cancellationToken)).ConfigureAwait(false);
         return true;
     }
 
@@ -1098,6 +1197,39 @@ internal sealed partial class SqliteStorageEngine(
         }
     }
 
+    // The caller holds an admission; native heap-limit initialization also runs on a worker. Racing first
+    // calls are harmless: LimitHeap only ever raises the process-wide limit.
+    private async Task InitializeHeapAsync(CancellationToken cancellationToken)
+    {
+        if (!Volatile.Read(ref _heapInitialized))
+        {
+            await Io.RunAsync(() => SqliteSession.LimitHeap(_memoryBudget), cancellationToken).ConfigureAwait(false);
+            Volatile.Write(ref _heapInitialized, true);
+        }
+    }
+
+    // Count semaphore waiters toward storage-queue, and release admission even if waiting is cancelled.
+    private async ValueTask EnterCreationAsync(CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        Io.Admit();
+        try
+        {
+            await _creation.WaitAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            Io.Release();
+            throw;
+        }
+    }
+
+    private void ExitCreation()
+    {
+        _creation.Release();
+        Io.Release();
+    }
+
     // Returns the open store, or null when the file is gone (a delete won the lock).
     private async ValueTask<SqliteDatabaseStore?> OpenStoreAsync(
         (string Organization, string Project, string Database) key, string path, CancellationToken cancellationToken)
@@ -1110,7 +1242,7 @@ internal sealed partial class SqliteStorageEngine(
 
         Task<SqliteDatabaseStore> initialization;
         var started = false;
-        await _creation.WaitAsync(cancellationToken).ConfigureAwait(false);
+        await EnterCreationAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
@@ -1129,7 +1261,7 @@ internal sealed partial class SqliteStorageEngine(
         }
         finally
         {
-            _creation.Release();
+            ExitCreation();
         }
 
         // The initiating caller owns cancellation and observes it only after the unpublished store is closed.
@@ -1154,31 +1286,37 @@ internal sealed partial class SqliteStorageEngine(
             return initialization;
         }
 
-        // SQLite async operations perform synchronous disk work; keep them off the lifecycle lock.
-        initialization = Task.Run(() => InitializeStoreAsync(key, path, cancellationToken), CancellationToken.None);
+        // Migration and seeding run on the I/O pool; keep them off the lifecycle lock. Nested transactions
+        // reuse the initialization's own admission.
+        initialization = Task.Run(() => Io.WithAdmissionAsync(() => InitializeStoreAsync(key, path, cancellationToken)).AsTask(), CancellationToken.None);
         _initializing.Add(key, initialization);
         started = true;
         return initialization;
     }
 
-    private async Task<SqliteDatabaseStore> InitializeStoreAsync(
+    private async ValueTask<SqliteDatabaseStore> InitializeStoreAsync(
         (string Organization, string Project, string Database) key, string path, CancellationToken cancellationToken)
     {
         var tenant = new TenantContext(key.Organization, PlanTier.Hobby, key.Project, key.Database);
         SqliteDatabaseStore? store = null;
-        store = new SqliteDatabaseStore(key.Database, path, Pool, tenant, Time,
+        store = new SqliteDatabaseStore(key.Database, path, Pool, Io, _pragmas, tenant, Time,
             sequence => Notify(ChangesCommitted, new ChangeGroupCommitted(store!, sequence), key.Database), RecordCommittedWrite);
         var published = false;
+        var admitted = false;
         try
         {
+            // Held from migration to publication or cleanup, so shutdown drains it and storage-queue bounds it.
+            Io.Admit();
+            admitted = true;
             using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _stopping.Token);
             RejectDatabaseLinks(path);
+            await InitializeHeapAsync(lifetime.Token).ConfigureAwait(false);
             await store.MigrateAsync(lifetime.Token).ConfigureAwait(false);
-            afterMigration?.Invoke(store);
+            _afterMigration?.Invoke(store);
             var (sequence, skipped) = await store.SeedAsync(lifetime.Token).ConfigureAwait(false);
             if (skipped > 0)
             {
-                LogBaselineSkipped(logger, key.Database, skipped);
+                LogBaselineSkipped(_logger, key.Database, skipped);
             }
 
             await _creation.WaitAsync(lifetime.Token).ConfigureAwait(false);
@@ -1208,21 +1346,32 @@ internal sealed partial class SqliteStorageEngine(
             {
                 if (!published)
                 {
-                    store.Dispose();
+                    // Not published, so nothing else would close it: release its sessions and file handles now.
+                    await Io.RunAsync(store.Dispose, CancellationToken.None).ConfigureAwait(false);
                 }
             }
             finally
             {
-                if (!published)
+                try
                 {
-                    await _creation.WaitAsync(CancellationToken.None).ConfigureAwait(false);
-                    try
+                    if (!published)
                     {
-                        _initializing.Remove(key);
+                        await _creation.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+                        try
+                        {
+                            _initializing.Remove(key);
+                        }
+                        finally
+                        {
+                            _creation.Release();
+                        }
                     }
-                    finally
+                }
+                finally
+                {
+                    if (admitted)
                     {
-                        _creation.Release();
+                        Io.Release();
                     }
                 }
             }
@@ -1240,7 +1389,7 @@ internal sealed partial class SqliteStorageEngine(
             }
             catch (Exception error)
             {
-                LogNotificationFailed(logger, error, name);
+                LogNotificationFailed(_logger, error, name);
             }
         }
     }

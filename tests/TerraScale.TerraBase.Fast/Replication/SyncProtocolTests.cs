@@ -463,7 +463,7 @@ public sealed class SyncProtocolTests
     public async Task A_document_at_the_last_version_refuses_writes_instead_of_losing_them()
     {
         await using var node = await Node.StartAsync("limits");
-        var engine = (SqliteStorageEngine)node.Server.Services.GetRequiredService<IStorageEngine>();
+        var engine = node.Server.Services.GetRequiredService<SqliteStorageEngine>();
         var store = (SqliteDatabaseStore)(await engine.OpenDatabaseAsync(node.Tenant.Database("limits"), CancellationToken.None))!;
         await using (var setup = await store.BeginTransactionAsync(write: true, CancellationToken.None))
         {

@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using TerraScale.TerraBase.Engine;
+using TerraScale.TerraBase.Engine.Sqlite;
 using TerraScale.TerraBase.Fast.Documents;
 using TerraScale.TerraBase.Primitives;
 using TerraScale.TerraBase.Tenancy;
@@ -12,6 +13,89 @@ namespace TerraScale.TerraBase.Fast.Storage;
 
 public sealed class StorageHistoryTests
 {
+    [Test]
+    [Arguments(false, "complete")]
+    [Arguments(true, "complete")]
+    [Arguments(false, "break")]
+    [Arguments(true, "break")]
+    [Arguments(false, "cancel")]
+    [Arguments(true, "cancel")]
+    public async Task An_active_changes_stream_refuses_overlap_and_releases_its_transaction(bool native, string ending)
+    {
+        var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
+        await using var api = await DocumentApi.StartAsync(settings => settings["storage-threads"] = "1", cancellationToken: token);
+        var id = DocumentApi.NewId();
+        (await api.PutAsync(id, new { n = 1 }, cancellationToken: token)).Status.ShouldBe(HttpStatusCode.Created);
+        (await api.PutAsync(id, new { n = 2 }, cancellationToken: token)).Status.ShouldBe(HttpStatusCode.OK);
+        var engine = native ? api.Server.Services.GetRequiredService<SqliteStorageEngine>()
+            : api.Server.Services.GetRequiredService<IStorageEngine>();
+        var store = (await engine.OpenDatabaseAsync(await api.TenantOfAsync(cancellationToken: token), token))!;
+        await using var transaction = await store.BeginTransactionAsync(write: false, token);
+        var offset = await transaction.GetOffsetAsync(token);
+        using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(token);
+        await using (var changes = transaction.ChangesAsync(DocumentApi.Collection, null, 0, offset, cancellation.Token).GetAsyncEnumerator())
+        {
+            await Assert.That(await changes.MoveNextAsync()).IsTrue();
+            await Assert.That(changes.Current.Id).IsEqualTo(id);
+            await Assert.ThrowsAsync<InvalidOperationException>(() => transaction.GetOffsetAsync(token).AsTask().WaitAsync(token));
+            await Assert.ThrowsAsync<InvalidOperationException>(() => transaction.DisposeAsync().AsTask().WaitAsync(token));
+            await using (var overlapping = transaction.ChangesAsync(DocumentApi.Collection, null, 0, offset, token).GetAsyncEnumerator())
+            {
+                await Assert.ThrowsAsync<InvalidOperationException>(() => overlapping.MoveNextAsync().AsTask().WaitAsync(token));
+            }
+            if (ending == "complete")
+            {
+                await Assert.That(await changes.MoveNextAsync()).IsTrue();
+                await Assert.That(await changes.MoveNextAsync()).IsFalse();
+                await Assert.That(await transaction.GetOffsetAsync(token)).IsEqualTo(offset);
+            }
+            else if (ending == "cancel")
+            {
+                cancellation.Cancel();
+                await Assert.ThrowsAsync<OperationCanceledException>(() => changes.MoveNextAsync().AsTask().WaitAsync(token));
+            }
+        }
+
+        await Assert.That(await transaction.GetOffsetAsync(token)).IsEqualTo(offset);
+        await transaction.DisposeAsync();
+        await using var reused = await store.BeginTransactionAsync(write: false, token);
+        await Assert.That((await reused.GetAsync(DocumentApi.Collection, id, token))?.Version).IsEqualTo(offset);
+        (await api.GetAsync(id, cancellationToken: token)).Status.ShouldBe(HttpStatusCode.OK);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task A_write_refused_during_a_changes_stream_cannot_commit_earlier_writes(bool native)
+    {
+        var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
+        await using var api = await DocumentApi.StartAsync(cancellationToken: token);
+        var seed = DocumentApi.NewId();
+        (await api.PutAsync(seed, new { n = 1 }, cancellationToken: token)).Status.ShouldBe(HttpStatusCode.Created);
+        var engine = native ? api.Server.Services.GetRequiredService<SqliteStorageEngine>()
+            : api.Server.Services.GetRequiredService<IStorageEngine>();
+        var store = (await engine.OpenDatabaseAsync(await api.TenantOfAsync(cancellationToken: token), token))!;
+        var idA = DocumentApi.NewId();
+        var idB = DocumentApi.NewId();
+        long offset;
+        await using (var writer = await store.BeginTransactionAsync(write: true, token))
+        {
+            offset = await writer.GetOffsetAsync(token);
+            await writer.PutAsync(DocumentApi.Collection, idA, Encoding.UTF8.GetBytes("{}"), token);
+            await using (var changes = writer.ChangesAsync(DocumentApi.Collection, null, 0, long.MaxValue, token).GetAsyncEnumerator())
+            {
+                await Assert.That(await changes.MoveNextAsync()).IsTrue();
+                await Assert.ThrowsAsync<InvalidOperationException>(() => writer.PutAsync(DocumentApi.Collection, idB, Encoding.UTF8.GetBytes("{}"), token).AsTask().WaitAsync(token));
+            }
+            await Assert.ThrowsAsync<InvalidOperationException>(() => writer.CommitAsync(token).AsTask());
+        }
+        await using var reader = await store.BeginTransactionAsync(write: false, token);
+        await Assert.That(await reader.GetOffsetAsync(token)).IsEqualTo(offset);
+        await Assert.That(await reader.GetAsync(DocumentApi.Collection, idA, token)).IsNull();
+        await Assert.That(await reader.GetAsync(DocumentApi.Collection, idB, token)).IsNull();
+        (await api.GetAsync(seed, cancellationToken: token)).Status.ShouldBe(HttpStatusCode.OK);
+    }
+
     [Test]
     public async Task Storage_refuses_an_empty_document_id()
     {
@@ -79,6 +163,7 @@ public sealed class StorageHistoryTests
     [Test]
     public async Task Upgrading_keeps_system_records_out_of_shape_history()
     {
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         var directory = Directory.CreateTempSubdirectory("terrabase-upgrade-").FullName;
         try
         {
@@ -91,7 +176,7 @@ public sealed class StorageHistoryTests
             var path = Path.Combine(directory, "_system.db");
             await using (var connection = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={path};Pooling=False"))
             {
-                await connection.OpenAsync();
+                await connection.OpenAsync(deadline.Token);
                 await using var command = connection.CreateCommand();
                 command.CommandText = """
                     DROP TABLE journal_prefixes;
@@ -107,18 +192,17 @@ public sealed class StorageHistoryTests
                     INSERT INTO documents VALUES ('invitations', 'a', 1, '{"email":"someone@example.com"}');
                     PRAGMA user_version = 4;
                     """;
-                await command.ExecuteNonQueryAsync();
+                await command.ExecuteNonQueryAsync(deadline.Token);
             }
 
-            await using (var engine = new TerraScale.TerraBase.Engine.Sqlite.SqliteStorageEngine(
-                directory, TimeSpan.FromSeconds(5), Microsoft.Extensions.Logging.Abstractions.NullLogger<TerraScale.TerraBase.Engine.Sqlite.SqliteStorageEngine>.Instance,
-                TimeSpan.FromSeconds(1), static (_, _) => { }))
+            await using (var api = await DocumentApi.StartAsync(
+                settings => settings["data-directory"] = directory, StorageTransactionTests.ConfigurePool, deadline.Token))
             {
-                await engine.OpenSystemDatabaseAsync(CancellationToken.None);
+                await api.Server.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(deadline.Token);
             }
 
             // Migrated to the current schema, but _system's deletes never reach history, so its records are not copied there.
-            await Assert.That(await HistoryRowsAsync(path)).IsEqualTo(0);
+            await Assert.That(await HistoryRowsAsync(path, deadline.Token)).IsEqualTo(0);
         }
         finally
         {
@@ -167,9 +251,9 @@ public sealed class StorageHistoryTests
                 await command.ExecuteNonQueryAsync();
             }
 
-            await using var engine = new TerraScale.TerraBase.Engine.Sqlite.SqliteStorageEngine(
-                directory, TimeSpan.FromSeconds(5), Microsoft.Extensions.Logging.Abstractions.NullLogger<TerraScale.TerraBase.Engine.Sqlite.SqliteStorageEngine>.Instance,
-                TimeSpan.FromSeconds(1), static (_, _) => { });
+            await using var reopened = await DocumentApi.StartAsync(
+                settings => settings["data-directory"] = directory, StorageTransactionTests.ConfigurePool);
+            var engine = reopened.Server.Services.GetRequiredService<IStorageEngine>();
             var store = (await engine.OpenDatabaseAsync(database, CancellationToken.None))!;
             var after = DocumentApi.NewId();
             await using (var writer = await store.BeginTransactionAsync(write: true, CancellationToken.None))
@@ -194,13 +278,13 @@ public sealed class StorageHistoryTests
         }
     }
 
-    private static async Task<long> HistoryRowsAsync(string path)
+    private static async Task<long> HistoryRowsAsync(string path, CancellationToken cancellationToken)
     {
         await using var connection = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={path};Pooling=False;Mode=ReadOnly");
-        await connection.OpenAsync();
+        await connection.OpenAsync(cancellationToken);
         await using var command = connection.CreateCommand();
         command.CommandText = "SELECT count(*) FROM change_log;";
-        return (long)(await command.ExecuteScalarAsync())!;
+        return (long)(await command.ExecuteScalarAsync(cancellationToken))!;
     }
 
     [Test]
@@ -355,9 +439,9 @@ public sealed class StorageHistoryTests
         await Assert.That((await api.GetAsync(id)).Status).IsEqualTo(HttpStatusCode.NotFound);
     }
 
-    private static async Task<IDatabaseStore> StoreAsync(DocumentApi api)
+    private static async Task<IDatabaseStore> StoreAsync(DocumentApi api, CancellationToken cancellationToken = default)
     {
         var engine = api.Server.Services.GetRequiredService<IStorageEngine>();
-        return (await engine.OpenDatabaseAsync(await api.TenantOfAsync(), CancellationToken.None))!;
+        return (await engine.OpenDatabaseAsync(await api.TenantOfAsync(cancellationToken: cancellationToken), cancellationToken))!;
     }
 }

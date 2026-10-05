@@ -94,7 +94,7 @@ public sealed class HealthTests
         });
         using var client = tls.CreateClient(server.ClientAddress!);
         var provider = server.Services;
-        var engine = (SqliteStorageEngine)provider.GetRequiredService<IStorageEngine>();
+        var engine = provider.GetRequiredService<SqliteStorageEngine>();
         var clock = new ProbeClock();
         var barrier = new ProbeBarrier();
         engine.ReadinessClock = clock;
@@ -138,7 +138,7 @@ public sealed class HealthTests
     {
         var requests = new ObserveCanceledRequest();
         await using var server = await TerraBaseTestServer.StartAsync(services: services => services.AddSingleton<IStartupFilter>(requests));
-        var engine = (SqliteStorageEngine)server.Services.GetRequiredService<IStorageEngine>();
+        var engine = server.Services.GetRequiredService<SqliteStorageEngine>();
         var clock = new ProbeClock(expectedWaiters: 2);
         var barrier = new ProbeBarrier();
         engine.ReadinessClock = clock;
@@ -193,7 +193,7 @@ public sealed class HealthTests
         using var tls = new ClientTls();
         await using var server = await TerraBaseTestServer.StartAsync(tls.Apply);
         using var client = tls.CreateClient(server.ClientAddress!);
-        var engine = (SqliteStorageEngine)server.Services.GetRequiredService<IStorageEngine>();
+        var engine = server.Services.GetRequiredService<SqliteStorageEngine>();
         var clock = new ProbeClock(expectedWaiters: 16);
         var barrier = new ProbeBarrier();
         engine.ReadinessClock = clock;
@@ -232,7 +232,7 @@ public sealed class HealthTests
             }
         });
         using var client = tls.CreateClient(server.ClientAddress!);
-        var engine = (SqliteStorageEngine)server.Services.GetRequiredService<IStorageEngine>();
+        var engine = server.Services.GetRequiredService<SqliteStorageEngine>();
         var clock = new ProbeClock();
         var probes = new ProbeBarrier();
         probes.Release.TrySetResult();
@@ -261,7 +261,7 @@ public sealed class HealthTests
         var shutdown = new HeldShutdown();
         await using var server = await TerraBaseTestServer.StartAsync(tls.Apply, services => services.AddHostedService(_ => shutdown));
         using var client = tls.CreateClient(server.ClientAddress!);
-        var engine = (SqliteStorageEngine)server.Services.GetRequiredService<IStorageEngine>();
+        var engine = server.Services.GetRequiredService<SqliteStorageEngine>();
         var probes = new ProbeBarrier();
         probes.Release.TrySetResult();
         // Freeze the TTL at zero so the successful result stays cached throughout shutdown.
@@ -302,7 +302,7 @@ public sealed class HealthTests
                 settings["data-directory"] = dataDirectory;
             });
             using var client = tls.CreateClient(server.ClientAddress!);
-            var engine = (SqliteStorageEngine)server.Services.GetRequiredService<IStorageEngine>();
+            var engine = server.Services.GetRequiredService<SqliteStorageEngine>();
             var clock = new ProbeClock();
             var probes = new ProbeBarrier();
             probes.Release.TrySetResult();
@@ -341,7 +341,7 @@ public sealed class HealthTests
         var before = Directory.GetFileSystemEntries(server.DataDirectory).Order(StringComparer.Ordinal).ToList();
 
         await Task.WhenAll(Enumerable.Range(0, 16).Select(_ => AssertProbeAsync(server.Client, "/readyz", HttpStatusCode.OK, "ready")));
-        await ((SqliteStorageEngine)server.Services.GetRequiredService<IStorageEngine>()).ReadinessProbeTask.WaitAsync(TimeSpan.FromSeconds(30));
+        await server.Services.GetRequiredService<SqliteStorageEngine>().ReadinessProbeTask.WaitAsync(TimeSpan.FromSeconds(30));
 
         await Assert.That(Directory.GetFileSystemEntries(server.DataDirectory).Order(StringComparer.Ordinal).ToList()).IsEquivalentTo(before);
     }

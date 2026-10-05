@@ -169,6 +169,8 @@ public sealed record TerraBaseOptions : IDisposable
     private const int MaxUserIdLength = 256;
 
     private const int MinManagementCredentialLength = 32;
+    private const int DefaultStorageQueue = 1024;
+    internal const long MinMemoryBudget = 1024 * 1024;
 
     private static readonly string[] ClientTlsKeys = ["client-certificate", "client-private-key"];
 
@@ -176,7 +178,7 @@ public sealed record TerraBaseOptions : IDisposable
 
     private static readonly FrozenSet<string> Keys = FrozenSet.Create(
         StringComparer.Ordinal,
-        ["admin-port", "data-directory", "region", "node-name", "memory-budget", "client-port", .. ClientTlsKeys, "auth-issuer", "auth-audience", "management-credential-file", "management-legacy-owner", "peer-port", .. PeerTlsKeys, "peer-addresses", "shutdown-grace-seconds", "readiness-cache-seconds"]);
+        ["admin-port", "data-directory", "region", "node-name", "memory-budget", "client-port", .. ClientTlsKeys, "auth-issuer", "auth-audience", "management-credential-file", "management-legacy-owner", "peer-port", .. PeerTlsKeys, "peer-addresses", "shutdown-grace-seconds", "readiness-cache-seconds", "storage-threads", "storage-queue"]);
 
     /// <summary>Every setting name, in <c>--name=value</c> form without the dashes.</summary>
     public static IReadOnlySet<string> SettingNames => Keys;
@@ -197,9 +199,6 @@ public sealed record TerraBaseOptions : IDisposable
 
     /// <summary>Operator node identity; defaults to the machine name. This is not membership evidence.</summary>
     public string NodeName { get; init; } = Environment.MachineName;
-
-    /// <summary>Memory pressure denominator in bytes; telemetry only until memory admission lands in #13.</summary>
-    public long MemoryBudget { get; init; } = Math.Max(1024 * 1024, GC.GetGCMemoryInfo().TotalAvailableMemoryBytes / 4);
 
     internal static bool IsRegion(string region) => region.Length is >= 1 and <= 63 && region[0] is >= 'a' and <= 'z'
         && region[^1] != '-' && region.All(character => character is >= 'a' and <= 'z' or >= '0' and <= '9' or '-');
@@ -274,6 +273,30 @@ public sealed record TerraBaseOptions : IDisposable
     /// </summary>
     public IReadOnlyList<Uri> PeerAddresses { get; init; } = [];
 
+    /// <summary>
+    /// Bytes of memory TerraBase plans for caches (<c>docs/memory.md</c>). Defaults to a quarter of the memory
+    /// available to the process (container limits included).
+    /// </summary>
+    public required long MemoryBudget
+    {
+        get;
+        init => field = ValidateInteger(value, "memory-budget", MinMemoryBudget, long.MaxValue);
+    }
+
+    /// <summary>Dedicated threads that run SQLite calls; defaults to the processor count.</summary>
+    public required int StorageThreads
+    {
+        get;
+        init => field = (int)ValidateInteger(value, "storage-threads", 1, 1024);
+    }
+
+    /// <summary>Most storage transactions open at once; more are rejected as busy (HTTP 503).</summary>
+    public required int StorageQueue
+    {
+        get;
+        init => field = (int)ValidateInteger(value, "storage-queue", 1, 1_000_000);
+    }
+
     /// <summary>Reads and validates the configuration of this process.</summary>
     public static TerraBaseOptions FromProcess(IReadOnlyList<string> args)
     {
@@ -341,16 +364,6 @@ public sealed record TerraBaseOptions : IDisposable
             throw new TerraBaseConfigurationException("node-name must be 1 to 128 ASCII letters, digits, dots, underscores, colons, pluses or hyphens");
         }
 
-        long? memoryBudget = null;
-        if (values.TryGetValue("memory-budget", out var rawBudget))
-        {
-            if (!long.TryParse(rawBudget, NumberStyles.None, CultureInfo.InvariantCulture, out var bytes) || bytes < 1024 * 1024)
-            {
-                throw new TerraBaseConfigurationException("memory-budget must be an integer of at least 1048576 bytes");
-            }
-
-            memoryBudget = bytes;
-        }
         if (string.IsNullOrWhiteSpace(dataDirectory))
         {
             throw new TerraBaseConfigurationException("data-directory must not be empty");
@@ -408,7 +421,9 @@ public sealed record TerraBaseOptions : IDisposable
                 DataDirectory = dataDirectory,
                 Region = region,
                 NodeName = nodeName,
-                MemoryBudget = memoryBudget ?? Math.Max(1024 * 1024, GC.GetGCMemoryInfo().TotalAvailableMemoryBytes / 4),
+                MemoryBudget = ParseInteger(values, "memory-budget", MinMemoryBudget, long.MaxValue) ?? DefaultMemoryBudget(),
+                StorageThreads = (int)(ParseInteger(values, "storage-threads", 1, 1024) ?? Math.Clamp(Environment.ProcessorCount, 1, 1024)),
+                StorageQueue = (int)(ParseInteger(values, "storage-queue", 1, 1_000_000) ?? DefaultStorageQueue),
                 ClientPort = clientPort,
                 ClientCertificate = clientCertificate,
                 AuthIssuer = authIssuer,
@@ -432,6 +447,28 @@ public sealed record TerraBaseOptions : IDisposable
             throw;
         }
     }
+
+    private static long DefaultMemoryBudget() => Math.Max(MinMemoryBudget, GC.GetGCMemoryInfo().TotalAvailableMemoryBytes / 4);
+
+    private static long? ParseInteger(IReadOnlyDictionary<string, string> values, string key, long min, long max)
+    {
+        if (!values.TryGetValue(key, out var raw))
+        {
+            return null;
+        }
+
+        if (!long.TryParse(raw, NumberStyles.None, CultureInfo.InvariantCulture, out var value))
+        {
+            throw new TerraBaseConfigurationException($"{key} must be an integer between {min} and {max}");
+        }
+
+        return ValidateInteger(value, key, min, max);
+    }
+
+    private static long ValidateInteger(long value, string key, long min, long max) =>
+        value >= min && value <= max
+            ? value
+            : throw new TerraBaseConfigurationException($"{key} must be an integer between {min} and {max}");
 
     // A listener port and its TLS settings are all set or all absent.
     private static void RequireGroup(IReadOnlyDictionary<string, string> values, string portKey, int? port, string[] tlsKeys)

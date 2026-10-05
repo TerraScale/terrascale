@@ -1,3 +1,4 @@
+using System.Diagnostics.Metrics;
 using Bogus;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -24,12 +25,13 @@ public sealed class BaselineInitializationTests
         SqliteStorageEngine? engine = null;
         SqliteDatabaseStore? initialized = null;
         Task<bool>? deletion = null;
-        await using var server = await TerraBaseTestServer.StartAsync(services: services => services.AddSingleton<IStorageEngine>(provider =>
+        await using var server = await TerraBaseTestServer.StartAsync(services: services => services.AddSingleton(provider =>
         {
             var options = provider.GetRequiredService<TerraBaseOptions>();
-            engine = new SqliteStorageEngine(options.DataDirectory, options.ShutdownGrace,
-                provider.GetRequiredService<ILogger<SqliteStorageEngine>>(), options.ReadinessCacheTtl,
-                (step, database) =>
+            engine = new SqliteStorageEngine(options.DataDirectory, options.StorageThreads, options.StorageQueue, options.MemoryBudget,
+                provider.GetRequiredService<IMeterFactory>().Create(Telemetry.MeterName),
+                provider.GetRequiredService<ILogger<SqliteStorageEngine>>(), options.ShutdownGrace, readinessCacheTtl: options.ReadinessCacheTtl,
+                checkpoint: (step, database) =>
                 {
                     if (step == "create.published" && database == target && deletion is null)
                     {
@@ -107,12 +109,13 @@ public sealed class BaselineInitializationTests
             {
                 settings["shutdown-grace-seconds"] = "0";
             }
-        }, services => services.AddSingleton<IStorageEngine>(provider =>
+        }, services => services.AddSingleton(provider =>
         {
             var options = provider.GetRequiredService<TerraBaseOptions>();
-            engine = new SqliteStorageEngine(options.DataDirectory, options.ShutdownGrace,
-                provider.GetRequiredService<ILogger<SqliteStorageEngine>>(), provider.GetRequiredService<TerraBaseOptions>().ReadinessCacheTtl,
-                provider.GetRequiredService<DatabaseLifecycleCheckpoint>(), afterMigration: store =>
+            engine = new SqliteStorageEngine(options.DataDirectory, options.StorageThreads, options.StorageQueue, options.MemoryBudget,
+                provider.GetRequiredService<IMeterFactory>().Create(Telemetry.MeterName),
+                provider.GetRequiredService<ILogger<SqliteStorageEngine>>(), options.ShutdownGrace, readinessCacheTtl: options.ReadinessCacheTtl,
+                checkpoint: provider.GetRequiredService<DatabaseLifecycleCheckpoint>(), afterMigration: store =>
                 {
                     if (store.Tenant != target)
                     {

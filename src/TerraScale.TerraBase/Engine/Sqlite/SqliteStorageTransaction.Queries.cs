@@ -1,5 +1,4 @@
 using System.Globalization;
-using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.RegularExpressions;
 using Microsoft.Data.Sqlite;
@@ -20,159 +19,123 @@ internal sealed partial class SqliteStorageTransaction
 {
     private const string IndexPrefix = "tb_index_";
 
-    public async ValueTask<long> CountDocumentsAsync(string collection, CancellationToken cancellationToken)
-    {
-        ThrowIfDisposed();
-        return await WithQueryBudgetAsync(async () =>
-            (long)(await Command(SqliteStatements.CountDocuments, collection).ExecuteScalarAsync(cancellationToken).ConfigureAwait(false))!, cancellationToken).ConfigureAwait(false);
-    }
+    public ValueTask<long> CountDocumentsAsync(string collection, CancellationToken cancellationToken) =>
+        RunAsync(() => WithQueryBudget(() =>
+            (long)Command(SqliteStatements.CountDocuments, collection).ExecuteScalar()!, cancellationToken), cancellationToken);
 
-    public async ValueTask<IReadOnlyList<CollectionCount>> CountCollectionsAsync(CancellationToken cancellationToken)
-    {
-        ThrowIfDisposed();
-        return await WithQueryBudgetAsync<IReadOnlyList<CollectionCount>>(async () =>
+    public ValueTask<IReadOnlyList<CollectionCount>> CountCollectionsAsync(CancellationToken cancellationToken) =>
+        RunAsync(() => WithQueryBudget<IReadOnlyList<CollectionCount>>(() =>
         {
             var collections = new List<CollectionCount>();
-            var reader = await session.Command(SqliteStatements.CountCollections, transaction).ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
-            await using (reader.ConfigureAwait(false))
+            using var reader = session.Command(SqliteStatements.CountCollections, transaction).ExecuteReader();
+            while (reader.Read())
             {
-                while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
-                {
-                    collections.Add(new CollectionCount(reader.GetString(0), reader.GetInt64(1)));
-                }
+                cancellationToken.ThrowIfCancellationRequested();
+                collections.Add(new CollectionCount(reader.GetString(0), reader.GetInt64(1)));
             }
 
             return collections;
-        }, cancellationToken).ConfigureAwait(false);
-    }
+        }, cancellationToken), cancellationToken);
 
-    public async ValueTask<IReadOnlyList<CollectionStats>> ListCollectionStatsAsync(CancellationToken cancellationToken)
-    {
-        ThrowIfDisposed();
-        return await WithQueryBudgetAsync<IReadOnlyList<CollectionStats>>(async () =>
+    public ValueTask<IReadOnlyList<CollectionStats>> ListCollectionStatsAsync(CancellationToken cancellationToken) =>
+        RunAsync(() => WithQueryBudget<IReadOnlyList<CollectionStats>>(() =>
         {
             var collections = new List<CollectionStats>();
-            var reader = await session.Command(SqliteStatements.ListCollectionStats, transaction).ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
-            await using (reader.ConfigureAwait(false))
+            using var reader = session.Command(SqliteStatements.ListCollectionStats, transaction).ExecuteReader();
+            while (reader.Read())
             {
-                while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
-                {
-                    collections.Add(new CollectionStats(reader.GetString(0), reader.GetInt64(1), reader.GetInt64(2)));
-                }
+                cancellationToken.ThrowIfCancellationRequested();
+                collections.Add(new CollectionStats(reader.GetString(0), reader.GetInt64(1), reader.GetInt64(2)));
             }
 
             return collections;
-        }, cancellationToken).ConfigureAwait(false);
-    }
+        }, cancellationToken), cancellationToken);
 
-    public async IAsyncEnumerable<StoredDocument> QuerySqlAsync(SqlQuery query, [EnumeratorCancellation] CancellationToken cancellationToken)
-    {
-        ThrowIfDisposed();
-        cancellationToken.ThrowIfCancellationRequested();
-        var command = QueryCommand(query, "SELECT id, version FROM documents");
-        await using (command.ConfigureAwait(false))
-        {
-            // The document queries' budget (ReadBudgetedAsync) bounds SQLite's work, not the rows it returns.
-            await foreach (var document in ReadBudgetedAsync(command, cancellationToken, query).ConfigureAwait(false))
-            {
-                yield return document;
-            }
-        }
-    }
+    public IAsyncEnumerable<StoredDocument> QuerySqlAsync(SqlQuery query, CancellationToken cancellationToken) =>
+        ReadBudgetedAsync(() => QueryCommand(query, "SELECT id, version FROM documents"), cancellationToken, query);
 
     public ValueTask<SqlQueryPlan> ExplainSqlAsync(SqlQuery query, CancellationToken cancellationToken) =>
-        WithQueryBudgetAsync(() => ReadSqlPlanAsync(query, cancellationToken), cancellationToken);
+        RunAsync(() => WithQueryBudget(() => ReadSqlPlan(query, cancellationToken), cancellationToken), cancellationToken);
 
-    private async ValueTask<SqlQueryPlan> ReadSqlPlanAsync(SqlQuery query, CancellationToken cancellationToken)
+    private SqlQueryPlan ReadSqlPlan(SqlQuery query, CancellationToken cancellationToken)
     {
-        var command = QueryCommand(query, "EXPLAIN QUERY PLAN SELECT id, version FROM documents");
-        await using (command.ConfigureAwait(false))
+        using var command = QueryCommand(query, "EXPLAIN QUERY PLAN SELECT id, version FROM documents");
+        var steps = new List<string>();
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
         {
-            var steps = new List<string>();
-            var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
-            await using (reader.ConfigureAwait(false))
-            {
-                while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
-                {
-                    steps.Add(reader.GetString(3));
-                }
-            }
-
-            var indexes = steps.SelectMany(step => UsedIndex().Matches(step).Select(match => match.Groups[1].Value)).Distinct().ToList();
-            return new SqlQueryPlan(steps, indexes);
+            cancellationToken.ThrowIfCancellationRequested();
+            steps.Add(reader.GetString(3));
         }
+
+        var indexes = steps.SelectMany(step => UsedIndex().Matches(step).Select(match => match.Groups[1].Value)).Distinct().ToList();
+        return new SqlQueryPlan(steps, indexes);
     }
 
-    public async ValueTask<long> DeleteCollectionsAsync(string prefix, CancellationToken cancellationToken)
-    {
-        ArgumentException.ThrowIfNullOrEmpty(prefix);
-        ThrowIfReadOnly();
-        // A range over each primary key: every name that starts with the prefix sorts in [prefix, prefix with its last character incremented).
-        var to = prefix[..^1] + (char)(prefix[^1] + 1);
-        var documents = session.Command(SqliteStatements.DeleteCollectionDocuments, transaction);
-        documents.Parameters.AddWithValue("$from", prefix);
-        documents.Parameters.AddWithValue("$to", to);
-        try
+    public ValueTask<long> DeleteCollectionsAsync(string prefix, CancellationToken cancellationToken) =>
+        RunAsync(() =>
         {
-            var deleted = await documents.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+            ThrowIfReadOnly();
+            ArgumentException.ThrowIfNullOrEmpty(prefix);
+            // The primary-key range covers every collection with this prefix.
+            var to = prefix[..^1] + (char)(prefix[^1] + 1);
+            var documents = session.Command(SqliteStatements.DeleteCollectionDocuments, transaction);
+            documents.Parameters.AddWithValue("$from", prefix);
+            documents.Parameters.AddWithValue("$to", to);
+            var deleted = documents.ExecuteNonQuery();
+            cancellationToken.ThrowIfCancellationRequested();
             var names = session.Command(SqliteStatements.DeleteCollectionNames, transaction);
             names.Parameters.AddWithValue("$from", prefix);
             names.Parameters.AddWithValue("$to", to);
-            await names.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
-            return deleted;
-        }
-        catch
-        {
-            _faulted = true;
-            throw;
-        }
-    }
+            names.ExecuteNonQuery();
+            return (long)deleted;
+        }, cancellationToken, mutation: true);
 
-    public async ValueTask<IReadOnlyList<IndexDefinition>> ListIndexesAsync(CancellationToken cancellationToken)
-    {
-        ThrowIfDisposed();
-        var indexes = new List<IndexDefinition>();
-        var reader = await session.Command(SqliteStatements.ListIndexes, transaction).ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
-        await using (reader.ConfigureAwait(false))
+    public ValueTask<IReadOnlyList<IndexDefinition>> ListIndexesAsync(CancellationToken cancellationToken) =>
+        RunAsync<IReadOnlyList<IndexDefinition>>(() =>
         {
-            while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+            var indexes = new List<IndexDefinition>();
+            using var reader = session.Command(SqliteStatements.ListIndexes, transaction).ExecuteReader();
+            while (reader.Read())
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 indexes.Add(ParseIndex(reader.GetString(0), reader.GetString(1)));
             }
-        }
 
-        // Sorted here, not by the statement: the schema table has no index on the name, so ORDER BY would need a temporary B-tree.
-        indexes.Sort((left, right) => string.CompareOrdinal(left.Name, right.Name));
-        return indexes;
-    }
+            // The schema table has no name index; sort here instead of a temporary B-tree.
+            indexes.Sort((left, right) => string.CompareOrdinal(left.Name, right.Name));
+            return indexes;
+        }, cancellationToken);
 
     /// <remarks>ponytail: builds synchronously inside the write transaction, so writers wait for the build; build in the background if collections get large.</remarks>
-    public async ValueTask<bool> CreateIndexAsync(IndexDefinition index, CancellationToken cancellationToken)
+    public ValueTask<bool> CreateIndexAsync(IndexDefinition index, CancellationToken cancellationToken)
     {
-        ArgumentNullException.ThrowIfNull(index);
-        ThrowIfReadOnly();
-        if (!IndexName().IsMatch(index.Name) || !DatabaseName.TryParse(index.Collection, out _) || index.Fields.Count is < 1 or > 4)
+        return RunAsync(() =>
         {
-            throw new ArgumentException("invalid index definition", nameof(index));
-        }
+            ArgumentNullException.ThrowIfNull(index);
+            ThrowIfReadOnly();
+            if (!IndexName().IsMatch(index.Name) || !DatabaseName.TryParse(index.Collection, out _) || index.Fields.Count is < 1 or > 4)
+            {
+                throw new ArgumentException("invalid index definition", nameof(index));
+            }
 
-        if (await IndexExistsAsync(index.Name, cancellationToken).ConfigureAwait(false))
-        {
-            return false;
-        }
+            if (IndexExists(index.Name))
+            {
+                return false;
+            }
 
-        // The collection leads the key, so the index also orders a whole collection by its fields (ORDER BY),
-        // not only answers equality on them.
-        var keys = "collection, " + string.Join(", ", index.Fields.Select(Column));
-        // Without statistics the planner prefers the primary key or documents_live, whose leading column (collection) is
-        // also an equality, over any secondary index. ANALYZE of the new index alone reads only that partial index, so
-        // the write lock is held for its collection's size, not the database's. The two collection-leading indexes get
-        // no full scan either: each is seeded or raised from the new index's row count when that establishes a larger
-        // lower bound for the table (SQLite lets applications write to sqlite_stat1), and the statistics are reloaded.
-        // The primary key's statistics row is named after the table (WITHOUT ROWID).
-        // ponytail: statistics are refreshed only when an index is built; run PRAGMA optimize periodically if data shifts a lot.
-        var name = IndexPrefix + index.Name;
-        var command = PlainCommand($"""
+            // The collection leads the key, so the index also orders a whole collection by its fields (ORDER BY),
+            // not only answers equality on them.
+            var keys = "collection, " + string.Join(", ", index.Fields.Select(Column));
+            // Without statistics the planner prefers the primary key or documents_live, whose leading column (collection) is
+            // also an equality, over any secondary index. ANALYZE of the new index alone reads only that partial index, so
+            // the write lock is held for its collection's size, not the database's. The two collection-leading indexes get
+            // no full scan either: each is seeded or raised from the new index's row count when that establishes a larger
+            // lower bound for the table (SQLite lets applications write to sqlite_stat1), and the statistics are reloaded.
+            // The primary key's statistics row is named after the table (WITHOUT ROWID).
+            // ponytail: statistics are refreshed only when an index is built; run PRAGMA optimize periodically if data shifts a lot.
+            var name = IndexPrefix + index.Name;
+            var command = PlainCommand($"""
             CREATE INDEX "{name}" ON documents ({keys}) WHERE collection = '{index.Collection}' AND body IS NOT NULL;
             ANALYZE "{name}";
             DELETE FROM sqlite_stat1
@@ -186,63 +149,68 @@ internal sealed partial class SqliteStorageTransaction
                 WHERE NOT EXISTS (SELECT 1 FROM sqlite_stat1 WHERE tbl = 'documents' AND idx = seeded.idx);
             ANALYZE sqlite_schema;
             """);
-        await using (command.ConfigureAwait(false))
-        {
-            raw.sqlite3_progress_handler(session.Connection.Handle, 1000, _ => cancellationToken.IsCancellationRequested ? 1 : 0, null);
-            try
+            using (command)
             {
-                await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+                raw.sqlite3_progress_handler(session.Connection.Handle, 1000, _ => cancellationToken.IsCancellationRequested ? 1 : 0, null);
+                try
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    command.ExecuteNonQuery();
+                }
+                catch (SqliteException error) when (error.SqliteErrorCode == raw.SQLITE_INTERRUPT && cancellationToken.IsCancellationRequested)
+                {
+                    _faulted = true;
+                    throw new OperationCanceledException("index build canceled", error, cancellationToken);
+                }
+                catch
+                {
+                    _faulted = true;
+                    throw;
+                }
+                finally
+                {
+                    StopQueryBudget();
+                }
             }
-            catch (SqliteException error) when (error.SqliteErrorCode == raw.SQLITE_INTERRUPT && cancellationToken.IsCancellationRequested)
-            {
-                _faulted = true;
-                throw new OperationCanceledException("index build canceled", error, cancellationToken);
-            }
-            catch
-            {
-                _faulted = true;
-                throw;
-            }
-            finally
-            {
-                StopQueryBudget();
-            }
-        }
 
-        return true;
+            return true;
+        }, cancellationToken, mutation: true);
     }
 
-    public async ValueTask<bool> DropIndexAsync(string name, CancellationToken cancellationToken)
+    public ValueTask<bool> DropIndexAsync(string name, CancellationToken cancellationToken)
     {
-        ThrowIfReadOnly();
-        if (!IndexName().IsMatch(name) || !await IndexExistsAsync(name, cancellationToken).ConfigureAwait(false))
+        return RunAsync(() =>
         {
-            return false;
-        }
-
-        var command = PlainCommand($"DROP INDEX \"{IndexPrefix}{name}\";");
-        await using (command.ConfigureAwait(false))
-        {
-            try
+            ThrowIfReadOnly();
+            if (!IndexName().IsMatch(name) || !IndexExists(name))
             {
-                await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+                return false;
             }
-            catch
-            {
-                _faulted = true;
-                throw;
-            }
-        }
 
-        return true;
+            var command = PlainCommand($"DROP INDEX \"{IndexPrefix}{name}\";");
+            using (command)
+            {
+                try
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    command.ExecuteNonQuery();
+                }
+                catch
+                {
+                    _faulted = true;
+                    throw;
+                }
+            }
+
+            return true;
+        }, cancellationToken, mutation: true);
     }
 
-    private async ValueTask<bool> IndexExistsAsync(string name, CancellationToken cancellationToken)
+    private bool IndexExists(string name)
     {
-        ThrowIfDisposed();
         var command = session.Command(SqliteStatements.IndexExists, transaction);
         command.Parameters.AddWithValue("$name", IndexPrefix + name);
-        return await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) is not null;
+        return command.ExecuteScalar() is not null;
     }
 
     // Recovers a definition from the CREATE INDEX statement CreateIndexAsync wrote.
@@ -370,7 +338,6 @@ internal sealed partial class SqliteStorageTransaction
 
     private SqliteCommand PlainCommand(string sql)
     {
-        ThrowIfDisposed();
         // Not cached on the session: these statements embed collections and paths, so their text varies.
         var command = session.Connection.CreateCommand();
         command.Transaction = transaction;

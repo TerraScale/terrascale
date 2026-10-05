@@ -72,6 +72,9 @@ never its value. Port `0` picks a free port.
 | `--peer-addresses` / `TERRABASE_PEER_ADDRESSES` | unset | Comma-separated `https://host:port` peers to send changes to; requires `peer-port` |
 | `--shutdown-grace-seconds` / `TERRABASE_SHUTDOWN_GRACE_SECONDS` | `10` | Seconds shutdown waits for transactions to return their database connections (0 to 3600). It never closes them; the data directory stays owned until they do or the process exits |
 | `--readiness-cache-seconds` / `TERRABASE_READINESS_CACHE_SECONDS` | `1` | Seconds completed readiness filesystem results are cached (positive integer, 1 to 60). Zero is prohibited to bound disk work from anonymous traffic. Shutdown bypasses the cache |
+| `memory-budget` | ¼ of available memory | Bytes for caches; see `docs/memory.md` |
+| `storage-threads` | processor count | Dedicated threads that run SQLite calls |
+| `storage-queue` | `1024` | Storage transactions admitted at once; more get `503` with `Retry-After` |
 
 ### Health probes
 
