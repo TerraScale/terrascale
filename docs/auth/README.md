@@ -107,14 +107,14 @@ nice -n 19 make dev        # dotnet watch, published over HTTPS on the tailnet f
 
 The service needs an explicitly configured TerraBase HTTPS origin, an
 organization-bound Documents API key and an existing database. Resolve the
-`auth` project UUID through Management before deployment; this example expects
+`ts-auth` project UUID through Management before deployment; this example expects
 that UUID in `AUTH_PROJECT_ID` and uses synthetic credential placeholders:
 
 ```sh
 TS_AUTH_PUBLIC_ORIGIN=https://auth.terrascale.tech \
 TS_AUTH_TERRASCALE_API_URL="${AUTH_STORAGE_ORIGIN:?set the resolved HTTPS authority}" \
 TS_AUTH_TERRASCALE_API_KEY=tb_... \
-TS_AUTH_DATABASE="${AUTH_PROJECT_ID:?set the auth project UUID}/auth" \
+TS_AUTH_DATABASE="${AUTH_PROJECT_ID:?set the ts-auth project UUID}/auth" \
 TS_AUTH_MASTER_KEY=$(head -c 32 /dev/urandom | base64) \
 TS_AUTH_AUDIT_SIGNING_KEY=$(head -c 32 /dev/urandom | base64) \
 TS_AUTH_OPERATOR_KEY=$(head -c 32 /dev/urandom | base64) \
@@ -125,8 +125,8 @@ nice -n 19 dotnet run --project src/TerraScale.Auth
 | --- | --- |
 | `TS_AUTH_PUBLIC_ORIGIN` | One global public origin shared by every replica (issuer URLs, email links, WebAuthn RP, OpenAPI server). Must be an origin without a path |
 | `TS_AUTH_TERRASCALE_API_URL` | Required HTTPS origin, no default; no credentials, path, query or fragment. Host must be `api.terrascale.tech` or under `.api.terrascale.tech`; loopback HTTPS is permitted only in Development. Explicit static endpoint override |
-| `TS_AUTH_TERRASCALE_API_KEY` | Organization-bound `tb_…` credential with `documents:read` and `documents:write`, restricted to the auth project/database where appropriate. A leading `Bearer` scheme is stripped; runtime uses no management credential |
-| `TS_AUTH_DATABASE` | Required `project-uuid/database`, e.g. `<auth-project-uuid>/auth`; lowercase hyphenated UUID and lowercase database name (at most 63 characters). Project labels are not accepted |
+| `TS_AUTH_TERRASCALE_API_KEY` | Organization-bound `tb_…` credential with `documents:read` and `documents:write`, restricted to the ts-auth project/database where appropriate. A leading `Bearer` scheme is stripped; runtime uses no management credential |
+| `TS_AUTH_DATABASE` | Required `project-uuid/database`, e.g. `<ts-auth-project-uuid>/auth`; lowercase hyphenated UUID and lowercase database name (at most 63 characters). Project labels are not accepted |
 | `TS_AUTH_MASTER_KEY` | Base64, 32 bytes; encrypts recoverable secrets (signing keys included) with AES-256-GCM. There is no re-encryption yet: changing it makes every sealed secret unreadable |
 | `TS_AUTH_AUDIT_SIGNING_KEY` | Base64 32-byte HMAC key for audit-event seals (required outside Development) |
 | `TS_AUTH_AUDIT_VERIFY_KEYS` | Optional semicolon-separated previous audit keys (at most 5), kept during rotation |
@@ -146,10 +146,10 @@ nice -n 19 dotnet run --project src/TerraScale.Auth
 | `TS_AUTH_SENTRY_DSN` | GlitchTip/Sentry DSN for error reporting; a deployment secret, never committed. Off when unset |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` (or the per-signal `OTEL_EXPORTER_OTLP_*_ENDPOINT`), `OTEL_SERVICE_NAME`, `OTEL_EXPORTER_OTLP_HEADERS` | Standard OpenTelemetry settings; traces, metrics and logs are pushed over OTLP only when an endpoint is set |
 
-The intended production dataset is `auth/auth` in organization
-`terrascale-internal`: project label `auth`, database name `auth`. Documents
+The intended production dataset is `ts-auth/auth` in organization
+`terrascale`: project label `ts-auth`, database name `auth`. Documents
 routes require the project's UUID, so runtime configuration must use
-`<auth-project-uuid>/auth`. The credential selects the organization; separate
+`<ts-auth-project-uuid>/auth`. The credential selects the organization; separate
 project/tenant selector options have been removed. `App.Build` injects
 `ITerraBaseEndpointResolver` with a `TerraBaseStaticEndpointResolver` for the
 configured origin. No GRU endpoint is hardcoded in client routing. Atlas
@@ -325,7 +325,7 @@ The application and readiness probe never provision or repair state, and
 there is no migration of Rust documents. `scripts/provision.sh` prints only
 the provisioning plan; live production execution belongs to TS-470:
 
-1. Resolve organization `terrascale-internal` and project label `auth` to their
+1. Resolve organization `terrascale` and project label `ts-auth` to their
    IDs through Management before deployment; keep management credentials out
    of the auth runtime.
 2. Provision the `auth` database and a `tb_…` credential restricted to the
@@ -339,7 +339,7 @@ the provisioning plan; live production execution belongs to TS-470:
    provisioned before TS-491 reports 503 until this step is repeated. Run it
    before rolling out TS-491; a configured dashboard or service client also
    stops startup while its collection is missing.
-4. Configure every replica with `<auth-project-uuid>/auth` and the same
+4. Configure every replica with `<ts-auth-project-uuid>/auth` and the same
    explicitly resolved HTTPS storage authority and shared auth settings.
 
 **Live production activation remains gated.** The pinned server uses SQLite

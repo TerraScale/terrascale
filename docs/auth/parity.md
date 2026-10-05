@@ -68,14 +68,15 @@ OpenAPI lint, 100 fast tests and 21 slow tests, with zero skips. Production/live
 validation has not been performed. See [the port guide](csharp-port.md) for the exact SDK and
 server pins and runtime configuration.
 
-Runtime selects `<auth-project-uuid>/auth`, with the production project
-labelled `auth` in organization `terrascale-internal` (logical dataset
-`auth/auth`). An operator resolves that UUID through Management before
+Runtime selects `<ts-auth-project-uuid>/auth`, with the production project
+labelled `ts-auth` in organization `terrascale` (logical dataset
+`ts-auth/auth`). An operator resolves that UUID through Management before
 deployment; runtime uses only a `tb_…` Documents credential scoped for
 `documents:read` and `documents:write`. The required HTTPS endpoint is an
 explicit static override via `ITerraBaseEndpointResolver`; Atlas SDK discovery
 belongs to TS-507. `scripts/provision.sh` prints a plan only; live execution
-belongs to TS-470.
+belongs to TS-529 in ts-orchestrator; production activation remains gated by
+TS-470.
 
 The pinned server's decisions 0003 and 0005 limit deployment: SQLite WAL
 `synchronous=NORMAL` can lose acknowledged writes since the last WAL sync
