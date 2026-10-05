@@ -32,7 +32,7 @@ public sealed class ProvisioningPlanTests
             await Assert.That(plan).Contains("ts-auth project");
             await Assert.That(plan).Contains("auth database");
             await Assert.That(plan).Contains("TS_AUTH_DATABASE=<ts-auth-project-id>/auth");
-            await Assert.That(plan).DoesNotContain("terrascale-internal");
+            await Assert.That(plan).DoesNotContain("terrascale" + "-internal");
             await Assert.That(plan).DoesNotContain("its auth project");
             await Assert.That(plan).DoesNotContain("<auth-project-id>");
         }

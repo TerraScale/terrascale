@@ -4,7 +4,7 @@ set -euo pipefail
 
 cat <<'PLAN'
 Provisioning plan (no changes executed):
-1. Use the Management API to resolve terrascale and organization terrascale and its ts-auth project ID.
+1. Use the Management API to resolve organization terrascale and its ts-auth project ID.
 2. Provision the auth database and a project/database-scoped tb_ API key with documents:read/write.
 3. With the pinned ts-dotnet Documents client, call AuthStore.ProvisionAsync on that existing database.
    It creates uniques, verification_tokens, storage_health, users, sessions, passcodes,
