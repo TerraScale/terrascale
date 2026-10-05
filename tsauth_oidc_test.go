@@ -10,9 +10,11 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -431,6 +433,83 @@ func TestTSAuthOIDCAtlasTransportPreservesCanonicalIssuer(t *testing.T) {
 		if host == "api.terrascale.tech" || host == "auth.terrascale.tech" {
 			t.Fatal("proxy fallback used")
 		}
+	}
+}
+
+func TestTSAuthOIDCRegionalIssuer(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		cfg   Config
+		hosts []string
+	}{
+		{"Atlas proxy calls the issuer region", Config{TSAuthBaseURL: "https://auth.terrascale.tech", DiscoveryBaseURL: "https://atlas.test"}, []string{"gru.auth.terrascale.tech"}},
+		{"reverse proxy", Config{TSAuthBaseURL: "https://auth.terrascale.tech", TSAuthUseReverseProxy: true}, []string{"auth.terrascale.tech"}},
+		{"direct regional base", Config{TSAuthBaseURL: "https://gru.auth.terrascale.tech"}, []string{"gru.auth.terrascale.tech"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newOIDCFixture(t)
+			local := strings.TrimPrefix(f.server.URL, "http://")
+			f.issuer = "https://gru.auth.terrascale.tech/acme"
+			raw, _ := json.Marshal(f.document)
+			json.Unmarshal([]byte(strings.ReplaceAll(string(raw), f.server.URL+"/acme", f.issuer)), &f.document)
+			hosts := map[string]bool{}
+			tc.cfg.HTTPClient = &http.Client{Transport: pinningRoundTripperFunc(func(request *http.Request) (*http.Response, error) {
+				hosts[request.URL.Host] = true
+				clone := request.Clone(request.Context())
+				clone.URL.Scheme, clone.URL.Host = "http", local
+				return http.DefaultTransport.RoundTrip(clone)
+			})}
+			client, err := NewClient(tc.cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			instance, err := client.TSAuth.Instance("acme")
+			if err != nil {
+				t.Fatal(err)
+			}
+			app, err := instance.OIDC.NewApplication(TSAuthOIDCApplicationConfig{Issuer: f.issuer, Authentication: TSAuthOAuthClientAuthentication{ClientID: "client", Method: TSAuthClientAuthenticationNone}, RedirectURI: "https://app.example/callback"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			attempt, err := app.BeginAuthorization(t.Context(), []string{"openid"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.HasPrefix(attempt.AuthorizationURL, f.issuer+"/oauth/authorize?") {
+				t.Fatalf("authorization URL %s", attempt.AuthorizationURL)
+			}
+			f.token = f.sign(t, f.claims(attempt.Nonce), nil)
+			if identity, err := app.VerifyIDToken(t.Context(), f.token, TSAuthIDTokenVerificationOptions{Nonce: attempt.Nonce, AccessToken: "access"}); err != nil || identity.Issuer != f.issuer {
+				t.Fatalf("identity=%+v error=%v", identity, err)
+			}
+			introspector, err := instance.NewResourceIntrospector(TSAuthResourceIntrospectorConfig{Issuer: f.issuer, ResourceAudience: "https://api.example.test/a", Authentication: TSAuthResourceAuthentication{ClientID: "resource", Secret: "secret"}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			introspector.Introspect(t.Context(), "opaque")
+			if f.requests != 1 || !reflect.DeepEqual(slices.Sorted(maps.Keys(hosts)), tc.hosts) {
+				t.Fatalf("requests=%d hosts=%v", f.requests, hosts)
+			}
+		})
+	}
+}
+
+func TestTSAuthOIDCRegionalIssuerRejections(t *testing.T) {
+	for _, tc := range []struct{ base, issuer string }{
+		{"https://auth.terrascale.tech", "https://evil.example/acme"},
+		{"https://auth.terrascale.tech", "https://gru.auth.terrascale.tech.evil.example/acme"},
+		{"https://auth.terrascale.tech", "https://evil.gru.auth.terrascale.tech/acme"},
+		{"https://auth.terrascale.tech", "https://xyz.auth.terrascale.tech/acme"},
+		{"https://auth.terrascale.tech", "https://GRU.auth.terrascale.tech/acme"},
+		{"https://auth.terrascale.tech", "https://gru.auth.terrascale.tech:8443/acme"},
+		{"https://gru.auth.terrascale.tech", "https://sfo.auth.terrascale.tech/acme"},
+		{"https://auth.example.com", "https://gru.auth.terrascale.tech/acme"},
+	} {
+		instance := newTSAuthTestInstance(t, Config{TSAuthBaseURL: tc.base})
+		_, err := instance.OIDC.NewApplication(TSAuthOIDCApplicationConfig{Issuer: tc.issuer, Authentication: TSAuthOAuthClientAuthentication{ClientID: "client", Method: TSAuthClientAuthenticationNone}, RedirectURI: "https://app.example/callback"})
+		assertOIDCCode(t, err, "issuer_transport_mismatch")
+		_, err = instance.NewResourceIntrospector(TSAuthResourceIntrospectorConfig{Issuer: tc.issuer, ResourceAudience: "https://api.example.test/a", Authentication: TSAuthResourceAuthentication{ClientID: "resource", Secret: "secret"}})
+		assertOIDCCode(t, err, "issuer_transport_mismatch")
 	}
 }
 

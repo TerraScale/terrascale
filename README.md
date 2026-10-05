@@ -179,7 +179,13 @@ TSAuth calls require an explicit `TSAuthBaseURL`, or a suitable explicit
 Management methods use the instance credential. The OIDC application API uses
 explicit issuer and OAuth client authentication, verifies authorization-code
 responses and ID tokens, and exposes introspection, revocation, and logout
-flows. Accepted OIDC source
+flows. ts-auth issues from its regional host, for example
+`https://gru.auth.terrascale.tech/<slug>`. A regional issuer
+(`https://<region>.auth.terrascale.tech`) is accepted only when
+`TSAuthBaseURL` is the Atlas proxy `https://auth.terrascale.tech`: the OIDC
+and resource clients then call the issuer's region directly, or the proxy with
+`TSAuthUseReverseProxy`. Any other issuer must be the base origin itself.
+Accepted OIDC source
 checks do not qualify an actual hosted-provider journey.
 
 Schema and SQL builders construct and validate statements locally and do not
@@ -215,7 +221,7 @@ they do not substitute for either OAuth credential role.
 
 ```go
 origin, err := instance.NewResourceClient(sdk.TSAuthResourceClientConfig{
-    Issuer: "https://auth.terrascale.tech/example",
+    Issuer: "https://gru.auth.terrascale.tech/example",
     ResourceAudience: "https://api.example.test/management",
     Authentication: sdk.TSAuthOAuthClientAuthentication{
         ClientID: originClientID, ClientSecret: originSecret,
@@ -226,7 +232,7 @@ if err != nil { return err }
 grant, err := origin.RequestClientCredentials(ctx, []string{"management:read"})
 if err != nil { return err }
 resource, err := instance.NewResourceIntrospector(sdk.TSAuthResourceIntrospectorConfig{
-    Issuer: "https://auth.terrascale.tech/example",
+    Issuer: "https://gru.auth.terrascale.tech/example",
     ResourceAudience: "https://api.example.test/management",
     Authentication: sdk.TSAuthResourceAuthentication{
         ClientID: introspectionClientID, Secret: introspectionSecret,
