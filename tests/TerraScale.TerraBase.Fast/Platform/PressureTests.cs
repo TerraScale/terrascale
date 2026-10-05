@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Globalization;
 using System.Net;
 using System.Net.Sockets;
@@ -353,7 +354,8 @@ public sealed class PressureTests
 
     private sealed class SamplingClock(bool pauseProcess = false) : TimeProvider
     {
-        private ITimer? _storageTimer;
+        // Usage flushes also tick every 10 seconds, and which timer is created last is a race, so every one is kept.
+        private readonly ConcurrentQueue<ITimer> _storageTimers = new();
         private ITimer? _processTimer;
 
         public TaskCompletionSource ProcessReady { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -368,7 +370,7 @@ public sealed class PressureTests
             var timer = base.CreateTimer(callback, state, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
             if (period == TimeSpan.FromSeconds(10))
             {
-                Volatile.Write(ref _storageTimer, timer);
+                _storageTimers.Enqueue(timer);
             }
             else
             {
@@ -379,7 +381,14 @@ public sealed class PressureTests
             return timer;
         }
 
-        public void SampleStorage() => _ = Volatile.Read(ref _storageTimer)!.Change(TimeSpan.Zero, Timeout.InfiniteTimeSpan);
+        // Firing a usage flush too is harmless.
+        public void SampleStorage()
+        {
+            foreach (var timer in _storageTimers)
+            {
+                _ = timer.Change(TimeSpan.Zero, Timeout.InfiniteTimeSpan);
+            }
+        }
 
         public void SampleProcess() => _ = Volatile.Read(ref _processTimer)!.Change(TimeSpan.Zero, Timeout.InfiniteTimeSpan);
     }

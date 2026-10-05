@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Net.Mail;
+using TerraScale.TerraBase.Errors;
 using TerraScale.TerraBase.Features.UserAuth;
 using TerraScale.TerraBase.Tenancy;
 
@@ -87,19 +88,32 @@ internal static class ManagementRoute
     public static string MemberId(HttpContext context) => ValidUserId(Value(context, "user"), "user");
 
     /// <summary>Validates a user id from a route or body.</summary>
-    public static string ValidUserId(string? user, string field) =>
+    public static string ValidUserId(string? user, string field) => OrThrow(CheckUserId(user, field));
+
+    /// <summary>A user id from a route or body, or the rule it breaks.</summary>
+    public static Valid<string> CheckUserId(string? user, string field) =>
         string.IsNullOrEmpty(user) || user.Length > MaxUserIdLength || user.Any(char.IsControl)
-            ? throw new BadHttpRequestException($"{field} must be 1 to 256 characters without control characters")
+            ? new Validation($"{field} must be 1 to 256 characters without control characters")
             : user;
 
     /// <summary>Validates one email address and returns it trimmed.</summary>
-    public static string Email(string? email)
+    public static string Email(string? email) => OrThrow(CheckEmail(email));
+
+    /// <summary>One email address, trimmed, or the rule it breaks.</summary>
+    public static Valid<string> CheckEmail(string? email)
     {
         var trimmed = email?.Trim();
         return trimmed is { Length: <= MaxEmailLength } && MailAddress.TryCreate(trimmed, out var address) && address.Address == trimmed
             ? trimmed
-            : throw new BadHttpRequestException("email must be one address of at most 254 characters");
+            : new Validation("email must be one address of at most 254 characters");
     }
+
+    // Callers not converted to unions yet (docs/error-handling.md) still throw; BadRequests answers the same 400.
+    private static string OrThrow(Valid<string> value) => value switch
+    {
+        string valid => valid,
+        Validation error => throw new BadHttpRequestException(error.Message),
+    };
 
     /// <summary>Validates a role. The enum converter also reads numbers, so undefined values are rejected here.</summary>
     public static OrganizationRole Role(OrganizationRole? role) =>

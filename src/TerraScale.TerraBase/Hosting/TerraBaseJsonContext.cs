@@ -19,6 +19,7 @@ namespace TerraScale.TerraBase.Hosting;
 /// <summary>Source-generated JSON metadata for every request and response type (fast startup, no reflection-based serialization).</summary>
 [JsonSourceGenerationOptions(JsonSerializerDefaults.Web)]
 [JsonSerializable(typeof(AcceptInvitationRequest))]
+[JsonSerializable(typeof(AddMemberRequest))]
 [JsonSerializable(typeof(ApiKey))]
 [JsonSerializable(typeof(AppliedIndexRecommendation))]
 [JsonSerializable(typeof(AuditEvent))]

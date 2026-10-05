@@ -83,7 +83,8 @@ Decided by COS on 2026-10-05: the TS-529 bootstrap creates the `terrascale` orga
   1 to 256 characters, no control characters). TerraBase compares the two SHA-256 hashes with
   `CryptographicOperations.FixedTimeEquals`. A wrong secret or a missing or invalid user answers `401`.
 - The named user then acts exactly like a token's `sub`: membership and roles apply as for anyone.
-  The credential carries no verified email, so it cannot accept invitations (`403`).
+  The credential carries no verified email, so it cannot accept invitations (`403`); it can
+  [add a member](#adding-a-member-on-the-administrative-listener) instead.
 - Every use is logged: `Management service credential acted as user <id>: <method> <path>` at
   Information, and `Management service credential rejected: <method> <path>` at Warning. The secret is
   never logged.
@@ -266,6 +267,7 @@ a user who is not a member gets `404`, and a member whose role is too low gets `
 | Method | Route | Needs | Result |
 | --- | --- | --- | --- |
 | `GET` | `/members` | member | page of members in user id order |
+| `PUT` | `/members/{user}` | admin; admin listener only | `{email}` → member; see [Adding a member on the administrative listener](#adding-a-member-on-the-administrative-listener) |
 | `PUT` | `/members/{user}/role` | admin; owner if the member is or becomes an owner | `{role}` → member; `409` when it would demote the last owner |
 | `DELETE` | `/members/{user}` | admin; owner to remove an owner | `204`; `409` for the last owner |
 | `POST` | `/leave` | member | `204`; `409` for the last owner |
@@ -298,11 +300,11 @@ Rules:
   Only the nominee confirms. The offer lapses (`404`) as soon as its starter stops being an owner or
   either side leaves, even if the starter later regains ownership.
 - **Audit events** record every change above as `{id, actor, action, target, detail, occurredAt}`.
-  Actions: `member.role_changed`, `member.removed`, `member.left`, `invitation.created`,
+  Actions: `member.added`, `member.role_changed`, `member.removed`, `member.left`, `invitation.created`,
   `invitation.revoked`, `invitation.accepted`, `ownership.transfer_started`,
   `ownership.transfer_confirmed`, `ownership.transfer_cancelled`, `settings.audit_retention_updated`,
   `settings.plan_updated`. `target` is a user id or an invitation email; `detail` is the new role, the
-  number of days or the new plan. Retention
+  number of days, the new plan or, for `member.added`, the supplied email. Retention
   is measured on each event's exact `occurredAt`: events older than the retention stop being listed at once
   and are deleted, oldest first, as new events are recorded.
 - **Order:** invitations list in creation order and audit events newest first, by a per-organization
@@ -319,6 +321,41 @@ Shapes:
 {"fromUserId":"<user id>","toUserId":"<user id>","createdAt":"…","expiresAt":"…"}
 {"id":"0199…","actor":"<user id>","action":"member.role_changed","target":"<user id>","detail":"admin","occurredAt":"…"}
 ```
+
+### Adding a member on the administrative listener
+
+Decided by COS on 2026-10-05 (TS-535): the TS-529 bootstrap creates the `terrascale` organization as its own
+identity, then hands it to a person. The management service credential carries no verified email, so it cannot accept
+an invitation; this operation adds the member directly.
+
+`PUT /v1/management/organizations/{organization}/members/{user}` with `{email}`:
+
+- Served **only on the loopback admin listener**, with the management service credential and `X-TerraBase-User-Id`
+  naming the acting user. On the client listener it answers `404` (or `421` for a mismatched region pin), whatever
+  credential or token the request presents.
+- `{user}` is the ts-auth user id to add (1 to 256 characters, no control characters) and `email` its address (one
+  address, at most 254 characters). TerraBase does not verify the email and does not store it on the membership: it is
+  recorded only in the audit event. A pending invitation for the same email is left alone; accepting it later answers
+  `409` (already a member).
+- Needs `admin`, like any membership change. Adds the user with role `member` and answers `200` with the membership.
+- Idempotent: a user who is already a member is returned unchanged (`200`), whatever its role, and nothing is recorded.
+- Audited as `member.added`: `actor` is the user the credential names, `target` the added user id and `detail` the
+  supplied email. The credential's log line (`Management service credential acted as user …: PUT …`) records the call too.
+- Errors use the `{"error":{"code","message"}}` body ([error handling](error-handling.md)): `400 invalid_request` for
+  an invalid user id or email, `403 forbidden_role` when the acting user's role is below `admin`, `404 not_found` for
+  an organization the acting user is not a member of.
+
+The bootstrap, every call on the admin listener with the credential:
+
+1. `POST /organizations` `{name}` as the bootstrap identity, which becomes its owner.
+2. `PUT /organizations/{organization}/members/{user}` `{email}` as the bootstrap identity.
+3. `POST …/ownership-transfer` `{userId}` naming the user, as the bootstrap identity.
+4. `POST …/ownership-transfer/confirm` with `X-TerraBase-User-Id` naming the user: the user becomes an owner and the
+   bootstrap identity a `member`.
+5. `PUT …/members/{bootstrap identity}/role` `{"role":"admin"}` as the user, to keep the bootstrap identity an admin.
+
+Step 2 is safe to repeat until step 4. After step 4 the bootstrap identity is no longer an admin, so repeating step 2
+answers `403`: resume from step 5.
 
 Not covered yet: invitation resend (revoke and invite again), audit filters and export, and audit events
 for organization, project and database changes.

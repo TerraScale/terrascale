@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using TerraScale.TerraBase.Engine;
+using TerraScale.TerraBase.Errors;
 using TerraScale.TerraBase.Hosting;
 using TerraScale.TerraBase.Tenancy;
 
@@ -82,6 +83,33 @@ internal sealed partial class EngineManagementService : IAccessService
             member = member with { Role = role };
             await PutMemberAsync(transaction, organizationId, member, cancellationToken).ConfigureAwait(false);
             await RecordAsync(transaction, organizationId, userId, "member.role_changed", memberId, RoleName(role), cancellationToken).ConfigureAwait(false);
+            return member;
+        }, cancellationToken).ConfigureAwait(false);
+
+    public async ValueTask<AddMemberResult> AddMemberAsync(
+        string userId, string organizationId, string memberId, string email, CancellationToken cancellationToken) =>
+        await WriteAsync<AddMemberResult>(async transaction =>
+        {
+            var actor = await AuthorizeAsync(transaction, userId, organizationId, OrganizationRole.Admin, cancellationToken).ConfigureAwait(false);
+            if (actor.Error == ManagementError.Forbidden)
+            {
+                return new Forbidden("your role in the organization does not allow this", "forbidden_role");
+            }
+
+            if (actor.Value is null)
+            {
+                return new NotFound();
+            }
+
+            // Idempotent: an existing membership keeps its role and is not recorded again.
+            if (await GetMemberAsync(transaction, organizationId, memberId, cancellationToken).ConfigureAwait(false) is { } existing)
+            {
+                return existing;
+            }
+
+            var member = new OrganizationMember(memberId, OrganizationRole.Member, time.GetUtcNow());
+            await PutMemberAsync(transaction, organizationId, member, cancellationToken).ConfigureAwait(false);
+            await RecordAsync(transaction, organizationId, userId, "member.added", memberId, email, cancellationToken).ConfigureAwait(false);
             return member;
         }, cancellationToken).ConfigureAwait(false);
 

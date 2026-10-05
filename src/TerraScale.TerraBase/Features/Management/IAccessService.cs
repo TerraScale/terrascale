@@ -1,4 +1,5 @@
 using System.Text.Json.Serialization;
+using TerraScale.TerraBase.Errors;
 
 namespace TerraScale.TerraBase.Features.Management;
 
@@ -59,6 +60,9 @@ public sealed record AuditRetention(int Days);
 /// <param name="OccurredAt">When it happened.</param>
 public sealed record AuditEvent(string Id, string Actor, string Action, string? Target, string? Detail, DateTimeOffset OccurredAt);
 
+/// <summary>The outcomes of <see cref="IAccessService.AddMemberAsync"/>.</summary>
+public readonly union AddMemberResult(OrganizationMember, NotFound, Forbidden);
+
 /// <summary>
 /// Members, invitations, ownership transfers and the audit log of organizations.
 /// </summary>
@@ -79,6 +83,14 @@ public interface IAccessService
     /// </summary>
     ValueTask<ManagementResult<OrganizationMember>> ChangeRoleAsync(
         string userId, string organizationId, string memberId, OrganizationRole role, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Adds <paramref name="memberId"/> as a <see cref="OrganizationRole.Member"/> without an invitation, recording
+    /// <paramref name="email"/> in the audit log. Needs <see cref="OrganizationRole.Admin"/>. An existing member is returned
+    /// unchanged. Served only on the administrative listener (TS-535).
+    /// </summary>
+    ValueTask<AddMemberResult> AddMemberAsync(
+        string userId, string organizationId, string memberId, string email, CancellationToken cancellationToken);
 
     /// <summary>Removes a member, with the same role rules as <see cref="ChangeRoleAsync"/>. The last owner cannot be removed.</summary>
     ValueTask<ManagementError> RemoveMemberAsync(string userId, string organizationId, string memberId, CancellationToken cancellationToken);

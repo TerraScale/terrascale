@@ -69,6 +69,105 @@ public sealed class ManagementCredentialTests
     }
 
     [Test]
+    public async Task The_credential_adds_a_member_who_then_takes_ownership()
+    {
+        // TS-535: the TS-529 bootstrap hands the organization it created to a person, before ts-auth exists.
+        using var credential = new CredentialFile(Credential);
+        await using var server = await TerraBaseTestServer.StartAsync(settings => settings["management-credential-file"] = credential.Path);
+        var bootstrap = Faker.Random.Guid().ToString();
+        var user = Faker.Random.Guid().ToString();
+        var email = $"{Faker.Random.Guid():N}@example.com";
+        using var created = await SendAsync(server.Client, HttpMethod.Post, Organizations, Credential, bootstrap, new { name = "terrascale" });
+        var organization = $"{Organizations}/{(await created.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString()}";
+
+        // Re-adding the sole owner must not demote it.
+        using var owner = await SendAsync(server.Client, HttpMethod.Put, $"{organization}/members/{bootstrap}", Credential, bootstrap, new { email });
+        using var added = await SendAsync(server.Client, HttpMethod.Put, $"{organization}/members/{user}", Credential, bootstrap, new { email });
+        using var again = await SendAsync(server.Client, HttpMethod.Put, $"{organization}/members/{user}", Credential, bootstrap, new { email });
+        using var transfer = await SendAsync(server.Client, HttpMethod.Post, $"{organization}/ownership-transfer", Credential, bootstrap, new { userId = user });
+        using var confirmed = await SendAsync(server.Client, HttpMethod.Post, $"{organization}/ownership-transfer/confirm", Credential, user);
+        // Confirming makes the previous owner a member; the new owner makes the bootstrap identity an admin.
+        using var promoted = await SendAsync(server.Client, HttpMethod.Put, $"{organization}/members/{bootstrap}/role", Credential, user, new { role = "admin" });
+        using var members = await SendAsync(server.Client, HttpMethod.Get, $"{organization}/members", Credential, user);
+        using var audit = await SendAsync(server.Client, HttpMethod.Get, $"{organization}/audit-events", Credential, user);
+        var member = await added.Content.ReadFromJsonAsync<JsonElement>();
+        var roles = (await members.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("items").EnumerateArray()
+            .ToDictionary(item => item.GetProperty("userId").GetString()!, item => item.GetProperty("role").GetString());
+        var additions = (await audit.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("items").EnumerateArray()
+            .Where(item => item.GetProperty("action").GetString() == "member.added")
+            .Select(item => (Actor: item.GetProperty("actor").GetString()!, Target: item.GetProperty("target").GetString()!, Detail: item.GetProperty("detail").GetString()!))
+            .ToList();
+
+        await Assert.That(owner.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That((await owner.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("role").GetString()).IsEqualTo("owner");
+        await Assert.That(added.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(member.GetProperty("userId").GetString()).IsEqualTo(user);
+        await Assert.That(member.GetProperty("role").GetString()).IsEqualTo("member");
+        await Assert.That(again.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(await again.Content.ReadAsStringAsync()).IsEqualTo(member.GetRawText());
+        await Assert.That(transfer.StatusCode).IsEqualTo(HttpStatusCode.Created);
+        await Assert.That(confirmed.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(promoted.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(roles).IsEquivalentTo(new Dictionary<string, string?> { [user] = "owner", [bootstrap] = "admin" });
+        await Assert.That(additions).IsEquivalentTo([(bootstrap, user, email)]);
+    }
+
+    [Test]
+    public async Task Adding_a_member_needs_an_admin_and_a_valid_email()
+    {
+        using var credential = new CredentialFile(Credential);
+        await using var server = await TerraBaseTestServer.StartAsync(settings => settings["management-credential-file"] = credential.Path);
+        var owner = Faker.Random.Guid().ToString();
+        var member = Faker.Random.Guid().ToString();
+        var user = Faker.Random.Guid().ToString();
+        var email = $"{Faker.Random.Guid():N}@example.com";
+        using var created = await SendAsync(server.Client, HttpMethod.Post, Organizations, Credential, owner, new { name = "terrascale" });
+        var organization = $"{Organizations}/{(await created.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString()}";
+        using var added = await SendAsync(server.Client, HttpMethod.Put, $"{organization}/members/{member}", Credential, owner, new { email });
+
+        using var byMember = await SendAsync(server.Client, HttpMethod.Put, $"{organization}/members/{user}", Credential, member, new { email });
+        using var byStranger = await SendAsync(server.Client, HttpMethod.Put, $"{organization}/members/{user}", Credential, user, new { email });
+        using var invalidEmail = await SendAsync(server.Client, HttpMethod.Put, $"{organization}/members/{user}", Credential, owner, new { email = "not an email" });
+        using var invalidUser = await SendAsync(server.Client, HttpMethod.Put, $"{organization}/members/{new string('u', 257)}", Credential, owner, new { email });
+        using var members = await SendAsync(server.Client, HttpMethod.Get, $"{organization}/members", Credential, owner);
+        var users = (await members.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("items").EnumerateArray()
+            .Select(item => item.GetProperty("userId").GetString()!).ToList();
+
+        await Assert.That(added.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(byMember.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
+        await Assert.That(await ErrorAsync(byMember)).IsEqualTo(("forbidden_role", "your role in the organization does not allow this"));
+        await Assert.That(byStranger.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+        await Assert.That(await ErrorAsync(byStranger)).IsEqualTo(("not_found", null));
+        await Assert.That(invalidEmail.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+        await Assert.That(await ErrorAsync(invalidEmail)).IsEqualTo(("invalid_request", "email must be one address of at most 254 characters"));
+        await Assert.That(invalidUser.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+        await Assert.That(await ErrorAsync(invalidUser)).IsEqualTo(("invalid_request", "user must be 1 to 256 characters without control characters"));
+        await Assert.That(users).IsEquivalentTo([owner, member]);
+    }
+
+    [Test]
+    public async Task Adding_a_member_is_not_served_on_the_public_listener()
+    {
+        using var credential = new CredentialFile(Credential);
+        await using var api = await ManagementApi.StartAsync(settings => settings["management-credential-file"] = credential.Path);
+        using var anonymous = api.WithToken(null);
+        var organization = $"{Organizations}/{await api.CreateOrganizationAsync("Public")}";
+        var path = $"{organization}/members/{Faker.Random.Guid()}";
+        var body = new { email = $"{Faker.Random.Guid():N}@example.com" };
+
+        // The owner's own valid token, and the credential, are both refused there.
+        using var withToken = await api.Client.PutAsJsonAsync(ManagementApi.Uri(path), body);
+        using var withCredential = await SendAsync(anonymous, HttpMethod.Put, path, Credential, api.User, body);
+        using var members = await api.Client.GetAsync(ManagementApi.Uri($"{organization}/members"));
+        var users = (await members.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("items").EnumerateArray()
+            .Select(item => item.GetProperty("userId").GetString()!).ToList();
+
+        await Assert.That(withToken.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+        await Assert.That(withCredential.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+        await Assert.That(users).IsEquivalentTo([api.User]);
+    }
+
+    [Test]
     public async Task The_credential_needs_the_exact_secret_and_one_valid_user()
     {
         using var credential = new CredentialFile(Credential);
@@ -123,6 +222,13 @@ public sealed class ManagementCredentialTests
         await Assert.That(audit).Contains($"Management service credential acted as user {user}: POST {Organizations}");
         await Assert.That(audit).Contains($"Management service credential rejected: GET {Organizations}");
         await Assert.That(logs.Messages).All().Satisfy(message => message.DoesNotContain(Credential[..20]));
+    }
+
+    // The code and message of an error body; the message is absent when it would say nothing.
+    private static async Task<(string? Code, string? Message)> ErrorAsync(HttpResponseMessage response)
+    {
+        var error = (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("error");
+        return (error.GetProperty("code").GetString(), error.TryGetProperty("message", out var message) ? message.GetString() : null);
     }
 
     private static Task<HttpResponseMessage> SendAsync(
