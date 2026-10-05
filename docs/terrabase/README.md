@@ -68,7 +68,8 @@ never its value. Port `0` picks a free port.
 | `--peer-port` / `TERRABASE_PEER_PORT` | unset (listener off) | Inter-node gRPC listener (mutual TLS), 0 to 65535. Requires `peer-certificate`, `peer-private-key` and `peer-client-ca` |
 | `--peer-certificate` / `TERRABASE_PEER_CERTIFICATE` | unset | PEM certificate file of the peer listener. Requires `peer-port` and the other peer TLS settings |
 | `--peer-private-key` / `TERRABASE_PEER_PRIVATE_KEY` | unset | PEM private key file of `peer-certificate`. Requires `peer-port` and the other peer TLS settings |
-| `--peer-client-ca` / `TERRABASE_PEER_CLIENT_CA` | unset | PEM CA certificate that every connecting peer's client certificate must chain to. Requires `peer-port` and the other peer TLS settings |
+| `--peer-client-ca` / `TERRABASE_PEER_CLIENT_CA` | unset | PEM CA bundle that every peer certificate must chain to, in both directions. Requires `peer-port` and the other peer TLS settings |
+| `--peer-addresses` / `TERRABASE_PEER_ADDRESSES` | unset | Comma-separated `https://host:port` peers to send changes to; requires `peer-port` |
 | `--shutdown-grace-seconds` / `TERRABASE_SHUTDOWN_GRACE_SECONDS` | `10` | Seconds shutdown waits for transactions to return their database connections (0 to 3600). It never closes them; the data directory stays owned until they do or the process exits |
 | `--readiness-cache-seconds` / `TERRABASE_READINESS_CACHE_SECONDS` | `1` | Seconds completed readiness filesystem results are cached (positive integer, 1 to 60). Zero is prohibited to bound disk work from anonymous traffic. Shutdown bypasses the cache |
 
@@ -89,6 +90,8 @@ when `client-port` is set, on the client TLS listener.
   returns 503 regardless of cached or in-flight results; engine closure is checked on every request.
 
 Point load balancers and reverse proxies (Caddy) at the client listener's `/readyz`.
+
+Replication setup, certificates, limits and metrics: [`docs/replication.md`](docs/replication.md).
 
 ## API reference
 

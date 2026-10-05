@@ -94,7 +94,7 @@ matches. The other throws in each row are invariants or configuration errors to 
 | `Features/Management` (orgs, projects) | 0 | 0 | **Converted** (reference) |
 | `Features/Management` (access, databases, catalog, recovery) | 18 | 9 | `ManagementError`/`ManagementResult` and throwing validators remain. The catalog version guard in `EnsureCatalogAsync` still throws `503 unavailable` under every operation, orgs and projects included; it becomes an `Unavailable` case when access and databases convert. |
 | `Features/Documents` | 59 | 56 | To do (`ApiException` throughout) |
-| `Features/Replication` | 4 | 0 | Review: `RpcException` and `InvalidDataException` at the gRPC boundary |
+| `Features/Replication` | 53 | 0 | Keep (TS-464): peer gRPC boundary only, no HTTP failures. `RpcException` status for peers, `InvalidDataException` for a protocol violation that ends the stream, and invariants |
 | `Features/ApiKeys` | 1 | 0 | Review: request validation returns `TypedResults.BadRequest`; the throw is an invariant |
 | `Engine` | 29 | 0 | Review: `QueryCapacityException`, `StorageWriteLimitException` and `FormatException` cross into Documents |
 | `Configuration` | 15 | 0 | Keep: startup configuration errors, exit code 2 |

@@ -16,7 +16,7 @@ var environmentName = args.LastOrDefault(argument => argument.StartsWith("--envi
     ?? Environment.GetEnvironmentVariable("DOTNET_ENVIRONMENT")
     ?? Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT")
     ?? Environments.Production;
-TerraBaseOptions options;
+TerraBaseOptions? options = null;
 try
 {
     options = TerraBaseOptions.FromProcess(args);
@@ -32,10 +32,14 @@ try
 }
 catch (TerraBaseConfigurationException error)
 {
+    options?.Dispose();
     // Configuration messages name settings, never their values.
     await Console.Error.WriteLineAsync($"terrabase: {error.Message}");
     return 2;
 }
+
+// The externally registered options owns any certificates not handed to a service, even if building fails.
+using var configuration = options;
 
 // Settings come only from TerraBaseOptions. The slim builder still adds environment variables
 // and appsettings files, and Kestrel would bind listeners from a "Kestrel" section in them
@@ -54,7 +58,11 @@ builder.Logging.AddFilter("Microsoft.AspNetCore", LogLevel.Warning);
 builder.Services.AddSingleton(options);
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.ConfigureHttpJsonOptions(json =>
-    json.SerializerOptions.TypeInfoResolverChain.Insert(0, TerraBaseJsonContext.Default));
+{
+    // Stored documents can reach SQLite's depth bound; response envelopes add a few levels.
+    json.SerializerOptions.MaxDepth = TerraBaseJsonContext.Default.Options.MaxDepth;
+    json.SerializerOptions.TypeInfoResolverChain.Insert(0, TerraBaseJsonContext.Default);
+});
 builder.Services.AddTerraScaleEndpoints(endpoints =>
 {
     endpoints.Title = "TerraBase API";
@@ -72,7 +80,7 @@ builder.Services.AddTerraBaseManagement();
 builder.Services.AddTerraBasePressure();
 builder.AddTerraBaseReplication(options);
 
-var app = builder.Build();
+await using var app = builder.Build();
 try
 {
     // The engine takes the data directory's lock and checks its layout before anything is served.
@@ -81,7 +89,6 @@ try
 catch (TerraBaseConfigurationException error)
 {
     await Console.Error.WriteLineAsync($"terrabase: {error.Message}");
-    await app.DisposeAsync();
     return 2;
 }
 

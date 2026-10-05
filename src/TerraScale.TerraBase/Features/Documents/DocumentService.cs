@@ -3,6 +3,7 @@ using System.Text.Json.Nodes;
 using TerraScale.TerraBase.Engine;
 using TerraScale.TerraBase.Features.Management.Usage;
 using TerraScale.TerraBase.Hosting;
+using TerraScale.TerraBase.Primitives;
 using TerraScale.TerraBase.Tenancy;
 
 namespace TerraScale.TerraBase.Features.Documents;
@@ -57,8 +58,15 @@ internal sealed class DocumentService(IStorageEngine engine, TimeProvider time, 
         await using (transaction.ConfigureAwait(false))
         {
             var collection = await CollectionAsync(transaction, name, cancellationToken).ConfigureAwait(false);
-            await transaction.DropCollectionAsync(name, cancellationToken).ConfigureAwait(false);
-            await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                await transaction.DropCollectionAsync(name, cancellationToken).ConfigureAwait(false);
+                await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+            }
+            catch (ChangeGroupCapacityException)
+            {
+                throw ChangeGroupCapacity();
+            }
             return collection;
         }
     }
@@ -124,6 +132,14 @@ internal sealed class DocumentService(IStorageEngine engine, TimeProvider time, 
 
                         results[i] = await ApplyAsync(transaction, operation, cancellationToken).ConfigureAwait(false);
                     }
+                    catch (DocumentValidationException error)
+                    {
+                        throw new ApiException(error.TooLarge ? StatusCodes.Status413PayloadTooLarge : StatusCodes.Status400BadRequest,
+                            error.TooLarge ? "payload_too_large" : "invalid_request", error.Message)
+                        {
+                            Op = indexErrors ? i : null,
+                        };
+                    }
                     catch (StorageWriteLimitException)
                     {
                         // One commit must fit one shape log chunk (docs/shape-reads.md).
@@ -131,6 +147,12 @@ internal sealed class DocumentService(IStorageEngine engine, TimeProvider time, 
                         {
                             Op = indexErrors ? i : null,
                         };
+                    }
+                    catch (ChangeGroupCapacityException)
+                    {
+                        var error = ChangeGroupCapacity();
+                        error.Op = indexErrors ? i : null;
+                        throw error;
                     }
                     catch (OverflowException)
                     {
@@ -178,25 +200,26 @@ internal sealed class DocumentService(IStorageEngine engine, TimeProvider time, 
         {
             case PutOperation put:
                 {
-                    // Preconditions need only the version, so the body being replaced is never read.
                     var current = await transaction.GetVersionAsync(put.Collection, put.Id, cancellationToken).ConfigureAwait(false);
-                    Check(transaction.Incarnation, put.Precondition, put.Collection, put.Id, current);
+                    await CheckAsync(transaction, put.Precondition, put.Collection, put.Id, current, cancellationToken).ConfigureAwait(false);
                     var version = await transaction.PutAsync(put.Collection, put.Id, put.Json, cancellationToken).ConfigureAwait(false);
-                    return new OperationResult(put.Id, version, current is not { Deleted: false }, null);
+                    return new OperationResult(put.Id, version, current is not { Deleted: false }, null,
+                        ETags.Version(transaction.Incarnation, put.Collection, put.Id, version, put.Json));
                 }
 
             case PatchOperation patch:
                 {
                     var current = await LiveAsync(transaction, patch.Collection, patch.Id, cancellationToken).ConfigureAwait(false);
-                    Check(transaction.Incarnation, patch.Precondition, patch.Collection, patch.Id, new DocumentVersion(current.Version, Deleted: false));
-                    var document = JsonNode.Parse(current.Json.Span)!.AsObject();
+                    await CheckAsync(transaction, patch.Precondition, patch.Collection, patch.Id,
+                        new DocumentVersion(current.Version, Deleted: false), cancellationToken, current.Json).ConfigureAwait(false);
+                    var document = JsonNode.Parse(current.Json.Span, documentOptions: RequestJson.StoredDocumentOptions)!.AsObject();
                     patch.Patch.Apply(document);
-                    // Patch inputs passed RequestJson's limits, so the tree is shallow enough to serialize; the
-                    // document limits then apply to the result.
+                    // Existing legacy documents use the stored depth bound; the strict client limits still
+                    // apply to the patched result.
                     var json = JsonSerializer.SerializeToUtf8Bytes(document, TerraBaseJsonContext.Default.JsonObject);
-                    RequestJson.ValidateDocument(json);
                     var version = await transaction.PutAsync(patch.Collection, patch.Id, json, cancellationToken).ConfigureAwait(false);
-                    return new OperationResult(patch.Id, version, false, null);
+                    return new OperationResult(patch.Id, version, false, null,
+                        ETags.Version(transaction.Incarnation, patch.Collection, patch.Id, version, json));
                 }
 
             case DeleteOperation delete:
@@ -207,9 +230,10 @@ internal sealed class DocumentService(IStorageEngine engine, TimeProvider time, 
                         throw NotFound();
                     }
 
-                    Check(transaction.Incarnation, delete.Precondition, delete.Collection, delete.Id, current);
+                    await CheckAsync(transaction, delete.Precondition, delete.Collection, delete.Id, current, cancellationToken).ConfigureAwait(false);
                     var version = await transaction.TombstoneAsync(delete.Collection, delete.Id, cancellationToken).ConfigureAwait(false);
-                    return new OperationResult(delete.Id, version, false, null);
+                    return new OperationResult(delete.Id, version, false, null,
+                        ETags.Version(transaction.Incarnation, delete.Collection, delete.Id, version!.Value, ReadOnlyMemory<byte>.Empty, deleted: true));
                 }
 
             case AssertOperation { Filter: null } absent:
@@ -291,12 +315,28 @@ internal sealed class DocumentService(IStorageEngine engine, TimeProvider time, 
         }
     }
 
-    private static void Check(Guid incarnation, Precondition precondition, string collection, string id, DocumentVersion? current) =>
-        ETags.Check(precondition, current is { Deleted: false }, current is { } state ? ETags.Version(incarnation, collection, id, state.Version) : null);
+    private static async ValueTask CheckAsync(
+        IStorageTransaction transaction, Precondition precondition, string collection, string id, DocumentVersion? current,
+        CancellationToken cancellationToken, ReadOnlyMemory<byte>? json = null)
+    {
+        string? version = null;
+        if (precondition.IfMatch is not null && current is { } state)
+        {
+            // Wildcards and unconditional writes need only existence. Exact tags also identify equal-version body winners.
+            var body = state.Deleted ? ReadOnlyMemory<byte>.Empty
+                : json ?? (await LiveAsync(transaction, collection, id, cancellationToken).ConfigureAwait(false)).Json;
+            version = ETags.Version(transaction.Incarnation, collection, id, state.Version, body, state.Deleted);
+        }
+
+        ETags.Check(precondition, current is { Deleted: false }, version);
+    }
 
     private static ApiException NotFound() => new(StatusCodes.Status404NotFound, "not_found", "the document does not exist");
 
     private static ApiException Failed(string message) => new(StatusCodes.Status412PreconditionFailed, "precondition_failed", message);
+
+    private static ApiException ChangeGroupCapacity() => new(
+        StatusCodes.Status503ServiceUnavailable, "capacity", "a write transaction holds at most 1024 changes and 2 MiB of change content");
 
     private static async ValueTask<CollectionInfo> CollectionAsync(
         IStorageTransaction transaction, string name, CancellationToken cancellationToken) =>

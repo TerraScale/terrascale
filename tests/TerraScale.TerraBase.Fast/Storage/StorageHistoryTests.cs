@@ -5,6 +5,7 @@ using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using TerraScale.TerraBase.Engine;
 using TerraScale.TerraBase.Fast.Documents;
+using TerraScale.TerraBase.Primitives;
 using TerraScale.TerraBase.Tenancy;
 
 namespace TerraScale.TerraBase.Fast.Storage;
@@ -18,7 +19,7 @@ public sealed class StorageHistoryTests
         await using var api = await DocumentApi.StartAsync();
         var store = await StoreAsync(api);
         await using var writer = await store.BeginTransactionAsync(write: true, CancellationToken.None);
-        await Assert.ThrowsAsync<StorageWriteLimitException>(() => writer.PutAsync(DocumentApi.Collection, "", Encoding.UTF8.GetBytes("{}"), CancellationToken.None).AsTask());
+        await Assert.ThrowsAsync<InvalidDataException>(() => writer.PutAsync(DocumentApi.Collection, "", Encoding.UTF8.GetBytes("{}"), CancellationToken.None).AsTask());
         await Assert.ThrowsAsync<InvalidOperationException>(() => writer.CommitAsync(CancellationToken.None).AsTask());
     }
 
@@ -93,6 +94,10 @@ public sealed class StorageHistoryTests
                 await connection.OpenAsync();
                 await using var command = connection.CreateCommand();
                 command.CommandText = """
+                    DROP TABLE journal_prefixes;
+                    DROP TABLE changes;
+                    DROP TABLE applied;
+                    DROP TABLE replication_state;
                     DROP TABLE change_log;
                     DROP TABLE change_log_births;
                     DROP TABLE change_log_high;
@@ -112,7 +117,7 @@ public sealed class StorageHistoryTests
                 await engine.OpenSystemDatabaseAsync(CancellationToken.None);
             }
 
-            // Migrated to version 5, but _system's deletes never reach history, so its records are not copied there.
+            // Migrated to the current schema, but _system's deletes never reach history, so its records are not copied there.
             await Assert.That(await HistoryRowsAsync(path)).IsEqualTo(0);
         }
         finally
@@ -152,6 +157,11 @@ public sealed class StorageHistoryTests
                     DROP TRIGGER change_log_birth;
                     DROP TABLE change_log_births;
                     DROP TABLE change_log_high;
+                    DROP TABLE journal_prefixes;
+                    DROP TABLE changes;
+                    DROP TABLE applied;
+                    DROP TABLE replication_state;
+                    ALTER TABLE change_log DROP COLUMN document_version;
                     PRAGMA user_version = 5;
                     """;
                 await command.ExecuteNonQueryAsync();
@@ -215,7 +225,7 @@ public sealed class StorageHistoryTests
     [Test]
     [Arguments(false)]
     [Arguments(true)]
-    public async Task Storage_commit_bytes_include_repeated_writes_and_shape_framing(bool repeated)
+    public async Task Storage_commit_limits_bound_distinct_states_and_count_repeated_writes_with_framing(bool repeated)
     {
         await using var api = await DocumentApi.StartAsync();
         using var shapes = await api.ClientWithScopesAsync("shapes:read");
@@ -229,42 +239,64 @@ public sealed class StorageHistoryTests
         using var snapshot = await shapes.GetAsync(start.Headers.Location!);
         using var snapshotBody = JsonDocument.Parse(await snapshot.Content.ReadAsStringAsync());
         var head = snapshotBody.RootElement.GetProperty("next_offset").GetString();
+        var sequence = store.CommitSequence;
+        using var cancelled = new CancellationTokenSource();
+        var waiting = store.WaitForCommitAsync(sequence, cancelled.Token);
 
         await using (var rejected = await store.BeginTransactionAsync(write: true, CancellationToken.None))
         {
-            for (var i = 0; i < 6; i++)
+            for (var i = 0; i < (repeated ? 6 : 1); i++)
             {
                 await rejected.PutAsync(DocumentApi.Collection, ids[repeated ? 0 : i], document, CancellationToken.None);
             }
 
-            // Seven raw 1 MiB documents leave no room for their operation framing.
-            await Assert.ThrowsAsync<StorageWriteLimitException>(() => rejected.PutAsync(DocumentApi.Collection, ids[repeated ? 0 : 6], document, CancellationToken.None).AsTask());
+            if (repeated)
+            {
+                // Capture holds one final state, but seven raw 1 MiB writes leave no room for shape framing.
+                await Assert.ThrowsAsync<StorageWriteLimitException>(() => rejected.PutAsync(DocumentApi.Collection, ids[0], document, CancellationToken.None).AsTask());
+            }
+            else
+            {
+                // Two distinct 1 MiB states plus their names and ids exceed capture's 2 MiB bound first.
+                await Assert.ThrowsAsync<ChangeGroupCapacityException>(() => rejected.PutAsync(DocumentApi.Collection, ids[1], document, CancellationToken.None).AsTask());
+            }
+
             await Assert.ThrowsAsync<InvalidOperationException>(() => rejected.CommitAsync(CancellationToken.None).AsTask());
         }
 
         await Assert.That((await api.GetAsync(ids[0])).Status).IsEqualTo(HttpStatusCode.NotFound);
+        await Assert.That((await api.GetAsync(ids[1])).Status).IsEqualTo(HttpStatusCode.NotFound);
+        await Assert.That(store.CommitSequence).IsEqualTo(sequence);
+        await Assert.That(waiting.IsCompleted).IsFalse();
         using var unchanged = await shapes.GetAsync(new Uri($"{shape}?handle={handle}&offset={head}", UriKind.Relative));
         using var unchangedBody = JsonDocument.Parse(await unchanged.Content.ReadAsStringAsync());
+        await Assert.That(unchanged.StatusCode).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(unchangedBody.RootElement.GetProperty("next_offset").GetString()).IsEqualTo(head);
         await Assert.That(unchangedBody.RootElement.GetProperty("changes").GetArrayLength()).IsEqualTo(0);
 
+        // Six smaller distinct documents fit capture; six full-size writes of one key retain only its final state.
+        var acceptedDocument = repeated ? document : Encoding.UTF8.GetBytes("{\"v\":\"" + new string('x', 300 * 1024) + "\"}");
         long committed;
         await using (var accepted = await store.BeginTransactionAsync(write: true, CancellationToken.None))
         {
             for (var i = 0; i < 6; i++)
             {
-                await accepted.PutAsync(DocumentApi.Collection, ids[repeated ? 0 : i], document, CancellationToken.None);
+                await accepted.PutAsync(DocumentApi.Collection, ids[repeated ? 0 : i], acceptedDocument, CancellationToken.None);
             }
 
             committed = await accepted.CommitAsync(CancellationToken.None);
         }
 
+        await waiting.WaitAsync(TimeSpan.FromSeconds(10));
+        await Assert.That(store.CommitSequence).IsEqualTo(sequence + 1);
+        await Assert.That(committed).IsEqualTo(long.Parse(head!, CultureInfo.InvariantCulture) + 1);
         using var log = await shapes.GetAsync(new Uri($"{shape}?handle={handle}&offset={head}", UriKind.Relative));
         log.EnsureSuccessStatusCode();
         var bytes = await log.Content.ReadAsByteArrayAsync();
         using var body = JsonDocument.Parse(bytes);
         await Assert.That(bytes.Length).IsLessThanOrEqualTo(8 * 1024 * 1024);
-        // Repeated writes of one document in one commit count toward the limit, but the chunk carries its final state once.
+        await Assert.That(body.RootElement.GetProperty("changes").GetArrayLength()).IsEqualTo(1);
+        // Repeated writes count toward shape framing, but capture and the chunk retain one final state per key.
         await Assert.That(body.RootElement.GetProperty("changes")[0].GetProperty("ops").GetArrayLength()).IsEqualTo(repeated ? 1 : 6);
         await Assert.That(body.RootElement.GetProperty("next_offset").GetString()).IsEqualTo(committed.ToString(CultureInfo.InvariantCulture));
     }
@@ -292,7 +324,8 @@ public sealed class StorageHistoryTests
         {
             await oversized.PutAsync(DocumentApi.Collection, id, small, CancellationToken.None);
             var large = Encoding.UTF8.GetBytes("{\"v\":\"" + new string('x', 1 << 20) + "\"}");
-            await Assert.ThrowsAsync<StorageWriteLimitException>(() => oversized.PutAsync(DocumentApi.Collection, id, large, CancellationToken.None).AsTask());
+            var error = await Assert.ThrowsAsync<DocumentValidationException>(() => oversized.PutAsync(DocumentApi.Collection, id, large, CancellationToken.None).AsTask());
+            await Assert.That(error!.TooLarge).IsTrue();
             await Assert.ThrowsAsync<InvalidOperationException>(() => oversized.CommitAsync(CancellationToken.None).AsTask());
         }
 
@@ -314,7 +347,7 @@ public sealed class StorageHistoryTests
         {
             await writer.PutAsync(DocumentApi.Collection, id, Encoding.UTF8.GetBytes("{}"), CancellationToken.None);
             // A lossy decoder triples these bytes, bypassing the admitted body size on repeated writes.
-            await Assert.ThrowsAsync<DecoderFallbackException>(() => writer.PutAsync(DocumentApi.Collection, id, invalid, CancellationToken.None).AsTask());
+            await Assert.ThrowsAsync<DocumentValidationException>(() => writer.PutAsync(DocumentApi.Collection, id, invalid, CancellationToken.None).AsTask());
             await Assert.ThrowsAsync<InvalidOperationException>(() => writer.PutAsync(DocumentApi.Collection, id, invalid, CancellationToken.None).AsTask());
             await Assert.ThrowsAsync<InvalidOperationException>(() => writer.CommitAsync(CancellationToken.None).AsTask());
         }

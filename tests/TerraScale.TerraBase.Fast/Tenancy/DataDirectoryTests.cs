@@ -124,8 +124,8 @@ public sealed class DataDirectoryTests
             // The transaction still works; returning its session closes the last connection, which releases the directory.
             await transaction.CommitAsync(CancellationToken.None);
             await transaction.DisposeAsync();
-            await Assert.That(TerraBaseTestServer.IsDataDirectoryOwned(dataDirectory)).IsFalse();
             await shutdown.WaitAsync(TimeSpan.FromSeconds(30));
+            await Assert.That(TerraBaseTestServer.IsDataDirectoryOwned(dataDirectory)).IsFalse();
             serverDisposed = true;
             await server.DisposeAsync();
 
@@ -167,8 +167,8 @@ public sealed class DataDirectoryTests
         await Assert.That(TerraBaseTestServer.IsDataDirectoryOwned(server.DataDirectory)).IsTrue();
         await transaction.CommitAsync(CancellationToken.None);
         await transaction.DisposeAsync();
-        // Its session was the last connection: returning it released the directory.
-        await Assert.That(TerraBaseTestServer.IsDataDirectoryOwned(server.DataDirectory)).IsFalse();
+        // Its session was the last connection: the background drain can now release the directory.
+        await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(!TerraBaseTestServer.IsDataDirectoryOwned(server.DataDirectory)));
     }
 
     [Test]

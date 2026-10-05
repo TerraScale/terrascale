@@ -14,10 +14,11 @@ public sealed class DropCollectionEndpoint(IDocumentService documents, ITenantDi
         Delete(DocumentRoute.Collections + "/{collection}");
         Name("dropCollection");
         Summary("Drops a collection");
-        Description("Deletes the collection and every document in it in one transaction, and returns the dropped collection.");
+        Description("Deletes the collection and every document in it in one transaction, and returns the dropped collection. A drop exceeding 1024 document states or 2 MiB of change content fails atomically with 503 capacity.");
         Tags("Collections");
         Produces<CollectionBody>();
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
+        Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
         RequireAuthorization(ApiKeyScopes.DocumentsWrite);
         Metadata(ListenerMetadata.Client);
     }

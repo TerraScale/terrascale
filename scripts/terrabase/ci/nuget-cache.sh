@@ -17,8 +17,11 @@ mkdir -p "$packages"
 echo "NUGET_PACKAGES=$packages" >> "$GITHUB_ENV"
 
 http_cache=/cache/nuget/terrabase/http-cache
-if mkdir -p "$http_cache" 2>/dev/null && [[ -w $http_cache ]]; then
+scratch=/cache/nuget/terrabase/scratch
+# NuGet coordinates concurrent HTTP-cache access through locks in its scratch directory.
+if mkdir -p "$http_cache" "$scratch" 2>/dev/null && [[ -w $http_cache && -w $scratch ]]; then
   echo "NUGET_HTTP_CACHE_PATH=$http_cache" >> "$GITHUB_ENV"
+  echo "NUGET_SCRATCH=$scratch" >> "$GITHUB_ENV"
   echo "NuGet downloads cache: $http_cache; packages extracted to $packages"
 else
   echo "no writable /cache volume; NuGet downloads are not cached"

@@ -1,15 +1,17 @@
+using System.Text;
+
 namespace TerraScale.TerraBase.Engine;
 
 /// <summary>
-/// A JSON document as stored: UTF-8 JSON text, or a tombstone once deleted, and the database
-/// commit offset of the transaction that last wrote it.
+/// A JSON document as stored: UTF-8 JSON text, or a tombstone once deleted, and its merge version.
 /// </summary>
 /// <param name="Id">Document id, unique within its collection.</param>
-/// <param name="Version">Commit offset of the last write; strictly increases on every write of the document.</param>
+/// <param name="Version">Merge version of the last write: its originating database commit offset.</param>
 /// <param name="Json">UTF-8 JSON text; empty for a tombstone.</param>
 /// <param name="Incarnation">Persisted identity of the owning database incarnation.</param>
 /// <param name="Deleted">Whether this is a tombstone left by a delete.</param>
-public sealed record StoredDocument(string Id, long Version, ReadOnlyMemory<byte> Json, Guid Incarnation, bool Deleted = false);
+/// <param name="HistoryOffset">Local commit offset when read from shape history; separate from the merge version.</param>
+public sealed record StoredDocument(string Id, long Version, ReadOnlyMemory<byte> Json, Guid Incarnation, bool Deleted = false, long? HistoryOffset = null);
 
 /// <summary>One page of documents in id order.</summary>
 /// <param name="Documents">The documents of this page.</param>
@@ -17,7 +19,7 @@ public sealed record StoredDocument(string Id, long Version, ReadOnlyMemory<byte
 public sealed record DocumentPage(IReadOnlyList<StoredDocument> Documents, bool HasMore);
 
 /// <summary>The version of a document or its tombstone, read without its body.</summary>
-/// <param name="Version">Commit offset of the last write.</param>
+/// <param name="Version">Merge version of the last write.</param>
 /// <param name="Deleted">Whether the document is a tombstone.</param>
 public readonly record struct DocumentVersion(long Version, bool Deleted);
 
@@ -43,9 +45,49 @@ public sealed record SnapshotPage(IReadOnlyList<QueryRow> Rows, bool HasMore, st
 /// </param>
 public sealed record CollectionInfo(string Name, long CreatedAt, long Generation = 0);
 
+/// <summary>One replicated document write: a JSON object, or a deletion, at the version it was written with.</summary>
+/// <param name="Collection">Collection name.</param>
+/// <param name="Id">Document id.</param>
+/// <param name="Version">Version written; a deletion carries the version of its tombstone.</param>
+/// <param name="Json">UTF-8 JSON text, or <see langword="null"/> for a deletion.</param>
+public sealed record DocumentChange(string Collection, string Id, long Version, ReadOnlyMemory<byte>? Json)
+{
+    private static readonly UTF8Encoding Utf8 = new(false, true);
+
+    internal static bool HasValidKey(string collection, string id)
+    {
+        if (!DatabaseName.TryParse(collection, out _) || id.Length is 0 or > 256 || id.Any(char.IsControl))
+        {
+            return false;
+        }
+
+        try
+        {
+            _ = Utf8.GetByteCount(id);
+            return true;
+        }
+        catch (EncoderFallbackException)
+        {
+            return false;
+        }
+    }
+}
+
 /// <summary>Document and collection operations inside one engine transaction.</summary>
+/// <remarks>
+/// Local document mutation calls (<see cref="PutAsync"/>, <see cref="DeleteAsync"/>, <see cref="TombstoneAsync"/>
+/// and <see cref="DropCollectionAsync"/>) cannot share a transaction with <see cref="ApplyAsync"/>, in either order,
+/// even when a call changes nothing. Mixing them throws and makes the transaction rollback-only.
+/// Collection creation and applied-frontier updates remain available to replicated transactions.
+/// </remarks>
 public interface IStorageTransaction : IAsyncDisposable
 {
+    /// <summary>Most document changes one captured write transaction may commit.</summary>
+    const int MaxChangeGroupChanges = 1024;
+
+    /// <summary>Most UTF-8 bytes of collections, ids and JSON one captured write transaction may commit.</summary>
+    const int MaxChangeGroupBytes = 2 * 1024 * 1024;
+
     /// <summary>Persisted identity of this database incarnation, distinct after deletion/recreation or copying.</summary>
     Guid Incarnation { get; }
 
@@ -60,9 +102,11 @@ public interface IStorageTransaction : IAsyncDisposable
 
     /// <summary>
     /// Inserts or replaces a document in an existing collection and returns its new version, the offset of this
-    /// transaction. A transaction writes at most 1024 documents of at most 1 MiB with ids of 1 to 1024 UTF-8 bytes,
-    /// 7 MiB in total with operation framing, so one commit fits a shape log chunk; a rejected write throws
-    /// <see cref="StorageWriteLimitException"/> and the transaction can no longer commit.
+    /// transaction. A transaction writes at most 1024 documents of at most 1 MiB. Captured ids have 1 to 256
+    /// characters, no control characters, and valid UTF-8; collection names satisfy <see cref="DatabaseName"/>.
+    /// Total writes and operation framing fit at most 7 MiB, so one commit fits a shape log chunk.
+    /// Invalid keys throw <see cref="InvalidDataException"/>; exceeded write budgets throw
+    /// <see cref="StorageWriteLimitException"/>. A rejected write prevents the transaction from committing.
     /// </summary>
     ValueTask<long> PutAsync(string collection, string id, ReadOnlyMemory<byte> json, CancellationToken cancellationToken);
 
@@ -102,8 +146,8 @@ public interface IStorageTransaction : IAsyncDisposable
     ValueTask<long> GetOffsetAsync(CancellationToken cancellationToken);
 
     /// <summary>
-    /// Streams every retained write and tombstone of the current generation of one collection whose version is in
-    /// (<paramref name="after"/>, <paramref name="through"/>], in (version, write) order. A live document that does
+    /// Streams every retained write and tombstone of the current generation of one collection whose local history offset is in
+    /// (<paramref name="after"/>, <paramref name="through"/>], in (history offset, write) order. A live document that does
     /// not match <paramref name="filter"/> comes back as a tombstone, so it reads as leaving the filtered view.
     /// </summary>
     IAsyncEnumerable<StoredDocument> ChangesAsync(
@@ -176,4 +220,46 @@ public interface IStorageTransaction : IAsyncDisposable
     /// this transaction's when it wrote documents or created or dropped a collection, otherwise the latest committed one.
     /// </summary>
     ValueTask<long> CommitAsync(CancellationToken cancellationToken);
+    /// <summary>
+    /// The origin of this database: 16 random bytes created with it. Captured change groups are numbered
+    /// 1, 2, … under it.
+    /// </summary>
+    ValueTask<ReadOnlyMemory<byte>> GetOriginAsync(CancellationToken cancellationToken);
+
+    /// <summary>The last locally committed change group sequence, or 0 for an empty journal.</summary>
+    ValueTask<long> GetLastChangeSequenceAsync(CancellationToken cancellationToken);
+
+    /// <summary>Reads captured change group <paramref name="sequence"/>, or <see langword="null"/> when it does not exist.</summary>
+    ValueTask<IReadOnlyList<DocumentChange>?> ReadChangesAsync(long sequence, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Reads the SHA-256 identity of the captured prefix through <paramref name="sequence"/>, or null for a missing group.
+    /// Sequence 0 returns <see cref="JournalDigest.Initial"/> for this database's origin.
+    /// </summary>
+    ValueTask<ReadOnlyMemory<byte>?> GetChangeDigestAsync(long sequence, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Merges a replicated change; it is never captured. The greater state wins, ordered by version, then a
+    /// deletion over a live document, then the UTF-8 JSON bytes, so every replica that applies the same
+    /// changes in any order ends in the same state. Returns whether the stored state changed.
+    /// </summary>
+    ValueTask<bool> ApplyAsync(DocumentChange change, CancellationToken cancellationToken);
+
+    /// <summary>The last change group of <paramref name="origin"/> applied to this database; 0 when none.</summary>
+    ValueTask<long> GetAppliedSequenceAsync(ReadOnlyMemory<byte> origin, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// The atomically stored sequence and SHA-256 prefix identity of <paramref name="origin"/>. A missing or legacy
+    /// unproven frontier returns sequence 0 and the empty-journal digest; it cannot acknowledge old groups.
+    /// </summary>
+    ValueTask<(long Sequence, ReadOnlyMemory<byte> Digest)> GetAppliedFrontierAsync(ReadOnlyMemory<byte> origin, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Records an unproven legacy sequence, which replication will not trust. Use <see cref="SetAppliedFrontierAsync"/>
+    /// to record a received group together with its validated prefix identity.
+    /// </summary>
+    ValueTask SetAppliedSequenceAsync(ReadOnlyMemory<byte> origin, long sequence, CancellationToken cancellationToken);
+
+    /// <summary>Records a received sequence and its validated SHA-256 prefix identity in the document transaction.</summary>
+    ValueTask SetAppliedFrontierAsync(ReadOnlyMemory<byte> origin, long sequence, ReadOnlyMemory<byte> digest, CancellationToken cancellationToken);
 }

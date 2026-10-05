@@ -15,18 +15,22 @@ service Replication {
 
 // Stable identity and current certified configuration for one member.
 message PeerIdentity {
-  // Canonical 16-byte ULID.
+  // Canonical 16-byte UUID in RFC byte order.
   bytes tenant_id = 1;
-  // Canonical 16-byte ULID.
+  // Canonical 16-byte UUID in RFC byte order.
   bytes database_id = 2;
   uint64 shard_id = 3;
-  // Canonical 16-byte ULID.
+  // Canonical 16-byte UUID in RFC byte order.
   bytes member_id = 4;
   // 16-byte incarnation; changes when this member's causal history is reset.
   bytes member_incarnation = 5;
   uint64 membership_epoch = 6;
   // Nonzero SHA-256 identity of the certified configuration.
   bytes configuration_id = 7;
+  // Project of the organization in tenant_id; required by this implementation.
+  bytes project_id = 8;
+  // Descriptive node region, using TERRABASE_REGION syntax. Empty for older peers.
+  string region = 9;
 }
 
 message ProtocolVersion {
@@ -72,6 +76,8 @@ message PeerFrontier {
   optional uint64 received_sequence = 2;
   optional uint64 durable_sequence = 3;
   optional uint64 applied_sequence = 4;
+  // SHA-256 identity of the durable contiguous journal prefix, including sequence zero.
+  bytes journal_digest = 5;
 }
 
 message Hello {
@@ -110,6 +116,9 @@ message CommittedEventId {
   uint64 shard_id = 2;
   OriginIdentity origin = 3;
   uint64 sequence = 4;
+  // Full tenant-qualified database identity, matching the Sync handshake.
+  bytes tenant_id = 5;
+  bytes project_id = 6;
 }
 
 // A single complete committed transaction group, never a partial chunk.
@@ -145,6 +154,9 @@ message CommittedGroupBatch {
   // distributed_metadata, u32 little-endian WAL frame length, and the complete
   // decoded WAL frame, in that order.
   bytes event_digest_sha256 = 19;
+  // Canonical chained journal identity; both digests are required and have 32 bytes.
+  bytes previous_journal_digest = 20;
+  bytes journal_digest = 21;
   reserved 4, 10;
 }
 
@@ -168,12 +180,14 @@ message ReceivedAck {
 message DurableAck {
   AckContext context = 1;
   uint64 durable_prefix = 2;
+  bytes journal_digest = 3;
 }
 
 // This ACK may be emitted only after atomic transaction visibility is applied.
 message AppliedAck {
   AckContext context = 1;
   uint64 applied_prefix = 2;
+  bytes journal_digest = 3;
 }
 
 // Explicit application-level byte credits, separate from HTTP/2 flow control.

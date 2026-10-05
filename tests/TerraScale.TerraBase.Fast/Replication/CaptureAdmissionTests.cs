@@ -1,0 +1,232 @@
+using System.Text;
+using System.Text.Json;
+using Bogus;
+using Microsoft.Extensions.DependencyInjection;
+using TerraScale.TerraBase.Engine;
+using TerraScale.TerraBase.Features.Replication;
+using TerraScale.TerraBase.Testing;
+
+namespace TerraScale.TerraBase.Fast.Replication;
+
+public sealed class CaptureAdmissionTests
+{
+    [Test]
+    [Arguments("long")]
+    [Arguments("control")]
+    [Arguments("surrogate")]
+    [Arguments("collection")]
+    [Arguments("empty")]
+    public async Task Invalid_keys_cannot_commit_and_admitted_boundary_keys_replicate(string invalid)
+    {
+        using var peerTls = new PeerTls();
+        using var clientTls = new ClientTls();
+        await using var receiver = await TerraBaseTestServer.StartAsync(settings =>
+        {
+            peerTls.Apply(settings);
+            clientTls.Apply(settings);
+        });
+        await using var sender = await TerraBaseTestServer.StartAsync(settings =>
+        {
+            peerTls.Apply(settings);
+            clientTls.Apply(settings);
+            settings["peer-addresses"] = receiver.PeerAddress!.ToString();
+        });
+        var tenant = await ReplicationTenant.CreateAsync(sender, "db");
+        await tenant.BindAsync(receiver);
+        using var client = clientTls.CreateClient(sender.ClientAddress!, await tenant.KeyAsync(sender, "documents:write"));
+        using var reader = clientTls.CreateClient(receiver.ClientAddress!, await tenant.KeyAsync(receiver, "documents:read"));
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        var token = deadline.Token;
+        using var created = await client.PostAsJsonAsync(new Uri($"{tenant.Path("db")}/collections", UriKind.Relative), new { name = "items" }, token);
+        created.EnsureSuccessStatusCode();
+        var source = (await sender.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(tenant.Database("db"), token))!;
+        var collection = invalid == "collection" ? "BadCollection" : "items";
+        var id = invalid switch
+        {
+            "long" => new string('a', 257),
+            "control" => "bad\nkey",
+            "surrogate" => "bad\ud800key",
+            "empty" => string.Empty,
+            _ => "key",
+        };
+        long offset;
+        await using (var read = await source.BeginTransactionAsync(write: false, token))
+        {
+            offset = await read.GetOffsetAsync(token);
+        }
+
+        foreach (var imported in new[] { false, true })
+        {
+            await using (var write = await source.BeginTransactionAsync(write: true, token))
+            {
+                if (imported)
+                {
+                    await Assert.That(async () => await write.ApplyAsync(new DocumentChange(collection, id, 1, "{}"u8.ToArray()), token))
+                        .Throws<InvalidDataException>();
+                }
+                else
+                {
+                    await write.PutAsync("items", "must-rollback", "{}"u8.ToArray(), token);
+                    await Assert.That(async () => await write.PutAsync(collection, id, "{}"u8.ToArray(), token)).Throws<InvalidDataException>();
+                }
+
+                await Assert.That(async () => await write.CommitAsync(token)).Throws<InvalidOperationException>();
+            }
+
+            await using var read = await source.BeginTransactionAsync(write: false, token);
+            await Assert.That(await read.GetLastChangeSequenceAsync(token)).IsEqualTo(0);
+            await Assert.That(await read.GetOffsetAsync(token)).IsEqualTo(offset);
+            await Assert.That(await read.GetAsync("items", "must-rollback", token)).IsNull();
+        }
+
+        var boundaryIds = new[] { new string('a', 256), new string('é', 256) };
+        await using (var write = await source.BeginTransactionAsync(write: true, token))
+        {
+            foreach (var boundary in boundaryIds)
+            {
+                await write.PutAsync("items", boundary, "{\"admitted\":true}"u8.ToArray(), token);
+            }
+
+            await write.CommitAsync(token);
+        }
+
+        var following = Guid.CreateVersion7().ToString("D");
+        using var added = await client.PutAsJsonAsync(new Uri($"{tenant.Path("db")}/collections/items/documents/{following}", UriKind.Relative), new { after = "rejection" }, token);
+        added.EnsureSuccessStatusCode();
+        await TerraBaseTestServer.ReplicatedAsync(sender);
+        await using var local = await source.BeginTransactionAsync(write: false, token);
+        await Assert.That(await local.GetLastChangeSequenceAsync(token)).IsEqualTo(2);
+        for (var sequence = 1L; sequence <= 2; sequence++)
+        {
+            var group = (await local.ReadChangesAsync(sequence, token))!;
+            var decoded = ChangeGroup.Decode(ChangeGroup.Encode(group));
+            await Assert.That(decoded.Select(change => (change.Collection, change.Id, change.Version)))
+                .IsEquivalentTo(group.Select(change => (change.Collection, change.Id, change.Version)));
+            foreach (var change in decoded)
+            {
+                using var response = await reader.GetAsync(new Uri($"{tenant.Path("db")}/collections/items/documents/{Uri.EscapeDataString(change.Id)}", UriKind.Relative), token);
+                response.EnsureSuccessStatusCode();
+                using var body = JsonDocument.Parse(await response.Content.ReadAsByteArrayAsync(token));
+                await Assert.That(body.RootElement.GetProperty("document").GetRawText()).IsEqualTo(Encoding.UTF8.GetString(change.Json!.Value.Span));
+            }
+        }
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Dropping_a_collection_releases_pending_bodies_before_admitting_other_deletions(bool capturedFirst)
+    {
+        using var peerTls = new PeerTls();
+        using var clientTls = new ClientTls();
+        await using var receiver = await TerraBaseTestServer.StartAsync(settings =>
+        {
+            peerTls.Apply(settings);
+            clientTls.Apply(settings);
+        });
+        await using var sender = await TerraBaseTestServer.StartAsync(settings =>
+        {
+            peerTls.Apply(settings);
+            clientTls.Apply(settings);
+            settings["peer-addresses"] = receiver.PeerAddress!.ToString();
+        });
+        var tenant = await ReplicationTenant.CreateAsync(sender, "db");
+        await tenant.BindAsync(receiver);
+        using var client = clientTls.CreateClient(sender.ClientAddress!, await tenant.KeyAsync(sender, "documents:write"));
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        var token = deadline.Token;
+        string[] names = ["items", "other"];
+        foreach (var name in names)
+        {
+            using var created = await client.PostAsJsonAsync(new Uri($"{tenant.Path("db")}/collections", UriKind.Relative), new { name }, token);
+            created.EnsureSuccessStatusCode();
+        }
+
+        const string early = "00000000-0000-0000-0000-000000000001";
+        const string late = "ffffffff-ffff-ffff-ffff-ffffffffffff";
+        var captured = capturedFirst ? early : late;
+        var existing = capturedFirst ? late : early;
+        var retained = Guid.CreateVersion7().ToString("D");
+        using var seeded = await client.PutAsJsonAsync(new Uri($"{tenant.Path("db")}/collections/items/documents/{existing}", UriKind.Relative), new { value = "old" }, token);
+        seeded.EnsureSuccessStatusCode();
+        // Two names (5 bytes), UUIDs (36 bytes) and these bodies fill exactly the 2 MiB capture budget.
+        var json = Encoding.UTF8.GetBytes("{\"value\":\"" + new string('x', IStorageTransaction.MaxChangeGroupBytes / 2 - 41 - 12) + "\"}");
+        var source = (await sender.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(tenant.Database("db"), token))!;
+        long offset;
+        await using (var write = await source.BeginTransactionAsync(write: true, token))
+        {
+            await write.PutAsync("other", retained, json, token);
+            await write.PutAsync("items", captured, json, token);
+            await Assert.That(await write.DropCollectionAsync("items", token)).IsTrue();
+            offset = await write.CommitAsync(token);
+        }
+
+        await TerraBaseTestServer.ReplicatedAsync(sender);
+        await using var local = await source.BeginTransactionAsync(write: false, token);
+        var group = (await local.ReadChangesAsync(2, token))!;
+        await Assert.That(group.Count).IsEqualTo(3);
+        await Assert.That(group.Single(change => change.Id == retained).Json!.Value.Span.SequenceEqual(json)).IsTrue();
+        await Assert.That(group.Where(change => change.Collection == "items").All(change => change.Json is null && change.Version == offset)).IsTrue();
+        var target = (await receiver.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(tenant.Database("db"), token))!;
+        await using var remote = await target.BeginTransactionAsync(write: false, token);
+        await Assert.That(await remote.GetAppliedSequenceAsync(await local.GetOriginAsync(token), token)).IsEqualTo(2);
+        var received = (await remote.GetAsync("other", retained, token))!;
+        await Assert.That(received.Json.Span.SequenceEqual(json)).IsTrue();
+        await Assert.That(await remote.GetVersionAsync("items", existing, token)).IsEqualTo(new DocumentVersion(offset, Deleted: true));
+        await Assert.That(await remote.GetVersionAsync("items", captured, token)).IsEqualTo(new DocumentVersion(offset, Deleted: true));
+    }
+
+    [Test]
+    public async Task Dropping_a_collection_replaces_every_pending_state_at_the_capture_count_limit()
+    {
+        using var peerTls = new PeerTls();
+        using var clientTls = new ClientTls();
+        await using var receiver = await TerraBaseTestServer.StartAsync(settings =>
+        {
+            peerTls.Apply(settings);
+            clientTls.Apply(settings);
+        });
+        await using var sender = await TerraBaseTestServer.StartAsync(settings =>
+        {
+            peerTls.Apply(settings);
+            clientTls.Apply(settings);
+            settings["peer-addresses"] = receiver.PeerAddress!.ToString();
+        });
+        var tenant = await ReplicationTenant.CreateAsync(sender, "db");
+        await tenant.BindAsync(receiver);
+        using var client = clientTls.CreateClient(sender.ClientAddress!, await tenant.KeyAsync(sender, "documents:write"));
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        var token = deadline.Token;
+        using var created = await client.PostAsJsonAsync(new Uri($"{tenant.Path("db")}/collections", UriKind.Relative), new { name = "items" }, token);
+        created.EnsureSuccessStatusCode();
+        var source = (await sender.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(tenant.Database("db"), token))!;
+        var ids = Enumerable.Range(0, IStorageTransaction.MaxChangeGroupChanges).Select(_ => Guid.CreateVersion7().ToString("D")).ToArray();
+        var json = JsonSerializer.SerializeToUtf8Bytes(new { value = new Faker().Lorem.Word() });
+        long offset;
+        await using (var write = await source.BeginTransactionAsync(write: true, token))
+        {
+            // Internal mutations may share a key; the public transaction API refuses duplicate targets.
+            foreach (var id in ids)
+            {
+                await write.PutAsync("items", id, json, token);
+            }
+
+            await Assert.That(await write.DropCollectionAsync("items", token)).IsTrue();
+            offset = await write.CommitAsync(token);
+        }
+
+        await TerraBaseTestServer.ReplicatedAsync(sender);
+        await using var local = await source.BeginTransactionAsync(write: false, token);
+        await Assert.That(await local.GetCollectionAsync("items", token)).IsNull();
+        var group = (await local.ReadChangesAsync(1, token))!;
+        await Assert.That(group.Select(change => change.Id)).IsEquivalentTo(ids);
+        await Assert.That(group.All(change => change.Json is null && change.Version == offset)).IsTrue();
+        var target = (await receiver.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(tenant.Database("db"), token))!;
+        await using var remote = await target.BeginTransactionAsync(write: false, token);
+        await Assert.That(await remote.GetAppliedSequenceAsync(await local.GetOriginAsync(token), token)).IsEqualTo(1);
+        foreach (var id in ids)
+        {
+            await Assert.That(await remote.GetVersionAsync("items", id, token)).IsEqualTo(new DocumentVersion(offset, Deleted: true));
+        }
+    }
+}

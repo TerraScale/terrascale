@@ -61,7 +61,8 @@ public sealed record AssertCountOperation(string Collection, DocumentFilter? Fil
 /// <param name="Version">New version of a written document.</param>
 /// <param name="Created">Whether a put created the document (it was absent or deleted).</param>
 /// <param name="Count">Count of an <see cref="AssertCountOperation"/>.</param>
-public sealed record OperationResult(string? Id, long? Version, bool Created, long? Count);
+/// <param name="ETag">Public validator for the written state, including its JSON or deletion state.</param>
+public sealed record OperationResult(string? Id, long? Version, bool Created, long? Count, string? ETag = null);
 
 /// <summary>Result of an atomic write.</summary>
 /// <param name="Offset">Database commit offset.</param>

@@ -239,7 +239,7 @@ public sealed class TransactionApiTests
     }
 
     [Test]
-    public async Task Storage_framing_limits_return_an_indexed_413_and_roll_back_the_transaction()
+    public async Task Captured_change_bytes_return_an_indexed_503_and_roll_back_the_transaction()
     {
         await using var api = await DocumentApi.StartAsync();
         var ids = Enumerable.Range(0, 7).Select(_ => DocumentApi.NewId()).ToArray();
@@ -253,15 +253,22 @@ public sealed class TransactionApiTests
             firstVersion ??= last.Version;
         }
 
-        // The documents total exactly 7 MiB; operation framing must count toward the storage limit, so one
-        // commit always fits a shape log chunk.
+        // Two 1 MiB documents plus their collection names and ids exceed capture's 2 MiB limit,
+        // before seven documents can reach the separate 7 MiB storage framing limit.
         var failed = await api.TransactAsync([.. ids.Select(id => new { op = "patch", collection = "items", id, merge = new { } })]);
         var unchanged = await api.GetAsync(ids[0]);
         var next = await api.PutAsync(DocumentApi.NewId(), new { });
 
-        await Assert.That((failed.Status, failed.Code, failed.Op)).IsEqualTo((HttpStatusCode.RequestEntityTooLarge, "payload_too_large", (int?)6));
+        await Assert.That((failed.Status, failed.Code, failed.Op)).IsEqualTo((HttpStatusCode.ServiceUnavailable, "capacity", (int?)1));
+        await Assert.That(unchanged.Status).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(unchanged.Version).IsEqualTo(firstVersion);
+        await Assert.That(unchanged.Json.GetProperty("document").GetRawText()).IsEqualTo(document);
         await Assert.That(Offset(next)).IsEqualTo(Offset(last!) + 1);
+
+        var bounded = await api.TransactAsync(new { op = "patch", collection = "items", id = ids[0], merge = new { } });
+        await Assert.That(bounded.Status).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(Offset(bounded)).IsEqualTo(Offset(next) + 1);
+        await Assert.That((await api.GetAsync(ids[0])).Version).IsEqualTo(bounded.Json.GetProperty("results")[0].GetProperty("version").GetString());
     }
 
     private static long Offset(ApiResponse response) =>

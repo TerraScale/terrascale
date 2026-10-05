@@ -106,7 +106,7 @@ internal sealed partial class SqliteStorageTransaction
     public async ValueTask<long> DeleteCollectionsAsync(string prefix, CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrEmpty(prefix);
-        RequireWritable();
+        ThrowIfReadOnly();
         // A range over each primary key: every name that starts with the prefix sorts in [prefix, prefix with its last character incremented).
         var to = prefix[..^1] + (char)(prefix[^1] + 1);
         var documents = session.Command(SqliteStatements.DeleteCollectionDocuments, transaction);
@@ -123,7 +123,7 @@ internal sealed partial class SqliteStorageTransaction
         }
         catch
         {
-            _writeFailed = true;
+            _faulted = true;
             throw;
         }
     }
@@ -150,7 +150,7 @@ internal sealed partial class SqliteStorageTransaction
     public async ValueTask<bool> CreateIndexAsync(IndexDefinition index, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(index);
-        RequireWritable();
+        ThrowIfReadOnly();
         if (!IndexName().IsMatch(index.Name) || !DatabaseName.TryParse(index.Collection, out _) || index.Fields.Count is < 1 or > 4)
         {
             throw new ArgumentException("invalid index definition", nameof(index));
@@ -195,12 +195,12 @@ internal sealed partial class SqliteStorageTransaction
             }
             catch (SqliteException error) when (error.SqliteErrorCode == raw.SQLITE_INTERRUPT && cancellationToken.IsCancellationRequested)
             {
-                _writeFailed = true;
+                _faulted = true;
                 throw new OperationCanceledException("index build canceled", error, cancellationToken);
             }
             catch
             {
-                _writeFailed = true;
+                _faulted = true;
                 throw;
             }
             finally
@@ -214,7 +214,7 @@ internal sealed partial class SqliteStorageTransaction
 
     public async ValueTask<bool> DropIndexAsync(string name, CancellationToken cancellationToken)
     {
-        RequireWritable();
+        ThrowIfReadOnly();
         if (!IndexName().IsMatch(name) || !await IndexExistsAsync(name, cancellationToken).ConfigureAwait(false))
         {
             return false;
@@ -229,7 +229,7 @@ internal sealed partial class SqliteStorageTransaction
             }
             catch
             {
-                _writeFailed = true;
+                _faulted = true;
                 throw;
             }
         }

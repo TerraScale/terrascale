@@ -63,7 +63,7 @@ internal static class Projection
                 target = child;
             }
 
-            target[path.Segments![^1]] = JsonNode.Parse(source.GetRawText(), new JsonNodeOptions { PropertyNameCaseInsensitive = false });
+            target[path.Segments![^1]] = JsonNode.Parse(source.GetRawText(), new JsonNodeOptions { PropertyNameCaseInsensitive = false }, RequestJson.StoredDocumentOptions);
         }
 
         return JsonSerializer.SerializeToElement(result, TerraBaseJsonContext.Default.JsonObject);

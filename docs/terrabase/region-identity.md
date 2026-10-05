@@ -13,6 +13,10 @@ Select Development with the standard `DOTNET_ENVIRONMENT=Development` host setti
 Region identity describes the running node. It does not establish database
 placement, replication, residency, or regional availability.
 
+Peer replication exchanges this region in Hello/Welcome and logs the local and
+validated peer regions. Older peers may omit it and are logged as `unknown`.
+The region remains descriptive; it is not part of database or journal identity.
+
 ## HTTP contract
 
 Every response on the client listener includes `X-TerraBase-Region: <region-id>`,

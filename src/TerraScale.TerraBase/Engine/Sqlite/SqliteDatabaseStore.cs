@@ -1,16 +1,26 @@
 using Microsoft.Data.Sqlite;
+using TerraScale.TerraBase.Tenancy;
 
 namespace TerraScale.TerraBase.Engine.Sqlite;
 
 /// <param name="name">Names the database in error messages: its id, or <c>_system</c>.</param>
 /// <param name="path">The database file.</param>
 /// <param name="pool">Idle sessions, shared by every database of the engine.</param>
+/// <param name="tenant">The storage identity; null for the system database.</param>
 /// <param name="time">The clock of the query deadline.</param>
+/// <param name="changesCommitted">Receives the last captured sequence after a write commits.</param>
 /// <param name="committed">Optional engine notification after a successful commit that changed this database.</param>
-internal sealed class SqliteDatabaseStore(string name, string path, SqliteSessionPool pool, TimeProvider time, Action? committed = null) : IDatabaseStore, IDisposable
+internal sealed class SqliteDatabaseStore(
+    string name, string path, SqliteSessionPool pool, TenantContext? tenant, TimeProvider time,
+    Action<long>? changesCommitted, Action? committed) : IDatabaseStore, IDisposable
 {
+    internal SqliteDatabaseStore(string name, string path, SqliteSessionPool pool, TimeProvider time, Action? committed = null)
+        : this(name, path, pool, null, time, null, committed) { }
+
+    internal SqliteDatabaseStore(string name, string path, SqliteSessionPool pool, TenantContext? tenant = null, Action<long>? changesCommitted = null)
+        : this(name, path, pool, tenant, TimeProvider.System, changesCommitted, null) { }
     /// <summary>On-disk schema version, stored in <c>PRAGMA user_version</c>.</summary>
-    private const int SchemaVersion = 6;
+    private const int SchemaVersion = 8;
 
     // Migrations[n] moves user_version n to n + 1.
     private static readonly string[] Migrations =
@@ -113,6 +123,34 @@ internal sealed class SqliteDatabaseStore(string name, string path, SqliteSessio
                     ORDER BY h.version DESC, h.id DESC LIMIT 1), '');
         END;
         """,
+        // Version 7: capture and applied frontiers use the existing incarnation in commit_offset.
+        """
+        ALTER TABLE change_log ADD COLUMN document_version INTEGER NOT NULL DEFAULT 0;
+        UPDATE change_log SET document_version = version;
+        CREATE TABLE changes (
+            sequence INTEGER NOT NULL,
+            ordinal INTEGER NOT NULL,
+            collection TEXT NOT NULL,
+            id TEXT NOT NULL,
+            version INTEGER NOT NULL,
+            body TEXT,
+            PRIMARY KEY (sequence, ordinal)
+        ) WITHOUT ROWID;
+        CREATE INDEX changes_deleted ON changes (collection, id, version) WHERE body IS NULL;
+        CREATE TABLE replication_state (id INTEGER PRIMARY KEY CHECK (id = 1), complete INTEGER NOT NULL);
+        INSERT INTO replication_state (id, complete) SELECT 1, NOT EXISTS (SELECT 1 FROM documents);
+        CREATE TABLE applied (origin BLOB PRIMARY KEY, sequence INTEGER NOT NULL) WITHOUT ROWID;
+        """,
+        // Version 8: a sequence alone cannot identify a prefix after snapshot restoration and replacement writes.
+        // Legacy applied prefixes have no content proof: replay them rather than trusting an ambiguous acknowledgment.
+        """
+        CREATE TABLE journal_prefixes (
+            sequence INTEGER PRIMARY KEY CHECK (sequence > 0),
+            digest BLOB NOT NULL CHECK (length(digest) = 32)
+        ) WITHOUT ROWID;
+        ALTER TABLE applied ADD COLUMN digest BLOB CHECK (digest IS NULL OR length(digest) = 32);
+        DELETE FROM applied;
+        """,
     ];
 
     // Version 5's history baseline, for client databases only: _system keeps no shape history, so its
@@ -169,10 +207,18 @@ internal sealed class SqliteDatabaseStore(string name, string path, SqliteSessio
         return signal.WaitAsync(cancellationToken);
     }
 
+    public TenantContext? Tenant { get; } = tenant;
+
     public Guid Incarnation { get; private set; }
 
     /// <summary>Set once the database is deleted or the engine shuts down; guarded by <see cref="SqliteSessionPool"/>.</summary>
-    internal bool Closed { get; set; }
+    internal bool Closed
+    {
+        get => Volatile.Read(ref field);
+        set => Volatile.Write(ref field, value);
+    }
+
+    public bool IsClosed => Closed;
 
     internal TimeProvider Time => time;
 
@@ -184,8 +230,24 @@ internal sealed class SqliteDatabaseStore(string name, string path, SqliteSessio
         var session = await RentAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            // Writers take the lock up front (BEGIN IMMEDIATE) so they wait instead of failing on upgrade.
-            return new SqliteStorageTransaction(this, session, session.Connection.BeginTransaction(deferred: !write), write, write ? Committed : null);
+            var transaction = await session.ExecuteAsync(async () =>
+            {
+                // BEGIN DEFERRED alone still permits a write upgrade. SQLite enforces read-only
+                // access before BEGIN; both setup and native lock acquisition share the caller's budget.
+                if (!write)
+                {
+                    var readOnly = session.Connection.CreateCommand();
+                    await using (readOnly.ConfigureAwait(false))
+                    {
+                        readOnly.CommandText = "PRAGMA query_only = ON;";
+                        await readOnly.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+                    }
+                }
+
+                // Writers take the lock up front so they wait instead of failing on upgrade.
+                return session.Connection.BeginTransaction(deferred: !write);
+            }, cancellationToken).ConfigureAwait(false);
+            return new SqliteStorageTransaction(this, session, transaction, write, write ? Committed : null, write ? changesCommitted : null);
         }
         catch
         {
@@ -230,7 +292,64 @@ internal sealed class SqliteDatabaseStore(string name, string path, SqliteSessio
 
         Return(session);
         // InitializeAsync switches the copy to WAL and refuses an unsupported schema version.
-        await InitializeAsync(name, path, cancellationToken).ConfigureAwait(false);
+        await InitializeAsync(name, path, SqliteStatements.MaterializeRetainedDeletions + """
+            UPDATE replication_state SET complete = 0 WHERE id = 1;
+            DELETE FROM changes;
+            DELETE FROM journal_prefixes;
+            DELETE FROM applied;
+            """, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// When the change log does not cover this database's state (a copy, or an upgrade from version 1 with
+    /// data), appends the current state of every document and tombstone as baseline change groups, one
+    /// bounded group per transaction, then marks the log complete. Merging is idempotent, so a baseline
+    /// repeated after a crash only costs bytes. Returns the last appended sequence (0 when none) and the
+    /// pre-existing states skipped for failing replication admission.
+    /// </summary>
+    internal async Task<(long Sequence, int Skipped)> SeedAsync(CancellationToken cancellationToken)
+    {
+        var (sequence, skipped) = (0L, 0);
+        foreach (var tombstones in new[] { false, true })
+        {
+            (string Collection, string Id)? after = null;
+            while (true)
+            {
+                var transaction = (SqliteStorageTransaction)await BeginTransactionAsync(write: true, cancellationToken).ConfigureAwait(false);
+                await using (transaction.ConfigureAwait(false))
+                {
+                    if (sequence == 0 && after is null && !tombstones)
+                    {
+                        if (await transaction.IsCompleteAsync(cancellationToken).ConfigureAwait(false))
+                        {
+                            return (0, 0);
+                        }
+
+                        // SQL skips oversized keys without bringing them into managed memory or the resume cursor.
+                        skipped = await transaction.CountOversizedBaselineKeysAsync(cancellationToken).ConfigureAwait(false);
+                    }
+
+                    if (await transaction.AppendBaselineAsync(tombstones, after, cancellationToken).ConfigureAwait(false) is not { } chunk)
+                    {
+                        break;
+                    }
+
+                    await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+                    after = chunk.Last;
+                    sequence = Math.Max(sequence, chunk.Sequence);
+                    skipped += chunk.Skipped;
+                }
+            }
+        }
+
+        var complete = (SqliteStorageTransaction)await BeginTransactionAsync(write: true, cancellationToken).ConfigureAwait(false);
+        await using (complete.ConfigureAwait(false))
+        {
+            await complete.MarkCompleteAsync(cancellationToken).ConfigureAwait(false);
+            await complete.CommitAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        return (sequence, skipped);
     }
 
     /// <summary>Takes back a session whose work has ended; the pool keeps it idle or closes it.</summary>
@@ -259,9 +378,15 @@ internal sealed class SqliteDatabaseStore(string name, string path, SqliteSessio
         {
             session = await SqliteSession.OpenAsync(_connectionString, cancellationToken).ConfigureAwait(false);
         }
-        catch
+        catch (Exception error)
         {
             pool.OpenFailed();
+            if (Closed && !cancellationToken.IsCancellationRequested)
+            {
+                // A delete can unlink the file after Rent found no session but before SQLite opened it.
+                throw new ObjectDisposedException(GetType().FullName, error);
+            }
+
             throw;
         }
 
@@ -272,7 +397,7 @@ internal sealed class SqliteDatabaseStore(string name, string path, SqliteSessio
     /// Creates (or adopts a copied) and migrates a new database file at <paramref name="path"/> on an unpooled
     /// connection, so no handle stays open once this returns and the file can be moved.
     /// </summary>
-    internal static async Task InitializeAsync(string name, string path, CancellationToken cancellationToken)
+    internal static async Task InitializeAsync(string name, string path, string? afterMigration, CancellationToken cancellationToken)
     {
         var connectionString = new SqliteConnectionStringBuilder
         {
@@ -288,8 +413,18 @@ internal sealed class SqliteDatabaseStore(string name, string path, SqliteSessio
             // The creating connection uses the same settings as every pooled one.
             await ScalarAsync(connection, null, "PRAGMA journal_mode = WAL;" + SqliteSession.Pragmas, cancellationToken).ConfigureAwait(false);
             await MigrateAsync(name, connection, cancellationToken).ConfigureAwait(false);
-            // Initialize publishes a new database, including a VACUUM copy: give it its own identity.
-            await RenewIncarnationAsync(connection, null, cancellationToken).ConfigureAwait(false);
+            // Publish a fresh identity and prepare the copied baseline atomically, on this file only.
+            var transaction = connection.BeginTransaction(deferred: false);
+            await using (transaction.ConfigureAwait(false))
+            {
+                await RenewIncarnationAsync(connection, transaction, cancellationToken).ConfigureAwait(false);
+                if (afterMigration is not null)
+                {
+                    await ScalarAsync(connection, transaction, afterMigration, cancellationToken).ConfigureAwait(false);
+                }
+
+                await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+            }
         }
     }
 
@@ -298,10 +433,15 @@ internal sealed class SqliteDatabaseStore(string name, string path, SqliteSessio
         var session = await RentAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            await MigrateAsync(name, session.Connection, cancellationToken).ConfigureAwait(false);
-            Incarnation = Guid.ParseExact(
-                (string)(await ScalarAsync(session.Connection, null, SqliteStatements.Incarnation, cancellationToken).ConfigureAwait(false)
-                    ?? throw new InvalidOperationException("database incarnation is missing")), "N");
+            await session.ExecuteAsync(async () =>
+            {
+                // A migration is atomic and rolls back before a lock error leaves this scope.
+                await MigrateAsync(name, session.Connection, cancellationToken).ConfigureAwait(false);
+                Incarnation = Guid.ParseExact(
+                    (string)(await ScalarAsync(session.Connection, null, SqliteStatements.Incarnation, cancellationToken).ConfigureAwait(false)
+                        ?? throw new InvalidOperationException("database incarnation is missing")), "N");
+                return 0;
+            }, cancellationToken).ConfigureAwait(false);
         }
         catch
         {
@@ -339,9 +479,59 @@ internal sealed class SqliteDatabaseStore(string name, string path, SqliteSessio
                 {
                     await ScalarAsync(connection, transaction, ShapeBaseline, cancellationToken).ConfigureAwait(false);
                 }
+
+                if (version == 7)
+                {
+                    await BackfillJournalDigestsAsync(connection, transaction, cancellationToken).ConfigureAwait(false);
+                }
             }
 
             await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    // The migration retains at most one 1024-item/2-MiB group, never the whole journal. The prefix chain
+    // and user_version publish together, so interruption cannot leave a partially trusted journal.
+    private static async Task BackfillJournalDigestsAsync(
+        SqliteConnection connection, SqliteTransaction transaction, CancellationToken cancellationToken)
+    {
+        var origin = (byte[])(await ScalarAsync(connection, transaction, SqliteStatements.Origin, cancellationToken).ConfigureAwait(false)
+            ?? throw new InvalidDataException("the journal origin is missing"));
+        var previous = JournalDigest.Initial(origin);
+        var head = (long)(await ScalarAsync(connection, transaction, SqliteStatements.LastSequence, cancellationToken).ConfigureAwait(false))!;
+        var read = connection.CreateCommand();
+        var append = connection.CreateCommand();
+        await using (read.ConfigureAwait(false))
+        await using (append.ConfigureAwait(false))
+        {
+            read.Transaction = append.Transaction = transaction;
+            read.CommandText = SqliteStatements.ReadChanges;
+            read.Parameters.AddWithValue("$sequence", 0L);
+            read.Parameters.AddWithValue("$limit", IStorageTransaction.MaxChangeGroupChanges + 1);
+            read.Parameters.AddWithValue("$maxBytes", IStorageTransaction.MaxChangeGroupBytes);
+            append.CommandText = SqliteStatements.AppendChangeDigest;
+            append.Parameters.AddWithValue("$sequence", 0L);
+            append.Parameters.AddWithValue("$digest", previous);
+            for (var sequence = 1L; sequence <= head;)
+            {
+                read.Parameters["$sequence"].Value = sequence;
+                var changes = await SqliteStorageTransaction.ReadChangesAsync(read, cancellationToken).ConfigureAwait(false);
+                if (changes.Count == 0)
+                {
+                    throw new InvalidDataException("the captured journal is not contiguous");
+                }
+
+                previous = JournalDigest.Compute(origin, sequence, previous, changes);
+                append.Parameters["$sequence"].Value = sequence;
+                append.Parameters["$digest"].Value = previous;
+                await append.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+                if (sequence == head)
+                {
+                    break;
+                }
+
+                sequence++;
+            }
         }
     }
 

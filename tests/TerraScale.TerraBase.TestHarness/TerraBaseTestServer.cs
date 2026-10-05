@@ -1,9 +1,12 @@
+using System.Net;
+using System.Net.Sockets;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
+using OpenTelemetry.Exporter;
 using TerraScale.TerraBase.Configuration;
 using TerraScale.TerraBase.Engine;
 using TerraScale.TerraBase.Engine.Sqlite;
@@ -163,14 +166,124 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// Starts two servers that name each other in their settings, for example in <c>peer-addresses</c>:
+    /// <paramref name="settings"/> gets each server's settings, its own peer port and the other's. Both
+    /// ports are chosen before either server starts; if one was taken meanwhile, both start again on new ports.
+    /// </summary>
+    public static async Task<(TerraBaseTestServer A, TerraBaseTestServer B)> StartPairAsync(Action<Dictionary<string, string>, int, int> settings)
+    {
+        ArgumentNullException.ThrowIfNull(settings);
+        for (var attempt = 1; ; attempt++)
+        {
+            var (portA, portB) = FreePorts();
+            TerraBaseTestServer? a = null;
+            try
+            {
+                a = await StartAsync(values => settings(values, portA, portB));
+                return (a, await StartAsync(values => settings(values, portB, portA)));
+            }
+            catch (Exception error)
+            {
+                if (a is not null)
+                {
+                    await a.DisposeAsync();
+                }
+
+                if (error is not IOException || attempt == 3)
+                {
+                    throw;
+                }
+            }
+        }
+    }
+
+    // Keep both probes bound until distinct ports are selected. Another process may still take them later.
+    private static (int A, int B) FreePorts()
+    {
+        var ipv6 = Socket.OSSupportsIPv6;
+        var family = ipv6 ? AddressFamily.InterNetworkV6 : AddressFamily.InterNetwork;
+        var address = ipv6 ? IPAddress.IPv6Any : IPAddress.Any;
+        using var a = new Socket(family, SocketType.Stream, ProtocolType.Tcp);
+        using var b = new Socket(family, SocketType.Stream, ProtocolType.Tcp);
+        if (ipv6)
+        {
+            a.DualMode = true;
+            b.DualMode = true;
+        }
+
+        a.Bind(new IPEndPoint(address, 0));
+        b.Bind(new IPEndPoint(address, 0));
+        return (((IPEndPoint)a.LocalEndPoint!).Port, ((IPEndPoint)b.LocalEndPoint!).Port);
+    }
+
+    /// <summary>
+    /// Polls <paramref name="condition"/> until it holds, failing after <paramref name="timeout"/> (default 30 s).
+    /// The condition gets the deadline's token and must pass it to its I/O, so a check still running at the
+    /// deadline is cancelled instead of outliving the test.
+    /// </summary>
+    public static async Task EventuallyAsync(Func<CancellationToken, Task<bool>> condition, TimeSpan? timeout = null, TimeProvider? time = null)
+    {
+        ArgumentNullException.ThrowIfNull(condition);
+        time ??= TimeProvider.System;
+        using var deadline = new CancellationTokenSource(timeout ?? TimeSpan.FromSeconds(30), time);
+        while (!await condition(deadline.Token))
+        {
+            await Task.Delay(TimeSpan.FromMilliseconds(50), time, deadline.Token);
+        }
+
+        deadline.Token.ThrowIfCancellationRequested();
+    }
+
+    /// <summary>
+    /// The replication completion barrier: waits until, on every node in <paramref name="nodes"/>, every change
+    /// group committed so far is durably acknowledged by every peer (the senders' durable lag, journal head
+    /// minus acknowledged prefix, is zero). Each sender must finish measuring every existing journal head at
+    /// startup first, so commits from before a node's startup count even when its peers are unavailable.
+    /// </summary>
+    public static Task ReplicatedAsync(params TerraBaseTestServer[] nodes) =>
+        EventuallyAsync(async token =>
+        {
+            foreach (var node in nodes)
+            {
+                if (await node.MetricAsync("terrabase_replication_sender_initialized", "", token) != 1
+                    || await node.MetricAsync("terrabase_replication_sender_durable_lag", "", token) != 0)
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        });
+
+    /// <summary>
+    /// The sum of the Prometheus samples of <paramref name="name"/> on this server whose labels contain
+    /// <paramref name="label"/> (for example <c>result="applied"</c>). Throws when no matching sample exists.
+    /// </summary>
+    public async Task<double> MetricAsync(string name, string label = "", CancellationToken cancellationToken = default)
+    {
+        var text = await Client.GetStringAsync(new Uri("/metrics", UriKind.Relative), cancellationToken);
+        var samples = text.Split('\n')
+            .Where(line => (line.StartsWith(name + "{", StringComparison.Ordinal) || line.StartsWith(name + " ", StringComparison.Ordinal))
+                && line.Contains(label, StringComparison.Ordinal))
+            .Select(line =>
+            {
+                // name{labels} value [timestamp]
+                var start = line.Contains('}', StringComparison.Ordinal) ? line.LastIndexOf('}') + 1 : name.Length;
+                return double.Parse(line[start..].Trim().Split(' ')[0], System.Globalization.CultureInfo.InvariantCulture);
+            }).ToArray();
+        return samples.Length == 0
+            ? throw new InvalidOperationException($"metric '{name}' with labels containing '{label}' has no samples")
+            : samples.Sum();
+    }
+
     /// <inheritdoc />
     public async ValueTask DisposeAsync()
     {
         Client.Dispose();
         await _factory.DisposeAsync();
-        // Program's RunAsync disposes the host on its own thread, which can still be closing database
-        // files when the factory returns. Disposing the engine again is a no-op that returns only once
-        // its files are closed (or closes them first).
+        // Program's host may still be draining its files when the factory returns. Rejoin that drain
+        // within the configured shutdown grace before cleaning up this harness's directory.
         await _engine.DisposeAsync();
         Directory.Delete(_temporaryDirectory, recursive: true);
     }
@@ -185,10 +298,12 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
                 builder.UseSetting(key, value);
             }
 
-            if (services is not null)
+            builder.ConfigureTestServices(values =>
             {
-                builder.ConfigureTestServices(services);
-            }
+                // Completion barriers must observe commits after the previous scrape, not its cached zero.
+                values.Configure<PrometheusAspNetCoreOptions>(options => options.ScrapeResponseCacheDurationMilliseconds = 0);
+                services?.Invoke(values);
+            });
         }
     }
 }

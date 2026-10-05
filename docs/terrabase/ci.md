@@ -39,6 +39,8 @@ Branch protection on `main` should require `Fast integration / fast` and
 
 - `fast` and `release` run in parallel; `publish` only publishes the draft and never rebuilds.
 - NuGet downloads (`.nupkg`) persist in `/cache/nuget/terrabase/http-cache` on the runner.
+  Jobs also share `/cache/nuget/terrabase/scratch` (`NUGET_SCRATCH`), so NuGet's filesystem
+  locks coordinate concurrent HTTP-cache writes, including vulnerability-data updates.
   Each job extracts them into its own fresh packages folder, and locked restore checks every
   `.nupkg` against `packages.lock.json` (NU1403). A pull request therefore cannot plant files that a
   `main` release reuses (`scripts/ci/nuget-cache.sh`).

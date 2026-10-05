@@ -4,6 +4,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Bogus;
+using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using TerraScale.TerraBase.Engine;
 using TerraScale.TerraBase.Features.ApiKeys;
@@ -20,6 +21,96 @@ public sealed class ShapeApiTests
     private const string Revalidate = "private, max-age=0, must-revalidate";
 
     private readonly Faker _faker = new();
+
+    [Test]
+    [Arguments("snapshot", "malformed")]
+    [Arguments("log", "malformed")]
+    [Arguments("snapshot", "injection")]
+    [Arguments("log", "injection")]
+    [Arguments("snapshot", "deep")]
+    [Arguments("log", "deep")]
+    public async Task Stored_shape_bodies_are_checked_without_rewriting_legacy_JSON(string mode, string bodyKind)
+    {
+        await using var api = await DocumentApi.StartAsync();
+        using var shapes = await api.ClientWithScopesAsync(ApiKeyScopes.ShapesRead);
+        var id = DocumentApi.NewId();
+        (await api.PutAsync(id, new { n = 1 })).Status.ShouldBe(HttpStatusCode.Created);
+        var (handle, _) = await SnapshotAsync(shapes, $"{api.Shape}?offset=-1");
+        var store = await StoreAsync(api);
+        long before;
+        await using (var read = await store.BeginTransactionAsync(write: false, CancellationToken.None))
+        {
+            before = await read.GetOffsetAsync(CancellationToken.None);
+        }
+
+        (await api.PutAsync(id, new { n = 2 })).Status.ShouldBe(HttpStatusCode.OK);
+        var raw = bodyKind switch
+        {
+            "malformed" => "{\"x\":",
+            "injection" => "{},\"injected\":true,\"document\":{}",
+            _ => "{\"nested\":" + new string('[', 80) + "0" + new string(']', 80) + "}",
+        };
+        // A restored row/history entry predates current write admission. Keep its body verbatim.
+        var path = await api.DatabaseFileAsync();
+        await using (var connection = new SqliteConnection(DocumentApi.ConnectionString(path)))
+        {
+            await connection.OpenAsync();
+            await using var corrupt = connection.CreateCommand();
+            corrupt.CommandText = """
+                UPDATE documents SET body = $body WHERE collection = 'items' AND id = $id;
+                UPDATE change_log SET body = $body WHERE collection = 'items' AND id = $id AND version = $version;
+                """;
+            corrupt.Parameters.AddWithValue("$body", raw);
+            corrupt.Parameters.AddWithValue("$id", id);
+            corrupt.Parameters.AddWithValue("$version", before + 1);
+            await Assert.That(await corrupt.ExecuteNonQueryAsync()).IsEqualTo(2);
+        }
+
+        var route = $"{api.Shape}?handle={handle}&offset={before}";
+        if (mode == "snapshot")
+        {
+            using var start = await GetAsync(shapes, $"{api.Shape}?offset=-1");
+            await Assert.That(start.StatusCode).IsEqualTo(HttpStatusCode.TemporaryRedirect);
+            route = start.Headers.Location!.OriginalString;
+        }
+
+        using var response = await GetAsync(shapes, route);
+        using var json = JsonDocument.Parse(await response.Content.ReadAsByteArrayAsync(), new JsonDocumentOptions
+        {
+            MaxDepth = RequestJson.StoredDocumentMaxDepth + 8,
+        });
+        if (bodyKind == "deep")
+        {
+            await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
+            var document = json.RootElement.GetProperty("changes").EnumerateArray()
+                .SelectMany(change => change.GetProperty("ops").EnumerateArray()).Single().GetProperty("document");
+            await Assert.That(document.GetRawText()).IsEqualTo(raw);
+        }
+        else
+        {
+            await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.InternalServerError);
+            await Assert.That(response.Headers.CacheControl!.NoStore).IsTrue();
+            await Assert.That(json.RootElement.GetProperty("error").GetProperty("code").GetString()).IsEqualTo("internal_error");
+            await Assert.That(json.RootElement.TryGetProperty("changes", out _)).IsFalse();
+            await Assert.That(json.RootElement.TryGetProperty("injected", out _)).IsFalse();
+            await Assert.That(response.Headers.ETag).IsNull();
+        }
+
+        await using (var local = await store.BeginTransactionAsync(write: false, CancellationToken.None))
+        {
+            await Assert.That(Encoding.UTF8.GetString((await local.GetAsync(DocumentApi.Collection, id, CancellationToken.None))!.Json.Span)).IsEqualTo(raw);
+        }
+
+        // A bad read neither writes nor retains its flight/session; a new valid snapshot still works.
+        (await api.PutAsync(id, new { repaired = true })).Status.ShouldBe(HttpStatusCode.OK);
+        using var fresh = await GetAsync(shapes, $"{api.Shape}?offset=-1");
+        using var repaired = await GetAsync(shapes, fresh.Headers.Location!.OriginalString);
+        await Assert.That(repaired.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        var clean = await JsonAsync(repaired);
+        await Assert.That(clean.GetProperty("changes").EnumerateArray()
+            .SelectMany(change => change.GetProperty("ops").EnumerateArray()).Single().GetProperty("document").GetRawText())
+            .IsEqualTo("{\"repaired\":true}");
+    }
 
     [Test]
     public async Task A_shape_syncs_a_snapshot_then_the_log_with_cacheable_headers()
@@ -765,24 +856,40 @@ public sealed class ShapeApiTests
     }
 
     [Test]
-    public async Task A_transaction_cannot_write_a_commit_larger_than_a_log_chunk()
+    public async Task A_transaction_cannot_capture_more_than_2_MiB_of_distinct_document_states()
     {
         await using var api = await DocumentApi.StartAsync();
         var ids = Ids(8);
         var padding = new string('x', 950 * 1024);
+        var versions = new Dictionary<string, string>(StringComparer.Ordinal);
+        ApiResponse? last = null;
         foreach (var id in ids)
         {
-            await api.PutAsync(id, new { padding, n = 0 });
+            last = await api.PutAsync(id, new { padding, n = 0 });
+            last.Status.ShouldBe(HttpStatusCode.Created);
+            versions.Add(id, last.Version);
         }
 
-        // Eight small patches would commit about 7.4 MiB of documents.
+        var before = long.Parse(last!.Json.GetProperty("offset").GetString()!, System.Globalization.CultureInfo.InvariantCulture);
+        // The third 950 KiB final state exceeds capture's 2 MiB limit before the 7 MiB shape framing limit.
         var patched = await api.TransactAsync([.. ids.Select(id => new { op = "patch", collection = DocumentApi.Collection, id, merge = new { n = 1 } })]);
-        var single = await api.TransactAsync([.. ids.Take(7).Select(id => new { op = "patch", collection = DocumentApi.Collection, id, merge = new { n = 1 } })]);
+        await Assert.That((patched.Status, patched.Code, patched.Op)).IsEqualTo((HttpStatusCode.ServiceUnavailable, "capacity", (int?)2));
+        foreach (var id in ids)
+        {
+            var unchanged = await api.GetAsync(id);
+            await Assert.That(unchanged.Status).IsEqualTo(HttpStatusCode.OK);
+            await Assert.That(unchanged.Version).IsEqualTo(versions[id]);
+            await Assert.That(unchanged.Json.GetProperty("document").GetProperty("n").GetInt32()).IsEqualTo(0);
+        }
 
-        await Assert.That(patched.Status).IsEqualTo(HttpStatusCode.RequestEntityTooLarge);
-        await Assert.That(patched.Code).IsEqualTo("payload_too_large");
-        await Assert.That(patched.Op).IsEqualTo(7);
-        await Assert.That(single.Status).IsEqualTo(HttpStatusCode.OK);
+        var bounded = await api.TransactAsync([.. ids.Take(2).Select(id => new { op = "patch", collection = DocumentApi.Collection, id, merge = new { n = 1 } })]);
+        await Assert.That(bounded.Status).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(long.Parse(bounded.Json.GetProperty("offset").GetString()!, System.Globalization.CultureInfo.InvariantCulture)).IsEqualTo(before + 1);
+        foreach (var id in ids.Take(2))
+        {
+            var changed = await api.GetAsync(id);
+            await Assert.That(changed.Json.GetProperty("document").GetProperty("n").GetInt32()).IsEqualTo(1);
+        }
     }
 
     [Test]
@@ -986,6 +1093,26 @@ public sealed class ShapeApiTests
     {
         await using var api = await DocumentApi.StartAsync();
         using var shapes = await api.ClientWithScopesAsync(ApiKeyScopes.ShapesRead);
+        // Legacy ids may exceed today's write contract; each 700 KiB document fills a page.
+        string[] ids = [new string('a', 1024), new string('b', 1024)];
+        var padding = new string('x', 700 * 1024);
+        await api.ReplaceWithOlderFileAsync(DocumentApi.Database, async path =>
+        {
+            await using var connection = new SqliteConnection(DocumentApi.ConnectionString(path));
+            await connection.OpenAsync();
+            await using var schema = connection.CreateCommand();
+            schema.CommandText = """
+                CREATE TABLE documents (collection TEXT NOT NULL, id TEXT NOT NULL, version INTEGER NOT NULL, body TEXT NOT NULL,
+                    PRIMARY KEY (collection, id)) WITHOUT ROWID;
+                INSERT INTO documents VALUES ('items', $first, 1, $body), ('items', $second, 1, $body);
+                PRAGMA user_version = 1;
+                """;
+            schema.Parameters.AddWithValue("$first", ids[0]);
+            schema.Parameters.AddWithValue("$second", ids[1]);
+            schema.Parameters.AddWithValue("$body", $$"""{"padding":"{{padding}}"}""");
+            await schema.ExecuteNonQueryAsync();
+        });
+
         static string Where(int length)
         {
             return Uri.EscapeDataString($$"""{"ne":["/pad","{{new string('p', length)}}"]}""");
@@ -1006,20 +1133,6 @@ public sealed class ShapeApiTests
                 await Assert.That(probe.StatusCode).IsEqualTo(HttpStatusCode.RequestUriTooLong);
                 high = middle - 1;
             }
-        }
-
-        // Ids of the longest length storage admits; each 700 KiB document fills a page.
-        string[] ids = [new string('a', 1024), new string('b', 1024)];
-        var padding = new string('x', 700 * 1024);
-        var store = await StoreAsync(api);
-        await using (var writer = await store.BeginTransactionAsync(write: true, CancellationToken.None))
-        {
-            foreach (var id in ids)
-            {
-                await writer.PutAsync(DocumentApi.Collection, id, Encoding.UTF8.GetBytes($$"""{"padding":"{{padding}}"}"""), CancellationToken.None);
-            }
-
-            await writer.CommitAsync(CancellationToken.None);
         }
 
         using var start = await GetAsync(shapes, $"{api.Shape}?where={Where(low)}&offset=-1");

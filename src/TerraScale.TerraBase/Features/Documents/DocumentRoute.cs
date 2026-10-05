@@ -129,7 +129,7 @@ internal static class DocumentRoute
     {
         var written = await documents.WriteAsync(key.Database, [operation], indexErrors: false, cancellationToken).ConfigureAwait(false);
         var result = written.Results[0];
-        var version = ETags.Version(written.Incarnation, key.Collection, key.Id, result.Version!.Value);
+        var version = result.ETag!;
         ETags.Set(context, version);
         return (new WriteBody(key.Id, version, Decimal(written.Offset), Durability), result.Created);
     }
@@ -191,7 +191,6 @@ internal static class DocumentRoute
     public static async ValueTask<byte[]> ReadDocumentAsync(HttpContext context, CancellationToken cancellationToken)
     {
         var json = await ReadBodyAsync(context, RequestJson.MaxDocumentBytes, "invalid_request", cancellationToken, JsonMediaType).ConfigureAwait(false);
-        RequestJson.ValidateDocument(json);
         return json;
     }
 }

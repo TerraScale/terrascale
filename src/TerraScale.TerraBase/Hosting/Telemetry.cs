@@ -28,6 +28,15 @@ public static class Telemetry
             .AddAspNetCoreInstrumentation()
             .AddRuntimeInstrumentation()
             .AddPrometheusExporter());
+        // Meters are matched by name across the whole process, so a process with several hosts (the
+        // integration suites) would report every host's instruments. Keep those created through this
+        // host's IMeterFactory and the process-wide ones (no scope), such as the runtime's.
+        services.ConfigureOpenTelemetryMeterProvider((provider, metrics) =>
+        {
+            var meters = provider.GetRequiredService<IMeterFactory>();
+            metrics.AddView(instrument =>
+                instrument.Meter.Scope is null || ReferenceEquals(instrument.Meter.Scope, meters) ? null : MetricStreamConfiguration.Drop);
+        });
         return services;
     }
 

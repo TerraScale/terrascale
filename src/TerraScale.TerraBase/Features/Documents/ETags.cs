@@ -18,11 +18,14 @@ internal static class ETags
     private static readonly SearchValues<char> LowerHex = SearchValues.Create("0123456789abcdef");
 
     /// <summary>The public version of a document state: <c>tbv1-</c> and 32 lowercase hex characters.</summary>
-    public static string Version(Guid incarnation, string collection, string id, long version)
+    public static string Version(Guid incarnation, string collection, string id, long version, ReadOnlyMemory<byte> json, bool deleted = false)
     {
-        Span<byte> hash = stackalloc byte[SHA256.HashSizeInBytes];
-        SHA256.HashData(Encoding.UTF8.GetBytes(string.Create(CultureInfo.InvariantCulture, $"{incarnation:N}\0{collection}\0{id}\0{version}")), hash);
-        return "tbv1-" + Convert.ToHexStringLower(hash[..16]);
+        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        hash.AppendData(Encoding.UTF8.GetBytes(string.Create(CultureInfo.InvariantCulture, $"{incarnation:N}\0{collection}\0{id}\0{version}\0{(deleted ? 1 : 0)}\0")));
+        hash.AppendData(json.Span);
+        Span<byte> digest = stackalloc byte[SHA256.HashSizeInBytes];
+        hash.GetHashAndReset(digest);
+        return "tbv1-" + Convert.ToHexStringLower(digest[..16]);
     }
 
     /// <summary>Sends <paramref name="version"/> as the strong <c>ETag</c>.</summary>

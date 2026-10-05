@@ -2,6 +2,11 @@ using TerraScale.TerraBase.Tenancy;
 
 namespace TerraScale.TerraBase.Engine;
 
+/// <summary>Change groups of <paramref name="Database"/> are committed up to <paramref name="Sequence"/>.</summary>
+/// <param name="Database">The database, including its creation-time incarnation and lifetime.</param>
+/// <param name="Sequence">The last committed change group.</param>
+public sealed record ChangeGroupCommitted(IDatabaseStore Database, long Sequence);
+
 /// <summary>
 /// The database engine TerraBase stores JSON documents in. Each database is isolated; one
 /// implementation per substrate (SQLite today, Turso or others later) lives under <c>Engine/&lt;Name&gt;/</c>.
@@ -41,8 +46,9 @@ public interface IStorageEngine : IAsyncDisposable
     /// Creates a database, optionally copying <paramref name="source"/> within the same organization, after recording
     /// creation ownership. Throws <see cref="IOException"/> before invoking <paramref name="recordIntent"/> when the
     /// destination contains a database file, sidecars or private creation artifacts, including directories and case variants.
-    /// Returns false only when the source is missing. The destination check, callback, publication and opening are
-    /// serialized together with engine lifecycle operations. A reservation blocks competing creation until
+    /// Returns false only when the source is missing. The destination check, callback and file publication are
+    /// serialized with engine lifecycle operations. Per-database initialization is registered before releasing that
+    /// lock, then awaited outside it. A reservation blocks competing creation until
     /// <see cref="CompleteDatabaseIntentAsync"/> is called after registration or cleanup commits, including after failure.
     /// </summary>
     /// <remarks>
@@ -73,6 +79,16 @@ public interface IStorageEngine : IAsyncDisposable
     ValueTask<bool> IsReadyAsync(CancellationToken cancellationToken);
 
     /// <summary>
+    /// Raised after a write transaction commits a change group, or baseline groups are appended (see
+    /// <see cref="IStorageTransaction.CommitAsync"/>), on the committing thread, with the last group's sequence.
+    /// Handlers must return quickly; a handler that throws is logged and does not fail the commit.
+    /// </summary>
+    event EventHandler<ChangeGroupCommitted>? ChangesCommitted;
+
+    /// <summary>Raised after a database is closed for deletion, so consumers discard its incarnation.</summary>
+    event EventHandler<IDatabaseStore>? DatabaseDeleted;
+
+    /// <summary>
     /// Creates the database of <paramref name="database"/> atomically within this process: among concurrent calls for the same
     /// database exactly one returns <see langword="true"/>. Returns <see langword="false"/> when it already existed.
     /// An unresolved creation intent rejects competing creation with <see cref="IOException"/>.
@@ -81,6 +97,9 @@ public interface IStorageEngine : IAsyncDisposable
 
     /// <summary>Opens an existing database, or <see langword="null"/> when it does not exist.</summary>
     ValueTask<IDatabaseStore?> OpenDatabaseAsync(TenantContext database, CancellationToken cancellationToken);
+
+    /// <summary>Streams existing tenant database identities, excluding TerraBase's own database. The plan is not storage identity.</summary>
+    IAsyncEnumerable<TenantContext> ListDatabasesAsync(CancellationToken cancellationToken);
 
     /// <summary>
     /// Creates <paramref name="target"/> as a consistent snapshot copy of <paramref name="source"/> in the same organization.

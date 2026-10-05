@@ -1,6 +1,6 @@
 # 0001: LZ4 gRPC transport compression for inter-node traffic
 
-- Status: accepted (human-approved, 2026-10-04)
+- Status: superseded by 0007 (2026-10-04); was accepted (human-approved, 2026-10-04)
 - Scope: `Features/Replication`
 
 ## Context

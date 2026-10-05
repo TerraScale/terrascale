@@ -103,7 +103,7 @@ internal sealed class SqliteQueryCompiler(SqliteParameterCollection parameters)
             SELECT b.id, b.version <= {at}, write.version, CASE WHEN write.matches THEN write.body END, write.size
             FROM change_log_births b
             LEFT JOIN (
-                SELECT sequence, version, body, length(CAST(body AS BLOB)) AS size, body IS NOT NULL AND {Filter(filter)} AS matches
+                SELECT sequence, document_version AS version, body, length(CAST(body AS BLOB)) AS size, body IS NOT NULL AND {Filter(filter)} AS matches
                 FROM change_log
             ) write ON write.sequence = (
                 SELECT last.sequence FROM change_log last INDEXED BY change_log_by_document
@@ -121,15 +121,15 @@ internal sealed class SqliteQueryCompiler(SqliteParameterCollection parameters)
     }
 
     /// <summary>
-    /// Columns: id, version, body. Each document's last write in every commit (one version, one state) of the
-    /// collection's current generation with a version in
-    /// (<paramref name="after"/>, <paramref name="through"/>], in (version, write) order; the body is NULL for
+    /// Columns: id, document merge version, body, local history offset. Each document's last write in every commit of the
+    /// collection's current generation with a local history offset in
+    /// (<paramref name="after"/>, <paramref name="through"/>], in (history offset, write) order; the body is NULL for
     /// tombstones and for documents <paramref name="filter"/> rejects.
     /// </summary>
     public string CompileChanges(DocumentFilter? filter, long after, long through) =>
         $"""
-        SELECT id, version, CASE WHEN matches THEN body END FROM (
-            SELECT id, version, body, body IS NOT NULL AND {Filter(filter)} AS matches, sequence FROM change_log c
+        SELECT id, document_version, CASE WHEN matches THEN body END, version FROM (
+            SELECT id, version, document_version, body, body IS NOT NULL AND {Filter(filter)} AS matches, sequence FROM change_log c
             WHERE collection = $collection AND generation = (SELECT generation FROM collections WHERE name = $collection)
                 AND version > {Parameter(after)} AND version <= {Parameter(through)}
                 AND sequence = (

@@ -61,8 +61,8 @@ internal static class SqliteStatements
     // Shape history: every write of a client database, a NULL body for a tombstone. No row is
     // inserted when the collection has no metadata, which the writer refuses.
     public const string AppendChange = """
-        INSERT INTO change_log (collection, generation, id, version, body)
-        SELECT name, generation, $id, $version, $body FROM collections WHERE name = $collection;
+        INSERT INTO change_log (collection, generation, id, version, document_version, body)
+        SELECT name, generation, $id, $version, $documentVersion, $body FROM collections WHERE name = $collection;
         """;
 
     public const string HistoryFloor = "SELECT floor FROM shape_history WHERE id = 1;";
@@ -103,6 +103,107 @@ internal static class SqliteStatements
 
     public const string IndexExists = "SELECT 1 FROM sqlite_schema WHERE type = 'index' AND name = $name;";
 
+    // Incoming versions advance the shared clock even when their document state loses the merge.
+    public const string ObserveOffset = "UPDATE commit_offset SET value = max(value, $version) WHERE id = 1;";
+
+    // Physical deletes retain their merge evidence in the journal, while public version reads stay absent.
+    // The partial index seeks one matching deletion, without scanning the journal or loading JSON.
+    public const string RetainedDeletion = """
+        SELECT 1 FROM changes INDEXED BY changes_deleted
+        WHERE collection = $collection AND id = $id AND version >= $version AND body IS NULL LIMIT 1;
+        """;
+
+    // On a copy only: retain physical-delete/drop evidence before its journal is reset. The deletion
+    // index groups keys without a sorter; newer live documents and tombstones keep their current state.
+    public const string MaterializeRetainedDeletions = """
+        INSERT INTO documents (collection, id, version, body)
+        SELECT collection, id, max(version), NULL FROM changes INDEXED BY changes_deleted
+        WHERE body IS NULL GROUP BY collection, id
+        ON CONFLICT (collection, id) DO UPDATE SET version = excluded.version, body = NULL
+        WHERE excluded.version > documents.version
+            OR (excluded.version = documents.version AND documents.body IS NOT NULL);
+        """;
+
+    // Compare live JSON as UTF-8 bytes. Equal-version tombstones beat every live body.
+    public const string ApplyDocument = """
+        INSERT INTO documents (collection, id, version, body) VALUES ($collection, $id, $version, $body)
+        ON CONFLICT (collection, id) DO UPDATE SET version = excluded.version, body = excluded.body
+        WHERE excluded.version > documents.version
+            OR (excluded.version = documents.version AND documents.body IS NOT NULL
+                AND CAST(excluded.body AS BLOB) > CAST(documents.body AS BLOB));
+        """;
+
+    public const string ApplyTombstone = """
+        INSERT INTO documents (collection, id, version, body) VALUES ($collection, $id, $version, NULL)
+        ON CONFLICT (collection, id) DO UPDATE SET version = excluded.version, body = NULL
+        WHERE excluded.version > documents.version
+            OR (excluded.version = documents.version AND documents.body IS NOT NULL);
+        """;
+
+    // A drop captures all live documents and tombstones without reading JSON.
+    public const string CollectionDocumentIds = "SELECT id, octet_length(id) FROM documents WHERE collection = $collection ORDER BY id LIMIT $limit;";
+
+    // The origin is the existing persisted incarnation in RFC byte order.
+    public const string Origin = "SELECT unhex(incarnation) FROM commit_offset WHERE id = 1;";
+
+    public const string Complete = "SELECT complete FROM replication_state WHERE id = 1;";
+
+    public const string MarkComplete = "UPDATE replication_state SET complete = 1 WHERE id = 1;";
+
+    public const string LastSequence = "SELECT coalesce(max(sequence), 0) FROM changes;";
+
+    public const string NextSequence = "SELECT coalesce(max(sequence), 0) + 1 FROM changes;";
+
+    public const string AppendReplicationChange = """
+        INSERT INTO changes (sequence, ordinal, collection, id, version, body)
+        VALUES ($sequence, $ordinal, $collection, $id, $version, $body);
+        """;
+
+    public const string ReadChanges = """
+        SELECT collection, id, version,
+            CASE WHEN octet_length(collection) + octet_length(id) + coalesce(octet_length(body), 0) <= $maxBytes THEN body END,
+            octet_length(collection) + octet_length(id) + coalesce(octet_length(body), 0)
+        FROM changes WHERE sequence = $sequence ORDER BY ordinal LIMIT $limit;
+        """;
+
+    public const string GetChangeDigest = "SELECT digest FROM journal_prefixes WHERE sequence = $sequence;";
+
+    public const string AppendChangeDigest = "INSERT INTO journal_prefixes (sequence, digest) VALUES ($sequence, $digest);";
+
+    public const string GetApplied = "SELECT sequence FROM applied WHERE origin = $origin;";
+
+    public const string GetAppliedFrontier = "SELECT sequence, digest FROM applied WHERE origin = $origin;";
+
+    public const string SetApplied = """
+        INSERT INTO applied (origin, sequence, digest) VALUES ($origin, $sequence, $digest)
+        ON CONFLICT (origin) DO UPDATE SET sequence = excluded.sequence, digest = excluded.digest;
+        """;
+
+    // Filter key byte lengths in SQLite before projection. Only bounded keys enter managed memory
+    // or the seek cursor; the excluded rows are counted once, including an entirely inadmissible file.
+    private const string BoundedBaselineKeys = "octet_length(collection) <= 63 AND octet_length(id) <= 1024";
+    public const string CountOversizedBaselineKeys = "SELECT count(*) FROM documents WHERE NOT (" + BoundedBaselineKeys + ");";
+
+    // Baselines seek through the same documents table; NULL bodies are tombstones.
+    public const string BaselineDocumentsFirst = $$"""
+        SELECT collection, id, version, CASE WHEN octet_length(body) <= $maxBytes THEN body END, octet_length(body)
+        FROM documents WHERE body IS NOT NULL AND {{BoundedBaselineKeys}} ORDER BY collection, id LIMIT $limit;
+        """;
+
+    public const string BaselineDocumentsAfter = $$"""
+        SELECT collection, id, version, CASE WHEN octet_length(body) <= $maxBytes THEN body END, octet_length(body)
+        FROM documents WHERE (collection, id) > ($collection, $id) AND body IS NOT NULL AND {{BoundedBaselineKeys}}
+        ORDER BY collection, id LIMIT $limit;
+        """;
+
+    public const string BaselineTombstonesFirst = "SELECT collection, id, version, NULL, 0 FROM documents WHERE body IS NULL AND " + BoundedBaselineKeys + " ORDER BY collection, id LIMIT $limit;";
+
+    public const string BaselineTombstonesAfter = $$"""
+        SELECT collection, id, version, NULL, 0 FROM documents
+        WHERE (collection, id) > ($collection, $id) AND body IS NULL AND {{BoundedBaselineKeys}}
+        ORDER BY collection, id LIMIT $limit;
+        """;
+
     /// <summary>Statement name and text, for query-plan checks.</summary>
     public static IReadOnlyDictionary<string, string> All { get; } = new Dictionary<string, string>(StringComparer.Ordinal)
     {
@@ -133,5 +234,29 @@ internal static class SqliteStatements
         [nameof(DeleteCollectionNames)] = DeleteCollectionNames,
         [nameof(ListIndexes)] = ListIndexes,
         [nameof(IndexExists)] = IndexExists,
+
+        [nameof(ObserveOffset)] = ObserveOffset,
+        [nameof(RetainedDeletion)] = RetainedDeletion,
+        [nameof(MaterializeRetainedDeletions)] = MaterializeRetainedDeletions,
+        [nameof(ApplyDocument)] = ApplyDocument,
+        [nameof(ApplyTombstone)] = ApplyTombstone,
+        [nameof(CollectionDocumentIds)] = CollectionDocumentIds,
+        [nameof(Origin)] = Origin,
+        [nameof(Complete)] = Complete,
+        [nameof(MarkComplete)] = MarkComplete,
+        [nameof(LastSequence)] = LastSequence,
+        [nameof(NextSequence)] = NextSequence,
+        [nameof(AppendReplicationChange)] = AppendReplicationChange,
+        [nameof(ReadChanges)] = ReadChanges,
+        [nameof(GetChangeDigest)] = GetChangeDigest,
+        [nameof(AppendChangeDigest)] = AppendChangeDigest,
+        [nameof(GetApplied)] = GetApplied,
+        [nameof(GetAppliedFrontier)] = GetAppliedFrontier,
+        [nameof(SetApplied)] = SetApplied,
+        [nameof(CountOversizedBaselineKeys)] = CountOversizedBaselineKeys,
+        [nameof(BaselineDocumentsFirst)] = BaselineDocumentsFirst,
+        [nameof(BaselineDocumentsAfter)] = BaselineDocumentsAfter,
+        [nameof(BaselineTombstonesFirst)] = BaselineTombstonesFirst,
+        [nameof(BaselineTombstonesAfter)] = BaselineTombstonesAfter,
     };
 }

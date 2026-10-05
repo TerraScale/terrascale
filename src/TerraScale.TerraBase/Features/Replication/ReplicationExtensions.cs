@@ -1,4 +1,4 @@
-using System.Security.Cryptography;
+using System.Net.Security;
 using System.Security.Cryptography.X509Certificates;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.AspNetCore.Server.Kestrel.Https;
@@ -7,15 +7,13 @@ using TerraScale.TerraBase.Hosting;
 
 namespace TerraScale.TerraBase.Features.Replication;
 
-/// <summary>Registers the inter-node gRPC listener and the <c>Replication</c> service.</summary>
+/// <summary>Registers the inter-node gRPC listener, the <c>Replication</c> service and the sender.</summary>
 public static class ReplicationExtensions
 {
-    /// <summary>Largest gRPC message in either direction: one 4 MiB application batch plus Protobuf framing.</summary>
-    public const int MaxMessageBytes = (4 * 1024 * 1024) + (64 * 1024);
-
     /// <summary>
-    /// Adds the peer listener (HTTP/2 over mutual TLS) and gRPC with <c>lz4</c> as the
-    /// response encoding. No-op when the peer listener is disabled.
+    /// Adds the peer listener (HTTP/2 over mutual TLS with certificates read again when their files change)
+    /// and the <c>Replication</c> service, plus the sender when <c>peer-addresses</c> is set. No-op when the
+    /// peer listener is disabled. Payloads are LZ4 application envelopes; gRPC transport compression is not used.
     /// </summary>
     public static WebApplicationBuilder AddTerraBaseReplication(this WebApplicationBuilder builder, TerraBaseOptions options)
     {
@@ -26,26 +24,44 @@ public static class ReplicationExtensions
             return builder;
         }
 
-        var clientCa = options.PeerClientCa!;
         builder.WebHost.ConfigureKestrel(kestrel => kestrel.ListenAnyIP(port, listen =>
         {
+            var credentials = kestrel.ApplicationServices.GetRequiredService<PeerCredentials>();
             listen.Protocols = HttpProtocols.Http2;
-            listen.UseHttps(https =>
+            listen.UseHttps(new TlsHandshakeCallbackOptions
             {
-                https.ServerCertificate = options.PeerCertificate;
-                https.ClientCertificateMode = ClientCertificateMode.RequireCertificate;
-                https.ClientCertificateValidation = (certificate, _, _) => ChainsTo(certificate, clientCa);
+                OnConnection = context =>
+                {
+                    var snapshot = credentials.Capture();
+                    context.Connection.ConnectionClosed.Register(static state => ((PeerCredentials.Lease)state!).Dispose(), snapshot);
+                    return ValueTask.FromResult(new SslServerAuthenticationOptions
+                    {
+                        ServerCertificateContext = snapshot.CertificateContext,
+                        CertificateChainPolicy = snapshot.Policy(PeerTlsFiles.ClientAuthentication),
+                        ClientCertificateRequired = true,
+                        ApplicationProtocols = [SslApplicationProtocol.Http2],
+                        RemoteCertificateValidationCallback = (_, certificate, chain, _) =>
+                            certificate is X509Certificate2 client && snapshot.IsTrusted(client, PeerTlsFiles.ClientAuthentication, chain),
+                    });
+                },
             });
             listen.UseTerraBaseListener(TerraBaseListener.Peer);
         }));
 
+        builder.Services.AddSingleton<PeerCredentials>();
+        builder.Services.AddSingleton<ReplicationMetrics>();
+        builder.Services.AddSingleton<IReplicationJournal, EngineReplicationJournal>();
+        builder.Services.AddSingleton<ReplicationService>();
         builder.Services.AddGrpc(grpc =>
         {
-            grpc.CompressionProviders.Add(new Lz4CompressionProvider(MaxMessageBytes));
-            grpc.ResponseCompressionAlgorithm = Lz4CompressionProvider.Name;
-            grpc.MaxReceiveMessageSize = MaxMessageBytes;
-            grpc.MaxSendMessageSize = MaxMessageBytes;
+            grpc.MaxReceiveMessageSize = ReplicationProtocol.MaxMessageBytes;
+            grpc.MaxSendMessageSize = ReplicationProtocol.MaxMessageBytes;
         });
+        if (options.PeerAddresses.Count > 0)
+        {
+            builder.Services.AddHostedService<ReplicationSender>();
+        }
+
         return builder;
     }
 
@@ -59,16 +75,5 @@ public static class ReplicationExtensions
         }
 
         return app;
-    }
-
-    private static bool ChainsTo(X509Certificate2 certificate, X509Certificate2 authority)
-    {
-        using var chain = new X509Chain();
-        chain.ChainPolicy.TrustMode = X509ChainTrustMode.CustomRootTrust;
-        chain.ChainPolicy.CustomTrustStore.Add(authority);
-        // ponytail: no revocation checks; add CRL/OCSP when peer certificates come from a real PKI.
-        chain.ChainPolicy.RevocationMode = X509RevocationMode.NoCheck;
-        chain.ChainPolicy.ApplicationPolicy.Add(new Oid("1.3.6.1.5.5.7.3.2")); // TLS client authentication
-        return chain.Build(certificate);
     }
 }

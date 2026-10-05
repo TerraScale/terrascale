@@ -123,7 +123,20 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
         public ValueTask<bool> IsReadyAsync(CancellationToken cancellationToken) => inner.IsReadyAsync(cancellationToken);
         public IEnumerable<StoredDatabaseFile> EnumerateDatabaseFiles(CancellationToken cancellationToken = default) => inner.EnumerateDatabaseFiles(cancellationToken);
         public ValueTask<long?> GetDatabaseSizeAsync(TenantContext database, CancellationToken cancellationToken) => inner.GetDatabaseSizeAsync(database, cancellationToken);
+        public IAsyncEnumerable<TenantContext> ListDatabasesAsync(CancellationToken cancellationToken) => inner.ListDatabasesAsync(cancellationToken);
         public ValueTask DisposeAsync() => inner.DisposeAsync();
+
+        public event EventHandler<ChangeGroupCommitted>? ChangesCommitted
+        {
+            add => inner.ChangesCommitted += value;
+            remove => inner.ChangesCommitted -= value;
+        }
+
+        public event EventHandler<IDatabaseStore>? DatabaseDeleted
+        {
+            add => inner.DatabaseDeleted += value;
+            remove => inner.DatabaseDeleted -= value;
+        }
 
         // Only the system database, where the catalog lives, is intercepted.
         public async ValueTask<IDatabaseStore> OpenSystemDatabaseAsync(CancellationToken cancellationToken) =>
@@ -133,6 +146,8 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
     private sealed class Store(IDatabaseStore inner, UsageCommitHook hook) : IDatabaseStore
     {
         public Guid Incarnation => inner.Incarnation;
+        public TenantContext? Tenant => inner.Tenant;
+        public bool IsClosed => inner.IsClosed;
         public long CommitSequence => inner.CommitSequence;
         public Task WaitForCommitAsync(long sequence, CancellationToken cancellationToken) => inner.WaitForCommitAsync(sequence, cancellationToken);
 
@@ -151,6 +166,8 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
     private sealed class Opened(IDatabaseStore inner, TenantContext database, UsageCommitHook hook) : IDatabaseStore
     {
         public Guid Incarnation => inner.Incarnation;
+        public TenantContext? Tenant => inner.Tenant;
+        public bool IsClosed => inner.IsClosed;
         public long CommitSequence => inner.CommitSequence;
         public Task WaitForCommitAsync(long sequence, CancellationToken cancellationToken) => inner.WaitForCommitAsync(sequence, cancellationToken);
 
@@ -196,6 +213,15 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
         public ValueTask<IReadOnlyList<IndexDefinition>> ListIndexesAsync(CancellationToken cancellationToken) => inner.ListIndexesAsync(cancellationToken);
         public ValueTask<bool> CreateIndexAsync(IndexDefinition index, CancellationToken cancellationToken) => inner.CreateIndexAsync(index, cancellationToken);
         public ValueTask<bool> DropIndexAsync(string name, CancellationToken cancellationToken) => inner.DropIndexAsync(name, cancellationToken);
+        public ValueTask<ReadOnlyMemory<byte>> GetOriginAsync(CancellationToken cancellationToken) => inner.GetOriginAsync(cancellationToken);
+        public ValueTask<long> GetLastChangeSequenceAsync(CancellationToken cancellationToken) => inner.GetLastChangeSequenceAsync(cancellationToken);
+        public ValueTask<IReadOnlyList<DocumentChange>?> ReadChangesAsync(long sequence, CancellationToken cancellationToken) => inner.ReadChangesAsync(sequence, cancellationToken);
+        public ValueTask<ReadOnlyMemory<byte>?> GetChangeDigestAsync(long sequence, CancellationToken cancellationToken) => inner.GetChangeDigestAsync(sequence, cancellationToken);
+        public ValueTask<bool> ApplyAsync(DocumentChange change, CancellationToken cancellationToken) => inner.ApplyAsync(change, cancellationToken);
+        public ValueTask<long> GetAppliedSequenceAsync(ReadOnlyMemory<byte> origin, CancellationToken cancellationToken) => inner.GetAppliedSequenceAsync(origin, cancellationToken);
+        public ValueTask<(long Sequence, ReadOnlyMemory<byte> Digest)> GetAppliedFrontierAsync(ReadOnlyMemory<byte> origin, CancellationToken cancellationToken) => inner.GetAppliedFrontierAsync(origin, cancellationToken);
+        public ValueTask SetAppliedSequenceAsync(ReadOnlyMemory<byte> origin, long sequence, CancellationToken cancellationToken) => inner.SetAppliedSequenceAsync(origin, sequence, cancellationToken);
+        public ValueTask SetAppliedFrontierAsync(ReadOnlyMemory<byte> origin, long sequence, ReadOnlyMemory<byte> digest, CancellationToken cancellationToken) => inner.SetAppliedFrontierAsync(origin, sequence, digest, cancellationToken);
         public ValueTask DisposeAsync() => inner.DisposeAsync();
 
         public ValueTask<long> PutAsync(string collection, string id, ReadOnlyMemory<byte> json, CancellationToken cancellationToken)

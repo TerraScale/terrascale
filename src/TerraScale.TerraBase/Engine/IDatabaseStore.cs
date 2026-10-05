@@ -1,14 +1,22 @@
+using TerraScale.TerraBase.Tenancy;
+
 namespace TerraScale.TerraBase.Engine;
 
 /// <summary>One open database. The engine owns its lifetime.</summary>
 public interface IDatabaseStore
 {
+    /// <summary>The organization, project and database identity, with the plan normalized to hobby; null only for TerraBase's own database.</summary>
+    TenantContext? Tenant { get; }
+
+    /// <summary>Whether deletion or engine shutdown ended this store's lifetime.</summary>
+    bool IsClosed { get; }
+
     /// <summary>Persisted identity shared by database-scoped handles and versions; stable across reopen, fresh for each new database or copy.</summary>
     Guid Incarnation { get; }
 
     /// <summary>
     /// Starts a transaction. Write transactions are serialized per database; read transactions see
-    /// a consistent snapshot. Dispose without <see cref="IStorageTransaction.CommitAsync"/> to roll back.
+    /// a consistent snapshot and refuse all mutations. Dispose without <see cref="IStorageTransaction.CommitAsync"/> to roll back.
     /// </summary>
     ValueTask<IStorageTransaction> BeginTransactionAsync(bool write, CancellationToken cancellationToken);
 

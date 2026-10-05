@@ -20,12 +20,15 @@ with `{"error":{"code",…}}` bodies.
   It persists across reopen; each newly created or copied database gets a fresh incarnation.
   `IDatabaseStore.Incarnation` exposes this single persisted value to versions and database-scoped
   handle consumers; transactions forward the same store identity.
-- **Versions** are `tbv1-` and the first 16 bytes of SHA-256 over database incarnation, collection, id and the commit
-  offset of the document's last write. A single writer per database never has siblings, so
+- **Versions** are `tbv1-` and the first 16 bytes of SHA-256 over database incarnation, collection, id,
+  merge version, deletion state and raw UTF-8 document bytes. Including the state prevents equal-version
+  replication winners from reusing a strong validator. A single writer per database never has siblings, so
   every document is `state:"value"`. The version hashes local metadata rather than the contract’s
   canonical causal-context encoding. This prevents token reuse when a database is deleted and
   recreated at the same name/offset. Migration to v4 changes existing public version tokens once;
-  clients must re-read them before conditional writes. Older binaries refuse schema v4.
+  clients must re-read them before conditional writes. The state-sensitive validator introduced with
+  replication also invalidates previous tokens once; the opaque token format remains unchanged.
+  Older binaries refuse schema v4.
 - **Queries** compile to one SQLite statement (`json_type`, `json_extract`, `json_each`), with
   keyset cursors bound to a digest of database, collection, filter, sort and projection. Cursor
   rank/value pairs are validated before they become query parameters. Projection paths are

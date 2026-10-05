@@ -327,7 +327,9 @@ internal sealed class ShapeService : IShapeService
         var rows = transaction.ChangesAsync(request.Collection, request.Filter, after, WindowEnd(after), cancellationToken);
         await foreach (var row in rows.ConfigureAwait(false))
         {
-            if (row.Version != commitOffset && commit.Count > 0)
+            var historyOffset = row.HistoryOffset
+                ?? throw new InvalidOperationException("a shape change needs its local history offset");
+            if (historyOffset != commitOffset && commit.Count > 0)
             {
                 if (!Add(changes, Serialize(commitOffset, commit), ref bytes))
                 {
@@ -337,7 +339,7 @@ internal sealed class ShapeService : IShapeService
                 commit = [];
             }
 
-            commitOffset = row.Version;
+            commitOffset = historyOffset;
             commit.Add(row.Deleted ? new Op("delete", row.Id, null, default) : Upsert(request.Collection, row));
         }
 
@@ -439,7 +441,8 @@ internal sealed class ShapeService : IShapeService
                 {
                     writer.WriteString("version", version);
                     writer.WritePropertyName("document");
-                    writer.WriteRawValue(op.Document.Span);
+                    // Storage shape reads also validate retained/restored JSON; preserve its exact bytes.
+                    writer.WriteRawValue(op.Document.Span, skipInputValidation: true);
                 }
 
                 writer.WriteEndObject();
@@ -453,7 +456,7 @@ internal sealed class ShapeService : IShapeService
     }
 
     private static Op Upsert(string collection, StoredDocument document) =>
-        new("upsert", document.Id, ETags.Version(document.Incarnation, collection, document.Id, document.Version), document.Json);
+        new("upsert", document.Id, ETags.Version(document.Incarnation, collection, document.Id, document.Version, document.Json), document.Json);
 
     // One op of a body: an upsert carries the version and the stored document bytes.
     private sealed record Op(string Kind, string Id, string? Version, ReadOnlyMemory<byte> Document);

@@ -1,4 +1,6 @@
+using System.Diagnostics;
 using Microsoft.Data.Sqlite;
+using SQLitePCL;
 
 namespace TerraScale.TerraBase.Engine.Sqlite;
 
@@ -14,7 +16,6 @@ internal sealed class SqliteSession(SqliteConnection connection) : IDisposable
     /// </summary>
     internal const string Pragmas = """
         PRAGMA synchronous = NORMAL;
-        PRAGMA busy_timeout = 30000;
         PRAGMA mmap_size = 268435456;
         """;
 
@@ -29,19 +30,61 @@ internal sealed class SqliteSession(SqliteConnection connection) : IDisposable
         try
         {
             await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
-            var command = connection.CreateCommand();
-            await using (command.ConfigureAwait(false))
+            var session = new SqliteSession(connection);
+            await session.ExecuteAsync(async () =>
             {
-                command.CommandText = Pragmas;
-                await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
-            }
-
-            return new SqliteSession(connection);
+                var command = connection.CreateCommand();
+                await using (command.ConfigureAwait(false))
+                {
+                    command.CommandText = Pragmas;
+                    return await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+                }
+            }, cancellationToken).ConfigureAwait(false);
+            return session;
         }
         catch
         {
             await connection.DisposeAsync().ConfigureAwait(false);
             throw;
+        }
+    }
+
+    // This provider's async APIs run synchronously and only check cancellation before starting.
+    // Let it retry lock contention for at most one second at a time; we retry between attempts
+    // with cancellation, keeping the original overall timeout and short native busy backoff.
+    // Never abandon an operation or return its session while SQLite still owns it. Retried
+    // operations must be reads or atomic work that rolls back before propagating a busy error.
+    public async ValueTask<T> ExecuteAsync<T>(Func<ValueTask<T>> execute, CancellationToken cancellationToken)
+    {
+        var timeout = connection.DefaultTimeout;
+        var started = Stopwatch.GetTimestamp();
+        connection.DefaultTimeout = 1;
+        raw.sqlite3_busy_timeout(connection.Handle, 100);
+        try
+        {
+            while (true)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                using var interrupt = cancellationToken.Register(() => raw.sqlite3_interrupt(connection.Handle));
+                try
+                {
+                    return await execute().ConfigureAwait(false);
+                }
+                catch (SqliteException error) when (error.SqliteErrorCode == raw.SQLITE_INTERRUPT && cancellationToken.IsCancellationRequested)
+                {
+                    throw new OperationCanceledException("the storage operation was cancelled", error, cancellationToken);
+                }
+                catch (SqliteException error) when (error.SqliteErrorCode is raw.SQLITE_BUSY or raw.SQLITE_LOCKED
+                    && (timeout == 0 || Stopwatch.GetElapsedTime(started).TotalSeconds < timeout))
+                {
+                    await Task.Delay(50, cancellationToken).ConfigureAwait(false);
+                }
+            }
+        }
+        finally
+        {
+            connection.DefaultTimeout = timeout;
+            raw.sqlite3_busy_timeout(connection.Handle, 30000);
         }
     }
 
