@@ -2,7 +2,6 @@ package v1
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -16,95 +15,75 @@ type ErrorCode string
 
 func (c ErrorCode) Error() string { return "terrabase: " + string(c) }
 
-// Error codes from api-v1.md and control-plane-v1.md.
+// Error codes TerraBase sends in {"error":{"code":…}} bodies.
 const (
-	ErrNotModified            ErrorCode = "not_modified" // 304; synthesized, the response has no body
-	ErrInvalidRequest         ErrorCode = "invalid_request"
-	ErrInvalidQuery           ErrorCode = "invalid_query"
-	ErrInvalidCursor          ErrorCode = "invalid_cursor"
-	ErrInvalidPatch           ErrorCode = "invalid_patch"
-	ErrTTLInvalid             ErrorCode = "ttl_invalid"
-	ErrSortRequiresIndex      ErrorCode = "sort_requires_index"
-	ErrAssertRequiresIndex    ErrorCode = "assert_requires_index"
-	ErrInvalidKey             ErrorCode = "invalid_key"
-	ErrInvalidToken           ErrorCode = "invalid_token" // shape token rejected by the origin or edge
-	ErrForbiddenScope         ErrorCode = "forbidden_scope"
-	ErrNotFound               ErrorCode = "not_found"
-	ErrUnknownDatabase        ErrorCode = "unknown_database"
-	ErrUnknownCollection      ErrorCode = "unknown_collection"
-	ErrUnknownRoute           ErrorCode = "unknown_route"
-	ErrMethodNotAllowed       ErrorCode = "method_not_allowed"
-	ErrConflictUnresolved     ErrorCode = "conflict_unresolved"
-	ErrUniqueViolation        ErrorCode = "unique_violation"
-	ErrPatchConflict          ErrorCode = "patch_conflict"
-	ErrIndexLimitExceeded     ErrorCode = "index_limit_exceeded"
-	ErrIdempotencyConflict    ErrorCode = "idempotency_conflict"
-	ErrIdempotencyExpired     ErrorCode = "idempotency_expired"
-	ErrSchemaChanged          ErrorCode = "schema_changed"
-	ErrMustRefetch            ErrorCode = "must_refetch"
-	ErrPreconditionFailed     ErrorCode = "precondition_failed"
-	ErrPayloadTooLarge        ErrorCode = "payload_too_large"
-	ErrTransactionTooLarge    ErrorCode = "transaction_too_large"
-	ErrUnsupportedMediaType   ErrorCode = "unsupported_media_type"
-	ErrHomeRegionRequired     ErrorCode = "home_region_required"
-	ErrRateLimited            ErrorCode = "rate_limited"
-	ErrInternalError          ErrorCode = "internal_error"       // 500; no effect is guaranteed, retried only with an Idempotency-Key
-	ErrUpstreamUnavailable    ErrorCode = "upstream_unavailable" // edge only
-	ErrCapacity               ErrorCode = "capacity"
-	ErrStorageUnavailable     ErrorCode = "storage_unavailable"
-	ErrStoredCorruption       ErrorCode = "stored_corruption"
-	ErrCommitUncertain        ErrorCode = "commit_uncertain"
-	ErrDependenciesUnavail    ErrorCode = "dependencies_unavailable"
-	ErrNameTaken              ErrorCode = "name_taken"
-	ErrIndexProtected         ErrorCode = "index_protected"
-	ErrInvalidSchema          ErrorCode = "invalid_schema"
-	ErrCodecConversion        ErrorCode = "codec_conversion_unsupported" // 409: schemaless and enforced collections never convert
-	ErrLimitExceeded          ErrorCode = "limit_exceeded"
-	ErrIdempotencyKeyRequired ErrorCode = "idempotency_key_required"
+	ErrNotModified          ErrorCode = "not_modified" // 304; synthesized, the response has no body
+	ErrInvalidRequest       ErrorCode = "invalid_request"
+	ErrInvalidQuery         ErrorCode = "invalid_query"
+	ErrInvalidCursor        ErrorCode = "invalid_cursor"
+	ErrInvalidPatch         ErrorCode = "invalid_patch"
+	ErrSortRequiresIndex    ErrorCode = "sort_requires_index"
+	ErrAssertRequiresIndex  ErrorCode = "assert_requires_index"
+	ErrInvalidKey           ErrorCode = "invalid_key" // 401: a missing or wrong API key or service credential
+	ErrForbiddenScope       ErrorCode = "forbidden_scope"
+	ErrNotFound             ErrorCode = "not_found"
+	ErrUnknownDatabase      ErrorCode = "unknown_database"
+	ErrUnknownCollection    ErrorCode = "unknown_collection"
+	ErrUnknownRoute         ErrorCode = "unknown_route" // also every Management 404: an unknown id or an organization the user is not a member of
+	ErrMethodNotAllowed     ErrorCode = "method_not_allowed"
+	ErrNameTaken            ErrorCode = "name_taken"
+	ErrPatchConflict        ErrorCode = "patch_conflict"
+	ErrPreconditionFailed   ErrorCode = "precondition_failed"
+	ErrPayloadTooLarge      ErrorCode = "payload_too_large"
+	ErrUnsupportedMediaType ErrorCode = "unsupported_media_type"
+	ErrRateLimited          ErrorCode = "rate_limited"
+	ErrInternalError        ErrorCode = "internal_error" // 500; never retried, its effect is unknown
+	ErrCapacity             ErrorCode = "capacity"
+	ErrStorageUnavailable   ErrorCode = "storage_unavailable"
+	ErrStoredCorruption     ErrorCode = "stored_corruption"
+	ErrCommitUncertain      ErrorCode = "commit_uncertain" // also matches mutation transport failures; the write may have committed
+	ErrDependenciesUnavail  ErrorCode = "dependencies_unavailable"
+)
+
+// Codes synthesized for Management responses whose body is a plain JSON
+// string message instead of an error object.
+const (
+	// ErrForbidden is a 403: the member's role does not allow the request.
+	ErrForbidden ErrorCode = "forbidden"
+	// ErrConflict is a 409: a taken name, a non-empty delete, the last owner,
+	// an existing member, a pending or expired invitation.
+	ErrConflict ErrorCode = "conflict"
 )
 
 // APIError is a non-2xx TerraBase response.
 type APIError struct {
 	// Status is the HTTP status code.
 	Status int
-	// Code is error.code, or a synthesized "http_<status>" when the body
-	// carried none.
+	// Code is error.code; ErrInvalidRequest, ErrForbidden or ErrConflict for
+	// a bare Management message; otherwise a synthesized "http_<status>".
 	Code    ErrorCode
 	Message string
 	// Op is the failing transaction op index, when the error names one.
 	Op *int
-	// Constraint is the unique constraint name for unique_violation.
-	Constraint string
-	// Handle is the new shape handle for must_refetch.
-	Handle string
 	// RetryAfter is the parsed Retry-After header, if any.
 	RetryAfter time.Duration
 	// ETag is the unquoted ETag of the response; a 404 for a deleted document
 	// carries the tombstone's version so it can be recreated with IfMatch.
 	ETag string
-	// Body is the raw error object, for route-specific members such as
-	// suggested_index.
+	// Body is the raw error object or message.
 	Body json.RawMessage
-	// IdempotencyKey is the Idempotency-Key the failed request carried
-	// (including one generated by Config.AutoIdempotencyKeys). Retry a
-	// commit_uncertain or internal_error with IdempotencyKey(e.IdempotencyKey)
-	// and the same body to learn the original outcome.
-	IdempotencyKey string
 
 	retryAfterSet bool
 }
 
 func (e *APIError) Error() string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "terrabase: %d %s", e.Status, e.Code)
+	fmt.Fprintf(&b, "terrabase: %d %s", e.Status, string(e.Code))
 	if e.Message != "" {
 		b.WriteString(": " + e.Message)
 	}
 	if e.Op != nil {
 		fmt.Fprintf(&b, " (op %d)", *e.Op)
-	}
-	if e.Constraint != "" {
-		fmt.Fprintf(&b, " (constraint %s)", e.Constraint)
 	}
 	return b.String()
 }
@@ -131,15 +110,24 @@ func parseAPIError(status int, h http.Header, body []byte) *APIError {
 	}
 	if decodeExact(body, &env) == nil && len(env.Error) > 0 {
 		var d struct {
-			Code       string `json:"code"`
-			Message    string `json:"message"`
-			Op         *int   `json:"op"`
-			Constraint string `json:"constraint"`
-			Handle     string `json:"handle"`
+			Code    string `json:"code"`
+			Message string `json:"message"`
+			Op      *int   `json:"op"`
 		}
 		if decodeExact(env.Error, &d) == nil {
-			e.Code, e.Message, e.Op, e.Constraint, e.Handle = ErrorCode(d.Code), d.Message, d.Op, d.Constraint, d.Handle
+			e.Code, e.Message, e.Op = ErrorCode(d.Code), d.Message, d.Op
 			e.Body = env.Error
+		}
+	} else if decodeExact(body, &e.Message) == nil {
+		// Management answers some errors with a bare JSON string.
+		e.Body = body
+		switch status {
+		case http.StatusBadRequest:
+			e.Code = ErrInvalidRequest
+		case http.StatusForbidden:
+			e.Code = ErrForbidden
+		case http.StatusConflict:
+			e.Code = ErrConflict
 		}
 	}
 	if e.Code == "" {
@@ -159,6 +147,3 @@ func unquoteETag(v string) string {
 	}
 	return v
 }
-
-// ErrSubscriptionClosed is returned by Subscription methods after Close.
-var ErrSubscriptionClosed = errors.New("terrabase: subscription closed")

@@ -10,11 +10,29 @@ import (
 	"math"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/zeebo/blake3"
 )
+
+func assertProducerJSON(t *testing.T, actual, expected []byte) {
+	t.Helper()
+	var a, b any
+	decode := func(raw []byte, value *any) {
+		decoder := json.NewDecoder(bytes.NewReader(raw))
+		decoder.UseNumber()
+		if err := decoder.Decode(value); err != nil {
+			t.Fatal(err)
+		}
+	}
+	decode(actual, &a)
+	decode(expected, &b)
+	if !reflect.DeepEqual(a, b) {
+		t.Fatalf("JSON differs from producer: got %s, want %s", actual, expected)
+	}
+}
 
 func TestBlake3MatchesPublishedVectors(t *testing.T) {
 	for _, test := range []struct {

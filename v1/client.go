@@ -1,27 +1,26 @@
 // Package v1 is the name-based TerraBase v1 client (terrascale.tech/sdk/v1).
 //
-// It implements the frozen v1 contracts: the Documents API (documents,
-// transactions, queries), shapes (reactive queries served over long-poll, SSE
-// or the edge) and the /v1/dashboard control plane. It lives beside the
-// UUID/shard native client in terrascale.tech/sdk, which stays until the old
-// routes are removed from tb-server.
+// It talks to the C# TerraBase server: the Documents API v1 (databases,
+// collections, documents, queries and transactions under
+// /v1/projects/{project}/databases/{database}) with a tb_ API key, and the
+// Management API (/v1/management) with the dashboard service credential.
 //
 // Document values are never decoded through float64: documents are returned
 // as json.RawMessage, and Decode helpers use json.Decoder.UseNumber, so
 // numbers keep their exact decimal text as json.Number.
 //
-// A data-plane client is created with New and a data key; the control plane
-// uses NewDashboard with a control key:
+// A data-plane client is created with New and an API key; the Management API
+// uses NewManagement with the dashboard credential:
 //
-//	c, err := v1.New(v1.Config{BaseURL: "https://gru.terrabase.example", Token: token})
-//	users := c.Database("main").Collection("users")
+//	c, err := v1.New(v1.Config{BaseURL: "https://gru.terrabase.example", Token: apiKey})
+//	users := c.Database(projectID, "main").Collection("users")
 //	doc, err := users.Get(ctx, id)
 package v1
 
 import (
 	"bytes"
+	"cmp"
 	"context"
-	"crypto/rand"
 	"crypto/tls"
 	"encoding/json"
 	"errors"
@@ -49,59 +48,82 @@ const (
 	MaxRetryWait = 30 * time.Second
 )
 
-// Config configures a Client or a Dashboard.
+// Config configures a Client or a Management client.
 type Config struct {
 	// BaseURL is the TerraBase origin, for example https://gru.terrabase.example.
 	// It must be HTTPS; plain HTTP is accepted only for loopback hosts. A path
 	// prefix is kept; a query, fragment or user info is rejected.
 	BaseURL string
-	// Token is the tbk1 API key: a data key for Client, a control key for
-	// Dashboard.
+	// Resolver supplies the endpoint for each call. Set either Resolver or
+	// BaseURL; BaseURL uses a StaticResolver. Resolver must be safe for
+	// concurrent use. Resolved URLs follow the same rules as BaseURL.
+	Resolver Resolver
+	// Token is the tb_ API key for Client, or the dashboard service
+	// credential for Management.
 	Token string
 	// HTTPClient is used for every request. Nil uses a client that requires
 	// TLS 1.3. The client is copied and its redirect policy replaced, so the
 	// bearer token is never forwarded to a redirect target.
 	HTTPClient *http.Client
-	// MaxRetries bounds retries. 429 rate_limited is retried after
-	// Retry-After. Transport errors and the transient 503s (capacity,
-	// storage_unavailable, dependencies_unavailable, commit_uncertain) are
-	// retried with backoff only when the request is safe to replay: reads,
-	// queries, the shape gatekeeper and mutations with an Idempotency-Key.
-	// 500 internal_error is retried only with an Idempotency-Key.
-	// stored_corruption is never retried. Zero means DefaultMaxRetries; negative disables retries.
+	// MaxRetries bounds retries. TerraBase does not deduplicate retries, so
+	// only requests that are safe to replay are resent: reads, queries and
+	// writes with an If-Match version, which a replay cannot apply twice
+	// (If-None-Match: * is not enough, a tombstone satisfies it). For those,
+	// 429 rate_limited is retried after Retry-After, and the transient 503s
+	// (capacity, storage_unavailable, dependencies_unavailable) with backoff.
+	// Transport errors and commit_uncertain are retried only for reads and
+	// queries. A mutation's uncertain outcome is returned without a replay;
+	// transport failures also match ErrCommitUncertain through errors.Is.
+	// stored_corruption and 500 internal_error are never retried.
+	// Zero means DefaultMaxRetries; negative disables retries.
 	MaxRetries int
 	// MaxResponseBytes bounds one response body. Zero means
 	// DefaultMaxResponseBytes.
 	MaxResponseBytes int64
-	// AutoIdempotencyKeys gives every data-plane write (Put, Create, Patch,
-	// Delete and Tx.Commit) that has no IdempotencyKey option a fresh random
-	// key, kept across the client's retries. Such writes become safe to
-	// replay, so commit_uncertain, internal_error, transient 503s and
-	// transport errors are retried and return the original outcome. When the
-	// retries run out, the key is reported in APIError.IdempotencyKey.
-	AutoIdempotencyKeys bool
 }
 
-// Client is a data-plane client for one data key. It is safe for concurrent use.
+// Client is a data-plane client for one API key. It is safe for concurrent use.
 type Client struct {
-	base        *url.URL
+	resolver    Resolver
 	token       string
 	hc          *http.Client
 	maxRetries  int
 	maxResponse int64
-	autoIdem    bool
 }
 
-var tokenPattern = regexp.MustCompile(`^tbk1\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}$`)
+// Resolver resolves a TerraBase endpoint. Resolution errors stop the call;
+// the client never falls back to another endpoint. A retry keeps the endpoint
+// resolved for the original call.
+type Resolver interface {
+	Resolve(context.Context) (string, error)
+}
+
+// StaticResolver always resolves to the configured base URL.
+type StaticResolver string
+
+func (r StaticResolver) Resolve(ctx context.Context) (string, error) {
+	return string(r), ctx.Err()
+}
+
+var tokenPattern = regexp.MustCompile(`^tb_[A-Za-z0-9_-]{43}$`)
 
 // New returns a data-plane client.
 func New(cfg Config) (*Client, error) {
-	base, err := parseBaseURL(cfg.BaseURL)
-	if err != nil {
-		return nil, err
-	}
 	if !tokenPattern.MatchString(cfg.Token) {
-		return nil, errors.New("terrabase: Token must be a tbk1.<id>.<secret> key")
+		return nil, errors.New("terrabase: Token must be a tb_ API key")
+	}
+	return newClient(cfg)
+}
+
+func newClient(cfg Config) (*Client, error) {
+	if cfg.Resolver != nil && cfg.BaseURL != "" {
+		return nil, errors.New("terrabase: set either Resolver or BaseURL")
+	}
+	if cfg.Resolver == nil {
+		if _, err := parseBaseURL(cfg.BaseURL); err != nil {
+			return nil, err
+		}
+		cfg.Resolver = StaticResolver(cfg.BaseURL)
 	}
 	hc := &http.Client{Transport: &http.Transport{
 		Proxy:             http.ProxyFromEnvironment,
@@ -114,7 +136,7 @@ func New(cfg Config) (*Client, error) {
 		hc = &copied
 	}
 	hc.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	c := &Client{base: base, token: cfg.Token, hc: hc, maxRetries: cfg.MaxRetries, maxResponse: cfg.MaxResponseBytes, autoIdem: cfg.AutoIdempotencyKeys}
+	c := &Client{resolver: cfg.Resolver, token: cfg.Token, hc: hc, maxRetries: cfg.MaxRetries, maxResponse: cfg.MaxResponseBytes}
 	switch {
 	case c.maxRetries == 0:
 		c.maxRetries = DefaultMaxRetries
@@ -145,22 +167,12 @@ func parseBaseURL(raw string) (*url.URL, error) {
 	default:
 		return nil, fmt.Errorf("terrabase: BaseURL scheme %q is not https", u.Scheme)
 	}
-	u.Path = strings.TrimSuffix(u.Path, "/")
-	u.RawPath = ""
-	return u, nil
-}
-
-// NewIdempotencyKey returns a random key that satisfies the Idempotency-Key
-// grammar. Keep the key and reuse it when retrying the same mutation.
-func NewIdempotencyKey() string { return rand.Text() }
-
-var idempotencyPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,64}$`)
-
-func validIdempotencyKey(key string) error {
-	if !idempotencyPattern.MatchString(key) {
-		return fmt.Errorf("terrabase: Idempotency-Key %q must be 1-64 characters of [A-Za-z0-9_.-]", key)
+	escaped := u.EscapedPath()
+	if strings.HasSuffix(escaped, "/") {
+		u.Path = strings.TrimSuffix(u.Path, "/")
+		u.RawPath = strings.TrimSuffix(escaped, "/")
 	}
-	return nil
+	return u, nil
 }
 
 type request struct {
@@ -170,13 +182,12 @@ type request struct {
 	body        []byte
 	contentType string
 	header      http.Header
-	idemKey     string
-	// write marks data-plane writes, which get a generated Idempotency-Key
-	// under Config.AutoIdempotencyKeys.
-	write bool
-	// replaySafe marks requests that may be resent after a transport error:
-	// reads, read-only POSTs and mutations carrying an Idempotency-Key.
+	// replaySafe permits retries after 429 or a known transient rejection:
+	// reads, read-only POSTs and If-Match writes.
 	replaySafe bool
+	// readOnly marks a read-only POST. GET is implicitly read-only. Only
+	// reads may retry potentially committed outcomes or transport failures.
+	readOnly bool
 }
 
 type response struct {
@@ -185,10 +196,31 @@ type response struct {
 	body   []byte
 }
 
-func (c *Client) url(segments []string, query url.Values) string {
-	u := c.base.JoinPath(segments...)
+// url escapes each segment. A segment may not contain a slash: TerraBase
+// would match an escaped %2F literally, so "a/b" could address a different
+// id such as "a%2Fb".
+func (c *Client) url(ctx context.Context, segments []string, query url.Values) (string, error) {
+	for _, s := range segments {
+		if s == "" || s == "." || s == ".." || strings.Contains(s, "/") {
+			return "", fmt.Errorf("terrabase: path segment %q is empty, a dot segment or contains a slash", s)
+		}
+	}
+	raw, err := c.resolver.Resolve(ctx)
+	if err != nil {
+		return "", fmt.Errorf("terrabase: resolve endpoint: %w", err)
+	}
+	base, err := parseBaseURL(raw)
+	if err != nil {
+		return "", err
+	}
+	u := *base
+	u.RawPath = u.EscapedPath()
+	for _, s := range segments {
+		u.Path += "/" + s
+		u.RawPath += "/" + url.PathEscape(s)
+	}
 	u.RawQuery = query.Encode()
-	return u.String()
+	return u.String(), nil
 }
 
 // do sends req with the client's retry policy and returns a 2xx response or
@@ -197,19 +229,17 @@ func (c *Client) do(ctx context.Context, req request) (*response, error) {
 	if len(req.body) > MaxRequestBytes {
 		return nil, fmt.Errorf("terrabase: request body is %d bytes, over the %d byte limit", len(req.body), MaxRequestBytes)
 	}
-	if req.write && req.idemKey == "" && c.autoIdem {
-		req.idemKey = NewIdempotencyKey()
+	target, err := c.url(ctx, req.path, req.query)
+	if err != nil {
+		return nil, err
 	}
-	if req.idemKey != "" {
-		if err := validIdempotencyKey(req.idemKey); err != nil {
-			return nil, err
-		}
-		req.replaySafe = true
-	}
-	target := c.url(req.path, req.query)
+	readOnly := req.method == http.MethodGet || req.readOnly
 	for attempt := 0; ; attempt++ {
-		resp, err := c.send(ctx, req.method, target, c.token, req.body, req.contentType, req.header, req.idemKey)
+		resp, err := c.send(ctx, req, target)
 		if err != nil {
+			if !readOnly {
+				return nil, fmt.Errorf("%w: %w", ErrCommitUncertain, err)
+			}
 			if ctx.Err() != nil || !req.replaySafe || attempt >= c.maxRetries {
 				return nil, err
 			}
@@ -222,8 +252,10 @@ func (c *Client) do(ctx context.Context, req request) (*response, error) {
 			return resp, nil
 		}
 		apiErr := parseAPIError(resp.status, resp.header, resp.body)
-		apiErr.IdempotencyKey = req.idemKey
-		if delay, ok := retryDelay(apiErr, attempt, req.replaySafe, req.idemKey != ""); ok && attempt < c.maxRetries {
+		if !readOnly && apiErr.Code == ErrCommitUncertain {
+			return resp, apiErr
+		}
+		if delay, ok := retryDelay(apiErr, attempt, req.replaySafe); ok && attempt < c.maxRetries {
 			if err := sleep(ctx, delay); err != nil {
 				return nil, err
 			}
@@ -233,19 +265,13 @@ func (c *Client) do(ctx context.Context, req request) (*response, error) {
 	}
 }
 
-// retryDelay implements the retry policy: 429 is always retried (the request
-// was not admitted); the transient 503s capacity, storage_unavailable,
-// dependencies_unavailable and commit_uncertain are retried only for requests
-// that are safe to replay (reads, queries and writes with an Idempotency-Key,
-// which make a retry return the original outcome). 500 internal_error is
-// retried only for requests carrying an Idempotency-Key, since the server
-// guarantees nothing about its effect. stored_corruption is never retried.
-func retryDelay(e *APIError, attempt int, replaySafe, keyed bool) (time.Duration, bool) {
-	switch {
-	case e.Status == http.StatusTooManyRequests:
-	case replaySafe && isTransient503(e):
-	case keyed && e.Status == http.StatusInternalServerError && e.Code == ErrInternalError:
-	default:
+// retryDelay implements the retry policy for requests that are safe to
+// replay (reads, queries and If-Match writes): 429 and the transient 503s
+// capacity, storage_unavailable, dependencies_unavailable and
+// commit_uncertain are retried. do excludes uncertain mutation outcomes.
+// stored_corruption and 500 internal_error are never retried.
+func retryDelay(e *APIError, attempt int, replaySafe bool) (time.Duration, bool) {
+	if !replaySafe || (e.Status != http.StatusTooManyRequests && !isTransient503(e)) {
 		return 0, false
 	}
 	if e.retryAfterSet {
@@ -285,25 +311,23 @@ func sleep(ctx context.Context, d time.Duration) error {
 }
 
 // send performs one HTTP exchange and reads the whole body (bounded).
-func (c *Client) send(ctx context.Context, method, target, token string, body []byte, contentType string, header http.Header, idemKey string) (*response, error) {
+func (c *Client) send(ctx context.Context, req request, target string) (*response, error) {
+	method := req.method
 	var rd io.Reader
-	if body != nil {
-		rd = bytes.NewReader(body)
+	if req.body != nil {
+		rd = bytes.NewReader(req.body)
 	}
 	hr, err := http.NewRequestWithContext(ctx, method, target, rd)
 	if err != nil {
 		return nil, fmt.Errorf("terrabase: build request: %w", err)
 	}
-	for k, v := range header {
+	for k, v := range req.header {
 		hr.Header[k] = v
 	}
-	hr.Header.Set("Authorization", "Bearer "+token)
+	hr.Header.Set("Authorization", "Bearer "+c.token)
 	hr.Header.Set("Accept", "application/json")
-	if body != nil {
-		hr.Header.Set("Content-Type", cmpOr(contentType, "application/json"))
-	}
-	if idemKey != "" {
-		hr.Header.Set("Idempotency-Key", idemKey)
+	if req.body != nil {
+		hr.Header.Set("Content-Type", cmp.Or(req.contentType, "application/json"))
 	}
 	res, err := c.hc.Do(hr)
 	if err != nil {
@@ -318,13 +342,6 @@ func (c *Client) send(ctx context.Context, method, target, token string, body []
 		return nil, fmt.Errorf("terrabase: %s %s response exceeds %d bytes", method, hr.URL.Path, c.maxResponse)
 	}
 	return &response{status: res.StatusCode, header: res.Header, body: data}, nil
-}
-
-func cmpOr(a, b string) string {
-	if a != "" {
-		return a
-	}
-	return b
 }
 
 // call sends a JSON request and decodes a JSON response into out (if non-nil).

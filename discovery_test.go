@@ -13,23 +13,16 @@ func TestManagementRoutingRequiresExplicitOrigin(t *testing.T) {
 	for _, test := range []struct {
 		name      string
 		discovery string
-		data      string
 	}{
 		{name: "no origin"},
 		{name: "canonical metadata", discovery: DefaultDiscoveryBaseURL},
 		{name: "custom metadata", discovery: "https://metadata.example.test"},
-		{name: "native origin", data: "https://gru.api.terrascale.tech"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			calls, nativeCredentialCalls := 0, 0
+			calls := 0
 			client, err := NewClient(Config{
 				DiscoveryBaseURL: test.discovery,
-				DataBaseURL:      test.data,
 				AccessToken:      "management-credential",
-				DataTokenProvider: func() string {
-					nativeCredentialCalls++
-					return nativeDiscoveryTestKey(5)
-				},
 				HTTPClient: &http.Client{Transport: pinningRoundTripperFunc(func(*http.Request) (*http.Response, error) {
 					calls++
 					return nil, errors.New("management authority must be resolved before HTTP")
@@ -54,8 +47,8 @@ func TestManagementRoutingRequiresExplicitOrigin(t *testing.T) {
 					t.Fatalf("management endpoint authority error = %v", err)
 				}
 			}
-			if calls != 0 || nativeCredentialCalls != 0 {
-				t.Fatalf("management borrowed metadata/native authority: HTTP=%d native credential=%d", calls, nativeCredentialCalls)
+			if calls != 0 {
+				t.Fatalf("management borrowed metadata authority: HTTP=%d", calls)
 			}
 		})
 	}
@@ -80,15 +73,11 @@ func TestManagementRoutingDoesNotAdoptCatalogAuthority(t *testing.T) {
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			metadataCalls, productCalls, nativeCredentialCalls := 0, 0, 0
+			metadataCalls, productCalls := 0, 0
 			client, err := NewClient(Config{
 				APIBaseURL:       "https://product.example.test",
 				DiscoveryBaseURL: "https://metadata.example.test",
 				AccessToken:      "management-credential",
-				DataTokenProvider: func() string {
-					nativeCredentialCalls++
-					return nativeDiscoveryTestKey(5)
-				},
 				HTTPClient: &http.Client{Transport: pinningRoundTripperFunc(func(request *http.Request) (*http.Response, error) {
 					if request.URL.Host == "metadata.example.test" {
 						metadataCalls++
@@ -127,8 +116,8 @@ func TestManagementRoutingDoesNotAdoptCatalogAuthority(t *testing.T) {
 					t.Fatalf("explicit management producer response = %v", err)
 				}
 			}
-			if metadataCalls != 0 || productCalls != 2 || nativeCredentialCalls != 0 {
-				t.Fatalf("management authority boundary: metadata=%d product=%d native credential=%d", metadataCalls, productCalls, nativeCredentialCalls)
+			if metadataCalls != 0 || productCalls != 2 {
+				t.Fatalf("management authority boundary: metadata=%d product=%d", metadataCalls, productCalls)
 			}
 		})
 	}

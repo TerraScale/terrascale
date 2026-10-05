@@ -3,6 +3,3 @@ __pycache__/
 
 # Private generated CI release candidates and signatures
 /.terrascale-develop-release/
-
-# tbv1-fake development certificates and keys
-/.tbv1-fake/

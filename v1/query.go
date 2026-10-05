@@ -13,20 +13,9 @@ import (
 // IDPath is the pseudo-path for the document ID.
 const IDPath = "$id"
 
-// Path is a filter or sort path: an RFC 6901 JSON Pointer string, IDPath,
-// or Lower(pointer).
-type Path interface{ string | LowerPath }
-
-// LowerPath compares a path's string values after Unicode default case folding.
-type LowerPath struct{ path string }
-
-// Lower applies case folding to path in comparisons and sorts.
-func Lower(path string) LowerPath { return LowerPath{path: path} }
-
-// MarshalJSON encodes {"lower":path}.
-func (l LowerPath) MarshalJSON() ([]byte, error) {
-	return json.Marshal(map[string]string{"lower": l.path})
-}
+// Path is a filter or sort path: an RFC 6901 JSON Pointer string or IDPath.
+// TerraBase does not serve {"lower":…} paths yet.
+type Path interface{ ~string }
 
 func pathValue[P Path](p P) any { return any(p) }
 
@@ -170,17 +159,6 @@ func (k SortKey) MarshalJSON() ([]byte, error) {
 	}{k.path, order})
 }
 
-// ExplainMode selects query explanation.
-type ExplainMode string
-
-// Explain modes.
-const (
-	// ExplainPlan returns the plan without executing the query.
-	ExplainPlan ExplainMode = "plan"
-	// ExplainAnalyze executes the query and adds measured counters.
-	ExplainAnalyze ExplainMode = "analyze"
-)
-
 // Query is a query-v1 request. Every field is optional.
 type Query struct {
 	Filter Filter `json:"filter,omitzero"`
@@ -195,8 +173,6 @@ type Query struct {
 	Cursor string `json:"cursor,omitempty"`
 	// Count requests the total match count; ignored when Cursor is set.
 	Count bool `json:"count,omitempty"`
-	// Explain requests the plan; ignored when Cursor is set.
-	Explain ExplainMode `json:"explain,omitempty"`
 }
 
 // Count is a match count; Value is a lower bound when Exact is false.
@@ -205,7 +181,7 @@ type Count struct {
 	Exact bool   `json:"exact"`
 }
 
-// QueryResult is one page of query results.
+// QueryResult is one page of query or list results.
 type QueryResult struct {
 	Items []Document `json:"items"`
 	// NextCursor is empty after the last page. A page may be empty and still
@@ -213,8 +189,6 @@ type QueryResult struct {
 	NextCursor string `json:"-"`
 	// Count is set when Query.Count was requested.
 	Count *Count `json:"count,omitempty"`
-	// Explain is the raw explain object when Query.Explain was set.
-	Explain json.RawMessage `json:"explain,omitempty"`
 }
 
 // Query runs one page of q against the collection.
@@ -223,11 +197,15 @@ func (col *Collection) Query(ctx context.Context, q Query) (*QueryResult, error)
 	if err != nil {
 		return nil, err
 	}
+	return col.db.c.page(ctx, request{method: http.MethodPost, path: p, replaySafe: true, readOnly: true}, q)
+}
+
+func (c *Client) page(ctx context.Context, req request, in any) (*QueryResult, error) {
 	var out struct {
 		QueryResult
 		NextCursor *string `json:"next_cursor"`
 	}
-	if _, err := col.db.c.call(ctx, request{method: http.MethodPost, path: p, replaySafe: true}, q, &out); err != nil {
+	if _, err := c.call(ctx, req, in, &out); err != nil {
 		return nil, err
 	}
 	res := out.QueryResult
@@ -238,8 +216,8 @@ func (col *Collection) Query(ctx context.Context, q Query) (*QueryResult, error)
 }
 
 // Pages iterates over every page of q, starting at q.Cursor, until a page has
-// no NextCursor. Iteration stops after the first error. Count and Explain are
-// evaluated only without a cursor, so they are sent with the first page only.
+// no NextCursor. Iteration stops after the first error. Count is evaluated
+// only without a cursor, so it is sent with the first page only.
 func (col *Collection) Pages(ctx context.Context, q Query) iter.Seq2[*QueryResult, error] {
 	return func(yield func(*QueryResult, error) bool) {
 		for {
@@ -247,7 +225,7 @@ func (col *Collection) Pages(ctx context.Context, q Query) iter.Seq2[*QueryResul
 			if !yield(page, err) || err != nil || page.NextCursor == "" {
 				return
 			}
-			q.Cursor, q.Count, q.Explain = page.NextCursor, false, ""
+			q.Cursor, q.Count = page.NextCursor, false
 		}
 	}
 }

@@ -1,6 +1,5 @@
 // Package sdk is the TerraScale Go SDK (terrascale.tech/sdk).
 //
-// Native document operations use the exact producer contract in contract.go.
 // Product and hosted authentication clients use separately configured origins.
 package sdk
 
@@ -93,16 +92,6 @@ const DefaultAPIBaseURL = "https://" + publicAPIHostname
 
 // Config configures a Client.
 type Config struct {
-	// DataBaseURL explicitly configures an HTTPS native regional origin with an
-	// ASCII hostname; HTTP is allowed only for loopback development. Empty uses
-	// authenticated UUID Atlas admission and never falls back to APIBaseURL.
-	// TerraScale hosts require a canonical direct region; reserved service hosts
-	// and trailing-dot aliases are rejected. Independent HTTPS origins are valid.
-	DataBaseURL string
-	// DataAccessToken and DataTokenProvider are native data credentials. They
-	// never inherit product or TSAuth management credentials.
-	DataAccessToken   string
-	DataTokenProvider func() string
 	// APIBaseURL explicitly configures the product API origin (tests or custom
 	// deployments). Empty product routing fails closed.
 	APIBaseURL string
@@ -141,18 +130,14 @@ type Config struct {
 	// RetryDelay is the base retry backoff (default 250ms, max 30s).
 	RetryDelay time.Duration
 	// RequestTimeout bounds the complete request, including retries (default
-	// 30s, maximum 30s). Native discovery and the single native dispatch share
-	// this original budget; discovery has no separate timeout and dispatch does
-	// not reset the deadline. A shorter context deadline still wins.
+	// 30s, maximum 30s). A shorter context deadline still wins.
 	RequestTimeout time.Duration
 }
 
 // Client is the TerraScale SDK entry point.
 type Client struct {
-	cfg          Config
-	http         *http.Client
-	nativeHTTP   *http.Client
-	nativeRouter *nativeDiscoveryRouter
+	cfg  Config
+	http *http.Client
 	// authDiscovery caches ranked regional ts-auth origins for public auth calls.
 	authDiscovery tsAuthEndpointDiscovery
 
@@ -164,7 +149,6 @@ type Client struct {
 	ProjectAPIKeys   *ProjectAPIKeysClient
 	TSAuth           *TSAuthClient
 	Operations       *OperationsClient
-	Documents        *DocumentsClient
 	Regions          *RegionsClient
 	Databases        *DatabasesClient
 	DatabaseBranches *DatabaseBranchesClient
@@ -173,14 +157,9 @@ type Client struct {
 	Usage            *UsageClient
 }
 
-// NewClient validates local configuration and constructs a Client. An empty
-// DataBaseURL defers authenticated native discovery until the first Documents
-// request; successful construction does not establish service readiness.
+// NewClient validates local configuration and constructs a Client;
+// successful construction does not establish service readiness.
 func NewClient(cfg Config) (*Client, error) {
-	dataBase, err := validateNativeOrigin(strings.TrimSpace(cfg.DataBaseURL))
-	if err != nil {
-		return nil, err
-	}
 	base := strings.TrimSpace(cfg.APIBaseURL)
 	base = strings.TrimSuffix(base, "/")
 	u, err := url.Parse(base + "/")
@@ -289,15 +268,9 @@ func NewClient(cfg Config) (*Client, error) {
 	ownedHTTPClient := *httpClient
 	ownedHTTPClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	httpClient = &ownedHTTPClient
-	// Native discovery and data use only the captured native credential.
-	nativeHTTPClient := ownedHTTPClient
-	nativeHTTPClient.Jar = nil
 
 	c := &Client{cfg: Config{
 		APIBaseURL:            base,
-		DataBaseURL:           dataBase,
-		DataAccessToken:       cfg.DataAccessToken,
-		DataTokenProvider:     cfg.DataTokenProvider,
 		TSAuthBaseURL:         strings.TrimSpace(cfg.TSAuthBaseURL),
 		TSAuthUseReverseProxy: cfg.TSAuthUseReverseProxy,
 		DiscoveryBaseURL:      discoveryBase,
@@ -311,12 +284,10 @@ func NewClient(cfg Config) (*Client, error) {
 		MaxRetryAttempts:      cfg.MaxRetryAttempts,
 		RetryDelay:            retryDelay,
 		RequestTimeout:        requestTimeout,
-	}, http: httpClient, nativeHTTP: &nativeHTTPClient, sessionToken: strings.TrimSpace(cfg.SessionToken)}
-	c.nativeRouter = newNativeDiscoveryRouter(c.nativeHTTP)
+	}, http: httpClient, sessionToken: strings.TrimSpace(cfg.SessionToken)}
 	c.ProjectAPIKeys = &ProjectAPIKeysClient{c: c}
 	c.TSAuth = &TSAuthClient{c: c}
 	c.Operations = &OperationsClient{c: c}
-	c.Documents = &DocumentsClient{c: c}
 	c.Regions = &RegionsClient{c: c}
 	c.Databases = &DatabasesClient{c: c}
 	c.DatabaseBranches = &DatabaseBranchesClient{c: c}
@@ -456,7 +427,7 @@ func numericToken(token string) (uint64, bool) {
 }
 
 // resolveProductBase requires the explicit origin configured for product and
-// management calls. Native admission and public metadata cannot authorize it.
+// management calls. Public metadata cannot authorize it.
 func (c *Client) resolveProductBase(method, path, route string) (string, error) {
 	if c.cfg.APIBaseURL == "" {
 		return "", &RoutingError{Route: route, Method: method, Path: path, Err: ErrManagementDiscoveryUnavailable}

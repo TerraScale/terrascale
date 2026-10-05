@@ -121,28 +121,3 @@ type WriteResult struct {
 	// Location is the Location header of a POST create.
 	Location string `json:"-"`
 }
-
-// Optional is a nullable PATCH member. The zero value leaves the member
-// unchanged (it is omitted), Value sets it and Null clears it.
-type Optional[T any] struct {
-	value T
-	set   bool
-	null  bool
-}
-
-// Value returns an Optional that sets the member to v.
-func Value[T any](v T) Optional[T] { return Optional[T]{value: v, set: true} }
-
-// Null returns an Optional that clears the member (JSON null).
-func Null[T any]() Optional[T] { return Optional[T]{null: true} }
-
-// IsZero reports whether the member is left unchanged.
-func (o Optional[T]) IsZero() bool { return !o.set && !o.null }
-
-// MarshalJSON encodes the value or null.
-func (o Optional[T]) MarshalJSON() ([]byte, error) {
-	if !o.set {
-		return []byte("null"), nil
-	}
-	return json.Marshal(o.value)
-}

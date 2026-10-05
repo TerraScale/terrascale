@@ -17,8 +17,8 @@ const publicAPIHostname = "api.terrascale.tech"
 const discoveryTimeout = 3 * time.Second
 
 // ErrManagementDiscoveryUnavailable indicates that no management endpoint
-// authority has been configured. Native admission and the public region catalog
-// cannot supply a product or management origin.
+// authority has been configured. The public region catalog cannot supply a
+// product or management origin.
 var ErrManagementDiscoveryUnavailable = errors.New("management endpoint authority is unavailable; configure an explicit product API origin")
 
 // RoutingError reports that a request has no authorized endpoint. Err preserves

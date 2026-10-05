@@ -5,6 +5,10 @@ import (
 	"encoding/hex"
 	"fmt"
 	"regexp"
+	"strings"
+	"unicode"
+	"unicode/utf16"
+	"unicode/utf8"
 )
 
 // namespaceURL is RFC 9562's NAMESPACE_URL, 6ba7b811-9dad-11d1-80b4-00c04fd430c8.
@@ -44,9 +48,8 @@ func formatUUID(u [16]byte) string {
 
 var (
 	namePattern    = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,62}$`)
-	idPattern      = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+	uuidPattern    = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 	versionPattern = regexp.MustCompile(`^tbv1-[0-9a-f]{32}$`)
-	shapeIDPattern = regexp.MustCompile(`^[0-9a-f]{32}$`)
 )
 
 func checkName(kind, name string) error {
@@ -56,9 +59,12 @@ func checkName(kind, name string) error {
 	return nil
 }
 
+// checkID accepts what TerraBase addresses: 1-256 UTF-16 units without control
+// characters. New ids must be UUIDs; older non-UUID ids stay addressable.
+// The path builder rejects a slash.
 func checkID(id string) error {
-	if !idPattern.MatchString(id) {
-		return fmt.Errorf("terrabase: document ID %q must be a lowercase hyphenated UUID", id)
+	if id == "" || !utf8.ValidString(id) || len(utf16.Encode([]rune(id))) > 256 || strings.ContainsFunc(id, unicode.IsControl) {
+		return fmt.Errorf("terrabase: document ID %q must be 1 to 256 characters without control characters", id)
 	}
 	return nil
 }

@@ -18,8 +18,8 @@ import (
 
 // Build a real Go module archive, then download and use it from an isolated
 // file proxy. The consumer has no replace directive or source-checkout access.
-func TestPackagedGoConsumerPreservesNativeIntegers(t *testing.T) {
-	root := filepath.Dir(filepath.Dir(pinnedNativeContractRoot(t)))
+func TestPackagedGoConsumerPreservesIntegers(t *testing.T) {
+	root := "."
 	workspace := t.TempDir()
 	proxy := filepath.Join(workspace, "proxy")
 	versionRoot := filepath.Join(proxy, "terrascale.tech", "sdk", "@v")
@@ -76,7 +76,7 @@ func TestPackagedGoConsumerPreservesNativeIntegers(t *testing.T) {
 	mirrorPackagedModuleDependencies(t, root, proxy, module, sums)
 	write(filepath.Join(consumer, "go.mod"), []byte("module consumer.test\n\ngo 1.25.0\n\nrequire terrascale.tech/sdk v0.0.0\n"))
 	write(filepath.Join(consumer, "go.sum"), sums)
-	write(filepath.Join(consumer, "consumer_test.go"), []byte(packagedNativeConsumer))
+	write(filepath.Join(consumer, "consumer_test.go"), []byte(packagedConsumer))
 	// The module cache is isolated so the SDK must resolve from the packed
 	// archive. The content-addressed build cache is shared; -trimpath keeps its
 	// keys independent of this temporary workspace, so unchanged packages are
@@ -241,73 +241,18 @@ func mirrorPackagedModuleDependencies(t *testing.T, root, proxy string, module, 
 	}
 }
 
-const packagedNativeConsumer = `package consumer_test
+const packagedConsumer = `package consumer_test
 
 import (
-	"encoding/json"
-	"math"
-	"net/http"
-	"net/http/httptest"
 	"testing"
 
 	sdk "terrascale.tech/sdk"
 )
 
-func TestNativeContractAndInteger(t *testing.T) {
-	scope := sdk.DocumentScope{
-		Tenant:   "11111111-1111-1111-1111-111111111111",
-		Database: "22222222-2222-2222-2222-222222222222",
-		Shard:    sdk.DecimalU64(math.MaxUint64),
-	}
-	collection := sdk.UUID("33333333-3333-3333-3333-333333333333")
-	document := sdk.UUID("44444444-4444-4444-4444-444444444444")
+func TestInteger(t *testing.T) {
 	const integer = int64(9007199254740993)
 	if err := sdk.ValidateSQL("SELECT value FROM orders WHERE value = :value", sdk.SQLParameters{"value": integer}); err != nil {
 		t.Fatal(err)
-	}
-	encoded, err := json.Marshal(sdk.I64Value(integer))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var roundtrip sdk.Value
-	if err := json.Unmarshal(encoded, &roundtrip); err != nil {
-		t.Fatal(err)
-	}
-	got, ok := roundtrip.Int64()
-	if !ok || got != integer {
-		t.Fatalf("integer rounded during JSON roundtrip: %d", got)
-	}
-
-	// Literal response bytes independently exercise the installed HTTP decoder.
-	const point = "{\"version\":1,\"state\":\"value\",\"state_version\":\"0100000000000000000000000000000000000000000000000000000000000000\"," +
-		"\"context\":[{\"replica\":\"33333333-3333-3333-3333-333333333333\",\"incarnation\":\"01000000000000000000000000000000\",\"sequence\":\"18446744073709551615\"}],\"siblings\":[{\"event\":{\"database\":\"22222222-2222-2222-2222-222222222222\",\"shard\":\"18446744073709551615\",\"replica\":\"33333333-3333-3333-3333-333333333333\",\"incarnation\":\"01000000000000000000000000000000\",\"sequence\":\"18446744073709551615\"}," +
-		"\"schema_generation\":\"18446744073709551615\",\"schema_digest\":\"0200000000000000000000000000000000000000000000000000000000000000\"," +
-		"\"kind\":\"live\",\"fields\":[{\"id\":1,\"value\":{\"type\":\"i64\",\"value\":\"9007199254740993\"}}]}]}"
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
-		if request.Method != "GET" || request.URL.RawQuery != "" || request.URL.Path != "/v1/tenants/11111111-1111-1111-1111-111111111111/databases/22222222-2222-2222-2222-222222222222/shards/18446744073709551615/collections/33333333-3333-3333-3333-333333333333/documents/44444444-4444-4444-4444-444444444444" {
-			t.Errorf("unexpected route: %s %s", request.Method, request.URL)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(point))
-	}))
-	defer server.Close()
-	client, err := sdk.NewClient(sdk.Config{DataBaseURL: server.URL})
-	if err != nil {
-		t.Fatal(err)
-	}
-	result, err := client.Documents.Get(t.Context(), scope, collection, document)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result.State != sdk.PointValue || result.StateVersion == nil || *result.StateVersion != (sdk.Hex32{1}) || len(result.Context) != 1 || len(result.Siblings) != 1 || len(result.Siblings[0].Fields) != 1 {
-		t.Fatalf("native point was not retained: %+v", result)
-	}
-	if result.Context[0].Sequence != sdk.DecimalU64(math.MaxUint64) || result.Siblings[0].Event.Shard != scope.Shard || result.Siblings[0].Event.Sequence != sdk.DecimalU64(math.MaxUint64) || result.Siblings[0].SchemaGeneration != sdk.DecimalU64(math.MaxUint64) {
-		t.Fatalf("native u64 metadata was rounded: %+v", result)
-	}
-	got, ok = result.Siblings[0].Fields[0].Value.Int64()
-	if !ok || result.Siblings[0].Fields[0].ID != 1 || got != integer {
-		t.Fatalf("integer rounded in native HTTP response: %d", got)
 	}
 }
 `

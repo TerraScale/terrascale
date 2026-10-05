@@ -7,19 +7,125 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
+	"strconv"
 )
 
-// Database is a handle to one database by name. It performs no I/O.
+// Database is a handle to one database of a project, by name. It performs no I/O.
 type Database struct {
-	c    *Client
-	name string
+	c       *Client
+	project string
+	name    string
 }
 
-// Database returns a handle to the named database.
-func (c *Client) Database(name string) *Database { return &Database{c: c, name: name} }
+// Database returns a handle to the named database of a project. project is
+// the project id from the Management API; the API key's organization selects
+// the tenant.
+func (c *Client) Database(project, name string) *Database {
+	return &Database{c: c, project: project, name: name}
+}
+
+// Project returns the project id.
+func (d *Database) Project() string { return d.project }
 
 // Name returns the database name.
 func (d *Database) Name() string { return d.name }
+
+func (d *Database) path(extra ...string) ([]string, error) {
+	if !uuidPattern.MatchString(d.project) {
+		return nil, fmt.Errorf("terrabase: project ID %q must be a lowercase hyphenated UUID", d.project)
+	}
+	if err := checkName("database", d.name); err != nil {
+		return nil, err
+	}
+	return append([]string{"v1", "projects", d.project, "databases", d.name}, extra...), nil
+}
+
+// DatabaseInfo is a database as returned by Database.Create.
+type DatabaseInfo struct {
+	ID        string `json:"id"`
+	ProjectID string `json:"projectId"`
+	Name      string `json:"name"`
+	// Created is true when the call created the database (201).
+	Created bool `json:"-"`
+}
+
+// Create creates the database in its project; an existing database is
+// returned unchanged (Created false).
+func (d *Database) Create(ctx context.Context) (*DatabaseInfo, error) {
+	p, err := d.path()
+	if err != nil {
+		return nil, err
+	}
+	var info DatabaseInfo
+	resp, err := d.c.call(ctx, request{method: http.MethodPut, path: p, replaySafe: true}, nil, &info)
+	if err != nil {
+		return nil, err
+	}
+	info.Created = resp.status == http.StatusCreated
+	return &info, nil
+}
+
+// CollectionInfo is a collection.
+type CollectionInfo struct {
+	Name      string    `json:"name"`
+	CreatedAt Timestamp `json:"created_at"`
+}
+
+// CollectionPage is one page of collections in name order.
+type CollectionPage struct {
+	Items []CollectionInfo `json:"items"`
+	// NextCursor is empty on the last page.
+	NextCursor string `json:"next_cursor"`
+}
+
+// ListOptions pages a list: Limit (zero uses the server default) and the
+// previous page's NextCursor.
+type ListOptions struct {
+	Limit  int
+	Cursor string
+}
+
+func (o ListOptions) query() url.Values {
+	q := url.Values{}
+	if o.Limit > 0 {
+		q.Set("limit", strconv.Itoa(o.Limit))
+	}
+	if o.Cursor != "" {
+		q.Set("cursor", o.Cursor)
+	}
+	return q
+}
+
+// CreateCollection creates an empty schemaless collection; an existing name
+// fails with ErrNameTaken.
+func (d *Database) CreateCollection(ctx context.Context, name string) (*CollectionInfo, error) {
+	if err := checkName("collection", name); err != nil {
+		return nil, err
+	}
+	p, err := d.path("collections")
+	if err != nil {
+		return nil, err
+	}
+	var info CollectionInfo
+	if _, err := d.c.call(ctx, request{method: http.MethodPost, path: p}, map[string]string{"name": name}, &info); err != nil {
+		return nil, err
+	}
+	return &info, nil
+}
+
+// Collections lists one page of collections (Limit 1-200, default 50).
+func (d *Database) Collections(ctx context.Context, opts ListOptions) (*CollectionPage, error) {
+	p, err := d.path("collections")
+	if err != nil {
+		return nil, err
+	}
+	var page CollectionPage
+	if _, err := d.c.call(ctx, request{method: http.MethodGet, path: p, query: opts.query(), replaySafe: true}, nil, &page); err != nil {
+		return nil, err
+	}
+	return &page, nil
+}
 
 // Collection is a handle to one collection by name. It performs no I/O.
 type Collection struct {
@@ -34,13 +140,10 @@ func (d *Database) Collection(name string) *Collection { return &Collection{db: 
 func (col *Collection) Name() string { return col.name }
 
 func (col *Collection) path(extra ...string) ([]string, error) {
-	if err := checkName("database", col.db.name); err != nil {
-		return nil, err
-	}
 	if err := checkName("collection", col.name); err != nil {
 		return nil, err
 	}
-	return append([]string{"v1", "databases", col.db.name, "collections", col.name}, extra...), nil
+	return col.db.path(append([]string{"collections", col.name}, extra...)...)
 }
 
 func (col *Collection) docPath(id string) ([]string, error) {
@@ -50,13 +153,45 @@ func (col *Collection) docPath(id string) ([]string, error) {
 	return col.path("documents", id)
 }
 
-// WriteOption configures a document write: a Precondition or IdempotencyKey.
+// Info reads the collection; a missing one fails with ErrUnknownCollection.
+func (col *Collection) Info(ctx context.Context) (*CollectionInfo, error) {
+	return col.collectionCall(ctx, http.MethodGet)
+}
+
+// Drop deletes the collection and every document in it, and returns the
+// dropped collection.
+func (col *Collection) Drop(ctx context.Context) (*CollectionInfo, error) {
+	return col.collectionCall(ctx, http.MethodDelete)
+}
+
+func (col *Collection) collectionCall(ctx context.Context, method string) (*CollectionInfo, error) {
+	p, err := col.path()
+	if err != nil {
+		return nil, err
+	}
+	var info CollectionInfo
+	if _, err := col.db.c.call(ctx, request{method: method, path: p, replaySafe: method == http.MethodGet}, nil, &info); err != nil {
+		return nil, err
+	}
+	return &info, nil
+}
+
+// List reads one page of documents in id order (Limit 1-1000, default 50). A
+// page also stops at 8 MiB of JSON.
+func (col *Collection) List(ctx context.Context, opts ListOptions) (*QueryResult, error) {
+	p, err := col.path("documents")
+	if err != nil {
+		return nil, err
+	}
+	return col.db.c.page(ctx, request{method: http.MethodGet, path: p, query: opts.query(), replaySafe: true}, nil)
+}
+
+// WriteOption configures a document write: a Precondition.
 type WriteOption interface{ applyWrite(*writeConfig) }
 
 type writeConfig struct {
 	ifMatch        string
 	ifNoneMatchAny bool
-	idemKey        string
 }
 
 // Precondition is a conditional-write precondition. It applies to document
@@ -78,16 +213,6 @@ func (p Precondition) applyWrite(w *writeConfig) {
 	}
 	w.ifNoneMatchAny = w.ifNoneMatchAny || p.ifNoneMatchAny
 }
-
-type idempotencyOption string
-
-func (k idempotencyOption) applyWrite(w *writeConfig) { w.idemKey = string(k) }
-
-// IdempotencyKey sets the Idempotency-Key of a mutation. An exact retry with
-// the same key within 24 hours returns the original response, and the client
-// retries 503 commit_uncertain and 500 internal_error only for keyed requests.
-// Config.AutoIdempotencyKeys generates a key when this option is absent.
-func IdempotencyKey(key string) WriteOption { return idempotencyOption(key) }
 
 func resolveWrite(opts []WriteOption) (writeConfig, error) {
 	var w writeConfig
@@ -154,7 +279,8 @@ func (col *Collection) Get(ctx context.Context, id string, opts ...ReadOption) (
 }
 
 // Put writes the complete document. Use IfMatch or IfNoneMatchAny for
-// conditional writes. Created reports a 201 (the document did not exist).
+// conditional writes; only IfMatch writes are retried.
+// Created reports a 201 (the document did not exist).
 func (col *Collection) Put(ctx context.Context, id string, doc any, opts ...WriteOption) (*WriteResult, error) {
 	p, err := col.docPath(id)
 	if err != nil {
@@ -168,10 +294,11 @@ func (col *Collection) Put(ctx context.Context, id string, doc any, opts ...Writ
 	if err != nil {
 		return nil, err
 	}
-	return col.write(ctx, request{write: true, method: http.MethodPut, path: p, body: body, header: w.header(), idemKey: w.idemKey})
+	return col.write(ctx, request{method: http.MethodPut, path: p, body: body, header: w.header(), replaySafe: w.ifMatch != ""})
 }
 
-// Create stores a new document under a server-generated UUIDv7.
+// Create stores a new document under a server-generated UUIDv7. It is never
+// retried, since a replay would create a second document.
 func (col *Collection) Create(ctx context.Context, doc any, opts ...WriteOption) (*WriteResult, error) {
 	p, err := col.path("documents")
 	if err != nil {
@@ -188,7 +315,7 @@ func (col *Collection) Create(ctx context.Context, doc any, opts ...WriteOption)
 	if err != nil {
 		return nil, err
 	}
-	return col.write(ctx, request{write: true, method: http.MethodPost, path: p, body: body, idemKey: w.idemKey})
+	return col.write(ctx, request{method: http.MethodPost, path: p, body: body})
 }
 
 // Patch applies a MergePatch or an Ops patch to an existing document.
@@ -208,7 +335,7 @@ func (col *Collection) Patch(ctx context.Context, id string, patch Patch, opts .
 	if err != nil {
 		return nil, err
 	}
-	return col.write(ctx, request{write: true, method: http.MethodPatch, path: p, body: body, contentType: contentType, header: w.header(), idemKey: w.idemKey})
+	return col.write(ctx, request{method: http.MethodPatch, path: p, body: body, contentType: contentType, header: w.header(), replaySafe: w.ifMatch != ""})
 }
 
 // Delete tombstones a document. The result's Version is the tombstone's.
@@ -224,7 +351,7 @@ func (col *Collection) Delete(ctx context.Context, id string, opts ...WriteOptio
 	if w.ifNoneMatchAny {
 		return nil, errors.New("terrabase: Delete does not take IfNoneMatchAny")
 	}
-	return col.write(ctx, request{write: true, method: http.MethodDelete, path: p, header: w.header(), idemKey: w.idemKey})
+	return col.write(ctx, request{method: http.MethodDelete, path: p, header: w.header(), replaySafe: w.ifMatch != ""})
 }
 
 func (col *Collection) write(ctx context.Context, req request) (*WriteResult, error) {

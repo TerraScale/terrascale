@@ -27,9 +27,6 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
-      - name: Verify the native producer artifacts and metadata
-        run: python3 scripts/native_contracts.py --check
-
       # Go and govulncheck are baked into the ts-builder job image.
       - name: Verify Go formatting
         run: test -z "$(gofmt -l .)"
@@ -43,5 +40,10 @@ jobs:
       - name: Build all Go packages
         run: go build ./...
 
+      # internal/terrabasetest downloads the pinned TerraBase release with the
+      # token; TERRABASE_REQUIRE fails its tests instead of skipping them.
       - name: Run the race-enabled test suite
+        env:
+          TERRABASE_TOKEN: ${{ secrets.ORG_READ_TOKEN }}
+          TERRABASE_REQUIRE: "1"
         run: go test -race ./...

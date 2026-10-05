@@ -177,26 +177,21 @@ func (t *Tx) AssertCount(collection string, filter Filter, bounds CountBounds) *
 }
 
 // Commit applies every op atomically. Failures are *APIError values whose Op
-// names the failing op index. Only IdempotencyKey is accepted as an option;
-// preconditions belong to individual ops.
-func (t *Tx) Commit(ctx context.Context, opts ...WriteOption) (*TxResult, error) {
+// names the failing op index. Preconditions belong to individual ops. The
+// client retries a commit only when every write op has an IfMatch version.
+// Transport failures and ErrCommitUncertain are returned without a retry.
+func (t *Tx) Commit(ctx context.Context) (*TxResult, error) {
 	if t.err != nil {
 		return nil, fmt.Errorf("terrabase: transaction: %w", t.err)
 	}
 	if len(t.ops) == 0 {
 		return nil, errors.New("terrabase: transaction has no ops")
 	}
-	if err := checkName("database", t.db.name); err != nil {
-		return nil, err
-	}
-	w, err := resolveWrite(opts)
+	p, err := t.db.path("transactions")
 	if err != nil {
 		return nil, err
 	}
-	if w.ifMatch != "" || w.ifNoneMatchAny {
-		return nil, errors.New("terrabase: Commit takes no preconditions; pass them to the ops")
-	}
-	req := request{write: true, method: http.MethodPost, path: []string{"v1", "databases", t.db.name, "transactions"}, idemKey: w.idemKey}
+	req := request{method: http.MethodPost, path: p, replaySafe: t.conditional()}
 	var res TxResult
 	if _, err := t.db.c.call(ctx, req, struct {
 		Ops []txOp `json:"ops"`
@@ -204,4 +199,16 @@ func (t *Tx) Commit(ctx context.Context, opts ...WriteOption) (*TxResult, error)
 		return nil, err
 	}
 	return &res, nil
+}
+
+// conditional reports whether a replay of the transaction cannot apply twice:
+// every write op requires a version. Absence is not enough, since a tombstone
+// left by another writer satisfies it again.
+func (t *Tx) conditional() bool {
+	for _, op := range t.ops {
+		if op.Op != "assert" && op.Op != "assert_count" && op.IfMatch == "" {
+			return false
+		}
+	}
+	return true
 }
