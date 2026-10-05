@@ -2,6 +2,7 @@ using TerraScale.Auth.Configuration;
 using TerraScale.Auth.Features.Observability;
 using TerraScale.Auth.Hosting;
 using TerraScale.Auth.Store;
+using TerraScale.DotNet.TerraBase;
 using TerraScale.Endpoints;
 
 namespace TerraScale.Auth;
@@ -24,7 +25,17 @@ public static class App
 
         builder.Services.AddSingleton(options);
         builder.Services.AddSingleton(TimeProvider.System);
-        builder.Services.AddSingleton<IStorageHealth, UnavailableStorageHealth>();
+        builder.Services.AddSingleton(_ => new HttpClient(TerraBaseHttp.CreateHandler()));
+        // The configured URL is an explicit static override. Replace the resolver with Atlas
+        // discovery when ts-dotnet supplies it; every process must pin the same database authority.
+        builder.Services.AddSingleton<ITerraBaseEndpointResolver>(_ => new TerraBaseStaticEndpointResolver(options.TerraScaleApiUrl));
+        builder.Services.AddSingleton(services => new TerraBaseDocumentsClient(services.GetRequiredService<HttpClient>(), new TerraBaseDocumentsClientOptions
+        {
+            EndpointResolver = services.GetRequiredService<ITerraBaseEndpointResolver>(),
+            ApiKey = options.TerraScaleApiKey,
+        }).Database(options.StorageProject, options.StorageDatabase));
+        builder.Services.AddSingleton<AuthStore>();
+        builder.Services.AddSingleton<IStorageHealth, TerraBaseStorageHealth>();
         builder.Services.AddSingleton<ReadinessProbe>();
 
         builder.Services.AddTerraScaleEndpoints(typeof(App).Assembly, endpoints =>

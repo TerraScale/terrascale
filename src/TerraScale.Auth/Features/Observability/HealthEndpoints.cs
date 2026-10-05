@@ -47,7 +47,7 @@ public sealed class ReadyzEndpoint(ReadinessProbe probe) : EndpointWithoutReques
         Get("/readyz");
         Name("readyz");
         Summary("Readiness probe");
-        Description("Returns 503 until TerraBase answers a health probe.");
+        Description("Returns 200 only when the configured TerraBase auth database, required collections, reads and conditional writes are usable. Observations are cached for at most one second; probe deadline is two seconds.");
         Tags("Observability");
         Produces<ReadyBody>();
         Produces<ReadyBody>(StatusCodes.Status503ServiceUnavailable);

@@ -6,7 +6,7 @@
 # public HTTPS sink is configured.
 #
 # Usage:
-#   scripts/smoke-real-stack.sh            # member at http://127.0.0.1:8420, service on a free port
+#   scripts/smoke-real-stack.sh            # member at https://127.0.0.1:8420, service on a free port
 #   MEMBER_URL=... SERVICE_LISTEN=http://127.0.0.1:9090 scripts/smoke-real-stack.sh
 #   WEBHOOK_SINK_URL=https://your-public-sink.example/hook \
 #   WEBHOOK_SINK_CAPTURE_FILE=/path/to/sink-receipts.jsonl scripts/smoke-real-stack.sh
@@ -14,7 +14,7 @@
 # body fields. Without both sink settings, webhook delivery is skipped.
 set -uo pipefail
 
-MEMBER_URL=${MEMBER_URL:-http://127.0.0.1:8420}
+MEMBER_URL=${MEMBER_URL:-https://127.0.0.1:8420}
 SERVICE_LISTEN=${SERVICE_LISTEN:-http://127.0.0.1:8480}
 REPO_ROOT=$(cd "$(dirname "$0")/.." && pwd)
 # Override SERVICE_BINARY to smoke a built worktree/pinned checkout.
@@ -75,7 +75,7 @@ TS_AUTH_LISTEN="$SERVICE_LISTEN" \
 TS_AUTH_PUBLIC_ORIGIN="$SERVICE_LISTEN" \
 TS_AUTH_TERRASCALE_API_URL="$MEMBER_URL" \
 TS_AUTH_TERRASCALE_API_KEY="${TS_AUTH_E2E_API_KEY:-dev}" \
-TS_AUTH_DATABASE="${TS_AUTH_E2E_DATABASE:-ts-auth-dev}" \
+TS_AUTH_DATABASE="${TS_AUTH_E2E_DATABASE:-00000000-0000-0000-0000-000000000000/ts-auth-dev}" \
 TS_AUTH_MASTER_KEY="$(head -c 32 /dev/urandom | base64 -w0)" \
 TS_AUTH_AUDIT_SIGNING_KEY="$(head -c 32 /dev/urandom | base64 -w0)" \
 TS_AUTH_OPERATOR_KEY="$OP_KEY" \

@@ -356,6 +356,12 @@
           "Microsoft.Extensions.Http": "[10.0.11, )"
         }
       },
+      "terrascale.dotnet.testing": {
+        "type": "Project",
+        "dependencies": {
+          "TerraScale.DotNet": "[0.1.0, )"
+        }
+      },
       "terrascale.endpoints": {
         "type": "Project",
         "dependencies": {

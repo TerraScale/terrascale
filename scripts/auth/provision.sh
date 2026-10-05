@@ -1,27 +1,13 @@
 #!/usr/bin/env bash
-# Provision the one platform auth database in an existing platform project.
-# The operator creates the project and API key first, then supplies their ids
-# through TS_AUTH_TERRASCALE_PROJECT_ID and TS_AUTH_TERRASCALE_API_KEY.
-# Every launch region gets a replica; GRU is the write authority.
-# Requires curl and jq.
+# Production execution belongs to TS-470. This repository only prints the setup plan.
 set -euo pipefail
 
-api=https://gru.api.terrascale.tech
-database=ts-auth
-regions='["GRU","SFO","FRA"]'
-residency=GRU,SFO,FRA
-
-: "${TS_AUTH_TERRASCALE_PROJECT_ID:?Set the platform auth project id}"
-: "${TS_AUTH_TERRASCALE_API_KEY:?Set the platform auth project API key}"
-
-database_body=$(jq -nc --arg name "$database" --argjson placement "$regions" \
-    --arg residency "$residency" \
-    '{name: $name, placement: $placement, residency: $residency, operation_id: "ts-auth-global-database-v1"}')
-database_result=$(curl -fsS -X POST \
-    -H "Authorization: Bearer $TS_AUTH_TERRASCALE_API_KEY" \
-    -H "X-TerraScale-Project-Id: $TS_AUTH_TERRASCALE_PROJECT_ID" \
-    -H 'Idempotency-Key: ts-auth-global-database-v1' \
-    -H 'Content-Type: application/json' \
-    --data "$database_body" "$api/api/v1/databases")
-
-printf 'database operation: %s\n' "$database_result"
+cat <<'PLAN'
+Provisioning plan (no changes executed):
+1. Use the Management API to resolve terrascale-internal and its auth project ID.
+2. Provision the auth database and a project/database-scoped tb_ API key with documents:read/write.
+3. With the pinned ts-dotnet Documents client, call AuthStore.ProvisionAsync on that existing database.
+4. Set TS_AUTH_DATABASE=<auth-project-id>/auth and TS_AUTH_TERRASCALE_API_URL to the resolved HTTPS authority.
+See docs/parity.md for collection setup, configuration and conditional-write guarantees.
+Live execution requires the TS-470 approval flow.
+PLAN

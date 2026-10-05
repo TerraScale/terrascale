@@ -11,6 +11,7 @@ public sealed class ConfigurationTests
     [Arguments("operator-key", "TS_AUTH_OPERATOR_KEY is required")]
     [Arguments("public-origin", "TS_AUTH_PUBLIC_ORIGIN is required")]
     [Arguments("database", "TS_AUTH_DATABASE is required")]
+    [Arguments("terrascale-api-url", "TS_AUTH_TERRASCALE_API_URL is required")]
     public async Task Startup_refuses_missing_required_settings(string key, string message)
     {
         var exception = await Assert.ThrowsAsync<AuthConfigurationException>(() => AuthTestServer.StartAsync(settings: values => values.Remove(key)));
@@ -62,9 +63,9 @@ public sealed class ConfigurationTests
     }
 
     [Test]
-    [Arguments("http://127.0.0.1:8420", "Production auth storage cannot use a loopback TerraScale API URL")]
-    [Arguments("https://evil.example", "Global auth storage requires https://api.terrascale.tech or https://gru.api.terrascale.tech")]
-    [Arguments("http://api.terrascale.tech", "Global auth storage requires https://api.terrascale.tech or https://gru.api.terrascale.tech")]
+    [Arguments("https://127.0.0.1:8420", "Production auth storage cannot use a loopback TerraScale API URL")]
+    [Arguments("https://evil.example", "Global auth storage requires a TerraScale HTTPS API origin")]
+    [Arguments("http://api.terrascale.tech", "TS_AUTH_TERRASCALE_API_URL must be an HTTPS origin without a path")]
     public async Task Production_storage_must_be_the_terrascale_authority(string url, string message)
     {
         var exception = await Assert.ThrowsAsync<AuthConfigurationException>(() => AuthTestServer.StartAsync(settings: values =>
@@ -79,6 +80,11 @@ public sealed class ConfigurationTests
     [Test]
     [Arguments("terrascale-api-key", "Bearer ", "TS_AUTH_TERRASCALE_API_KEY is required")]
     [Arguments("terrascale-api-key", "bearer  \t ", "TS_AUTH_TERRASCALE_API_KEY is required")]
+    [Arguments("database", "auth", "TS_AUTH_DATABASE must be project-uuid/database with a lowercase database name")]
+    [Arguments("database", "auth/auth/other", "TS_AUTH_DATABASE must be project-uuid/database with a lowercase database name")]
+    [Arguments("database", "auth/../other", "TS_AUTH_DATABASE must be project-uuid/database with a lowercase database name")]
+    [Arguments("terrascale-api-url", "https://localhost:8443/path", "TS_AUTH_TERRASCALE_API_URL must be an HTTPS origin without a path")]
+    [Arguments("terrascale-api-key", "tb_secret\r\nInjected", "TS_AUTH_TERRASCALE_API_KEY must contain at most 4096 characters without whitespace or controls")]
     [Arguments("master-key", "c2hvcnQ=", "TS_AUTH_MASTER_KEY must decode to 32 bytes")]
     [Arguments("master-key", "not base64!", "TS_AUTH_MASTER_KEY must be base64")]
     [Arguments("public-origin", "https://auth.example/?next=x", "TS_AUTH_PUBLIC_ORIGIN must be an absolute HTTP(S) URL")]
@@ -150,11 +156,9 @@ public sealed class ConfigurationTests
         await using var service = await RunningBinary.StartAsync(settings);
 
         using var health = await service.Client.GetAsync("/healthz");
-        using var ready = await service.Client.GetAsync("/readyz");
 
         await Assert.That(health.StatusCode).IsEqualTo(System.Net.HttpStatusCode.OK);
-        // No real authority is reachable from tests; readiness must still fail closed.
-        await Assert.That(ready.StatusCode).IsEqualTo(System.Net.HttpStatusCode.ServiceUnavailable);
+        // Exercise startup without sending any request to a production storage endpoint.
     }
 
     /// <summary>The real service binary on a free loopback port, with a controlled environment.</summary>

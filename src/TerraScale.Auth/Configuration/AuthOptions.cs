@@ -17,17 +17,12 @@ public sealed partial record AuthOptions
     /// <summary>The TerraScale API host every production replica stores through.</summary>
     public const string TerraScaleApiHost = "api.terrascale.tech";
 
-    /// <summary>The GRU regional authority host.</summary>
-    public const string GruAuthorityHost = "gru.api.terrascale.tech";
-
     private static readonly FrozenSet<string> Keys = FrozenSet.Create(
         StringComparer.Ordinal,
         "listen",
         "public-origin",
         "terrascale-api-url",
         "terrascale-api-key",
-        "terrascale-project-id",
-        "terrascale-tenant-id",
         "database",
         "master-key",
         "audit-signing-key",
@@ -59,14 +54,14 @@ public sealed partial record AuthOptions
     /// <summary>TerraBase API key, without any <c>Bearer</c> prefix.</summary>
     public required string TerraScaleApiKey { get; init; }
 
-    /// <summary>Optional TerraScale project scope.</summary>
-    public string? TerraScaleProjectId { get; init; }
-
-    /// <summary>Optional TerraScale tenant scope.</summary>
-    public string? TerraScaleTenantId { get; init; }
-
-    /// <summary>TerraBase database holding all ts-auth state.</summary>
+    /// <summary>TerraBase project/database selector holding all ts-auth state.</summary>
     public required string Database { get; init; }
+
+    /// <summary>Project UUID selected by <c>TS_AUTH_DATABASE</c>.</summary>
+    public string StorageProject => this.Database.Split('/')[0];
+
+    /// <summary>Database name selected by <c>TS_AUTH_DATABASE</c>.</summary>
+    public string StorageDatabase => this.Database.Split('/')[1];
 
     /// <summary>32-byte key that encrypts recoverable secrets at rest.</summary>
     public required byte[] MasterKey { get; init; }
@@ -180,7 +175,28 @@ public sealed partial record AuthOptions
             throw Invalid("TS_AUTH_PUBLIC_ORIGIN must be an origin without a path");
         }
 
-        var apiUrl = AbsoluteHttpUrl("terrascale-api-url", Optional("terrascale-api-url") ?? $"https://{TerraScaleApiHost}");
+        var apiUrl = AbsoluteHttpUrl("terrascale-api-url", Required("terrascale-api-url"));
+        if (apiUrl.Scheme != Uri.UriSchemeHttps || apiUrl.AbsolutePath != "/")
+        {
+            throw Invalid("TS_AUTH_TERRASCALE_API_URL must be an HTTPS origin without a path");
+        }
+
+        var database = Required("database");
+        var selector = database.Split('/');
+        if (selector.Length != 2 || !StorageProjectName().IsMatch(selector[0]) || !StorageName().IsMatch(selector[1]))
+        {
+            throw Invalid("TS_AUTH_DATABASE must be project-uuid/database with a lowercase database name");
+        }
+
+        var normalizedApiKey = NormalizeApiKey(Required("terrascale-api-key"));
+        if (normalizedApiKey.Length == 0)
+        {
+            throw Invalid("TS_AUTH_TERRASCALE_API_KEY is required");
+        }
+        if (normalizedApiKey.Length > 4096 || normalizedApiKey.Any(character => char.IsWhiteSpace(character) || char.IsControl(character)))
+        {
+            throw Invalid("TS_AUTH_TERRASCALE_API_KEY must contain at most 4096 characters without whitespace or controls");
+        }
         var stripeUrl = AbsoluteHttpUrl("stripe-api-url", Optional("stripe-api-url") ?? "https://api.stripe.com");
 
         var verifyValues = (Optional("audit-verify-keys") ?? string.Empty)
@@ -215,12 +231,8 @@ public sealed partial record AuthOptions
             Listen = ParseListen(Optional("listen") ?? "http://0.0.0.0:8080"),
             PublicOrigin = publicOrigin,
             TerraScaleApiUrl = apiUrl,
-            TerraScaleApiKey = NormalizeApiKey(Required("terrascale-api-key")) is { Length: > 0 } apiKey
-                ? apiKey
-                : throw Invalid("TS_AUTH_TERRASCALE_API_KEY is required"),
-            TerraScaleProjectId = Optional("terrascale-project-id"),
-            TerraScaleTenantId = Optional("terrascale-tenant-id"),
-            Database = Required("database"),
+            TerraScaleApiKey = normalizedApiKey,
+            Database = database,
             MasterKey = DecodeKey("master-key", Required("master-key")),
             AuditSigningKey = Optional("audit-signing-key") is { } signing ? DecodeKey("audit-signing-key", signing) : null,
             AuditVerificationKeys = [.. verifyValues.Select(raw => DecodeKey("audit-verify-keys", raw))],
@@ -263,10 +275,10 @@ public sealed partial record AuthOptions
             throw Invalid("Production auth storage cannot use a loopback TerraScale API URL");
         }
 
-        if (!loopback && (this.TerraScaleApiUrl.Scheme != Uri.UriSchemeHttps
-            || this.TerraScaleApiUrl.Host is not (TerraScaleApiHost or GruAuthorityHost)))
+        if (!loopback && this.TerraScaleApiUrl.Host != TerraScaleApiHost
+            && !this.TerraScaleApiUrl.Host.EndsWith(".api.terrascale.tech", StringComparison.Ordinal))
         {
-            throw Invalid($"Global auth storage requires https://{TerraScaleApiHost} or https://{GruAuthorityHost}");
+            throw Invalid("Global auth storage requires a TerraScale HTTPS API origin");
         }
     }
 
@@ -351,6 +363,12 @@ public sealed partial record AuthOptions
 
     [GeneratedRegex(@"\A(?<host>\[[^\]]+\]|[^:\[\]]+):(?<port>[0-9]{1,5})\z")]
     private static partial Regex ListenAuthority();
+
+    [GeneratedRegex(@"\A[a-z][a-z0-9_-]{0,62}\z")]
+    private static partial Regex StorageName();
+
+    [GeneratedRegex(@"\A[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\z")]
+    private static partial Regex StorageProjectName();
 
     private static string NormalizeApiKey(string raw)
     {

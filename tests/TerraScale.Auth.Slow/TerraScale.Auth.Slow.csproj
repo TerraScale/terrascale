@@ -13,6 +13,7 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../../src/TerraScale.Auth/TerraScale.Auth.csproj" />
+    <ProjectReference Include="$(TsDotnetRoot)/src/TerraScale.DotNet.Testing/TerraScale.DotNet.Testing.csproj" SetTargetFramework="TargetFramework=net10.0" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="TUnit" />

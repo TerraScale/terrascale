@@ -30,9 +30,9 @@ podman run --detach --rm --name "$container" --network host \
   --env TS_AUTH_ENVIRONMENT=Development \
   --env "TS_AUTH_LISTEN=http://127.0.0.1:${port}" \
   --env "TS_AUTH_PUBLIC_ORIGIN=http://127.0.0.1:${port}" \
-  --env TS_AUTH_TERRASCALE_API_URL=http://127.0.0.1:1 \
+  --env TS_AUTH_TERRASCALE_API_URL=https://127.0.0.1:1 \
   --env TS_AUTH_TERRASCALE_API_KEY=ci-contract-key \
-  --env TS_AUTH_DATABASE=ci-contract-db \
+  --env TS_AUTH_DATABASE=00000000-0000-0000-0000-000000000000/ci-contract-db \
   --env TS_AUTH_MASTER_KEY=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA= \
   --env TS_AUTH_OPERATOR_KEY=ci-operator \
   "$image"

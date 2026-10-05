@@ -1,3 +1,6 @@
+using System.Text.Json;
+using TerraScale.DotNet.TerraBase;
+
 namespace TerraScale.Auth.Store;
 
 /// <summary>Result of one storage-authority readiness probe.</summary>
@@ -13,12 +16,39 @@ public interface IStorageHealth
 }
 
 /// <summary>
-/// Fails closed until the native-v1 store (TS-428) supplies a real probe:
-/// readiness must never claim a dependency it has not reached.
+/// Verifies the configured database, required collections, and real create/read/conditional-delete access.
+/// No setup or identity repair happens during probes. Exceptions are handled by the host readiness boundary.
 /// </summary>
-public sealed class UnavailableStorageHealth : IStorageHealth
+public sealed class TerraBaseStorageHealth(TerraBaseDatabase database) : IStorageHealth
 {
+    private static readonly JsonElement ProbeDocument = JsonSerializer.SerializeToElement(new Dictionary<string, bool> { ["probe"] = true });
+    // Reuse one synthetic address so repeated probes do not accumulate tombstones.
+    private readonly string probeId = Guid.NewGuid().ToString("D");
+
     /// <inheritdoc />
-    public Task<StorageHealthResult> CheckAsync(CancellationToken cancellationToken) =>
-        Task.FromResult(new StorageHealthResult(false, null));
+    public async Task<StorageHealthResult> CheckAsync(CancellationToken cancellationToken)
+    {
+        foreach (var collection in new[] { AuthStore.UniqueCollection, AuthStore.ChallengeCollection, AuthStore.HealthCollection })
+        {
+            await database.GetCollectionAsync(collection, cancellationToken).ConfigureAwait(false);
+        }
+
+        // An interrupted probe may have committed its create. Only this synthetic address
+        // is safe to clean up; never compensate an ambiguous identity write this way.
+        var previous = await database.GetDocumentAsync(AuthStore.HealthCollection, this.probeId, cancellationToken).ConfigureAwait(false);
+        if (previous is not null)
+        {
+            await database.DeleteDocumentAsync(AuthStore.HealthCollection, this.probeId, TerraBasePrecondition.Matches(previous.Version), cancellationToken).ConfigureAwait(false);
+        }
+
+        var created = await database.PutDocumentAsync(AuthStore.HealthCollection, this.probeId, ProbeDocument, TerraBasePrecondition.Absent, cancellationToken).ConfigureAwait(false);
+        var read = await database.GetDocumentAsync(AuthStore.HealthCollection, this.probeId, cancellationToken).ConfigureAwait(false);
+        if (read is null || read.Version != created.Version || !read.Document.TryGetProperty("probe", out var probe) || probe.ValueKind != JsonValueKind.True)
+        {
+            return new StorageHealthResult(false, null);
+        }
+
+        await database.DeleteDocumentAsync(AuthStore.HealthCollection, this.probeId, TerraBasePrecondition.Matches(read.Version), cancellationToken).ConfigureAwait(false);
+        return new StorageHealthResult(true, null);
+    }
 }

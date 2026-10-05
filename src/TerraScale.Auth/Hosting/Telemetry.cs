@@ -1,9 +1,7 @@
-using OpenTelemetry;
 using OpenTelemetry.Logs;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
-using Sentry;
 using Sentry.Extensibility;
 using Sentry.Protocol;
 using TerraScale.Auth.Configuration;

@@ -2,7 +2,7 @@
 
 A hosted identity provider in the Clerk / Auth0 / WorkOS category, built on
 TerraBase. The service is written in C# on .NET 10: ASP.NET Core with every
-API declared through `TerraScale.Endpoints` (ts-libs), TerraBase native-v1
+API declared through `TerraScale.Endpoints` (ts-libs), TerraBase Documents v1
 storage through `ts-dotnet`, RazorSlices and Datastar for hosted pages, and
 TUnit and Playwright integration tests.
 
@@ -10,12 +10,16 @@ TUnit and Playwright integration tests.
 > Rust workspace has been removed (TS-442). The foundation is in place:
 > configuration and production guards, the error envelope, health and
 > readiness, OpenAPI and Scalar, the hosted-page shell, telemetry, the test
-> harness and CI. The identity features below are being ported stream by
-> stream (TS-427 to TS-441). Until a stream lands, its routes are not served.
+> harness and CI. TS-489 adds the Documents v1 storage boundary and real
+> storage readiness, validated locally against the pinned binary. Live production
+> activation remains gated (see provisioning below). Users/sessions (TS-490)
+> and OIDC (TS-491) are not implemented. The identity features below are being
+> ported stream by stream. Until a stream lands, its routes are not served.
 > [`docs/parity.md`](docs/parity.md) tracks each capability, and
 > [`docs/csharp-port.md`](docs/csharp-port.md) describes the layout, commands
 > and intentional changes. The Rust implementation remains in Git history
-> (before TS-442) as the behavioural reference.
+> (before TS-442 / `8dd2874`) as the behavioural reference, including the
+> original TS-428 storage design.
 
 The consumer-app competitive review and remaining release gates are in
 [`docs/competitive-review.md`](docs/competitive-review.md). The consumer
@@ -47,12 +51,14 @@ organization permission checks) is in
 | Billing | Stripe subscriptions: Checkout, customer portal, signature-verified webhooks, plan quotas |
 
 
-Multi-instance: one ts-auth deployment hosts many customer instances; every
-instance gets its own users, keys, orgs, and OAuth clients, isolated by
-instance-scoped keys. The public issuer and hosted UI use one global origin;
-customers do not choose an authentication region. Regional ts-auth processes
-share one database, and that database is replicated to the admitted launch
-regions. Project and customer database placement remain separate choices.
+Target multi-instance design: one ts-auth deployment hosts many customer
+instances; every instance gets its own users, keys, orgs, and OAuth clients,
+isolated by instance-scoped keys. The public issuer and hosted UI use one global origin;
+customers do not choose an authentication region. All auth replicas must use
+one configured TerraBase authority. The pinned server does not implement
+replication or regional failover; production activation remains gated on its
+durability/recovery limits described below. Project and customer database
+placement remain separate choices.
 
 
 Scalar is served at `/scalar` and the JSON contract at `/openapi/v1.json`.
@@ -64,7 +70,7 @@ Both are generated from the endpoints the running service actually maps.
 src/TerraScale.Auth/            # ASP.NET Core host; Features/<Area>/ endpoints, services and Razor slices; Assets/
 src/TerraScale.Auth.Contracts/  # persisted models and the {"error":{…}} envelope
 src/TerraScale.Auth.Security/   # tokens, digests and (with TS-427) password, JWT, WebAuthn and TOTP primitives
-src/TerraScale.Auth.Store/      # TerraBase native-v1 adapter on ts-dotnet (TS-428)
+src/TerraScale.Auth.Store/      # Documents v1 persistence/readiness on ts-dotnet (TS-489)
 tests/TerraScale.Auth.Fast/     # blocking integration suite
 tests/TerraScale.Auth.Slow/     # non-blocking integration suite
 tests/Shared/                   # harness source linked into both suites
@@ -80,8 +86,12 @@ The build needs the .NET 10 SDK (see `global.json`) and the sibling `ts-dotnet`
 and `ts-libs` checkouts at the revisions pinned in `.forgejo/workflows/ci.yml`.
 They are looked up at `../ts-dotnet` and `../ts-libs`, or under
 `~/Projects/TerraScale/`; pass `-p:TerraScaleRoot=<dir>` or set the
-`TerraScaleRoot` environment variable to use another location. Run local
-commands at low CPU priority:
+`TerraScaleRoot` environment variable to use another location. Both workflows
+pin ts-dotnet to SDK merge #24, `bdea1e8f4926e46367b751d8f633dcec04d760e9`.
+Storage integration tests require the real SDK-pinned Linux x64 TerraBase
+binary locally and in CI; unavailable prerequisites fail instead of skipping.
+See [the port guide](docs/csharp-port.md) for the binary tag, SHA-256 and
+download/cache settings. Run local commands at low CPU priority:
 
 ```sh
 nice -n 19 make check      # format, build (analyzers as errors), NuGet audit, OpenAPI lint, fast suite
@@ -89,32 +99,34 @@ nice -n 19 make test-slow  # slow suite
 nice -n 19 make dev        # dotnet watch, published over HTTPS on the tailnet for this worktree
 ```
 
-The service needs a TerraScale API endpoint, a project API key and a database:
+The service needs an explicitly configured TerraBase HTTPS origin, an
+organization-bound Documents API key and an existing database. Resolve the
+`auth` project UUID through Management before deployment; this example expects
+that UUID in `AUTH_PROJECT_ID` and uses synthetic credential placeholders:
 
 ```sh
 TS_AUTH_PUBLIC_ORIGIN=https://auth.terrascale.tech \
-TS_AUTH_TERRASCALE_API_URL=https://api.terrascale.tech \
-TS_AUTH_TERRASCALE_API_KEY=sk_... \
-TS_AUTH_DATABASE=ts-auth \
+TS_AUTH_TERRASCALE_API_URL="${AUTH_STORAGE_ORIGIN:?set the resolved HTTPS authority}" \
+TS_AUTH_TERRASCALE_API_KEY=tb_... \
+TS_AUTH_DATABASE="${AUTH_PROJECT_ID:?set the auth project UUID}/auth" \
 TS_AUTH_MASTER_KEY=$(head -c 32 /dev/urandom | base64) \
 TS_AUTH_AUDIT_SIGNING_KEY=$(head -c 32 /dev/urandom | base64) \
 TS_AUTH_OPERATOR_KEY=$(head -c 32 /dev/urandom | base64) \
-dotnet run --project src/TerraScale.Auth
+nice -n 19 dotnet run --project src/TerraScale.Auth
 ```
 
 | Variable | Meaning |
 | --- | --- |
 | `TS_AUTH_PUBLIC_ORIGIN` | One global public origin shared by every replica (issuer URLs, email links, WebAuthn RP, OpenAPI server). Must be an origin without a path |
-| `TS_AUTH_TERRASCALE_API_URL` | TerraScale API origin (default `https://api.terrascale.tech`). Must be `https://api.terrascale.tech` or `https://gru.api.terrascale.tech`, or a loopback URL in Development |
-| `TS_AUTH_TERRASCALE_API_KEY` | Project API key for TerraBase; a bare `Bearer` prefix is stripped |
-| `TS_AUTH_TERRASCALE_PROJECT_ID` / `TS_AUTH_TERRASCALE_TENANT_ID` | Optional project and tenant selectors |
-| `TS_AUTH_DATABASE` | TerraBase database backing ts-auth |
+| `TS_AUTH_TERRASCALE_API_URL` | Required HTTPS origin, no default; no credentials, path, query or fragment. Host must be `api.terrascale.tech` or under `.api.terrascale.tech`; loopback HTTPS is permitted only in Development. Explicit static endpoint override |
+| `TS_AUTH_TERRASCALE_API_KEY` | Organization-bound `tb_…` credential with `documents:read` and `documents:write`, restricted to the auth project/database where appropriate. A leading `Bearer` scheme is stripped; runtime uses no management credential |
+| `TS_AUTH_DATABASE` | Required `project-uuid/database`, e.g. `<auth-project-uuid>/auth`; lowercase hyphenated UUID and lowercase database name (at most 63 characters). Project labels are not accepted |
 | `TS_AUTH_MASTER_KEY` | Base64, 32 bytes; encrypts recoverable secrets |
 | `TS_AUTH_AUDIT_SIGNING_KEY` | Base64 32-byte HMAC key for audit-event seals (required outside Development) |
 | `TS_AUTH_AUDIT_VERIFY_KEYS` | Optional semicolon-separated previous audit keys (at most 5), kept during rotation |
 | `TS_AUTH_OPERATOR_KEY` | Bearer key that can create instances (`POST /v1/instances`) |
 | `TS_AUTH_LISTEN` | Plain-HTTP listen address with an explicit port (default `http://0.0.0.0:8080`) |
-| `TS_AUTH_ENVIRONMENT` | `Development` waives the audit-signing key requirement and permits a loopback TerraScale API URL |
+| `TS_AUTH_ENVIRONMENT` | `Development` waives the audit-signing key requirement and permits a loopback HTTPS TerraBase API origin |
 | `TS_AUTH_RATE_LIMIT` | Management API requests per key per window (default 1000) |
 | `TS_AUTH_STRIPE_SECRET_KEY` / `TS_AUTH_STRIPE_WEBHOOK_SECRET` | Stripe credentials |
 | `TS_AUTH_PRICE_PRO` / `TS_AUTH_PRICE_ENTERPRISE` | Stripe price ids for the plans |
@@ -122,6 +134,15 @@ dotnet run --project src/TerraScale.Auth
 | `TS_AUTH_SMTP_HOST` / `_PORT` / `_USERNAME` / `_PASSWORD` / `_FROM_ADDRESS` | SMTP delivery; host, username, password and from address are all or nothing, port defaults to 587 |
 | `TS_AUTH_SENTRY_DSN` | GlitchTip/Sentry DSN for error reporting; a deployment secret, never committed. Off when unset |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` (or the per-signal `OTEL_EXPORTER_OTLP_*_ENDPOINT`), `OTEL_SERVICE_NAME`, `OTEL_EXPORTER_OTLP_HEADERS` | Standard OpenTelemetry settings; traces, metrics and logs are pushed over OTLP only when an endpoint is set |
+
+The intended production dataset is `auth/auth` in organization
+`terrascale-internal`: project label `auth`, database name `auth`. Documents
+routes require the project's UUID, so runtime configuration must use
+`<auth-project-uuid>/auth`. The credential selects the organization; separate
+project/tenant selector options have been removed. `App.Build` injects
+`ITerraBaseEndpointResolver` with a `TerraBaseStaticEndpointResolver` for the
+configured origin. No GRU endpoint is hardcoded in client routing. Atlas
+discovery in ts-dotnet is TS-507; its resolver can replace this static override.
 
 `GET /metrics` and `TS_AUTH_METRICS_KEY` from the Rust service are gone:
 metrics are pushed over OTLP. Telemetry never carries exception messages,
@@ -177,18 +198,23 @@ Upstream OIDC connections request `openid email profile` by default. A custom
 OIDC scope list must contain `openid` and `email`; valid configured scopes are
 stored on the connection and sent to the provider.
 
-Uniqueness of user-chosen identifiers (emails, usernames, org slugs,
-credentials) is enforced with atomic claim documents: CreateOnly writes the
-engine rejects on collision — race-safe without transactions. See
-`docs/parity.md` for the full Clerk/WorkOS/Auth0 feature matrix.
-An ambiguous TerraBase write can leave a uniqueness or quota claim reserved,
-or commit an API key before its plaintext is returned. A timeout, a failed
-immediate read, or a compensation attempt does not prove that a delayed write
-did not commit. Keep an ambiguous claim reserved; never release it immediately
-from the failed request. Any manual repair must first quiesce the relevant
-writers, verify the claim and its expected owner, and use an owner-checked,
-conditional release. If the state is uncertain, retain the claim. List or
-revoke an uncertain API key before retrying its creation.
+The TS-489 storage boundary provides create-only uniqueness claims and
+owner-checked CAS release. Addresses are deterministic UUIDv8 values from
+SHA-256 over length-framed instance/kind/key inputs; new document IDs must be
+UUIDs. Email keys use trim and invariant lowercase. Generic feature writes
+are create-only or version-conditional and reject infrastructure collection
+names. Single-use challenges persist only hashes, check instance/purpose/
+subject/expiry, and retain their CAS-consumed record to reject replay and
+reissue. These primitives do not implement the identity flows above. See
+`docs/parity.md` for capability status.
+
+An ambiguous TerraBase write can leave a uniqueness claim reserved. A timeout
+or failed immediate read does not prove that a delayed write did not commit.
+Keep the claim reserved; never compensate by releasing it from the failed
+request. Any manual repair must first quiesce the relevant writers, verify
+the claim and its expected owner, and use an owner-checked conditional release.
+If the state is uncertain, retain the claim. The SDK does not automatically
+retry writes.
 
 Management mutations and audit writes are separate operations. User
 create/update/delete, instance update, and API-key revocation return success
@@ -241,39 +267,48 @@ this repo):
 ### Local development against a real TerraBase member
 
 Point `TS_AUTH_TERRASCALE_API_URL` at an already running compatible local
-member and set `TS_AUTH_ENVIRONMENT=Development`. This repository does not
-start or embed a TerraBase member. `/readyz` fails closed (503) until the
-native-v1 store (TS-428) provides a real storage probe.
-`scripts/smoke-real-stack.sh` is a future real-backend check for the published
-executable against a separately running member; it exits with a precondition
-error while no member is reachable.
+member's HTTPS origin and set `TS_AUTH_ENVIRONMENT=Development`, a valid
+`tb_…` key and `TS_AUTH_DATABASE=<project-uuid>/<database-name>`. The application
+does not start or embed TerraBase; the integration-test fixture starts the
+SDK-pinned binary. `/readyz` checks the existing `uniques`,
+`verification_tokens` and `storage_health` collections, then creates, reads
+and conditionally deletes a synthetic document in `storage_health`. It returns
+200 only on success, otherwise 503, without provisioning, repair or in-memory
+fallback. Observations coalesce and are cached for one second after
+completion, with a two-second deadline; unknown `region` is omitted.
+
+The broader `scripts/smoke-real-stack.sh` still targets identity flows that
+TS-490/TS-491 and later streams have not implemented; it is not evidence of
+TS-489 acceptance.
 
 ## Provisioning the global auth dataset
 
-The C# service starts with a newly provisioned dataset; it does not migrate
-documents written by the Rust service. Native-v1 collection and schema
-provisioning moves into the service with the store (TS-428);
-`scripts/provision.sh` documents the placement steps:
+The application and readiness probe never provision or repair state, and
+there is no migration of Rust documents. `scripts/provision.sh` prints only
+the provisioning plan; live production execution belongs to TS-470:
 
-1. Create a platform `ts-auth` project with `GRU,SFO,FRA` placement and issue
-   its project API key. Set `TS_AUTH_TERRASCALE_PROJECT_ID` and
-   `TS_AUTH_TERRASCALE_API_KEY` for the provisioning process.
-2. Create the `ts-auth` database with placement and residency lock
-   `GRU,SFO,FRA`, using the GRU regional data endpoint. Provisioning is an
-   internal operator action; customers never select a region for authentication.
-3. Deploy the same image in each admitted region behind
-   `auth.terrascale.tech`, with the same database, public origin, master key,
-   audit signing and verification keys, and operator key on every replica.
+1. Resolve organization `terrascale-internal` and project label `auth` to their
+   IDs through Management before deployment; keep management credentials out
+   of the auth runtime.
+2. Provision the `auth` database and a `tb_…` credential restricted to the
+   auth project/database with `documents:read` and `documents:write`.
+3. Explicitly call `AuthStore.ProvisionAsync` with the pinned SDK against that
+   existing database. It creates only `uniques`, `verification_tokens` and
+   `storage_health`; feature streams own their other collections.
+4. Configure every replica with `<auth-project-uuid>/auth` and the same
+   explicitly resolved HTTPS storage authority and shared auth settings.
 
-All auth storage reads and writes use the GRU data-plane authority. This is
-required for unique email and seat claims, session revocation, and token
-rotation: TerraBase's cross-region replication is causal and does not make
-conditional writes globally atomic. An unavailable GRU authority makes auth
-storage unavailable until an explicitly fenced recovery promotes a new
-authority; routing a replica to a stale regional copy is unsafe. The global
-edge endpoint may route requests to any healthy auth process, but every such
-process still uses that one storage authority. `scripts/provision.sh` records
-the global placement and creates the database through the regional data API.
+**Live production activation remains gated.** The pinned server uses SQLite
+WAL with `synchronous=NORMAL` (TerraBase decision 0003): a process crash alone
+preserves committed writes, but an OS crash or power loss can lose acknowledged
+PUT/DELETE transactions since the last WAL sync. That can roll back uniqueness
+claims and consumed challenges. Decision 0005 states that replication `Sync`
+is an unsupported bootstrap stub, so no regional replication or failover is
+available. All replicas must use one authority, with no automatic retries or
+failover to another copy. Production activation requires an approved
+durability/recovery design and TS-470 verification; `/readyz` and local tests
+do not prove production durability. [The port guide](docs/csharp-port.md#production-activation-gate)
+links the exact pinned decisions. No live production validation is claimed.
 
 ## API surface
 
@@ -326,14 +361,12 @@ rotation.
   `Idempotency-Key` unique to each intentional instance bootstrap. Reuse the
   same key when retrying that request so its first key can be recovered.
 - Liveness/readiness: `GET /healthz` is process liveness; `GET /readyz`
-  checks TerraBase management health. Readiness responses and gauges reflect
-  the latest completed check, coalesced and cached per process for one second
-  after completion. Each check is capped at two seconds, and readiness starts
-  at zero until a check completes. Both JSON bodies include `version`: the
-  Cargo package version, plus `+<revision>` when `TS_AUTH_REVISION` is set at
-  build time. CI release builds set it to the first 12 characters of the
-  source commit.
-- Private metrics: `GET /metrics` (`X-TerraScale-Metrics-Key`), with bounded request, uptime, build, and latest-observation readiness gauges.
+  checks the configured database, required collections and synthetic
+  create/read/conditional-delete access through Documents v1. Results are
+  coalesced and cached per process for one second after completion, with a
+  two-second deadline. Both JSON bodies include the .NET service `version`;
+  readiness omits `region` when unknown. Metrics are pushed over OTLP;
+  `GET /metrics` is not served.
 
 ## CI
 
@@ -343,7 +376,8 @@ rotation.
   `dotnet format --verify-no-changes`, a Release build with analyzers as
   errors, the NuGet vulnerability audit, the Redocly lint of the served OpenAPI
   document, the image-transfer guard tests and the fast integration suite,
-  including Chromium.
+  including Chromium and storage/readiness against the real SDK-pinned
+  TerraBase binary. Missing binary/download prerequisites fail the suite.
 - **`release`** publishes a self-contained single-file linux-x64 executable
   (`scripts/ci/stage-release.sh`), packages it into the chiseled
   `runtime-deps` image (`Containerfile`, pinned by digest), and smoke-checks

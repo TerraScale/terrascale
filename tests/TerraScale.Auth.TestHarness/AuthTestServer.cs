@@ -4,7 +4,6 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.Extensions.DependencyInjection;
-using TerraScale.Auth;
 using TerraScale.Auth.Configuration;
 
 namespace TerraScale.Auth.Tests;
@@ -38,9 +37,9 @@ public sealed class AuthTestServer : IAsyncDisposable
     {
         ["listen"] = "http://127.0.0.1:0",
         ["public-origin"] = "https://auth.test.invalid",
-        ["terrascale-api-url"] = "http://127.0.0.1:9",
+        ["terrascale-api-url"] = "https://127.0.0.1:9",
         ["terrascale-api-key"] = "contract-fixture-key",
-        ["database"] = $"ts-auth-test-{Environment.ProcessId}-{Interlocked.Increment(ref sequence)}",
+        ["database"] = $"{Guid.NewGuid():D}/ts-auth-test-{Environment.ProcessId}-{Interlocked.Increment(ref sequence)}",
         ["master-key"] = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)),
         ["audit-signing-key"] = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)),
         ["operator-key"] = Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(24)),

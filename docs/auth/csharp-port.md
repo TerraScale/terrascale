@@ -2,7 +2,9 @@
 
 ts-auth is a C# service on .NET 10. Epic TS-424 (ku.mariogk.com) tracks the
 port. The Rust workspace was removed in TS-442; its source in Git history
-before that change is the behavioural reference for each port stream, and
+before `8dd2874` is the behavioural reference for each port stream, including
+the original TS-428 storage design. TS-489 implements the Documents v1 storage
+boundary; users/sessions (TS-490) and OIDC (TS-491) are not implemented, and
 `docs/parity.md` tracks what has landed.
 
 ## Layout
@@ -12,20 +14,43 @@ before that change is the behavioural reference for each port stream, and
 | `src/TerraScale.Auth/` | ASP.NET Core host. Features live in `Features/<Area>/`; each endpoint is one TerraScale.Endpoints class. |
 | `src/TerraScale.Auth.Contracts/` | Persisted models and the `{"error":{"code","message"}}` envelope (`ApiException`). |
 | `src/TerraScale.Auth.Security/` | Cryptographic primitives (port of `auth-security`). |
-| `src/TerraScale.Auth.Store/` | TerraBase native-v1 adapter on ts-dotnet (port of `auth-store`). |
+| `src/TerraScale.Auth.Store/` | Documents v1 persistence and storage readiness through ts-dotnet (TS-489, from the TS-428 design). |
 | `tests/TerraScale.Auth.Fast/` | Blocking integration suite (TUnit + Playwright). |
 | `tests/TerraScale.Auth.Slow/` | Non-blocking integration suite. |
-| `tests/Shared/` | Harness source linked into both suites: the app on a loopback Kestrel port, Chromium launcher, test doubles. |
+| `tests/Shared/` | Harness source linked into both suites: loopback Kestrel app, Chromium launcher, pinned real TerraBase fixture and observability test doubles. |
 
-There are no unit tests. Tests start the real application with
-`AuthTestServer.StartAsync` and talk to it over HTTP. Test-only routes and
-doubles are added through that call and exist only in the test process.
+There are no unit tests. HTTP tests start the real application with
+`AuthTestServer.StartAsync`. Storage tests use ts-dotnet against the real
+TerraBase binary; `TerraBaseFixture` shares one process per suite and creates
+isolated synthetic tenants/databases. Observability doubles test scheduling
+and error reporting, not the persistence boundary.
 
 The sibling `ts-dotnet` and `ts-libs` checkouts are project references. Locally
 they are found at `../ts-dotnet` and `../ts-libs`, or under
 `~/Projects/TerraScale/`; pass `-p:TerraScaleRoot=<dir>` to use another
 location. CI checks out the revisions pinned in `.forgejo/workflows/ci.yml`
 into a job-owned directory outside the repository.
+
+Both `.forgejo/workflows/ci.yml` and `.forgejo/workflows/slow.yml` pin ts-dotnet
+to `bdea1e8f4926e46367b751d8f633dcec04d760e9` (SDK merge #24). That revision's
+`src/TerraScale.DotNet.Testing/TerraBaseRelease.cs` pins the Linux x64 server:
+
+| Pin | Value |
+|---|---|
+| TerraBase commit | `ff256067015433c8c40b59879f1282d2a40480ce` |
+| Release tag | `ci-ff256067015433c8c40b59879f1282d2a40480ce-run-13258` |
+| Binary SHA-256 | `e07d173fc2bbab19dcb1fde8b121b0207b07d55452a5b19a406871d220e05e13` |
+
+The helper verifies the binary's SHA-256 on every start. Provide a matching
+`TERRABASE_BINARY`, a verified cached binary, or `TERRABASE_DOWNLOAD_TOKEN` /
+`ORG_READ_TOKEN` to download the private release. `TERRABASE_CACHE_DIRECTORY`
+overrides the cache location. The ts-auth fixture fails when the binary is
+unavailable, including locally; it never skips these tests. The SDK's
+`docs/terrabase-consumers.md` describes the adoption procedure but reflects
+ts-auth before TS-489; its older pins and local-skip example do not describe
+this integration. Local Release validation passed: formatting, build, locked
+restore, NuGet audit, OpenAPI lint, 100 fast tests and 21 slow tests with zero
+skips. No production/live acceptance is claimed.
 
 ## Commands
 
@@ -48,8 +73,28 @@ The release image is the self-contained executable on the chiseled
 `runtime-deps` base (see README, CI).
 
 
-All `TS_AUTH_*` settings keep their names and defaults, with these exceptions:
+Configuration retains the `TS_AUTH_*` convention, with these changes:
 
+- **Storage selectors and credentials:** `TS_AUTH_DATABASE` is required as
+  `project-uuid/database`. The intended production dataset is `auth/auth` in
+  organization `terrascale-internal`, where the first `auth` is the project
+  label. The pinned server and inspected TerraBase `origin/main` resolve that
+  route by project ID, not label: configure `<auth-project-uuid>/auth`.
+  `AuthOptions` requires a lowercase hyphenated project UUID and a lowercase
+  database name of at most 63 characters. An operator resolves the project
+  label to its UUID through Management before deployment; runtime does no
+  Management lookup. The API key is an organization-bound `tb_…`
+  credential with `documents:read` and `documents:write`, narrowed to the
+  project/database where appropriate. Runtime uses no management credential.
+  Separate project/tenant selector options have been removed.
+- **Storage endpoint:** `TS_AUTH_TERRASCALE_API_URL` is required, with no
+  default. It must be an HTTPS origin without credentials, path, query or
+  fragment, on `api.terrascale.tech` or a host under `.api.terrascale.tech`;
+  loopback HTTPS is allowed only in Development. `App.Build` registers this
+  as an explicit `TerraBaseStaticEndpointResolver` override through
+  `ITerraBaseEndpointResolver`. The host does not hardcode GRU routing.
+  Atlas discovery in ts-dotnet belongs to TS-507; the injectable resolver
+  allows that implementation to replace the static override.
 - **`GET /metrics` and `TS_AUTH_METRICS_KEY` are removed.** This is an
   intentional breaking change. Metrics, traces and logs are pushed over
   OpenTelemetry OTLP when the standard `OTEL_EXPORTER_OTLP_ENDPOINT` (and
@@ -65,10 +110,73 @@ All `TS_AUTH_*` settings keep their names and defaults, with these exceptions:
   `System.Net.Http.HttpClient`) is limited to warnings, because those
   categories log full URLs, query strings included.
 
-## Readiness until the native-v1 store lands
+## Storage and readiness (TS-489)
 
-`/readyz` returns 503 until stream B (TS-428) provides a real TerraBase probe.
-The placeholder `UnavailableStorageHealth` fails closed by design.
+`AuthStore` uses generic per-feature collections through
+`TerraBaseDocumentsClient`, with no unconditional writes or automatic write
+retries. Reads expose the opaque ETag version; create uses
+`TerraBasePrecondition.Absent` (`If-None-Match: *`), and replacement/deletion
+uses `Matches(version)` (`If-Match`). Callers authorize the instance before
+entering this internal boundary. Missing databases/collections and outages
+propagate; there is no in-memory fallback.
+Generic create/update/delete reject `uniques`, `verification_tokens` and
+`storage_health`, so feature callers cannot bypass their dedicated operations.
+
+Natural-key addresses are deterministic UUIDv8 values derived from SHA-256
+over length-framed instance/kind/key inputs; new TerraBase IDs must be UUIDs.
+Email normalization trims and lowercases invariantly; email syntax validation
+belongs to the account boundary. Uniqueness uses create-only claim documents,
+and explicit release checks the stored instance, kind, owner and version.
+Never compensate an ambiguous write by releasing its claim; retain uncertain
+ownership until writers are quiesced and an operator can verify it before a
+conditional release.
+
+Single-use challenges persist only lowercase SHA-256 secret hashes in
+`verification_tokens`, with instance, purpose, subject and expiry bindings.
+Consumption rejects invalid bindings, expiry and prior consumption, then
+marks the record consumed with CAS and returns `Consumed=true` on success.
+The record remains to reject replay and reissue; a write completing after
+expiry cannot grant authorization.
+
+`TerraBaseStorageHealth` checks the configured database's `uniques`,
+`verification_tokens` and `storage_health` collections, then performs a
+synthetic create-only write, version/content-checked read and conditional
+delete in `storage_health`. `/readyz` returns 200 only on success and 503 on
+missing state, permission failure, outage or timeout. Concurrent observations
+coalesce; the latest completed result is cached for one second and the
+deadline is two seconds. `region` is omitted when unknown, as it is for this
+probe.
+
+The application and probe never provision or repair state. An operator/test
+can explicitly call `AuthStore.ProvisionAsync` to create only those three
+infrastructure collections in an already existing database; repeated setup
+accepts an existing collection. Feature streams must provision their own
+collections. This is not production project/database provisioning or a
+migration of Rust documents.
+
+## Production activation gate
+
+[`scripts/provision.sh`](../scripts/provision.sh) prints only a provisioning
+plan. It performs no live setup; production execution belongs to TS-470.
+Every auth replica must use the same single configured storage authority,
+without automatic write retries or failover to another copy. Atlas endpoint
+discovery (TS-507) does not supply replication or failover guarantees.
+
+The pinned server's [decision 0003](https://git.terrascale.tech/TerraScale/terrabase/src/commit/ff256067015433c8c40b59879f1282d2a40480ce/docs/decisions/0003-sqlite-synchronous-normal.md)
+uses SQLite WAL with `synchronous=NORMAL`. A TerraBase process crash alone
+preserves committed writes, but an OS crash or power loss can roll back
+acknowledged PUT/DELETE transactions since the WAL was last synced. Thus
+uniqueness claims and consumed-challenge records can be rolled back.
+[Decision 0005](https://git.terrascale.tech/TerraScale/terrabase/src/commit/ff256067015433c8c40b59879f1282d2a40480ce/docs/decisions/0005-multi-tenancy.md)
+states that replication `Sync` is rejected by a bootstrap stub and committed
+batches do not yet carry database identity. There is no supported replication
+or regional failover for this pin.
+
+Storage is implemented, but these limits leave live production activation
+gated on an approved durability/recovery design and production verification
+under TS-470. `/readyz` establishes current read/conditional-write access,
+not crash durability, replication or safe failover. Local integration tests
+cannot establish those guarantees.
 
 ## OpenAPI
 
@@ -82,4 +190,4 @@ transformers in `Hosting/OpenApiSetup.cs`:
 - define only the schemes that are actually used;
 - require a description for every tag.
 
-`make openapi-check` lints the served document with Redocly.
+`nice -n 19 make openapi-check` lints the served document with Redocly locally.

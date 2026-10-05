@@ -24,7 +24,7 @@ env:
   DOTNET_CLI_TELEMETRY_OPTOUT: "1"
   DOTNET_NOLOGO: "1"
   FORGEJO_SHA: ${{ forgejo.sha }}
-  TS_DOTNET_REV: 20862d391a8c0e746af010b289a1a6dc7ae7867b
+  TS_DOTNET_REV: bdea1e8f4926e46367b751d8f633dcec04d760e9
   TS_LIBS_REV: 55b260872f8d4fb1cfa0975576632b4e022e4c91
 
 jobs:
@@ -65,6 +65,8 @@ jobs:
         run: bash scripts/check-image-transfer.sh
 
       - name: Fast integration suite
+        env:
+          ORG_READ_TOKEN: ${{ secrets.ORG_READ_TOKEN }}
         run: |
           set -euo pipefail
           TS_AUTH_CHROMIUM_PATH="$(node -p 'require("playwright").chromium.executablePath()')"
