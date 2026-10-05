@@ -505,7 +505,7 @@ internal sealed partial class EngineManagementService : IAccessService
     }
 
     // The next value of a counter document, incremented in the caller's write transaction.
-    private static async ValueTask<long> NextSequenceAsync(IStorageTransaction transaction, string collection, string counter, CancellationToken cancellationToken)
+    internal static async ValueTask<long> NextSequenceAsync(IStorageTransaction transaction, string collection, string counter, CancellationToken cancellationToken)
     {
         var next = await transaction.GetAsync(collection, counter, cancellationToken).ConfigureAwait(false) is { } current
             ? JsonSerializer.Deserialize(current.Json.Span, TerraBaseJsonContext.Default.Int64) + 1
@@ -536,12 +536,12 @@ internal sealed partial class EngineManagementService : IAccessService
     }
 
     // Keys sort by ordinal comparison, so numbers are written with a fixed width of 19 digits (any long).
-    private static string AscendingKey(long sequence) => sequence.ToString("D19", CultureInfo.InvariantCulture);
+    internal static string AscendingKey(long sequence) => sequence.ToString("D19", CultureInfo.InvariantCulture);
 
     // The engine lists keys in ascending order; counting down from long.MaxValue lists the newest first.
     private static string DescendingKey(long sequence) => AscendingKey(long.MaxValue - sequence);
 
-    private static string TicksKey(DateTimeOffset time) => AscendingKey(time.UtcTicks);
+    internal static string TicksKey(DateTimeOffset time) => AscendingKey(time.UtcTicks);
 
     private static string PlanName(PlanTier plan) => plan switch
     {
@@ -570,7 +570,7 @@ internal sealed partial class EngineManagementService : IAccessService
     private static string Audit(string organizationId) => $"organizations/{organizationId}/audit";
 
     // Single documents of an organization: its pending transfer, audit retention and counters.
-    private static string State(string organizationId) => $"organizations/{organizationId}/state";
+    internal static string State(string organizationId) => $"organizations/{organizationId}/state";
 
     private static string AuditExpiry(string organizationId) => $"organizations/{organizationId}/audit_expiry";
 }

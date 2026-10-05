@@ -37,7 +37,16 @@ internal static class ManagementRoute
     public const string IdentityDescription =
         "Authorization: Bearer <ts-auth access token>; its sub is the acting user. On the loopback administrative listener only, the "
         + "management service credential instead, with X-TerraBase-User-Id naming the acting user. Organizations the user is not a member of answer 404.";
-    public const string PageDescription = "Query: after (exclusive id cursor from the previous page's next), limit (1 to 100, default 20). Items are in creation order.";
+
+    public const string ApiKeys = Project + "/api-keys";
+    public const string ApiKey = ApiKeys + "/{key}";
+    public const string Sql = Database + "/sql";
+    public const string SavedQueries = Project + "/saved-queries";
+    public const string SavedQuery = SavedQueries + "/{query}";
+    public const string Indexes = Database + "/indexes";
+    public const string Index = Indexes + "/{index}";
+    public const string IndexRecommendations = Database + "/index-recommendations";
+    public const string PageDescription = "Query: after (exclusive cursor from the previous page's next), limit (1 to 100, default 20). Items are in creation order.";
 
     private const int MaxDisplayNameLength = 128;
     private const int MaxUserIdLength = 256;
@@ -46,6 +55,24 @@ internal static class ManagementRoute
     private const int MaxLimit = 100;
 
     public static string Value(HttpContext context, string name) => (string)context.Request.RouteValues[name]!;
+
+    /// <summary>The project addressed by <c>{organization}</c> and <c>{project}</c>; <see langword="null"/> when it does not exist or the acting user is not a member of its organization.</summary>
+    public static ValueTask<Project?> ProjectAsync(HttpContext context, IManagementService management, CancellationToken cancellationToken) =>
+        management.GetProjectAsync(UserId(context), OrganizationId(context), Value(context, "project"), cancellationToken);
+
+    /// <summary>
+    /// The tenant of the database addressed by <c>{organization}</c>, <c>{project}</c> and <c>{database}</c>, resolved with
+    /// the membership check; <see langword="null"/> when it does not exist or the acting user is not a member of its organization.
+    /// </summary>
+    public static ValueTask<TenantContext?> DatabaseAsync(HttpContext context, IManagementService management, CancellationToken cancellationToken) =>
+        management.GetDatabaseTenantAsync(UserId(context), OrganizationId(context), Value(context, "project"), Value(context, "database"), cancellationToken);
+
+    /// <summary>The canonical path of a project, from route values: request paths may differ in case or end in a slash.</summary>
+    public static string ProjectPath(HttpContext context, Project project) => $"{Organizations}/{OrganizationId(context)}/projects/{project.Id}";
+
+    /// <summary>The canonical path of a database, from its tenant (see <see cref="ProjectPath"/>).</summary>
+    public static string DatabasePath(TenantContext database) =>
+        $"{Organizations}/{database.OrganizationId}/projects/{database.ProjectId}/databases/{database.DatabaseId}";
 
     /// <summary>
     /// The acting user: the <c>sub</c> of the caller's ts-auth access token, or the user named with the management service

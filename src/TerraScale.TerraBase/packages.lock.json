@@ -2,6 +2,12 @@
   "version": 2,
   "dependencies": {
     "net11.0": {
+      "Cronos": {
+        "type": "Direct",
+        "requested": "[0.13.0, )",
+        "resolved": "0.13.0",
+        "contentHash": "Nkve+Yi0+ol3ntSBRHeW0ka9cJQ8vndSUvvkXqF9LVqwpoqWueyxu/HS275r98RDOmF7/mzRnZW5XXUBXob+TA=="
+      },
       "Google.Protobuf": {
         "type": "Direct",
         "requested": "[3.36.2, )",
@@ -136,6 +142,12 @@
         "requested": "[2.17.13, )",
         "resolved": "2.17.13",
         "contentHash": "+R0eJtJIIHW9owY61rIOgR2lywjZnjqUPAM7ll+lZYML7mZ4LxokG6wpAmkuyaLS1Ml4fI4kdAC2U6KkdrDDiA=="
+      },
+      "SqlParserCS": {
+        "type": "Direct",
+        "requested": "[0.6.5, )",
+        "resolved": "0.6.5",
+        "contentHash": "IKLnqJCGYrZPVpSUIBS+63c19YzETWN+/qY+KSili715vEmiNcJsH7XOTwBurhWbFaiUwkJcS2eYvgN9BmZUeA=="
       },
       "TerraScale.Endpoints": {
         "type": "Direct",

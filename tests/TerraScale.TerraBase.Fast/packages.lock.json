@@ -25,6 +25,12 @@
         "resolved": "4.14.0",
         "contentHash": "gSWJlDWwmDhtbrEJGiHqvEjz9KthIiFD0qYB8zZ6a7z+xpMSPEtM9yTYELSa58iFWYlzSRqP9FXO6KoT3+ZMtg=="
       },
+      "Microsoft.Extensions.TimeProvider.Testing": {
+        "type": "Direct",
+        "requested": "[10.10.0, )",
+        "resolved": "10.10.0",
+        "contentHash": "8duZdxuO3Oo8tlyQXVq1drXee6GJC9DjUU97Pq3YaIqf92jrAHsWxbbRKwvjQI48Mer3IANwUKF0elqvHeY4Rw=="
+      },
       "Microsoft.NET.ILLink.Tasks": {
         "type": "Direct",
         "requested": "[11.0.0-rc.1.26425.128, )",
@@ -205,6 +211,11 @@
         "dependencies": {
           "Microsoft.Extensions.Logging": "11.0.0-rc.1.26425.128"
         }
+      },
+      "Microsoft.Extensions.ObjectPool": {
+        "type": "Transitive",
+        "resolved": "8.0.1",
+        "contentHash": "X21b8D6z58EG34OMLH955750mFaEaGs5xLGe9Vyi3059Cgb3sk+p2k/JlQXaieEBRrk+SVlFzDei3Q6PdVzJOA=="
       },
       "Microsoft.IdentityModel.Abstractions": {
         "type": "Transitive",
@@ -573,6 +584,7 @@
       "terrabase": {
         "type": "Project",
         "dependencies": {
+          "Cronos": "[0.13.0, )",
           "Google.Protobuf": "[3.36.2, )",
           "Grpc.AspNetCore": "[2.84.0, )",
           "Grpc.Net.Client": "[2.84.0, )",
@@ -586,10 +598,17 @@
           "OpenTelemetry.Instrumentation.AspNetCore": "[1.15.2, )",
           "OpenTelemetry.Instrumentation.Runtime": "[1.15.1, )",
           "Scalar.AspNetCore": "[2.17.13, )",
+          "SqlParserCS": "[0.6.5, )",
           "TerraScale.Endpoints": "[3.0.23-rc.1, )",
           "Ulid": "[1.4.1, )",
           "ZString": "[2.6.0, )"
         }
+      },
+      "Cronos": {
+        "type": "CentralTransitive",
+        "requested": "[0.13.0, )",
+        "resolved": "0.13.0",
+        "contentHash": "Nkve+Yi0+ol3ntSBRHeW0ka9cJQ8vndSUvvkXqF9LVqwpoqWueyxu/HS275r98RDOmF7/mzRnZW5XXUBXob+TA=="
       },
       "Google.Protobuf": {
         "type": "CentralTransitive",
@@ -817,6 +836,15 @@
         "requested": "[2.17.13, )",
         "resolved": "2.17.13",
         "contentHash": "+R0eJtJIIHW9owY61rIOgR2lywjZnjqUPAM7ll+lZYML7mZ4LxokG6wpAmkuyaLS1Ml4fI4kdAC2U6KkdrDDiA=="
+      },
+      "SqlParserCS": {
+        "type": "CentralTransitive",
+        "requested": "[0.6.5, )",
+        "resolved": "0.6.5",
+        "contentHash": "IKLnqJCGYrZPVpSUIBS+63c19YzETWN+/qY+KSili715vEmiNcJsH7XOTwBurhWbFaiUwkJcS2eYvgN9BmZUeA==",
+        "dependencies": {
+          "Microsoft.Extensions.ObjectPool": "8.0.1"
+        }
       },
       "TerraScale.Endpoints": {
         "type": "CentralTransitive",

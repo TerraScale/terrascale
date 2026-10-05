@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
@@ -8,7 +7,7 @@ using SQLitePCL;
 namespace TerraScale.TerraBase.Engine.Sqlite;
 
 // committed runs after a write transaction that allocated an offset commits; null for reads.
-internal sealed class SqliteStorageTransaction(
+internal sealed partial class SqliteStorageTransaction(
     SqliteDatabaseStore store, SqliteSession session, SqliteTransaction transaction, bool write, Action? committed)
     : IStorageTransaction
 {
@@ -230,7 +229,11 @@ internal sealed class SqliteStorageTransaction(
         }
     }
 
-    public async ValueTask<DocumentPage> ListAsync(
+    public ValueTask<DocumentPage> ListAsync(
+        string collection, string? afterId, int limit, long maxBytes, CancellationToken cancellationToken) =>
+        WithQueryBudgetAsync(() => ReadListAsync(collection, afterId, limit, maxBytes, cancellationToken), cancellationToken);
+
+    private async ValueTask<DocumentPage> ReadListAsync(
         string collection, string? afterId, int limit, long maxBytes, CancellationToken cancellationToken)
     {
         ThrowIfDisposed();
@@ -272,7 +275,7 @@ internal sealed class SqliteStorageTransaction(
         {
             if (query.Sort.Count > 0 && !query.Sort[0].Path.IsId)
             {
-                await CheckSortBudgetAsync(query, cancellationToken).ConfigureAwait(false);
+                await CheckSortBudgetAsync(query.Collection, query.MaxBytes, cancellationToken).ConfigureAwait(false);
             }
 
             return await ReadQueryAsync(query, cancellationToken).ConfigureAwait(false);
@@ -281,10 +284,19 @@ internal sealed class SqliteStorageTransaction(
 
     private async ValueTask<T> WithQueryBudgetAsync<T>(Func<ValueTask<T>> execute, CancellationToken cancellationToken)
     {
-        StartQueryBudget(cancellationToken);
+        ThrowIfDisposed();
+        cancellationToken.ThrowIfCancellationRequested();
+        var budget = StartQueryBudget(cancellationToken);
         try
         {
-            return await execute().ConfigureAwait(false);
+            var result = await execute().ConfigureAwait(false);
+            if (budget.Spent >= QueryDeadline)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                throw new QueryCapacityException("query execution budget exceeded");
+            }
+
+            return result;
         }
         catch (SqliteException error) when (error.SqliteErrorCode == raw.SQLITE_INTERRUPT)
         {
@@ -298,11 +310,11 @@ internal sealed class SqliteStorageTransaction(
 
     // A lock timeout does not bound query work. Interrupt after 5 million VM instructions or 5 seconds,
     // including cancellation; StopQueryBudget removes the handler before this session can be reused.
-    // A streaming reader restarts the clock before each step (QueryBudget.Restart), so the deadline
+    // A streaming reader pauses the clock between SQLite steps, so the deadline
     // measures SQLite's work, not the consumer's time between rows; the instruction count accumulates.
     private QueryBudget StartQueryBudget(CancellationToken cancellationToken)
     {
-        var budget = new QueryBudget();
+        var budget = new QueryBudget(store.Time);
         raw.sqlite3_progress_handler(session.Connection.Handle, 1000,
             _ => cancellationToken.IsCancellationRequested || ++budget.Callbacks >= 5000 || budget.Spent >= QueryDeadline ? 1 : 0, null);
         return budget;
@@ -319,30 +331,33 @@ internal sealed class SqliteStorageTransaction(
 
     // Time spent in SQLite across a read's steps: a streaming reader pauses it while its consumer works, so the
     // deadline bounds the read's total execution, not each step and not the consumer.
-    private sealed class QueryBudget
+    private sealed class QueryBudget(TimeProvider time)
     {
-        // Running since this timestamp, or 0 while paused; Spent adds the time before the last pause.
-        private long _running = Stopwatch.GetTimestamp();
+        // Running since _started while _running; Spent adds the time before the last pause. Any timestamp, 0 included,
+        // is a valid start.
+        private bool _running = true;
+        private long _started = time.GetTimestamp();
         private TimeSpan _paused;
 
         public int Callbacks { get; set; }
 
-        public TimeSpan Spent => _running == 0 ? _paused : _paused + Stopwatch.GetElapsedTime(_running);
+        public TimeSpan Spent => _running ? _paused + time.GetElapsedTime(_started) : _paused;
 
         public void Resume()
         {
-            if (_running == 0)
+            if (!_running)
             {
-                _running = Stopwatch.GetTimestamp();
+                _started = time.GetTimestamp();
+                _running = true;
             }
         }
 
         public void Pause()
         {
-            if (_running != 0)
+            if (_running)
             {
-                _paused += Stopwatch.GetElapsedTime(_running);
-                _running = 0;
+                _paused += time.GetElapsedTime(_started);
+                _running = false;
             }
         }
     }
@@ -355,11 +370,11 @@ internal sealed class SqliteStorageTransaction(
         return new QueryCapacityException("query execution budget exceeded", error);
     }
 
-    // Sort only after bounding both candidate count and JSON bytes, so SQLite cannot retain an unbounded
-    // collection's bodies in its temporary sorter. octet_length reads size metadata without loading the body.
-    private async ValueTask CheckSortBudgetAsync(DocumentQuery query, CancellationToken cancellationToken)
+    // Bound the candidate count and bytes before a temporary sort. The sorter carries only ids and keys;
+    // octet_length reads body size metadata without loading the body.
+    private async ValueTask CheckSortBudgetAsync(string collection, long maxBytes, CancellationToken cancellationToken)
     {
-        var command = Uncached(query.Collection);
+        var command = Uncached(collection);
         await using (command.ConfigureAwait(false))
         {
             command.CommandText = """
@@ -374,7 +389,7 @@ internal sealed class SqliteStorageTransaction(
                 while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
                 {
                     bytes += reader.GetInt64(0);
-                    if (++rows > 10000 || bytes > query.MaxBytes)
+                    if (++rows > 10000 || bytes > maxBytes)
                     {
                         throw new QueryCapacityException("query sort budget exceeded") { SortBudget = true };
                     }
@@ -397,25 +412,27 @@ internal sealed class SqliteStorageTransaction(
             {
                 while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
                 {
-                    var size = reader.GetInt64(3);
+                    var size = reader.GetInt64(2);
                     if (rows.Count == query.Limit || (rows.Count > 0 && bytes + size > query.MaxBytes))
                     {
                         return new QueryPage(rows, HasMore: true);
                     }
 
                     bytes += size;
-                    var keys = new object?[reader.FieldCount - 4];
+                    var keys = new object?[reader.FieldCount - 3];
                     for (var i = 0; i < keys.Length; i++)
                     {
                         // The provider's text conversion stops at NUL. Read string key bytes with their
                         // SQLite length so a continuation carries the complete sort value.
-                        keys[i] = reader.IsDBNull(4 + i) ? null
-                            : i % 2 == 1 && reader.GetInt64(3 + i) == 5
-                                ? Encoding.UTF8.GetString(reader.GetFieldValue<byte[]>(4 + i))
-                                : reader.GetValue(4 + i);
+                        keys[i] = reader.IsDBNull(3 + i) ? null
+                            : i % 2 == 1 && reader.GetInt64(2 + i) == 5
+                                ? Encoding.UTF8.GetString(reader.GetFieldValue<byte[]>(3 + i))
+                                : reader.GetValue(3 + i);
                     }
 
-                    rows.Add(new QueryRow(new StoredDocument(reader.GetString(0), reader.GetInt64(1), reader.GetFieldValue<byte[]>(2), Incarnation), keys));
+                    // Bodies are fetched only after the id/key page admits this row; a temporary sort never carries them.
+                    var document = await GetAsync(query.Collection, reader.GetString(0), cancellationToken).ConfigureAwait(false);
+                    rows.Add(new QueryRow(document!, keys));
                 }
             }
 
@@ -563,34 +580,87 @@ internal sealed class SqliteStorageTransaction(
         await using (command.ConfigureAwait(false))
         {
             command.CommandText = new SqliteQueryCompiler(command.Parameters).CompileChanges(filter, after, through);
-            // The query budget covers the whole enumeration, and the handler goes even when the consumer stops early.
-            var budget = StartQueryBudget(cancellationToken);
+            await foreach (var document in ReadBudgetedAsync(command, cancellationToken).ConfigureAwait(false))
+            {
+                yield return document;
+            }
+        }
+    }
+
+    // Streams a command's (id, version, body) rows; a null body is a tombstone. The query budget covers the whole
+    // enumeration, including a scan or sort SQLite does before the first row, and the handler goes even when the consumer
+    // stops early.
+    private async IAsyncEnumerable<StoredDocument> ReadBudgetedAsync(
+        SqliteCommand command, [EnumeratorCancellation] CancellationToken cancellationToken, SqlQuery? query = null)
+    {
+        var budget = StartQueryBudget(cancellationToken);
+        try
+        {
+            SqliteDataReader reader;
             try
             {
-                SqliteDataReader reader;
-                try
+                if (query is { Order.Count: > 0 })
                 {
-                    reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
-                }
-                catch (SqliteException error) when (error.SqliteErrorCode == raw.SQLITE_INTERRUPT)
-                {
-                    throw Exhausted(error, cancellationToken);
+                    var plan = await ReadSqlPlanAsync(query, cancellationToken).ConfigureAwait(false);
+                    if (plan.Steps.Any(step => step.Contains("TEMP B-TREE", StringComparison.Ordinal)))
+                    {
+                        await CheckSortBudgetAsync(query.Collection, 8 * 1024 * 1024, cancellationToken).ConfigureAwait(false);
+                    }
                 }
 
-                await using (reader.ConfigureAwait(false))
+                reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+                budget.Pause();
+            }
+            catch (SqliteException error) when (error.SqliteErrorCode == raw.SQLITE_INTERRUPT)
+            {
+                throw Exhausted(error, cancellationToken);
+            }
+
+            await using (reader.ConfigureAwait(false))
+            {
+                while (true)
                 {
-                    while (true)
+                    bool read;
+                    try
                     {
-                        bool read;
+                        budget.Resume();
+                        read = await reader.ReadAsync(cancellationToken).ConfigureAwait(false);
+                    }
+                    catch (SqliteException error) when (error.SqliteErrorCode == raw.SQLITE_INTERRUPT)
+                    {
+                        throw Exhausted(error, cancellationToken);
+                    }
+                    finally
+                    {
+                        budget.Pause();
+                    }
+
+                    if (budget.Spent >= QueryDeadline)
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        throw new QueryCapacityException("query execution budget exceeded");
+                    }
+
+                    if (!read)
+                    {
+                        yield break;
+                    }
+
+                    if (query is not null)
+                    {
+                        StoredDocument? document;
                         try
                         {
                             budget.Resume();
-                            read = await reader.ReadAsync(cancellationToken).ConfigureAwait(false);
-                            budget.Pause();
+                            document = await GetAsync(query.Collection, reader.GetString(0), cancellationToken).ConfigureAwait(false);
                         }
                         catch (SqliteException error) when (error.SqliteErrorCode == raw.SQLITE_INTERRUPT)
                         {
                             throw Exhausted(error, cancellationToken);
+                        }
+                        finally
+                        {
+                            budget.Pause();
                         }
 
                         if (budget.Spent >= QueryDeadline)
@@ -599,21 +669,19 @@ internal sealed class SqliteStorageTransaction(
                             throw new QueryCapacityException("query execution budget exceeded");
                         }
 
-                        if (!read)
-                        {
-                            yield break;
-                        }
-
-                        yield return reader.IsDBNull(2)
-                            ? new StoredDocument(reader.GetString(0), reader.GetInt64(1), ReadOnlyMemory<byte>.Empty, Incarnation, Deleted: true)
-                            : new StoredDocument(reader.GetString(0), reader.GetInt64(1), reader.GetFieldValue<byte[]>(2), Incarnation);
+                        yield return document!;
+                        continue;
                     }
+
+                    yield return reader.IsDBNull(2)
+                        ? new StoredDocument(reader.GetString(0), reader.GetInt64(1), ReadOnlyMemory<byte>.Empty, Incarnation, Deleted: true)
+                        : new StoredDocument(reader.GetString(0), reader.GetInt64(1), reader.GetFieldValue<byte[]>(2), Incarnation);
                 }
             }
-            finally
-            {
-                StopQueryBudget();
-            }
+        }
+        finally
+        {
+            StopQueryBudget();
         }
     }
 

@@ -1,5 +1,4 @@
 using TerraScale.Endpoints;
-using TerraScale.TerraBase.Tenancy;
 
 namespace TerraScale.TerraBase.Features.ApiKeys;
 
@@ -27,7 +26,7 @@ public sealed record CreatedApiKeyBody(
 /// <c>POST /admin/api-keys</c>: issues a scoped client API key for one organization. Served only on the loopback
 /// administrative listener, so it trusts the local operator.
 /// </summary>
-public sealed class CreateApiKeyEndpoint(IApiKeyStore keys, ITenantDirectory tenants) : Endpoint<CreateApiKeyRequest, IResult>
+public sealed class CreateApiKeyEndpoint(IApiKeyStore keys) : Endpoint<CreateApiKeyRequest, IResult>
 {
     private const int MaxNameLength = 100;
 
@@ -57,15 +56,15 @@ public sealed class CreateApiKeyEndpoint(IApiKeyStore keys, ITenantDirectory ten
             return TypedResults.BadRequest($"scopes must be a non-empty subset of: {string.Join(", ", ApiKeyScopes.All)}");
         }
 
+        // The store checks the scope in the issuing write.
         if (string.IsNullOrEmpty(request.OrganizationId) || (request.DatabaseId is not null && request.ProjectId is null)
-            || !await tenants.ExistsAsync(request.OrganizationId, request.ProjectId, request.DatabaseId, cancellationToken))
+            || await keys.CreateAsync(request.Name, [.. request.Scopes.Distinct()], request.OrganizationId, request.ProjectId, request.DatabaseId, cancellationToken)
+                is not var (key, secret))
         {
             return TypedResults.BadRequest(
                 "organizationId must name an organization, projectId one of its projects and databaseId (only with projectId) one of that project's databases");
         }
 
-        var (key, secret) = await keys.CreateAsync(
-            request.Name, [.. request.Scopes.Distinct()], request.OrganizationId, request.ProjectId, request.DatabaseId, cancellationToken);
         return TypedResults.Created(
             $"/admin/api-keys/{key.Id}", new CreatedApiKeyBody(key.Id, key.Name, key.Scopes, key.OrganizationId, key.ProjectId, key.DatabaseId, secret));
     }

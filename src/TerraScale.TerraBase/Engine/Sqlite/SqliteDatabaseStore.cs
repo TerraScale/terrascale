@@ -5,8 +5,9 @@ namespace TerraScale.TerraBase.Engine.Sqlite;
 /// <param name="name">Names the database in error messages: its id, or <c>_system</c>.</param>
 /// <param name="path">The database file.</param>
 /// <param name="pool">Idle sessions, shared by every database of the engine.</param>
+/// <param name="time">The clock of the query deadline.</param>
 /// <param name="committed">Optional engine notification after a successful commit that changed this database.</param>
-internal sealed class SqliteDatabaseStore(string name, string path, SqliteSessionPool pool, Action? committed = null) : IDatabaseStore, IDisposable
+internal sealed class SqliteDatabaseStore(string name, string path, SqliteSessionPool pool, TimeProvider time, Action? committed = null) : IDatabaseStore, IDisposable
 {
     /// <summary>On-disk schema version, stored in <c>PRAGMA user_version</c>.</summary>
     private const int SchemaVersion = 6;
@@ -172,6 +173,8 @@ internal sealed class SqliteDatabaseStore(string name, string path, SqliteSessio
 
     /// <summary>Set once the database is deleted or the engine shuts down; guarded by <see cref="SqliteSessionPool"/>.</summary>
     internal bool Closed { get; set; }
+
+    internal TimeProvider Time => time;
 
     /// <summary>Idle sessions of this database, for tests.</summary>
     internal int IdleCount => pool.IdleCountOf(this);

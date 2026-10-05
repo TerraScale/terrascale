@@ -133,6 +133,45 @@ public interface IStorageTransaction : IAsyncDisposable
     ValueTask<bool> DropCollectionAsync(string name, CancellationToken cancellationToken);
 
     /// <summary>
+    /// Counts the live documents of one collection (0 when it holds none, or was never created), without reading other
+    /// collections or any body.
+    /// </summary>
+    ValueTask<long> CountDocumentsAsync(string collection, CancellationToken cancellationToken);
+
+    /// <summary>Counts the live documents of every collection, in name order, without reading document bodies.</summary>
+    ValueTask<IReadOnlyList<CollectionCount>> CountCollectionsAsync(CancellationToken cancellationToken);
+
+    /// <summary>Lists every collection, in name order, with its live documents and their JSON size (read from size metadata).</summary>
+    ValueTask<IReadOnlyList<CollectionStats>> ListCollectionStatsAsync(CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Streams the live documents <paramref name="query"/> selects, at most <see cref="SqlQuery.Limit"/>, one at a time:
+    /// the caller bounds what it keeps and stops reading when it has enough. The query work budget of
+    /// <see cref="QueryAsync"/> applies: past it the stream fails with a <see cref="QueryCapacityException"/>, and cancelling
+    /// <paramref name="cancellationToken"/> stops the query even while the engine is still scanning or sorting, with an
+    /// <see cref="OperationCanceledException"/>.
+    /// </summary>
+    IAsyncEnumerable<StoredDocument> QuerySqlAsync(SqlQuery query, CancellationToken cancellationToken);
+
+    /// <summary>Describes how the engine would run <paramref name="query"/>, without running it.</summary>
+    ValueTask<SqlQueryPlan> ExplainSqlAsync(SqlQuery query, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Drops every collection whose name starts with <paramref name="prefix"/>, with every document and tombstone in
+    /// them; returns how many documents and tombstones were removed.
+    /// </summary>
+    ValueTask<long> DeleteCollectionsAsync(string prefix, CancellationToken cancellationToken);
+
+    /// <summary>Lists the secondary indexes of this database in name order.</summary>
+    ValueTask<IReadOnlyList<IndexDefinition>> ListIndexesAsync(CancellationToken cancellationToken);
+
+    /// <summary>Builds a secondary index over live documents; <see langword="false"/> when an index with the name already exists.</summary>
+    ValueTask<bool> CreateIndexAsync(IndexDefinition index, CancellationToken cancellationToken);
+
+    /// <summary>Drops a secondary index; <see langword="false"/> when it did not exist.</summary>
+    ValueTask<bool> DropIndexAsync(string name, CancellationToken cancellationToken);
+
+    /// <summary>
     /// Makes every change of this transaction visible atomically and returns the database offset:
     /// this transaction's when it wrote documents or created or dropped a collection, otherwise the latest committed one.
     /// </summary>

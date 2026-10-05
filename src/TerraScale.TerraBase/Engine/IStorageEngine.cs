@@ -105,6 +105,9 @@ public interface IStorageEngine : IAsyncDisposable
     /// </summary>
     IEnumerable<StoredDatabaseFile> EnumerateDatabaseFiles(CancellationToken cancellationToken = default);
 
+    /// <summary>Bytes the database occupies on disk, or <see langword="null"/> when it does not exist.</summary>
+    ValueTask<long?> GetDatabaseSizeAsync(TenantContext database, CancellationToken cancellationToken);
+
     /// <summary>Opens TerraBase's own database (catalog, API keys), creating it on first use. No tenant can address it.</summary>
     ValueTask<IDatabaseStore> OpenSystemDatabaseAsync(CancellationToken cancellationToken);
 }

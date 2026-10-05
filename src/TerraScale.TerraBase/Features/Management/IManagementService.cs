@@ -139,7 +139,7 @@ public interface IManagementService
     ValueTask<ManagementResult<Project>> RenameProjectAsync(
         string userId, string organizationId, string projectId, string name, CancellationToken cancellationToken);
 
-    /// <summary>Deletes a project that has no databases.</summary>
+    /// <summary>Deletes a project that has no databases or API keys.</summary>
     ValueTask<ManagementError> DeleteProjectAsync(string userId, string organizationId, string projectId, CancellationToken cancellationToken);
 
     /// <summary>Creates an empty database in a project.</summary>
@@ -154,11 +154,28 @@ public interface IManagementService
     ValueTask<ManagedDatabase?> GetDatabaseAsync(
         string userId, string organizationId, string projectId, string databaseId, CancellationToken cancellationToken);
 
-    /// <summary>Deletes a database and its data.</summary>
+    /// <summary>
+    /// The tenant of a database the user reaches through membership of its organization: organization and plan, project
+    /// and database, resolved in the same catalog read as the membership check; <see langword="null"/> when any is missing.
+    /// </summary>
+    ValueTask<TenantContext?> GetDatabaseTenantAsync(
+        string userId, string organizationId, string projectId, string databaseId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Deletes a database and its data. Its files and the expiry of its backups are owed to the storage sweep from the
+    /// catalog commit on, so a failed or interrupted deletion of the files is retried.
+    /// </summary>
     ValueTask<ManagementError> DeleteDatabaseAsync(
         string userId, string organizationId, string projectId, string databaseId, CancellationToken cancellationToken);
 
     /// <summary>Creates a database in the same project as a snapshot copy of an existing one.</summary>
     ValueTask<ManagementResult<ManagedDatabase>> BranchDatabaseAsync(
         string userId, string organizationId, string projectId, string databaseId, string name, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Creates a database in a project as a snapshot copy of the engine database <paramref name="sourceId"/> of the same
+    /// project (for example a backup snapshot); <see cref="ManagementError.NotFound"/> when the project or the source does not exist.
+    /// </summary>
+    ValueTask<ManagementResult<ManagedDatabase>> CopyDatabaseAsync(
+        string userId, string organizationId, string projectId, string sourceId, string name, string? branchedFrom, CancellationToken cancellationToken);
 }

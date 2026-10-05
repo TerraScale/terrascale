@@ -35,6 +35,7 @@
     <ProjectReference Include="$(MSBuildThisFileDirectory)src/TerraScale.TerraBase/TerraScale.TerraBase.csproj" />
     <PackageReference Include="TUnit" />
     <PackageReference Include="Bogus" />
+    <PackageReference Include="Microsoft.Extensions.TimeProvider.Testing" />
     <!-- Starts the top-level Program on real Kestrel listeners (WebApplicationFactory.UseKestrel). -->
     <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" />
     <!-- Shared harness source; deliberately not a third test project. -->

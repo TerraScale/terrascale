@@ -1,5 +1,6 @@
 using System.Diagnostics.Metrics;
 using System.Text.Json;
+using TerraScale.TerraBase.Features.Management.Backups;
 using TerraScale.TerraBase.Hosting;
 using TerraScale.TerraBase.Tenancy;
 
@@ -82,10 +83,13 @@ internal sealed partial class EngineManagementService
 
     public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 
+    // A database of the project, or a backup snapshot its organization still tracks there (the storage sweep deletes it).
     private ValueTask<bool> IsRegisteredAsync(TenantContext storage, CancellationToken cancellationToken) =>
         ReadCatalogAsync(async transaction =>
             await OrganizationProjectAsync(transaction, storage.OrganizationId, storage.ProjectId!, cancellationToken).ConfigureAwait(false) is not null
-            && await GetAsync(transaction, Databases(storage.ProjectId!), storage.DatabaseId!, TerraBaseJsonContext.Default.ManagedDatabase, cancellationToken).ConfigureAwait(false) is not null,
+            && (await GetAsync(transaction, Databases(storage.ProjectId!), storage.DatabaseId!, TerraBaseJsonContext.Default.ManagedDatabase, cancellationToken).ConfigureAwait(false) is not null
+                || await GetAsync(transaction, BackupCatalog.Records(storage.OrganizationId), storage.DatabaseId!, TerraBaseJsonContext.Default.BackupRecord, cancellationToken)
+                    .ConfigureAwait(false) is { } backup && backup.ProjectId == storage.ProjectId),
             cancellationToken);
 
     private ValueTask<bool> HasDatabaseRowAsync(TenantContext storage, CancellationToken cancellationToken) =>

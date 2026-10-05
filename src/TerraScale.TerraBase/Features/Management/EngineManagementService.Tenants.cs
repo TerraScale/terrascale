@@ -16,7 +16,7 @@ internal sealed partial class EngineManagementService
         string organizationId, string projectId, string database, CancellationToken cancellationToken)
     {
         var added = await AddDatabaseAsync(
-            transaction => OrganizationProjectAsync(transaction, organizationId, projectId, cancellationToken), database, source: null, cancellationToken)
+            transaction => OrganizationProjectAsync(transaction, organizationId, projectId, cancellationToken), database, sourceId: null, branchedFrom: null, cancellationToken)
             .ConfigureAwait(false);
         if (added.Value is { } value)
         {
@@ -30,21 +30,25 @@ internal sealed partial class EngineManagementService
             : null;
     }
 
-    public ValueTask<bool> ExistsAsync(string organizationId, string? projectId, string? databaseId, CancellationToken cancellationToken) =>
-        ReadAsync(async transaction =>
+    /// <summary>
+    /// Whether an organization, one of its projects and one database of that project (each optional after the first)
+    /// exist, inside a catalog transaction and without a membership check: the scope of an API key.
+    /// </summary>
+    internal static async ValueTask<bool> ScopeExistsUncheckedAsync(
+        IStorageTransaction transaction, string organizationId, string? projectId, string? databaseId, CancellationToken cancellationToken)
+    {
+        if (projectId is null)
         {
-            if (projectId is null)
-            {
-                return databaseId is null
-                    && await GetAsync(transaction, Organizations, organizationId, TerraBaseJsonContext.Default.Organization, cancellationToken)
-                        .ConfigureAwait(false) is not null;
-            }
+            return databaseId is null
+                && await GetAsync(transaction, Organizations, organizationId, TerraBaseJsonContext.Default.Organization, cancellationToken)
+                    .ConfigureAwait(false) is not null;
+        }
 
-            return await OrganizationProjectAsync(transaction, organizationId, projectId, cancellationToken).ConfigureAwait(false) is not null
-                && (databaseId is null
-                    || await GetAsync(transaction, Databases(projectId), databaseId, TerraBaseJsonContext.Default.ManagedDatabase, cancellationToken)
-                        .ConfigureAwait(false) is not null);
-        }, cancellationToken);
+        return await OrganizationProjectAsync(transaction, organizationId, projectId, cancellationToken).ConfigureAwait(false) is not null
+            && (databaseId is null
+                || await GetAsync(transaction, Databases(projectId), databaseId, TerraBaseJsonContext.Default.ManagedDatabase, cancellationToken)
+                    .ConfigureAwait(false) is not null);
+    }
 
     private static async ValueTask<TenantContext?> FindDatabaseAsync(
         IStorageTransaction transaction, string organizationId, string projectId, string database, CancellationToken cancellationToken) =>

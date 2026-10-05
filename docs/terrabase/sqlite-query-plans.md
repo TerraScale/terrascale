@@ -7,8 +7,8 @@ SQLite that Microsoft.Data.Sqlite bundles (3.53.4). The Fast suite
 
 ## Inventory
 
-Only the engine runs SQL. Catalog, indexing and replication have no SQL yet (their slices are
-interfaces only). API keys and the Management slice (organizations, projects, databases) are
+Only the engine runs SQL. Catalog and replication have no SQL yet (their slices are interfaces
+only). API keys and the Management slice (organizations, projects, databases) are
 documents in `_system` and use the document statements: lookups by id or unique name use `Get`, creates
 and renames use `Put` and `Delete`, list endpoints and "has children" checks use `ListFirst` and `ListAfter`.
 The plan test runs every statement against both a client database and the `_system` database
@@ -38,6 +38,10 @@ from live listing and query scans. Point reads and tombstone metadata still use 
 | List, next page: `… WHERE collection = ? AND id > ? ORDER BY id LIMIT ?` | list with cursor | `SEARCH documents USING PRIMARY KEY (collection=?)` — one statement used `($after IS NULL OR id > $after)`, which kept SQLite from seeking to the cursor: every page walked the collection from its first id | `SEARCH documents USING INDEX documents_live (collection=? AND id>?)` (`ListAfter`) |
 | `PRAGMA user_version`, `PRAGMA journal_mode = WAL`, `CREATE TABLE` | once per database per process (migration) | DDL, no plan | unchanged |
 | `VACUUM INTO $path` | database copy (Management API), rare | maintenance, `EXPLAIN QUERY PLAN` returns no rows | unchanged; runs on a pooled connection |
+| `CountDocuments`: `SELECT count(*) … WHERE collection = ? AND body IS NOT NULL` | schema inference, query-field records in `_system` (Management API) | — | `SEARCH documents USING PRIMARY KEY (collection=?)`; tests each record header's body type, never loads a body. `documents_live` would not cover the `body` test and would add a lookup per row |
+| `CountCollections`, `ListCollectionStats` | usage, collection list (Management API) | — | `SCAN collections` in key order, then per collection `SEARCH documents USING PRIMARY KEY (collection=?)` (a correlated count, or a `LEFT-JOIN` summing `octet_length(body)`, which reads the size from the record header) |
+| `DeleteCollectionDocuments`, `DeleteCollectionNames`: `DELETE … WHERE name >= ? AND name < ?` | database or project deletion in `_system` (Management API) | — | `SEARCH documents USING PRIMARY KEY (collection>? AND collection<?)`; `SEARCH collections USING PRIMARY KEY (name>? AND name<?)` |
+| `ListIndexes`, `IndexExists` on `sqlite_schema` | index list, create and drop (Management API) | — | `SCAN sqlite_schema` (a handful of rows); the list is sorted in memory, not in a temporary B-tree |
 
 No fixed statement sorts in a temporary B-tree, and only the first collections page scans (in key
 order, up to its limit).
@@ -63,7 +67,7 @@ Queries and counts (`SqliteQueryCompiler`) are compiled per request and are neit
 the session nor in `SqliteStatements.All`. Live queries read the collection's partial-index range
 (`SEARCH documents USING INDEX documents_live (collection=?)`, or `collection=? AND id>?` with an id-only
 cursor) and evaluate filters with `json_type`/`json_extract`/`json_each`; a sort on a document field
-sorts in a temporary B-tree. There is no `json_extract` expression index yet (Indexing slice). Queries/counts have cancellation,
+sorts in a temporary B-tree. Document queries do not use the Management API's expression indexes (below). Queries/counts have cancellation,
 VM-instruction and deadline budgets; field sorts also preflight
 10000 live candidates and 8 MiB of JSON metadata before admitting a temporary sorter. A leading `$id` sort emits only
 `ORDER BY id ASC|DESC`: the constant rank and redundant later terms would force a sorter. Its
@@ -134,3 +138,23 @@ of each.
 | Insert, 100 documents per transaction | 206–225 µs per document | 168 µs per document |
 | Insert, 4 concurrent writers, 1 document per transaction | 6.10–6.83 ms per write | 141–151 µs per write |
 | Update, 1 document per transaction | 5.44–6.84 ms | 91 µs |
+
+## Management API: SQL subset and secondary indexes
+
+`SqliteStorageTransaction.Queries.cs` compiles the dashboard SQL subset (TS-463) per request and creates secondary
+indexes; neither is in `SqliteStatements.All`. Both read live documents only.
+
+- A SQL-subset query is `SELECT id, version FROM documents WHERE collection = '<collection>' AND body IS NOT NULL
+  AND <filter> ORDER BY <fields>, id LIMIT ?`, with `id DESC` when the first field is descending, so an index read
+  backwards serves the whole order. A temporary sort holds keys only; each body is read by primary key as its row is
+  consumed. Fields compile to `id`, `version` or `json_extract(body, '$.<path>')`; the collection and the paths are
+  literals so that SQLite matches an expression index textually.
+- An index is `CREATE INDEX "tb_index_<name>" ON documents (collection, <fields>) WHERE collection = '<collection>' AND
+  body IS NOT NULL`: partial on the same two terms the query repeats, so tombstones take no index space and the planner
+  can use it. Document queries never use it (they name `documents_live`), nor do document counts, which read
+  tombstones too.
+- After a build, `ANALYZE` of the new index alone and a seeded or raised `sqlite_stat1` row for the primary key and
+  `documents_live` (`"<rows> <rows> 1"`) keep the planner from preferring either collection-leading index over it. Plans
+  are reported by `POST …/sql/check` and asserted by the Fast `SqlApiTests` and `IndexApiTests`.
+- SQL-subset queries share the document query work budget (`QueryBudget` in `SqliteStorageTransaction`: 5 million VM instructions or 5 seconds,
+  or cancellation).

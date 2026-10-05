@@ -16,6 +16,10 @@ public sealed class TenantIsolationTests
     // Client routes that address no organization, project or database: they act only for the caller.
     private static readonly string[] ReadScope = ["documents:read"];
 
+    // Index fields the Management API tooling routes are sent with.
+    private static readonly string[] NameField = ["name"];
+    private static readonly string[] OwnerField = ["owner"];
+
     // The id of every document these tests write; documents are created with UUID ids.
     private const string DocumentId = "0199a000-0000-7000-8000-000000000001";
 
@@ -44,8 +48,11 @@ public sealed class TenantIsolationTests
         var aSecret = await SeedAsync(api, a, aDashboard);
         var bSecret = await SeedAsync(api, b, bDashboard);
         var bInvitation = await InviteAsync(b, bDashboard);
-        var aBefore = await SnapshotAsync(api, a, aDashboard);
-        var bBefore = await SnapshotAsync(api, b, bDashboard);
+        // And the database tooling of the Management API: a project API key, a saved query, an index, a backup and a recommendation.
+        var aTooling = await SeedToolingAsync(a, aDashboard, aSecret);
+        var bTooling = await SeedToolingAsync(b, bDashboard, bSecret);
+        var aBefore = await SnapshotAsync(api, a, aDashboard, aSecret);
+        var bBefore = await SnapshotAsync(api, b, bDashboard, bSecret);
 
         var routes = ClientRoutes(api.Server);
         foreach (var (method, pattern) in routes.Where(route => !Addresses(route.Pattern)))
@@ -59,15 +66,15 @@ public sealed class TenantIsolationTests
         List<(string Request, HttpStatusCode Status)> answers =
         [
             // A's credentials (its API key, or its member on the dashboard) with B's organization and B's project.
-            .. await SendAsync(addressing, aDashboard, a.Data, b.OrganizationId, b.ProjectId, bSecret, b.User, bInvitation),
+            .. await SendAsync(addressing, aDashboard, a.Data, b.OrganizationId, b.ProjectId, bSecret, b.User, bInvitation, bTooling),
             // A's organization, where A is an owner, with B's project.
             .. await SendAsync(management.Where(route => route.Pattern.Contains("{project}", StringComparison.Ordinal)),
-                aDashboard, a.Data, a.OrganizationId, b.ProjectId, bSecret, b.User, bInvitation),
+                aDashboard, a.Data, a.OrganizationId, b.ProjectId, bSecret, b.User, bInvitation, bTooling),
             // B's organization with A's project: A's member on B's organization, and B's key (whose organization is B) on A's project.
-            .. await SendAsync(withProject, aDashboard, b.Data, b.OrganizationId, a.ProjectId, aSecret, b.User, bInvitation),
+            .. await SendAsync(withProject, aDashboard, b.Data, b.OrganizationId, a.ProjectId, aSecret, b.User, bInvitation, aTooling),
             // A's organization and project with B's database.
             .. await SendAsync(management.Where(route => route.Pattern.Contains("{database}", StringComparison.Ordinal)),
-                aDashboard, a.Data, a.OrganizationId, a.ProjectId, bSecret, b.User, bInvitation),
+                aDashboard, a.Data, a.OrganizationId, a.ProjectId, bSecret, b.User, bInvitation, bTooling),
         ];
 
         // Routes that address no tenant show A only its own organization.
@@ -82,8 +89,8 @@ public sealed class TenantIsolationTests
         await Assert.That(listed.RootElement.GetProperty("items").EnumerateArray().Select(item => item.GetProperty("id").GetString()!))
             .IsEquivalentTo([a.OrganizationId]);
         await Assert.That(switched.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
-        await Assert.That(await SnapshotAsync(api, a, aDashboard)).IsEquivalentTo(aBefore);
-        await Assert.That(await SnapshotAsync(api, b, bDashboard)).IsEquivalentTo(bBefore);
+        await Assert.That(await SnapshotAsync(api, a, aDashboard, aSecret)).IsEquivalentTo(aBefore);
+        await Assert.That(await SnapshotAsync(api, b, bDashboard, bSecret)).IsEquivalentTo(bBefore);
     }
 
     [Test]
@@ -214,7 +221,7 @@ public sealed class TenantIsolationTests
     // Sends each route with these values for its parameters: management routes through dashboard, data routes through data.
     private static async Task<List<(string Request, HttpStatusCode Status)>> SendAsync(
         IEnumerable<(string Method, string Pattern)> routes, HttpClient dashboard, HttpClient data,
-        string organization, string project, string database, string user, string invitation)
+        string organization, string project, string database, string user, string invitation, Tooling tooling)
     {
         var sent = new List<(string Request, HttpStatusCode Status)>();
         foreach (var (method, pattern) in routes)
@@ -227,15 +234,33 @@ public sealed class TenantIsolationTests
                 .Replace("{collection}", "people", StringComparison.Ordinal)
                 .Replace("{id}", DocumentId, StringComparison.Ordinal)
                 .Replace("{user}", user, StringComparison.Ordinal)
-                .Replace("{invitation}", invitation, StringComparison.Ordinal);
+                .Replace("{invitation}", invitation, StringComparison.Ordinal)
+                .Replace("{key}", tooling.Key, StringComparison.Ordinal)
+                .Replace("{query}", tooling.Query, StringComparison.Ordinal)
+                .Replace("{backup}", tooling.Backup, StringComparison.Ordinal)
+                .Replace("{index}", tooling.Index, StringComparison.Ordinal)
+                .Replace("{recommendation}", tooling.Recommendation, StringComparison.Ordinal);
             // A new route parameter needs a value here.
             await Assert.That(path).DoesNotContain("{");
             using var request = new HttpRequestMessage(new HttpMethod(method), new Uri(path, UriKind.Relative));
             if (method is "POST" or "PUT" or "PATCH")
             {
                 // Valid for every route, so only tenancy can refuse it.
-                request.Content = JsonContent.Create(
-                    new { name = "intruder", plan = "enterprise", email = "intruder@example.com", role = "member", userId = user, days = 30 });
+                request.Content = JsonContent.Create(new
+                {
+                    name = "intruder",
+                    plan = "enterprise",
+                    email = "intruder@example.com",
+                    role = "member",
+                    userId = user,
+                    days = 30,
+                    scopes = ReadScope,
+                    sql = "SELECT * FROM people",
+                    collection = "people",
+                    fields = OwnerField,
+                    fullBackupCron = "",
+                    retentionDays = 7,
+                });
             }
 
             using var response = await (IsManagement(pattern) ? dashboard : data).SendAsync(request);
@@ -260,6 +285,27 @@ public sealed class TenantIsolationTests
         await Assert.That(pending.StatusCode).IsEqualTo(HttpStatusCode.OK);
         await Assert.That((await pending.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("toUserId").GetString()).IsEqualTo(nominee);
         return id;
+    }
+
+    // The Management API's tooling of a database: a project API key, a saved query, an index on people.name, a backup, and a
+    // recommendation for people.owner from a SQL run.
+    private static async Task<Tooling> SeedToolingAsync(Tenant tenant, HttpClient dashboard, string database)
+    {
+        var project = $"/v1/management/organizations/{tenant.OrganizationId}/projects/{tenant.ProjectId}";
+        var path = $"{project}/databases/{database}";
+        async Task<JsonElement> PostAsync(string route, object? body)
+        {
+            using var response = await dashboard.PostAsJsonAsync(new Uri(route, UriKind.Relative), body);
+            response.EnsureSuccessStatusCode();
+            return await response.Content.ReadFromJsonAsync<JsonElement>();
+        }
+
+        var key = (await PostAsync($"{project}/api-keys", new { name = "ci", scopes = ReadScope })).GetProperty("key").GetProperty("id").GetString()!;
+        var query = (await PostAsync($"{project}/saved-queries", new { name = "All", sql = "SELECT * FROM people" })).GetProperty("id").GetString()!;
+        var backup = (await PostAsync($"{path}/backups", null)).GetProperty("id").GetString()!;
+        var index = (await PostAsync($"{path}/indexes", new { collection = "people", fields = NameField })).GetProperty("name").GetString()!;
+        await PostAsync($"{path}/sql", new { sql = "SELECT * FROM people WHERE owner = 'nobody'" });
+        return new Tooling(key, query, backup, index, "people:owner");
     }
 
     // A pending invitation; returns its id.
@@ -307,15 +353,18 @@ public sealed class TenantIsolationTests
 
     // Everything of a tenant that another could have read, changed or deleted: its organization, members, invitations,
     // ownership transfer, audit log, projects, databases, documents and files.
-    private static async Task<List<string>> SnapshotAsync(ManagementApi api, Tenant b, HttpClient bDashboard)
+    private static async Task<List<string>> SnapshotAsync(ManagementApi api, Tenant b, HttpClient bDashboard, string secret)
     {
         var organization = $"/v1/management/organizations/{b.OrganizationId}";
         var project = $"{organization}/projects/{b.ProjectId}";
+        var database = $"{project}/databases/{secret}";
         var snapshot = new List<string>();
         foreach (var path in new[]
         {
             organization, $"{organization}/projects", project, $"{project}/databases", $"{organization}/members", $"{organization}/invitations",
             $"{organization}/ownership-transfer", $"{organization}/audit-retention", $"{organization}/audit-events",
+            $"{project}/api-keys", $"{project}/saved-queries", $"{database}/indexes", $"{database}/backups", $"{database}/backup-policy",
+            $"{database}/index-recommendations",
         })
         {
             using var response = await bDashboard.GetAsync(new Uri(path, UriKind.Relative));
@@ -328,4 +377,7 @@ public sealed class TenantIsolationTests
             .Order(StringComparer.Ordinal));
         return snapshot;
     }
+
+    /// <summary>The ids of a tenant's Management API tooling that routes name.</summary>
+    private sealed record Tooling(string Key, string Query, string Backup, string Index, string Recommendation);
 }

@@ -77,6 +77,32 @@ internal static class SqliteStatements
 
     public const string DropCollection = "DELETE FROM collections WHERE name = $collection;";
 
+    // Management API (TS-463). Counts walk the collection's primary-key range and test each record header's body type,
+    // never the body: documents_live would not cover the body test and would add a lookup per row.
+    public const string CountDocuments = "SELECT count(*) FROM documents WHERE collection = $collection AND body IS NOT NULL;";
+
+    public const string CountCollections = """
+        SELECT name, (SELECT count(*) FROM documents WHERE collection = collections.name AND body IS NOT NULL)
+        FROM collections ORDER BY name;
+        """;
+
+    // octet_length reads each live body's size from its record header, not the body.
+    public const string ListCollectionStats = """
+        SELECT collections.name, count(documents.id), coalesce(sum(octet_length(documents.body)), 0)
+        FROM collections LEFT JOIN documents ON documents.collection = collections.name AND documents.body IS NOT NULL
+        GROUP BY collections.name ORDER BY collections.name;
+        """;
+
+    // A prefix is the name range [$from, $to) of each primary key; documents and tombstones go with their collections.
+    public const string DeleteCollectionDocuments = "DELETE FROM documents WHERE collection >= $from AND collection < $to;";
+
+    public const string DeleteCollectionNames = "DELETE FROM collections WHERE name >= $from AND name < $to;";
+
+    // Secondary indexes are read back from the schema table, which is small and has no index of its own.
+    public const string ListIndexes = "SELECT name, sql FROM sqlite_schema WHERE type = 'index' AND name LIKE 'tb\\_index\\_%' ESCAPE '\\';";
+
+    public const string IndexExists = "SELECT 1 FROM sqlite_schema WHERE type = 'index' AND name = $name;";
+
     /// <summary>Statement name and text, for query-plan checks.</summary>
     public static IReadOnlyDictionary<string, string> All { get; } = new Dictionary<string, string>(StringComparer.Ordinal)
     {
@@ -100,5 +126,12 @@ internal static class SqliteStatements
         [nameof(AppendChange)] = AppendChange,
         [nameof(HistoryFloor)] = HistoryFloor,
         [nameof(DropHistory)] = DropHistory,
+        [nameof(CountDocuments)] = CountDocuments,
+        [nameof(CountCollections)] = CountCollections,
+        [nameof(ListCollectionStats)] = ListCollectionStats,
+        [nameof(DeleteCollectionDocuments)] = DeleteCollectionDocuments,
+        [nameof(DeleteCollectionNames)] = DeleteCollectionNames,
+        [nameof(ListIndexes)] = ListIndexes,
+        [nameof(IndexExists)] = IndexExists,
     };
 }

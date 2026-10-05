@@ -19,9 +19,11 @@ internal static class RequestJson
     /// <summary>Largest stored document, and so the largest document request body.</summary>
     public const int MaxDocumentBytes = 1024 * 1024;
 
+    /// <summary>Deepest nesting of a client value, the document itself counting as the first level.</summary>
+    public const int MaxDepth = 16;
+
     private static readonly UTF8Encoding StrictUtf8 = new(false, true);
 
-    private const int MaxDepth = 16;
     private const int MaxNodes = 4096;
 
     private static readonly JsonSerializerOptions Options = new(TerraBaseJsonContext.Default.Options)

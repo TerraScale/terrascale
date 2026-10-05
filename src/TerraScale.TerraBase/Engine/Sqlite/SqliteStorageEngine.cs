@@ -25,9 +25,10 @@ namespace TerraScale.TerraBase.Engine.Sqlite;
 /// <param name="logger">Reports a shutdown that stopped waiting with connections still open.</param>
 /// <param name="readinessCacheTtl">How long completed filesystem readiness checks are reused.</param>
 /// <param name="checkpoint">A per-host lifecycle checkpoint for integration tests.</param>
+/// <param name="time">The clock of the query deadline; the system clock by default.</param>
 internal sealed partial class SqliteStorageEngine(
     string dataDirectory, TimeSpan shutdownGrace, ILogger<SqliteStorageEngine> logger, TimeSpan readinessCacheTtl,
-    DatabaseLifecycleCheckpoint checkpoint) : IStorageEngine
+    DatabaseLifecycleCheckpoint checkpoint, TimeProvider? time = null) : IStorageEngine
 {
     private const string FileExtension = ".db";
 
@@ -272,6 +273,8 @@ internal sealed partial class SqliteStorageEngine(
     /// Idle connections of every database: enough for every core to work on one database, and four
     /// times that in total.
     /// </summary>
+    internal TimeProvider Time { get; } = time ?? TimeProvider.System;
+
     internal SqliteSessionPool Pool { get; } = new(maxIdle: 4 * Environment.ProcessorCount, maxIdlePerDatabase: Environment.ProcessorCount);
 
     public async ValueTask<bool> CreateDatabaseWithIntentAsync(
@@ -564,6 +567,14 @@ internal sealed partial class SqliteStorageEngine(
         return File.Exists(path) ? await OpenStoreAsync(key, path, cancellationToken).ConfigureAwait(false) : null;
     }
 
+    public ValueTask<long?> GetDatabaseSizeAsync(TenantContext database, CancellationToken cancellationToken)
+    {
+        var (_, path) = Locate(database);
+        var file = new FileInfo(path);
+        var wal = new FileInfo(path + "-wal");
+        return ValueTask.FromResult<long?>(file.Exists ? file.Length + (wal.Exists ? wal.Length : 0) : null);
+    }
+
     public async ValueTask<IDatabaseStore> OpenSystemDatabaseAsync(CancellationToken cancellationToken)
     {
         // Like every other store: none is handed out after shutdown, even a cached one.
@@ -582,7 +593,7 @@ internal sealed partial class SqliteStorageEngine(
             {
                 var path = LocateSystem();
                 await CreateFileAsync(SystemName, path, cancellationToken).ConfigureAwait(false);
-                system = new SqliteDatabaseStore(SystemName, path, Pool);
+                system = new SqliteDatabaseStore(SystemName, path, Pool, Time);
                 await system.MigrateAsync(cancellationToken).ConfigureAwait(false);
                 Volatile.Write(ref _system, system);
             }
@@ -961,7 +972,7 @@ internal sealed partial class SqliteStorageEngine(
             return null;
         }
 
-        store = new SqliteDatabaseStore(key.Database, path, Pool, RecordCommittedWrite);
+        store = new SqliteDatabaseStore(key.Database, path, Pool, Time, RecordCommittedWrite);
         try
         {
             await store.MigrateAsync(cancellationToken).ConfigureAwait(false);

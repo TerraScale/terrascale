@@ -21,10 +21,4 @@ public interface ITenantDirectory
     /// </summary>
     ValueTask<(TenantContext Database, bool Created)?> CreateDatabaseAsync(
         string organizationId, string projectId, string database, CancellationToken cancellationToken);
-
-    /// <summary>
-    /// Whether the organization exists and, when given, <paramref name="projectId"/> is one of its projects and
-    /// <paramref name="databaseId"/> one of that project's databases.
-    /// </summary>
-    ValueTask<bool> ExistsAsync(string organizationId, string? projectId, string? databaseId, CancellationToken cancellationToken);
 }

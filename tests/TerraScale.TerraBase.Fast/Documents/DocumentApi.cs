@@ -65,7 +65,7 @@ internal sealed class DocumentApi : IAsyncDisposable
     public static async Task<DocumentApi> StartAsync(
         Action<Dictionary<string, string>>? configure = null, Action<Microsoft.Extensions.DependencyInjection.IServiceCollection>? services = null)
     {
-        var management = await ManagementApi.StartAsync(configure, services);
+        var management = await ManagementApi.StartAsync(configure, services: services);
         Tenant? tenant = null;
         try
         {

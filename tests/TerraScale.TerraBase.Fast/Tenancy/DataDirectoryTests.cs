@@ -215,7 +215,7 @@ public sealed class DataDirectoryTests
         ];
         foreach (var connection in connections)
         {
-            var store = new SqliteDatabaseStore("probe", path, engine.Pool);
+            var store = new SqliteDatabaseStore("probe", path, engine.Pool, engine.Time);
             var session = await OpenSessionAsync(connection);
             await Assert.That(engine.Pool.Rent(store)).IsNull();
             engine.Pool.Adopt(store, session);

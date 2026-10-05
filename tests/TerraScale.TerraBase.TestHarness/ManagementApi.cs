@@ -1,5 +1,9 @@
+using System.Net;
 using System.Net.Http.Headers;
+using System.Text;
 using System.Text.Json;
+using Microsoft.Data.Sqlite;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace TerraScale.TerraBase.Testing;
 
@@ -30,9 +34,12 @@ public sealed class ManagementApi : IAsyncDisposable
     /// <summary>A client acting as <see cref="User"/>.</summary>
     public HttpClient Client { get; }
 
-    /// <summary>Starts a server; <paramref name="services"/> replaces services as in <see cref="TerraBaseTestServer.StartAsync"/>.</summary>
+    /// <summary>
+    /// Starts a server; <paramref name="configure"/> edits its settings after the client listener and the credential are
+    /// configured, <paramref name="time"/> replaces its clock and <paramref name="services"/> its other services.
+    /// </summary>
     public static async Task<ManagementApi> StartAsync(
-        Action<Dictionary<string, string>>? configure = null, Action<Microsoft.Extensions.DependencyInjection.IServiceCollection>? services = null)
+        Action<Dictionary<string, string>>? configure = null, Action<IServiceCollection>? services = null, TimeProvider? time = null)
     {
         var tls = new ClientTls();
         var issuer = new TestIssuer();
@@ -46,6 +53,11 @@ public sealed class ManagementApi : IAsyncDisposable
             }, collection =>
             {
                 issuer.Route(collection);
+                if (time is not null)
+                {
+                    collection.AddSingleton(time);
+                }
+
                 services?.Invoke(collection);
             });
             // Startup waited for the issuer's keys, so tokens work from the first request.
@@ -76,6 +88,13 @@ public sealed class ManagementApi : IAsyncDisposable
     /// <summary>A data API client for the client listener that sends <paramref name="apiKey"/>, if any.</summary>
     public HttpClient DataClient(string? apiKey = null) => Tls.CreateClient(Server.ClientAddress!, apiKey);
 
+    /// <summary>A data API client with a fresh API key of <paramref name="organization"/> holding <paramref name="scopes"/>.</summary>
+    public async Task<HttpClient> CreateClientAsync(string organization, params string[] scopes) =>
+        DataClient(await Server.IssueAsync(organization, scopes));
+
+    /// <summary>A relative URI.</summary>
+    public static Uri Uri(string path) => new(path, UriKind.Relative);
+
     public async Task<string> CreateOrganizationAsync(string name, HttpClient? client = null) =>
         await CreateAsync(client, "/v1/management/organizations", name);
 
@@ -84,6 +103,110 @@ public sealed class ManagementApi : IAsyncDisposable
 
     public async Task<string> CreateDatabaseAsync(string organization, string project, string name, HttpClient? client = null) =>
         await CreateAsync(client, $"/v1/management/organizations/{organization}/projects/{project}/databases", name);
+
+    /// <summary>Creates an organization, a project and a database in it, as <see cref="User"/>.</summary>
+    public async Task<ManagedDatabaseRef> CreateManagedDatabaseAsync(string name = "main")
+    {
+        var organization = await CreateOrganizationAsync("Org " + Guid.NewGuid().ToString("N"));
+        var project = await CreateProjectAsync(organization, "Project");
+        return await CreateManagedDatabaseAsync(organization, project, name);
+    }
+
+    /// <summary>Creates a database in an existing project, as <see cref="User"/>.</summary>
+    public async Task<ManagedDatabaseRef> CreateManagedDatabaseAsync(string organization, string project, string name) =>
+        new(organization, project, await CreateDatabaseAsync(organization, project, name), name);
+
+    /// <summary>
+    /// A document id for a readable test name of at most 15 ASCII characters: a lowercase hyphenated UUID that holds the
+    /// name's bytes, so ids sort like their names (the data API admits only UUIDs as new ids).
+    /// </summary>
+    public static string DocumentId(string name)
+    {
+        var hex = Convert.ToHexStringLower(Encoding.ASCII.GetBytes(name));
+        // NUL pads the id, so a name holding one would collide with the same name without it.
+        if (hex.Length > 30 || !Ascii.IsValid(name) || name.Contains('\0', StringComparison.Ordinal))
+        {
+            throw new ArgumentException("a test document name is at most 15 ASCII characters other than NUL", nameof(name));
+        }
+
+        hex = hex.PadRight(30, '0');
+        // Version and variant digits sit at the same places in every id, so they never change the order.
+        return $"{hex[..8]}-{hex[8..12]}-7{hex[12..15]}-8{hex[15..18]}-{hex[18..]}";
+    }
+
+    /// <summary>The name <see cref="DocumentId"/> made <paramref name="id"/> from.</summary>
+    public static string DocumentName(string id)
+    {
+        var hex = id.Replace("-", "", StringComparison.Ordinal);
+        var bytes = Convert.FromHexString(hex[..12] + hex[13..16] + hex[17..]);
+        return Encoding.ASCII.GetString(bytes).TrimEnd('\0');
+    }
+
+    /// <summary>The data API route of document <see cref="DocumentId"/>(<paramref name="name"/>) of a collection of <paramref name="database"/>.</summary>
+    public static string DocumentPath(ManagedDatabaseRef database, string collection, string name) =>
+        $"{database.Data}/collections/{collection}/documents/{DocumentId(name)}";
+
+    /// <summary>Creates <paramref name="collection"/> through the data API, unless it exists.</summary>
+    public static async Task CreateCollectionAsync(HttpClient data, ManagedDatabaseRef database, string collection)
+    {
+        ArgumentNullException.ThrowIfNull(data);
+        ArgumentNullException.ThrowIfNull(database);
+        using var response = await data.PostAsJsonAsync(Uri($"{database.Data}/collections"), new { name = collection });
+        if (response.StatusCode != HttpStatusCode.Conflict)
+        {
+            response.EnsureSuccessStatusCode();
+        }
+    }
+
+    /// <summary>
+    /// Runs one statement straight on the file of <paramref name="database"/> and returns the rows it changed: for stored
+    /// data the data API no longer accepts (written by an earlier build), such as duplicate members or legacy ids.
+    /// </summary>
+    public static async Task<int> ExecuteStoredAsync(string dataDirectory, ManagedDatabaseRef database, string sql, params (string Name, object Value)[] parameters)
+    {
+        ArgumentNullException.ThrowIfNull(database);
+        var path = Path.Combine(dataDirectory, database.Organization, database.Project, database.Id + ".db");
+        await using var connection = new SqliteConnection(
+            new SqliteConnectionStringBuilder { DataSource = path, Mode = SqliteOpenMode.ReadWrite, Pooling = false }.ToString());
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = sql;
+        foreach (var (name, value) in parameters)
+        {
+            command.Parameters.AddWithValue(name, value);
+        }
+
+        return await command.ExecuteNonQueryAsync();
+    }
+
+    /// <summary>Replaces the stored JSON of the live document <paramref name="name"/> (see <see cref="ExecuteStoredAsync"/>).</summary>
+    public static async Task ReplaceStoredBodyAsync(string dataDirectory, ManagedDatabaseRef database, string collection, string name, string json)
+    {
+        var changed = await ExecuteStoredAsync(
+            dataDirectory,
+            database,
+            "UPDATE documents SET body = $body WHERE collection = $collection AND id = $id AND body IS NOT NULL;",
+            ("$body", json),
+            ("$collection", collection),
+            ("$id", DocumentId(name)));
+        if (changed != 1)
+        {
+            throw new InvalidOperationException("the document to replace does not exist");
+        }
+    }
+
+    /// <summary>
+    /// Creates document <paramref name="name"/> as <c>{}</c> through the data API, then stores <paramref name="json"/> as its
+    /// body straight in the file: for bodies the data API refuses, and for megabytes of seed data a test would otherwise upload.
+    /// </summary>
+    public async Task PutStoredAsync(HttpClient data, ManagedDatabaseRef database, string collection, string name, string json)
+    {
+        ArgumentNullException.ThrowIfNull(data);
+        using var content = new StringContent("{}", Encoding.UTF8, "application/json");
+        using var put = await data.PutAsync(Uri(DocumentPath(database, collection, name)), content);
+        put.EnsureSuccessStatusCode();
+        await ReplaceStoredBodyAsync(Server.DataDirectory, database, collection, name, json);
+    }
 
     /// <summary>
     /// Creates an organization with one project, as a new user, and a data client whose API key has
@@ -181,4 +304,21 @@ public sealed class Tenant(string user, string organizationId, string projectId,
     public Uri Database(string name, string path = "") => new($"/v1/projects/{ProjectId}/databases/{name}{path}", UriKind.Relative);
 
     public void Dispose() => Data.Dispose();
+}
+
+/// <summary>A managed database created by a test.</summary>
+/// <param name="Organization">Organization id.</param>
+/// <param name="Project">Project id.</param>
+/// <param name="Id">Database id.</param>
+/// <param name="Name">Database name, which the data API addresses it by in its project.</param>
+public sealed record ManagedDatabaseRef(string Organization, string Project, string Id, string Name)
+{
+    /// <summary><c>/v1/management/organizations/{organization}/projects/{project}</c>.</summary>
+    public string ProjectPath => $"/v1/management/organizations/{Organization}/projects/{Project}";
+
+    /// <summary><c>…/projects/{project}/databases/{id}</c>.</summary>
+    public string Path => $"{ProjectPath}/databases/{Id}";
+
+    /// <summary>The data API route of the database: <c>/v1/projects/{project}/databases/{name}</c>.</summary>
+    public string Data => $"/v1/projects/{Project}/databases/{Name}";
 }

@@ -1,0 +1,41 @@
+using TerraScale.Endpoints;
+using TerraScale.TerraBase.Engine;
+using TerraScale.TerraBase.Features.UserAuth;
+using TerraScale.TerraBase.Hosting;
+
+namespace TerraScale.TerraBase.Features.Management.Indexes;
+
+/// <summary><c>GET …/databases/{database}/indexes</c>: lists the indexes of a database.</summary>
+public sealed class ListIndexesEndpoint(IManagementService management, IIndexService indexes) : EndpointWithoutRequest<IResult>
+{
+    /// <inheritdoc />
+    public override void Configure()
+    {
+        Get(ManagementRoute.Indexes);
+        Name("listIndexes");
+        Summary("Lists the indexes of a database");
+        Description("Query: collection (optional) keeps the indexes of one collection. Items are in name order; state is always active." + " " + ManagementRoute.IdentityDescription);
+        Tags(ManagementRoute.Tag);
+        Produces<IndexListBody>();
+        Produces<string>(StatusCodes.Status400BadRequest);
+        Produces<string>(StatusCodes.Status404NotFound);
+        RequireAuthorization(UserAuthExtensions.PolicyName);
+        Metadata(ListenerMetadata.Management);
+    }
+
+    /// <inheritdoc />
+    public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
+    {
+        string? collection = null;
+        if (HttpContext.Request.Query.TryGetValue("collection", out var raw))
+        {
+            collection = DatabaseName.TryParse(raw, out var name)
+                ? name.Value
+                : throw new BadHttpRequestException("collection must be a lowercase name of at most 63 characters");
+        }
+
+        return await ManagementRoute.DatabaseAsync(HttpContext, management, cancellationToken) is { } database
+            ? TypedResults.Ok(await indexes.ListAsync(database, collection, cancellationToken))
+            : TypedResults.NotFound();
+    }
+}

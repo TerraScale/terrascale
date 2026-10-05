@@ -27,7 +27,7 @@ internal sealed class SqliteQueryCompiler(SqliteParameterCollection parameters)
     private readonly Dictionary<string, string> _paths = [];
 
     /// <summary>
-    /// Columns: id, version, body, JSON byte length, then per sort key its type rank and scalar value.
+    /// Columns: id, version, JSON byte length, then per sort key its type rank and scalar value.
     /// One extra row beyond the limit tells whether another page exists.
     /// </summary>
     public string Compile(DocumentQuery query)
@@ -48,7 +48,7 @@ internal sealed class SqliteQueryCompiler(SqliteParameterCollection parameters)
         var sql = new StringBuilder();
         sql.Append(CultureInfo.InvariantCulture, $"""
             SELECT * FROM (
-                SELECT id, version, body, length(CAST(body AS BLOB)) AS size{columns}
+                SELECT id, version, octet_length(body) AS size{columns}
                 FROM documents INDEXED BY documents_live WHERE collection = $collection AND body IS NOT NULL AND {Filter(query.Filter)}
             ) WHERE {after}
             ORDER BY

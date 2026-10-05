@@ -9,8 +9,8 @@ public sealed class QueryPlanTests
     private static readonly Faker Faker = new();
 
     // The plans recorded in docs/sqlite-query-plans.md. Every statement seeks a primary key, except the
-    // first page of collections, which walks the collections key in order up to its limit; none sorts in a
-    // temporary B-tree.
+    // first page of collections and the collection counts and sizes, which walk the collections key in order, and
+    // the index catalog reads, which scan the small schema table; none sorts in a temporary B-tree.
     private static readonly Dictionary<string, string> Expected = new(StringComparer.Ordinal)
     {
         ["Get"] = "SEARCH documents USING PRIMARY KEY (collection=? AND id=?)",
@@ -35,6 +35,13 @@ public sealed class QueryPlanTests
         ["AppendChange"] = "SEARCH collections USING PRIMARY KEY (name=?)",
         ["HistoryFloor"] = "SEARCH shape_history USING INTEGER PRIMARY KEY (rowid=?)",
         ["DropHistory"] = "SEARCH change_log USING INDEX change_log_by_offset (collection=? AND generation=?) | SCALAR SUBQUERY 1 | SEARCH collections USING PRIMARY KEY (name=?)",
+        ["CountDocuments"] = "SEARCH documents USING PRIMARY KEY (collection=?)",
+        ["CountCollections"] = "SCAN collections | CORRELATED SCALAR SUBQUERY 1 | SEARCH documents USING PRIMARY KEY (collection=?)",
+        ["ListCollectionStats"] = "SCAN collections | SEARCH documents USING PRIMARY KEY (collection=?) LEFT-JOIN",
+        ["DeleteCollectionDocuments"] = "SEARCH documents USING PRIMARY KEY (collection>? AND collection<?)",
+        ["DeleteCollectionNames"] = "SEARCH collections USING PRIMARY KEY (name>? AND name<?)",
+        ["ListIndexes"] = "SCAN sqlite_schema",
+        ["IndexExists"] = "SCAN sqlite_schema",
     };
 
     [Test]

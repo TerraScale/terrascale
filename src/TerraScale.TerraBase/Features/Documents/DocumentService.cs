@@ -1,12 +1,17 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using TerraScale.TerraBase.Engine;
+using TerraScale.TerraBase.Features.Management.Usage;
 using TerraScale.TerraBase.Hosting;
 using TerraScale.TerraBase.Tenancy;
 
 namespace TerraScale.TerraBase.Features.Documents;
 
-internal sealed class DocumentService(IStorageEngine engine, TimeProvider time) : IDocumentService
+/// <remarks>
+/// Usage: a get, and a list or query page (with its optional count), is one read once the engine answered it; each put,
+/// patch and delete is one write once its transaction committed. Rejected and failed requests count nothing.
+/// </remarks>
+internal sealed class DocumentService(IStorageEngine engine, TimeProvider time, IUsageMeter usage) : IDocumentService
 {
     // assert_count examines at most this many documents.
     private const long MaxAssertCount = 10_000;
@@ -66,10 +71,12 @@ internal sealed class DocumentService(IStorageEngine engine, TimeProvider time) 
             await CollectionAsync(transaction, key.Collection, cancellationToken).ConfigureAwait(false);
             await RequireAddressAsync(transaction, key.Collection, key.Id, cancellationToken).ConfigureAwait(false);
             // A deleted document comes back as its tombstone, without a body, so its 404 can carry its version.
-            return await transaction.GetAsync(key.Collection, key.Id, cancellationToken).ConfigureAwait(false)
+            var document = await transaction.GetAsync(key.Collection, key.Id, cancellationToken).ConfigureAwait(false)
                 ?? (await transaction.GetVersionAsync(key.Collection, key.Id, cancellationToken).ConfigureAwait(false) is { Deleted: true } tombstone
                     ? new StoredDocument(key.Id, tombstone.Version, ReadOnlyMemory<byte>.Empty, transaction.Incarnation, Deleted: true)
                     : null);
+            usage.RecordRead(key.Database);
+            return document;
         }
     }
 
@@ -84,6 +91,7 @@ internal sealed class DocumentService(IStorageEngine engine, TimeProvider time) 
             (long Count, bool Complete)? count = countLimit is { } limit
                 ? await CountAsync(transaction, query.Collection, query.Filter, limit, cancellationToken).ConfigureAwait(false)
                 : null;
+            usage.RecordRead(database);
             return (page, count);
         }
     }
@@ -140,6 +148,12 @@ internal sealed class DocumentService(IStorageEngine engine, TimeProvider time) 
             }
 
             var offset = await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+            var writes = operations.Count(operation => operation is PutOperation or PatchOperation or DeleteOperation);
+            if (writes > 0)
+            {
+                usage.RecordWrites(database, writes);
+            }
+
             return new WriteResult(offset, results, transaction.Incarnation);
         }
     }
