@@ -1,7 +1,7 @@
 package v1_test
 
 // Integration tests: every v1 client call against the pinned TerraBase
-// release executable, started by internal/terrabasetest (never a fake). One
+// release executable, started by terrabasetest (never a fake). One
 // server serves every subtest; a recording transport checks the real traffic:
 // every request is a route of the pinned OpenAPI and every client route of it
 // is called, no request carries Idempotency-Key, and the Management headers
@@ -10,7 +10,7 @@ package v1_test
 //
 // testdata/openapi.json is the pinned executable's /openapi/v1.json (admin
 // port 9464 by default); TestIntegration/PinnedOpenAPI fails when they
-// differ. To re-pin after moving the pin in internal/terrabasetest:
+// differ. To re-pin after moving the pin in terrabasetest:
 //
 //	terrabase-<commit> --data-directory=$(mktemp -d) &
 //	curl -s http://127.0.0.1:9464/openapi/v1.json > v1/testdata/openapi.json
@@ -31,7 +31,7 @@ import (
 	"testing"
 	"time"
 
-	"terrascale.tech/sdk/internal/terrabasetest"
+	"terrascale.tech/sdk/terrabasetest"
 	v1 "terrascale.tech/sdk/v1"
 )
 

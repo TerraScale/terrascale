@@ -40,7 +40,7 @@ jobs:
       - name: Build all Go packages
         run: go build ./...
 
-      # internal/terrabasetest downloads the pinned TerraBase release with the
+      # terrabasetest downloads the pinned TerraBase release with the
       # token; TERRABASE_REQUIRE fails its tests instead of skipping them.
       - name: Run the race-enabled test suite
         env:

@@ -126,7 +126,8 @@ query `explain`, `Idempotency-Key`, and the `/v1/dashboard` control plane.
 ### Tests
 
 Tests of the TerraBase client run against the real TerraBase release, never a
-fake server. `internal/terrabasetest` is the one harness: it pins the release
+fake server. The importable `terrascale.tech/sdk/terrabasetest` package is the
+shared harness for SDK and downstream tests: it pins the release
 by version and SHA-256, downloads it once with `TERRABASE_TOKEN` (read access
 to TerraScale/terrabase) into the user cache directory (or `TERRABASE_CACHE`),
 and starts it per test with a generated TLS certificate and dashboard
@@ -135,7 +136,7 @@ credential file. TerraBase assigns both listener ports. Startup is bounded to
 10 seconds.
 
 ```sh
-TERRABASE_TOKEN=… nice -n 19 go test ./v1/ ./internal/terrabasetest/
+TERRABASE_TOKEN=… TERRABASE_REQUIRE=1 nice -n 19 go test ./v1/ ./terrabasetest/
 ```
 
 `v1/integration_test.go` exercises every SDK call against it. Its recording
@@ -147,6 +148,24 @@ faults into that transport in front of the real server. Tests skip only on an
 unsupported platform or when neither a cached executable nor a token is
 available; CI sets `TERRABASE_REQUIRE=1` to fail instead. Checksum, download
 and filesystem errors always fail, including in local runs.
+
+Downstream tests call `terrabasetest.Start(t)` to get a fresh real server.
+Use its `URL`, `Credential`, and trusted `Client` with `v1.NewManagement`
+to create an organization and project, then `Server.APIKey` to issue a
+project-scoped document credential. Pass `Server.Client` as `Config.HTTPClient`
+so SDK clients trust the generated TLS certificate. The process and temporary
+data, TLS, and credential files are cleaned up automatically when the test ends.
+
+[`terrabasetest/example_test.go`](terrabasetest/example_test.go) is a runnable
+downstream restart example: it writes through one store, creates a fresh store
+against the same running database, and checks the persisted document and version.
+Keep `Start(t)` outside the app/store restart; calling it again creates a new,
+empty database server. Copy the test into a downstream package and replace the
+SDK database handle with the application's store constructor.
+
+Consume this package from the SDK module's merged Go pseudo-version; this repo
+has no tag or release-on-merge workflow. The TerraBase executable version and
+SHA-256 remain pinned by the helper, independently of the SDK module version.
 
 ## Product, TSAuth, and builders
 
