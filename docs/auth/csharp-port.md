@@ -14,7 +14,7 @@ tracks what has landed.
 |---|---|
 | `src/TerraScale.Auth/` | ASP.NET Core host. Features live in `Features/<Area>/`; each endpoint is one TerraScale.Endpoints class. |
 | `src/TerraScale.Auth.Contracts/` | Persisted models and the `{"error":{"code","message"}}` envelope (`ApiException`). |
-| `src/TerraScale.Auth.Security/` | Cryptographic primitives (port of `auth-security`). |
+| `src/TerraScale.Auth.Security/` | Cryptographic primitives (port of `auth-security`): Argon2id, the secret box, ES256 keys and JWTs, tokens. |
 | `src/TerraScale.Auth.Store/` | Documents v1 persistence and storage readiness through ts-dotnet (TS-489, from the TS-428 design). |
 | `tests/TerraScale.Auth.Fast/` | Blocking integration suite (TUnit + Playwright). |
 | `tests/TerraScale.Auth.Slow/` | Non-blocking integration suite. |
@@ -224,6 +224,58 @@ gated on an approved durability/recovery design and production verification
 under TS-470. `/readyz` establishes current read/conditional-write access,
 not crash durability, replication or safe failover. Local integration tests
 cannot establish those guarantees.
+
+## Key ring and attempt limits (TS-488)
+
+The key ring and the attempt limiter store their state through
+`IDocumentStore` (`src/TerraScale.Auth.Store/DocumentStore.cs`), addressed by
+collection, instance and key: read with a version, create-only, and
+replace-if-version. Production uses `TerraBaseDocumentStore`, which maps
+these onto `AuthStore` natural-key addresses with `If-None-Match: *` and
+`If-Match`. Single-use, uniqueness and counter state must be built on those
+conditional writes, never on a read followed by an unconditional write or on
+process locks. Consumers wrap the store in `FailClosedDocumentStore`, so any
+failure other than caller cancellation (an outage, a missing collection, a
+rejected key, an unexpected API error) answers 503 with the original
+exception kept for server logs. The fast and slow suites run both against the
+real SDK-pinned TerraBase; test-only wrappers inject failures and contention
+over that real store, and two servers bound to one database stand in for
+replicas.
+
+Their collections, `signing_key_rings` and `rate_limits`, are provisioned
+with the other collections (`scripts/provision.sh`); while one is missing the
+feature answers 503.
+
+Signing keys live in one document per instance, so a rotation is one
+conditional replace. Each key's d ‖ X ‖ Y is sealed under `TS_AUTH_MASTER_KEY`
+with `signing-key:<kid>:<instance>` as associated data, so a key copied into
+another instance's ring fails to open. Rotation adds a key and keeps the older
+ones validating. Lookup and rotation validate the complete original ring's
+count, valid Unix timestamps and strict oldest-first creation order before
+importing keys; rotation restores every original key before the capacity
+check or any write. A malformed or unreadable ring fails closed and stays
+unchanged. Creation timestamps are kept strictly increasing across replicas,
+but this ordering does not establish supersession age.
+
+Automatic retirement is disabled: the pinned Documents v1 SDK exposes only
+document content and an opaque version, without an authoritative update or
+supersession time. A key created 72 hours ago can still sign a fresh token;
+a replica 49 hours slow can date its successor 49 hours ago, making the old
+48-hour pruning rule remove a live token's key on the next accurate rotation.
+JWTs live at most 24 hours (`Jwt.MaxLifetime`), but replica wall clocks alone
+cannot prove expiry. Rotation retains all keys and answers 409
+`signing_key_limit` at 16 keys, regardless of elapsed local time; signing and
+validation continue with the unchanged ring. There is no automatic recovery
+from that capacity limit. Retirement remains gated on an approved design
+with trustworthy time and safe handling of concurrent/in-flight signing;
+do not delete keys or weaken the bound to bypass it. The persisted schema is
+unchanged. Fast regressions cover the old-active-key/fresh-token slow-then-
+accurate rotations, capacity after a clock jump, malformed/oversized rings,
+timestamp limits and a corrupted oldest inactive key.
+
+Attempt buckets are keyed by an HMAC of purpose and subject under a key
+derived from the master key, within the instance's address space, and one
+document is kept per distinct subject.
 
 ## OpenAPI
 

@@ -1,6 +1,9 @@
 using TerraScale.Auth.Configuration;
 using TerraScale.Auth.Features.Identity;
+using TerraScale.Auth.Features.Email;
 using TerraScale.Auth.Features.Observability;
+using TerraScale.Auth.Features.RateLimiting;
+using TerraScale.Auth.Features.SigningKeys;
 using TerraScale.Auth.Hosting;
 using TerraScale.Auth.Store;
 using TerraScale.DotNet.TerraBase;
@@ -9,7 +12,7 @@ using TerraScale.Endpoints;
 namespace TerraScale.Auth;
 
 /// <summary>Composes services, middleware and endpoints.</summary>
-public static class App
+public static partial class App
 {
     /// <summary>OpenAPI document title; clients key on it.</summary>
     public const string ApiTitle = "TerraScale Auth API";
@@ -42,6 +45,17 @@ public static class App
         builder.Services.AddHostedService<SessionPruner>();
         builder.Services.AddSingleton<IStorageHealth, TerraBaseStorageHealth>();
         builder.Services.AddSingleton<ReadinessProbe>();
+        builder.Services.AddSingleton<IDocumentStore, TerraBaseDocumentStore>();
+        builder.Services.AddSingleton<KeyRing>();
+        builder.Services.AddSingleton<AttemptLimiter>();
+        if (options.SmtpHost is null)
+        {
+            builder.Services.AddSingleton<IEmailSender, LoggingEmailSender>();
+        }
+        else
+        {
+            builder.Services.AddSingleton<IEmailSender, SmtpEmailSender>();
+        }
 
         builder.Services.AddTerraScaleEndpoints(typeof(App).Assembly, endpoints =>
         {
@@ -54,9 +68,17 @@ public static class App
         configure?.Invoke(builder);
 
         var app = builder.Build();
+        if (options.SmtpHost is null && !options.Development)
+        {
+            LogEmailNotConfigured(app.Logger);
+        }
+
         app.UseMiddleware<ErrorEnvelopeMiddleware>();
         app.MapTerraScaleEndpoints();
         app.MapTerraScaleOpenApi();
         return app;
     }
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "TS_AUTH_SMTP_* is not configured: email is logged, not delivered")]
+    private static partial void LogEmailNotConfigured(ILogger logger);
 }

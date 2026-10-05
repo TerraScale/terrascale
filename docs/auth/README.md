@@ -71,7 +71,7 @@ Both are generated from the endpoints the running service actually maps.
 ```text
 src/TerraScale.Auth/            # ASP.NET Core host; Features/<Area>/ endpoints, services and Razor slices; Assets/
 src/TerraScale.Auth.Contracts/  # persisted models and the {"error":{…}} envelope
-src/TerraScale.Auth.Security/   # tokens, digests and (with TS-427) password, JWT, WebAuthn and TOTP primitives
+src/TerraScale.Auth.Security/   # Argon2id passwords, the master-key secret box, ES256 keys and JWTs, tokens and digests
 src/TerraScale.Auth.Store/      # Documents v1 persistence/readiness on ts-dotnet (TS-489)
 tests/TerraScale.Auth.Fast/     # blocking integration suite
 tests/TerraScale.Auth.Slow/     # non-blocking integration suite
@@ -123,7 +123,7 @@ nice -n 19 dotnet run --project src/TerraScale.Auth
 | `TS_AUTH_TERRASCALE_API_URL` | Required HTTPS origin, no default; no credentials, path, query or fragment. Host must be `api.terrascale.tech` or under `.api.terrascale.tech`; loopback HTTPS is permitted only in Development. Explicit static endpoint override |
 | `TS_AUTH_TERRASCALE_API_KEY` | Organization-bound `tb_…` credential with `documents:read` and `documents:write`, restricted to the auth project/database where appropriate. A leading `Bearer` scheme is stripped; runtime uses no management credential |
 | `TS_AUTH_DATABASE` | Required `project-uuid/database`, e.g. `<auth-project-uuid>/auth`; lowercase hyphenated UUID and lowercase database name (at most 63 characters). Project labels are not accepted |
-| `TS_AUTH_MASTER_KEY` | Base64, 32 bytes; encrypts recoverable secrets |
+| `TS_AUTH_MASTER_KEY` | Base64, 32 bytes; encrypts recoverable secrets (signing keys included) with AES-256-GCM. There is no re-encryption yet: changing it makes every sealed secret unreadable |
 | `TS_AUTH_AUDIT_SIGNING_KEY` | Base64 32-byte HMAC key for audit-event seals (required outside Development) |
 | `TS_AUTH_AUDIT_VERIFY_KEYS` | Optional semicolon-separated previous audit keys (at most 5), kept during rotation |
 | `TS_AUTH_OPERATOR_KEY` | Bearer key that can create instances (`POST /v1/instances`) |
@@ -153,7 +153,11 @@ request header values, query strings, bodies or credentials. See
 
 Every setting can also be passed as `--name=value` (for example
 `--public-origin=https://…`). Configuration errors name the setting, never its
-value, and stop startup with exit code 2.
+value, and stop startup with exit code 2. Before serving, the process checks
+Argon2id against a reference vector; if the bundled libsodium cannot load,
+startup stops with exit code 3 (if it cannot even be extracted, see
+`DOTNET_BUNDLE_EXTRACT_BASE_DIR` below, the .NET host stops first). Outside
+Development, a missing `TS_AUTH_SMTP_*` configuration logs a startup warning.
 
 ### Self-service authentication setup
 
@@ -247,8 +251,12 @@ session usable again; deactivation does not itself revoke sessions.
 
 ### Email delivery (OCI)
 
-Without `TS_AUTH_SMTP_*` configuration ts-auth uses the logging sender —
-emails go to stdout only (the dev/test default). For real delivery via OCI
+Without `TS_AUTH_SMTP_*` configuration ts-auth uses the logging sender: nothing
+is delivered, and each message logs a warning with its sizes only, never the
+recipient or the content (the dev/test default). With SMTP configured, STARTTLS
+and a valid server certificate are mandatory; a relay that offers no TLS never
+receives the credentials or the message. Delivery failures are logged and never
+fail the request that sent the mail. For real delivery via OCI
 Email Delivery, set the five variables above; fetch the credentials from the
 ts-infra state:
 
@@ -381,14 +389,20 @@ rotation.
   ts-libs revisions into a job-owned directory, then runs a locked restore,
   `dotnet format --verify-no-changes`, a Release build with analyzers as
   errors, the NuGet vulnerability audit, the Redocly lint of the served OpenAPI
-  document, the image-transfer guard tests and the fast integration suite,
+  document, the image-transfer, binary-publish and arm64-smoke guard tests and the fast integration suite,
   including Chromium and storage/readiness against the real SDK-pinned
   TerraBase binary. Missing binary/download prerequisites fail the suite.
 - **`release`** publishes a self-contained single-file linux-x64 executable
   (`scripts/ci/stage-release.sh`), packages it into the chiseled
   `runtime-deps` image (`Containerfile`, pinned by digest), and smoke-checks
   `/healthz` (revision), `/openapi/v1.json`, fail-closed `/readyz` and the
-  absence of `/metrics` (`scripts/ci/package-image.sh`).
+  absence of `/metrics` (`scripts/ci/package-image.sh`). It also publishes
+  the linux-arm64 single-file executable, so every pull request proves that
+  build. `stage-release.sh` checks the ELF machine of each build, and
+  `scripts/ci/smoke-arm64.sh` starts the arm64 executable under qemu-aarch64 on
+  the arm64 variant of the pinned runtime-deps image, requiring `/healthz` with
+  this revision and a fail-closed `/readyz` (its startup Argon2id self-test
+  proves the bundled libsodium loads on arm64).
 
 On pushes to `main`, `release` stages the smoke-checked image in
 `git.terrascale.tech/<owner>/ts-auth-ci` and passes its registry manifest
@@ -396,6 +410,25 @@ digest to `publish` (`scripts/ci/transfer-image.sh`). Once both jobs pass,
 `publish` tags that exact image as `git.terrascale.tech/<owner>/ts-auth:<commit>`.
 The daily `registry-retention.yml` workflow removes staging candidates older
 than 30 days.
+
+On pushes to `main`, once `fast` and `release` pass, `publish-binary`
+(`scripts/ci/publish-binary.sh`) attaches `ts-auth-linux-arm64` and
+`ts-auth-linux-arm64.sha256` to the Forgejo release `v<version>-dev.<commit>`,
+which ts-orchestrator downloads to run ts-auth natively. The exact bytes are
+smoke-checked under emulation before any upload. New uploads succeed only
+once both downloads match the smoke-checked executable and its checksum byte for byte;
+a rerun leaves an existing internally verified release
+untouched and replaces both assets of one an interrupted run left incomplete
+(`scripts/check-binary-publish.sh` covers these paths in `fast`). Download
+both assets into one directory and verify with
+`sha256sum -c ts-auth-linux-arm64.sha256`; the checksum detects a corrupt or
+mismatched download, it is not a signature.
+
+The executable extracts its bundled native library (libsodium, used for
+Argon2id) at startup into `DOTNET_BUNDLE_EXTRACT_BASE_DIR` (default
+`$HOME/.net`). Point it at a private directory writable only by the service
+user, for example a systemd `StateDirectory`: files planted in a shared
+extraction directory would be loaded.
 
 `.forgejo/workflows/slow.yml` runs the slow suite after pushes, nightly and on
 demand. It never blocks merges or releases. A failure files or updates the

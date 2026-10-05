@@ -22,6 +22,12 @@ env:
   CI: "true"
   DOTNET_CLI_TELEMETRY_OPTOUT: "1"
   DOTNET_NOLOGO: "1"
+  # The runner mounts one /cache into every job and NUGET_PACKAGES lives there,
+  # but NuGet keeps its package-extraction locks under the per-container temp
+  # directory. Concurrent jobs restoring a package new to the cache then race
+  # ("Could not find file .../<random>"). Keeping the locks on the shared mount
+  # serializes extraction across jobs.
+  NUGET_SCRATCH: /cache/nuget-scratch
   TS_DOTNET_REV: bdea1e8f4926e46367b751d8f633dcec04d760e9
   TS_LIBS_REV: 55b260872f8d4fb1cfa0975576632b4e022e4c91
 

@@ -27,6 +27,7 @@
     <PackageReference Include="OpenTelemetry.Instrumentation.Http" />
     <PackageReference Include="OpenTelemetry.Instrumentation.Runtime" />
     <PackageReference Include="Sentry.AspNetCore" />
+    <PackageReference Include="MailKit" />
   </ItemGroup>
 
   <ItemGroup>

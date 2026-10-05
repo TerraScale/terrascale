@@ -2,11 +2,15 @@ name: ts-auth CI
 
 # fast and release run in parallel. fast is the required gate: locked restore,
 # formatting, a Release build with analyzers as errors, the NuGet audit, the
-# OpenAPI lint, the CI transfer-script guards and the fast integration suite.
+# OpenAPI lint, the CI transfer- and publish-script guards and the fast
+# integration suite.
 # release publishes a self-contained executable into the chiseled runtime-deps
-# image, smoke-checks the container and, on pushes to protected main, stages
-# it by registry digest. publish tags that exact image only after every gate
-# passed. The slow suite runs separately in slow.yml and never blocks.
+# image, smoke-checks the container, builds the linux-arm64 single-file
+# executable and starts it under qemu-aarch64, and, on pushes to protected main, stages the image by registry
+# digest. publish tags that exact image only after every gate passed; on main,
+# publish-binary attaches ts-auth-linux-arm64 and its .sha256 to the Forgejo
+# release v<version>-dev.<commit>. The slow suite runs separately in slow.yml
+# and never blocks.
 
 on:
   push:
@@ -23,6 +27,12 @@ env:
   CI: "true"
   DOTNET_CLI_TELEMETRY_OPTOUT: "1"
   DOTNET_NOLOGO: "1"
+  # The runner mounts one /cache into every job and NUGET_PACKAGES lives there,
+  # but NuGet keeps its package-extraction locks under the per-container temp
+  # directory. Concurrent jobs restoring a package new to the cache then race
+  # ("Could not find file .../<random>"). Keeping the locks on the shared mount
+  # serializes extraction across jobs.
+  NUGET_SCRATCH: /cache/nuget-scratch
   FORGEJO_SHA: ${{ forgejo.sha }}
   TS_DOTNET_REV: bdea1e8f4926e46367b751d8f633dcec04d760e9
   TS_LIBS_REV: 55b260872f8d4fb1cfa0975576632b4e022e4c91
@@ -64,6 +74,12 @@ jobs:
       - name: Check image transfer guards
         run: bash scripts/check-image-transfer.sh
 
+      - name: Check binary publish guards
+        run: bash scripts/check-binary-publish.sh
+
+      - name: Check arm64 smoke guards
+        run: bash scripts/check-arm64-smoke.sh
+
       - name: Fast integration suite
         env:
           ORG_READ_TOKEN: ${{ secrets.ORG_READ_TOKEN }}
@@ -102,6 +118,14 @@ jobs:
       - name: Package and smoke-check the release image
         run: bash scripts/ci/package-image.sh
 
+      # After packaging, so the arm64 executable stays out of the image build
+      # context. publish-binary rebuilds and uploads it on protected main.
+      - name: Publish the self-contained linux-arm64 executable
+        run: bash scripts/ci/stage-release.sh artifacts/ci/arm64 linux-arm64
+
+      - name: Smoke-check the linux-arm64 executable under emulation
+        run: bash scripts/ci/smoke-arm64.sh artifacts/ci/arm64/ts-auth
+
       # Artifact actions are unavailable on this runner. A registry digest
       # works across runner machines and survives a retry of publish alone.
       - name: Stage the image for publish
@@ -133,3 +157,30 @@ jobs:
           REGISTRY_PUSH_TOKEN: ${{ secrets.REGISTRY_PUSH_TOKEN }}
           REPOSITORY_OWNER: ${{ forgejo.repository_owner }}
         run: bash scripts/ci/transfer-image.sh publish
+
+  publish-binary:
+    name: Publish the linux-arm64 executable on protected main
+    needs: [fast, release]
+    if: forgejo.event_name == 'push' && forgejo.ref == 'refs/heads/main'
+    runs-on: terrascale-builder
+    timeout-minutes: 45
+    steps:
+      - name: Check out the event revision
+        uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          github-server-url: "https://git.terrascale.tech"
+          ref: ${{ forgejo.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Check out the pinned ts-dotnet and ts-libs revisions
+        env:
+          ORG_READ_TOKEN: ${{ secrets.ORG_READ_TOKEN }}
+        run: bash scripts/ci/checkout-dotnet-deps.sh
+
+      - name: Publish the linux-arm64 release assets
+        env:
+          FORGEJO_TOKEN: ${{ forgejo.token }}
+          FORGEJO_REF: ${{ forgejo.ref }}
+          FORGEJO_REPOSITORY: ${{ forgejo.repository }}
+        run: bash scripts/ci/publish-binary.sh

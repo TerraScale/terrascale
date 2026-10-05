@@ -2,4 +2,8 @@
   <PropertyGroup>
     <RootNamespace>TerraScale.Auth.Security</RootNamespace>
   </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Geralt" />
+    <PackageReference Include="Microsoft.IdentityModel.JsonWebTokens" />
+  </ItemGroup>
 </Project>

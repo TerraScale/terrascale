@@ -51,7 +51,10 @@ public sealed class HealthTests
         await Assert.That(body.GetProperty("region").GetString()).IsEqualTo("gru");
     }
 
+    // A wall-clock bound: run alone so CPU-heavy tests (Argon2id hashing) cannot starve the
+    // shared thread pool and delay the probe's deadline.
     [Test]
+    [NotInParallel]
     public async Task Readiness_treats_a_hung_authority_as_not_ready()
     {
         var health = new FakeStorageHealth(healthy: true, delay: TimeSpan.FromSeconds(30));
