@@ -21,9 +21,12 @@ func TestPageLayoutsFitContentColumn(t *testing.T) {
 		routes = append(routes, route)
 	}
 
-	for _, width := range []int{360, 768, 1024, 1100, 1180, 1440} {
+	for _, width := range []int{360, 768, 1024, 1100, 1180, 1280, 1440} {
 		must(t, page.SetViewportSize(width, 900))
 		for _, route := range routes {
+			if width == 1280 && route.key != "audit" {
+				continue
+			}
 			t.Run(fmt.Sprintf("%s/%d", route.key, width), func(t *testing.T) {
 				response := goTo(t, page, route.path)
 				if response.Status() != http.StatusOK {
@@ -47,16 +50,29 @@ func TestPageLayoutsFitContentColumn(t *testing.T) {
 						problems.push('.ts-main is not the named page container');
 					if (document.documentElement.scrollWidth > innerWidth + 1)
 						problems.push('horizontal page scroll: ' + document.documentElement.scrollWidth + ' > ' + innerWidth);
-					if (location.pathname === '/audit' && innerWidth === 360) {
-						const header = document.querySelector('#recent-activity .ts-card-head');
-						const title = header?.querySelector('.ts-card-title');
-						const actions = header?.querySelector('.ts-card-actions');
-						const description = header?.querySelector('.ts-card-description');
-						if (!title || !actions || !description ||
-							box(title).bottom <= box(actions).top || box(actions).bottom <= box(title).top ||
-							box(actions).right < box(header).right - 1 ||
-							box(description).top < Math.max(box(title).bottom, box(actions).bottom))
-							problems.push('audit export must share the title row, with description below');
+					if (location.pathname === '/audit') {
+						const card = document.querySelector('#recent-activity');
+						const header = card?.querySelector('.ts-card-head');
+						if (!header?.querySelector('.ts-card-title') || !header?.querySelector('.ts-card-description') ||
+							header.querySelector('.ts-card-actions'))
+							problems.push('audit card head must hold only the title and description');
+						const filters = card?.querySelector('.ts-audit-filters');
+						const controls = filters ? [...filters.children] : [];
+						const order = controls.map(el => el.htmlFor || (el.matches('.ts-audit-apply') ? 'apply' : 'export'));
+						if (order.join(',') !== 'audit-search,audit-action,audit-severity,audit-range,apply,export' ||
+							!controls[5]?.matches('.ts-menu') || card?.querySelectorAll('.ts-menu').length !== 1)
+							problems.push('audit filters must end with Apply filters and one Export menu');
+						for (const control of controls) {
+							if (box(control).left < box(filters).left - 1 || !inside(control, filters))
+								problems.push('audit filter escapes its row');
+						}
+						if (innerWidth >= 1280 && controls.length === 6) {
+							const bottom = box(controls[0]).bottom;
+							if (controls.some(el => Math.abs(box(el).bottom - bottom) > 1))
+								problems.push('audit filters and buttons must share one aligned desktop row');
+							if (controls.some((el, index) => index > 0 && box(el).left < box(controls[index - 1]).right - 1))
+								problems.push('audit filter controls overlap or are out of order');
+						}
 					}
 					for (const [selector, breakpoint] of [['.ts-grid-2', 768], ['.ts-grid-3', 960], ['.ts-split', 960]]) {
 						for (const grid of document.querySelectorAll(selector)) {
@@ -137,6 +153,8 @@ func TestPageLayoutsFitContentColumn(t *testing.T) {
 
 func layoutScreenshot(route string, width int) bool {
 	switch route {
+	case "audit":
+		return width == 360 || width == 1280 || width == 1440
 	case "team":
 		return width == 360 || width == 768 || width == 1440
 	case "profile":
