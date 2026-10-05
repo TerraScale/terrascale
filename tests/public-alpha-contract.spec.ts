@@ -21,7 +21,7 @@ const renderedRoutes = [...publishedRoutes, { path: '/404', canonical: 'https://
 const expectedRenderedCtaHrefs = {
   '/': [registrationUrl, registrationUrl, 'https://docs.terrascale.tech', registrationUrl, './contact'],
   '/about': [registrationUrl, './pricing', './contact'],
-  '/contact': [registrationUrl],
+  '/contact': [registrationUrl, 'mailto:support@terrascale.tech'],
   '/pricing': [
     registrationUrl,
     `${registrationUrl}?plan=hobby`,

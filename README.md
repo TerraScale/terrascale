@@ -82,3 +82,28 @@ That builds the site and serves the generated `build/` output through
 ## Assets
 
 Static assets live in `static/` and are served from root-relative URLs such as `/logo-principal.svg` or `/icons/lucide/menu.svg`.
+
+## Real sample contract tests
+
+`npm run test:slow` runs the actual TypeScript and compiled C# samples against a local TerraBase
+release over HTTPS. It covers successful create/query, failed create stopping the
+query, failed query cancellation, and both requests' Bearer/redirect options.
+It creates temporary local credentials and databases; it never calls production
+or substitutes API responses.
+
+Download the pinned Linux amd64 release using your existing Forgejo login:
+
+```bash
+fj release asset download -r TerraScale/terrabase \
+  ci-ff256067015433c8c40b59879f1282d2a40480ce-run-13258 \
+  terrabase-linux-amd64 -o /tmp/ts502-terrabase
+chmod +x /tmp/ts502-terrabase
+TERRABASE_TEST_BINARY=/tmp/ts502-terrabase nice -n 19 npm run test:slow
+```
+
+The runner verifies SHA-256
+`e07d173fc2bbab19dcb1fde8b121b0207b07d55452a5b19a406871d220e05e13`
+before execution. Node.js, OpenSSL, a .NET SDK targeting net10.0, and the pinned binary are required; missing
+or mismatched inputs fail the suite. The runner chooses available ports and
+stops its own server afterward. This release's HTTPS listener binds all
+interfaces, so use an isolated test environment when network isolation is needed.
