@@ -17,6 +17,23 @@ public interface IStorageEngine : IAsyncDisposable
     /// <summary>Short substrate name, for diagnostics (for example <c>sqlite</c>).</summary>
     string Name { get; }
 
+    /// <summary>Returns the last immutable physical-storage snapshot without scanning files. Unknown until the first complete refresh.</summary>
+    StoragePressure StoragePressure { get; }
+
+    /// <summary>
+    /// Cumulative successful client-database commits that changed data in this engine's lifetime, saturating at
+    /// <see cref="long.MaxValue"/>. Excludes empty transactions, reads, rollbacks, system writes and schema migrations.
+    /// </summary>
+    long CommittedWrites { get; }
+
+    /// <summary>
+    /// Refreshes physical storage from file metadata, including unopened databases. Invoke periodically off the request
+    /// path: scanning runs synchronously on the caller's thread. Concurrent refreshes are skipped, not queued.
+    /// A failed or cancelled scan publishes an unknown snapshot; cancellation is propagated.
+    /// </summary>
+    ValueTask RefreshStoragePressureAsync(CancellationToken cancellationToken);
+
+
     /// <summary>Whether the system database already exists, without creating or opening it; refuses symbolic links.</summary>
     bool SystemDatabaseExists { get; }
 

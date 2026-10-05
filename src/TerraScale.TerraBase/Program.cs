@@ -5,6 +5,7 @@ using TerraScale.TerraBase.Engine;
 using TerraScale.TerraBase.Features.ApiKeys;
 using TerraScale.TerraBase.Features.Documents;
 using TerraScale.TerraBase.Features.Management;
+using TerraScale.TerraBase.Features.Pressure;
 using TerraScale.TerraBase.Features.Replication;
 using TerraScale.TerraBase.Hosting;
 
@@ -64,6 +65,7 @@ builder.Services.AddTerraBaseEngine(options);
 builder.Services.AddTerraBaseApiKeys();
 builder.Services.AddTerraBaseDocuments();
 builder.Services.AddTerraBaseManagement();
+builder.Services.AddTerraBasePressure();
 builder.AddTerraBaseReplication(options);
 
 var app = builder.Build();
@@ -80,6 +82,7 @@ catch (TerraBaseConfigurationException error)
 }
 
 // Error bodies first, so they also cover the listener check's 404.
+app.UseTerraBasePressure();
 app.UseTerraBaseBadRequests();
 app.UseTerraBaseListeners();
 app.UseAuthentication();

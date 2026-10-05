@@ -159,7 +159,7 @@ public sealed class StorageHistoryTests
 
             await using var engine = new TerraScale.TerraBase.Engine.Sqlite.SqliteStorageEngine(
                 directory, TimeSpan.FromSeconds(5), Microsoft.Extensions.Logging.Abstractions.NullLogger<TerraScale.TerraBase.Engine.Sqlite.SqliteStorageEngine>.Instance,
-                TimeSpan.FromSeconds(1));
+                TimeSpan.FromSeconds(1), static (_, _) => { });
             var store = (await engine.OpenDatabaseAsync(database, CancellationToken.None))!;
             var after = DocumentApi.NewId();
             await using (var writer = await store.BeginTransactionAsync(write: true, CancellationToken.None))

@@ -5,6 +5,7 @@ using TerraScale.TerraBase.Features.ApiKeys;
 using TerraScale.TerraBase.Features.Documents;
 using TerraScale.TerraBase.Features.Health;
 using TerraScale.TerraBase.Features.Management;
+using TerraScale.TerraBase.Features.Pressure;
 using TerraScale.TerraBase.Tenancy;
 
 namespace TerraScale.TerraBase.Hosting;
@@ -52,6 +53,7 @@ namespace TerraScale.TerraBase.Hosting;
 [JsonSerializable(typeof(OrganizationMember))]
 [JsonSerializable(typeof(OwnershipTransfer))]
 [JsonSerializable(typeof(PlanRequest))]
+[JsonSerializable(typeof(PressureBody))]
 [JsonSerializable(typeof(Project))]
 [JsonSerializable(typeof(RoleRequest))]
 [JsonSerializable(typeof(StatusBody))]

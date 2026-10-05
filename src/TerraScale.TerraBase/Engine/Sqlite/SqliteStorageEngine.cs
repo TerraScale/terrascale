@@ -80,7 +80,124 @@ internal sealed partial class SqliteStorageEngine(
 
     internal Task ReadinessProbeTask => Volatile.Read(ref _probe) ?? Task.CompletedTask;
 
+    private static readonly StoragePressure UnknownStoragePressure = new(null, []);
+    private StoragePressure _storagePressure = UnknownStoragePressure;
+    private long _committedWrites;
+    private int _refreshingStoragePressure;
+
     public string Name => "sqlite";
+
+    public StoragePressure StoragePressure => Volatile.Read(ref _storagePressure);
+
+    public long CommittedWrites => Interlocked.Read(ref _committedWrites);
+
+    public ValueTask RefreshStoragePressureAsync(CancellationToken cancellationToken)
+    {
+        if (cancellationToken.IsCancellationRequested)
+        {
+            Volatile.Write(ref _storagePressure, UnknownStoragePressure);
+            cancellationToken.ThrowIfCancellationRequested();
+        }
+
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed), this);
+        if (Interlocked.CompareExchange(ref _refreshingStoragePressure, 1, 0) != 0)
+        {
+            return ValueTask.CompletedTask;
+        }
+
+        try
+        {
+            var top = new List<StoredTenantPressure>(10);
+            long total = 0;
+            // Stream each layout level: one organization's running total and at most ten retained UUIDs.
+            // ponytail: metadata is sampled rather than atomic across files; use lifecycle coordination if an exact instant is required.
+            RejectLink(dataDirectory);
+            foreach (var organization in new DirectoryInfo(dataDirectory).EnumerateDirectories())
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (!IsId(organization.Name))
+                {
+                    continue;
+                }
+
+                RejectLink(organization.FullName);
+
+                long bytes = 0;
+                foreach (var project in organization.EnumerateDirectories())
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (!IsId(project.Name))
+                    {
+                        continue;
+                    }
+
+                    RejectLink(project.FullName);
+
+                    foreach (var file in project.EnumerateFiles())
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        if (Path.GetExtension(file.Name) is ".db" or ".db-wal" or ".db-shm"
+                            && IsId(Path.GetFileNameWithoutExtension(file.Name)))
+                        {
+                            RejectLink(file.FullName);
+                            bytes = checked(bytes + file.Length);
+                        }
+                    }
+                }
+
+                total = checked(total + bytes);
+                var index = top.FindIndex(tenant => bytes > tenant.Bytes
+                    || (bytes == tenant.Bytes && string.CompareOrdinal(organization.Name, tenant.Org) < 0));
+                if (index < 0)
+                {
+                    index = top.Count;
+                }
+
+                if (index < 10)
+                {
+                    if (top.Count == 10)
+                    {
+                        top.RemoveAt(9);
+                    }
+
+                    top.Insert(index, new StoredTenantPressure(organization.Name, bytes));
+                }
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
+            Volatile.Write(ref _storagePressure, new StoragePressure(total, top.AsReadOnly()));
+        }
+        catch (OperationCanceledException)
+        {
+            Volatile.Write(ref _storagePressure, UnknownStoragePressure);
+            throw;
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or OverflowException)
+        {
+            // Never publish a partial sum as known storage; the next periodic refresh retries from scratch.
+            Volatile.Write(ref _storagePressure, UnknownStoragePressure);
+        }
+        finally
+        {
+            Volatile.Write(ref _refreshingStoragePressure, 0);
+        }
+
+        return ValueTask.CompletedTask;
+    }
+
+    private void RecordCommittedWrite()
+    {
+        long current;
+        do
+        {
+            current = Interlocked.Read(ref _committedWrites);
+            if (current == long.MaxValue)
+            {
+                return;
+            }
+        }
+        while (Interlocked.CompareExchange(ref _committedWrites, current + 1, current) != current);
+    }
 
     public async ValueTask<bool> IsReadyAsync(CancellationToken cancellationToken)
     {
@@ -844,7 +961,7 @@ internal sealed partial class SqliteStorageEngine(
             return null;
         }
 
-        store = new SqliteDatabaseStore(key.Database, path, Pool);
+        store = new SqliteDatabaseStore(key.Database, path, Pool, RecordCommittedWrite);
         try
         {
             await store.MigrateAsync(cancellationToken).ConfigureAwait(false);

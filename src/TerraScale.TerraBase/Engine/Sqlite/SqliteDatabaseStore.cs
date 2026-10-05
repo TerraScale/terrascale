@@ -5,7 +5,8 @@ namespace TerraScale.TerraBase.Engine.Sqlite;
 /// <param name="name">Names the database in error messages: its id, or <c>_system</c>.</param>
 /// <param name="path">The database file.</param>
 /// <param name="pool">Idle sessions, shared by every database of the engine.</param>
-internal sealed class SqliteDatabaseStore(string name, string path, SqliteSessionPool pool) : IDatabaseStore, IDisposable
+/// <param name="committed">Optional engine notification after a successful commit that changed this database.</param>
+internal sealed class SqliteDatabaseStore(string name, string path, SqliteSessionPool pool, Action? committed = null) : IDatabaseStore, IDisposable
 {
     /// <summary>On-disk schema version, stored in <c>PRAGMA user_version</c>.</summary>
     private const int SchemaVersion = 6;
@@ -192,6 +193,7 @@ internal sealed class SqliteDatabaseStore(string name, string path, SqliteSessio
 
     private void Committed()
     {
+        committed?.Invoke();
         TaskCompletionSource signal;
         lock (_commits)
         {

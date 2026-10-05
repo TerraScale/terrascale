@@ -50,10 +50,12 @@ internal static class DocumentRoute
     {
         var name = Database(context);
         var key = ApiKey.Of(context);
-        return await tenants.FindDatabaseAsync(key.OrganizationId, Project(context), name.Value, cancellationToken).ConfigureAwait(false) is { } tenant
+        var resolved = await tenants.FindDatabaseAsync(key.OrganizationId, Project(context), name.Value, cancellationToken).ConfigureAwait(false) is { } tenant
             && key.Reaches(tenant)
             ? tenant
             : throw UnknownDatabase();
+        context.Features.Set(resolved);
+        return resolved;
     }
 
     /// <summary>The one answer for a database that does not exist, or that the caller's tenant does not reach.</summary>

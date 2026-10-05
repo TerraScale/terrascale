@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Connections.Features;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.OpenApi;
 using TerraScale.TerraBase.Configuration;
+using TerraScale.TerraBase.Features.Pressure;
 
 namespace TerraScale.TerraBase.Hosting;
 
@@ -47,6 +48,15 @@ public static class Listeners
 {
     private static readonly object ListenerKey = typeof(TerraBaseListener);
 
+    /// <summary>The actual listener that accepted the connection, or null for an untagged connection.</summary>
+    public static TerraBaseListener? ArrivedOn(HttpContext context)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        return context.Features.Get<IConnectionItemsFeature>()?.Items.TryGetValue(ListenerKey, out var tag) == true
+            ? tag as TerraBaseListener?
+            : null;
+    }
+
     /// <summary>Documents the client listener's region headers and pin rejection in OpenAPI.</summary>
     public static IServiceCollection AddTerraBaseRegionOpenApi(this IServiceCollection services)
     {
@@ -91,10 +101,19 @@ public static class Listeners
     public static ListenOptions UseTerraBaseListener(this ListenOptions listen, TerraBaseListener listener)
     {
         ArgumentNullException.ThrowIfNull(listen);
-        listen.Use(next => connection =>
+        listen.Use(next => async connection =>
         {
             connection.Items[ListenerKey] = listener;
-            return next(connection);
+            var pressure = listener == TerraBaseListener.Client ? listen.ApplicationServices.GetRequiredService<IPressureSignals>() : null;
+            pressure?.ConnectionOpened();
+            try
+            {
+                await next(connection).ConfigureAwait(false);
+            }
+            finally
+            {
+                pressure?.ConnectionClosed();
+            }
         });
         return listen;
     }
@@ -112,8 +131,8 @@ public static class Listeners
         kestrel.ListenAnyIP(port, listen =>
         {
             listen.Protocols = HttpProtocols.Http1AndHttp2;
-            listen.UseHttps(options.ClientCertificate!);
             listen.UseTerraBaseListener(TerraBaseListener.Client);
+            listen.UseHttps(options.ClientCertificate!);
         });
     }
 
@@ -128,9 +147,7 @@ public static class Listeners
         app.UseRouting();
         app.Use((context, next) =>
         {
-            var arrivedOn = context.Features.Get<IConnectionItemsFeature>()?.Items.TryGetValue(ListenerKey, out var tag) == true
-                ? tag as TerraBaseListener?
-                : null;
+            var arrivedOn = ArrivedOn(context);
             if (arrivedOn == TerraBaseListener.Client)
             {
                 // OnStarting survives Response.Clear() in the error middleware.

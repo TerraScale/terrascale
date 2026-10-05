@@ -45,7 +45,7 @@ public sealed record TerraBaseOptions
 
     private static readonly FrozenSet<string> Keys = FrozenSet.Create(
         StringComparer.Ordinal,
-        ["admin-port", "data-directory", "region", "client-port", .. ClientTlsKeys, "dashboard-credential-file", "management-legacy-owner", "peer-port", .. PeerTlsKeys, "shutdown-grace-seconds", "readiness-cache-seconds"]);
+        ["admin-port", "data-directory", "region", "node-name", "memory-budget", "client-port", .. ClientTlsKeys, "dashboard-credential-file", "management-legacy-owner", "peer-port", .. PeerTlsKeys, "shutdown-grace-seconds", "readiness-cache-seconds"]);
 
     /// <summary>Every setting name, in <c>--name=value</c> form without the dashes.</summary>
     public static IReadOnlySet<string> SettingNames => Keys;
@@ -63,6 +63,12 @@ public sealed record TerraBaseOptions
 
     /// <summary>Node region. Startup requires it outside Development, where it defaults to <c>development</c>.</summary>
     public string Region { get; init; } = string.Empty;
+
+    /// <summary>Operator node identity; defaults to the machine name. This is not membership evidence.</summary>
+    public string NodeName { get; init; } = Environment.MachineName;
+
+    /// <summary>Memory pressure denominator in bytes; telemetry only until memory admission lands in #13.</summary>
+    public long MemoryBudget { get; init; } = Math.Max(1024 * 1024, GC.GetGCMemoryInfo().TotalAvailableMemoryBytes / 4);
 
     /// <summary>
     /// Port of the client-facing HTTPS listener; <c>0</c> picks a free port.
@@ -168,6 +174,22 @@ public sealed record TerraBaseOptions
         }
 
         var dataDirectory = values.GetValueOrDefault("data-directory", DefaultDataDirectory);
+        var nodeName = values.GetValueOrDefault("node-name", Environment.MachineName);
+        if (nodeName.Length is < 1 or > 128 || nodeName.Any(character => !char.IsAsciiLetterOrDigit(character) && character is not ('.' or '_' or ':' or '+' or '-')))
+        {
+            throw new TerraBaseConfigurationException("node-name must be 1 to 128 ASCII letters, digits, dots, underscores, colons, pluses or hyphens");
+        }
+
+        long? memoryBudget = null;
+        if (values.TryGetValue("memory-budget", out var rawBudget))
+        {
+            if (!long.TryParse(rawBudget, NumberStyles.None, CultureInfo.InvariantCulture, out var bytes) || bytes < 1024 * 1024)
+            {
+                throw new TerraBaseConfigurationException("memory-budget must be an integer of at least 1048576 bytes");
+            }
+
+            memoryBudget = bytes;
+        }
         if (string.IsNullOrWhiteSpace(dataDirectory))
         {
             throw new TerraBaseConfigurationException("data-directory must not be empty");
@@ -204,6 +226,8 @@ public sealed record TerraBaseOptions
             AdminPort = ParsePort(values, "admin-port") ?? DefaultAdminPort,
             DataDirectory = dataDirectory,
             Region = region,
+            NodeName = nodeName,
+            MemoryBudget = memoryBudget ?? Math.Max(1024 * 1024, GC.GetGCMemoryInfo().TotalAvailableMemoryBytes / 4),
             ClientPort = clientPort,
             ClientCertificate = clientPort is null ? null : LoadPem(
                 () => X509Certificate2.CreateFromPemFile(values["client-certificate"], values["client-private-key"]),

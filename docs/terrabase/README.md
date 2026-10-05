@@ -55,6 +55,8 @@ never its value. Port `0` picks a free port.
 | --- | --- | --- |
 | `--region` / `TERRABASE_REGION` | `development` in Development; required otherwise | Node region ID matching Atlas discovery. Lowercase ASCII letter followed by lowercase letters, digits or hyphens; at most 63 characters, no trailing hyphen |
 | `--admin-port` / `TERRABASE_ADMIN_PORT` | `9464` | Loopback administrative listener (`/healthz`, `/readyz`, `/metrics`, OpenAPI). 0 to 65535 |
+| `--node-name` / `TERRABASE_NODE_NAME` | Machine name | Descriptive node identity in pressure telemetry |
+| `--memory-budget` / `TERRABASE_MEMORY_BUDGET` | One quarter of runtime-available memory, at least 1 MiB | Pressure denominator in bytes; not yet an enforced admission limit |
 | `--data-directory` / `TERRABASE_DATA_DIRECTORY` | `data` (relative to the working directory) | Directory holding one SQLite file per database. Must be a valid path |
 | `--client-port` / `TERRABASE_CLIENT_PORT` | unset (listener off) | Client-facing HTTPS listener, 0 to 65535. Requires `client-certificate` and `client-private-key` |
 | `--client-certificate` / `TERRABASE_CLIENT_CERTIFICATE` | unset | PEM certificate file of the client listener. Requires `client-port` and `client-private-key` |
@@ -96,6 +98,13 @@ Clients resolve endpoints through Atlas, support an explicit static endpoint
 override, and pin a session to the selected region. Keep regional endpoints out
 of client code. See [the region contract](docs/region-identity.md) for pinning
 and Atlas compatibility.
+
+## Node pressure
+
+`GET /v1/node/pressure` and pressure metrics are available only on the loopback
+administrative listener. Measurements are cached; I/O-pool and replication
+signals stay unknown, keeping autoscaling gated until #13 and #11 are integrated.
+See [signal definitions and follow-ups](docs/node-pressure.md).
 
 ## Layout
 
