@@ -346,19 +346,6 @@ public sealed class SqlApiTests
         await Assert.ThrowsAsync<QueryCapacityException>(() => transaction.CountCollectionsAsync(CancellationToken.None).AsTask());
     }
 
-    // Reads 0 until armed; then each reading returns the current time and moves it 6 seconds on.
-    private sealed class SteppingClock : TimeProvider
-    {
-        private static readonly long Step = 6 * TimeSpan.TicksPerSecond;
-        private long _now;
-
-        public bool Armed { get; set; }
-
-        public override long TimestampFrequency => TimeSpan.TicksPerSecond;
-
-        public override long GetTimestamp() => Armed ? Interlocked.Add(ref _now, Step) - Step : Interlocked.Read(ref _now);
-    }
-
     [Test]
     public async Task A_quoted_name_with_a_dot_is_refused_and_quoted_parts_still_name_nested_members()
     {

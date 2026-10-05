@@ -2,6 +2,7 @@ using System.Net;
 using Bogus;
 using Microsoft.Extensions.DependencyInjection;
 using TerraScale.TerraBase.Engine;
+using TerraScale.TerraBase.Testing;
 
 namespace TerraScale.TerraBase.Fast.Documents;
 
@@ -12,19 +13,44 @@ public sealed class ReplicationCapacityTests
     {
         await using var api = await DocumentApi.StartAsync();
         var ids = Enumerable.Range(0, 3).Select(_ => DocumentApi.NewId()).ToArray();
-        var document = new { text = new Faker().Random.String2(800 * 1024, "abcdef") };
-        var operations = ids.Select(id => (object)new { op = "put", collection = "items", id, document }).ToArray();
+        foreach (var id in ids)
+        {
+            (await api.PutAsync(id, new { n = 0 })).Status.ShouldBe(HttpStatusCode.Created);
+        }
+
+        // Each body grows to about 800 KiB in the file, not over HTTP: a multi-megabyte upload can stall for 20 s on
+        // loopback. A small patch captures its whole document, so the third patch passes the 2 MiB of change content.
+        var tenant = await api.TenantOfAsync();
+        var database = new ManagedDatabaseRef(tenant.OrganizationId, tenant.ProjectId!, tenant.DatabaseId!, DocumentApi.Database);
+        var body = $$"""{"n":0,"text":"{{new Faker().Random.String2(800 * 1024, "abcdef")}}"}""";
+        foreach (var id in ids)
+        {
+            var stored = await ManagementApi.ExecuteStoredAsync(
+                api.Server.DataDirectory, database, "UPDATE documents SET body = $body WHERE collection = $collection AND id = $id;",
+                ("$body", body), ("$collection", DocumentApi.Collection), ("$id", id));
+            await Assert.That(stored).IsEqualTo(1);
+        }
+
+        // The version covers the body, so read it after the body changed.
+        var versions = new List<string>();
+        foreach (var id in ids)
+        {
+            versions.Add((await api.GetAsync(id)).Version);
+        }
+
+        var operations = ids.Select(id => (object)new { op = "patch", collection = "items", id, merge = new { n = 1 } }).ToArray();
         var result = await api.TransactAsync(operations);
 
         await Assert.That((result.Status, result.Code, result.Op)).IsEqualTo((HttpStatusCode.ServiceUnavailable, "capacity", (int?)2));
-        foreach (var id in ids)
+        for (var i = 0; i < ids.Length; i++)
         {
-            await Assert.That((await api.GetAsync(id)).Status).IsEqualTo(HttpStatusCode.NotFound);
+            var current = await api.GetAsync(ids[i]);
+            await Assert.That((current.Status, current.Version)).IsEqualTo((HttpStatusCode.OK, versions[i]));
         }
 
-        await AssertStateAsync(api, 0, 0);
-        (await api.PutAsync(ids[0], new { n = 1 })).Status.ShouldBe(HttpStatusCode.Created);
-        await AssertStateAsync(api, 1, 1);
+        await AssertStateAsync(api, 3, 3);
+        (await api.PutAsync(DocumentApi.NewId(), new { n = 1 })).Status.ShouldBe(HttpStatusCode.Created);
+        await AssertStateAsync(api, 4, 4);
     }
 
     [Test]

@@ -2,8 +2,8 @@ using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using TerraScale.TerraBase.Engine;
+using TerraScale.TerraBase.Errors;
 using TerraScale.TerraBase.Hosting;
-
 using TerraScale.TerraBase.Tenancy;
 
 namespace TerraScale.TerraBase.Features.Management.Schema;
@@ -20,17 +20,28 @@ internal sealed partial class SchemaService(IStorageEngine engine) : ISchemaServ
     private const long MaxFieldPathBytes = 1024 * 1024;
     private const long MaxResponseBytes = 8 * 1024 * 1024;
 
-    public async ValueTask<IReadOnlyList<CollectionStats>> ListCollectionsAsync(TenantContext database, CancellationToken cancellationToken)
+    // Same code as a document query over the engine read budget.
+    private static readonly Validation QueryTooExpensive = new("query too expensive", "invalid_query");
+    private static readonly Validation SchemaTooExpensive = new("schema too expensive", "invalid_query");
+
+    public async ValueTask<ListCollectionsResult> ListCollectionsAsync(TenantContext database, CancellationToken cancellationToken)
     {
         var transaction = await BeginAsync(database, cancellationToken).ConfigureAwait(false);
         if (transaction is null)
         {
-            return [];
+            return new CollectionList([]);
         }
 
         await using (transaction.ConfigureAwait(false))
         {
-            return await transaction.ListCollectionStatsAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                return new CollectionList(await transaction.ListCollectionStatsAsync(cancellationToken).ConfigureAwait(false));
+            }
+            catch (QueryCapacityException)
+            {
+                return QueryTooExpensive;
+            }
         }
     }
 
@@ -48,74 +59,91 @@ internal sealed partial class SchemaService(IStorageEngine engine) : ISchemaServ
         }
     }
 
-    public async ValueTask<CollectionSchema?> InferAsync(TenantContext database, string collection, CancellationToken cancellationToken)
+    public async ValueTask<InferSchemaResult> InferAsync(TenantContext database, string collection, CancellationToken cancellationToken)
     {
         var transaction = await BeginAsync(database, cancellationToken).ConfigureAwait(false);
         if (transaction is null)
         {
-            return null;
+            return new NotFound();
         }
 
         await using (transaction.ConfigureAwait(false))
         {
-            if (await transaction.GetCollectionAsync(collection, cancellationToken).ConfigureAwait(false) is null)
+            try
             {
-                return null;
+                return await InferAsync(transaction, collection, cancellationToken).ConfigureAwait(false);
             }
-
-            var documents = await transaction.CountDocumentsAsync(collection, cancellationToken).ConfigureAwait(false);
-
-            var fields = new SortedDictionary<string, FieldCounts>(StringComparer.Ordinal);
-            var sampled = 0;
-            long bytes = 0;
-            long fieldPathBytes = 0;
-            string? after = null;
-            var full = false;
-            while (!full && sampled < MaxSampledDocuments && bytes < MaxSampledBytes)
+            catch (QueryCapacityException)
             {
-                var page = await transaction.ListAsync(
-                    collection, after, Math.Min(PageSize, MaxSampledDocuments - sampled), MaxSampledBytes - bytes, cancellationToken).ConfigureAwait(false);
-                foreach (var document in page.Documents)
-                {
-                    // A page may start with a document larger than the budget left; stop before parsing it.
-                    if (bytes + document.Json.Length > MaxSampledBytes)
-                    {
-                        full = true;
-                        break;
-                    }
+                return SchemaTooExpensive;
+            }
+        }
+    }
 
-                    using var json = JsonDocument.Parse(document.Json);
-                    Walk(json.RootElement, prefix: null, prefixBytes: 0, depth: 1, fields, ref fieldPathBytes, cancellationToken);
-                    sampled++;
-                    bytes += document.Json.Length;
-                }
+    private static async ValueTask<InferSchemaResult> InferAsync(IStorageTransaction transaction, string collection, CancellationToken cancellationToken)
+    {
+        if (await transaction.GetCollectionAsync(collection, cancellationToken).ConfigureAwait(false) is null)
+        {
+            return new NotFound();
+        }
 
-                if (full || !page.HasMore)
+        var documents = await transaction.CountDocumentsAsync(collection, cancellationToken).ConfigureAwait(false);
+
+        var fields = new SortedDictionary<string, FieldCounts>(StringComparer.Ordinal);
+        var sampled = 0;
+        long bytes = 0;
+        long fieldPathBytes = 0;
+        string? after = null;
+        var full = false;
+        while (!full && sampled < MaxSampledDocuments && bytes < MaxSampledBytes)
+        {
+            var page = await transaction.ListAsync(
+                collection, after, Math.Min(PageSize, MaxSampledDocuments - sampled), MaxSampledBytes - bytes, cancellationToken).ConfigureAwait(false);
+            foreach (var document in page.Documents)
+            {
+                // A page may start with a document larger than the budget left; stop before parsing it.
+                if (bytes + document.Json.Length > MaxSampledBytes)
                 {
+                    full = true;
                     break;
                 }
 
-                after = page.Documents[^1].Id;
+                using var json = JsonDocument.Parse(document.Json);
+                if (!Walk(json.RootElement, prefix: null, prefixBytes: 0, depth: 1, fields, ref fieldPathBytes, cancellationToken))
+                {
+                    return SchemaTooExpensive;
+                }
+
+                sampled++;
+                bytes += document.Json.Length;
             }
 
-            var schema = new CollectionSchema(
-                collection,
-                documents,
-                sampled,
-                [.. fields.Select(field => new SchemaField(field.Key, field.Value.Present, field.Value.Types))]);
-            // Field/path limits also bound this serialization, including worst-case JSON escaping.
-            if (JsonSerializer.SerializeToUtf8Bytes(schema, TerraBaseJsonContext.Default.CollectionSchema).LongLength > MaxResponseBytes)
+            if (full || !page.HasMore)
             {
-                throw new QueryCapacityException("schema response budget exceeded");
+                break;
             }
 
-            return schema;
+            after = page.Documents[^1].Id;
         }
+
+        var schema = new CollectionSchema(
+            collection,
+            documents,
+            sampled,
+            [.. fields.Select(field => new SchemaField(field.Key, field.Value.Present, field.Value.Types))]);
+        // Field/path limits also bound this serialization, including worst-case JSON escaping.
+        if (JsonSerializer.SerializeToUtf8Bytes(schema, TerraBaseJsonContext.Default.CollectionSchema).LongLength > MaxResponseBytes)
+        {
+            return SchemaTooExpensive;
+        }
+
+        return schema;
     }
 
     // Documents preserve duplicate members. Use the first member, including its subtree, like SQL's json_extract
     // and projections; later duplicates do not contribute types or children. Do not descend into arrays or below MaxDepth.
-    private static void Walk(
+    // False when the field table would exceed its bounds.
+    private static bool Walk(
         JsonElement value, string? prefix, int prefixBytes, int depth, SortedDictionary<string, FieldCounts> fields,
         ref long fieldPathBytes, CancellationToken cancellationToken)
     {
@@ -128,7 +156,7 @@ internal sealed partial class SchemaService(IStorageEngine engine) : ISchemaServ
             // expands a small stored document into gigabytes of paths.
             if (name.Length > MaxPathBytes)
             {
-                throw new QueryCapacityException("schema path budget exceeded");
+                return false;
             }
 
             if (!seen.Add(name))
@@ -141,7 +169,7 @@ internal sealed partial class SchemaService(IStorageEngine engine) : ISchemaServ
                 + (identifier ? 0 : 2 + name.Count(character => character == '"'));
             if (pathBytes > MaxPathBytes)
             {
-                throw new QueryCapacityException("schema path budget exceeded");
+                return false;
             }
 
             var segment = identifier ? name : Quote(name);
@@ -150,7 +178,7 @@ internal sealed partial class SchemaService(IStorageEngine engine) : ISchemaServ
             {
                 if (fields.Count == MaxFields || fieldPathBytes + pathBytes > MaxFieldPathBytes)
                 {
-                    throw new QueryCapacityException("schema field budget exceeded");
+                    return false;
                 }
 
                 fieldPathBytes += pathBytes;
@@ -160,11 +188,14 @@ internal sealed partial class SchemaService(IStorageEngine engine) : ISchemaServ
             var type = TypeOf(member.Value);
             field.Present++;
             field.Types[type] = field.Types.GetValueOrDefault(type) + 1;
-            if (member.Value.ValueKind == JsonValueKind.Object && depth < MaxDepth)
+            if (member.Value.ValueKind == JsonValueKind.Object && depth < MaxDepth
+                && !Walk(member.Value, path, pathBytes, depth + 1, fields, ref fieldPathBytes, cancellationToken))
             {
-                Walk(member.Value, path, pathBytes, depth + 1, fields, ref fieldPathBytes, cancellationToken);
+                return false;
             }
         }
+
+        return true;
     }
 
     // Member names that are not plain identifiers are double-quoted (SQL style, inner quotes doubled), so a literal

@@ -223,7 +223,7 @@ logged and counted as unknown while management requests keep returning `503`.
 - **Errors:** `400` for invalid input, `403` when the acting member's role does not allow the request,
   `404` for an unknown resource or parent (or an organization the user is not a member of), `409` for a
   duplicate name, a non-empty delete or a rule in [Members and roles](#members-and-roles). Bodies are
-  `{"error":{"code","message"}}` with a stable code (`invalid_request`, `forbidden_role`, `not_found`,
+  `{"error":{"code","message"}}` with a stable code (`invalid_request`, `invalid_query`, `forbidden_role`, `not_found`,
   `name_taken`, `not_empty`, `last_owner`, `already_member`, `invitation_pending`, `already_owner`,
   `invitation_expired`) and a message that never echoes input ([error handling](error-handling.md)).
 - The data API addresses a database as `/v1/projects/{projectId}/databases/{name}/collections/…`,
@@ -517,8 +517,10 @@ documents (a deleted document's tombstone is not counted) and `bytes` is their J
 with `0` and `0`.
 
 Collection statistics, document counts and usage scans use the same engine read budget as SQL: 5 million SQLite
-instructions or 5 seconds of execution. Exhausting it returns `400` `"query too expensive"`; schema inference returns
-`400` `"schema too expensive"`. Cancellation interrupts scans and the progress handler is removed before session reuse.
+instructions or 5 seconds of execution. Exhausting it lists collections with `400` `invalid_query`,
+`query too expensive`, and infers a schema with `400` `invalid_query`, `schema too expensive`; usage still answers a
+plain `400` `"query too expensive"`. Cancellation interrupts scans and the progress handler is removed before session
+reuse.
 
 `GET …/databases/{database}/collections/{collection}/schema` infers the fields of a collection:
 `{"collection":"people","documents":3,"sampledDocuments":3,"fields":[{"path":"address.city","present":2,"types":{"string":2}}]}`.
@@ -528,8 +530,8 @@ The schema is inferred and read-only: TerraBase has no declared schemas yet.
 - It walks object members up to depth 8 and joins names with `.`. It does not descend into arrays.
 - The inferred field table is limited to 10000 paths, 1024 UTF-8 bytes per quoted path and 1 MiB of path bytes total.
   Paths are checked before concatenation. The complete JSON response, including escaping, is limited to 8 MiB.
-  Exceeding any bound, or exhausting the engine scan budget, returns `400` `"schema too expensive"`; no partial fields
-  are returned.
+  Exceeding any bound, or exhausting the engine scan budget, returns `400` `invalid_query`, `schema too expensive`; no
+  partial fields are returned.
 - The data API rejects duplicate member names, but documents stored before it did may still hold them. Schema inference
   takes the first occurrence in each object (including its subtree), like SQL filters and projections; later duplicates
   do not add types or fields.

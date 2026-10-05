@@ -85,18 +85,26 @@ malformed JSON body, with `400 invalid_request`.
 
 ## Checklist
 
-`throw new` counts in `src/TerraScale.TerraBase` after this change: 127, excluding generated `obj/` code.
-"Expected" counts the `ApiException`/`BadHttpRequestException` constructions that `BanExpectedFailureExceptions`
-matches. The other throws in each row are invariants or configuration errors to review during the conversion.
+`throw new` counts in `src/TerraScale.TerraBase`, excluding generated `obj/` code: 287 (TS-538 recounted them
+after TS-463, TS-464 and TS-521; TS-518's figure of 127 predates them). "Expected" counts the
+`ApiException`/`BadHttpRequestException` constructions that `BanExpectedFailureExceptions` matches. The other throws
+in each row are invariants or configuration errors to review during the conversion.
 
 | Folder | `throw new` | Expected | State |
 |--------|------------:|---------:|-------|
-| `Features/Management` (orgs, projects) | 0 | 0 | **Converted** (reference) |
+| `Features/Management` (orgs, projects) | 0 | 0 | **Not converted on `main`.** TS-518's reference conversion (commit `84b6ebd`) was lost when it was rebased onto TS-463; its endpoints still go through `ManagementRoute.Error` and the throwing validators. |
 | `Features/Management` commits, versions, dashboard documents (TS-521) | 0 | 0 | **Converted**: `CommitResult(CommitOutcome, CommitRejected)` carries the failing operation's index to `ErrorResponse.From(error, op)`; Documents API errors from document operations are read at that boundary |
-| `Features/Management` (access, databases, catalog, recovery) | 18 | 9 | `ManagementError`/`ManagementResult` and throwing validators remain. The catalog version guard in `EnsureCatalogAsync` still throws `503 unavailable` under every operation, orgs and projects included; it becomes an `Unavailable` case when access and databases convert. |
-| `Features/Documents` | 59 | 56 | To do (`ApiException` throughout) |
+| `Features/Management/Schema` | 0 | 0 | **Converted** (TS-538) |
+| `Features/Management` root (access, databases, catalog, recovery, commit invariants) | 25 | 8 | `ManagementError`/`ManagementResult` and throwing validators remain. The catalog version guard in `EnsureCatalogAsync` still throws `503 unavailable` under every operation, orgs and projects included; it becomes an `Unavailable` case when access and databases convert. |
+| `Features/Management/Credentials` | 1 | 1 | To do |
+| `Features/Management/Backups` | 4 | 2 | To do |
+| `Features/Management/Usage` | 2 | 0 | Review: `QueryCapacityException` thrown and caught inside the folder |
+| `Features/Management/Indexes` | 6 | 6 | To do |
+| `Features/Management/Queries` | 33 | 1 | To do; most throws are the SQL subset parser's `SqlSubsetException` |
+| `Features/Documents` | 58 | 54 | To do (`ApiException` throughout) |
 | `Features/Replication` | 53 | 0 | Keep (TS-464): peer gRPC boundary only, no HTTP failures. `RpcException` status for peers, `InvalidDataException` for a protocol violation that ends the stream, and invariants |
-| `Features/ApiKeys` | 1 | 0 | Review: request validation returns `TypedResults.BadRequest`; the throw is an invariant |
-| `Engine` | 29 | 0 | Review: `QueryCapacityException`, `StorageWriteLimitException` and `FormatException` cross into Documents |
-| `Configuration` | 15 | 0 | Keep: startup configuration errors, exit code 2 |
+| `Features/ApiKeys` | 2 | 0 | Review: request validation returns `TypedResults.BadRequest`; the throws are invariants |
+| `Features/UserAuth` | 2 | 0 | Review |
+| `Engine` | 63 | 0 | Review: `QueryCapacityException`, `StorageWriteLimitException` and `FormatException` cross into Documents |
+| `Configuration` | 28 | 0 | Keep: startup configuration errors, exit code 2 |
 | `Program.cs` | 1 | 0 | Keep: startup configuration error |

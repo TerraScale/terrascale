@@ -1,5 +1,5 @@
 using TerraScale.Endpoints;
-using TerraScale.TerraBase.Engine;
+using TerraScale.TerraBase.Errors;
 using TerraScale.TerraBase.Features.UserAuth;
 using TerraScale.TerraBase.Hosting;
 
@@ -14,7 +14,7 @@ public sealed class ListCollectionsEndpoint(IManagementService management, ISche
         Get(ManagementRoute.Database + "/collections");
         Name("listDatabaseCollections");
         Summary("Lists the collections of a database");
-        Description("Every collection, in name order, with its live document count and their JSON bytes." + " " + ManagementRoute.IdentityDescription);
+        Description("Every collection, in name order, with its live document count and their JSON bytes. Exhausting the engine read budget answers 400 invalid_query, query too expensive." + " " + ManagementRoute.IdentityDescription);
         Tags(ManagementRoute.Tag);
         Produces<CollectionList>();
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
@@ -24,17 +24,12 @@ public sealed class ListCollectionsEndpoint(IManagementService management, ISche
     }
 
     /// <inheritdoc />
-    public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
-    {
-        try
-        {
-            return await ManagementRoute.DatabaseAsync(HttpContext, management, cancellationToken) is { } database
-                ? TypedResults.Ok(new CollectionList(await schema.ListCollectionsAsync(database, cancellationToken)))
-                : TypedResults.NotFound();
-        }
-        catch (QueryCapacityException)
-        {
-            return TypedResults.BadRequest("query too expensive");
-        }
-    }
+    public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
+        await ManagementRoute.DatabaseAsync(HttpContext, management, cancellationToken) is not { } database
+            ? ErrorResponse.From(new NotFound())
+            : await schema.ListCollectionsAsync(database, cancellationToken) switch
+            {
+                CollectionList collections => TypedResults.Ok(collections),
+                Validation error => ErrorResponse.From(error),
+            };
 }

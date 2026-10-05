@@ -2,12 +2,16 @@ using System.Net;
 using System.Text;
 using System.Text.Json;
 using Bogus;
+using Microsoft.Extensions.DependencyInjection;
+using TerraScale.TerraBase.Engine;
 using TerraScale.TerraBase.Testing;
 
 namespace TerraScale.TerraBase.Fast.Management;
 
 public sealed class SchemaApiTests
 {
+    private const string BadCollection = "collection must be a lowercase name of at most 63 characters";
+
     private static readonly Faker Faker = new();
 
     [Test]
@@ -204,10 +208,34 @@ public sealed class SchemaApiTests
         // A legacy stored document can exceed the data API's current 4096-node limit.
         await api.PutStoredAsync(data, database, "wide", "d0", document);
 
-        using var response = await api.Client.GetAsync(Uri($"{database.Path}/collections/wide/schema"));
+        await ErrorAssert.ErrorAsync(
+            api.Client.GetAsync(Uri($"{database.Path}/collections/wide/schema")), HttpStatusCode.BadRequest, "invalid_query", "schema too expensive");
+    }
 
-        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
-        await Assert.That(await response.Content.ReadFromJsonAsync<string>()).IsEqualTo("schema too expensive");
+    [Test]
+    public async Task An_exhausted_engine_read_budget_is_too_expensive()
+    {
+        var clock = new SteppingClock();
+        var hook = new UsageCommitHook();
+        await using var api = await ManagementApi.StartAsync(services: services =>
+        {
+            hook.Install(services);
+            services.AddKeyedSingleton<TimeProvider>(EngineExtensions.QueryDeadlineClock, clock);
+        });
+        var database = await api.CreateManagedDatabaseAsync();
+        using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
+        await PutAsync(data, database, "people", "p1", new { name = Faker.Name.FullName() });
+        // From the first read of the database on, every engine read outlasts the 5-second deadline.
+        hook.BeforeBegin = (tenant, _) =>
+        {
+            clock.Armed |= tenant.DatabaseId == database.Id;
+            return ValueTask.CompletedTask;
+        };
+
+        await ErrorAssert.ErrorAsync(
+            api.Client.GetAsync(Uri(database.Path + "/collections")), HttpStatusCode.BadRequest, "invalid_query", "query too expensive");
+        await ErrorAssert.ErrorAsync(
+            api.Client.GetAsync(Uri(database.Path + "/collections/people/schema")), HttpStatusCode.BadRequest, "invalid_query", "schema too expensive");
     }
 
     [Test]
@@ -246,26 +274,21 @@ public sealed class SchemaApiTests
         var unknownDatabase = $"{database.ProjectPath}/databases/{Guid.NewGuid()}";
         var unknownProject = $"/v1/management/organizations/{database.Organization}/projects/{Guid.NewGuid()}/databases/{database.Id}";
 
-        using var missingCollection = await api.Client.GetAsync(Uri(database.Path + "/collections/nothing/schema"));
         using var emptiedCollection = await api.Client.GetAsync(Uri(database.Path + "/collections/emptied/schema"));
-        using var invalidCollection = await api.Client.GetAsync(Uri(database.Path + "/collections/Not-Valid/schema"));
-        using var databaseCollections = await api.Client.GetAsync(Uri(unknownDatabase + "/collections"));
-        using var databaseSchema = await api.Client.GetAsync(Uri(unknownDatabase + "/collections/people/schema"));
-        using var projectCollections = await api.Client.GetAsync(Uri(unknownProject + "/collections"));
-        using var projectSchema = await api.Client.GetAsync(Uri(unknownProject + "/collections/people/schema"));
 
-        await Assert.That(missingCollection.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+        await ErrorAssert.ErrorAsync(api.Client.GetAsync(Uri(database.Path + "/collections/nothing/schema")), HttpStatusCode.NotFound, "not_found");
+        await ErrorAssert.ErrorAsync(
+            api.Client.GetAsync(Uri(database.Path + "/collections/Not-Valid/schema")), HttpStatusCode.BadRequest, "invalid_request", BadCollection);
+        await ErrorAssert.ErrorAsync(api.Client.GetAsync(Uri(unknownDatabase + "/collections")), HttpStatusCode.NotFound, "not_found");
+        await ErrorAssert.ErrorAsync(api.Client.GetAsync(Uri(unknownDatabase + "/collections/people/schema")), HttpStatusCode.NotFound, "not_found");
+        await ErrorAssert.ErrorAsync(api.Client.GetAsync(Uri(unknownProject + "/collections")), HttpStatusCode.NotFound, "not_found");
+        await ErrorAssert.ErrorAsync(api.Client.GetAsync(Uri(unknownProject + "/collections/people/schema")), HttpStatusCode.NotFound, "not_found");
         // Collections are explicit: one whose documents were all deleted (tombstones) still exists, with nothing to infer.
         await Assert.That(emptiedCollection.StatusCode).IsEqualTo(HttpStatusCode.OK);
         var emptied = await emptiedCollection.Content.ReadFromJsonAsync<JsonElement>();
         await Assert.That(emptied.GetProperty("documents").GetInt64()).IsEqualTo(0);
         await Assert.That(emptied.GetProperty("sampledDocuments").GetInt32()).IsEqualTo(0);
         await Assert.That(emptied.GetProperty("fields").GetArrayLength()).IsEqualTo(0);
-        await Assert.That(invalidCollection.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
-        await Assert.That(databaseCollections.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
-        await Assert.That(databaseSchema.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
-        await Assert.That(projectCollections.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
-        await Assert.That(projectSchema.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
     }
 
     // Sends the exact JSON text, so stored bytes are known; returns it. Creates the collection first.
