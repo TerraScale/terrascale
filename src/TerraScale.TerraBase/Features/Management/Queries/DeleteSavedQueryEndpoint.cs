@@ -16,14 +16,22 @@ public sealed class DeleteSavedQueryEndpoint(IManagementService management, IQue
         Description(ManagementRoute.IdentityDescription);
         Tags(ManagementRoute.Tag);
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
+        Produces<ErrorBody>(StatusCodes.Status403Forbidden);
         RequireAuthorization(UserAuthExtensions.PolicyName);
         Metadata(ListenerMetadata.Management, new ProducesResponseTypeMetadata(StatusCodes.Status204NoContent, typeof(void)));
     }
 
     /// <inheritdoc />
-    public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
-        await ManagementRoute.ProjectAsync(HttpContext, management, cancellationToken) is { } project
-        && await queries.DeleteSavedAsync(ManagementRoute.UserId(HttpContext), project, ManagementRoute.Value(HttpContext, "query"), cancellationToken)
+    public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
+    {
+        var writable = await ManagementRoute.WritableProjectAsync(HttpContext, management, cancellationToken);
+        if (writable.Value is not { } project)
+        {
+            return ManagementRoute.Error(writable.Error);
+        }
+
+        return await queries.DeleteSavedAsync(ManagementRoute.UserId(HttpContext), project, ManagementRoute.Value(HttpContext, "query"), cancellationToken)
             ? TypedResults.NoContent()
             : TypedResults.NotFound();
+    }
 }

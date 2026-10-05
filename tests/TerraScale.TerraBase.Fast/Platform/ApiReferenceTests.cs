@@ -23,7 +23,9 @@ public sealed class ApiReferenceTests
         DELETE /v1/projects/{project}/databases/{database}/collections/{collection}/documents/{id} ApiKey(documents:write)
         GET /healthz anonymous
         GET /readyz anonymous
+        GET /v1/management/commits/{id} TsAuth
         GET /v1/management/current-organization TsAuth
+        GET /v1/management/documents/{collection}/{id} TsAuth
         GET /v1/management/organizations TsAuth
         GET /v1/management/organizations/{organization} TsAuth
         GET /v1/management/organizations/{organization}/audit-events TsAuth
@@ -46,6 +48,7 @@ public sealed class ApiReferenceTests
         GET /v1/management/organizations/{organization}/projects/{project}/saved-queries TsAuth
         GET /v1/management/organizations/{organization}/projects/{project}/saved-queries/{query} TsAuth
         GET /v1/management/organizations/{organization}/projects/{project}/usage TsAuth
+        GET /v1/management/versions TsAuth
         GET /v1/projects/{project}/databases/{database}/collections ApiKey(documents:read)
         GET /v1/projects/{project}/databases/{database}/collections/{collection} ApiKey(documents:read)
         GET /v1/projects/{project}/databases/{database}/collections/{collection}/documents ApiKey(documents:read)
@@ -54,7 +57,10 @@ public sealed class ApiReferenceTests
         PATCH /v1/management/organizations/{organization} TsAuth
         PATCH /v1/management/organizations/{organization}/projects/{project} TsAuth
         PATCH /v1/projects/{project}/databases/{database}/collections/{collection}/documents/{id} ApiKey(documents:write)
+        POST /v1/management/commits TsAuth
+        POST /v1/management/documents/{collection}/query TsAuth
         POST /v1/management/invitations/accept TsAuth
+        POST /v1/management/invitations/lookup TsAuth
         POST /v1/management/organizations TsAuth
         POST /v1/management/organizations/{organization}/invitations TsAuth
         POST /v1/management/organizations/{organization}/leave TsAuth

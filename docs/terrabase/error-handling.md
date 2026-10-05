@@ -12,8 +12,8 @@ fallback was not needed.
 
 | Where | What |
 |-------|------|
-| `src/TerraScale.TerraBase/Errors/Errors.cs` | The failure kinds `NotFound`, `Conflict`, `Validation`, `Unauthorized`, `Forbidden`, `QuotaExceeded`, `Unavailable`. Each has a message (the rule that failed, never client input) and a stable `Code`. Also `Done` (success without a value), `Failure` (all kinds), `Valid<T>` (a request value or `Validation`) and `Found<T>` (a resource or `NotFound`). |
-| `src/TerraScale.TerraBase/Errors/ErrorResponse.cs` | `ErrorResponse.From(Failure)`, the single mapping to HTTP: 404, 409, 400, 401, 403, 429, 503. The body is the existing `{"error":{"code","message"}}` envelope (decision 0004), with `Cache-Control: no-store`. |
+| `src/TerraScale.TerraBase/Errors/Errors.cs` | The failure kinds `NotFound`, `Conflict`, `Validation`, `PreconditionFailed` (a stale version, TS-521), `Unauthorized`, `Forbidden`, `QuotaExceeded`, `Unavailable`. Each has a message (the rule that failed, never client input) and a stable `Code`. Also `Done` (success without a value), `Failure` (all kinds), `Valid<T>` (a request value or `Validation`) and `Found<T>` (a resource or `NotFound`). |
+| `src/TerraScale.TerraBase/Errors/ErrorResponse.cs` | `ErrorResponse.From(Failure, op)`, the single mapping to HTTP: 404, 409, 400, 412, 401, 403, 429, 503. `op` names the failing operation of a batch (`error.op`), as Management commits do. The body is the existing `{"error":{"code","message"}}` envelope (decision 0004), with `Cache-Control: no-store`. |
 | The feature | One `union` per operation that lists exactly its outcomes, for example `public readonly union DeleteProjectResult(Done, NotFound, Conflict);`. It also holds shared instances with feature codes, such as `ManagementErrors.NameTaken` (`name_taken`). |
 
 `Errors/` is shared from the start, unlike other shared primitives that wait for a second feature: every folder
@@ -92,6 +92,7 @@ matches. The other throws in each row are invariants or configuration errors to 
 | Folder | `throw new` | Expected | State |
 |--------|------------:|---------:|-------|
 | `Features/Management` (orgs, projects) | 0 | 0 | **Converted** (reference) |
+| `Features/Management` commits, versions, dashboard documents (TS-521) | 0 | 0 | **Converted**: `CommitResult(CommitOutcome, CommitRejected)` carries the failing operation's index to `ErrorResponse.From(error, op)`; Documents API errors from document operations are read at that boundary |
 | `Features/Management` (access, databases, catalog, recovery) | 18 | 9 | `ManagementError`/`ManagementResult` and throwing validators remain. The catalog version guard in `EnsureCatalogAsync` still throws `503 unavailable` under every operation, orgs and projects included; it becomes an `Unavailable` case when access and databases convert. |
 | `Features/Documents` | 59 | 56 | To do (`ApiException` throughout) |
 | `Features/Replication` | 53 | 0 | Keep (TS-464): peer gRPC boundary only, no HTTP failures. `RpcException` status for peers, `InvalidDataException` for a protocol violation that ends the stream, and invariants |

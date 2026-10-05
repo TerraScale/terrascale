@@ -95,12 +95,36 @@ internal sealed class DocumentService(IStorageEngine engine, TimeProvider time, 
         await using (transaction.ConfigureAwait(false))
         {
             await CollectionAsync(transaction, query.Collection, cancellationToken).ConfigureAwait(false);
-            var page = await QueryPageAsync(transaction, query, cancellationToken).ConfigureAwait(false);
-            (long Count, bool Complete)? count = countLimit is { } limit
-                ? await CountAsync(transaction, query.Collection, query.Filter, limit, cancellationToken).ConfigureAwait(false)
-                : null;
+            var result = await QueryAsync(transaction, query, countLimit, cancellationToken).ConfigureAwait(false);
             usage.RecordRead(database);
-            return (page, count);
+            return result;
+        }
+    }
+
+    public async ValueTask<(QueryPage Page, (long Count, bool Complete)? Count)> QueryAsync(
+        IStorageTransaction transaction, DocumentQuery query, long? countLimit, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(query);
+        var page = await QueryPageAsync(transaction, query, cancellationToken).ConfigureAwait(false);
+        (long Count, bool Complete)? count = countLimit is { } limit
+            ? await CountAsync(transaction, query.Collection, query.Filter, limit, cancellationToken).ConfigureAwait(false)
+            : null;
+        return (page, count);
+    }
+
+    public async ValueTask<OperationResult> ApplyAsync(IStorageTransaction transaction, DocumentOperation operation, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await ApplyOperationAsync(transaction, operation, cancellationToken).ConfigureAwait(false);
+        }
+        catch (StorageWriteLimitException)
+        {
+            throw new ApiException(StatusCodes.Status413PayloadTooLarge, "payload_too_large", "a transaction exceeds the storage write limits");
+        }
+        catch (OverflowException)
+        {
+            throw new ApiException(StatusCodes.Status503ServiceUnavailable, "capacity", "the commit offset is exhausted");
         }
     }
 
@@ -130,7 +154,7 @@ internal sealed class DocumentService(IStorageEngine engine, TimeProvider time, 
                             await CollectionAsync(transaction, operation.Collection, cancellationToken).ConfigureAwait(false);
                         }
 
-                        results[i] = await ApplyAsync(transaction, operation, cancellationToken).ConfigureAwait(false);
+                        results[i] = await ApplyOperationAsync(transaction, operation, cancellationToken).ConfigureAwait(false);
                     }
                     catch (DocumentValidationException error)
                     {
@@ -180,7 +204,7 @@ internal sealed class DocumentService(IStorageEngine engine, TimeProvider time, 
         }
     }
 
-    private static async ValueTask<OperationResult> ApplyAsync(
+    private static async ValueTask<OperationResult> ApplyOperationAsync(
         IStorageTransaction transaction, DocumentOperation operation, CancellationToken cancellationToken)
     {
         var id = operation switch

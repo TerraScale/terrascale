@@ -110,12 +110,13 @@ public sealed class AccessApiTests
         await Assert.That(accepted.StatusCode).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(member.GetProperty("userId").GetString()).IsEqualTo(inviteeId);
         await Assert.That(member.GetProperty("role").GetString()).IsEqualTo("admin");
-        // An accepted invitation is gone: its token no longer names anything.
-        await Assert.That(acceptedAgain.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
-        await Assert.That(Strings(afterAccept, "id")).IsEquivalentTo([revokedId]);
+        // An accepted invitation stays in the history, closed: its token cannot be used again.
+        await Assert.That(acceptedAgain.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
+        await Assert.That(Strings(afterAccept, "id")).IsEquivalentTo([id, revokedId]);
+        await Assert.That(Strings(afterAccept, "status")).IsEquivalentTo(["accepted", "pending"]);
         await Assert.That(revoke.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
         await Assert.That(revokeUnknown.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
-        await Assert.That(acceptRevoked.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+        await Assert.That(acceptRevoked.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
         await Assert.That(alreadyMember.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
     }
 
@@ -465,7 +466,8 @@ public sealed class AccessApiTests
         await Assert.That(statuses).All().Satisfy(status => status.IsEqualTo(HttpStatusCode.BadRequest));
         // A rejected request changes nothing.
         await Assert.That(Roles(members)).IsEquivalentTo([$"{ownerId}=owner", $"{memberId}=member"]);
-        await Assert.That(pending.GetProperty("items").GetArrayLength()).IsEqualTo(0);
+        // Only the invitation the member joined through, accepted.
+        await Assert.That(Strings(pending, "status")).IsEquivalentTo(["accepted"]);
     }
 
     [Test]

@@ -18,7 +18,7 @@ public sealed class CreateInvitationEndpoint(IAccessService access) : Endpoint<I
         Post(ManagementRoute.Invitations);
         Name("createInvitation");
         Summary("Invites an email address to an organization");
-        Description($"email: one address; role: owner, admin or member (default member). Needs admin, and owner to invite an owner. The token is returned only here and expires with the invitation after 7 days. 409 while an unexpired invitation for the email is pending; an expired one is replaced. {ManagementRoute.IdentityDescription}");
+        Description($"email: one address; role: owner, admin, member or viewer (default member). Needs admin, and owner to invite an owner. The token is returned only here and expires with the invitation after 7 days. 409 while an unexpired invitation for the email is pending; an expired one stays in the history and a new one is created. {ManagementRoute.IdentityDescription}");
         Tags(ManagementRoute.AccessTag);
         Produces<CreatedInvitation>(StatusCodes.Status201Created);
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);

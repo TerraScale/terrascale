@@ -16,14 +16,22 @@ public sealed class DropIndexEndpoint(IManagementService management, IIndexServi
         Description(ManagementRoute.IdentityDescription);
         Tags(ManagementRoute.Tag);
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
+        Produces<ErrorBody>(StatusCodes.Status403Forbidden);
         RequireAuthorization(UserAuthExtensions.PolicyName);
         Metadata(ListenerMetadata.Management, new ProducesResponseTypeMetadata(StatusCodes.Status204NoContent, typeof(void)));
     }
 
     /// <inheritdoc />
-    public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
-        await ManagementRoute.DatabaseAsync(HttpContext, management, cancellationToken) is { } database
-        && await indexes.DropAsync(database, ManagementRoute.Value(HttpContext, "index"), cancellationToken)
+    public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
+    {
+        var writable = await ManagementRoute.WritableDatabaseAsync(HttpContext, management, cancellationToken);
+        if (writable.Value is not { } database)
+        {
+            return ManagementRoute.Error(writable.Error);
+        }
+
+        return await indexes.DropAsync(database, ManagementRoute.Value(HttpContext, "index"), cancellationToken)
             ? TypedResults.NoContent()
             : TypedResults.NotFound();
+    }
 }

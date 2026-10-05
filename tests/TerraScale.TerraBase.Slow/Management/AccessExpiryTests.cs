@@ -17,7 +17,7 @@ public sealed class AccessExpiryTests
     private static readonly TimeSpan PastExpiry = TimeSpan.FromDays(8);
 
     [Test]
-    public async Task Expired_invitations_cannot_be_accepted_and_are_replaced()
+    public async Task Expired_invitations_cannot_be_accepted_and_stay_in_the_history_beside_a_new_one()
     {
         await using var api = await ShiftedApi.StartAsync();
         var ownerId = User();
@@ -41,9 +41,9 @@ public sealed class AccessExpiryTests
         await Assert.That(stillPending.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
         await Assert.That(expired.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
         await Assert.That(reinvited.StatusCode).IsEqualTo(HttpStatusCode.Created);
-        // The expired invitation was replaced rather than kept beside the new one.
-        await Assert.That(Strings(pending, "id")).IsEquivalentTo([fresh.GetProperty("invitation").GetProperty("id").GetString()!]);
-        await Assert.That(replaced.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+        // The expired invitation stays in the history, still expired, beside the new one, which took its email.
+        await Assert.That(Strings(pending, "id")).IsEquivalentTo([expiredToken.Split('.')[1], fresh.GetProperty("invitation").GetProperty("id").GetString()!]);
+        await Assert.That(replaced.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
         await Assert.That(accepted.StatusCode).IsEqualTo(HttpStatusCode.OK);
     }
 

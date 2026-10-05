@@ -35,6 +35,16 @@ public sealed class TenantIsolationTests
         "POST /v1/management/invitations/accept",
         "POST /v1/management/organizations",
         "PUT /v1/management/current-organization",
+        // Commits name organizations in their operations, each authorized like its REST route (CommitApiTests);
+        // commit records and versions are the acting user's own.
+        "POST /v1/management/commits",
+        "GET /v1/management/commits/{id}",
+        "GET /v1/management/versions",
+        // A token hash names one invitation, as the accept route's token does.
+        "POST /v1/management/invitations/lookup",
+        // The dashboard document space belongs to the dashboard, not to a tenant; API keys never reach it.
+        "GET /v1/management/documents/{collection}/{id}",
+        "POST /v1/management/documents/{collection}/query",
     ];
 
     [Test]

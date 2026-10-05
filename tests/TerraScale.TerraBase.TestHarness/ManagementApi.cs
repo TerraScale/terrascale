@@ -13,12 +13,19 @@ namespace TerraScale.TerraBase.Testing;
 /// </summary>
 public sealed class ManagementApi : IAsyncDisposable
 {
-    private ManagementApi(TerraBaseTestServer server, ClientTls tls, TestIssuer issuer, string user)
+    /// <summary>The management service credential of servers started with one.</summary>
+    public const string ServiceCredential = "test-management-service-credential-0123456789";
+
+    // Holds the credential file of a server started with the management service credential.
+    private readonly string? _credentialDirectory;
+
+    private ManagementApi(TerraBaseTestServer server, ClientTls tls, TestIssuer issuer, string user, string? credentialDirectory)
     {
         Server = server;
         Tls = tls;
         Issuer = issuer;
         User = user;
+        _credentialDirectory = credentialDirectory;
         Client = As(user);
     }
 
@@ -37,18 +44,31 @@ public sealed class ManagementApi : IAsyncDisposable
     /// <summary>
     /// Starts a server; <paramref name="configure"/> edits its settings after the client listener and the credential are
     /// configured, <paramref name="time"/> replaces its clock and <paramref name="services"/> its other services.
+    /// <paramref name="managementCredential"/> also enables the management service credential, for <see cref="Service"/>.
     /// </summary>
     public static async Task<ManagementApi> StartAsync(
-        Action<Dictionary<string, string>>? configure = null, Action<IServiceCollection>? services = null, TimeProvider? time = null)
+        Action<Dictionary<string, string>>? configure = null, Action<IServiceCollection>? services = null, TimeProvider? time = null,
+        bool managementCredential = false)
     {
         var tls = new ClientTls();
         var issuer = new TestIssuer();
+        var credentialDirectory = managementCredential ? Directory.CreateTempSubdirectory("terrabase-service-").FullName : null;
         try
         {
+            if (credentialDirectory is not null)
+            {
+                await File.WriteAllTextAsync(Path.Combine(credentialDirectory, "credential"), ServiceCredential + "\n");
+            }
+
             var server = await TerraBaseTestServer.StartAsync(settings =>
             {
                 tls.Apply(settings);
                 TestIssuer.Configure(settings);
+                if (credentialDirectory is not null)
+                {
+                    settings["management-credential-file"] = Path.Combine(credentialDirectory, "credential");
+                }
+
                 configure?.Invoke(settings);
             }, collection =>
             {
@@ -61,7 +81,7 @@ public sealed class ManagementApi : IAsyncDisposable
                 services?.Invoke(collection);
             });
             // Startup waited for the issuer's keys, so tokens work from the first request.
-            return new ManagementApi(server, tls, issuer, Guid.NewGuid().ToString());
+            return new ManagementApi(server, tls, issuer, Guid.NewGuid().ToString(), credentialDirectory);
         }
         catch
         {
@@ -72,6 +92,10 @@ public sealed class ManagementApi : IAsyncDisposable
             finally
             {
                 issuer.Dispose();
+                if (credentialDirectory is not null)
+                {
+                    Directory.Delete(credentialDirectory, recursive: true);
+                }
             }
 
             throw;
@@ -81,6 +105,23 @@ public sealed class ManagementApi : IAsyncDisposable
     /// <summary>A client acting as <paramref name="user"/>, with <paramref name="email"/> as its verified email when set.</summary>
     public HttpClient As(string user, string? email = null) =>
         Authorized(() => email is null ? Issuer.Mint(user) : Issuer.MintWithEmail(user, email));
+
+    /// <summary>
+    /// A client acting as <paramref name="user"/> with the management service credential on the loopback administrative
+    /// listener, as a trusted service; needs a server started with <c>managementCredential</c>.
+    /// </summary>
+    public HttpClient Service(string user)
+    {
+        if (_credentialDirectory is null)
+        {
+            throw new InvalidOperationException("start the server with managementCredential: true");
+        }
+
+        var client = new HttpClient { BaseAddress = Server.BaseAddress, Timeout = TimeSpan.FromSeconds(30) };
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", ServiceCredential);
+        client.DefaultRequestHeaders.Add("X-TerraBase-User-Id", user);
+        return client;
+    }
 
     /// <summary>A client that sends <paramref name="token"/> as its bearer token, or no token when it is null.</summary>
     public HttpClient WithToken(string? token) => Tls.CreateClient(Server.ClientAddress!, token);
@@ -258,6 +299,10 @@ public sealed class ManagementApi : IAsyncDisposable
                 finally
                 {
                     Issuer.Dispose();
+                    if (_credentialDirectory is not null)
+                    {
+                        Directory.Delete(_credentialDirectory, recursive: true);
+                    }
                 }
             }
         }

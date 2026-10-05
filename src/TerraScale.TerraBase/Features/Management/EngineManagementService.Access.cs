@@ -9,11 +9,20 @@ using TerraScale.TerraBase.Tenancy;
 
 namespace TerraScale.TerraBase.Features.Management;
 
-/// <summary>An invitation as stored: with the SHA-256 (hex) of its token secret, which is never returned.</summary>
+/// <summary>An invitation as stored: with hashes of its token, which is never stored or returned again.</summary>
 /// <param name="Invitation">The invitation.</param>
-/// <param name="SecretHash">Lowercase hex SHA-256 of the token's secret part.</param>
+/// <param name="SecretHash">
+/// Lowercase hex SHA-256 of the secret part of a token TerraBase issued (<c>organization.invitation.secret</c>);
+/// <see langword="null"/> when the client chose the token.
+/// </param>
 /// <param name="Order">Its key in the organization's <c>invitation_order</c> collection.</param>
-internal sealed record StoredInvitation(Invitation Invitation, string SecretHash, string Order);
+/// <param name="TokenHash">Lowercase hex SHA-256 of the whole token; <see langword="null"/> for invitations from before token hashes.</param>
+internal sealed record StoredInvitation(Invitation Invitation, string? SecretHash, string Order, string? TokenHash = null);
+
+/// <summary>Where the invitation with a token hash is: the <c>invitation_tokens</c> index, which outlives its pending state.</summary>
+/// <param name="OrganizationId">The invitation's organization.</param>
+/// <param name="InvitationId">The invitation.</param>
+internal sealed record InvitationToken(string OrganizationId, string InvitationId);
 
 /// <summary>
 /// The access part of the catalog. Members are keyed by user id; an <c>owners</c> index holds the owners so the
@@ -44,7 +53,7 @@ internal sealed partial class EngineManagementService : IAccessService
         string userId, string organizationId, string? after, int limit, CancellationToken cancellationToken) =>
         ReadAsync<ManagementResult<ManagementPage<OrganizationMember>>>(async transaction =>
         {
-            var actor = await AuthorizeAsync(transaction, userId, organizationId, OrganizationRole.Member, cancellationToken).ConfigureAwait(false);
+            var actor = await AuthorizeAsync(transaction, userId, organizationId, OrganizationRole.Viewer, cancellationToken).ConfigureAwait(false);
             return actor.Error != ManagementError.None
                 ? actor.Error
                 : await ListAsync(transaction, Members(organizationId), after, limit, TerraBaseJsonContext.Default.OrganizationMember, member => member.UserId, cancellationToken).ConfigureAwait(false);
@@ -148,7 +157,7 @@ internal sealed partial class EngineManagementService : IAccessService
     public async ValueTask<ManagementError> LeaveAsync(string userId, string organizationId, CancellationToken cancellationToken) =>
         await WriteAsync(async transaction =>
         {
-            var actor = await AuthorizeAsync(transaction, userId, organizationId, OrganizationRole.Member, cancellationToken).ConfigureAwait(false);
+            var actor = await AuthorizeAsync(transaction, userId, organizationId, OrganizationRole.Viewer, cancellationToken).ConfigureAwait(false);
             if (actor.Value is null)
             {
                 return actor.Error;
@@ -165,8 +174,20 @@ internal sealed partial class EngineManagementService : IAccessService
         }, cancellationToken).ConfigureAwait(false);
 
     public async ValueTask<ManagementResult<CreatedInvitation>> InviteAsync(
-        string userId, string organizationId, string email, OrganizationRole role, CancellationToken cancellationToken) =>
-        await WriteAsync<ManagementResult<CreatedInvitation>>(async transaction =>
+        string userId, string organizationId, string email, OrganizationRole role, CancellationToken cancellationToken)
+    {
+        var secret = Base64Url(RandomNumberGenerator.GetBytes(32));
+        var id = NewId();
+        // The token names its invitation, so accepting it needs no global token index.
+        var token = $"{organizationId}.{id}.{secret}";
+        var created = await InviteAsync(userId, organizationId, id, email, role, Hash(token), Hash(secret), cancellationToken).ConfigureAwait(false);
+        return created.Value is { } invitation ? new CreatedInvitation(invitation, token) : created.Error;
+    }
+
+    // Creates a pending invitation whose token has tokenHash; secretHash is set only for tokens TerraBase issued.
+    private ValueTask<ManagementResult<Invitation>> InviteAsync(
+        string userId, string organizationId, string id, string email, OrganizationRole role, string tokenHash, string? secretHash, CancellationToken cancellationToken) =>
+        WriteAsync<ManagementResult<Invitation>>(async transaction =>
         {
             var actor = await AuthorizeAsync(transaction, userId, organizationId, OrganizationRole.Admin, cancellationToken).ConfigureAwait(false);
             if (actor.Value is null)
@@ -180,29 +201,77 @@ internal sealed partial class EngineManagementService : IAccessService
             }
 
             var now = time.GetUtcNow();
-            if (await GetAsync(transaction, InvitationEmails(organizationId), Key(email), Id, cancellationToken).ConfigureAwait(false) is { } pendingId
-                && await GetAsync(transaction, Invitations(organizationId), pendingId, TerraBaseJsonContext.Default.StoredInvitation, cancellationToken).ConfigureAwait(false) is { } pending)
+            if (await PendingInvitationAsync(transaction, organizationId, email, cancellationToken).ConfigureAwait(false) is { } pending
+                && pending.Invitation.ExpiresAt > now)
             {
-                if (pending.Invitation.ExpiresAt > now)
-                {
-                    return ManagementError.InvitationPending;
-                }
-
-                // An expired invitation is replaced by a new one, last in the order.
-                await DeleteInvitationAsync(transaction, organizationId, pending, cancellationToken).ConfigureAwait(false);
+                return ManagementError.InvitationPending;
             }
 
-            var invitation = new Invitation(NewId(), email, role, userId, now, now + InvitationLifetime);
-            var secret = Base64Url(RandomNumberGenerator.GetBytes(32));
+            if (await transaction.GetAsync(InvitationTokens, tokenHash, cancellationToken).ConfigureAwait(false) is not null)
+            {
+                return ManagementError.TokenTaken;
+            }
+
+            // An expired invitation for the email stays in the history; the new one takes its email slot.
+            var invitation = new Invitation(id, email, role, userId, now, now + InvitationLifetime);
             var order = AscendingKey(await NextSequenceAsync(transaction, State(organizationId), InvitationSequences, cancellationToken).ConfigureAwait(false));
-            var stored = new StoredInvitation(invitation, Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(secret))), order);
-            await PutAsync(transaction, Invitations(organizationId), invitation.Id, stored, TerraBaseJsonContext.Default.StoredInvitation, cancellationToken).ConfigureAwait(false);
+            await PutAsync(transaction, Invitations(organizationId), invitation.Id, new StoredInvitation(invitation, secretHash, order, tokenHash), TerraBaseJsonContext.Default.StoredInvitation, cancellationToken)
+                .ConfigureAwait(false);
             await PutAsync(transaction, InvitationOrder(organizationId), order, invitation.Id, Id, cancellationToken).ConfigureAwait(false);
             await PutAsync(transaction, InvitationEmails(organizationId), Key(email), invitation.Id, Id, cancellationToken).ConfigureAwait(false);
+            await ReserveTokenAsync(transaction, organizationId, invitation.Id, tokenHash, cancellationToken).ConfigureAwait(false);
             await RecordAsync(transaction, organizationId, userId, "invitation.created", email, RoleName(role), cancellationToken).ConfigureAwait(false);
-            // The token names its invitation, so accepting needs no global token index.
-            return new CreatedInvitation(invitation, $"{organizationId}.{invitation.Id}.{secret}");
-        }, cancellationToken).ConfigureAwait(false);
+            return invitation;
+        }, cancellationToken);
+
+    // Gives a pending invitation, expired or not, a new token, creation time and expiry; the old token stops working.
+    private ValueTask<ManagementResult<Invitation>> ResendInvitationAsync(
+        string userId, string organizationId, string invitationId, string tokenHash, CancellationToken cancellationToken) =>
+        WriteAsync<ManagementResult<Invitation>>(async transaction =>
+        {
+            var actor = await AuthorizeAsync(transaction, userId, organizationId, OrganizationRole.Admin, cancellationToken).ConfigureAwait(false);
+            if (actor.Value is null)
+            {
+                return actor.Error;
+            }
+
+            if (await GetAsync(transaction, Invitations(organizationId), invitationId, TerraBaseJsonContext.Default.StoredInvitation, cancellationToken).ConfigureAwait(false) is not { } stored)
+            {
+                return ManagementError.NotFound;
+            }
+
+            // Renewing an owner invitation hands out ownership, which only owners may offer.
+            if (stored.Invitation.Role == OrganizationRole.Owner && actor.Value.Role != OrganizationRole.Owner)
+            {
+                return ManagementError.Forbidden;
+            }
+
+            if (stored.Invitation.Status != InvitationStatus.Pending)
+            {
+                return ManagementError.InvitationClosed;
+            }
+
+            // A newer invitation for the email took its slot after it expired.
+            if (await GetAsync(transaction, InvitationEmails(organizationId), Key(stored.Invitation.Email), Id, cancellationToken).ConfigureAwait(false) != invitationId)
+            {
+                return ManagementError.InvitationPending;
+            }
+
+            if (await transaction.GetAsync(InvitationTokens, tokenHash, cancellationToken).ConfigureAwait(false) is not null)
+            {
+                return ManagementError.TokenTaken;
+            }
+
+            var now = time.GetUtcNow();
+            var invitation = stored.Invitation with { CreatedAt = now, ExpiresAt = now + InvitationLifetime };
+            await PutAsync(transaction, Invitations(organizationId), invitationId, stored with { Invitation = invitation, SecretHash = null, TokenHash = tokenHash }, TerraBaseJsonContext.Default.StoredInvitation, cancellationToken)
+                .ConfigureAwait(false);
+            // The previous hash stays reserved: it no longer matches the invitation, so it redeems nothing, and no
+            // other invitation can take it.
+            await ReserveTokenAsync(transaction, organizationId, invitationId, tokenHash, cancellationToken).ConfigureAwait(false);
+            await RecordAsync(transaction, organizationId, userId, "invitation.resent", invitation.Email, RoleName(invitation.Role), cancellationToken).ConfigureAwait(false);
+            return invitation;
+        }, cancellationToken);
 
     public ValueTask<ManagementResult<ManagementPage<Invitation>>> ListInvitationsAsync(
         string userId, string organizationId, string? after, int limit, CancellationToken cancellationToken) =>
@@ -241,7 +310,12 @@ internal sealed partial class EngineManagementService : IAccessService
                 return ManagementError.NotFound;
             }
 
-            await DeleteInvitationAsync(transaction, organizationId, stored, cancellationToken).ConfigureAwait(false);
+            if (stored.Invitation.Status != InvitationStatus.Pending)
+            {
+                return ManagementError.InvitationClosed;
+            }
+
+            await CloseInvitationAsync(transaction, organizationId, stored, InvitationStatus.Revoked, cancellationToken).ConfigureAwait(false);
             await RecordAsync(transaction, organizationId, userId, "invitation.revoked", stored.Invitation.Email, null, cancellationToken).ConfigureAwait(false);
             return ManagementError.None;
         }, cancellationToken).ConfigureAwait(false);
@@ -253,44 +327,99 @@ internal sealed partial class EngineManagementService : IAccessService
             return ManagementError.NotFound;
         }
 
-        return await WriteAsync<ManagementResult<OrganizationMember>>(async transaction =>
+        var accepted = await WriteAsync<ManagementResult<Membership>>(async transaction =>
+            await GetAsync(transaction, Invitations(organizationId), invitationId, TerraBaseJsonContext.Default.StoredInvitation, cancellationToken).ConfigureAwait(false) is { SecretHash: { } secretHash } stored
+            && Matches(secretHash, Hash(secret))
+                ? await AcceptAsync(transaction, userId, email, organizationId, stored, cancellationToken).ConfigureAwait(false)
+                : ManagementError.NotFound,
+            cancellationToken).ConfigureAwait(false);
+        return accepted.Value is { } membership ? membership.Member : accepted.Error;
+    }
+
+    public ValueTask<FoundInvitation?> FindInvitationAsync(string tokenHash, CancellationToken cancellationToken) =>
+        ReadAsync<FoundInvitation?>(async transaction =>
+            await TokenInvitationAsync(transaction, tokenHash, cancellationToken).ConfigureAwait(false) is (var organizationId, var stored)
+            && stored.Invitation.Status == InvitationStatus.Pending
+            && stored.Invitation.ExpiresAt > time.GetUtcNow()
+            && await GetAsync(transaction, Organizations, organizationId, TerraBaseJsonContext.Default.Organization, cancellationToken).ConfigureAwait(false) is { } organization
+                ? new FoundInvitation(new OrganizationIdentity(organization.Id, organization.Name), stored.Invitation)
+                : null,
+            cancellationToken);
+
+    private ValueTask<ManagementResult<Membership>> AcceptInvitationByHashAsync(string userId, string email, string tokenHash, CancellationToken cancellationToken) =>
+        WriteAsync<ManagementResult<Membership>>(async transaction =>
+            await TokenInvitationAsync(transaction, tokenHash, cancellationToken).ConfigureAwait(false) is (var organizationId, var stored)
+                ? await AcceptAsync(transaction, userId, email, organizationId, stored, cancellationToken).ConfigureAwait(false)
+                : ManagementError.NotFound,
+            cancellationToken);
+
+    private ValueTask<ManagementResult<Invitation>> DeclineInvitationAsync(string userId, string email, string tokenHash, CancellationToken cancellationToken) =>
+        WriteAsync<ManagementResult<Invitation>>(async transaction =>
         {
-            if (await GetAsync(transaction, Organizations, organizationId, TerraBaseJsonContext.Default.Organization, cancellationToken).ConfigureAwait(false) is null
-                || await GetAsync(transaction, Invitations(organizationId), invitationId, TerraBaseJsonContext.Default.StoredInvitation, cancellationToken).ConfigureAwait(false) is not { } stored
-                || !CryptographicOperations.FixedTimeEquals(SHA256.HashData(Encoding.UTF8.GetBytes(secret)), Convert.FromHexString(stored.SecretHash)))
+            if (await TokenInvitationAsync(transaction, tokenHash, cancellationToken).ConfigureAwait(false) is not (var organizationId, var stored))
             {
                 return ManagementError.NotFound;
             }
 
-            var invitation = stored.Invitation;
-            if (!string.Equals(invitation.Email, email, StringComparison.OrdinalIgnoreCase))
+            var check = Redeemable(stored.Invitation, email);
+            if (check != ManagementError.None)
             {
-                return ManagementError.Forbidden;
+                return check;
             }
 
-            var now = time.GetUtcNow();
-            if (invitation.ExpiresAt <= now)
-            {
-                return ManagementError.Expired;
-            }
+            var invitation = await CloseInvitationAsync(transaction, organizationId, stored, InvitationStatus.Declined, cancellationToken).ConfigureAwait(false);
+            await RecordAsync(transaction, organizationId, userId, "invitation.declined", invitation.Email, null, cancellationToken).ConfigureAwait(false);
+            return invitation;
+        }, cancellationToken);
 
-            if (await GetMemberAsync(transaction, organizationId, userId, cancellationToken).ConfigureAwait(false) is not null)
-            {
-                return ManagementError.AlreadyMember;
-            }
+    // Makes the user a member through a pending invitation whose token was already verified.
+    private async ValueTask<ManagementResult<Membership>> AcceptAsync(
+        IStorageTransaction transaction, string userId, string email, string organizationId, StoredInvitation stored, CancellationToken cancellationToken)
+    {
+        if (await GetAsync(transaction, Organizations, organizationId, TerraBaseJsonContext.Default.Organization, cancellationToken).ConfigureAwait(false) is null)
+        {
+            return ManagementError.NotFound;
+        }
 
-            var member = new OrganizationMember(userId, invitation.Role, now);
-            await PutMemberAsync(transaction, organizationId, member, cancellationToken).ConfigureAwait(false);
-            await DeleteInvitationAsync(transaction, organizationId, stored, cancellationToken).ConfigureAwait(false);
-            await RecordAsync(transaction, organizationId, userId, "invitation.accepted", invitation.Email, RoleName(invitation.Role), cancellationToken).ConfigureAwait(false);
-            return member;
-        }, cancellationToken).ConfigureAwait(false);
+        var check = Redeemable(stored.Invitation, email);
+        if (check != ManagementError.None)
+        {
+            return check;
+        }
+
+        if (await GetMemberAsync(transaction, organizationId, userId, cancellationToken).ConfigureAwait(false) is not null)
+        {
+            return ManagementError.AlreadyMember;
+        }
+
+        var invitation = stored.Invitation;
+        var member = new OrganizationMember(userId, invitation.Role, time.GetUtcNow());
+        await PutMemberAsync(transaction, organizationId, member, cancellationToken).ConfigureAwait(false);
+        await CloseInvitationAsync(transaction, organizationId, stored, InvitationStatus.Accepted, cancellationToken).ConfigureAwait(false);
+        await RecordAsync(transaction, organizationId, userId, "invitation.accepted", invitation.Email, RoleName(invitation.Role), cancellationToken).ConfigureAwait(false);
+        return new Membership(organizationId, member);
     }
+
+    // Whether the holder of an invitation's token, whose verified email is email, may still accept or decline it.
+    private ManagementError Redeemable(Invitation invitation, string email) =>
+        invitation.Status != InvitationStatus.Pending ? ManagementError.InvitationClosed
+        : !string.Equals(invitation.Email, email, StringComparison.OrdinalIgnoreCase) ? ManagementError.Forbidden
+        : invitation.ExpiresAt <= time.GetUtcNow() ? ManagementError.Expired
+        : ManagementError.None;
+
+    // The invitation a token hash names, with its organization, when the hash matches it.
+    private static async ValueTask<(string OrganizationId, StoredInvitation Stored)?> TokenInvitationAsync(
+        IStorageTransaction transaction, string tokenHash, CancellationToken cancellationToken) =>
+        await GetAsync(transaction, InvitationTokens, tokenHash, TerraBaseJsonContext.Default.InvitationToken, cancellationToken).ConfigureAwait(false) is { } entry
+        && await GetAsync(transaction, Invitations(entry.OrganizationId), entry.InvitationId, TerraBaseJsonContext.Default.StoredInvitation, cancellationToken).ConfigureAwait(false) is { TokenHash: { } stored } invitation
+        && Matches(stored, tokenHash)
+            ? (entry.OrganizationId, invitation)
+            : null;
 
     public ValueTask<ManagementResult<OwnershipTransfer>> GetTransferAsync(string userId, string organizationId, CancellationToken cancellationToken) =>
         ReadAsync<ManagementResult<OwnershipTransfer>>(async transaction =>
         {
-            var actor = await AuthorizeAsync(transaction, userId, organizationId, OrganizationRole.Member, cancellationToken).ConfigureAwait(false);
+            var actor = await AuthorizeAsync(transaction, userId, organizationId, OrganizationRole.Viewer, cancellationToken).ConfigureAwait(false);
             if (actor.Error != ManagementError.None)
             {
                 return actor.Error;
@@ -331,7 +460,7 @@ internal sealed partial class EngineManagementService : IAccessService
     public async ValueTask<ManagementResult<OrganizationMember>> ConfirmTransferAsync(string userId, string organizationId, CancellationToken cancellationToken) =>
         await WriteAsync<ManagementResult<OrganizationMember>>(async transaction =>
         {
-            var actor = await AuthorizeAsync(transaction, userId, organizationId, OrganizationRole.Member, cancellationToken).ConfigureAwait(false);
+            var actor = await AuthorizeAsync(transaction, userId, organizationId, OrganizationRole.Viewer, cancellationToken).ConfigureAwait(false);
             if (actor.Value is null)
             {
                 return actor.Error;
@@ -347,12 +476,13 @@ internal sealed partial class EngineManagementService : IAccessService
                 return ManagementError.Forbidden;
             }
 
-            await transaction.DeleteAsync(State(organizationId), OwnershipTransfers, cancellationToken).ConfigureAwait(false);
-            // The offer lapses when the owner who made it is no longer an owner.
+            // The offer lapses when the owner who made it is no longer an owner (losing the role already dropped it).
             if (await GetMemberAsync(transaction, organizationId, transfer.FromUserId, cancellationToken).ConfigureAwait(false) is not { Role: OrganizationRole.Owner } starter)
             {
                 return ManagementError.NotFound;
             }
+
+            await transaction.DeleteAsync(State(organizationId), OwnershipTransfers, cancellationToken).ConfigureAwait(false);
 
             var owner = actor.Value with { Role = OrganizationRole.Owner };
             await PutMemberAsync(transaction, organizationId, owner, cancellationToken).ConfigureAwait(false);
@@ -364,7 +494,7 @@ internal sealed partial class EngineManagementService : IAccessService
     public async ValueTask<ManagementError> CancelTransferAsync(string userId, string organizationId, CancellationToken cancellationToken) =>
         await WriteAsync(async transaction =>
         {
-            var actor = await AuthorizeAsync(transaction, userId, organizationId, OrganizationRole.Member, cancellationToken).ConfigureAwait(false);
+            var actor = await AuthorizeAsync(transaction, userId, organizationId, OrganizationRole.Viewer, cancellationToken).ConfigureAwait(false);
             if (actor.Value is null)
             {
                 return actor.Error;
@@ -445,10 +575,11 @@ internal sealed partial class EngineManagementService : IAccessService
         IStorageTransaction transaction, string organizationId, string userId, CancellationToken cancellationToken) =>
         GetAsync(transaction, Members(organizationId), userId, TerraBaseJsonContext.Default.OrganizationMember, cancellationToken);
 
-    // Writes the membership, the user's organization index and the owners index together.
+    // Writes the membership, the user's organization index and the owners index together, and advances the user's account version.
     private static async ValueTask PutMemberAsync(
         IStorageTransaction transaction, string organizationId, OrganizationMember member, CancellationToken cancellationToken)
     {
+        await TouchAccountAsync(transaction, member.UserId, cancellationToken).ConfigureAwait(false);
         await PutAsync(transaction, Members(organizationId), member.UserId, member, TerraBaseJsonContext.Default.OrganizationMember, cancellationToken).ConfigureAwait(false);
         await PutAsync(transaction, UserOrganizations(member.UserId), organizationId, organizationId, Id, cancellationToken).ConfigureAwait(false);
         if (member.Role == OrganizationRole.Owner)
@@ -463,6 +594,7 @@ internal sealed partial class EngineManagementService : IAccessService
 
     private static async ValueTask DeleteMemberAsync(IStorageTransaction transaction, string organizationId, string userId, CancellationToken cancellationToken)
     {
+        await TouchAccountAsync(transaction, userId, cancellationToken).ConfigureAwait(false);
         await transaction.DeleteAsync(Members(organizationId), userId, cancellationToken).ConfigureAwait(false);
         await transaction.DeleteAsync(UserOrganizations(userId), organizationId, cancellationToken).ConfigureAwait(false);
         await transaction.DeleteAsync(Owners(organizationId), userId, cancellationToken).ConfigureAwait(false);
@@ -484,12 +616,44 @@ internal sealed partial class EngineManagementService : IAccessService
     private static async ValueTask<bool> IsLastOwnerAsync(IStorageTransaction transaction, string organizationId, CancellationToken cancellationToken) =>
         (await transaction.ListAsync(Owners(organizationId), afterId: null, limit: 2, MaxPageBytes, cancellationToken).ConfigureAwait(false)).Documents.Count < 2;
 
-    private static async ValueTask DeleteInvitationAsync(IStorageTransaction transaction, string organizationId, StoredInvitation stored, CancellationToken cancellationToken)
+    // Ends a pending invitation: it keeps its place in the history with its new status and frees its email slot. Its
+    // token index entry stays, so redeeming it again is InvitationClosed rather than NotFound.
+    private static async ValueTask<Invitation> CloseInvitationAsync(
+        IStorageTransaction transaction, string organizationId, StoredInvitation stored, InvitationStatus status, CancellationToken cancellationToken)
     {
-        await transaction.DeleteAsync(Invitations(organizationId), stored.Invitation.Id, cancellationToken).ConfigureAwait(false);
-        await transaction.DeleteAsync(InvitationOrder(organizationId), stored.Order, cancellationToken).ConfigureAwait(false);
-        await transaction.DeleteAsync(InvitationEmails(organizationId), Key(stored.Invitation.Email), cancellationToken).ConfigureAwait(false);
+        var invitation = stored.Invitation with { Status = status };
+        await PutAsync(transaction, Invitations(organizationId), invitation.Id, stored with { Invitation = invitation }, TerraBaseJsonContext.Default.StoredInvitation, cancellationToken)
+            .ConfigureAwait(false);
+        if (await GetAsync(transaction, InvitationEmails(organizationId), Key(invitation.Email), Id, cancellationToken).ConfigureAwait(false) == invitation.Id)
+        {
+            await transaction.DeleteAsync(InvitationEmails(organizationId), Key(invitation.Email), cancellationToken).ConfigureAwait(false);
+        }
+
+        return invitation;
     }
+
+    // The invitation holding the email's slot: the latest one for it, while it is pending (expired or not).
+    private static async ValueTask<StoredInvitation?> PendingInvitationAsync(
+        IStorageTransaction transaction, string organizationId, string email, CancellationToken cancellationToken) =>
+        await GetAsync(transaction, InvitationEmails(organizationId), Key(email), Id, cancellationToken).ConfigureAwait(false) is { } id
+            ? await GetAsync(transaction, Invitations(organizationId), id, TerraBaseJsonContext.Default.StoredInvitation, cancellationToken).ConfigureAwait(false)
+            : null;
+
+    // Indexes a token hash for good: every hash an invitation ever had stays taken until the organization is deleted.
+    private static async ValueTask ReserveTokenAsync(
+        IStorageTransaction transaction, string organizationId, string invitationId, string tokenHash, CancellationToken cancellationToken)
+    {
+        await PutAsync(transaction, InvitationTokens, tokenHash, new InvitationToken(organizationId, invitationId), TerraBaseJsonContext.Default.InvitationToken, cancellationToken)
+            .ConfigureAwait(false);
+        await PutAsync(transaction, OrganizationTokens(organizationId), tokenHash, invitationId, Id, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static string Hash(string value) => Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(value)));
+
+    // Constant time over the two hex hashes; anything that is not a SHA-256 in hex never matches.
+    private static bool Matches(string storedHash, string presentedHash) =>
+        storedHash.Length == presentedHash.Length
+        && CryptographicOperations.FixedTimeEquals(Encoding.ASCII.GetBytes(storedHash), Encoding.ASCII.GetBytes(presentedHash));
 
     // An expired transfer is treated as none.
     private async ValueTask<OwnershipTransfer?> GetTransferAsync(IStorageTransaction transaction, string organizationId, CancellationToken cancellationToken) =>
@@ -512,9 +676,11 @@ internal sealed partial class EngineManagementService : IAccessService
     // Records an event under the next sequence, newest first, and deletes a batch of expired ones. The
     // audit_expiry index orders the same events by occurredAt ticks, so purging takes exactly the events that
     // occurred before the cutoff, oldest first, whatever order the clock gave them.
+    // Every recorded change is a change to the organization, so it also advances the organization's version.
     private async ValueTask RecordAsync(
         IStorageTransaction transaction, string organizationId, string userId, string action, string? target, string? detail, CancellationToken cancellationToken)
     {
+        await TouchOrganizationAsync(transaction, organizationId, cancellationToken).ConfigureAwait(false);
         var now = time.GetUtcNow();
         var sequence = await NextSequenceAsync(transaction, State(organizationId), AuditSequences, cancellationToken).ConfigureAwait(false);
         var key = DescendingKey(sequence);
@@ -545,9 +711,24 @@ internal sealed partial class EngineManagementService : IAccessService
     // Removes what a deleted organization keeps besides its members (deleted by DeleteOrganizationAsync), page by page.
     private static async ValueTask DeleteAccessAsync(IStorageTransaction transaction, string organizationId, CancellationToken cancellationToken)
     {
+        // The token index is global; the organization's copy of its keys says which entries go with it.
+        string? after = null;
+        DocumentPage tokens;
+        do
+        {
+            tokens = await transaction.ListAsync(OrganizationTokens(organizationId), after, AuditPurgeBatch, MaxPageBytes, cancellationToken).ConfigureAwait(false);
+            foreach (var token in tokens.Documents)
+            {
+                await transaction.DeleteAsync(InvitationTokens, token.Id, cancellationToken).ConfigureAwait(false);
+            }
+
+            after = tokens.Documents.Count > 0 ? tokens.Documents[^1].Id : after;
+        }
+        while (tokens.HasMore);
+
         foreach (var collection in (string[])[
             Owners(organizationId), Invitations(organizationId), InvitationOrder(organizationId), InvitationEmails(organizationId),
-            Audit(organizationId), AuditExpiry(organizationId), State(organizationId)])
+            Audit(organizationId), AuditExpiry(organizationId), State(organizationId), OrganizationTokens(organizationId)])
         {
             DocumentPage page;
             do
@@ -582,7 +763,8 @@ internal sealed partial class EngineManagementService : IAccessService
     {
         OrganizationRole.Owner => "owner",
         OrganizationRole.Admin => "admin",
-        _ => "member",
+        OrganizationRole.Member => "member",
+        _ => "viewer",
     };
 
     private static string Base64Url(byte[] bytes) => Convert.ToBase64String(bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_');
@@ -590,6 +772,11 @@ internal sealed partial class EngineManagementService : IAccessService
     private static string Owners(string organizationId) => $"organizations/{organizationId}/owners";
 
     private static string Invitations(string organizationId) => $"organizations/{organizationId}/invitations";
+
+    // Global: token hash to invitation. Removed with the organization, through its copy of the keys below.
+    private const string InvitationTokens = "invitation_tokens";
+
+    private static string OrganizationTokens(string organizationId) => $"organizations/{organizationId}/invitation_tokens";
 
     private static string InvitationOrder(string organizationId) => $"organizations/{organizationId}/invitation_order";
 

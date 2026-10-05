@@ -94,7 +94,8 @@ public sealed class TransactionEndpoint(IDocumentService documents, IAuthorizati
             })]));
     }
 
-    private static (string, string)? Target(DocumentOperation operation) => operation switch
+    /// <summary>The document an operation targets; <see langword="null"/> for <c>assert_count</c>.</summary>
+    internal static (string, string)? Target(DocumentOperation operation) => operation switch
     {
         PutOperation put => (put.Collection, put.Id),
         PatchOperation patch => (patch.Collection, patch.Id),
@@ -103,7 +104,8 @@ public sealed class TransactionEndpoint(IDocumentService documents, IAuthorizati
         _ => null,
     };
 
-    private static DocumentOperation Operation(JsonElement json)
+    /// <summary>Parses and validates one operation of a transaction (also of a Management commit).</summary>
+    internal static DocumentOperation Operation(JsonElement json)
     {
         if (json.ValueKind != JsonValueKind.Object)
         {

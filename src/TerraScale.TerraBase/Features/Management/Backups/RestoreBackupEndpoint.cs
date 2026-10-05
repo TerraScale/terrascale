@@ -19,6 +19,7 @@ public sealed class RestoreBackupEndpoint(IManagementService management, IManage
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
         Produces<ErrorBody>(StatusCodes.Status409Conflict);
+        Produces<ErrorBody>(StatusCodes.Status403Forbidden);
         RequireAuthorization(UserAuthExtensions.PolicyName);
         Metadata(ListenerMetadata.Management);
     }
@@ -28,9 +29,10 @@ public sealed class RestoreBackupEndpoint(IManagementService management, IManage
     {
         ArgumentNullException.ThrowIfNull(request);
         var name = request.Name is null ? null : ManagementRoute.DatabaseName(request);
-        if (await ManagementRoute.DatabaseAsync(HttpContext, management, cancellationToken) is not { } database)
+        var writable = await ManagementRoute.WritableDatabaseAsync(HttpContext, management, cancellationToken);
+        if (writable.Value is not { } database)
         {
-            return TypedResults.NotFound();
+            return ManagementRoute.Error(writable.Error);
         }
 
         var organization = ManagementRoute.OrganizationId(HttpContext);

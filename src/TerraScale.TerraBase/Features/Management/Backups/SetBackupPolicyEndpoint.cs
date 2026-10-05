@@ -21,6 +21,7 @@ public sealed class SetBackupPolicyEndpoint(IManagementService management, IMana
         Produces<BackupPolicy>();
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
+        Produces<ErrorBody>(StatusCodes.Status403Forbidden);
         RequireAuthorization(UserAuthExtensions.PolicyName);
         Metadata(ListenerMetadata.Management);
     }
@@ -40,9 +41,10 @@ public sealed class SetBackupPolicyEndpoint(IManagementService management, IMana
             throw new BadHttpRequestException("retentionDays must be an integer between 1 and 35");
         }
 
-        if (await ManagementRoute.DatabaseAsync(HttpContext, management, cancellationToken) is not { } database)
+        var writable = await ManagementRoute.WritableDatabaseAsync(HttpContext, management, cancellationToken);
+        if (writable.Value is not { } database)
         {
-            return TypedResults.NotFound();
+            return ManagementRoute.Error(writable.Error);
         }
 
         return ManagementRoute.Ok(await backups.SetPolicyAsync(

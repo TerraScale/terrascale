@@ -17,6 +17,7 @@ public sealed class CreateBackupEndpoint(IManagementService management, IManaged
         Tags(ManagementRoute.Tag);
         Produces<DatabaseBackup>(StatusCodes.Status201Created);
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
+        Produces<ErrorBody>(StatusCodes.Status403Forbidden);
         RequireAuthorization(UserAuthExtensions.PolicyName);
         Metadata(ListenerMetadata.Management);
     }
@@ -24,9 +25,10 @@ public sealed class CreateBackupEndpoint(IManagementService management, IManaged
     /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
-        if (await ManagementRoute.DatabaseAsync(HttpContext, management, cancellationToken) is not { } database)
+        var writable = await ManagementRoute.WritableDatabaseAsync(HttpContext, management, cancellationToken);
+        if (writable.Value is not { } database)
         {
-            return TypedResults.NotFound();
+            return ManagementRoute.Error(writable.Error);
         }
 
         var organization = ManagementRoute.OrganizationId(HttpContext);

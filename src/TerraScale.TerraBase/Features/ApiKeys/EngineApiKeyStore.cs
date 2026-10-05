@@ -66,6 +66,14 @@ internal sealed class EngineApiKeyStore(SystemCatalog catalog, TimeProvider time
                 return ManagementError.NotFound;
             }
 
+            // Keys are project state: a viewer cannot issue them, and issuing one changes the organization.
+            var writer = await EngineManagementService.WritableAsync(transaction, userId, organizationId, cancellationToken).ConfigureAwait(false);
+            if (writer != ManagementError.None)
+            {
+                return writer;
+            }
+
+            await EngineManagementService.TouchOrganizationAsync(transaction, organizationId, cancellationToken).ConfigureAwait(false);
             var (_, listed) = await StoreAsync(transaction, secret, name, scopes, organizationId, projectId, databaseId, cancellationToken).ConfigureAwait(false);
             return new CreatedProjectApiKey(listed!, secret);
         }, cancellationToken).ConfigureAwait(false);
@@ -102,6 +110,13 @@ internal sealed class EngineApiKeyStore(SystemCatalog catalog, TimeProvider time
                 return ManagementError.NotFound;
             }
 
+            var writer = await EngineManagementService.WritableAsync(transaction, userId, organizationId, cancellationToken).ConfigureAwait(false);
+            if (writer != ManagementError.None)
+            {
+                return writer;
+            }
+
+            await EngineManagementService.TouchOrganizationAsync(transaction, organizationId, cancellationToken).ConfigureAwait(false);
             await transaction.DeleteAsync(Collection, entry.Hash, cancellationToken).ConfigureAwait(false);
             await transaction.DeleteAsync(ProjectKeys(projectId), keyId, cancellationToken).ConfigureAwait(false);
             await transaction.DeleteAsync(ProjectKeyOrder(projectId), entry.Order, cancellationToken).ConfigureAwait(false);

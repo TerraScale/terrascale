@@ -18,6 +18,7 @@ public sealed class UpdateSavedQueryEndpoint(IManagementService management, IQue
         Produces<SavedQuery>();
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
+        Produces<ErrorBody>(StatusCodes.Status403Forbidden);
         RequireAuthorization(UserAuthExtensions.PolicyName);
         Metadata(ListenerMetadata.Management);
     }
@@ -27,9 +28,14 @@ public sealed class UpdateSavedQueryEndpoint(IManagementService management, IQue
     {
         ArgumentNullException.ThrowIfNull(request);
         var (name, sql) = QueriesExtensions.Validate(request);
-        return await ManagementRoute.ProjectAsync(HttpContext, management, cancellationToken) is { } project
-            && await queries.UpdateSavedAsync(ManagementRoute.UserId(HttpContext), project, ManagementRoute.Value(HttpContext, "query"), name, sql, cancellationToken) is { } query
-                ? TypedResults.Ok(query)
-                : TypedResults.NotFound();
+        var writable = await ManagementRoute.WritableProjectAsync(HttpContext, management, cancellationToken);
+        if (writable.Value is not { } project)
+        {
+            return ManagementRoute.Error(writable.Error);
+        }
+
+        return await queries.UpdateSavedAsync(ManagementRoute.UserId(HttpContext), project, ManagementRoute.Value(HttpContext, "query"), name, sql, cancellationToken) is { } query
+            ? TypedResults.Ok(query)
+            : TypedResults.NotFound();
     }
 }

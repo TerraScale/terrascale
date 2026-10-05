@@ -21,7 +21,7 @@ internal sealed partial class EngineManagementService
         var version = hasCatalog
             ? await ReadCatalogAsync(transaction => GetAsync(transaction, Catalog, CatalogVersionId, Id, cancellationToken), cancellationToken).ConfigureAwait(false)
             : null;
-        if (version == CatalogVersion)
+        if (version is IntentCatalogVersion or CatalogVersion)
         {
             while (true)
             {
@@ -56,7 +56,7 @@ internal sealed partial class EngineManagementService
             cancellationToken.ThrowIfCancellationRequested();
             var registered = false;
             // Future catalogs may change row schemas; preserve their files without interpreting those rows.
-            if (hasCatalog && version is null or MembershipCatalogVersion or "3" or CatalogVersion
+            if (hasCatalog && version is null or MembershipCatalogVersion or "3" or IntentCatalogVersion or CatalogVersion
                 && file.Database is { } database)
             {
                 var key = (database.OrganizationId, database.ProjectId!, database.DatabaseId!);

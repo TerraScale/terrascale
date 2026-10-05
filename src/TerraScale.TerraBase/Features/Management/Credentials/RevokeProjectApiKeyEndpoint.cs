@@ -17,6 +17,7 @@ public sealed class RevokeProjectApiKeyEndpoint(IApiKeyStore keys) : EndpointWit
         Description("The key stops authenticating immediately." + " " + ManagementRoute.IdentityDescription);
         Tags(ManagementRoute.Tag);
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
+        Produces<ErrorBody>(StatusCodes.Status403Forbidden);
         RequireAuthorization(UserAuthExtensions.PolicyName);
         Metadata(ListenerMetadata.Management, new ProducesResponseTypeMetadata(StatusCodes.Status204NoContent, typeof(void)));
     }

@@ -60,6 +60,15 @@ public enum ManagementError
 
     /// <summary>The invitation expired.</summary>
     Expired,
+
+    /// <summary>A client-chosen id is already used by another resource.</summary>
+    IdTaken,
+
+    /// <summary>The invitation is no longer pending: it was accepted, declined or revoked.</summary>
+    InvitationClosed,
+
+    /// <summary>Another invitation already has the token hash.</summary>
+    TokenTaken,
 }
 
 /// <summary>A value or the reason there is none.</summary>
@@ -160,6 +169,19 @@ public interface IManagementService
     /// </summary>
     ValueTask<TenantContext?> GetDatabaseTenantAsync(
         string userId, string organizationId, string projectId, string databaseId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// As <see cref="GetDatabaseTenantAsync"/> for a change to the database or its tooling state: <see cref="ManagementError.Forbidden"/>
+    /// for a <see cref="OrganizationRole.Viewer"/>, which is read-only.
+    /// </summary>
+    ValueTask<ManagementResult<TenantContext>> GetWritableDatabaseTenantAsync(
+        string userId, string organizationId, string projectId, string databaseId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// A project whose state the user may change: <see cref="ManagementError.NotFound"/> as for <see cref="GetProjectAsync"/>,
+    /// <see cref="ManagementError.Forbidden"/> for a <see cref="OrganizationRole.Viewer"/>.
+    /// </summary>
+    ValueTask<ManagementResult<Project>> GetWritableProjectAsync(string userId, string organizationId, string projectId, CancellationToken cancellationToken);
 
     /// <summary>
     /// Deletes a database and its data. Its files and the expiry of its backups are owed to the storage sweep from the

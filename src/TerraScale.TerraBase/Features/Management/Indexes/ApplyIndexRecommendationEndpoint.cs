@@ -19,6 +19,7 @@ public sealed class ApplyIndexRecommendationEndpoint(IManagementService manageme
         Produces<AppliedIndexRecommendation>();
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
         Produces<ErrorBody>(StatusCodes.Status409Conflict);
+        Produces<ErrorBody>(StatusCodes.Status403Forbidden);
         RequireAuthorization(UserAuthExtensions.PolicyName);
         Metadata(ListenerMetadata.Management);
     }
@@ -26,9 +27,10 @@ public sealed class ApplyIndexRecommendationEndpoint(IManagementService manageme
     /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
-        if (await ManagementRoute.DatabaseAsync(HttpContext, management, cancellationToken) is not { } database)
+        var writable = await ManagementRoute.WritableDatabaseAsync(HttpContext, management, cancellationToken);
+        if (writable.Value is not { } database)
         {
-            return TypedResults.NotFound();
+            return ManagementRoute.Error(writable.Error);
         }
 
         var result = await indexes.ApplyAsync(database, ManagementRoute.Value(HttpContext, "recommendation"), cancellationToken);

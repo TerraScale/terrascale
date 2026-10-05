@@ -31,6 +31,10 @@ internal static class ManagementRoute
     public const string Leave = Organization + "/leave";
     public const string Invitations = Organization + "/invitations";
     public const string AcceptInvitation = "/v1/management/invitations/accept";
+    public const string LookupInvitation = "/v1/management/invitations/lookup";
+    public const string Commits = "/v1/management/commits";
+    public const string Versions = "/v1/management/versions";
+    public const string Documents = "/v1/management/documents/{collection}";
     public const string OwnershipTransfer = Organization + "/ownership-transfer";
     public const string AuditRetention = Organization + "/audit-retention";
     public const string AuditEvents = Organization + "/audit-events";
@@ -67,6 +71,14 @@ internal static class ManagementRoute
     /// </summary>
     public static ValueTask<TenantContext?> DatabaseAsync(HttpContext context, IManagementService management, CancellationToken cancellationToken) =>
         management.GetDatabaseTenantAsync(UserId(context), OrganizationId(context), Value(context, "project"), Value(context, "database"), cancellationToken);
+
+    /// <summary>As <see cref="DatabaseAsync"/> for a change: a viewer, which is read-only, gets <see cref="ManagementError.Forbidden"/>.</summary>
+    public static ValueTask<ManagementResult<TenantContext>> WritableDatabaseAsync(HttpContext context, IManagementService management, CancellationToken cancellationToken) =>
+        management.GetWritableDatabaseTenantAsync(UserId(context), OrganizationId(context), Value(context, "project"), Value(context, "database"), cancellationToken);
+
+    /// <summary>As <see cref="ProjectAsync"/> for a change: a viewer, which is read-only, gets <see cref="ManagementError.Forbidden"/>.</summary>
+    public static ValueTask<ManagementResult<Project>> WritableProjectAsync(HttpContext context, IManagementService management, CancellationToken cancellationToken) =>
+        management.GetWritableProjectAsync(UserId(context), OrganizationId(context), Value(context, "project"), cancellationToken);
 
     /// <summary>The canonical path of a project, from route values: request paths may differ in case or end in a slash.</summary>
     public static string ProjectPath(HttpContext context, Project project) => $"{Organizations}/{OrganizationId(context)}/projects/{project.Id}";
@@ -119,7 +131,7 @@ internal static class ManagementRoute
     public static OrganizationRole Role(OrganizationRole? role) =>
         role is { } value && Enum.IsDefined(value)
             ? value
-            : throw new BadHttpRequestException("role must be owner, admin or member");
+            : throw new BadHttpRequestException("role must be owner, admin, member or viewer");
 
     /// <summary>Validates an organization or project name and returns it trimmed.</summary>
     public static string DisplayName(NameRequest request)
@@ -167,6 +179,9 @@ internal static class ManagementRoute
         ManagementError.InvitationPending => TypedResults.Conflict("an invitation for this email is pending"),
         ManagementError.AlreadyOwner => TypedResults.Conflict("the member is already an owner"),
         ManagementError.Expired => TypedResults.Conflict("the invitation expired"),
+        ManagementError.IdTaken => TypedResults.Conflict("the id is already taken"),
+        ManagementError.InvitationClosed => TypedResults.Conflict("the invitation is no longer pending"),
+        ManagementError.TokenTaken => TypedResults.Conflict("another invitation has this token"),
         _ => throw new ArgumentOutOfRangeException(nameof(error)),
     };
 

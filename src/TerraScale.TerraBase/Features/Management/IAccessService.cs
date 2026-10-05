@@ -3,11 +3,15 @@ using TerraScale.TerraBase.Errors;
 
 namespace TerraScale.TerraBase.Features.Management;
 
-/// <summary>A member's role in an organization, from least to most privileged.</summary>
+/// <summary>A member's role in an organization, from least to most privileged. Numbers keep their meaning from before viewer.</summary>
 [JsonConverter(typeof(JsonStringEnumConverter<OrganizationRole>))]
 public enum OrganizationRole
 {
-    /// <summary>Manages projects and databases; reads members and the pending ownership transfer.</summary>
+    /// <summary>Reads the organization, its projects, databases, members and pending ownership transfer; changes nothing but its own membership.</summary>
+    [JsonStringEnumMemberName("viewer")]
+    Viewer = -1,
+
+    /// <summary>Also manages projects and databases.</summary>
     [JsonStringEnumMemberName("member")]
     Member,
 
@@ -26,14 +30,53 @@ public enum OrganizationRole
 /// <param name="JoinedAt">When the user became a member.</param>
 public sealed record OrganizationMember(string UserId, OrganizationRole Role, DateTimeOffset JoinedAt);
 
-/// <summary>A pending invitation to join an organization.</summary>
+/// <summary>Where an invitation is in its life. A pending invitation past its expiry is expired.</summary>
+[JsonConverter(typeof(JsonStringEnumConverter<InvitationStatus>))]
+public enum InvitationStatus
+{
+    /// <summary>Can be accepted or declined until it expires.</summary>
+    [JsonStringEnumMemberName("pending")]
+    Pending,
+
+    /// <summary>The invitee became a member.</summary>
+    [JsonStringEnumMemberName("accepted")]
+    Accepted,
+
+    /// <summary>The invitee declined.</summary>
+    [JsonStringEnumMemberName("declined")]
+    Declined,
+
+    /// <summary>An admin revoked it.</summary>
+    [JsonStringEnumMemberName("revoked")]
+    Revoked,
+}
+
+/// <summary>An invitation to join an organization.</summary>
 /// <param name="Id">Lowercase hyphenated UUID.</param>
 /// <param name="Email">The invited address; only a user with this email can accept.</param>
 /// <param name="Role">Role the user gets on accepting.</param>
 /// <param name="InvitedBy">User id of the inviter.</param>
-/// <param name="CreatedAt">Creation time.</param>
+/// <param name="CreatedAt">Creation time, or the last resend.</param>
 /// <param name="ExpiresAt">After this time the invitation can no longer be accepted.</param>
-public sealed record Invitation(string Id, string Email, OrganizationRole Role, string InvitedBy, DateTimeOffset CreatedAt, DateTimeOffset ExpiresAt);
+/// <param name="Status">Its state; stored invitations from before statuses are pending.</param>
+public sealed record Invitation(
+    string Id, string Email, OrganizationRole Role, string InvitedBy, DateTimeOffset CreatedAt, DateTimeOffset ExpiresAt,
+    InvitationStatus Status = InvitationStatus.Pending);
+
+/// <summary>A pending invitation found by its token hash, with only the identity of its organization.</summary>
+/// <param name="Organization">The organization's id and name.</param>
+/// <param name="Invitation">The invitation.</param>
+public sealed record FoundInvitation(OrganizationIdentity Organization, Invitation Invitation);
+
+/// <summary>An organization's id and name, which an invitee may see before joining.</summary>
+/// <param name="Id">Organization id.</param>
+/// <param name="Name">Organization name.</param>
+public sealed record OrganizationIdentity(string Id, string Name);
+
+/// <summary>A user's new membership, with the organization it is in.</summary>
+/// <param name="OrganizationId">The organization joined.</param>
+/// <param name="Member">The membership.</param>
+public sealed record Membership(string OrganizationId, OrganizationMember Member);
 
 /// <summary>A new invitation and its acceptance token, which is returned only here.</summary>
 /// <param name="Invitation">The invitation.</param>
@@ -73,7 +116,7 @@ public readonly union AddMemberResult(OrganizationMember, NotFound, Forbidden);
 /// </remarks>
 public interface IAccessService
 {
-    /// <summary>Lists members in user id order. Needs <see cref="OrganizationRole.Member"/>.</summary>
+    /// <summary>Lists members in user id order. Needs <see cref="OrganizationRole.Viewer"/>.</summary>
     ValueTask<ManagementResult<ManagementPage<OrganizationMember>>> ListMembersAsync(
         string userId, string organizationId, string? after, int limit, CancellationToken cancellationToken);
 
@@ -105,17 +148,20 @@ public interface IAccessService
     ValueTask<ManagementResult<CreatedInvitation>> InviteAsync(
         string userId, string organizationId, string email, OrganizationRole role, CancellationToken cancellationToken);
 
-    /// <summary>Lists pending invitations, expired ones included, in creation order. Needs <see cref="OrganizationRole.Admin"/>.</summary>
+    /// <summary>Lists every invitation with its status, in creation order. Needs <see cref="OrganizationRole.Admin"/>.</summary>
     ValueTask<ManagementResult<ManagementPage<Invitation>>> ListInvitationsAsync(
         string userId, string organizationId, string? after, int limit, CancellationToken cancellationToken);
 
-    /// <summary>Revokes an invitation. Needs <see cref="OrganizationRole.Admin"/>.</summary>
+    /// <summary>Marks a pending invitation revoked. Needs <see cref="OrganizationRole.Admin"/>.</summary>
     ValueTask<ManagementError> RevokeInvitationAsync(string userId, string organizationId, string invitationId, CancellationToken cancellationToken);
 
     /// <summary>Makes the user, whose verified email is <paramref name="email"/>, a member through an invitation token.</summary>
     ValueTask<ManagementResult<OrganizationMember>> AcceptInvitationAsync(string userId, string email, string token, CancellationToken cancellationToken);
 
-    /// <summary>Reads the pending, unexpired ownership transfer. Needs <see cref="OrganizationRole.Member"/>.</summary>
+    /// <summary>Finds a pending, unexpired invitation by the lowercase hex SHA-256 of its token.</summary>
+    ValueTask<FoundInvitation?> FindInvitationAsync(string tokenHash, CancellationToken cancellationToken);
+
+    /// <summary>Reads the pending, unexpired ownership transfer. Needs <see cref="OrganizationRole.Viewer"/>.</summary>
     ValueTask<ManagementResult<OwnershipTransfer>> GetTransferAsync(string userId, string organizationId, CancellationToken cancellationToken);
 
     /// <summary>Offers ownership to a member who is not an owner, replacing any pending offer. Needs <see cref="OrganizationRole.Owner"/>.</summary>

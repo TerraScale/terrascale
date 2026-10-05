@@ -46,6 +46,12 @@ public static class UserAuthExtensions
             ?.FindFirst(ClaimTypes.NameIdentifier)?.Value
         ?? throw new InvalidOperationException("the request has no authenticated ts-auth user");
 
+    /// <summary>
+    /// Whether the request authenticated with the management service credential (loopback administrative listener), which
+    /// the dashboard document space of Management commits needs: a ts-auth user token never reaches it.
+    /// </summary>
+    public static bool IsManagementService(this ClaimsPrincipal user) => Identity(user, ManagementCredentialHandler.SchemeName) is not null;
+
     /// <summary>The user's email when its ts-auth token marks it verified; otherwise <see langword="null"/>.</summary>
     public static string? VerifiedEmail(this ClaimsPrincipal user) =>
         Identity(user, UserAuthenticationHandler.SchemeName)?.FindFirst(ClaimTypes.Email)?.Value;

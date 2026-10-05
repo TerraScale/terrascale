@@ -105,4 +105,14 @@ public interface IDocumentService
     /// </summary>
     ValueTask<WriteResult> WriteAsync(
         TenantContext database, IReadOnlyList<DocumentOperation> operations, bool indexErrors, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Applies one operation in a write transaction the caller owns and commits, with the failures of
+    /// <see cref="WriteAsync"/>. Collections are not checked: the caller's store decides which exist.
+    /// </summary>
+    ValueTask<OperationResult> ApplyAsync(IStorageTransaction transaction, DocumentOperation operation, CancellationToken cancellationToken);
+
+    /// <summary>Runs a query, and a count as in <see cref="QueryAsync(TenantContext, DocumentQuery, long?, CancellationToken)"/>, in a transaction the caller owns.</summary>
+    ValueTask<(QueryPage Page, (long Count, bool Complete)? Count)> QueryAsync(
+        IStorageTransaction transaction, DocumentQuery query, long? countLimit, CancellationToken cancellationToken);
 }

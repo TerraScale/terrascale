@@ -27,6 +27,7 @@ public sealed class CreateProjectApiKeyEndpoint(IApiKeyStore keys) : Endpoint<Cr
         Produces<CreatedProjectApiKey>(StatusCodes.Status201Created);
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
+        Produces<ErrorBody>(StatusCodes.Status403Forbidden);
         RequireAuthorization(UserAuthExtensions.PolicyName);
         Metadata(ListenerMetadata.Management);
     }

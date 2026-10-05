@@ -12,8 +12,8 @@ public sealed class ListInvitationsEndpoint(IAccessService access) : EndpointWit
     {
         Get(ManagementRoute.Invitations);
         Name("listInvitations");
-        Summary("Lists the pending invitations of an organization");
-        Description($"Needs admin. Expired invitations are listed until replaced or revoked; compare expiresAt. Query: after (id cursor), limit (1 to 100, default 20); creation order. {ManagementRoute.IdentityDescription}");
+        Summary("Lists the invitations of an organization");
+        Description($"Needs admin. Every invitation with its status (pending, accepted, declined, revoked); a pending one past expiresAt is expired. Query: after (id cursor), limit (1 to 100, default 20); creation order. {ManagementRoute.IdentityDescription}");
         Tags(ManagementRoute.AccessTag);
         Produces<ManagementPage<Invitation>>();
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);

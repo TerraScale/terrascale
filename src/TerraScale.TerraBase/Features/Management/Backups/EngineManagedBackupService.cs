@@ -115,6 +115,14 @@ internal sealed partial class EngineManagedBackupService(
                 return ManagementError.NotFound;
             }
 
+            // A backup policy is project state of the organization: a viewer cannot set it, and setting it changes the organization.
+            var writer = await EngineManagementService.WritableAsync(transaction, userId, organizationId, cancellationToken).ConfigureAwait(false);
+            if (writer != ManagementError.None)
+            {
+                return writer;
+            }
+
+            await EngineManagementService.TouchOrganizationAsync(transaction, organizationId, cancellationToken).ConfigureAwait(false);
             await PutAsync(transaction, BackupCatalog.Policy(owner.DatabaseId), CurrentPolicy, policy, TerraBaseJsonContext.Default.BackupPolicy, cancellationToken).ConfigureAwait(false);
             await PutAsync(transaction, BackedUpDatabases, owner.DatabaseId, owner, TerraBaseJsonContext.Default.DatabaseOwner, cancellationToken).ConfigureAwait(false);
             return policy;

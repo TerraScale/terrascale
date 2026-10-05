@@ -16,7 +16,10 @@ internal sealed partial class EngineManagementService
         string organizationId, string projectId, string database, CancellationToken cancellationToken)
     {
         var added = await AddDatabaseAsync(
-            transaction => OrganizationProjectAsync(transaction, organizationId, projectId, cancellationToken), database, sourceId: null, branchedFrom: null, cancellationToken)
+            async transaction => await OrganizationProjectAsync(transaction, organizationId, projectId, cancellationToken).ConfigureAwait(false) is { } tenant
+                ? tenant
+                : ManagementError.NotFound,
+            database, sourceId: null, branchedFrom: null, cancellationToken)
             .ConfigureAwait(false);
         if (added.Value is { } value)
         {

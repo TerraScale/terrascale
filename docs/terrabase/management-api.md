@@ -107,9 +107,12 @@ Decided by COS on 2026-10-05: the TS-529 bootstrap creates the `terrascale` orga
 - An organization the user is not a member of, and everything under it (projects, databases,
   branches), answers `404`, exactly like an id that does not exist. A non-member cannot confirm
   that an organization exists.
-- Project access is decided at the organization level for now: every member, whatever its role, can
-  manage every project and database in the organization. Renaming the organization needs `admin` and
-  deleting it needs `owner` (`403` otherwise). Per-project roles are a follow-up.
+- Project access is decided at the organization level for now: every member with the `member` role or
+  higher can manage every project and database in the organization; a `viewer` reads them and gets `403` on
+  every change, including the database tooling (indexes, recommendations applied, backups, backup policies,
+  restores, saved queries and project API keys); it still reads them and runs SQL, which is read-only. Renaming the
+  organization needs `admin` and deleting it needs `owner` (`403` otherwise).
+  Per-project roles are a follow-up.
 - `GET /organizations` lists only the acting user's organizations. The current organization can
   be set only to an organization the user belongs to, and it reads as `404` once the user no longer
   belongs to it.
@@ -126,10 +129,10 @@ creator (or the legacy owner) a member. `joinedAt` is the organization's creatio
 ### Upgrading a catalog from before membership
 
 The first Management release (#5) stored organizations with no members and with globally
-unique names. That is catalog version 1. This release uses version 4 and records it in the
+unique names. That is catalog version 1. This release uses version 5 and records it in the
 `catalog/version` document of the `_system` database.
 
-- On its first Management request, each process brings the catalog to version 4, in one write
+- On its first Management request, each process brings the catalog to version 5, in one write
   transaction.
 - If the catalog is still version 1 and holds organizations, set `TERRABASE_MANAGEMENT_LEGACY_OWNER`
   (or `--management-legacy-owner=`) to a ts-auth user id. In that same transaction, every version 1
@@ -143,6 +146,13 @@ unique names. That is catalog version 1. This release uses version 4 and records
   hidden.
 - Once migrated, the version is recorded, so later starts need no setting.
 - Version 3 upgrades to version 4 without changing existing resources.
+- Version 4 upgrades to version 5 (TS-521) by filling the global project index (`project_organizations`),
+  which keeps client-chosen project ids unique across organizations; resources do not change. Version 5 adds
+  the `viewer` role, invitation history and token hashes, organization and account versions, commit records
+  and the dashboard document space ([management-commits.md](management-commits.md)). Builds that only
+  understand version 4 refuse a version 5 catalog (`503`), so they never misread a viewer or a closed
+  invitation; downgrade needs a supported recovery procedure, not editing the version marker. A version 4
+  catalog's cleanup intents are replayed at startup before the upgrade, as version 5 intents are.
 - A catalog with any other version (for example, one written by a newer build) is never migrated
   or downgraded. The Management API answers `503`, logs an error and leaves the catalog unchanged.
 - `management-legacy-owner` must be a non-blank user id: at most 256 characters and no control
@@ -168,7 +178,7 @@ requires a supported recovery procedure, not editing the version marker.
   the intent is cleared, including when only sidecars remain. Remove `.db`, `-wal`, `-shm`, `-journal`
   and private creation files for that database, then remove the intent. Filesystem failures leave the
   intent available for recovery.
-- **Startup:** replay all version 4 intents before any listener serves requests. Replay is idempotent,
+- **Startup:** replay all version 4 and 5 intents before any listener serves requests. Replay is idempotent,
   including when only sidecars remain. A replay error stops startup; the intent stays for the next
   start. An intent conflicting with a registered database stops startup without deleting its data.
 - **Unknown files:** preserve files without a catalog registration and log each path. A backup snapshot
@@ -235,7 +245,7 @@ Base path: `/v1/management`.
 | `DELETE` | `/organizations/{organization}` | `204`; `409` while it has projects; needs `owner`. Also deletes its members, invitations, transfer and audit log |
 | `GET` | `/current-organization` | the organization the acting user last switched to; `404` if none or no longer a member |
 | `PUT` | `/current-organization` | `{organizationId}` → organization; `404` if the user is not a member |
-| `POST` | `/organizations/{organization}/projects` | `{name}` → `201` project |
+| `POST` | `/organizations/{organization}/projects` | `{name}` → `201` project; needs `member` (as every project and database change below) |
 | `GET` | `/organizations/{organization}/projects` | page of projects |
 | `GET` | `/organizations/{organization}/projects/{project}` | project |
 | `PATCH` | `/organizations/{organization}/projects/{project}` | `{name}` → renamed project |
@@ -245,6 +255,11 @@ Base path: `/v1/management`.
 | `GET` | `…/projects/{project}/databases/{database}` | database |
 | `DELETE` | `…/projects/{project}/databases/{database}` | `204`; deletes the data. Branches are independent and stay. |
 | `POST` | `…/databases/{database}/branches` | `{name}` → `201` database in the same project holding a consistent snapshot copy |
+| `POST` | `/commits` | atomic commit of Management operations and dashboard documents ([management-commits.md](management-commits.md)) |
+| `GET` | `/commits/{id}` | recorded outcome of the acting user's commit; `404` if it never committed |
+| `GET` | `/versions?organization=…` | account and organization versions for fencing commits |
+| `GET` | `/documents/{collection}/{id}` | a document of the dashboard document space |
+| `POST` | `/documents/{collection}/query` | query v1 over the dashboard document space |
 
 Shapes:
 
@@ -260,21 +275,23 @@ placement. See [region identity](region-identity.md) for Atlas session pins and 
 
 ## Members and roles
 
-Roles, from least to most privileged: `member`, `admin`, `owner`. The routes below are under
+Roles, from least to most privileged: `viewer`, `member`, `admin`, `owner`. A `viewer` is read-only: it reads
+the organization, projects, databases, members and the pending transfer, and may leave. A viewer is never
+mapped to a writable role. The routes below are under
 `/v1/management/organizations/{organization}` and follow [Access and authorization](#access-and-authorization):
 a user who is not a member gets `404`, and a member whose role is too low gets `403`.
 
 | Method | Route | Needs | Result |
 | --- | --- | --- | --- |
-| `GET` | `/members` | member | page of members in user id order |
+| `GET` | `/members` | viewer | page of members in user id order |
 | `PUT` | `/members/{user}` | admin; admin listener only | `{email}` → member; see [Adding a member on the administrative listener](#adding-a-member-on-the-administrative-listener) |
 | `PUT` | `/members/{user}/role` | admin; owner if the member is or becomes an owner | `{role}` → member; `409` when it would demote the last owner |
 | `DELETE` | `/members/{user}` | admin; owner to remove an owner | `204`; `409` for the last owner |
-| `POST` | `/leave` | member | `204`; `409` for the last owner |
+| `POST` | `/leave` | viewer | `204`; `409` for the last owner |
 | `POST` | `/invitations` | admin; owner to invite an owner | `{email, role}` (role defaults to `member`) → `201` `{invitation, token}`; `409` while an unexpired invitation for the email is pending |
-| `GET` | `/invitations` | admin | page of pending invitations in creation order, expired ones included; `after` is the previous page's `next` |
-| `DELETE` | `/invitations/{invitation}` | admin | `204`; the token stops working |
-| `GET` | `/ownership-transfer` | member | pending transfer; `404` if none |
+| `GET` | `/invitations` | admin | page of every invitation with its `status` (`pending`, `accepted`, `declined`, `revoked`), in creation order; `after` is the previous page's `next` |
+| `DELETE` | `/invitations/{invitation}` | admin | `204`; the invitation becomes `revoked` and its token stops working; `409` when it is no longer pending |
+| `GET` | `/ownership-transfer` | viewer | pending transfer; `404` if none |
 | `POST` | `/ownership-transfer` | owner | `{userId}` → `201` transfer to a member who is not an owner; replaces a pending one |
 | `POST` | `/ownership-transfer/confirm` | the nominee | nominee's membership, now `owner`; the owner who started it becomes `member` |
 | `DELETE` | `/ownership-transfer` | owner or the nominee | `204` |
@@ -286,22 +303,30 @@ Accepting is the one route outside an organization: `POST /v1/management/invitat
 `{token}`; the invitation token names the organization. The email is the access token's `email` claim, used
 only when `email_verified` is `true`; the body never supplies it, because the caller may be the user itself.
 It answers the new membership; `403` when the access token has no verified email or it differs from the
-invitation, `404` for an unknown token, `409` when the invitation expired or the user is already a member.
+invitation, `404` for an unknown token, `409` when the invitation expired, is no longer pending or the user is
+already a member.
+
+`POST /v1/management/invitations/lookup` with `{tokenHash}` (lowercase hex SHA-256 of the token) answers a
+pending, unexpired invitation with its organization's id and name, and `404` otherwise. Invitations whose
+token the dashboard generates (sending only its hash), decline and resend are commit operations: see
+[Invitations by token hash](management-commits.md#invitations-by-token-hash).
 
 Rules:
 
 - **The last owner** cannot be demoted, removed or leave. An organization can have several owners;
   only owners grant, revoke or transfer ownership.
 - **Invitations** expire after 7 days. The token (`<organization>.<invitation>.<secret>`) is returned
-  only by the create call; TerraBase stores the SHA-256 of its secret and compares it in constant time.
-  Inviting an address whose invitation expired replaces it. TerraBase sends no email: the dashboard delivers
-  the link. On accept, the access token's verified email must match the invitation ignoring case.
+  only by the create call; TerraBase stores SHA-256 hashes of it and compares them in constant time.
+  Inviting an address whose pending invitation expired creates a new one and keeps the expired one in the
+  history. Accepting, declining and revoking keep the invitation with its new status; each token works at
+  most once. TerraBase sends no email: the dashboard delivers the link. On accept and decline, the access
+  token's verified email must match the invitation ignoring case.
 - **Ownership transfer** follows the dashboard: one pending transfer per organization, valid for 7 days.
   Only the nominee confirms. The offer lapses (`404`) as soon as its starter stops being an owner or
   either side leaves, even if the starter later regains ownership.
 - **Audit events** record every change above as `{id, actor, action, target, detail, occurredAt}`.
   Actions: `member.added`, `member.role_changed`, `member.removed`, `member.left`, `invitation.created`,
-  `invitation.revoked`, `invitation.accepted`, `ownership.transfer_started`,
+  `invitation.revoked`, `invitation.accepted`, `invitation.declined`, `invitation.resent`, `ownership.transfer_started`,
   `ownership.transfer_confirmed`, `ownership.transfer_cancelled`, `settings.audit_retention_updated`,
   `settings.plan_updated`. `target` is a user id or an invitation email; `detail` is the new role, the
   number of days, the new plan or, for `member.added`, the supplied email. Retention
@@ -357,8 +382,7 @@ The bootstrap, every call on the admin listener with the credential:
 Step 2 is safe to repeat until step 4. After step 4 the bootstrap identity is no longer an admin, so repeating step 2
 answers `403`: resume from step 5.
 
-Not covered yet: invitation resend (revoke and invite again), audit filters and export, and audit events
-for organization, project and database changes.
+Not covered yet: audit filters and export, and audit events for organization, project and database changes.
 
 ## Database tooling endpoints
 
@@ -694,7 +718,7 @@ A project key is an API key of the project's organization narrowed to the projec
 | Change member role | `/api/v1/access/members/{userID}/role`, `/api/v1/dashboard/organization/members/{userID}/role` | `PUT …/members/{user}/role` |
 | Remove member | `/api/v1/access/members/{userID}/revoke`, `/api/v1/dashboard/organization/members/{userID}/remove` | `DELETE …/members/{user}` |
 | Leave organization | `/api/v1/dashboard/organization/leave` | `POST …/leave` |
-| Invitations | `/api/v1/access/invitations[/{id}/revoke]`, `/invitations/{token}/respond` | `POST`/`GET …/invitations`, `DELETE …/invitations/{invitation}`, `POST /invitations/accept` |
+| Invitations | `/api/v1/access/invitations[/{id}/revoke\|/resend]`, `/invitations/{token}/respond` | commits (`invite`, `resend_invitation`, `revoke_invitation`, `accept_invitation`, `decline_invitation`), `GET …/invitations`, `POST /invitations/lookup` |
 | Ownership transfer | `/api/v1/dashboard/organization/members/ownership[/confirm\|/cancel]` | `GET`/`POST`/`DELETE …/ownership-transfer`, `POST …/ownership-transfer/confirm` |
 | Audit log and retention | `GET /audit`, `/api/v1/dashboard/settings/audit-retention` | `GET …/audit-events`, `GET`/`PUT …/audit-retention` |
 
@@ -702,7 +726,6 @@ A project key is an API key of the project's organization narrowed to the projec
 
 | Dashboard feature | Dashboard routes |
 | --- | --- |
-| Invitation resend | `/api/v1/access/invitations/{id}/resend` |
 | Project switcher (current project) | `POST /api/v1/dashboard/switch-project` |
 | Declared collection schemas | `POST /api/v1/dashboard/schema` |
 | Live-query subscriptions | `/api/v1/dashboard/subscriptions/attach\|pause\|resume\|detach` |
@@ -753,7 +776,7 @@ not cover branches.
 | IDs | UUIDv7 strings | dashboard uses `org_`, `prj_`, `db_` + 32 hex |
 | Database names | `^[a-z][a-z0-9_-]{0,62}$` | dashboard and SDK use `^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$` (leading digit allowed, no `_`, no trailing `-`) |
 | JSON | camelCase, ISO 8601 timestamps | control-plane-v1 uses snake_case, Unix-ms strings and `next_cursor` |
-| Idempotency | none | control-plane-v1 requires `Idempotency-Key` on mutations |
+| Idempotency | commits carry a client commit id with a durable, queryable outcome ([management-commits.md](management-commits.md#uncertain-outcomes)); other routes have none | control-plane-v1 requires `Idempotency-Key` on mutations |
 | Authentication | ts-auth access token (`at+jwt`); `sub` is the user, the route names the organization | control-plane-v1 uses a `control`-role `tbk1.` key with no user identity |
 | Regions, placement, residency | not modeled | dashboard and SDK send them on project and database create; ts-orchestrator places partitions |
 | Organization delete | deletes an empty organization | dashboard only marks `deletionRequested` and keeps the data |
@@ -765,9 +788,8 @@ not cover branches.
 | SQL result | `{matched, truncated, rows:[{id, value}]}` | SDK `SQLResult{matched, rows[{id, value}]}`; no explain variant |
 | API keys | `tb_` secret, SHA-256 stored, scopes `documents:read\|write`, optional `databaseId` | control-plane-v1 `tbk1.<id>.<secret>` tokens with grants, row filters, rate limits, expiry and rotation |
 | Usage | best-effort lifetime reads and writes; documents and bytes | control-plane-v1 reports the current calendar month as decimal strings |
-| Roles | `owner`, `admin`, `member`; several owners; admins manage members and invitations | dashboard: also `viewer`; exactly one owner, who alone manages members |
+| Roles | `owner`, `admin`, `member`, `viewer`; several owners; admins manage members and invitations | dashboard: exactly one owner, who alone manages members (it keeps one by granting `owner` only through a transfer) |
 | Members | user id, role and join time | dashboard members also carry email and name; ts-auth owns profiles |
-| Invitation decline, resend | not modeled; revoke and invite again | dashboard stores `declined` and `revoked` and reissues tokens on resend |
 
 These are deliberate simplifications for the first slice. The dashboard adapter maps
 names and IDs until the contracts are aligned.

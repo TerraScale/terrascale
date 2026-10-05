@@ -19,6 +19,11 @@ public sealed record Conflict(string Message, string Code = "conflict");
 /// <param name="Code">Stable machine-readable code.</param>
 public sealed record Validation(string Message, string Code = "invalid_request");
 
+/// <summary>A precondition of the request no longer holds, such as a stale version: re-read and retry.</summary>
+/// <param name="Message">The rule that failed.</param>
+/// <param name="Code">Stable machine-readable code.</param>
+public sealed record PreconditionFailed(string Message, string Code = "precondition_failed");
+
 /// <summary>The caller is not authenticated.</summary>
 /// <param name="Message">The rule that failed.</param>
 /// <param name="Code">Stable machine-readable code.</param>
@@ -43,7 +48,7 @@ public sealed record Unavailable(string Message, string Code = "unavailable");
 public sealed record Done;
 
 /// <summary>Every expected failure; <see cref="ErrorResponse.From"/> maps each to its HTTP response.</summary>
-public readonly union Failure(NotFound, Conflict, Validation, Unauthorized, Forbidden, QuotaExceeded, Unavailable);
+public readonly union Failure(NotFound, Conflict, Validation, PreconditionFailed, Unauthorized, Forbidden, QuotaExceeded, Unavailable);
 
 /// <summary>A value read from a request, or the input rule it breaks.</summary>
 /// <typeparam name="T">The value type.</typeparam>
