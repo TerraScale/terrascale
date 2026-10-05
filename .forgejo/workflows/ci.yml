@@ -208,6 +208,33 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
+      - name: Provision the reviewed npm CLI
+        run: node scripts/provision-reviewed-npm.js
+
+      # TS-528 one-shot; remove after it has run
+      - name: Withdraw 1.0.0 and deprecate 0.3.0
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "${NPM_TOKEN}"
+          umask 077
+          export NPM_CONFIG_USERCONFIG="${RUNNER_TEMP:-/tmp}/npmrc"
+          view_error="${RUNNER_TEMP:-/tmp}/npm-view-error"
+          trap 'rm -f "${NPM_CONFIG_USERCONFIG}" "${view_error}"' EXIT
+          printf '//registry.npmjs.org/:_authToken=%s\n' "${NPM_TOKEN}" > "${NPM_CONFIG_USERCONFIG}"
+          if npm view terrascale@1.0.0 version --registry https://registry.npmjs.org/ 2>"${view_error}"; then
+            npm unpublish terrascale@1.0.0 --registry https://registry.npmjs.org/
+          else
+            status=$?
+            cat "${view_error}" >&2
+            if ! grep -q 'E404' "${view_error}"; then exit "${status}"; fi
+          fi
+          deprecated="$(npm view terrascale@0.3.0 deprecated --registry https://registry.npmjs.org/)"
+          if [ -z "${deprecated}" ]; then
+            npm deprecate terrascale@0.3.0 "Use terrascale@0.0.x" --registry https://registry.npmjs.org/
+          fi
+
       - name: Skip a version npm already has
         id: version
         run: |
@@ -219,9 +246,6 @@ jobs:
           else
             echo "publish=true" >> "${GITHUB_OUTPUT:?GITHUB_OUTPUT is required}"
           fi
-
-      - name: Provision the reviewed npm CLI
-        run: node scripts/provision-reviewed-npm.js
 
       - name: Install locked dependencies
         if: ${{ steps.version.outputs.publish == 'true' }}
@@ -246,34 +270,9 @@ jobs:
           mkdir -p artifacts/release
           npm pack --ignore-scripts --pack-destination artifacts/release
           sha256sum artifacts/release/*.tgz
-          npm publish artifacts/release/*.tgz --access public --ignore-scripts --registry https://registry.npmjs.org/
-
-      # TS-528 one-shot; remove after it has run
-      - name: Withdraw 1.0.0, deprecate 0.3.0 and verify latest
-        env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |
-          set -euo pipefail
-          test -n "${NPM_TOKEN}"
-          umask 077
-          export NPM_CONFIG_USERCONFIG="${RUNNER_TEMP:-/tmp}/npmrc"
-          view_error="${RUNNER_TEMP:-/tmp}/npm-view-error"
-          trap 'rm -f "${NPM_CONFIG_USERCONFIG}" "${view_error}"' EXIT
-          printf '//registry.npmjs.org/:_authToken=%s\n' "${NPM_TOKEN}" > "${NPM_CONFIG_USERCONFIG}"
-          if npm view terrascale@1.0.0 version --registry https://registry.npmjs.org/ 2>"${view_error}"; then
-            npm unpublish terrascale@1.0.0 --registry https://registry.npmjs.org/
-          else
-            status=$?
-            cat "${view_error}" >&2
-            if ! grep -q 'E404' "${view_error}"; then exit "${status}"; fi
-          fi
-          deprecated="$(npm view terrascale@0.3.0 deprecated --registry https://registry.npmjs.org/)"
-          if [ -z "${deprecated}" ]; then
-            npm deprecate terrascale@0.3.0 "Use terrascale@0.0.x" --registry https://registry.npmjs.org/
-          fi
+          npm publish artifacts/release/*.tgz --access public --ignore-scripts --tag latest --registry https://registry.npmjs.org/
           version="$(node -p 'require("./package.json").version')"
-          npm dist-tag add "terrascale@${version}" latest --registry https://registry.npmjs.org/
-          latest="$(npm view terrascale dist-tags.latest --registry https://registry.npmjs.org/)"
+          latest="$(npm view terrascale dist-tags.latest --prefer-online --registry https://registry.npmjs.org/)"
           if [ "${latest}" != "${version}" ]; then
             echo "TS-528: expected npm latest ${version}, got ${latest}" >&2
             exit 1
