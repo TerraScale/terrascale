@@ -504,7 +504,7 @@ public sealed class ManagementApiTests
             await Assert.That(invited).IsEqualTo(HttpStatusCode.Created);
             await Assert.That(read).IsEqualTo(HttpStatusCode.OK);
             await Assert.That((await ReadSystemDocumentsAsync(dataDirectory)).Where(line => line.StartsWith("catalog|version|", StringComparison.Ordinal)))
-                .IsEquivalentTo([$"catalog|version|{JsonSerializer.Serialize("3")}"]);
+                .IsEquivalentTo([$"catalog|version|{JsonSerializer.Serialize("4")}"]);
         }
         finally
         {

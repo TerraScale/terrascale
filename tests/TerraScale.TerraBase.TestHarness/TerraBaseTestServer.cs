@@ -18,6 +18,7 @@ namespace TerraScale.TerraBase.Testing;
 public sealed class TerraBaseTestServer : IAsyncDisposable
 {
     private readonly WebApplicationFactory<Program> _factory;
+    private readonly IStorageEngine _engine;
 
     // The temporary directory this harness created, deleted on dispose even when a test chose another data directory.
     private readonly string _temporaryDirectory;
@@ -26,6 +27,7 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
         WebApplicationFactory<Program> factory, string temporaryDirectory, IReadOnlyList<Uri> listeners, IReadOnlyDictionary<string, string> settings)
     {
         _factory = factory;
+        _engine = factory.Services.GetRequiredService<IStorageEngine>();
         _temporaryDirectory = temporaryDirectory;
         DataDirectory = Path.GetFullPath(settings["data-directory"]);
         BaseAddress = listeners.Single(address => address.Scheme == Uri.UriSchemeHttp);
@@ -165,12 +167,11 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         Client.Dispose();
-        var engine = _factory.Services.GetRequiredService<IStorageEngine>();
         await _factory.DisposeAsync();
         // Program's RunAsync disposes the host on its own thread, which can still be closing database
         // files when the factory returns. Disposing the engine again is a no-op that returns only once
         // its files are closed (or closes them first).
-        await engine.DisposeAsync();
+        await _engine.DisposeAsync();
         Directory.Delete(_temporaryDirectory, recursive: true);
     }
 

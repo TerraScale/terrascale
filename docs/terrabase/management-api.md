@@ -83,10 +83,10 @@ creator (or the legacy owner) a member. `joinedAt` is the organization's creatio
 ### Upgrading a catalog from before membership
 
 The first Management release (#5) stored organizations with no members and with globally
-unique names. That is catalog version 1. This release uses version 3 and records it in the
+unique names. That is catalog version 1. This release uses version 4 and records it in the
 `catalog/version` document of the `_system` database.
 
-- On its first Management request, each process brings the catalog to version 3, in one write
+- On its first Management request, each process brings the catalog to version 4, in one write
   transaction.
 - If the catalog is still version 1 and holds organizations, set `TERRABASE_MANAGEMENT_LEGACY_OWNER`
   (or `--management-legacy-owner=`) to a ts-auth user id. In that same transaction, every version 1
@@ -99,11 +99,55 @@ unique names. That is catalog version 1. This release uses version 3 and records
   log gives only the number of organizations, no ids. Nothing is changed, and nothing is silently
   hidden.
 - Once migrated, the version is recorded, so later starts need no setting.
+- Version 3 upgrades to version 4 without changing existing resources.
 - A catalog with any other version (for example, one written by a newer build) is never migrated
   or downgraded. The Management API answers `503`, logs an error and leaves the catalog unchanged.
 - `management-legacy-owner` must be a non-blank user id: at most 256 characters and no control
   characters. Anything else stops the process with exit code `2`.
 - A user's current organization from version 1 reads as `404` unless that user is the assigned owner.
+
+### Database lifecycle recovery (TS-480)
+
+Version 4 adds `pending_database_cleanup` documents in `_system.db`, keyed by database id and
+holding its tenant context. Builds that only understand version 3 refuse this catalog; downgrade
+requires a supported recovery procedure, not editing the version marker.
+
+- **Create and branch:** check that the target has no existing files and commit a cleanup intent
+  under the engine lifecycle lock, keeping that lock through storage publication. Existing unknown
+  targets, including case-equivalent names, are preserved without creating an intent. Register the
+  database and remove the intent in one catalog transaction after storage succeeds.
+  A process crash before registration leaves an intent that proves which
+  unpublished files may be removed. An unresolved create intent reserves its destination against
+  competing engine creation, including after cancellation or an error, until registration or cleanup
+  clears the intent. Startup finishes persisted intents before permitting new requests.
+- **Delete:** remove the database and name claim and insert its cleanup intent in the same catalog
+  transaction while reserving the destination under the lifecycle lock. Retain that reservation until
+  the intent is cleared, including when only sidecars remain. Remove `.db`, `-wal`, `-shm`, `-journal`
+  and private creation files for that database, then remove the intent. Filesystem failures leave the
+  intent available for recovery.
+- **Startup:** replay all version 4 intents before any listener serves requests. Replay is idempotent,
+  including when only sidecars remain. A replay error stops startup; the intent stays for the next
+  start. An intent conflicting with a registered database stops startup without deleting its data.
+- **Unknown files:** preserve files without a catalog registration and log each path. The
+  administrative `/metrics` exposes `terrabase_storage_unknown_files`, a count of individual files
+  found at startup, including sidecars, unknown root files and directories named as database
+  artifacts. Inspect and recover them manually; TerraBase never sweeps unknown data. The gauge is
+  a startup observation, refreshed on restart. System database or sidecar symbolic links stop
+  startup before their targets are opened. Tenant database opens and branch sources also refuse
+  symbolic links in the main file or any known sidecar, including dangling links.
+
+The data directory, its ancestors and tenant directories must be writable only by the trusted
+TerraBase service account and operators. Do not move or replace them while the server runs;
+stop the server before filesystem maintenance. Link checks are repeated after lifecycle callbacks
+and before publication or cleanup, but path-based SQLite access does not provide isolation from
+a hostile process with filesystem write access. The ownership lock coordinates TerraBase
+processes, not arbitrary filesystem writers; deployment permissions provide that boundary.
+
+This covers TerraBase process crashes. SQLite still uses `synchronous = NORMAL` (decision 0003),
+so it does not add a power-loss or operating-system-crash durability guarantee. Older catalogs keep
+existing migration and `503` behavior; they contain no version 4 intents and are never swept.
+Unsupported catalog versions are audited without interpreting tenant rows; their files are preserved,
+logged and counted as unknown while management requests keep returning `503`.
 
 ## Conventions
 

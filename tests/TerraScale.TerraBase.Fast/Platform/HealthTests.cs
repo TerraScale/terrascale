@@ -86,9 +86,15 @@ public sealed class HealthTests
     {
         using var tls = new ClientTls();
         var shutdown = new HeldShutdown();
-        await using var server = await TerraBaseTestServer.StartAsync(tls.Apply, services => services.AddHostedService(_ => shutdown));
+        var providerDisposed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var server = await TerraBaseTestServer.StartAsync(tls.Apply, services =>
+        {
+            services.AddHostedService(_ => shutdown);
+            services.AddSingleton<IStartupFilter>(_ => new ObserveProviderDisposal(providerDisposed));
+        });
         using var client = tls.CreateClient(server.ClientAddress!);
-        var engine = (SqliteStorageEngine)server.Services.GetRequiredService<IStorageEngine>();
+        var provider = server.Services;
+        var engine = (SqliteStorageEngine)provider.GetRequiredService<IStorageEngine>();
         var clock = new ProbeClock();
         var barrier = new ProbeBarrier();
         engine.ReadinessClock = clock;
@@ -119,6 +125,10 @@ public sealed class HealthTests
                 shutdown.Release.TrySetResult();
             }
         }
+
+        // Program has disposed the root provider before await-using cleans up the harness.
+        await providerDisposed.Task.WaitAsync(TimeSpan.FromSeconds(30));
+        await Assert.That(() => { _ = provider.GetRequiredService<IStorageEngine>(); }).Throws<ObjectDisposedException>();
     }
 
     [Test]
@@ -351,6 +361,14 @@ public sealed class HealthTests
             Stopping.TrySetResult();
             await Release.Task.WaitAsync(cancellationToken);
         }
+    }
+
+    // The factory registration gives DI ownership; startup eagerly resolves the filter.
+    private sealed class ObserveProviderDisposal(TaskCompletionSource disposed) : IStartupFilter, IDisposable
+    {
+        public Action<IApplicationBuilder> Configure(Action<IApplicationBuilder> next) => next;
+
+        public void Dispose() => disposed.TrySetResult();
     }
 
     private sealed class ProbeBarrier

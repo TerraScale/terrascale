@@ -23,6 +23,8 @@
   <!-- Integration suites (Fast and Slow): TUnit executables driving the real server. -->
   <PropertyGroup Condition="'$(IsTestProject)' == 'true'">
     <IsPackable>false</IsPackable>
+    <!-- The real server uses server GC; the parallel in-process hosts must use the same runtime mode. -->
+    <ServerGarbageCollection>true</ServerGarbageCollection>
     <!-- CA1515: TUnit discovers public test classes. CA1707: test names use
          underscores as sentence separators. CA2007: tests have no synchronization
          context to capture. CS1591: tests are not a public API. -->

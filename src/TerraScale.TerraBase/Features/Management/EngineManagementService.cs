@@ -1,3 +1,4 @@
+using System.Diagnostics.Metrics;
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
 using TerraScale.TerraBase.Configuration;
@@ -23,7 +24,8 @@ namespace TerraScale.TerraBase.Features.Management;
 /// first operation of the process. Version 1 (no document) predates membership: its organizations have no
 /// members and globally unique names, and every organization is assigned to
 /// <see cref="TerraBaseOptions.ManagementLegacyOwner"/> as its owner; without that setting the API answers 503.
-/// Version 2 stored members without roles; they all become owners. Any other version is unsupported: the API
+/// Version 2 stored members without roles; they all become owners. Version 3 upgrades to version 4, which
+/// records pending database cleanup intents. Any other version is unsupported: the API
 /// answers 503 and the catalog is left unchanged.
 /// </para>
 /// <para>
@@ -32,14 +34,15 @@ namespace TerraScale.TerraBase.Features.Management;
 /// </para>
 /// </remarks>
 internal sealed partial class EngineManagementService(
-    IStorageEngine engine, TimeProvider time, TerraBaseOptions options, ILogger<EngineManagementService> logger)
-    : IManagementService, IAccessService, ITenantDirectory
+    IStorageEngine engine, TimeProvider time, TerraBaseOptions options, ILogger<EngineManagementService> logger, DatabaseLifecycleCheckpoint checkpoint, IMeterFactory meters)
+    : IManagementService, IAccessService, ITenantDirectory, IHostedService
 {
     private const string Organizations = "organizations";
     private const string CurrentOrganizations = "current_organizations";
     private const string Catalog = "catalog";
     private const string CatalogVersionId = "version";
-    private const string CatalogVersion = "3";
+    private const string CatalogVersion = "4";
+    private const string PendingDatabaseCleanup = "pending_database_cleanup";
 
     // Version 2 added membership; its member documents hold only the user id.
     private const string MembershipCatalogVersion = "2";
@@ -299,7 +302,7 @@ internal sealed partial class EngineManagementService(
     public async ValueTask<ManagementError> DeleteDatabaseAsync(
         string userId, string organizationId, string projectId, string databaseId, CancellationToken cancellationToken)
     {
-        var storage = await WriteAsync<TenantContext?>(async transaction =>
+        var storage = await ReadAsync<TenantContext?>(async transaction =>
         {
             if (await MemberProjectAsync(transaction, userId, organizationId, projectId, cancellationToken).ConfigureAwait(false) is not { } project
                 || await GetAsync(transaction, Databases(projectId), databaseId, TerraBaseJsonContext.Default.ManagedDatabase, cancellationToken)
@@ -308,8 +311,6 @@ internal sealed partial class EngineManagementService(
                 return null;
             }
 
-            await transaction.DeleteAsync(DatabaseNames(projectId), database.Name, cancellationToken).ConfigureAwait(false);
-            await transaction.DeleteAsync(Databases(projectId), database.Id, cancellationToken).ConfigureAwait(false);
             return project with { DatabaseId = database.Id };
         }, cancellationToken).ConfigureAwait(false);
         if (storage is null)
@@ -317,8 +318,48 @@ internal sealed partial class EngineManagementService(
             return ManagementError.NotFound;
         }
 
-        // The catalog no longer names it: finish even if the caller goes away, or the file leaks.
-        await engine.DeleteDatabaseAsync(storage, CancellationToken.None).ConfigureAwait(false);
+        var recording = false;
+        bool recorded;
+        try
+        {
+            recorded = await engine.RecordDatabaseDeleteIntentAsync(storage, async token =>
+            {
+                recording = true;
+                checkpoint("delete.recording", storage);
+                return await WriteAsync(async transaction =>
+                {
+                    if (await MemberProjectAsync(transaction, userId, organizationId, projectId, token).ConfigureAwait(false) is null
+                        || await GetAsync(transaction, Databases(projectId), databaseId, TerraBaseJsonContext.Default.ManagedDatabase, token)
+                            .ConfigureAwait(false) is not { } database)
+                    {
+                        return false;
+                    }
+
+                    await PutAsync(transaction, PendingDatabaseCleanup, database.Id, storage, TerraBaseJsonContext.Default.TenantContext, token).ConfigureAwait(false);
+                    await transaction.DeleteAsync(DatabaseNames(projectId), database.Name, token).ConfigureAwait(false);
+                    await transaction.DeleteAsync(Databases(projectId), database.Id, token).ConfigureAwait(false);
+                    return true;
+                }, token).ConfigureAwait(false);
+            }, cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            if (recording)
+            {
+                await ReleaseUnrecordedIntentAsync(storage).ConfigureAwait(false);
+            }
+
+            throw;
+        }
+        if (!recorded)
+        {
+            return ManagementError.NotFound;
+        }
+
+        checkpoint("delete.intent", storage);
+        // The committed intent survives failure or cancellation of the file operation.
+        await FinishDatabaseCleanupAsync(storage, CancellationToken.None).ConfigureAwait(false);
+        checkpoint("delete.finalized", storage);
         return ManagementError.None;
     }
 
@@ -336,8 +377,8 @@ internal sealed partial class EngineManagementService(
         return added.Value is { } value ? value.Database : added.Error;
     }
 
-    // Creates (or copies) the storage first and registers it after, deleting it again when registration
-    // fails, so the catalog never names a database that does not exist. project resolves the tenant of the
+    // Records cleanup ownership before creating (or copying) storage, then registers the database and
+    // clears the intent in one transaction. project resolves the tenant of the
     // project to add to (null when it is not found) inside each transaction.
     private async ValueTask<ManagementResult<AddedDatabase>> AddDatabaseAsync(
         Func<IStorageTransaction, ValueTask<TenantContext?>> project, string name, ManagedDatabase? source, CancellationToken cancellationToken)
@@ -352,19 +393,50 @@ internal sealed partial class EngineManagementService(
 
         var database = new ManagedDatabase(NewId(), tenant.ProjectId!, name, source?.Id, time.GetUtcNow());
         var storage = tenant with { DatabaseId = database.Id };
+        checkpoint("create.prepare", storage);
+        var recording = false;
+        var publishing = false;
+        bool created;
+        try
+        {
+            created = await engine.CreateDatabaseWithIntentAsync(storage, source is null ? null : tenant with { DatabaseId = source.Id }, async token =>
+            {
+                recording = true;
+                _ = await WriteCatalogAsync(async transaction =>
+                {
+                    await PutAsync(transaction, PendingDatabaseCleanup, database.Id, storage, TerraBaseJsonContext.Default.TenantContext, token).ConfigureAwait(false);
+                    return 0;
+                }, token).ConfigureAwait(false);
+                checkpoint("create.intent", storage);
+                publishing = true;
+            }, cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            // A rejected destination never acquired ownership. A stop in the intent callback leaves recovery work.
+            if (publishing)
+            {
+                await FinishDatabaseCleanupAsync(storage, CancellationToken.None).ConfigureAwait(false);
+            }
+            else if (recording)
+            {
+                await ReleaseUnrecordedIntentAsync(storage).ConfigureAwait(false);
+            }
+
+            throw;
+        }
+
+        if (!created)
+        {
+            // A missing branch source made no target.
+            await ClearDatabaseCleanupAsync(storage, CancellationToken.None).ConfigureAwait(false);
+            return ManagementError.NotFound;
+        }
+
+        checkpoint("create.files", storage);
         ManagementError error;
         try
         {
-            // Inside the try: the file may be in place even when creating fails or is cancelled afterwards.
-            var created = source is null
-                ? await engine.CreateDatabaseAsync(storage, cancellationToken).ConfigureAwait(false)
-                : await engine.CopyDatabaseAsync(tenant with { DatabaseId = source.Id }, storage, cancellationToken).ConfigureAwait(false);
-            if (!created)
-            {
-                // A new random id always creates; only a branch source deleted meanwhile gets here.
-                return ManagementError.NotFound;
-            }
-
             error = await WriteAsync(async transaction =>
             {
                 var check = await CanAddDatabaseAsync(transaction, project, name, cancellationToken).ConfigureAwait(false);
@@ -374,23 +446,43 @@ internal sealed partial class EngineManagementService(
                     await PutAsync(
                         transaction, Databases(database.ProjectId), database.Id, database, TerraBaseJsonContext.Default.ManagedDatabase, cancellationToken)
                         .ConfigureAwait(false);
+                    await transaction.DeleteAsync(PendingDatabaseCleanup, database.Id, cancellationToken).ConfigureAwait(false);
                 }
 
                 return check.Error;
             }, cancellationToken).ConfigureAwait(false);
+            if (error == ManagementError.None)
+            {
+                checkpoint("create.committed", storage);
+            }
         }
         catch
         {
-            await engine.DeleteDatabaseAsync(storage, CancellationToken.None).ConfigureAwait(false);
+            // Commit can succeed before a later transaction/disposal error. Confirm both catalog facts in one snapshot.
+            var registered = await ReadCatalogAsync(async transaction =>
+                await transaction.GetAsync(Databases(storage.ProjectId!), storage.DatabaseId!, CancellationToken.None).ConfigureAwait(false) is not null
+                && await transaction.GetAsync(PendingDatabaseCleanup, storage.DatabaseId!, CancellationToken.None).ConfigureAwait(false) is null,
+                CancellationToken.None).ConfigureAwait(false);
+            if (registered)
+            {
+                await engine.CompleteDatabaseIntentAsync(storage, CancellationToken.None).ConfigureAwait(false);
+            }
+            else
+            {
+                await FinishDatabaseCleanupAsync(storage, CancellationToken.None).ConfigureAwait(false);
+            }
+
             throw;
         }
 
         if (error != ManagementError.None)
         {
-            await engine.DeleteDatabaseAsync(storage, CancellationToken.None).ConfigureAwait(false);
+            await FinishDatabaseCleanupAsync(storage, CancellationToken.None).ConfigureAwait(false);
             return error;
         }
 
+        await engine.CompleteDatabaseIntentAsync(storage, CancellationToken.None).ConfigureAwait(false);
+        checkpoint("create.registered", storage);
         return new AddedDatabase(database, storage);
     }
 
@@ -532,6 +624,12 @@ internal sealed partial class EngineManagementService(
             var version = await GetAsync(transaction, Catalog, CatalogVersionId, Id, cancellationToken).ConfigureAwait(false);
             if (version == CatalogVersion)
             {
+                return 0;
+            }
+
+            if (version == "3")
+            {
+                await PutAsync(transaction, Catalog, CatalogVersionId, CatalogVersion, Id, cancellationToken).ConfigureAwait(false);
                 return 0;
             }
 

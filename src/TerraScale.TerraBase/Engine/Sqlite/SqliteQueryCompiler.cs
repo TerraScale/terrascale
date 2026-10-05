@@ -184,7 +184,9 @@ internal sealed class SqliteQueryCompiler(SqliteParameterCollection parameters)
         var literals = $"coalesce({Type(path)} IN (SELECT type FROM json_each({values}) WHERE type IN ('null', 'true', 'false')), 0)";
         var numbers = $"(coalesce({Type(path)} IN ('integer', 'real'), 0) AND {Extract(path)} IN (SELECT value FROM json_each({values}) WHERE type IN ('integer', 'real')))";
         var texts = $"({Type(path)} IS 'text' AND {Extract(path)} IN (SELECT value FROM json_each({values}) WHERE type = 'text'))";
-        return $"({literals} OR {numbers} OR {texts})";
+        return filter.Values.All(static value => value.Kind == ScalarKind.Number)
+            ? numbers
+            : $"({literals} OR {numbers} OR {texts})";
     }
 
     // Byte-wise on BLOBs: text length() and substr() stop at an embedded NUL.
