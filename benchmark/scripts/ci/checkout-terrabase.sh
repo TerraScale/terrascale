@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# Check out the TerraBase revision pinned in terrabase.rev beside this
-# repository, where the drivers' `../../terrabase` path dependencies expect it,
-# then bring its Turso submodule to the pinned v0.8.1 gitlink plus TerraBase's
-# own patches/turso series through TerraBase's prepare-turso.sh.
+# Check out historical Rust comparison sources pinned in terrabase.rev beside
+# this repository, where local-engine's `../../terrabase` paths expect them.
+# Bring its Turso submodule to the pinned v0.8.1 gitlink plus TerraBase's own
+# patches/turso series through TerraBase's prepare-turso.sh. This checkout
+# supplies historical comparison sources only, not the C# acceptance subject.
 set -euo pipefail
 
 test "$#" -eq 0 || { echo "usage: $0" >&2; exit 2; }
@@ -37,4 +38,4 @@ test "$(git -C "$engine" rev-parse HEAD)" = "$rev"
 git -C "$engine" submodule update -q --init --depth 1 crates/turso
 # The credential is only for the fetch above; preparation never sees it.
 env -u ORG_READ_TOKEN bash "$engine/scripts/ci/prepare-turso.sh"
-printf 'TerraBase %s, Turso %s\n' "$rev" "$(git -C "$engine/crates/turso" rev-parse HEAD)"
+printf 'Historical Rust comparison sources %s, Turso %s\n' "$rev" "$(git -C "$engine/crates/turso" rev-parse HEAD)"

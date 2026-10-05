@@ -1,0 +1,43 @@
+{
+  "release": {
+    "version": "ci-ff256067015433c8c40b59879f1282d2a40480ce-run-13258",
+    "application_version": "0.1.0",
+    "source_revision": "ff256067015433c8c40b59879f1282d2a40480ce",
+    "url": "https://git.terrascale.tech/TerraScale/terrabase/releases/download/ci-ff256067015433c8c40b59879f1282d2a40480ce-run-13258/terrabase-linux-amd64",
+    "sha256": "e07d173fc2bbab19dcb1fde8b121b0207b07d55452a5b19a406871d220e05e13"
+  },
+  "harness_sha256": "5bb5a8a5bd1ff29974932364d62e2540355263506c20d9d9be5c16061fdbf440",
+  "benchmark_worktree_dirty": true,
+  "cpu_model": "AMD Ryzen 5 PRO 6650H with Radeon Graphics",
+  "memory_total": "MemTotal:       15065588 kB",
+  "benchmark_revision": "9ea62b7b603a557703d5e38b6df54b761b33f327",
+  "platform": "Linux-7.2.8-x86_64-with-glibc2.42",
+  "cpu_count": 12,
+  "affinity": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+  ],
+  "priority": 19,
+  "mode": "baseline",
+  "fixture": {
+    "seed_documents": 32,
+    "generator": "rank 0..31, group rank%2, payload ts500",
+    "rollback_verified": true
+  },
+  "server_options": {
+    "tls": "verified local CA and server leaf",
+    "storage": "fresh local directory",
+    "admin": "loopback",
+    "shutdown_grace_seconds": 10
+  }
+}

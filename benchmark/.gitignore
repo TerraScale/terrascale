@@ -113,3 +113,7 @@ binaries/
 *.orig
 *.rej
 Thumbs.db
+
+# Python harness bytecode and reproducible CI smoke outputs.
+__pycache__/
+/bench/csharp-smoke*/

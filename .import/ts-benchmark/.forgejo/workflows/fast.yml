@@ -1,11 +1,8 @@
 name: Fast
 
-# Blocking Fast suite: format, lint and build every driver against the
-# TerraBase revision pinned in terrabase.rev (with its patched Turso v0.8.1
-# submodule), then run tests/fast.sh: the v2 throughput-floor classifier and a
-# small SQLite-vs-Turso CRUD smoke benchmark through the real bindings. Shared
-# runner timings never fill a scoreboard row. Rust compiles go through the
-# runner's shared kache store when /cache is mounted.
+# Current C# TerraBase acceptance uses a real pinned release over local HTTPS.
+# Historical SQLite/Turso subjects remain available outside active product CI.
+# Shared runner smoke timings never qualify a performance scoreboard row.
 
 on:
   push:
@@ -22,10 +19,10 @@ env:
   CI: "true"
 
 jobs:
-  fast:
-    name: Fast suite
+  csharp-smoke:
+    name: C# HTTPS acceptance smoke
     runs-on: terrascale-builder
-    timeout-minutes: 120
+    timeout-minutes: 15
     container:
       image: git.terrascale.tech/terrascale/ts-builder:latest
       options: --memory=8g
@@ -39,13 +36,17 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
-      - name: Check out the pinned TerraBase and Turso sources
+      - name: Run local C# HTTPS acceptance
         env:
           ORG_READ_TOKEN: ${{ secrets.ORG_READ_TOKEN }}
-        run: bash ts-benchmark/scripts/ci/checkout-terrabase.sh
+        run: bash ts-benchmark/scripts/ci/kache.sh make -C ts-benchmark csharp-smoke
 
-      - name: Format, lint and build the drivers
-        run: bash ts-benchmark/scripts/ci/kache.sh make -C ts-benchmark lint-fast build-fast
-
-      - name: Run the Fast suite
-        run: make -C ts-benchmark test-fast
+      - name: Retain C# acceptance JSON and Markdown evidence
+        if: always()
+        # Forgejo's v3-node20 fork uses the legacy artifact protocol.
+        uses: https://data.forgejo.org/forgejo/upload-artifact@ed48a7bb0c8a9079492c354d37994c413423c83e
+        with:
+          name: csharp-smoke-${{ forgejo.sha }}-${{ forgejo.run_id }}
+          path: ts-benchmark/bench/csharp-smoke/
+          if-no-files-found: error
+          retention-days: 30
