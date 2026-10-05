@@ -81,7 +81,7 @@ public sealed class ConfigurationTests
     [Arguments("terrascale-api-key", "Bearer ", "TS_AUTH_TERRASCALE_API_KEY is required")]
     [Arguments("terrascale-api-key", "bearer  \t ", "TS_AUTH_TERRASCALE_API_KEY is required")]
     [Arguments("database", "auth", "TS_AUTH_DATABASE must be project-uuid/database with a lowercase database name")]
-    [Arguments("database", "auth/auth/other", "TS_AUTH_DATABASE must be project-uuid/database with a lowercase database name")]
+    [Arguments("database", "not-a-uuid/auth/other", "TS_AUTH_DATABASE must be project-uuid/database with a lowercase database name")]
     [Arguments("database", "auth/../other", "TS_AUTH_DATABASE must be project-uuid/database with a lowercase database name")]
     [Arguments("terrascale-api-url", "https://localhost:8443/path", "TS_AUTH_TERRASCALE_API_URL must be an HTTPS origin without a path")]
     [Arguments("terrascale-api-key", "tb_secret\r\nInjected", "TS_AUTH_TERRASCALE_API_KEY must contain at most 4096 characters without whitespace or controls")]
