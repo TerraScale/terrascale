@@ -8,20 +8,21 @@
     <TargetFramework />
     <PackageId>TerraScale.DotNet</PackageId>
     <Version>0.1.0</Version>
-    <Description>Official .NET SDK for TerraScale native database and auth APIs.</Description>
+    <Description>Official .NET SDK for TerraBase, TerraScale native database and auth APIs.</Description>
     <PackageProjectUrl>https://git.terrascale.tech/TerraScale/ts-dotnet</PackageProjectUrl>
     <RepositoryUrl>https://git.terrascale.tech/TerraScale/ts-dotnet</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
     <PublishRepositoryUrl>true</PublishRepositoryUrl>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageReadmeFile>README.md</PackageReadmeFile>
-    <PackageTags>terrascale;database;documents;native;auth;sdk</PackageTags>
+    <PackageTags>terrascale;terrabase;database;documents;native;auth;sdk</PackageTags>
     <PackageReleaseNotes>Native v1 client replaces TerraScaleClient, its options, AddTerraScaleClient, and the obsolete EF provider; use NativeClient and AddTerraScaleAuthClient. Supports .NET 10 and .NET 11. Producer and release qualification remain external gates recorded against immutable package bytes.</PackageReleaseNotes>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <Deterministic>true</Deterministic>
     <!-- Required only by source-generated platform file-persistence interop. -->
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <IncludeSymbols>false</IncludeSymbols>
+    <IsAotCompatible>true</IsAotCompatible>
   </PropertyGroup>
 
   <ItemGroup>

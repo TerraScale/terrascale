@@ -1,6 +1,7 @@
 <Solution>
   <Folder Name="/SDK/">
     <Project Path="src/TerraScale.DotNet/TerraScale.DotNet.csproj" />
+    <Project Path="src/TerraScale.DotNet.Testing/TerraScale.DotNet.Testing.csproj" />
   </Folder>
   <Folder Name="/Tests/">
     <Project Path="tests/TerraScale.DotNet.FifoProbe/TerraScale.DotNet.FifoProbe.csproj" />

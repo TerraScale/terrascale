@@ -1,9 +1,149 @@
 # TerraScale.DotNet
 
-The official .NET SDK for TerraScale native database APIs and ts-auth. The
-package supports .NET 10 LTS and .NET 11; a .NET 11 toolchain builds both targets.
+The official .NET SDK for TerraBase, the TerraScale native database APIs and
+ts-auth. The package supports .NET 10 LTS and .NET 11; a .NET 11 toolchain builds
+both targets.
 
-## Native database client
+## TerraBase client
+
+`TerraScale.DotNet.TerraBase` talks to the C# TerraBase server over its public
+HTTPS client listener. `TerraBaseDocumentsClient` covers the Documents API v1:
+databases, collections, documents, queries and transactions.
+`TerraBaseManagementClient` covers the Management API: organizations, the
+current organization, plans, projects, databases, branches, members,
+invitations, ownership transfer, audit retention and audit events. Shapes and
+the bulk data endpoints are not covered yet.
+
+```csharp
+using System.Text.Json;
+using TerraScale.DotNet.TerraBase;
+
+using var httpClient = new HttpClient(TerraBaseHttp.CreateHandler());
+var documents = new TerraBaseDocumentsClient(httpClient, new TerraBaseDocumentsClientOptions
+{
+    BaseAddress = new Uri("https://terrabase.internal:8443"),
+    ApiKey = currentTerraBaseApiKey // tb_...
+});
+
+TerraBaseDatabase database = documents.Database(projectId, "app");
+await database.CreateAsync(cancellationToken); // idempotent PUT
+await database.CreateCollectionAsync("users", cancellationToken);
+
+var user = JsonSerializer.SerializeToElement(new { email = "user@example.com" });
+TerraBaseWriteResult created = await database.PutDocumentAsync(
+    "users", userId, user, TerraBasePrecondition.Absent, cancellationToken);
+
+TerraBaseDocument? current = await database.GetDocumentAsync("users", userId, cancellationToken);
+```
+
+`GetDocumentAsync` returns `null` for an absent document. `CreateDocumentAsync`
+posts a document and TerraBase generates a UUIDv7 id. Lists and queries return
+pages with `NextCursor`. Patches take an RFC 7396 merge patch `JsonElement` or a
+list of `TerraBasePatchOperation`. `TransactAsync` applies `Create`, `Put`,
+`Patch`, `Delete`, `Assert`, `AssertAbsent` and `AssertCount` operations
+atomically.
+
+```csharp
+var management = new TerraBaseManagementClient(httpClient, new TerraBaseManagementClientOptions
+{
+    BaseAddress = new Uri("https://terrabase.internal:8443"),
+    ServiceCredential = dashboardServiceCredential
+});
+
+TerraBaseOrganization organization = await management.CreateOrganizationAsync(
+    authenticatedUserId, "Acme", cancellationToken);
+TerraBaseProject project = await management.CreateProjectAsync(
+    authenticatedUserId, organization.Id, "web", cancellationToken);
+TerraBasePage<TerraBaseProject> page = await management.ListProjectsAsync(
+    authenticatedUserId, organization.Id, cancellationToken: cancellationToken);
+```
+
+The service credential is sent as a bearer token. Every management call takes
+the acting `userId` first and sends it as `X-TerraBase-User-Id`; organization
+routes also send `X-TerraBase-Organization-Id`. Take the user id from an
+authenticated session, never from browser input. Pages are
+`TerraBasePage<T>(Items, Next)`; pass `Next` as `after` with an optional `limit`.
+
+Concurrency uses document versions (`tbv1-…` ETags).
+`TerraBasePrecondition.Matches(version)` sends `If-Match` with that version,
+`TerraBasePrecondition.Exists` sends `If-Match: *`, and
+`TerraBasePrecondition.Absent` sends `If-None-Match: *` for create-only writes;
+create-only succeeds over a deleted tombstone. A failed precondition throws
+`TerraBasePreconditionFailedException`. Transaction operations take the version
+as their `ifMatch` argument.
+
+Error statuses throw `TerraBaseException`, an `HttpRequestException` with
+`ErrorCode` and, for transactions, `OperationIndex`. Subclasses name the
+statuses callers act on: `TerraBaseValidationException` (400, 413, 415),
+`TerraBaseAuthenticationException` (401), `TerraBaseForbiddenException` (403),
+`TerraBaseNotFoundException` (404), `TerraBaseConflictException` (409),
+`TerraBasePreconditionFailedException` (412) and `TerraBaseUnavailableException`
+(503). A request that passes its `RequestTimeout` throws `TimeoutException`.
+An earlier `HttpClient.Timeout` also throws `TimeoutException`; caller cancellation
+remains `OperationCanceledException`. There are no automatic retries: TerraBase documents no retryable failure and
+rejects `Idempotency-Key`, so each request is sent once. Retry a write only
+when its precondition makes the retry safe.
+
+Supplied `HttpClient` handlers **must disable automatic redirects**. Use
+`TerraBaseHttp.CreateHandler()` or set `AllowAutoRedirect = false` on your handler
+before constructing the client. Redirects can forward invitation tokens, document
+bodies and acting-user headers to another origin. The SDK cannot inspect or
+change a caller-owned handler's settings. Cookie handling should also be disabled.
+
+Every call takes a `CancellationToken`. The clients are thread-safe and never
+dispose the caller-owned `HttpClient`. The TerraBase slice uses
+System.Text.Json source generation and is trim- and native-AOT-safe; the build
+fails on any trimming or AOT warning in it. The legacy `Native` and
+`AuthService` slices still use reflection-based JSON and are not.
+
+Both clients resolve their endpoint per request through `ITerraBaseEndpointResolver`.
+`BaseAddress` creates a `TerraBaseStaticEndpointResolver`; alternatively, set
+`EndpointResolver` alone to supply a resolver. Resolution shares the request deadline
+and cancellation token, and every returned origin is validated before credentials
+are sent. Atlas discovery is deferred to TS-507; no production origin is hardcoded.
+
+Tests never use a fake TerraBase. `TerraScale.DotNet.Testing`
+(`src/TerraScale.DotNet.Testing`) starts the real release binary
+`terrabase-linux-amd64`, pinned by tag and SHA-256 in `TerraBaseRelease.Pinned`,
+with a fresh data directory, a generated self-signed localhost certificate and a
+generated service credential. TerraBase binds both listeners to OS-assigned ports;
+the helper discovers their addresses from the pinned release's startup logs.
+That release clears generic-host configuration sources, so inherited logging
+filters and console formatters do not change these announcements. CI verifies
+startup while its environment requests disabled logging and the JSON formatter;
+these inherited settings are ignored by the pinned server.
+It downloads the binary once into
+`~/.cache/terrascale/terrabase/<sha256>/` (or `TERRABASE_CACHE_DIRECTORY`) using
+`TERRABASE_DOWNLOAD_TOKEN` or `ORG_READ_TOKEN`, because terrabase is private, and
+checks the SHA-256 on every use. `TERRABASE_BINARY` points at a binary you
+already have; it must match the pinned digest too. Cached and explicit binaries
+must be executable by the effective user; resolution reports `chmod u+x` guidance if access is denied.
+Downloads have a ten-minute deadline and a 256 MiB size limit, checked against
+both the declared length and streamed bytes. Failed downloads remove partial files.
+If removal also fails, the primary exception retains the secondary error in
+`Data["TerraBaseCleanupException"]` for diagnosis and manual cleanup.
+Disposal waits up to five seconds for process exit and redirected output completion
+before releasing resources and deleting data. A failed termination or timeout retains
+those resources so a later disposal call can retry.
+Failed directory deletion can also be retried, without reusing disposed resources.
+If startup cleanup fails, the original exception retains the server in
+`Data[nameof(TerraBaseTestServer)]` so its cleanup can be retried.
+
+```bash
+ORG_READ_TOKEN=<forgejo read token> nice -n 19 dotnet run \
+  --project tests/TerraScale.DotNet.Tests/TerraScale.DotNet.Tests.csproj \
+  --framework net10.0 --configuration Release
+```
+
+When the binary is neither cached nor downloadable, the TerraBase tests are
+skipped, except under `CI=true`, where they fail. Other services, such as
+ts-auth, start the same binary through the same helper:
+[TerraBase consumers](docs/terrabase-consumers.md).
+
+## Native database client (legacy)
+
+`Native/` targets the retired Rust UUID/shard API; it is kept so existing
+consumers compile, and new code should use the TerraBase client.
 
 `TerraScale.DotNet.Native.NativeClient` exposes native v1 document reads,
 bounded typed queries, atomic commits, and original transaction status.
@@ -105,7 +245,7 @@ dotnet build TerraScale.DotNet.slnx --configuration Release
 dotnet format style TerraScale.DotNet.slnx --verify-no-changes --no-restore
 dotnet run --project tests/TerraScale.DotNet.Tests/TerraScale.DotNet.Tests.csproj \
   --framework net10.0 --configuration Release --no-build --no-restore -- \
-  --minimum-expected-tests 135
+  --minimum-expected-tests 424
 ```
 
 Run the suite for `net11.0` with a .NET 11 toolchain too. Tests use TUnit and

@@ -1,0 +1,6 @@
+# The package is IsAotCompatible. Native/ and AuthService/ predate the trimming and AOT
+# analyzers and keep reflection-based JSON calls; every other slice, TerraBase/ included,
+# must stay free of these warnings.
+[{Native,AuthService}/**.cs]
+dotnet_diagnostic.IL2026.severity = none
+dotnet_diagnostic.IL3050.severity = none

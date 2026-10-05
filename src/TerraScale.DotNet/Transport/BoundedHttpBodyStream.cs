@@ -9,6 +9,7 @@ internal sealed class BoundedHttpBodyStream(int limit, Func<Exception> overflow,
     public override long Length => body.Length;
     public override long Position { get => body.Position; set => throw new NotSupportedException(); }
     internal byte[] ToArray() => body.ToArray();
+    internal ReadOnlyMemory<byte> Written => body.GetBuffer().AsMemory(0, (int)body.Length);
     public override void Write(ReadOnlySpan<byte> buffer)
     {
         token.ThrowIfCancellationRequested();
