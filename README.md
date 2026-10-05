@@ -1,4 +1,4 @@
-# terrascale
+# @terrascale/sdk
 
 The JavaScript/JSDoc SDK for the project-scoped C#/.NET TerraBase server
 (`terrabase`, `origin/main`). Version 0.0.1 replaces the retired Rust client.
@@ -6,8 +6,12 @@ The package targets Node.js 22 and 24 and current Chrome, Firefox, Safari, and E
 Plain ES modules ship as written; `nice -n 19 npm run build` generates the
 TypeScript declarations in `types/`.
 
+```sh
+npm install @terrascale/sdk
+```
+
 ```js
-import { createTerraBaseV1Client, documentIdFor, v1Filter } from "terrascale";
+import { createTerraBaseV1Client, documentIdFor, v1Filter } from "@terrascale/sdk";
 
 const client = createTerraBaseV1Client({
   project: process.env.TERRABASE_PROJECT,
@@ -46,7 +50,7 @@ HTTPS is required except for loopback HTTP in local development; no regional
 host is hardcoded and no implicit production endpoint is selected.
 
 ```js
-import { createTerraBaseV1Client, staticBaseUrlResolver } from "terrascale";
+import { createTerraBaseV1Client, staticBaseUrlResolver } from "@terrascale/sdk";
 
 const client = createTerraBaseV1Client({
   project: process.env.TERRABASE_PROJECT,
@@ -177,12 +181,12 @@ See [CHANGELOG.md](CHANGELOG.md) for the 0.0.1 migration and breaking changes.
 
 ## Separate and deprecated entrypoints
 
-`terrascale/ts-auth` retains its separate hosted identity management and OIDC
+`@terrascale/sdk/ts-auth` retains its separate hosted identity management and OIDC
 client, with its own origin, instance and credentials. Management,
 administration and production Better Auth capabilities remain subject to their
 explicit admission errors; they are not a shortcut into the database transport.
 
-`terrascale/local` (including `terrascale-local`) and `terrascale/postgres` are
+`@terrascale/sdk/local` (including `terrascale-local`) and `@terrascale/sdk/postgres` are
 **deprecated legacy entrypoints**. SQLite stays opt-in for development only and
 refuses CI, production, staging, qualification and deployment environments.
 It is no longer the required Dashboard backend and does not qualify the C# API.

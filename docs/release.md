@@ -75,10 +75,12 @@ Client/resource management responses use exact snake_case records and safe numer
 
 ## Publishing
 
-The `release/npm` job in `.forgejo/workflows/ci.yml` publishes the `terrascale`
+The `release/npm` job in `.forgejo/workflows/ci.yml` publishes the `@terrascale/sdk`
 npm package on every push to `main`, after the static, Node and browser jobs
 pass. It skips immediately when npm already has the `package.json` version;
-otherwise it packs the tarball once and publishes those exact bytes. Bump the
+otherwise it packs the tarball once, publishes those exact bytes with
+`--access public --tag latest`, and fails unless npm then reports that version
+as `dist-tags.latest`. Bump the
 version to release. The publish token is the Forgejo action secret `NPM_TOKEN`;
 its canonical copy is the operator-only OpenBao object
 `/infra/npm/terrascale-publish` (`NPM_TOKEN`, `NPM_USER`).

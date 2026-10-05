@@ -2,9 +2,11 @@
 
 ## 0.0.1 — TS-498
 
-Per the owner's 2026-10-05 decision (TS-528), 0.0.1 is the latest npm release,
-1.0.0 is withdrawn from npm, and 0.3.0 is deprecated. `terrascale` stays on
-0.0.x until the owner explicitly lifts this policy.
+The package moves from the unscoped `terrascale` npm name, which the owner has
+deleted, to `@terrascale/sdk` (TS-537). Install `@terrascale/sdk` and import
+from `@terrascale/sdk` and its subpaths, for example `@terrascale/sdk/admin`.
+Per the owner's 2026-10-05 decision (TS-528), 0.0.1 is the first `latest`
+release and `@terrascale/sdk` stays on 0.0.x until the owner lifts this policy.
 
 ### Breaking changes
 
@@ -21,7 +23,7 @@ Per the owner's 2026-10-05 decision (TS-528), 0.0.1 is the latest npm release,
    server numeric comparison and bounded-count semantics replace Rust assumptions.
 4. Shapes use `GET …/collections/{collection}/shape` with `shapes:read`.
    The retired shape gatekeeper, SSE, edge tokens and projection are unavailable.
-5. `terrascale/local`, `terrascale-local` and `terrascale/postgres` are deprecated
+5. `@terrascale/sdk/local`, `terrascale-local` and `@terrascale/sdk/postgres` are deprecated
    legacy surfaces. SDK SQLite is no longer the required Dashboard backend;
    real C# release binaries replace frozen Rust/fake-server qualification.
 

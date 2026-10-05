@@ -1051,7 +1051,7 @@ async function ensureVersionAvailable(name, version, registry, npmCli) {
     version.length === 0
   ) {
     throw new Error(
-      "Only a nonblank terrascale version can be checked for promotion.",
+      `Only a nonblank ${npmReleasePolicy.packageName} version can be checked for promotion.`,
     );
   }
   requirePublicRegistry(registry);

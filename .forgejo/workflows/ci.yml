@@ -211,30 +211,6 @@ jobs:
       - name: Provision the reviewed npm CLI
         run: node scripts/provision-reviewed-npm.js
 
-      # TS-528 one-shot; remove after it has run
-      - name: Withdraw 1.0.0 and deprecate 0.3.0
-        env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |
-          set -euo pipefail
-          test -n "${NPM_TOKEN}"
-          umask 077
-          export NPM_CONFIG_USERCONFIG="${RUNNER_TEMP:-/tmp}/npmrc"
-          view_error="${RUNNER_TEMP:-/tmp}/npm-view-error"
-          trap 'rm -f "${NPM_CONFIG_USERCONFIG}" "${view_error}"' EXIT
-          printf '//registry.npmjs.org/:_authToken=%s\n' "${NPM_TOKEN}" > "${NPM_CONFIG_USERCONFIG}"
-          if npm view terrascale@1.0.0 version --registry https://registry.npmjs.org/ 2>"${view_error}"; then
-            npm unpublish terrascale@1.0.0 --registry https://registry.npmjs.org/
-          else
-            status=$?
-            cat "${view_error}" >&2
-            if ! grep -q 'E404' "${view_error}"; then exit "${status}"; fi
-          fi
-          deprecated="$(npm view terrascale@0.3.0 deprecated --registry https://registry.npmjs.org/)"
-          if [ -z "${deprecated}" ]; then
-            npm deprecate terrascale@0.3.0 "Use terrascale@0.0.x" --registry https://registry.npmjs.org/
-          fi
-
       - name: Skip a version npm already has
         id: version
         run: |
@@ -271,8 +247,14 @@ jobs:
           npm pack --ignore-scripts --pack-destination artifacts/release
           sha256sum artifacts/release/*.tgz
           npm publish artifacts/release/*.tgz --access public --ignore-scripts --tag latest --registry https://registry.npmjs.org/
+          name="$(node -p 'require("./package.json").name')"
           version="$(node -p 'require("./package.json").version')"
-          latest="$(npm view terrascale dist-tags.latest --prefer-online --registry https://registry.npmjs.org/)"
+          # A first publish can take a few seconds to appear in the registry.
+          for attempt in 1 2 3 4 5 6; do
+            latest="$(npm view "${name}" dist-tags.latest --prefer-online --registry https://registry.npmjs.org/ || true)"
+            if [ "${latest}" = "${version}" ]; then break; fi
+            sleep 10
+          done
           if [ "${latest}" != "${version}" ]; then
             echo "TS-528: expected npm latest ${version}, got ${latest}" >&2
             exit 1

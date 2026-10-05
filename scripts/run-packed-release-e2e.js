@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import { npmReleasePolicy } from "./npm-release-policy.js";
 import "./require-release-e2e-config.js";
 
 const execute = promisify(execFile);
@@ -37,11 +38,11 @@ try {
     maxBuffer: 16 * 1024 * 1024,
   });
   const installedManifest = JSON.parse(await readFile(
-    path.join(consumer, "node_modules", "@terrascale", "sdk", "package.json"),
+    path.join(consumer, "node_modules", ...npmReleasePolicy.packageName.split("/"), "package.json"),
     "utf8",
   ));
-  if (installedManifest.name !== "terrascale") {
-    throw new Error("Packed release E2E did not install terrascale.");
+  if (installedManifest.name !== npmReleasePolicy.packageName) {
+    throw new Error(`Packed release E2E did not install ${npmReleasePolicy.packageName}.`);
   }
   const journey = path.join(consumer, "release-e2e.js");
   await copyFile(path.join(scriptDirectory, "packed-release-e2e-journey.js"), journey);
@@ -50,7 +51,7 @@ try {
     env: process.env,
     maxBuffer: 16 * 1024 * 1024,
   });
-  console.log(`Packed live E2E passed for terrascale@${installedManifest.version}.`);
+  console.log(`Packed live E2E passed for ${npmReleasePolicy.packageName}@${installedManifest.version}.`);
 } finally {
   await rm(consumer, { recursive: true, force: true });
 }

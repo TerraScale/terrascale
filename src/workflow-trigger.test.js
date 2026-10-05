@@ -60,13 +60,10 @@ test("npm publication runs only after verification on pushes to main", async () 
   );
   assert.match(publish, /NPM_TOKEN: \$\{\{ secrets\.NPM_TOKEN \}\}/u);
   assert.match(publish, /npm publish artifacts\/release\/\*\.tgz --access public --ignore-scripts --tag latest/u);
-  assert.equal(workflow.match(/NPM_TOKEN: \$\{\{ secrets\.NPM_TOKEN \}\}/gu)?.length, 2);
-  const cleanup = stepDefinition(publish, "Withdraw 1.0.0 and deprecate 0.3.0");
-  assert.ok(publish.indexOf(cleanup) < publish.indexOf("npm publish artifacts/release/"));
-  assert.doesNotMatch(cleanup, /^        if:/mu);
-  assert.match(cleanup, /NPM_TOKEN: \$\{\{ secrets\.NPM_TOKEN \}\}/u);
+  assert.equal(workflow.match(/NPM_TOKEN: \$\{\{ secrets\.NPM_TOKEN \}\}/gu)?.length, 1);
+  assert.doesNotMatch(workflow, /npm (?:unpublish|deprecate)|terrascale@/u);
   assert.doesNotMatch(stepDefinition(publish, "Provision the reviewed npm CLI"), /^        if:/mu);
-  assert.match(publish, /npm view terrascale dist-tags\.latest --prefer-online --registry https:\/\/registry\.npmjs\.org\//u);
+  assert.match(publish, /npm view "\$\{name\}" dist-tags\.latest --prefer-online --registry https:\/\/registry\.npmjs\.org\//u);
   assert.match(publish, /TS-528: expected npm latest \$\{version\}, got \$\{latest\}/u);
 });
 
@@ -90,55 +87,44 @@ test("the real static workflow guard accepts only owner-approved 0.0.x versions"
   }
 });
 
-test.each(["first-run", "unpublish-denied", "view-failed"])("the real npm cleanup shell handles %s", async (scenario) => {
+test.each(["published", "delayed", "wrong-latest"])("the real npm publish shell verifies latest when %s", async (scenario) => {
   const workflow = await readFile(new URL("../.forgejo/workflows/ci.yml", import.meta.url), "utf8");
-  const cleanup = stepRun(stepDefinition(jobDefinition(workflow, "publish"), "Withdraw 1.0.0 and deprecate 0.3.0"));
-  const directory = await mkdtemp(path.join(tmpdir(), "terrascale-npm-cleanup-"));
-  const permissionError = "npm error code E403\nnpm error 403 unpublish permission denied\n";
-  const viewError = "npm error code E503\nnpm error registry unavailable\n";
-  const missingError = "npm error code E404\nnpm error version absent\n";
+  const publish = stepRun(stepDefinition(jobDefinition(workflow, "publish"), "Pack and publish the release tarball"));
+  const directory = await mkdtemp(path.join(tmpdir(), "terrascale-npm-publish-"));
   try {
-    await writeFile(path.join(directory, "package.json"), JSON.stringify({ version: "0.0.1" }));
+    await writeFile(path.join(directory, "package.json"), JSON.stringify({ name: "@terrascale/sdk", version: "0.0.1" }));
     // This npm CLI double never forwards commands to a real registry.
     await writeFile(path.join(directory, "npm"), `#!/usr/bin/env bash
 set -euo pipefail
 printf '%s\\n' "$*" >> calls
-case "$1 $2 $3" in
-  'view terrascale@1.0.0 version')
-    if [ "$NPM_CASE" = view-failed ]; then printf '%s' '${viewError}' >&2; exit 17; fi
-    if [ -f withdrawn ]; then printf '%s' '${missingError}' >&2; exit 1; fi
-    echo 1.0.0 ;;
-  'unpublish terrascale@1.0.0 --registry')
-    if [ "$NPM_CASE" = unpublish-denied ]; then printf '%s' '${permissionError}' >&2; exit 23; fi
-    touch withdrawn ;;
-  'view terrascale@0.3.0 deprecated')
-    if [ -f deprecated ]; then cat deprecated; fi ;;
-  'deprecate terrascale@0.3.0 Use terrascale@0.0.x')
-    printf '%s\\n' "$3" > deprecated ;;
+case "$1" in
+  whoami) echo terrascale ;;
+  pack) touch artifacts/release/terrascale-sdk-0.0.1.tgz ;;
+  publish) touch published ;;
+  view)
+    test -f published
+    if [ "$NPM_CASE" = delayed ] && [ ! -f seen ]; then touch seen; echo 'npm error code E404' >&2; exit 1; fi
+    if [ "$NPM_CASE" = wrong-latest ]; then echo 1.0.0; else echo 0.0.1; fi ;;
   *) echo "Unexpected npm command: $*" >&2; exit 98 ;;
 esac
 `, { mode: 0o755 });
-    const view = "view terrascale@1.0.0 version";
-    const unpublish = "unpublish terrascale@1.0.0";
-    const remaining = ["view terrascale@0.3.0 deprecated"];
-    for (const rerun of scenario === "first-run" ? [false, true] : [false]) {
-      await writeFile(path.join(directory, "calls"), "");
-      const result = spawnSync("bash", ["-e", "-o", "pipefail", "-c", `npm() { bash ./npm "$@"; }\n${cleanup}`], {
-        cwd: directory, encoding: "utf8", timeout: 10_000,
-        env: {
-          PATH: process.env.PATH ?? "",
-          RUNNER_TEMP: directory, NPM_TOKEN: "workflow-test-token", NPM_CASE: scenario,
-        },
-      });
-      assert.ifError(result.error);
-      assert.equal(result.status, scenario === "first-run" ? 0 : scenario === "unpublish-denied" ? 23 : scenario === "view-failed" ? 17 : 1, result.stderr);
-      assert.equal(result.stderr, rerun ? missingError : scenario === "unpublish-denied" ? permissionError : scenario === "view-failed" ? viewError : "");
-      const calls = scenario === "view-failed" ? [view] : scenario === "unpublish-denied" ? [view, unpublish] : rerun ? [view, ...remaining] : [view, unpublish, remaining[0], "deprecate terrascale@0.3.0 Use terrascale@0.0.x"];
-      assert.equal(await readFile(path.join(directory, "calls"), "utf8"), calls.map((call) => `${call} --registry https://registry.npmjs.org/\n`).join(""));
-      for (const file of ["npmrc", "npm-view-error"]) {
-        await assert.rejects(readFile(path.join(directory, file)), { code: "ENOENT" });
-      }
-    }
+    await writeFile(path.join(directory, "calls"), "");
+    const result = spawnSync("bash", ["-e", "-o", "pipefail", "-c", `npm() { bash ./npm "$@"; }\nsleep() { :; }\n${publish}`], {
+      cwd: directory, encoding: "utf8", timeout: 10_000,
+      env: { PATH: process.env.PATH ?? "", RUNNER_TEMP: directory, NPM_TOKEN: "workflow-test-token", NPM_CASE: scenario },
+    });
+    assert.ifError(result.error);
+    assert.equal(result.status, scenario === "wrong-latest" ? 1 : 0, result.stderr);
+    assert.match(result.stderr, scenario === "wrong-latest" ? /TS-528: expected npm latest 0\.0\.1, got 1\.0\.0\n$/u : scenario === "delayed" ? /^npm error code E404\n$/u : /^$/u);
+    const view = "view @terrascale/sdk dist-tags.latest --prefer-online --registry https://registry.npmjs.org/";
+    const views = scenario === "published" ? 1 : scenario === "delayed" ? 2 : 6;
+    assert.equal(await readFile(path.join(directory, "calls"), "utf8"), [
+      "whoami --registry https://registry.npmjs.org/",
+      "pack --ignore-scripts --pack-destination artifacts/release",
+      "publish artifacts/release/terrascale-sdk-0.0.1.tgz --access public --ignore-scripts --tag latest --registry https://registry.npmjs.org/",
+      ...Array(views).fill(view),
+    ].map((call) => `${call}\n`).join(""));
+    await assert.rejects(readFile(path.join(directory, "npmrc")), { code: "ENOENT" });
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

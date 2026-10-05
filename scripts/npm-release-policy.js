@@ -1,5 +1,5 @@
 export const npmReleasePolicy = Object.freeze({
-  packageName: "terrascale",
+  packageName: "@terrascale/sdk",
   buildTarget: "npm",
   outputRoot: "artifacts/candidate",
   qualificationSchemaVersion: 1,
@@ -26,7 +26,7 @@ export const npmReleasePolicy = Object.freeze({
  * @returns {string}
  */
 export function qualificationFilename(version) {
-  return `terrascale-${version}.qualification.json`;
+  return `terrascale-sdk-${version}.qualification.json`;
 }
 
 /**
@@ -34,5 +34,5 @@ export function qualificationFilename(version) {
  * @returns {string}
  */
 export function tarballFilename(version) {
-  return `terrascale-${version}.tgz`;
+  return `terrascale-sdk-${version}.tgz`;
 }

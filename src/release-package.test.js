@@ -35,7 +35,7 @@ test("packed SDK independently installs its project-scoped JavaScript and declar
     await npmRun(["exec", "--", "tsc", "--noEmit", "--strict", "--skipLibCheck", "--target", "ES2023", "--module", "NodeNext", "--moduleResolution", "NodeNext", "caller.ts"], consumer);
     await run(process.execPath, ["caller.ts"], { cwd: consumer });
     await run(process.execPath, ["--conditions=browser", "--input-type=module", "--eval",
-      "import assert from 'node:assert/strict'; for (const entry of ['local','better-auth','postgres']) await assert.rejects(import('terrascale/' + entry), { code: 'ERR_PACKAGE_PATH_NOT_EXPORTED' });"], { cwd: consumer });
+      "import assert from 'node:assert/strict'; for (const entry of ['local','better-auth','postgres']) await assert.rejects(import('@terrascale/sdk/' + entry), { code: 'ERR_PACKAGE_PATH_NOT_EXPORTED' });"], { cwd: consumer });
     const declarations = await readFile(path.join(root, "types/index.d.ts"), "utf8");
     assert.doesNotMatch(declarations, /node:sqlite|local\/|database-types|discovery\.js/u);
   } finally {
@@ -43,7 +43,7 @@ test("packed SDK independently installs its project-scoped JavaScript and declar
   }
 });
 
-const installedCaller = `import { createTerraBaseClient, createTerraBaseV1Client, TerraBaseV1Client, ExactDecimal } from "terrascale";
+const installedCaller = `import { createTerraBaseClient, createTerraBaseV1Client, TerraBaseV1Client, ExactDecimal } from "@terrascale/sdk";
 const client = createTerraBaseClient({ project: "project", baseUrl: "http://127.0.0.1:18447", token: "tb_" + "a".repeat(43) });
 if (!(client instanceof TerraBaseV1Client) || createTerraBaseClient !== createTerraBaseV1Client) throw new Error("Multiple client implementations.");
 const collection = client.database("main").collection("users");
