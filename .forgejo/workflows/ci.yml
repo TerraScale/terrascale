@@ -17,12 +17,13 @@ concurrency:
 # Node.js 24 (.node-version) and the Playwright 1.63 engines are baked into
 # ts-builder. CI runs the SHA-bound C# release binary and provisions
 # actual stable vendor Chrome and Edge binaries with pinned Nix definitions.
+# Verified ts-builder release: bcbc828a87cfe3e13b72a7fb62d9a0d16b9a76b9 (run 85).
 jobs:
   static:
     name: verify/static-contracts
     runs-on: terrascale-builder
     container:
-      image: git.terrascale.tech/terrascale/ts-builder@sha256:bbf543e2e2676ca3e560b4807412b5a1912c634ec46c9ef486545a58efda4c46
+      image: git.terrascale.tech/terrascale/ts-builder@sha256:75a2b6350ac5194528dc672a3ac710f10c53d24203fbc9088657d1a84e61c62f
     timeout-minutes: 45
     steps:
       - name: Check out the exact event revision
@@ -36,6 +37,10 @@ jobs:
 
       - name: Confirm the repository Node.js version
         run: test "$(node --version)" = "v$(cat .node-version)"
+
+      - name: Require the owner-approved 0.0.x version policy
+        run: |
+          node -e 'const { version } = require("./package.json"); if (!/^0\.0\.[0-9]+$/.test(version)) { console.error("TS-528: 0.0.x is required until the owner lifts it; got " + version); process.exit(1); }'
 
       - name: Provision the reviewed npm CLI
         run: node scripts/provision-reviewed-npm.js
@@ -73,7 +78,7 @@ jobs:
           - node: "24.21.0"
     runs-on: terrascale-builder
     container:
-      image: git.terrascale.tech/terrascale/ts-builder@sha256:bbf543e2e2676ca3e560b4807412b5a1912c634ec46c9ef486545a58efda4c46
+      image: git.terrascale.tech/terrascale/ts-builder@sha256:75a2b6350ac5194528dc672a3ac710f10c53d24203fbc9088657d1a84e61c62f
     timeout-minutes: 45
     steps:
       - name: Check out the exact event revision
@@ -145,7 +150,7 @@ jobs:
     name: verify/browser-current-engines
     runs-on: terrascale-builder
     container:
-      image: git.terrascale.tech/terrascale/ts-builder@sha256:bbf543e2e2676ca3e560b4807412b5a1912c634ec46c9ef486545a58efda4c46
+      image: git.terrascale.tech/terrascale/ts-builder@sha256:75a2b6350ac5194528dc672a3ac710f10c53d24203fbc9088657d1a84e61c62f
     timeout-minutes: 60
     steps:
       - name: Check out the exact event revision
@@ -188,7 +193,7 @@ jobs:
     if: ${{ forgejo.event_name == 'push' && forgejo.ref == 'refs/heads/main' }}
     runs-on: terrascale-builder
     container:
-      image: git.terrascale.tech/terrascale/ts-builder@sha256:bbf543e2e2676ca3e560b4807412b5a1912c634ec46c9ef486545a58efda4c46
+      image: git.terrascale.tech/terrascale/ts-builder@sha256:75a2b6350ac5194528dc672a3ac710f10c53d24203fbc9088657d1a84e61c62f
     timeout-minutes: 15
     concurrency:
       group: ts-js-npm-publish
@@ -216,7 +221,6 @@ jobs:
           fi
 
       - name: Provision the reviewed npm CLI
-        if: ${{ steps.version.outputs.publish == 'true' }}
         run: node scripts/provision-reviewed-npm.js
 
       - name: Install locked dependencies
@@ -243,3 +247,34 @@ jobs:
           npm pack --ignore-scripts --pack-destination artifacts/release
           sha256sum artifacts/release/*.tgz
           npm publish artifacts/release/*.tgz --access public --ignore-scripts --registry https://registry.npmjs.org/
+
+      # TS-528 one-shot; remove after it has run
+      - name: Withdraw 1.0.0, deprecate 0.3.0 and verify latest
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "${NPM_TOKEN}"
+          umask 077
+          export NPM_CONFIG_USERCONFIG="${RUNNER_TEMP:-/tmp}/npmrc"
+          view_error="${RUNNER_TEMP:-/tmp}/npm-view-error"
+          trap 'rm -f "${NPM_CONFIG_USERCONFIG}" "${view_error}"' EXIT
+          printf '//registry.npmjs.org/:_authToken=%s\n' "${NPM_TOKEN}" > "${NPM_CONFIG_USERCONFIG}"
+          if npm view terrascale@1.0.0 version --registry https://registry.npmjs.org/ 2>"${view_error}"; then
+            npm unpublish terrascale@1.0.0 --registry https://registry.npmjs.org/
+          else
+            status=$?
+            cat "${view_error}" >&2
+            if ! grep -q 'E404' "${view_error}"; then exit "${status}"; fi
+          fi
+          deprecated="$(npm view terrascale@0.3.0 deprecated --registry https://registry.npmjs.org/)"
+          if [ -z "${deprecated}" ]; then
+            npm deprecate terrascale@0.3.0 "Use terrascale@0.0.x" --registry https://registry.npmjs.org/
+          fi
+          version="$(node -p 'require("./package.json").version')"
+          npm dist-tag add "terrascale@${version}" latest --registry https://registry.npmjs.org/
+          latest="$(npm view terrascale dist-tags.latest --registry https://registry.npmjs.org/)"
+          if [ "${latest}" != "${version}" ]; then
+            echo "TS-528: expected npm latest ${version}, got ${latest}" >&2
+            exit 1
+          fi

@@ -1,6 +1,6 @@
 {
   "name": "terrascale",
-  "version": "1.0.0",
+  "version": "0.0.1",
   "description": "JavaScript SDK, typed with JSDoc, for project-scoped C# TerraBase v1 and hosted TerraScale identity.",
   "type": "module",
   "license": "Apache-2.0",

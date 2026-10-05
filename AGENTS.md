@@ -36,6 +36,12 @@ This restriction concerns the SDK runtime, not the C# producer's internal storag
 
 This repository owns the public `terrascale` package
 
+## Version convention
+
+Per the owner's 2026-10-05 decision (TS-528), the `package.json` version must
+match `^0\.0\.[0-9]+$` until the owner explicitly lifts this policy. Keep
+`package-lock.json` versions in sync with `package.json`.
+
 ## Service ownership
 
 - Dashboard is one full-stack Vinext TypeScript app. It owns Better Auth,

@@ -1,6 +1,10 @@
 # Changelog
 
-## 1.0.0 — TS-498
+## 0.0.1 — TS-498
+
+Per the owner's 2026-10-05 decision (TS-528), 0.0.1 is the latest npm release,
+1.0.0 is withdrawn from npm, and 0.3.0 is deprecated. `terrascale` stays on
+0.0.x until the owner explicitly lifts this policy.
 
 ### Breaking changes
 
@@ -40,7 +44,7 @@ The pinned official producer release is a draft after failed fast checks
 (terrabase #110). Its verified release asset can run SDK integration without
 publication; those results do not establish that producer source checks passed.
 
-The package and lockfile versions advance from 0.3.0 to 1.0.0. `lint` reuses the
+The package and lockfile must use version 0.0.1. `lint` reuses the
 existing strict TypeScript/JSDoc check; dependencies are unchanged.
 
 Fresh shape bootstrap requires a server runtime; browser manual redirects hide

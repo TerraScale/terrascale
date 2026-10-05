@@ -1,7 +1,7 @@
 # terrascale
 
 The JavaScript/JSDoc SDK for the project-scoped C#/.NET TerraBase server
-(`terrabase`, `origin/main`). Version 1.0.0 replaces the retired Rust client.
+(`terrabase`, `origin/main`). Version 0.0.1 replaces the retired Rust client.
 The package targets Node.js 22 and 24 and current Chrome, Firefox, Safari, and Edge.
 Plain ES modules ship as written; `nice -n 19 npm run build` generates the
 TypeScript declarations in `types/`.
@@ -173,7 +173,7 @@ nice -n 19 npm test
 
 `lint` reuses the strict TypeScript/JSDoc check, including unused-code checks,
 without adding a linter dependency. CI runs these commands at normal priority.
-See [CHANGELOG.md](CHANGELOG.md) for the 1.0.0 migration and breaking changes.
+See [CHANGELOG.md](CHANGELOG.md) for the 0.0.1 migration and breaking changes.
 
 ## Separate and deprecated entrypoints
 
