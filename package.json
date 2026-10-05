@@ -23,7 +23,8 @@
     "release:check": "npm run check:release",
     "preview": "vite preview",
     "test": "npm run test:validators",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "test:slow": "node scripts/test-code-samples-real.mjs"
   },
   "overrides": {
     "cookie": "0.7.2"

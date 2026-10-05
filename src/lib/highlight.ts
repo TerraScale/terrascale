@@ -62,48 +62,118 @@ export function tokenize(code: string, lang: Lang): Token[] {
 }
 
 export const CODE_SAMPLES: Record<Lang, string> = {
-  typescript: `import { createTerraScaleClient, toUlid } from '@terrascale/sdk';
+  typescript: `// Server-side: keep your tb_ API key out of browser bundles.
+// Supply an Atlas resolver and trusted origins from server configuration.
+// The override skips discovery.
+async function createAndQueryCustomers(
+  resolveRegion: (signal: AbortSignal) => Promise<string>, trustedOrigins: readonly string[],
+  project: string, database: string, collection: string,
+  staticOrigin?: string, callerSignal?: AbortSignal,
+) {
+  const signal = AbortSignal.any([AbortSignal.timeout(30_000), ...(callerSignal ? [callerSignal] : [])]);
+  signal.throwIfAborted();
+  let abort!: () => void;
+  const cancelled = new Promise<never>((_, reject) => {
+    abort = () => reject(signal.reason);
+    signal.addEventListener('abort', abort, { once: true });
+  });
+  let resolved: string;
+  try { resolved = staticOrigin ?? await Promise.race([resolveRegion(signal), cancelled]); }
+  finally { signal.removeEventListener('abort', abort); }
+  const origin = new URL(resolved);
+  if (origin.protocol !== 'https:' || origin.username || origin.password ||
+      origin.pathname !== '/' || origin.search || origin.hash ||
+      !trustedOrigins.includes(origin.origin)) {
+    throw new Error('Expected a trusted HTTPS origin');
+  }
+  if ([project, database, collection].some(name => !name || name === '.' || name === '..')) {
+    throw new Error('Resource names are required');
+  }
+  const apiKey = process.env.TERRABASE_API_KEY;
+  if (!apiKey?.trim()) throw new Error('TERRABASE_API_KEY is required');
 
-const client = createTerraScaleClient({
-  apiBaseUrl: 'https://api.terrascale.tech',
-  authBaseUrl: 'https://auth.terrascale.tech',
-  projectId: toUlid(process.env.TERRASCALE_PROJECT_ID!),
-  accessToken: async () => process.env.TERRASCALE_TOKEN!,
-});
+  const path = '/v1/projects/' + encodeURIComponent(project) +
+    '/databases/' + encodeURIComponent(database) +
+    '/collections/' + encodeURIComponent(collection);
+  const headers = {
+    Authorization: 'Bearer ' + apiKey,
+    'Content-Type': 'application/json',
+  };
+  const created = await fetch(new URL(path + '/documents', origin), {
+    method: 'POST', redirect: 'error', headers, signal,
+    body: JSON.stringify({ email: 'team@example.com', plan: 'pro' }),
+  });
+  await created.body?.cancel();
+  if (!created.ok) throw new Error('Create failed: ' + created.status);
+  const response = await fetch(new URL(path + '/query', origin), {
+    method: 'POST',
+    redirect: 'error',
+    headers, signal,
+    body: JSON.stringify({
+      filter: { eq: ['/plan', 'pro'] },
+      limit: 25,
+    }),
+  });
+  if (!response.ok) {
+    await response.body?.cancel();
+    throw new Error('Query failed: ' + response.status);
+  }
+  return response.json();
+}`,
+  csharp: `using System.Net.Http.Headers;
+using System.Net.Http.Json;
 
-const repositoryId = toUlid(process.env.TERRASCALE_REPOSITORY_ID!);
-
-await client.documents.create(
-  { repositoryId },
-  { email: 'team@example.com', plan: 'pro' },
-);
-
-const page = await client.query.execute(
-  { repositoryId },
-  { query: "from customers where plan = 'pro'", take: 25 },
-);`,
-  csharp: `using TerraScale.DotNet;
-
-var client = new TerraScaleClient(
-    new HttpClient(),
-    new TerraScaleClientOptions
-    {
-        BaseAddress = new Uri("https://api.terrascale.tech"),
-        ProjectId = Environment.GetEnvironmentVariable("TERRASCALE_PROJECT_ID"),
-        ApiKey = Environment.GetEnvironmentVariable("TERRASCALE_API_KEY")
+// Server-side: TERRABASE_API_KEY holds a tb_ key.
+// Supply an Atlas resolver and trusted origins from server configuration.
+// The override skips discovery.
+static class DocumentsExample
+{
+    private static readonly HttpClient Http = new(new SocketsHttpHandler {
+        AllowAutoRedirect = false,
+        PooledConnectionLifetime = TimeSpan.FromMinutes(5)
     });
 
-var repository = await client.Repositories.CreateAsync(
-    name: "customers",
-    collection: "customers");
+    public static async Task<string> CreateAndQueryCustomers(
+        Func<CancellationToken, Task<Uri>> resolveRegion, IReadOnlyCollection<Uri> trustedOrigins,
+        string project, string database, string collection, Uri? staticOrigin = null,
+        CancellationToken cancellationToken = default)
+    {
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deadline.CancelAfter(TimeSpan.FromSeconds(30));
+        var token = deadline.Token;
+        token.ThrowIfCancellationRequested();
+        var origin = staticOrigin ?? await resolveRegion(token).WaitAsync(token);
+        if (!origin.IsAbsoluteUri || origin.Scheme != Uri.UriSchemeHttps ||
+            origin.UserInfo.Length != 0 || origin.AbsolutePath != "/" ||
+            origin.Query.Length != 0 || origin.Fragment.Length != 0 ||
+            !trustedOrigins.Contains(origin))
+            throw new ArgumentException("Expected a trusted HTTPS origin");
+        if (new[] { project, database, collection }.Any(name =>
+            string.IsNullOrEmpty(name) || name == "." || name == ".."))
+            throw new ArgumentException("Resource names are required");
+        var apiKey = Environment.GetEnvironmentVariable("TERRABASE_API_KEY");
+        if (string.IsNullOrWhiteSpace(apiKey))
+            throw new InvalidOperationException("TERRABASE_API_KEY is required");
 
-await client.Documents.CreateAsync(
-    repository.RepositoryId,
-    new { email = "team@example.com", plan = "pro" });
-
-var page = await client.Tql.QueryAsync(
-    repository.RepositoryId,
-    TerraScaleQuery.From("customers").WhereEqual("plan", "pro").Take(25));`,
+        var path = "/v1/projects/" + Uri.EscapeDataString(project) +
+            "/databases/" + Uri.EscapeDataString(database) +
+            "/collections/" + Uri.EscapeDataString(collection);
+        using var create = new HttpRequestMessage(HttpMethod.Post, new Uri(origin, path + "/documents"));
+        create.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+        create.Content = JsonContent.Create(new { email = "team@example.com", plan = "pro" });
+        using (var created = await Http.SendAsync(create, HttpCompletionOption.ResponseHeadersRead, token))
+            created.EnsureSuccessStatusCode();
+        using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(origin, path + "/query"));
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+        request.Content = JsonContent.Create(new {
+            filter = new { eq = new[] { "/plan", "pro" } },
+            limit = 25
+        });
+        using var response = await Http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, token);
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadAsStringAsync(token);
+    }
+}`,
 }
 
 export const LANG_META: Array<{ id: Lang; label: string; ext: string; icon: string }> = [

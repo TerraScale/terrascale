@@ -932,3 +932,183 @@ test('entity decoding stays in validation tooling dependencies', () => {
   assert.equal(packageJson.dependencies?.entities, undefined)
   assert.equal(packageJson.devDependencies.entities, '^8.0.0')
 })
+
+async function documentSamples() {
+  const { transpileModule, ModuleKind } = await import('typescript')
+  const source = readFileSync(path.join(root, 'src/lib/highlight.ts'), 'utf8')
+  const module = transpileModule(source, { compilerOptions: { module: ModuleKind.ESNext } }).outputText
+  const { CODE_SAMPLES } = await import(`data:text/javascript;base64,${Buffer.from(module).toString('base64')}`)
+  return CODE_SAMPLES
+}
+
+async function runDocumentSampleChecks(checks, sampleSource) {
+  const { transpileModule } = await import('typescript')
+  const code = transpileModule(sampleSource ?? (await documentSamples()).typescript, {}).outputText
+  const script = `
+    import assert from 'node:assert/strict';
+    import { runInNewContext } from 'node:vm';
+    let requests = 0;
+    let requestedUrl;
+    let requestedOptions;
+    const inputs = {
+      URL, AbortSignal, process: { env: { TERRABASE_API_KEY: 'tb_test_only' } },
+      fetch: (url, options) => {
+        requests++;
+        requestedUrl = url.href;
+        requestedOptions = options;
+        throw new Error('Request construction verified; no API response is simulated');
+      },
+    };
+    const sample = runInNewContext(${JSON.stringify(`${code}; createAndQueryCustomers;`)}, inputs,
+      { timeout: 1000, contextCodeGeneration: { strings: false, wasm: false } });
+    ${checks}
+  `
+  return spawnSync(process.execPath, ['--input-type=module', '-e', script], {
+    encoding: 'utf8', timeout: 2000, env: { TERRASCALE_SAMPLE_PROCESS: 'child' },
+  })
+}
+
+test('document sample rejects unsafe discovered and overridden origins before sending a key', async () => {
+  const result = await runDocumentSampleChecks(`
+    const trusted = ['https://region.example.test'];
+    for (const origin of [
+      'http://region.example.test', '/relative', 'https://untrusted.example.test',
+      'https://user:password@region.example.test', 'https://region.example.test/path',
+      'https://region.example.test/?query=1', 'https://region.example.test/#fragment',
+    ]) {
+      await assert.rejects(sample(async () => origin, trusted, 'project', 'database', 'collection'));
+      await assert.rejects(sample(async () => trusted[0], trusted, 'project', 'database', 'collection', origin));
+    }
+    assert.equal(requests, 0);
+  `)
+  assert.equal(result.status, 0, result.stderr || result.error?.message)
+})
+
+test('document sample encodes caller resource names and static override skips discovery', async () => {
+  const result = await runDocumentSampleChecks(`
+    const origin = 'https://region.example.test';
+    await assert.rejects(sample(() => { throw new Error('Discovery must be skipped') }, [origin],
+      'my project', 'db/other', 'people?#', origin), /Request construction verified/);
+    assert.equal(requestedUrl,
+      'https://region.example.test/v1/projects/my%20project/databases/db%2Fother/collections/people%3F%23/documents');
+    assert.equal(requestedOptions.redirect, 'error');
+    assert.equal(requestedOptions.headers.Authorization, 'Bearer tb_test_only');
+    for (const name of ['', '.', '..']) {
+      await assert.rejects(sample(async () => origin, [origin], name, 'db', 'collection'), /Resource names are required/);
+    }
+  `)
+  assert.equal(result.status, 0, result.stderr || result.error?.message)
+})
+
+test('sample invocation deadline terminates synchronous loops and pending async continuations', async () => {
+  const checks = 'const keepAlive = setInterval(() => {}, 100); try { await sample(); } finally { clearInterval(keepAlive); }'
+  const completed = await runDocumentSampleChecks(checks, 'async function createAndQueryCustomers() { return; }')
+  assert.equal(completed.status, 0, completed.stderr || completed.error?.message)
+  for (const body of ['while (true) {}', 'await new Promise(() => {})']) {
+    const result = await runDocumentSampleChecks(checks,
+      `async function createAndQueryCustomers() { ${body} }`)
+    assert.equal(result.error?.code, 'ETIMEDOUT')
+  }
+})
+
+test('sample harness treats the disposable subprocess as the execution boundary', async () => {
+  const result = await runDocumentSampleChecks(`
+    assert.equal(process.env.TERRASCALE_SAMPLE_PROCESS, 'child');
+    assert.equal(process.env.HOME, undefined);
+    assert.equal(process.env.TERRABASE_API_KEY, undefined);
+    assert.equal(await sample(), 'tb_test_only');
+  `, `async function createAndQueryCustomers() {
+    return process.env.TERRABASE_API_KEY;
+  }`)
+  assert.equal(result.status, 0, result.stderr || result.error?.message)
+  const source = readFileSync(path.join(root, 'tests/validator-contracts.test.mjs'), 'utf8')
+  assert.doesNotMatch(source, /\bFunction\s*\(|\.constructor\s*\(/)
+})
+
+test('both samples reject absent, empty and whitespace API keys', async () => {
+  const result = await runDocumentSampleChecks(`
+    for (const key of [undefined, '', '   ']) {
+      inputs.process.env.TERRABASE_API_KEY = key;
+      await assert.rejects(sample(async () => 'https://region.example.test',
+        ['https://region.example.test'], 'project', 'db', 'collection'), /TERRABASE_API_KEY is required/);
+    }
+    assert.equal(requests, 0);
+  `)
+  assert.equal(result.status, 0, result.stderr || result.error?.message)
+  const { csharp } = await documentSamples()
+  assert.match(csharp, /if \(string.IsNullOrWhiteSpace\(apiKey\)\)\s*throw new InvalidOperationException/)
+})
+
+test('TypeScript sample releases create bodies before status checks and cancels failed queries', async () => {
+  const { typescript } = await documentSamples()
+  assert.ok(typescript.indexOf('await created.body?.cancel()') > typescript.indexOf('const created ='))
+  assert.ok(typescript.indexOf('await created.body?.cancel()') < typescript.indexOf('if (!created.ok)'))
+  assert.ok(typescript.indexOf('await created.body?.cancel()') < typescript.indexOf('const response ='))
+  assert.match(typescript, /if \(!response.ok\) \{\s*await response.body\?\.cancel\(\);\s*throw/)
+})
+
+test('C# sample shares a redirect-disabled connection pool and scopes keys to individual requests', async () => {
+  const { csharp } = await documentSamples()
+  const method = csharp.slice(csharp.indexOf('public static async'))
+  assert.match(csharp, /private static readonly HttpClient Http = new\(new SocketsHttpHandler/)
+  assert.match(csharp, /AllowAutoRedirect = false/)
+  assert.doesNotMatch(method, /new HttpClient|new SocketsHttpHandler|DefaultRequestHeaders/)
+  assert.match(method, /create.Headers.Authorization = new AuthenticationHeaderValue/)
+  assert.match(method, /request.Headers.Authorization = new AuthenticationHeaderValue/)
+  assert.match(method, /using \(var created = await Http.SendAsync\(create, HttpCompletionOption.ResponseHeadersRead, token\)\)\s*created.EnsureSuccessStatusCode\(\);\s*using var request/)
+  assert.match(method, /using var response = await Http.SendAsync\(request, HttpCompletionOption.ResponseHeadersRead, token\)/)
+})
+
+test('both TypeScript requests forbid redirects and attach the configured Bearer key', async () => {
+  const ts = await import('typescript')
+  const { typescript } = await documentSamples()
+  const file = ts.createSourceFile('sample.ts', typescript, ts.ScriptTarget.Latest, true)
+  const calls = []
+  let headers
+  const visit = (node) => {
+    if (ts.isVariableDeclaration(node) && node.name.getText(file) === 'headers') headers = node.initializer
+    if (ts.isCallExpression(node) && node.expression.getText(file) === 'fetch') calls.push(node)
+    ts.forEachChild(node, visit)
+  }
+  visit(file)
+  const property = (object, name) => object.properties.find((item) => item.name?.getText(file) === name)
+  assert.ok(headers && ts.isObjectLiteralExpression(headers))
+  const auth = property(headers, 'Authorization').initializer
+  assert.ok(ts.isBinaryExpression(auth) && auth.operatorToken.kind === ts.SyntaxKind.PlusToken)
+  assert.ok(ts.isStringLiteral(auth.left) && auth.left.text === 'Bearer ')
+  assert.ok(ts.isIdentifier(auth.right) && auth.right.text === 'apiKey')
+  assert.equal(calls.length, 2)
+  for (const call of calls) {
+    const options = call.arguments[1]
+    assert.ok(ts.isObjectLiteralExpression(options))
+    const redirect = property(options, 'redirect')?.initializer
+    assert.ok(redirect && ts.isStringLiteral(redirect) && redirect.text === 'error')
+    const requestHeaders = property(options, 'headers')
+    assert.ok(requestHeaders && ts.isShorthandPropertyAssignment(requestHeaders))
+  }
+})
+
+
+test('TypeScript caller cancellation interrupts unresolved discovery before any request', async () => {
+  const result = await runDocumentSampleChecks(`
+    const controller = new AbortController();
+    const keepAlive = setInterval(() => {}, 100);
+    try {
+      const pending = sample(() => new Promise(() => {}), [], 'project', 'db', 'collection', undefined, controller.signal);
+      controller.abort(new Error('caller cancelled'));
+      await assert.rejects(pending, /caller cancelled/);
+      assert.equal(requests, 0);
+    } finally { clearInterval(keepAlive); }
+  `)
+  assert.equal(result.status, 0, result.stderr || result.error?.message)
+})
+
+
+test('real-server harness never blocks the event loop while draining TerraBase log pipes', () => {
+  for (const file of ['scripts/test-code-samples-real.mjs', 'scripts/test-csharp-sample.mjs']) {
+    const source = readFileSync(path.join(root, file), 'utf8')
+    assert.doesNotMatch(source, /\b(?:spawnSync|execSync|execFileSync)\b/)
+    assert.match(source, /await exec(?:ute)?\(/)
+    assert.match(source, /killSignal: 'SIGKILL'/)
+  }
+})
