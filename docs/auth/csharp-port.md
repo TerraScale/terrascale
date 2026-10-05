@@ -78,10 +78,10 @@ The release image is the self-contained executable on the chiseled
 Configuration retains the `TS_AUTH_*` convention, with these changes:
 
 - **Storage selectors and credentials:** `TS_AUTH_DATABASE` is required as
-  `project-uuid/database`. The intended production dataset is `auth/auth` in
-  organization `terrascale-internal`, where the first `auth` is the project
+  `project-uuid/database`. The intended production dataset is `ts-auth/auth` in
+  organization `terrascale`, where `ts-auth` is the project
   label. The pinned server and inspected TerraBase `origin/main` resolve that
-  route by project ID, not label: configure `<auth-project-uuid>/auth`.
+  route by project ID, not label: configure `<ts-auth-project-uuid>/auth`.
   `AuthOptions` requires a lowercase hyphenated project UUID and a lowercase
   database name of at most 63 characters. An operator resolves the project
   label to its UUID through Management before deployment; runtime does no
@@ -388,7 +388,8 @@ production validation is claimed.
 ## Production activation gate
 
 [`scripts/provision.sh`](../scripts/provision.sh) prints only a provisioning
-plan. It performs no live setup; production execution belongs to TS-470.
+plan. It performs no live setup; live dataset provisioning belongs to TS-529
+in ts-orchestrator, with production activation still gated by TS-470.
 Every auth replica must use the same single configured storage authority,
 without automatic write retries or failover to another copy. Atlas endpoint
 discovery (TS-507) does not supply replication or failover guarantees.
