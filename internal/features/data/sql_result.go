@@ -6,8 +6,6 @@ import (
 	json "encoding/json/v2"
 	"strings"
 	"unicode/utf8"
-
-	sdk "terrascale.tech/sdk"
 )
 
 // Bounds that keep a large result readable and the page small. The raw JSON
@@ -28,7 +26,6 @@ type sqlResult struct {
 	Matched int
 	// HiddenColumns counts the fields beyond maxResultColumns.
 	HiddenColumns int
-	Explain       *sdk.SQLExplainResponse
 	// JSON is the shown rows, indented, for the raw view.
 	JSON string
 }

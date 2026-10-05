@@ -259,6 +259,12 @@ func AuthorizeAccount(a Account, p Principal) error {
 	}
 	org, err := a.OrganizationFor(p, p.OrganizationID)
 	if err != nil {
+		// A previously valid scope whose membership was removed is an
+		// authorization failure, even though the repaired aggregate no longer
+		// contains that organization.
+		if errors.Is(err, ErrNotFound) {
+			return ErrForbidden
+		}
 		return err
 	}
 	if p.ProjectID != "" {

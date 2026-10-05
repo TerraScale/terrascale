@@ -101,8 +101,8 @@ func TestNewIgnoresStripeSettingsInDemoMode(t *testing.T) {
 	if err != nil || billing != nil {
 		t.Fatalf("demo billing = %v, %v", billing, err)
 	}
-	if _, err := New(t.Context(), false, func(string) string { return "" }, nil); !errors.Is(err, ErrInvalidStripeOptions) {
-		t.Fatalf("live billing without settings error = %v", err)
+	if billing, err := New(t.Context(), false, func(string) string { return "" }, nil); err != nil || billing != nil {
+		t.Fatalf("unconfigured live billing = %v, %v", billing, err)
 	}
 	if _, err := New(t.Context(), false, func(name string) string { return validStripeEnv()[name] }, nil); !errors.Is(err, ErrInvalidStripeOptions) {
 		t.Fatalf("live billing without ts-go error = %v", err)

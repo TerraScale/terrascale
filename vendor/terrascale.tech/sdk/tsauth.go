@@ -6,6 +6,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -185,7 +186,8 @@ func (i *TSAuthInstanceClient) oidc(suffix string) string {
 // so they never enter Client.do: tsAuthSend mirrors do's timeout, retry, and
 // decoding behavior while authenticating and routing directly to the
 // instance's resolved ts-auth origin (no discovery, no placement repair, no
-// idempotency contract — mutations are never retried).
+// idempotency contract — mutations are never retried, except operator calls
+// that carry an Idempotency-Key, such as CreateInstance).
 
 func tsAuthRoute(path string) bool {
 	return strings.HasPrefix(path, "/v1/") ||
@@ -231,18 +233,6 @@ func (i *TSAuthInstanceClient) tsAuthDo(ctx context.Context, method, path string
 	return i.c.tsAuthSend(ctx, i.base, method, path, query, payload, "application/json", i.token(), out, route)
 }
 
-// tsAuthPostForm performs one OIDC form post (client_secret_post): the client
-// credentials travel as form fields, so no bearer header is attached.
-func (i *TSAuthInstanceClient) tsAuthPostForm(ctx context.Context, path string, form url.Values, out any, route string) error {
-	if ctx == nil {
-		return fmt.Errorf("sdk: request context cannot be nil")
-	}
-	if !tsAuthRoute(path) {
-		return fmt.Errorf("sdk: path %q is outside the ts-auth routes", path)
-	}
-	return i.c.tsAuthSend(ctx, i.base, http.MethodPost, path, nil, []byte(form.Encode()), "application/x-www-form-urlencoded", "", out, route)
-}
-
 // tsAuthSend forwards a raw ts-auth request (OIDC discovery, JWKS, userinfo)
 // through the instance's resolved origin.
 func (i *TSAuthInstanceClient) tsAuthSend(ctx context.Context, method, path string, query url.Values, payload []byte, contentType, bearer string, out any, route string) error {
@@ -262,6 +252,13 @@ func (i *TSAuthInstanceClient) token() string {
 }
 
 func (c *Client) tsAuthSend(ctx context.Context, base, method, path string, query url.Values, payload []byte, contentType, bearer string, out any, route string) error {
+	return c.tsAuthSendAuthorized(ctx, base, method, path, query, payload, contentType, tsAuthAuthorization{bearer: bearer}, out, route)
+}
+
+func (c *Client) tsAuthSendAuthorized(ctx context.Context, base, method, path string, query url.Values, payload []byte, contentType string, authorization tsAuthAuthorization, out any, route string) error {
+	if ctx == nil {
+		return &ValidationError{Field: "context", Message: "cannot be nil"}
+	}
 	if err := tsAuthRejectDotSegments(path); err != nil {
 		return err
 	}
@@ -282,22 +279,31 @@ func (c *Client) tsAuthSend(ctx context.Context, base, method, path string, quer
 			return fmt.Errorf("sdk: auth endpoint discovery: %w", err)
 		}
 	}
+	// A keyed mutation (Idempotency-Key) replays its original outcome, so it
+	// is retried and failed over like a read.
+	// The ts-auth bootstrap answers 503 while an outcome is not yet visible,
+	// so keyed calls retry at least tsAuthKeyedRetries times.
+	retryable := tsAuthRetryable(method) || authorization.idempotencyKey != ""
+	maxRetries := c.cfg.MaxRetryAttempts
+	if authorization.idempotencyKey != "" {
+		maxRetries = max(maxRetries, tsAuthKeyedRetries)
+	}
 	regionIndex := 0
 	attempt := 0
 	for {
-		status, headers, respBody, err := c.tsAuthRoundTrip(requestCtx, bases[regionIndex], method, path, query, payload, contentType, bearer, route)
-		var oversized *APIError
-		if errors.As(err, &oversized) {
-			// A capped response is the server's answer, not a transport
-			// failure: keep its status and never retry it.
-			return oversized
+		status, headers, respBody, err := c.tsAuthRoundTrip(requestCtx, bases[regionIndex], method, path, query, payload, contentType, authorization, route)
+		var responseErr *APIError
+		if errors.As(err, &responseErr) && responseErr.Code == "response_too_large" {
+			// A capped response is the server's answer. Keep its metadata
+			// and never retry a body that already exceeded the protocol cap.
+			return responseErr
 		}
-		if err != nil {
-			if tsAuthRetryable(method) && regionIndex < len(bases)-1 && requestCtx.Err() == nil {
+		if err != nil && responseErr == nil {
+			if retryable && regionIndex < len(bases)-1 && requestCtx.Err() == nil {
 				regionIndex++
 				continue
 			}
-			if tsAuthRetryable(method) && attempt < c.cfg.MaxRetryAttempts && requestCtx.Err() == nil {
+			if retryable && attempt < maxRetries && requestCtx.Err() == nil {
 				if sleepErr := sleepContext(requestCtx, c.retryDelayFor(nil, attempt)); sleepErr != nil {
 					return sleepErr
 				}
@@ -306,7 +312,7 @@ func (c *Client) tsAuthSend(ctx context.Context, base, method, path string, quer
 			}
 			return fmt.Errorf("sdk: %s %s (%s): %w", method, path, route, err)
 		}
-		if status >= 200 && status < 300 {
+		if responseErr == nil && status >= 200 && status < 300 {
 			if out == nil {
 				// No-content calls answer exactly 204; anything else breaks
 				// the no-content contract.
@@ -315,8 +321,8 @@ func (c *Client) tsAuthSend(ctx context.Context, base, method, path string, quer
 				}
 				return nil
 			}
-			if decoder, ok := out.(interface{ decodeHTTPResponse(int, []byte) error }); ok {
-				return decoder.decodeHTTPResponse(status, respBody)
+			if decoder, ok := out.(httpResponseDecoder); ok {
+				return decodeSpecialResponse(decoder, status, respBody)
 			}
 			if len(bytes.TrimSpace(respBody)) == 0 {
 				return fmt.Errorf("sdk: %s: empty response body", route)
@@ -326,13 +332,17 @@ func (c *Client) tsAuthSend(ctx context.Context, base, method, path string, quer
 			}
 			return nil
 		}
-		apiErr := tsAuthErrorFromResponse(route, method, path, status, headers, respBody)
-		if tsAuthRetryable(method) && regionIndex < len(bases)-1 &&
+		apiErr := responseErr
+		if apiErr == nil {
+			apiErr = tsAuthErrorFromResponse(route, method, path, status, headers, respBody)
+		}
+		if retryable && regionIndex < len(bases)-1 &&
 			(status == http.StatusBadGateway || status == http.StatusServiceUnavailable || status == http.StatusGatewayTimeout) {
 			regionIndex++
 			continue
 		}
-		if tsAuthRetryable(method) && attempt < c.cfg.MaxRetryAttempts && retryableStatuses[status] {
+		incompleteSuccess := responseErr != nil && status >= 200 && status < 300
+		if retryable && attempt < maxRetries && (retryableStatuses[status] || incompleteSuccess) {
 			if sleepErr := sleepContext(requestCtx, c.retryDelayFor(headers, attempt)); sleepErr != nil {
 				return sleepErr
 			}
@@ -343,22 +353,14 @@ func (c *Client) tsAuthSend(ctx context.Context, base, method, path string, quer
 	}
 }
 
+// tsAuthKeyedRetries is the minimum retry budget of keyed mutations.
+const tsAuthKeyedRetries = 3
+
 func tsAuthRetryable(method string) bool {
 	return method == http.MethodGet || method == http.MethodHead
 }
 
-// tsAuthTooLargeError reports a response body above the protocol cap while
-// keeping the observed status.
-func tsAuthTooLargeError(route string, status int) *APIError {
-	return &APIError{
-		Route:   route,
-		Status:  status,
-		Code:    "response_too_large",
-		Message: fmt.Sprintf("response body exceeds %d bytes", MaxResponseBodyBytes),
-	}
-}
-
-func (c *Client) tsAuthRoundTrip(ctx context.Context, base, method, path string, query url.Values, payload []byte, contentType, bearer, route string) (int, http.Header, []byte, error) {
+func (c *Client) tsAuthRoundTrip(ctx context.Context, base, method, path string, query url.Values, payload []byte, contentType string, authorization tsAuthAuthorization, route string) (int, http.Header, []byte, error) {
 	full := strings.TrimSuffix(base, "/") + path
 	if len(query) > 0 {
 		full += "?" + query.Encode()
@@ -376,10 +378,16 @@ func (c *Client) tsAuthRoundTrip(ctx context.Context, base, method, path string,
 	if payload != nil {
 		h.Set("Content-Type", contentType)
 	}
-	if bearer != "" {
-		if err := setBearerAuthorization(h, bearer); err != nil {
+	if authorization.bearer != "" {
+		if err := setBearerAuthorization(h, authorization.bearer); err != nil {
 			return 0, nil, nil, err
 		}
+	}
+	if authorization.basic != "" {
+		h.Set("Authorization", "Basic "+authorization.basic)
+	}
+	if authorization.idempotencyKey != "" {
+		h.Set("Idempotency-Key", authorization.idempotencyKey)
 	}
 	resp, err := tsAuthNoRedirectClient(c.http).Do(req)
 	if err != nil {
@@ -387,14 +395,14 @@ func (c *Client) tsAuthRoundTrip(ctx context.Context, base, method, path string,
 	}
 	defer resp.Body.Close()
 	if resp.ContentLength > MaxResponseBodyBytes {
-		return 0, nil, nil, tsAuthTooLargeError(route, resp.StatusCode)
+		return resp.StatusCode, resp.Header, nil, responseTooLargeError(route, method, path, resp.StatusCode, resp.Header)
 	}
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, MaxResponseBodyBytes+1))
 	if err != nil {
-		return 0, nil, nil, err
+		return resp.StatusCode, resp.Header, nil, responseReadError(route, method, path, resp.StatusCode, resp.Header)
 	}
 	if int64(len(respBody)) > MaxResponseBodyBytes {
-		return 0, nil, nil, tsAuthTooLargeError(route, resp.StatusCode)
+		return resp.StatusCode, resp.Header, nil, responseTooLargeError(route, method, path, resp.StatusCode, resp.Header)
 	}
 	return resp.StatusCode, resp.Header, respBody, nil
 }
@@ -1067,7 +1075,7 @@ func (o *TSAuthOrganizationsClient) EnrollDomainUser(ctx context.Context, domain
 	return &out, nil
 }
 
-// OAuth clients family: request snake_case, response camelCase. The
+// OAuth clients family: the producer uses snake_case requests and responses. The
 // client_secret is one-time, returned only by Create (null for public/none).
 
 type CreateTSAuthOAuthClientRequest struct {
@@ -1075,22 +1083,34 @@ type CreateTSAuthOAuthClientRequest struct {
 	RedirectURIs            []string `json:"redirect_uris"`
 	Public                  *bool    `json:"public,omitempty"`
 	TokenEndpointAuthMethod string   `json:"token_endpoint_auth_method,omitempty"`
+	AllowAnonymous          bool     `json:"allow_anonymous,omitzero"`
+	AllowedOrigins          []string `json:"allowed_origins,omitempty"`
+	PostLogoutRedirectURIs  []string `json:"post_logout_redirect_uris,omitempty"`
 }
 
 type TSAuthOAuthClient struct {
 	ID                      string   `json:"id"`
-	ClientID                string   `json:"clientId"`
+	ClientID                string   `json:"client_id"`
 	Name                    string   `json:"name"`
-	RedirectURIs            []string `json:"redirectUris"`
-	TokenEndpointAuthMethod string   `json:"tokenEndpointAuthMethod"`
+	RedirectURIs            []string `json:"redirect_uris"`
+	TokenEndpointAuthMethod string   `json:"token_endpoint_auth_method"`
 	Public                  bool     `json:"public"`
-	CreatedAt               int64    `json:"createdAt"`
+	AllowAnonymous          bool     `json:"allow_anonymous"`
+	AllowedOrigins          []string `json:"allowed_origins"`
+	PostLogoutRedirectURIs  []string `json:"post_logout_redirect_uris"`
+	CreatedAt               int64    `json:"created_at"`
 }
 
 type TSAuthOAuthClientSecret struct {
 	Client       TSAuthOAuthClient `json:"client"`
 	ClientSecret *string           `json:"client_secret"`
 }
+
+func (TSAuthOAuthClientSecret) String() string {
+	return "TSAuthOAuthClientSecret{ClientSecret:[REDACTED]}"
+}
+
+func (s TSAuthOAuthClientSecret) GoString() string { return s.String() }
 
 type TSAuthOAuthClientsClient struct{ i *TSAuthInstanceClient }
 
@@ -1100,6 +1120,15 @@ func (o *TSAuthOAuthClientsClient) Create(ctx context.Context, request CreateTSA
 	}
 	if len(request.RedirectURIs) == 0 {
 		return nil, &ValidationError{Field: "redirect_uris", Message: "must not be empty"}
+	}
+	if request.TokenEndpointAuthMethod != "" && request.TokenEndpointAuthMethod != string(TSAuthClientSecretBasic) && request.TokenEndpointAuthMethod != string(TSAuthClientSecretPost) && request.TokenEndpointAuthMethod != string(TSAuthClientAuthenticationNone) {
+		return nil, oidcError("invalid_client_configuration", "registration", false, nil)
+	}
+	if request.Public != nil && *request.Public && request.TokenEndpointAuthMethod != "" && request.TokenEndpointAuthMethod != string(TSAuthClientAuthenticationNone) {
+		return nil, oidcError("invalid_client_configuration", "registration", false, nil)
+	}
+	if err := validateTSAuthOAuthRegistration(request.RedirectURIs, request.PostLogoutRedirectURIs, request.AllowedOrigins); err != nil {
+		return nil, err
 	}
 	var out TSAuthOAuthClientSecret
 	if err := o.i.tsAuthDo(ctx, http.MethodPost, o.i.v1("oauth-clients"), nil, request, &out, "tsauth.oauth_clients.create"); err != nil {
@@ -1259,6 +1288,8 @@ func (d TSAuthDirectory) String() string {
 	return fmt.Sprintf("TSAuthDirectory{ID:%s OrgID:%v Token:[REDACTED] CreatedAt:%d}", d.ID, d.OrgID, d.CreatedAt)
 }
 
+func (d TSAuthDirectory) GoString() string { return d.String() }
+
 type TSAuthDirectoriesClient struct{ i *TSAuthInstanceClient }
 
 func (d *TSAuthDirectoriesClient) Create(ctx context.Context, orgID string) (*TSAuthDirectory, error) {
@@ -1324,6 +1355,10 @@ type TSAuthJWTTemplate struct {
 type TSAuthMintedToken struct {
 	JWT string `json:"jwt"`
 }
+
+func (TSAuthMintedToken) String() string { return "TSAuthMintedToken{JWT:[REDACTED]}" }
+
+func (t TSAuthMintedToken) GoString() string { return t.String() }
 
 type TSAuthJWTTemplatesClient struct{ i *TSAuthInstanceClient }
 
@@ -1422,6 +1457,8 @@ type TSAuthWebhook struct {
 func (w TSAuthWebhook) String() string {
 	return fmt.Sprintf("TSAuthWebhook{ID:%s URL:%s Enabled:%t SigningSecret:[REDACTED] CreatedAt:%d}", w.ID, w.URL, w.Enabled, w.CreatedAt)
 }
+
+func (w TSAuthWebhook) GoString() string { return w.String() }
 
 type TSAuthWebhookTest struct {
 	Queued bool `json:"queued"`
@@ -1626,6 +1663,8 @@ func (k TSAuthAPIKey) String() string {
 	return fmt.Sprintf("TSAuthAPIKey{ID:%s Name:%s APIKey:[REDACTED] Revoked:%t}", k.ID, k.Name, k.Revoked)
 }
 
+func (k TSAuthAPIKey) GoString() string { return k.String() }
+
 // Instance family (snake_case; the PATCH response omits created_at).
 
 // TSAuthInstanceRecord is the GET view; the PATCH response omits created_at,
@@ -1665,7 +1704,7 @@ func (f *TSAuthInstanceFamilyClient) Update(ctx context.Context, settings TSAuth
 
 // OIDC family: public routes under /{slug}/... (no /v1, no sk_ key). The
 // discovery and JWKS routes are unauthenticated; the token endpoints
-// authenticate with client_secret_post form fields; userinfo carries the
+// authenticate with the registered basic/post/none method; userinfo carries the
 // access token as its bearer.
 
 type TSAuthDiscoveryDocument struct {
@@ -1684,16 +1723,21 @@ type TSAuthDiscoveryDocument struct {
 	IdTokenSigningAlgValuesSupported  []string `json:"id_token_signing_alg_values_supported"`
 	TokenEndpointAuthMethodsSupported []string `json:"token_endpoint_auth_methods_supported"`
 	ScopesSupported                   []string `json:"scopes_supported"`
+	DeviceAuthorizationEndpoint       string   `json:"device_authorization_endpoint"`
 }
 
 type TSAuthJWK struct {
-	Kty string `json:"kty"`
-	Crv string `json:"crv"`
-	Alg string `json:"alg"`
-	Use string `json:"use"`
-	Kid string `json:"kid"`
-	X   string `json:"x"`
-	Y   string `json:"y"`
+	Kty              string   `json:"kty"`
+	Crv              string   `json:"crv"`
+	Alg              string   `json:"alg"`
+	Use              string   `json:"use"`
+	Kid              string   `json:"kid"`
+	X                string   `json:"x"`
+	Y                string   `json:"y"`
+	D                string   `json:"d,omitempty"`
+	KeyOps           []string `json:"key_ops,omitempty"`
+	hasKeyOps        bool
+	hasPrivateMember bool
 }
 
 type TSAuthJWKS struct {
@@ -1719,6 +1763,8 @@ type TSAuthIntrospection struct {
 	Scope     *string `json:"scope"`
 	Exp       *int64  `json:"exp"`
 	Iat       *int64  `json:"iat"`
+	SessionID *string `json:"sid"`
+	FamilyID  *string `json:"family_id"`
 }
 
 type TSAuthUserInfo struct {
@@ -1746,8 +1792,8 @@ func (o *TSAuthOIDCClient) GetJwks(ctx context.Context) (*TSAuthJWKS, error) {
 	return &out, nil
 }
 
-func (o *TSAuthOIDCClient) ExchangeAuthorizationCode(ctx context.Context, clientID, clientSecret, code, redirectURI, codeVerifier string) (*TSAuthTokenResponse, error) {
-	if err := tsAuthRequireClientCredentials(clientID, clientSecret); err != nil {
+func (o *TSAuthOIDCClient) ExchangeAuthorizationCode(ctx context.Context, authentication TSAuthOAuthClientAuthentication, code, redirectURI, codeVerifier string) (*TSAuthTokenResponse, error) {
+	if err := authentication.validate(); err != nil {
 		return nil, err
 	}
 	if err := requireID("code", code); err != nil {
@@ -1758,40 +1804,36 @@ func (o *TSAuthOIDCClient) ExchangeAuthorizationCode(ctx context.Context, client
 	}
 	form := url.Values{}
 	form.Set("grant_type", "authorization_code")
-	form.Set("client_id", clientID)
-	form.Set("client_secret", clientSecret)
 	form.Set("code", code)
 	form.Set("redirect_uri", redirectURI)
 	if codeVerifier != "" {
 		form.Set("code_verifier", codeVerifier)
 	}
 	var out TSAuthTokenResponse
-	if err := o.i.tsAuthPostForm(ctx, o.i.oidc("oauth/token"), form, &out, "tsauth.oidc.token.code"); err != nil {
+	if err := o.postAuthenticatedForm(ctx, "oauth/token", form, authentication, &out, "tsauth.oidc.token.code"); err != nil {
 		return nil, err
 	}
 	return &out, nil
 }
 
-func (o *TSAuthOIDCClient) RequestClientCredentialsToken(ctx context.Context, clientID, clientSecret, scope string) (*TSAuthTokenResponse, error) {
-	if err := tsAuthRequireClientCredentials(clientID, clientSecret); err != nil {
+func (o *TSAuthOIDCClient) RequestClientCredentialsToken(ctx context.Context, authentication TSAuthOAuthClientAuthentication, scope string) (*TSAuthTokenResponse, error) {
+	if err := authentication.validate(); err != nil {
 		return nil, err
 	}
 	form := url.Values{}
 	form.Set("grant_type", "client_credentials")
-	form.Set("client_id", clientID)
-	form.Set("client_secret", clientSecret)
 	if scope != "" {
 		form.Set("scope", scope)
 	}
 	var out TSAuthTokenResponse
-	if err := o.i.tsAuthPostForm(ctx, o.i.oidc("oauth/token"), form, &out, "tsauth.oidc.token.client_credentials"); err != nil {
+	if err := o.postAuthenticatedForm(ctx, "oauth/token", form, authentication, &out, "tsauth.oidc.token.client_credentials"); err != nil {
 		return nil, err
 	}
 	return &out, nil
 }
 
-func (o *TSAuthOIDCClient) RefreshToken(ctx context.Context, clientID, clientSecret, refreshToken string) (*TSAuthTokenResponse, error) {
-	if err := tsAuthRequireClientCredentials(clientID, clientSecret); err != nil {
+func (o *TSAuthOIDCClient) RefreshToken(ctx context.Context, authentication TSAuthOAuthClientAuthentication, refreshToken string) (*TSAuthTokenResponse, error) {
+	if err := authentication.validate(); err != nil {
 		return nil, err
 	}
 	if err := requireID("refresh_token", refreshToken); err != nil {
@@ -1799,43 +1841,37 @@ func (o *TSAuthOIDCClient) RefreshToken(ctx context.Context, clientID, clientSec
 	}
 	form := url.Values{}
 	form.Set("grant_type", "refresh_token")
-	form.Set("client_id", clientID)
-	form.Set("client_secret", clientSecret)
 	form.Set("refresh_token", refreshToken)
 	var out TSAuthTokenResponse
-	if err := o.i.tsAuthPostForm(ctx, o.i.oidc("oauth/token"), form, &out, "tsauth.oidc.token.refresh"); err != nil {
+	if err := o.postAuthenticatedForm(ctx, "oauth/token", form, authentication, &out, "tsauth.oidc.token.refresh"); err != nil {
 		return nil, err
 	}
 	return &out, nil
 }
 
-func (o *TSAuthOIDCClient) RevokeToken(ctx context.Context, clientID, clientSecret, token string) error {
-	if err := tsAuthRequireClientCredentials(clientID, clientSecret); err != nil {
+func (o *TSAuthOIDCClient) RevokeToken(ctx context.Context, authentication TSAuthOAuthClientAuthentication, token string) error {
+	if err := authentication.validate(); err != nil {
 		return err
 	}
 	if err := requireID("token", token); err != nil {
 		return err
 	}
 	form := url.Values{}
-	form.Set("client_id", clientID)
-	form.Set("client_secret", clientSecret)
 	form.Set("token", token)
-	return o.i.tsAuthPostForm(ctx, o.i.oidc("oauth/revoke"), form, tsAuthAnySuccess{}, "tsauth.oidc.token.revoke")
+	return o.postAuthenticatedForm(ctx, "oauth/revoke", form, authentication, tsAuthAnySuccess{}, "tsauth.oidc.token.revoke")
 }
 
-func (o *TSAuthOIDCClient) IntrospectToken(ctx context.Context, clientID, clientSecret, token string) (*TSAuthIntrospection, error) {
-	if err := tsAuthRequireClientCredentials(clientID, clientSecret); err != nil {
+func (o *TSAuthOIDCClient) IntrospectToken(ctx context.Context, authentication TSAuthOAuthClientAuthentication, token string) (*TSAuthIntrospection, error) {
+	if err := authentication.validate(); err != nil {
 		return nil, err
 	}
 	if err := requireID("token", token); err != nil {
 		return nil, err
 	}
 	form := url.Values{}
-	form.Set("client_id", clientID)
-	form.Set("client_secret", clientSecret)
 	form.Set("token", token)
 	var out TSAuthIntrospection
-	if err := o.i.tsAuthPostForm(ctx, o.i.oidc("oauth/introspect"), form, &out, "tsauth.oidc.token.introspect"); err != nil {
+	if err := o.postAuthenticatedForm(ctx, "oauth/introspect", form, authentication, &out, "tsauth.oidc.token.introspect"); err != nil {
 		return nil, err
 	}
 	return &out, nil
@@ -1850,13 +1886,6 @@ func (o *TSAuthOIDCClient) GetUserInfo(ctx context.Context, accessToken string) 
 		return nil, err
 	}
 	return &out, nil
-}
-
-func tsAuthRequireClientCredentials(clientID, clientSecret string) error {
-	if err := requireID("client_id", clientID); err != nil {
-		return err
-	}
-	return requireID("client_secret", clientSecret)
 }
 
 // URL preflight helpers.
@@ -1938,4 +1967,26 @@ func VerifyTSAuthWebhookWithTolerance(signingSecret, timestamp, signature string
 		}
 	}
 	return true
+}
+
+// tsAuthAuthorization cannot be supplied by public request options.
+// tsAuthAuthorization carries a request's credentials and, for keyed
+// mutations, its Idempotency-Key.
+type tsAuthAuthorization struct{ bearer, basic, idempotencyKey string }
+
+func (o *TSAuthOIDCClient) postAuthenticatedForm(ctx context.Context, endpoint string, form url.Values, authentication TSAuthOAuthClientAuthentication, out any, route string) error {
+	if err := authentication.validate(); err != nil {
+		return err
+	}
+	authorization := tsAuthAuthorization{}
+	switch authentication.Method {
+	case TSAuthClientSecretBasic:
+		authorization.basic = base64.StdEncoding.EncodeToString([]byte(url.QueryEscape(authentication.ClientID) + ":" + url.QueryEscape(authentication.ClientSecret)))
+	case TSAuthClientSecretPost:
+		form.Set("client_id", authentication.ClientID)
+		form.Set("client_secret", authentication.ClientSecret)
+	case TSAuthClientAuthenticationNone:
+		form.Set("client_id", authentication.ClientID)
+	}
+	return o.i.c.tsAuthSendAuthorized(ctx, o.i.base, http.MethodPost, o.i.oidc(endpoint), nil, []byte(form.Encode()), "application/x-www-form-urlencoded", authorization, out, route)
 }

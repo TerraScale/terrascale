@@ -1,6 +1,9 @@
 package config
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestPublicURLConfiguration(t *testing.T) {
 	t.Setenv("TS_DASHBOARD_PRODUCTION_DEMO", "1")
@@ -112,7 +115,7 @@ func TestCSRFSecretConfiguration(t *testing.T) {
 		{name: "short key", demo: "1", secret: "short", invalid: true},
 		{name: "one byte short of the minimum", demo: "1", secret: secret[:31], invalid: true},
 		{name: "exactly the minimum", demo: "1", secret: secret[:32], want: secret[:32]},
-		{name: "required outside the demo", demo: "", invalid: true},
+		{name: "unset backend keeps the memory demo", demo: ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("TS_DASHBOARD_PRODUCTION_DEMO", tc.demo)
@@ -122,5 +125,31 @@ func TestCSRFSecretConfiguration(t *testing.T) {
 				t.Fatalf("secret=%q error=%v", cfg.CSRFSecret, err)
 			}
 		})
+	}
+}
+
+func TestTerraBaseBackendConfiguration(t *testing.T) {
+	for _, name := range []string{"DASHBOARD_PUBLIC_URL", "DASHBOARD_DEMO_ADMIN_EMAIL", "DASHBOARD_DEMO_ADMIN_PASSWORD", "DASHBOARD_CSP_REPORT_URL", "FLY_APP_NAME", "TS_DASHBOARD_CSRF_SECRET", "TERRABASE_URL", "TERRABASE_API_KEY", "TERRABASE_PROJECT_ID", "TERRABASE_DATABASE"} {
+		t.Setenv(name, "")
+	}
+	cfg, err := Load()
+	if err != nil || !cfg.Demo {
+		t.Fatalf("unset backend: demo=%v err=%v", cfg.Demo, err)
+	}
+	t.Setenv("TERRABASE_URL", "http://127.0.0.1:5555")
+	if _, err := Load(); err == nil {
+		t.Fatal("partial config accepted")
+	}
+	t.Setenv("TERRABASE_API_KEY", "tb_"+strings.Repeat("a", 43))
+	t.Setenv("TERRABASE_PROJECT_ID", "11111111-1111-4111-8111-111111111111")
+	t.Setenv("TERRABASE_DATABASE", "dashboard")
+	t.Setenv("TS_DASHBOARD_PRODUCTION_DEMO", "1")
+	if _, err := Load(); err == nil {
+		t.Fatal("persistent backend accepted without stable CSRF key")
+	}
+	t.Setenv("TS_DASHBOARD_CSRF_SECRET", strings.Repeat("a", 32))
+	cfg, err = Load()
+	if err != nil || cfg.Demo || cfg.TerraBaseDatabase != "dashboard" {
+		t.Fatalf("persistent backend: demo=%v database=%q err=%v", cfg.Demo, cfg.TerraBaseDatabase, err)
 	}
 }

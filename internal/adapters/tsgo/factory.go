@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	sdk "terrascale.tech/sdk"
+	"terrascale.tech/sdk/v1"
 )
 
 // Factory holds the public API origin and a server credential. The public API
@@ -18,6 +19,13 @@ type Factory struct {
 	APIBaseURL  string
 	AccessToken string
 	HTTPClient  *http.Client
+}
+
+func (f Factory) ForDocuments(tenantID, projectID string) (*v1.Client, error) {
+	if strings.TrimSpace(tenantID) == "" || strings.TrimSpace(projectID) == "" {
+		return nil, errors.New("tsgo: organization and project scope are required")
+	}
+	return v1.New(v1.Config{BaseURL: f.APIBaseURL, Token: f.AccessToken, HTTPClient: f.HTTPClient})
 }
 
 // ForScope returns a new client so its causal session frontier cannot leak

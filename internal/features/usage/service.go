@@ -179,7 +179,7 @@ func (s Service) report(ctx context.Context, p core.Principal, org core.Organiza
 // provider's database usage facts.
 func (s Service) totals(ctx context.Context, p core.Principal, project core.Project, databaseFilter string, report *usageReport) {
 	totals := &report.Totals
-	if s.deps.Demo {
+	if s.deps.LocalResources() {
 		totals.Source = "Sample dashboard data; these values are not provider-metered usage."
 		report.PlanUsageNote = "Demo mode has no measured usage feed, so allowance utilization is unavailable."
 		totals.Writes = int64(localDocuments(project, databaseFilter))

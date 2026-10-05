@@ -5,12 +5,14 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"terrascale.tech/dashboard/internal/core"
 	"terrascale.tech/dashboard/internal/core/memstore"
 	sdk "terrascale.tech/sdk"
+	"terrascale.tech/sdk/v1"
 )
 
 // cancelingStore honors ctx like a database store and cancels the request
@@ -33,6 +35,10 @@ func (s *cancelingStore) UpdateAs(ctx context.Context, p core.Principal, mutate 
 }
 
 type testSDK struct{ url string }
+
+func (f testSDK) ForDocuments(_, _ string) (*v1.Client, error) {
+	return v1.New(v1.Config{BaseURL: f.url, Token: "tb_" + strings.Repeat("a", 43)})
+}
 
 func (f testSDK) ForScope(tenantID, projectID string) (*sdk.Client, error) {
 	return sdk.NewClient(sdk.Config{APIBaseURL: f.url, AccessToken: "token", TenantID: tenantID, ProjectID: projectID})

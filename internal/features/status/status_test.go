@@ -46,6 +46,9 @@ func TestProbesReportStatusAndBuildVersion(t *testing.T) {
 			if body.Status != tc.status {
 				t.Fatalf("status = %q, want %q", body.Status, tc.status)
 			}
+			if body.Backend != "memstore" {
+				t.Fatalf("backend = %q, want memstore", body.Backend)
+			}
 			if body.Version == "" || body.Version != buildinfo.Version() {
 				t.Fatalf("version = %q, want %q", body.Version, buildinfo.Version())
 			}

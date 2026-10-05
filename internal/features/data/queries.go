@@ -2,9 +2,7 @@ package data
 
 import (
 	"cmp"
-	json "encoding/json/v2"
 	"errors"
-	"math"
 	"net/http"
 	"net/url"
 	"strings"
@@ -153,21 +151,6 @@ func mountQueryRoutes(mux *http.ServeMux, deps core.Deps, service Service) {
 		}
 		w.WriteHeader(http.StatusNoContent)
 	})
-}
-
-// liveResult lays out a data plane result; an EXPLAIN answers with its plan.
-func liveResult(result *sdk.SQLResult) sqlResult {
-	rows := make([]documentView, 0, len(result.Rows))
-	for _, row := range result.Rows {
-		value, err := json.Marshal(row.Value)
-		if err != nil {
-			value = []byte("null")
-		}
-		rows = append(rows, documentView{ID: row.ID, Value: value})
-	}
-	table := newSQLResult(rows, int(min(result.Matched, math.MaxInt32)))
-	table.Explain = result.Explain
-	return table
 }
 
 // savedQueriesReturn sends a saved-query form back to the SQL console of the

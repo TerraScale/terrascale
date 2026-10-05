@@ -97,7 +97,7 @@ func (s Service) Create(ctx context.Context, p core.Principal, kind string, inpu
 	if err := validateInput(project, input); err != nil {
 		return sdk.ProjectAPIKeySecret{}, err
 	}
-	if !s.deps.Demo {
+	if !s.deps.LocalResources() {
 		if s.issuer == nil || kind == kindM2M {
 			return sdk.ProjectAPIKeySecret{}, errLiveCredentials
 		}
@@ -140,7 +140,7 @@ func (s Service) Rotate(ctx context.Context, p core.Principal, keyID, kind strin
 	if err != nil {
 		return sdk.ProjectAPIKeySecret{}, err
 	}
-	if !s.deps.Demo {
+	if !s.deps.LocalResources() {
 		// The producer issuer only manages project API keys.
 		if s.issuer == nil || existing.Kind == kindM2M {
 			return sdk.ProjectAPIKeySecret{}, errLiveCredentials
@@ -183,7 +183,7 @@ func (s Service) Revoke(ctx context.Context, p core.Principal, keyID, kind strin
 	if err != nil {
 		return sdk.ProjectAPIKeyRevocation{}, err
 	}
-	if !s.deps.Demo {
+	if !s.deps.LocalResources() {
 		if s.issuer == nil || existing.Kind == kindM2M {
 			return sdk.ProjectAPIKeyRevocation{}, errLiveCredentials
 		}

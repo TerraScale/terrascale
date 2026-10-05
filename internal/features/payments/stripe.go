@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"terrascale.tech/dashboard/internal/core"
+	"terrascale.tech/sdk/v1"
 )
 
 var (
@@ -20,8 +21,8 @@ var (
 )
 
 // Stripe is the live billing provider, built once at startup and shared by
-// every billing route. A nil *Stripe means demo mode: billing runs through the
-// in-memory simulator and nothing contacts Stripe.
+// every billing route. A nil *Stripe disables provider billing; demo mode
+// instead uses the Store-backed simulator.
 type Stripe struct {
 	config   StripeConfig
 	provider BillingProvider
@@ -30,28 +31,19 @@ type Stripe struct {
 
 // New loads the Stripe configuration, creates the official stripe-go client,
 // and connects the TerraBase state store through ts-go. Demo mode returns nil
-// and ignores every Stripe and TerraBase billing setting.
-func New(ctx context.Context, demo bool, lookup func(string) string, sdk core.SDKFactory) (*Stripe, error) {
-	if demo {
+// and ignores every Stripe setting. Unconfigured live billing stays disabled.
+func New(_ context.Context, demo bool, lookup func(string) string, db *v1.Database) (*Stripe, error) {
+	if demo || (lookup("STRIPE_MODE") == "" && lookup("STRIPE_SECRET_KEY") == "" && lookup("STRIPE_WEBHOOK_SECRET") == "") {
 		return nil, nil
 	}
 	config, err := LoadStripeConfig(lookup)
 	if err != nil {
 		return nil, err
 	}
-	if sdk == nil {
-		return nil, fmt.Errorf("%w: a ts-go client is required to store Stripe state", ErrInvalidStripeOptions)
+	if db == nil {
+		return nil, fmt.Errorf("%w: TerraBase persistence is required for Stripe state", ErrInvalidStripeOptions)
 	}
-	client, err := sdk.ForScope(config.State.TenantID, config.State.ProjectID)
-	if err != nil {
-		return nil, fmt.Errorf("%w: connect to TerraBase: %w", ErrInvalidStripeOptions, err)
-	}
-	store := newTerraBaseStateStore(client, config.State.DatabaseID)
-	schemaContext, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-	if err := store.EnsureSchema(schemaContext); err != nil {
-		return nil, fmt.Errorf("prepare Stripe state store: %w", err)
-	}
+	store := newTerraBaseStateStore(db)
 	slog.Info("Stripe billing enabled", "mode", config.Mode, "public_origin", config.PublicOrigin, "state_database", config.State.DatabaseID)
 	return newStripe(config, newStripeProvider(config), store), nil
 }

@@ -1,0 +1,407 @@
+package v1
+
+import (
+	"context"
+	"errors"
+	"net/http"
+	"net/url"
+	"strconv"
+	"strings"
+	"time"
+	"unicode"
+)
+
+// Management is a client of the TerraBase Management API (/v1/management)
+// for the ts-dashboard backend. It authenticates with the dashboard service
+// credential; every call acts as one ts-auth user, chosen with As. It is safe
+// for concurrent use.
+//
+//	m, err := v1.NewManagement(v1.Config{BaseURL: origin, Token: credential})
+//	u := m.As(session.UserID) // never a user id taken from browser input
+//	org, err := u.CreateOrganization(ctx, "Acme")
+type Management struct{ c *Client }
+
+// NewManagement returns a Management API client. Config.Token is the
+// dashboard service credential, at least 32 characters.
+func NewManagement(cfg Config) (*Management, error) {
+	if len(cfg.Token) < 32 || strings.ContainsFunc(cfg.Token, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) {
+		return nil, errors.New("terrabase: Token must be the dashboard service credential: at least 32 characters without whitespace")
+	}
+	c, err := newClient(cfg)
+	if err != nil {
+		return nil, err
+	}
+	return &Management{c: c}, nil
+}
+
+// As returns a view that acts as the ts-auth user userID. It sends
+// X-TerraBase-User-Id on every request, and X-TerraBase-Organization-Id on
+// every organization route. TerraBase trusts the user id because the service
+// credential authenticated the caller: take it from the user's session.
+func (m *Management) As(userID string) *ManagementUser {
+	return &ManagementUser{c: m.c, user: userID}
+}
+
+// ManagementUser is the Management API as seen by one user. Organizations the
+// user is not a member of answer 404 (ErrUnknownRoute), like unknown ids.
+type ManagementUser struct {
+	c    *Client
+	user string
+}
+
+// Plan is an organization's plan.
+type Plan string
+
+// Plans.
+const (
+	PlanHobby      Plan = "hobby"
+	PlanPro        Plan = "pro"
+	PlanEnterprise Plan = "enterprise"
+)
+
+// Role is a member's role in an organization, from least to most privileged:
+// member, admin, owner.
+type Role string
+
+// Roles.
+const (
+	RoleMember Role = "member"
+	RoleAdmin  Role = "admin"
+	RoleOwner  Role = "owner"
+)
+
+// Organization is a TerraBase organization, the tenant that owns projects.
+type Organization struct {
+	ID        string    `json:"id"`
+	Name      string    `json:"name"`
+	CreatedBy string    `json:"createdBy"`
+	CreatedAt time.Time `json:"createdAt"`
+	Plan      Plan      `json:"plan"`
+}
+
+// Project is a folder of databases inside an organization.
+type Project struct {
+	ID             string    `json:"id"`
+	OrganizationID string    `json:"organizationId"`
+	Name           string    `json:"name"`
+	CreatedAt      time.Time `json:"createdAt"`
+}
+
+// ManagedDatabase is a database as the Management API returns it. Its Name
+// addresses it in the Documents API: Client.Database(ProjectID, Name).
+type ManagedDatabase struct {
+	ID        string `json:"id"`
+	ProjectID string `json:"projectId"`
+	Name      string `json:"name"`
+	// BranchedFrom is the id of the database this one was branched from.
+	BranchedFrom *string   `json:"branchedFrom"`
+	CreatedAt    time.Time `json:"createdAt"`
+}
+
+// Member is a user's membership in an organization.
+type Member struct {
+	UserID   string    `json:"userId"`
+	Role     Role      `json:"role"`
+	JoinedAt time.Time `json:"joinedAt"`
+}
+
+// Invitation is a pending invitation; it expires after 7 days.
+type Invitation struct {
+	ID        string    `json:"id"`
+	Email     string    `json:"email"`
+	Role      Role      `json:"role"`
+	InvitedBy string    `json:"invitedBy"`
+	CreatedAt time.Time `json:"createdAt"`
+	ExpiresAt time.Time `json:"expiresAt"`
+}
+
+// CreatedInvitation is a new invitation with its token, returned only once.
+type CreatedInvitation struct {
+	Invitation Invitation `json:"invitation"`
+	Token      string     `json:"token"`
+}
+
+// OwnershipTransfer is an organization's pending ownership transfer.
+type OwnershipTransfer struct {
+	FromUserID string    `json:"fromUserId"`
+	ToUserID   string    `json:"toUserId"`
+	CreatedAt  time.Time `json:"createdAt"`
+	ExpiresAt  time.Time `json:"expiresAt"`
+}
+
+// AuditEvent is one recorded access change.
+type AuditEvent struct {
+	ID         string    `json:"id"`
+	Actor      string    `json:"actor"`
+	Action     string    `json:"action"`
+	Target     string    `json:"target"`
+	Detail     string    `json:"detail"`
+	OccurredAt time.Time `json:"occurredAt"`
+}
+
+// Page is one page of a Management list.
+type Page[T any] struct {
+	Items []T `json:"items"`
+	// Next is passed back as PageOptions.After for the next page; empty on
+	// the last page.
+	Next string `json:"next"`
+}
+
+// PageOptions pages a Management list: After is the previous page's Next and
+// Limit is 1-100 (zero uses the server default of 20).
+type PageOptions struct {
+	After string
+	Limit int
+}
+
+func (o PageOptions) query() url.Values {
+	q := url.Values{}
+	if o.Limit > 0 {
+		q.Set("limit", strconv.Itoa(o.Limit))
+	}
+	if o.After != "" {
+		q.Set("after", o.After)
+	}
+	return q
+}
+
+// call sends one Management request as the user. org, when non-empty, is the
+// organization the route is under and is sent as X-TerraBase-Organization-Id.
+func (u *ManagementUser) call(ctx context.Context, method, org string, path []string, query url.Values, in, out any) error {
+	h := http.Header{}
+	h.Set("X-TerraBase-User-Id", u.user)
+	if org != "" {
+		h.Set("X-TerraBase-Organization-Id", org)
+	}
+	req := request{
+		method:     method,
+		path:       append([]string{"v1", "management"}, path...),
+		query:      query,
+		header:     h,
+		replaySafe: method == http.MethodGet,
+	}
+	_, err := u.c.call(ctx, req, in, out)
+	return err
+}
+
+func orgPath(org string, extra ...string) []string {
+	return append([]string{"organizations", org}, extra...)
+}
+
+func projectPath(org, project string, extra ...string) []string {
+	return orgPath(org, append([]string{"projects", project}, extra...)...)
+}
+
+func databasePath(org, project, databaseID string, extra ...string) []string {
+	return projectPath(org, project, append([]string{"databases", databaseID}, extra...)...)
+}
+
+func get[T any](ctx context.Context, u *ManagementUser, org string, path []string, query url.Values) (*T, error) {
+	var out T
+	if err := u.call(ctx, http.MethodGet, org, path, query, nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func send[T any](ctx context.Context, u *ManagementUser, method, org string, path []string, in any) (*T, error) {
+	var out T
+	if err := u.call(ctx, method, org, path, nil, in, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+type nameBody struct {
+	Name string `json:"name"`
+}
+
+// CreateOrganization creates an organization with the user as its owner.
+// A name the user already used fails with ErrConflict.
+func (u *ManagementUser) CreateOrganization(ctx context.Context, name string) (*Organization, error) {
+	return send[Organization](ctx, u, http.MethodPost, "", []string{"organizations"}, nameBody{name})
+}
+
+// Organizations lists the user's organizations.
+func (u *ManagementUser) Organizations(ctx context.Context, opts PageOptions) (*Page[Organization], error) {
+	return get[Page[Organization]](ctx, u, "", []string{"organizations"}, opts.query())
+}
+
+// Organization reads an organization.
+func (u *ManagementUser) Organization(ctx context.Context, org string) (*Organization, error) {
+	return get[Organization](ctx, u, org, orgPath(org), nil)
+}
+
+// RenameOrganization renames an organization; it needs the admin role.
+func (u *ManagementUser) RenameOrganization(ctx context.Context, org, name string) (*Organization, error) {
+	return send[Organization](ctx, u, http.MethodPatch, org, orgPath(org), nameBody{name})
+}
+
+// SetPlan sets an organization's plan; it needs the owner role.
+func (u *ManagementUser) SetPlan(ctx context.Context, org string, plan Plan) (*Organization, error) {
+	return send[Organization](ctx, u, http.MethodPut, org, orgPath(org, "plan"), map[string]Plan{"plan": plan})
+}
+
+// DeleteOrganization deletes an organization without projects; it needs the
+// owner role.
+func (u *ManagementUser) DeleteOrganization(ctx context.Context, org string) error {
+	return u.call(ctx, http.MethodDelete, org, orgPath(org), nil, nil, nil)
+}
+
+// CurrentOrganization reads the organization the user last switched to.
+func (u *ManagementUser) CurrentOrganization(ctx context.Context) (*Organization, error) {
+	return get[Organization](ctx, u, "", []string{"current-organization"}, nil)
+}
+
+// SetCurrentOrganization switches the user to one of their organizations.
+func (u *ManagementUser) SetCurrentOrganization(ctx context.Context, org string) (*Organization, error) {
+	return send[Organization](ctx, u, http.MethodPut, "", []string{"current-organization"}, map[string]string{"organizationId": org})
+}
+
+// CreateProject creates a project in an organization.
+func (u *ManagementUser) CreateProject(ctx context.Context, org, name string) (*Project, error) {
+	return send[Project](ctx, u, http.MethodPost, org, orgPath(org, "projects"), nameBody{name})
+}
+
+// Projects lists an organization's projects.
+func (u *ManagementUser) Projects(ctx context.Context, org string, opts PageOptions) (*Page[Project], error) {
+	return get[Page[Project]](ctx, u, org, orgPath(org, "projects"), opts.query())
+}
+
+// Project reads a project.
+func (u *ManagementUser) Project(ctx context.Context, org, project string) (*Project, error) {
+	return get[Project](ctx, u, org, projectPath(org, project), nil)
+}
+
+// RenameProject renames a project.
+func (u *ManagementUser) RenameProject(ctx context.Context, org, project, name string) (*Project, error) {
+	return send[Project](ctx, u, http.MethodPatch, org, projectPath(org, project), nameBody{name})
+}
+
+// DeleteProject deletes a project without databases.
+func (u *ManagementUser) DeleteProject(ctx context.Context, org, project string) error {
+	return u.call(ctx, http.MethodDelete, org, projectPath(org, project), nil, nil, nil)
+}
+
+// CreateDatabase creates an empty database in a project.
+func (u *ManagementUser) CreateDatabase(ctx context.Context, org, project, name string) (*ManagedDatabase, error) {
+	return send[ManagedDatabase](ctx, u, http.MethodPost, org, projectPath(org, project, "databases"), nameBody{name})
+}
+
+// Databases lists a project's databases.
+func (u *ManagementUser) Databases(ctx context.Context, org, project string, opts PageOptions) (*Page[ManagedDatabase], error) {
+	return get[Page[ManagedDatabase]](ctx, u, org, projectPath(org, project, "databases"), opts.query())
+}
+
+// Database reads a database by id.
+func (u *ManagementUser) Database(ctx context.Context, org, project, databaseID string) (*ManagedDatabase, error) {
+	return get[ManagedDatabase](ctx, u, org, databasePath(org, project, databaseID), nil)
+}
+
+// DeleteDatabase deletes a database, by id, and its data; its branches stay.
+func (u *ManagementUser) DeleteDatabase(ctx context.Context, org, project, databaseID string) error {
+	return u.call(ctx, http.MethodDelete, org, databasePath(org, project, databaseID), nil, nil, nil)
+}
+
+// BranchDatabase creates the database name in the same project, holding a
+// consistent snapshot copy of the database databaseID.
+func (u *ManagementUser) BranchDatabase(ctx context.Context, org, project, databaseID, name string) (*ManagedDatabase, error) {
+	return send[ManagedDatabase](ctx, u, http.MethodPost, org, databasePath(org, project, databaseID, "branches"), nameBody{name})
+}
+
+// Members lists an organization's members in user id order.
+func (u *ManagementUser) Members(ctx context.Context, org string, opts PageOptions) (*Page[Member], error) {
+	return get[Page[Member]](ctx, u, org, orgPath(org, "members"), opts.query())
+}
+
+// SetMemberRole changes a member's role; it needs admin, and owner when the
+// member is or becomes an owner.
+func (u *ManagementUser) SetMemberRole(ctx context.Context, org, user string, role Role) (*Member, error) {
+	return send[Member](ctx, u, http.MethodPut, org, orgPath(org, "members", user, "role"), map[string]Role{"role": role})
+}
+
+// RemoveMember removes a member; it needs admin, and owner to remove an owner.
+func (u *ManagementUser) RemoveMember(ctx context.Context, org, user string) error {
+	return u.call(ctx, http.MethodDelete, org, orgPath(org, "members", user), nil, nil, nil)
+}
+
+// Leave removes the user from an organization. The last owner cannot leave.
+func (u *ManagementUser) Leave(ctx context.Context, org string) error {
+	return u.call(ctx, http.MethodPost, org, orgPath(org, "leave"), nil, nil, nil)
+}
+
+// CreateInvitation invites email with role (empty means member). TerraBase
+// sends no email: deliver the returned token yourself.
+func (u *ManagementUser) CreateInvitation(ctx context.Context, org, email string, role Role) (*CreatedInvitation, error) {
+	body := struct {
+		Email string `json:"email"`
+		Role  Role   `json:"role,omitempty"`
+	}{email, role}
+	return send[CreatedInvitation](ctx, u, http.MethodPost, org, orgPath(org, "invitations"), body)
+}
+
+// Invitations lists pending invitations, expired ones included.
+func (u *ManagementUser) Invitations(ctx context.Context, org string, opts PageOptions) (*Page[Invitation], error) {
+	return get[Page[Invitation]](ctx, u, org, orgPath(org, "invitations"), opts.query())
+}
+
+// RevokeInvitation revokes an invitation; its token stops working.
+func (u *ManagementUser) RevokeInvitation(ctx context.Context, org, invitation string) error {
+	return u.call(ctx, http.MethodDelete, org, orgPath(org, "invitations", invitation), nil, nil, nil)
+}
+
+// AcceptInvitation makes the user a member through token. email is the
+// signed-in user's verified email; it must match the invitation.
+func (u *ManagementUser) AcceptInvitation(ctx context.Context, token, email string) (*Member, error) {
+	return send[Member](ctx, u, http.MethodPost, "", []string{"invitations", "accept"}, map[string]string{"token": token, "email": email})
+}
+
+// OwnershipTransfer reads the pending ownership transfer.
+func (u *ManagementUser) OwnershipTransfer(ctx context.Context, org string) (*OwnershipTransfer, error) {
+	return get[OwnershipTransfer](ctx, u, org, orgPath(org, "ownership-transfer"), nil)
+}
+
+// StartOwnershipTransfer offers ownership to a member who is not an owner,
+// replacing a pending offer; it needs the owner role.
+func (u *ManagementUser) StartOwnershipTransfer(ctx context.Context, org, toUser string) (*OwnershipTransfer, error) {
+	return send[OwnershipTransfer](ctx, u, http.MethodPost, org, orgPath(org, "ownership-transfer"), map[string]string{"userId": toUser})
+}
+
+// CancelOwnershipTransfer cancels the pending transfer; the owner or the
+// nominee may cancel.
+func (u *ManagementUser) CancelOwnershipTransfer(ctx context.Context, org string) error {
+	return u.call(ctx, http.MethodDelete, org, orgPath(org, "ownership-transfer"), nil, nil, nil)
+}
+
+// ConfirmOwnershipTransfer accepts the transfer as its nominee and returns the
+// nominee's membership, now owner.
+func (u *ManagementUser) ConfirmOwnershipTransfer(ctx context.Context, org string) (*Member, error) {
+	return send[Member](ctx, u, http.MethodPost, org, orgPath(org, "ownership-transfer", "confirm"), nil)
+}
+
+// AuditRetention returns how many days audit events are kept (1-90).
+func (u *ManagementUser) AuditRetention(ctx context.Context, org string) (int, error) {
+	r, err := get[auditRetention](ctx, u, org, orgPath(org, "audit-retention"), nil)
+	if err != nil {
+		return 0, err
+	}
+	return r.Days, nil
+}
+
+// SetAuditRetention sets how many days audit events are kept (1-90).
+func (u *ManagementUser) SetAuditRetention(ctx context.Context, org string, days int) (int, error) {
+	r, err := send[auditRetention](ctx, u, http.MethodPut, org, orgPath(org, "audit-retention"), auditRetention{days})
+	if err != nil {
+		return 0, err
+	}
+	return r.Days, nil
+}
+
+type auditRetention struct {
+	Days int `json:"days"`
+}
+
+// AuditEvents lists audit events, newest first, within the retention.
+func (u *ManagementUser) AuditEvents(ctx context.Context, org string, opts PageOptions) (*Page[AuditEvent], error) {
+	return get[Page[AuditEvent]](ctx, u, org, orgPath(org, "audit-events"), opts.query())
+}

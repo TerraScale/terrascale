@@ -63,7 +63,7 @@ func (s Service) Detail(ctx context.Context, p core.Principal, databaseID string
 	}
 	org := a.Organizations[p.OrganizationID]
 	canManage := org.CanManage(p.UserID)
-	info := makeDetailInfo(s.deps.Demo, p, a, project, db, canManage, canManage && org.CanProvisionResources(p.UserID))
+	info := makeDetailInfo(s.deps.LocalResources(), p, a, project, db, canManage, canManage && org.CanProvisionResources(p.UserID))
 	detail := databaseDetail{
 		databaseView: view(db), Endpoint: db.Endpoint, Collections: info.Collections, Documents: info.Documents,
 		BackupsEnabled: info.BackupsEnabled, BackupRetentionDays: db.BackupRetentionDays, CanManage: canManage, CanBranch: info.CanBranch,
@@ -105,7 +105,7 @@ func (s Service) Create(ctx context.Context, p core.Principal, name string, regi
 		ID: core.NewID("db"), ProjectID: p.ProjectID, Name: name, Region: codes[0], Regions: codes, Status: "provisioning",
 		CreatedAt: time.Now().UTC(), Documents: make(map[string]map[string][]byte),
 	}
-	if s.deps.Demo {
+	if s.deps.LocalResources() {
 		db.Status = "ready"
 	}
 	// The store refuses the commit with core.ErrDatabaseLimit when the plan's
@@ -135,7 +135,7 @@ func (s Service) Create(ctx context.Context, p core.Principal, name string, regi
 	if err != nil {
 		return databaseView{}, err
 	}
-	if s.deps.Demo {
+	if s.deps.LocalResources() {
 		return view(db), nil
 	}
 	// The record is committed, so its outcome is saved even when the request
@@ -187,7 +187,7 @@ func (s Service) Branch(ctx context.Context, p core.Principal, sourceID, name st
 		return databaseView{}, errNotReady
 	}
 	branch := core.Database{ID: core.NewID("db"), ProjectID: project.ID, Name: name, Region: source.Region, Regions: slices.Clone(databaseRegions(source)), Status: "provisioning", CreatedAt: time.Now().UTC()}
-	if s.deps.Demo {
+	if s.deps.LocalResources() {
 		branch.Status = "ready"
 	}
 	err = s.deps.Store.UpdateAs(ctx, p, func(a *core.Account) error {
@@ -211,7 +211,7 @@ func (s Service) Branch(ctx context.Context, p core.Principal, sourceID, name st
 				return fmt.Errorf("%w: database %q already exists", core.ErrConflict, name)
 			}
 		}
-		if s.deps.Demo {
+		if s.deps.LocalResources() {
 			branch.Documents = core.CloneDocuments(current.Documents)
 			branch.Schemas = core.CloneSchemas(current.Schemas)
 			branch.Indexes = core.CloneIndexes(current.Indexes)
@@ -225,7 +225,7 @@ func (s Service) Branch(ctx context.Context, p core.Principal, sourceID, name st
 	if err != nil {
 		return databaseView{}, err
 	}
-	if s.deps.Demo {
+	if s.deps.LocalResources() {
 		return view(branch), nil
 	}
 	// The record is committed, so its outcome is saved even when the request
@@ -264,7 +264,7 @@ func (s Service) Delete(ctx context.Context, p core.Principal, databaseID, confi
 	if provisioning(db.Status) {
 		return errProvisioning
 	}
-	if !s.deps.Demo {
+	if !s.deps.LocalResources() {
 		client, err := s.deps.DataPlane(p)
 		if err != nil {
 			return err

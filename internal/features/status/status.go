@@ -2,8 +2,10 @@
 package status
 
 import (
+	"context"
 	"encoding/json/v2"
 	"net/http"
+	"time"
 
 	"terrascale.tech/dashboard/internal/core"
 	"terrascale.tech/dashboard/internal/platform/buildinfo"
@@ -14,19 +16,37 @@ import (
 type probe struct {
 	Status  string `json:"status"`
 	Version string `json:"version"`
+	Backend string `json:"backend"`
+}
+
+type Options struct {
+	Backend string
+	Check   func(context.Context) error
 }
 
 // Mount registers the liveness and readiness probes used by the platform.
-func Mount(mux *http.ServeMux, deps core.Deps) {
-	ok := probeBody("ok")
-	unavailable := probeBody("unavailable")
+func Mount(mux *http.ServeMux, deps core.Deps, options ...Options) {
+	opts := Options{Backend: "memstore"}
+	if len(options) > 0 {
+		opts = options[0]
+	}
+	ok := probeBody("ok", opts.Backend)
+	unavailable := probeBody("unavailable", opts.Backend)
 	live := func(w http.ResponseWriter, _ *http.Request) {
 		writeStatus(w, http.StatusOK, ok)
 	}
-	ready := func(w http.ResponseWriter, _ *http.Request) {
+	ready := func(w http.ResponseWriter, r *http.Request) {
 		if deps.Store == nil {
 			writeStatus(w, http.StatusServiceUnavailable, unavailable)
 			return
+		}
+		if opts.Check != nil {
+			ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+			defer cancel()
+			if err := opts.Check(ctx); err != nil {
+				writeStatus(w, http.StatusServiceUnavailable, unavailable)
+				return
+			}
 		}
 		writeStatus(w, http.StatusOK, ok)
 	}
@@ -38,8 +58,8 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 
 // probeBody prebuilds a probe response once; the build version never changes
 // while the process runs.
-func probeBody(status string) []byte {
-	body, err := json.Marshal(probe{Status: status, Version: buildinfo.Version()})
+func probeBody(status, backend string) []byte {
+	body, err := json.Marshal(probe{Status: status, Version: buildinfo.Version(), Backend: backend})
 	if err != nil {
 		panic("status: encode probe: " + err.Error())
 	}

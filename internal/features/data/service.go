@@ -16,6 +16,7 @@ import (
 
 	"terrascale.tech/dashboard/internal/core"
 	sdk "terrascale.tech/sdk"
+	"terrascale.tech/sdk/v1"
 )
 
 const (
@@ -179,20 +180,24 @@ func (s Service) Collections(ctx context.Context, p core.Principal, databaseID s
 	if err != nil {
 		return nil, err
 	}
-	if s.deps.Demo {
+	if s.deps.LocalResources() {
 		names := slices.Concat(slices.Collect(maps.Keys(db.Documents)), slices.Collect(maps.Keys(db.Schemas)), slices.Collect(maps.Keys(db.Indexes)))
 		slices.Sort(names)
 		return slices.Compact(names), nil
 	}
-	client, err := s.deps.DataPlane(p)
+	client, err := s.deps.Documents(p, db.Name)
 	if err != nil {
 		return nil, err
 	}
-	page, err := client.Databases.ListCollections(ctx, db.Name, sdk.PageRequest{})
+	page, err := client.Collections(ctx, v1.ListOptions{Limit: 200})
 	if err != nil {
 		return nil, core.ProviderError{Action: "collection list", Err: err}
 	}
-	return page.Collections, nil
+	names := make([]string, 0, len(page.Items))
+	for _, item := range page.Items {
+		names = append(names, item.Name)
+	}
+	return names, nil
 }
 
 // Documents lists one page of a collection, ordered by ID and filtered by a
@@ -206,7 +211,7 @@ func (s Service) Documents(ctx context.Context, p core.Principal, databaseID str
 		return nil, core.Invalid("limit must be 1 to 100")
 	}
 	var docs []documentView
-	if s.deps.Demo {
+	if s.deps.LocalResources() {
 		for id, body := range db.Documents[query.Collection] {
 			if query.After == "" || id > query.After {
 				docs = append(docs, documentView{ID: id, Value: jsontext.Value(body).Clone()})
@@ -214,16 +219,16 @@ func (s Service) Documents(ctx context.Context, p core.Principal, databaseID str
 		}
 		slices.SortFunc(docs, func(a, b documentView) int { return strings.Compare(a.ID, b.ID) })
 	} else {
-		client, err := s.deps.DataPlane(p)
+		client, err := s.deps.Documents(p, db.Name)
 		if err != nil {
 			return nil, err
 		}
-		page, err := client.Documents.List(ctx, db.Name, query.Collection, cmp.Or(query.Limit, maxListLimit), query.After)
+		page, err := client.Collection(query.Collection).List(ctx, v1.ListOptions{Limit: cmp.Or(query.Limit, maxListLimit), Cursor: query.After})
 		if err != nil {
 			return nil, core.ProviderError{Action: "document list", Err: err}
 		}
-		for _, row := range page.Documents {
-			docs = append(docs, documentView{ID: row.ID, Value: jsontext.Value(row.Value)})
+		for _, row := range page.Items {
+			docs = append(docs, documentView{ID: row.ID, Value: jsontext.Value(row.Document)})
 		}
 	}
 	if search := strings.ToLower(strings.TrimSpace(query.Search)); search != "" {
@@ -243,22 +248,22 @@ func (s Service) Document(ctx context.Context, p core.Principal, databaseID, col
 	if err != nil {
 		return documentView{}, err
 	}
-	if s.deps.Demo {
+	if s.deps.LocalResources() {
 		body, ok := db.Documents[collection][id]
 		if !ok {
 			return documentView{}, fmt.Errorf("%w: document %q", core.ErrNotFound, id)
 		}
 		return documentView{ID: id, Value: jsontext.Value(body).Clone()}, nil
 	}
-	client, err := s.deps.DataPlane(p)
+	client, err := s.deps.Documents(p, db.Name)
 	if err != nil {
 		return documentView{}, err
 	}
-	document, err := client.Documents.Get(ctx, db.Name, collection, id)
+	document, err := client.Collection(collection).Get(ctx, id)
 	if err != nil {
 		return documentView{}, core.ProviderError{Action: "document read", Err: err}
 	}
-	return documentView{ID: id, Value: jsontext.Value(document.Body)}, nil
+	return documentView{ID: id, Value: jsontext.Value(document.Document)}, nil
 }
 
 // WriteDocument creates, replaces, merge-patches, or deletes one document and
@@ -286,25 +291,32 @@ func (s Service) WriteDocument(ctx context.Context, p core.Principal, databaseID
 		return documentWrite{}, core.Invalid("document must be valid JSON within 1 MiB")
 	}
 	result := documentWrite{ID: id, Operation: operation}
-	if s.deps.Demo {
+	if s.deps.LocalResources() {
 		return result, s.updateDatabase(ctx, p, db.ID, core.Organization.CanWrite, func(current *core.Database) error {
 			return writeDemoDocument(current, collection, operation, id, body)
 		})
 	}
-	client, err := s.deps.DataPlane(p)
+	client, err := s.deps.Documents(p, db.Name)
 	if err != nil {
 		return documentWrite{}, err
 	}
-	opts := []sdk.RequestOption{sdk.WithIdempotencyKey(core.NewID("docop"))}
+	var opts []v1.WriteOption
+	if operation != "create" {
+		current, readErr := client.Collection(collection).Get(ctx, id)
+		if readErr != nil {
+			return documentWrite{}, core.ProviderError{Action: "document read", Err: readErr}
+		}
+		opts = append(opts, v1.IfMatch(current.Version))
+	}
 	switch operation {
 	case "create":
-		_, err = client.Documents.Create(ctx, db.Name, collection, id, stdjson.RawMessage(body), opts...)
+		_, err = client.Collection(collection).Put(ctx, id, stdjson.RawMessage(body), v1.IfNoneMatchAny())
 	case "replace":
-		_, err = client.Documents.Put(ctx, db.Name, collection, id, stdjson.RawMessage(body), opts...)
+		_, err = client.Collection(collection).Put(ctx, id, stdjson.RawMessage(body), opts...)
 	case "patch":
-		_, err = client.Documents.Patch(ctx, db.Name, collection, id, stdjson.RawMessage(body), opts...)
+		_, err = client.Collection(collection).Patch(ctx, id, v1.MergePatch(stdjson.RawMessage(body)), opts...)
 	case "delete":
-		err = client.Documents.Delete(ctx, db.Name, collection, id, opts...)
+		_, err = client.Collection(collection).Delete(ctx, id, opts...)
 	}
 	if err != nil {
 		return documentWrite{}, core.ProviderError{Action: "document " + operation, Err: err}
@@ -361,7 +373,7 @@ func (s Service) History(ctx context.Context, p core.Principal, databaseID, coll
 	if err != nil {
 		return nil, err
 	}
-	if s.deps.Demo {
+	if s.deps.LocalResources() {
 		versions := db.DocumentHistory[collection][id]
 		entries := make([]historyEntry, 0, len(versions))
 		for i, version := range versions {
@@ -374,19 +386,8 @@ func (s Service) History(ctx context.Context, p core.Principal, databaseID, coll
 		}
 		return entries, nil
 	}
-	client, err := s.deps.DataPlane(p)
-	if err != nil {
-		return nil, err
-	}
-	live, err := client.Documents.History(ctx, db.Name, collection, id)
-	if err != nil {
-		return nil, core.ProviderError{Action: "document history", Err: err}
-	}
-	entries := make([]historyEntry, 0, len(live))
-	for _, entry := range live {
-		entries = append(entries, historyEntry{Revision: entry.Revision, Deleted: entry.Deleted})
-	}
-	return entries, nil
+	// TODO(TS-463): Documents v1 has no document history endpoint.
+	return nil, core.ErrUnavailable
 }
 
 // Schema returns a collection's schema as JSON, in the shape SetSchema
@@ -396,7 +397,7 @@ func (s Service) Schema(ctx context.Context, p core.Principal, databaseID, colle
 	if err != nil {
 		return nil, err
 	}
-	if s.deps.Demo {
+	if s.deps.LocalResources() {
 		body, ok := db.Schemas[collection]
 		if !ok {
 			return nil, fmt.Errorf("%w: no schema for collection %q", core.ErrNotFound, collection)
@@ -428,7 +429,7 @@ func (s Service) SetSchema(ctx context.Context, p core.Principal, databaseID, co
 	if len(body) == 0 || len(body) > maxSchemaBytes || json.Unmarshal(body, &schema) != nil || schema.Name != collection || schema.Validate() != nil {
 		return core.Invalid("schema must be valid JSON for the selected collection, with name equal to the collection")
 	}
-	if s.deps.Demo {
+	if s.deps.LocalResources() {
 		return s.updateDatabase(ctx, p, db.ID, core.Organization.CanManage, func(current *core.Database) error {
 			if current.Schemas == nil {
 				current.Schemas = make(map[string][]byte)
@@ -457,7 +458,7 @@ func (s Service) Indexes(ctx context.Context, p core.Principal, databaseID, coll
 	if err != nil {
 		return nil, err
 	}
-	if s.deps.Demo {
+	if s.deps.LocalResources() {
 		indexes := make([]indexView, 0, len(db.Indexes[collection]))
 		for _, field := range db.Indexes[collection] {
 			state := "ready"
@@ -498,7 +499,7 @@ func (s Service) CreateIndex(ctx context.Context, p core.Principal, databaseID, 
 	if field == "" || len(field) > 128 {
 		return core.Invalid("index fields use 1-128 characters")
 	}
-	if s.deps.Demo {
+	if s.deps.LocalResources() {
 		return s.updateDatabase(ctx, p, db.ID, core.Organization.CanManage, func(current *core.Database) error {
 			if current.Indexes == nil {
 				current.Indexes = make(map[string][]string)
@@ -550,7 +551,7 @@ func (s Service) ApplyRecommendation(ctx context.Context, p core.Principal, data
 	if (collection != "" && !validCollection(collection)) || recommendationID == "" || len(recommendationID) > 128 {
 		return recommendationResult{}, core.Invalid("a recommendation ID and valid collection are required")
 	}
-	if !s.deps.Demo {
+	if !s.deps.LocalResources() {
 		return recommendationResult{}, errDemoOnly
 	}
 	var result recommendationResult
@@ -628,7 +629,7 @@ func (s Service) Migration(ctx context.Context, p core.Principal, databaseID, co
 	if !validCollection(collection) {
 		return nil, core.Invalid("collection names use 1-128 characters without slashes or line breaks")
 	}
-	if !s.deps.Demo {
+	if !s.deps.LocalResources() {
 		return nil, nil
 	}
 	return marioIndexMigration(a, p, db, collection), nil
@@ -665,7 +666,7 @@ func (s Service) RunSQL(ctx context.Context, p core.Principal, databaseID, state
 	}
 	var result any
 	var table sqlResult
-	if s.deps.Demo {
+	if s.deps.LocalResources() {
 		rows, matched, err := demoSelect(db, statement)
 		if err != nil {
 			return sqlRun{}, err
@@ -675,15 +676,8 @@ func (s Service) RunSQL(ctx context.Context, p core.Principal, databaseID, state
 		}{Rows: rows}
 		table = newSQLResult(rows, matched)
 	} else {
-		client, err := s.deps.DataPlane(p)
-		if err != nil {
-			return sqlRun{}, err
-		}
-		live, err := client.ExecuteSQL(ctx, db.Name, statement, nil)
-		if err != nil {
-			return sqlRun{}, core.ProviderError{Action: "SQL query", Err: err}
-		}
-		result, table = live, liveResult(live)
+		// TODO(TS-463): Documents v1 has no SQL execution endpoint.
+		return sqlRun{}, core.ErrUnavailable
 	}
 	encoded, err := json.Marshal(result)
 	return sqlRun{JSON: jsontext.Value(encoded), Table: table}, err

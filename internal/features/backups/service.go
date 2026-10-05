@@ -152,7 +152,7 @@ func (s Service) List(ctx context.Context, p core.Principal, databaseID string) 
 	if err != nil {
 		return backupListing{}, err
 	}
-	if !s.deps.Demo {
+	if !s.deps.LocalResources() {
 		client, err := s.deps.DataPlane(p)
 		if err != nil {
 			return backupListing{}, err
@@ -177,7 +177,7 @@ func (s Service) Create(ctx context.Context, p core.Principal, databaseID string
 	if err != nil {
 		return backupView{}, err
 	}
-	if !s.deps.Demo {
+	if !s.deps.LocalResources() {
 		return backupView{}, ErrUnavailable
 	}
 	var created core.Backup
@@ -212,7 +212,7 @@ func (s Service) SetPolicy(ctx context.Context, p core.Principal, databaseID str
 	if err != nil {
 		return core.BackupPolicy{}, err
 	}
-	if !s.deps.Demo {
+	if !s.deps.LocalResources() {
 		return core.BackupPolicy{}, ErrUnavailable
 	}
 	saved := core.BackupPolicy{
@@ -256,7 +256,7 @@ func (s Service) Restore(ctx context.Context, p core.Principal, databaseID strin
 		return restoreResult{}, core.Invalid("restore timestamp must not be negative")
 	}
 	target := core.Database{ID: core.NewID("db"), ProjectID: p.ProjectID, Region: db.Region, Regions: slices.Clone(db.Regions), Status: "provisioning", CreatedAt: time.Now().UTC()}
-	if s.deps.Demo {
+	if s.deps.LocalResources() {
 		target.Status = "ready"
 	}
 	err = s.update(ctx, p, core.Organization.CanProvisionResources, func(a *core.Account, project *core.Project) error {
@@ -273,7 +273,7 @@ func (s Service) Restore(ctx context.Context, p core.Principal, databaseID strin
 				return fmt.Errorf("%w: database %q already exists", core.ErrConflict, target.Name)
 			}
 		}
-		if s.deps.Demo {
+		if s.deps.LocalResources() {
 			index := slices.IndexFunc(current.Backups, func(b core.Backup) bool { return b.ID == in.BackupID && b.Status == "ready" })
 			if index < 0 {
 				return errBackupMissing
@@ -291,7 +291,7 @@ func (s Service) Restore(ctx context.Context, p core.Principal, databaseID strin
 		return restoreResult{}, err
 	}
 	result := restoreResult{DatabaseID: target.ID, Name: target.Name, Status: target.Status}
-	if s.deps.Demo {
+	if s.deps.LocalResources() {
 		return result, nil
 	}
 	// The restore record is committed, so its outcome is saved even when the

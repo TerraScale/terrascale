@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net/http"
 	"net/url"
 	"os"
 	"strings"
@@ -13,15 +14,21 @@ import (
 const defaultStatusURL = "https://status.terrascale.tech/api/v2/summary.json"
 
 type Config struct {
-	PublicURL      string
-	Addr           string
-	Demo           bool
-	Dev            bool
-	SecureCookies  bool
-	AdminEmail     string
-	AdminPassword  string
-	SDKBaseURL     string
-	SDKAccessToken string
+	PublicURL          string
+	Addr               string
+	Demo               bool
+	Dev                bool
+	SecureCookies      bool
+	AdminEmail         string
+	AdminPassword      string
+	SDKBaseURL         string
+	SDKAccessToken     string
+	TerraBaseURL       string
+	TerraBaseAPIKey    string
+	TerraBaseProjectID string
+	TerraBaseDatabase  string
+	// TerraBaseHTTPClient supplies the trusted local release certificate in tests.
+	TerraBaseHTTPClient *http.Client
 	// StatusURL is the Statuspage-compatible summary.json the shell banner
 	// reads; empty disables the banner.
 	StatusURL string
@@ -49,18 +56,28 @@ const minCSRFSecret = 32
 
 func Load() (Config, error) {
 	c := Config{
-		PublicURL:         strings.TrimRight(strings.TrimSpace(os.Getenv("DASHBOARD_PUBLIC_URL")), "/"),
-		Addr:              strings.TrimSpace(os.Getenv("DASHBOARD_ADDR")),
-		Demo:              os.Getenv("TS_DASHBOARD_PRODUCTION_DEMO") == "1",
-		Dev:               os.Getenv("DASHBOARD_DEV") == "1",
-		AdminEmail:        strings.TrimSpace(os.Getenv("DASHBOARD_DEMO_ADMIN_EMAIL")),
-		AdminPassword:     os.Getenv("DASHBOARD_DEMO_ADMIN_PASSWORD"),
-		SDKBaseURL:        strings.TrimSpace(os.Getenv("TS_API_BASE_URL")),
-		SDKAccessToken:    os.Getenv("TS_API_ACCESS_TOKEN"),
-		SentryDSN:         strings.TrimSpace(os.Getenv("SENTRY_DSN")),
-		SentryEnvironment: strings.TrimSpace(os.Getenv("SENTRY_ENVIRONMENT")),
-		CSPReportURL:      strings.TrimSpace(os.Getenv("DASHBOARD_CSP_REPORT_URL")),
+		PublicURL:          strings.TrimRight(strings.TrimSpace(os.Getenv("DASHBOARD_PUBLIC_URL")), "/"),
+		Addr:               strings.TrimSpace(os.Getenv("DASHBOARD_ADDR")),
+		Demo:               os.Getenv("TS_DASHBOARD_PRODUCTION_DEMO") == "1",
+		Dev:                os.Getenv("DASHBOARD_DEV") == "1",
+		AdminEmail:         strings.TrimSpace(os.Getenv("DASHBOARD_DEMO_ADMIN_EMAIL")),
+		AdminPassword:      os.Getenv("DASHBOARD_DEMO_ADMIN_PASSWORD"),
+		SDKBaseURL:         strings.TrimSpace(os.Getenv("TS_API_BASE_URL")),
+		SDKAccessToken:     os.Getenv("TS_API_ACCESS_TOKEN"),
+		TerraBaseURL:       strings.TrimSpace(os.Getenv("TERRABASE_URL")),
+		TerraBaseAPIKey:    strings.TrimSpace(os.Getenv("TERRABASE_API_KEY")),
+		TerraBaseProjectID: strings.TrimSpace(os.Getenv("TERRABASE_PROJECT_ID")),
+		TerraBaseDatabase:  strings.TrimSpace(os.Getenv("TERRABASE_DATABASE")),
+		SentryDSN:          strings.TrimSpace(os.Getenv("SENTRY_DSN")),
+		SentryEnvironment:  strings.TrimSpace(os.Getenv("SENTRY_ENVIRONMENT")),
+		CSPReportURL:       strings.TrimSpace(os.Getenv("DASHBOARD_CSP_REPORT_URL")),
 	}
+	if err := c.ValidateBackend(); err != nil {
+		return Config{}, err
+	}
+	// Persistence configuration selects live mode, independently of the old
+	// deployment's demo flag. Unconfigured deployments retain the memory demo.
+	c.Demo = c.TerraBaseURL == ""
 	if c.Addr == "" {
 		c.Addr = ":8080"
 	}
@@ -101,9 +118,6 @@ func Load() (Config, error) {
 	} else if !c.Demo {
 		return Config{}, errors.New("TS_DASHBOARD_CSRF_SECRET is required outside the demo")
 	}
-	if !c.Demo {
-		return Config{}, errors.New("live dashboard persistence is not configured; set TS_DASHBOARD_PRODUCTION_DEMO=1")
-	}
 	c.SecureCookies = os.Getenv("DASHBOARD_SECURE_COOKIES") == "1" ||
 		(os.Getenv("DASHBOARD_SECURE_COOKIES") != "0" && !c.Dev &&
 			(strings.HasPrefix(c.PublicURL, "https://") || os.Getenv("FLY_APP_NAME") != ""))
@@ -116,4 +130,20 @@ func Load() (Config, error) {
 		return Config{}, errors.New("demo admin email and password must both be set")
 	}
 	return c, nil
+}
+
+// ValidateBackend rejects partial configuration rather than silently losing
+// state in memory. The SDK validates the origin and key before app startup.
+func (c Config) ValidateBackend() error {
+	values := []string{c.TerraBaseURL, c.TerraBaseAPIKey, c.TerraBaseProjectID, c.TerraBaseDatabase}
+	configured := 0
+	for _, value := range values {
+		if value != "" {
+			configured++
+		}
+	}
+	if configured != 0 && configured != len(values) {
+		return errors.New("TERRABASE_URL, TERRABASE_API_KEY, TERRABASE_PROJECT_ID and TERRABASE_DATABASE must all be set")
+	}
+	return nil
 }

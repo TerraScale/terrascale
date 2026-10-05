@@ -69,19 +69,23 @@ func (d *tsAuthEndpointDiscovery) resolve(ctx context.Context, client *http.Clie
 		return nil, errors.New("Atlas auth discovery response is too large")
 	}
 	var doc struct {
-		Version        int `json:"v"`
-		RefreshSeconds int `json:"refreshSeconds"`
-		Endpoints      []struct {
-			Region string `json:"region"`
-			URL    string `json:"url"`
-		} `json:"endpoints"`
+		Version        int               `json:"v"`
+		RefreshSeconds int               `json:"refreshSeconds"`
+		Endpoints      []json.RawMessage `json:"endpoints"`
 	}
-	if err := json.Unmarshal(data, &doc); err != nil || doc.Version != 1 || doc.RefreshSeconds < 1 || doc.RefreshSeconds > 3600 || len(doc.Endpoints) < 1 || len(doc.Endpoints) > 20 {
+	if err := oidcDecodeExactJSON(data, &doc, []string{"v", "refreshSeconds", "endpoints"}); err != nil || doc.Version != 1 || doc.RefreshSeconds < 1 || doc.RefreshSeconds > 3600 || len(doc.Endpoints) < 1 || len(doc.Endpoints) > 20 {
 		return nil, errors.New("Atlas auth discovery response is invalid")
 	}
 	bases := make([]string, 0, len(doc.Endpoints))
 	seen := make(map[string]bool, len(doc.Endpoints))
-	for _, endpoint := range doc.Endpoints {
+	for _, rawEndpoint := range doc.Endpoints {
+		var endpoint struct {
+			Region string `json:"region"`
+			URL    string `json:"url"`
+		}
+		if err := oidcDecodeExactJSON(rawEndpoint, &endpoint, []string{"region", "url"}); err != nil {
+			return nil, errors.New("Atlas auth endpoint JSON is invalid")
+		}
 		if !IsRegionCode(endpoint.Region) || seen[endpoint.Region] {
 			return nil, errors.New("Atlas auth endpoint has an invalid region")
 		}

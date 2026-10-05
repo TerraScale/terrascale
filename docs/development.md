@@ -176,7 +176,19 @@ accounts and sessions must remain on one machine and do not survive restarts.
 while idle, so preview accounts are reset when it wakes. Both configurations
 probe `GET /health/ready` and set `TS_DASHBOARD_PRODUCTION_DEMO=1`.
 
-The health probes answer `{"status":"ok","version":"<commit>"}`; the status
+### State backend
+
+`TERRABASE_URL`, `TERRABASE_API_KEY`, `TERRABASE_PROJECT_ID` and
+`TERRABASE_DATABASE` (all four, or none) select the TerraBase Documents store;
+it then also needs a stable `TS_DASHBOARD_CSRF_SECRET` of at least 32 bytes.
+Unset, the dashboard keeps the in-memory store above. The operator command
+`dashboard import-org` additionally reads `TERRABASE_MANAGEMENT_URL`,
+`TERRABASE_MANAGEMENT_CREDENTIAL` and `TERRABASE_MANAGEMENT_USER_ID`. See
+[terrabase-cutover.md](terrabase-cutover.md).
+
+The health probes answer `{"status":"ok","version":"<commit>","backend":"memstore"}`
+(`terrabase` when configured; readiness then reads TerraBase and answers 503
+when it is unreachable); the status
 page records a deploy marker whenever the version changes. The deploy
 workflows pass the commit as the `VERSION` build argument, which the
 Dockerfile links into `internal/platform/buildinfo`; builds without it report

@@ -12,7 +12,7 @@ require (
 	github.com/starfederation/datastar-go v1.2.2
 	github.com/stripe/stripe-go/v86 v86.4.2
 	golang.org/x/net v0.56.0
-	terrascale.tech/sdk v0.0.0-20260930023159-430cb6624fa8
+	terrascale.tech/sdk v0.0.0-20261005130518-b911817c6e63
 )
 
 require (
@@ -20,11 +20,13 @@ require (
 	github.com/andybalholm/brotli v1.2.0 // indirect
 	github.com/cenkalti/backoff/v4 v4.3.0 // indirect
 	github.com/cli/browser v1.3.0 // indirect
-	github.com/coder/websocket v1.8.15 // indirect
 	github.com/deckarep/golang-set/v2 v2.8.0 // indirect
 	github.com/fatih/color v1.16.0 // indirect
 	github.com/fsnotify/fsnotify v1.7.0 // indirect
 	github.com/go-stack/stack v1.8.1 // indirect
+	github.com/jackc/pgpassfile v1.0.0 // indirect
+	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
+	github.com/jackc/pgx/v5 v5.9.2 // indirect
 	github.com/klauspost/compress v1.18.0 // indirect
 	github.com/klauspost/cpuid/v2 v2.0.12 // indirect
 	github.com/mattn/go-colorable v0.1.13 // indirect
@@ -48,4 +50,4 @@ tool github.com/a-h/templ/cmd/templ
 
 // The SDK declares this vanity module path, which does not yet serve go-import
 // metadata. Resolve the pinned source through its public Forgejo repository.
-replace terrascale.tech/sdk => git.terrascale.tech/TerraScale/ts-go v0.0.0-20260930023159-430cb6624fa8
+replace terrascale.tech/sdk => git.terrascale.tech/TerraScale/ts-go v0.0.0-20261005130518-b911817c6e63

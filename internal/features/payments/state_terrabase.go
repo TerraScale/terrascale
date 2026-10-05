@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"terrascale.tech/dashboard/internal/core"
-	sdk "terrascale.tech/sdk"
+	"terrascale.tech/sdk/v1"
 )
 
 const (
@@ -17,14 +17,9 @@ const (
 	organizationsCollection = "stripe_organizations"
 )
 
-// terraBaseStateStore keeps Stripe billing state in the dashboard's own
-// TerraBase database through ts-go. Documents are keyed by Stripe customer ID
-// and organization ID, and every write is conditional so concurrent syncs and
-// customer bindings cannot overwrite each other.
-type terraBaseStateStore struct {
-	client     *sdk.Client
-	databaseID string
-}
+// terraBaseStateStore uses the dashboard's dedicated database. Bindings
+// commit atomically; synced customer state uses the loaded document version.
+type terraBaseStateStore struct{ db *v1.Database }
 
 // customerDocument is the stored form of CustomerState. Times are Unix
 // seconds and every field is declared in the collection schema.
@@ -56,97 +51,48 @@ type organizationDocument struct {
 	CustomerID string `json:"customerId"`
 }
 
-func newTerraBaseStateStore(client *sdk.Client, databaseID string) *terraBaseStateStore {
-	return &terraBaseStateStore{client: client, databaseID: databaseID}
+func newTerraBaseStateStore(db *v1.Database) *terraBaseStateStore {
+	return &terraBaseStateStore{db: db}
 }
 
-// EnsureSchema declares both collections. Stripe customer and organization
-// IDs are unique across bindings, so one customer can never serve two tenants.
-func (store *terraBaseStateStore) EnsureSchema(ctx context.Context) error {
-	customers, err := sdk.NewCollection(customersCollection).
-		Field("organizationId", sdk.FieldString, sdk.Required(), sdk.Unique()).
-		Field("subscriptionId", sdk.FieldString).
-		Field("status", sdk.FieldString, sdk.Required()).
-		Field("priceId", sdk.FieldString).
-		Field("planKey", sdk.FieldString).
-		Field("interval", sdk.FieldString).
-		Field("currentPeriodStart", sdk.FieldInt).
-		Field("currentPeriodEnd", sdk.FieldInt).
-		Field("cancelAtPeriodEnd", sdk.FieldBool).
-		Field("pendingPlanKey", sdk.FieldString).
-		Field("pendingInterval", sdk.FieldString).
-		Field("scheduleId", sdk.FieldString).
-		Field("scheduledPlanKey", sdk.FieldString).
-		Field("scheduledInterval", sdk.FieldString).
-		Field("trialUsed", sdk.FieldBool).
-		Field("paymentBrand", sdk.FieldString).
-		Field("paymentLast4", sdk.FieldString).
-		Field("paymentExpMonth", sdk.FieldInt).
-		Field("paymentExpYear", sdk.FieldInt).
-		Field("invoices", sdk.FieldJSON).
-		Field("syncedAt", sdk.FieldInt).
-		Build()
-	if err != nil {
-		return err
-	}
-	organizations, err := sdk.NewCollection(organizationsCollection).
-		Field("customerId", sdk.FieldString, sdk.Required(), sdk.Unique()).
-		Build()
-	if err != nil {
-		return err
-	}
-	for _, schema := range []sdk.CollectionSchema{customers, organizations} {
-		if _, err := store.client.Databases.PutCollectionSchema(ctx, store.databaseID, schema.Name, schema,
-			sdk.WithIdempotencyKey("dashboard-schema:"+schema.Name)); err != nil {
-			return fmt.Errorf("declare %s schema: %w", schema.Name, err)
-		}
-	}
-	return nil
-}
+func billingID(collection, key string) string { return v1.DocumentIDFor(collection, key) }
 
-// BindCustomer writes the organization's binding first and the customer's
-// reverse binding second. Both writes are create-only and an existing binding
-// is accepted when it matches, so binding an already bound organization again
-// restores a reverse binding an interrupted earlier call left missing.
 func (store *terraBaseStateStore) BindCustomer(ctx context.Context, organizationID, customerID string) (string, error) {
 	if organizationID == "" || customerID == "" {
 		return "", ErrInvalidBillingInput
 	}
-	_, err := store.client.Documents.Create(ctx, store.databaseID, organizationsCollection, organizationID,
-		organizationDocument{CustomerID: customerID}, sdk.WithIdempotencyKey("bind:"+organizationID+":"+customerID))
-	if isConflict(err) {
-		// Another request bound this organization first; its customer wins.
-		existing, ok, lookupErr := store.CustomerFor(ctx, organizationID)
-		if lookupErr != nil {
-			return "", lookupErr
-		}
-		if !ok {
-			return "", core.ErrConflict
-		}
-		customerID, err = existing, nil
-	}
+	existing, found, err := store.CustomerFor(ctx, organizationID)
 	if err != nil {
 		return "", err
 	}
-	// The reverse binding starts empty and is filled by the first sync; its
-	// create-only write fails if the customer already serves another tenant.
-	_, err = store.client.Documents.Create(ctx, store.databaseID, customersCollection, customerID,
-		customerDocument{OrganizationID: organizationID, Status: StatusNone},
-		sdk.WithIdempotencyKey("bind-customer:"+customerID))
+	if found {
+		owner, bound, err := store.OrganizationFor(ctx, existing)
+		if err != nil {
+			return "", err
+		}
+		if !bound || owner != organizationID {
+			return "", core.ErrConflict
+		}
+		return existing, nil
+	}
+	_, err = store.db.Tx().
+		Create(organizationsCollection, billingID(organizationsCollection, organizationID), organizationDocument{CustomerID: customerID}).
+		Create(customersCollection, billingID(customersCollection, customerID), customerDocument{OrganizationID: organizationID, Status: StatusNone}).Commit(ctx)
+	if err == nil {
+		return customerID, nil
+	}
 	if isConflict(err) {
-		boundTo, ok, lookupErr := store.OrganizationFor(ctx, customerID)
+		// A confirmed precondition failure committed nothing. Resolve the winner.
+		existing, found, lookupErr := store.CustomerFor(ctx, organizationID)
 		if lookupErr != nil {
 			return "", lookupErr
 		}
-		if !ok || boundTo != organizationID {
-			return "", core.ErrConflict
+		if found {
+			return existing, nil
 		}
-		err = nil
+		return "", core.ErrConflict
 	}
-	if err != nil {
-		return "", err
-	}
-	return customerID, nil
+	return "", fmt.Errorf("%w: bind Stripe customer: %w", core.ErrUnavailable, err)
 }
 
 func (store *terraBaseStateStore) CustomerFor(ctx context.Context, organizationID string) (string, bool, error) {
@@ -163,44 +109,47 @@ func (store *terraBaseStateStore) OrganizationFor(ctx context.Context, customerI
 
 func (store *terraBaseStateStore) Load(ctx context.Context, customerID string) (CustomerState, string, error) {
 	var document customerDocument
-	found, etag, err := store.get(ctx, customersCollection, customerID, &document)
+	found, version, err := store.get(ctx, customersCollection, customerID, &document)
 	if err != nil || !found {
 		return CustomerState{}, "", err
 	}
-	return document.state(customerID), etag, nil
+	return document.state(customerID), version, nil
 }
 
 func (store *terraBaseStateStore) Save(ctx context.Context, state CustomerState, version string) error {
-	condition := sdk.WithCreateOnly()
+	condition := v1.IfNoneMatchAny()
 	if version != "" {
-		condition = sdk.WithIfMatch(version)
+		condition = v1.IfMatch(version)
 	}
-	_, err := store.client.Documents.Put(ctx, store.databaseID, customersCollection, state.CustomerID,
-		documentFromState(state), condition, sdk.WithIdempotencyKey(core.NewID("sync")))
+	_, err := store.db.Collection(customersCollection).Put(ctx, billingID(customersCollection, state.CustomerID), documentFromState(state), condition)
 	if isConflict(err) {
 		return ErrStaleState
 	}
-	return err
+	if err != nil {
+		return fmt.Errorf("%w: save Stripe state: %w", core.ErrUnavailable, err)
+	}
+	return nil
 }
 
-// get decodes one document, reporting false for a missing document.
 func (store *terraBaseStateStore) get(ctx context.Context, collection, id string, target any) (bool, string, error) {
-	document, err := store.client.Documents.Get(ctx, store.databaseID, collection, id)
-	if apiError, ok := errors.AsType[*sdk.APIError](err); ok && apiError.Status == http.StatusNotFound {
+	document, err := store.db.Collection(collection).Get(ctx, billingID(collection, id))
+	if apiError, ok := errors.AsType[*v1.APIError](err); ok && apiError.Status == http.StatusNotFound {
 		return false, "", nil
 	}
 	if err != nil {
-		return false, "", err
+		return false, "", fmt.Errorf("%w: read Stripe state: %w", core.ErrUnavailable, err)
 	}
-	if err := json.Unmarshal(document.Body, target); err != nil {
-		return false, "", fmt.Errorf("decode %s/%s: %w", collection, id, err)
+	if document.State != v1.StateValue {
+		return false, "", core.ErrUnavailable
 	}
-	return true, document.ETag, nil
+	if err := json.Unmarshal(document.Document, target); err != nil {
+		return false, "", fmt.Errorf("%w: decode %s/%s: %w", core.ErrUnavailable, collection, id, err)
+	}
+	return true, document.Version, nil
 }
 
-// isConflict reports a failed create-only or If-Match precondition.
 func isConflict(err error) bool {
-	apiError, ok := errors.AsType[*sdk.APIError](err)
+	apiError, ok := errors.AsType[*v1.APIError](err)
 	return ok && (apiError.Status == http.StatusConflict || apiError.Status == http.StatusPreconditionFailed)
 }
 

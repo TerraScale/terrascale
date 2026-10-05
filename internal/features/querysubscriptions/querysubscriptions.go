@@ -134,7 +134,7 @@ func formPrincipal(w http.ResponseWriter, r *http.Request, deps core.Deps) (core
 	if !ok {
 		return core.Principal{}, false
 	}
-	if !deps.Demo {
+	if !deps.LocalResources() {
 		writeError(w, errLive)
 		return core.Principal{}, false
 	}

@@ -1,225 +1,267 @@
 # TerraScale Go SDK (`terrascale.tech/sdk`)
 
-Go SDK for the TerraScale public API. The package provides document CRUD,
-typed schema and SQL builders, parameterized SQL execution, reactive
-subscribe/execute with checkpoints and typed resets, discovery-driven regional
-routing, tenant-scoped authorization and leases, database management, durable
-imports and exports, and auth persistence.
+Package `v1` is the TerraBase client: documents, collections, queries and
+transactions with an API key, and the Management API for the dashboard
+backend. The root package holds the product clients, hosted TSAuth clients and
+the pure schema and SQL builders.
 
-## Atlas discovery and regional routing (ADR 0050)
+## TerraBase v1 client (`terrascale.tech/sdk/v1`)
 
-Routing follows the ADR 0050 discovery-first flow:
+Package `v1` talks to the C# TerraBase server: the Documents API v1 and the
+Management API (terrabase `docs/decisions/0004-document-api-v1.md` and
+`docs/management-api.md`). A database is addressed by its project id and name;
+the API key's organization selects the tenant.
 
-- **Database-scoped requests** (`/api/v1/databases/{name}/…`) first resolve
-  the database's eligible regional endpoints with one metadata GET,
-  `https://atlas.terrascale.tech/api/v1/discovery?database=…&branch=main`,
-  then connect directly to the selected `<region>.api.terrascale.tech`
-  member. Documents are cached per routing scope (origin, database, branch,
-  project, tenant) for the document's `refreshSeconds` (clamped to 60–3600s);
-  concurrent lookups for one scope share a single request. The selected
-  region is sticky across refreshes while it stays eligible; a request picks
-  the first endpoint whose capabilities cover the operation (`write` for
-  mutations, `read` otherwise). A transport error or a Cloudflare 52x/503
-  against a regional endpoint demotes that endpoint behind the alternatives
-  for safe reads and idempotency-keyed mutations. Measured latency is fed
-  back into ranking: every successful request to a discovered regional
-  endpoint updates a per-region EWMA (60 s halflife) that travels as the
-  `X-TerraScale-Region-Rtt` header on discovery requests — never to member
-  endpoints — where it outranks geography. Refreshes also send the cached
-  document's revision as the `rev` query parameter for observability and
-  server-side stale detection.
-- **Discovery failure degrades to the region catalog**
-  (`GET https://atlas.terrascale.tech/api/v1/regions`, cached five minutes):
-  the request goes directly to the first available regional host. When the
-  catalog cannot answer either, member routes fail with a typed
-  `*sdk.RoutingError` — they never fall back to a proxy or to the bare
-  product origin.
-- **Product routes** (`/api/v1/organizations…`, `/api/v1/projects…`,
-  `/api/v1/regions/{code}`) target the configured product origin,
-  `api.terrascale.tech`, which the dashboard serves. `/api/v1/regions`
-  exactly is the catalog itself and targets the atlas origin.
-- **Database-less member routes** (for example database create/list and the
-  reactive attach) use the catalog-selected regional endpoint; the reactive
-  attach resolves through the database's discovery scope and its WebSocket
-  dials the regional member origin that minted the view capability.
-- **421 Misdirected Request** keeps the ADR 0043 repair-once contract (safe
-  reads and keyed mutations only) and additionally adopts the member's
-  authoritative placement into the routing cache, scheduling one corrective
-  rediscovery (`stale=1`). `404` never triggers rediscovery.
+```go
+import tb "terrascale.tech/sdk/v1"
 
-Discovery is active when `APIBaseURL` is the public global origin (the
-default) or `DiscoveryBaseURL` is configured. Custom origins, the local
-emulator, and `Affinity: AffinityStrict` keep direct configured routing and
-never discover. `Config.DiscoveryBaseURL` overrides the metadata origin for
-tests and development (loopback dev origins may serve `http` regional
-endpoints); it is independent of `APIBaseURL`.
+c, err := tb.New(tb.Config{BaseURL: "https://gru.terrabase.example", Token: apiKey}) // tb_…
+db := c.Database(projectID, "main")
+_, err = db.Create(ctx)                     // PUT; Created reports a 201
+_, err = db.CreateCollection(ctx, "users") // 409 name_taken when it exists
+cols, err := db.Collections(ctx, tb.ListOptions{Limit: 50})
+users := db.Collection("users")             // also Info and Drop
 
-`PinRegion`/`PreferredRegion` are the explicit region pin and
-`X-TerraScale-Preferred-Region` hint; under discovery the router owns
-stickiness and failover per database scope.
+res, err := users.Create(ctx, map[string]any{"email": "ana@example.com"}) // server UUIDv7
+doc, err := users.Get(ctx, res.ID)
+var body map[string]any
+err = doc.Decode(&body) // numbers decode as json.Number, never float64
 
-## Contract source
+id := tb.DocumentIDFor("users", "ana@example.com") // deterministic UUIDv5 natural key
+_, err = users.Put(ctx, id, body, tb.IfNoneMatchAny())
+_, err = users.Patch(ctx, id, tb.Ops(tb.Inc("/logins", 1), tb.Append("/tags", "beta")), tb.IfMatch(doc.Version))
+_, err = users.Patch(ctx, id, tb.MergePatch(map[string]any{"legacy": nil}))
+_, err = users.Delete(ctx, id, tb.IfMatch(version))
+page, err := users.List(ctx, tb.ListOptions{Cursor: next}) // id order
+```
 
-`CONTRACT_VERSION` is the committed TerraBase contract pin. Contract
-verification requires `CONTRACT_URL`, an immutable versioned package URL, in
-CI. Local development can explicitly use `CONTRACT_SOURCE` for a checked-out
-contract bundle; there is no implicit source fallback. The generator verifies the
-producer manifest and every artifact digest, then generates operation, route,
-model, and MessagePack frame metadata in `contract.go`. The producer's HTTP,
-reactive, and MessagePack conformance corpus is required in the bundle.
+Every call resolves its endpoint through `tb.Resolver`. `BaseURL` wraps a
+`tb.StaticResolver`; alternatively, set `Config.Resolver` to a concurrent-safe
+resolver implementing `Resolve(context.Context) (string, error)`. Set one of
+`BaseURL` or `Resolver`. Resolved URLs are validated before credentials are
+sent, resolution errors stop the call, and retries keep the original endpoint.
+The same configuration applies to `NewManagement`. Atlas resolution follows
+in TS-507; no production endpoint is built into the SDK.
 
-## Verify
+Every write returns `WriteResult{ID, Version, Offset, Durability}` and the
+version is the `ETag`. Errors are `*tb.APIError{Status, Code, Message, Op,
+RetryAfter, ETag}`, and every error code is also an error value for
+`errors.Is`, for example `tb.ErrNotFound`, `tb.ErrPreconditionFailed`,
+`tb.ErrUnknownDatabase` or `tb.ErrNameTaken`. A 404 for a deleted document
+carries the tombstone version in `ETag`, which recreates it with `IfMatch`.
+
+Retries: TerraBase does not deduplicate retries and rejects `Idempotency-Key`,
+so the client never sends one. Only requests a replay cannot apply twice are
+retried: reads, queries, `PUT` of a database and writes with an `IfMatch`
+version (a transaction when every write op has one). `IfNoneMatchAny` is not
+enough, since a tombstone left by another writer satisfies it again. For
+those, 429 is retried after `Retry-After`, and the transient rejections
+(`capacity`, `storage_unavailable`, `dependencies_unavailable`) with backoff.
+Transport errors and `commit_uncertain` are retried only for reads and
+queries. Mutations return uncertain outcomes without a replay: use
+`errors.Is(err, tb.ErrCommitUncertain)` and re-read the state before deciding
+what to do. A transport failure matches that code and retains its original
+cause; a server response retains its `*tb.APIError`. Other writes and
+`500 internal_error` are never retried. Set `Config.MaxRetries` to change the
+budget. Path segments containing `/` fail locally: TerraBase would match an
+escaped `%2F` literally.
+
+Transactions apply up to 1024 ops atomically; failures name the op index:
+
+```go
+res, err := db.Tx().
+	Create("users", "", map[string]any{"email": "bia@example.com"}).
+	Patch("projects", projectID, tb.Ops(tb.Inc("/db_count", 1)), tb.IfMatch(v)).
+	Assert("plans", planID, tb.Eq("/visible", true)).
+	AssertAbsent("invites", inviteID).
+	Commit(ctx)
+var apiErr *tb.APIError
+if errors.As(err, &apiErr) {
+	op, _ := apiErr.OpIndex() // failing op
+}
+```
+
+Queries use filter constructors (`And`, `Or`, `Not`, `Eq`, `Ne`, `Lt`, `Lte`,
+`Gt`, `Gte`, `In`, `Nin`, `Exists`, `Prefix`, `Contains`), paths as JSON
+Pointers or `tb.IDPath`, and page with keyset cursors:
+
+```go
+q := tb.Query{Filter: tb.And(tb.Eq("/org_id", org), tb.Gte("/created_at", json.Number("1759363200000"))),
+	Sort: []tb.SortKey{tb.Desc("/created_at")}, Project: []string{"/email"}, Limit: 50, Count: true}
+for doc, err := range users.Items(ctx, q) { … }     // every match across pages
+for page, err := range users.Pages(ctx, q) { … }    // page.NextCursor, page.Count
+```
+
+### Management API
+
+The ts-dashboard backend manages organizations, projects, databases, members,
+invitations, ownership transfers and the audit log with the dashboard service
+credential. `As` acts as one ts-auth user: it sends `X-TerraBase-User-Id` on
+every call and `X-TerraBase-Organization-Id` on organization routes. Take the
+user id from the session, never from browser input.
+
+```go
+m, err := tb.NewManagement(tb.Config{BaseURL: origin, Token: dashboardCredential})
+u := m.As(session.UserID)
+org, err := u.CreateOrganization(ctx, "Acme")
+project, err := u.CreateProject(ctx, org.ID, "Production")
+db, err := u.CreateDatabase(ctx, org.ID, project.ID, "main") // then c.Database(project.ID, "main")
+inv, err := u.CreateInvitation(ctx, org.ID, "bia@example.com", tb.RoleAdmin)
+page, err := u.Members(ctx, org.ID, tb.PageOptions{After: next})
+```
+
+It also covers `Organizations`, `RenameOrganization`, `SetPlan`,
+`DeleteOrganization`, `CurrentOrganization`/`SetCurrentOrganization`, project
+and database reads, renames and deletes, `BranchDatabase`, `SetMemberRole`,
+`RemoveMember`, `Leave`, `Invitations`, `RevokeInvitation`,
+`AcceptInvitation`, `OwnershipTransfer` and its start, cancel and confirm,
+`AuditRetention`/`SetAuditRetention` and `AuditEvents`. A 404 (`ErrUnknownRoute`)
+means an unknown id or an organization the user is not a member of; bare
+message errors map to `ErrInvalidRequest` (400), `ErrForbidden` (403, role too
+low) and `ErrConflict` (409).
+
+Not served by TerraBase yet, so not in the client: shapes (reactive queries),
+query `explain`, `Idempotency-Key`, and the `/v1/dashboard` control plane.
+
+### Tests
+
+Tests of the TerraBase client run against the real TerraBase release, never a
+fake server. The importable `terrascale.tech/sdk/terrabasetest` package is the
+shared harness for SDK and downstream tests: it pins the release
+by version and SHA-256, downloads it once with `TERRABASE_TOKEN` (read access
+to TerraScale/terrabase) into the user cache directory (or `TERRABASE_CACHE`),
+and starts it per test with a generated TLS certificate and dashboard
+credential file. TerraBase assigns both listener ports. Startup is bounded to
+30 seconds; admin requests, including their response bodies, are bounded to
+10 seconds.
+
+```sh
+TERRABASE_TOKEN=… TERRABASE_REQUIRE=1 nice -n 19 go test ./v1/ ./terrabasetest/
+```
+
+`v1/integration_test.go` exercises every SDK call against it. Its recording
+transport checks the real traffic: each request is a route of
+`v1/testdata/openapi.json` (the executable's own `/openapi/v1.json`, admin port
+9464) and each of those routes is called, no request carries
+`Idempotency-Key`, and the Management headers are present. Retry tests inject
+faults into that transport in front of the real server. Tests skip only on an
+unsupported platform or when neither a cached executable nor a token is
+available; CI sets `TERRABASE_REQUIRE=1` to fail instead. Checksum, download
+and filesystem errors always fail, including in local runs.
+
+Downstream tests call `terrabasetest.Start(t)` to get a fresh real server.
+Use its `URL`, `Credential`, and trusted `Client` with `v1.NewManagement`
+to create an organization and project, then `Server.APIKey` to issue a
+project-scoped document credential. Pass `Server.Client` as `Config.HTTPClient`
+so SDK clients trust the generated TLS certificate. The process and temporary
+data, TLS, and credential files are cleaned up automatically when the test ends.
+
+[`terrabasetest/example_test.go`](terrabasetest/example_test.go) is a runnable
+downstream restart example: it writes through one store, creates a fresh store
+against the same running database, and checks the persisted document and version.
+Keep `Start(t)` outside the app/store restart; calling it again creates a new,
+empty database server. Copy the test into a downstream package and replace the
+SDK database handle with the application's store constructor.
+
+Consume this package from the SDK module's merged Go pseudo-version; this repo
+has no tag or release-on-merge workflow. The TerraBase executable version and
+SHA-256 remain pinned by the helper, independently of the SDK module version.
+
+## Product, TSAuth, and builders
+
+Product calls require an explicit `APIBaseURL`. `AccessToken` and
+`TokenProvider` configure their management credential. `ProjectAPIKeys`
+uses the authenticated Dashboard project API-key routes. The routes require
+the owning session and project membership.
+
+TSAuth calls require an explicit `TSAuthBaseURL`, or a suitable explicit
+`APIBaseURL`. Use `client.TSAuth.Instance("slug")` for the scoped families.
+Management methods use the instance credential. The OIDC application API uses
+explicit issuer and OAuth client authentication, verifies authorization-code
+responses and ID tokens, and exposes introspection, revocation, and logout
+flows. Accepted OIDC source
+checks do not qualify an actual hosted-provider journey.
+
+Schema and SQL builders construct and validate statements locally and do not
+execute SQL over HTTP. The explicit pgx-backed PostgreSQL client uses separate
+listener configuration, credentials, and CA trust. Actual PostgreSQL execution
+requires its producer protocol and an admitted signed listener; source and
+package checks do not qualify an actual admitted PostgreSQL runtime.
+Retained product methods do not establish management, provisioning, or restore
+runtime qualification.
+
+## Checks
+
+The edge artifacts and pins are in `contracts/edge/v1`.
 
 ```sh
 test -z "$(gofmt -l .)"
 go vet ./...
-go test ./...
+go build ./...
+go test -race ./...
 ```
 
-The checks exercise the pinned producer's HTTP success/error corpus and
-reactive/MessagePack vectors. They also install a freshly built module ZIP
-through an isolated local Go proxy and run a consumer without a checkout
-replacement. These checks do not qualify a published module or a live member.
+The module requires Go 1.25 and has no CGO dependency. CI runs the pinned
+vulnerability scanner alongside formatting, vet, build and race tests,
+including the v1 integration tests against the pinned TerraBase. BLAKE3
+remains a dependency of the retained product artifact verification.
 
-Reactive subscriptions use bounded HTTP long-polling by default. To opt into
-the direct WebSocket transport, pass `SubscriptionOptions{Transport:
-TransportWebSocket}` to `Subscribe`; to opt into the push stream, pass
-`Transport: TransportServerSentEvents` (wire value `server-sent-events`). The
-SDK performs the authenticated view
-attach, negotiates `terrascale.sync.v1` with the view capability on WebSocket,
-and validates each binary MessagePack frame against the pinned sync-v1 limits;
-the server-sent-events transport delivers the same envelopes as base64
-`data` events and tracks the event id as the resume offset. A canceled or
-closed connection ends the subscription; an unexpected transport or protocol
-failure delivers a typed `ResetReconnect` update, after which the caller can
-create a new subscription using its last checkpoint.
+## Resource OAuth
 
-## Region catalog and member health
+A registered resource uses its own introspection credentials. Originating OAuth
+clients obtain opaque access tokens for one exact HTTPS resource URI. The URI's
+raw path and query remain part of its identity. Management keys register policy;
+they do not substitute for either OAuth credential role.
 
-`Regions.List` calls the atlas-owned `GET /api/v1/regions` route (the same
-catalog the SDK consults internally when discovery cannot answer) and decodes
-the ordered `RegionCatalogResponse` (including regional hosts). A regional
-TerraBase member intentionally uses that same path shape for its
-health-shaped probe; it returns `HealthResponse`, not a catalog.
-`Regions.Health` and `Regions.Status` therefore call the member's
-`/api/v1/health` route. Keep the two producers separate when configuring a
-client: the atlas contract is pinned in `contracts/edge/v1`, while the member
-contract is pinned in the TerraBase bundle. See TerraBase ADRs 0043 and 0050.
+```go
+origin, err := instance.NewResourceClient(sdk.TSAuthResourceClientConfig{
+    Issuer: "https://auth.terrascale.tech/example",
+    ResourceAudience: "https://api.example.test/management",
+    Authentication: sdk.TSAuthOAuthClientAuthentication{
+        ClientID: originClientID, ClientSecret: originSecret,
+        Method: sdk.TSAuthClientSecretBasic,
+    },
+})
+if err != nil { return err }
+grant, err := origin.RequestClientCredentials(ctx, []string{"management:read"})
+if err != nil { return err }
+resource, err := instance.NewResourceIntrospector(sdk.TSAuthResourceIntrospectorConfig{
+    Issuer: "https://auth.terrascale.tech/example",
+    ResourceAudience: "https://api.example.test/management",
+    Authentication: sdk.TSAuthResourceAuthentication{
+        ClientID: introspectionClientID, Secret: introspectionSecret,
+    },
+})
+if err != nil { return err }
+principal, err := resource.Introspect(ctx, grant.Tokens.AccessToken)
+if err != nil { return err }
+// Authorize principal against current durable grants in the application.
+```
 
-SQL projection numbers in `SQLRow.Value` decode as `json.Number`. Use its
-`Int64` method for integer values; this preserves values above 2^53 without
-rounding them through `float64`.
+`OAuthClientPolicies()` and `OAuthResourcePolicies()` expose explicit allowlists,
+checked numeric `uint64` epochs, secret rotation and disable operations. Secrets
+are returned once. Nonrotating client PATCH returns a client record; a rotating
+PATCH returns the client plus its new secret. Resource PATCH always returns a
+resource record and a nullable secret.
 
-`Databases` exposes collection schema GET/PUT, schema migration rollback, index
-recommendations and deletion,
-webhook endpoints and delivery replay, and resumable exports. Schema reads return
-`SchemaDocument`, including migration progress; pass its generation through
-`WithSchemaGeneration` and a stable `WithIdempotencyKey` when applying changes.
-`RollbackCollectionSchema` requires both options and accepts HTTP 202 (rollback
-admitted) and HTTP 200 (idempotent replay of a completed rollback); poll
-`GetCollectionSchema` until `Migration` is absent.
-Index recommendations accept a limit up to 64 and retain the coordinator's
-generation and truncation flag.
+`NewResourceApplication` adds resource selection to verified browser OIDC while
+retaining server-held state, nonce and PKCE. The application atomically consumes
+an attempt before exchanging its callback. ID-token audience remains the
+originating client. Device authorization exposes one explicit poll at a time and
+honors the provider interval. Code, device and refresh redemption can inherit
+or repeat their bound URI; they cannot select another resource. Refresh scope
+`nil` inherits the current grant; a nonnil empty slice narrows it to no scopes.
 
-`GetAuthorizationLease` returns the producer lease previously authenticated for
-one tenant, with its original absolute `ValidUntil` expiry. The route never
-fetches identity state or renews a lease on a reader's behalf.
+Serving-resource introspection requires Basic authentication and validates the
+configured issuer, exact audience, Bearer type, integer times and principal shape.
+Users require a nonempty session ID. Services require null session ID and subject
+matching originating client ID. Inactive results grant no access. Subject,
+scopes and activity do not establish project or provisioner ownership; current
+durable grants remain application authorization. Introspection uses a fresh
+request with no browser cookie jar or management/native token provider.
 
-`Usage.GetDatabaseUsage` returns authoritative decimal-string write units and
-storage byte-seconds, plus unbilled `Reads.TotalReads`. It does not estimate
-current storage bytes. Export create returns the durable job identity; status
-and resume reuse that job, and `DownloadExport` returns exact artifact bytes.
-
-Database creation requires a stable `OperationID`. `CreateDatabaseResult.Database`
-is populated only for HTTP 201; HTTP 202 instead populates `Operation`, which
-acknowledges pending provisioning and does not imply serving readiness.
-Webhook create and secret rotation return `WebhookSecretResponse`; list/delete
-responses contain endpoint metadata without signing secrets. Ordinary HTTP
-redirects are disabled, including for supplied HTTP clients; placement repair
-uses the explicit 421 contract.
-
-Cloud development branches expose `EnableDevelopmentFault`,
-`ClearDevelopmentFault`, and `DevelopmentLogs` through the public API. Faults
-require explicit branch confirmation, bounded duration and operation counts;
-the server enforces branch eligibility and authorization. Schema timestamp
-values use epoch-millisecond integers (`time.Time.UnixMilli()`), and byte values
-use standard padded base64 JSON strings (Go `[]byte` encoding).
-
-Use `Operations.Get` with the original operation ID to discover provisioning
-progress. Reading status never resubmits database creation.
-
-`TenantID` and `ProjectID` select the requested scope; authorization remains
-server-enforced. `Documents.Create` sends `If-None-Match: *` for atomic create-only
-writes. `Put` remains an upsert unless passed `WithCreateOnly`; that option is
-rejected on other methods. Webhook rotation never retries automatically because
-its one-time secret has no replay contract, even when shared options carry a key.
-
-`ListExports` discovers durable jobs with bounded pagination. `CancelExport`
-requests cancellation at a safe page boundary; inspect the returned
-`Cancellation` state rather than assuming the job stopped immediately. Export
-status retains phase, page counts and creation time alongside record progress.
-
-`AuthPersistence` exposes the producer's strict record, unique-index, conditional
-update, one-time consume, paging, and transaction operations without a framework
-adapter. Supply stable operation identities. Unknown commits return the typed
-error without automatic retries or callback replay; resolve using the same
-transaction and idempotency identities. Auth record values remain raw JSON.
-
-`ProjectAPIKeys` exposes the Dashboard's authenticated project API-key
-create/list/rotate/revoke routes. Construct a client with the Dashboard origin
-and an owner Dashboard session token, then use the one-time `Secret` returned
-by `Create` or `Rotate` as `AccessToken` on a separate public API client. These
-routes are not part of the producer contract and do not provide anonymous or
-no-account provisioning; the Dashboard session and project membership remain
-required.
-
-`TSAuth` exposes the hosted ts-auth identity provider's management and OIDC
-routes. Point a client at the deployment origin with the instance `sk_` key —
-`NewClient(sdk.Config{TSAuthBaseURL: "https://auth.terrascale.tech", AccessToken:
-"sk_..."})` — then call `client.TSAuth.Instance("slug")` for the scoped
-families (`Users`, `Sessions`, `APIKeys`, `Organizations`, `OAuthClients`,
-`Connections`, `Directories`, `JWTTemplates`, `Webhooks`, `AuditEvents`,
-`Billing`, `Instance`, and `OIDC`); for example
-`client.TSAuth.Instance("acme").Users.List(ctx, 50, "")`. The deployment
-origin must be explicit: `TSAuthBaseURL` when set, else a non-default
-`APIBaseURL`; the default product origin is rejected because it never serves
-ts-auth routes. One-time secrets
-(`api_key`, OAuth `client_secret`, directory `token`, webhook
-`signing_secret`) are returned only by the creating or rotating call. The OIDC
-family uses client credentials instead of the `sk_` key, and webhook
-deliveries are verified with `VerifyTSAuthWebhook` (HMAC-SHA256 over
-`timestamp + "." + rawBody`, with an optional replay tolerance). These routes
-are not part of the TerraBase producer contract. The public auth origin uses
-Atlas auth discovery to select a healthy regional ts-auth endpoint directly;
-safe reads can fail over and mutations are sent once. Set
-`TSAuthUseReverseProxy: true` to use `auth.terrascale.tech` as a reverse proxy.
-Other ts-auth origins are used directly without discovery.
-
-Document reads expose the exact response `ETag` and session token. Pass that
-ETag to `WithIfMatch` for conditional PUT, PATCH, or DELETE; `"*"` requires
-an existing document. Retain the same condition and `WithIdempotencyKey` when
-retrying an uncertain write. A failed precondition returns HTTP 412 without
-automatic retry. Use `Put` or `Upsert` for document replacement.
-
-`Databases.GetDeletionStatus(ctx, databaseID, operationID)` reads the original
-accepted deletion through its GET status route. It preserves authoritative
-preparation, regional stop, and edge revocation receipts, including their exact
-scope and timestamps. States are `preparing`, `stopping`, `edge_pending`, and
-`cleanup_pending`; the last state does not claim physical cleanup is complete.
-Canceling the status request does not cancel deletion. `DeleteDatabase` requires
-HTTP 202 and `GetDeletionStatus` requires HTTP 200, with matching operation and
-configured tenant/project scope in both responses.
-
-## Supported versions
-
-- Go floor: `go 1.24.0`, declared in `go.mod` and enforced by the toolchain at
-  build time. The SDK has no CGO dependencies; runtime dependencies are
-  `github.com/coder/websocket` and `github.com/zeebo/blake3` (see `go.mod`
-  for the pinned versions).
-- Toolchain checks: `go vet`, `gofmt`, `go test ./...` and `go test -race ./...`
-  all run in CI; the dependency lane runs the pinned `govulncheck@v1.8.0`
-  scanner and fails on any known vulnerability.
-- Contract surface: the TerraBase API contract is pinned through
-  `scripts/contracts.cs` (immutable archive with SHA-256 verification); tests
-  fail closed when the archive is not resolvable. The packaged-consumer test
-  exercises the module from outside this checkout.
+Unknown exchanges and refresh rotations return `TSAuthOIDCError.Uncertain` and
+are never automatically replayed. Resource contracts pin the independently
+reviewed protocol source and actual loopback HTTP response captures. Those
+fixtures verify source interoperability; native persistence, two-process
+revocation and hosted caller qualification have separate evidence.

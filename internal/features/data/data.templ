@@ -9,7 +9,6 @@ import (
 	"terrascale.tech/dashboard/internal/features/databases"
 	"terrascale.tech/dashboard/internal/ui"
 	"terrascale.tech/dashboard/internal/ui/icons"
-	sdk "terrascale.tech/sdk"
 )
 
 // path links to a section of the open database, keeping the collection.
@@ -310,8 +309,6 @@ templ saveQueryAction(d pageData) {
 templ sqlResultView(r sqlResult) {
 	@ui.Card(ui.CardProps{ID: "sql-result", Title: "Query result", Description: resultSummary(r), Flush: true}) {
 		switch {
-			case r.Explain != nil:
-				@explainPlan(*r.Explain)
 			case len(r.Rows) == 0:
 				@ui.Empty("No rows matched.", "The query ran and returned no rows.")
 			default:
@@ -356,19 +353,6 @@ templ sqlResultView(r sqlResult) {
 				</details>
 		}
 	}
-}
-
-templ explainPlan(plan sdk.SQLExplainResponse) {
-	<dl class="ts-kv">
-		<div><dt>Dialect</dt><dd>{ plan.Dialect }</dd></div>
-		if plan.Collection != nil {
-			<div><dt>Collection</dt><dd class="ts-mono">{ *plan.Collection }</dd></div>
-		}
-		<div><dt>Access</dt><dd class="ts-mono">{ plan.Access }</dd></div>
-		for _, order := range plan.Order {
-			<div><dt>Order</dt><dd class="ts-mono">{ order.Field } { order.Direction }</dd></div>
-		}
-	</dl>
 }
 
 templ sqlCheck(d pageData) {
@@ -530,9 +514,6 @@ func newDocument(d pageData) string {
 }
 
 func resultSummary(r sqlResult) string {
-	if r.Explain != nil {
-		return "Query plan"
-	}
 	summary := plural(len(r.Rows), "row", "rows")
 	if r.Truncated() {
 		summary = fmt.Sprintf("First %d of %d matched rows; add a LIMIT to narrow the query", len(r.Rows), r.Matched)

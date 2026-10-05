@@ -2,101 +2,30 @@ package payments
 
 import (
 	"errors"
-	"io"
-	"net/http"
-	"net/http/httptest"
 	"reflect"
-	"strconv"
-	"sync"
+	"terrascale.tech/dashboard/internal/core"
+	"terrascale.tech/dashboard/internal/platform/terrabasetest"
 	"testing"
 	"time"
-
-	"terrascale.tech/dashboard/internal/core"
-	sdk "terrascale.tech/sdk"
 )
 
-// fakeTerraBase serves the document and schema routes the state store uses,
-// honouring create-only (If-None-Match: *) and If-Match preconditions.
-type fakeTerraBase struct {
-	mu        sync.Mutex
-	documents map[string][]byte
-	revisions map[string]int
-	schemas   []string
-}
-
-func newFakeTerraBase(t *testing.T) (*terraBaseStateStore, *fakeTerraBase) {
+func realBillingStore(t *testing.T) *terraBaseStateStore {
 	t.Helper()
-	fake := &fakeTerraBase{documents: make(map[string][]byte), revisions: make(map[string]int)}
-	mux := http.NewServeMux()
-	mux.HandleFunc("PUT /api/v1/databases/{database}/collections/{collection}/schema", func(w http.ResponseWriter, r *http.Request) {
-		fake.mu.Lock()
-		fake.schemas = append(fake.schemas, r.PathValue("collection"))
-		fake.mu.Unlock()
-		w.Header().Set("Content-Type", "application/json")
-		io.WriteString(w, `{"generation":1}`)
-	})
-	document := "/api/v1/databases/{database}/collections/{collection}/documents/{id}"
-	mux.HandleFunc("GET "+document, fake.get)
-	mux.HandleFunc("PUT "+document, fake.put)
-	server := httptest.NewServer(mux)
-	t.Cleanup(server.Close)
-	client, err := sdk.NewClient(sdk.Config{APIBaseURL: server.URL, AccessToken: "token"})
-	if err != nil {
-		t.Fatal(err)
+	if testing.Short() {
+		t.Skip("starts pinned TerraBase release")
 	}
-	return newTerraBaseStateStore(client, "dashboard-billing"), fake
-}
-
-func (fake *fakeTerraBase) get(w http.ResponseWriter, r *http.Request) {
-	fake.mu.Lock()
-	defer fake.mu.Unlock()
-	key := r.PathValue("collection") + "/" + r.PathValue("id")
-	body, ok := fake.documents[key]
-	if !ok {
-		writeFakeError(w, http.StatusNotFound, "not_found")
-		return
+	server := terrabasetest.Start(t)
+	db, _ := terrabasetest.Database(t, server, "dashboard")
+	for _, collection := range []string{customersCollection, organizationsCollection} {
+		if _, err := db.CreateCollection(t.Context(), collection); err != nil {
+			t.Fatal(err)
+		}
 	}
-	w.Header().Set("ETag", strconv.Quote(strconv.Itoa(fake.revisions[key])))
-	w.Header().Set("Content-Type", "application/json")
-	w.Write(body)
-}
-
-func (fake *fakeTerraBase) put(w http.ResponseWriter, r *http.Request) {
-	body, _ := io.ReadAll(r.Body)
-	fake.mu.Lock()
-	defer fake.mu.Unlock()
-	key := r.PathValue("collection") + "/" + r.PathValue("id")
-	_, exists := fake.documents[key]
-	current := strconv.Quote(strconv.Itoa(fake.revisions[key]))
-	if (r.Header.Get("If-None-Match") == "*" && exists) || (r.Header.Get("If-Match") != "" && (!exists || r.Header.Get("If-Match") != current)) {
-		writeFakeError(w, http.StatusPreconditionFailed, "precondition_failed")
-		return
-	}
-	fake.documents[key] = body
-	fake.revisions[key]++
-	w.Header().Set("ETag", strconv.Quote(strconv.Itoa(fake.revisions[key])))
-	w.Header().Set("Content-Type", "application/json")
-	io.WriteString(w, `{"revision":"`+strconv.Itoa(fake.revisions[key])+`"}`)
-}
-
-func writeFakeError(w http.ResponseWriter, status int, code string) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	io.WriteString(w, `{"error":{"code":"`+code+`","message":"`+code+`"}}`)
-}
-
-func TestTerraBaseStateStoreDeclaresSchemas(t *testing.T) {
-	store, fake := newFakeTerraBase(t)
-	if err := store.EnsureSchema(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	if got := fake.schemas; !reflect.DeepEqual(got, []string{customersCollection, organizationsCollection}) {
-		t.Fatalf("schemas = %v", got)
-	}
+	return newTerraBaseStateStore(db)
 }
 
 func TestTerraBaseStateStoreBindsEachCustomerOnce(t *testing.T) {
-	store, _ := newFakeTerraBase(t)
+	store := realBillingStore(t)
 	ctx := t.Context()
 	if customer, err := store.BindCustomer(ctx, "org_a", "cus_a"); err != nil || customer != "cus_a" {
 		t.Fatalf("first binding = %q, %v", customer, err)
@@ -115,21 +44,22 @@ func TestTerraBaseStateStoreBindsEachCustomerOnce(t *testing.T) {
 	}
 }
 
-func TestTerraBaseStateStoreCompletesInterruptedBinding(t *testing.T) {
-	store, fake := newFakeTerraBase(t)
+func TestTerraBaseStateStoreRejectsCustomerReuseAtomically(t *testing.T) {
+	store := realBillingStore(t)
 	ctx := t.Context()
-	// The organization binding was written but the customer binding was not.
-	fake.documents[organizationsCollection+"/org_a"] = []byte(`{"customerId":"cus_a"}`)
-	if customer, err := store.BindCustomer(ctx, "org_a", "cus_a"); err != nil || customer != "cus_a" {
-		t.Fatalf("binding again = %q, %v", customer, err)
+	if _, err := store.BindCustomer(ctx, "org_a", "cus_a"); err != nil {
+		t.Fatal(err)
 	}
-	if organization, ok, err := store.OrganizationFor(ctx, "cus_a"); err != nil || !ok || organization != "org_a" {
-		t.Fatalf("OrganizationFor = %q, %v, %v", organization, ok, err)
+	if _, err := store.BindCustomer(ctx, "org_b", "cus_a"); !errors.Is(err, core.ErrConflict) {
+		t.Fatalf("reuse: %v", err)
+	}
+	if _, bound, err := store.CustomerFor(ctx, "org_b"); err != nil || bound {
+		t.Fatalf("failed binding left organization record: %v %v", bound, err)
 	}
 }
 
 func TestTerraBaseStateStoreSavesConditionally(t *testing.T) {
-	store, _ := newFakeTerraBase(t)
+	store := realBillingStore(t)
 	ctx := t.Context()
 	if _, err := store.BindCustomer(ctx, "org_a", "cus_a"); err != nil {
 		t.Fatal(err)

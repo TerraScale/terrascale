@@ -58,7 +58,7 @@ func (s Service) project(ctx context.Context, p core.Principal) (core.Project, e
 // update commits mutate to the selected project once the principal may write
 // in the selected organization. Only the in-memory demo stores configurations.
 func (s Service) update(ctx context.Context, p core.Principal, mutate func(*core.Project) error) error {
-	if !s.deps.Demo {
+	if !s.deps.LocalResources() {
 		return errLive
 	}
 	return s.deps.Store.UpdateAs(ctx, p, func(account *core.Account) error {
@@ -99,7 +99,7 @@ func (s Service) List(ctx context.Context, p core.Principal) ([]subscriptionView
 // Attach saves a shared-result configuration for one of the project's
 // databases.
 func (s Service) Attach(ctx context.Context, p core.Principal, in attachInput) (subscriptionView, error) {
-	if !s.deps.Demo {
+	if !s.deps.LocalResources() {
 		return subscriptionView{}, errLive
 	}
 	name, query := strings.TrimSpace(in.Name), strings.TrimSpace(in.Query)

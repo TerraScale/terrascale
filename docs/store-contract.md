@@ -14,8 +14,10 @@ deployment and the test suites use:
 The CSRF key is configuration, not state: `TS_DASHBOARD_CSRF_SECRET` (at least
 32 bytes, required outside the demo, random per process in the demo).
 
-This document is the design input for the TerraBase adapter
-(`internal/adapters/terrabase`, Workstream D step 2). It lists what each
+This document describes the TerraBase adapter
+(`internal/adapters/terrabase`). Phase 1 uses Documents v1 only, including
+organizations, memberships, projects and database records. The Management
+mapping is phase 2 (TS-521). It lists what each
 interface promises, which invariants `memstore` enforces today with one global
 lock and full scans, and how each one maps onto the TerraBase v1 contract
 (`terrabase/docs/api-v1.md`, `terrabase/docs/query-v1.md`). The adapter talks
@@ -69,8 +71,9 @@ steps:
 
 Map `409 unique_violation` to `ErrConflict`.
 
-Retry `503 commit_uncertain` with the same `Idempotency-Key`. Derive that key
-once per logical operation, not per attempt.
+The current v1 API has no idempotency keys. An uncertain transaction outcome
+(transport failure or `503 commit_uncertain`) wraps `ErrUnavailable` and must
+never replay the callback. Only a confirmed failed CAS may reload and retry.
 
 **Serializability.** `memstore` gives every update serializable isolation over
 the whole aggregate. `if_match` on changed documents only would allow write
@@ -101,17 +104,37 @@ same helper with the named key.
 
 **Encoding.**
 - Times are RFC 3339 strings.
-- TTL paths are RFC 3339 strings or Unix milliseconds.
+- Expiry and purge paths are RFC 3339 strings or Unix milliseconds.
 - Counters are exact decimals.
 - Empty strings that a unique constraint covers (`customer_id`,
   `subscription_id`, `slug`) must be omitted, not stored as `""`. TerraBase
   only skips missing or `null` paths, and every empty value would collide.
 
-**Demo-only payloads.** `Database.Documents`, `DocumentHistory`, `Schemas`,
-`Indexes`, `IndexRecommendations`, `IndexBuilds` and `Backups` simulate the
-data plane in the demo. In TerraBase mode they come from the ts-go `Dashboard`
-client (Workstream D step 5) and are never stored in the `dashboard`
-database.
+**Resource payloads.** Phase 1 retains `Database.Documents`, history, schema,
+indexes, recommendations, builds and backups as Store-backed local behavior.
+They persist with the database record. TODO(TS-463, TS-521): connect actual
+resource operations after the producer and Management contracts land. Local
+API-key secrets are dashboard records, not TerraBase data-plane credentials.
+The embedded payloads remain subject to TerraBase's document-size limits.
+
+**Current v1 capabilities.** There is no native unique-constraint, case-folding,
+index or TTL configuration endpoint. The following table states the logical
+constraints and query/expiry fields. Provisioning creates schemaless collections
+only. Never send speculative schema/index/TTL settings.
+
+Uniqueness uses normalized fields and deterministic `kind=unique_claim`
+documents in the same collection as the entity. Claims commit in the entity's
+transaction using create-only CAS; replacement/removal uses `if_match`.
+`kind=record` distinguishes entities from claims. Email keys are normalized with
+`core.NormalizeEmail`; scoped names use normalized keys. Plan ID/key
+cross-uniqueness serializes on the catalog root. Claims never contain secrets.
+
+Expiry is checked when resolving credentials, sessions, grants and throttle
+buckets, and when counting live tokens/invitations/checkout references. Stale
+physical records do not grant access. Native TTL and query indexes are future
+producer features; until then queries use the paged Documents scan. Retention
+metadata does not promise automatic physical deletion. Purging historical
+records requires a separate maintenance command; this PR installs no reaper.
 
 ## Collections
 
@@ -119,7 +142,7 @@ All collections live in database `dashboard`. The table is the plan's table,
 plus the indexes and paths the invariants below need. Changes from the plan
 are in bold.
 
-| Collection | ID | Unique / index / TTL |
+| Collection | ID | Logical uniqueness / query / expiry fields |
 |---|---|---|
 | `users` | uuidv5(account ID) | unique `lower(/email)`; **index `/created_at` (admin list)**; **prefix search on `lower(/email)`, `lower(/name)`** |
 | `access_tokens` | uuidv5(`/token_hash`) | unique `/token_hash`; index `/user_id`; TTL `/expires_at`; cap of 25 per user, see invariant 4 |
@@ -169,14 +192,14 @@ does it on TerraBase v1.
    record in every organization, on every update.
    - *v1:* query `memberships` by `/user_id` (one index range, bounded by the
      user's organizations). Add a `patch` op per membership whose copy differs,
-     in the same transaction as the user change. There is no global scan.
+     in the same transaction as the user change. The query is paged; native secondary indexes are not available in this release.
 
 4. **Access tokens** (`byAccessToken` index; at most `MaxAccessTokens` (25) live
    tokens; a credential change ends every token).
    - *Resolve:* `AccessTokenPrincipal` is a point `GET` of
      `uuidv5(token_hash)`, then the user document.
-   - *Expiry:* TTL `/expires_at` removes expired tokens, which matches
-     `memstore` pruning them on the next issue.
+   - *Expiry:* expired tokens are rejected on resolve and pruned on the next issue,
+     matching `memstore`. Physical deletion is separate maintenance.
    - *Cap:* the plan says "counter plus `assert`". That does not work with
      TTL, because a reaped token never decrements the counter. Instead, count
      live tokens with a query `count` on `/user_id`, then create the token in
@@ -238,23 +261,11 @@ does it on TerraBase v1.
      `plans` catalog lock document with `if_match` after reading the whole
      collection (one query, at most 1000 rows).
 
-10. **`DeletePlanAs` reference check**: `memstore` scans every organization
-    for `PlanID` and every open checkout (unexpired when demo) for the plan.
-    - *Does not map cleanly:* the check is a query, and a transaction can only
-      `assert` single documents by ID. Between the query and the delete, a
-      concurrent `UpdateAsWithPlan` can move an organization onto the plan.
-    - A refcount on the plan document would make `plan_free` (every Personal
-      organization) a hot spot.
-    - *Workaround: a two-phase retire.*
-      1. Patch the plan to `/state = retiring` with `if_match`. Every
-         plan-binding transaction (`UpdateAsWithPlan`, checkout, invariants 7
-         and 11) asserts `{"ne":["/state","retiring"]}` on the plan.
-      2. Query `organizations` by `/plan_id` and `checkout_sessions` by
-         (`/plan_id`, `/status`) with `count`.
-      3. Delete the plan with `if_match` if both are zero; otherwise restore
-         its state.
-    - *Ask for the contract:* an `assert` op that takes a query filter and
-      expects `count == 0` would make this one transaction.
+10. **`DeletePlanAs` reference check**: delete the plan and CAS the catalog
+    lock in one transaction containing two native `AssertCount` operations:
+    no organizations with `/plan_id`, and no live open checkout references.
+    Plan-binding transactions assert the plan's `/rev`, so a reference cannot
+    race deletion. No retiring state or multi-step compensation is needed.
 
 11. **Member limit** (`AcceptInvitation` counts active members against
     `MaxMembers`; `organization.CreateInvitation` also counts unexpired pending
@@ -377,28 +388,26 @@ does it on TerraBase v1.
   - `Reserve` reads both buckets (client and account) and commits one
     transaction with `if_match` (or `if_none_match:"*"`) on each, retrying on
     412.
-  - `memstore`'s `maxKeys` bound is unnecessary with TTL.
+  - The store enforces logical bucket expiry; physical expiry needs
+    future native TTL or explicit maintenance.
   - The limiter refuses an attempt when the store fails, so an outage never
     disables the limit.
 
-## Summary: does not map cleanly onto v1
+## Bootstrap and operational limits
 
-- **`DeletePlanAs` reference check** (invariant 10): this needs a query
-  inside a transaction. The workaround is a two-phase retire.
-- **Plan ID/key cross-uniqueness** (invariant 9): this needs a lock document.
-- **Access-token cap** (invariant 4): "counter plus `assert`" conflicts with
-  TTL. Use a query `count` under the user `if_match` instead.
-- **Database limit** (invariant 7): it is per organization, but the plan
-  counts per project. Keep the counter on the organization root.
-- **Write skew** across an aggregate: `if_match` covers only touched
-  documents, so root documents serve as aggregate locks.
-- **Indexes missing from the plan table**:
-  - `memberships` (`/user_id`) and (`/org_id`)
-  - `sessions` (`/account_id`, `/user_id`)
-  - `organizations` `/plan_id`
-  - `checkout_sessions` (`/plan_id`, `/status`)
-  - `invitations` `/org_id`
-  - `device_grants` `/client_key`
-- **TTL on invitations and checkout sessions** must use a separate
-  `/purge_at`, because their expiry is shown or depends on provider state.
-- **Document IDs** must be UUIDs, so every dashboard ID goes through uuidv5.
+`New(db *v1.Database) *Store` performs no I/O and keeps no hydrated state.
+Every call loads documents into an isolated `memstore.FromState` validation
+workspace and commits its diff with root revision guards. `EnsureCollections`
+and `SeedPlans(ctx)` are explicit provisioning/test-fixture operations. Neither
+application startup nor readiness seeds state.
+
+`TERRABASE_URL`, `TERRABASE_API_KEY`, `TERRABASE_PROJECT_ID` and
+`TERRABASE_DATABASE` select this backend together; unset selects memstore.
+Readiness reads `users` with a one-row limit and reports the backend. See
+[terrabase-cutover.md](terrabase-cutover.md) for the COS-run production steps.
+
+Transactions are limited to 1024 operations and document bodies to 1 MiB,
+4096 nodes and depth 16. Oversized mutations fail before partial publication.
+Native `AssertCount` scans at most 10,000 entries; exceeding the producer's
+limit fails safely. No native index, TTL, Management or Rust API endpoint is
+called for phase-1 persistence.

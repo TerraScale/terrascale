@@ -151,7 +151,7 @@ func renderSection(w http.ResponseWriter, r *http.Request, deps core.Deps, datab
 		data.DocumentID = query.Get("edit")
 		data.DeleteID = query.Get("delete")
 	}
-	if deps.Demo {
+	if deps.LocalResources() {
 		loadDemo(&data, a, p, db)
 	} else {
 		loadLive(ctx, service, p, &data)

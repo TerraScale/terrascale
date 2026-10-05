@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/CAFxX/httpcompression"
+	"terrascale.tech/dashboard/internal/adapters/terrabase"
 	"terrascale.tech/dashboard/internal/adapters/tsgo"
 	"terrascale.tech/dashboard/internal/core"
 	"terrascale.tech/dashboard/internal/core/memstore"
@@ -42,6 +43,7 @@ import (
 	"terrascale.tech/dashboard/internal/platform/session"
 	"terrascale.tech/dashboard/internal/platform/statuspage"
 	"terrascale.tech/dashboard/internal/platform/throttle"
+	"terrascale.tech/sdk/v1"
 )
 
 type Application struct {
@@ -49,24 +51,61 @@ type Application struct {
 }
 
 func New(cfg config.Config) (*Application, error) {
-	if !cfg.Demo {
-		return nil, errors.New("live dashboard state is not configured")
+	if err := cfg.ValidateBackend(); err != nil {
+		return nil, err
 	}
-	// The demo keeps every account in this process's memory.
 	ctx := context.Background()
-	store := memstore.New()
-	if err := seedAdmin(ctx, store, cfg.AdminEmail, cfg.AdminPassword); err != nil {
-		return nil, err
-	}
-	if err := seedDemoAccount(ctx, store); err != nil {
-		return nil, err
+	var store core.Store
+	var sessionStore session.Store
+	var throttleStore throttle.Store
+	grants := auth.DeviceGrants(auth.NewMemoryDeviceGrants())
+	probe := status.Options{Backend: "memstore"}
+	var db *v1.Database
+	cfg.Demo = cfg.TerraBaseURL == ""
+	if cfg.Demo {
+		store = memstore.New()
+		if err := seedAdmin(ctx, store, cfg.AdminEmail, cfg.AdminPassword); err != nil {
+			return nil, err
+		}
+		if err := seedDemoAccount(ctx, store); err != nil {
+			return nil, err
+		}
+	} else {
+		if len(cfg.CSRFSecret) < 32 {
+			return nil, errors.New("TS_DASHBOARD_CSRF_SECRET must be at least 32 bytes with TerraBase persistence")
+		}
+		client, err := v1.New(v1.Config{BaseURL: cfg.TerraBaseURL, Token: cfg.TerraBaseAPIKey, HTTPClient: cfg.TerraBaseHTTPClient})
+		if err != nil {
+			return nil, err
+		}
+		db = client.Database(cfg.TerraBaseProjectID, cfg.TerraBaseDatabase)
+		store = terrabase.New(db)
+		sessionStore = terrabase.NewSessions(db)
+		throttleStore = terrabase.NewThrottle(db)
+		grants = terrabase.NewDeviceGrants(db)
+		probe = status.Options{Backend: "terrabase", Check: func(ctx context.Context) error {
+			_, err := db.Collection("users").List(ctx, v1.ListOptions{Limit: 1})
+			return err
+		}}
 	}
 	sdkFactory := tsgo.Factory{APIBaseURL: cfg.SDKBaseURL, AccessToken: cfg.SDKAccessToken}
-	billing, err := payments.New(ctx, cfg.Demo, os.Getenv, sdkFactory)
+	billingLookup := func(name string) string {
+		switch name {
+		case "TS_BILLING_TENANT_ID":
+			return "terrascale-internal"
+		case "TS_BILLING_PROJECT_ID":
+			return cfg.TerraBaseProjectID
+		case "TS_BILLING_DATABASE_ID":
+			return cfg.TerraBaseDatabase
+		default:
+			return os.Getenv(name)
+		}
+	}
+	billing, err := payments.New(ctx, cfg.Demo, billingLookup, db)
 	if err != nil {
 		return nil, err
 	}
-	sessions := session.New(store, session.Options{Secure: cfg.SecureCookies})
+	sessions := session.New(store, session.Options{Secure: cfg.SecureCookies, Store: sessionStore})
 	guard := csrf.New(sessions, csrf.Options{Secure: cfg.SecureCookies, Secret: cfg.CSRFSecret})
 	var notices render.StatusNotices
 	if cfg.StatusURL != "" {
@@ -80,15 +119,16 @@ func New(cfg config.Config) (*Application, error) {
 	deps := core.Deps{
 		Store: store, Sessions: sessions, CSRF: guard, Render: renderer,
 		Events: datastar.Events{}, Demo: cfg.Demo, Tools: core.NewTools(store),
-		SDK: sdkFactory, Throttle: throttle.New(throttle.Options{ClientHeader: cfg.ClientIPHeader}),
+		SDK: sdkFactory, DocumentsOnly: db != nil,
+		Throttle: throttle.New(throttle.Options{ClientHeader: cfg.ClientIPHeader, Store: throttleStore}),
 	}
 	mux := http.NewServeMux()
 	if err := assets.Mount(mux, cfg.Dev); err != nil {
 		return nil, err
 	}
-	status.Mount(mux, deps)
+	status.Mount(mux, deps, probe)
 	auth.Mount(mux, deps)
-	deviceAuthorization := auth.NewDeviceAuthorization(deps, auth.NewMemoryDeviceGrants(), cfg.SecureCookies, cfg.PublicURL)
+	deviceAuthorization := auth.NewDeviceAuthorization(deps, grants, cfg.SecureCookies, cfg.PublicURL)
 	deviceAuthorization.MountBrowser(mux)
 	admin.Mount(mux, deps)
 	authentication.Mount(mux, deps)

@@ -23,6 +23,13 @@ import (
 const shutdownTimeout = 10 * time.Second
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "import-org" {
+		if err := importOrg(os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, "import-org:", err)
+			os.Exit(1)
+		}
+		return
+	}
 	flush := func() {}
 	err := run(&flush)
 	if err != nil {
