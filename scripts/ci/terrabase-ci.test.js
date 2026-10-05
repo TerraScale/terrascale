@@ -3,7 +3,6 @@ import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { access, readFile, rm } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-import { setTimeout as delay } from "node:timers/promises";
 import { captureProducerOutput, stopChild } from "./terrabase-lifecycle.mjs";
 import { releaseApiUrl, releaseRedirectUrl } from "./provision-terrabase.mjs";
 
@@ -147,6 +146,38 @@ test("release redirects reject missing targets before resolving a URL", () => {
 
 const runnerPath = fileURLToPath(new URL("./run-terrabase-integration.mjs", import.meta.url));
 const withoutBinary = !process.env.TERRABASE_BINARY || process.platform !== "linux";
+// The runner itself may spend 30s starting TerraBase, 10s on bootstrap fetches,
+// then provisioning, and up to 20s on its concurrent stopChild cleanups. Tests
+// wait on its events within this one budget instead of shorter deadlines.
+const runnerBudget = 120_000;
+
+/**
+ * Resolves with the first match once the runner prints it; rejects if its
+ * streams close first.
+ * @param {import("node:child_process").ChildProcess} runner @param {() => string} read @param {RegExp} pattern
+ * @returns {Promise<RegExpMatchArray>}
+ */
+function waitForOutput(runner, read, pattern) {
+  return new Promise((resolve, reject) => {
+    const check = () => {
+      const match = read().match(pattern);
+      if (match) finish(() => resolve(match));
+    };
+    const closed = () => finish(() => reject(new Error(`Runner exited before printing ${pattern}: ${read()}`)));
+    /** @param {() => void} settle */
+    const finish = settle => {
+      runner.stdout?.off("data", check);
+      runner.stderr?.off("data", check);
+      runner.off("close", closed);
+      settle();
+    };
+    runner.stdout?.on("data", check);
+    runner.stderr?.on("data", check);
+    runner.on("close", closed);
+    check();
+    if (runner.stdout?.readableEnded && runner.stderr?.readableEnded) closed();
+  });
+}
 
 test.skipIf(withoutBinary)("pinned runner preserves a custom command with no arguments", async () => {
   const runner = spawn(process.execPath, [runnerPath, "uname"], { stdio: ["ignore", "pipe", "pipe"] });
@@ -154,13 +185,13 @@ test.skipIf(withoutBinary)("pinned runner preserves a custom command with no arg
   runner.stdout.on("data", chunk => { log += chunk.toString(); });
   runner.stderr.on("data", chunk => { log += chunk.toString(); });
   try {
-    const [code, signal] = await once(runner, "exit", { signal: AbortSignal.timeout(20_000) });
+    const [code, signal] = await once(runner, "close");
     expect({ code, signal, log }).toMatchObject({ code: 0, signal: null });
     expect(log).toContain("Linux");
   } finally {
     await stopChild(runner);
   }
-}, 30_000);
+}, runnerBudget);
 
 /** @type {NodeJS.Signals[]} */
 const terminationSignals = ["SIGINT", "SIGTERM"];
@@ -171,31 +202,20 @@ test.skipIf(withoutBinary).each(terminationSignals)("pinned runner cleans childr
   let log = "";
   runner.stdout.on("data", chunk => { log += chunk.toString(); });
   runner.stderr.on("data", chunk => { log += chunk.toString(); });
-  const exited = once(runner, "exit", { signal: AbortSignal.timeout(20_000) });
+  const exited = once(runner, "close");
   /** @type {number[]} */
   let children = [];
   let directory;
   try {
-    const deadline = Date.now() + 10_000;
-    while (!log.match(/TS498_CHILD (\{[^\n]+\})/u)) {
-      expect(Date.now(), log).toBeLessThan(deadline);
-      expect(runner.exitCode, log).toBeNull();
-      await delay(20);
-    }
-    const match = log.match(/TS498_CHILD (\{[^\n]+\})/u);
-    expect(match).not.toBeNull();
-    const target = JSON.parse(match?.[1] ?? "{}");
+    const match = await waitForOutput(runner, () => log, /TS498_CHILD (\{[^\n]+\})/u);
+    const target = JSON.parse(match[1] ?? "{}");
     directory = target.directory;
     children = (await readFile(`/proc/${runner.pid}/task/${runner.pid}/children`, "utf8")).trim().split(/\s+/u).map(Number);
     expect(children).not.toContain(target.pid);
     expect(children.length).toBeGreaterThanOrEqual(2);
     children.push(target.pid, target.parentPid);
     runner.kill(signal);
-    while (!log.includes("TS498_ALLOCATION_PRESENT")) {
-      expect(Date.now()).toBeLessThan(deadline);
-      await delay(5);
-    }
-    expect(log).toContain("TS498_ALLOCATION_PRESENT true");
+    expect((await waitForOutput(runner, () => log, /TS498_ALLOCATION_PRESENT (?:true|false)\n/u))[0]).toBe("TS498_ALLOCATION_PRESENT true\n");
     runner.kill(signal === "SIGINT" ? "SIGTERM" : "SIGINT");
     expect(await exited).toEqual([signal === "SIGINT" ? 130 : 143, null]);
     for (const childPid of children)
@@ -208,4 +228,4 @@ test.skipIf(withoutBinary).each(terminationSignals)("pinned runner cleans childr
     }
     if (directory) await rm(directory, { recursive: true, force: true });
   }
-}, 30_000);
+}, runnerBudget);
