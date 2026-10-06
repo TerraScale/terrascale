@@ -198,6 +198,22 @@ listener configuration, credentials, and CA trust. Actual PostgreSQL execution
 requires its producer protocol and an admitted signed listener; source and
 package checks do not qualify an actual admitted PostgreSQL runtime.
 
+## Atlas publishing (`terrascale.tech/sdk/atlas`)
+
+`atlas.Publisher` posts signed documents to ts-atlas (`POST /v1/publish`,
+ts-atlas `docs/discovery-v1.md`): the whole topology of regions and services,
+and project placements. The key is the P-256 key whose public JWK is in
+Atlas' `PUBLISH_KEYS`; each publish is signed with ES256 over
+`atlas-publish-v1\n<timestamp>\n<body>`. Atlas keeps the newest `Updated`,
+so a retry (for example after `502 store_unavailable`) never rolls a document
+back.
+
+```go
+p := atlas.Publisher{BaseURL: "https://atlas.terrascale.tech", Key: publishKey}
+report, err := p.Publish(ctx, atlas.Document{Topology: &topology}) // report.Topology: updated, stale or skipped
+var atlasErr *atlas.Error // errors.As: Status, Code (invalid_signature, invalid_topology, …), Message, Fix
+```
+
 ## Checks
 
 The edge artifacts and pins are in `contracts/edge/v1`.
