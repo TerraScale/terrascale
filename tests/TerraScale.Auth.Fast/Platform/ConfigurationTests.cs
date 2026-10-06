@@ -95,12 +95,28 @@ public sealed class ConfigurationTests
     [Arguments("listen", "http://auth.internal:8080", "TS_AUTH_LISTEN must use a host and port")]
     [Arguments("listen", "http://127.0.0.1:65536", "TS_AUTH_LISTEN must use a host and port")]
     [Arguments("smtp-host", "smtp.example", "TS_AUTH_SMTP_* is partially configured")]
+    [Arguments("smtp-check-revocation", "no", "TS_AUTH_SMTP_CHECK_REVOCATION must be true or false")]
     [Arguments("rate-limit", "0", "TS_AUTH_RATE_LIMIT must be positive")]
     public async Task Startup_rejects_malformed_settings(string key, string value, string message)
     {
         var exception = await Assert.ThrowsAsync<AuthConfigurationException>(() => AuthTestServer.StartAsync(settings: values => values[key] = value));
 
         await Assert.That(exception!.Message).IsEqualTo(message);
+    }
+
+    [Test]
+    [Arguments(null, true)]
+    [Arguments("true", true)]
+    [Arguments("false", false)]
+    public async Task Smtp_revocation_is_checked_unless_a_deployment_opts_out(string? value, bool expected)
+    {
+        var settings = AuthTestServer.DefaultSettings();
+        if (value is not null)
+        {
+            settings["smtp-check-revocation"] = value;
+        }
+
+        await Assert.That(AuthOptions.Load(settings).SmtpCheckRevocation).IsEqualTo(expected);
     }
 
     private const string DashboardSecret = "dashboard-config-secret-0123456789abcdef";

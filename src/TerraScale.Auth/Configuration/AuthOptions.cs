@@ -39,6 +39,7 @@ public sealed partial record AuthOptions
         "smtp-username",
         "smtp-password",
         "smtp-from-address",
+        "smtp-check-revocation",
         "sentry-dsn",
         "dashboard-client-secret",
         "dashboard-redirect-uris",
@@ -112,6 +113,13 @@ public sealed partial record AuthOptions
 
     /// <summary>Sender address for outgoing mail.</summary>
     public string? SmtpFromAddress { get; init; }
+
+    /// <summary>
+    /// Whether the relay certificate's revocation is checked online. A deployment without a route to its CA's OCSP and
+    /// CRL servers sets <c>TS_AUTH_SMTP_CHECK_REVOCATION=false</c> as a documented exception; chain and host name are
+    /// still validated.
+    /// </summary>
+    public bool SmtpCheckRevocation { get; init; } = true;
 
     /// <summary>GlitchTip/Sentry DSN. Error reporting is off when unset.</summary>
     public string? SentryDsn { get; init; }
@@ -234,6 +242,13 @@ public sealed partial record AuthOptions
             throw Invalid("TS_AUTH_SMTP_PORT must be between 1 and 65535");
         }
 
+        var smtpCheckRevocation = Optional("smtp-check-revocation") switch
+        {
+            null or "true" => true,
+            "false" => false,
+            _ => throw Invalid("TS_AUTH_SMTP_CHECK_REVOCATION must be true or false"),
+        };
+
         var rateLimit = 1000;
         if (Optional("rate-limit") is { } rawLimit
             && (!int.TryParse(rawLimit, NumberStyles.None, CultureInfo.InvariantCulture, out rateLimit) || rateLimit < 1))
@@ -260,6 +275,7 @@ public sealed partial record AuthOptions
             PriceEnterprise = Optional("price-enterprise"),
             SmtpHost = smtp[0],
             SmtpPort = smtpPort,
+            SmtpCheckRevocation = smtpCheckRevocation,
             SmtpUsername = smtp[1],
             SmtpPassword = smtp[2],
             SmtpFromAddress = smtp[3],

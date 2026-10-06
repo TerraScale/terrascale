@@ -51,7 +51,8 @@ public sealed partial class LoggingEmailSender(ILogger<LoggingEmailSender> logge
 
 /// <summary>
 /// Authenticated SMTP (<c>TS_AUTH_SMTP_*</c>) with mandatory STARTTLS and certificate validation:
-/// a relay that does not offer TLS never receives the credentials or the message. Registered
+/// a relay that does not offer TLS never receives the credentials or the message. Revocation is
+/// checked online unless <see cref="AuthOptions.SmtpCheckRevocation"/> is off. Registered
 /// only when every SMTP setting is present (<see cref="AuthOptions"/> rejects partial settings).
 /// <paramref name="createClient"/> exists for the test suites, which register a client that
 /// trusts only their relay's certificate, as they register TerraBase's <see cref="HttpClient"/>.
@@ -74,6 +75,7 @@ public sealed partial class SmtpEmailSender(AuthOptions options, ILogger<SmtpEma
 
             using var client = createClient?.Invoke() ?? new SmtpClient();
             client.Timeout = TimeoutMilliseconds;
+            client.CheckCertificateRevocation = options.SmtpCheckRevocation;
             await client.ConnectAsync(options.SmtpHost!, options.SmtpPort, SecureSocketOptions.StartTls, cancellationToken);
             await client.AuthenticateAsync(options.SmtpUsername!, options.SmtpPassword!, cancellationToken);
             await client.SendAsync(message, cancellationToken);

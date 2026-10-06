@@ -138,6 +138,7 @@ nice -n 19 dotnet run --project src/TerraScale.Auth
 | `TS_AUTH_PRICE_PRO` / `TS_AUTH_PRICE_ENTERPRISE` | Stripe price ids for the plans |
 | `TS_AUTH_STRIPE_API_URL` | Stripe API origin (default `https://api.stripe.com`; test override) |
 | `TS_AUTH_SMTP_HOST` / `_PORT` / `_USERNAME` / `_PASSWORD` / `_FROM_ADDRESS` | SMTP delivery; host, username, password and from address are all or nothing, port defaults to 587 |
+| `TS_AUTH_SMTP_CHECK_REVOCATION` | `true` (default) or `false`: whether the relay certificate's revocation is checked online; see [Email delivery](#email-delivery-oci) |
 | `TS_AUTH_DASHBOARD_CLIENT_SECRET` | Optional secret of the confidential OIDC client `ts-dashboard`, 32 to 512 characters without whitespace. Required together with the redirect URIs; only OpenIddict's PBKDF2 hash is stored |
 | `TS_AUTH_DASHBOARD_REDIRECT_URIS` | Semicolon-separated exact callback URIs for `ts-dashboard` (at most 10), e.g. `https://dash.terrascale.tech/auth/callback;http://localhost:5173/auth/callback`. HTTPS, or HTTP only for `localhost` or a loopback IP; no credentials or fragment |
 | `TS_AUTH_DASHBOARD_POST_LOGOUT_REDIRECT_URIS` | Optional semicolon-separated exact post-logout URIs for `ts-dashboard`, with the same rules |
@@ -280,8 +281,14 @@ session usable again; deactivation does not itself revoke sessions.
 Without `TS_AUTH_SMTP_*` configuration ts-auth uses the logging sender: nothing
 is delivered, and each message logs a warning with its sizes only, never the
 recipient or the content (the dev/test default). With SMTP configured, STARTTLS
-and a valid server certificate are mandatory; a relay that offers no TLS never
-receives the credentials or the message. Delivery failures are logged and never
+and a valid server certificate (chain and host name) are mandatory; a relay that
+offers no TLS never receives the credentials or the message. The certificate's
+revocation is checked online by default. A deployment that cannot reach its
+CA's OCSP and CRL servers sets `TS_AUTH_SMTP_CHECK_REVOCATION=false` as a
+documented security exception: a revoked relay certificate that still chains
+to a trusted CA and matches the host is then accepted. TerraScale's gru-1 cell
+reaches OCI's relay through the OCI service gateway without internet egress
+and sets it (ts-orchestrator `deploy/oci-region/ts-auth-gru-1-profile.json`). Delivery failures are logged and never
 fail the request that sent the mail. For real delivery via OCI
 Email Delivery, set the five variables above; fetch the credentials from the
 ts-infra state:

@@ -201,8 +201,9 @@ public sealed class EmailTests
         var logs = new CapturingLogs();
         await using var relay = FakeRelay.Start(offerStartTls: true, acceptDelivery: true);
         // Like TerraBase's HttpClient in the store tests, the client trusts only this relay's certificate.
+        SmtpClient? used = null;
         await using var server = await StartAsync(logs, relay.Port, services: services =>
-            services.AddSingleton<Func<SmtpClient>>(() => new SmtpClient
+            services.AddSingleton<Func<SmtpClient>>(() => used = new SmtpClient
             {
                 ServerCertificateValidationCallback = (_, certificate, _, _) =>
                     certificate is not null && certificate.GetRawCertData().AsSpan().SequenceEqual(relay.CertificateRawData),
@@ -224,6 +225,26 @@ public sealed class EmailTests
         await Assert.That(delivered.TextBody?.TrimEnd()).IsEqualTo(Body);
         await Assert.That(logs.Text).DoesNotContain("SMTP delivery failed");
         await AssertNoMessageDataAsync(logs.Text);
+        await Assert.That(used!.CheckCertificateRevocation).IsTrue();
+    }
+
+    [Test]
+    public async Task A_deployment_without_revocation_egress_turns_the_online_check_off()
+    {
+        await using var relay = FakeRelay.Start(offerStartTls: true, acceptDelivery: true);
+        SmtpClient? used = null;
+        await using var server = await StartAsync(new CapturingLogs(), relay.Port, settings: values => values["smtp-check-revocation"] = "false",
+            services: services => services.AddSingleton<Func<SmtpClient>>(() => used = new SmtpClient
+            {
+                ServerCertificateValidationCallback = (_, certificate, _, _) =>
+                    certificate is not null && certificate.GetRawCertData().AsSpan().SequenceEqual(relay.CertificateRawData),
+            }));
+
+        using var response = await server.Client.PostAsync("/__test/email", null);
+
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Accepted);
+        await Assert.That(relay.Delivered).IsNotNull();
+        await Assert.That(used!.CheckCertificateRevocation).IsFalse();
     }
 
     [Test]
