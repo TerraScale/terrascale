@@ -16,9 +16,6 @@ func TestP2BConformanceCoreSurfaceHasNoSyntheticTransport(t *testing.T) {
 	if _, err := sdk.NewClient(sdk.Config{APIBaseURL: "https://tbep.terrascale.tech"}); err == nil {
 		t.Fatal("TBEP must not be accepted as the public SDK endpoint")
 	}
-	if _, err := sdk.NewClient(sdk.Config{APIBaseURL: "https://api.terrascale.tech", Affinity: sdk.AffinityStrict}); err == nil {
-		t.Fatal("strict affinity without a region must fail closed")
-	}
 	if _, err := sdk.ParseRegionCode("gru"); err != nil {
 		t.Fatalf("region parsing is not case-insensitive: %v", err)
 	}

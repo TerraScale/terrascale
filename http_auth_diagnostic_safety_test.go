@@ -237,63 +237,6 @@ func TestHTTPAuthDiagnosticSafetyResponseMetadata(t *testing.T) {
 	}
 }
 
-func TestHTTPAuthDiagnosticSafetyProductResponseMetadata(t *testing.T) {
-	const secret = "CANARY_CREDENTIAL"
-	for _, test := range []struct {
-		name     string
-		status   int
-		code     string
-		attempts int
-	}{
-		{"unauthorized", http.StatusUnauthorized, "unauthenticated", 1},
-		{"forbidden", http.StatusForbidden, "forbidden", 1},
-		{"unavailable", http.StatusServiceUnavailable, "server_error", 3},
-		{"incomplete-success", http.StatusOK, "response_read_failed", 3},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			attempts := 0
-			var bodies []*httpAuthSafetyBody
-			client, err := NewClient(Config{
-				APIBaseURL:       "https://product.example.test",
-				MaxRetryAttempts: 2,
-				RetryDelay:       time.Millisecond,
-				HTTPClient: &http.Client{Transport: httpAuthSafetyTransport(func(request *http.Request) (*http.Response, error) {
-					attempts++
-					body := &httpAuthSafetyBody{reader: strings.NewReader(secret), readErr: errors.New("reader echoed " + secret)}
-					bodies = append(bodies, body)
-					return &http.Response{
-						StatusCode: test.status, ContentLength: -1,
-						Header: http.Header{"X-Request-Id": {"product-request"}, "Retry-After": {"0"}},
-						Body:   body, Request: request,
-					}, nil
-				})},
-			})
-			if err != nil {
-				t.Fatal(err)
-			}
-			_, err = client.Databases.CreateDatabase(t.Context(), CreateDatabaseRequest{
-				Name: "database", Placement: []RegionCode{RegionGRU}, OperationID: "operation-1",
-			}, WithIdempotencyKey("request-key"))
-			var apiErr *APIError
-			if !errors.As(err, &apiErr) || apiErr.Status != test.status || apiErr.Code != test.code || apiErr.RequestID != "product-request" ||
-				apiErr.Method != http.MethodPost || apiErr.Path != "/api/v1/databases" || apiErr.Route != "create_database" {
-				t.Fatalf("product response classification = %v", err)
-			}
-			if attempts != test.attempts {
-				t.Fatalf("product attempts = %d, want %d", attempts, test.attempts)
-			}
-			if apiErr.RetryAfter == nil || *apiErr.RetryAfter != 0 || apiErr.Body != "" || strings.Contains(fmt.Sprintf("%#v", apiErr), secret) {
-				t.Fatal("product response lost retry metadata or retained credentials")
-			}
-			for _, body := range bodies {
-				if !body.closed {
-					t.Fatal("product response body was not closed")
-				}
-			}
-		})
-	}
-}
-
 func TestHTTPAuthDiagnosticSafetyMutationRead(t *testing.T) {
 	const secret = "CANARY_CREDENTIAL"
 	attempts := 0
@@ -341,7 +284,7 @@ func TestHTTPAuthDiagnosticSafetyCompleteResponses(t *testing.T) {
 		t.Run(http.StatusText(status), func(t *testing.T) {
 			attempts := 0
 			client, err := NewClient(Config{
-				APIBaseURL: "https://product.example.test", TSAuthBaseURL: "https://auth.example.test",
+				TSAuthBaseURL:    "https://auth.example.test",
 				MaxRetryAttempts: 3, RetryDelay: time.Millisecond,
 				HTTPClient: &http.Client{Transport: httpAuthSafetyTransport(func(request *http.Request) (*http.Response, error) {
 					attempts++
@@ -363,12 +306,6 @@ func TestHTTPAuthDiagnosticSafetyCompleteResponses(t *testing.T) {
 				name string
 				call func(*testing.T) error
 			}{
-				{"product", func(t *testing.T) error {
-					_, err := client.Databases.CreateDatabase(t.Context(), CreateDatabaseRequest{
-						Name: "database", Placement: []RegionCode{RegionGRU}, OperationID: "operation-1",
-					}, WithIdempotencyKey("request-key"))
-					return err
-				}},
 				{"auth", func(t *testing.T) error {
 					_, err := instance.Users.Get(t.Context(), "user-1")
 					return err

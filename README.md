@@ -2,8 +2,8 @@
 
 Package `v1` is the TerraBase client: documents, collections, queries and
 transactions with an API key, and the Management API for the dashboard
-backend. The root package holds the product clients, hosted TSAuth clients and
-the pure schema and SQL builders.
+backend. The root package holds the hosted TSAuth clients and the pure schema
+and SQL builders.
 
 ## TerraBase v1 client (`terrascale.tech/sdk/v1`)
 
@@ -176,12 +176,7 @@ Consume this package from the SDK module's merged Go pseudo-version; this repo
 has no tag or release-on-merge workflow. The TerraBase executable version and
 SHA-256 remain pinned by the helper, independently of the SDK module version.
 
-## Product, TSAuth, and builders
-
-Product calls require an explicit `APIBaseURL`. `AccessToken` and
-`TokenProvider` configure their management credential. `ProjectAPIKeys`
-uses the authenticated Dashboard project API-key routes. The routes require
-the owning session and project membership.
+## TSAuth and builders
 
 TSAuth calls require an explicit `TSAuthBaseURL`, or a suitable explicit
 `APIBaseURL`. Use `client.TSAuth.Instance("slug")` for the scoped families.
@@ -202,8 +197,6 @@ execute SQL over HTTP. The explicit pgx-backed PostgreSQL client uses separate
 listener configuration, credentials, and CA trust. Actual PostgreSQL execution
 requires its producer protocol and an admitted signed listener; source and
 package checks do not qualify an actual admitted PostgreSQL runtime.
-Retained product methods do not establish management, provisioning, or restore
-runtime qualification.
 
 ## Checks
 
@@ -218,8 +211,7 @@ go test -race ./...
 
 The module requires Go 1.25 and has no CGO dependency. CI runs the pinned
 vulnerability scanner alongside formatting, vet, build and race tests,
-including the v1 integration tests against the pinned TerraBase. BLAKE3
-remains a dependency of the retained product artifact verification.
+including the v1 integration tests against the pinned TerraBase.
 
 ## Resource OAuth
 

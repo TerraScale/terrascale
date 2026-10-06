@@ -1,8 +1,6 @@
 package sdk
 
 import (
-	"errors"
-	"fmt"
 	"strings"
 	"time"
 )
@@ -15,30 +13,6 @@ const DefaultDiscoveryBaseURL = "https://atlas.terrascale.tech"
 const publicAPIHostname = "api.terrascale.tech"
 
 const discoveryTimeout = 3 * time.Second
-
-// ErrManagementDiscoveryUnavailable indicates that no management endpoint
-// authority has been configured. The public region catalog cannot supply a
-// product or management origin.
-var ErrManagementDiscoveryUnavailable = errors.New("management endpoint authority is unavailable; configure an explicit product API origin")
-
-// RoutingError reports that a request has no authorized endpoint. Err preserves
-// the underlying local admission failure or actual discovery response.
-type RoutingError struct {
-	Route  string
-	Method string
-	Path   string
-	Err    error
-}
-
-func (e *RoutingError) Error() string {
-	detail := "endpoint authority is unavailable"
-	if e.Err != nil {
-		detail = e.Err.Error()
-	}
-	return fmt.Sprintf("sdk: %s %s (%s): no authorized endpoint: %s", e.Method, e.Path, e.Route, detail)
-}
-
-func (e *RoutingError) Unwrap() error { return e.Err }
 
 // isDevOrigin reports a loopback development metadata hostname.
 func isDevOrigin(host string) bool {
