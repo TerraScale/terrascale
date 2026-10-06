@@ -176,7 +176,7 @@ var (
 		}},
 		{Label: "Manage", Items: []core.NavItem{
 			{Label: "Usage", URL: "/usage"},
-			{Label: "Organization", URL: "/organization"}, {Label: "Project settings", URL: "/settings"},
+			{Label: "Organization", URL: "/organization"},
 		}},
 	}
 	adminNavigation = []core.NavGroup{

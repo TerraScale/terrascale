@@ -22,8 +22,6 @@ var memberAccessibilityPaths = []string{
 	"/api-keys", "/organization?tab=members", "/organization?tab=members", "/organization?tab=invitations",
 	"/audit", "/usage", "/usage?tab=billing", "/subscriptions", "/billing",
 	"/organization", "/organization?newOrganization=organization",
-	"/settings", "/settings?tab=credentials", "/settings?tab=webhooks", "/settings?tab=backups",
-	"/settings?tab=audit", "/settings?tab=danger",
 	"/profile", "/profile?tab=security", "/profile?tab=sessions", "/notifications",
 	"/cli/approve", "/agent/approve",
 }

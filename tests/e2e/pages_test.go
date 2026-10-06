@@ -57,7 +57,6 @@ var parityRouteStates = []routeState{
 	{key: "notifications", path: "/notifications", heading: "Notifications"},
 	{key: "organization", path: "/organization", heading: "Organization"},
 	{key: "profile", path: "/profile", heading: "Profile"},
-	{key: "settings", path: "/settings", heading: "Project settings"},
 	{key: "subscriptions", path: "/subscriptions", heading: "Shared result configuration"},
 	{key: "usage", path: "/usage", heading: "Usage"},
 	{key: "agent-approve", path: "/agent/approve", heading: "Approve agent access"},
@@ -85,12 +84,13 @@ func TestPagesMemberNavigationKeyboardAndMobile(t *testing.T) {
 
 	navigation := pageByRole(page, *playwright.AriaRoleNavigation, "Dashboard sections")
 	visible(t, byRole(navigation, *playwright.AriaRoleLink, "Overview"))
-	for _, label := range []string{"Databases", "Usage", "Project settings"} {
+	for _, label := range []string{"Databases", "Usage"} {
 		visible(t, byRole(navigation, *playwright.AriaRoleLink, label, true))
 	}
 	visible(t, byRole(navigation, *playwright.AriaRoleLink, "Organization"))
 	must(t, expect.Locator(byRole(navigation, *playwright.AriaRoleLink, "Billing", true)).ToHaveCount(0))
 	must(t, expect.Locator(byRole(navigation, *playwright.AriaRoleLink, "Team", true)).ToHaveCount(0))
+	must(t, expect.Locator(byRole(navigation, *playwright.AriaRoleLink, "Project settings", true)).ToHaveCount(0))
 	must(t, expect.Locator(byRole(navigation, *playwright.AriaRoleLink, "Query subscriptions", true)).ToHaveCount(0))
 	viewportScreenshot(t, page, "member-desktop-navigation")
 

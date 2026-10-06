@@ -3,12 +3,8 @@ package settings
 
 import (
 	"errors"
-	"maps"
 	"net/http"
-	"net/url"
-	"slices"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/a-h/templ"
@@ -34,39 +30,6 @@ type pageData struct {
 func Mount(mux *http.ServeMux, deps core.Deps) {
 	service := Service{deps: deps, backups: backups.NewService(deps)}
 	mountTools(deps.Tools, service)
-	mux.HandleFunc("GET /settings", func(w http.ResponseWriter, r *http.Request) {
-		p, ok := signedIn(deps, w, r)
-		if !ok {
-			return
-		}
-		account, project, err := service.selected(r.Context(), p)
-		if errors.Is(err, core.ErrNotFound) {
-			// Without a project, Overview leads to the project setup.
-			http.Redirect(w, r, "/", http.StatusSeeOther)
-			return
-		}
-		if err != nil {
-			writeError(w, err)
-			return
-		}
-		settings := settingsFor(account, project, p)
-		tab := r.URL.Query().Get("tab")
-		if !slices.Contains([]string{"identity", "credentials", "webhooks", "backups", "audit", "danger"}, tab) {
-			tab = "identity"
-		}
-		selectedID := r.URL.Query().Get("database")
-		if _, exists := project.Databases[selectedID]; !exists && len(settings.Databases) > 0 {
-			selectedID = settings.Databases[0].ID
-		}
-		credentials := slices.SortedFunc(maps.Values(project.APIKeys), func(a, b core.APIKey) int { return strings.Compare(a.Name, b.Name) })
-		render(w, r, deps, p, pageData{
-			projectSettings: settings, Tab: tab, UpdatedAt: changedAt(settings.SecuritySettingsUpdatedAt),
-			SelectedDatabaseID: selectedID, SelectedBackups: project.Databases[selectedID].Backups,
-			Policy: backupPolicy(project, selectedID), Credentials: credentials,
-			Toast: r.URL.Query().Get("toast"), Error: r.URL.Query().Get("error"), Demo: deps.Demo,
-		})
-	})
-
 	mux.HandleFunc("POST /api/v1/dashboard/settings/audit-retention", func(w http.ResponseWriter, r *http.Request) {
 		p, ok := deps.FormPrincipal(w, r)
 		if !ok {
@@ -160,7 +123,7 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 		ctx := r.Context()
 		if err := service.DeleteProject(ctx, p, confirmName); err != nil {
 			if errors.Is(err, core.ErrConflict) {
-				redirectSettings(w, r, "danger", "", "", msgProtected)
+				http.Error(w, msgProtected, http.StatusConflict)
 				return
 			}
 			redirectOrError(w, r, err, "danger", "")
@@ -194,15 +157,14 @@ func signedIn(deps core.Deps, w http.ResponseWriter, r *http.Request) (core.Prin
 	return p, true
 }
 
-// redirectOrError shows validation and provider-contract failures on the
-// settings tab and answers every other error with its status.
+// redirectOrError returns validation and provider-contract failures explicitly.
 func redirectOrError(w http.ResponseWriter, r *http.Request, err error, tab, database string) {
 	reason, invalid := core.InvalidReason(err)
 	switch {
 	case invalid:
 		redirectSettings(w, r, tab, "", database, reason)
 	case errors.Is(err, backups.ErrUnavailable):
-		redirectSettings(w, r, tab, "", database, msgBackupsUnavailable)
+		http.Error(w, msgBackupsUnavailable, http.StatusServiceUnavailable)
 	default:
 		writeError(w, err)
 	}
@@ -219,17 +181,11 @@ func render(w http.ResponseWriter, r *http.Request, deps core.Deps, p core.Princ
 }
 
 func redirectSettings(w http.ResponseWriter, r *http.Request, tab, toast, database, errMsg string) {
-	query := url.Values{"tab": {tab}}
-	if toast != "" {
-		query.Set("toast", toast)
-	}
-	if database != "" {
-		query.Set("database", database)
-	}
 	if errMsg != "" {
-		query.Set("error", errMsg)
+		http.Error(w, errMsg, http.StatusBadRequest)
+		return
 	}
-	http.Redirect(w, r, "/settings?"+query.Encode(), http.StatusSeeOther)
+	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
 func writeError(w http.ResponseWriter, err error) {
