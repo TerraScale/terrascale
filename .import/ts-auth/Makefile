@@ -27,10 +27,11 @@ lint: fmt-check build
 audit:
 	dotnet run scripts/check-nuget-vulnerabilities.cs src/TerraScale.Auth/TerraScale.Auth.csproj
 
+# The served document, and the platform contract (TS-598) that later slices implement.
 openapi-check: build
 	mkdir -p artifacts
 	scripts/export-openapi.sh $(HOST_DLL) artifacts/openapi.json
-	$(REDOCLY) lint artifacts/openapi.json
+	$(REDOCLY) lint artifacts/openapi.json docs/platform-api.openapi.yaml
 
 test-fast: build
 	dotnet run --project tests/TerraScale.Auth.Fast --configuration $(CONFIGURATION) --no-build

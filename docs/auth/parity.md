@@ -26,10 +26,13 @@ Nothing here implies acceptance against a live TerraBase deployment.
 | MFA (TOTP, recovery codes, step-up) | TS-434 | Not yet ported; email passcodes moved to TS-490 |
 | Passkeys | TS-435 | Not yet ported |
 | OIDC, GitHub and SAML federation | TS-436 | Not yet ported |
-| Organizations, invitations, domains, roles and authorization checks | TS-437 | Not yet ported |
+| Platform organizations, projects, organization and project roles, invitations, ownership transfer, audit | TS-598 | Contract published ([`platform-contract.md`](platform-contract.md)); not served |
+| API keys exchanged for organization and project tokens (client credentials, token exchange) | TS-598 | Contract published; not served |
+| Per-project tenants (one issuer per customer project) | TS-598 | Contract published; not served |
+| End-user organizations of a project tenant, enrollment domains, authorization checks | TS-437 | Not yet ported |
 | SCIM directories, users, groups (including operator repair runbooks) | TS-438 | Not yet ported |
 | JWT templates, webhooks, signed audit log | TS-439 | Not yet ported |
-| Billing, quota seats, Stripe webhooks | TS-440 | Not yet ported |
+| Billing, quota seats, Stripe webhooks | TS-440 | Not ts-auth's: ts-dashboard owns billing (TS-597) |
 | Hosted admin portal (Datastar) | TS-441 | Not yet ported; bundled assets are served |
 
 ## TS-489 storage and readiness

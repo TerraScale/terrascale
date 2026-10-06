@@ -11,6 +11,26 @@ It is built on **TerraBase through the `ts-rust` SDK**.
 
 Prioritize security, tenant isolation, correctness, and interoperability over convenience or performance shortcuts.
 
+## Service Ownership
+
+User decision 2026-10-06 (epic TS-597; umbrella `AGENTS.md`, "Service ownership"). The contract is `docs/platform-contract.md`.
+
+ts-auth is the single owner of identity and access:
+
+- Tenants: `terrascale` for TerraScale customers, plus one tenant (issuer `https://<region>.auth.terrascale.tech/<project id>`) per customer project for its end users, strictly isolated.
+- Users, credentials, sessions, MFA, SSO and federation, OAuth/OIDC clients and every token ts-auth signs, with their signing keys and JWKS.
+- Organizations, projects (organization → project), organization and project memberships, roles, invitations, ownership transfer and their audit events.
+- API keys: client credentials owned by an organization or project, exchanged at the token endpoint for short-lived JWTs.
+- Authentication emails and their branding.
+
+ts-auth does not own, and must not store copies of, other products' data. It reaches them only through the TerraScale SDKs:
+
+- **TerraBase** (through `ts-dotnet`): databases, collections, documents, backups, indexes, schema and usage metering. ts-auth persists its own state there with a TerraBase-issued bootstrap key, never with a token it signed itself.
+- **ts-dashboard**: the platform UI, platform API and MCP server, plans, subscriptions, Stripe billing and spending caps.
+- **ts-orchestrator**: regions, hosts, releases and placement. **ts-atlas**: region discovery and the global proxies.
+
+TerraBase and the other products authorize from ts-auth tokens offline. ts-auth exposes identity through its documented APIs and tokens and never reaches into another product's storage.
+
 ## Local CPU Priority
 
 - When building or testing locally, run every build, test, lint, and benchmark

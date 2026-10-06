@@ -27,6 +27,12 @@ TUnit and Playwright integration tests.
 > (before TS-442 / `8dd2874`) as the behavioural reference, including the
 > original TS-428 storage design.
 
+ts-auth owns identity and access for the whole platform (epic TS-597). The
+contract for organizations, projects, roles, invitations, API keys, the token
+claims and the tenant/issuer scheme is
+[`docs/platform-contract.md`](docs/platform-contract.md), with
+[`docs/platform-api.openapi.yaml`](docs/platform-api.openapi.yaml).
+
 The consumer-app competitive review and remaining release gates are in
 [`docs/competitive-review.md`](docs/competitive-review.md). The consumer
 integration contract (guest accounts, browser origins, device authorization,
@@ -48,13 +54,13 @@ organization permission checks) is in
 | Social SSO | Upstream OIDC connections (Microsoft, Google, any issuer) with JWKS-verified ID tokens; GitHub OAuth with verified email lookup |
 | Enterprise SSO | SAML 2.0 connections (HTTP-Redirect AuthnRequest, XML-DSig-verified assertions) |
 | Directory sync | SCIM 2.0 `/scim/{dir}` — users, groups, deprovisioning |
-| Organizations | Orgs, memberships, invitations, enrollment domains, versioned role permission definitions and current-state authorization checks |
+| Organizations and projects | The platform's organizations → projects, organization and project roles, invitations, ownership transfer, audit, and API keys exchanged for short-lived JWTs (TS-598, [`docs/platform-contract.md`](docs/platform-contract.md)); one issuer per customer project for its end users |
 | Admin portal | Dashboard-styled hosted page for org admins to configure GitHub, Microsoft, Google, custom OIDC and SAML connections, and view directories |
 | Management API | Full developer REST API with `sk_...` keys, per-family key scopes, pagination, rate limiting |
 | JWT templates | Custom-claim tokens (`{{user.email}}` substitution) minted on demand |
 | Webhooks | HMAC-signed outbound events with retries, durable delivery status, dead-letter listing, and operator replay |
 | Audit logs | Signed audit events in production, with query and verification APIs |
-| Billing | Stripe subscriptions: Checkout, customer portal, signature-verified webhooks, plan quotas |
+| Billing | Not ts-auth's: plans, subscriptions and Stripe belong to ts-dashboard (TS-597) |
 
 
 Target multi-instance design: one ts-auth deployment hosts many customer
