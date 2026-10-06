@@ -34,7 +34,7 @@
 }
 
 .ts-sidebar-brand {
-  justify-self: start;
+  justify-self: center;
   padding: var(--ts-s1) var(--ts-s2);
 }
 
