@@ -238,6 +238,34 @@ tokens, err := tsauth.NewAPIKeySource(tsauth.APIKeyConfig{Key: apiKey, Project: 
 token, err := tokens.Token(ctx) // or pass tokens as a client's TokenSource
 ```
 
+### ts-auth management
+
+`tsauth.New(Config{Issuer})` calls the platform management API of the
+tenant (`{origin}/v1/terrascale/…`) as a signed-in user, `WithToken(token)`:
+organizations (`CreateOrganization`, `Organizations`, `Organization`,
+`RenameOrganization`, `DeleteOrganization`), members (`Members`,
+`SetMemberRole`, `RemoveMember`, `Leave`), invitations to the organization or
+one project (`CreateInvitation`, `Invitations`, `RevokeInvitation`,
+`LookupInvitation`, `AcceptInvitation`, `DeclineInvitation`), ownership
+transfers, projects and project members, organization and project API keys
+(`CreateAPIKey`, `APIKeys`, `APIKey`, `RotateAPIKey`, `RevokeAPIKey`; an empty
+project means an organization key) and `AuditEvents`. Errors are
+`*tsauth.APIError`, and each code is an `errors.Is` value such as
+`tsauth.ErrNotFound` (also an organization the user cannot reach),
+`ErrForbiddenRole` or `ErrLastOwner`.
+
+```go
+c, err := tsauth.New(tsauth.Config{})
+u := c.WithToken(signInToken)
+org, err := u.CreateOrganization(ctx, "Acme")
+project, err := u.CreateProject(ctx, org.ID, "Production")
+key, err := u.CreateAPIKey(ctx, org.ID, project.ID, tsauth.APIKeyRequest{Name: "ci", Scopes: []string{tsauth.ScopeDocumentsWrite}})
+tokens, err := tsauth.NewAPIKeySource(tsauth.APIKeyConfig{Key: key.Key}) // key.Key is shown once
+```
+
+ts-auth does not serve this contract yet. Its tests check every operation
+against the pinned contract, `tsauth/testdata/platform-api.openapi.json`.
+
 ## Checks
 
 The edge artifacts and pins are in `contracts/edge/v1`.

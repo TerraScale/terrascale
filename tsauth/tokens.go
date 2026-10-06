@@ -155,13 +155,18 @@ type flight struct {
 }
 
 func newSource(hc *http.Client, fetch func(context.Context, *http.Client) (*tokenResponse, error)) *TokenSource {
+	return &TokenSource{hc: noRedirects(hc), fetch: fetch, now: time.Now}
+}
+
+// noRedirects copies hc, or a client with a 30 s timeout: a redirect would
+// carry a secret or token elsewhere.
+func noRedirects(hc *http.Client) *http.Client {
 	copied := http.Client{Timeout: 30 * time.Second}
 	if hc != nil {
 		copied = *hc
 	}
-	// A redirect would carry the client secret or subject token elsewhere.
 	copied.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	return &TokenSource{hc: &copied, fetch: fetch, now: time.Now}
+	return &copied
 }
 
 // Token returns a valid access token. A request that fails is not cached:
