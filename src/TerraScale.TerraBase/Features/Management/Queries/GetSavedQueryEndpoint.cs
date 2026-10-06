@@ -1,4 +1,5 @@
 using TerraScale.Endpoints;
+using TerraScale.TerraBase.Errors;
 using TerraScale.TerraBase.Features.UserAuth;
 using TerraScale.TerraBase.Hosting;
 
@@ -23,8 +24,11 @@ public sealed class GetSavedQueryEndpoint(IManagementService management, IQueryS
 
     /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
-        await ManagementRoute.ProjectAsync(HttpContext, management, cancellationToken) is { } project
-        && await queries.GetSavedAsync(project, ManagementRoute.Value(HttpContext, "query"), cancellationToken) is { } query
-            ? TypedResults.Ok(query)
-            : TypedResults.NotFound();
+        await ManagementRoute.ProjectAsync(HttpContext, management, cancellationToken) is not { } project
+            ? ErrorResponse.From(new NotFound())
+            : await queries.GetSavedAsync(project, ManagementRoute.Value(HttpContext, "query"), cancellationToken) switch
+            {
+                SavedQuery query => TypedResults.Ok(query),
+                NotFound error => ErrorResponse.From(error),
+            };
 }

@@ -1,4 +1,5 @@
 using TerraScale.Endpoints;
+using TerraScale.TerraBase.Errors;
 using TerraScale.TerraBase.Features.UserAuth;
 using TerraScale.TerraBase.Hosting;
 
@@ -22,16 +23,15 @@ public sealed class DeleteSavedQueryEndpoint(IManagementService management, IQue
     }
 
     /// <inheritdoc />
-    public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
-    {
-        var writable = await ManagementRoute.WritableProjectAsync(HttpContext, management, cancellationToken);
-        if (writable.Value is not { } project)
+    public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
+        await ManagementRoute.CheckWritableProjectAsync(HttpContext, management, cancellationToken) switch
         {
-            return ManagementRoute.Error(writable.Error);
-        }
-
-        return await queries.DeleteSavedAsync(ManagementRoute.UserId(HttpContext), project, ManagementRoute.Value(HttpContext, "query"), cancellationToken)
-            ? TypedResults.NoContent()
-            : TypedResults.NotFound();
-    }
+            NotFound error => ErrorResponse.From(error),
+            Forbidden error => ErrorResponse.From(error),
+            Project project => await queries.DeleteSavedAsync(ManagementRoute.UserId(HttpContext), project, ManagementRoute.Value(HttpContext, "query"), cancellationToken) switch
+            {
+                Done => TypedResults.NoContent(),
+                NotFound error => ErrorResponse.From(error),
+            },
+        };
 }

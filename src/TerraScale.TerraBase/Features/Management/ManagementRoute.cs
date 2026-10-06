@@ -17,6 +17,9 @@ public sealed record PlanRequest(string? Plan);
 /// <summary>A database the acting user may change, or why not.</summary>
 public readonly union WritableDatabase(TenantContext, NotFound, Forbidden);
 
+/// <summary>A project the acting user may change, or why not.</summary>
+public readonly union WritableProject(Project, NotFound, Forbidden);
+
 /// <summary>A page request.</summary>
 /// <param name="After">Exclusive cursor from the previous page's <c>next</c>.</param>
 /// <param name="Limit">Page size, 1 to 100.</param>
@@ -89,6 +92,15 @@ internal static class ManagementRoute
         await WritableDatabaseAsync(context, management, cancellationToken).ConfigureAwait(false) switch
         {
             { Value: { } database } => database,
+            { Error: ManagementError.Forbidden } => ManagementErrors.RoleTooLow,
+            _ => new NotFound(),
+        };
+
+    /// <summary>As <see cref="WritableProjectAsync"/>, as a union: a viewer gets <see cref="ManagementErrors.RoleTooLow"/>.</summary>
+    public static async ValueTask<WritableProject> CheckWritableProjectAsync(HttpContext context, IManagementService management, CancellationToken cancellationToken) =>
+        await WritableProjectAsync(context, management, cancellationToken).ConfigureAwait(false) switch
+        {
+            { Value: { } project } => project,
             { Error: ManagementError.Forbidden } => ManagementErrors.RoleTooLow,
             _ => new NotFound(),
         };

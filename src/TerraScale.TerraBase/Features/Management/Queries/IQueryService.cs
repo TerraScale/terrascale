@@ -1,5 +1,5 @@
 using System.Text.Json;
-
+using TerraScale.TerraBase.Errors;
 using TerraScale.TerraBase.Tenancy;
 
 namespace TerraScale.TerraBase.Features.Management.Queries;
@@ -65,27 +65,36 @@ public sealed record SavedQuery(string Id, string Name, string Sql, DateTimeOffs
 /// <param name="Sql">A statement of the SQL subset.</param>
 public sealed record SavedQueryRequest(string? Name, string? Sql);
 
+/// <summary>The rows a statement selected, or that it exhausted the engine read budget.</summary>
+public readonly union RunSqlResult(SqlResultBody, Validation);
+
+/// <summary>How the engine would run a statement, or that explaining it exhausted the engine read budget.</summary>
+public readonly union CheckSqlResult(SqlCheckBody, Validation);
+
+/// <summary>A deleted saved query, or that it (or its project) does not exist for the user.</summary>
+public readonly union DeleteSavedQueryResult(Done, NotFound);
+
 /// <summary>Runs and checks dashboard SQL against managed databases, and keeps saved queries.</summary>
 public interface IQueryService
 {
     /// <summary>Runs a statement and records the fields it used without an index.</summary>
-    ValueTask<SqlResultBody> RunAsync(TenantContext database, SqlStatement statement, CancellationToken cancellationToken);
+    ValueTask<RunSqlResult> RunAsync(TenantContext database, SqlStatement statement, CancellationToken cancellationToken);
 
     /// <summary>Explains a statement without running it.</summary>
-    ValueTask<SqlCheckBody> CheckAsync(TenantContext database, SqlStatement statement, CancellationToken cancellationToken);
+    ValueTask<CheckSqlResult> CheckAsync(TenantContext database, SqlStatement statement, CancellationToken cancellationToken);
 
     /// <summary>Lists the saved queries of a project in creation order.</summary>
     ValueTask<ManagementPage<SavedQuery>> ListSavedAsync(Project project, string? after, int limit, CancellationToken cancellationToken);
 
-    /// <summary>Saves a query in a project.</summary>
-    ValueTask<SavedQuery?> CreateSavedAsync(string userId, Project project, string name, string sql, CancellationToken cancellationToken);
+    /// <summary>Saves a query in a project; not found when the user can no longer change the project.</summary>
+    ValueTask<Found<SavedQuery>> CreateSavedAsync(string userId, Project project, string name, string sql, CancellationToken cancellationToken);
 
-    /// <summary>Reads a saved query; <see langword="null"/> when absent.</summary>
-    ValueTask<SavedQuery?> GetSavedAsync(Project project, string queryId, CancellationToken cancellationToken);
+    /// <summary>Reads a saved query.</summary>
+    ValueTask<Found<SavedQuery>> GetSavedAsync(Project project, string queryId, CancellationToken cancellationToken);
 
-    /// <summary>Replaces the name and SQL of a saved query; <see langword="null"/> when absent.</summary>
-    ValueTask<SavedQuery?> UpdateSavedAsync(string userId, Project project, string queryId, string name, string sql, CancellationToken cancellationToken);
+    /// <summary>Replaces the name and SQL of a saved query.</summary>
+    ValueTask<Found<SavedQuery>> UpdateSavedAsync(string userId, Project project, string queryId, string name, string sql, CancellationToken cancellationToken);
 
-    /// <summary>Deletes a saved query; <see langword="false"/> when absent.</summary>
-    ValueTask<bool> DeleteSavedAsync(string userId, Project project, string queryId, CancellationToken cancellationToken);
+    /// <summary>Deletes a saved query.</summary>
+    ValueTask<DeleteSavedQueryResult> DeleteSavedAsync(string userId, Project project, string queryId, CancellationToken cancellationToken);
 }

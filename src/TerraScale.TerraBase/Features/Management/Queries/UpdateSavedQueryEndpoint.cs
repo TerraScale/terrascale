@@ -1,4 +1,5 @@
 using TerraScale.Endpoints;
+using TerraScale.TerraBase.Errors;
 using TerraScale.TerraBase.Features.UserAuth;
 using TerraScale.TerraBase.Hosting;
 
@@ -27,15 +28,20 @@ public sealed class UpdateSavedQueryEndpoint(IManagementService management, IQue
     public override async ValueTask<IResult> HandleAsync(SavedQueryRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
-        var (name, sql) = QueriesExtensions.Validate(request);
-        var writable = await ManagementRoute.WritableProjectAsync(HttpContext, management, cancellationToken);
-        if (writable.Value is not { } project)
+        return QueriesExtensions.Validate(request) switch
         {
-            return ManagementRoute.Error(writable.Error);
-        }
-
-        return await queries.UpdateSavedAsync(ManagementRoute.UserId(HttpContext), project, ManagementRoute.Value(HttpContext, "query"), name, sql, cancellationToken) is { } query
-            ? TypedResults.Ok(query)
-            : TypedResults.NotFound();
+            Validation error => ErrorResponse.From(error),
+            SavedQueryRequest valid => await ManagementRoute.CheckWritableProjectAsync(HttpContext, management, cancellationToken) switch
+            {
+                NotFound error => ErrorResponse.From(error),
+                Forbidden error => ErrorResponse.From(error),
+                Project project => await queries.UpdateSavedAsync(
+                    ManagementRoute.UserId(HttpContext), project, ManagementRoute.Value(HttpContext, "query"), valid.Name!, valid.Sql!, cancellationToken) switch
+                {
+                    SavedQuery query => TypedResults.Ok(query),
+                    NotFound error => ErrorResponse.From(error),
+                },
+            },
+        };
     }
 }

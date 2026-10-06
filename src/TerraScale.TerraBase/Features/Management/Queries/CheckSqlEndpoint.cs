@@ -1,5 +1,5 @@
 using TerraScale.Endpoints;
-using TerraScale.TerraBase.Engine;
+using TerraScale.TerraBase.Errors;
 using TerraScale.TerraBase.Features.UserAuth;
 using TerraScale.TerraBase.Hosting;
 
@@ -29,19 +29,18 @@ public sealed class CheckSqlEndpoint(IManagementService management, IQueryServic
         ArgumentNullException.ThrowIfNull(request);
         if (await ManagementRoute.DatabaseAsync(HttpContext, management, cancellationToken) is not { } database)
         {
-            return TypedResults.NotFound();
+            return ErrorResponse.From(new NotFound());
         }
 
-        var parsed = SqlSubset.Parse(request.Sql);
-        try
+        // SQL outside the subset is a check result, not an error.
+        return SqlSubset.Parse(request.Sql) switch
         {
-            return TypedResults.Ok(parsed.Statement is { } statement
-                ? await queries.CheckAsync(database, statement, cancellationToken)
-                : new SqlCheckBody(false, parsed.Error, null, false, [], [], []));
-        }
-        catch (QueryCapacityException)
-        {
-            return TypedResults.BadRequest("query too expensive");
-        }
+            Validation invalid => TypedResults.Ok(new SqlCheckBody(false, invalid.Message, null, false, [], [], [])),
+            SqlStatement statement => await queries.CheckAsync(database, statement, cancellationToken) switch
+            {
+                SqlCheckBody check => TypedResults.Ok(check),
+                Validation error => ErrorResponse.From(error),
+            },
+        };
     }
 }

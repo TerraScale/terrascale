@@ -3,6 +3,7 @@ using SqlParser;
 using SqlParser.Ast;
 using SqlParser.Dialects;
 using TerraScale.TerraBase.Engine;
+using TerraScale.TerraBase.Errors;
 
 namespace TerraScale.TerraBase.Features.Management.Queries;
 
@@ -12,15 +13,14 @@ namespace TerraScale.TerraBase.Features.Management.Queries;
 /// <param name="HasLimit">Whether the statement has a <c>LIMIT</c>.</param>
 public sealed record SqlStatement(SqlQuery Query, IReadOnlyList<DocumentField>? Projection, bool HasLimit);
 
-/// <summary>A statement, or why the SQL is outside the subset.</summary>
-/// <param name="Statement">The statement when <paramref name="Error"/> is <see langword="null"/>.</param>
-/// <param name="Error">A message that names the failed rule, never the client's text.</param>
-internal readonly record struct SqlParseResult(SqlStatement? Statement, string? Error);
-
 /// <summary>
 /// Parses the read-only subset <c>SELECT * | field, … FROM collection [WHERE …] [ORDER BY …] [LIMIT n]</c> with
 /// SqlParserCS and translates its syntax tree, rejecting every node outside the subset.
 /// </summary>
+/// <remarks>
+/// The translator rejects a node by throwing <see cref="FormatException"/> from deep in the tree, like the parser's own
+/// <see cref="ParserException"/>; <see cref="Parse"/> catches both, so no exception leaves this class.
+/// </remarks>
 internal static class SqlSubset
 {
     public const int MaxSqlLength = 16 * 1024;
@@ -33,28 +33,29 @@ internal static class SqlSubset
     private const int MaxConditions = 256;
     private const int MaxValues = 1024;
 
-    public static SqlParseResult Parse(string? sql)
+    /// <summary>The statement, or the rule the SQL breaks; the message never quotes the client's text.</summary>
+    public static Valid<SqlStatement> Parse(string? sql)
     {
         if (string.IsNullOrWhiteSpace(sql) || sql.Length > MaxSqlLength)
         {
-            return new(null, "sql must be 1 to 16384 characters");
+            return new Validation("sql must be 1 to 16384 characters");
         }
 
         try
         {
-            return new(Translate(new Parser().ParseSql(sql, new SQLiteDialect())), null);
+            return Translate(new Parser().ParseSql(sql, new SQLiteDialect()));
         }
         catch (ParserException exception)
         {
-            return new(null, Syntax(exception.Line, exception.Column));
+            return new Validation(Syntax(exception.Line, exception.Column));
         }
         catch (TokenizeException exception)
         {
-            return new(null, Syntax(exception.Line, exception.Column));
+            return new Validation(Syntax(exception.Line, exception.Column));
         }
         catch (FormatException exception)
         {
-            return new(null, exception.Message);
+            return new Validation(exception.Message);
         }
     }
 

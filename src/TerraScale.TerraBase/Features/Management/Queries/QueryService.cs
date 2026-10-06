@@ -1,6 +1,7 @@
 using System.Buffers;
 using System.Text.Json;
 using TerraScale.TerraBase.Engine;
+using TerraScale.TerraBase.Errors;
 using TerraScale.TerraBase.Features.Documents;
 using TerraScale.TerraBase.Hosting;
 using TerraScale.TerraBase.Tenancy;
@@ -20,7 +21,10 @@ internal sealed class QueryService(IStorageEngine engine, SystemCatalog catalog,
     private const long MaxCatalogPageBytes = 1024 * 1024;
     private const string QuerySequence = "saved_query_sequence";
 
-    public async ValueTask<SqlResultBody> RunAsync(TenantContext database, SqlStatement statement, CancellationToken cancellationToken)
+    // Same code as a document query over the engine read budget.
+    private static readonly Validation TooExpensive = new("query too expensive", "invalid_query");
+
+    public async ValueTask<RunSqlResult> RunAsync(TenantContext database, SqlStatement statement, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(database);
         ArgumentNullException.ThrowIfNull(statement);
@@ -37,6 +41,10 @@ internal sealed class QueryService(IStorageEngine engine, SystemCatalog catalog,
                 new SqlResultBody(0, false, []),
                 cancellationToken).ConfigureAwait(false);
         }
+        catch (QueryCapacityException)
+        {
+            return TooExpensive;
+        }
         finally
         {
             // Also when the work budget stopped the run: those are the statements an index helps most.
@@ -44,16 +52,26 @@ internal sealed class QueryService(IStorageEngine engine, SystemCatalog catalog,
         }
     }
 
-    public async ValueTask<SqlCheckBody> CheckAsync(TenantContext database, SqlStatement statement, CancellationToken cancellationToken)
+    public async ValueTask<CheckSqlResult> CheckAsync(TenantContext database, SqlStatement statement, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(statement);
-        var (plan, indexes) = await ReadAsync(
-            database,
-            async transaction => (
-                await transaction.ExplainSqlAsync(statement.Query, cancellationToken).ConfigureAwait(false),
-                await transaction.ListIndexesAsync(cancellationToken).ConfigureAwait(false)),
-            (new SqlQueryPlan([], []), []),
-            cancellationToken).ConfigureAwait(false);
+        SqlQueryPlan plan;
+        IReadOnlyList<IndexDefinition> indexes;
+        try
+        {
+            (plan, indexes) = await ReadAsync(
+                database,
+                async transaction => (
+                    await transaction.ExplainSqlAsync(statement.Query, cancellationToken).ConfigureAwait(false),
+                    await transaction.ListIndexesAsync(cancellationToken).ConfigureAwait(false)),
+                (new SqlQueryPlan([], []), []),
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch (QueryCapacityException)
+        {
+            return TooExpensive;
+        }
+
         return new SqlCheckBody(true, null, statement.Query.Collection, statement.HasLimit, plan.Steps, plan.Indexes, Suggest(statement.Query, indexes));
     }
 
@@ -83,13 +101,13 @@ internal sealed class QueryService(IStorageEngine engine, SystemCatalog catalog,
             return new ManagementPage<SavedQuery>(queries, next);
         }, cancellationToken);
 
-    public async ValueTask<SavedQuery?> CreateSavedAsync(string userId, Project project, string name, string sql, CancellationToken cancellationToken)
+    public async ValueTask<Found<SavedQuery>> CreateSavedAsync(string userId, Project project, string name, string sql, CancellationToken cancellationToken)
     {
-        return await catalog.WriteAsync<SavedQuery?>(async transaction =>
+        return await catalog.WriteAsync<Found<SavedQuery>>(async transaction =>
         {
             if (!await IsWriterProjectAsync(transaction, userId, project, cancellationToken).ConfigureAwait(false))
             {
-                return null;
+                return new NotFound();
             }
 
             var now = time.GetUtcNow();
@@ -103,19 +121,21 @@ internal sealed class QueryService(IStorageEngine engine, SystemCatalog catalog,
         }, cancellationToken).ConfigureAwait(false);
     }
 
-    public async ValueTask<SavedQuery?> GetSavedAsync(Project project, string queryId, CancellationToken cancellationToken) =>
-        (await catalog.ReadAsync(
+    public async ValueTask<Found<SavedQuery>> GetSavedAsync(Project project, string queryId, CancellationToken cancellationToken) =>
+        await catalog.ReadAsync(
             transaction => GetAsync(transaction, SavedQueries(project), queryId, TerraBaseJsonContext.Default.SavedQueryEntry, cancellationToken),
-            cancellationToken).ConfigureAwait(false))?.Query;
+            cancellationToken).ConfigureAwait(false) is { } entry
+            ? entry.Query
+            : new NotFound();
 
-    public async ValueTask<SavedQuery?> UpdateSavedAsync(
+    public async ValueTask<Found<SavedQuery>> UpdateSavedAsync(
         string userId, Project project, string queryId, string name, string sql, CancellationToken cancellationToken) =>
-        await catalog.WriteAsync(async transaction =>
+        await catalog.WriteAsync<Found<SavedQuery>>(async transaction =>
         {
             if (!await IsWriterProjectAsync(transaction, userId, project, cancellationToken).ConfigureAwait(false)
                 || await MemberEntryAsync(transaction, userId, project, queryId, cancellationToken).ConfigureAwait(false) is not { } entry)
             {
-                return null;
+                return new NotFound();
             }
 
             var query = entry.Query with { Name = name, Sql = sql, UpdatedAt = time.GetUtcNow() };
@@ -123,18 +143,18 @@ internal sealed class QueryService(IStorageEngine engine, SystemCatalog catalog,
             return query;
         }, cancellationToken).ConfigureAwait(false);
 
-    public async ValueTask<bool> DeleteSavedAsync(string userId, Project project, string queryId, CancellationToken cancellationToken) =>
-        await catalog.WriteAsync(async transaction =>
+    public async ValueTask<DeleteSavedQueryResult> DeleteSavedAsync(string userId, Project project, string queryId, CancellationToken cancellationToken) =>
+        await catalog.WriteAsync<DeleteSavedQueryResult>(async transaction =>
         {
             if (!await IsWriterProjectAsync(transaction, userId, project, cancellationToken).ConfigureAwait(false)
                 || await MemberEntryAsync(transaction, userId, project, queryId, cancellationToken).ConfigureAwait(false) is not { } entry)
             {
-                return false;
+                return new NotFound();
             }
 
             await transaction.DeleteAsync(SavedQueries(project), queryId, cancellationToken).ConfigureAwait(false);
             await transaction.DeleteAsync(SavedQueryOrder(project), entry.Order, cancellationToken).ConfigureAwait(false);
-            return true;
+            return new Done();
         }, cancellationToken).ConfigureAwait(false);
 
     /// <summary>Filtered or sorted fields of <paramref name="query"/> that no index of its collection leads with.</summary>

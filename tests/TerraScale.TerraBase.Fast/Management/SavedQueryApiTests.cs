@@ -2,7 +2,9 @@ using System.Net;
 using System.Text.Json;
 using Bogus;
 using Microsoft.Data.Sqlite;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
+using TerraScale.TerraBase.Engine;
 using TerraScale.TerraBase.Testing;
 
 namespace TerraScale.TerraBase.Fast.Management;
@@ -10,6 +12,56 @@ namespace TerraScale.TerraBase.Fast.Management;
 public sealed class SavedQueryApiTests
 {
     private static readonly Faker Faker = new();
+
+    [Test]
+    public async Task Query_errors_answer_their_code_and_message()
+    {
+        const string BadName = "name must be 1 to 128 characters, include a letter or digit and have no control characters";
+        const string NotSelect = "only SELECT statements are supported";
+        const string RoleTooLow = "your role in the organization does not allow this";
+        var clock = new SteppingClock();
+        var hook = new UsageCommitHook();
+        await using var api = await ManagementApi.StartAsync(services: services =>
+        {
+            hook.Install(services);
+            services.AddKeyedSingleton<TimeProvider>(EngineExtensions.QueryDeadlineClock, clock);
+        });
+        var database = await api.CreateManagedDatabaseAsync();
+        var queries = $"{database.ProjectPath}/saved-queries";
+        var unknownProject = $"/v1/management/organizations/{database.Organization}/projects/{Guid.NewGuid()}";
+        var unknownDatabase = $"{database.ProjectPath}/databases/{Guid.NewGuid()}";
+        using var created = await api.Client.PostAsJsonAsync(Uri(queries), new { name = "All", sql = "SELECT * FROM people" });
+        var id = (await created.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString();
+        using var viewer = api.As(await api.AddMemberAsync(api.Client, database.Organization, "viewer"));
+
+        await ErrorAssert.ErrorAsync(api.Client.PostAsJsonAsync(Uri(queries), new { name = " ", sql = "SELECT * FROM people" }), HttpStatusCode.BadRequest, "invalid_request", BadName);
+        await ErrorAssert.ErrorAsync(api.Client.PostAsJsonAsync(Uri(queries), new { name = "Drop", sql = "DELETE FROM people" }), HttpStatusCode.BadRequest, "invalid_request", NotSelect);
+        await ErrorAssert.ErrorAsync(api.Client.PutAsJsonAsync(Uri($"{queries}/{id}"), new { name = "All", sql = "" }), HttpStatusCode.BadRequest, "invalid_request", "sql must be 1 to 16384 characters");
+        await ErrorAssert.ErrorAsync(api.Client.PostAsJsonAsync(Uri($"{unknownProject}/saved-queries"), new { name = "All", sql = "SELECT * FROM people" }), HttpStatusCode.NotFound, "not_found");
+        await ErrorAssert.ErrorAsync(api.Client.GetAsync(Uri($"{unknownProject}/saved-queries")), HttpStatusCode.NotFound, "not_found");
+        await ErrorAssert.ErrorAsync(api.Client.GetAsync(Uri($"{queries}?limit=0")), HttpStatusCode.BadRequest, "invalid_request", "limit must be an integer between 1 and 100");
+        await ErrorAssert.ErrorAsync(api.Client.GetAsync(Uri($"{queries}/{Guid.NewGuid()}")), HttpStatusCode.NotFound, "not_found");
+        await ErrorAssert.ErrorAsync(api.Client.GetAsync(Uri($"{unknownProject}/saved-queries/{id}")), HttpStatusCode.NotFound, "not_found");
+        await ErrorAssert.ErrorAsync(api.Client.PutAsJsonAsync(Uri($"{queries}/{Guid.NewGuid()}"), new { name = "All", sql = "SELECT * FROM people" }), HttpStatusCode.NotFound, "not_found");
+        await ErrorAssert.ErrorAsync(api.Client.DeleteAsync(Uri($"{queries}/{Guid.NewGuid()}")), HttpStatusCode.NotFound, "not_found");
+        await ErrorAssert.ErrorAsync(viewer.PostAsJsonAsync(Uri(queries), new { name = "All", sql = "SELECT * FROM people" }), HttpStatusCode.Forbidden, "forbidden_role", RoleTooLow);
+        await ErrorAssert.ErrorAsync(viewer.PutAsJsonAsync(Uri($"{queries}/{id}"), new { name = "All", sql = "SELECT * FROM people" }), HttpStatusCode.Forbidden, "forbidden_role", RoleTooLow);
+        await ErrorAssert.ErrorAsync(viewer.DeleteAsync(Uri($"{queries}/{id}")), HttpStatusCode.Forbidden, "forbidden_role", RoleTooLow);
+        await ErrorAssert.ErrorAsync(api.Client.PostAsJsonAsync(Uri($"{database.Path}/sql"), new { sql = "DELETE FROM people" }), HttpStatusCode.BadRequest, "invalid_request", NotSelect);
+        await ErrorAssert.ErrorAsync(api.Client.PostAsJsonAsync(Uri($"{unknownDatabase}/sql"), new { sql = "SELECT * FROM people" }), HttpStatusCode.NotFound, "not_found");
+        await ErrorAssert.ErrorAsync(api.Client.PostAsJsonAsync(Uri($"{unknownDatabase}/sql/check"), new { sql = "SELECT * FROM people" }), HttpStatusCode.NotFound, "not_found");
+
+        // From the first read of the database on, every engine read outlasts the 5-second deadline.
+        hook.BeforeBegin = (tenant, _) =>
+        {
+            clock.Armed |= tenant.DatabaseId == database.Id;
+            return ValueTask.CompletedTask;
+        };
+        await ErrorAssert.ErrorAsync(
+            api.Client.PostAsJsonAsync(Uri($"{database.Path}/sql"), new { sql = "SELECT * FROM people" }), HttpStatusCode.BadRequest, "invalid_query", "query too expensive");
+        await ErrorAssert.ErrorAsync(
+            api.Client.PostAsJsonAsync(Uri($"{database.Path}/sql/check"), new { sql = "SELECT * FROM people" }), HttpStatusCode.BadRequest, "invalid_query", "query too expensive");
+    }
 
     [Test]
     public async Task Saved_queries_are_created_listed_updated_and_deleted()

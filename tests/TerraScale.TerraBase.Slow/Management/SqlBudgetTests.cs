@@ -33,12 +33,11 @@ public sealed class SqlBudgetTests
         // The interrupted statement's session serves the next one.
         using var resumed = await RunAsync(api, database, "SELECT _id FROM items ORDER BY _id LIMIT 1");
 
-        await Assert.That(filtered.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
-        await Assert.That(await filtered.Content.ReadFromJsonAsync<string>()).IsEqualTo("query too expensive");
-        await Assert.That(sorted.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
-        await Assert.That(await sorted.Content.ReadFromJsonAsync<string>()).IsEqualTo("query too expensive");
-        await Assert.That(afterFirstRow.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
-        await Assert.That(await afterFirstRow.Content.ReadFromJsonAsync<string>()).IsEqualTo("query too expensive");
+        foreach (var expensive in new[] { filtered, sorted, afterFirstRow })
+        {
+            await ErrorAssert.ErrorAsync(Task.FromResult(expensive), HttpStatusCode.BadRequest, "invalid_query", "query too expensive");
+        }
+
         // The stopped statements still count their unindexed fields.
         await Assert.That(recommended).Contains("items:f000");
         await Assert.That(resumed.StatusCode).IsEqualTo(HttpStatusCode.OK);

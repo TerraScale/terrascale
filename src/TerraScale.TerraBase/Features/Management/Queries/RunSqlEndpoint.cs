@@ -1,5 +1,5 @@
 using TerraScale.Endpoints;
-using TerraScale.TerraBase.Engine;
+using TerraScale.TerraBase.Errors;
 using TerraScale.TerraBase.Features.UserAuth;
 using TerraScale.TerraBase.Hosting;
 
@@ -31,22 +31,17 @@ public sealed class RunSqlEndpoint(IManagementService management, IQueryService 
         ArgumentNullException.ThrowIfNull(request);
         if (await ManagementRoute.DatabaseAsync(HttpContext, management, cancellationToken) is not { } database)
         {
-            return TypedResults.NotFound();
+            return ErrorResponse.From(new NotFound());
         }
 
-        var parsed = SqlSubset.Parse(request.Sql);
-        if (parsed.Statement is not { } statement)
+        return SqlSubset.Parse(request.Sql) switch
         {
-            return TypedResults.BadRequest(parsed.Error);
-        }
-
-        try
-        {
-            return TypedResults.Ok(await queries.RunAsync(database, statement, cancellationToken));
-        }
-        catch (QueryCapacityException)
-        {
-            return TypedResults.BadRequest("query too expensive");
-        }
+            Validation error => ErrorResponse.From(error),
+            SqlStatement statement => await queries.RunAsync(database, statement, cancellationToken) switch
+            {
+                SqlResultBody result => TypedResults.Ok(result),
+                Validation error => ErrorResponse.From(error),
+            },
+        };
     }
 }

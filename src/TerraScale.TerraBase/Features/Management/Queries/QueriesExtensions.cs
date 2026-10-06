@@ -1,3 +1,5 @@
+using TerraScale.TerraBase.Errors;
+
 namespace TerraScale.TerraBase.Features.Management.Queries;
 
 /// <summary>Registers the SQL and saved-query part of the Management slice.</summary>
@@ -12,11 +14,12 @@ public static class QueriesExtensions
     public static IServiceCollection AddTerraBaseManagementQueries(this IServiceCollection services) =>
         services.AddSingleton<QueryFieldRecorder>().AddSingleton<IQueryService, QueryService>();
 
-    /// <summary>Validates a saved query: a display name and SQL of the subset.</summary>
-    internal static (string Name, string Sql) Validate(SavedQueryRequest request)
-    {
-        var name = ManagementRoute.DisplayName(new NameRequest(request.Name));
-        var parsed = SqlSubset.Parse(request.Sql);
-        return parsed.Error is null ? (name, request.Sql!) : throw new BadHttpRequestException(parsed.Error);
-    }
+    /// <summary>A saved query with its name trimmed, or the rule it breaks: a display name and SQL of the subset.</summary>
+    internal static Valid<SavedQueryRequest> Validate(SavedQueryRequest request) =>
+        (ManagementRoute.CheckDisplayName(new NameRequest(request.Name)), SqlSubset.Parse(request.Sql)) switch
+        {
+            (Validation error, _) => error,
+            (_, Validation error) => error,
+            (string name, SqlStatement) => request with { Name = name },
+        };
 }

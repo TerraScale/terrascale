@@ -1,4 +1,5 @@
 using TerraScale.Endpoints;
+using TerraScale.TerraBase.Errors;
 using TerraScale.TerraBase.Features.UserAuth;
 using TerraScale.TerraBase.Hosting;
 
@@ -23,11 +24,12 @@ public sealed class ListSavedQueriesEndpoint(IManagementService management, IQue
     }
 
     /// <inheritdoc />
-    public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
-    {
-        var (after, limit) = ManagementRoute.Page(HttpContext);
-        return await ManagementRoute.ProjectAsync(HttpContext, management, cancellationToken) is { } project
-            ? TypedResults.Ok(await queries.ListSavedAsync(project, after, limit, cancellationToken))
-            : TypedResults.NotFound();
-    }
+    public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
+        ManagementRoute.CheckPage(HttpContext) switch
+        {
+            Validation error => ErrorResponse.From(error),
+            PageQuery page => await ManagementRoute.ProjectAsync(HttpContext, management, cancellationToken) is { } project
+                ? TypedResults.Ok(await queries.ListSavedAsync(project, page.After, page.Limit, cancellationToken))
+                : ErrorResponse.From(new NotFound()),
+        };
 }
