@@ -49,6 +49,10 @@ public sealed record ListenerMetadata(params IReadOnlyList<TerraBaseListener> Li
     public static ListenerMetadata Management { get; } = new(TerraBaseListener.Admin, TerraBaseListener.Client);
 }
 
+/// <summary>Request feature: the request is answered as a node of <paramref name="Region"/> (see <see cref="Listeners.RegionOf"/>).</summary>
+/// <param name="Region">The answering node's region.</param>
+public sealed record AnsweringRegion(string Region);
+
 /// <summary>Binds listeners and keeps each endpoint on its own listener.</summary>
 public static class Listeners
 {
@@ -61,6 +65,19 @@ public static class Listeners
         return context.Features.Get<IConnectionItemsFeature>()?.Items.TryGetValue(ListenerKey, out var tag) == true
             ? tag as TerraBaseListener?
             : null;
+    }
+
+    /// <summary>Connection items for a request served in process as if <paramref name="listener"/> accepted it.</summary>
+    internal static IConnectionItemsFeature AcceptedBy(TerraBaseListener listener) => new AcceptedConnection(listener);
+
+    /// <summary>
+    /// The region of the node that answers the request (docs/region-identity.md): this node's, or for a request a catalog
+    /// follower forwarded, the follower's (<see cref="AnsweringRegion"/>).
+    /// </summary>
+    public static string RegionOf(HttpContext context)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        return context.Features.Get<AnsweringRegion>()?.Region ?? context.RequestServices.GetRequiredService<TerraBaseOptions>().Region;
     }
 
     /// <summary>Documents the client listener's region headers and pin rejection in OpenAPI.</summary>
@@ -149,13 +166,13 @@ public static class Listeners
     public static WebApplication UseTerraBaseListeners(this WebApplication app)
     {
         ArgumentNullException.ThrowIfNull(app);
-        var region = app.Services.GetRequiredService<TerraBaseOptions>().Region;
         app.UseRouting();
         app.Use((context, next) =>
         {
             var arrivedOn = ArrivedOn(context);
             if (arrivedOn == TerraBaseListener.Client)
             {
+                var region = RegionOf(context);
                 // OnStarting survives Response.Clear() in the error middleware.
                 context.Response.OnStarting(() =>
                 {
@@ -180,5 +197,10 @@ public static class Listeners
             return next(context);
         });
         return app;
+    }
+
+    private sealed class AcceptedConnection(TerraBaseListener listener) : IConnectionItemsFeature
+    {
+        public IDictionary<object, object?> Items { get; set; } = new Dictionary<object, object?> { [ListenerKey] = listener };
     }
 }

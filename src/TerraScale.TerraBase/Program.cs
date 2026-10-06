@@ -94,12 +94,14 @@ catch (TerraBaseConfigurationException error)
     return 2;
 }
 
-// Error bodies first, so they also cover the listener check's 404.
+// Forwarded requests run through everything after it. Error bodies first, so they also cover the listener check's 404.
+app.UseTerraBaseForwardedRequests();
 app.UseTerraBasePressure();
 app.UseTerraBaseBadRequests();
 app.UseTerraBaseListeners();
 app.UseAuthentication();
 app.UseAuthorization();
+app.UseTerraBaseCatalogForwarding();
 app.MapTerraScaleEndpoints();
 app.MapTerraBaseApiReference();
 app.MapTerraBaseMetrics();

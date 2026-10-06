@@ -1,0 +1,671 @@
+using System.Net;
+using System.Net.Http.Headers;
+using System.Text;
+using System.Text.Json;
+using Google.Protobuf;
+using Grpc.Core;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Time.Testing;
+using TerraScale.TerraBase.Engine;
+using TerraScale.TerraBase.Features.ApiKeys;
+using TerraScale.TerraBase.Features.Management;
+using TerraScale.TerraBase.Features.Replication;
+using TerraScale.TerraBase.Features.Replication.V1;
+using TerraScale.TerraBase.Testing;
+
+namespace TerraScale.TerraBase.Fast.Replication;
+
+/// <summary>A catalog follower forwards what its catalog primary serves (docs/decisions/0009).</summary>
+public sealed class CatalogForwardingTests
+{
+    private static readonly string[] Scopes = [ApiKeyScopes.DocumentsRead, ApiKeyScopes.DocumentsWrite];
+
+    [Test]
+    public async Task Management_requests_through_a_follower_are_served_by_the_primary_as_the_follower_and_what_they_wrote_serves_there_at_once()
+    {
+        using var peers = new PeerTls();
+        using var tls = new ClientTls();
+        using var issuer = new TestIssuer();
+        var credentials = Directory.CreateTempSubdirectory("terrabase-service-").FullName;
+        TerraBaseTestServer? primary = null;
+        try
+        {
+            var credential = Path.Combine(credentials, "credential");
+            await File.WriteAllTextAsync(credential, ManagementApi.ServiceCredential + "\n");
+            void Configure(Dictionary<string, string> settings)
+            {
+                peers.Apply(settings);
+                tls.Apply(settings);
+                TestIssuer.Configure(settings);
+                settings["management-credential-file"] = credential;
+            }
+
+            primary = await TerraBaseTestServer.StartAsync(settings =>
+            {
+                Configure(settings);
+                settings["region"] = "primary-region";
+            }, issuer.Route);
+            await using var follower = await TerraBaseTestServer.StartAsync(settings =>
+            {
+                Configure(settings);
+                settings["region"] = "follower-region";
+                settings["catalog-primary"] = primary.PeerAddress!.ToString();
+            }, issuer.Route);
+            await ReadyAsync(follower);
+
+            // ts-dashboard's calls through the follower, pinned to its region: an organization, a project, a database and a key.
+            var user = Guid.NewGuid().ToString();
+            using var dashboard = tls.CreateClient(follower.ClientAddress!, issuer.Mint(user));
+            dashboard.DefaultRequestHeaders.Add("X-TerraScale-Region-Pin", "follower-region");
+            var organization = await CreatedIdAsync(dashboard, "/v1/management/organizations", new { name = "Forwarded" });
+            var project = await CreatedIdAsync(dashboard, $"/v1/management/organizations/{organization}/projects", new { name = "main" });
+            using (var database = await dashboard.PostAsJsonAsync(Relative($"/v1/management/organizations/{organization}/projects/{project}/databases"), new { name = "reports" }))
+            {
+                // The follower answered it: its region, in the header and in the body.
+                await Assert.That(database.StatusCode).IsEqualTo(HttpStatusCode.Created);
+                await Assert.That(database.Headers.GetValues("X-TerraBase-Region").Single()).IsEqualTo("follower-region");
+                await Assert.That((await database.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("region").GetString()).IsEqualTo("follower-region");
+            }
+
+            string key;
+            using (var issued = await dashboard.PostAsJsonAsync(
+                Relative($"/v1/management/organizations/{organization}/projects/{project}/api-keys"), new { name = "app", scopes = Scopes }))
+            {
+                await Assert.That(issued.StatusCode).IsEqualTo(HttpStatusCode.Created);
+                key = (await issued.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("secret").GetString()!;
+            }
+
+            // The key, and a database it creates through the follower, serve there as soon as the requests answered.
+            using var data = tls.CreateClient(follower.ClientAddress!, key);
+            await Assert.That(await PutDatabaseAsync(data, project, "orders")).IsEqualTo(HttpStatusCode.Created);
+            using (var withBody = await data.PutAsJsonAsync(Relative($"/v1/projects/{project}/databases/archive"), new { }))
+            {
+                await Assert.That(withBody.StatusCode).IsEqualTo(HttpStatusCode.Created);
+            }
+
+            using (var collection = await data.PostAsJsonAsync(Relative($"/v1/projects/{project}/databases/orders/collections"), new { name = "items" }))
+            {
+                await Assert.That(collection.StatusCode).IsEqualTo(HttpStatusCode.Created);
+            }
+
+            // The primary wrote all of it, and serves the follower's Management reads.
+            await Assert.That(await primary.Services.GetRequiredService<IManagementService>().GetOrganizationAsync(user, organization, CancellationToken.None))
+                .IsNotNull();
+            using (var read = await dashboard.GetAsync(Relative($"/v1/management/organizations/{organization}")))
+            {
+                await Assert.That(read.StatusCode).IsEqualTo(HttpStatusCode.OK);
+                await Assert.That((await read.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("name").GetString()).IsEqualTo("Forwarded");
+            }
+
+            // An existing database answers here, unforwarded; so do requests the follower refuses itself.
+            await Assert.That(await PutDatabaseAsync(data, project, "orders")).IsEqualTo(HttpStatusCode.OK);
+            foreach (var token in new string?[] { null, TestIssuer.MintUnsigned(user), ManagementApi.ServiceCredential })
+            {
+                using var client = tls.CreateClient(follower.ClientAddress!, token);
+                using var refused = await client.GetAsync(Relative("/v1/management/organizations"));
+                await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+            }
+
+            await Assert.That(await follower.MetricAsync("terrabase_catalog_forwarded_total", "result=\"answered\"")).IsEqualTo(7);
+
+            // The loopback listener is never forwarded: its catalog writes stay the primary's own, with nothing written here.
+            using var service = new HttpClient { BaseAddress = follower.BaseAddress };
+            service.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", ManagementApi.ServiceCredential);
+            service.DefaultRequestHeaders.Add("X-TerraBase-User-Id", user);
+            using (var member = await service.PutAsJsonAsync(Relative($"/v1/management/organizations/{organization}/members/{Guid.NewGuid()}"), new { email = "m@example.com" }))
+            {
+                await NotPrimaryAsync(member);
+            }
+
+            using (var operatorKey = await follower.Client.PostAsJsonAsync(
+                Relative("/admin/api-keys"), new { name = "denied", scopes = Scopes, organizationId = organization }))
+            {
+                await NotPrimaryAsync(operatorKey);
+            }
+
+            // A follower serves no forwarded request.
+            using (var channel = peers.CreateChannel(follower.PeerAddress!))
+            {
+                var notPrimary = await Assert.ThrowsAsync<RpcException>(async () =>
+                    await ForwardAsync(new CatalogForwarding.CatalogForwardingClient(channel), Request("GET", "/v1/management/organizations")));
+                await Assert.That(notPrimary!.StatusCode).IsEqualTo(StatusCode.FailedPrecondition);
+            }
+
+            // Without its primary the follower still serves existing databases; what the primary serves is unavailable.
+            await primary.DisposeAsync();
+            primary = null;
+            await Assert.That(await PutDatabaseAsync(data, project, "orders")).IsEqualTo(HttpStatusCode.OK);
+            foreach (var request in new Func<Task<HttpResponseMessage>>[]
+            {
+                () => data.PutAsync(Relative($"/v1/projects/{project}/databases/new"), null),
+                () => dashboard.GetAsync(Relative($"/v1/management/organizations/{organization}")),
+            })
+            {
+                using var unavailable = await request();
+                await Assert.That(unavailable.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+                await Assert.That(unavailable.Headers.RetryAfter?.Delta).IsEqualTo(TimeSpan.FromSeconds(1));
+                await Assert.That(await CodeAsync(unavailable)).IsEqualTo("catalog_primary_unavailable");
+            }
+        }
+        finally
+        {
+            if (primary is not null)
+            {
+                await primary.DisposeAsync();
+            }
+
+            Directory.Delete(credentials, recursive: true);
+        }
+    }
+
+    [Test]
+    public async Task The_primary_serves_a_forwarded_request_only_as_its_client_listener_would_and_only_on_an_endpoint_it_serves()
+    {
+        using var peers = new PeerTls();
+        using var tls = new ClientTls();
+        await using var primary = await TerraBaseTestServer.StartAsync(settings =>
+        {
+            peers.Apply(settings);
+            tls.Apply(settings);
+        });
+        var user = Guid.NewGuid().ToString();
+        var management = primary.Services.GetRequiredService<IManagementService>();
+        var organization = (await management.CreateOrganizationAsync(user, "Forwarded", CancellationToken.None)).Value!;
+        var project = (await management.CreateProjectAsync(user, organization.Id, "main", CancellationToken.None)).Value!;
+        _ = (await management.CreateDatabaseAsync(user, organization.Id, project.Id, "orders", CancellationToken.None)).Value!;
+        var key = await primary.IssueAsync(organization.Id, Scopes);
+        using var channel = peers.CreateChannel(primary.PeerAddress!);
+        var client = new CatalogForwarding.CatalogForwardingClient(channel);
+        var before = await primary.Services.GetRequiredService<ISystemReplication>().GetHeadAsync(CancellationToken.None);
+
+        // Endpoints the primary serves to nobody's followers answer 404 unexecuted: the loopback listener's, probes and the
+        // data plane, even with a valid key.
+        var documents = Request("GET", $"/v1/projects/{project.Id}/databases/orders/collections");
+        documents.Headers.Add(new ForwardedHeader { Name = "Authorization", Value = "Bearer " + key });
+        foreach (var request in new[]
+        {
+            Request("POST", "/admin/api-keys", JsonSerializer.SerializeToUtf8Bytes(new { name = "forwarded", scopes = Scopes, organizationId = organization.Id })),
+            Request("PUT", $"/v1/management/organizations/{organization.Id}/members/{Guid.NewGuid()}", JsonSerializer.SerializeToUtf8Bytes(new { email = "m@example.com" })),
+            Request("GET", "/healthz"),
+            Request("GET", "/readyz"),
+            documents,
+        })
+        {
+            var (head, body) = await ForwardAsync(client, request);
+            await Assert.That(head.Status).IsEqualTo(404U).Because(request.Path);
+            await Assert.That(JsonDocument.Parse(body).RootElement.GetProperty("error").GetProperty("code").GetString()).IsEqualTo("unknown_route");
+        }
+
+        // The Management API authenticates as on the client listener: no token, or the loopback listener's credential.
+        var service = Request("GET", "/v1/management/organizations");
+        service.Headers.Add(new ForwardedHeader { Name = "Authorization", Value = "Bearer " + ManagementApi.ServiceCredential });
+        service.Headers.Add(new ForwardedHeader { Name = "X-TerraBase-User-Id", Value = user });
+        foreach (var request in new[] { Request("GET", "/v1/management/organizations"), service })
+        {
+            var (head, _) = await ForwardAsync(client, request);
+            await Assert.That(head.Status).IsEqualTo(401U);
+            await Assert.That(head.Headers.Single(header => header.Name == "X-TerraBase-Region").Value).IsEqualTo("follower-region");
+        }
+
+        // A request is answered as the follower's region, pin included.
+        var pinned = WithHeader(Request("GET", "/v1/management/organizations"), "X-TerraScale-Region-Pin", "test-region");
+        var (misdirected, _) = await ForwardAsync(client, pinned);
+        await Assert.That(misdirected.Status).IsEqualTo(421U);
+        var after = await primary.Services.GetRequiredService<ISystemReplication>().GetHeadAsync(CancellationToken.None);
+        await Assert.That(after.Sequence).IsEqualTo(before.Sequence);
+        await Assert.That(misdirected.Origin.Span.SequenceEqual(after.Origin.Span)).IsTrue();
+
+        // Requests no HTTP server would have accepted, and tampered bodies, are refused before anything runs.
+        var envelope = ApplicationEnvelope.Encode("{\"name\":\"x\"}"u8).ToArray();
+        var tampered = envelope.ToArray();
+        tampered[^1] ^= 1;
+        var invalid = new (string Case, ForwardRequest Request)[]
+        {
+            ("protocol", Request("GET", "/", protocol: 2)),
+            ("region", Request("GET", "/", region: "Not A Region")),
+            ("method", Request("GE T", "/")),
+            ("path", Request("GET", "v1/management/organizations")),
+            ("path control", Request("GET", "/v1\r\nX: 1")),
+            ("query", Request("GET", "/", query: "a=1")),
+            ("header name", WithHeader(Request("GET", "/"), "Bad Name", "1")),
+            ("header value", WithHeader(Request("GET", "/"), "X-Test", "1\r\nX-Injected: 1")),
+            ("no length", Request("POST", "/", envelope: envelope, length: null)),
+            ("two lengths", WithHeader(Request("POST", "/", envelope: envelope, length: 12), "Content-Length", "12")),
+            ("long length", Request("POST", "/", envelope: envelope, length: 13)),
+            ("short length", Request("POST", "/", envelope: envelope, length: 11)),
+            ("tampered body", Request("POST", "/", envelope: tampered, length: 12)),
+        };
+        foreach (var (name, request) in invalid)
+        {
+            var refused = await Assert.ThrowsAsync<RpcException>(async () => await ForwardAsync(client, request));
+            await Assert.That(refused!.StatusCode).IsEqualTo(StatusCode.InvalidArgument).Because(name);
+        }
+    }
+
+    [Test]
+    public async Task A_forwarded_request_answers_once_the_follower_applied_the_primary_head_or_after_the_apply_timeout()
+    {
+        using var peers = new PeerTls();
+        using var tls = new ClientTls();
+        using var issuer = new TestIssuer();
+        var time = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        var origin = System.Security.Cryptography.RandomNumberGenerator.GetBytes(16);
+        var initial = JournalDigest.Initial(origin);
+        var first = new DocumentChange("catalog_test", "first", 3, Encoding.UTF8.GetBytes("1"));
+        var firstDigest = JournalDigest.Compute(origin, 1, initial, [first]);
+        var second = new DocumentChange("catalog_test", "second", 4, Encoding.UTF8.GetBytes("2"));
+        // Set once the fake primary sent its whole response to the first and the second forwarded request, once the third
+        // reached it, and once it sent the fourth's head.
+        var answered = Enumerable.Range(0, 4).Select(_ => new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously)).ToArray();
+        var lateReached = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var lateHead = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var deliver = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var calls = 0;
+        await using var fake = await FakePeer.StartCatalogAsync(peers, async (_, responses, context) =>
+        {
+            await responses.WriteAsync(new FollowResponse { Welcome = new CatalogWelcome { Protocol = 1, Origin = ByteString.CopyFrom(origin), Head = 1 } });
+            await responses.WriteAsync(new FollowResponse { SnapshotBegin = new SnapshotBegin { Sequence = 0, Digest = ByteString.CopyFrom(initial) } });
+            await WriteGroupAsync(responses, 1, [first], firstDigest);
+            await responses.WriteAsync(new FollowResponse { SnapshotEnd = new SnapshotEnd { Sequence = 1, Digest = ByteString.CopyFrom(firstDigest), CommitOffset = 3 } });
+            await responses.WriteAsync(new FollowResponse { Heartbeat = new CatalogHeartbeat { Head = 1 } });
+            await deliver.Task.WaitAsync(context.CancellationToken);
+            await WriteGroupAsync(responses, 2, [second], JournalDigest.Compute(origin, 2, firstDigest, [second]));
+            await Task.Delay(Timeout.Infinite, context.CancellationToken);
+        }, async (_, responses, context) =>
+        {
+            // The first request wrote group 2, which the follower gets only after the primary answered; the second wrote group
+            // 3, which never comes; the third is never answered; the fourth gets a head for group 4, which never comes, when
+            // the test says so, and no body.
+            var call = Interlocked.Increment(ref calls);
+            if (call == 3)
+            {
+                answered[2].TrySetResult();
+                await Task.Delay(Timeout.Infinite, context.CancellationToken);
+            }
+
+            if (call == 4)
+            {
+                lateReached.TrySetResult();
+                await lateHead.Task.WaitAsync(context.CancellationToken);
+                await responses.WriteAsync(new ForwardResponse
+                {
+                    Head = new ForwardHead { Status = 201, BodyLength = 2, Origin = ByteString.CopyFrom(origin), Sequence = 4 },
+                });
+                answered[3].TrySetResult();
+                await Task.Delay(Timeout.Infinite, context.CancellationToken);
+            }
+
+            await responses.WriteAsync(new ForwardResponse
+            {
+                Head = new ForwardHead { Status = 201, BodyLength = 2, Origin = ByteString.CopyFrom(origin), Sequence = call == 1 ? 2UL : 3UL },
+            });
+            await responses.WriteAsync(new ForwardResponse { Body = UnsafeByteOperations.UnsafeWrap(ApplicationEnvelope.Encode("{}"u8)) });
+            answered[call - 1].TrySetResult();
+        });
+        await using var follower = await StartFollowerAsync(peers, tls, issuer, fake.Address, services => services.AddSingleton<TimeProvider>(time));
+        await ReadyAsync(follower);
+        using var client = tls.CreateClient(follower.ClientAddress!, issuer.Mint(Guid.NewGuid().ToString()));
+
+        // Group 2 leaves the primary only after its whole response did: the follower answers once it applied it.
+        var answer = client.PostAsJsonAsync(Relative("/v1/management/organizations"), new { name = "Waits" });
+        await answered[0].Task.WaitAsync(TimeSpan.FromSeconds(30));
+        await Assert.That(answer.IsCompleted).IsFalse();
+        deliver.SetResult();
+        using (var response = await answer)
+        {
+            await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Created);
+            await Assert.That(await CountAsync(follower, "catalog_test")).IsEqualTo(2);
+        }
+
+        // Group 3 never comes: the answer takes the whole apply timeout of the follower's clock.
+        var lagging = client.PostAsJsonAsync(Relative("/v1/management/organizations"), new { name = "Lags" });
+        await answered[1].Task.WaitAsync(TimeSpan.FromSeconds(30));
+        var advanced = TimeSpan.Zero;
+        await TerraBaseTestServer.EventuallyAsync(_ =>
+        {
+            if (!lagging.IsCompleted)
+            {
+                time.Advance(TimeSpan.FromSeconds(1));
+                advanced += TimeSpan.FromSeconds(1);
+            }
+
+            return Task.FromResult(lagging.IsCompleted);
+        });
+        using (var response = await lagging)
+        {
+            await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Created);
+            await Assert.That(advanced).IsGreaterThanOrEqualTo(TimeSpan.FromSeconds(5));
+        }
+
+        // A primary that never answers holds the request only until the forwarding deadline.
+        var stalled = client.PostAsJsonAsync(Relative("/v1/management/organizations"), new { name = "Stalls" });
+        await answered[2].Task.WaitAsync(TimeSpan.FromSeconds(30));
+        advanced = TimeSpan.Zero;
+        await TerraBaseTestServer.EventuallyAsync(_ =>
+        {
+            if (!stalled.IsCompleted)
+            {
+                time.Advance(TimeSpan.FromSeconds(10));
+                advanced += TimeSpan.FromSeconds(10);
+            }
+
+            return Task.FromResult(stalled.IsCompleted);
+        });
+        using (var response = await stalled)
+        {
+            await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+            await Assert.That(await CodeAsync(response)).IsEqualTo("catalog_primary_unavailable");
+            await Assert.That(advanced).IsGreaterThanOrEqualTo(TimeSpan.FromSeconds(60));
+        }
+
+        // A head 58 seconds in starts a 5-second apply wait, but the forwarding deadline still ends the request at 60.
+        var late = client.PostAsJsonAsync(Relative("/v1/management/organizations"), new { name = "Late" });
+        await lateReached.Task.WaitAsync(TimeSpan.FromSeconds(30));
+        time.Advance(TimeSpan.FromSeconds(58));
+        lateHead.SetResult();
+        await answered[3].Task.WaitAsync(TimeSpan.FromSeconds(30));
+        time.Advance(TimeSpan.FromSeconds(3));
+        using (var response = await late.WaitAsync(TimeSpan.FromSeconds(30)))
+        {
+            await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+            await Assert.That(await CodeAsync(response)).IsEqualTo("catalog_primary_unavailable");
+        }
+
+        await Assert.That(await follower.MetricAsync("terrabase_catalog_forwarded_total", "result=\"answered\"")).IsEqualTo(1);
+        await Assert.That(await follower.MetricAsync("terrabase_catalog_forwarded_total", "result=\"lagging\"")).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task A_follower_forwards_requests_as_they_arrived_relays_the_response_and_refuses_a_broken_one()
+    {
+        using var peers = new PeerTls();
+        using var tls = new ClientTls();
+        using var issuer = new TestIssuer();
+        var origin = System.Security.Cryptography.RandomNumberGenerator.GetBytes(16);
+        var initial = JournalDigest.Initial(origin);
+        var requests = new List<ForwardRequest>();
+        var body = Encoding.UTF8.GetBytes(new string('x', 3 * 1024 * 1024));
+        await using var fake = await FakePeer.StartCatalogAsync(peers, async (_, responses, context) =>
+        {
+            await responses.WriteAsync(new FollowResponse { Welcome = new CatalogWelcome { Protocol = 1, Origin = ByteString.CopyFrom(origin), Head = 0 } });
+            await responses.WriteAsync(new FollowResponse { SnapshotBegin = new SnapshotBegin { Sequence = 0, Digest = ByteString.CopyFrom(initial) } });
+            await responses.WriteAsync(new FollowResponse { SnapshotEnd = new SnapshotEnd { Sequence = 0, Digest = ByteString.CopyFrom(initial), CommitOffset = 1 } });
+            await responses.WriteAsync(new FollowResponse { Heartbeat = new CatalogHeartbeat { Head = 0 } });
+            await Task.Delay(Timeout.Infinite, context.CancellationToken);
+        }, async (request, responses, _) =>
+        {
+            lock (requests)
+            {
+                requests.Add(request);
+            }
+
+            var head = new ForwardHead { Status = 200, Origin = ByteString.CopyFrom(origin) };
+            switch (request.Path)
+            {
+                case "/v1/management/organizations/large":
+                    // A body larger than one envelope, with a header to relay and a connection header not to.
+                    head.BodyLength = (ulong)body.Length;
+                    head.Headers.Add(new ForwardedHeader { Name = "X-Relayed", Value = "1" });
+                    head.Headers.Add(new ForwardedHeader { Name = "Connection", Value = "close" });
+                    await responses.WriteAsync(new ForwardResponse { Head = head });
+                    for (var offset = 0; offset < body.Length; offset += 1024 * 1024)
+                    {
+                        await responses.WriteAsync(new ForwardResponse
+                        {
+                            Body = UnsafeByteOperations.UnsafeWrap(ApplicationEnvelope.Encode(body.AsSpan(offset, Math.Min(1024 * 1024, body.Length - offset)))),
+                        });
+                    }
+
+                    break;
+                case "/v1/management/organizations/tampered":
+                    head.BodyLength = 2;
+                    await responses.WriteAsync(new ForwardResponse { Head = head });
+                    var envelope = ApplicationEnvelope.Encode("{}"u8).ToArray();
+                    envelope[^1] ^= 1;
+                    await responses.WriteAsync(new ForwardResponse { Body = ByteString.CopyFrom(envelope) });
+                    break;
+                case "/v1/management/organizations/empty-then-fails":
+                    await responses.WriteAsync(new ForwardResponse { Head = head });
+                    throw new RpcException(new Status(StatusCode.Internal, "failed after its head"));
+                case "/v1/management/organizations/body-then-fails":
+                    head.BodyLength = 2;
+                    await responses.WriteAsync(new ForwardResponse { Head = head });
+                    await responses.WriteAsync(new ForwardResponse { Body = UnsafeByteOperations.UnsafeWrap(ApplicationEnvelope.Encode("{}"u8)) });
+                    throw new RpcException(new Status(StatusCode.Internal, "failed after its body"));
+                case "/v1/management/organizations/trailing":
+                    head.BodyLength = 2;
+                    await responses.WriteAsync(new ForwardResponse { Head = head });
+                    await responses.WriteAsync(new ForwardResponse { Body = UnsafeByteOperations.UnsafeWrap(ApplicationEnvelope.Encode("{}"u8)) });
+                    await responses.WriteAsync(new ForwardResponse { Head = head });
+                    break;
+                case "/v1/management/organizations/large-then-fails":
+                    head.BodyLength = (ulong)body.Length;
+                    await responses.WriteAsync(new ForwardResponse { Head = head });
+                    for (var offset = 0; offset < body.Length; offset += 1024 * 1024)
+                    {
+                        await responses.WriteAsync(new ForwardResponse
+                        {
+                            Body = UnsafeByteOperations.UnsafeWrap(ApplicationEnvelope.Encode(body.AsSpan(offset, Math.Min(1024 * 1024, body.Length - offset)))),
+                        });
+                    }
+
+                    throw new RpcException(new Status(StatusCode.Internal, "failed after its whole body"));
+                case "/v1/management/organizations/headless":
+                    await responses.WriteAsync(new ForwardResponse { Body = UnsafeByteOperations.UnsafeWrap(ApplicationEnvelope.Encode("{}"u8)) });
+                    break;
+                case "/v1/management/organizations/hop":
+                    // Connection names a header that must stay between the primary and the follower.
+                    head.Headers.Add(new ForwardedHeader { Name = "Connection", Value = "keep-alive, X-Secret" });
+                    head.Headers.Add(new ForwardedHeader { Name = "X-Secret", Value = "1" });
+                    head.Headers.Add(new ForwardedHeader { Name = "X-Public", Value = "1" });
+                    await responses.WriteAsync(new ForwardResponse { Head = head });
+                    break;
+                case "/v1/management/organizations/invalid":
+                    throw new RpcException(new Status(StatusCode.InvalidArgument, "invalid"));
+                default:
+                    throw new RpcException(new Status(StatusCode.ResourceExhausted, "busy"));
+            }
+        });
+        await using var follower = await StartFollowerAsync(peers, tls, issuer, fake.Address);
+        await ReadyAsync(follower);
+        var token = issuer.Mint(Guid.NewGuid().ToString());
+        using var client = tls.CreateClient(follower.ClientAddress!, token);
+        client.DefaultRequestHeaders.Add("X-TerraScale-Region-Pin", "test-region");
+
+        // The request goes as it arrived, without connection headers or the pin; the response comes back whole, without them either.
+        using (var content = new ByteArrayContent(Encoding.UTF8.GetBytes("{\"name\":\"large\"}")))
+        {
+            content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
+            using var large = await client.PatchAsync(Relative("/v1/management/organizations/large?expand=1"), content);
+            await Assert.That(large.StatusCode).IsEqualTo(HttpStatusCode.OK);
+            await Assert.That(large.Headers.GetValues("X-Relayed").Single()).IsEqualTo("1");
+            await Assert.That(large.Headers.ConnectionClose ?? false).IsFalse();
+            await Assert.That((await large.Content.ReadAsByteArrayAsync()).SequenceEqual(body)).IsTrue();
+        }
+
+        var sent = requests.Single();
+        await Assert.That((sent.Method, sent.Path, sent.Query, sent.Region)).IsEqualTo(("PATCH", "/v1/management/organizations/large", "?expand=1", "test-region"));
+        await Assert.That(sent.Headers.Single(header => header.Name == "Authorization").Value).IsEqualTo("Bearer " + token);
+        await Assert.That(sent.Headers.Single(header => header.Name == "Content-Length").Value).IsEqualTo("16");
+        await Assert.That(sent.Headers.Any(header => header.Name == "X-TerraScale-Region-Pin")).IsFalse();
+        await Assert.That(Encoding.UTF8.GetString(ApplicationEnvelope.Decode(sent.Body.Span, 16))).IsEqualTo("{\"name\":\"large\"}");
+
+        // Headers HTTP/1.1's Connection names stay on their hop, both ways.
+        using (var hop = new HttpRequestMessage(HttpMethod.Get, Relative("/v1/management/organizations/hop"))
+        {
+            Version = HttpVersion.Version11,
+            VersionPolicy = HttpVersionPolicy.RequestVersionExact,
+        })
+        {
+            hop.Headers.Connection.Add("X-Hop");
+            hop.Headers.Add("X-Hop", "1");
+            hop.Headers.Add("X-Kept", "1");
+            using var relayed = await client.SendAsync(hop);
+            await Assert.That(relayed.StatusCode).IsEqualTo(HttpStatusCode.OK);
+            await Assert.That(relayed.Headers.Contains("X-Secret")).IsFalse();
+            await Assert.That(relayed.Headers.GetValues("X-Public").Single()).IsEqualTo("1");
+        }
+
+        var forwardedHop = requests.Single(request => request.Path == "/v1/management/organizations/hop");
+        await Assert.That(forwardedHop.Headers.Any(header => header.Name == "X-Hop")).IsFalse();
+        await Assert.That(forwardedHop.Headers.Single(header => header.Name == "X-Kept").Value).IsEqualTo("1");
+
+        // A primary that refuses, answers without a head, sends a tampered body, more frames than its head declared, or fails
+        // after its response, is unavailable while nothing went out; one that cannot serve the request at all answers 400; one
+        // that fails once part of the body went out resets the connection.
+        foreach (var path in new[] { "busy", "headless", "tampered", "empty-then-fails", "body-then-fails", "trailing" })
+        {
+            using var unavailable = await client.GetAsync(Relative($"/v1/management/organizations/{path}"));
+            await Assert.That(unavailable.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+            await Assert.That(unavailable.Headers.RetryAfter?.Delta).IsEqualTo(TimeSpan.FromSeconds(1));
+            await Assert.That(await CodeAsync(unavailable)).IsEqualTo("catalog_primary_unavailable");
+        }
+
+        using (var invalid = await client.GetAsync(Relative("/v1/management/organizations/invalid")))
+        {
+            await Assert.That(invalid.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+            await Assert.That(await CodeAsync(invalid)).IsEqualTo("invalid_request");
+        }
+
+        await Assert.ThrowsAsync<HttpRequestException>(async () =>
+            await client.GetByteArrayAsync(Relative("/v1/management/organizations/large-then-fails")));
+        await Assert.That(await follower.MetricAsync("terrabase_catalog_forwarded_total", "result=\"unavailable\"")).IsEqualTo(7);
+        await Assert.That(await follower.MetricAsync("terrabase_catalog_forwarded_total", "result=\"answered\"")).IsEqualTo(2);
+    }
+
+    [Test]
+    public async Task A_follower_answers_503_while_its_primary_cannot_be_reached_and_413_for_a_body_it_cannot_forward()
+    {
+        using var peers = new PeerTls();
+        using var tls = new ClientTls();
+        using var issuer = new TestIssuer();
+        await using var follower = await StartFollowerAsync(peers, tls, issuer, new Uri($"https://localhost:{TerraBaseTestServer.FreePort()}"));
+        using var client = tls.CreateClient(follower.ClientAddress!, issuer.Mint(Guid.NewGuid().ToString()));
+
+        using (var unreachable = await client.PostAsJsonAsync(Relative("/v1/management/organizations"), new { name = "Partitioned" }))
+        {
+            await Assert.That(unreachable.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+            await Assert.That(unreachable.Headers.RetryAfter?.Delta).IsEqualTo(TimeSpan.FromSeconds(1));
+            await Assert.That(await CodeAsync(unreachable)).IsEqualTo("catalog_primary_unavailable");
+        }
+
+        using var large = new ByteArrayContent(new byte[(4 * 1024 * 1024) + 1]);
+        using (var tooLarge = await client.PostAsync(Relative("/v1/management/organizations"), large))
+        {
+            await Assert.That(tooLarge.StatusCode).IsEqualTo(HttpStatusCode.RequestEntityTooLarge);
+            await Assert.That(await CodeAsync(tooLarge)).IsEqualTo("payload_too_large");
+        }
+
+        await Assert.That(await follower.MetricAsync("terrabase_catalog_forwarded_total", "result=\"unavailable\"")).IsEqualTo(1);
+    }
+
+    private static Uri Relative(string path) => new(path, UriKind.Relative);
+
+    private static Task<TerraBaseTestServer> StartFollowerAsync(
+        PeerTls peers, ClientTls tls, TestIssuer issuer, Uri primary, Action<IServiceCollection>? services = null) =>
+        TerraBaseTestServer.StartAsync(settings =>
+        {
+            peers.Apply(settings);
+            tls.Apply(settings);
+            TestIssuer.Configure(settings);
+            settings["catalog-primary"] = primary.ToString();
+        }, collection =>
+        {
+            issuer.Route(collection);
+            services?.Invoke(collection);
+        });
+
+    private static async Task ReadyAsync(TerraBaseTestServer server) =>
+        await TerraBaseTestServer.EventuallyAsync(async token =>
+        {
+            using var response = await server.Client.GetAsync(Relative("/readyz"), token);
+            return response.StatusCode == HttpStatusCode.OK;
+        });
+
+    private static async Task<HttpStatusCode> PutDatabaseAsync(HttpClient data, string project, string name)
+    {
+        using var response = await data.PutAsync(Relative($"/v1/projects/{project}/databases/{name}"), null);
+        return response.StatusCode;
+    }
+
+    private static async Task NotPrimaryAsync(HttpResponseMessage response)
+    {
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+        await Assert.That(await CodeAsync(response)).IsEqualTo("not_primary");
+    }
+
+    private static async Task<string?> CodeAsync(HttpResponseMessage response) =>
+        (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("error").GetProperty("code").GetString();
+
+    private static async Task<string> CreatedIdAsync(HttpClient client, string path, object body)
+    {
+        using var response = await client.PostAsJsonAsync(Relative(path), body);
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Created);
+        return (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString()!;
+    }
+
+    private static async Task<long> CountAsync(TerraBaseTestServer server, string collection)
+    {
+        var store = await server.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(CancellationToken.None);
+        await using var transaction = await store.BeginTransactionAsync(write: false, CancellationToken.None);
+        return await transaction.CountDocumentsAsync(collection, CancellationToken.None);
+    }
+
+    private static async Task WriteGroupAsync(IServerStreamWriter<FollowResponse> responses, ulong sequence, IReadOnlyList<DocumentChange> changes, byte[] digest)
+    {
+        await responses.WriteAsync(new FollowResponse { GroupBegin = new GroupBegin { Sequence = sequence, ChangeCount = (uint)changes.Count } });
+        await responses.WriteAsync(new FollowResponse { Changes = CatalogProtocol.Page(changes) });
+        await responses.WriteAsync(new FollowResponse { GroupEnd = new GroupEnd { Digest = ByteString.CopyFrom(digest) } });
+    }
+
+    // A request a follower of follower-region would forward; length -1 declares the body's own length.
+    private static ForwardRequest Request(
+        string method, string path, byte[]? body = null, uint protocol = 1, string query = "", string region = "follower-region", byte[]? envelope = null,
+        int? length = -1)
+    {
+        var request = new ForwardRequest { Protocol = protocol, Method = method, Path = path, Query = query, Region = region };
+        request.Headers.Add(new ForwardedHeader { Name = "Host", Value = "terrabase.test" });
+        envelope ??= body is null ? null : ApplicationEnvelope.Encode(body).ToArray();
+        if (envelope is not null)
+        {
+            request.Body = ByteString.CopyFrom(envelope);
+            request.Headers.Add(new ForwardedHeader { Name = "Content-Type", Value = "application/json" });
+        }
+
+        length = length == -1 ? body?.Length : length;
+        if (length is { } declared)
+        {
+            request.Headers.Add(new ForwardedHeader { Name = "Content-Length", Value = declared.ToString(System.Globalization.CultureInfo.InvariantCulture) });
+        }
+
+        return request;
+    }
+
+    private static ForwardRequest WithHeader(ForwardRequest request, string name, string value)
+    {
+        request.Headers.Add(new ForwardedHeader { Name = name, Value = value });
+        return request;
+    }
+
+    // The head and the whole body of a Forward call.
+    private static async Task<(ForwardHead Head, byte[] Body)> ForwardAsync(CatalogForwarding.CatalogForwardingClient client, ForwardRequest request)
+    {
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        using var call = client.Forward(request, cancellationToken: deadline.Token);
+        ForwardHead? head = null;
+        using var body = new MemoryStream();
+        while (await call.ResponseStream.MoveNext(deadline.Token))
+        {
+            if (call.ResponseStream.Current.Head is { } first)
+            {
+                head = first;
+            }
+            else
+            {
+                body.Write(ApplicationEnvelope.Decode(call.ResponseStream.Current.Body.Span, 1024 * 1024));
+            }
+        }
+
+        return (head ?? throw new InvalidOperationException("the primary sent no head"), body.ToArray());
+    }
+}

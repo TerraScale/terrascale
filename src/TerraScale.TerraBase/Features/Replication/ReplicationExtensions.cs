@@ -29,6 +29,7 @@ public static class ReplicationExtensions
             builder.Services.AddSingleton<CatalogFollower>();
             builder.Services.AddSingleton<ICatalogReadiness>(provider => provider.GetRequiredService<CatalogFollower>());
             builder.Services.AddHostedService(provider => provider.GetRequiredService<CatalogFollower>());
+            builder.Services.AddSingleton<CatalogForwarder>();
         }
 
         if (options.PeerPort is not { } port)
@@ -65,6 +66,7 @@ public static class ReplicationExtensions
         builder.Services.AddSingleton<IReplicationJournal, EngineReplicationJournal>();
         builder.Services.AddSingleton<ReplicationService>();
         builder.Services.AddSingleton<CatalogFeed>();
+        builder.Services.AddSingleton<ForwardedRequests>();
         builder.Services.AddGrpc(grpc =>
         {
             grpc.MaxReceiveMessageSize = ReplicationProtocol.MaxMessageBytes;
@@ -86,8 +88,59 @@ public static class ReplicationExtensions
         {
             app.MapGrpcService<ReplicationService>().WithMetadata(ListenerMetadata.Peer);
             app.MapGrpcService<CatalogFeed>().WithMetadata(ListenerMetadata.Peer);
+            app.MapGrpcService<ForwardedRequests>().WithMetadata(ListenerMetadata.Peer);
         }
 
+        return app;
+    }
+
+    /// <summary>
+    /// Takes the application pipeline that serves requests a catalog follower forwards; register it first, so a forwarded
+    /// request passes every middleware a request accepted by a listener does.
+    /// </summary>
+    public static WebApplication UseTerraBaseForwardedRequests(this WebApplication app)
+    {
+        ArgumentNullException.ThrowIfNull(app);
+        if (app.Services.GetService<ForwardedRequests>() is { } forwarded)
+        {
+            app.Use(forwarded.Capture);
+        }
+
+        return app;
+    }
+
+    /// <summary>
+    /// Register after authorization: a catalog follower forwards an authenticated client-listener request to an endpoint the
+    /// catalog primary serves (<see cref="ServedByCatalogPrimary"/>) to its primary, and the primary serves a forwarded request
+    /// only on such an endpoint (404 otherwise). The administrative listener's requests are never forwarded.
+    /// </summary>
+    public static WebApplication UseTerraBaseCatalogForwarding(this WebApplication app)
+    {
+        ArgumentNullException.ThrowIfNull(app);
+        var forwarder = app.Services.GetService<CatalogForwarder>();
+        app.Use((context, next) =>
+        {
+            var endpoint = context.GetEndpoint();
+            if (context.Features.Get<ForwardedRequests.ForwardedRequest>() is not null)
+            {
+                if (ServedByCatalogPrimary.Serves(endpoint))
+                {
+                    return next(context);
+                }
+
+                context.Response.StatusCode = StatusCodes.Status404NotFound;
+                return Task.CompletedTask;
+            }
+
+            if (forwarder is null || Listeners.ArrivedOn(context) != TerraBaseListener.Client)
+            {
+                return next(context);
+            }
+
+            return ServedByCatalogPrimary.Always(endpoint) ? forwarder.ForwardAsync(context)
+                : ServedByCatalogPrimary.Serves(endpoint) ? forwarder.ForwardWhenWritingAsync(context, next)
+                : next(context);
+        });
         return app;
     }
 }

@@ -91,3 +91,55 @@ message CatalogHeartbeat {
   // The primary's last committed group.
   uint64 head = 1;
 }
+
+// Internal: a catalog follower forwards the client-listener requests its catalog primary serves
+// (Management API requests, and a data-plane database creation the follower cannot write) once it
+// authenticated them, as they arrived. The primary serves them through its own HTTP pipeline as if its
+// client listener had accepted them, authenticating and authorizing them again, and serves only those
+// endpoints. TerraBase C# only (docs/decisions/0009).
+service CatalogForwarding {
+  // One ForwardHead, then the response body in ForwardResponse.body envelopes. A member that is not a
+  // catalog primary answers FAILED_PRECONDITION; a request no HTTP server would have accepted
+  // INVALID_ARGUMENT; a primary at capacity RESOURCE_EXHAUSTED, all before serving it.
+  rpc Forward(ForwardRequest) returns (stream ForwardResponse);
+}
+
+message ForwardRequest {
+  // Forwarding protocol version: 1.
+  uint32 protocol = 1;
+  string method = 2;
+  // The request path as the follower's server decoded it, and the raw query string ("" or "?…").
+  string path = 3;
+  string query = 4;
+  // Request headers except connection-specific ones and the region pin the follower checked;
+  // Content-Length is the body's length when there is a body.
+  repeated ForwardedHeader headers = 5;
+  // Empty, or one TBLZ4E01 LZ4 application envelope of at most 4 MiB of body.
+  bytes body = 6;
+  // The follower's region, TERRABASE_REGION syntax: the primary answers as that responding node.
+  string region = 7;
+}
+
+message ForwardedHeader {
+  string name = 1;
+  string value = 2;
+}
+
+message ForwardResponse {
+  oneof frame {
+    // Always first and once.
+    ForwardHead head = 1;
+    // Then body_length bytes of body, in envelopes of at most 1 MiB each.
+    bytes body = 2;
+  }
+}
+
+message ForwardHead {
+  uint32 status = 1;
+  repeated ForwardedHeader headers = 2;
+  uint64 body_length = 3;
+  // The primary's catalog journal head once it served the request (16-byte origin and sequence): the
+  // follower answers once it applied it, so it serves what the request wrote.
+  bytes origin = 4;
+  uint64 sequence = 5;
+}

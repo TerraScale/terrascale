@@ -1,12 +1,11 @@
 using TerraScale.Endpoints;
-using TerraScale.TerraBase.Configuration;
 using TerraScale.TerraBase.Features.UserAuth;
 using TerraScale.TerraBase.Hosting;
 
 namespace TerraScale.TerraBase.Features.Management;
 
 /// <summary><c>GET …/databases/{database}</c>: reads a database.</summary>
-public sealed class GetManagedDatabaseEndpoint(IManagementService management, TerraBaseOptions options) : EndpointWithoutRequest<IResult>
+public sealed class GetManagedDatabaseEndpoint(IManagementService management) : EndpointWithoutRequest<IResult>
 {
     /// <inheritdoc />
     public override void Configure()
@@ -25,6 +24,6 @@ public sealed class GetManagedDatabaseEndpoint(IManagementService management, Te
     /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
         await management.GetDatabaseAsync(ManagementRoute.UserId(HttpContext), ManagementRoute.OrganizationId(HttpContext), ManagementRoute.Value(HttpContext, "project"), ManagementRoute.Value(HttpContext, "database"), cancellationToken) is { } database
-            ? TypedResults.Ok(ManagedDatabaseBody.From(database, options.Region))
+            ? TypedResults.Ok(ManagedDatabaseBody.From(database, Listeners.RegionOf(HttpContext)))
             : TypedResults.NotFound();
 }

@@ -2,6 +2,7 @@ using TerraScale.Endpoints;
 using TerraScale.TerraBase.Engine;
 using TerraScale.TerraBase.Errors;
 using TerraScale.TerraBase.Features.ApiKeys;
+using TerraScale.TerraBase.Features.Replication;
 using TerraScale.TerraBase.Hosting;
 using TerraScale.TerraBase.Tenancy;
 
@@ -27,7 +28,7 @@ public sealed class CreateDatabaseEndpoint(ITenantDirectory tenants) : EndpointW
         Produces<DatabaseBody>(StatusCodes.Status201Created);
         Produces<DatabaseBody>();
         RequireAuthorization(ApiKeyScopes.DocumentsWrite);
-        Metadata(ListenerMetadata.Client);
+        Metadata(ListenerMetadata.Client, ServedByCatalogPrimary.WhenWriting);
     }
 
     /// <inheritdoc />

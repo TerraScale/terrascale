@@ -49,9 +49,15 @@ checks apply.
 One member is the catalog primary; every other member sets `catalog-primary` to the primary's peer listener and
 follows it. Design, limits and failover: [0009](decisions/0009-catalog-replication.md).
 
-- Only the primary writes the catalog. A follower answers every catalog write (Management API writes, API key
-  issues, a data-plane database creation under a new name) with `503 not_primary` and `Retry-After: 1`, and runs
-  no catalog writer of its own (intent recovery, migration, backups, usage flushes).
+- Only the primary writes the catalog. A follower forwards every authenticated Management API request on its client
+  listener (reads too), and a data-plane creation of a database it does not have, to the primary over
+  `CatalogForwarding.Forward`; the primary authenticates and serves them through its own pipeline, answering as the
+  follower's region. The follower answers once it applied what the request wrote (at most 5 seconds later), so a key
+  or database created through any member serves there at once: no load balancer routing to the primary is needed.
+  A primary that cannot be reached answers `503 catalog_primary_unavailable` with `Retry-After: 1`. The
+  administrative listener is never forwarded: on a follower its catalog writes (`POST /admin/api-keys`, the
+  service credential's Management writes) answer `503 not_primary`. A follower runs no catalog writer of its own
+  (intent recovery, migration, backups, usage flushes).
 - A follower authenticates API keys and resolves organizations, projects and databases from its replica, and
   serves a registered database before any of its documents arrived (an empty local file that client replication
   fills).
@@ -87,6 +93,7 @@ Metrics on the follower:
 | `terrabase_catalog_follower_lag` | Catalog groups the primary last reported that the follower has not applied |
 | `terrabase_catalog_applied_sequence` | The primary's last group the follower applied; the highest one is the best failover candidate |
 | `terrabase_catalog_follower_failures_total{reason}` | Streams that failed: `lineage` (a catalog of another origin, kept), `invalid` (a frame failed validation; nothing of it applied) or `stream` |
+| `terrabase_catalog_forwarded_total{result}` | Requests the follower forwarded to its primary: `answered`, `lagging` (answered before the follower applied what it wrote, after 5 seconds) or `unavailable` (503, or a reset once the response started) |
 
 ## Configuration
 

@@ -21,7 +21,7 @@ public sealed class CatalogReplicationTests
     private static readonly string[] Scopes = [ApiKeyScopes.DocumentsRead, ApiKeyScopes.DocumentsWrite];
 
     [Test]
-    public async Task Organizations_databases_and_keys_of_the_primary_serve_on_a_follower_that_writes_no_catalog()
+    public async Task Organizations_databases_and_keys_of_the_primary_serve_on_a_follower_that_writes_no_catalog_itself()
     {
         using var peers = new PeerTls();
         using var tls = new ClientTls();
@@ -44,12 +44,14 @@ public sealed class CatalogReplicationTests
             await Assert.That(existing.StatusCode).IsEqualTo(HttpStatusCode.OK);
         }
 
-        // Every catalog write is refused, with nothing written: a new database, an operator key.
-        using (var refused = await data.PutAsync(tenant.Database("new"), null))
+        // A new database is created by the primary and serves here at once; the follower writes no catalog itself, so an
+        // operator key (issued only on the primary's loopback listener) is refused with nothing written.
+        using (var database = await data.PutAsync(tenant.Database("new"), null))
         {
-            await NotPrimaryAsync(refused);
+            await Assert.That(database.StatusCode).IsEqualTo(HttpStatusCode.Created);
         }
 
+        await Assert.That(await PutAsync(data, tenant, "new", "first")).IsEqualTo(HttpStatusCode.Created);
         using (var issued = await follower.Client.PostAsJsonAsync(
             new Uri("/admin/api-keys", UriKind.Relative), new { name = "denied", scopes = Scopes, organizationId = tenant.Organization }))
         {

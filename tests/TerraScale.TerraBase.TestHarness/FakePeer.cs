@@ -38,11 +38,20 @@ public sealed class FakePeer : IAsyncDisposable
 
     /// <summary>
     /// Starts a fake catalog primary (<c>CatalogReplication</c>) that serves the node certificate of <paramref name="tls"/>; each
-    /// Follow stream runs <paramref name="serve"/>.
+    /// Follow stream runs <paramref name="serve"/>, and each <c>CatalogForwarding.Forward</c> call <paramref name="forward"/>.
     /// </summary>
     public static Task<FakePeer> StartCatalogAsync(
-        PeerTls tls, Func<FollowRequest, IServerStreamWriter<FollowResponse>, ServerCallContext, Task> serve) =>
-        StartAsync(tls, null, services => services.AddSingleton(new CatalogService(serve)), app => app.MapGrpcService<CatalogService>());
+        PeerTls tls, Func<FollowRequest, IServerStreamWriter<FollowResponse>, ServerCallContext, Task> serve,
+        Func<ForwardRequest, IServerStreamWriter<ForwardResponse>, ServerCallContext, Task>? forward = null) =>
+        StartAsync(tls, null, services =>
+        {
+            services.AddSingleton(new CatalogService(serve));
+            services.AddSingleton(new ForwardingService(forward ?? ((_, _, _) => throw new RpcException(new Status(StatusCode.Unimplemented, "no forwarding")))));
+        }, app =>
+        {
+            app.MapGrpcService<CatalogService>();
+            app.MapGrpcService<ForwardingService>();
+        });
 
     private static async Task<FakePeer> StartAsync(
         PeerTls tls, Action<HttpsConnectionAdapterOptions>? configureTls, Action<IServiceCollection> register, Action<WebApplication> map)
@@ -154,6 +163,13 @@ public sealed class FakePeer : IAsyncDisposable
     {
         public override Task Follow(FollowRequest request, IServerStreamWriter<FollowResponse> responseStream, ServerCallContext context) =>
             serve(request, responseStream, context);
+    }
+
+    private sealed class ForwardingService(Func<ForwardRequest, IServerStreamWriter<ForwardResponse>, ServerCallContext, Task> forward)
+        : CatalogForwarding.CatalogForwardingBase
+    {
+        public override Task Forward(ForwardRequest request, IServerStreamWriter<ForwardResponse> responseStream, ServerCallContext context) =>
+            forward(request, responseStream, context);
     }
 
     private sealed class Service(Func<IAsyncStreamReader<SyncRequest>, IServerStreamWriter<SyncResponse>, ServerCallContext, Task> serve)

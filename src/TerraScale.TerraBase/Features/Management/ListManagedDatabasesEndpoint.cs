@@ -1,12 +1,11 @@
 using TerraScale.Endpoints;
-using TerraScale.TerraBase.Configuration;
 using TerraScale.TerraBase.Features.UserAuth;
 using TerraScale.TerraBase.Hosting;
 
 namespace TerraScale.TerraBase.Features.Management;
 
 /// <summary><c>GET …/projects/{project}/databases</c>: lists the databases of a project.</summary>
-public sealed class ListManagedDatabasesEndpoint(IManagementService management, TerraBaseOptions options) : EndpointWithoutRequest<IResult>
+public sealed class ListManagedDatabasesEndpoint(IManagementService management) : EndpointWithoutRequest<IResult>
 {
     /// <inheritdoc />
     public override void Configure()
@@ -27,7 +26,7 @@ public sealed class ListManagedDatabasesEndpoint(IManagementService management, 
     {
         var (after, limit) = ManagementRoute.Page(HttpContext);
         return await management.ListDatabasesAsync(ManagementRoute.UserId(HttpContext), ManagementRoute.OrganizationId(HttpContext), ManagementRoute.Value(HttpContext, "project"), after, limit, cancellationToken) is { } page
-            ? TypedResults.Ok(new ManagementPage<ManagedDatabaseBody>(page.Items.Select(database => ManagedDatabaseBody.From(database, options.Region)).ToArray(), page.Next))
+            ? TypedResults.Ok(new ManagementPage<ManagedDatabaseBody>(page.Items.Select(database => ManagedDatabaseBody.From(database, Listeners.RegionOf(HttpContext))).ToArray(), page.Next))
             : TypedResults.NotFound();
     }
 }

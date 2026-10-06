@@ -1,12 +1,11 @@
 using TerraScale.Endpoints;
-using TerraScale.TerraBase.Configuration;
 using TerraScale.TerraBase.Features.UserAuth;
 using TerraScale.TerraBase.Hosting;
 
 namespace TerraScale.TerraBase.Features.Management;
 
 /// <summary><c>POST …/databases/{database}/branches</c>: creates a database as a snapshot copy of another.</summary>
-public sealed class BranchManagedDatabaseEndpoint(IManagementService management, TerraBaseOptions options) : Endpoint<NameRequest, IResult>
+public sealed class BranchManagedDatabaseEndpoint(IManagementService management) : Endpoint<NameRequest, IResult>
 {
     /// <inheritdoc />
     public override void Configure()
@@ -30,7 +29,7 @@ public sealed class BranchManagedDatabaseEndpoint(IManagementService management,
         ArgumentNullException.ThrowIfNull(request);
         var result = await management.BranchDatabaseAsync(ManagementRoute.UserId(HttpContext), ManagementRoute.OrganizationId(HttpContext), ManagementRoute.Value(HttpContext, "project"), ManagementRoute.Value(HttpContext, "database"), ManagementRoute.DatabaseName(request), cancellationToken);
         return result.Value is { } value
-            ? TypedResults.Created($"{ManagementRoute.Organizations}/{ManagementRoute.OrganizationId(HttpContext)}/projects/{value.ProjectId}/databases/{value.Id}", ManagedDatabaseBody.From(value, options.Region))
+            ? TypedResults.Created($"{ManagementRoute.Organizations}/{ManagementRoute.OrganizationId(HttpContext)}/projects/{value.ProjectId}/databases/{value.Id}", ManagedDatabaseBody.From(value, Listeners.RegionOf(HttpContext)))
             : ManagementRoute.Error(result.Error);
     }
 }

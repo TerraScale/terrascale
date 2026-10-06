@@ -27,12 +27,38 @@ every check that runs in its write transaction stays atomic for the whole cluste
 election. Failover is a configuration change ([Failover](#failover)).
 
 **Followers write nothing.** A follower's engine refuses every write transaction on `_system.db` except its
-replication applier's. A Management write, an API key issue or a data-plane database creation that reaches a
-follower answers `503 not_primary` with `Retry-After: 1`; nothing is written. Its hosted catalog writers do not
-run: startup intent recovery and the file audit, catalog migration and backfills (the primary's are replicated),
-the backup scheduler, and the usage and query-field flushes (their counts stay in memory, bounded by the
-databases served, and are lost on restart: they are best-effort dashboard statistics, not billing). Reads
-(authenticating API keys, resolving tenants, Management reads) use the local replica.
+replication applier's: a catalog write that reaches it answers `503 not_primary` with `Retry-After: 1`, and nothing
+is written. The requests that write the catalog are forwarded instead (Forwarding, below). Its hosted
+catalog writers do not run: startup intent recovery and the file audit, catalog migration and backfills (the
+primary's are replicated), the backup scheduler, and the usage and query-field flushes (their counts stay in
+memory, bounded by the databases served, and are lost on restart: they are best-effort dashboard statistics, not
+billing). Data-plane reads (authenticating API keys, resolving tenants) use the local replica.
+
+**Forwarding.** A follower forwards a client-listener request the primary serves to the primary over
+`CatalogForwarding.Forward`, on the peer listener's mutual TLS, once routing, the listener and region-pin checks,
+authentication and authorization passed locally: every Management API request (reads included, so they see every
+catalog write), and a request to an endpoint marked `ServedByCatalogPrimary.WhenWriting` (data-plane database
+creation, which never reads its body) that the follower refused because it would write the catalog; an existing
+database is answered locally. It sends the method, decoded path, raw query, its headers without connection-specific
+ones (those HTTP/1.1's `Connection` names too) and the region pin, its region, and its body (at most 4 MiB, one
+`TBLZ4E01` envelope; larger answers 413). The primary serves it through its whole HTTP pipeline as if its own client
+listener had accepted it, answering as the follower's region (`docs/region-identity.md`): it authenticates,
+authorizes and validates it again, and serves a forwarded request only on those endpoints (404 otherwise). It
+buffers the response (at most 16 MiB, the first 64 KiB reserved from the memory budget before the request runs),
+reads its catalog head, which every write of the request committed before, and sends the status, headers, body
+length and that head, then the body in 1 MiB envelopes. The follower answers once it applied that head, so a key or
+database created through it serves there at once; it waits at most 5 seconds, never past the forwarding deadline,
+and not at all while it does not follow the primary's journal
+(`terrabase_catalog_forwarded_total{result="lagging"}`). A primary that cannot serve the request (unreachable, not a
+primary, at its 64 forwarded requests or out of memory) makes the follower answer `503 catalog_primary_unavailable`
+with `Retry-After: 1`; one it refuses as malformed, 400. The follower holds each body chunk back until the next
+frame or the call's successful end arrived, so a call that fails or sends more or less than its head declared is
+answered 503 while nothing of it went out, and resets the client connection after. A forwarded request has 60
+seconds, from reading its body to the end of the response: a body that does not arrive in time answers 408; a
+primary that does not answer, or a client that stops reading the response, gets 503 (or a reset), and the primary's
+request is cancelled. The administrative listener's requests are never forwarded: it stays loopback-only, and its
+catalog writes (the operator's `POST /admin/api-keys`, the service credential's Management requests) answer `503
+not_primary` on a follower.
 
 **Capture.** Every committed write transaction on `_system.db` of a primary appends one group to the
 database's existing journal (`changes`, chained `journal_prefixes`), in the same SQLite transaction, under the
@@ -110,8 +136,17 @@ primary without `catalog-primary` while another one serves.
 
 ## Consequences
 
-- Management writes must reach the primary until a follower can forward them (TS-561 follow-up); a load
-  balancer in front of all members either routes `/v1/management` to the primary or retries `503 not_primary`.
+- A load balancer routes every request to any ready member; Management requests cost a follower one peer round
+  trip and, for now, a TLS handshake each (no pooled channel). They need the primary: while it is down they answer
+  503, data-plane reads and writes do not. A forwarded request whose answer is lost may still have run, as behind
+  any proxy: retry with the request's own idempotency (Management commit ids).
+- Management requests that read or change a database's contents (SQL, schema, collections, indexes) run on the
+  primary's copy, as they did behind a load balancer routing `/v1/management` to it: documents, collections and
+  indexes written on a follower show there once client replication delivered them, and the reverse (TS-574).
+- gRPC materializes a forwarded message (at most 4 MiB and 64 KiB) before the primary's in-flight check and memory
+  reservation: at worst about 8 MiB per call, 64 calls per follower.
+- A peer certificate can submit client-listener requests to the primary, as any client can; it gains nothing more
+  than the credentials it sends, but names the region the primary answers as.
 - Followers lag the primary by one stream round trip. A key issued on the primary authenticates on a follower
   once that follower applied it; a revoked key stops authenticating there at the same point.
 - `Follow` serves the whole catalog (member emails, key and invitation hashes, dashboard documents) to any
@@ -130,9 +165,8 @@ primary without `catalog-primary` while another one serves.
   forward them).
 - A follower serves a registered database from an empty local file until client replication delivers its
   documents; for a branch or restore of a populated database that is a short window of missing documents.
-- Index definitions live in each member's copy of a client database and are not replicated yet (TS-561
-  follow-up). Database deletion is still not replicated to client-database files, and a client-replication
-  receiver still creates databases the catalog does not register.
+- Database deletion is still not replicated to client-database files, and a client-replication receiver still
+  creates databases the catalog does not register.
 - Tombstones of dashboard documents are not replicated: a follower holds no row for a deleted document.
 
 ## Alternatives considered

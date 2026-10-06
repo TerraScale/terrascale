@@ -48,6 +48,7 @@ internal sealed partial class CatalogFollower : BackgroundService, ICatalogReadi
     private int _connected;
     private long _applied;
     private long _head;
+    private Progress _progress = new(Guid.Empty, 0);
 
     public CatalogFollower(
         ISystemReplication system, PeerCredentials credentials, TerraBaseOptions options, ILogger<CatalogFollower> logger, TimeProvider time, IMeterFactory meters)
@@ -68,6 +69,26 @@ internal sealed partial class CatalogFollower : BackgroundService, ICatalogReadi
     // Not ready before the first catch-up, nor while the primary reports a head this follower has not applied (after a
     // reconnect); a primary that cannot be reached leaves the last head, so a caught-up follower keeps serving.
     public bool IsReady => _caughtUp && Interlocked.Read(ref _head) <= Interlocked.Read(ref _applied);
+
+    /// <summary>
+    /// Whether this follower holds a stream to its primary and applies the journal of <paramref name="origin"/> (16 bytes), so
+    /// <see cref="WaitAppliedAsync"/> can end before it times out.
+    /// </summary>
+    public bool Follows(ReadOnlyMemory<byte> origin) =>
+        Volatile.Read(ref _connected) == 1 && Volatile.Read(ref _progress).Origin == new Guid(origin.Span);
+
+    /// <summary>
+    /// Completes once this follower applied group <paramref name="sequence"/> of the journal of <paramref name="origin"/>
+    /// (16 bytes): the primary's head after it served a forwarded request, which this follower serves from then on.
+    /// </summary>
+    public async Task WaitAppliedAsync(ReadOnlyMemory<byte> origin, long sequence, CancellationToken cancellationToken)
+    {
+        var journal = new Guid(origin.Span);
+        while (Volatile.Read(ref _progress) is var progress && (progress.Origin != journal || progress.Sequence < sequence))
+        {
+            await progress.Next.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+        }
+    }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -144,7 +165,7 @@ internal sealed partial class CatalogFollower : BackgroundService, ICatalogReadi
         var position = head.Origin.Span.SequenceEqual(origin.Span) ? head : null;
         if (position is not null)
         {
-            Interlocked.Exchange(ref _applied, position.Sequence);
+            Applied(position);
             Interlocked.Exchange(ref _head, (long)welcome.Head);
         }
         while (true)
@@ -155,7 +176,7 @@ internal sealed partial class CatalogFollower : BackgroundService, ICatalogReadi
                 case FollowResponse.FrameOneofCase.SnapshotBegin:
                     position = await ApplySnapshotAsync(stream, origin, frame.SnapshotBegin, sameLineage: position is not null, stoppingToken)
                         .ConfigureAwait(false);
-                    Interlocked.Exchange(ref _applied, position.Sequence);
+                    Applied(position);
                     Interlocked.Exchange(ref _head, (long)welcome.Head);
                     break;
                 case FollowResponse.FrameOneofCase.GroupBegin:
@@ -184,8 +205,19 @@ internal sealed partial class CatalogFollower : BackgroundService, ICatalogReadi
 
             if (position is not null)
             {
-                Interlocked.Exchange(ref _applied, position.Sequence);
+                Applied(position);
             }
+        }
+    }
+
+    // Publishes the applied position to the lag gauge and to forwarded requests waiting for it; only the stream loop calls it.
+    private void Applied(JournalPosition position)
+    {
+        Interlocked.Exchange(ref _applied, position.Sequence);
+        var journal = new Guid(position.Origin.Span);
+        if (Volatile.Read(ref _progress) is var current && (current.Origin != journal || current.Sequence != position.Sequence))
+        {
+            Interlocked.Exchange(ref _progress, new Progress(journal, position.Sequence)).Next.TrySetResult();
         }
     }
 
@@ -303,6 +335,16 @@ internal sealed partial class CatalogFollower : BackgroundService, ICatalogReadi
                 throw new TimeoutException("the catalog primary sent nothing within the progress timeout", error);
             }
         }
+    }
+
+    // An applied journal position; Next completes when a later one replaces it.
+    private sealed class Progress(Guid origin, long sequence)
+    {
+        public Guid Origin { get; } = origin;
+
+        public long Sequence { get; } = sequence;
+
+        public TaskCompletionSource Next { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     }
 
     private sealed class LineageException() : Exception("the local catalog belongs to another origin than the catalog primary's");
