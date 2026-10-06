@@ -794,7 +794,21 @@ internal sealed partial class EngineManagementService(
         }
 
         await EnsureCatalogAsync(cancellationToken).ConfigureAwait(false);
-        return await ReadCatalogAsync(read, cancellationToken).ConfigureAwait(false);
+        return await ReadCatalogAsync(async transaction =>
+        {
+            await CheckReadAsync(transaction, cancellationToken).ConfigureAwait(false);
+            return await read(transaction).ConfigureAwait(false);
+        }, cancellationToken).ConfigureAwait(false);
+    }
+
+    public async ValueTask CheckReadAsync(IStorageTransaction transaction, CancellationToken cancellationToken)
+    {
+        if (options.CatalogPrimary is not null
+            && await GetAsync(transaction, Catalog, CatalogVersionId, Id, cancellationToken).ConfigureAwait(false) != CatalogVersion)
+        {
+            throw new BadHttpRequestException(
+                "the replicated management catalog is not at a version this build supports", StatusCodes.Status503ServiceUnavailable);
+        }
     }
 
     private async ValueTask<T> ReadCatalogAsync<T>(Func<IStorageTransaction, ValueTask<T>> read, CancellationToken cancellationToken)
@@ -850,15 +864,8 @@ internal sealed partial class EngineManagementService(
 
         if (options.CatalogPrimary is not null)
         {
-            // A follower migrates nothing: the primary's migration and backfills replicate. It checks every time, since
-            // replication can bring a version this build does not read.
-            if (await ReadCatalogAsync(transaction => GetAsync(transaction, Catalog, CatalogVersionId, Id, cancellationToken), cancellationToken)
-                .ConfigureAwait(false) != CatalogVersion)
-            {
-                throw new BadHttpRequestException(
-                    "the replicated management catalog is not at a version this build supports", StatusCodes.Status503ServiceUnavailable);
-            }
-
+            // A follower migrates nothing: the primary's migration and backfills replicate. Each read checks the version in its
+            // own transaction (CheckReadAsync); a write is refused before it reads anything.
             return;
         }
 

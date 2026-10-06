@@ -232,6 +232,12 @@ internal static class SqliteStatements
 
     public const string TruncatePrefixes = "DELETE FROM journal_prefixes WHERE sequence <= $floor;";
 
+    // A follower's snapshot replaces its documents and journal: whole-table deletes, once per snapshot, so not in All (no
+    // plan to check). commit_offset keeps its value (its incarnation is renewed separately); change_log, its births and
+    // highs, shape_history and replication_state hold nothing for _system, which keeps no shape history.
+    public const string ResetReplica =
+        "DELETE FROM documents; DELETE FROM collections; DELETE FROM changes; DELETE FROM journal_prefixes; DELETE FROM applied;";
+
     /// <summary>Statement name and text, for query-plan checks.</summary>
     public static IReadOnlyDictionary<string, string> All { get; } = new Dictionary<string, string>(StringComparer.Ordinal)
     {

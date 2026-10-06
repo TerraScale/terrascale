@@ -779,9 +779,71 @@ public sealed class PeerTransportTests
     [Arguments("peer-addresses", "http://localhost:7000", "https://host:port")]
     [Arguments("peer-addresses", "https://localhost:7000/path", "https://host:port")]
     [Arguments("peer-addresses", "https://a:1,https://a:1", "distinct")]
+    [Arguments("catalog-primary", "https://localhost:7000", "peer-port")]
+    [Arguments("catalog-primary", "http://localhost:7000", "https://host:port")]
+    [Arguments("catalog-primary", "https://localhost:7000,https://other:7000", "https://host:port")]
     public async Task Peer_addresses_must_be_distinct_https_origins(string key, string value, string message)
     {
         var settings = new Dictionary<string, string> { [key] = value };
+
+        var error = await Assert.That(() => TerraBaseOptions.FromValues(settings)).Throws<TerraBaseConfigurationException>();
+
+        await Assert.That(error!.Message).Contains(message);
+        await Assert.That(error.Message).DoesNotContain("7000");
+    }
+
+    [Test]
+    public async Task Peers_name_every_member_and_derive_the_peer_addresses_and_catalog_primary()
+    {
+        using var tls = new PeerTls();
+        Dictionary<string, string> Settings(string node, string primary)
+        {
+            var settings = new Dictionary<string, string>
+            {
+                ["node-name"] = node,
+                ["peers"] = "gru-1-db-1=10.251.0.21:9443, gru-1-db-2=10.251.0.22:9443",
+                ["catalog-primary"] = primary,
+            };
+            tls.Apply(settings);
+            return settings;
+        }
+
+        using (var primary = TerraBaseOptions.FromValues(Settings("gru-1-db-1", "gru-1-db-1")))
+        {
+            await Assert.That(primary.PeerAddresses.Select(address => address.ToString())).IsEquivalentTo(["https://10.251.0.22:9443/"]);
+            await Assert.That(primary.CatalogPrimary).IsNull();
+        }
+
+        using var follower = TerraBaseOptions.FromValues(Settings("gru-1-db-2", "gru-1-db-1"));
+        await Assert.That(follower.PeerAddresses.Select(address => address.ToString())).IsEquivalentTo(["https://10.251.0.21:9443/"]);
+        await Assert.That(follower.CatalogPrimary!.ToString()).IsEqualTo("https://10.251.0.21:9443/");
+
+        // peers needs the peer listener, and replaces peer-addresses rather than adding to it.
+        var withoutListener = await Assert.That(() => TerraBaseOptions.FromValues(new Dictionary<string, string> { ["peers"] = "a=localhost:7000", ["node-name"] = "a" }))
+            .Throws<TerraBaseConfigurationException>();
+        await Assert.That(withoutListener!.Message).Contains("peer-port");
+        var both = Settings("gru-1-db-1", "gru-1-db-1");
+        both["peer-addresses"] = "https://localhost:7001";
+        var twice = await Assert.That(() => TerraBaseOptions.FromValues(both)).Throws<TerraBaseConfigurationException>();
+        await Assert.That(twice!.Message).Contains("not both");
+    }
+
+    [Test]
+    [Arguments("a=localhost:7000", "b", "", "node-name")]
+    [Arguments("a=localhost:7000,a=localhost:7001", "a", "", "distinct")]
+    [Arguments("a=localhost:7000,b=localhost:7000", "a", "", "distinct")]
+    [Arguments("A=localhost:7000", "A", "", "name=host:port")]
+    [Arguments("a=localhost:7000/path", "a", "", "name=host:port")]
+    [Arguments("a=localhost:7000", "a", "c", "catalog-primary")]
+    public async Task Peers_must_be_distinct_members_naming_this_node(string peers, string node, string primary, string message)
+    {
+        using var tls = new PeerTls();
+        var settings = new Dictionary<string, string> { ["peers"] = peers, ["node-name"] = node };
+        tls.Apply(settings);
+        if (primary.Length > 0)
+        {
+            settings["catalog-primary"] = primary;
+        }
 
         var error = await Assert.That(() => TerraBaseOptions.FromValues(settings)).Throws<TerraBaseConfigurationException>();
 

@@ -57,6 +57,17 @@ Three nodes, `a` the primary: every node sets the [peer listener](#configuration
 TERRABASE_CATALOG_PRIMARY=https://a.internal:7443
 ```
 
+Or give every member the same settings, as the orchestrator does with one workload profile, and let each find itself
+by its `node-name` (the host name by default):
+
+```sh
+TERRABASE_PEERS=gru-1-db-1=10.251.0.21:9443,gru-1-db-2=10.251.0.22:9443
+TERRABASE_CATALOG_PRIMARY=gru-1-db-1
+```
+
+`peers` lists every member, this one included; the others become `peer-addresses`, and the member named in
+`catalog-primary` is the primary while every other follows it. A member whose `node-name` is not listed refuses to start.
+
 Metrics on the follower:
 
 | Prometheus name | Meaning |
@@ -75,7 +86,8 @@ Metrics on the follower:
 | `peer-private-key` | PEM private key of `peer-certificate` |
 | `peer-client-ca` | PEM CA certificate that every peer certificate must chain to, in both directions |
 | `peer-addresses` | Comma-separated, distinct `https://host:port` peer listeners to send to; requires `peer-port` |
-| `catalog-primary` | `https://host:port` peer listener of the catalog primary this node follows; unset makes it a primary. Requires `peer-port` |
+| `peers` | Every member as `name=host:port`, this node included under its `node-name`; sets `peer-addresses` to the others. Requires `peer-port` |
+| `catalog-primary` | The catalog primary this node follows: a member name of `peers` (this node's own makes it the primary) or an `https://host:port` peer listener; unset makes it a primary. Requires `peer-port` |
 
 `peer-port` and the three files are set together. The files are read at startup; an unreadable
 file or any other invalid setting stops the process with exit code `2`. A node with `peer-port`

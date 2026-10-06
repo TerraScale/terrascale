@@ -36,7 +36,7 @@ internal sealed partial class SqliteStorageEngine : ISystemReplication
                 await transaction.ResetReplicaAsync(origin, cancellationToken).ConfigureAwait(false);
             }
 
-            return new ReplicaTransaction(store, transaction, adopt);
+            return new ReplicaTransaction(transaction);
         }
         catch
         {
@@ -55,7 +55,7 @@ internal sealed partial class SqliteStorageEngine : ISystemReplication
         }
     }
 
-    private sealed class ReplicaTransaction(SqliteDatabaseStore store, SqliteStorageTransaction inner, ReadOnlyMemory<byte>? adopted) : ISystemReplicaTransaction
+    private sealed class ReplicaTransaction(SqliteStorageTransaction inner) : ISystemReplicaTransaction
     {
         public ValueTask ReplaceAsync(DocumentChange change, CancellationToken cancellationToken) => inner.ReplaceAsync(change, cancellationToken);
 
@@ -64,10 +64,6 @@ internal sealed partial class SqliteStorageEngine : ISystemReplication
             ArgumentNullException.ThrowIfNull(head);
             await inner.SetReplicaHeadAsync(head, offset, cancellationToken).ConfigureAwait(false);
             await inner.CommitAsync(cancellationToken).ConfigureAwait(false);
-            if (adopted is { } origin)
-            {
-                store.AdoptIncarnation(Guid.ParseExact(Convert.ToHexStringLower(origin.Span), "N"));
-            }
         }
 
         public ValueTask DisposeAsync() => inner.DisposeAsync();

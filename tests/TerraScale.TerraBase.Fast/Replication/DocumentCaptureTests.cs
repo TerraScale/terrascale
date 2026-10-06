@@ -2,6 +2,7 @@ using System.Net;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using TerraScale.TerraBase.Engine;
+using TerraScale.TerraBase.Features.Management.Usage;
 using TerraScale.TerraBase.Features.Replication;
 using TerraScale.TerraBase.Features.Replication.V1;
 using TerraScale.TerraBase.Tenancy;
@@ -340,7 +341,14 @@ public sealed class DocumentCaptureTests
     public async Task Empty_mutations_capture_nothing_and_system_removals_stay_physical_in_one_catalog_group()
     {
         using var tls = new ClientTls();
-        await using var server = await TerraBaseTestServer.StartAsync(tls.Apply);
+        // Only the measured transaction may add a catalog group: no background usage flush.
+        await using var server = await TerraBaseTestServer.StartAsync(tls.Apply, services =>
+        {
+            foreach (var flush in services.Where(service => service.ImplementationType == typeof(UsageFlushService)).ToList())
+            {
+                services.Remove(flush);
+            }
+        });
         var tenant = await ReplicationTenant.CreateAsync(server, "captured");
         using var writer = tls.CreateClient(server.ClientAddress!, await tenant.KeyAsync(server, "documents:write"));
         using (var response = await writer.PutAsync(new Uri(tenant.Path("captured"), UriKind.Relative), null))

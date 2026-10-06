@@ -179,7 +179,7 @@ public sealed record TerraBaseOptions : IDisposable
 
     private static readonly FrozenSet<string> Keys = FrozenSet.Create(
         StringComparer.Ordinal,
-        ["admin-port", "data-directory", "region", "node-name", "memory-budget", "client-port", .. ClientTlsKeys, "auth-issuer", "auth-audience", "management-credential-file", "management-legacy-owner", "peer-port", .. PeerTlsKeys, "peer-addresses", "catalog-primary", "shutdown-grace-seconds", "readiness-cache-seconds", "storage-threads", "storage-queue"]);
+        ["admin-port", "data-directory", "region", "node-name", "memory-budget", "client-port", .. ClientTlsKeys, "auth-issuer", "auth-audience", "management-credential-file", "management-legacy-owner", "peer-port", .. PeerTlsKeys, "peer-addresses", "peers", "catalog-primary", "shutdown-grace-seconds", "readiness-cache-seconds", "storage-threads", "storage-queue"]);
 
     /// <summary>Every setting name, in <c>--name=value</c> form without the dashes.</summary>
     public static IReadOnlySet<string> SettingNames => Keys;
@@ -270,14 +270,15 @@ public sealed record TerraBaseOptions : IDisposable
     /// <summary>
     /// Peer listeners (<c>https://host:port</c>) this node sends its committed changes to; empty
     /// disables sending (changes are captured either way). Requires <see cref="PeerPort"/>, whose
-    /// certificate it presents.
+    /// certificate it presents. With <c>peers</c>, every member it lists but this one.
     /// </summary>
     public IReadOnlyList<Uri> PeerAddresses { get; init; } = [];
 
     /// <summary>
     /// The peer listener (<c>https://host:port</c>) of the catalog primary this node follows: it replicates the system
     /// database from there and writes none of it (docs/decisions/0009). <see langword="null"/> makes this node a catalog
-    /// primary. Requires <see cref="PeerPort"/>, whose certificate it presents.
+    /// primary. Requires <see cref="PeerPort"/>, whose certificate it presents. Set as an address, or as a member of
+    /// <c>peers</c>; naming this node makes it the primary.
     /// </summary>
     public Uri? CatalogPrimary { get; init; }
 
@@ -401,16 +402,31 @@ public sealed record TerraBaseOptions : IDisposable
         RequireGroup(values, "peer-port", peerPort, PeerTlsKeys);
         var peerTls = peerPort is null ? null : new PeerTlsFiles(values["peer-certificate"], values["peer-private-key"], values["peer-client-ca"]);
         var peerAddresses = ParsePeerAddresses(values);
-        if (peerAddresses.Count > 0 && peerPort is null)
+        // peers (the orchestrator's TERRABASE_PEERS) lists every member, this one included; the others are the peer addresses.
+        var peers = ParsePeers(values, nodeName);
+        if (peers is not null)
         {
-            throw new TerraBaseConfigurationException("peer-addresses requires peer-port");
+            peerAddresses = peerAddresses.Count == 0
+                ? [.. peers.Where(peer => peer.Key != nodeName).Select(peer => peer.Value)]
+                : throw new TerraBaseConfigurationException("set peers or peer-addresses, not both");
         }
 
+        if ((peerAddresses.Count > 0 || peers is not null) && peerPort is null)
+        {
+            throw new TerraBaseConfigurationException("peer-addresses and peers require peer-port");
+        }
+
+        // A member name of peers (this node's own makes it the primary) or an https://host:port address.
         Uri? catalogPrimary = null;
         if (values.TryGetValue("catalog-primary", out var primary)
-            && (!TryParsePeerAddress(primary, out catalogPrimary) || peerPort is null))
+            && ((peers?.TryGetValue(primary, out catalogPrimary) != true && !TryParsePeerAddress(primary, out catalogPrimary)) || peerPort is null))
         {
-            throw new TerraBaseConfigurationException("catalog-primary must be one https://host:port address and requires peer-port");
+            throw new TerraBaseConfigurationException("catalog-primary must be a member of peers or one https://host:port address, and requires peer-port");
+        }
+
+        if (primary == nodeName && peers is not null)
+        {
+            catalogPrimary = null;
         }
 
         // Validate the remaining settings before allocating certificates.
@@ -616,7 +632,34 @@ public sealed record TerraBaseOptions : IDisposable
         return addresses;
     }
 
-    // An https://host:port origin of a peer listener.
+    // Comma-separated name=host:port entries with distinct names and addresses, one of them this node's (node-name). Names
+    // are lowercase letters, digits and inner hyphens, at most 63 characters: the host node names of the orchestrator.
+    private static Dictionary<string, Uri>? ParsePeers(IReadOnlyDictionary<string, string> values, string nodeName)
+    {
+        if (!values.TryGetValue("peers", out var raw))
+        {
+            return null;
+        }
+
+        var peers = new Dictionary<string, Uri>(StringComparer.Ordinal);
+        foreach (var entry in raw.Split(',', StringSplitOptions.TrimEntries))
+        {
+            var separator = entry.IndexOf('=', StringComparison.Ordinal);
+            var name = separator > 0 ? entry[..separator] : "";
+            if (!IsPeerName(name) || !TryParsePeerAddress("https://" + entry[(separator + 1)..], out var address)
+                || peers.ContainsValue(address) || !peers.TryAdd(name, address))
+            {
+                throw new TerraBaseConfigurationException("peers must be comma-separated name=host:port entries with distinct names and addresses");
+            }
+        }
+
+        return peers.ContainsKey(nodeName) ? peers : throw new TerraBaseConfigurationException("peers must list this node by its node-name");
+    }
+
+    private static bool IsPeerName(string name) =>
+        name.Length is >= 1 and <= 63 && name[0] != '-' && name[^1] != '-' && name.All(c => c is (>= 'a' and <= 'z') or (>= '0' and <= '9') or '-');
+
+    // An https://host:port origin of a peer listener (the port defaults to 443).
     private static bool TryParsePeerAddress(string value, [NotNullWhen(true)] out Uri? address) =>
         Uri.TryCreate(value, UriKind.Absolute, out address)
         && address.Scheme == Uri.UriSchemeHttps

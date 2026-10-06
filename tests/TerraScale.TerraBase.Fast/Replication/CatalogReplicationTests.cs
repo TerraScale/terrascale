@@ -72,6 +72,57 @@ public sealed class CatalogReplicationTests
         var incarnations = await Task.WhenAll(new[] { primary, follower }.Select(async server =>
             (await server.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(CancellationToken.None)).Incarnation));
         await Assert.That(incarnations[1]).IsEqualTo(incarnations[0]);
+
+        // A replicated catalog version this build does not read is refused, not misread, until the version is one it reads.
+        var version = await ReadVersionAsync(primary);
+        await WriteSystemAsync(primary.Services.GetRequiredService<IStorageEngine>(),
+            async (transaction, token) => await transaction.PutAsync("catalog", "version", "\"99\""u8.ToArray(), token));
+        await TerraBaseTestServer.EventuallyAsync(async token => await GetAsync(data, tenant, "orders", "first", token) == HttpStatusCode.ServiceUnavailable);
+        await WriteSystemAsync(primary.Services.GetRequiredService<IStorageEngine>(),
+            async (transaction, token) => await transaction.PutAsync("catalog", "version", version, token));
+        await TerraBaseTestServer.EventuallyAsync(async token => await GetAsync(data, tenant, "orders", "first", token) == HttpStatusCode.OK);
+    }
+
+    private static async Task<byte[]> ReadVersionAsync(TerraBaseTestServer server)
+    {
+        var store = await server.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(CancellationToken.None);
+        await using var transaction = await store.BeginTransactionAsync(write: false, CancellationToken.None);
+        return (await transaction.GetAsync("catalog", "version", CancellationToken.None))!.Json.ToArray();
+    }
+
+    [Test]
+    public async Task Members_configured_by_one_shared_peers_list_follow_the_named_primary_and_replicate_documents()
+    {
+        // The orchestrator's shape: every member gets the same peers and catalog-primary; only its node name differs.
+        using var peers = new PeerTls();
+        using var tls = new ClientTls();
+        var (primary, follower) = await TerraBaseTestServer.StartPairAsync((settings, own, other) =>
+        {
+            peers.Apply(settings);
+            tls.Apply(settings);
+            settings["peer-port"] = own.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            var (a, b) = own < other ? (own, other) : (other, own);
+            settings["peers"] = $"member-a=localhost:{a},member-b=localhost:{b}";
+            settings["node-name"] = own == a ? "member-a" : "member-b";
+            settings["catalog-primary"] = "member-a";
+        });
+        await using (primary)
+        await using (follower)
+        {
+            var (catalog, replica) = primary.Services.GetRequiredService<TerraScale.TerraBase.Configuration.TerraBaseOptions>().CatalogPrimary is null
+                ? (primary, follower)
+                : (follower, primary);
+            await Assert.That(replica.Services.GetRequiredService<TerraScale.TerraBase.Configuration.TerraBaseOptions>().CatalogPrimary).IsNotNull();
+            var tenant = await CatalogTenant.CreateAsync(catalog, "orders");
+            await ReadyAsync(replica);
+
+            // A key and a document made on the primary are served by the other member.
+            using var writer = tls.CreateClient(catalog.ClientAddress!, tenant.Key);
+            await Assert.That(await PutAsync(writer, tenant, "orders", "shared")).IsEqualTo(HttpStatusCode.Created);
+            using var reader = tls.CreateClient(replica.ClientAddress!, tenant.Key);
+            await TerraBaseTestServer.EventuallyAsync(
+                async token => await GetAsync(reader, tenant, "orders", "shared", token) == HttpStatusCode.OK, TimeSpan.FromSeconds(10));
+        }
     }
 
     [Test]
@@ -89,21 +140,19 @@ public sealed class CatalogReplicationTests
             });
         }
 
+        await using var follower = await TerraBaseTestServer.StartAsync(settings =>
+        {
+            peers.Apply(settings);
+            tls.Apply(settings);
+            settings["catalog-primary"] = $"https://localhost:{port}";
+        });
         CatalogTenant tenant;
-        TerraBaseTestServer follower;
         await using (var primary = await StartPrimaryAsync())
         {
             tenant = await CatalogTenant.CreateAsync(primary, "orders");
-            follower = await TerraBaseTestServer.StartAsync(settings =>
-            {
-                peers.Apply(settings);
-                tls.Apply(settings);
-                settings["catalog-primary"] = $"https://localhost:{port}";
-            });
             await ReadyAsync(follower);
         }
 
-        await using (follower)
         {
             // The same address now serves an empty catalog of another origin.
             await using var replacement = await StartPrimaryAsync();
@@ -432,11 +481,14 @@ public sealed class CatalogReplicationTests
     // Catalog streams of the follower that failed for reason; a counter without a sample yet reads as 0.
     private static async Task<double> FailuresAsync(TerraBaseTestServer follower, string reason, CancellationToken cancellationToken)
     {
-        var metrics = await follower.Client.GetStringAsync(new Uri("/metrics", UriKind.Relative), cancellationToken);
-        return metrics.Split('\n')
-            .Where(line => line.StartsWith("terrabase_catalog_follower_failures_total{", StringComparison.Ordinal)
-                && line.Contains($"reason=\"{reason}\"", StringComparison.Ordinal))
-            .Sum(line => double.Parse(line[(line.LastIndexOf('}') + 1)..].Trim().Split(' ')[0], System.Globalization.CultureInfo.InvariantCulture));
+        try
+        {
+            return await follower.MetricAsync("terrabase_catalog_follower_failures_total", $"reason=\"{reason}\"", cancellationToken);
+        }
+        catch (InvalidOperationException) when (!cancellationToken.IsCancellationRequested)
+        {
+            return 0;
+        }
     }
 
     [Test]
@@ -554,7 +606,8 @@ public sealed class CatalogReplicationTests
     private static FollowRequest Frontier(ByteString origin, ulong sequence, ByteString digest) =>
         new() { Protocol = 1, Codecs = { PayloadCodec.Lz4BlockV1 }, Origin = origin, Sequence = sequence, Digest = digest };
 
-    // Reads frames until count of them arrived or stop holds for one, within 30 seconds, then ends the stream.
+    // Reads frames until count of them arrived or stop holds for one after the first (always Welcome), within 30 seconds, then
+    // ends the stream.
     private static async Task<List<FollowResponse>> FramesAsync(
         CatalogReplication.CatalogReplicationClient client, FollowRequest request, int count = int.MaxValue, Func<FollowResponse, bool>? stop = null)
     {

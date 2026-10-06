@@ -68,6 +68,7 @@ public static class JournalDigest
         private readonly IncrementalHash _hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
         private readonly int _count;
         private int _appended;
+        private bool _completed;
 
         /// <summary>Starts the group of <paramref name="count"/> changes after the prefix <paramref name="previous"/>.</summary>
         public Group(ReadOnlySpan<byte> origin, long sequence, ReadOnlySpan<byte> previous, int count)
@@ -93,7 +94,7 @@ public static class JournalDigest
         public void Append(DocumentChange change)
         {
             ArgumentNullException.ThrowIfNull(change);
-            if (_appended == _count)
+            if (_completed || _appended == _count)
             {
                 throw new InvalidDataException("a journal group holds more changes than it declared");
             }
@@ -112,9 +113,17 @@ public static class JournalDigest
             }
         }
 
-        /// <summary>The digest of the prefix through this group, once every declared change was appended.</summary>
-        public byte[] Complete() =>
-            _appended == _count ? _hash.GetHashAndReset() : throw new InvalidDataException("a journal group holds fewer changes than it declared");
+        /// <summary>The digest of the prefix through this group, exactly once, after every declared change was appended.</summary>
+        public byte[] Complete()
+        {
+            if (_completed || _appended != _count)
+            {
+                throw new InvalidDataException("a journal group completes once, after every change it declared");
+            }
+
+            _completed = true;
+            return _hash.GetHashAndReset();
+        }
 
         /// <inheritdoc />
         public void Dispose() => _hash.Dispose();

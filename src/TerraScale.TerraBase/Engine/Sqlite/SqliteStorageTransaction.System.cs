@@ -8,6 +8,9 @@ internal sealed partial class SqliteStorageTransaction
     // Set by a replica write, so its commit signals waiters like a local one.
     private bool _replicaChanged;
 
+    // The primary's incarnation a snapshot adopts; published as the store's right after the SQL commit.
+    private Guid? _adoptedIncarnation;
+
     // A system group replays every mutation in order, so a follower reaches the same state without a merge: no
     // final-state collapse and no client key or object rules. Keys must fit the u16 lengths of the wire encoding.
     private void CaptureSystem(DocumentChange change)
@@ -112,12 +115,12 @@ internal sealed partial class SqliteStorageTransaction
                 throw new InvalidDataException("a replica adopts a 16-byte origin");
             }
 
-            // Whole-table deletes run once per snapshot, never on a request path.
-            PlainCommand("DELETE FROM documents; DELETE FROM collections; DELETE FROM changes; DELETE FROM journal_prefixes; DELETE FROM applied;")
-                .ExecuteNonQuery();
+            PlainCommand(SqliteStatements.ResetReplica).ExecuteNonQuery();
+            var hex = Convert.ToHexStringLower(origin.Span);
             var incarnation = Command(SqliteStatements.RenewIncarnation);
-            incarnation.Parameters.AddWithValue("$incarnation", Convert.ToHexStringLower(origin.Span));
+            incarnation.Parameters.AddWithValue("$incarnation", hex);
             incarnation.ExecuteNonQuery();
+            _adoptedIncarnation = Guid.ParseExact(hex, "N");
             _replicaChanged = true;
             return true;
         }, cancellationToken, mutation: true).ConfigureAwait(false);
@@ -128,7 +131,8 @@ internal sealed partial class SqliteStorageTransaction
         {
             ThrowIfReadOnly();
             ArgumentNullException.ThrowIfNull(change);
-            if (change.Collection.Length == 0 || change.Id.Length == 0 || change.Version is <= 0 or > VersionClock.MaxVersion)
+            if (change.Collection.Length == 0 || change.Id.Length == 0 || change.Version is <= 0 or > VersionClock.MaxVersion
+                || Encoding.UTF8.GetByteCount(change.Collection) > ushort.MaxValue || Encoding.UTF8.GetByteCount(change.Id) > ushort.MaxValue)
             {
                 throw new InvalidDataException("a replicated system change has an invalid collection, id or version");
             }

@@ -868,6 +868,12 @@ internal sealed partial class SqliteStorageTransaction(
 
                 cancellationToken.ThrowIfCancellationRequested();
                 transaction.Commit();
+                if (_adoptedIncarnation is { } adopted)
+                {
+                    // Before the commit wakes waiters: readers see the adopted documents with their incarnation.
+                    store.AdoptIncarnation(adopted);
+                }
+
                 return offset;
             }
             catch

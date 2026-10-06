@@ -9,6 +9,12 @@ internal interface ICatalogGuard
 {
     /// <summary>Migrates once per process; throws a 503 <see cref="BadHttpRequestException"/> for a catalog this build cannot use.</summary>
     ValueTask EnsureCatalogAsync(CancellationToken cancellationToken);
+
+    /// <summary>
+    /// On a catalog follower, checks the replicated catalog version inside the reader's own <paramref name="transaction"/>, since
+    /// replication can bring a version this build does not read (503); nothing on a primary, which checked when it migrated.
+    /// </summary>
+    ValueTask CheckReadAsync(IStorageTransaction transaction, CancellationToken cancellationToken);
 }
 
 /// <summary>
@@ -35,7 +41,11 @@ internal sealed class SystemCatalog(IStorageEngine engine, ICatalogGuard guard)
     public async ValueTask<T> ReadAsync<T>(Func<IStorageTransaction, ValueTask<T>> read, CancellationToken cancellationToken)
     {
         await guard.EnsureCatalogAsync(cancellationToken).ConfigureAwait(false);
-        return await ReadUncheckedAsync(read, cancellationToken).ConfigureAwait(false);
+        return await ReadUncheckedAsync(async transaction =>
+        {
+            await guard.CheckReadAsync(transaction, cancellationToken).ConfigureAwait(false);
+            return await read(transaction).ConfigureAwait(false);
+        }, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>Writes to the management catalog after <see cref="ICatalogGuard"/> accepted its version.</summary>
