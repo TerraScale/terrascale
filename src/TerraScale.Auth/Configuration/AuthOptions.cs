@@ -1,6 +1,8 @@
 using System.Collections.Frozen;
 using System.Globalization;
 using System.Net;
+using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
 using System.Text.RegularExpressions;
 
 namespace TerraScale.Auth.Configuration;
@@ -22,6 +24,9 @@ public sealed partial record AuthOptions
         "listen",
         "public-origin",
         "terrascale-api-url",
+        "terrascale-api-endpoints",
+        "terrascale-api-ca",
+        "terrascale-api-failover",
         "terrascale-api-key",
         "database",
         "master-key",
@@ -56,6 +61,22 @@ public sealed partial record AuthOptions
 
     /// <summary>TerraBase API origin.</summary>
     public required Uri TerraScaleApiUrl { get; init; }
+
+    /// <summary>
+    /// Private TerraBase member origins that storage uses instead of <see cref="TerraScaleApiUrl"/>, most preferred first:
+    /// every replica sends to the first ready one. Empty: storage uses <see cref="TerraScaleApiUrl"/>.
+    /// </summary>
+    public IReadOnlyList<Uri> TerraScaleApiEndpoints { get; init; } = [];
+
+    /// <summary>The only certificates trusted as roots for <see cref="TerraScaleApiEndpoints"/>, for example the cell's TerraBase member CA.</summary>
+    public IReadOnlyList<X509Certificate2> TerraScaleApiCa { get; init; } = [];
+
+    /// <summary>
+    /// Whether storage may move to the next of several <see cref="TerraScaleApiEndpoints"/> while the preferred member is
+    /// down: a documented exception (<c>TS_AUTH_TERRASCALE_API_FAILOVER=true</c>) to the single storage authority, for
+    /// members that replicate. Off, a deployment lists one member and fails closed while it is down.
+    /// </summary>
+    public bool TerraScaleApiFailover { get; init; }
 
     /// <summary>TerraBase API key, without any <c>Bearer</c> prefix.</summary>
     public required string TerraScaleApiKey { get; init; }
@@ -142,6 +163,7 @@ public sealed partial record AuthOptions
     /// </summary>
     public override string ToString() =>
         $"AuthOptions {{ Listen = {this.Listen}, PublicOrigin = {this.PublicOrigin}, TerraScaleApiUrl = {this.TerraScaleApiUrl}, "
+        + $"TerraScaleApiEndpoints = {this.TerraScaleApiEndpoints.Count}, "
         + $"Database = {this.Database}, Development = {this.Development}, Smtp = {(this.SmtpHost is null ? "off" : "on")}, "
         + $"ErrorReporting = {(this.SentryDsn is null ? "off" : "on")}, DashboardClient = {(this.DashboardClient is null ? "off" : "on")}, "
         + $"AccessTokenAudiences = {this.AccessTokenAudiences.Count}, ServiceClients = {this.ServiceClients.Count} }}";
@@ -204,6 +226,24 @@ public sealed partial record AuthOptions
             throw Invalid("TS_AUTH_TERRASCALE_API_URL must be an HTTPS origin without a path");
         }
 
+        var endpoints = ParseEndpoints(Optional("terrascale-api-endpoints"));
+        var trusted = ParseCertificates(Optional("terrascale-api-ca"));
+        if ((endpoints.Count == 0) != (trusted.Count == 0))
+        {
+            throw Invalid("TS_AUTH_TERRASCALE_API_ENDPOINTS and TS_AUTH_TERRASCALE_API_CA are required together");
+        }
+
+        var failover = Optional("terrascale-api-failover") switch
+        {
+            null or "false" => false,
+            "true" => true,
+            _ => throw Invalid("TS_AUTH_TERRASCALE_API_FAILOVER must be true or false"),
+        };
+        if (endpoints.Count > 1 && !failover)
+        {
+            throw Invalid("TS_AUTH_TERRASCALE_API_ENDPOINTS may list several members only with TS_AUTH_TERRASCALE_API_FAILOVER=true");
+        }
+
         var database = Required("database");
         var selector = database.Split('/');
         if (selector.Length != 2 || !StorageProjectName().IsMatch(selector[0]) || !StorageName().IsMatch(selector[1]))
@@ -261,6 +301,9 @@ public sealed partial record AuthOptions
             Listen = ParseListen(Optional("listen") ?? "http://0.0.0.0:8080"),
             PublicOrigin = publicOrigin,
             TerraScaleApiUrl = apiUrl,
+            TerraScaleApiEndpoints = endpoints,
+            TerraScaleApiCa = trusted,
+            TerraScaleApiFailover = failover,
             TerraScaleApiKey = normalizedApiKey,
             Database = database,
             MasterKey = DecodeKey("master-key", Required("master-key")),
@@ -421,6 +464,52 @@ public sealed partial record AuthOptions
             && string.IsNullOrEmpty(uri.UserInfo) && string.IsNullOrEmpty(uri.Fragment) && !value.Contains('#', StringComparison.Ordinal)
                 ? uri
                 : throw Invalid($"{EnvName(key)} must hold absolute HTTPS URIs (HTTP only for loopback) without credentials or fragments"))];
+    }
+
+    // Distinct HTTPS origins, semicolon-separated, in order of preference.
+    private static List<Uri> ParseEndpoints(string? raw)
+    {
+        var endpoints = new List<Uri>();
+        foreach (var value in (raw ?? string.Empty).Split(';', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (!Uri.TryCreate(value, UriKind.Absolute, out var url) || url.Scheme != Uri.UriSchemeHttps || url.AbsolutePath != "/"
+                || !string.IsNullOrEmpty(url.UserInfo) || !string.IsNullOrEmpty(url.Query) || !string.IsNullOrEmpty(url.Fragment)
+                || endpoints.Contains(url) || endpoints.Count == 8)
+            {
+                throw Invalid("TS_AUTH_TERRASCALE_API_ENDPOINTS must hold at most 8 distinct HTTPS origins without a path");
+            }
+
+            endpoints.Add(url);
+        }
+
+        return endpoints;
+    }
+
+    // PEM certificates only: a private key or any other block is refused, never silently dropped.
+    private static List<X509Certificate2> ParseCertificates(string? raw)
+    {
+        var certificates = new List<X509Certificate2>();
+        var rest = (raw ?? string.Empty).AsSpan();
+        while (PemEncoding.TryFind(rest, out var fields))
+        {
+            if (rest[fields.Label] is not "CERTIFICATE" || rest[..fields.Location.Start].Trim().Length != 0 || certificates.Count == 4)
+            {
+                throw Invalid("TS_AUTH_TERRASCALE_API_CA must hold 1 to 4 PEM certificates and nothing else");
+            }
+
+            try
+            {
+                certificates.Add(X509CertificateLoader.LoadCertificate(Convert.FromBase64String(rest[fields.Base64Data].ToString())));
+            }
+            catch (CryptographicException)
+            {
+                throw Invalid("TS_AUTH_TERRASCALE_API_CA must hold 1 to 4 PEM certificates and nothing else");
+            }
+
+            rest = rest[fields.Location.End..];
+        }
+
+        return rest.Trim().Length == 0 ? certificates : throw Invalid("TS_AUTH_TERRASCALE_API_CA must hold 1 to 4 PEM certificates and nothing else");
     }
 
     private static byte[] DecodeKey(string key, string raw)

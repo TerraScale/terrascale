@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
 using TerraScale.Auth.Configuration;
 using TerraScale.Auth.Tests;
 
@@ -97,11 +99,61 @@ public sealed class ConfigurationTests
     [Arguments("smtp-host", "smtp.example", "TS_AUTH_SMTP_* is partially configured")]
     [Arguments("smtp-check-revocation", "no", "TS_AUTH_SMTP_CHECK_REVOCATION must be true or false")]
     [Arguments("rate-limit", "0", "TS_AUTH_RATE_LIMIT must be positive")]
+    [Arguments("terrascale-api-endpoints", "https://10.0.0.1:9465", "TS_AUTH_TERRASCALE_API_ENDPOINTS and TS_AUTH_TERRASCALE_API_CA are required together")]
+    [Arguments("terrascale-api-ca", "-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----", "TS_AUTH_TERRASCALE_API_CA must hold 1 to 4 PEM certificates and nothing else")]
+    [Arguments("terrascale-api-ca", "not a certificate", "TS_AUTH_TERRASCALE_API_CA must hold 1 to 4 PEM certificates and nothing else")]
+    [Arguments("terrascale-api-failover", "yes", "TS_AUTH_TERRASCALE_API_FAILOVER must be true or false")]
     public async Task Startup_rejects_malformed_settings(string key, string value, string message)
     {
         var exception = await Assert.ThrowsAsync<AuthConfigurationException>(() => AuthTestServer.StartAsync(settings: values => values[key] = value));
 
         await Assert.That(exception!.Message).IsEqualTo(message);
+    }
+
+    [Test]
+    [Arguments("http://10.0.0.1:9465")]
+    [Arguments("https://10.0.0.1:9465/path")]
+    [Arguments("https://10.0.0.1:9465;https://10.0.0.1:9465")]
+    [Arguments("https://user@10.0.0.1:9465")]
+    [Arguments("https://1.invalid;https://2.invalid;https://3.invalid;https://4.invalid;https://5.invalid;https://6.invalid;https://7.invalid;https://8.invalid;https://9.invalid")]
+    public async Task Private_storage_endpoints_must_be_distinct_https_origins(string endpoints)
+    {
+        var settings = AuthTestServer.DefaultSettings();
+        settings["terrascale-api-endpoints"] = endpoints;
+        settings["terrascale-api-ca"] = Root();
+
+        var exception = Assert.Throws<AuthConfigurationException>(() => AuthOptions.Load(settings));
+        await Assert.That(exception!.Message).IsEqualTo("TS_AUTH_TERRASCALE_API_ENDPOINTS must hold at most 8 distinct HTTPS origins without a path");
+    }
+
+    [Test]
+    public async Task Private_storage_trusts_only_pem_certificates()
+    {
+        var settings = AuthTestServer.DefaultSettings();
+        settings["terrascale-api-endpoints"] = "https://10.251.0.21:9465; https://10.251.0.22:9465";
+        settings["terrascale-api-ca"] = Root() + "\n" + Root();
+        var pinned = Assert.Throws<AuthConfigurationException>(() => AuthOptions.Load(settings));
+        await Assert.That(pinned!.Message).IsEqualTo("TS_AUTH_TERRASCALE_API_ENDPOINTS may list several members only with TS_AUTH_TERRASCALE_API_FAILOVER=true");
+
+        settings["terrascale-api-failover"] = "true";
+        var options = AuthOptions.Load(settings);
+        await Assert.That(options.TerraScaleApiFailover).IsTrue();
+        await Assert.That(options.TerraScaleApiEndpoints.Select(endpoint => endpoint.ToString()))
+            .IsEquivalentTo(["https://10.251.0.21:9465/", "https://10.251.0.22:9465/"]);
+        await Assert.That(options.TerraScaleApiCa.Count).IsEqualTo(2);
+
+        using var key = ECDsa.Create();
+        settings["terrascale-api-ca"] = Root() + key.ExportPkcs8PrivateKeyPem();
+        var exception = Assert.Throws<AuthConfigurationException>(() => AuthOptions.Load(settings));
+        await Assert.That(exception!.Message).IsEqualTo("TS_AUTH_TERRASCALE_API_CA must hold 1 to 4 PEM certificates and nothing else");
+    }
+
+    internal static string Root()
+    {
+        using var key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        var request = new CertificateRequest("CN=TerraBase member CA test", key, HashAlgorithmName.SHA256);
+        using var certificate = request.CreateSelfSigned(DateTimeOffset.UtcNow.AddMinutes(-5), DateTimeOffset.UtcNow.AddDays(1));
+        return certificate.ExportCertificatePem();
     }
 
     [Test]

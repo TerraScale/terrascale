@@ -1,5 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using TerraScale.Auth.Tests;
@@ -88,6 +90,62 @@ public sealed class StorageReadinessTests(TerraBaseFixture fixture)
         await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
         await Assert.That((await database.ListCollectionsAsync()).Items.Any(item => item.Name == collection)).IsFalse();
     }
+
+    [Test]
+    public async Task Private_members_fail_over_to_the_next_ready_member_trusting_only_the_configured_root()
+    {
+        var (tenant, _) = await fixture.CreateDatabaseAsync();
+        // The first member refuses connections; storage moves on to the real one.
+        await using var auth = await StartMembersAsync(tenant, $"https://localhost:9;{fixture.Server.ClientAddress}", fixture.Server.Certificate.ExportCertificatePem(), failover: true);
+
+        await Assert.That(await ReadyWithinAsync(auth, TimeSpan.FromSeconds(10))).IsTrue();
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Private_members_are_never_ready_over_an_untrusted_or_misnamed_certificate(bool misnamed)
+    {
+        var (tenant, database) = await fixture.CreateDatabaseAsync();
+        using var key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        using var other = new CertificateRequest("CN=localhost", key, HashAlgorithmName.SHA256).CreateSelfSigned(DateTimeOffset.UtcNow.AddMinutes(-5), DateTimeOffset.UtcNow.AddDays(1));
+        // The member certificate names localhost only, not 127.0.0.1.
+        var endpoint = misnamed ? $"https://127.0.0.1:{fixture.Server.ClientAddress.Port}" : fixture.Server.ClientAddress.ToString();
+        var root = misnamed ? fixture.Server.Certificate.ExportCertificatePem() : other.ExportCertificatePem();
+        await using var auth = await StartMembersAsync(tenant, endpoint, root);
+
+        await Assert.That(await ReadyWithinAsync(auth, TimeSpan.FromSeconds(3))).IsFalse();
+        await Assert.That((await database.ListDocumentsAsync("storage_health")).Items.Count).IsEqualTo(0);
+    }
+
+    private static async Task<bool> ReadyWithinAsync(AuthTestServer auth, TimeSpan limit)
+    {
+        var deadline = DateTimeOffset.UtcNow + limit;
+        do
+        {
+            using var response = await auth.Client.GetAsync("/readyz");
+            if (response.StatusCode == HttpStatusCode.OK)
+            {
+                return true;
+            }
+
+            // Readiness is cached for one second.
+            await Task.Delay(TimeSpan.FromMilliseconds(1100));
+        }
+        while (DateTimeOffset.UtcNow < deadline);
+        return false;
+    }
+
+    // Uses the product's own storage client: no test HttpClient replaces its trust.
+    private static Task<AuthTestServer> StartMembersAsync(TerraBaseTestTenant tenant, string endpoints, string root, bool failover = false) =>
+        AuthTestServer.StartAsync(settings: values =>
+        {
+            values["terrascale-api-endpoints"] = endpoints;
+            values["terrascale-api-ca"] = root;
+            values["terrascale-api-failover"] = failover ? "true" : "false";
+            values["terrascale-api-key"] = tenant.ApiKey;
+            values["database"] = $"{tenant.Project.Id}/auth";
+        });
 
     private Task<AuthTestServer> StartAuthAsync(TerraBaseTestTenant tenant, string databaseName = "auth", string? apiKey = null) =>
         AuthTestServer.StartAsync(settings: values =>

@@ -82,7 +82,9 @@ The pinned server's decisions 0003 and 0005 limit deployment: SQLite WAL
 `synchronous=NORMAL` can lose acknowledged writes since the last WAL sync
 after an OS crash or power loss, though a process crash alone preserves them;
 replication `Sync` is unsupported. All replicas must use a single authority,
-with no automatic retries or failover. Lost claim/consumption writes can
+with no automatic retries or failover, except where a deployment sets the
+documented `TS_AUTH_TERRASCALE_API_FAILOVER=true` exception (TS-577) for
+members that replicate. Lost claim/consumption writes can
 invalidate security guarantees. Live production activation remains gated on
 an approved durability/recovery design and TS-470 verification; readiness
 does not prove production durability. The [port guide's activation gate](csharp-port.md#production-activation-gate)

@@ -392,7 +392,13 @@ plan. It performs no live setup; live dataset provisioning belongs to TS-529
 in ts-orchestrator, with production activation still gated by TS-470.
 Every auth replica must use the same single configured storage authority,
 without automatic write retries or failover to another copy. Atlas endpoint
-discovery (TS-507) does not supply replication or failover guarantees.
+discovery (TS-507) does not supply replication or failover guarantees. The one
+documented exception is `TS_AUTH_TERRASCALE_API_FAILOVER=true` (TS-577), for
+private members that replicate: every replica still uses the first ready
+member of one shared order and never resends a request, but while the
+preferred member is down storage moves to the next one, which may not hold the
+latest writes within the members' replication lag. Without it a deployment
+lists one member and fails closed.
 
 The pinned server's [decision 0003](https://git.terrascale.tech/TerraScale/terrabase/src/commit/ff256067015433c8c40b59879f1282d2a40480ce/docs/decisions/0003-sqlite-synchronous-normal.md)
 uses SQLite WAL with `synchronous=NORMAL`. A TerraBase process crash alone

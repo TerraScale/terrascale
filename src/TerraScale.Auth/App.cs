@@ -31,10 +31,21 @@ public static partial class App
 
         builder.Services.AddSingleton(options);
         builder.Services.AddSingleton(TimeProvider.System);
-        builder.Services.AddSingleton(_ => new HttpClient(TerraBaseHttp.CreateHandler()));
-        // The configured URL is an explicit static override. Replace the resolver with Atlas
-        // discovery when ts-dotnet supplies it; every process must pin the same database authority.
-        builder.Services.AddSingleton<ITerraBaseEndpointResolver>(_ => new TerraBaseStaticEndpointResolver(options.TerraScaleApiUrl));
+        if (options.TerraScaleApiEndpoints.Count == 0)
+        {
+            builder.Services.AddSingleton(_ => new HttpClient(TerraBaseHttp.CreateHandler()));
+            // The configured URL is an explicit static override. Replace the resolver with Atlas
+            // discovery when ts-dotnet supplies it; every process must pin the same database authority.
+            builder.Services.AddSingleton<ITerraBaseEndpointResolver>(_ => new TerraBaseStaticEndpointResolver(options.TerraScaleApiUrl));
+        }
+        else
+        {
+            // The cell's private members, in the same order on every replica (see TerraBaseMembers).
+            builder.Services.AddSingleton<TerraBaseMembers>();
+            builder.Services.AddHostedService(services => services.GetRequiredService<TerraBaseMembers>());
+            builder.Services.AddSingleton(services => new HttpClient(services.GetRequiredService<TerraBaseMembers>().CreateHandler()));
+            builder.Services.AddSingleton<ITerraBaseEndpointResolver>(services => services.GetRequiredService<TerraBaseMembers>());
+        }
         builder.Services.AddSingleton(services => new TerraBaseDocumentsClient(services.GetRequiredService<HttpClient>(), new TerraBaseDocumentsClientOptions
         {
             EndpointResolver = services.GetRequiredService<ITerraBaseEndpointResolver>(),
