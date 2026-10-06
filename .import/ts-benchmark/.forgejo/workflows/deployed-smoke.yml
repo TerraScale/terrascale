@@ -1,0 +1,67 @@
+name: Deployed smoke
+
+# A short, rate-bounded smoke of the production gru-1 TerraBase over the public
+# internet through Cloudflare, like a customer (TS-606). It creates and deletes
+# its own database in the dedicated benchmark project. Member metrics and the LB
+# check need operator access, so they run only from the homelab client.
+
+on:
+  schedule:
+    - cron: "17 5 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: ts-benchmark-deployed-smoke
+  cancel-in-progress: false
+
+env:
+  CI: "true"
+
+jobs:
+  deployed-smoke:
+    name: Deployed gru-1 smoke
+    runs-on: terrascale-builder
+    timeout-minutes: 45
+    container:
+      image: git.terrascale.tech/terrascale/ts-builder:latest
+      options: --memory=4g
+    steps:
+      - name: Check out the event revision
+        uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          github-server-url: "https://git.terrascale.tech"
+          ref: ${{ forgejo.sha }}
+          path: ts-benchmark
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Check out ts-cli
+        uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          github-server-url: "https://git.terrascale.tech"
+          repository: TerraScale/ts-cli
+          token: ${{ secrets.ORG_READ_TOKEN }}
+          path: ts-cli
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Run the deployed smoke
+        env:
+          TERRASCALE_DASHBOARD_TOKEN: ${{ secrets.BENCH_DASHBOARD_TOKEN }}
+          TERRASCALE_PROJECT_ID: ${{ secrets.BENCH_PROJECT_ID }}
+        run: |
+          if [ -z "$TERRASCALE_DASHBOARD_TOKEN" ] || [ -z "$TERRASCALE_PROJECT_ID" ]; then
+            echo "::warning::BENCH_DASHBOARD_TOKEN and BENCH_PROJECT_ID are not set; skipping the deployed smoke"
+            exit 0
+          fi
+          (cd ts-cli && CGO_ENABLED=0 go build -trimpath -o "$PWD/../ts" ./cmd/ts)
+          TS_CLI="$PWD/ts" make -C ts-benchmark deployed-smoke DEPLOYED_ARGS="--client local --no-lb-check --no-metrics"
+
+      - name: Retain deployed smoke evidence
+        if: always()
+        uses: https://data.forgejo.org/forgejo/upload-artifact@ed48a7bb0c8a9079492c354d37994c413423c83e
+        with:
+          name: deployed-smoke-${{ forgejo.run_id }}
+          path: ts-benchmark/bench/deployed/
+          if-no-files-found: ignore
+          retention-days: 30

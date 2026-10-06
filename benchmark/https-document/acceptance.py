@@ -18,6 +18,8 @@ import urllib.request
 import urllib.parse
 
 ROOT = Path(__file__).resolve().parents[1]
+# Every driver workload; the committed baselines ran the first, third, sixth, seventh and eighth.
+WORKLOADS = ["point_read", "point_write", "update", "delete", "query_filter_sort", "list_page", "transactions", "mixed_90_10", "mixed_80_20"]
 
 
 class DriverFailure(subprocess.CalledProcessError):
@@ -80,6 +82,13 @@ def download(pin, destination):
     destination.chmod(0o700)
 
 
+def build_driver():
+    """Builds the release driver; Cargo's JSON artifact path honors target-directory and build-target overrides."""
+    built = subprocess.run(["cargo", "build", "--release", "--locked", "-j", "2", "--message-format=json-render-diagnostics"], cwd=ROOT / "https-document", text=True, stdout=subprocess.PIPE, check=True)
+    binaries = [item["executable"] for line in built.stdout.splitlines() if (item := json.loads(line)).get("reason") == "compiler-artifact" and item.get("executable")]
+    return binaries[-1]
+
+
 def free_port():
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
@@ -114,11 +123,8 @@ def run(args):
         raise RuntimeError("output must be a fresh evidence directory")
     source_state = benchmark_source_state()
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    # Cargo's JSON artifact path honors target-directory and build-target overrides.
     subprocess.run(["make", "-C", str(ROOT / "https-document"), "fmt", "lint", "test"], check=True)
-    built = subprocess.run(["cargo", "build", "--release", "--locked", "-j", "2", "--message-format=json-render-diagnostics"], cwd=ROOT / "https-document", text=True, stdout=subprocess.PIPE, check=True)
-    binaries = [item["executable"] for line in built.stdout.splitlines() if (item := json.loads(line)).get("reason") == "compiler-artifact" and item.get("executable")]
-    driver = binaries[-1]
+    driver = build_driver()
     with tempfile.TemporaryDirectory(prefix="ts500-") as scratch:
         work = Path(scratch)
         binary = work / "terrabase"
@@ -181,7 +187,7 @@ def run(args):
                 {"op": "put", "collection": "baseline", "id": document_id(0), "document": {"should_not_commit": True}, "if_none_match": "*"},
             ]}, auth, (412,))
             request(opener, origin, f"{collection}/documents/{rollback_id}", headers=auth, expected=(404,))
-            config = {"endpoint_override": origin, "atlas_url": "https://atlas.terrascale.tech", "project": project["id"], "database": database["name"], "collection": "baseline", "ca_pem_path": str(ca), "server_binary_path": str(binary), "server_version": pin["version"], "server_sha256": pin["sha256"], "concurrency": [1, 4, 16], "operations_per_worker": 10 if args.smoke else 100, "timeout_ms": 10000}
+            config = {"endpoint_override": origin, "atlas_url": "https://atlas.terrascale.tech", "project": project["id"], "database": database["name"], "collection": "baseline", "ca_pem_path": str(ca), "server_binary_path": str(binary), "server_version": pin["version"], "server_sha256": pin["sha256"], "concurrency": [1, 4, 16], "operations_per_worker": 10 if args.smoke else 100, "timeout_ms": 10000, "workloads": WORKLOADS}
             write_json(work / "workload.json", config)
             try:
                 result = subprocess.run([driver, "--config", str(work / "workload.json"), "--token-file", str(token_file), "--output", str(args.output.resolve())], check=False)

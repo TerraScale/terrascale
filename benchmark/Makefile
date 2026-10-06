@@ -1,8 +1,8 @@
 .DEFAULT_GOAL := help
-.PHONY: help fast lint-fast build-fast test-fast csharp-smoke fmt check lint build build-guest check-engine lint-engine build-guest-engine test-build test test-vm vm-preflight vm-smoke vm-network-smoke vm-run local-engine-lock local-engine-fmt local-engine-check local-engine-lint local-engine-build local-engine-build-guest
+.PHONY: help fast lint-fast build-fast test-fast csharp-smoke deployed-smoke fmt check lint build build-guest check-engine lint-engine build-guest-engine test-build test test-vm vm-preflight vm-smoke vm-network-smoke vm-run local-engine-lock local-engine-fmt local-engine-check local-engine-lint local-engine-build local-engine-build-guest
 
 help:
-	@printf '%s\n' 'fmt/check/lint/build: C# HTTPS driver format, compile check, strict Clippy, host release build' 'build-guest: static musl SQLite-only guest binary (requires musl C compiler)' 'check-engine/lint-engine/build-guest-engine: feature-enabled SQLite and TerraBase caller' 'local-engine-*: standalone pinned Turso-vs-SQLite CRUD driver lock, format, check, lint, or build targets' 'test-build: compile feature-enabled musl tests without running them on the host' 'test-vm: execute TEST_BINARY inside Firecracker; requires RUN_ID and frozen harness/agent paths with SHA-256' 'vm-preflight: verify Firecracker/KVM and pinned guest inputs' 'vm-smoke: boot the pinned guest and check success/failure receipts' 'vm-network-smoke: boot one opt-in isolated-NIC guest' 'fast: current C# HTTPS acceptance smoke' 'csharp-smoke: local C# HTTPS acceptance; fresh run evidence under bench/csharp-smoke' 'vm-run: execute PROGRAM in a guest; pass PROGRAM, SUBJECT_REPO, RUN_ID, ARGS, and optional TIMEOUT_SECONDS'
+	@printf '%s\n' 'fmt/check/lint/build: C# HTTPS driver format, compile check, strict Clippy, host release build' 'build-guest: static musl SQLite-only guest binary (requires musl C compiler)' 'check-engine/lint-engine/build-guest-engine: feature-enabled SQLite and TerraBase caller' 'local-engine-*: standalone pinned Turso-vs-SQLite CRUD driver lock, format, check, lint, or build targets' 'test-build: compile feature-enabled musl tests without running them on the host' 'test-vm: execute TEST_BINARY inside Firecracker; requires RUN_ID and frozen harness/agent paths with SHA-256' 'vm-preflight: verify Firecracker/KVM and pinned guest inputs' 'vm-smoke: boot the pinned guest and check success/failure receipts' 'vm-network-smoke: boot one opt-in isolated-NIC guest' 'fast: current C# HTTPS acceptance smoke' 'csharp-smoke: local C# HTTPS acceptance; fresh run evidence under bench/csharp-smoke' 'deployed-smoke: rate-bounded gru-1 smoke through Cloudflare (TS-606); needs TERRASCALE_DASHBOARD_TOKEN and TERRASCALE_PROJECT_ID' 'vm-run: execute PROGRAM in a guest; pass PROGRAM, SUBJECT_REPO, RUN_ID, ARGS, and optional TIMEOUT_SECONDS'
 
 # Sequential so a parallel make never tests missing or stale executables.
 fast:
@@ -21,6 +21,9 @@ test-fast:
 
 csharp-smoke:
 	bash tests/fast.sh
+
+deployed-smoke:
+	python3 https-document/deployed.py $(DEPLOYED_ARGS)
 
 fmt:
 	$(MAKE) -C https-document fmt
