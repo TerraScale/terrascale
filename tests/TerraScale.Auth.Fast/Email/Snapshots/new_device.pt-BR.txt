@@ -1,0 +1,15 @@
+Subject: Novo acesso à sua conta TerraScale
+
+Novo acesso à sua conta
+
+jane@example.com acabou de entrar em TerraScale em um novo dispositivo.
+
+Dispositivo: Chrome on macOS
+Local: São Paulo, Brazil
+Horário: 2026-01-01 00:00 UTC
+
+Se foi você, não é preciso fazer nada. Se não foi, redefina sua senha e encerre suas outras sessões agora.
+
+-- 
+Este e-mail foi enviado para jane@example.com.
+TerraScale · terrascale.tech

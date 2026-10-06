@@ -32,15 +32,18 @@ public sealed class TerraBaseFixture : IAsyncInitializer, IAsyncDisposable
         return (tenant, database);
     }
 
-    public HttpClient NewHttpClient()
+    public HttpClient NewHttpClient() => new(this.NewHandler());
+
+    /// <summary>A handler that trusts only this fixture's TerraBase certificate.</summary>
+    public SocketsHttpHandler NewHandler()
     {
         var trusted = this.Server.Certificate.RawData;
-        return new HttpClient(new SocketsHttpHandler
+        return new SocketsHttpHandler
         {
             AllowAutoRedirect = false,
             UseCookies = false,
             SslOptions = { RemoteCertificateValidationCallback = (_, presented, _, _) => presented is not null && presented.GetRawCertData().AsSpan().SequenceEqual(trusted) },
-        });
+        };
     }
 
     public static JsonElement Json(string json)

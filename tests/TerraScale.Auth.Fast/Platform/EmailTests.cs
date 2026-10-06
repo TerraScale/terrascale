@@ -79,7 +79,7 @@ public sealed class EmailTests
         {
             app.MapPost("/__test/email", async (IEmailSender sender, CancellationToken cancellationToken) =>
             {
-                await sender.SendAsync(Recipient, new EmailMessage(Subject, Body, Html), cancellationToken);
+                await sender.SendAsync(Recipient, new EmailMessage(Subject, Body, Html) { FromName = "Acme \"Cloud\"", ReplyTo = "help@example.test" }, cancellationToken);
                 return Results.Accepted();
             });
             app.MapPost("/__test/email/canceled", async (IEmailSender sender, string? recipient) =>
@@ -226,6 +226,10 @@ public sealed class EmailTests
         await Assert.That(delivered.Body?.ContentType.MimeType).IsEqualTo("multipart/alternative");
         await Assert.That(delivered.TextBody?.TrimEnd()).IsEqualTo(Body);
         await Assert.That(delivered.HtmlBody?.TrimEnd()).IsEqualTo(Html);
+        // The display name is the brand's; the address is always the configured one.
+        await Assert.That(delivered.From.Mailboxes.Single().Name).IsEqualTo("Acme \"Cloud\"");
+        await Assert.That(delivered.From.Mailboxes.Single().Address).IsEqualTo("no-reply@auth.test.invalid");
+        await Assert.That(delivered.ReplyTo.Mailboxes.Single().Address).IsEqualTo("help@example.test");
         await Assert.That(logs.Text).DoesNotContain("SMTP delivery failed");
         await AssertNoMessageDataAsync(logs.Text);
         await Assert.That(used!.CheckCertificateRevocation).IsTrue();

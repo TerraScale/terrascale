@@ -154,12 +154,13 @@ The application and probe never provision or repair state. An operator/test
 can explicitly call `AuthStore.ProvisionAsync` to create those three
 infrastructure collections, plus `users`, `sessions` and `passcodes` (TS-490),
 `signing_key_rings` (TS-488), `oidc_applications`, `oidc_authorizations`
-and `oidc_tokens` (TS-491) and `rate_limits` (TS-488, required since TS-582),
-in an already existing database; repeated setup accepts an existing
-collection. Later feature streams must provision their own collections.
-Readiness requires the same list (`AuthStore.RequiredCollections`), so a
-database provisioned before TS-582 reports 503 until `ProvisionAsync` runs
-again (or `rate_limits` is created). This is not production project/database provisioning or a
+and `oidc_tokens` (TS-491), `rate_limits` (TS-488, required since TS-582) and
+`email_configs` and `email_config_versions` (TS-583), in an already existing
+database; repeated setup accepts an existing collection. Later feature streams
+must provision their own collections. Readiness requires the same list
+(`AuthStore.RequiredCollections`), so a database provisioned before TS-583
+reports 503 until `ProvisionAsync` runs again (or the missing collections are
+created). This is not production project/database provisioning or a
 migration of Rust documents.
 
 ## Users, sessions and passcodes (TS-490)

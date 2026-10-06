@@ -50,13 +50,15 @@ public sealed class AuthStore(TerraBaseDatabase database, TimeProvider clock)
 
     /// <summary>
     /// Every collection the service needs; provisioning creates them and readiness requires them. <c>signing_key_rings</c>
-    /// belongs to the TS-488 key ring, which signs OpenID Connect tokens, and <c>rate_limits</c> to the TS-488 attempt
-    /// limiter, which every headless call (TS-582) charges.
+    /// belongs to the TS-488 key ring, which signs OpenID Connect tokens; <c>rate_limits</c> to the TS-488 attempt limiter,
+    /// which every headless call (TS-582) and email test send (TS-583) charges; and <c>email_configs</c> and
+    /// <c>email_config_versions</c> to TS-583 email branding.
     /// </summary>
     public static IReadOnlyList<string> RequiredCollections { get; } =
     [
         UniqueCollection, ChallengeCollection, HealthCollection, UserCollection, SessionCollection, PasscodeCollection,
-        "signing_key_rings", OidcApplicationCollection, OidcAuthorizationCollection, OidcTokenCollection, "rate_limits",
+        "signing_key_rings", OidcApplicationCollection, OidcAuthorizationCollection, OidcTokenCollection,
+        "rate_limits", "email_configs", "email_config_versions",
     ];
 
     private static readonly UTF8Encoding StrictUtf8 = new(false, true);
@@ -105,8 +107,12 @@ public sealed class AuthStore(TerraBaseDatabase database, TimeProvider clock)
         database.GetDocumentAsync(collection, NaturalKeyId(instanceId, collection, key), cancellationToken);
 
     /// <summary>Up to <paramref name="limit"/> documents matching a TerraBase query filter, in id order.</summary>
-    public async Task<IReadOnlyList<TerraBaseDocument>> QueryAsync(string collection, JsonElement filter, int limit, CancellationToken cancellationToken = default) =>
-        (await database.QueryAsync(collection, new TerraBaseQuery { Filter = filter, Limit = limit }, cancellationToken).ConfigureAwait(false)).Items;
+    public Task<IReadOnlyList<TerraBaseDocument>> QueryAsync(string collection, JsonElement filter, int limit, CancellationToken cancellationToken = default) =>
+        this.QueryAsync(collection, filter, limit, null, cancellationToken);
+
+    /// <summary>Up to <paramref name="limit"/> documents matching a TerraBase query filter, in <paramref name="sort"/> order, then id order.</summary>
+    public async Task<IReadOnlyList<TerraBaseDocument>> QueryAsync(string collection, JsonElement filter, int limit, IReadOnlyList<TerraBaseSort>? sort, CancellationToken cancellationToken = default) =>
+        (await database.QueryAsync(collection, new TerraBaseQuery { Filter = filter, Limit = limit, Sort = sort }, cancellationToken).ConfigureAwait(false)).Items;
 
     /// <summary>Creates only; a taken address throws a precondition failure.</summary>
     public Task<TerraBaseWriteResult> CreateAsync(string collection, string instanceId, string key, JsonElement record, CancellationToken cancellationToken = default)
@@ -154,6 +160,32 @@ public sealed class AuthStore(TerraBaseDatabase database, TimeProvider clock)
         catch (TerraBasePreconditionFailedException error) when (error.ErrorCode == "precondition_failed" && error.OperationIndex == 0)
         {
             return null;
+        }
+    }
+
+    /// <summary>
+    /// In one transaction, replaces the record at <paramref name="key"/> if it is still at <paramref name="expectedVersion"/>
+    /// (or creates it when <paramref name="expectedVersion"/> is <see langword="null"/>), and creates the same record as the
+    /// immutable history entry <paramref name="historyKey"/> in <paramref name="historyCollection"/>. False means another writer
+    /// changed the record or already wrote that history entry, and nothing was written.
+    /// </summary>
+    public async Task<bool> CommitVersionAsync(string collection, string instanceId, string key, JsonElement record, string? expectedVersion, string historyCollection, string historyKey, CancellationToken cancellationToken = default)
+    {
+        RequireEntityCollection(collection);
+        RequireEntityCollection(historyCollection);
+        var id = NaturalKeyId(instanceId, collection, key);
+        try
+        {
+            await database.TransactAsync(
+            [
+                expectedVersion is null ? TerraBaseTransactionOperation.Create(collection, record, id) : TerraBaseTransactionOperation.Put(collection, id, record, expectedVersion),
+                TerraBaseTransactionOperation.Create(historyCollection, record, NaturalKeyId(instanceId, historyCollection, historyKey)),
+            ], cancellationToken).ConfigureAwait(false);
+            return true;
+        }
+        catch (TerraBasePreconditionFailedException error) when (error.ErrorCode == "precondition_failed")
+        {
+            return false;
         }
     }
 

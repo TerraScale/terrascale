@@ -70,21 +70,174 @@ public sealed record AuthEmailValues(string Email)
     public override string ToString() => nameof(AuthEmailValues);
 }
 
-/// <summary>Who an email comes from and how it looks.</summary>
+/// <summary>How dark mode applies to one rendering.</summary>
+public enum EmailDarkMode
+{
+    /// <summary>Never: the email stays light.</summary>
+    None,
+
+    /// <summary>When the reader's client is in dark mode.</summary>
+    Media,
+
+    /// <summary>Always.</summary>
+    Always,
+}
+
+/// <summary>
+/// Who an email comes from and how it looks: branding merged over the defaults, with the colours the layout derives from
+/// it. Every colour is <c>#rrggbb</c>, so it is safe in CSS.
+/// </summary>
 /// <param name="Name">The product name, shown as <c>{{ app_name }}</c> and as the logo's alt text.</param>
-/// <param name="LogoUrl">A PNG logo for light backgrounds.</param>
-/// <param name="LogoDarkUrl">The same logo for dark backgrounds.</param>
+/// <param name="LogoUrl">The logo for light backgrounds, or <see langword="null"/> to show the name.</param>
+/// <param name="LogoDarkUrl">The logo for dark backgrounds.</param>
 /// <param name="LogoWidth">Logo width in CSS pixels; Outlook needs it.</param>
 /// <param name="LogoHeight">Logo height in CSS pixels.</param>
-/// <param name="PrimaryColor">Button colour, <c>#rrggbb</c>, with white text.</param>
-/// <param name="WebsiteUrl">The product's website, linked in the footer.</param>
-public sealed record EmailBrand(string Name, Uri LogoUrl, Uri LogoDarkUrl, int LogoWidth, int LogoHeight, string PrimaryColor, Uri WebsiteUrl);
+/// <param name="IconUrl">A square icon shown with the name when there is no logo.</param>
+/// <param name="PrimaryColor">Button colour.</param>
+/// <param name="AccentColor">Link and code-box colour.</param>
+/// <param name="Theme"><c>auto</c>, <c>light</c> or <c>dark</c>.</param>
+/// <param name="ButtonStyle"><c>rounded</c>, <c>pill</c> or <c>square</c>.</param>
+/// <param name="FooterText">Footer lines, e.g. a postal address.</param>
+/// <param name="SupportEmail">Support address.</param>
+/// <param name="SupportUrl">Help page.</param>
+/// <param name="WebsiteUrl">Website linked in the footer.</param>
+/// <param name="SenderName">Display name of the From address.</param>
+/// <param name="ReplyTo">Reply-To address.</param>
+public sealed record EmailBrand(
+    string Name,
+    Uri? LogoUrl,
+    Uri? LogoDarkUrl,
+    int LogoWidth,
+    int LogoHeight,
+    Uri? IconUrl,
+    string PrimaryColor,
+    string AccentColor,
+    string Theme,
+    string ButtonStyle,
+    string? FooterText,
+    string? SupportEmail,
+    Uri? SupportUrl,
+    Uri? WebsiteUrl,
+    string? SenderName,
+    string? ReplyTo)
+{
+    private const string Card = "#ffffff";
+    private const string DarkCard = "#11141c";
+
+    /// <summary>Button text: black or white, whichever contrasts more with the button; one of them always reaches 4.5:1.</summary>
+    public string ButtonTextColor => Contrast(this.PrimaryColor, "#ffffff") >= Contrast(this.PrimaryColor, "#000000") ? "#ffffff" : "#000000";
+
+    /// <summary>Button corner radius.</summary>
+    public string ButtonRadius => this.ButtonStyle switch { "pill" => "999px", "square" => "0", _ => "8px" };
+
+    /// <summary>Links on the light card: the accent, darkened until it reaches 4.5:1.</summary>
+    public string LinkColor => Readable(this.AccentColor, Card, "#000000");
+
+    /// <summary>Links on the dark card: the accent, lightened until it reaches 4.5:1.</summary>
+    public string LinkDarkColor => Readable(this.AccentColor, DarkCard, "#ffffff");
+
+    /// <summary>Code box fill and border, tinted with the accent.</summary>
+    public (string Fill, string Border) CodeBox => (Mix(this.AccentColor, Card, 0.08), Mix(this.AccentColor, Card, 0.25));
+
+    /// <summary>The same in dark mode.</summary>
+    public (string Fill, string Border) CodeBoxDark => (Mix(this.AccentColor, DarkCard, 0.12), Mix(this.AccentColor, DarkCard, 0.35));
+
+    /// <summary>
+    /// Merges <paramref name="branding"/> over <paramref name="defaults"/>. A custom logo replaces both default logos; a
+    /// custom brand name or icon without a logo drops them, and a custom brand name drops the default website (another
+    /// brand's logo or site would be wrong) and replaces the default sender name.
+    /// </summary>
+    public static EmailBrand Merge(EmailBrand defaults, EmailBranding branding)
+    {
+        ArgumentNullException.ThrowIfNull(defaults);
+        ArgumentNullException.ThrowIfNull(branding);
+        var custom = branding.LogoUrl is { } url ? new Uri(url) : null;
+        var keepDefault = custom is null && branding.BrandName is null && branding.IconUrl is null;
+        var name = branding.BrandName ?? defaults.Name;
+        return new EmailBrand(
+            name,
+            custom ?? (keepDefault ? defaults.LogoUrl : null),
+            custom is null ? (keepDefault ? defaults.LogoDarkUrl : null) : branding.LogoDarkUrl is { } dark ? new Uri(dark) : custom,
+            custom is null ? defaults.LogoWidth : branding.LogoWidth ?? defaults.LogoWidth,
+            custom is null ? defaults.LogoHeight : branding.LogoHeight ?? defaults.LogoHeight,
+            branding.IconUrl is { } icon ? new Uri(icon) : defaults.IconUrl,
+            branding.PrimaryColor ?? defaults.PrimaryColor,
+            branding.AccentColor ?? branding.PrimaryColor ?? defaults.AccentColor,
+            branding.Theme ?? defaults.Theme,
+            branding.ButtonStyle ?? defaults.ButtonStyle,
+            branding.FooterText ?? defaults.FooterText,
+            branding.SupportEmail ?? defaults.SupportEmail,
+            branding.SupportUrl is { } support ? new Uri(support) : defaults.SupportUrl,
+            branding.WebsiteUrl is { } website ? new Uri(website) : branding.BrandName is null ? defaults.WebsiteUrl : null,
+            branding.SenderName ?? (branding.BrandName is null ? defaults.SenderName : name),
+            branding.ReplyTo ?? defaults.ReplyTo);
+    }
+
+    /// <summary>The branding fields these values correspond to, for showing the defaults.</summary>
+    public EmailBranding ToBranding() => new()
+    {
+        BrandName = this.Name,
+        LogoUrl = this.LogoUrl?.AbsoluteUri,
+        LogoDarkUrl = this.LogoDarkUrl?.AbsoluteUri,
+        LogoWidth = this.LogoUrl is null ? null : this.LogoWidth,
+        LogoHeight = this.LogoUrl is null ? null : this.LogoHeight,
+        IconUrl = this.IconUrl?.AbsoluteUri,
+        PrimaryColor = this.PrimaryColor,
+        AccentColor = this.AccentColor,
+        Theme = this.Theme,
+        ButtonStyle = this.ButtonStyle,
+        FooterText = this.FooterText,
+        SupportEmail = this.SupportEmail,
+        SupportUrl = this.SupportUrl?.AbsoluteUri,
+        WebsiteUrl = this.WebsiteUrl?.AbsoluteUri,
+        SenderName = this.SenderName,
+        ReplyTo = this.ReplyTo,
+    };
+
+    private static string Readable(string color, string background, string toward)
+    {
+        for (var step = 0; step <= 10; step++)
+        {
+            var candidate = Mix(toward, color, step / 10.0);
+            if (Contrast(candidate, background) >= 4.5)
+            {
+                return candidate;
+            }
+        }
+
+        return toward;
+    }
+
+    private static string Mix(string color, string other, double amount)
+    {
+        var (a, b) = (Rgb(color), Rgb(other));
+        return string.Create(CultureInfo.InvariantCulture,
+            $"#{(int)Math.Round(a.R * amount + b.R * (1 - amount)):x2}{(int)Math.Round(a.G * amount + b.G * (1 - amount)):x2}{(int)Math.Round(a.B * amount + b.B * (1 - amount)):x2}");
+    }
+
+    private static double Contrast(string one, string two)
+    {
+        var (a, b) = (Luminance(one), Luminance(two));
+        return (Math.Max(a, b) + 0.05) / (Math.Min(a, b) + 0.05);
+    }
+
+    // WCAG 2 relative luminance.
+    private static double Luminance(string color)
+    {
+        static double Channel(int value) => value / 255.0 <= 0.03928 ? value / 255.0 / 12.92 : Math.Pow((value / 255.0 + 0.055) / 1.055, 2.4);
+        var (r, g, b) = Rgb(color);
+        return 0.2126 * Channel(r) + 0.7152 * Channel(g) + 0.0722 * Channel(b);
+    }
+
+    private static (int R, int G, int B) Rgb(string color) =>
+        (Convert.ToInt32(color[1..3], 16), Convert.ToInt32(color[3..5], 16), Convert.ToInt32(color[5..7], 16));
+}
 
 /// <summary>
 /// Renders every ts-auth email as a responsive HTML message with a plain-text alternative, in English or Brazilian
-/// Portuguese. The HTML follows the reader's light or dark mode, and works without images or styles. The copy
-/// takes <c>{{ name }}</c> placeholders and nothing else: there is no logic to run, and every value is HTML-encoded
-/// by the layout.
+/// Portuguese, with an instance's branding and copy overrides. The HTML follows the reader's light or dark mode, and
+/// works without images or styles. The copy takes <c>{{ name }}</c> placeholders and nothing else: there is no logic to
+/// run, and every value is HTML-encoded by the layout.
 /// </summary>
 public sealed partial class AuthEmails(AuthOptions options)
 {
@@ -93,6 +246,21 @@ public sealed partial class AuthEmails(AuthOptions options)
 
     /// <summary>Brazilian Portuguese.</summary>
     public const string Portuguese = "pt-BR";
+
+    /// <summary>Every supported locale.</summary>
+    public static readonly IReadOnlyList<string> Locales = [English, Portuguese];
+
+    /// <summary>The API name of each kind.</summary>
+    public static readonly IReadOnlyDictionary<string, AuthEmailKind> Kinds = new Dictionary<string, AuthEmailKind>(StringComparer.Ordinal)
+    {
+        ["sign_in_code"] = AuthEmailKind.SignInCode,
+        ["magic_link"] = AuthEmailKind.MagicLink,
+        ["verify_email"] = AuthEmailKind.VerifyEmail,
+        ["password_reset"] = AuthEmailKind.PasswordReset,
+        ["invitation"] = AuthEmailKind.Invitation,
+        ["mfa_code"] = AuthEmailKind.MfaCode,
+        ["new_device"] = AuthEmailKind.NewDevice,
+    };
 
     // Keeps accented letters readable in the HTML part; markup characters are still encoded.
     private static readonly HtmlEncoder Encoder = HtmlEncoder.Create(UnicodeRanges.All);
@@ -104,8 +272,36 @@ public sealed partial class AuthEmails(AuthOptions options)
         new Uri(options.PublicOrigin, "/admin/email-logo-dark.png"),
         LogoWidth: 150,
         LogoHeight: 36,
+        IconUrl: null,
         PrimaryColor: "#2158e8",
-        new Uri("https://terrascale.tech"));
+        AccentColor: "#2158e8",
+        Theme: "auto",
+        ButtonStyle: "rounded",
+        FooterText: null,
+        SupportEmail: null,
+        SupportUrl: null,
+        new Uri("https://terrascale.tech"),
+        SenderName: "TerraScale",
+        ReplyTo: null);
+
+    /// <summary>The API name of <paramref name="kind"/>.</summary>
+    public static string Name(AuthEmailKind kind) => Kinds.First(entry => entry.Value == kind).Key;
+
+    /// <summary>The placeholders <paramref name="kind"/>'s copy may use.</summary>
+    public static IReadOnlyList<string> Variables(AuthEmailKind kind) =>
+    [
+        "app_name", "user.email", "support_email",
+        .. kind switch
+        {
+            AuthEmailKind.MagicLink => ["link", "expires_in"],
+            AuthEmailKind.Invitation => ["link", "expires_in", "organization", "inviter"],
+            AuthEmailKind.NewDevice => ["device", "location", "time"],
+            _ => (string[])["code", "expires_in"],
+        },
+    ];
+
+    /// <summary>The default copy of <paramref name="kind"/> in <paramref name="locale"/>.</summary>
+    public static EmailTemplateFields Defaults(AuthEmailKind kind, string locale) => Copies[(kind, locale)];
 
     /// <summary>
     /// The locale for a request's <c>Accept-Language</c>: <see cref="Portuguese"/> when Portuguese is preferred over
@@ -141,8 +337,12 @@ public sealed partial class AuthEmails(AuthOptions options)
         return English;
     }
 
-    /// <summary>Renders <paramref name="kind"/> for <paramref name="values"/>; an unknown locale gets English.</summary>
-    public async Task<EmailMessage> RenderAsync(AuthEmailKind kind, string locale, AuthEmailValues values, CancellationToken cancellationToken = default)
+    /// <summary>
+    /// Renders <paramref name="kind"/> for <paramref name="values"/> with <paramref name="config"/>'s branding and copy
+    /// (the defaults when <see langword="null"/>); an unknown locale gets English. <paramref name="colorScheme"/>
+    /// <c>light</c> or <c>dark</c> pins an <c>auto</c> theme for previews.
+    /// </summary>
+    public async Task<EmailMessage> RenderAsync(AuthEmailKind kind, string locale, AuthEmailValues values, EmailConfig? config = null, string? colorScheme = null, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(values);
         if (!Chromes.TryGetValue(locale, out var chrome))
@@ -150,11 +350,17 @@ public sealed partial class AuthEmails(AuthOptions options)
             (locale, chrome) = (English, Chromes[English]);
         }
 
-        var copy = Copies[(kind, locale)];
+        var brand = config is null ? this.Brand : EmailBrand.Merge(this.Brand, config.Branding);
+        var defaults = Copies[(kind, locale)];
+        var custom = config?.Override(Name(kind), locale);
+        var copy = custom is null ? defaults : new EmailTemplateFields(
+            custom.Subject ?? defaults.Subject, custom.Preheader ?? defaults.Preheader, custom.Heading ?? defaults.Heading,
+            custom.Body ?? defaults.Body, custom.Button ?? defaults.Button, custom.Footnote ?? defaults.Footnote);
         var variables = new Dictionary<string, string>(StringComparer.Ordinal)
         {
-            ["app_name"] = this.Brand.Name,
+            ["app_name"] = brand.Name,
             ["user.email"] = values.Email,
+            ["support_email"] = brand.SupportEmail ?? string.Empty,
             ["code"] = values.Code ?? string.Empty,
             ["link"] = values.Link?.AbsoluteUri ?? string.Empty,
             ["expires_in"] = values.ExpiresIn is { } lifetime ? chrome.Duration(lifetime) : string.Empty,
@@ -164,7 +370,7 @@ public sealed partial class AuthEmails(AuthOptions options)
             ["location"] = values.Location ?? string.Empty,
             ["time"] = values.Time?.UtcDateTime.ToString("yyyy-MM-dd HH:mm 'UTC'", CultureInfo.InvariantCulture) ?? string.Empty,
         };
-        string Fill(string template) => Placeholder().Replace(template, match => variables.GetValueOrDefault(match.Groups["name"].Value, string.Empty));
+        string Fill(string? template) => Placeholder().Replace(template ?? string.Empty, match => variables.GetValueOrDefault(match.Groups["name"].Value, string.Empty));
 
         var expiry = values.ExpiresIn is null ? null : Fill(kind switch
         {
@@ -181,16 +387,24 @@ public sealed partial class AuthEmails(AuthOptions options)
             [.. Fill(copy.Body).Split("\n\n").Select(paragraph => paragraph.Split('\n'))],
             values.Code,
             string.IsNullOrEmpty(expiry) ? null : expiry,
-            values.Link is null ? null : copy.Button is null ? null : Fill(copy.Button),
+            values.Link is null || copy.Button is null ? null : Fill(copy.Button),
             values.Link?.AbsoluteUri,
             Fill(chrome.LinkFallback),
             Fill(copy.Footnote),
             Fill(chrome.SentTo),
-            this.Brand);
+            brand.FooterText?.Split('\n') ?? [],
+            brand.SupportEmail is not null || brand.SupportUrl is not null ? chrome.Support : null,
+            brand,
+            brand.Theme switch
+            {
+                "light" => EmailDarkMode.None,
+                "dark" => EmailDarkMode.Always,
+                _ => colorScheme switch { "light" => EmailDarkMode.None, "dark" => EmailDarkMode.Always, _ => EmailDarkMode.Media },
+            });
 
         await using var html = new StringWriter(CultureInfo.InvariantCulture);
         await AuthEmailLayout.Create(view).RenderAsync(html, Encoder, cancellationToken).ConfigureAwait(false);
-        return new EmailMessage(view.Subject, Text(view), html.ToString());
+        return new EmailMessage(view.Subject, Text(view), html.ToString()) { FromName = brand.SenderName, ReplyTo = brand.ReplyTo };
     }
 
     /// <summary>The plain-text alternative: the same content in reading order.</summary>
@@ -218,19 +432,31 @@ public sealed partial class AuthEmails(AuthOptions options)
             text.Append(expiry).Append("\n\n");
         }
 
-        text.Append(view.Footnote).Append("\n\n-- \n").Append(view.SentTo).Append('\n')
-            .Append(view.Brand.Name).Append(" · ").Append(view.Brand.WebsiteUrl.Host).Append('\n');
-        return text.ToString();
+        text.Append(view.Footnote).Append("\n\n-- \n").Append(view.SentTo).Append('\n');
+        foreach (var line in view.FooterLines)
+        {
+            text.Append(line).Append('\n');
+        }
+
+        if (view.Support is { } support)
+        {
+            text.Append(support).Append(' ').Append(view.Brand.SupportEmail ?? view.Brand.SupportUrl!.AbsoluteUri).Append('\n');
+        }
+
+        text.Append(view.Brand.Name);
+        if (view.Brand.WebsiteUrl is { } website)
+        {
+            text.Append(" · ").Append(website.Host);
+        }
+
+        return text.Append('\n').ToString();
     }
 
     [GeneratedRegex(@"\{\{\s*(?<name>[a-z_]+(?:\.[a-z_]+)?)\s*\}\}")]
     private static partial Regex Placeholder();
 
-    /// <summary>The editable copy of one kind in one locale.</summary>
-    private sealed record Copy(string Subject, string Preheader, string Heading, string Body, string? Button, string Footnote);
-
     /// <summary>The layout's own lines in one locale.</summary>
-    private sealed record Chrome(string CodeExpiry, string LinkExpiry, string InvitationExpiry, string LinkFallback, string SentTo, Func<TimeSpan, string> Duration);
+    private sealed record Chrome(string CodeExpiry, string LinkExpiry, string InvitationExpiry, string LinkFallback, string SentTo, string Support, Func<TimeSpan, string> Duration);
 
     private static readonly Dictionary<string, Chrome> Chromes = new(StringComparer.Ordinal)
     {
@@ -240,6 +466,7 @@ public sealed partial class AuthEmails(AuthOptions options)
             "This invitation expires in {{ expires_in }}.",
             "Button not working? Paste this link into your browser:",
             "This email was sent to {{ user.email }}.",
+            "Need help?",
             lifetime => Duration(lifetime, ("minute", "minutes"), ("hour", "hours"), ("day", "days"))),
         [Portuguese] = new(
             "Este código expira em {{ expires_in }} e só pode ser usado uma vez.",
@@ -247,6 +474,7 @@ public sealed partial class AuthEmails(AuthOptions options)
             "Este convite expira em {{ expires_in }}.",
             "O botão não funciona? Cole este link no seu navegador:",
             "Este e-mail foi enviado para {{ user.email }}.",
+            "Precisa de ajuda?",
             lifetime => Duration(lifetime, ("minuto", "minutos"), ("hora", "horas"), ("dia", "dias"))),
     };
 
@@ -258,7 +486,7 @@ public sealed partial class AuthEmails(AuthOptions options)
         return string.Create(CultureInfo.InvariantCulture, $"{count} {(count == 1 ? unit.One : unit.Many)}");
     }
 
-    private static readonly Dictionary<(AuthEmailKind, string), Copy> Copies = new()
+    private static readonly Dictionary<(AuthEmailKind, string), EmailTemplateFields> Copies = new()
     {
         [(AuthEmailKind.SignInCode, English)] = new(
             "{{ code }} is your {{ app_name }} sign-in code",
@@ -374,7 +602,10 @@ public sealed partial class AuthEmails(AuthOptions options)
 /// <param name="LinkFallback">The line above the link written out in full.</param>
 /// <param name="Footnote">The security note at the end of the card.</param>
 /// <param name="SentTo">Who the email was sent to.</param>
+/// <param name="FooterLines">The brand's footer text, line by line.</param>
+/// <param name="Support">The label before the support address or page, when the brand has one.</param>
 /// <param name="Brand">The sender's brand.</param>
+/// <param name="Dark">When the dark styles apply.</param>
 public sealed record AuthEmailView(
     string Lang,
     string Subject,
@@ -388,4 +619,7 @@ public sealed record AuthEmailView(
     string LinkFallback,
     string Footnote,
     string SentTo,
-    EmailBrand Brand);
+    IReadOnlyList<string> FooterLines,
+    string? Support,
+    EmailBrand Brand,
+    EmailDarkMode Dark);

@@ -2,9 +2,13 @@
 @{
     // Email clients drop external CSS and most of <style>: every light-mode rule is inline, and the <style> block
     // only adds the mobile and dark-mode overrides. Tables and fixed widths keep Outlook's Word renderer in line.
+    // Every colour comes from EmailBrand as #rrggbb, so it is safe inside CSS.
     const string Sans = "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif";
     const string Mono = "'SFMono-Regular',Menlo,Consolas,'Liberation Mono','Courier New',monospace";
     var brand = Model.Brand;
+    var (codeFill, codeBorder) = brand.CodeBox;
+    var (codeFillDark, codeBorderDark) = brand.CodeBoxDark;
+    var scheme = Model.Dark switch { EmailDarkMode.None => "light only", EmailDarkMode.Always => "dark", _ => "light dark" };
 }
 <!DOCTYPE html>
 <html lang="@Model.Lang" dir="ltr" xmlns="http://www.w3.org/1999/xhtml" xmlns:o="urn:schemas-microsoft-com:office:office">
@@ -13,15 +17,15 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="x-apple-disable-message-reformatting">
 <meta name="format-detection" content="telephone=no, date=no, address=no, email=no, url=no">
-<meta name="color-scheme" content="light dark">
-<meta name="supported-color-schemes" content="light dark">
+<meta name="color-scheme" content="@scheme">
+<meta name="supported-color-schemes" content="@scheme">
 <title>@Model.Subject</title>
 <!--[if mso]>
 <noscript><xml><o:OfficeDocumentSettings><o:PixelsPerInch>96</o:PixelsPerInch></o:OfficeDocumentSettings></xml></noscript>
 <style>td,h1,p,a,span{font-family:'Segoe UI',Arial,sans-serif !important}.code{font-family:Consolas,'Courier New',monospace !important}</style>
 <![endif]-->
 <style>
-:root{color-scheme:light dark;supported-color-schemes:light dark}
+:root{color-scheme:@scheme;supported-color-schemes:@scheme}
 body{margin:0 !important;padding:0 !important;width:100% !important;-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%}
 table,td{mso-table-lspace:0pt;mso-table-rspace:0pt}
 img{-ms-interpolation-mode:bicubic}
@@ -32,25 +36,34 @@ a[x-apple-data-detectors]{color:inherit !important;text-decoration:none !importa
 .card{padding:28px 22px !important}
 .code{font-size:30px !important;letter-spacing:6px !important}
 }
-@@media (prefers-color-scheme:dark){
-.canvas{background-color:#0a0c12 !important}
-.card{background-color:#11141c !important;border-color:#232838 !important}
-.heading{color:#eef1f7 !important}
-.text{color:#c9cfdb !important}
-.muted{color:#a7afbf !important}
-.code-box{background-color:#141b2e !important;border-color:#2a3a63 !important}
-.code{color:#eef1f7 !important}
-.rule{border-color:#232838 !important}
-.link{color:#6ea8ff !important}
-.logo-light{display:none !important}
-.logo-dark{display:block !important}
+@if (Model.Dark != EmailDarkMode.None)
+{
+@if (Model.Dark == EmailDarkMode.Media)
+{
+@:@@media (prefers-color-scheme:dark){
 }
-[data-ogsc] .heading,[data-ogsc] .code{color:#eef1f7 !important}
-[data-ogsc] .text{color:#c9cfdb !important}
-[data-ogsc] .muted{color:#a7afbf !important}
-[data-ogsc] .link{color:#6ea8ff !important}
-[data-ogsc] .logo-light{display:none !important}
-[data-ogsc] .logo-dark{display:block !important}
+@:.canvas{background-color:#0a0c12 !important}
+@:.card{background-color:#11141c !important;border-color:#232838 !important}
+@:.heading,.brand-name{color:#eef1f7 !important}
+@:.text{color:#c9cfdb !important}
+@:.muted{color:#a7afbf !important}
+@:.code-box{background-color:@codeFillDark !important;border-color:@codeBorderDark !important}
+@:.code{color:#eef1f7 !important}
+@:.rule{border-color:#232838 !important}
+@:.link{color:@brand.LinkDarkColor !important}
+@:.logo-light{display:none !important}
+@:.logo-dark{display:block !important}
+@if (Model.Dark == EmailDarkMode.Media)
+{
+@:}
+@:[data-ogsc] .heading,[data-ogsc] .brand-name,[data-ogsc] .code{color:#eef1f7 !important}
+@:[data-ogsc] .text{color:#c9cfdb !important}
+@:[data-ogsc] .muted{color:#a7afbf !important}
+@:[data-ogsc] .link{color:@brand.LinkDarkColor !important}
+@:[data-ogsc] .logo-light{display:none !important}
+@:[data-ogsc] .logo-dark{display:block !important}
+}
+}
 </style>
 </head>
 <body class="canvas" style="margin:0;padding:0;background-color:#f3f5f9;">
@@ -62,8 +75,29 @@ a[x-apple-data-detectors]{color:inherit !important;text-decoration:none !importa
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:560px;">
 <tr>
 <td style="padding:0 4px 24px;">
-<img class="logo-light" src="@brand.LogoUrl.AbsoluteUri" width="@brand.LogoWidth" height="@brand.LogoHeight" alt="@brand.Name" style="display:block;border:0;outline:none;text-decoration:none;width:@(brand.LogoWidth)px;height:@(brand.LogoHeight)px;font-family:@Sans;font-size:22px;font-weight:700;line-height:@(brand.LogoHeight)px;color:#0b1220;">
-<!--[if !mso]><!--><img class="logo-dark" src="@brand.LogoDarkUrl.AbsoluteUri" width="@brand.LogoWidth" height="@brand.LogoHeight" alt="@brand.Name" style="display:none;border:0;outline:none;text-decoration:none;width:@(brand.LogoWidth)px;height:@(brand.LogoHeight)px;font-family:@Sans;font-size:22px;font-weight:700;line-height:@(brand.LogoHeight)px;color:#eef1f7;"><!--<![endif]-->
+@if (brand.LogoUrl is { } logo)
+{
+// Only a distinct dark logo swaps in; a single logo stays visible in both modes.
+var swap = brand.LogoDarkUrl is { } other && other != logo;
+<img class="@(swap ? "logo-light" : null)" src="@logo.AbsoluteUri" width="@brand.LogoWidth" height="@brand.LogoHeight" alt="@brand.Name" style="display:block;border:0;outline:none;text-decoration:none;width:@(brand.LogoWidth)px;height:@(brand.LogoHeight)px;font-family:@Sans;font-size:22px;font-weight:700;line-height:@(brand.LogoHeight)px;color:#0b1220;">
+@if (swap)
+{
+var darkLogo = brand.LogoDarkUrl!;
+@:<!--[if !mso]><!--><img class="logo-dark" src="@darkLogo.AbsoluteUri" width="@brand.LogoWidth" height="@brand.LogoHeight" alt="@brand.Name" style="display:none;border:0;outline:none;text-decoration:none;width:@(brand.LogoWidth)px;height:@(brand.LogoHeight)px;font-family:@Sans;font-size:22px;font-weight:700;line-height:@(brand.LogoHeight)px;color:#eef1f7;"><!--<![endif]-->
+}
+}
+else
+{
+<table role="presentation" cellpadding="0" cellspacing="0" border="0">
+<tr>
+@if (brand.IconUrl is { } icon)
+{
+<td style="padding-right:10px;"><img src="@icon.AbsoluteUri" width="36" height="36" alt="" style="display:block;border:0;outline:none;width:36px;height:36px;border-radius:8px;"></td>
+}
+<td class="brand-name" style="font-family:@Sans;font-size:22px;line-height:36px;font-weight:700;color:#0b1220;">@brand.Name</td>
+</tr>
+</table>
+}
 </td>
 </tr>
 <tr>
@@ -79,7 +113,7 @@ a[x-apple-data-detectors]{color:inherit !important;text-decoration:none !importa
 {
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:8px 0 16px;">
 <tr>
-<td class="code-box" align="center" style="background-color:#eef3fe;border:1px solid #cddbfb;border-radius:10px;padding:20px 12px 20px 20px;">
+<td class="code-box" align="center" style="background-color:@codeFill;border:1px solid @codeBorder;border-radius:10px;padding:20px 12px 20px 20px;">
 <span class="code" style="font-family:@Mono;font-size:36px;line-height:44px;font-weight:700;letter-spacing:8px;color:#0b1220;">@code</span>
 </td>
 </tr>
@@ -89,8 +123,8 @@ a[x-apple-data-detectors]{color:inherit !important;text-decoration:none !importa
 {
 <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:8px 0 20px;">
 <tr>
-<td align="center" bgcolor="@brand.PrimaryColor" style="border-radius:8px;background-color:@brand.PrimaryColor;mso-padding-alt:14px 28px;">
-<a href="@link" target="_blank" style="display:inline-block;padding:14px 28px;font-family:@Sans;font-size:16px;line-height:20px;font-weight:600;color:#ffffff;text-decoration:none;border-radius:8px;">@button</a>
+<td align="center" bgcolor="@brand.PrimaryColor" style="border-radius:@brand.ButtonRadius;background-color:@brand.PrimaryColor;mso-padding-alt:14px 28px;">
+<a href="@link" target="_blank" style="display:inline-block;padding:14px 28px;font-family:@Sans;font-size:16px;line-height:20px;font-weight:600;color:@brand.ButtonTextColor;text-decoration:none;border-radius:@brand.ButtonRadius;">@button</a>
 </td>
 </tr>
 </table>
@@ -101,7 +135,7 @@ a[x-apple-data-detectors]{color:inherit !important;text-decoration:none !importa
 }
 @if (Model.Button is not null && Model.Link is { } fallback)
 {
-<p class="muted" style="margin:0 0 16px;font-family:@Sans;font-size:13px;line-height:20px;color:#5b6474;word-break:break-all;">@Model.LinkFallback<br><a class="link" href="@fallback" target="_blank" style="color:#2158e8;text-decoration:underline;">@fallback</a></p>
+<p class="muted" style="margin:0 0 16px;font-family:@Sans;font-size:13px;line-height:20px;color:#5b6474;word-break:break-all;">@Model.LinkFallback<br><a class="link" href="@fallback" target="_blank" style="color:@brand.LinkColor;text-decoration:underline;">@fallback</a></p>
 }
 <p class="muted rule" style="margin:24px 0 0;padding-top:20px;border-top:1px solid #e2e7ef;font-family:@Sans;font-size:14px;line-height:22px;color:#5b6474;">@Model.Footnote</p>
 </td>
@@ -109,7 +143,19 @@ a[x-apple-data-detectors]{color:inherit !important;text-decoration:none !importa
 <tr>
 <td style="padding:24px 4px 0;font-family:@Sans;">
 <p class="muted" style="margin:0 0 4px;font-family:@Sans;font-size:12px;line-height:18px;color:#5b6474;">@Model.SentTo</p>
-<p class="muted" style="margin:0;font-family:@Sans;font-size:12px;line-height:18px;color:#5b6474;">@brand.Name &middot; <a class="link" href="@brand.WebsiteUrl.AbsoluteUri" target="_blank" style="color:#5b6474;text-decoration:underline;">@brand.WebsiteUrl.Host</a></p>
+@if (Model.FooterLines.Count > 0)
+{
+<p class="muted" style="margin:0 0 4px;font-family:@Sans;font-size:12px;line-height:18px;color:#5b6474;">@for (var line = 0; line < Model.FooterLines.Count; line++)
+{@if (line > 0)
+{<br>}@Model.FooterLines[line]}</p>
+}
+@if (Model.Support is { } support)
+{
+var supportHref = brand.SupportEmail is { } supportEmail ? "mailto:" + supportEmail : brand.SupportUrl!.AbsoluteUri;
+<p class="muted" style="margin:0 0 4px;font-family:@Sans;font-size:12px;line-height:18px;color:#5b6474;">@support <a class="link" href="@supportHref" target="_blank" style="color:#5b6474;text-decoration:underline;">@(brand.SupportEmail ?? brand.SupportUrl!.Host)</a></p>
+}
+<p class="muted" style="margin:0;font-family:@Sans;font-size:12px;line-height:18px;color:#5b6474;">@brand.Name@if (brand.WebsiteUrl is { } website)
+{<text> &middot; </text><a class="link" href="@website.AbsoluteUri" target="_blank" style="color:#5b6474;text-decoration:underline;">@website.Host</a>}</p>
 </td>
 </tr>
 </table>

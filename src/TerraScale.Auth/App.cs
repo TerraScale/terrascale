@@ -74,6 +74,7 @@ public static partial class App
         }
 
         builder.Services.AddSingleton<AuthEmails>();
+        builder.Services.AddSingleton<EmailSettings>();
         builder.Services.AddSingleton<SignInMail>();
         builder.Services.AddHostedService(services => services.GetRequiredService<SignInMail>());
         builder.Services.AddOidc(options);

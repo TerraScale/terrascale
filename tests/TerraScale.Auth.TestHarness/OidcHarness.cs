@@ -141,7 +141,7 @@ public sealed class OidcHarness : IAsyncDisposable
     public HttpClient Client => this.Server.Client;
 
     public static async Task<OidcHarness> StartAsync(TerraBaseFixture fixture, Action<Dictionary<string, string>>? settings = null, CapturingEmailSender? email = null,
-        CapturingLogs? logs = null, TimeProvider? clock = null)
+        CapturingLogs? logs = null, TimeProvider? clock = null, Action<IServiceCollection>? services = null)
     {
         var (tenant, database) = await fixture.CreateDatabaseAsync();
         email ??= new CapturingEmailSender();
@@ -150,7 +150,7 @@ public sealed class OidcHarness : IAsyncDisposable
         {
             values["master-key"] = masterKey;
             settings?.Invoke(values);
-        }, logs, clock);
+        }, logs, clock, services);
         return new OidcHarness(fixture, tenant, masterKey, server, database, email);
     }
 
@@ -164,7 +164,7 @@ public sealed class OidcHarness : IAsyncDisposable
 
     /// <summary>Another replica bound to the same database.</summary>
     public static Task<AuthTestServer> StartServerAsync(TerraBaseFixture fixture, TerraBaseTestTenant tenant, CapturingEmailSender email, Action<Dictionary<string, string>>? settings = null,
-        CapturingLogs? logs = null, TimeProvider? clock = null) =>
+        CapturingLogs? logs = null, TimeProvider? clock = null, Action<IServiceCollection>? replace = null) =>
         AuthTestServer.StartAsync(values =>
         {
             values["terrascale-api-url"] = fixture.Server.ClientAddress.GetLeftPart(UriPartial.Authority);
@@ -187,6 +187,8 @@ public sealed class OidcHarness : IAsyncDisposable
             {
                 services.AddSingleton(clock);
             }
+
+            replace?.Invoke(services);
         });
 
     public async Task<UserRecord> CreateUserAsync(string address = "alice@example.test") =>

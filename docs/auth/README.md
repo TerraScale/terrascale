@@ -317,6 +317,36 @@ the layout HTML-encodes every value. The logos come from
 `/admin/email-logo.png` and `/admin/email-logo-dark.png` on the public origin,
 so mail clients must be able to reach it.
 
+### Email branding and templates API (TS-583)
+
+`/v1/{slug}/email/*` lets ts-dashboard change the branding and copy of every
+auth email; Scalar documents each operation. Only the `ts-dashboard` client
+may call it, with HTTP Basic credentials (`ts-dashboard` and
+`TS_AUTH_DASHBOARD_CLIENT_SECRET`, compared in constant time); the dashboard
+authorizes its own user first and reports them as `actor`. Only the
+`terrascale` instance exists; per-organization branding waits for
+organizations (TS-437).
+
+- Branding: name, logo (light and dark, with its size for Outlook) or icon,
+  primary and accent colours, theme (`auto`, `light`, `dark`), button style,
+  footer text, support address or page, website, sender display name and
+  Reply-To. The From address stays `TS_AUTH_SMTP_FROM_ADDRESS`. Button text
+  and link colours are chosen to keep 4.5:1 contrast.
+- Copy: subject, preview line, heading, body, button and footnote per kind and
+  locale. Fields are plain text with the kind's `{{ name }}` placeholders and
+  nothing else; everything is HTML-encoded. The code, button, expiry line and
+  footer always come from the layout.
+- Every save of branding or a template writes a new version, conditional on
+  the version the caller read (409 otherwise), together with its immutable
+  history entry in one TerraBase transaction (`email_configs`,
+  `email_config_versions`). A restore saves an earlier version again as the
+  newest; history is never rewritten.
+- Preview renders drafts with synthetic values; a test send mails one sample
+  with a `[Test]` subject, at most 10 per instance per minute (`rate_limits`).
+- Every email reads the configuration when it is sent, without a cache, so a
+  change applies to the next email on every replica. If it cannot be read,
+  the sign-in code still goes out with the defaults and a warning is logged.
+
 DNS prerequisites (terrascale.tech is hosted at Purelymail — not editable from
 this repo):
 
@@ -334,7 +364,8 @@ does not start or embed TerraBase; the integration-test fixture starts the
 SDK-pinned binary. `/readyz` checks the existing `uniques`,
 `verification_tokens`, `storage_health`, `users`, `sessions`, `passcodes`,
 `signing_key_rings`, `oidc_applications`, `oidc_authorizations`,
-`oidc_tokens` and `rate_limits` collections, then creates, reads
+`oidc_tokens`, `rate_limits`, `email_configs` and `email_config_versions`
+collections, then creates, reads
 and conditionally deletes a synthetic document in `storage_health`. It returns
 200 only on success, otherwise 503, without provisioning, repair or in-memory
 fallback. Observations coalesce and are cached for one second after
@@ -358,13 +389,13 @@ the provisioning plan; live production execution belongs to TS-470:
 3. Explicitly call `AuthStore.ProvisionAsync` with the pinned SDK against that
    existing database. It creates `uniques`, `verification_tokens` and
    `storage_health`, the TS-490 `users`, `sessions` and `passcodes`, the
-   TS-488 `signing_key_rings` and `rate_limits`, and the TS-491
-   `oidc_applications`, `oidc_authorizations` and `oidc_tokens` collections;
-   later feature streams own their other collections. `/readyz` requires all
-   eleven, so a database provisioned before TS-582 (which made `rate_limits`
-   required) reports 503 until this step is repeated. Run it before rolling
-   out a new release; a configured dashboard or service client also stops
-   startup while its collection is missing.
+   TS-488 `signing_key_rings` and `rate_limits`, the TS-491 `oidc_applications`,
+   `oidc_authorizations` and `oidc_tokens`, and the TS-583 `email_configs` and
+   `email_config_versions` collections; later feature streams own their other
+   collections. `/readyz` requires all thirteen, so a database provisioned
+   before TS-583 reports 503 until this step is repeated. Run it before rolling
+   out a release that adds collections; a configured dashboard or service
+   client also stops startup while its collection is missing.
 4. Configure every replica with `<ts-auth-project-uuid>/auth` and the same
    explicitly resolved HTTPS storage authority and shared auth settings.
 

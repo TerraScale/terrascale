@@ -11,6 +11,12 @@ namespace TerraScale.Auth.Features.Email;
 /// <param name="Html">The HTML body, or <see langword="null"/> for a plain-text message.</param>
 public sealed record EmailMessage(string Subject, string Text, string? Html = null)
 {
+    /// <summary>Display name of the From address; the address itself is always the configured one.</summary>
+    public string? FromName { get; init; }
+
+    /// <summary>A plain Reply-To address, if replies should go somewhere.</summary>
+    public string? ReplyTo { get; init; }
+
     /// <summary>Omits the content, so formatting or logging the message never discloses a code or a link.</summary>
     public override string ToString() => nameof(EmailMessage);
 }
@@ -77,8 +83,13 @@ public sealed partial class SmtpEmailSender(AuthOptions options, ILogger<SmtpEma
         {
             using var mime = new MimeMessage();
             // Bare addresses only: Parse would turn "Name <other@example>" into a different recipient.
-            mime.From.Add(new MailboxAddress(string.Empty, options.SmtpFromAddress!));
+            mime.From.Add(new MailboxAddress(message.FromName ?? string.Empty, options.SmtpFromAddress!));
             mime.To.Add(new MailboxAddress(string.Empty, recipient));
+            if (message.ReplyTo is { } replyTo)
+            {
+                mime.ReplyTo.Add(new MailboxAddress(string.Empty, replyTo));
+            }
+
             mime.Subject = message.Subject;
             // multipart/alternative with the text part first, when there is HTML.
             mime.Body = new BodyBuilder { TextBody = message.Text, HtmlBody = message.Html }.ToMessageBody();

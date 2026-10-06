@@ -1,0 +1,16 @@
+Subject: Alex Silva invited you to Acme on TerraScale
+
+Join Acme
+
+Alex Silva invited jane@example.com to join Acme on TerraScale.
+
+Accept invitation:
+https://auth.test.invalid/ui/terrascale/sign-in
+
+This invitation expires in 7 days.
+
+Not expecting this invitation? You can safely ignore this email.
+
+-- 
+This email was sent to jane@example.com.
+TerraScale · terrascale.tech

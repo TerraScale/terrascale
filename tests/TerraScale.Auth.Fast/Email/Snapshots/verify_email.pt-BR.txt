@@ -1,0 +1,15 @@
+Subject: 123456 é o seu código de verificação para TerraScale
+
+Confirme seu e-mail
+
+Digite este código em TerraScale para confirmar que jane@example.com pertence a você.
+
+    123456
+
+Este código expira em 10 minutos e só pode ser usado uma vez.
+
+Não se cadastrou em TerraScale? Pode ignorar este e-mail com segurança.
+
+-- 
+Este e-mail foi enviado para jane@example.com.
+TerraScale · terrascale.tech
