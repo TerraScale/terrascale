@@ -1,5 +1,6 @@
 // Package mcpserver serves the dashboard's MCP tools over stateless
-// Streamable HTTP (MCP 2026-07-28). Every request authenticates with a
+// Streamable HTTP (MCP 2026-07-28) on mcp.terrascale.tech and at /mcp on
+// every other host. Every request authenticates with a
 // personal access token and carries its own scope, so no MCP session or
 // per-connection state exists on the server.
 package mcpserver
@@ -16,6 +17,9 @@ import (
 )
 
 const serverVersion = "1.0.0"
+
+// Host is the MCP server's own host, whose every path is the endpoint.
+const Host = "mcp.terrascale.tech"
 
 const instructions = `TerraScale dashboard tools manage organizations, projects, members, databases, data, backups, credentials, authentication, billing, and settings.
 Calls are stateless: pass organizationId and projectId to choose the scope, or omit them to use your current dashboard selection. Call get_context first to discover the IDs you can use.`

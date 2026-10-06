@@ -333,6 +333,12 @@ func TestScopeGuardAndMembershipRemoval(t *testing.T, s core.Store) {
 	}
 	_, err = s.SnapshotAs(ctx, selected)
 	want(t, err, core.ErrForbidden)
+	// Scoping to an organization that is not the account's is a missing
+	// resource, which only a principal without an account is not.
+	_, err = s.ScopedPrincipal(ctx, p, core.Scope{OrganizationID: owner.OrganizationID})
+	want(t, err, core.ErrNotFound)
+	_, err = s.ScopedPrincipal(ctx, core.Principal{AccountID: "acct_missing", UserID: p.UserID}, core.Scope{})
+	want(t, err, core.ErrUnauthorized)
 }
 
 func TestSetPlatformAdmin(t *testing.T, s core.Store) {

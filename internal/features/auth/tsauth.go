@@ -55,8 +55,10 @@ type TSAuth struct {
 }
 
 type tsAuthProvider struct {
-	oauth      oauth2.Config
-	verifier   *oidc.IDTokenVerifier
+	oauth    oauth2.Config
+	verifier *oidc.IDTokenVerifier
+	// issuer verifies resource tokens (resource_token.go).
+	issuer     *oidc.Provider
 	endSession string
 	revocation string
 	// headless is whether discovery lists the headless grants, which the
@@ -179,6 +181,7 @@ func (t *TSAuth) fetchDiscovery(ctx context.Context) (*tsAuthProvider, error) {
 			Scopes:   []string{oidc.ScopeOpenID, "email", "profile", oidc.ScopeOfflineAccess},
 		},
 		verifier:   provider.Verifier(&oidc.Config{ClientID: t.cfg.ClientID}),
+		issuer:     provider,
 		endSession: metadata.EndSession,
 		revocation: metadata.Revocation,
 		headless:   slices.Contains(metadata.Grants, passwordGrant) && slices.Contains(metadata.Grants, emailCodeGrant),

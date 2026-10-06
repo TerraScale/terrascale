@@ -28,12 +28,16 @@ type spendingControlsInput struct {
 func mountTools(tools *core.Tools, service Service) {
 	core.AddTool(tools, core.ToolSpec{
 		Name: "get_usage", Title: "Get usage", ReadOnly: true,
+		Route:       "GET /v1/organizations/{organizationId}/projects/{projectId}/usage",
+		RouteScope:  "usage:read",
 		Description: "Report an organization's plan allowances and spending controls with the selected project's per-database storage and operation totals.",
 	}, func(ctx context.Context, p core.Principal, in usageInput) (usageReport, error) {
 		return service.Usage(ctx, p, in.DatabaseID)
 	})
 	core.AddTool(tools, core.ToolSpec{
 		Name: "set_spending_controls", Title: "Set spending controls", Idempotent: true,
+		Route:       "PUT /v1/organizations/{organizationId}/spending-controls",
+		RouteScope:  "billing:write",
 		Description: "Set monthly spend caps for the organization, its projects, and its databases, and whether usage above the plan allowance is billed. Requires an owner or admin role.",
 	}, func(ctx context.Context, p core.Principal, in spendingControlsInput) (usageReport, error) {
 		controls := spendingControls{
