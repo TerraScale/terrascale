@@ -11,6 +11,9 @@
     <PublishDocumentationFile>false</PublishDocumentationFile>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
     <UserSecretsId />
+    <!-- No dynamic PGO (TS-607): on the 1-vCPU gru-1 nodes it doubles JIT time after every start (instrumented tier)
+         for no measurable steady-state CPU or latency gain; without it startup and idle CPU and RSS drop. -->
+    <TieredPGO>false</TieredPGO>
     <!-- HTTP endpoints, OpenAPI and Scalar from the ts-libs TerraScale.Endpoints package (Directory.Build.targets). -->
     <UseTerraScaleEndpoints>true</UseTerraScaleEndpoints>
   </PropertyGroup>
