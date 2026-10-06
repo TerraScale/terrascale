@@ -123,7 +123,7 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 		ctx := r.Context()
 		if err := service.DeleteProject(ctx, p, confirmName); err != nil {
 			if errors.Is(err, core.ErrConflict) {
-				redirectSettings(w, r, "danger", "", "", msgProtected)
+				http.Error(w, msgProtected, http.StatusConflict)
 				return
 			}
 			redirectOrError(w, r, err, "danger", "")
@@ -157,15 +157,14 @@ func signedIn(deps core.Deps, w http.ResponseWriter, r *http.Request) (core.Prin
 	return p, true
 }
 
-// redirectOrError shows validation and provider-contract failures on the
-// settings tab and answers every other error with its status.
+// redirectOrError returns validation and provider-contract failures explicitly.
 func redirectOrError(w http.ResponseWriter, r *http.Request, err error, tab, database string) {
 	reason, invalid := core.InvalidReason(err)
 	switch {
 	case invalid:
 		redirectSettings(w, r, tab, "", database, reason)
 	case errors.Is(err, backups.ErrUnavailable):
-		redirectSettings(w, r, tab, "", database, msgBackupsUnavailable)
+		http.Error(w, msgBackupsUnavailable, http.StatusServiceUnavailable)
 	default:
 		writeError(w, err)
 	}
@@ -182,6 +181,10 @@ func render(w http.ResponseWriter, r *http.Request, deps core.Deps, p core.Princ
 }
 
 func redirectSettings(w http.ResponseWriter, r *http.Request, tab, toast, database, errMsg string) {
+	if errMsg != "" {
+		http.Error(w, errMsg, http.StatusBadRequest)
+		return
+	}
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
