@@ -501,11 +501,13 @@ const (
 	ErrTemporarilyUnavailable ErrorCode = "temporarily_unavailable"
 )
 
-// APIError is a non-2xx management API response.
+// APIError is a non-2xx response of a JSON API.
 type APIError struct {
 	Status  int
 	Code    ErrorCode
 	Message string
+	// RetryAfter is the parsed Retry-After of a 429.
+	RetryAfter time.Duration
 }
 
 func (e *APIError) Error() string {
@@ -546,6 +548,12 @@ func (u *User) do(ctx context.Context, method string, path []string, query url.V
 	if len(query) > 0 {
 		target += "?" + query.Encode()
 	}
+	return sendJSON(ctx, u.c.hc, method, target, "Bearer "+u.token, in, out)
+}
+
+// sendJSON sends a JSON request with an Authorization header and decodes a
+// 2xx JSON answer into out; other answers are *APIError.
+func sendJSON(ctx context.Context, hc *http.Client, method, target, authorization string, in, out any) error {
 	var body io.Reader
 	if in != nil {
 		data, err := json.Marshal(in)
@@ -558,12 +566,12 @@ func (u *User) do(ctx context.Context, method string, path []string, query url.V
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Authorization", "Bearer "+u.token)
+	req.Header.Set("Authorization", authorization)
 	req.Header.Set("Accept", "application/json")
 	if in != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	res, err := u.c.hc.Do(req)
+	res, err := hc.Do(req)
 	if err != nil {
 		return fmt.Errorf("tsauth: %s %s: %w", method, req.URL.Path, err)
 	}
@@ -573,7 +581,7 @@ func (u *User) do(ctx context.Context, method string, path []string, query url.V
 		return fmt.Errorf("tsauth: read %s %s response: %w", method, req.URL.Path, err)
 	}
 	if res.StatusCode < 200 || res.StatusCode > 299 {
-		e := &APIError{Status: res.StatusCode, Code: ErrorCode("http_" + strconv.Itoa(res.StatusCode))}
+		e := &APIError{Status: res.StatusCode, Code: ErrorCode("http_" + strconv.Itoa(res.StatusCode)), RetryAfter: retryAfter(res.Header.Get("Retry-After"))}
 		var env struct {
 			Error struct {
 				Code    string `json:"code"`

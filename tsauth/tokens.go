@@ -248,10 +248,12 @@ func (e *Error) Error() string {
 }
 
 type tokenResponse struct {
-	AccessToken string `json:"access_token"`
-	TokenType   string `json:"token_type"`
-	ExpiresIn   int64  `json:"expires_in"`
-	Scope       string `json:"scope"`
+	AccessToken  string `json:"access_token"`
+	TokenType    string `json:"token_type"`
+	ExpiresIn    int64  `json:"expires_in"`
+	Scope        string `json:"scope"`
+	RefreshToken string `json:"refresh_token"`
+	IDToken      string `json:"id_token"`
 }
 
 // retryAfter parses Retry-After: delta-seconds or an HTTP-date (RFC 9110
@@ -297,33 +299,11 @@ func loopback(host string) bool {
 	return host == "localhost" || ip != nil && ip.IsLoopback()
 }
 
-// requestToken posts form with client authentication: HTTP Basic when the
-// client has a secret (client_secret_basic, both parts form-encoded per
-// RFC 6749 section 2.3.1).
+// requestToken posts form to the token endpoint and decodes the token.
 func requestToken(ctx context.Context, hc *http.Client, endpoint string, form url.Values, client, secret string) (*tokenResponse, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(form.Encode()))
+	body, err := oauthPost(ctx, hc, endpoint, form, client, secret)
 	if err != nil {
 		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("Accept", "application/json")
-	if secret != "" {
-		req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte(url.QueryEscape(client)+":"+url.QueryEscape(secret))))
-	}
-	res, err := hc.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("tsauth: token request: %w", err)
-	}
-	defer res.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(res.Body, 64<<10))
-	if err != nil {
-		return nil, fmt.Errorf("tsauth: read token response: %w", err)
-	}
-	if res.StatusCode != http.StatusOK {
-		e := &Error{Status: res.StatusCode}
-		json.Unmarshal(body, e) // a malformed body leaves Code empty
-		e.RetryAfter = retryAfter(res.Header.Get("Retry-After"))
-		return nil, e
 	}
 	// Decoding errors quote the body's values, which can be credentials:
 	// the cause is dropped.
@@ -333,4 +313,41 @@ func requestToken(ctx context.Context, hc *http.Client, endpoint string, form ur
 		return nil, errors.New("tsauth: the token response is not a Bearer access_token with a valid expires_in")
 	}
 	return &tr, nil
+}
+
+// oauthPost posts form to an OAuth endpoint and returns a 200 body; other
+// answers are *Error. A client with a secret authenticates with HTTP Basic
+// (client_secret_basic).
+func oauthPost(ctx context.Context, hc *http.Client, endpoint string, form url.Values, client, secret string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(form.Encode()))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json")
+	if secret != "" {
+		req.Header.Set("Authorization", basicAuth(client, secret))
+	}
+	res, err := hc.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("tsauth: POST %s: %w", req.URL.Path, err)
+	}
+	defer res.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(res.Body, 64<<10))
+	if err != nil {
+		return nil, fmt.Errorf("tsauth: read %s response: %w", req.URL.Path, err)
+	}
+	if res.StatusCode != http.StatusOK {
+		e := &Error{Status: res.StatusCode}
+		json.Unmarshal(body, e) // a malformed body leaves Code empty
+		e.RetryAfter = retryAfter(res.Header.Get("Retry-After"))
+		return nil, e
+	}
+	return body, nil
+}
+
+// basicAuth is client_secret_basic: both parts form-encoded (RFC 6749
+// section 2.3.1), as ts-auth decodes them.
+func basicAuth(client, secret string) string {
+	return "Basic " + base64.StdEncoding.EncodeToString([]byte(url.QueryEscape(client)+":"+url.QueryEscape(secret)))
 }

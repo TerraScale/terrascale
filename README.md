@@ -268,6 +268,26 @@ tokens, err := tsauth.NewAPIKeySource(tsauth.APIKeyConfig{Key: key.Key}) // key.
 ts-auth does not serve this contract yet. Its tests check every operation
 against the pinned contract, `tsauth/testdata/platform-api.openapi.json`.
 
+### ts-auth headless sign-in
+
+`tsauth.NewHeadless(HeadlessConfig{ClientID, ClientSecret})` is ts-auth's
+headless API (TS-582) for a first-party confidential client that signs users
+in on its own pages, as ts-dashboard does: `SignInWithPassword`,
+`SignInWithEmailCode` (with the `pendingToken` of `SignUp` for a sign-up
+code), `StartEmailCode`, `SignUp`, `StartPasswordReset`,
+`CompletePasswordReset`, `Refresh` and `Revoke`. Every sign-in and step
+takes the end user's IP address, which ts-auth's rate limits key on. Grants
+answer `*tsauth.Tokens` or a `*tsauth.Error` (`invalid_grant` for any wrong
+credential); the JSON steps fail with `*tsauth.APIError` (`ErrInvalidCode`,
+`ErrInvalidPassword`, `ErrRateLimited` with `RetryAfter`, `ErrInvalidClient`).
+
+```go
+h, err := tsauth.NewHeadless(tsauth.HeadlessConfig{ClientID: "ts-dashboard", ClientSecret: secret})
+tokens, err := h.SignInWithPassword(ctx, email, password, clientIP, []string{"openid", "email", "offline_access"})
+project, err := tsauth.NewExchangeSource(tsauth.ExchangeConfig{ClientID: "ts-dashboard", ClientSecret: secret,
+	SubjectToken: func(context.Context) (string, error) { return tokens.AccessToken, nil }, Organization: orgID, Project: projectID})
+```
+
 ## Checks
 
 The edge artifacts and pins are in `contracts/edge/v1`.
