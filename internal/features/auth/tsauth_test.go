@@ -52,6 +52,8 @@ type testIssuer struct {
 	refreshed  int
 	endSession bool
 	pkce       []string
+	// noRefresh answers sign-ins without a refresh token.
+	noRefresh bool
 	// keepRefresh answers refresh grants without a new refresh token, so the
 	// one presented stays valid.
 	keepRefresh bool
@@ -198,10 +200,14 @@ func (i *testIssuer) token(w http.ResponseWriter, r *http.Request) {
 	}
 	refresh := rand.Text()
 	i.refreshes[refresh] = subject
-	writeJSON(w, http.StatusOK, map[string]any{
+	body := map[string]any{
 		"access_token": rand.Text(), "token_type": "Bearer", "expires_in": 3600,
 		"refresh_token": refresh, "id_token": i.idToken(subject, nonce),
-	})
+	}
+	if i.noRefresh {
+		delete(body, "refresh_token")
+	}
+	writeJSON(w, http.StatusOK, body)
 }
 
 // idToken signs an RS256 ID token; i.mu is held.
@@ -621,12 +627,15 @@ func TestTSAuthRefreshKeepsTokenTSAuthDoesNotRotate(t *testing.T) {
 func TestRecheckAtRenewsBeforeTheAccessTokenExpires(t *testing.T) {
 	now := time.Now()
 	for _, lifetime := range []time.Duration{time.Hour, 2 * time.Minute, 10 * time.Second} {
-		if at := recheckAt(&oauth2.Token{Expiry: now.Add(lifetime)}); !at.Equal(now.Add(lifetime - renewEarly)) {
+		if at := recheckAt(&oauth2.Token{RefreshToken: "r", Expiry: now.Add(lifetime)}); !at.Equal(now.Add(lifetime - renewEarly)) {
 			t.Fatalf("recheck of a %v token at %v, want renewEarly before it expires", lifetime, at.Sub(now))
 		}
 	}
-	if at := recheckAt(&oauth2.Token{}); at.Before(now.Add(minRecheck - time.Second)) {
+	if at := recheckAt(&oauth2.Token{RefreshToken: "r"}); at.Before(now.Add(minRecheck - time.Second)) {
 		t.Fatalf("recheck without an expiry at %v, want minRecheck later", at)
+	}
+	if at := recheckAt(&oauth2.Token{Expiry: now.Add(time.Hour)}); !at.Equal(noRecheck) {
+		t.Fatalf("recheck without a refresh token at %v, want never", at)
 	}
 }
 
@@ -700,6 +709,34 @@ func TestTSAuthSessionSavedBeforeAccessTokensRenewsAtOnce(t *testing.T) {
 	}
 	if token := dashboard.sessions.UserToken(request); token == "" || issuer.refreshCount() != 1 {
 		t.Fatalf("access token %q after %d refreshes, want one from an immediate recheck", token, issuer.refreshCount())
+	}
+}
+
+// TestTSAuthSessionWithoutRefreshTokenKeepsTheAccessToken covers a ts-auth
+// that issues no refresh token: the session lasts its lifetime without a
+// recheck, as before, and still hands out the access token for TerraBase.
+func TestTSAuthSessionWithoutRefreshTokenKeepsTheAccessToken(t *testing.T) {
+	t.Parallel()
+	issuer := newTestIssuer(t)
+	issuer.set(func(i *testIssuer) { i.noRefresh = true })
+	dashboard := newTSAuthDashboard(t, issuer)
+	dashboard.signIn(t, issuer, "/login/sso")
+	record, _ := dashboard.record(t)
+	if !record.RefreshAt.Equal(noRecheck) {
+		t.Fatalf("access-only session rechecks at %v, want never", record.RefreshAt)
+	}
+	request := httptest.NewRequest(http.MethodGet, "http://dashboard.test/", nil)
+	for _, cookie := range dashboard.cookies {
+		request.AddCookie(cookie)
+	}
+	if token := dashboard.sessions.UserToken(request); token == "" || issuer.refreshCount() != 0 {
+		t.Fatalf("access token %q after %d refreshes, want the sign-in's token without a recheck", token, issuer.refreshCount())
+	}
+	if next, at, err := (&TSAuth{}).RefreshSession(t.Context(), record.Refresh); err != nil || next != record.Refresh || !at.Equal(noRecheck) {
+		t.Fatalf("RefreshSession(access-only) = %q, %v, %v; want it kept", next, at, err)
+	}
+	if !dashboard.signedIn(t) {
+		t.Fatal("access-only session was signed out")
 	}
 }
 

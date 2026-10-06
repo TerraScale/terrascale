@@ -448,8 +448,12 @@ func tsAuthAccount(ctx context.Context, store core.Store, identity tsAuthIdentit
 // names the session's subject. A refused token ends the session.
 func (t *TSAuth) RefreshSession(ctx context.Context, refresh string) (string, time.Time, error) {
 	var state refreshState
-	if json.Unmarshal([]byte(refresh), &state) != nil || state.Token == "" {
+	switch {
+	case json.Unmarshal([]byte(refresh), &state) != nil || state.Token == "" && state.Access == "":
 		return "", time.Time{}, fmt.Errorf("unreadable ts-auth refresh state: %w", core.ErrUnauthorized)
+	case state.Token == "":
+		// An access-only session has nothing to recheck with; it is kept.
+		return refresh, noRecheck, nil
 	}
 	provider, err := t.discover(ctx)
 	if err != nil {
@@ -487,14 +491,20 @@ func (t *TSAuth) RevokeSession(ctx context.Context, refresh string) error {
 	return t.revoke(ctx, state.Token)
 }
 
+// encodeRefresh is a session's refresh state. Without a refresh token from
+// ts-auth it keeps only the access token, and recheckAt never rechecks the
+// session: it lasts its lifetime, and TerraBase calls work until the token
+// expires.
 func encodeRefresh(subject string, token *oauth2.Token) (string, error) {
-	if token.RefreshToken == "" {
-		// ts-auth issued no refresh token: the session is not rechecked.
+	if token.RefreshToken == "" && token.AccessToken == "" {
 		return "", nil
 	}
 	value, err := json.Marshal(refreshState{Subject: subject, Token: token.RefreshToken, Access: token.AccessToken, AccessExpiry: token.Expiry})
 	return string(value), err
 }
+
+// noRecheck is the RefreshAt of a session nothing can recheck.
+var noRecheck = time.Date(9999, time.January, 1, 0, 0, 0, 0, time.UTC)
 
 // recheckAt is when to recheck a session with ts-auth: renewEarly before the
 // access token it issued expires, so the session always holds a live one for
@@ -502,6 +512,9 @@ func encodeRefresh(subject string, token *oauth2.Token) (string, error) {
 // hour-long tokens; a token shorter than renewEarly is renewed on the next
 // request, one at a time per session.
 func recheckAt(token *oauth2.Token) time.Time {
+	if token.RefreshToken == "" {
+		return noRecheck
+	}
 	if token.Expiry.IsZero() {
 		return time.Now().Add(minRecheck)
 	}
