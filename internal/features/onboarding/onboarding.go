@@ -49,7 +49,9 @@ type stepView struct {
 }
 
 // Mount registers account setup and its tools. billing is nil in demo mode.
-func Mount(mux *http.ServeMux, deps core.Deps, billing *payments.Stripe) {
+// With tsAuth, signing up creates the user at ts-auth, which verifies their
+// address with an emailed code before the account opens.
+func Mount(mux *http.ServeMux, deps core.Deps, billing *payments.Stripe, tsAuth *auth.TSAuth) {
 	service := Service{deps: deps, billing: payments.NewService(deps, subscriptions.NewBillingService(deps.Store), billing)}
 	mountTools(deps.Tools, service)
 	mux.HandleFunc("GET /register", func(w http.ResponseWriter, r *http.Request) {
@@ -59,12 +61,23 @@ func Mount(mux *http.ServeMux, deps core.Deps, billing *payments.Stripe) {
 		}
 		http.Redirect(w, r, target, http.StatusSeeOther)
 	})
-	mux.HandleFunc("GET /onboarding", getOnboarding(deps, service))
-	mux.HandleFunc("POST /onboarding", register(deps))
+	mux.HandleFunc("GET /onboarding", getOnboarding(deps, service, tsAuth))
+	mux.HandleFunc("POST /onboarding", register(deps, tsAuth))
 	mux.HandleFunc("POST /onboarding/step", saveStep(deps, service))
 }
 
-func getOnboarding(deps core.Deps, service Service) http.HandlerFunc {
+// renderRegistration shows the sign-up form, or with ts-auth that does not
+// offer its headless API yet, sends the visitor to sign in there, which signs
+// them up too.
+func renderRegistration(w http.ResponseWriter, r *http.Request, deps core.Deps, tsAuth *auth.TSAuth, data pageData) {
+	if tsAuth != nil && !tsAuth.Headless(r.Context()) {
+		core.RedirectToLogin(w, r)
+		return
+	}
+	render(w, r, deps, http.StatusOK, data)
+}
+
+func getOnboarding(deps core.Deps, service Service, tsAuth *auth.TSAuth) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		query := r.URL.Query()
 		ctx := r.Context()
@@ -79,7 +92,7 @@ func getOnboarding(deps core.Deps, service Service) http.HandlerFunc {
 		registration := pageData{Registration: true, Plan: offeredPlan(plans, query.Get("plan")), ReturnTo: returnPath(cmp.Or(query.Get("returnTo"), query.Get("return")))}
 		principal, ok := deps.Sessions.Principal(r)
 		if !ok {
-			renderRegistration(w, r, deps, registration)
+			renderRegistration(w, r, deps, tsAuth, registration)
 			return
 		}
 		account, err := deps.Store.SnapshotAs(ctx, principal)
@@ -88,7 +101,7 @@ func getOnboarding(deps core.Deps, service Service) http.HandlerFunc {
 				http.Error(w, "service unavailable", http.StatusServiceUnavailable)
 				return
 			}
-			renderRegistration(w, r, deps, registration)
+			renderRegistration(w, r, deps, tsAuth, registration)
 			return
 		}
 		if account.OnboardingCompleted {
@@ -137,20 +150,10 @@ func getOnboarding(deps core.Deps, service Service) http.HandlerFunc {
 	}
 }
 
-// renderRegistration shows the sign-up form. With ts-auth, signing up is
-// signing in there for the first time, which returns here afterwards.
-func renderRegistration(w http.ResponseWriter, r *http.Request, deps core.Deps, data pageData) {
-	if deps.ExternalSignIn {
-		core.RedirectToLogin(w, r)
-		return
-	}
-	render(w, r, deps, http.StatusOK, data)
-}
-
-func register(deps core.Deps) http.HandlerFunc {
+func register(deps core.Deps, tsAuth *auth.TSAuth) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if deps.ExternalSignIn {
-			http.Error(w, "sign up through ts-auth", http.StatusForbidden)
+		if tsAuth != nil && !tsAuth.Headless(r.Context()) {
+			core.RedirectToLogin(w, r)
 			return
 		}
 		if err := r.ParseForm(); err != nil {
@@ -173,7 +176,21 @@ func register(deps core.Deps) http.HandlerFunc {
 			return
 		}
 		plan, returnTo := offeredPlan(plans, r.Form.Get("plan")), returnPath(r.Form.Get("returnTo"))
-		account, err := auth.RegisterAccount(ctx, deps, input)
+		// Like sign-in, a return path wins; setup resumes at the next sign-in.
+		location := "/onboarding"
+		switch {
+		case returnTo != "":
+			location = returnTo
+		case plan != "":
+			location += "?" + url.Values{"plan": {plan}}.Encode()
+		}
+		var account core.Account
+		if tsAuth != nil {
+			// The account opens when the emailed code is entered.
+			err = tsAuth.SignUp(w, r, deps, input, location)
+		} else {
+			account, err = auth.RegisterAccount(ctx, deps, input)
+		}
 		if err != nil {
 			// Render the form again with everything but the passwords kept.
 			data := pageData{
@@ -197,17 +214,12 @@ func register(deps core.Deps) http.HandlerFunc {
 			render(w, r, deps, status, data)
 			return
 		}
+		if tsAuth != nil {
+			return
+		}
 		if err := deps.Sessions.Start(w, r, account.Principal()); err != nil {
 			http.Error(w, "could not create session", http.StatusInternalServerError)
 			return
-		}
-		// Like sign-in, a return path wins; setup resumes at the next sign-in.
-		location := "/onboarding"
-		switch {
-		case returnTo != "":
-			location = returnTo
-		case plan != "":
-			location += "?" + url.Values{"plan": {plan}}.Encode()
 		}
 		http.Redirect(w, r, location, http.StatusSeeOther)
 	}

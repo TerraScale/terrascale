@@ -28,6 +28,9 @@ type Options struct {
 	// check again. An error wrapping core.ErrUnauthorized ends the session;
 	// any other keeps it and retries a minute later.
 	Refresh func(ctx context.Context, refresh string) (string, time.Time, error)
+	// Revoke is given the refresh state of a session End ends, so the
+	// provider can end its sign-in too. Its failure does not stop sign-out.
+	Revoke func(ctx context.Context, refresh string) error
 }
 
 // refreshTimeout bounds one Options.Refresh call.
@@ -292,7 +295,12 @@ func (m *Manager) refresh(ctx context.Context, key [32]byte) (Record, error) {
 		// refreshed meanwhile, spending the token this attempt used, is read
 		// back.
 		if err := m.sessions.Replace(ctx, key, current, updated); errors.Is(err, ErrNotFound) {
-			return m.sessions.Get(ctx, key, time.Now())
+			latest, err := m.sessions.Get(ctx, key, time.Now())
+			if errors.Is(err, ErrNotFound) && updated.Refresh != current.Refresh {
+				// Signed out meanwhile: end the sign-in this refresh renewed.
+				m.revoke(ctx, updated.Refresh)
+			}
+			return latest, err
 		} else if err != nil {
 			return Record{}, err
 		}
@@ -312,12 +320,11 @@ func (m *Manager) End(w http.ResponseWriter, r *http.Request) error {
 	token, _ := m.Token(r)
 	var err error
 	if token != "" {
-		err = m.sessions.Delete(r.Context(), sha256.Sum256([]byte(token)))
+		err = m.end(r.Context(), sha256.Sum256([]byte(token)))
 	}
 	if scheme, bearer, ok := strings.Cut(r.Header.Get("Authorization"), " "); ok && strings.EqualFold(scheme, "Bearer") && bearer != "" && !strings.ContainsAny(bearer, " \t\r\n") && bearer != token {
-		// Revoke the supplied token without a lookup: an account outage must
-		// not prevent logout. Try both tokens even if one deletion fails.
-		err = errors.Join(err, m.sessions.Delete(r.Context(), sha256.Sum256([]byte(bearer))))
+		// Try both tokens even if one deletion fails.
+		err = errors.Join(err, m.end(r.Context(), sha256.Sum256([]byte(bearer))))
 	}
 	if err != nil {
 		return err
@@ -327,6 +334,49 @@ func (m *Manager) End(w http.ResponseWriter, r *http.Request) error {
 		SameSite: http.SameSiteLaxMode, MaxAge: -1,
 	})
 	return nil
+}
+
+// end deletes the session under key, then revokes its refresh state. The
+// session is looked up only for Options.Revoke, and a failed lookup only
+// skips revocation, so an account outage never prevents logout. It ends the
+// record only as last read, so the state revoked is the newest a concurrent
+// refresh saved; refresh revokes what it renews for a session ended
+// meanwhile.
+func (m *Manager) end(ctx context.Context, key [32]byte) error {
+	var refresh string
+	// ponytail: three reads; more concurrent refreshes of one session than
+	// that would need a lock across the shared store.
+	for attempt := 0; m.opts.Revoke != nil && attempt < 3; attempt++ {
+		record, err := m.sessions.Get(ctx, key, time.Now())
+		if err != nil {
+			break
+		}
+		if err := m.sessions.Replace(ctx, key, record, ended(record)); err == nil {
+			refresh = record.Refresh
+			break
+		} else if !errors.Is(err, ErrNotFound) {
+			break
+		}
+	}
+	if err := m.sessions.Delete(ctx, key); err != nil {
+		return err
+	}
+	m.revoke(ctx, refresh)
+	return nil
+}
+
+// revoke hands an ended session's refresh state to Options.Revoke, best
+// effort and after the session is gone, so a slow or cancelled call never
+// keeps anyone signed in.
+func (m *Manager) revoke(ctx context.Context, refresh string) {
+	if m.opts.Revoke == nil || refresh == "" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), refreshTimeout)
+	defer cancel()
+	if err := m.opts.Revoke(ctx, refresh); err != nil {
+		slog.Warn("revoke session", "error", err)
+	}
 }
 
 func (m *Manager) RevokeUser(ctx context.Context, accountID, userID string) error {

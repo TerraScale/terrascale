@@ -105,7 +105,7 @@ func New(cfg config.Config) (*Application, error) {
 	if err != nil {
 		return nil, err
 	}
-	// With TS_AUTH_ISSUER set, ts-auth is the only way to sign in.
+	// With TS_AUTH_ISSUER set, ts-auth holds every credential.
 	var tsAuth *auth.TSAuth
 	sessionOptions := session.Options{Secure: cfg.SecureCookies, Store: sessionStore}
 	if cfg.TSAuth.Issuer != "" {
@@ -116,7 +116,7 @@ func New(cfg config.Config) (*Application, error) {
 		if err != nil {
 			return nil, err
 		}
-		sessionOptions.Refresh = tsAuth.RefreshSession
+		sessionOptions.Refresh, sessionOptions.Revoke = tsAuth.RefreshSession, tsAuth.RevokeSession
 	}
 	sessions := session.New(store, sessionOptions)
 	guard := csrf.New(sessions, csrf.Options{Secure: cfg.SecureCookies, Secret: cfg.CSRFSecret})
@@ -133,8 +133,7 @@ func New(cfg config.Config) (*Application, error) {
 		Store: store, Sessions: sessions, CSRF: guard, Render: renderer,
 		Events: datastar.Events{}, Demo: cfg.Demo, Tools: core.NewTools(store),
 		SDK: sdkFactory, DocumentsOnly: db != nil,
-		Throttle:       throttle.New(throttle.Options{ClientHeader: cfg.ClientIPHeader, Store: throttleStore}),
-		ExternalSignIn: tsAuth != nil,
+		Throttle: throttle.New(throttle.Options{ClientHeader: cfg.ClientIPHeader, Store: throttleStore}),
 	}
 	mux := http.NewServeMux()
 	if err := assets.Mount(mux, cfg.Dev); err != nil {
@@ -146,7 +145,7 @@ func New(cfg config.Config) (*Application, error) {
 	deviceAuthorization.MountBrowser(mux)
 	admin.Mount(mux, deps)
 	authentication.Mount(mux, deps, cfg.TSAuthOrigin)
-	onboarding.Mount(mux, deps, billing)
+	onboarding.Mount(mux, deps, billing, tsAuth)
 	profile.Mount(mux, deps)
 	settings.Mount(mux, deps)
 	organization.Mount(mux, deps, billing)

@@ -253,8 +253,10 @@ revoke an existing token and poll again after the advertised interval.
 
 ## Sign-in through ts-auth
 
-Set these to sign users in through ts-auth with OpenID Connect (authorization
-code flow with PKCE). The dashboard is a confidential client.
+Set these to sign users in through ts-auth. The dashboard is a confidential
+client: its own pages check passwords and emailed codes through ts-auth's
+headless API (TS-582), and single sign-on uses OpenID Connect's authorization
+code flow with PKCE.
 
 - `TS_AUTH_ISSUER`: the issuer exactly as ts-auth's discovery document names
   it. It must use HTTPS, or HTTP when `DASHBOARD_DEV=1`. ts-auth's issuers are
@@ -282,17 +284,29 @@ use, so it starts while ts-auth is down.
 
 With the variables set:
 
-- `/login` redirects to ts-auth with the scopes `openid email profile
+- `POST /login` and `POST /login/code/verify` redeem ts-auth's password and
+  email-code grants at its token endpoint, with the end user's IP address as
+  `ip_address`. `/login/code` asks ts-auth to email a sign-in code,
+  `/reset-password` a reset code. Every step reads the same whether or not
+  the address has an account, and the dashboard's throttle limits attempts
+  and mails per client and per address before ts-auth's own limits.
+- Registration (`POST /onboarding`) asks ts-auth to email a code that
+  verifies the address; entering it, with the sign-up's pending token from
+  an HttpOnly cookie, opens the account. The local password JSON API
+  (`POST /api/v1/auth/password/login`) is disabled.
+- These pages need ts-auth's headless API. Until its discovery document lists
+  both headless grants in `grant_types_supported`, every way in redirects to
+  ts-auth as before TS-582, and discovery is fetched again every minute, so
+  deploying ts-auth switches the pages on without restarting the dashboard.
+- `/login/sso` redirects to ts-auth with the scopes `openid email profile
   offline_access`, a PKCE S256 challenge, `state` and `nonce`. ts-auth returns
   to `/login/callback`.
-- Password sign-in (`POST /login`, `POST /api/v1/auth/password/login`) and
-  registration (`POST /onboarding`) are disabled. `GET /onboarding` sends
-  signed-out visitors to `/login`.
-- Signing out also ends the ts-auth session through its
+- Signing out revokes the session's refresh token when discovery lists a
+  `revocation_endpoint`, and ends the ts-auth browser session through its
   `end_session_endpoint`, with `post_logout_redirect_uri` set to the
   dashboard's origin plus `/login`. Without that endpoint, or with ts-auth
-  unreachable, it goes to `/login?prompt=login`, so ts-auth asks for
-  credentials again.
+  unreachable, it goes to `/login?prompt=login`, whose single sign-on asks
+  ts-auth for credentials again.
 
 The account for a sign-in is found by ts-auth subject, else linked by verified
 email, else created. The ID token must carry `email_verified: true`. The

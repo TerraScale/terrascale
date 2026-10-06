@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json/v2"
@@ -19,6 +20,7 @@ import (
 
 	"github.com/coreos/go-oidc/v3/oidc"
 	"golang.org/x/oauth2"
+	"golang.org/x/sync/singleflight"
 	"terrascale.tech/dashboard/internal/core"
 )
 
@@ -41,15 +43,25 @@ type TSAuthConfig struct {
 type TSAuth struct {
 	cfg    TSAuthConfig
 	client *http.Client
+	// recheck is how long discovery without the headless grants is trusted
+	// before it is fetched again.
+	recheck time.Duration
 
-	mu       sync.Mutex
-	provider *tsAuthProvider
+	mu         sync.Mutex
+	provider   *tsAuthProvider
+	discovered time.Time
+	// fetches shares one discovery fetch among the requests waiting for it.
+	fetches singleflight.Group
 }
 
 type tsAuthProvider struct {
 	oauth      oauth2.Config
 	verifier   *oidc.IDTokenVerifier
 	endSession string
+	revocation string
+	// headless is whether discovery lists the headless grants, which the
+	// dashboard's own sign-in pages need.
+	headless bool
 }
 
 // signInFlow is one sign-in in progress, kept in a short-lived cookie from
@@ -95,24 +107,64 @@ func NewTSAuth(cfg TSAuthConfig) (*TSAuth, error) {
 	if cfg.Issuer == "" || cfg.ClientID == "" || cfg.ClientSecret == "" || err != nil || !redirect.IsAbs() || redirect.Host == "" {
 		return nil, errors.New("ts-auth needs an issuer, a client ID and secret, and an absolute redirect URL")
 	}
-	return &TSAuth{cfg: cfg, client: &http.Client{Timeout: 10 * time.Second}}, nil
+	// Redirects are not followed: a redirected token request would resend
+	// a password or code, and the client's credentials, elsewhere.
+	client := &http.Client{Timeout: 10 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	return &TSAuth{cfg: cfg, client: client, recheck: time.Minute}, nil
 }
 
 // discover returns ts-auth's endpoints and keys, fetching them on the first
-// call and again after a failed one.
+// call and again after a failed one. Until discovery lists the headless
+// grants it is fetched again every recheck, so ts-auth gaining them takes
+// effect without a restart; a failed refetch keeps what worked.
+//
+// No lock is held while ts-auth answers: a recheck is claimed by the request
+// that finds it due, and every other request keeps the cached provider
+// meanwhile.
 func (t *TSAuth) discover(ctx context.Context) (*tsAuthProvider, error) {
 	t.mu.Lock()
-	defer t.mu.Unlock()
-	if t.provider != nil {
-		return t.provider, nil
+	cached := t.provider
+	if cached != nil && (cached.headless || time.Since(t.discovered) < t.recheck) {
+		t.mu.Unlock()
+		return cached, nil
 	}
+	t.discovered = time.Now()
+	t.mu.Unlock()
+	fetched, err, _ := t.fetches.Do("discovery", func() (any, error) {
+		return t.fetchDiscovery(context.WithoutCancel(ctx))
+	})
+	if err != nil {
+		if cached != nil {
+			slog.Warn("recheck ts-auth discovery", "error", err)
+			return cached, nil
+		}
+		return nil, err
+	}
+	provider := fetched.(*tsAuthProvider)
+	t.mu.Lock()
+	t.provider, t.discovered = provider, time.Now()
+	t.mu.Unlock()
+	return provider, nil
+}
+
+// Headless reports whether ts-auth offers the headless API the dashboard's
+// own sign-in pages use. Without it, signing in and up keeps redirecting to
+// ts-auth, so the dashboard works before and after ts-auth ships it.
+func (t *TSAuth) Headless(ctx context.Context) bool {
+	provider, err := t.discover(ctx)
+	return err == nil && provider.headless
+}
+
+func (t *TSAuth) fetchDiscovery(ctx context.Context) (*tsAuthProvider, error) {
 	provider, err := oidc.NewProvider(oidc.ClientContext(ctx, t.client), t.cfg.Issuer)
 	if err != nil {
 		return nil, fmt.Errorf("discover ts-auth: %w", err)
 	}
 	var metadata struct {
 		EndSession string   `json:"end_session_endpoint"`
+		Revocation string   `json:"revocation_endpoint"`
 		PKCE       []string `json:"code_challenge_methods_supported"`
+		Grants     []string `json:"grant_types_supported"`
 	}
 	if err := provider.Claims(&metadata); err != nil {
 		return nil, fmt.Errorf("discover ts-auth: %w", err)
@@ -120,7 +172,7 @@ func (t *TSAuth) discover(ctx context.Context) (*tsAuthProvider, error) {
 	if !slices.Contains(metadata.PKCE, "S256") {
 		return nil, errors.New("discover ts-auth: PKCE with S256 is not supported")
 	}
-	t.provider = &tsAuthProvider{
+	return &tsAuthProvider{
 		oauth: oauth2.Config{
 			ClientID: t.cfg.ClientID, ClientSecret: t.cfg.ClientSecret, RedirectURL: t.cfg.RedirectURL,
 			Endpoint: provider.Endpoint(),
@@ -128,8 +180,9 @@ func (t *TSAuth) discover(ctx context.Context) (*tsAuthProvider, error) {
 		},
 		verifier:   provider.Verifier(&oidc.Config{ClientID: t.cfg.ClientID}),
 		endSession: metadata.EndSession,
-	}
-	return t.provider, nil
+		revocation: metadata.Revocation,
+		headless:   slices.Contains(metadata.Grants, passwordGrant) && slices.Contains(metadata.Grants, emailCodeGrant),
+	}, nil
 }
 
 // flowCookie is the sign-in flow cookie's name. The __Host- prefix keeps a
@@ -196,45 +249,69 @@ func (t *TSAuth) callback(deps core.Deps) http.HandlerFunc {
 		query := r.URL.Query()
 		flow, ok := t.takeFlow(w, r)
 		if !ok || subtle.ConstantTimeCompare([]byte(query.Get("state")), []byte(flow.State)) != 1 {
-			signInFailed(w, r, deps, http.StatusBadRequest, "This sign-in link expired or was started in another browser. Sign in again.")
+			signInFailed(w, r, deps, http.StatusBadRequest, "This sign-in link expired or was started in another browser. Sign in again.", "/",
+				errors.New("no sign-in flow matches the callback's state"))
 			return
 		}
 		if query.Get("error") != "" {
-			slog.Info("ts-auth sign-in refused", "error", query.Get("error"))
-			signInFailed(w, r, deps, http.StatusUnauthorized, "ts-auth did not sign you in. Sign in again.")
+			signInFailed(w, r, deps, http.StatusUnauthorized, "ts-auth did not sign you in. Sign in again.", flow.ReturnTo,
+				fmt.Errorf("ts-auth refused the sign-in: %q", query.Get("error")))
 			return
 		}
-		identity, refresh, refreshAt, err := t.exchange(r.Context(), query.Get("code"), flow)
-		var account core.Account
+		token, err := t.exchange(r.Context(), query.Get("code"), flow)
+		var location string
 		if err == nil {
-			account, err = tsAuthAccount(r.Context(), deps.Store, identity)
+			location, err = t.startSession(w, r, deps, token, flow.Nonce, "", flow.ReturnTo)
 		}
 		if err != nil {
-			slog.Warn("ts-auth sign-in", "error", err)
-			switch {
-			case errors.Is(err, errEmailUnusable):
-				signInFailed(w, r, deps, http.StatusForbidden, "Your ts-auth email address must be verified, and not linked to another ts-auth user, to sign in.")
-			case errors.Is(err, errSignInRejected):
-				signInFailed(w, r, deps, http.StatusUnauthorized, "ts-auth could not confirm this sign-in. Sign in again.")
-			default:
-				signInFailed(w, r, deps, http.StatusServiceUnavailable, "Sign-in could not finish right now. Try again in a moment.")
-			}
+			status, message := sessionFailure(err)
+			signInFailed(w, r, deps, status, message, flow.ReturnTo, err)
 			return
-		}
-		sessions, ok := deps.Sessions.(refreshableSessions)
-		if !ok {
-			http.Error(w, "refreshable sessions are unavailable", http.StatusInternalServerError)
-			return
-		}
-		if err := sessions.StartRefreshable(w, r, account.Principal(), refresh, refreshAt); err != nil {
-			http.Error(w, "could not create session", http.StatusInternalServerError)
-			return
-		}
-		location := SafeRedirectTarget(flow.ReturnTo)
-		if location == "/" && !account.OnboardingCompleted {
-			location = "/onboarding"
 		}
 		http.Redirect(w, r, location, http.StatusSeeOther)
+	}
+}
+
+// startSession signs the user ts-auth's token answer names in to their
+// account and returns where to continue. nonce is the one the redirect flow
+// sent, empty for the headless API's answers; name, when set, names an
+// account this sign-in opens if ts-auth has no name for the user.
+func (t *TSAuth) startSession(w http.ResponseWriter, r *http.Request, deps core.Deps, token *oauth2.Token, nonce, name, returnTo string) (string, error) {
+	identity, refresh, refreshAt, err := t.identify(r.Context(), token, nonce)
+	if err != nil {
+		return "", err
+	}
+	if name != "" && identity.Name == identity.Email {
+		identity.Name = name
+	}
+	account, err := tsAuthAccount(r.Context(), deps.Store, identity)
+	if err != nil {
+		return "", err
+	}
+	sessions, ok := deps.Sessions.(refreshableSessions)
+	if !ok {
+		return "", errors.New("refreshable sessions are unavailable")
+	}
+	if err := sessions.StartRefreshable(w, r, account.Principal(), refresh, refreshAt); err != nil {
+		return "", fmt.Errorf("start session: %w", err)
+	}
+	location := SafeRedirectTarget(returnTo)
+	if location == "/" && !account.OnboardingCompleted {
+		location = "/onboarding"
+	}
+	return location, nil
+}
+
+// sessionFailure is the status and message for a sign-in startSession, or
+// the code exchange before it, could not finish.
+func sessionFailure(err error) (int, string) {
+	switch {
+	case errors.Is(err, errEmailUnusable):
+		return http.StatusForbidden, "Your ts-auth email address must be verified, and not linked to another ts-auth user, to sign in."
+	case errors.Is(err, errSignInRejected):
+		return http.StatusUnauthorized, "ts-auth could not confirm this sign-in. Sign in again."
+	default:
+		return http.StatusServiceUnavailable, "Sign-in could not finish right now. Try again in a moment."
 	}
 }
 
@@ -245,31 +322,40 @@ type tsAuthIdentity struct {
 	Name    string
 }
 
-// exchange redeems the authorization code and returns the identity its ID
-// token proves, with the session's refresh state and when to recheck it.
-// Failures ts-auth's answer caused wrap errSignInRejected or are
+// exchange redeems the authorization code with the flow's PKCE verifier.
+// A refusal wraps errSignInRejected.
+func (t *TSAuth) exchange(ctx context.Context, code string, flow signInFlow) (*oauth2.Token, error) {
+	provider, err := t.discover(ctx)
+	if err != nil {
+		return nil, err
+	}
+	token, err := provider.oauth.Exchange(oidc.ClientContext(ctx, t.client), code, oauth2.VerifierOption(flow.Verifier))
+	if _, refused := errors.AsType[*oauth2.RetrieveError](err); refused {
+		return nil, fmt.Errorf("%w: %w", errSignInRejected, err)
+	}
+	return token, err
+}
+
+// identify returns the identity the token's ID token proves, with the session's
+// refresh state and when to recheck it. A nonce, when not empty, must be the
+// ID token's. Failures ts-auth's answer caused wrap errSignInRejected or are
 // errEmailUnusable.
-func (t *TSAuth) exchange(ctx context.Context, code string, flow signInFlow) (tsAuthIdentity, string, time.Time, error) {
+func (t *TSAuth) identify(ctx context.Context, token *oauth2.Token, nonce string) (tsAuthIdentity, string, time.Time, error) {
 	provider, err := t.discover(ctx)
 	if err != nil {
 		return tsAuthIdentity{}, "", time.Time{}, err
 	}
-	ctx = oidc.ClientContext(ctx, t.client)
-	token, err := provider.oauth.Exchange(ctx, code, oauth2.VerifierOption(flow.Verifier))
-	if _, refused := errors.AsType[*oauth2.RetrieveError](err); refused {
-		return tsAuthIdentity{}, "", time.Time{}, fmt.Errorf("%w: %w", errSignInRejected, err)
-	}
-	if err != nil {
-		return tsAuthIdentity{}, "", time.Time{}, err
+	if token == nil {
+		return tsAuthIdentity{}, "", time.Time{}, fmt.Errorf("%w: ts-auth answered without tokens", errSignInRejected)
 	}
 	raw, _ := token.Extra("id_token").(string)
 	// Verify checks the signature against ts-auth's published keys with an
 	// algorithm it advertises, the issuer, the audience and the expiry.
-	idToken, err := provider.verifier.Verify(ctx, raw)
+	idToken, err := provider.verifier.Verify(oidc.ClientContext(ctx, t.client), raw)
 	if err != nil {
 		return tsAuthIdentity{}, "", time.Time{}, fmt.Errorf("%w: %w", errSignInRejected, err)
 	}
-	if subtle.ConstantTimeCompare([]byte(idToken.Nonce), []byte(flow.Nonce)) != 1 {
+	if nonce != "" && subtle.ConstantTimeCompare([]byte(idToken.Nonce), []byte(nonce)) != 1 {
 		return tsAuthIdentity{}, "", time.Time{}, fmt.Errorf("%w: ID token nonce does not match", errSignInRejected)
 	}
 	var claims struct {
@@ -367,6 +453,17 @@ func (t *TSAuth) RefreshSession(ctx context.Context, refresh string) (string, ti
 	return next, recheckAt(token), err
 }
 
+// RevokeSession is the session manager's Revoke hook: signing out of the
+// dashboard ends the ts-auth sign-in behind the session, so its refresh
+// token stops working too.
+func (t *TSAuth) RevokeSession(ctx context.Context, refresh string) error {
+	var state refreshState
+	if json.Unmarshal([]byte(refresh), &state) != nil || state.Token == "" {
+		return nil
+	}
+	return t.revoke(ctx, state.Token)
+}
+
 func encodeRefresh(subject string, token *oauth2.Token) (string, error) {
 	if token.RefreshToken == "" {
 		// ts-auth issued no refresh token: the session is not rechecked.
@@ -410,8 +507,25 @@ func (t *TSAuth) endSessionURL(ctx context.Context) string {
 	return target.String()
 }
 
-func signInFailed(w http.ResponseWriter, r *http.Request, deps core.Deps, status int, message string) {
+// signInFailed logs why a sign-in failed and shows the visitor how to
+// recover, with the reference that finds the log line. The
+// recovery's ways back continue to returnTo, the page the sign-in was for.
+func signInFailed(w http.ResponseWriter, r *http.Request, deps core.Deps, status int, message, returnTo string, err error) {
 	renderAuthStatus(w, r, deps, authStatusPageData{
 		Title: "Sign in", Description: "Sign-in through ts-auth did not finish.", Message: message, Status: status,
+		Reference: logFailure("ts-auth sign-in", err), Recovery: true, ReturnTo: SafeRedirectTarget(returnTo),
 	})
+}
+
+// logFailure logs err under a new short reference a visitor can quote, so
+// support finds the log line, and returns the reference.
+func logFailure(event string, err error) string {
+	ref := strings.ToLower(rand.Text()[:10])
+	slog.Warn(event, "error", err, "ref", ref)
+	return ref
+}
+
+// withReference is message followed by the reference of its log line.
+func withReference(message, ref string) string {
+	return message + " Reference: " + ref + "."
 }

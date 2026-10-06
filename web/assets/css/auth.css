@@ -85,6 +85,11 @@
   gap: var(--ts-s5);
 }
 
+/* Text options stack, so their labels fit the narrowest sign-in column. */
+.ts-auth-providers-stack {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .ts-auth-providers .ts-btn {
   padding-inline: var(--ts-s3);
 }

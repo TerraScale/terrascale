@@ -5,7 +5,6 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
-	"log/slog"
 	"math"
 	"mime"
 	"net/http"
@@ -37,14 +36,19 @@ type apiError struct {
 	Error string `json:"error"`
 }
 
-// loginPageData is the sign-in form. Error is shown above the form; the field
-// errors sit under the email and password controls.
+// loginPageData is the sign-in form. Error and Notice are shown above the
+// form; the field errors sit under the email and password controls. TSAuth
+// offers sign-in with an emailed code and single sign-on, which PromptLogin
+// makes ask ts-auth for credentials again.
 type loginPageData struct {
 	Email         string
 	RedirectTo    string
 	Error         string
+	Notice        string
 	EmailError    string
 	PasswordError string
+	TSAuth        bool
+	PromptLogin   bool
 }
 
 type authStatusPageData struct {
@@ -55,6 +59,12 @@ type authStatusPageData struct {
 	Message       string
 	ShowEmailForm bool
 	Flow          bool
+	// Recovery offers the ways to sign in after a failed one, and Reference
+	// names the log line that says why it failed.
+	Recovery  bool
+	Reference string
+	// ReturnTo is the page the failed sign-in was for.
+	ReturnTo string
 }
 
 type loginUser struct {
@@ -101,33 +111,35 @@ var dummyPasswordHash = sync.OnceValue(func() string {
 	return hash
 })
 
-// Mount registers sign-in and sign-out. With tsAuth, ts-auth is the only way
-// to sign in; nil keeps the dashboard's own password sign-in.
+// Mount registers sign-in and sign-out. With tsAuth, ts-auth holds every
+// credential: the dashboard's pages check passwords and emailed codes through
+// its headless API, and single sign-on redirects to it. nil keeps the
+// dashboard's own password sign-in.
 func Mount(mux *http.ServeMux, deps core.Deps, tsAuth *TSAuth) {
 	mux.HandleFunc("GET /login", loginPage(deps, tsAuth))
 	if tsAuth != nil {
-		mux.HandleFunc("GET /login/callback", tsAuth.callback(deps))
+		tsAuth.mountNative(mux, deps)
 	} else {
 		_ = dummyPasswordHash()
 		mux.HandleFunc("POST /login", loginForm(deps))
 		mux.HandleFunc("POST /api/v1/auth/password/login", loginAPI(deps))
+		mux.HandleFunc("GET /reset-password", func(w http.ResponseWriter, r *http.Request) {
+			renderAuthStatus(w, r, deps, authStatusPageData{
+				Title:         "Reset password",
+				Description:   "Password recovery is unavailable in the in-memory demo.",
+				Message:       "This demo does not send recovery emails or accept password reset tokens. Submitting this form will not send an email.",
+				ShowEmailForm: true,
+			})
+		})
+		mux.HandleFunc("POST /reset-password", func(w http.ResponseWriter, r *http.Request) {
+			renderAuthStatus(w, r, deps, authStatusPageData{
+				Title:         "Reset password",
+				Description:   "Password recovery is unavailable in the in-memory demo.",
+				Message:       "No recovery request was processed. This demo does not send recovery emails or accept password reset tokens; no password was changed.",
+				ShowEmailForm: true,
+			})
+		})
 	}
-	mux.HandleFunc("GET /reset-password", func(w http.ResponseWriter, r *http.Request) {
-		renderAuthStatus(w, r, deps, authStatusPageData{
-			Title:         "Reset password",
-			Description:   "Password recovery is unavailable in the in-memory demo.",
-			Message:       "This demo does not send recovery emails or accept password reset tokens. Submitting this form will not send an email.",
-			ShowEmailForm: true,
-		})
-	})
-	mux.HandleFunc("POST /reset-password", func(w http.ResponseWriter, r *http.Request) {
-		renderAuthStatus(w, r, deps, authStatusPageData{
-			Title:         "Reset password",
-			Description:   "Password recovery is unavailable in the in-memory demo.",
-			Message:       "No recovery request was processed. This demo does not send recovery emails or accept password reset tokens; no password was changed.",
-			ShowEmailForm: true,
-		})
-	})
 	mux.HandleFunc("GET /agent/approve", func(w http.ResponseWriter, r *http.Request) {
 		renderAuthStatus(w, r, deps, authStatusPageData{
 			Title:       "Approve agent access",
@@ -175,14 +187,24 @@ func loginPage(deps core.Deps, tsAuth *TSAuth) http.HandlerFunc {
 		if returnTo == "" {
 			returnTo = r.URL.Query().Get("next")
 		}
-		if tsAuth != nil {
-			if err := tsAuth.signIn(w, r, SafeRedirectTarget(returnTo)); err != nil {
-				slog.Warn("start ts-auth sign-in", "error", err)
-				signInFailed(w, r, deps, http.StatusServiceUnavailable, "ts-auth is unavailable right now. Try again in a moment.")
+		data := loginPageData{RedirectTo: SafeRedirectTarget(returnTo)}
+		if tsAuth != nil && !tsAuth.Headless(r.Context()) {
+			// ts-auth's own page signs in until it offers the headless API.
+			if err := tsAuth.signIn(w, r, data.RedirectTo); err != nil {
+				signInFailed(w, r, deps, http.StatusServiceUnavailable, "ts-auth is unavailable right now. Try again in a moment.", data.RedirectTo, err)
 			}
 			return
 		}
-		renderLogin(w, r, deps, http.StatusOK, loginPageData{RedirectTo: SafeRedirectTarget(returnTo)})
+		if tsAuth != nil {
+			// Signing out without ts-auth's end-session endpoint asks it for
+			// credentials again at the next single sign-on.
+			data.TSAuth, data.PromptLogin = true, r.URL.Query().Get("prompt") == "login"
+			if r.URL.Query().Get("notice") == passwordResetNotice {
+				data.Notice = "Your password was changed. Sign in with your new password."
+				data.Email = r.URL.Query().Get("email")
+			}
+		}
+		renderLogin(w, r, deps, http.StatusOK, data)
 	}
 }
 
@@ -307,44 +329,9 @@ func renderAuthStatus(w http.ResponseWriter, r *http.Request, deps core.Deps, da
 // The store enforces email uniqueness again while committing, so concurrent
 // requests cannot create duplicate accounts after this early duplicate check.
 func RegisterAccount(ctx context.Context, deps core.Deps, input RegistrationInput) (core.Account, error) {
-	name := strings.TrimSpace(input.DisplayName)
-	if name == "" {
-		return core.Account{}, InputError{"displayName", "Enter your full name."}
-	}
-	if !utf8.ValidString(name) || strings.ContainsFunc(name, unicode.IsControl) {
-		return core.Account{}, InputError{"displayName", "Enter a valid name."}
-	}
-	if utf8.RuneCountInString(name) > 128 {
-		return core.Account{}, InputError{"displayName", "Use a name with 128 characters or fewer."}
-	}
-
-	email := core.NormalizeEmail(input.Email)
-	if email == "" {
-		return core.Account{}, InputError{"email", "Enter your email address."}
-	}
-	if len(email) > 254 || !utf8.ValidString(email) || strings.ContainsFunc(email, unicode.IsControl) || !validEmail(email) {
-		return core.Account{}, InputError{"email", "Enter a valid email address, like name@company.com."}
-	}
-	if input.Password == "" {
-		return core.Account{}, InputError{"password", "Enter a password."}
-	}
-	if !utf8.ValidString(input.Password) {
-		return core.Account{}, InputError{"password", "Use a valid UTF-8 password."}
-	}
-	if utf8.RuneCountInString(input.Password) < 12 {
-		return core.Account{}, InputError{"password", "Use a password with at least 12 characters."}
-	}
-	if len(input.Password) > 1024 {
-		return core.Account{}, InputError{"password", "Use a password with 1024 bytes or fewer."}
-	}
-	if input.ConfirmPassword == "" {
-		return core.Account{}, InputError{"confirmPassword", "Enter your password again."}
-	}
-	if input.ConfirmPassword != input.Password {
-		return core.Account{}, InputError{"confirmPassword", "Passwords do not match."}
-	}
-	if !input.AcceptedTerms {
-		return core.Account{}, InputError{"terms", "Accept the Terms of Service to continue."}
+	name, email, err := ValidateRegistration(input)
+	if err != nil {
+		return core.Account{}, err
 	}
 	if _, err := deps.Store.FindByEmail(ctx, email); err == nil {
 		return core.Account{}, core.ErrConflict
@@ -363,6 +350,69 @@ func RegisterAccount(ctx context.Context, deps core.Deps, input RegistrationInpu
 		Locale:       "en",
 		Role:         "owner",
 	})
+}
+
+// ValidateRegistration checks sign-up input and returns the trimmed name and
+// the normalized email, or an InputError.
+func ValidateRegistration(input RegistrationInput) (name, email string, err error) {
+	name, err = validDisplayName(input.DisplayName)
+	if err != nil {
+		return "", "", err
+	}
+
+	email = core.NormalizeEmail(input.Email)
+	if email == "" {
+		return "", "", InputError{"email", "Enter your email address."}
+	}
+	if len(email) > 254 || !utf8.ValidString(email) || strings.ContainsFunc(email, unicode.IsControl) || !validEmail(email) {
+		return "", "", InputError{"email", "Enter a valid email address, like name@company.com."}
+	}
+	if err := validNewPassword(input.Password, input.ConfirmPassword); err != nil {
+		return "", "", err
+	}
+	if !input.AcceptedTerms {
+		return "", "", InputError{"terms", "Accept the Terms of Service to continue."}
+	}
+	return name, email, nil
+}
+
+// validDisplayName returns the trimmed name, or an InputError.
+func validDisplayName(raw string) (string, error) {
+	name := strings.TrimSpace(raw)
+	if name == "" {
+		return "", InputError{"displayName", "Enter your full name."}
+	}
+	if !utf8.ValidString(name) || strings.ContainsFunc(name, unicode.IsControl) {
+		return "", InputError{"displayName", "Enter a valid name."}
+	}
+	if utf8.RuneCountInString(name) > 128 {
+		return "", InputError{"displayName", "Use a name with 128 characters or fewer."}
+	}
+	return name, nil
+}
+
+// validNewPassword checks a new password and its confirmation, returning an
+// InputError or nil.
+func validNewPassword(password, confirm string) error {
+	if password == "" {
+		return InputError{"password", "Enter a password."}
+	}
+	if !utf8.ValidString(password) {
+		return InputError{"password", "Use a valid UTF-8 password."}
+	}
+	if utf8.RuneCountInString(password) < 12 {
+		return InputError{"password", "Use a password with at least 12 characters."}
+	}
+	if len(password) > 1024 {
+		return InputError{"password", "Use a password with 1024 bytes or fewer."}
+	}
+	if confirm == "" {
+		return InputError{"confirmPassword", "Enter your password again."}
+	}
+	if confirm != password {
+		return InputError{"confirmPassword", "Passwords do not match."}
+	}
+	return nil
 }
 
 func validEmail(email string) bool {

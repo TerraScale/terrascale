@@ -93,28 +93,33 @@ func (l *Limiter) Forgive(r *http.Request, account string) {
 	}
 }
 
-// ClientKey identifies the request's client by the address the trusted
-// proxy header reports, or else by the connection's remote address. IPv6
-// clients are grouped by /64, the block one subscriber usually holds.
+// ClientKey identifies the request's client by ClientAddr. IPv6 clients are
+// grouped by /64, the block one subscriber usually holds.
 func (l *Limiter) ClientKey(r *http.Request) string {
-	addr, ok := netip.Addr{}, false
-	if l.opts.ClientHeader != "" {
-		addr, ok = parseAddr(r.Header.Get(l.opts.ClientHeader))
-	}
-	if !ok {
-		host, _, err := net.SplitHostPort(r.RemoteAddr)
-		if err != nil {
-			host = r.RemoteAddr
-		}
-		if addr, ok = parseAddr(host); !ok {
-			return "client " + host
-		}
-	}
-	if addr.Is6() {
-		prefix, _ := addr.Prefix(64)
+	addr := l.ClientAddr(r)
+	if parsed, err := netip.ParseAddr(addr); err == nil && parsed.Is6() {
+		prefix, _ := parsed.Prefix(64)
 		return "client " + prefix.String()
 	}
-	return "client " + addr.String()
+	return "client " + addr
+}
+
+// ClientAddr is the request's client address as the trusted proxy header
+// reports it, or else the connection's remote address.
+func (l *Limiter) ClientAddr(r *http.Request) string {
+	if l.opts.ClientHeader != "" {
+		if addr, ok := parseAddr(r.Header.Get(l.opts.ClientHeader)); ok {
+			return addr.String()
+		}
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	if addr, ok := parseAddr(host); ok {
+		return addr.String()
+	}
+	return host
 }
 
 func parseAddr(raw string) (netip.Addr, bool) {
