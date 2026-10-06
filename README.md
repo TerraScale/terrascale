@@ -95,14 +95,16 @@ for page, err := range users.Pages(ctx, q) { … }    // page.NextCursor, page.C
 ### Management API
 
 The ts-dashboard backend manages organizations, projects, databases, members,
-invitations, ownership transfers and the audit log with the dashboard service
-credential. `As` acts as one ts-auth user: it sends `X-TerraBase-User-Id` on
-every call and `X-TerraBase-Organization-Id` on organization routes. Take the
-user id from the session, never from browser input.
+invitations, ownership transfers and the audit log as one ts-auth user.
+`WithToken` presents the user's ts-auth access token on the client listener.
+`As` names the user in `X-TerraBase-User-Id` with the management service
+credential (`Config.Token`), which TerraBase accepts only on its loopback admin
+listener, for bootstrap work such as `AddMember`. Take the user id from the
+session, never from browser input.
 
 ```go
-m, err := tb.NewManagement(tb.Config{BaseURL: origin, Token: dashboardCredential})
-u := m.As(session.UserID)
+m, err := tb.NewManagement(tb.Config{BaseURL: origin})
+u := m.WithToken(session.AccessToken)
 org, err := u.CreateOrganization(ctx, "Acme")
 project, err := u.CreateProject(ctx, org.ID, "Production")
 db, err := u.CreateDatabase(ctx, org.ID, project.ID, "main") // then c.Database(project.ID, "main")
@@ -114,14 +116,17 @@ It also covers `Organizations`, `RenameOrganization`, `SetPlan`,
 `DeleteOrganization`, `CurrentOrganization`/`SetCurrentOrganization`, project
 and database reads, renames and deletes, `BranchDatabase`, `SetMemberRole`,
 `RemoveMember`, `Leave`, `Invitations`, `RevokeInvitation`,
-`AcceptInvitation`, `OwnershipTransfer` and its start, cancel and confirm,
+`AcceptInvitation` (the access token's verified email must match),
+`OwnershipTransfer` and its start, cancel and confirm,
 `AuditRetention`/`SetAuditRetention` and `AuditEvents`. A 404 (`ErrUnknownRoute`)
 means an unknown id or an organization the user is not a member of; bare
 message errors map to `ErrInvalidRequest` (400), `ErrForbidden` (403, role too
-low) and `ErrConflict` (409).
+low) and `ErrConflict` (409). A rejected token or credential is `ErrInvalidKey`.
 
-Not served by TerraBase yet, so not in the client: shapes (reactive queries),
-query `explain`, `Idempotency-Key`, and the `/v1/dashboard` control plane.
+Served by TerraBase but not in the client yet (TS-590 adds them): shapes,
+database tooling (backups, indexes, schema, usage), SQL and saved queries,
+project API keys, invitation lookup and Management commits. Not served:
+query `explain`, `Idempotency-Key` and the `/v1/dashboard` control plane.
 
 ### Tests
 
@@ -130,8 +135,9 @@ fake server. The importable `terrascale.tech/sdk/terrabasetest` package is the
 shared harness for SDK and downstream tests: it pins the release
 by version and SHA-256, downloads it once with `TERRABASE_TOKEN` (read access
 to TerraScale/terrabase) into the user cache directory (or `TERRABASE_CACHE`),
-and starts it per test with a generated TLS certificate and dashboard
-credential file. TerraBase assigns both listener ports. Startup is bounded to
+and starts it per test with a generated TLS certificate, management credential
+file and local ts-auth issuer, whose access tokens `Server.Token` mints.
+TerraBase assigns both listener ports. Startup is bounded to
 30 seconds; admin requests, including their response bodies, are bounded to
 10 seconds.
 
@@ -141,18 +147,21 @@ TERRABASE_TOKEN=… TERRABASE_REQUIRE=1 nice -n 19 go test ./v1/ ./terrabasetest
 
 `v1/integration_test.go` exercises every SDK call against it. Its recording
 transport checks the real traffic: each request is a route of
-`v1/testdata/openapi.json` (the executable's own `/openapi/v1.json`, admin port
-9464) and each of those routes is called, no request carries
-`Idempotency-Key`, and the Management headers are present. Retry tests inject
+`v1/testdata/openapi.json` (the executable's own `/openapi/v1.json` on the
+client listener; `TERRABASE_REPIN=1` rewrites it) or an admin-listener route,
+each of those routes is called unless the test lists it as not in the client
+yet, no request carries `Idempotency-Key`, and no access token goes with
+`X-TerraBase-User-Id`. Retry tests inject
 faults into that transport in front of the real server. Tests skip only on an
 unsupported platform or when neither a cached executable nor a token is
 available; CI sets `TERRABASE_REQUIRE=1` to fail instead. Checksum, download
 and filesystem errors always fail, including in local runs.
 
 Downstream tests call `terrabasetest.Start(t)` to get a fresh real server.
-Use its `URL`, `Credential`, and trusted `Client` with `v1.NewManagement`
-to create an organization and project, then `Server.APIKey` to issue a
-project-scoped document credential. Pass `Server.Client` as `Config.HTTPClient`
+Use its `URL` and trusted `Client` with `v1.NewManagement` and
+`WithToken(Server.Token(t, user, email))` to create an organization and
+project, then `Server.APIKey` to issue a project-scoped document credential.
+The management service `Credential` works with `As` on `AdminURL` only. Pass `Server.Client` as `Config.HTTPClient`
 so SDK clients trust the generated TLS certificate. The process and temporary
 data, TLS, and credential files are cleaned up automatically when the test ends.
 

@@ -4,16 +4,15 @@ package v1_test
 // release executable, started by terrabasetest (never a fake). One
 // server serves every subtest; a recording transport checks the real traffic:
 // every request is a route of the pinned OpenAPI and every client route of it
-// is called, no request carries Idempotency-Key, and the Management headers
-// are sent where TerraBase requires them. Retries are tested by injecting
-// faults in that transport in front of the real server.
+// is called, no request carries Idempotency-Key, and X-TerraBase-User-Id never
+// accompanies an access token.
+// Retries are tested by injecting faults in that transport in front of the
+// real server.
 //
-// testdata/openapi.json is the pinned executable's /openapi/v1.json (admin
-// port 9464 by default); TestIntegration/PinnedOpenAPI fails when they
-// differ. To re-pin after moving the pin in terrabasetest:
-//
-//	terrabase-<commit> --data-directory=$(mktemp -d) &
-//	curl -s http://127.0.0.1:9464/openapi/v1.json > v1/testdata/openapi.json
+// testdata/openapi.json is the pinned executable's /openapi/v1.json on the
+// client listener; TestIntegration/PinnedOpenAPI fails when they differ. To
+// re-pin after moving the pin in terrabasetest, run the test with
+// TERRABASE_REPIN=1.
 
 import (
 	"bytes"
@@ -50,12 +49,13 @@ func TestIntegration(t *testing.T) {
 	}
 	routes := pinnedRoutes(loadOpenAPI(t))
 	for _, route := range routes {
-		if !slices.ContainsFunc(rec.seen, func(r string) bool { return routeMatches(route, r) }) {
-			t.Errorf("pinned route never called: %s", route)
+		called := slices.ContainsFunc(rec.seen, func(r string) bool { return routeMatches(route, r) })
+		if missing := slices.Contains(notInClient, route); called == missing {
+			t.Errorf("pinned route called=%t, but listed as not in the client=%t: %s", called, missing, route)
 		}
 	}
 	for _, r := range rec.seen {
-		if !slices.ContainsFunc(routes, func(route string) bool { return routeMatches(route, r) }) {
+		if !slices.ContainsFunc(append(routes, adminRoutes...), func(route string) bool { return routeMatches(route, r) }) {
 			t.Errorf("request outside the pinned OpenAPI: %s", r)
 		}
 	}
@@ -90,17 +90,9 @@ func (r *recorder) RoundTrip(req *http.Request) (*http.Response, error) {
 	if req.Header.Get("Idempotency-Key") != "" {
 		r.bad = append(r.bad, route+": Idempotency-Key")
 	}
-	if rest, ok := strings.CutPrefix(req.URL.EscapedPath(), "/v1/management/"); ok {
-		if req.Header.Get("X-TerraBase-User-Id") == "" {
-			r.bad = append(r.bad, route+": no X-TerraBase-User-Id")
-		}
-		var org string
-		if after, ok := strings.CutPrefix(rest, "organizations/"); ok {
-			org, _, _ = strings.Cut(after, "/")
-		}
-		if got := req.Header.Values("X-TerraBase-Organization-Id"); !slices.Equal(got, []string{org}) && (org != "" || len(got) > 0) {
-			r.bad = append(r.bad, fmt.Sprintf("%s: X-TerraBase-Organization-Id %q, want %q", route, got, org))
-		}
+	// WithToken users never name a user; the access token does.
+	if strings.Count(req.Header.Get("Authorization"), ".") == 2 && req.Header.Get("X-TerraBase-User-Id") != "" {
+		r.bad = append(r.bad, route+": X-TerraBase-User-Id with an access token")
 	}
 	f := r.f
 	inject := f != nil && f.method == req.Method
@@ -146,11 +138,18 @@ func (r *recorder) arm(f fault) func() int {
 
 func management(t *testing.T, tb *terrabasetest.Server, hc *http.Client) *v1.Management {
 	t.Helper()
-	m, err := v1.NewManagement(v1.Config{Resolver: v1.StaticResolver(tb.URL), Token: tb.Credential, HTTPClient: hc})
+	m, err := v1.NewManagement(v1.Config{Resolver: v1.StaticResolver(tb.URL), HTTPClient: hc})
 	if err != nil {
 		t.Fatal(err)
 	}
 	return m
+}
+
+// user acts as the ts-auth user id, whose verified email is email (none when
+// empty), with an access token of the server's issuer.
+func user(t *testing.T, tb *terrabasetest.Server, m *v1.Management, id, email string) *v1.ManagementUser {
+	t.Helper()
+	return m.WithToken(tb.Token(t, id, email))
 }
 
 // must(f())(t) returns f's value and fails t on its error.
@@ -172,13 +171,24 @@ func wantCode(t *testing.T, err error, code v1.ErrorCode) {
 }
 
 func testPinnedOpenAPI(t *testing.T, tb *terrabasetest.Server) {
-	res, err := http.Get(tb.AdminURL + "/openapi/v1.json")
+	res, err := tb.Client.Get(tb.URL + "/openapi/v1.json")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer res.Body.Close()
+	raw, err := io.ReadAll(res.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The TsAuth scheme names the issuer, whose port changes per server.
+	raw = bytes.ReplaceAll(raw, []byte(tb.Issuer), []byte("https://issuer.test"))
+	if os.Getenv("TERRABASE_REPIN") == "1" {
+		if err := os.WriteFile("testdata/openapi.json", raw, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
 	var live, pinned map[string]any
-	if err := json.NewDecoder(res.Body).Decode(&live); err != nil {
+	if err := json.Unmarshal(raw, &live); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile("testdata/openapi.json")
@@ -201,7 +211,7 @@ func testPinnedOpenAPI(t *testing.T, tb *terrabasetest.Server) {
 func testManagement(t *testing.T, tb *terrabasetest.Server, hc *http.Client) {
 	ctx := t.Context()
 	m := management(t, tb, hc)
-	ana, bia := m.As("user-ana"), m.As("user-bia")
+	ana, bia := user(t, tb, m, "user-ana", "ana@example.com"), user(t, tb, m, "user-bia", "bia@example.com")
 
 	org := must(ana.CreateOrganization(ctx, "Acme"))(t)
 	if org.Name != "Acme" || org.CreatedBy != "user-ana" || org.Plan != v1.PlanHobby || org.CreatedAt.IsZero() {
@@ -271,9 +281,9 @@ func testManagement(t *testing.T, tb *terrabasetest.Server, hc *http.Client) {
 	if got := must(ana.Invitations(ctx, org.ID, v1.PageOptions{}))(t); len(got.Items) != 1 {
 		t.Fatalf("invitations: %+v", got)
 	}
-	_, err = bia.AcceptInvitation(ctx, inv.Token, "someone@example.com")
+	_, err = user(t, tb, m, "user-bia", "someone@example.com").AcceptInvitation(ctx, inv.Token)
 	wantCode(t, err, v1.ErrForbidden)
-	if member := must(bia.AcceptInvitation(ctx, inv.Token, "bia@example.com"))(t); member.UserID != "user-bia" || member.Role != v1.RoleAdmin {
+	if member := must(bia.AcceptInvitation(ctx, inv.Token))(t); member.UserID != "user-bia" || member.Role != v1.RoleAdmin {
 		t.Fatalf("accept: %+v", member)
 	}
 	cara := must(ana.CreateInvitation(ctx, org.ID, "cara@example.com", ""))(t)
@@ -283,8 +293,11 @@ func testManagement(t *testing.T, tb *terrabasetest.Server, hc *http.Client) {
 	if err := ana.RevokeInvitation(ctx, org.ID, cara.Invitation.ID); err != nil {
 		t.Fatal(err)
 	}
-	_, err = m.As("user-cara").AcceptInvitation(ctx, cara.Token, "cara@example.com")
-	wantCode(t, err, v1.ErrUnknownRoute)
+	if got := must(ana.Invitations(ctx, org.ID, v1.PageOptions{}))(t); len(got.Items) != 2 || got.Items[0].Status != v1.InvitationAccepted || got.Items[1].Status != v1.InvitationRevoked {
+		t.Fatalf("invitation history: %+v", got)
+	}
+	_, err = user(t, tb, m, "user-cara", "cara@example.com").AcceptInvitation(ctx, cara.Token)
+	wantCode(t, err, v1.ErrConflict) // no longer pending
 	if got := must(bia.Members(ctx, org.ID, v1.PageOptions{}))(t); len(got.Items) != 2 {
 		t.Fatalf("members: %+v", got)
 	}
@@ -332,7 +345,7 @@ func testManagement(t *testing.T, tb *terrabasetest.Server, hc *http.Client) {
 	}
 	must(ana.CreateOrganization(ctx, "Other"))(t) // ana still acts elsewhere
 	inv2 := must(bia.CreateInvitation(ctx, org.ID, "ana@example.com", ""))(t)
-	must(ana.AcceptInvitation(ctx, inv2.Token, "ana@example.com"))(t)
+	must(ana.AcceptInvitation(ctx, inv2.Token))(t)
 	// An opaque user id is escaped as one segment; a slash or dot segment
 	// fails locally, since TerraBase matches %2F literally.
 	wantCode(t, bia.RemoveMember(ctx, org.ID, "no such user %"), v1.ErrUnknownRoute)
@@ -356,18 +369,43 @@ func testManagement(t *testing.T, tb *terrabasetest.Server, hc *http.Client) {
 	_, err = bia.Organization(ctx, org.ID)
 	wantCode(t, err, v1.ErrUnknownRoute)
 
-	// The credential is checked, and an API key is no credential.
-	bad, err := v1.NewManagement(v1.Config{BaseURL: tb.URL, Token: rand.Text() + rand.Text(), HTTPClient: hc})
+	// The service credential acts As a user on the admin listener only; an
+	// access token works on the client listener only.
+	admin, err := v1.NewManagement(v1.Config{BaseURL: tb.AdminURL, Token: tb.Credential, HTTPClient: hc})
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = bad.As("user-ana").Organizations(ctx, v1.PageOptions{})
+	boot := admin.As("user-boot")
+	bootOrg := must(boot.CreateOrganization(ctx, "Bootstrap"))(t)
+	for range 2 { // idempotent
+		if got := must(boot.AddMember(ctx, bootOrg.ID, "user-ana", "ana@example.com"))(t); got.UserID != "user-ana" || got.Role != v1.RoleMember {
+			t.Fatalf("add member: %+v", got)
+		}
+	}
+	must(ana.Organization(ctx, bootOrg.ID))(t)
+	_, err = ana.AddMember(ctx, bootOrg.ID, "user-bia", "bia@example.com")
+	wantCode(t, err, v1.ErrUnknownRoute) // admin listener only
+	_, err = admin.WithToken(tb.Token(t, "user-ana", "")).Organizations(ctx, v1.PageOptions{})
+	wantCode(t, err, v1.ErrInvalidKey)
+	onClient, err := v1.NewManagement(v1.Config{BaseURL: tb.URL, Token: tb.Credential, HTTPClient: hc})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = onClient.As("user-boot").Organizations(ctx, v1.PageOptions{})
+	wantCode(t, err, v1.ErrInvalidKey)
+	wrong, err := v1.NewManagement(v1.Config{BaseURL: tb.AdminURL, Token: rand.Text() + rand.Text(), HTTPClient: hc})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = wrong.As("user-boot").Organizations(ctx, v1.PageOptions{})
+	wantCode(t, err, v1.ErrInvalidKey)
+	_, err = m.WithToken("not-a-token").Organizations(ctx, v1.PageOptions{})
 	wantCode(t, err, v1.ErrInvalidKey)
 }
 
 func testDocuments(t *testing.T, tb *terrabasetest.Server, hc *http.Client) {
 	ctx := t.Context()
-	u := management(t, tb, hc).As("user-dora")
+	u := user(t, tb, management(t, tb, hc), "user-dora", "")
 	org := must(u.CreateOrganization(ctx, "Acme"))(t)
 	project := must(u.CreateProject(ctx, org.ID, "Production"))(t)
 	c, err := v1.New(v1.Config{BaseURL: tb.URL, Token: tb.APIKey(t, org.ID, project.ID, "documents:read", "documents:write"), HTTPClient: hc})
@@ -575,7 +613,7 @@ func testDocuments(t *testing.T, tb *terrabasetest.Server, hc *http.Client) {
 
 func testRetries(t *testing.T, tb *terrabasetest.Server, hc *http.Client, rec *recorder) {
 	ctx := t.Context()
-	u := management(t, tb, hc).As("user-eve")
+	u := user(t, tb, management(t, tb, hc), "user-eve", "")
 	org := must(u.CreateOrganization(ctx, "Retries"))(t)
 	project := must(u.CreateProject(ctx, org.ID, "Retries"))(t)
 	resolver := &testResolver{url: tb.URL}

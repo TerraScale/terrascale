@@ -36,6 +36,7 @@ func TestClientConfigValidation(t *testing.T) {
 		{"http loopback", false, testToken, "http://127.0.0.1:9464", true},
 		{"http non-loopback", false, testToken, "http://tb.example", false},
 		{"credential", true, testCredential, "https://tb.example", true},
+		{"no credential", true, "", "https://tb.example", true},
 		{"short credential", true, strings.Repeat("a", 31), "https://tb.example", false},
 		{"credential with space", true, strings.Repeat("a", 31) + " ", "https://tb.example", false},
 	} {
@@ -118,6 +119,10 @@ func TestLocalRejection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	anonymous, err := v1.NewManagement(v1.Config{BaseURL: "https://tb.example", HTTPClient: hc})
+	if err != nil {
+		t.Fatal(err)
+	}
 	users := c.Database(testProject, "main").Collection("users")
 	ctx := t.Context()
 	for name, call := range map[string]func() error{
@@ -141,6 +146,12 @@ func TestLocalRejection(t *testing.T) {
 		"slash member":  func() error { return m.As("u").RemoveMember(ctx, testOrg, "a/b") },
 		"dot member":    func() error { return m.As("u").RemoveMember(ctx, testOrg, "..") },
 		"empty org":     func() error { _, err := m.As("u").Organization(ctx, ""); return err },
+		"As without credential": func() error {
+			_, err := anonymous.As("u").Organizations(ctx, v1.PageOptions{})
+			return err
+		},
+		"empty token":      func() error { _, err := anonymous.WithToken("").Organizations(ctx, v1.PageOptions{}); return err },
+		"token with space": func() error { _, err := anonymous.WithToken("a b").Organizations(ctx, v1.PageOptions{}); return err },
 	} {
 		if err := call(); err == nil {
 			t.Errorf("%s: no error", name)

@@ -10,11 +10,11 @@ import (
 func TestDownstreamRestart(t *testing.T) {
 	s := terrabasetest.Start(t)
 	ctx := t.Context()
-	m, err := v1.NewManagement(v1.Config{BaseURL: s.URL, Token: s.Credential, HTTPClient: s.Client})
+	m, err := v1.NewManagement(v1.Config{BaseURL: s.URL, HTTPClient: s.Client})
 	if err != nil {
 		t.Fatal(err)
 	}
-	u := m.As("downstream-user")
+	u := m.WithToken(s.Token(t, "downstream-user", ""))
 	org, err := u.CreateOrganization(ctx, "Downstream")
 	if err != nil {
 		t.Fatal(err)

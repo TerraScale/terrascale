@@ -39,7 +39,7 @@ func loadOpenAPI(t *testing.T) openAPIDoc {
 	return doc
 }
 
-// pinnedRoutes returns the "METHOD /template" routes the v1 client implements.
+// pinnedRoutes returns the "METHOD /template" data and Management routes.
 func pinnedRoutes(doc openAPIDoc) []string {
 	var routes []string
 	for path, ops := range doc.Paths {
@@ -55,6 +55,48 @@ func pinnedRoutes(doc openAPIDoc) []string {
 	}
 	slices.Sort(routes)
 	return routes
+}
+
+// notInClient lists the pinned routes the client does not call yet; TS-590
+// adds them group by group.
+var notInClient = []string{
+	"DELETE /v1/management/organizations/{organization}/projects/{project}/api-keys/{key}",
+	"DELETE /v1/management/organizations/{organization}/projects/{project}/databases/{database}/indexes/{index}",
+	"DELETE /v1/management/organizations/{organization}/projects/{project}/saved-queries/{query}",
+	"GET /v1/management/commits/{id}",
+	"GET /v1/management/documents/{collection}/{id}",
+	"GET /v1/management/organizations/{organization}/projects/{project}/api-keys",
+	"GET /v1/management/organizations/{organization}/projects/{project}/databases/{database}/backup-policy",
+	"GET /v1/management/organizations/{organization}/projects/{project}/databases/{database}/backups",
+	"GET /v1/management/organizations/{organization}/projects/{project}/databases/{database}/collections",
+	"GET /v1/management/organizations/{organization}/projects/{project}/databases/{database}/collections/{collection}/schema",
+	"GET /v1/management/organizations/{organization}/projects/{project}/databases/{database}/index-recommendations",
+	"GET /v1/management/organizations/{organization}/projects/{project}/databases/{database}/indexes",
+	"GET /v1/management/organizations/{organization}/projects/{project}/databases/{database}/usage",
+	"GET /v1/management/organizations/{organization}/projects/{project}/saved-queries",
+	"GET /v1/management/organizations/{organization}/projects/{project}/saved-queries/{query}",
+	"GET /v1/management/organizations/{organization}/projects/{project}/usage",
+	"GET /v1/management/versions",
+	"GET /v1/projects/{project}/databases/{database}/collections/{collection}/shape",
+	"POST /v1/management/commits",
+	"POST /v1/management/documents/{collection}/query",
+	"POST /v1/management/invitations/lookup",
+	"POST /v1/management/organizations/{organization}/projects/{project}/api-keys",
+	"POST /v1/management/organizations/{organization}/projects/{project}/databases/{database}/backups",
+	"POST /v1/management/organizations/{organization}/projects/{project}/databases/{database}/backups/{backup}/restore",
+	"POST /v1/management/organizations/{organization}/projects/{project}/databases/{database}/index-recommendations/{recommendation}/apply",
+	"POST /v1/management/organizations/{organization}/projects/{project}/databases/{database}/indexes",
+	"POST /v1/management/organizations/{organization}/projects/{project}/databases/{database}/sql",
+	"POST /v1/management/organizations/{organization}/projects/{project}/databases/{database}/sql/check",
+	"POST /v1/management/organizations/{organization}/projects/{project}/saved-queries",
+	"PUT /v1/management/organizations/{organization}/projects/{project}/databases/{database}/backup-policy",
+	"PUT /v1/management/organizations/{organization}/projects/{project}/saved-queries/{query}",
+}
+
+// adminRoutes are served only on the admin listener, so the OpenAPI of the
+// client listener leaves them out.
+var adminRoutes = []string{
+	"PUT /v1/management/organizations/{organization}/members/{user}",
 }
 
 // routeMatches reports whether "METHOD /path" matches "METHOD /template",
@@ -104,7 +146,8 @@ func TestOpenAPIParityEnums(t *testing.T) {
 
 	for schema, want := range map[string][]string{
 		"PlanTier":         {string(v1.PlanHobby), string(v1.PlanPro), string(v1.PlanEnterprise)},
-		"OrganizationRole": {string(v1.RoleMember), string(v1.RoleAdmin), string(v1.RoleOwner)},
+		"OrganizationRole": {string(v1.RoleViewer), string(v1.RoleMember), string(v1.RoleAdmin), string(v1.RoleOwner)},
+		"InvitationStatus": {string(v1.InvitationPending), string(v1.InvitationAccepted), string(v1.InvitationDeclined), string(v1.InvitationRevoked)},
 	} {
 		got := slices.Sorted(slices.Values(doc.Components.Schemas[schema].Enum))
 		if slices.Sort(want); !slices.Equal(got, want) {
