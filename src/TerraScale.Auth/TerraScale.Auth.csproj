@@ -10,6 +10,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="TerraScale.Auth.Fast" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="../TerraScale.Auth.Contracts/TerraScale.Auth.Contracts.csproj" />
     <ProjectReference Include="../TerraScale.Auth.Security/TerraScale.Auth.Security.csproj" />
     <ProjectReference Include="../TerraScale.Auth.Store/TerraScale.Auth.Store.csproj" />

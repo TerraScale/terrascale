@@ -27,6 +27,9 @@ public sealed partial class TerraBaseMembers : BackgroundService, ITerraBaseEndp
     private readonly string[] authorities;
     // 1 while ready. Optimistic until probed, so storage starts on the first member.
     private readonly int[] ready;
+    // Request failures per member. A probe that began before the latest one cannot make the member ready again.
+    private readonly long[] failures;
+    private readonly Lock gate = new();
     private readonly HttpClient probes;
     private readonly ILogger<TerraBaseMembers> logger;
 
@@ -38,6 +41,7 @@ public sealed partial class TerraBaseMembers : BackgroundService, ITerraBaseEndp
         this.members = [.. options.TerraScaleApiEndpoints];
         this.authorities = [.. this.members.Select(member => member.GetLeftPart(UriPartial.Authority))];
         this.ready = [.. this.members.Select(_ => 1)];
+        this.failures = new long[this.members.Length];
         this.probes = new HttpClient(CreateTransport(options));
         this.logger = logger;
     }
@@ -78,8 +82,24 @@ public sealed partial class TerraBaseMembers : BackgroundService, ITerraBaseEndp
         while (await timer.WaitForNextTickAsync(stoppingToken));
     }
 
+    /// <summary>How many requests to member <paramref name="index"/> have failed; a probe reads it before it starts.</summary>
+    internal long Failures(int index) => Volatile.Read(ref this.failures[index]);
+
+    /// <summary>Applies a probe result, unless the probe began before a request failure that is newer than it.</summary>
+    internal void ApplyProbe(int index, bool isReady, long failuresAtStart)
+    {
+        lock (this.gate)
+        {
+            if (!isReady || this.failures[index] == failuresAtStart)
+            {
+                this.Set(index, isReady);
+            }
+        }
+    }
+
     private async Task ProbeAsync(int index, CancellationToken stoppingToken)
     {
+        var failuresAtStart = this.Failures(index);
         bool isReady;
         try
         {
@@ -93,7 +113,7 @@ public sealed partial class TerraBaseMembers : BackgroundService, ITerraBaseEndp
             isReady = false;
         }
 
-        this.Set(index, isReady);
+        this.ApplyProbe(index, isReady, failuresAtStart);
     }
 
     private void MarkDown(Uri request)
@@ -101,7 +121,11 @@ public sealed partial class TerraBaseMembers : BackgroundService, ITerraBaseEndp
         var index = Array.IndexOf(this.authorities, request.GetLeftPart(UriPartial.Authority));
         if (index >= 0)
         {
-            this.Set(index, false);
+            lock (this.gate)
+            {
+                this.failures[index]++;
+                this.Set(index, false);
+            }
         }
     }
 

@@ -485,32 +485,44 @@ public sealed partial record AuthOptions
         return endpoints;
     }
 
-    // PEM certificates only: a private key or any other block is refused, never silently dropped.
+    // PEM certificates only: a private key or any other block is refused, never silently dropped. On a refusal the
+    // certificates already loaded are disposed; otherwise the options own them for the process lifetime.
     private static List<X509Certificate2> ParseCertificates(string? raw)
     {
         var certificates = new List<X509Certificate2>();
-        var rest = (raw ?? string.Empty).AsSpan();
-        while (PemEncoding.TryFind(rest, out var fields))
+        try
         {
-            if (rest[fields.Label] is not "CERTIFICATE" || rest[..fields.Location.Start].Trim().Length != 0 || certificates.Count == 4)
+            var rest = (raw ?? string.Empty).AsSpan();
+            while (PemEncoding.TryFind(rest, out var fields))
             {
-                throw Invalid("TS_AUTH_TERRASCALE_API_CA must hold 1 to 4 PEM certificates and nothing else");
+                if (rest[fields.Label] is not "CERTIFICATE" || rest[..fields.Location.Start].Trim().Length != 0 || certificates.Count == 4)
+                {
+                    throw InvalidCertificates();
+                }
+
+                try
+                {
+                    certificates.Add(X509CertificateLoader.LoadCertificate(Convert.FromBase64String(rest[fields.Base64Data].ToString())));
+                }
+                catch (CryptographicException)
+                {
+                    throw InvalidCertificates();
+                }
+
+                rest = rest[fields.Location.End..];
             }
 
-            try
-            {
-                certificates.Add(X509CertificateLoader.LoadCertificate(Convert.FromBase64String(rest[fields.Base64Data].ToString())));
-            }
-            catch (CryptographicException)
-            {
-                throw Invalid("TS_AUTH_TERRASCALE_API_CA must hold 1 to 4 PEM certificates and nothing else");
-            }
-
-            rest = rest[fields.Location.End..];
+            return rest.Trim().Length == 0 ? certificates : throw InvalidCertificates();
         }
-
-        return rest.Trim().Length == 0 ? certificates : throw Invalid("TS_AUTH_TERRASCALE_API_CA must hold 1 to 4 PEM certificates and nothing else");
+        catch (AuthConfigurationException)
+        {
+            certificates.ForEach(certificate => certificate.Dispose());
+            throw;
+        }
     }
+
+    private static AuthConfigurationException InvalidCertificates() =>
+        Invalid("TS_AUTH_TERRASCALE_API_CA must hold 1 to 4 PEM certificates and nothing else");
 
     private static byte[] DecodeKey(string key, string raw)
     {

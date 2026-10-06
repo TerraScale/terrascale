@@ -24,6 +24,24 @@ public sealed class TerraBaseMembersTests
     }
 
     [Test]
+    public async Task A_probe_that_began_before_a_request_failure_cannot_restore_the_member()
+    {
+        using var members = Members("https://127.0.0.1:9;https://127.0.0.1:10", failover: true);
+        using var http = new HttpClient(members.CreateHandler());
+        var first = await members.ResolveAsync();
+
+        // The probe starts, a storage request then fails, and the probe answers ready afterwards.
+        var probeStart = members.Failures(0);
+        await Assert.ThrowsAsync<HttpRequestException>(() => http.GetAsync(new Uri(first, "readyz")));
+        members.ApplyProbe(0, isReady: true, probeStart);
+        await Assert.That(await members.ResolveAsync()).IsEqualTo(new Uri("https://127.0.0.1:10"));
+
+        // A probe that starts after the failure restores it.
+        members.ApplyProbe(0, isReady: true, members.Failures(0));
+        await Assert.That(await members.ResolveAsync()).IsEqualTo(first);
+    }
+
+    [Test]
     public async Task A_single_member_stays_pinned_while_it_is_down()
     {
         using var members = Members("https://127.0.0.1:9", failover: false);
