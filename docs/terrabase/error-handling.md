@@ -12,8 +12,8 @@ fallback was not needed.
 
 | Where | What |
 |-------|------|
-| `src/TerraScale.TerraBase/Errors/Errors.cs` | The failure kinds `NotFound`, `Conflict`, `Validation`, `PreconditionFailed` (a stale version, TS-521), `Unauthorized`, `Forbidden`, `QuotaExceeded`, `Unavailable`, `UriTooLong` (a shape filter whose continuation URL would not fit). Each has a message (the rule that failed, never client input) and a stable `Code`. Also `Done` (success without a value), `Failure` (all kinds), `Valid<T>` (a request value or `Validation`) and `Found<T>` (a resource or `NotFound`). |
-| `src/TerraScale.TerraBase/Errors/ErrorResponse.cs` | `ErrorResponse.From(Failure, op)`, the single mapping to HTTP: 404, 409, 400, 412, 401, 403, 429, 503, 414. `op` names the failing operation of a batch (`error.op`), as Management commits do. The body is the existing `{"error":{"code","message"}}` envelope (decision 0004), with `Cache-Control: no-store`. |
+| `src/TerraScale.TerraBase/Errors/Errors.cs` | The failure kinds `NotFound`, `Conflict`, `Validation`, `PreconditionFailed` (a stale version, TS-521), `Unauthorized`, `Forbidden`, `QuotaExceeded`, `Unavailable`, `UriTooLong` (a shape filter whose continuation URL would not fit), `PayloadTooLarge` and `UnsupportedMediaType` (request bodies). Each has a message (the rule that failed, never client input) and a stable `Code`. Also `Done` (success without a value), `Failure` (all kinds), `Valid<T>` (a request value or `Validation`) and `Found<T>` (a resource or `NotFound`). |
+| `src/TerraScale.TerraBase/Errors/ErrorResponse.cs` | `ErrorResponse.From(Failure, op)`, the single mapping to HTTP: 404, 409, 400, 412, 401, 403, 429, 503, 414, 413, 415. `op` names the failing operation of a batch (`error.op`), as Management commits do. The body is the existing `{"error":{"code","message"}}` envelope (decision 0004), with `Cache-Control: no-store`. |
 | The feature | One `union` per operation that lists exactly its outcomes, for example `public readonly union DeleteProjectResult(Done, NotFound, Conflict);`. It also holds shared instances with feature codes, such as `ManagementErrors.NameTaken` (`name_taken`). |
 
 `Errors/` is shared from the start, unlike other shared primitives that wait for a second feature: every folder
@@ -65,7 +65,9 @@ To validate several inputs, switch over a tuple: `(Validation error, _) => …, 
    results; assigned values and explicit `_ =` statements are negative controls.
 3. **Throwing expected failures:** the `BanExpectedFailureExceptions` target in `Directory.Build.targets` fails
    the build when code constructs `ApiException` or `BadHttpRequestException` outside the files that still do so
-   (listed in `ExpectedFailureExceptionFiles`).
+   (listed in `ExpectedFailureExceptionFiles`). Its pattern matches `new ApiException(`, not a target-typed `new(…)`
+   returned as one: write the type out in the files that still construct it. The final conversion replaces the target
+   with `BannedSymbols.txt`, which sees every form.
 
 Exceptions remain for bugs and broken invariants (`InvalidOperationException`, `ArgumentOutOfRangeException`,
 `UnreachableException`), for startup configuration errors (`TerraBaseConfigurationException`, exit code 2), and
@@ -85,7 +87,7 @@ malformed JSON body, with `400 invalid_request`.
 
 ## Checklist
 
-`throw new` counts in `src/TerraScale.TerraBase`, excluding generated `obj/` code: 279 (TS-538 recounted them
+`throw new` counts in `src/TerraScale.TerraBase`, excluding generated `obj/` code: 262 (TS-538 recounted them
 after TS-463, TS-464, TS-521 and TS-473; TS-518's figure of 127 predates them). "Expected" counts the
 `ApiException`/`BadHttpRequestException` constructions that `BanExpectedFailureExceptions` matches. The other throws
 in each row are invariants or configuration errors to review during the conversion.
@@ -102,7 +104,8 @@ in each row are invariants or configuration errors to review during the conversi
 | `Features/Management` root (access, databases, catalog, recovery, commit invariants) | 23 | 6 | `ManagementError`/`ManagementResult` and throwing validators remain. The catalog version guard in `EnsureCatalogAsync` still throws `503 unavailable` under every operation, orgs and projects included; it becomes an `Unavailable` case when access and databases convert. |
 | `Features/Management/Usage` | 2 | 0 | Review: `QueryCapacityException` thrown and caught inside the folder |
 | `Features/Documents` shapes (`GetShapeEndpoint`, `ShapeService`) | 1 | 0 | **Converted** (TS-538): `ShapeReadResult(ShapeResult, NotFound, Validation, QuotaExceeded)`; a collapsed read shares its union result, and only unexpected failures travel as exceptions. The endpoint still calls the throwing `DocumentRoute` helpers until they convert. `must_refetch` stays a 409 result with the current handle. One invariant |
-| `Features/Documents` (the rest) | 50 | 45 | To do (`ApiException` throughout); the allowlist names its remaining files. Management commits read its `ApiException`s (`FromDocuments`) |
+| `Features/Documents` request edge (`DocumentRoute`, `RequestJson`, `ETags`, `DocumentPatch` parsing, the document, collection and database endpoints) | 3 | 11 | **Converted** (TS-538): `Check…` helpers return `TenantResult`, `KeyResult`, `BodyResult`, `Valid<T>`, `NotModifiedResult` and `VersionCheck`, and `DocumentPatch.CheckMerge`/`CheckOps` return `Valid<DocumentPatch>`; endpoints switch over them. The 11 matches are `DocumentRoute.Throwable`, the one bridge that turns a `Failure` into the `ApiException` the callers below still throw, through thin wrappers (`TenantAsync`, `Parameters`, `ReadBodyAsync`, `RequestJson.Deserialize`, `ETags.Check`, …). It goes with the last of them. Three invariants |
+| `Features/Documents` (the rest: `DocumentService`, `QueryParser`, `TransactionEndpoint`, and patch application) | 30 | 28 | To do (`ApiException` throughout). Management commits read its `ApiException`s (`FromDocuments`) |
 | `Features/Replication` | 53 | 0 | Keep (TS-464): peer gRPC boundary only, no HTTP failures. `RpcException` status for peers, `InvalidDataException` for a protocol violation that ends the stream, and invariants |
 | `Features/ApiKeys` | 2 | 0 | Review: request validation returns `TypedResults.BadRequest`; the throws are invariants |
 | `Features/UserAuth` | 2 | 0 | Review |

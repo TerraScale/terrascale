@@ -19,6 +19,10 @@ internal sealed record ApiResponse(HttpStatusCode Status, JsonElement Json, stri
 
     public int? Op => Json.TryGetProperty("error", out var error) && error.TryGetProperty("op", out var op) ? op.GetInt32() : null;
 
+    public string? Message => Json.ValueKind == JsonValueKind.Object && Json.TryGetProperty("error", out var error) && error.TryGetProperty("message", out var message)
+        ? message.GetString()
+        : null;
+
     public string Version => Json.GetProperty("version").GetString()!;
 
     public IReadOnlyList<string> Ids => [.. Json.GetProperty("items").EnumerateArray().Select(item => item.GetProperty("id").GetString()!)];

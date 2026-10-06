@@ -1,4 +1,5 @@
 using TerraScale.Endpoints;
+using TerraScale.TerraBase.Errors;
 using TerraScale.TerraBase.Features.ApiKeys;
 using TerraScale.TerraBase.Hosting;
 using TerraScale.TerraBase.Tenancy;
@@ -22,11 +23,16 @@ public sealed class GetCollectionEndpoint(IDocumentService documents, ITenantDir
     }
 
     /// <inheritdoc />
-    public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
-    {
-        var database = await DocumentRoute.TenantAsync(HttpContext, tenants, cancellationToken);
-        var name = DocumentRoute.CollectionName(HttpContext);
-        DocumentRoute.Parameters(HttpContext);
-        return TypedResults.Ok(CreateCollectionEndpoint.Body(await documents.GetCollectionAsync(database, name, cancellationToken)));
-    }
+    public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
+        await DocumentRoute.CheckTenantAsync(HttpContext, tenants, cancellationToken) switch
+        {
+            Validation error => ErrorResponse.From(error),
+            NotFound error => ErrorResponse.From(error),
+            TenantContext database => (DocumentRoute.CheckCollectionName(HttpContext), DocumentRoute.CheckParameters(HttpContext)) switch
+            {
+                (Validation error, _) => ErrorResponse.From(error),
+                (_, Validation error) => ErrorResponse.From(error),
+                (string name, _) => TypedResults.Ok(CreateCollectionEndpoint.Body(await documents.GetCollectionAsync(database, name, cancellationToken))),
+            },
+        };
 }

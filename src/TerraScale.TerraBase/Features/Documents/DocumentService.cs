@@ -400,7 +400,7 @@ internal sealed class DocumentService(IStorageEngine engine, TimeProvider time, 
     private async ValueTask<IStorageTransaction> BeginAsync(TenantContext database, bool write, CancellationToken cancellationToken)
     {
         var store = await engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false)
-            ?? throw DocumentRoute.UnknownDatabase();
+            ?? throw DocumentRoute.Throwable(DocumentRoute.UnknownDatabase);
         return await store.BeginTransactionAsync(write, cancellationToken).ConfigureAwait(false);
     }
 }

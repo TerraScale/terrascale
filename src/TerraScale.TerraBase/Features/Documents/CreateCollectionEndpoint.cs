@@ -1,5 +1,6 @@
 using TerraScale.Endpoints;
 using TerraScale.TerraBase.Engine;
+using TerraScale.TerraBase.Errors;
 using TerraScale.TerraBase.Features.ApiKeys;
 using TerraScale.TerraBase.Hosting;
 using TerraScale.TerraBase.Tenancy;
@@ -26,13 +27,35 @@ public sealed class CreateCollectionEndpoint(IDocumentService documents, ITenant
     }
 
     /// <inheritdoc />
-    public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
+    public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
+        await DocumentRoute.CheckTenantAsync(HttpContext, tenants, cancellationToken) switch
+        {
+            Validation error => ErrorResponse.From(error),
+            NotFound error => ErrorResponse.From(error),
+            TenantContext database => (DocumentRoute.CheckParameters(HttpContext), DocumentRoute.CheckIdempotencyKey(HttpContext)) switch
+            {
+                (Validation error, _) => ErrorResponse.From(error),
+                (_, Validation error) => ErrorResponse.From(error),
+                _ => await DocumentRoute.CheckBodyAsync(HttpContext, DocumentRoute.MaxRequestBytes, "invalid_request", cancellationToken, DocumentRoute.JsonMediaType) switch
+                {
+                    Validation error => ErrorResponse.From(error),
+                    PayloadTooLarge error => ErrorResponse.From(error),
+                    UnsupportedMediaType error => ErrorResponse.From(error),
+                    byte[] body => RequestJson.Read<CreateCollectionRequest>(body, "invalid_request") switch
+                    {
+                        Validation error => ErrorResponse.From(error),
+                        CreateCollectionRequest request => DocumentRoute.CheckCollectionName(request.Name) switch
+                        {
+                            Validation error => ErrorResponse.From(error),
+                            string name => await CreateAsync(database, name, cancellationToken),
+                        },
+                    },
+                },
+            },
+        };
+
+    private async ValueTask<IResult> CreateAsync(TenantContext database, string name, CancellationToken cancellationToken)
     {
-        var database = await DocumentRoute.TenantAsync(HttpContext, tenants, cancellationToken);
-        DocumentRoute.Parameters(HttpContext);
-        DocumentRoute.RejectIdempotencyKey(HttpContext);
-        var body = await DocumentRoute.ReadBodyAsync(HttpContext, DocumentRoute.MaxRequestBytes, "invalid_request", cancellationToken, DocumentRoute.JsonMediaType);
-        var name = DocumentRoute.CollectionName(RequestJson.Deserialize<CreateCollectionRequest>(body, "invalid_request").Name);
         var collection = await documents.CreateCollectionAsync(database, name, cancellationToken);
         return TypedResults.Created(
             $"/v1/projects/{Uri.EscapeDataString(DocumentRoute.Project(HttpContext))}/databases/{DocumentRoute.Database(HttpContext)}/collections/{name}", Body(collection));

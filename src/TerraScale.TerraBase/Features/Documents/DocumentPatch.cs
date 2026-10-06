@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using TerraScale.TerraBase.Errors;
 using TerraScale.TerraBase.Hosting;
 using TerraScale.TerraBase.Primitives;
 
@@ -19,43 +20,81 @@ public abstract record DocumentPatch
     /// <summary>Applies the patch to a live document; fails with <c>patch_conflict</c> when a target has the wrong type.</summary>
     public abstract void Apply(JsonObject document);
 
+    /// <summary>As <see cref="CheckMerge"/>, for the callers not converted to unions yet.</summary>
+    public static DocumentPatch Merge(JsonElement patch) => CheckMerge(patch) switch
+    {
+        DocumentPatch merge => merge,
+        Validation error => throw DocumentRoute.Throwable(error),
+    };
+
     /// <summary>Parses a merge patch, which must be an object.</summary>
-    public static DocumentPatch Merge(JsonElement patch)
+    public static Valid<DocumentPatch> CheckMerge(JsonElement patch)
     {
         if (patch.ValueKind != JsonValueKind.Object)
         {
-            throw Invalid("a merge patch must be a JSON object");
+            return Invalid("a merge patch must be a JSON object");
         }
 
-        RequestJson.ValidateValue(patch, "invalid_patch");
-        return new MergePatch(JsonObject.Create(patch.Clone())!);
+        if (RequestJson.CheckValue(patch, "invalid_patch") is Validation error)
+        {
+            return error;
+        }
+
+        DocumentPatch merge = new MergePatch(JsonObject.Create(patch.Clone())!);
+        return merge;
     }
 
-    /// <summary>Parses patch operations.</summary>
-    public static DocumentPatch Ops(IReadOnlyList<PatchOpRequest>? ops)
+    /// <summary>As <see cref="CheckOps"/>, for the callers not converted to unions yet.</summary>
+    public static DocumentPatch Ops(IReadOnlyList<PatchOpRequest>? ops) => CheckOps(ops) switch
+    {
+        DocumentPatch patch => patch,
+        Validation error => throw DocumentRoute.Throwable(error),
+    };
+
+    /// <summary>Parses patch operations; the first invalid one names the rule it breaks.</summary>
+    public static Valid<DocumentPatch> CheckOps(IReadOnlyList<PatchOpRequest>? ops)
     {
         if (ops is not { Count: > 0 and <= MaxOps })
         {
-            throw Invalid("ops must hold 1 to 256 operations");
+            return Invalid("ops must hold 1 to 256 operations");
         }
 
-        return new OpsPatch([.. ops.Select(Parse)]);
+        var steps = new List<PatchStep>(ops.Count);
+        foreach (var op in ops)
+        {
+            switch (Step(op))
+            {
+                case Validation error:
+                    return error;
+                case PatchStep step:
+                    steps.Add(step);
+                    break;
+            }
+        }
+
+        DocumentPatch patch = new OpsPatch([.. steps]);
+        return patch;
     }
 
-    private static PatchStep Parse(PatchOpRequest op)
+    private static Valid<PatchStep> Step(PatchOpRequest op) =>
+        QueryParser.CheckPointer(op.Path, "invalid_patch", "patch paths are JSON Pointers to object members") switch
+        {
+            Validation error => error,
+            IReadOnlyList<string> path => Step(op, path),
+        };
+
+    private static Valid<PatchStep> Step(PatchOpRequest op, IReadOnlyList<string> path)
     {
-        var path = QueryParser.Pointer(op.Path, "invalid_patch")
-            ?? throw Invalid("patch paths are JSON Pointers to object members");
         var hasValue = op.Value.ValueKind != JsonValueKind.Undefined;
         var hasBy = op.By.ValueKind != JsonValueKind.Undefined;
-        if (hasValue)
+        if (hasValue && RequestJson.CheckValue(op.Value, "invalid_patch") is Validation badValue)
         {
-            RequestJson.ValidateValue(op.Value, "invalid_patch");
+            return badValue;
         }
 
-        if (hasBy)
+        if (hasBy && RequestJson.CheckValue(op.By, "invalid_patch") is Validation badBy)
         {
-            RequestJson.ValidateValue(op.By, "invalid_patch");
+            return badBy;
         }
 
         return op.Op switch
@@ -63,13 +102,16 @@ public abstract record DocumentPatch
             "set" or "append" when hasValue && !hasBy => new PatchStep(op.Op, path, op.Value.Clone()),
             "unset" when !hasValue && !hasBy => new PatchStep(op.Op, path, default),
             "inc" when hasBy && !hasValue && op.By.ValueKind == JsonValueKind.Number => new PatchStep(op.Op, path, op.By.Clone()),
-            _ => throw Invalid("each op is set or append with value, unset, or inc with a number by"),
+            _ => Invalid("each op is set or append with value, unset, or inc with a number by"),
         };
     }
 
-    private static ApiException Invalid(string message) => new(StatusCodes.Status400BadRequest, "invalid_patch", message);
+    private static Validation Invalid(string message) => new(message, "invalid_patch");
 
-    private static ApiException Conflict(string message) => new(StatusCodes.Status409Conflict, "patch_conflict", message);
+    // Apply runs inside the document service, which still throws (docs/error-handling.md); it converts with the service.
+    private static ApiException Rejected(string message) => DocumentRoute.Throwable(Invalid(message));
+
+    private static ApiException Conflict(string message) => DocumentRoute.Throwable(new Conflict(message, "patch_conflict"));
 
     private sealed record MergePatch(JsonObject Patch) : DocumentPatch
     {
@@ -136,7 +178,7 @@ public abstract record DocumentPatch
                 case "inc":
                     if (!ExactNumber.TryParse(Value.GetRawText(), out var by))
                     {
-                        throw Invalid("inc needs a number by");
+                        throw Rejected("inc needs a number by");
                     }
 
                     var start = default(ExactNumber);
@@ -150,7 +192,7 @@ public abstract record DocumentPatch
                         // Stored numbers are within the limits; only an earlier op of this patch can leave one outside.
                         if (!ExactNumber.TryParse(number.ToJsonString(), out start))
                         {
-                            throw new ApiException("numbers have at most 128 significant digits and a magnitude of 0 or 1e-307 to below 1e308");
+                            throw DocumentRoute.Throwable(new Validation("numbers have at most 128 significant digits and a magnitude of 0 or 1e-307 to below 1e308"));
                         }
                     }
 

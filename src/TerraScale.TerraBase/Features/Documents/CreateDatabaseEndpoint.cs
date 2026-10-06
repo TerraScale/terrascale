@@ -1,4 +1,6 @@
 using TerraScale.Endpoints;
+using TerraScale.TerraBase.Engine;
+using TerraScale.TerraBase.Errors;
 using TerraScale.TerraBase.Features.ApiKeys;
 using TerraScale.TerraBase.Hosting;
 using TerraScale.TerraBase.Tenancy;
@@ -29,21 +31,32 @@ public sealed class CreateDatabaseEndpoint(ITenantDirectory tenants) : EndpointW
     }
 
     /// <inheritdoc />
-    public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
+    public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
+        DocumentRoute.CheckDatabase(HttpContext) switch
+        {
+            Validation error => ErrorResponse.From(error),
+            DatabaseName name => await CreateAsync(name, cancellationToken),
+        };
+
+    private async ValueTask<IResult> CreateAsync(DatabaseName name, CancellationToken cancellationToken)
     {
-        var name = DocumentRoute.Database(HttpContext);
         var key = ApiKey.Of(HttpContext);
         var project = DocumentRoute.Project(HttpContext);
         if (key.DatabaseId is not null)
         {
             // Only its own database exists for such a key, and it already does.
-            return TypedResults.Ok(Body(await DocumentRoute.TenantAsync(HttpContext, tenants, cancellationToken), name.Value));
+            return await DocumentRoute.CheckTenantAsync(HttpContext, tenants, cancellationToken) switch
+            {
+                TenantContext own => TypedResults.Ok(Body(own, name.Value)),
+                Validation error => ErrorResponse.From(error),
+                NotFound error => ErrorResponse.From(error),
+            };
         }
 
         if ((key.ProjectId is not null && !string.Equals(key.ProjectId, project, StringComparison.Ordinal))
             || await tenants.CreateDatabaseAsync(key.OrganizationId, project, name.Value, cancellationToken) is not ({ } database, var created))
         {
-            throw DocumentRoute.UnknownDatabase();
+            return ErrorResponse.From(DocumentRoute.UnknownDatabase);
         }
 
         var body = Body(database, name.Value);

@@ -1,5 +1,6 @@
 using System.Text.Json;
 using TerraScale.Endpoints;
+using TerraScale.TerraBase.Errors;
 using TerraScale.TerraBase.Features.ApiKeys;
 using TerraScale.TerraBase.Hosting;
 using TerraScale.TerraBase.Tenancy;
@@ -27,13 +28,28 @@ public sealed class PutDocumentEndpoint(IDocumentService documents, ITenantDirec
     }
 
     /// <inheritdoc />
-    public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
+    public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
+        await DocumentRoute.CheckKeyAsync(HttpContext, tenants, cancellationToken) switch
+        {
+            Validation error => ErrorResponse.From(error),
+            NotFound error => ErrorResponse.From(error),
+            DocumentKey key => (DocumentRoute.CheckParameters(HttpContext), DocumentRoute.CheckIdempotencyKey(HttpContext), ETags.CheckPrecondition(HttpContext)) switch
+            {
+                (Validation error, _, _) => ErrorResponse.From(error),
+                (_, Validation error, _) => ErrorResponse.From(error),
+                (_, _, Validation error) => ErrorResponse.From(error),
+                (_, _, Precondition precondition) => await DocumentRoute.CheckDocumentAsync(HttpContext, cancellationToken) switch
+                {
+                    Validation error => ErrorResponse.From(error),
+                    PayloadTooLarge error => ErrorResponse.From(error),
+                    UnsupportedMediaType error => ErrorResponse.From(error),
+                    byte[] json => await PutAsync(key, json, precondition, cancellationToken),
+                },
+            },
+        };
+
+    private async ValueTask<IResult> PutAsync(DocumentKey key, byte[] json, Precondition precondition, CancellationToken cancellationToken)
     {
-        var key = await DocumentRoute.KeyAsync(HttpContext, tenants, cancellationToken);
-        DocumentRoute.Parameters(HttpContext);
-        DocumentRoute.RejectIdempotencyKey(HttpContext);
-        var precondition = ETags.Precondition(HttpContext);
-        var json = await DocumentRoute.ReadDocumentAsync(HttpContext, cancellationToken);
         var (body, created) = await DocumentRoute.WriteAsync(
             HttpContext, documents, key, new PutOperation(key.Collection, key.Id, json, precondition), cancellationToken);
         return created ? TypedResults.Created(DocumentRoute.Location(HttpContext, key), body) : TypedResults.Ok(body);

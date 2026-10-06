@@ -20,6 +20,8 @@ internal static class ErrorResponse
         QuotaExceeded e => new Response(StatusCodes.Status429TooManyRequests, e.Code, e.Message, op),
         Unavailable e => new Response(StatusCodes.Status503ServiceUnavailable, e.Code, e.Message, op),
         UriTooLong e => new Response(StatusCodes.Status414UriTooLong, e.Code, e.Message, op),
+        PayloadTooLarge e => new Response(StatusCodes.Status413PayloadTooLarge, e.Code, e.Message, op),
+        UnsupportedMediaType e => new Response(StatusCodes.Status415UnsupportedMediaType, e.Code, e.Message, op),
     };
 
     private sealed class Response(int status, string code, string? message, int? op) : IResult

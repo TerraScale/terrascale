@@ -1,6 +1,7 @@
 using System.Globalization;
 using TerraScale.Endpoints;
 using TerraScale.TerraBase.Engine;
+using TerraScale.TerraBase.Errors;
 using TerraScale.TerraBase.Features.ApiKeys;
 using TerraScale.TerraBase.Hosting;
 using TerraScale.TerraBase.Tenancy;
@@ -33,13 +34,32 @@ public sealed class QueryDocumentsEndpoint(IDocumentService documents, ITenantDi
     }
 
     /// <inheritdoc />
-    public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
+    public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
+        await DocumentRoute.CheckTenantAsync(HttpContext, tenants, cancellationToken) switch
+        {
+            Validation error => ErrorResponse.From(error),
+            NotFound error => ErrorResponse.From(error),
+            TenantContext database => (DocumentRoute.CheckCollectionName(HttpContext), DocumentRoute.CheckParameters(HttpContext)) switch
+            {
+                (Validation error, _) => ErrorResponse.From(error),
+                (_, Validation error) => ErrorResponse.From(error),
+                (string collection, _) => await DocumentRoute.CheckBodyAsync(
+                    HttpContext, DocumentRoute.MaxRequestBytes, "invalid_query", cancellationToken, DocumentRoute.JsonMediaType) switch
+                {
+                    Validation error => ErrorResponse.From(error),
+                    PayloadTooLarge error => ErrorResponse.From(error),
+                    UnsupportedMediaType error => ErrorResponse.From(error),
+                    byte[] body => RequestJson.Read<QueryRequest>(body, "invalid_query") switch
+                    {
+                        Validation error => ErrorResponse.From(error),
+                        QueryRequest request => await QueryAsync(database, collection, body, request, cancellationToken),
+                    },
+                },
+            },
+        };
+
+    private async ValueTask<IResult> QueryAsync(TenantContext database, string collection, byte[] body, QueryRequest request, CancellationToken cancellationToken)
     {
-        var database = await DocumentRoute.TenantAsync(HttpContext, tenants, cancellationToken);
-        var collection = DocumentRoute.CollectionName(HttpContext);
-        DocumentRoute.Parameters(HttpContext);
-        var body = await DocumentRoute.ReadBodyAsync(HttpContext, DocumentRoute.MaxRequestBytes, "invalid_query", cancellationToken, DocumentRoute.JsonMediaType);
-        var request = RequestJson.Deserialize<QueryRequest>(body, "invalid_query");
         var query = QueryParser.Parse(database, collection, request);
         var after = request.Cursor is { } cursor ? QueryParser.Position(cursor, query.Digest, query.Sort.Count) : null;
         var (page, count) = await documents.QueryAsync(

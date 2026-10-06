@@ -47,10 +47,25 @@ public sealed class GetShapeEndpoint(IShapeService shapes, ITenantDirectory tena
         var headers = HttpContext.Response.Headers;
         // Errors are never cached; successful responses replace this.
         headers.CacheControl = "no-store";
-        var collection = DocumentRoute.CollectionName(HttpContext);
         // Malformed route values first (400), then the tenant: another tenant's database is 404 whatever the query.
-        var database = await DocumentRoute.TenantAsync(HttpContext, tenants, cancellationToken);
-        var query = DocumentRoute.Parameters(HttpContext, "where", "handle", "offset", "live", "cursor");
+        return DocumentRoute.CheckCollectionName(HttpContext) switch
+        {
+            Validation error => ErrorResponse.From(error),
+            string collection => await DocumentRoute.CheckTenantAsync(HttpContext, tenants, cancellationToken) switch
+            {
+                Validation error => ErrorResponse.From(error),
+                NotFound error => ErrorResponse.From(error),
+                TenantContext database => DocumentRoute.CheckParameters(HttpContext, "where", "handle", "offset", "live", "cursor") switch
+                {
+                    Validation error => ErrorResponse.From(error),
+                    IQueryCollection query => await ReadAsync(collection, database, query, cancellationToken),
+                },
+            },
+        };
+    }
+
+    private async ValueTask<IResult> ReadAsync(string collection, TenantContext database, IQueryCollection query, CancellationToken cancellationToken)
+    {
         if ((query.TryGetValue("offset", out var rawOffset) ? ShapeOffset.Parse(rawOffset.ToString()) : null) is not { } offset)
         {
             return ErrorResponse.From(new Validation("offset is required: -1, snap.<S>.<P> or a decimal log position"));
@@ -123,9 +138,20 @@ public sealed class GetShapeEndpoint(IShapeService shapes, ITenantDirectory tena
         // Historical snapshots and closed log chunks keep the same bytes and validator after writes.
         var version = $"{result.ShapeId}:{result.Handle}:{offset}:{result.NextOffset}:{result.Digest}";
         headers.ETag = $"\"{version}\"";
-        return ETags.NotModified(HttpContext, live: true, version)
-            ? TypedResults.StatusCode(StatusCodes.Status304NotModified)
-            : TypedResults.Bytes(result.Body, DocumentRoute.JsonMediaType);
+        return ETags.CheckNotModified(HttpContext, live: true, version) switch
+        {
+            Validation error => Refuse(error),
+            PreconditionFailed error => Refuse(error),
+            true => TypedResults.StatusCode(StatusCodes.Status304NotModified),
+            false => TypedResults.Bytes(result.Body, DocumentRoute.JsonMediaType),
+        };
+    }
+
+    // The response was prepared for a page (validators, cache policy, shape headers): an error must not carry them.
+    private IResult Refuse(Failure error)
+    {
+        HttpContext.Response.Clear();
+        return ErrorResponse.From(error);
     }
 
     // Unpadded base64url of the longest id storage admits (1024 UTF-8 bytes): ceil(1024 * 4 / 3) characters.
@@ -139,7 +165,11 @@ public sealed class GetShapeEndpoint(IShapeService shapes, ITenantDirectory tena
         }
 
         // JsonDocument accepts lone surrogate escapes such as "\uD800"; reject them as a 400, like query bodies.
-        RequestJson.RequireText(Encoding.UTF8.GetBytes(where.ToString()), "invalid_query");
+        if (!RequestJson.IsText(Encoding.UTF8.GetBytes(where.ToString())))
+        {
+            return new Validation(RequestJson.TextRule, "invalid_query");
+        }
+
         try
         {
             using var json = JsonDocument.Parse(where.ToString());

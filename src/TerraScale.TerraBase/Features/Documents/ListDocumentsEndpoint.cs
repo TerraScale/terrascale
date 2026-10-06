@@ -1,5 +1,6 @@
 using TerraScale.Endpoints;
 using TerraScale.TerraBase.Engine;
+using TerraScale.TerraBase.Errors;
 using TerraScale.TerraBase.Features.ApiKeys;
 using TerraScale.TerraBase.Hosting;
 using TerraScale.TerraBase.Tenancy;
@@ -24,18 +25,35 @@ public sealed class ListDocumentsEndpoint(IDocumentService documents, ITenantDir
     }
 
     /// <inheritdoc />
-    public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
+    public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
+        await DocumentRoute.CheckTenantAsync(HttpContext, tenants, cancellationToken) switch
+        {
+            Validation error => ErrorResponse.From(error),
+            NotFound error => ErrorResponse.From(error),
+            TenantContext database => (DocumentRoute.CheckCollectionName(HttpContext), DocumentRoute.CheckParameters(HttpContext, "limit", "cursor")) switch
+            {
+                (Validation error, _) => ErrorResponse.From(error),
+                (_, Validation error) => ErrorResponse.From(error),
+                (string collection, IQueryCollection query) => await ListAsync(database, collection, query, cancellationToken),
+            },
+        };
+
+    private async ValueTask<IResult> ListAsync(TenantContext database, string collection, IQueryCollection query, CancellationToken cancellationToken)
     {
-        var database = await DocumentRoute.TenantAsync(HttpContext, tenants, cancellationToken);
-        var collection = DocumentRoute.CollectionName(HttpContext);
-        var query = DocumentRoute.Parameters(HttpContext, "limit", "cursor");
         var digest = QueryParser.Digest(database, collection, "list");
         var after = query.TryGetValue("cursor", out var cursor) ? QueryParser.Position(cursor!, digest, 0) : null;
+        return DocumentRoute.CheckLimit(query, QueryParser.DefaultLimit, QueryParser.MaxLimit) switch
+        {
+            Validation error => ErrorResponse.From(error),
+            int limit => await PageAsync(database, collection, digest, after, limit, cancellationToken),
+        };
+    }
+
+    private async ValueTask<IResult> PageAsync(
+        TenantContext database, string collection, string digest, QueryPosition? after, int limit, CancellationToken cancellationToken)
+    {
         var (page, _) = await documents.QueryAsync(
-            database,
-            new DocumentQuery(collection, null, [], after, DocumentRoute.Limit(query, QueryParser.DefaultLimit, QueryParser.MaxLimit), DocumentRoute.MaxPageBytes),
-            countLimit: null,
-            cancellationToken);
+            database, new DocumentQuery(collection, null, [], after, limit, DocumentRoute.MaxPageBytes), countLimit: null, cancellationToken);
         return TypedResults.Ok(new DocumentPageBody(
             [.. page.Rows.Select(row => GetDocumentEndpoint.Body(collection, row.Document, cancellationToken: cancellationToken))],
             page.HasMore ? QueryParser.Cursor(digest, page.Rows[^1]) : null));

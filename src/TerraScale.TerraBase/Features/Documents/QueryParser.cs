@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using TerraScale.TerraBase.Engine;
+using TerraScale.TerraBase.Errors;
 using TerraScale.TerraBase.Hosting;
 using TerraScale.TerraBase.Tenancy;
 
@@ -103,6 +104,31 @@ internal static class QueryParser
     /// </summary>
     public static IReadOnlyList<string>? Pointer(string? pointer, string code)
     {
+        var segments = ParsePointer(pointer, out var tooDeep);
+        return tooDeep ? throw new ApiException(StatusCodes.Status400BadRequest, code, TooDeep) : segments;
+    }
+
+    /// <summary>
+    /// The segments of an RFC 6901 JSON Pointer of object members (1 to 16 segments, at most 4 KiB), or the rule it
+    /// breaks: <paramref name="invalid"/> when it is not one.
+    /// </summary>
+    public static Valid<IReadOnlyList<string>> CheckPointer(string? pointer, string code, string invalid)
+    {
+        if (ParsePointer(pointer, out var tooDeep) is not { } parsed)
+        {
+            return new Validation(tooDeep ? TooDeep : invalid, code);
+        }
+
+        IReadOnlyList<string> segments = parsed;
+        return segments;
+    }
+
+    private const string TooDeep = "a path has at most 16 segments";
+
+    // null when the pointer is not one, also when it has too many segments (tooDeep).
+    private static string[]? ParsePointer(string? pointer, out bool tooDeep)
+    {
+        tooDeep = false;
         if (pointer is null || pointer.Length > MaxPathLength || !pointer.StartsWith('/'))
         {
             return null;
@@ -111,7 +137,8 @@ internal static class QueryParser
         var segments = pointer[1..].Split('/');
         if (segments.Length > MaxSegments)
         {
-            throw new ApiException(StatusCodes.Status400BadRequest, code, "a path has at most 16 segments");
+            tooDeep = true;
+            return null;
         }
 
         for (var i = 0; i < segments.Length; i++)

@@ -1,7 +1,9 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.Json.Serialization.Metadata;
+using TerraScale.TerraBase.Errors;
 using TerraScale.TerraBase.Hosting;
 using TerraScale.TerraBase.Primitives;
 
@@ -40,28 +42,41 @@ public static class RequestJson
         TypeInfoResolver = TerraBaseJsonContext.Default.WithAddedModifier(RejectNullElements),
     };
 
+    /// <summary>The rule <see cref="IsText"/> checks, as its failure message.</summary>
+    public const string TextRule = "strings must be valid UTF-8 without lone UTF-16 surrogate escapes";
+
+    /// <summary>As <see cref="Read{T}"/>, for the callers not converted to unions yet.</summary>
+    public static T Deserialize<T>(ReadOnlySpan<byte> json, string code) =>
+        TryRead<T>(json, out var value, out var rule) ? value : throw DocumentRoute.Throwable(new Validation(rule, code));
+
     /// <summary>
     /// Deserializes a request body: exact member names, no unknown or duplicate members, numbers as numbers and no
     /// null list elements. Any failure is a 400 with <paramref name="code"/>.
     /// </summary>
-    public static T Deserialize<T>(ReadOnlySpan<byte> json, string code)
+    public static Valid<T> Read<T>(ReadOnlySpan<byte> json, string code) =>
+        TryRead<T>(json, out var value, out var rule) ? value : new Validation(rule, code);
+
+    private static bool TryRead<T>(ReadOnlySpan<byte> json, [MaybeNullWhen(false)] out T value, out string rule)
     {
+        rule = "the body must be a JSON object";
         try
         {
-            return JsonSerializer.Deserialize(json, Options.GetTypeInfo<T>())
-                ?? throw new ApiException(StatusCodes.Status400BadRequest, code, "the body must be a JSON object");
+            value = JsonSerializer.Deserialize(json, Options.GetTypeInfo<T>());
+            return value is not null;
         }
         catch (JsonException)
         {
-            throw new ApiException(StatusCodes.Status400BadRequest, code, "the body is not a valid request");
+            value = default;
+            rule = "the body is not a valid request";
+            return false;
         }
     }
 
     /// <summary>
-    /// Rejects invalid UTF-8 and lone UTF-16 surrogate escapes in every string and member name.
-    /// Reading a token alone does not validate its text; decoding it does.
+    /// Whether every string and member name is valid UTF-8 without lone UTF-16 surrogate escapes. Reading a token alone
+    /// does not validate its text; decoding it does. Malformed JSON passes: the parser that reads it reports it.
     /// </summary>
-    public static void RequireText(ReadOnlySpan<byte> json, string code)
+    public static bool IsText(ReadOnlySpan<byte> json)
     {
         var reader = new Utf8JsonReader(json);
         try
@@ -81,7 +96,18 @@ public static class RequestJson
         }
         catch (Exception error) when (error is InvalidOperationException or DecoderFallbackException)
         {
-            throw new ApiException(StatusCodes.Status400BadRequest, code, "strings must be valid UTF-8 without lone UTF-16 surrogate escapes");
+            return false;
+        }
+
+        return true;
+    }
+
+    /// <summary>As <see cref="CheckValue"/>, for the callers not converted to unions yet.</summary>
+    public static void ValidateValue(JsonElement value, string code)
+    {
+        if (CheckValue(value, code) is Validation error)
+        {
+            throw DocumentRoute.Throwable(error);
         }
     }
 
@@ -90,15 +116,17 @@ public static class RequestJson
     /// that <see cref="ExactNumber.TryParse(ReadOnlySpan{byte}, out ExactNumber)"/> accepts. A patch value within them cannot make a patched document too
     /// deep for the client's parser (16 path segments plus 16 levels stay below its 64-level envelope bound).
     /// </summary>
-    public static void ValidateValue(JsonElement value, string code)
+    public static Valid<Done> CheckValue(JsonElement value, string code)
     {
         try
         {
             DocumentJson.ValidateValue(value);
+            return new Done();
         }
         catch (DocumentValidationException error)
         {
-            throw new ApiException(StatusCodes.Status400BadRequest, code, error.Message);
+            // The document library reports its limits by exception; this is that boundary.
+            return new Validation(error.Message, code);
         }
     }
 

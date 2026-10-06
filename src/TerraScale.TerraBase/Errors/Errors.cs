@@ -49,11 +49,21 @@ public sealed record Unavailable(string Message, string Code = "unavailable");
 /// <param name="Code">Stable machine-readable code.</param>
 public sealed record UriTooLong(string Message, string Code = "uri_too_long");
 
+/// <summary>The request body is larger than the route accepts.</summary>
+/// <param name="Message">The limit that was hit.</param>
+/// <param name="Code">Stable machine-readable code.</param>
+public sealed record PayloadTooLarge(string Message, string Code = "payload_too_large");
+
+/// <summary>The request body's media type or content encoding is not one the route reads.</summary>
+/// <param name="Message">What the route accepts.</param>
+/// <param name="Code">Stable machine-readable code.</param>
+public sealed record UnsupportedMediaType(string Message, string Code = "unsupported_media_type");
+
 /// <summary>Success without a value, such as a deletion.</summary>
 public sealed record Done;
 
 /// <summary>Every expected failure; <see cref="ErrorResponse.From"/> maps each to its HTTP response.</summary>
-public readonly union Failure(NotFound, Conflict, Validation, PreconditionFailed, Unauthorized, Forbidden, QuotaExceeded, Unavailable, UriTooLong);
+public readonly union Failure(NotFound, Conflict, Validation, PreconditionFailed, Unauthorized, Forbidden, QuotaExceeded, Unavailable, UriTooLong, PayloadTooLarge, UnsupportedMediaType);
 
 /// <summary>A value read from a request, or the input rule it breaks.</summary>
 /// <typeparam name="T">The value type.</typeparam>

@@ -4,9 +4,15 @@ using System.Security.Cryptography;
 using System.Text;
 using Microsoft.Extensions.Primitives;
 using Microsoft.Net.Http.Headers;
-using TerraScale.TerraBase.Hosting;
+using TerraScale.TerraBase.Errors;
 
 namespace TerraScale.TerraBase.Features.Documents;
+
+/// <summary>Whether a read answers 304, or why its conditions refuse it.</summary>
+internal readonly union NotModifiedResult(bool, Validation, PreconditionFailed);
+
+/// <summary>A precondition that holds, or the 412 it fails with.</summary>
+internal readonly union VersionCheck(Done, PreconditionFailed);
 
 /// <summary>
 /// Document versions as entity tags and the conditional requests on them (RFC 9110 §8.8.3, §13.1.1, §13.1.2).
@@ -35,81 +41,106 @@ internal static class ETags
     /// The preconditions of a write. <c>If-Match</c> compares strongly, so weak tags never match; <c>If-None-Match</c>
     /// on a write accepts only <c>*</c>.
     /// </summary>
-    public static Precondition Precondition(HttpContext context)
-    {
-        var ifNoneMatch = Parse(context, HeaderNames.IfNoneMatch);
-        if (ifNoneMatch is not null && !ifNoneMatch[0].Equals(EntityTagHeaderValue.Any))
+    public static Valid<Precondition> CheckPrecondition(HttpContext context) =>
+        (Tags(context, HeaderNames.IfNoneMatch), Tags(context, HeaderNames.IfMatch)) switch
         {
-            throw new ApiException("writes accept only If-None-Match: *");
-        }
-
-        return FromIfMatch(Parse(context, HeaderNames.IfMatch)) with { IfNoneMatch = ifNoneMatch is not null };
-    }
+            (Validation error, _) => error,
+            (IList<EntityTagHeaderValue> ifNoneMatch, _) when ifNoneMatch.Count > 0 && !ifNoneMatch[0].Equals(EntityTagHeaderValue.Any) =>
+                new Validation("writes accept only If-None-Match: *"),
+            (_, Validation error) => error,
+            (IList<EntityTagHeaderValue> ifNoneMatch, IList<EntityTagHeaderValue> ifMatch) => FromIfMatch(ifMatch) with { IfNoneMatch = ifNoneMatch.Count > 0 },
+        };
 
     /// <summary>
     /// Evaluates a read's conditions in RFC 9110 §13.2.2 order, before the read reports absence: a failed
     /// <c>If-Match</c> (strong) is a 412; then <see langword="true"/> when <c>If-None-Match</c> matches the live
     /// document, compared weakly, so the read answers 304.
     /// </summary>
-    public static bool NotModified(HttpContext context, bool live, string? version)
-    {
-        var ifMatch = Parse(context, HeaderNames.IfMatch);
-        var ifNoneMatch = Parse(context, HeaderNames.IfNoneMatch);
-        if (ifMatch is not null)
+    public static NotModifiedResult CheckNotModified(HttpContext context, bool live, string? version) =>
+        (Tags(context, HeaderNames.IfMatch), Tags(context, HeaderNames.IfNoneMatch)) switch
         {
-            Check(FromIfMatch(ifMatch), live, version);
-        }
+            (Validation error, _) => error,
+            (_, Validation error) => error,
+            (IList<EntityTagHeaderValue> ifMatch, _) when ifMatch.Count > 0 && CheckVersion(FromIfMatch(ifMatch), live, version) is PreconditionFailed failed => failed,
+            (_, IList<EntityTagHeaderValue> ifNoneMatch) =>
+                live && ifNoneMatch.Count > 0 && (ifNoneMatch[0].Equals(EntityTagHeaderValue.Any) || ifNoneMatch.Any(tag => Opaque(tag) == version)),
+        };
 
-        return live && ifNoneMatch is not null && (ifNoneMatch[0].Equals(EntityTagHeaderValue.Any) || ifNoneMatch.Any(tag => Opaque(tag) == version));
-    }
+    /// <summary>As <see cref="CheckIfMatch"/>, for the callers not converted to unions yet.</summary>
+    public static Precondition IfMatch(string value) => CheckIfMatch(value) switch
+    {
+        Precondition precondition => precondition,
+        Validation error => throw DocumentRoute.Throwable(error),
+    };
 
     /// <summary>
     /// A transaction operation's <c>if_match</c>: the contract's bare version (<c>"tbv1-…"</c>), or anything
     /// <c>If-Match</c> accepts, read by the same parser, so <c>"\"*\""</c> is a literal tag and never the wildcard.
     /// </summary>
-    public static Precondition IfMatch(string value) =>
-        FromIfMatch(IsVersion(value) ? [new EntityTagHeaderValue($"\"{value}\"")] : Parse(value, "if_match"));
+    public static Valid<Precondition> CheckIfMatch(string value) =>
+        IsVersion(value)
+            ? FromIfMatch([new EntityTagHeaderValue($"\"{value}\"")])
+            : Tags(value, "if_match") switch
+            {
+                IList<EntityTagHeaderValue> tags => FromIfMatch(tags),
+                Validation error => error,
+            };
 
     private static bool IsVersion(string value) =>
         value.Length == 37 && value.StartsWith("tbv1-", StringComparison.Ordinal) && !value.AsSpan(5).ContainsAnyExcept(LowerHex);
+
+    /// <summary>As <see cref="CheckVersion"/>, for the callers not converted to unions yet.</summary>
+    public static void Check(Precondition precondition, bool live, string? version)
+    {
+        if (CheckVersion(precondition, live, version) is PreconditionFailed failed)
+        {
+            throw DocumentRoute.Throwable(failed);
+        }
+    }
 
     /// <summary>
     /// Fails with <c>412 precondition_failed</c> unless <paramref name="precondition"/> holds for the current state:
     /// <paramref name="version"/> is the current version, a tombstone's included, or <see langword="null"/> when absent.
     /// </summary>
-    public static void Check(Precondition precondition, bool live, string? version)
+    public static VersionCheck CheckVersion(Precondition precondition, bool live, string? version) =>
+        precondition.IfNoneMatch && live ? Failed("the document exists")
+        : (precondition.IfMatchAny && !live) || (precondition.IfMatch is { } accepted && (version is null || !accepted.Contains(version)))
+            ? Failed("the document version does not match")
+            : new Done();
+
+    // Empty when the header is absent; otherwise a non-empty list where * stands alone (RFC 9110: "*" / #entity-tag).
+    private static Valid<IList<EntityTagHeaderValue>> Tags(HttpContext context, string header)
     {
-        if (precondition.IfNoneMatch && live)
+        if (context.Request.Headers[header] is { Count: > 0 } values)
         {
-            throw Failed("the document exists");
+            return Tags(values, header);
         }
 
-        if ((precondition.IfMatchAny && !live) || (precondition.IfMatch is { } accepted && (version is null || !accepted.Contains(version))))
-        {
-            throw Failed("the document version does not match");
-        }
+        IList<EntityTagHeaderValue> absent = [];
+        return absent;
     }
 
-    // null when the header is absent; otherwise a non-empty list where * stands alone (RFC 9110: "*" / #entity-tag).
-    private static IList<EntityTagHeaderValue>? Parse(HttpContext context, string header) =>
-        context.Request.Headers[header] is { Count: > 0 } values ? Parse(values, header) : null;
-
-    private static IList<EntityTagHeaderValue> Parse(StringValues values, string name) =>
-        EntityTagHeaderValue.TryParseStrictList(values, out var tags)
-        && tags.Count > 0
-        && (tags.Count == 1 || !tags.Any(tag => tag.Equals(EntityTagHeaderValue.Any)))
-            ? tags
-            : throw new ApiException($"{name} must be * or a list of entity tags");
-
-    // If-Match compares strongly, so weak tags never match.
-    private static Precondition FromIfMatch(IList<EntityTagHeaderValue>? ifMatch)
+    private static Valid<IList<EntityTagHeaderValue>> Tags(StringValues values, string name)
     {
-        var any = ifMatch?[0].Equals(EntityTagHeaderValue.Any) == true;
-        return new Precondition(ifMatch is null || any ? null : [.. ifMatch.Where(tag => !tag.IsWeak).Select(Opaque)], any, IfNoneMatch: false);
+        if (EntityTagHeaderValue.TryParseStrictList(values, out var tags)
+            && tags.Count > 0
+            && (tags.Count == 1 || !tags.Any(tag => tag.Equals(EntityTagHeaderValue.Any))))
+        {
+            return tags;
+        }
+
+        return new Validation($"{name} must be * or a list of entity tags");
+    }
+
+    // If-Match compares strongly, so weak tags never match; an empty list means no If-Match.
+    private static Precondition FromIfMatch(IList<EntityTagHeaderValue> ifMatch)
+    {
+        var any = ifMatch.Count > 0 && ifMatch[0].Equals(EntityTagHeaderValue.Any);
+        return new Precondition(ifMatch.Count == 0 || any ? null : [.. ifMatch.Where(tag => !tag.IsWeak).Select(Opaque)], any, IfNoneMatch: false);
     }
 
     // The tag between its quotes: the version a client copied from an ETag.
     private static string Opaque(EntityTagHeaderValue tag) => tag.Tag.Value![1..^1];
 
-    private static ApiException Failed(string message) => new(StatusCodes.Status412PreconditionFailed, "precondition_failed", message);
+    private static PreconditionFailed Failed(string message) => new(message, "precondition_failed");
 }

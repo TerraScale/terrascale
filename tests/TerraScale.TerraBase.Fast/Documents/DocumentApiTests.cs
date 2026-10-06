@@ -4,12 +4,94 @@ using System.Text.Json;
 using Bogus;
 using Microsoft.Extensions.DependencyInjection;
 using TerraScale.TerraBase.Engine;
+using TerraScale.TerraBase.Features.Documents;
 using TerraScale.TerraBase.Testing;
 
 namespace TerraScale.TerraBase.Fast.Documents;
 
 public sealed class DocumentApiTests
 {
+    [Test]
+    public async Task Request_errors_answer_their_code_and_message()
+    {
+        await using var api = await DocumentApi.StartAsync();
+        var id = DocumentApi.NewId();
+        var deleted = DocumentApi.NewId();
+        var live = DocumentApi.NewId();
+        (await api.PutAsync(deleted, new { a = 1 })).Status.ShouldBe(HttpStatusCode.Created);
+        (await api.SendAsync(HttpMethod.Delete, api.Document(deleted))).Status.ShouldBe(HttpStatusCode.OK);
+        (await api.PutAsync(live, new { a = 1 })).Status.ShouldBe(HttpStatusCode.Created);
+        const string Json = DocumentRoute.JsonMediaType;
+        const string Ops = DocumentPatch.OpsMediaType;
+        const string BadDatabase = "database must be a lowercase name of at most 63 characters";
+        const string UnknownDatabase = "the database does not exist";
+        var deepPath = string.Concat(Enumerable.Repeat("/a", 17));
+        var tombstone = await api.GetAsync(deleted);
+        var stale = await api.GetAsync(live, request => request.Headers.TryAddWithoutValidation("If-Match", "\"tbv1-00000000000000000000000000000000\""));
+
+        (ApiResponse Response, HttpStatusCode Status, string Code, string Message)[] cases =
+        [
+            (await api.SendAsync(HttpMethod.Get, $"{api.Project}/databases/Not-Valid/collections"), HttpStatusCode.BadRequest, "invalid_request", BadDatabase),
+            (await api.SendAsync(HttpMethod.Put, $"{api.Project}/databases/Not-Valid"), HttpStatusCode.BadRequest, "invalid_request", BadDatabase),
+            (await api.SendAsync(HttpMethod.Get, $"{api.Project}/databases/missing/collections"), HttpStatusCode.NotFound, "unknown_database", UnknownDatabase),
+            (await api.SendAsync(HttpMethod.Put, $"/v1/projects/{Guid.NewGuid()}/databases/fresh"), HttpStatusCode.NotFound, "unknown_database", UnknownDatabase),
+            // The tenant answers before the request's own input: a key learns nothing about other databases.
+            (await api.SendRawAsync(
+                HttpMethod.Put, $"{api.Project}/databases/missing/collections/items/documents/{id}?x=1", "{", "text/plain",
+                request => request.Headers.TryAddWithoutValidation("If-Match", "tag")), HttpStatusCode.NotFound, "unknown_database", UnknownDatabase),
+            (await api.SendAsync(HttpMethod.Get, $"{api.Collections}/Not-Valid/documents/{id}"),
+                HttpStatusCode.BadRequest, "invalid_request", "collection must be a lowercase name of at most 63 characters"),
+            (await api.SendAsync(HttpMethod.Get, api.Document(new string('x', 257))),
+                HttpStatusCode.BadRequest, "invalid_request", "id must be 1 to 256 characters without control characters"),
+            (await api.SendAsync(HttpMethod.Get, api.Document(id) + "?x=1"), HttpStatusCode.BadRequest, "invalid_request", "this route takes no query parameters"),
+            (await api.SendAsync(HttpMethod.Get, api.Documents + "?x=1"),
+                HttpStatusCode.BadRequest, "invalid_request", "query parameters are limited to: limit, cursor, each once and non-empty"),
+            (await api.SendAsync(HttpMethod.Get, api.Documents + "?limit=0"), HttpStatusCode.BadRequest, "invalid_request", "limit must be an integer between 1 and 1000"),
+            (await api.SendAsync(HttpMethod.Get, api.Collections + "?limit=201"), HttpStatusCode.BadRequest, "invalid_request", "limit must be an integer between 1 and 200"),
+            (await api.SendAsync(HttpMethod.Get, api.Collections + "?cursor=%21%21"), HttpStatusCode.BadRequest, "invalid_cursor", "the cursor is not a collection cursor"),
+            (await api.PutAsync(id, new { a = 1 }, request => request.Headers.Add("Idempotency-Key", "k1")),
+                HttpStatusCode.BadRequest, "invalid_request", "Idempotency-Key is not supported yet"),
+            (await api.PutAsync(id, new { a = 1 }, request => request.Headers.TryAddWithoutValidation("If-None-Match", "\"tag\"")),
+                HttpStatusCode.BadRequest, "invalid_request", "writes accept only If-None-Match: *"),
+            (await api.PutAsync(id, new { a = 1 }, request => request.Headers.TryAddWithoutValidation("If-Match", "tag")),
+                HttpStatusCode.BadRequest, "invalid_request", "If-Match must be * or a list of entity tags"),
+            (await api.SendRawAsync(HttpMethod.Put, api.Document(id), """{"a":1}""", Json, request => request.Content!.Headers.ContentEncoding.Add("gzip")),
+                HttpStatusCode.UnsupportedMediaType, "unsupported_media_type", "Content-Encoding is not accepted"),
+            (await api.SendRawAsync(HttpMethod.Put, api.Document(id), """{"a":1}""", "text/plain"),
+                HttpStatusCode.UnsupportedMediaType, "unsupported_media_type", "Content-Type must be application/json"),
+            // A Content-Length past the limit is refused before the body is read.
+            (await api.SendRawAsync(HttpMethod.Put, api.Document(id), $$"""{"blob":"{{new string('x', 1024 * 1024)}}"}""", Json),
+                HttpStatusCode.RequestEntityTooLarge, "payload_too_large", "the body is at most 1 MiB"),
+            (await api.SendRawAsync(HttpMethod.Put, api.Document(id), """{"a":"\uD800"}""", Json),
+                HttpStatusCode.BadRequest, "invalid_request", "strings must be valid UTF-8 without lone UTF-16 surrogate escapes"),
+            (await api.SendRawAsync(HttpMethod.Post, api.Collections, "null", Json), HttpStatusCode.BadRequest, "invalid_request", "the body must be a JSON object"),
+            (await api.SendRawAsync(HttpMethod.Post, api.Collections, "{", Json), HttpStatusCode.BadRequest, "invalid_request", "the body is not a valid request"),
+            (await api.SendRawAsync(HttpMethod.Patch, api.Document(live), "{", DocumentPatch.MergeMediaType),
+                HttpStatusCode.BadRequest, "invalid_patch", "the body is not a valid request"),
+            (await api.SendRawAsync(HttpMethod.Patch, api.Document(live), "[1]", DocumentPatch.MergeMediaType),
+                HttpStatusCode.BadRequest, "invalid_patch", "a merge patch must be a JSON object"),
+            (await api.SendRawAsync(HttpMethod.Patch, api.Document(live), """{"ops":[]}""", Ops),
+                HttpStatusCode.BadRequest, "invalid_patch", "ops must hold 1 to 256 operations"),
+            (await api.SendRawAsync(HttpMethod.Patch, api.Document(live), """{"ops":[{"op":"unset","path":"a"}]}""", Ops),
+                HttpStatusCode.BadRequest, "invalid_patch", "patch paths are JSON Pointers to object members"),
+            (await api.SendRawAsync(HttpMethod.Patch, api.Document(live), $$"""{"ops":[{"op":"unset","path":"{{deepPath}}"}]}""", Ops),
+                HttpStatusCode.BadRequest, "invalid_patch", "a path has at most 16 segments"),
+            (await api.SendRawAsync(HttpMethod.Patch, api.Document(live), """{"ops":[{"op":"inc","path":"/a","by":"x"}]}""", Ops),
+                HttpStatusCode.BadRequest, "invalid_patch", "each op is set or append with value, unset, or inc with a number by"),
+            (tombstone, HttpStatusCode.NotFound, "not_found", "the document does not exist"),
+            (stale, HttpStatusCode.PreconditionFailed, "precondition_failed", "the document version does not match"),
+        ];
+
+        foreach (var (response, status, code, message) in cases)
+        {
+            await Assert.That((response.Status, response.Code, response.Message)).IsEqualTo((status, code, message));
+        }
+
+        // A deleted document's 404 carries its tombstone's version; a failed precondition does not carry the current one.
+        await Assert.That(tombstone.ETag).IsNotNull();
+        await Assert.That(stale.ETag).IsNull();
+    }
+
     [Test]
     public async Task Recreated_database_rejects_versions_from_its_previous_incarnation()
     {
