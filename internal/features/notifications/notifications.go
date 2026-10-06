@@ -4,6 +4,7 @@ package notifications
 import (
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/a-h/templ"
 
@@ -56,6 +57,9 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			writeError(w, err)
 			return
 		}
+		if patchDialog(w, r, deps, service, p) {
+			return
+		}
 		http.Redirect(w, r, returnHref(r), http.StatusSeeOther)
 	})
 
@@ -71,7 +75,32 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			writeError(w, err)
 			return
 		}
+		if patchDialog(w, r, deps, service, p) {
+			return
+		}
 		http.Redirect(w, r, returnHref(r), http.StatusSeeOther)
+	})
+
+	// The dialog body the shell's account-menu item and top-bar bell fetch
+	// when they open the notifications dialog. Direct navigation shows the
+	// full inbox page instead.
+	mux.HandleFunc("GET /notifications/dialog", func(w http.ResponseWriter, r *http.Request) {
+		p, ok := principal(deps, w, r)
+		if !ok {
+			return
+		}
+		// Datastar requests patch straight from patchDialog's own fetch;
+		// fetching the inbox here too would double every dialog load.
+		if strings.EqualFold(r.Header.Get("Datastar-Request"), "true") && deps.Events != nil {
+			patchDialog(w, r, deps, service, p)
+			return
+		}
+		data, err := service.Inbox(r.Context(), p, r.URL.Query().Get("status"), r.URL.Query().Get("page"))
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		render(w, r, deps, p, data)
 	})
 }
 
@@ -102,6 +131,35 @@ func writeError(w http.ResponseWriter, err error) {
 	if !core.WriteAccessError(w, err) {
 		http.Error(w, "invalid request", http.StatusBadRequest)
 	}
+}
+
+// patchDialog re-renders the notifications dialog through Datastar so opening
+// it and marking notifications read never navigates away from the page. The
+// inbox keeps the filter and page the request carried, in the query for
+// fetches and the form for mark-read submissions. It reports whether the
+// request wanted a patch; plain requests fall back to the redirect flow.
+func patchDialog(w http.ResponseWriter, r *http.Request, deps core.Deps, service Service, p core.Principal) bool {
+	if !strings.EqualFold(r.Header.Get("Datastar-Request"), "true") || deps.Events == nil {
+		return false
+	}
+	status, page := r.URL.Query().Get("status"), r.URL.Query().Get("page")
+	if r.Method == http.MethodPost {
+		status, page = r.PostFormValue("status"), r.PostFormValue("page")
+	}
+	data, err := service.Inbox(r.Context(), p, status, page)
+	if err != nil {
+		writeError(w, err)
+		return true
+	}
+	var fragment strings.Builder
+	if err := dialogPatch(data, deps.CSRF.Token(w, r)).Render(r.Context(), &fragment); err != nil {
+		http.Error(w, "could not render notifications", http.StatusInternalServerError)
+		return true
+	}
+	if err := deps.Events.PatchElements(w, r, fragment.String()); err != nil {
+		http.Error(w, "could not patch notifications", http.StatusInternalServerError)
+	}
+	return true
 }
 
 // returnHref is the inbox view a mark-read form was posted from, so readers

@@ -9,20 +9,35 @@ import (
 	"terrascale.tech/dashboard/internal/core"
 )
 
-func TestAdminSidebarLinksToNotifications(t *testing.T) {
-	for unread, label := range map[int]string{0: `aria-label="Notifications"`, 3: `aria-label="Notifications, 3 unread"`, 150: `aria-label="Notifications, 99+ unread"`} {
+func TestShellOpensNotificationsFromTheAccountMenu(t *testing.T) {
+	for unread, label := range map[int]string{0: "Notifications", 3: "Notifications, 3 unread", 150: "Notifications, 99+ unread"} {
 		page := core.Page{Title: "Users", Shell: core.Shell{UnreadNotifications: unread}}
 		var out strings.Builder
-		if err := Admin(page, templ.NopComponent).Render(t.Context(), &out); err != nil {
+		if err := Shell(page, templ.NopComponent).Render(t.Context(), &out); err != nil {
 			t.Fatal(err)
 		}
-		footer := out.String()[strings.Index(out.String(), `<div class="ts-sidebar-footer">`):]
-		link := `<a class="ts-nav-link" href="/notifications" data-tone="amber" ` + label + `>`
-		if !strings.Contains(footer, link) {
-			t.Errorf("%d unread: the admin sidebar lacks %s", unread, link)
+		markup := html.UnescapeString(out.String())
+		// The sidebar no longer links the inbox.
+		if strings.Contains(markup, `href="/notifications"`) {
+			t.Errorf("%d unread: the shell still links /notifications", unread)
 		}
-		if pill := `<span class="ts-nav-count" aria-hidden="true">` + countText(unread) + `</span>`; unread > 0 && !strings.Contains(footer, pill) {
-			t.Errorf("%d unread: the admin sidebar link lacks the %s count", unread, countText(unread))
+		// The account menu opens the notifications dialog instead, named by its
+		// unread count.
+		item := `<button id="ts-notifications-menu" class="ts-menu-item" type="button" data-tone="amber" aria-label="` + label + `" command="show-modal" commandfor="ts-notifications-dialog"`
+		if !strings.Contains(markup, item) {
+			t.Errorf("%d unread: the account menu lacks %s", unread, item)
+		}
+		// The top-bar bell opens the same dialog.
+		bell := `<button id="ts-notifications-topbar" class="ts-icon-btn ts-topbar-notifications" type="button" data-tone="amber" aria-label="` + label + `" command="show-modal" commandfor="ts-notifications-dialog"`
+		if !strings.Contains(markup, bell) {
+			t.Errorf("%d unread: the top bar lacks %s", unread, bell)
+		}
+		if pill := `<span class="ts-nav-count" aria-hidden="true">` + countText(unread) + `</span>`; unread > 0 && !strings.Contains(markup, pill) {
+			t.Errorf("%d unread: the notifications entries lack the %s count", unread, countText(unread))
+		}
+		// The shell carries the dialog the entries open.
+		if !strings.Contains(markup, `<dialog id="ts-notifications-dialog"`) {
+			t.Errorf("%d unread: the shell lacks the notifications dialog", unread)
 		}
 	}
 }
