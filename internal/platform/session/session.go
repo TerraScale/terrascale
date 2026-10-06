@@ -32,8 +32,9 @@ type Options struct {
 	// provider can end its sign-in too. Its failure does not stop sign-out.
 	Revoke func(ctx context.Context, refresh string) error
 	// UserToken reads the user's ts-auth access token from a session's
-	// refresh state.
-	UserToken func(refresh string) string
+	// refresh state. renew asks to recheck the session now to get one, as
+	// for a state saved before sessions kept the token.
+	UserToken func(refresh string) (token string, renew bool)
 }
 
 // refreshTimeout bounds one Options.Refresh call.
@@ -206,17 +207,31 @@ func (m *Manager) BearerPrincipal(r *http.Request) (core.Principal, bool) {
 
 // UserToken is the ts-auth access token of the request's session, or empty
 // for a session without one. It reads the session the request's Principal
-// already resolved and refreshed.
+// already resolved and refreshed, rechecking it first when its refresh state
+// has no token yet rather than waiting for its RefreshAt.
 func (m *Manager) UserToken(r *http.Request) string {
 	token, ok := m.Token(r)
 	if !ok || m.opts.UserToken == nil {
 		return ""
 	}
-	item, err := m.sessions.Get(r.Context(), sha256.Sum256([]byte(token)), time.Now())
+	key := sha256.Sum256([]byte(token))
+	item, err := m.sessions.Get(r.Context(), key, time.Now())
 	if err != nil || item.Refresh == "" {
 		return ""
 	}
-	return m.opts.UserToken(item.Refresh)
+	user, renew := m.opts.UserToken(item.Refresh)
+	if !renew || m.opts.Refresh == nil {
+		return user
+	}
+	item, err = m.refresh(r.Context(), key, func(rec Record) bool {
+		_, renew := m.opts.UserToken(rec.Refresh)
+		return renew
+	})
+	if err != nil {
+		return ""
+	}
+	user, _ = m.opts.UserToken(item.Refresh)
+	return user
 }
 
 func (m *Manager) Token(r *http.Request) (string, bool) {
@@ -266,7 +281,7 @@ func (m *Manager) CLIGrantPrincipal(ctx context.Context, binding string) (core.P
 func (m *Manager) principalForHash(ctx context.Context, key [32]byte) (core.Principal, bool, error) {
 	item, err := m.sessions.Get(ctx, key, time.Now())
 	if err == nil && item.Refresh != "" && m.opts.Refresh != nil && !time.Now().Before(item.RefreshAt) {
-		item, err = m.refresh(ctx, key)
+		item, err = m.refresh(ctx, key, refreshDue)
 	}
 	if errors.Is(err, ErrNotFound) {
 		return core.Principal{}, false, nil
@@ -284,17 +299,20 @@ func (m *Manager) principalForHash(ctx context.Context, key [32]byte) (core.Prin
 	return p, true, nil
 }
 
-// refresh rechecks the session under key with Options.Refresh, once however
-// many of its requests arrive together, and returns its record afterwards or
-// ErrNotFound once the session ended.
-func (m *Manager) refresh(ctx context.Context, key [32]byte) (Record, error) {
+// refreshDue reports whether a session's RefreshAt has passed.
+func refreshDue(rec Record) bool { return !time.Now().Before(rec.RefreshAt) }
+
+// refresh rechecks the session under key with Options.Refresh if it is still
+// due, once however many of its requests arrive together, and returns its
+// record afterwards or ErrNotFound once the session ended.
+func (m *Manager) refresh(ctx context.Context, key [32]byte, due func(Record) bool) (Record, error) {
 	result, err, _ := m.refreshes.Do(string(key[:]), func() (any, error) {
 		// The outcome is saved even if the request that asked for it ends,
 		// since the provider may already have replaced the refresh token.
 		ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), refreshTimeout)
 		defer cancel()
 		current, err := m.sessions.Get(ctx, key, time.Now())
-		if err != nil || time.Now().Before(current.RefreshAt) {
+		if err != nil || !due(current) {
 			return current, err
 		}
 		next, at, err := m.opts.Refresh(ctx, current.Refresh)

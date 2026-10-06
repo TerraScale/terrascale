@@ -84,14 +84,20 @@ type refreshState struct {
 }
 
 // AccessToken is the ts-auth access token a session's refresh state keeps,
-// or empty once it has expired. A session rechecks with ts-auth, renewing
-// it, when it expires.
-func AccessToken(refresh string) string {
+// or empty once it has expired; a session renews it before then. renew is
+// set for a state saved before sessions kept the token, which a recheck with
+// ts-auth gives one.
+func AccessToken(refresh string) (token string, renew bool) {
 	var state refreshState
-	if json.Unmarshal([]byte(refresh), &state) != nil || !state.AccessExpiry.IsZero() && !time.Now().Before(state.AccessExpiry) {
-		return ""
+	switch {
+	case json.Unmarshal([]byte(refresh), &state) != nil:
+		return "", false
+	case state.Access == "":
+		return "", state.Token != ""
+	case !state.AccessExpiry.IsZero() && !time.Now().Before(state.AccessExpiry):
+		return "", false
 	}
-	return state.Access
+	return state.Access, false
 }
 
 // refreshableSessions starts sessions that ts-auth rechecks.

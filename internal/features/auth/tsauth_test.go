@@ -669,8 +669,37 @@ func TestTSAuthSessionKeepsTheAccessTokenForTerraBase(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if AccessToken(string(expired)) != "" || AccessToken("not json") != "" {
-		t.Fatal("an expired or unreadable refresh state yielded an access token")
+	if token, _ := AccessToken(string(expired)); token != "" {
+		t.Fatal("an expired refresh state yielded an access token")
+	}
+	if token, renew := AccessToken("not json"); token != "" || renew {
+		t.Fatal("an unreadable refresh state yielded an access token or a renewal")
+	}
+}
+
+// TestTSAuthSessionSavedBeforeAccessTokensRenewsAtOnce covers sessions
+// started before they kept the access token: the first TerraBase call
+// rechecks them instead of waiting for their RefreshAt.
+func TestTSAuthSessionSavedBeforeAccessTokensRenewsAtOnce(t *testing.T) {
+	t.Parallel()
+	issuer := newTestIssuer(t)
+	dashboard := newTSAuthDashboard(t, issuer)
+	dashboard.signIn(t, issuer, "/login")
+	record, key := dashboard.record(t)
+	legacy, err := json.Marshal(refreshState{Subject: testSubject, Token: refreshToken(t, record.Refresh)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	record.Refresh, record.RefreshAt = string(legacy), time.Now().Add(time.Hour)
+	if err := dashboard.records.Put(t.Context(), key, record); err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodGet, "http://dashboard.test/", nil)
+	for _, cookie := range dashboard.cookies {
+		request.AddCookie(cookie)
+	}
+	if token := dashboard.sessions.UserToken(request); token == "" || issuer.refreshCount() != 1 {
+		t.Fatalf("access token %q after %d refreshes, want one from an immediate recheck", token, issuer.refreshCount())
 	}
 }
 

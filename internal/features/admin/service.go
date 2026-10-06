@@ -406,6 +406,9 @@ func (s Service) SavePlan(ctx context.Context, principal core.Principal, plan co
 	if plan.PriceCents < 0 || plan.AnnualPriceCents < 0 || plan.TrialDays < 0 || plan.StorageMiB < 0 || plan.MonthlyRequests < 0 {
 		return core.Plan{}, core.Invalid("plan prices and limits must be non-negative")
 	}
+	if plan.StorageMiB > core.MaxStorageMiB {
+		return core.Plan{}, core.Invalid(fmt.Sprintf("plan storage must be at most %d MiB", core.MaxStorageMiB))
+	}
 	plans, err := s.store.Plans(ctx)
 	if err != nil {
 		return core.Plan{}, err

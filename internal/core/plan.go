@@ -3,6 +3,7 @@ package core
 import (
 	"cmp"
 	"fmt"
+	"math"
 	"strconv"
 )
 
@@ -58,9 +59,12 @@ func UpgradeSeededPlan(plan Plan) Plan {
 	return plan
 }
 
+// MaxStorageMiB is the largest storage limit whose bytes fit an int64.
+const MaxStorageMiB = math.MaxInt64 >> 20
+
 // StorageBytes is the plan's included storage; 0 means no published limit.
 func (plan Plan) StorageBytes() int64 {
-	return plan.StorageMiB << 20
+	return min(plan.StorageMiB, MaxStorageMiB) << 20
 }
 
 func (plan Plan) DatabaseAllowance() string {

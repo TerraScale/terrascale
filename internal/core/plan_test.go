@@ -37,6 +37,9 @@ func TestPlanLimitsForUtilization(t *testing.T) {
 	if plan.MonthlyOperations() != 7 || plan.StorageBytes() != 3<<20 {
 		t.Fatalf("limits = %d operations, %d bytes", plan.MonthlyOperations(), plan.StorageBytes())
 	}
+	if huge := (Plan{StorageMiB: 1 << 50}); huge.StorageBytes() != MaxStorageMiB<<20 || huge.StorageBytes() <= 0 {
+		t.Fatalf("storage of %d MiB = %d bytes, want it clamped, not wrapped", huge.StorageMiB, huge.StorageBytes())
+	}
 	if plan := (Plan{OperationsPerMonth: 9, MonthlyRequests: 7}); plan.MonthlyOperations() != 9 {
 		t.Fatalf("OperationsPerMonth must win over MonthlyRequests, got %d", plan.MonthlyOperations())
 	}
