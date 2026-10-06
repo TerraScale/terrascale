@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"terrascale.tech/dashboard/internal/core"
+	"terrascale.tech/dashboard/internal/features/organization"
 	"terrascale.tech/dashboard/internal/ui"
 	"terrascale.tech/dashboard/internal/ui/charts"
 	"terrascale.tech/dashboard/internal/ui/icons"
@@ -37,11 +38,7 @@ templ accessPageView(page core.Page, data pageData) {
 			</section>
 		}
 		<div class="ts-toolbar ts-access-toolbar">
-			@ui.Tabs("Organization sections", []ui.Tab{
-				{Label: "Overview", URL: "/organization", Active: false},
-				{Label: "Members", URL: "/organization?tab=members", Active: data.Tab == "members"},
-				{Label: "Invitations", URL: "/organization?tab=invitations", Active: data.Tab == "invitations"},
-			})
+			@organization.Tabs(data.Tab)
 			if data.Tab == "members" {
 				@memberFilters(data)
 			}

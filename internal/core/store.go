@@ -129,6 +129,11 @@ type Store interface {
 	UpdateAccountAsAdmin(ctx context.Context, p Principal, targetAccountID string, mutate func(*Account) error) error
 	// RecordPlatformAdminAction appends one record to the admin action log.
 	RecordPlatformAdminAction(ctx context.Context, p Principal, action, target, reason string) error
+	// SetPlatformAdmin grants or revokes platform administration for one
+	// account, for operators with direct store access, and records the change
+	// in the admin action log in the same commit. It reports whether anything
+	// changed; repeating a grant or a revoke is a no-op.
+	SetPlatformAdmin(ctx context.Context, accountID string, admin bool) (bool, error)
 	// PlatformAdminActions returns the admin action log, oldest first.
 	PlatformAdminActions(ctx context.Context, p Principal) ([]AdminAction, error)
 

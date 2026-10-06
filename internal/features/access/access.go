@@ -14,6 +14,7 @@ import (
 	"github.com/a-h/templ"
 	"terrascale.tech/dashboard/internal/core"
 	"terrascale.tech/dashboard/internal/features/organization"
+	"terrascale.tech/dashboard/internal/features/payments"
 )
 
 type memberView struct {
@@ -92,7 +93,7 @@ type pageData struct {
 	InviteURL          string
 }
 
-func Mount(mux *http.ServeMux, deps core.Deps) {
+func Mount(mux *http.ServeMux, deps core.Deps, billing *payments.Stripe) {
 	organizationService := organization.NewService(deps.Store, deps.Sessions)
 	service := NewService(deps.Store, organizationService)
 	mountTools(deps.Tools, service)
@@ -105,7 +106,7 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 		if tab := r.URL.Query().Get("tab"); tab == "members" || tab == "invitations" {
 			accessPage(deps, organizationService)(w, r)
 		} else {
-			organization.Page(deps)(w, r)
+			organization.Page(deps, billing)(w, r)
 		}
 	})
 	mux.HandleFunc("POST /api/v1/access/invitations", createInvitation(deps, service))

@@ -132,7 +132,7 @@ func TestOrganizationPageReportsCheckoutRecoveryOutage(t *testing.T) {
 			page := &recoveryPage{principal: owner}
 			deps := core.Deps{Store: lookup, Sessions: page, CSRF: page, Render: page, Demo: true}
 			response := httptest.NewRecorder()
-			organizationPage(deps, NewService(lookup, page))(response, recoveryRequest(organizationID))
+			organizationPage(deps, NewService(lookup, page), nil)(response, recoveryRequest(organizationID))
 			if response.Code != http.StatusServiceUnavailable || page.rendered || page.started != (core.Principal{}) || lookup.calls != failAt {
 				t.Fatalf("page = %d, rendered %t, started %+v, lookups %d; want 503 without rendering or switching", response.Code, page.rendered, page.started, lookup.calls)
 			}

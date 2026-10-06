@@ -12,6 +12,8 @@ import (
 
 	"github.com/a-h/templ"
 	"terrascale.tech/dashboard/internal/core"
+	"terrascale.tech/dashboard/internal/features/payments"
+	"terrascale.tech/dashboard/internal/features/usage"
 	sdk "terrascale.tech/sdk"
 )
 
@@ -64,6 +66,7 @@ type memberView struct {
 }
 
 type organizationPageData struct {
+	Tab                 string
 	Organization        organizationView
 	Organizations       []organizationView
 	Projects            []projectView
@@ -95,7 +98,6 @@ type organizationPageData struct {
 func Mount(mux *http.ServeMux, deps core.Deps) {
 	service := NewService(deps.Store, deps.Sessions)
 	mountTools(deps.Tools, service)
-
 	mux.HandleFunc("POST /api/v1/dashboard/organization/new-organization", newOrganization(deps, service))
 	mux.HandleFunc("POST /api/v1/dashboard/switch-organization", switchOrganization(deps, service))
 	mux.HandleFunc("POST /api/v1/dashboard/organization/switch", switchOrganization(deps, service))
@@ -138,13 +140,13 @@ func wizardPlans(plans []core.Plan, org core.Organization) []planView {
 	return views
 }
 
-// Page renders the organization overview. The access feature routes member tabs.
-func Page(deps core.Deps) http.HandlerFunc {
+// Page renders organization and billing tabs. The access feature routes member tabs.
+func Page(deps core.Deps, billing *payments.Stripe) http.HandlerFunc {
 	service := NewService(deps.Store, deps.Sessions)
-	return pageWithService(deps, service)
+	return organizationPage(deps, service, billing)
 }
 
-func pageWithService(deps core.Deps, service Service) http.HandlerFunc {
+func organizationPage(deps core.Deps, service Service, billing *payments.Stripe) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		p, ok := deps.Sessions.Principal(r)
 		if !ok {
@@ -170,6 +172,19 @@ func pageWithService(deps core.Deps, service Service) http.HandlerFunc {
 		case "declined":
 			data.InvitationNotice = "Invitation declined"
 		}
+		data.Tab = r.URL.Query().Get("tab")
+		if !slices.Contains([]string{"organization", "members", "projects", "billing"}, data.Tab) {
+			data.Tab = "organization"
+		}
+		if r.URL.Query().Get("newProject") == "1" {
+			data.Tab = "projects"
+		}
+		if data.Tab == "billing" {
+			usage.OrganizationBilling(deps, billing, func(page core.Page, content templ.Component) templ.Component {
+				return organizationBillingView(data, content)
+			})(w, r)
+			return
+		}
 		data.NewOrganizationID = org.ID
 		data.PaymentCanceled = paymentVerified && r.URL.Query().Get("payment") == "canceled" && data.NewOrganization == "payment"
 		data.OpenCreateProject = r.URL.Query().Get("newProject") == "1"
@@ -191,10 +206,6 @@ func pageWithService(deps core.Deps, service Service) http.HandlerFunc {
 			http.Error(w, "could not render organization page", http.StatusInternalServerError)
 		}
 	}
-}
-
-func organizationPage(deps core.Deps, service Service) http.HandlerFunc {
-	return pageWithService(deps, service)
 }
 
 func resumeCheckoutOrganization(deps core.Deps, service Service, w http.ResponseWriter, r *http.Request, p core.Principal) (core.Principal, bool, error) {
@@ -448,7 +459,7 @@ func newOrganization(deps core.Deps, service Service) http.HandlerFunc {
 				writeProblem(w, err)
 				return
 			}
-			http.Redirect(w, r, "/organization", http.StatusSeeOther)
+			http.Redirect(w, r, "/organization?tab=projects", http.StatusSeeOther)
 		default:
 			http.Redirect(w, r, "/organization?newOrganization=organization", http.StatusSeeOther)
 		}
@@ -502,7 +513,7 @@ func renameOrganization(deps core.Deps, service Service) http.HandlerFunc {
 }
 
 func createProject(deps core.Deps, service Service) http.HandlerFunc {
-	return organizationMutation(deps, "/organization", func(p core.Principal, r *http.Request, form url.Values) error {
+	return organizationMutation(deps, "/organization?tab=projects", func(p core.Principal, r *http.Request, form url.Values) error {
 		_, err := service.CreateProject(r.Context(), p, form.Get("name"), form.Get("region"), form.Get("backupRegion"), form["regions"])
 		return err
 	})
@@ -515,10 +526,10 @@ func renameProject(deps core.Deps, service Service) http.HandlerFunc {
 			return
 		}
 		if err := service.RenameProject(r.Context(), p, r.PathValue("projectID"), form.Get("name"), form.Get("region"), form.Get("backupRegion"), form["regions"]); err != nil {
-			redirectWithError(w, r, "/organization", err)
+			redirectWithError(w, r, "/organization?tab=projects", err)
 			return
 		}
-		http.Redirect(w, r, "/organization", http.StatusSeeOther)
+		http.Redirect(w, r, "/organization?tab=projects", http.StatusSeeOther)
 	}
 }
 

@@ -16,112 +16,114 @@ templ organizationPageView(page core.Page, data organizationPageData) {
 			<a class="ts-btn ts-btn-secondary" href="/organization?tab=members">@icons.Users(16)<span>Manage members</span></a>
 			<a class="ts-btn ts-btn-primary" href="/organization?newOrganization=organization">@icons.Plus(16)<span>Create organization</span></a>
 		}
-		@ui.Tabs("Organization sections", []ui.Tab{
- {Label: "Overview", URL: "/organization", Active: true},
- {Label: "Members", URL: "/organization?tab=members"},
- {Label: "Invitations", URL: "/organization?tab=invitations"},
-		})
 		if data.InvitationNotice != "" {
 			@ui.Alert("success", data.InvitationNotice, "")
 		}
 		if data.Error != "" {
 			@ui.Alert("danger", "", data.Error)
 		}
-		@ui.Stats("Organization summary") {
-			@ui.Stat("Projects", fmt.Sprint(len(data.Projects)), "Projects in this workspace")
-			@ui.Stat("Members", fmt.Sprint(len(data.Members)), "People with organization access")
-			@ui.Stat("Invitations", fmt.Sprint(data.InvitationCount), "Current and historical invitations")
-			@ui.Stat("Created", organizationDay(data.Organization.CreatedAt), "Organization record")
-		}
-		@ui.Card(ui.CardProps{ID: "projects", Title: "Projects", Description: organizationKindLabel(data.Organization.Kind) + " · Projects returned by the TerraScale Dashboard API", Actions: createProjectAction(data), Flush: true}) {
-			if len(data.Projects) == 0 {
-				@ui.Empty("No projects returned", "The API did not return projects for this organization.")
-			} else {
-				<div class="ts-table-wrap">
-					<table class="ts-table">
-						<thead><tr><th>Project</th><th>Slug</th><th>Status</th><th>Backup region</th><th>Created</th><th class="ts-table-actions">Actions</th></tr></thead>
-						<tbody>
-							for _, project := range data.Projects {
-								@organizationProjectRow(page, data, project)
-							}
-						</tbody>
-					</table>
-				</div>
+		@Tabs(data.Tab)
+		if data.Tab == "organization" {
+			@ui.Stats("Organization summary") {
+				@ui.Stat("Projects", fmt.Sprint(len(data.Projects)), "Projects in this workspace")
+				@ui.Stat("Members", fmt.Sprint(len(data.Members)), "People with organization access")
+				@ui.Stat("Invitations", fmt.Sprint(data.InvitationCount), "Current and historical invitations")
+				@ui.Stat("Created", organizationDay(data.Organization.CreatedAt), "Organization record")
 			}
 		}
-		if data.CanProvision {
-			@ui.Dialog(ui.DialogProps{ID: "create-project", Title: "Create project", Description: "Name the project and choose where its data lives.", Open: data.OpenCreateProject, Wide: true}) {
-				<form method="post" action="/api/v1/dashboard/organization/projects" class="ts-form">
-					<input type="hidden" name="_csrf" value={ page.CSRFToken }/>
-					@ui.Field(ui.FieldProps{ID: "project-name", Label: "Project name"}) {
-						<input class="ts-input" id="project-name" name="name" placeholder="Analytics" maxlength="128" required/>
-					}
-					@regionPlacement(placement{
-						RegionsID: "project-regions", PrimaryID: "project-region", BackupID: "project-backup",
-						Regions: allSelected(data.Regions), All: data.Regions, RequireRegions: true,
-						Hint: "Databases and authentication inherit this placement.",
-					})
-					@ui.DialogActions("create-project") {
-						<button class="ts-btn ts-btn-primary" type="submit">Create project</button>
-					}
-				</form>
-			}
-		}
-		<div class="ts-split">
-			@ui.Card(ui.CardProps{ID: "organization-details", Title: "Organization details", Description: "Current tenant context"}) {
-				<dl class="ts-kv">
-					<dt>Name</dt>
-					<dd>{ data.Organization.Name }</dd>
-					<dt>Status</dt>
-					<dd>
-						@ui.Badge("success", organizationStatusLabel(data.Organization.Status))
-					</dd>
-					<dt>Organization ID</dt>
-					<dd class="ts-mono">{ data.Organization.ID }</dd>
-					<dt>Current project</dt>
-					<dd class="ts-mono">{ displayProjectID(data.CurrentProjectID) }</dd>
-					<dt>Created</dt>
-					<dd>{ organizationDate(data.Organization.CreatedAt) }</dd>
-					<dt>Signed-in user</dt>
-					<dd>{ data.SignedInEmail }</dd>
-				</dl>
-				@ui.Alert("success", "", "Organization access is enforced by the API session and project context.")
-				if data.CanManage {
-					@ui.DialogTrigger(ui.DialogTriggerProps{Dialog: "rename-organization", Label: "Edit name", Icon: icons.Pencil(14), Small: true})
-					@ui.Dialog(ui.DialogProps{ID: "rename-organization", Title: "Rename organization"}) {
-						<form method="post" action="/api/v1/dashboard/organization/rename" class="ts-form">
-							<input type="hidden" name="_csrf" value={ page.CSRFToken }/>
-							@ui.Field(ui.FieldProps{ID: "organizationName", Label: "Organization name"}) {
-								<input class="ts-input" id="organizationName" name="name" value={ data.Organization.Name } required/>
-							}
-							@ui.DialogActions("rename-organization") {
-								<button class="ts-btn ts-btn-primary" type="submit">Save name</button>
-							}
-						</form>
-					}
+		if data.Tab == "projects" {
+			@ui.Card(ui.CardProps{ID: "projects", Title: "Projects", Description: organizationKindLabel(data.Organization.Kind) + " · Projects returned by the TerraScale Dashboard API", Actions: createProjectAction(data), Flush: true}) {
+				if len(data.Projects) == 0 {
+					@ui.Empty("No projects returned", "The API did not return projects for this organization.")
+				} else {
+					<div class="ts-table-wrap">
+						<table class="ts-table">
+							<thead><tr><th>Project</th><th>Slug</th><th>Status</th><th>Backup region</th><th>Created</th><th class="ts-table-actions">Actions</th></tr></thead>
+							<tbody>
+								for _, project := range data.Projects {
+									@organizationProjectRow(page, data, project)
+								}
+							</tbody>
+						</table>
+					</div>
 				}
 			}
-			<div class="ts-stack">
-				@ui.Card(ui.CardProps{ID: "organization-switch", Title: "Active organization", Description: "Switch the organization used by the dashboard."}) {
-					<form method="post" action="/api/v1/dashboard/switch-organization" class="ts-form">
+			if data.CanProvision {
+				@ui.Dialog(ui.DialogProps{ID: "create-project", Title: "Create project", Description: "Name the project and choose where its data lives.", Open: data.OpenCreateProject, Wide: true}) {
+					<form method="post" action="/api/v1/dashboard/organization/projects" class="ts-form">
 						<input type="hidden" name="_csrf" value={ page.CSRFToken }/>
-						@ui.Field(ui.FieldProps{ID: "activeOrganization", Label: "Active organization"}) {
-							<select class="ts-select" id="activeOrganization" name="organizationId">
-								for _, organization := range data.Organizations {
-									<option value={ organization.ID } selected?={ organization.ID == data.Organization.ID }>{ organization.Name } ({ organizationKindShortLabel(organization.Kind) })</option>
-								}
-							</select>
+						@ui.Field(ui.FieldProps{ID: "project-name", Label: "Project name"}) {
+							<input class="ts-input" id="project-name" name="name" placeholder="Analytics" maxlength="128" required/>
 						}
-						<div class="ts-form-actions"><button class="ts-btn ts-btn-secondary" type="submit">Switch organization</button></div>
+						@regionPlacement(placement{
+							RegionsID: "project-regions", PrimaryID: "project-region", BackupID: "project-backup",
+							Regions: allSelected(data.Regions), All: data.Regions, RequireRegions: true,
+							Hint: "Databases and authentication inherit this placement.",
+						})
+						@ui.DialogActions("create-project") {
+							<button class="ts-btn ts-btn-primary" type="submit">Create project</button>
+						}
 					</form>
 				}
-				if data.CanLeave || data.CanManage || data.CanConfirmOwnership {
-					@ui.Card(ui.CardProps{ID: "organization-ownership", Title: "Ownership", Description: "Leave, transfer, or delete this organization."}) {
-						@organizationOwnership(page, data)
+			}
+		}
+		if data.Tab == "organization" {
+			<div class="ts-split">
+				@ui.Card(ui.CardProps{ID: "organization-details", Title: "Organization details", Description: "Current tenant context"}) {
+					<dl class="ts-kv">
+						<dt>Name</dt>
+						<dd>{ data.Organization.Name }</dd>
+						<dt>Status</dt>
+						<dd>
+							@ui.Badge("success", organizationStatusLabel(data.Organization.Status))
+						</dd>
+						<dt>Organization ID</dt>
+						<dd class="ts-mono">{ data.Organization.ID }</dd>
+						<dt>Current project</dt>
+						<dd class="ts-mono">{ displayProjectID(data.CurrentProjectID) }</dd>
+						<dt>Created</dt>
+						<dd>{ organizationDate(data.Organization.CreatedAt) }</dd>
+						<dt>Signed-in user</dt>
+						<dd>{ data.SignedInEmail }</dd>
+					</dl>
+					@ui.Alert("success", "", "Organization access is enforced by the API session and project context.")
+					if data.CanManage {
+						@ui.DialogTrigger(ui.DialogTriggerProps{Dialog: "rename-organization", Label: "Edit name", Icon: icons.Pencil(14), Small: true})
+						@ui.Dialog(ui.DialogProps{ID: "rename-organization", Title: "Rename organization"}) {
+							<form method="post" action="/api/v1/dashboard/organization/rename" class="ts-form">
+								<input type="hidden" name="_csrf" value={ page.CSRFToken }/>
+								@ui.Field(ui.FieldProps{ID: "organizationName", Label: "Organization name"}) {
+									<input class="ts-input" id="organizationName" name="name" value={ data.Organization.Name } required/>
+								}
+								@ui.DialogActions("rename-organization") {
+									<button class="ts-btn ts-btn-primary" type="submit">Save name</button>
+								}
+							</form>
+						}
 					}
 				}
+				<div class="ts-stack">
+					@ui.Card(ui.CardProps{ID: "organization-switch", Title: "Active organization", Description: "Switch the organization used by the dashboard."}) {
+						<form method="post" action="/api/v1/dashboard/switch-organization" class="ts-form">
+							<input type="hidden" name="_csrf" value={ page.CSRFToken }/>
+							@ui.Field(ui.FieldProps{ID: "activeOrganization", Label: "Active organization"}) {
+								<select class="ts-select" id="activeOrganization" name="organizationId">
+									for _, organization := range data.Organizations {
+										<option value={ organization.ID } selected?={ organization.ID == data.Organization.ID }>{ organization.Name } ({ organizationKindShortLabel(organization.Kind) })</option>
+									}
+								</select>
+							}
+							<div class="ts-form-actions"><button class="ts-btn ts-btn-secondary" type="submit">Switch organization</button></div>
+						</form>
+					}
+					if data.CanLeave || data.CanManage || data.CanConfirmOwnership {
+						@ui.Card(ui.CardProps{ID: "organization-ownership", Title: "Ownership", Description: "Leave, transfer, or delete this organization."}) {
+							@organizationOwnership(page, data)
+						}
+					}
+				</div>
 			</div>
-		</div>
+		}
 		if data.NewOrganization != "" {
 			@newOrganizationDialog(page, data)
 		}
@@ -400,4 +402,22 @@ func deletionActionLabel(requested bool) string {
 		return "Deletion pending"
 	}
 	return "Request deletion"
+}
+
+templ Tabs(active string) {
+	@ui.Tabs("Organization sections", []ui.Tab{
+		{Label: "Organization", URL: "/organization", Active: active == "organization"},
+		{Label: "Members", URL: "/organization?tab=members", Active: active == "members"},
+		{Label: "Invitations", URL: "/organization?tab=invitations", Active: active == "invitations"},
+		{Label: "Projects", URL: "/organization?tab=projects", Active: active == "projects"},
+		{Label: "Billing", URL: "/organization?tab=billing", Active: active == "billing"},
+	})
+}
+
+templ organizationBillingView(data organizationPageData, content templ.Component) {
+	<main class="ts-page">
+		@ui.PageHeader(data.Organization.Name)
+		@Tabs("billing")
+		@content
+	</main>
 }

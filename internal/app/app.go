@@ -150,7 +150,7 @@ func New(cfg config.Config) (*Application, error) {
 	profile.Mount(mux, deps)
 	settings.Mount(mux, deps)
 	organization.Mount(mux, deps)
-	access.Mount(mux, deps)
+	access.Mount(mux, deps, billing)
 	home.Mount(mux, deps)
 	databases.Mount(mux, deps)
 	apikeys.Mount(mux, deps)

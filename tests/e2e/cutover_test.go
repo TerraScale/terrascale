@@ -68,7 +68,7 @@ func TestCutoverBusinessOrganizationRetriesCanceledAnnualCheckoutAsMonthly(t *te
 	selectOption(t, project.Locator(`[name="region"]`), "GRU")
 	selectOption(t, project.Locator(`[name="backupRegion"]`), "SFO")
 	submitAndExpect(t, page, newOrganizationPath, 303, byRole(project, *playwright.AriaRoleButton, "Create project", true).Click)
-	waitForPath(t, page, func(u *url.URL) bool { return u.Path == "/organization" && u.RawQuery == "" })
+	waitForPath(t, page, func(u *url.URL) bool { return u.Path == "/organization" && u.Query().Get("tab") == "projects" })
 	visible(t, pageByRole(page, *playwright.AriaRoleHeading, organizationName))
 	visible(t, page.Locator("#projects tbody tr").Filter(playwright.LocatorFilterOptions{HasText: projectName}))
 }

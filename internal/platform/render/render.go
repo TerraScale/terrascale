@@ -175,7 +175,7 @@ var (
 			{Label: "Authentication", URL: "/auth", Children: core.AuthNavigation()}, {Label: "Audit", URL: "/audit"},
 		}},
 		{Label: "Manage", Items: []core.NavItem{
-			{Label: "Usage", URL: "/usage"}, {Label: "Billing", URL: "/billing"},
+			{Label: "Usage", URL: "/usage"},
 			{Label: "Organization", URL: "/organization"}, {Label: "Project settings", URL: "/settings"},
 		}},
 	}
