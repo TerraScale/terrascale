@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"terrascale.tech/dashboard/internal/core"
+	"terrascale.tech/dashboard/internal/features/organization"
 	"terrascale.tech/dashboard/internal/ui"
 	"terrascale.tech/dashboard/internal/ui/charts"
 	"terrascale.tech/dashboard/internal/ui/icons"
@@ -42,7 +43,7 @@ func accessPageView(page core.Page, data pageData) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = ui.PageHeader("Team").Render(ctx, templ_7745c5c3_Buffer)
+		templ_7745c5c3_Err = ui.PageHeader("Organization").Render(ctx, templ_7745c5c3_Buffer)
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -66,7 +67,7 @@ func accessPageView(page core.Page, data pageData) templ.Component {
 			var templ_7745c5c3_Var2 string
 			templ_7745c5c3_Var2, templ_7745c5c3_Err = templ.ResolveAttributeValue("history.replaceState(null, '', '" + tabPath(data.Tab) + "')")
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 25, Col: 159}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 26, Col: 159}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var2)
 			if templ_7745c5c3_Err != nil {
@@ -79,7 +80,7 @@ func accessPageView(page core.Page, data pageData) templ.Component {
 			var templ_7745c5c3_Var3 templ.SafeURL
 			templ_7745c5c3_Var3, templ_7745c5c3_Err = templ.JoinURLErrs(data.InviteURL)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 29, Col: 75}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 30, Col: 75}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var3))
 			if templ_7745c5c3_Err != nil {
@@ -92,7 +93,7 @@ func accessPageView(page core.Page, data pageData) templ.Component {
 			var templ_7745c5c3_Var4 string
 			templ_7745c5c3_Var4, templ_7745c5c3_Err = templ.JoinStringErrs(data.InviteURL)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 29, Col: 131}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 30, Col: 131}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var4))
 			if templ_7745c5c3_Err != nil {
@@ -115,12 +116,7 @@ func accessPageView(page core.Page, data pageData) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = ui.Tabs("Team sections", []ui.Tab{
-			{Label: "Overview", URL: "/access", Active: data.Tab == "overview"},
-			{Label: "Members", URL: "/access?tab=members", Active: data.Tab == "members"},
-			{Label: "Projects", URL: "/access?tab=projects", Active: data.Tab == "projects"},
-			{Label: "Invitations", URL: "/access?tab=invitations", Active: data.Tab == "invitations"},
-		}).Render(ctx, templ_7745c5c3_Buffer)
+		templ_7745c5c3_Err = organization.Tabs(data.Tab).Render(ctx, templ_7745c5c3_Buffer)
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -131,7 +127,7 @@ func accessPageView(page core.Page, data pageData) templ.Component {
 			}
 		}
 		if data.CanManage {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 8, "<a class=\"ts-btn ts-btn-primary\" href=\"/access?tab=invitations&amp;create=1\">")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 8, "<a class=\"ts-btn ts-btn-primary\" href=\"/organization?tab=invitations&amp;create=1\">")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -199,14 +195,14 @@ func memberFilters(data pageData) templ.Component {
 			templ_7745c5c3_Var5 = templ.NopComponent
 		}
 		ctx = templ.ClearChildren(ctx)
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 12, "<form id=\"access-filter-form\" method=\"get\" action=\"/access\" class=\"ts-filters ts-access-filters\" role=\"search\" aria-label=\"Filter members\" data-on:submit=\"@get('/access', {contentType:'form'})\"><input type=\"hidden\" name=\"tab\" value=\"members\"><button class=\"ts-sr-only\" type=\"submit\">Apply filters</button> <input type=\"hidden\" name=\"role\" value=\"")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 12, "<form id=\"access-filter-form\" method=\"get\" action=\"/organization\" class=\"ts-filters ts-access-filters\" role=\"search\" aria-label=\"Filter members\" data-on:submit=\"@get('/organization', {contentType:'form'})\"><input type=\"hidden\" name=\"tab\" value=\"members\"><button class=\"ts-sr-only\" type=\"submit\">Apply filters</button> <input type=\"hidden\" name=\"role\" value=\"")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		var templ_7745c5c3_Var6 string
 		templ_7745c5c3_Var6, templ_7745c5c3_Err = templ.ResolveAttributeValue(roleFilterValue(data.RoleFilter))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 73, Col: 75}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 69, Col: 75}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var6)
 		if templ_7745c5c3_Err != nil {
@@ -219,7 +215,7 @@ func memberFilters(data pageData) templ.Component {
 		var templ_7745c5c3_Var7 string
 		templ_7745c5c3_Var7, templ_7745c5c3_Err = templ.ResolveAttributeValue(data.Query)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 76, Col: 116}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 72, Col: 116}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var7)
 		if templ_7745c5c3_Err != nil {
@@ -258,7 +254,7 @@ func memberFilters(data pageData) templ.Component {
 			return templ_7745c5c3_Err
 		}
 		if data.Query != "" || data.RoleFilter != "all" {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 16, "<a class=\"ts-btn ts-btn-ghost ts-btn-sm\" href=\"/access?tab=members\">Clear</a>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 16, "<a class=\"ts-btn ts-btn-ghost ts-btn-sm\" href=\"/organization?tab=members\">Clear</a>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -443,7 +439,7 @@ func accessOverview(page core.Page, data pageData) templ.Component {
 			}
 			return nil
 		})
-		templ_7745c5c3_Err = ui.Card(ui.CardProps{ID: "organization-members", Title: "Organization members", Description: "Users returned by the TerraScale Dashboard API", Actions: linkAction("/access?tab=members", "View all"), Flush: data.MemberCount > 0}).Render(templ.WithChildren(ctx, templ_7745c5c3_Var13), templ_7745c5c3_Buffer)
+		templ_7745c5c3_Err = ui.Card(ui.CardProps{ID: "organization-members", Title: "Organization members", Description: "Users returned by the TerraScale Dashboard API", Actions: linkAction("/organization?tab=members", "View all"), Flush: data.MemberCount > 0}).Render(templ.WithChildren(ctx, templ_7745c5c3_Var13), templ_7745c5c3_Buffer)
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -467,7 +463,7 @@ func accessOverview(page core.Page, data pageData) templ.Component {
 				var templ_7745c5c3_Var15 string
 				templ_7745c5c3_Var15, templ_7745c5c3_Err = templ.ResolveAttributeValue(page.CSRFToken)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 132, Col: 61}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 128, Col: 61}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var15)
 				if templ_7745c5c3_Err != nil {
@@ -506,7 +502,7 @@ func accessOverview(page core.Page, data pageData) templ.Component {
 				var templ_7745c5c3_Var17 string
 				templ_7745c5c3_Var17, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprint(data.PendingInviteCount))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 138, Col: 60}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 134, Col: 60}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var17))
 				if templ_7745c5c3_Err != nil {
@@ -519,7 +515,7 @@ func accessOverview(page core.Page, data pageData) templ.Component {
 				var templ_7745c5c3_Var18 string
 				templ_7745c5c3_Var18, templ_7745c5c3_Err = templ.JoinStringErrs(invitationNoun(data.PendingInviteCount))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 138, Col: 112}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 134, Col: 112}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var18))
 				if templ_7745c5c3_Err != nil {
@@ -532,7 +528,7 @@ func accessOverview(page core.Page, data pageData) templ.Component {
 				var templ_7745c5c3_Var19 string
 				templ_7745c5c3_Var19, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprint(data.MemberCount))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 138, Col: 149}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 134, Col: 149}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var19))
 				if templ_7745c5c3_Err != nil {
@@ -545,7 +541,7 @@ func accessOverview(page core.Page, data pageData) templ.Component {
 				var templ_7745c5c3_Var20 string
 				templ_7745c5c3_Var20, templ_7745c5c3_Err = templ.JoinStringErrs(accessRecordNoun(data.MemberCount))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 138, Col: 208}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 134, Col: 208}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var20))
 				if templ_7745c5c3_Err != nil {
@@ -568,7 +564,7 @@ func accessOverview(page core.Page, data pageData) templ.Component {
 						var templ_7745c5c3_Var21 string
 						templ_7745c5c3_Var21, templ_7745c5c3_Err = templ.JoinStringErrs(invitation.Email)
 						if templ_7745c5c3_Err != nil {
-							return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 143, Col: 75}
+							return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 139, Col: 75}
 						}
 						_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var21))
 						if templ_7745c5c3_Err != nil {
@@ -590,7 +586,7 @@ func accessOverview(page core.Page, data pageData) templ.Component {
 							var templ_7745c5c3_Var22 templ.SafeURL
 							templ_7745c5c3_Var22, templ_7745c5c3_Err = templ.JoinURLErrs("/api/v1/access/invitations/" + invitation.ID + "/revoke")
 							if templ_7745c5c3_Err != nil {
-								return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 146, Col: 95}
+								return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 142, Col: 95}
 							}
 							_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var22))
 							if templ_7745c5c3_Err != nil {
@@ -603,7 +599,7 @@ func accessOverview(page core.Page, data pageData) templ.Component {
 							var templ_7745c5c3_Var23 string
 							templ_7745c5c3_Var23, templ_7745c5c3_Err = templ.ResolveAttributeValue(page.CSRFToken)
 							if templ_7745c5c3_Err != nil {
-								return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 146, Col: 154}
+								return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 142, Col: 154}
 							}
 							_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var23)
 							if templ_7745c5c3_Err != nil {
@@ -616,7 +612,7 @@ func accessOverview(page core.Page, data pageData) templ.Component {
 							var templ_7745c5c3_Var24 string
 							templ_7745c5c3_Var24, templ_7745c5c3_Err = templ.ResolveAttributeValue("Cancel invitation for " + invitation.Email)
 							if templ_7745c5c3_Err != nil {
-								return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 146, Col: 269}
+								return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 142, Col: 269}
 							}
 							_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var24)
 							if templ_7745c5c3_Err != nil {
@@ -645,7 +641,7 @@ func accessOverview(page core.Page, data pageData) templ.Component {
 			}
 			return nil
 		})
-		templ_7745c5c3_Err = ui.Card(ui.CardProps{ID: "invitations-summary", Title: "Invitations and role changes", Description: "Persistent access mutations", Actions: linkAction("/access?tab=invitations", "Manage access")}).Render(templ.WithChildren(ctx, templ_7745c5c3_Var14), templ_7745c5c3_Buffer)
+		templ_7745c5c3_Err = ui.Card(ui.CardProps{ID: "invitations-summary", Title: "Invitations and role changes", Description: "Persistent access mutations", Actions: linkAction("/organization?tab=invitations", "Manage access")}).Render(templ.WithChildren(ctx, templ_7745c5c3_Var14), templ_7745c5c3_Buffer)
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -713,7 +709,7 @@ func accessMembers(page core.Page, data pageData) templ.Component {
 					}
 					ctx = templ.InitializeContext(ctx)
 					if data.Query != "" || data.RoleFilter != "all" {
-						templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 44, "<a class=\"ts-btn ts-btn-secondary ts-btn-sm\" href=\"/access?tab=members\">Clear filters</a>")
+						templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 44, "<a class=\"ts-btn ts-btn-secondary ts-btn-sm\" href=\"/organization?tab=members\">Clear filters</a>")
 						if templ_7745c5c3_Err != nil {
 							return templ_7745c5c3_Err
 						}
@@ -805,7 +801,7 @@ func accessProjects(data pageData) templ.Component {
 					var templ_7745c5c3_Var30 string
 					templ_7745c5c3_Var30, templ_7745c5c3_Err = templ.JoinStringErrs(project.Name)
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 197, Col: 76}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 193, Col: 76}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var30))
 					if templ_7745c5c3_Err != nil {
@@ -818,7 +814,7 @@ func accessProjects(data pageData) templ.Component {
 					var templ_7745c5c3_Var31 string
 					templ_7745c5c3_Var31, templ_7745c5c3_Err = templ.JoinStringErrs(project.ID)
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 197, Col: 127}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 193, Col: 127}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var31))
 					if templ_7745c5c3_Err != nil {
@@ -846,7 +842,7 @@ func accessProjects(data pageData) templ.Component {
 					var templ_7745c5c3_Var32 string
 					templ_7745c5c3_Var32, templ_7745c5c3_Err = templ.JoinStringErrs(project.CreatedAt)
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 205, Col: 62}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 201, Col: 62}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var32))
 					if templ_7745c5c3_Err != nil {
@@ -919,7 +915,7 @@ func accessInvitations(page core.Page, data pageData) templ.Component {
 				var templ_7745c5c3_Var35 string
 				templ_7745c5c3_Var35, templ_7745c5c3_Err = templ.ResolveAttributeValue(page.CSRFToken)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 222, Col: 60}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 218, Col: 60}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var35)
 				if templ_7745c5c3_Err != nil {
@@ -1061,7 +1057,7 @@ func shareChart(label, of string, shares []shareView) templ.Component {
 		var templ_7745c5c3_Var40 string
 		templ_7745c5c3_Var40, templ_7745c5c3_Err = templ.ResolveAttributeValue(label)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 255, Col: 48}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 251, Col: 48}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var40)
 		if templ_7745c5c3_Err != nil {
@@ -1079,7 +1075,7 @@ func shareChart(label, of string, shares []shareView) templ.Component {
 			var templ_7745c5c3_Var41 string
 			templ_7745c5c3_Var41, templ_7745c5c3_Err = templ.ResolveAttributeValue(share.Tone)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 257, Col: 53}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 253, Col: 53}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var41)
 			if templ_7745c5c3_Err != nil {
@@ -1092,7 +1088,7 @@ func shareChart(label, of string, shares []shareView) templ.Component {
 			var templ_7745c5c3_Var42 string
 			templ_7745c5c3_Var42, templ_7745c5c3_Err = templ.JoinStringErrs(share.Label)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 258, Col: 100}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 254, Col: 100}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var42))
 			if templ_7745c5c3_Err != nil {
@@ -1105,7 +1101,7 @@ func shareChart(label, of string, shares []shareView) templ.Component {
 			var templ_7745c5c3_Var43 string
 			templ_7745c5c3_Var43, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprint(share.Count))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 259, Col: 89}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 255, Col: 89}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var43))
 			if templ_7745c5c3_Err != nil {
@@ -1118,7 +1114,7 @@ func shareChart(label, of string, shares []shareView) templ.Component {
 			var templ_7745c5c3_Var44 string
 			templ_7745c5c3_Var44, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprint(share.Percent))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 259, Col: 148}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 255, Col: 148}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var44))
 			if templ_7745c5c3_Err != nil {
@@ -1175,7 +1171,7 @@ func accessPager(label string, data pageData) templ.Component {
 			var templ_7745c5c3_Var46 string
 			templ_7745c5c3_Var46, templ_7745c5c3_Err = templ.ResolveAttributeValue(label)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 269, Col: 42}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 265, Col: 42}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var46)
 			if templ_7745c5c3_Err != nil {
@@ -1188,7 +1184,7 @@ func accessPager(label string, data pageData) templ.Component {
 			var templ_7745c5c3_Var47 string
 			templ_7745c5c3_Var47, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprint(data.First))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 270, Col: 41}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 266, Col: 41}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var47))
 			if templ_7745c5c3_Err != nil {
@@ -1201,7 +1197,7 @@ func accessPager(label string, data pageData) templ.Component {
 			var templ_7745c5c3_Var48 string
 			templ_7745c5c3_Var48, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprint(data.Last))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 270, Col: 69}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 266, Col: 69}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var48))
 			if templ_7745c5c3_Err != nil {
@@ -1214,7 +1210,7 @@ func accessPager(label string, data pageData) templ.Component {
 			var templ_7745c5c3_Var49 string
 			templ_7745c5c3_Var49, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprint(data.Total))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 270, Col: 99}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 266, Col: 99}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var49))
 			if templ_7745c5c3_Err != nil {
@@ -1232,7 +1228,7 @@ func accessPager(label string, data pageData) templ.Component {
 				var templ_7745c5c3_Var50 templ.SafeURL
 				templ_7745c5c3_Var50, templ_7745c5c3_Err = templ.JoinURLErrs(data.PreviousURL)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 273, Col: 84}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 269, Col: 84}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var50))
 				if templ_7745c5c3_Err != nil {
@@ -1251,7 +1247,7 @@ func accessPager(label string, data pageData) templ.Component {
 				var templ_7745c5c3_Var51 templ.SafeURL
 				templ_7745c5c3_Var51, templ_7745c5c3_Err = templ.JoinURLErrs(data.NextURL)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 276, Col: 80}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 272, Col: 80}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var51))
 				if templ_7745c5c3_Err != nil {
@@ -1328,7 +1324,7 @@ func linkAction(href, label string) templ.Component {
 		var templ_7745c5c3_Var54 templ.SafeURL
 		templ_7745c5c3_Var54, templ_7745c5c3_Err = templ.JoinURLErrs(templ.SafeURL(href))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 288, Col: 68}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 284, Col: 68}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var54))
 		if templ_7745c5c3_Err != nil {
@@ -1341,7 +1337,7 @@ func linkAction(href, label string) templ.Component {
 		var templ_7745c5c3_Var55 string
 		templ_7745c5c3_Var55, templ_7745c5c3_Err = templ.JoinStringErrs(label)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 288, Col: 84}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 284, Col: 84}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var55))
 		if templ_7745c5c3_Err != nil {
@@ -1391,7 +1387,7 @@ func memberIdentity(member memberView) templ.Component {
 		var templ_7745c5c3_Var57 string
 		templ_7745c5c3_Var57, templ_7745c5c3_Err = templ.JoinStringErrs(accessInitials(member.Name, member.Email))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 292, Col: 87}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 288, Col: 87}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var57))
 		if templ_7745c5c3_Err != nil {
@@ -1404,7 +1400,7 @@ func memberIdentity(member memberView) templ.Component {
 		var templ_7745c5c3_Var58 string
 		templ_7745c5c3_Var58, templ_7745c5c3_Err = templ.JoinStringErrs(accessMemberDisplayName(member))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 294, Col: 71}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 290, Col: 71}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var58))
 		if templ_7745c5c3_Err != nil {
@@ -1417,7 +1413,7 @@ func memberIdentity(member memberView) templ.Component {
 		var templ_7745c5c3_Var59 string
 		templ_7745c5c3_Var59, templ_7745c5c3_Err = templ.JoinStringErrs(member.Email)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 295, Col: 50}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 291, Col: 50}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var59))
 		if templ_7745c5c3_Err != nil {
@@ -1467,7 +1463,7 @@ func accessMemberRow(page core.Page, member memberView) templ.Component {
 		var templ_7745c5c3_Var61 string
 		templ_7745c5c3_Var61, templ_7745c5c3_Err = templ.JoinStringErrs(member.ID)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 302, Col: 39}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 298, Col: 39}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var61))
 		if templ_7745c5c3_Err != nil {
@@ -1488,7 +1484,7 @@ func accessMemberRow(page core.Page, member memberView) templ.Component {
 		var templ_7745c5c3_Var62 string
 		templ_7745c5c3_Var62, templ_7745c5c3_Err = templ.JoinStringErrs(member.JoinedOn)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 304, Col: 54}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 300, Col: 54}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var62))
 		if templ_7745c5c3_Err != nil {
@@ -1506,7 +1502,7 @@ func accessMemberRow(page core.Page, member memberView) templ.Component {
 			var templ_7745c5c3_Var63 templ.SafeURL
 			templ_7745c5c3_Var63, templ_7745c5c3_Err = templ.JoinURLErrs("/api/v1/access/members/" + member.ID + "/role?tab=members")
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 308, Col: 108}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 304, Col: 108}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var63))
 			if templ_7745c5c3_Err != nil {
@@ -1519,7 +1515,7 @@ func accessMemberRow(page core.Page, member memberView) templ.Component {
 			var templ_7745c5c3_Var64 string
 			templ_7745c5c3_Var64, templ_7745c5c3_Err = templ.ResolveAttributeValue(page.CSRFToken)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 309, Col: 62}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 305, Col: 62}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var64)
 			if templ_7745c5c3_Err != nil {
@@ -1532,7 +1528,7 @@ func accessMemberRow(page core.Page, member memberView) templ.Component {
 			var templ_7745c5c3_Var65 string
 			templ_7745c5c3_Var65, templ_7745c5c3_Err = templ.ResolveAttributeValue("role-" + member.ID)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 310, Col: 57}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 306, Col: 57}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var65)
 			if templ_7745c5c3_Err != nil {
@@ -1545,7 +1541,7 @@ func accessMemberRow(page core.Page, member memberView) templ.Component {
 			var templ_7745c5c3_Var66 string
 			templ_7745c5c3_Var66, templ_7745c5c3_Err = templ.JoinStringErrs(accessMemberDisplayName(member))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 310, Col: 102}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 306, Col: 102}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var66))
 			if templ_7745c5c3_Err != nil {
@@ -1558,7 +1554,7 @@ func accessMemberRow(page core.Page, member memberView) templ.Component {
 			var templ_7745c5c3_Var67 string
 			templ_7745c5c3_Var67, templ_7745c5c3_Err = templ.ResolveAttributeValue("role-" + member.ID)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 311, Col: 83}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 307, Col: 83}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var67)
 			if templ_7745c5c3_Err != nil {
@@ -1576,7 +1572,7 @@ func accessMemberRow(page core.Page, member memberView) templ.Component {
 				var templ_7745c5c3_Var68 string
 				templ_7745c5c3_Var68, templ_7745c5c3_Err = templ.JoinStringErrs(roleLabel(member.Role))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 315, Col: 67}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 311, Col: 67}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var68))
 				if templ_7745c5c3_Err != nil {
@@ -1634,7 +1630,7 @@ func accessMemberRow(page core.Page, member memberView) templ.Component {
 				var templ_7745c5c3_Var70 templ.SafeURL
 				templ_7745c5c3_Var70, templ_7745c5c3_Err = templ.JoinURLErrs("/api/v1/access/members/" + member.ID + "/revoke?tab=members")
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 324, Col: 96}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 320, Col: 96}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var70))
 				if templ_7745c5c3_Err != nil {
@@ -1647,7 +1643,7 @@ func accessMemberRow(page core.Page, member memberView) templ.Component {
 				var templ_7745c5c3_Var71 string
 				templ_7745c5c3_Var71, templ_7745c5c3_Err = templ.ResolveAttributeValue(page.CSRFToken)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 325, Col: 63}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 321, Col: 63}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var71)
 				if templ_7745c5c3_Err != nil {
@@ -1740,7 +1736,7 @@ func accessInvitationRow(page core.Page, canManage bool, invitation invitationVi
 		var templ_7745c5c3_Var74 string
 		templ_7745c5c3_Var74, templ_7745c5c3_Err = templ.JoinStringErrs(invitation.Email)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 343, Col: 42}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 339, Col: 42}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var74))
 		if templ_7745c5c3_Err != nil {
@@ -1753,7 +1749,7 @@ func accessInvitationRow(page core.Page, canManage bool, invitation invitationVi
 		var templ_7745c5c3_Var75 string
 		templ_7745c5c3_Var75, templ_7745c5c3_Err = templ.JoinStringErrs(roleLabel(invitation.Role))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 344, Col: 34}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 340, Col: 34}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var75))
 		if templ_7745c5c3_Err != nil {
@@ -1774,7 +1770,7 @@ func accessInvitationRow(page core.Page, canManage bool, invitation invitationVi
 		var templ_7745c5c3_Var76 string
 		templ_7745c5c3_Var76, templ_7745c5c3_Err = templ.JoinStringErrs(invitation.ExpiresOn)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 346, Col: 59}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 342, Col: 59}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var76))
 		if templ_7745c5c3_Err != nil {
@@ -1792,7 +1788,7 @@ func accessInvitationRow(page core.Page, canManage bool, invitation invitationVi
 			var templ_7745c5c3_Var77 templ.SafeURL
 			templ_7745c5c3_Var77, templ_7745c5c3_Err = templ.JoinURLErrs("/api/v1/access/invitations/" + invitation.ID + "/resend?tab=invitations")
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 350, Col: 107}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 346, Col: 107}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var77))
 			if templ_7745c5c3_Err != nil {
@@ -1805,7 +1801,7 @@ func accessInvitationRow(page core.Page, canManage bool, invitation invitationVi
 			var templ_7745c5c3_Var78 string
 			templ_7745c5c3_Var78, templ_7745c5c3_Err = templ.ResolveAttributeValue(page.CSRFToken)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 351, Col: 62}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 347, Col: 62}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var78)
 			if templ_7745c5c3_Err != nil {
@@ -1818,7 +1814,7 @@ func accessInvitationRow(page core.Page, canManage bool, invitation invitationVi
 			var templ_7745c5c3_Var79 templ.SafeURL
 			templ_7745c5c3_Var79, templ_7745c5c3_Err = templ.JoinURLErrs("/api/v1/access/invitations/" + invitation.ID + "/revoke?tab=invitations")
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 354, Col: 107}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 350, Col: 107}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var79))
 			if templ_7745c5c3_Err != nil {
@@ -1831,7 +1827,7 @@ func accessInvitationRow(page core.Page, canManage bool, invitation invitationVi
 			var templ_7745c5c3_Var80 string
 			templ_7745c5c3_Var80, templ_7745c5c3_Err = templ.ResolveAttributeValue(page.CSRFToken)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 355, Col: 62}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 351, Col: 62}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var80)
 			if templ_7745c5c3_Err != nil {
@@ -1860,7 +1856,7 @@ func tabPath(tab string) string {
 	if tab == "overview" {
 		return "/access"
 	}
-	return "/access?tab=" + tab
+	return "/organization?tab=" + tab
 }
 
 func roleFilterValue(role string) string {
@@ -1909,7 +1905,7 @@ func roleFilterTrigger(role string) templ.Component {
 		var templ_7745c5c3_Var82 string
 		templ_7745c5c3_Var82, templ_7745c5c3_Err = templ.JoinStringErrs(roleFilterLabel(role))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 393, Col: 60}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/access/access.templ`, Line: 389, Col: 60}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var82))
 		if templ_7745c5c3_Err != nil {

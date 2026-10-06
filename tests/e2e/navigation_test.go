@@ -43,9 +43,9 @@ func TestNavigationContextSwitchStaysInSection(t *testing.T) {
 		})
 	}
 
-	goToOK(t, page, "/access")
+	goToOK(t, page, "/organization?tab=members")
 	switchContext(t, page, "data-organization-option", "Personal")
-	waitForPath(t, page, func(u *url.URL) bool { return u.Path == "/access" })
+	waitForPath(t, page, func(u *url.URL) bool { return u.Path == "/organization" })
 	must(t, expect.Locator(page.Locator("[data-active-organization-id]")).ToHaveText("Current organization: Personal"))
 }
 

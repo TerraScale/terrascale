@@ -68,7 +68,7 @@ func respondToInvitation(deps core.Deps, service Service) http.HandlerFunc {
 			return
 		}
 		if action != "accept" {
-			http.Redirect(w, r, "/access?invitation=declined", http.StatusSeeOther)
+			http.Redirect(w, r, "/organization?invitation=declined", http.StatusSeeOther)
 			return
 		}
 		refreshed, err := deps.Store.CurrentPrincipal(r.Context(), p.AccountID, p.UserID)
@@ -86,7 +86,7 @@ func respondToInvitation(deps core.Deps, service Service) http.HandlerFunc {
 			http.Error(w, "could not refresh session", http.StatusInternalServerError)
 			return
 		}
-		http.Redirect(w, r, "/access?tab=members&invitation=accepted", http.StatusSeeOther)
+		http.Redirect(w, r, "/organization?tab=members&invitation=accepted", http.StatusSeeOther)
 	}
 }
 

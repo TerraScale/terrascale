@@ -13,6 +13,38 @@ import (
 
 var testNow = time.Date(2026, time.September, 26, 12, 0, 0, 0, time.UTC)
 
+func TestLegacyAccessRedirect(t *testing.T) {
+	mux := http.NewServeMux()
+	Mount(mux, core.Deps{Tools: core.NewTools(nil)}, nil)
+	for _, tc := range []struct {
+		query string
+		tab   string
+	}{
+		{"", "members"},
+		{"tab=members&role=admin&q=Alice&page=2", "members"},
+		{"tab=invitations&create=1", "invitations"},
+		{"tab=invitations&page=2", "invitations"},
+		{"create=1", "invitations"},
+		{"tab=unknown", "members"},
+		{"tab=unknown&create=1", "invitations"},
+		{"tab=members&create=1", "members"},
+	} {
+		t.Run(tc.query, func(t *testing.T) {
+			response := httptest.NewRecorder()
+			mux.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/access?"+tc.query, nil))
+			location, err := url.Parse(response.Header().Get("Location"))
+			if err != nil || response.Code != http.StatusSeeOther || location.Path != "/organization" {
+				t.Fatalf("redirect = %d %q, error %v", response.Code, response.Header().Get("Location"), err)
+			}
+			want, _ := url.ParseQuery(tc.query)
+			want.Set("tab", tc.tab)
+			if got := location.Query().Encode(); got != want.Encode() {
+				t.Errorf("redirect query = %q, want %q", got, want.Encode())
+			}
+		})
+	}
+}
+
 func teamOrganization(invitations ...core.Invitation) core.Organization {
 	org := core.Organization{
 		ID: "org_1", Name: "Acme", OwnerUserID: "usr_owner",
@@ -69,7 +101,7 @@ func TestInvitationsTabIsPaged(t *testing.T) {
 	if len(data.Invitations) != 2 || data.First != 11 || data.Last != 12 || data.Total != 12 {
 		t.Fatalf("page 2 = %d invitations, %d–%d of %d; want 2, 11–12 of 12", len(data.Invitations), data.First, data.Last, data.Total)
 	}
-	if data.PreviousURL != "/access?page=1&tab=invitations" || data.NextURL != "" {
+	if data.PreviousURL != "/organization?page=1&tab=invitations" || data.NextURL != "" {
 		t.Fatalf("pager links = %q, %q", data.PreviousURL, data.NextURL)
 	}
 }

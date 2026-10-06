@@ -171,7 +171,7 @@ var (
 			{Label: "Databases", URL: "/databases"},
 		}},
 		{Label: "Secure", Items: []core.NavItem{
-			{Label: "API keys", URL: "/api-keys"}, {Label: "Team", URL: "/access"},
+			{Label: "API keys", URL: "/api-keys"},
 			{Label: "Authentication", URL: "/auth", Children: core.AuthNavigation()},
 		}},
 		{Label: "Manage", Items: []core.NavItem{

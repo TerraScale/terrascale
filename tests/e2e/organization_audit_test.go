@@ -23,7 +23,7 @@ func TestOrganizationAuditTabsAndLegacyRedirect(t *testing.T) {
 		}
 	}
 	tabs := pageByRole(page, *playwright.AriaRoleNavigation, "Organization sections")
-	must(t, expect.Locator(tabs.Locator("a")).ToHaveText([]string{"Organization", "Members", "Projects", "Billing", "Audit"}))
+	must(t, expect.Locator(tabs.Locator("a")).ToHaveText([]string{"Organization", "Members", "Invitations", "Projects", "Billing", "Audit"}))
 	must(t, expect.Locator(byRole(tabs, *playwright.AriaRoleLink, "Audit", true)).ToHaveAttribute("aria-current", "page"))
 	must(t, expect.Locator(page.Locator("main")).ToHaveCount(1))
 	navigation := pageByRole(page, *playwright.AriaRoleNavigation, "Dashboard sections")
@@ -32,7 +32,7 @@ func TestOrganizationAuditTabsAndLegacyRedirect(t *testing.T) {
 	visible(t, pageByRole(page, *playwright.AriaRoleSearch, "Filter audit events"))
 	viewportScreenshot(t, page, "organization-audit-desktop")
 
-	for _, label := range []string{"Organization", "Members", "Projects", "Billing"} {
+	for _, label := range []string{"Organization", "Members", "Invitations", "Projects", "Billing"} {
 		click(t, byRole(tabs, *playwright.AriaRoleLink, label, true))
 		must(t, expect.Locator(byRole(tabs, *playwright.AriaRoleLink, label, true)).ToHaveAttribute("aria-current", "page"))
 		if currentPath(t, page) != "/organization" {

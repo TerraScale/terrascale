@@ -14,6 +14,7 @@ import (
 	"github.com/a-h/templ"
 	"terrascale.tech/dashboard/internal/core"
 	"terrascale.tech/dashboard/internal/features/organization"
+	"terrascale.tech/dashboard/internal/features/payments"
 )
 
 type memberView struct {
@@ -92,11 +93,28 @@ type pageData struct {
 	InviteURL          string
 }
 
-func Mount(mux *http.ServeMux, deps core.Deps) {
+func Mount(mux *http.ServeMux, deps core.Deps, billing *payments.Stripe) {
 	organizationService := organization.NewService(deps.Store, deps.Sessions)
 	service := NewService(deps.Store, organizationService)
 	mountTools(deps.Tools, service)
-	mux.HandleFunc("GET /access", accessPage(deps, organizationService))
+	mux.HandleFunc("GET /access", func(w http.ResponseWriter, r *http.Request) {
+		query := r.URL.Query()
+		if tab := query.Get("tab"); tab != "members" && tab != "invitations" {
+			if query.Get("create") == "1" {
+				query.Set("tab", "invitations")
+			} else {
+				query.Set("tab", "members")
+			}
+		}
+		http.Redirect(w, r, "/organization?"+query.Encode(), http.StatusSeeOther)
+	})
+	mux.HandleFunc("GET /organization", func(w http.ResponseWriter, r *http.Request) {
+		if tab := r.URL.Query().Get("tab"); tab == "members" || tab == "invitations" {
+			accessPage(deps, organizationService)(w, r)
+		} else {
+			organization.Page(deps, billing)(w, r)
+		}
+	})
 	mux.HandleFunc("POST /api/v1/access/invitations", createInvitation(deps, service))
 	mux.HandleFunc("POST /api/v1/access/invitations/{invitationID}/resend", resendInvitation(deps, service))
 	mux.HandleFunc("POST /api/v1/access/invitations/{invitationID}/revoke", revokeInvitation(deps, organizationService))
@@ -124,7 +142,11 @@ func renderAccessPage(w http.ResponseWriter, r *http.Request, deps core.Deps, se
 		writeProblem(w, err)
 		return
 	}
-	data := buildPageData(account, org, p, r.URL.Query(), message, inviteURL, time.Now())
+	query := r.URL.Query()
+	if query.Get("tab") != "members" && query.Get("tab") != "invitations" {
+		query.Set("tab", "members")
+	}
+	data := buildPageData(account, org, p, query, message, inviteURL, time.Now())
 	csrfToken := deps.CSRF.Token(w, r)
 	if r.Method == http.MethodGet && strings.EqualFold(r.Header.Get("Datastar-Request"), "true") && r.URL.Query().Get("tab") == "members" {
 		if deps.Events == nil {
@@ -133,20 +155,20 @@ func renderAccessPage(w http.ResponseWriter, r *http.Request, deps core.Deps, se
 		}
 		var fragment strings.Builder
 		if err := accessPageView(core.Page{CSRFToken: csrfToken}, data).Render(r.Context(), &fragment); err != nil {
-			http.Error(w, "could not render team page", http.StatusInternalServerError)
+			http.Error(w, "could not render organization members", http.StatusInternalServerError)
 			return
 		}
 		_ = deps.Events.PatchElements(w, r, fragment.String())
 		return
 	}
 	page := core.Page{
-		Layout: "shell", Title: "Team · TerraScale", Principal: p, CSRFToken: csrfToken,
+		Layout: "shell", Title: "Organization · TerraScale", Principal: p, CSRFToken: csrfToken,
 		View: func(page core.Page) templ.Component {
 			return accessPageView(page, data)
 		},
 	}
 	if err := deps.Render.Page(w, r, page); err != nil {
-		http.Error(w, "could not render team page", http.StatusInternalServerError)
+		http.Error(w, "could not render organization members", http.StatusInternalServerError)
 	}
 }
 
@@ -366,7 +388,7 @@ func accessPageURL(tab, search, role string, page int) string {
 		values.Set("role", role)
 	}
 	values.Set("page", strconv.Itoa(page))
-	return "/access?" + values.Encode()
+	return "/organization?" + values.Encode()
 }
 
 // invitationStatus labels an invitation, reporting a pending one past its
@@ -476,7 +498,7 @@ func revokeInvitation(deps core.Deps, service organization.Service) http.Handler
 			redirectAccessError(w, r, err)
 			return
 		}
-		http.Redirect(w, r, "/access?tab=invitations", http.StatusSeeOther)
+		http.Redirect(w, r, "/organization?tab=invitations", http.StatusSeeOther)
 	}
 }
 
@@ -490,7 +512,7 @@ func updateMemberRole(deps core.Deps, service organization.Service) http.Handler
 			redirectAccessError(w, r, err)
 			return
 		}
-		http.Redirect(w, r, "/access?tab=members", http.StatusSeeOther)
+		http.Redirect(w, r, "/organization?tab=members", http.StatusSeeOther)
 	}
 }
 
@@ -504,7 +526,7 @@ func revokeMember(deps core.Deps, service organization.Service) http.HandlerFunc
 			redirectAccessError(w, r, err)
 			return
 		}
-		http.Redirect(w, r, "/access?tab=members", http.StatusSeeOther)
+		http.Redirect(w, r, "/organization?tab=members", http.StatusSeeOther)
 	}
 }
 
@@ -547,7 +569,7 @@ func redirectAccessError(w http.ResponseWriter, r *http.Request, err error) {
 	if tab := r.URL.Query().Get("tab"); slices.Contains(listTabs, tab) {
 		query.Set("tab", tab)
 	}
-	http.Redirect(w, r, "/access?"+query.Encode(), http.StatusSeeOther)
+	http.Redirect(w, r, "/organization?"+query.Encode(), http.StatusSeeOther)
 }
 
 func writeProblem(w http.ResponseWriter, err error) {

@@ -64,7 +64,7 @@ func TestKeyboardMenusShowFocusAndKeepItAfterAPatch(t *testing.T) {
 	t.Parallel()
 	page := newPage(t)
 	login(t, page, sampleAccount.Email, sampleAccount.Password)
-	goToOK(t, page, "/access?tab=members")
+	goToOK(t, page, "/organization?tab=members")
 
 	// The account trigger is named by the text it shows.
 	account := page.Locator("details.ts-account > summary")
@@ -99,7 +99,7 @@ func TestKeyboardMenusShowFocusAndKeepItAfterAPatch(t *testing.T) {
 	must(t, expect.Locator(owner).ToBeFocused())
 	_, err := page.ExpectResponse(func(response playwright.Response) bool {
 		parsed, err := url.Parse(response.URL())
-		return err == nil && parsed.Path == "/access" && slices.Contains(parsed.Query()["role"], "owner") &&
+		return err == nil && parsed.Path == "/organization" && slices.Contains(parsed.Query()["role"], "owner") &&
 			response.Request().Headers()["datastar-request"] == "true"
 	}, func() error { return page.Keyboard().Press("Enter") })
 	must(t, err)

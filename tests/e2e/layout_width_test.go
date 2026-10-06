@@ -82,51 +82,9 @@ func TestPageLayoutsFitContentColumn(t *testing.T) {
 							if (columns !== expected) problems.push(selector + ' has ' + columns + ' columns, want ' + expected);
 						}
 					}
-					if (location.pathname === '/access') {
-						const toolbar = document.querySelector('#access-page > .ts-toolbar');
-						const tabs = toolbar?.querySelector('[aria-label="Team sections"]');
-						const invite = toolbar?.querySelector('a[href="/access?tab=invitations&create=1"]');
-						if (!tabs || !invite) {
-							problems.push('Team tabs and invite action must share the header container');
-						} else {
-							if (!inside(invite, toolbar) || box(invite).left < box(toolbar).left - 1)
-								problems.push('Team invite action escapes the header');
-							if (innerWidth >= 1024 && (
-								Math.abs((box(tabs).top + box(tabs).bottom - box(invite).top - box(invite).bottom) / 2) > 1 ||
-								box(tabs).right > box(invite).left || Math.abs(box(invite).right - box(toolbar).right) > 1))
-								problems.push('Team tabs and invite action must be centered on one desktop row');
-						}
-						if ([...document.querySelectorAll('#access-page > .ts-page-actions')].some(visible))
-							problems.push('Team header has a redundant page-action row');
-					}
-					if (location.pathname === '/access' && innerWidth === 1440) {
-						const nested = document.createElement('div');
-						nested.style.width = '600px';
-						nested.style.containerType = 'inline-size';
-						nested.innerHTML = '<div class="ts-grid-2"><span>A</span><span>B</span></div>';
-						main.append(nested);
-						const columns = getComputedStyle(nested.firstElementChild).gridTemplateColumns.split(/\s+/).length;
-						nested.remove();
-						if (columns !== 2) problems.push('nested container overrides the page breakpoint');
-					}
 					for (const text of document.querySelectorAll('.ts-list-main > .ts-truncate')) {
 						if (visible(text) && (!inside(text, text.parentElement) || !inside(text, text.closest('.ts-list-item, .ts-list') || text.parentElement)))
 							problems.push('list text escapes its row: ' + text.textContent.trim());
-					}
-					if (location.pathname === '/access' && innerWidth === 360) {
-						const email = [...document.querySelectorAll('.ts-list-main > .ts-truncate')]
-							.find(el => el.textContent.trim() === 'mario@terrascale.tech');
-						if (!email || email.scrollWidth <= email.clientWidth)
-							problems.push('long member email is not truncated');
-						const list = document.createElement('ul');
-						list.className = 'ts-list';
-						list.style.width = '180px';
-						list.innerHTML = '<li class="ts-list-item"><div class="ts-list-main"><code class="ts-mono">prj_abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz</code></div></li>';
-						main.append(list);
-						const code = list.querySelector('code');
-						if (!inside(code, list) || code.scrollWidth > code.clientWidth + 1)
-							problems.push('unbroken list value escapes its row');
-						list.remove();
 					}
 					for (const row of document.querySelectorAll('.ts-idp-copy')) {
 						if (!visible(row)) continue;
