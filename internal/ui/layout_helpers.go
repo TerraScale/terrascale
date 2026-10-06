@@ -76,8 +76,9 @@ func UnreadLabel(count int) string {
 	return CountLabel(count, "unread", "unread")
 }
 
-// notificationsItem is the Notifications link shown outside the section
-// navigation: in the top bar and in the admin sidebar.
+// notificationsItem names the Notifications entry points outside the section
+// navigation: the account-menu item and the top-bar bell that open the
+// notifications dialog.
 func notificationsItem(unread int) core.NavItem {
 	return core.NavItem{Label: "Notifications", URL: "/notifications", BadgeCount: unread, BadgeLabel: UnreadLabel(unread)}
 }

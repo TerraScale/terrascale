@@ -23,28 +23,10 @@ templ notificationsView(data pageData, csrfToken string) {
 					@viewFields(data, csrfToken)
 					<button class="ts-btn ts-btn-secondary" type="submit" disabled?={ data.Unread == 0 }>Mark all read</button>
 				</form>
-				<p class="ts-meta ts-notifications-summary">
-					{ fmt.Sprint(data.Unread) } unread
-					if data.Critical > 0 {
-						<span>· { fmt.Sprint(data.Critical) } critical</span>
-					}
-					· { fmt.Sprint(data.Total) } total
-				</p>
+				@notificationsSummary(data)
 			</div>
 		</div>
-		if len(data.Notifications) > 0 {
-			<ol class="ts-notification-list">
-				for _, item := range data.Notifications {
-					<li>
-						@notificationItem(item, data, csrfToken)
-					</li>
-				}
-			</ol>
-		} else if data.Status == "unread" {
-			@ui.Empty("You're all caught up", "No unread notifications in this scope.")
-		} else {
-			@ui.Empty("You're all caught up", "No notifications in this scope.")
-		}
+		@notificationList(data, csrfToken, false)
 		if data.PageCount > 1 {
 			<nav class="ts-pager" aria-label="Notification pages">
 				<span>Page { fmt.Sprint(data.Page) } of { fmt.Sprint(data.PageCount) }</span>
@@ -61,7 +43,106 @@ templ notificationsView(data pageData, csrfToken string) {
 	</main>
 }
 
-templ notificationItem(item core.Notification, data pageData, csrfToken string) {
+// dialogPatch is the Datastar element patch for the shell's notifications
+// dialog: the inbox body, then the shell entry points whose unread counts
+// move with the inbox. Datastar merges each element over the one carrying
+// the same id, so the account-menu item and the top-bar bell stay current
+// without a page reload.
+templ dialogPatch(data pageData, csrfToken string) {
+	<div id="ts-notifications-body">
+		<div class="ts-toolbar">
+			<nav class="ts-tabs" aria-label="Notification filter">
+				<button
+					class="ts-tab"
+					type="button"
+					if data.Status == "all" {
+						aria-current="page"
+					}
+					data-on:click="@get('/notifications/dialog')"
+				>
+					<span>All</span>
+					if data.Total > 0 {
+						<span class="ts-tab-count">{ fmt.Sprint(data.Total) }</span>
+					}
+				</button>
+				<button
+					class="ts-tab"
+					type="button"
+					if data.Status == "unread" {
+						aria-current="page"
+					}
+					data-on:click="@get('/notifications/dialog?status=unread')"
+				>
+					<span>Unread</span>
+					if data.Unread > 0 {
+						<span class="ts-tab-count">{ fmt.Sprint(data.Unread) }</span>
+					}
+				</button>
+			</nav>
+			<div class="ts-notifications-actions">
+				<form method="post" action="/api/v1/notifications/read-all" data-on:submit="@post('/api/v1/notifications/read-all', {contentType:'form'})">
+					@viewFields(data, csrfToken)
+					<button class="ts-btn ts-btn-secondary" type="submit" disabled?={ data.Unread == 0 }>Mark all read</button>
+				</form>
+				@notificationsSummary(data)
+			</div>
+		</div>
+		@notificationList(data, csrfToken, true)
+		if data.PageCount > 1 {
+			<nav class="ts-pager" aria-label="Notification pages">
+				<span>Page { fmt.Sprint(data.Page) } of { fmt.Sprint(data.PageCount) }</span>
+				<div class="ts-row">
+					if data.HasPrevious {
+						<button class="ts-btn ts-btn-ghost ts-btn-sm" type="button" data-on:click={ "@get('/notifications/dialog?page=" + strconv.Itoa(data.Previous) + dialogQuery(data.Status) + "')" }>Previous</button>
+					}
+					if data.HasNext {
+						<button class="ts-btn ts-btn-ghost ts-btn-sm" type="button" data-on:click={ "@get('/notifications/dialog?page=" + strconv.Itoa(data.Next) + dialogQuery(data.Status) + "')" }>Next</button>
+					}
+				</div>
+			</nav>
+		}
+	</div>
+	@ui.NotificationsMenuItem(data.Unread)
+	@ui.NotificationsBell(data.Unread)
+}
+
+// dialogQuery is the status filter as a dialog-patch query suffix.
+func dialogQuery(status string) string {
+	if status == "unread" {
+		return "&status=unread"
+	}
+	return ""
+}
+
+// notificationList is the inbox the page and the dialog share.
+templ notificationList(data pageData, csrfToken string, dialog bool) {
+	if len(data.Notifications) > 0 {
+		<ol class="ts-notification-list">
+			for _, item := range data.Notifications {
+				<li>
+					@notificationItem(item, data, csrfToken, dialog)
+				</li>
+			}
+		</ol>
+	} else if data.Status == "unread" {
+		@ui.Empty("You're all caught up", "No unread notifications in this scope.")
+	} else {
+		@ui.Empty("You're all caught up", "No notifications in this scope.")
+	}
+}
+
+// notificationsSummary counts what the current inbox holds.
+templ notificationsSummary(data pageData) {
+	<p class="ts-meta ts-notifications-summary">
+		{ fmt.Sprint(data.Unread) } unread
+		if data.Critical > 0 {
+			<span>· { fmt.Sprint(data.Critical) } critical</span>
+		}
+		· { fmt.Sprint(data.Total) } total
+	</p>
+}
+
+templ notificationItem(item core.Notification, data pageData, csrfToken string, dialog bool) {
 	<article
 		class={ "ts-notification", templ.KV("ts-notification-unread", item.Unread()) }
 		data-tone={ severityTone(item.Severity) }
@@ -81,10 +162,19 @@ templ notificationItem(item core.Notification, data pageData, csrfToken string) 
 			<p class="ts-meta"><time datetime={ item.CreatedAt.Format("2006-01-02T15:04:05Z07:00") }>{ item.CreatedAt.UTC().Format("Jan 2, 2006 15:04 UTC") }</time> · { statusText(item) }</p>
 		</div>
 		if item.Unread() {
-			<form method="post" action={ "/api/v1/notifications/" + item.ID + "/read" }>
-				@viewFields(data, csrfToken)
-				<button class="ts-btn ts-btn-ghost ts-btn-sm" type="submit">Mark read</button>
-			</form>
+			if dialog {
+				// Inside the dialog a mark-read patches the inbox in place instead
+				// of navigating to it.
+				<form method="post" action={ "/api/v1/notifications/" + item.ID + "/read" } data-on:submit={ "@post('/api/v1/notifications/" + item.ID + "/read', {contentType:'form'})" }>
+					@viewFields(data, csrfToken)
+					<button class="ts-btn ts-btn-ghost ts-btn-sm" type="submit">Mark read</button>
+				</form>
+			} else {
+				<form method="post" action={ "/api/v1/notifications/" + item.ID + "/read" }>
+					@viewFields(data, csrfToken)
+					<button class="ts-btn ts-btn-ghost ts-btn-sm" type="submit">Mark read</button>
+				</form>
+			}
 		}
 	</article>
 }

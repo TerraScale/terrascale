@@ -3,58 +3,73 @@ package e2e
 import (
 	"fmt"
 	"net/url"
-	"regexp"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/mxschmitt/playwright-go"
 )
 
-// TestNotificationsUnreadCountAndReadFlow follows the seeded account's unread
-// notifications from the sidebar count to marking one read on the Unread tab.
-func TestNotificationsUnreadCountAndReadFlow(t *testing.T) {
+// TestNotificationsOpenInTheProfileDialog follows the seeded account's unread
+// notifications from the account menu to the in-place dialog: the sidebar no
+// longer links the inbox, opening it never navigates, and marking one read
+// updates the list and the unread counts without a reload.
+func TestNotificationsOpenInTheProfileDialog(t *testing.T) {
 	t.Parallel()
 	page := newPage(t)
 	login(t, page, sampleAccount.Email, sampleAccount.Password)
+	goToOK(t, page, "/")
 
-	goToOK(t, page, "/notifications?status=unread")
+	// The sidebar no longer carries the inbox.
 	navigation := pageByRole(page, *playwright.AriaRoleNavigation, "Dashboard sections")
-	link := byRole(navigation, *playwright.AriaRoleLink, "Notifications")
-	must(t, expect.Locator(link).ToHaveAttribute("aria-current", "page"))
-	items := page.Locator(".ts-notification-list > li")
-	unread, err := items.Count()
-	must(t, err)
-	expectUnreadCount(t, link, unread)
+	must(t, expect.Locator(navigation.GetByRole(*playwright.AriaRoleLink, playwright.LocatorGetByRoleOptions{Name: "Notifications"})).ToHaveCount(0))
+
+	menuItem := page.Locator("#ts-notifications-menu")
+	unread := 0
+	if count, err := menuItem.Locator(".ts-nav-count").TextContent(); err == nil {
+		unread, err = strconv.Atoi(strings.TrimSpace(count))
+		must(t, err)
+	}
 
 	account := page.Locator("details.ts-account")
 	click(t, account.Locator("summary"))
-	visible(t, byRole(account, *playwright.AriaRoleLink, "Profile"))
-	for _, label := range []string{"Notifications", "Settings"} {
-		must(t, expect.Locator(byRole(account, *playwright.AriaRoleLink, label)).ToHaveCount(0))
-	}
-	must(t, page.Keyboard().Press("Escape"))
+	click(t, menuItem)
+
+	// The dialog opens over the current page, which stays put.
+	dialog := page.Locator("#ts-notifications-dialog")
+	must(t, expect.Locator(dialog).ToHaveAttribute("open", ""))
+	items := dialog.Locator(".ts-notification-list > li")
+	must(t, expect.Locator(items.First()).ToBeVisible())
+	waitForPath(t, page, func(u *url.URL) bool { return u.Path == "/" })
+	must(t, expect.Locator(dialog).ToContainText(fmt.Sprintf("%d unread", unread)))
 
 	if unread > 0 {
 		click(t, byRole(items.First(), *playwright.AriaRoleButton, "Mark read"))
-		waitForPath(t, page, func(u *url.URL) bool {
-			return u.Path == "/notifications" && u.Query().Get("status") == "unread"
-		})
-		must(t, expect.Locator(items).ToHaveCount(unread-1))
-		expectUnreadCount(t, link, unread-1)
+		// The patch refreshes the inbox, the summary, and both entry points'
+		// counts without a navigation.
+		if unread > 1 {
+			must(t, expect.Locator(menuItem.Locator(".ts-nav-count")).ToHaveText(fmt.Sprint(unread-1)))
+		} else {
+			must(t, expect.Locator(menuItem.Locator(".ts-nav-count")).ToHaveCount(0))
+		}
+		must(t, expect.Locator(dialog).ToContainText(fmt.Sprintf("%d unread", unread-1)))
 	}
 
-	goToOK(t, page, "/notifications")
-	must(t, expect.Locator(pageByRole(page, *playwright.AriaRoleLink, "API key expiring soon")).ToHaveAttribute("href", "/api-keys"))
-	must(t, expect.Locator(pageByRole(page, *playwright.AriaRoleLink, "Backup completed")).ToHaveAttribute("href", regexp.MustCompile(`^/databases/db_\w+/backups$`)))
-}
-
-// expectUnreadCount checks the Notifications link announces unread, or no
-// count when everything is read.
-func expectUnreadCount(t *testing.T, link playwright.Locator, unread int) {
-	t.Helper()
-	if unread == 0 {
-		must(t, expect.Locator(link).ToHaveAccessibleName("Notifications"))
-		return
+	// The unread tab filters the dialog in place.
+	click(t, byRole(dialog, *playwright.AriaRoleButton, "Unread"))
+	remaining := unread
+	if unread > 0 {
+		remaining--
 	}
-	must(t, expect.Locator(link).ToHaveAccessibleName(fmt.Sprintf("Notifications, %d unread", unread)))
-	must(t, expect.Locator(link.Locator(".ts-nav-count")).ToHaveText(fmt.Sprint(unread)))
+	if remaining > 0 {
+		must(t, expect.Locator(items).ToHaveCount(remaining))
+	} else {
+		must(t, expect.Locator(dialog).ToContainText("You're all caught up"))
+	}
+	waitForPath(t, page, func(u *url.URL) bool { return u.Path == "/" })
+
+	// Closing lands back on the page that was open underneath.
+	must(t, page.Keyboard().Press("Escape"))
+	must(t, expect.Locator(dialog).Not().ToHaveAttribute("open", ""))
+	waitForPath(t, page, func(u *url.URL) bool { return u.Path == "/" })
 }
