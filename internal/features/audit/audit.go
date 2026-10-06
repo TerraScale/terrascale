@@ -58,17 +58,12 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 	service := Service{store: deps.Store}
 	mountTools(deps.Tools, service)
 	mux.HandleFunc("GET /audit", func(w http.ResponseWriter, r *http.Request) {
-		p, ok := signedIn(deps, w, r)
-		if !ok {
+		if _, ok := signedIn(deps, w, r); !ok {
 			return
 		}
 		query := r.URL.Query()
-		data, err := service.Page(r.Context(), p, query.Get("search"), query.Get("action"), query.Get("severity"), query.Get("range"), query.Get("page"), pageSize)
-		if err != nil {
-			writeError(w, err)
-			return
-		}
-		page(w, r, deps, p, data)
+		query.Set("tab", "audit")
+		http.Redirect(w, r, "/organization?"+query.Encode(), http.StatusSeeOther)
 	})
 
 	mux.HandleFunc("GET /audit/export", func(w http.ResponseWriter, r *http.Request) {
@@ -136,13 +131,27 @@ func signedIn(deps core.Deps, w http.ResponseWriter, r *http.Request) (core.Prin
 	return p, true
 }
 
-func page(w http.ResponseWriter, r *http.Request, deps core.Deps, p core.Principal, data pageData) {
-	page := core.Page{
-		Layout: "shell", Title: "Audit", Principal: p,
-		View: func(core.Page) templ.Component { return auditView(data) },
-	}
-	if err := deps.Render.Page(w, r, page); err != nil {
-		http.Error(w, "could not render audit history", http.StatusInternalServerError)
+// OrganizationAudit renders the scoped audit history inside Organization.
+func OrganizationAudit(deps core.Deps, wrap func(templ.Component) templ.Component) http.HandlerFunc {
+	service := Service{store: deps.Store}
+	return func(w http.ResponseWriter, r *http.Request) {
+		p, ok := signedIn(deps, w, r)
+		if !ok {
+			return
+		}
+		query := r.URL.Query()
+		data, err := service.Page(r.Context(), p, query.Get("search"), query.Get("action"), query.Get("severity"), query.Get("range"), query.Get("page"), pageSize)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		page := core.Page{
+			Layout: "shell", Title: "Organization · TerraScale", Principal: p,
+			View: func(core.Page) templ.Component { return wrap(auditContent(data)) },
+		}
+		if err := deps.Render.Page(w, r, page); err != nil {
+			http.Error(w, "could not render audit history", http.StatusInternalServerError)
+		}
 	}
 }
 

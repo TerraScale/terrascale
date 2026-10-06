@@ -20,7 +20,7 @@ import (
 // sample account.
 var memberAccessibilityPaths = []string{
 	"/api-keys", "/access", "/access?tab=members", "/access?tab=projects", "/access?tab=invitations",
-	"/audit", "/usage", "/usage?tab=billing", "/subscriptions", "/billing",
+	"/organization?tab=audit", "/usage", "/usage?tab=billing", "/subscriptions", "/billing",
 	"/organization", "/organization?newOrganization=organization",
 	"/profile", "/profile?tab=security", "/profile?tab=sessions", "/notifications",
 	"/cli/approve", "/agent/approve",

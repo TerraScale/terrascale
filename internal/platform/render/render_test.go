@@ -60,8 +60,8 @@ func TestShellNavigationNamesItsCounts(t *testing.T) {
 	}
 	for _, group := range shell.Navigation {
 		for _, item := range group.Items {
-			if item.URL == "/notifications" {
-				t.Error("notifications left the sidebar navigation for the account menu")
+			if item.URL == "/notifications" || item.URL == "/audit" {
+				t.Errorf("%s must not appear in the sidebar navigation", item.URL)
 			}
 			if expected, ok := want[item.URL]; ok {
 				if item.BadgeCount != expected.count || item.BadgeLabel != expected.label {
