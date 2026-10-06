@@ -502,9 +502,13 @@ failure.
   other registration, behind client authentication and the limits above. The
   authorization code flow stays the only flow for every other client and for
   SSO and social sign-in.
-- **No enumeration.** Starts answer 202 and mail after the response
-  (`SignInMail`), grants answer one `invalid_grant`, and limits apply to
-  unknown emails the same way.
+- **No enumeration.** Starts answer 202 and leave issuing and mail to the
+  `SignInMail` worker, grants answer one `invalid_grant`, and limits apply to
+  unknown emails the same way. The Argon2id timing equalizer is hashed at
+  startup, so the first unknown account costs no more than later ones.
+- **Errors at the token endpoint** stay OAuth errors: a busy Argon2id pool or
+  a storage failure answers `503 temporarily_unavailable` in RFC 6749 form;
+  the JSON routes answer the same code in the `{"error":{…}}` envelope.
 - **Not applicable:** CSRF (no cookies; server-to-server only) and CORS.
 - **Audit events** are structured log lines (`Audit: headless …`) with the
   method, the outcome and the user id when known, never the email, password,
@@ -524,9 +528,11 @@ failure.
   code, without a long-term lockout. Anyone who knows an address can supersede
   its live code or spend its 5 codes an hour, delaying (not taking over)
   that account's code sign-in.
-- Timing: for an existing account the starts and code grants make two or three
-  more storage round trips than for a stranger, as the hosted page does; mail
-  goes out after the response.
+- Timing: the three starts only charge limits and queue the work: the mail
+  worker issues the code (or finds no account) and mails it after the
+  response, so their timing does not depend on the account. The code grants
+  and the reset completion still make two or three more storage round trips
+  for an existing account than for a stranger, as the hosted page does.
 - One delivery queue per replica (256 codes) serves sign-in, reset and sign-up
   mail; a flood beyond the per-IP budgets that outpaces the relay drops codes,
   and the user asks for another.

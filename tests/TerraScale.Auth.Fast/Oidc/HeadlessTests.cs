@@ -440,6 +440,24 @@ public sealed class HeadlessTests(TerraBaseFixture fixture)
     }
 
     [Test]
+    public async Task Without_its_limiter_storage_the_api_fails_closed_with_a_retryable_error_in_each_format()
+    {
+        await using var oidc = await StartAsync();
+        await CreateUserAsync(oidc, "alice@example.test", Password);
+        await oidc.Database.DropCollectionAsync("rate_limits");
+
+        // The token endpoint answers an OAuth error, never the JSON API envelope or a sign-in.
+        using var grant = await oidc.GrantAsync(HeadlessGrants.Password, "alice@example.test", Password, Ip);
+        await Assert.That(grant.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+        await Assert.That(await OidcHarness.ErrorAsync(grant)).IsEqualTo("temporarily_unavailable");
+
+        using var start = await oidc.HeadlessAsync("email-code/start", new { email = "alice@example.test", ip_address = Ip });
+        await Assert.That(start.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+        await Assert.That(await OidcHarness.EnvelopeCodeAsync(start)).IsEqualTo("temporarily_unavailable");
+        await Assert.That(oidc.Email.HasPending).IsFalse();
+    }
+
+    [Test]
     public async Task Concurrent_redemptions_of_one_sign_up_code_across_replicas_create_one_account()
     {
         await using var oidc = await StartAsync();

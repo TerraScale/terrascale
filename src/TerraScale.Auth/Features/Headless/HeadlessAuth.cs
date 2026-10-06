@@ -63,6 +63,19 @@ public sealed partial class HeadlessAuth(Users users, Passcodes passcodes, Passw
     public async Task<IResult> GrantAsync(OpenIddictRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
+        try
+        {
+            return await this.RedeemAsync(request, cancellationToken);
+        }
+        catch (ApiException error) when (error.Status == StatusCodes.Status503ServiceUnavailable)
+        {
+            // Storage or Argon2id capacity: an OAuth error the client can retry, not the JSON API envelope.
+            return Results.Json(new OAuthErrorBody(Errors.TemporarilyUnavailable, error.Message), statusCode: StatusCodes.Status503ServiceUnavailable);
+        }
+    }
+
+    private async Task<IResult> RedeemAsync(OpenIddictRequest request, CancellationToken cancellationToken)
+    {
         var email = (string?)request["email"];
         var secret = (string?)(request.GrantType == HeadlessGrants.Password ? request["password"] : request["code"]);
         if (Subject((string?)request["ip_address"]) is not { } ip || email is null || secret is null)
@@ -118,7 +131,8 @@ public sealed partial class HeadlessAuth(Users users, Passcodes passcodes, Passw
             return wait;
         }
 
-        this.Send(await passcodes.RequestAsync(OidcIssuer.InstanceId, email, PasscodePurpose.SignIn, cancellationToken));
+        // Issued on the mail worker, so the response takes the same work whether or not the address has an account.
+        mail.EnqueueIssue(() => passcodes.RequestAsync(OidcIssuer.InstanceId, email, PasscodePurpose.SignIn, CancellationToken.None));
         return null;
     }
 
@@ -137,7 +151,7 @@ public sealed partial class HeadlessAuth(Users users, Passcodes passcodes, Passw
         // Hashed whether or not the address has an account, so both take the same time.
         var hash = await passwords.HashAsync(password, cancellationToken);
         var pending = Tokens.RandomToken(43);
-        this.Send(await passcodes.RequestSignUpAsync(OidcIssuer.InstanceId, email, hash, pending, cancellationToken));
+        mail.EnqueueIssue(() => passcodes.RequestSignUpAsync(OidcIssuer.InstanceId, email, hash, pending, CancellationToken.None));
         return (pending, null);
     }
 
@@ -149,7 +163,7 @@ public sealed partial class HeadlessAuth(Users users, Passcodes passcodes, Passw
             return wait;
         }
 
-        this.Send(await passcodes.RequestAsync(OidcIssuer.InstanceId, email, PasscodePurpose.PasswordReset, cancellationToken));
+        mail.EnqueueIssue(() => passcodes.RequestAsync(OidcIssuer.InstanceId, email, PasscodePurpose.PasswordReset, CancellationToken.None));
         return null;
     }
 
@@ -254,14 +268,6 @@ public sealed partial class HeadlessAuth(Users users, Passcodes passcodes, Passw
         }
 
         return null;
-    }
-
-    private void Send(IssuedPasscode? issued)
-    {
-        if (issued is not null)
-        {
-            mail.Enqueue(issued);
-        }
     }
 
     [LoggerMessage(Level = LogLevel.Information, Message = "Audit: headless {Method} sign-in succeeded for user {UserId}")]

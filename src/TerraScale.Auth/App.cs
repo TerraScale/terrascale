@@ -90,6 +90,8 @@ public static partial class App
         configure?.Invoke(builder);
 
         var app = builder.Build();
+        // Hashes its timing equalizer now, so the first password check of an unknown account costs no more than any other.
+        app.Services.GetRequiredService<PasswordHasher>();
         if (options.SmtpHost is null && !options.Development)
         {
             LogEmailNotConfigured(app.Logger);

@@ -26,13 +26,24 @@ public sealed partial class SignInMail(IEmailSender email, AuthEmails emails, Em
     private DateTimeOffset configRetryAt;
 
     // ponytail: one sequential sender, add workers if a healthy relay cannot keep up with sign-in volume.
-    private readonly Channel<(IssuedPasscode Passcode, string Locale)> queue = Channel.CreateBounded<(IssuedPasscode, string)>(new BoundedChannelOptions(Capacity) { SingleReader = true });
+    private readonly Channel<(Func<Task<IssuedPasscode?>> Issue, string Locale)> queue =
+        Channel.CreateBounded<(Func<Task<IssuedPasscode?>>, string)>(new BoundedChannelOptions(Capacity) { SingleReader = true });
 
     /// <summary>Queues <paramref name="passcode"/> for delivery in <paramref name="locale"/> without waiting for it.</summary>
     public void Enqueue(IssuedPasscode passcode, string locale = AuthEmails.English)
     {
         ArgumentNullException.ThrowIfNull(passcode);
-        if (!this.queue.Writer.TryWrite((passcode, locale)))
+        this.EnqueueIssue(() => Task.FromResult<IssuedPasscode?>(passcode), locale);
+    }
+
+    /// <summary>
+    /// Queues <paramref name="issue"/> to run on the worker and mails the code it returns, if any. The request then does
+    /// the same work whether or not the address has an account; issuing failures are logged, not answered.
+    /// </summary>
+    public void EnqueueIssue(Func<Task<IssuedPasscode?>> issue, string locale = AuthEmails.English)
+    {
+        ArgumentNullException.ThrowIfNull(issue);
+        if (!this.queue.Writer.TryWrite((issue, locale)))
         {
             LogDropped(logger);
         }
@@ -50,10 +61,15 @@ public sealed partial class SignInMail(IEmailSender email, AuthEmails emails, Em
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         // Not stoppingToken: codes already issued are still delivered while the host shuts down.
-        await foreach (var (passcode, locale) in this.queue.Reader.ReadAllAsync(CancellationToken.None))
+        await foreach (var (issue, locale) in this.queue.Reader.ReadAllAsync(CancellationToken.None))
         {
             try
             {
+                if (await issue().ConfigureAwait(false) is not { } passcode)
+                {
+                    continue;
+                }
+
                 var kind = passcode.Purpose switch
                 {
                     PasscodePurpose.PasswordReset => AuthEmailKind.PasswordReset,

@@ -23,8 +23,9 @@ public sealed class PasswordHasher : IDisposable
 
     private readonly SemaphoreSlim slots = new(Concurrency);
 
-    // Verified against when there is no real hash, so an unknown account costs what a real one does.
-    private readonly Lazy<string> equalizer = new(() => Passwords.Hash("ts-auth sign-in timing equalizer"));
+    // Verified against when there is no real hash, so an unknown account costs what a real one does. Computed when the
+    // service is constructed, which App.Build does before serving, so no request pays for it.
+    private readonly string equalizer = Passwords.Hash("ts-auth sign-in timing equalizer");
 
     /// <summary>Whether <paramref name="password"/> is well-formed UTF-16 of <see cref="MinBytes"/> to <see cref="MaxBytes"/> UTF-8 bytes.</summary>
     public static bool Acceptable(string? password)
@@ -48,7 +49,7 @@ public sealed class PasswordHasher : IDisposable
     /// it spends the same work on a fixed hash and answers false.
     /// </summary>
     public Task<bool> VerifyAsync(string password, string? hash, CancellationToken cancellationToken) =>
-        this.RunAsync(() => Passwords.Verify(password, hash ?? this.equalizer.Value) && hash is not null, cancellationToken);
+        this.RunAsync(() => Passwords.Verify(password, hash ?? this.equalizer) && hash is not null, cancellationToken);
 
     /// <inheritdoc />
     public void Dispose() => this.slots.Dispose();
