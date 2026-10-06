@@ -7,6 +7,7 @@ using Microsoft.AspNetCore;
 using OpenIddict.Server.AspNetCore;
 using TerraScale.Auth.Configuration;
 using TerraScale.Auth.Contracts;
+using TerraScale.Auth.Features.Headless;
 using TerraScale.Auth.Features.Identity;
 using TerraScale.Auth.Features.SigningKeys;
 using TerraScale.Auth.Security;
@@ -75,9 +76,13 @@ public static class OidcIssuer
                     .SetTokenEndpointUris($"{Slug}/oauth/token")
                     .SetUserInfoEndpointUris($"{Slug}/oauth/userinfo")
                     .SetEndSessionEndpointUris($"{Slug}/oauth/logout")
+                    .SetRevocationEndpointUris($"{Slug}/oauth/revoke")
                     .AllowAuthorizationCodeFlow()
                     .AllowRefreshTokenFlow()
                     .AllowClientCredentialsFlow()
+                    // The headless grants (TS-582) are permitted only to ts-dashboard; see ClientRegistration.
+                    .AllowCustomFlow(HeadlessGrants.Password)
+                    .AllowCustomFlow(HeadlessGrants.EmailCode)
                     .RequireProofKeyForCodeExchange()
                     .RegisterScopes(Scopes.Email, Scopes.Profile, Scopes.OfflineAccess)
                     // Each client's scope permissions still bound what it may request; there is no scope store.
@@ -111,6 +116,9 @@ public static class OidcIssuer
                         .SetType(OpenIddictServerHandlerType.Custom))
                     .AddEventHandler<ProcessSignInContext>(handler => handler.UseScopedHandler<RedeemExactlyOnce>()
                         .SetOrder(OpenIddictServerHandlers.RedeemTokenEntry.Descriptor.Order)
+                        .SetType(OpenIddictServerHandlerType.Custom))
+                    .AddEventHandler<HandleRevocationRequestContext>(handler => handler.UseScopedHandler<RevokeTheSignIn>()
+                        .SetOrder(OpenIddictServerHandlers.Revocation.RevokeToken.Descriptor.Order - 1)
                         .SetType(OpenIddictServerHandlerType.Custom));
                 server.UseAspNetCore()
                     .EnableAuthorizationEndpointPassthrough()
@@ -252,6 +260,24 @@ public sealed class RedeemExactlyOnce(IOpenIddictTokenManager tokens) : IOpenIdd
 }
 
 /// <summary>
+/// Makes revocation (RFC 7009) end the whole sign-in, as §2.1 recommends: revoking a refresh or access token revokes
+/// its authorization, so every refresh token of that sign-in is refused and ts-auth stops accepting its access tokens.
+/// Access tokens validated offline, as TerraBase does, stay valid until they expire (at most 1 hour).
+/// </summary>
+public sealed class RevokeTheSignIn(IOpenIddictTokenManager tokens) : IOpenIddictServerHandler<HandleRevocationRequestContext>
+{
+    /// <inheritdoc />
+    public async ValueTask HandleAsync(HandleRevocationRequestContext context)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        if (context.GenericTokenPrincipal?.GetAuthorizationId() is { Length: > 0 } authorizationId)
+        {
+            await tokens.RevokeByAuthorizationIdAsync(authorizationId, context.CancellationToken).ConfigureAwait(false);
+        }
+    }
+}
+
+/// <summary>
 /// Registers or updates the ts-dashboard client (<c>TS_AUTH_DASHBOARD_*</c>) and the service clients
 /// (<c>TS_AUTH_SERVICE_CLIENTS</c>) at startup. Concurrent replicas converge through conditional writes; a storage
 /// failure stops startup instead of serving without them. Clients removed from configuration stay registered.
@@ -293,8 +319,10 @@ public sealed class ClientRegistration(IServiceScopeFactory scopes, AuthOptions 
             DisplayName = "TerraScale Dashboard",
             Permissions =
             {
-                Permissions.Endpoints.Authorization, Permissions.Endpoints.Token, Permissions.Endpoints.EndSession,
+                Permissions.Endpoints.Authorization, Permissions.Endpoints.Token, Permissions.Endpoints.EndSession, Permissions.Endpoints.Revocation,
                 Permissions.GrantTypes.AuthorizationCode, Permissions.GrantTypes.RefreshToken, Permissions.ResponseTypes.Code,
+                // The first-party headless API (TS-582); the email-code grant also gates its JSON endpoints.
+                Permissions.Prefixes.GrantType + HeadlessGrants.Password, Permissions.Prefixes.GrantType + HeadlessGrants.EmailCode,
                 Permissions.Scopes.Email, Permissions.Scopes.Profile,
             },
             Requirements = { Requirements.Features.ProofKeyForCodeExchange },

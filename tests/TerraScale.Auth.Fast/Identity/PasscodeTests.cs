@@ -411,6 +411,27 @@ public sealed class PasscodeTests(TerraBaseFixture fixture)
         public void Dispose() => this.released.Dispose();
     }
 
+    [Test]
+    public async Task Pruning_deletes_code_records_only_once_their_window_and_every_code_in_it_have_ended()
+    {
+        var (tenant, database) = await fixture.CreateDatabaseAsync();
+        var clock = new StoreTestClock();
+        var (users, _, passcodes) = this.Stack(tenant, clock, AuthOptions.Load(AuthTestServer.DefaultSettings()));
+        await users.CreateAsync("instance", Email);
+        await Assert.That(await passcodes.RequestAsync("instance", Email)).IsNotNull();
+        await Assert.That(await passcodes.RequestSignUpAsync("instance", "new@example.test", "argon2-hash", "pending-token")).IsNotNull();
+
+        // At the window's end a code issued just before it is still live.
+        clock.UtcNow += Passcodes.IssueWindow;
+        var late = (await passcodes.RequestSignUpAsync("instance", "late@example.test", "argon2-hash", "late-token"))!;
+        await Assert.That(await passcodes.PruneAsync(batchSize: 1)).IsEqualTo(0);
+
+        clock.UtcNow += Passcodes.Lifetime;
+        await Assert.That(await passcodes.PruneAsync(batchSize: 1)).IsEqualTo(2);
+        var left = (await database.ListDocumentsAsync("passcodes")).Items.Single().Document;
+        await Assert.That(left.GetProperty("email").GetString()).IsEqualTo(late.Email);
+    }
+
     private (Users Users, Sessions Sessions, Passcodes Passcodes) Stack(TerraBaseTestTenant tenant, TimeProvider clock, AuthOptions options)
     {
         var store = new AuthStore(fixture.Server.Documents(tenant.ApiKey).Database(tenant.Project.Id, "auth"), clock);

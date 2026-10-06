@@ -30,7 +30,8 @@ public sealed partial class OpenApiTests
         await Assert.That(paths.TryGetProperty("/healthz", out _)).IsTrue();
         await Assert.That(paths.TryGetProperty("/readyz", out _)).IsTrue();
         await Assert.That(paths.TryGetProperty("/admin/{asset}", out _)).IsTrue();
-        foreach (var oidcPath in new[] { "/{slug}/.well-known/openid-configuration", "/{slug}/.well-known/jwks.json", "/{slug}/oauth/authorize", "/{slug}/oauth/token", "/{slug}/oauth/userinfo", "/{slug}/oauth/logout", "/ui/{slug}/sign-in", "/ui/{slug}/sign-in/verify" })
+        foreach (var oidcPath in new[] { "/{slug}/.well-known/openid-configuration", "/{slug}/.well-known/jwks.json", "/{slug}/oauth/authorize", "/{slug}/oauth/token", "/{slug}/oauth/userinfo", "/{slug}/oauth/logout", "/ui/{slug}/sign-in", "/ui/{slug}/sign-in/verify", "/{slug}/oauth/revoke",
+            "/{slug}/headless/v1/email-code/start", "/{slug}/headless/v1/sign-up", "/{slug}/headless/v1/password-reset/start", "/{slug}/headless/v1/password-reset/complete" })
         {
             await Assert.That(paths.TryGetProperty(oidcPath, out _)).IsTrue();
         }
@@ -92,6 +93,11 @@ public sealed partial class OpenApiTests
         await Assert.That(Scheme(paths.GetProperty("/ui/{slug}/admin/__test").GetProperty("get"))).IsEqualTo("SessionCookie");
         await Assert.That(Scheme(paths.GetProperty("/{slug}/oauth/userinfo").GetProperty("get"))).IsEqualTo("OAuthAccessBearer");
         await Assert.That(Scheme(paths.GetProperty("/{slug}/oauth/token").GetProperty("post"))).IsEqualTo("clientBasic");
+        await Assert.That(Scheme(paths.GetProperty("/{slug}/oauth/revoke").GetProperty("post"))).IsEqualTo("clientBasic");
+        await Assert.That(Scheme(paths.GetProperty("/{slug}/headless/v1/sign-up").GetProperty("post"))).IsEqualTo("clientBasic");
+        // The headless contract documents its real JSON bodies.
+        await Assert.That(paths.GetProperty("/{slug}/headless/v1/password-reset/complete").GetProperty("post").GetProperty("requestBody")
+            .GetProperty("content").GetProperty("application/json").GetProperty("schema").GetProperty("$ref").GetString()).IsEqualTo("#/components/schemas/HeadlessPasswordResetRequest");
         await Assert.That(Scheme(paths.GetProperty("/v1/instances").GetProperty("post"))).IsEqualTo("OperatorBearer");
         await Assert.That(Scheme(paths.GetProperty("/scim/{directory}/__test").GetProperty("post"))).IsEqualTo("bearerAuth");
         // An endpoint's own declaration beats its group's; AllowAnonymous beats both.

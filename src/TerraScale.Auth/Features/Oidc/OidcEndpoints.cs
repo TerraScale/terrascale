@@ -7,6 +7,7 @@ using Microsoft.AspNetCore;
 using OpenIddict.Server.AspNetCore;
 using TerraScale.Auth.Configuration;
 using TerraScale.Auth.Contracts;
+using TerraScale.Auth.Features.Headless;
 using TerraScale.Auth.Features.Identity;
 using TerraScale.Auth.Features.Ui;
 using TerraScale.Auth.Hosting;
@@ -145,7 +146,7 @@ public sealed class AuthorizeEndpoint(Sessions sessions, TimeProvider clock, Aut
 /// client-credentials access token. Each code and refresh token works once: a second presentation, even a concurrent
 /// one, fails and revokes every token of that sign-in. Tokens are refused once the user signed out everywhere.
 /// </summary>
-public sealed class TokenEndpoint(Users users, AuthOptions options) : EndpointWithoutRequest<IResult>
+public sealed class TokenEndpoint(Users users, HeadlessAuth headless, AuthOptions options) : EndpointWithoutRequest<IResult>
 {
     /// <inheritdoc />
     public override void Configure()
@@ -153,12 +154,13 @@ public sealed class TokenEndpoint(Users users, AuthOptions options) : EndpointWi
         Post("/{slug}/oauth/token");
         Name("oauth_token");
         Summary("Token endpoint");
-        Description("application/x-www-form-urlencoded grant_type=authorization_code (code, redirect_uri, code_verifier), grant_type=refresh_token (refresh_token) or, for service clients only, grant_type=client_credentials. Confidential clients authenticate with client_secret_basic or client_secret_post. Access tokens are ES256 JWTs with typ at+jwt whose aud holds TS_AUTH_ACCESS_TOKEN_AUDIENCES; a user's carry email and email_verified, a service client's have sub = client id and no scopes. Refresh tokens rotate on every use and expire 14 days after the authorization code is redeemed.");
+        Description("application/x-www-form-urlencoded grant_type=authorization_code (code, redirect_uri, code_verifier), grant_type=refresh_token (refresh_token) or, for service clients only, grant_type=client_credentials. For ts-dashboard only, the headless extension grants (TS-582) sign a user in from credentials the client collected: grant_type=urn:terrascale:params:oauth:grant-type:password (email, password, ip_address) and grant_type=urn:terrascale:params:oauth:grant-type:email-code (email, code, ip_address; a sign-in code, or a sign-up code with the pending_token its sign-up answered, which creates the account). ip_address is the end user's IP address; each IP (IPv6 per /64, and 120 per /48) may make 30 headless calls a minute and each email 10 password attempts per 15 minutes, beyond which the answer is 429 rate_limited with Retry-After. Every wrong email, password or code answers invalid_grant alike. Confidential clients authenticate with client_secret_basic or client_secret_post. Access tokens are ES256 JWTs with typ at+jwt whose aud holds TS_AUTH_ACCESS_TOKEN_AUDIENCES; a user's carry email and email_verified, a service client's have sub = client id and no scopes. Refresh tokens rotate on every use and expire 14 days after the authorization code is redeemed.");
         Tags("OAuth");
         Accepts<Dictionary<string, string>>("application/x-www-form-urlencoded");
         Produces<TokenBody>();
         Produces<OAuthErrorBody>(StatusCodes.Status400BadRequest);
         Produces<OAuthErrorBody>(StatusCodes.Status401Unauthorized);
+        Produces<OAuthErrorBody>(StatusCodes.Status429TooManyRequests);
         Metadata(new RequiresSecurity(SecuritySchemes.ClientBasic));
     }
 
@@ -168,6 +170,12 @@ public sealed class TokenEndpoint(Users users, AuthOptions options) : EndpointWi
         if (this.HttpContext.GetOpenIddictServerRequest() is not { } request)
         {
             return Results.NotFound();
+        }
+
+        if (request.GrantType is HeadlessGrants.Password or HeadlessGrants.EmailCode)
+        {
+            // OpenIddict has authenticated the client and checked its permission for this grant.
+            return await headless.GrantAsync(request, cancellationToken);
         }
 
         if (request.IsClientCredentialsGrantType())
@@ -226,6 +234,28 @@ public sealed class UserInfoEndpoint(Users users) : EndpointWithoutRequest<IResu
         var email = principal.HasScope(Scopes.Email);
         return Results.Ok(new UserInfoBody(user.Id, email ? user.Email : null, email ? true : null));
     }
+}
+
+/// <summary><c>POST /{slug}/oauth/revoke</c>: token revocation (RFC 7009), served by OpenIddict.</summary>
+public sealed class RevocationEndpoint : EndpointWithoutRequest<IResult>
+{
+    /// <inheritdoc />
+    public override void Configure()
+    {
+        Post("/{slug}/oauth/revoke");
+        Name("oauth_revoke");
+        Summary("Revocation endpoint");
+        Description("RFC 7009, application/x-www-form-urlencoded token (and optionally token_type_hint); the client authenticates as at the token endpoint and may revoke only its own tokens. Revoking a refresh or access token ends its whole sign-in: every refresh token of it is refused and ts-auth stops accepting its access tokens, while access tokens validated offline (TerraBase) stay valid until they expire, at most 1 hour. An unknown, expired or already revoked token also answers 200.");
+        Tags("OAuth");
+        Accepts<Dictionary<string, string>>("application/x-www-form-urlencoded");
+        Produces<Dictionary<string, object>>();
+        Produces<OAuthErrorBody>(StatusCodes.Status400BadRequest);
+        Produces<OAuthErrorBody>(StatusCodes.Status401Unauthorized);
+        Metadata(new RequiresSecurity(SecuritySchemes.ClientBasic));
+    }
+
+    /// <inheritdoc />
+    public override Task<IResult> HandleAsync(CancellationToken cancellationToken) => Task.FromResult(Results.NotFound());
 }
 
 /// <summary>

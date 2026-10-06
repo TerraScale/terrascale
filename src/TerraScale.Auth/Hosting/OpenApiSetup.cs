@@ -82,6 +82,7 @@ public static partial class OpenApiSetup
         ["Admin"] = "Hosted administrator portal and its bundled assets.",
         ["OAuth"] = "OpenID Connect provider for the issuer {public origin}/{slug} (authorization code with S256 PKCE, rotating refresh tokens).",
         ["Sign-in"] = "Hosted email passcode sign-in pages.",
+        ["Headless"] = "Headless authentication for first-party confidential clients (ts-dashboard): sign-up, emailed codes and password reset; tokens come from the token endpoint's headless grants.",
     };
 
     private static readonly Dictionary<string, Func<OpenApiSecurityScheme>> SchemeDefinitions = new(StringComparer.Ordinal)

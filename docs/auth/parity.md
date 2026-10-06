@@ -17,9 +17,10 @@ Nothing here implies acceptance against a live TerraBase deployment.
 | Key ring, email, operator instances, rate limiting | TS-431 | Partly ported (TS-488): per-instance ES256 key ring with rotation (every key retained; at most 16 keys, further rotations answer 409 regardless of elapsed replica time; automatic retirement disabled until an approved trustworthy-time design exists), the shared attempt limiter (one-minute windows), SMTP with mandatory STARTTLS and the logging fallback; observability landed in TS-426. Lookup and rotation validate the complete original ring's count, valid timestamps and strict creation order; rotation restores every original key before checking capacity or writing. Malformed, oversized and unreadable rings fail closed unchanged. The key ring and limiter use conditional writes on the TS-489 store (`signing_key_rings`, `rate_limits` collections); any storage failure other than caller cancellation answers 503. Fast and slow tests run against the real pinned TerraBase, including two replicas racing. Limiter bucket ids are HMAC-keyed from the master key; callers pass identifiers the service already holds, and a caller limiting by attacker-chosen text (Rust's guest-mailbox folding) ports with that caller. Without SMTP outside Development, email is logged and a startup warning is emitted; whether flows that need delivery must refuse to start is decided with the first flow (TS-490). Operator instances, the management-key gate (with management keys, TS-490) and Data Protection keys in TerraBase are not yet ported |
 | Users, sessions and email passcodes | TS-490 (TS-432 design) | Implemented on the TerraBase store; served only through the TS-491 hosted sign-in page (see below) |
 | Hosted email-passcode sign-in for existing accounts | TS-491 | Served at `/ui/terrascale/sign-in` for the `terrascale` instance; fast test covers a passcode sign-in that resumes `authorize` |
-| Sign-up, email links, password sign-in and recovery, management users/sessions/keys | TS-432 design (not in TS-490/TS-491) | Not implemented |
+| Headless API for ts-dashboard: sign-up with email verification, password sign-in, email-code sign-in, password reset, RFC 7009 revocation | TS-582 | Served for the `terrascale` instance and the `ts-dashboard` client (see below) |
+| Email links, hosted sign-up and recovery pages, management users/sessions/keys | TS-432 design (not in TS-490/TS-491/TS-582) | Not implemented |
 | OAuth 2.0/OIDC provider on OpenIddict: authorization code with S256 PKCE, rotating refresh tokens, discovery, JWKS, userinfo, RP-initiated logout | TS-491 (TS-433 design) | Served for one issuer, `{public origin}/terrascale`, and the `ts-dashboard` client. ES256 access tokens (`at+jwt`, configured audiences, email claims) and identity tokens from the key ring; client credentials for configured service clients; exactly-once code and refresh redemption with reuse revocation. Fast test covers sign-in, code redemption, token verification with IdentityModel, userinfo and identity-token rejection (see below) |
-| Introspection, revocation endpoint, per-instance issuers, client management API, token pruning, token-endpoint rate limiting | TS-433 design (not in TS-491) | Not implemented |
+| Introspection, per-instance issuers, client management API, token pruning, rate limits on the code and refresh grants | TS-433 design (not in TS-491) | Not implemented |
 | Device flow, guest accounts, browser CORS | TS-495 (TS-433 design) | Not implemented |
 | MFA (TOTP, recovery codes, step-up) | TS-434 | Not yet ported; email passcodes moved to TS-490 |
 | Passkeys | TS-435 | Not yet ported |
@@ -152,9 +153,9 @@ yields two sessions. Unknown emails write nothing.
 Differences from Rust: Rust stored SHA-256 of the code and had a 30-second resend
 throttle. C# stores the keyed HMAC and uses the hourly issue cap instead.
 
-Per-user limits live on the passcode document. The TS-488 `AttemptLimiter` is not
-on `main` and not carried by TS-491, so the hosted sign-in routes have no
-per-client or per-route limit yet. They give the same response whether or not
+Per-user limits live on the passcode document. The hosted sign-in routes have
+no per-client or per-route limit; the TS-488 `AttemptLimiter` limits only the
+TS-582 headless API. They give the same response whether or not
 an account exists and send email after the response.
 
 `AuthStore.ProvisionAsync` now also creates `users`, `sessions` and
@@ -162,8 +163,8 @@ an account exists and send email after the response.
 reports 503 until an operator runs `ProvisionAsync` again.
 
 Not in TS-490 (remaining TS-432 surface; TS-491 adds the hosted sign-in page):
-sign-up pages, password sign-in and reset, magic links, email verification, account and
-session-list pages, the management API for users, sessions, impersonation,
+hosted sign-up and reset pages, magic links, account and session-list pages
+(TS-582 serves sign-up, password sign-in and reset to ts-dashboard headlessly), the management API for users, sessions, impersonation,
 instances and API keys.
 
 ## TS-491 OpenID Connect
@@ -191,9 +192,21 @@ of them.
 
 Client credentials are served for configured service clients only.
 
-Not implemented: introspection, the revocation endpoint, device flow, guest
-accounts, CORS, sign-up, forced reauthentication for `prompt=login` or
+Not implemented: introspection, device flow, guest
+accounts, CORS, forced reauthentication for `prompt=login` or
 `max_age`, per-instance issuers, token and authorization
-pruning, and a token-endpoint rate limit. After sign-out everywhere or logout,
+pruning, and a rate limit on the code and refresh grants. After sign-out everywhere or logout,
 access tokens already issued stay valid until they expire (at most 1 hour).
 The [port guide](csharp-port.md#openid-connect-ts-491) has the details.
+
+## TS-582 headless API
+
+ts-dashboard signs users in on its own pages and calls ts-auth server-to-server
+with its client credentials, for the same tokens as the redirect flow:
+sign-up with email verification, password sign-in, email-code sign-in,
+password reset and RFC 7009 revocation. SSO and social sign-in keep the
+redirect flow. Fast tests drive every flow over real HTTP on the real
+TerraBase, including enumeration, brute-force and rate-limit cases, a third
+party attaching a password to someone else's sign-up, log redaction, code
+pruning and a cross-replica sign-up race. The [port guide](csharp-port.md#headless-api-ts-582)
+has the contract, limits and security decisions.

@@ -50,12 +50,13 @@ public sealed class AuthStore(TerraBaseDatabase database, TimeProvider clock)
 
     /// <summary>
     /// Every collection the service needs; provisioning creates them and readiness requires them. <c>signing_key_rings</c>
-    /// belongs to the TS-488 key ring, which signs OpenID Connect tokens.
+    /// belongs to the TS-488 key ring, which signs OpenID Connect tokens, and <c>rate_limits</c> to the TS-488 attempt
+    /// limiter, which every headless call (TS-582) charges.
     /// </summary>
     public static IReadOnlyList<string> RequiredCollections { get; } =
     [
         UniqueCollection, ChallengeCollection, HealthCollection, UserCollection, SessionCollection, PasscodeCollection,
-        "signing_key_rings", OidcApplicationCollection, OidcAuthorizationCollection, OidcTokenCollection,
+        "signing_key_rings", OidcApplicationCollection, OidcAuthorizationCollection, OidcTokenCollection, "rate_limits",
     ];
 
     private static readonly UTF8Encoding StrictUtf8 = new(false, true);

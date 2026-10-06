@@ -5,7 +5,7 @@ using TerraScale.Auth.Features.Identity;
 namespace TerraScale.Auth.Features.SignIn;
 
 /// <summary>
-/// Delivers sign-in codes after the response, so request timing never tells an account from a stranger. One worker
+/// Delivers emailed codes (sign-in, password reset, sign-up) after the response, so request timing never tells an account from a stranger. One worker
 /// sends them in order, so a slow relay holds at most one SMTP connection however many requests arrive. Codes queued
 /// when the host stops are still sent within its shutdown timeout. A full queue drops the code and logs it; the user
 /// can ask for another.
@@ -44,7 +44,13 @@ public sealed partial class SignInMail(IEmailSender email, AuthEmails emails, IL
         {
             try
             {
-                var message = await emails.RenderAsync(AuthEmailKind.SignInCode, locale,
+                var kind = passcode.Purpose switch
+                {
+                    PasscodePurpose.PasswordReset => AuthEmailKind.PasswordReset,
+                    PasscodePurpose.SignUp => AuthEmailKind.VerifyEmail,
+                    _ => AuthEmailKind.SignInCode,
+                };
+                var message = await emails.RenderAsync(kind, locale,
                     new AuthEmailValues(passcode.Email) { Code = passcode.Code, ExpiresIn = Passcodes.Lifetime }, CancellationToken.None);
                 await email.SendAsync(passcode.Email, message, CancellationToken.None);
             }

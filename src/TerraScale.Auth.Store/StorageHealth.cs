@@ -28,10 +28,8 @@ public sealed class TerraBaseStorageHealth(TerraBaseDatabase database) : IStorag
     /// <inheritdoc />
     public async Task<StorageHealthResult> CheckAsync(CancellationToken cancellationToken)
     {
-        foreach (var collection in AuthStore.RequiredCollections)
-        {
-            await database.GetCollectionAsync(collection, cancellationToken).ConfigureAwait(false);
-        }
+        // Concurrently, so the list can grow without the probe outgrowing its deadline.
+        await Task.WhenAll(AuthStore.RequiredCollections.Select(collection => database.GetCollectionAsync(collection, cancellationToken))).ConfigureAwait(false);
 
         // An interrupted probe may have committed its create. Only this synthetic address
         // is safe to clean up; never compensate an ambiguous identity write this way.

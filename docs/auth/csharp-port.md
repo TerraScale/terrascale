@@ -153,12 +153,13 @@ probe.
 The application and probe never provision or repair state. An operator/test
 can explicitly call `AuthStore.ProvisionAsync` to create those three
 infrastructure collections, plus `users`, `sessions` and `passcodes` (TS-490),
-`signing_key_rings` (TS-488) and `oidc_applications`, `oidc_authorizations`
-and `oidc_tokens` (TS-491), in an already existing database; repeated setup
-accepts an existing collection. Later feature streams must provision their own
-collections. Readiness requires the same list (`AuthStore.RequiredCollections`),
-so a database provisioned before TS-491 reports 503 until `ProvisionAsync`
-runs again. This is not production project/database provisioning or a
+`signing_key_rings` (TS-488), `oidc_applications`, `oidc_authorizations`
+and `oidc_tokens` (TS-491) and `rate_limits` (TS-488, required since TS-582),
+in an already existing database; repeated setup accepts an existing
+collection. Later feature streams must provision their own collections.
+Readiness requires the same list (`AuthStore.RequiredCollections`), so a
+database provisioned before TS-582 reports 503 until `ProvisionAsync` runs
+again (or `rate_limits` is created). This is not production project/database provisioning or a
 migration of Rust documents.
 
 ## Users, sessions and passcodes (TS-490)
@@ -197,10 +198,10 @@ sign-in, rotation and sign-out over real HTTP through test-only routes
   concurrent requests cannot exceed the limit or redeem a code twice. A code is
   consumed before its session is written.
 
-Per-user limits live on the passcode document. The TS-488 `AttemptLimiter` is
-not on `main` and not carried by TS-491, so the hosted sign-in routes have no
-per-client or per-route limit yet; they do give generic responses and send
-email after the response. Rust
+Per-user limits live on the passcode document. The hosted sign-in routes have
+no per-client or per-route limit (the TS-488 `AttemptLimiter` limits only the
+TS-582 headless API); they do give generic responses and send email after the
+response. Rust
 stored SHA-256 of the code and throttled resends to one per 30 seconds; C# uses
 the keyed HMAC and the hourly issue cap instead. Password sign-in and reset,
 magic links, email verification, account pages and the management API remain in
@@ -261,7 +262,7 @@ validates the request first and answers protocol errors itself.
   cookie, then returns to a registered `post_logout_redirect_uri` or shows a
   signed-out page.
 
-Not implemented: introspection, the revocation endpoint, device authorization, forced reauthentication for `max_age`, and the
+Not implemented: introspection, device authorization, forced reauthentication for `max_age`, and the
 OpenIddict validation stack. No ts-auth API other than `userinfo` accepts
 access tokens, and the server stack validates those.
 
@@ -269,8 +270,7 @@ access tokens, and the server stack validates those.
 
 The page uses the TS-490 email passcodes: six digits, 10 minutes, 5 wrong
 guesses, 5 codes per account per hour. It signs in existing accounts only;
-there is no sign-up route, and how accounts are created is an open product
-decision. The page is the same whether or not the address has an account, and
+accounts are created by the [headless sign-up](#headless-api-ts-582). The page is the same whether or not the address has an account, and
 the email is sent after the response, so its timing does not reveal it either.
 `SignInMail`, a hosted service, queues at most 256 codes and sends them one at
 a time, so a slow relay holds at most one SMTP connection. Codes still queued
@@ -373,11 +373,11 @@ token.
 
 ### Limitations and follow-ups
 
-- No rate limit on the token endpoint, and none on the sign-in routes beyond
-  the per-account passcode limits. A single per-client bucket would serialize
-  every dashboard refresh through one document.
+- No rate limit on the code and refresh grants, and none on the hosted sign-in
+  routes beyond the per-account passcode limits (the TS-582 headless grants are
+  limited). A single per-client bucket would serialize every dashboard refresh
+  through one document.
 - Expired tokens and authorizations are not pruned.
-- No sign-up; accounts must already exist.
 - Per-instance issuers wait for the instance registry.
 
 The fast suite drives a browser-style passcode sign-in through `authorize`
@@ -386,6 +386,153 @@ binary. It checks discovery, JWKS and both tokens with IdentityModel rather
 than OpenIddict, calls `userinfo`, and checks that an identity token is
 rejected there. No interoperability with a third-party client library or
 production validation is claimed.
+
+## Headless API (TS-582)
+
+TS-582 lets ts-dashboard sign users in on its own pages, the way apps use the
+WorkOS User Management API or the Clerk Backend API: the dashboard's Go backend
+collects the email, password or emailed code and calls ts-auth
+server-to-server. SSO and social sign-in keep the redirect flow. The code is
+in `src/TerraScale.Auth/Features/Headless/`.
+
+### Contract
+
+Every call authenticates the confidential client with HTTP Basic
+(`client_secret_basic`, as at the token endpoint). Only clients holding the
+headless grant permissions may call it, and only `ts-dashboard` is registered
+with them; other slugs answer 404. `ip_address` is the end user's IP address as
+the dashboard saw it; rate limits key on it, and it is trusted only because the
+caller is an authenticated first-party client.
+
+Tokens come from the standard token endpoint, so they are exactly the redirect
+flow's (`at+jwt` access token with the configured audiences and email claims,
+identity token for the client, rotating refresh token with reuse revocation):
+
+| Grant (`POST /terrascale/oauth/token`, form) | Parameters |
+| --- | --- |
+| `urn:terrascale:params:oauth:grant-type:password` | `email`, `password`, `ip_address`, `scope` |
+| `urn:terrascale:params:oauth:grant-type:email-code` | `email`, `code`, `ip_address`, `scope`, and `pending_token` for a sign-up code: a sign-in code, or a sign-up code, which creates the account |
+| `refresh_token` | unchanged |
+
+Every wrong email, password or code, an unknown account and an account
+without a password answer `400 invalid_grant` with one body. The other
+steps are JSON (`{"error":{"code","message"}}` on failure):
+
+| Route (`POST /terrascale/headless/v1/…`) | Body | Success |
+| --- | --- | --- |
+| `email-code/start` | `email`, `ip_address` | 202; mails a sign-in code if the account exists |
+| `sign-up` | `email`, `password`, `ip_address` | 202 `{"pending_token"}`; mails a verification code, or a sign-in code if the address has an account |
+| `password-reset/start` | `email`, `ip_address` | 202; mails a reset code if the account exists |
+| `password-reset/complete` | `email`, `code`, `new_password`, `ip_address` | 204; password set, user signed out everywhere |
+
+Failures: 400 `invalid_request` (malformed email, IP or body), 400
+`invalid_password` (not 8 to 1024 UTF-8 bytes of well-formed text), 400
+`invalid_code`, 401 `invalid_client`, 429 `rate_limited` with `Retry-After`,
+503 `temporarily_unavailable`. Sign-out is `POST /terrascale/oauth/revoke`
+(RFC 7009); revoking a refresh or access token revokes its whole sign-in
+(`RevokeTheSignIn`), so every refresh token of it is refused and `userinfo`
+refuses its access tokens; TerraBase validates access tokens offline, so they
+live out their hour.
+
+### Accounts, codes and passwords
+
+- Sign-up never creates an unverified account. The pending sign-up is a code
+  document in `passcodes` keyed by the normalized email, holding the Argon2id
+  hash of the chosen password and the SHA-256 of a random `pending_token` that
+  only the requester receives; redeeming its code needs both the code (the
+  inbox) and the token (the requester), creates the account with the
+  create-only email claim, and clears the password hash from the consumed
+  record. So nobody can pre-register someone else's address or attach their
+  password to the owner's sign-up (a later sign-up of the address replaces the
+  earlier one's code and token), and `email_verified` stays true for every
+  account. A wrong token is refused before any guess is charged. A sign-up for
+  an address that has an account mails that account a sign-in code, discards
+  the password and answers a random token, so the answer is the same either
+  way.
+- Sign-in, reset and sign-up codes are the TS-490 passcodes: six digits, 10
+  minutes, single use, 5 wrong guesses, 5 codes per account (or pending
+  sign-up) per hour. A user has one current code whatever its purpose; the
+  record's `purpose` binds it, so a reset code never signs in and a sign-in
+  code never resets. Records written before TS-582 read as sign-in codes.
+- Users gain an optional `passwordHash` (Argon2id PHC, the TS-488 parameters).
+  Accounts created before TS-582 have none: they sign in with codes, or set a
+  password through the reset. A password reset sets the hash and advances
+  `authEpoch` in one conditional write, only while the epoch is still the one
+  the code was issued under, so hosted sessions, outstanding codes and refresh
+  tokens of the user all die.
+- Passwords are hashed and verified with at most four Argon2id runs per
+  replica (`PasswordHasher`, about 19 MiB each); a request that waits more
+  than 5 seconds answers 503. An unknown account or one without a password is
+  verified against a fixed hash, so timing does not tell them apart. Sign-up
+  hashes the password even when the address has an account. The new password
+  of a reset is hashed before its code is consumed, so a busy replica never
+  burns a code.
+
+### Limits
+
+`AttemptLimiter` (shared by every replica through conditional writes on
+`rate_limits`) now takes a window per purpose and folds attacker-chosen text
+into 65,536 keyed buckets per purpose (`Fold`, as Rust did for guest
+mailboxes), so storage stays bounded and nobody can target a victim's bucket.
+
+| Budget | Limit | Purpose |
+| --- | --- | --- |
+| Every headless call per IP (IPv6 per /64) | 30 per minute | `headless-ip` |
+| Every headless call per IPv6 /48 | 120 per minute | `headless-ip-site` |
+| Mail-sending calls per IP (IPv6 per /64) | 10 per 15 minutes | `headless-ip-mail` |
+| Mail-sending calls per IPv6 /48 | 40 per 15 minutes | `headless-ip-site-mail` |
+| Password attempts per email, with or without an account | 10 per 15 minutes | `headless-password-email` |
+
+Every attempt counts, successful ones included. An email whose password budget
+is spent still signs in with an emailed code; someone who knows an address can
+spend its password budget, which delays only password sign-in for that address.
+`Retry-After` is the window's full length, an upper bound. Since TS-582
+`rate_limits` is one of `AuthStore.RequiredCollections`: `/readyz` answers 503
+while it is missing, and the limiter fails closed with 503 on any storage
+failure.
+
+### Security decisions
+
+- **Password grant.** The repository rules forbid the resource-owner password
+  grant for interactive client authorization. TS-582 is an explicit product
+  decision (2026-10-06) for a WorkOS/Clerk-style first-party API, and the
+  password grant here is that: an extension grant permitted only to the
+  confidential first-party `ts-dashboard`, never to service clients or any
+  other registration, behind client authentication and the limits above. The
+  authorization code flow stays the only flow for every other client and for
+  SSO and social sign-in.
+- **No enumeration.** Starts answer 202 and mail after the response
+  (`SignInMail`), grants answer one `invalid_grant`, and limits apply to
+  unknown emails the same way.
+- **Not applicable:** CSRF (no cookies; server-to-server only) and CORS.
+- **Audit events** are structured log lines (`Audit: headless …`) with the
+  method, the outcome and the user id when known, never the email, password,
+  code or IP. Persisted, signed audit events wait for the TS-439 audit log.
+
+### Limitations
+
+- No MFA step: MFA is not ported (TS-434), so no account can have it. When it
+  lands, the two grants answer an MFA challenge instead of tokens.
+- Users have no name; `profile` adds no claims.
+- Code records (pending sign-ups included) are deleted by `SessionPruner`
+  once their issue window and every code issued in it have ended (70 minutes
+  after the window starts). Attempt buckets are bounded by folding and never
+  pruned.
+- Guessing ceiling: one code record per account (or pending sign-up) gives
+  at most 5 codes × 5 guesses per hour, about 0.06% per day against a six-digit
+  code, without a long-term lockout. Anyone who knows an address can supersede
+  its live code or spend its 5 codes an hour, delaying (not taking over)
+  that account's code sign-in.
+- Timing: for an existing account the starts and code grants make two or three
+  more storage round trips than for a stranger, as the hosted page does; mail
+  goes out after the response.
+- One delivery queue per replica (256 codes) serves sign-in, reset and sign-up
+  mail; a flood beyond the per-IP budgets that outpaces the relay drops codes,
+  and the user asks for another.
+- The hosted page still signs in existing accounts by email code only.
+- Rolling out: replicas of an older release ignore `purpose` and would accept
+  a reset code on the hosted sign-in page (which needs the inbox anyway); they
+  never write users, so they cannot drop a password hash.
 
 ## Production activation gate
 

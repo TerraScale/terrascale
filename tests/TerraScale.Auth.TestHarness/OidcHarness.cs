@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Headers;
+using System.Net.Http.Json;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -139,7 +140,8 @@ public sealed class OidcHarness : IAsyncDisposable
 
     public HttpClient Client => this.Server.Client;
 
-    public static async Task<OidcHarness> StartAsync(TerraBaseFixture fixture, Action<Dictionary<string, string>>? settings = null, CapturingEmailSender? email = null)
+    public static async Task<OidcHarness> StartAsync(TerraBaseFixture fixture, Action<Dictionary<string, string>>? settings = null, CapturingEmailSender? email = null,
+        CapturingLogs? logs = null, TimeProvider? clock = null)
     {
         var (tenant, database) = await fixture.CreateDatabaseAsync();
         email ??= new CapturingEmailSender();
@@ -148,7 +150,7 @@ public sealed class OidcHarness : IAsyncDisposable
         {
             values["master-key"] = masterKey;
             settings?.Invoke(values);
-        });
+        }, logs, clock);
         return new OidcHarness(fixture, tenant, masterKey, server, database, email);
     }
 
@@ -161,7 +163,8 @@ public sealed class OidcHarness : IAsyncDisposable
         });
 
     /// <summary>Another replica bound to the same database.</summary>
-    public static Task<AuthTestServer> StartServerAsync(TerraBaseFixture fixture, TerraBaseTestTenant tenant, CapturingEmailSender email, Action<Dictionary<string, string>>? settings = null) =>
+    public static Task<AuthTestServer> StartServerAsync(TerraBaseFixture fixture, TerraBaseTestTenant tenant, CapturingEmailSender email, Action<Dictionary<string, string>>? settings = null,
+        CapturingLogs? logs = null, TimeProvider? clock = null) =>
         AuthTestServer.StartAsync(values =>
         {
             values["terrascale-api-url"] = fixture.Server.ClientAddress.GetLeftPart(UriPartial.Authority);
@@ -175,6 +178,15 @@ public sealed class OidcHarness : IAsyncDisposable
         {
             services.AddSingleton(fixture.Server.Http);
             services.AddSingleton<IEmailSender>(email);
+            if (logs is not null)
+            {
+                services.AddSingleton<Microsoft.Extensions.Logging.ILoggerProvider>(logs);
+            }
+
+            if (clock is not null)
+            {
+                services.AddSingleton(clock);
+            }
         });
 
     public async Task<UserRecord> CreateUserAsync(string address = "alice@example.test") =>
@@ -273,6 +285,54 @@ public sealed class OidcHarness : IAsyncDisposable
             ? (user, session, JsonSerializer.Deserialize<JsonElement>(body))
             : throw new InvalidOperationException($"The token endpoint answered {response.StatusCode}: {body}");
     }
+
+    /// <summary>Posts a JSON body to <c>/{slug}/headless/v1/{path}</c> as a client authenticated with HTTP Basic.</summary>
+    public Task<HttpResponseMessage> HeadlessAsync(string path, object body, string clientId = OidcIssuer.DashboardClientId, string? secret = ClientSecret, string slug = OidcIssuer.Slug)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Post, $"/{slug}/headless/v1/{path}") { Content = JsonContent.Create(body) };
+        if (secret is not null)
+        {
+            request.Headers.Authorization = new AuthenticationHeaderValue("Basic", Convert.ToBase64String(Encoding.UTF8.GetBytes($"{clientId}:{secret}")));
+        }
+
+        return this.Client.SendAsync(request);
+    }
+
+    /// <summary>Redeems a headless extension grant at the token endpoint.</summary>
+    public Task<HttpResponseMessage> GrantAsync(string grantType, string email, string secret, string? ipAddress, string scope = "openid email profile offline_access",
+        HttpClient? client = null, string? pendingToken = null)
+    {
+        var form = new Dictionary<string, string>
+        {
+            ["grant_type"] = grantType,
+            ["email"] = email,
+            [grantType.EndsWith(":password", StringComparison.Ordinal) ? "password" : "code"] = secret,
+            ["scope"] = scope,
+        };
+        if (ipAddress is not null)
+        {
+            form["ip_address"] = ipAddress;
+        }
+
+        if (pendingToken is not null)
+        {
+            form["pending_token"] = pendingToken;
+        }
+
+        return this.TokenAsync(form, client: client);
+    }
+
+    /// <summary>Revokes a token at the RFC 7009 endpoint.</summary>
+    public Task<HttpResponseMessage> RevokeAsync(string token, string hint = "refresh_token")
+    {
+        var request = new HttpRequestMessage(HttpMethod.Post, $"/{OidcIssuer.Slug}/oauth/revoke") { Content = new FormUrlEncodedContent(new Dictionary<string, string> { ["token"] = token, ["token_type_hint"] = hint }) };
+        request.Headers.Authorization = new AuthenticationHeaderValue("Basic", Convert.ToBase64String(Encoding.UTF8.GetBytes($"{OidcIssuer.DashboardClientId}:{ClientSecret}")));
+        return this.Client.SendAsync(request);
+    }
+
+    /// <summary>The <c>error.code</c> of a JSON error envelope.</summary>
+    public static async Task<string?> EnvelopeCodeAsync(HttpResponseMessage response) =>
+        (await JsonAsync(response)).GetProperty("error").GetProperty("code").GetString();
 
     /// <summary>Calls userinfo with a bearer access token.</summary>
     public async Task<HttpResponseMessage> UserInfoAsync(string accessToken, HttpClient? client = null)

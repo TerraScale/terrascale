@@ -212,7 +212,10 @@ every `TS_AUTH_ACCESS_TOKEN_AUDIENCES` value, and a user's `email` and
 as userinfo does. The user-facing client is the confidential `ts-dashboard`,
 registered from `TS_AUTH_DASHBOARD_*`. It authenticates at the token endpoint
 with `client_secret_basic` or `client_secret_post`, must use PKCE with S256
-(`plain` is disabled for every client), and gets implicit consent. Service
+(`plain` is disabled for every client), and gets implicit consent. It is also the
+only client allowed the TS-582 headless API: its own sign-up, password,
+email-code and password-reset pages call ts-auth server-to-server and receive
+the same tokens ([port guide](docs/csharp-port.md#headless-api-ts-582)). Service
 clients from `TS_AUTH_SERVICE_CLIENTS` may use only the client-credentials
 grant: their access token has `sub` = the client id, the same `typ` and `aud`,
 no scopes and no email, and they get no identity or refresh token. Authorization requests must exactly match a registered redirect URI;
@@ -330,8 +333,8 @@ member's HTTPS origin and set `TS_AUTH_ENVIRONMENT=Development`, a valid
 does not start or embed TerraBase; the integration-test fixture starts the
 SDK-pinned binary. `/readyz` checks the existing `uniques`,
 `verification_tokens`, `storage_health`, `users`, `sessions`, `passcodes`,
-`signing_key_rings`, `oidc_applications`, `oidc_authorizations` and
-`oidc_tokens` collections, then creates, reads
+`signing_key_rings`, `oidc_applications`, `oidc_authorizations`,
+`oidc_tokens` and `rate_limits` collections, then creates, reads
 and conditionally deletes a synthetic document in `storage_health`. It returns
 200 only on success, otherwise 503, without provisioning, repair or in-memory
 fallback. Observations coalesce and are cached for one second after
@@ -355,12 +358,13 @@ the provisioning plan; live production execution belongs to TS-470:
 3. Explicitly call `AuthStore.ProvisionAsync` with the pinned SDK against that
    existing database. It creates `uniques`, `verification_tokens` and
    `storage_health`, the TS-490 `users`, `sessions` and `passcodes`, the
-   TS-488 `signing_key_rings`, and the TS-491 `oidc_applications`,
-   `oidc_authorizations` and `oidc_tokens` collections. Then create the TS-488
-   `rate_limits` collection; later feature streams own their other collections. `/readyz` requires all ten, so a database
-   provisioned before TS-491 reports 503 until this step is repeated. Run it
-   before rolling out TS-491; a configured dashboard or service client also
-   stops startup while its collection is missing.
+   TS-488 `signing_key_rings` and `rate_limits`, and the TS-491
+   `oidc_applications`, `oidc_authorizations` and `oidc_tokens` collections;
+   later feature streams own their other collections. `/readyz` requires all
+   eleven, so a database provisioned before TS-582 (which made `rate_limits`
+   required) reports 503 until this step is repeated. Run it before rolling
+   out a new release; a configured dashboard or service client also stops
+   startup while its collection is missing.
 4. Configure every replica with `<ts-auth-project-uuid>/auth` and the same
    explicitly resolved HTTPS storage authority and shared auth settings.
 
@@ -385,14 +389,18 @@ OpenID Connect routes for the slug `terrascale` (other slugs answer 404):
 - `GET /terrascale/.well-known/openid-configuration` and
   `GET /terrascale/.well-known/jwks.json`
 - `GET /terrascale/oauth/authorize`, `POST /terrascale/oauth/token`,
-  `GET /terrascale/oauth/userinfo` and `GET /terrascale/oauth/logout`
-  (RP-initiated logout)
+  `GET /terrascale/oauth/userinfo`, `GET /terrascale/oauth/logout`
+  (RP-initiated logout) and `POST /terrascale/oauth/revoke` (RFC 7009, TS-582)
 - `GET` and `POST /ui/terrascale/sign-in`, `POST /ui/terrascale/sign-in/verify`
   (hosted email-passcode sign-in)
+- The TS-582 headless API for ts-dashboard: `POST
+  /terrascale/headless/v1/email-code/start`, `/sign-up`,
+  `/password-reset/start` and `/password-reset/complete`, plus the token
+  endpoint's headless grants (see [the port guide](docs/csharp-port.md#headless-api-ts-582))
 
-All of them appear in `/openapi/v1.json` under the `OAuth` and `Sign-in` tags.
-Introspection, the revocation endpoint and device authorization are not
-served. The target surface below is the contract the
+All of them appear in `/openapi/v1.json` under the `OAuth`, `Sign-in` and
+`Headless` tags. Introspection and device authorization are not served. The
+target surface below is the contract the
 port streams restore (from the Rust service); each stream keeps its paths,
 methods and operation ids. [The port guide](docs/csharp-port.md#openid-connect-ts-491)
 describes the TS-491 behaviour and its limits.

@@ -30,13 +30,17 @@ public sealed class Users(AuthStore store, TimeProvider clock)
     }
 
     /// <summary>
-    /// Creates an account. The email claim and the account are written in one transaction, so a claim never
-    /// outlives a failed creation. Returns <see langword="null"/> when the email already has an account.
+    /// Creates an account without a password. The email claim and the account are written in one transaction, so a
+    /// claim never outlives a failed creation. Returns <see langword="null"/> when the email already has an account.
     /// </summary>
-    public async Task<UserRecord?> CreateAsync(string instanceId, string email, CancellationToken cancellationToken = default)
+    public Task<UserRecord?> CreateAsync(string instanceId, string email, CancellationToken cancellationToken = default) =>
+        this.CreateAsync(instanceId, email, null, cancellationToken);
+
+    /// <summary>Creates an account with an Argon2id <paramref name="passwordHash"/>, or none; see the overload.</summary>
+    public async Task<UserRecord?> CreateAsync(string instanceId, string email, string? passwordHash, CancellationToken cancellationToken)
     {
         var normalized = NormalizeEmail(email) ?? throw new ArgumentException("A valid email address is required.", nameof(email));
-        var user = new UserRecord(Guid.NewGuid().ToString("D"), instanceId, normalized, 0, clock.GetUtcNow());
+        var user = new UserRecord(Guid.NewGuid().ToString("D"), instanceId, normalized, 0, clock.GetUtcNow(), passwordHash);
         var record = JsonSerializer.SerializeToElement(user, IdentityJson.Default.UserRecord);
         return await store.CreateClaimedAsync(AuthStore.UserCollection, instanceId, user.Id, record, EmailKind, normalized, cancellationToken).ConfigureAwait(false)
             ? user
@@ -59,6 +63,31 @@ public sealed class Users(AuthStore store, TimeProvider clock)
     /// <summary>The account with <paramref name="userId"/> in the instance, or <see langword="null"/>.</summary>
     public async Task<UserRecord?> GetAsync(string instanceId, string userId, CancellationToken cancellationToken = default) =>
         (await this.GetVersionedAsync(instanceId, userId, cancellationToken).ConfigureAwait(false))?.User;
+
+    /// <summary>
+    /// Sets the password of the account while its authentication epoch is still <paramref name="authEpoch"/>, and
+    /// advances the epoch, which signs the user out everywhere. False when the account is gone or its epoch moved on
+    /// (another reset or a sign-out everywhere won), so a code issued before that change never sets a password after it.
+    /// </summary>
+    public async Task<bool> SetPasswordAsync(string instanceId, string userId, long authEpoch, string passwordHash, CancellationToken cancellationToken = default)
+    {
+        // Every write to a user advances its epoch, so a lost write always ends the loop on the epoch check.
+        for (var round = 0; round < 3; round++)
+        {
+            if (await this.GetVersionedAsync(instanceId, userId, cancellationToken).ConfigureAwait(false) is not { } current || current.User.AuthEpoch != authEpoch)
+            {
+                return false;
+            }
+
+            var updated = JsonSerializer.SerializeToElement(current.User with { PasswordHash = passwordHash, AuthEpoch = authEpoch + 1 }, IdentityJson.Default.UserRecord);
+            if (await store.CompareAndPutAsync(AuthStore.UserCollection, instanceId, userId, updated, current.Version, cancellationToken).ConfigureAwait(false))
+            {
+                return true;
+            }
+        }
+
+        throw ApiException.Unavailable();
+    }
 
     internal async Task<(UserRecord User, string Version)?> GetVersionedAsync(string instanceId, string userId, CancellationToken cancellationToken)
     {
