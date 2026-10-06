@@ -13,6 +13,38 @@ import (
 
 var testNow = time.Date(2026, time.September, 26, 12, 0, 0, 0, time.UTC)
 
+func TestLegacyAccessRedirect(t *testing.T) {
+	mux := http.NewServeMux()
+	Mount(mux, core.Deps{Tools: core.NewTools(nil)}, nil)
+	for _, tc := range []struct {
+		query string
+		tab   string
+	}{
+		{"", "members"},
+		{"tab=members&role=admin&q=Alice&page=2", "members"},
+		{"tab=invitations&create=1", "invitations"},
+		{"tab=invitations&page=2", "invitations"},
+		{"create=1", "invitations"},
+		{"tab=unknown", "members"},
+		{"tab=unknown&create=1", "invitations"},
+		{"tab=members&create=1", "members"},
+	} {
+		t.Run(tc.query, func(t *testing.T) {
+			response := httptest.NewRecorder()
+			mux.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/access?"+tc.query, nil))
+			location, err := url.Parse(response.Header().Get("Location"))
+			if err != nil || response.Code != http.StatusSeeOther || location.Path != "/organization" {
+				t.Fatalf("redirect = %d %q, error %v", response.Code, response.Header().Get("Location"), err)
+			}
+			want, _ := url.ParseQuery(tc.query)
+			want.Set("tab", tc.tab)
+			if got := location.Query().Encode(); got != want.Encode() {
+				t.Errorf("redirect query = %q, want %q", got, want.Encode())
+			}
+		})
+	}
+}
+
 func teamOrganization(invitations ...core.Invitation) core.Organization {
 	org := core.Organization{
 		ID: "org_1", Name: "Acme", OwnerUserID: "usr_owner",

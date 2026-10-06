@@ -99,7 +99,13 @@ func Mount(mux *http.ServeMux, deps core.Deps, billing *payments.Stripe) {
 	mountTools(deps.Tools, service)
 	mux.HandleFunc("GET /access", func(w http.ResponseWriter, r *http.Request) {
 		query := r.URL.Query()
-		query.Set("tab", "members")
+		if tab := query.Get("tab"); tab != "members" && tab != "invitations" {
+			if query.Get("create") == "1" {
+				query.Set("tab", "invitations")
+			} else {
+				query.Set("tab", "members")
+			}
+		}
 		http.Redirect(w, r, "/organization?"+query.Encode(), http.StatusSeeOther)
 	})
 	mux.HandleFunc("GET /organization", func(w http.ResponseWriter, r *http.Request) {

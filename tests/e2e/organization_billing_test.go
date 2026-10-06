@@ -31,6 +31,12 @@ func TestOrganizationBillingTabsAndLegacyRedirect(t *testing.T) {
 	}
 	must(t, expect.Locator(byRole(tabs, *playwright.AriaRoleLink, "Members", true)).ToHaveAttribute("aria-current", "page"))
 	visible(t, page.Locator("#member-search"))
+	goToOK(t, page, "/access?tab=invitations&create=1")
+	must(t, expect.Locator(byRole(tabs, *playwright.AriaRoleLink, "Invitations", true)).ToHaveAttribute("aria-current", "page"))
+	visible(t, page.Locator("#invite-email"))
+	goToOK(t, page, "/access?create=1")
+	must(t, expect.Locator(byRole(tabs, *playwright.AriaRoleLink, "Invitations", true)).ToHaveAttribute("aria-current", "page"))
+	visible(t, page.Locator("#invite-email"))
 	click(t, byRole(tabs, *playwright.AriaRoleLink, "Organization", true))
 	visible(t, pageByRole(page, *playwright.AriaRoleHeading, "Organization details", true))
 	must(t, expect.Locator(page.Locator("#billing-summary")).ToHaveCount(0))
