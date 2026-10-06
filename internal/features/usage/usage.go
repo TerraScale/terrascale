@@ -148,6 +148,7 @@ type pageData struct {
 	BillingPlans          []billingPlanChoice
 	Review                billingPlanReview
 	Allowances            []allowanceGauge
+	AllowanceError        string
 	PlanUsageNote         string
 	HistoryRange          string
 	HistoryRangeLabel     string
@@ -624,7 +625,7 @@ func buildPage(ctx context.Context, service Service, p core.Principal, token str
 		Tab: tab, Projects: projects, DatabaseOptions: databaseOptions, Databases: databases, SelectedProject: project.ID,
 		SelectedDatabase: databaseFilter, OrganizationCap: dollars(report.SpendCapCents),
 		PaidExcess: report.PaidExcessEnabled, EffectiveCap: capLabel(report.ProjectEffectiveCapCents),
-		PlanName: report.PlanName, PlanUsageNote: report.PlanUsageNote, BillingStatus: org.BillingStatus, BillingRenewal: org.BillingRenewal,
+		PlanName: report.PlanName, PlanUsageNote: report.PlanUsageNote, AllowanceError: report.AllowanceError, BillingStatus: org.BillingStatus, BillingRenewal: org.BillingRenewal,
 		BillingSummary:  summarizeBilling(org.Billing.Invoices, time.Now().UTC()),
 		InvoiceCount:    len(org.Billing.Invoices),
 		ActiveDatabases: report.ActiveDatabases, RegionCount: report.RegionCount, CanManage: report.CanManage,

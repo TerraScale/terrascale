@@ -108,6 +108,9 @@ templ invoiceFilters(data pageData) {
 
 templ overviewTab(data pageData) {
 	@ui.Card(ui.CardProps{ID: "usage-allowance", Title: "Plan allowance", Description: "Use of the " + data.PlanName + " plan this month"}) {
+		if data.AllowanceError != "" {
+			@ui.Alert("warning", "", data.AllowanceError)
+		}
 		<div class="ts-usage-gauges">
 			for _, gauge := range data.Allowances {
 				<div class="ts-usage-gauge">

@@ -159,12 +159,18 @@ func TestUsageAppliesEachTerraBaseAnswerOnItsOwn(t *testing.T) {
 	}
 
 	meter = &fakeMeter{reads: 4, writes: 2, orgErr: core.ErrUnavailable}
-	service, principal, _ = meterFixture(t, meter)
+	service, principal, mux := meterFixture(t, meter)
 	if report, err = service.Usage(t.Context(), principal, "user-token", "", ""); err != nil {
 		t.Fatal(err)
 	}
-	if !report.Totals.Available || report.Totals.Reads != 4 || report.Totals.Error != "" || report.Allowances[0].Measured || report.Allowances[2].Measured {
-		t.Fatalf("report = %+v, want the project's range without this month's allowances", report)
+	if !report.Totals.Available || report.Totals.Reads != 4 || report.Totals.Error != "" || report.Allowances[0].Measured || report.Allowances[2].Measured ||
+		!strings.Contains(report.AllowanceError, "could not be loaded") {
+		t.Fatalf("report = %+v, want the project's range and this month's allowances reported as failed", report)
+	}
+	response := httptest.NewRecorder()
+	mux.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/usage", nil))
+	if body := response.Body.String(); !strings.Contains(body, "could not be loaded from TerraBase") || !strings.Contains(body, "Reads and writes, Last 7 days") {
+		t.Fatal("usage page hides the failed monthly usage or the loaded chart")
 	}
 }
 

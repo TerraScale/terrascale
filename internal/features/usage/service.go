@@ -77,6 +77,7 @@ type usageReport struct {
 	DatabaseID               string           `json:"databaseId,omitempty"`
 	PlanName                 string           `json:"planName"`
 	Allowances               []allowanceUsage `json:"allowances" jsonschema:"Reads, writes, and storage against the plan's limits."`
+	AllowanceError           string           `json:"allowanceError,omitempty" jsonschema:"Why this month's usage failed to load, when TerraBase answered with an error."`
 	PlanUsageNote            string           `json:"planUsageNote"`
 	SpendCapCents            int64            `json:"spendCapCents" jsonschema:"The organization's monthly spend cap in US cents; 0 means none."`
 	PaidExcessEnabled        bool             `json:"paidExcessEnabled" jsonschema:"Whether usage above the plan allowance is billed instead of blocked."`
@@ -208,7 +209,8 @@ func (s Service) report(ctx context.Context, p core.Principal, token string, org
 		allowance("Storage", plan.StorageAllowance(), plan.StorageBytes(), organizationBytes, metered.organizationStorage),
 	}
 	report.PlanUsageNote = "Reads and writes count separately: each read is one read and each write one write. The month runs on UTC."
-	if !metered.monthMeasured {
+	report.AllowanceError = metered.monthError
+	if !metered.monthMeasured && metered.monthError == "" {
 		report.PlanUsageNote = "This month's reads and writes aren't metered here, so their utilization is unavailable."
 	}
 	return report, nil
@@ -220,6 +222,9 @@ type metered struct {
 	month               core.UsagePeriod
 	monthMeasured       bool
 	organizationStorage bool
+	// monthError is why the organization's answer failed, other than
+	// TerraBase not reporting the organization.
+	monthError string
 }
 
 // meter fills the report with TerraBase's metered usage. The organization's
@@ -256,6 +261,11 @@ func (s Service) meter(ctx context.Context, token string, org core.Organization,
 		// TerraBase reports none of the organization's projects either.
 		meterError(totals, err, "organization")
 		return result
+	case errors.Is(err, core.ErrUnauthorized):
+		result.monthError = "TerraBase didn't accept this sign-in, so this month's reads and writes didn't load. Sign out and in again."
+	default:
+		// The selected scope's answer below still applies.
+		result.monthError = "This month's reads and writes could not be loaded from TerraBase. Try again shortly."
 	}
 	if project.ID == "" {
 		totals.Source = "Create a project to meter its reads and writes."
