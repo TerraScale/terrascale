@@ -2,6 +2,7 @@ package v1
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/url"
@@ -117,6 +118,40 @@ type ManagedDatabase struct {
 	// BranchedFrom is the id of the database this one was branched from.
 	BranchedFrom *string   `json:"branchedFrom"`
 	CreatedAt    time.Time `json:"createdAt"`
+}
+
+// CollectionStats is a collection with its live documents (tombstones are
+// not counted) and their total JSON bytes.
+type CollectionStats struct {
+	Name      string `json:"name"`
+	Documents int64  `json:"documents"`
+	Bytes     int64  `json:"bytes"`
+}
+
+// DatabaseUsage is a database's storage and its metered reads and writes.
+type DatabaseUsage struct {
+	DatabaseID   string `json:"databaseId"`
+	StorageBytes int64  `json:"storageBytes"`
+	Collections  int64  `json:"collections"`
+	Documents    int64  `json:"documents"`
+	Reads        int64  `json:"reads"`
+	Writes       int64  `json:"writes"`
+}
+
+// SQLResult is the rows a dashboard SQL statement selected.
+type SQLResult struct {
+	Matched int `json:"matched"`
+	// Truncated reports that the statement's LIMIT or the 8 MiB bound cut
+	// the rows short.
+	Truncated bool     `json:"truncated"`
+	Rows      []SQLRow `json:"rows"`
+}
+
+// SQLRow is one selected document: all of it for SELECT *, otherwise one
+// member per selected field.
+type SQLRow struct {
+	ID    string          `json:"id"`
+	Value json.RawMessage `json:"value"`
 }
 
 // Member is a user's membership in an organization.
@@ -332,6 +367,32 @@ func (u *ManagementUser) Database(ctx context.Context, org, project, databaseID 
 // DeleteDatabase deletes a database, by id, and its data; its branches stay.
 func (u *ManagementUser) DeleteDatabase(ctx context.Context, org, project, databaseID string) error {
 	return u.call(ctx, http.MethodDelete, databasePath(org, project, databaseID), nil, nil, nil)
+}
+
+// Collections lists every collection of a database, in name order, with its
+// live document count and bytes.
+func (u *ManagementUser) Collections(ctx context.Context, org, project, databaseID string) ([]CollectionStats, error) {
+	out, err := get[struct {
+		Items []CollectionStats `json:"items"`
+	}](ctx, u, databasePath(org, project, databaseID, "collections"), nil)
+	if err != nil {
+		return nil, err
+	}
+	return out.Items, nil
+}
+
+// DatabaseUsage reads a database's storage, documents, reads and writes.
+func (u *ManagementUser) DatabaseUsage(ctx context.Context, org, project, databaseID string) (*DatabaseUsage, error) {
+	return get[DatabaseUsage](ctx, u, databasePath(org, project, databaseID, "usage"), nil)
+}
+
+// SQL runs a read-only statement of the dashboard SQL subset (SELECT … FROM
+// collection [WHERE …] [ORDER BY …] [LIMIT 1 to 1000]) against a database.
+// Invalid SQL fails with ErrInvalidRequest.
+func (u *ManagementUser) SQL(ctx context.Context, org, project, databaseID, statement string) (*SQLResult, error) {
+	return send[SQLResult](ctx, u, http.MethodPost, databasePath(org, project, databaseID, "sql"), struct {
+		SQL string `json:"sql"`
+	}{statement})
 }
 
 // BranchDatabase creates the database name in the same project, holding a

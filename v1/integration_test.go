@@ -468,6 +468,22 @@ func testDocuments(t *testing.T, tb *terrabasetest.Server, hc *http.Client) {
 		t.Fatalf("decode: %v %v", body, err)
 	}
 
+	// Management reads the same data as the signed-in user.
+	stats := must(u.Collections(ctx, org.ID, project.ID, info.ID))(t)
+	if len(stats) != 2 || stats[0].Name != "audit" || stats[0].Documents != 0 || stats[1].Name != "users" || stats[1].Documents != 1 || stats[1].Bytes <= 0 {
+		t.Fatalf("collection stats: %+v", stats)
+	}
+	rows := must(u.SQL(ctx, org.ID, project.ID, info.ID, "SELECT * FROM users ORDER BY _id LIMIT 10"))(t)
+	if rows.Matched != 1 || rows.Truncated || len(rows.Rows) != 1 || rows.Rows[0].ID != created.ID || !strings.Contains(string(rows.Rows[0].Value), "ana@example.com") {
+		t.Fatalf("sql: %+v", rows)
+	}
+	_, err = u.SQL(ctx, org.ID, project.ID, info.ID, "DELETE FROM users")
+	wantCode(t, err, v1.ErrInvalidRequest)
+	usage := must(u.DatabaseUsage(ctx, org.ID, project.ID, info.ID))(t)
+	if usage.DatabaseID != info.ID || usage.Collections != 2 || usage.Documents != 1 || usage.StorageBytes <= 0 {
+		t.Fatalf("usage: %+v", usage)
+	}
+
 	id := v1.DocumentIDFor("users", "bia@example.com")
 	put := must(users.Put(ctx, id, map[string]any{"email": "bia@example.com"}, v1.IfNoneMatchAny()))(t)
 	if !put.Created {

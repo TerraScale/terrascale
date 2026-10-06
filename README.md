@@ -118,13 +118,15 @@ and database reads, renames and deletes, `BranchDatabase`, `SetMemberRole`,
 `RemoveMember`, `Leave`, `Invitations`, `RevokeInvitation`,
 `AcceptInvitation` (the access token's verified email must match),
 `OwnershipTransfer` and its start, cancel and confirm,
-`AuditRetention`/`SetAuditRetention` and `AuditEvents`. A 404 (`ErrUnknownRoute`)
+`AuditRetention`/`SetAuditRetention`, `AuditEvents`, and the read-only
+database tooling: `Collections` (document counts and bytes), `DatabaseUsage`
+and `SQL` (rows of the dashboard SQL subset). A 404 (`ErrUnknownRoute`)
 means an unknown id or an organization the user is not a member of; bare
 message errors map to `ErrInvalidRequest` (400), `ErrForbidden` (403, role too
 low) and `ErrConflict` (409). A rejected token or credential is `ErrInvalidKey`.
 
 Served by TerraBase but not in the client yet (TS-590 adds them): shapes,
-database tooling (backups, indexes, schema, usage), SQL and saved queries,
+database tooling (backups, indexes, schema, project usage, SQL check) and saved queries,
 project API keys, invitation lookup and Management commits. Not served:
 query `explain`, `Idempotency-Key` and the `/v1/dashboard` control plane.
 
