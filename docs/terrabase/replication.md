@@ -294,7 +294,7 @@ through its own `IMeterFactory` plus process-wide ones (runtime), so several hos
 | `terrabase_replication_sent_encoded_bytes_total` | Envelope bytes sent, after LZ4 |
 | `terrabase_replication_received_groups_total{result}` | Groups received; `result` is `applied`, `duplicate` or `rejected` |
 | `terrabase_replication_sender_initialized` | `0` while persisted journal heads are being measured, `1` once all existing databases are initialized |
-| `terrabase_replication_write_wait_seconds{result}` | Histogram of the time client writes waited for their peers' `DurableAck`; `result` is `acknowledged` (every active peer acknowledged) or `timeout` (answered at `write-wait-ms`) |
+| `terrabase_replication_write_wait_seconds{result}` | Histogram of the time client writes waited for their peers' `DurableAck`; `result` is `acknowledged` (every peer acknowledged), `degraded` (answered without a peer whose stream is failing) or `timeout` (answered at `write-wait-ms`) |
 | `terrabase_replication_sender_durable_lag` | Committed groups some peer has not durably acknowledged, summed over peers and databases; `0` means the last validated prefixes acknowledge every group; receiver state loss is discovered by periodic reconciliation. It counts a commit before the commit returns, and a database's older groups before network progress; require `terrabase_replication_sender_initialized = 1` before interpreting zero lag |
 
 ## Not yet

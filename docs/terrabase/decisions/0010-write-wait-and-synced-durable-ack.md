@@ -41,7 +41,8 @@ against 0003. Both questions decide what a peer's acknowledgment is worth, so th
 - **Active peers.** A peer whose `Sync` stream for the database is failing is not waited for: its stream is in backoff
   after an error (unreachable, restarting, refusing the database). Waiting resumes once a stream to it succeeds again.
   A connected peer that is slow is waited for, up to the bound. So a member down for a rolling restart costs each
-  database one wait, until that database's first failed attempt, not a wait on every write.
+  database one wait, until that database's first failed attempt, not a wait on every write. Such answers are counted as
+  `terrabase_replication_write_wait_seconds_count{result="degraded"}`.
 - **Timeout: degrade, not an error.** When the bound expires, the member answers the write's normal success. The write is
   committed locally and keeps replicating. An error would report a committed write as failed: a client that retried a
   create with `If-None-Match: *` would then get 412, and a retried transaction would apply twice. Timeouts are counted

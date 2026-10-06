@@ -27,7 +27,7 @@ internal sealed class ReplicationMetrics
         _creditWaits = meter.CreateCounter<long>(
             "terrabase.replication.sender.credit.waits", "{wait}", "Prepared groups held until durable acknowledgments release byte credit.");
         _writeWaits = meter.CreateHistogram(
-            "terrabase.replication.write_wait", "s", "Time client writes waited for their peers' durable acknowledgment, by result: acknowledged or timeout.",
+            "terrabase.replication.write_wait", "s", "Time client writes waited for their peers' durable acknowledgment, by result: acknowledged, degraded (a failing peer was skipped) or timeout.",
             advice: new InstrumentAdvice<double> { HistogramBucketBoundaries = [0.0005, 0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10] });
     }
 
@@ -56,6 +56,8 @@ internal sealed class ReplicationMetrics
 
     public void CreditWait() => _creditWaits.Add(1);
 
-    public void WriteWaited(TimeSpan waited, bool timedOut) =>
-        _writeWaits.Record(waited.TotalSeconds, new KeyValuePair<string, object?>("result", timedOut ? "timeout" : "acknowledged"));
+    /// <param name="waited">How long the write waited.</param>
+    /// <param name="result"><c>acknowledged</c>, <c>degraded</c> or <c>timeout</c>.</param>
+    public void WriteWaited(TimeSpan waited, string result) =>
+        _writeWaits.Record(waited.TotalSeconds, new KeyValuePair<string, object?>("result", result));
 }

@@ -152,9 +152,11 @@ internal sealed partial class ReplicationSender(
             Task progress;
             lock (_state)
             {
-                if (Volatile.Read(ref _peers).All(peer => peer.Covers(identity, head)))
+                var peers = Volatile.Read(ref _peers);
+                if (peers.All(peer => peer.Covers(identity, head)))
                 {
-                    metrics.WriteWaited(time.GetElapsedTime(started), timedOut: false);
+                    // Degraded: a failing peer was skipped, so not every member holds the write.
+                    metrics.WriteWaited(time.GetElapsedTime(started), peers.All(peer => peer.Acknowledges(identity, head)) ? "acknowledged" : "degraded");
                     return;
                 }
 
@@ -168,7 +170,7 @@ internal sealed partial class ReplicationSender(
             catch (OperationCanceledException) when (expiry.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
             {
                 // The write is committed and keeps replicating; failing it now would invite a retry of a write that succeeded.
-                metrics.WriteWaited(time.GetElapsedTime(started), timedOut: true);
+                metrics.WriteWaited(time.GetElapsedTime(started), "timeout");
                 return;
             }
         }
@@ -708,7 +710,15 @@ internal sealed partial class ReplicationSender(
         {
             lock (state)
             {
-                return _retries.ContainsKey(database) || _acknowledged.GetValueOrDefault(database).Prefix >= head;
+                return _retries.ContainsKey(database) || Acknowledges(database, head);
+            }
+        }
+
+        public bool Acknowledges(DatabaseIncarnation database, long head)
+        {
+            lock (state)
+            {
+                return _acknowledged.GetValueOrDefault(database).Prefix >= head;
             }
         }
 

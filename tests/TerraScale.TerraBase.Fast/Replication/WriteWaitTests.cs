@@ -131,7 +131,10 @@ public sealed class WriteWaitTests
             await Assert.That(written.StatusCode).IsEqualTo(HttpStatusCode.Created);
         }
 
-        await Assert.That(await server.MetricAsync("terrabase_replication_write_wait_seconds_count", "result=\"acknowledged\"", token)).IsEqualTo(4);
+        // Answered without the peer: counted as degraded, never as acknowledged.
+        await Assert.That(await server.MetricAsync("terrabase_replication_write_wait_seconds_count", "result=\"degraded\"", token)).IsEqualTo(4);
+        await Assert.That(() => server.MetricAsync("terrabase_replication_write_wait_seconds_count", "result=\"acknowledged\"", token))
+            .Throws<InvalidOperationException>();
     }
 
     private static void Configure(Dictionary<string, string> settings, PeerTls peerTls, ClientTls clientTls, string peerAddress)
