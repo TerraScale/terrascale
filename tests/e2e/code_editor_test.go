@@ -74,7 +74,7 @@ func TestCodeEditorValidatesAndSubmitsJSONDocument(t *testing.T) {
 	fill(t, dialog.Locator("#new-document-json"), `{ "customer_id": "cus_e2e" }`)
 	must(t, expect.Locator(editor.Locator(".squiggly-error")).ToHaveCount(0))
 	submitAndExpect(t, page, "/api/v1/dashboard/data/documents", 303, byRole(dialog, *playwright.AriaRoleButton, "Add document").Click)
-	must(t, expect.Locator(page.Locator("table.ts-data-documents")).ToContainText(id))
+	must(t, expect.Locator(page.Locator("#documents table")).ToContainText(id))
 }
 
 func TestCodeEditorLoadsOnlyWhereUsed(t *testing.T) {

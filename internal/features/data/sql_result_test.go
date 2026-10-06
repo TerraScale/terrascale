@@ -18,7 +18,7 @@ func TestSQLResultColumnsFollowFirstUse(t *testing.T) {
 		{ID: "ord_3", Value: jsontext.Value(`"legacy"`)},
 	}, 3)
 
-	want := []sqlColumn{{"total", true}, {"status", false}, {"tags", false}, {"note", false}, {"customer", false}, {"value", false}}
+	want := []sqlColumn{{"total", true, false}, {"status", false, false}, {"tags", false, false}, {"note", false, false}, {"customer", false, false}, {"value", false, true}}
 	if !slices.Equal(result.Columns, want) {
 		t.Fatalf("columns = %v, want %v", result.Columns, want)
 	}

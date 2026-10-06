@@ -1,6 +1,7 @@
 package data
 
 import (
+	"cmp"
 	"context"
 	"encoding/json/jsontext"
 	json "encoding/json/v2"
@@ -46,6 +47,7 @@ type pageData struct {
 	Search          string
 	IndexView       string
 	Collection      string
+	Collections     []collectionEntry // the documents tab's sub-navigation
 	Documents       []documentView
 	Schema          string
 	Indexes         []string
@@ -78,6 +80,33 @@ type pageData struct {
 	NewDocument   string
 	QueryName     string
 	IndexField    string
+	// NewCollection refills the new-collection form after a failed post.
+	NewCollection string
+	// Layout is how the documents tab shows a page: grid, one column per
+	// top-level field, or list, one JSON preview per document. Order, Page,
+	// PageCount, Matched, and More place the page in the collection; Grid
+	// lays it out.
+	Layout    string
+	Order     documentSort
+	Page      int
+	PageCount int
+	Matched   int
+	More      bool
+	Grid      sqlResult
+}
+
+const (
+	// documentsPerPage is the page size of the documents tab.
+	documentsPerPage = 25
+	// maxSortField bounds the field name a sort link carries.
+	maxSortField = 128
+)
+
+// collectionEntry is one collection in the documents sub-navigation. Count
+// is empty when counting would cost a data plane scan.
+type collectionEntry struct {
+	Name  string
+	Count string
 }
 
 type historyVersion struct {
@@ -92,11 +121,39 @@ func mountPages(mux *http.ServeMux, deps core.Deps) {
 			renderSection(w, r, deps, r.PathValue("databaseID"), section, http.StatusOK, nil)
 		})
 	}
+	mux.HandleFunc("GET /databases/{databaseID}/documents/{collection}", func(w http.ResponseWriter, r *http.Request) {
+		renderSection(w, r, deps, r.PathValue("databaseID"), "documents", http.StatusOK, nil)
+	})
 }
 
 // sectionPath is the URL of a data section of one database.
 func sectionPath(databaseID, section string, query url.Values) string {
 	return databases.TabPath(databaseID, section, query)
+}
+
+// browseKeys are the documents tab's browsing state: layout, sort, search,
+// and page.
+var browseKeys = []string{"view", "sort", "order", "q", "page"}
+
+// browseState is the browsing state a document form posted back, for the
+// redirect that returns to it.
+func browseState(r *http.Request) url.Values {
+	query := url.Values{}
+	for _, key := range browseKeys {
+		if value := r.PostFormValue(key); value != "" {
+			query.Set(key, value)
+		}
+	}
+	return query
+}
+
+// documentsPath is the deep link to one collection's documents.
+func documentsPath(databaseID, collection string, query url.Values) string {
+	path := "/databases/" + url.PathEscape(databaseID) + "/documents/" + url.PathEscape(collection)
+	if len(query) > 0 {
+		path += "?" + query.Encode()
+	}
+	return path
 }
 
 // renderSection renders one data section of a database. Form posts pass
@@ -132,11 +189,16 @@ func renderSection(w http.ResponseWriter, r *http.Request, deps core.Deps, datab
 		CanWrite:  org.CanWrite(p.UserID),
 		CanManage: org.CanManage(p.UserID),
 		Demo:      deps.Demo,
-		Search:    strings.TrimSpace(query.Get("q")),
+		// Document forms post the browsing state back with their change.
+		Search:    strings.TrimSpace(r.FormValue("q")),
 		IndexView: query.Get("view"),
-		// Form posts carry the collection in their body.
-		Collection: strings.TrimSpace(r.FormValue("collection")),
+		// Deep links carry the collection in the path, form posts in their
+		// body.
+		Collection: strings.TrimSpace(cmp.Or(r.PathValue("collection"), r.FormValue("collection"))),
 		DocumentID: query.Get("id"),
+	}
+	if section == "documents" {
+		loadCollections(ctx, service, p, &data)
 	}
 	if !validCollection(data.Collection) {
 		data.Collection = "users"
@@ -150,6 +212,14 @@ func renderSection(w http.ResponseWriter, r *http.Request, deps core.Deps, datab
 	if section == "documents" {
 		data.DocumentID = query.Get("edit")
 		data.DeleteID = query.Get("delete")
+		data.Layout = "grid"
+		if r.FormValue("view") == "list" {
+			data.Layout = "list"
+		}
+		if field := r.FormValue("sort"); len(field) <= maxSortField {
+			data.Order = documentSort{Field: field, Desc: r.FormValue("order") == "desc"}
+		}
+		data.Page, _ = strconv.Atoi(r.FormValue("page"))
 	}
 	if deps.LocalResources() {
 		loadDemo(&data, a, p, db)
@@ -175,6 +245,9 @@ func renderSection(w http.ResponseWriter, r *http.Request, deps core.Deps, datab
 		data.Documents = slices.DeleteFunc(data.Documents, func(document documentView) bool {
 			return !strings.Contains(strings.ToLower(document.ID+" "+document.Value.String()), search)
 		})
+	}
+	if section == "documents" {
+		paginate(&data)
 	}
 	if edit != nil {
 		edit(&data)
@@ -229,6 +302,45 @@ func indented(value jsontext.Value) string {
 	return formatted.String()
 }
 
+// paginate cuts the sorted, filtered documents to the open page and lays
+// the page out for the grid.
+func paginate(data *pageData) {
+	data.Matched = len(data.Documents)
+	data.PageCount = max(1, (data.Matched+documentsPerPage-1)/documentsPerPage)
+	data.Page = min(max(data.Page, 1), data.PageCount)
+	start := (data.Page - 1) * documentsPerPage
+	data.Documents = data.Documents[start:min(start+documentsPerPage, data.Matched)]
+	if data.Layout == "grid" {
+		data.Grid = newSQLResult(data.Documents, len(data.Documents))
+	}
+}
+
+// loadCollections lists the database's collections for the sub-navigation
+// and settles which one is open: without a choice, users or else the first
+// one; a chosen collection that holds nothing yet is listed too. Demo
+// collections are in memory, so they carry their document counts.
+func loadCollections(ctx context.Context, service Service, p core.Principal, data *pageData) {
+	names, err := service.Collections(ctx, p, data.Database.ID)
+	if err != nil {
+		data.Error = err.Error()
+		return
+	}
+	switch {
+	case data.Collection == "" && len(names) > 0 && !slices.Contains(names, "users"):
+		data.Collection = names[0]
+	case validCollection(data.Collection) && !slices.Contains(names, data.Collection):
+		names = append(names, data.Collection)
+		slices.Sort(names)
+	}
+	for _, name := range names {
+		entry := collectionEntry{Name: name}
+		if service.deps.LocalResources() {
+			entry.Count = strconv.Itoa(len(data.Database.Documents[name]))
+		}
+		data.Collections = append(data.Collections, entry)
+	}
+}
+
 // loadDemo reads the selected collection from the in-memory demo database.
 func loadDemo(data *pageData, a core.Account, p core.Principal, db core.Database) {
 	if data.Section == "indexes" && data.IndexView == "migration" {
@@ -237,7 +349,7 @@ func loadDemo(data *pageData, a core.Account, p core.Principal, db core.Database
 	for id, body := range db.Documents[data.Collection] {
 		data.Documents = append(data.Documents, documentView{ID: id, Value: body})
 	}
-	slices.SortFunc(data.Documents, func(a, b documentView) int { return strings.Compare(a.ID, b.ID) })
+	sortDocuments(data.Documents, data.Order)
 	if schema, ok := db.Schemas[data.Collection]; ok {
 		data.Schema = indented(schema)
 	}
@@ -264,7 +376,7 @@ func loadLive(ctx context.Context, service Service, p core.Principal, data *page
 	var err error
 	switch data.Section {
 	case "documents":
-		data.Documents, err = service.Documents(ctx, p, data.Database.ID, documentQuery{Collection: data.Collection})
+		data.Documents, data.More, err = service.Browse(ctx, p, data.Database.ID, data.Collection, data.Order)
 	case "history":
 		if data.DocumentID == "" {
 			return

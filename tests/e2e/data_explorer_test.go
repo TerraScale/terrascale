@@ -116,7 +116,7 @@ func TestDataDocumentFormsKeepInputOnErrorAndConfirmDeletes(t *testing.T) {
 	}
 	id := uniqueName("doc")
 	add(id, `{"total": 1}`, 303)
-	table := page.Locator("table.ts-data-documents")
+	table := page.Locator("#documents table")
 	must(t, expect.Locator(table).ToContainText(id))
 
 	add(id, `{"total": 2}`, 409)
@@ -146,6 +146,79 @@ func TestDataDocumentFormsKeepInputOnErrorAndConfirmDeletes(t *testing.T) {
 	must(t, expect.Locator(table).ToContainText(id))
 	submitAndExpect(t, page, "/api/v1/dashboard/data/documents", 303, byRole(confirm, *playwright.AriaRoleButton, "Delete document").Click)
 	visible(t, page.GetByText("No documents match this collection and filter."))
+}
+
+func TestDataDocumentsListCollectionsAndCreateOne(t *testing.T) {
+	t.Parallel()
+	page := formErrorPage(t)
+	databasePath := sampleDatabase(t, page)
+	goToOK(t, page, databasePath+"/documents")
+	nav := pageByRole(page, *playwright.AriaRoleNavigation, "Collections")
+	collection := func(name string) playwright.Locator { return byRole(nav, *playwright.AriaRoleLink, name) }
+	must(t, expect.Locator(nav.Locator(`a[aria-current="page"]`)).ToHaveCount(1))
+
+	click(t, collection("orders"))
+	waitForPath(t, page, func(u *url.URL) bool { return u.Path == databasePath+"/documents/orders" })
+	must(t, expect.Locator(collection("orders")).ToHaveAttribute("aria-current", "page"))
+	must(t, expect.Locator(collection("orders")).ToContainText("3 documents"))
+	rows := page.Locator("#documents table tbody tr")
+	must(t, expect.Locator(rows).ToHaveCount(3))
+	screenshot(t, page, "documents-collections")
+
+	// The grid has a column per field; its headings sort the collection.
+	grid := page.Locator("#documents table")
+	heading := func(name string) playwright.Locator { return byRole(grid, *playwright.AriaRoleColumnheader, name) }
+	click(t, byRole(heading("total"), *playwright.AriaRoleLink, "total"))
+	must(t, expect.Locator(heading("total")).ToHaveAttribute("aria-sort", "ascending"))
+	must(t, expect.Locator(rows.First()).ToContainText("ord_1003"))
+	click(t, byRole(heading("total"), *playwright.AriaRoleLink, "total"))
+	must(t, expect.Locator(heading("total")).ToHaveAttribute("aria-sort", "descending"))
+	must(t, expect.Locator(rows.First()).ToContainText("ord_1002"))
+	must(t, expect.Locator(page.Locator("#documents nav.ts-pager")).ToContainText("1–3 of 3 documents"))
+
+	// The list keeps the sort and shows each document as JSON.
+	click(t, byRole(pageByRole(page, *playwright.AriaRoleNavigation, "Document layout"), *playwright.AriaRoleLink, "List"))
+	waitForPath(t, page, func(u *url.URL) bool { return u.Query().Get("view") == "list" && u.Query().Get("sort") == "total" })
+	must(t, expect.Locator(rows.First().Locator("code")).ToContainText(`"total":980`))
+
+	name := identifier("e2e_collection")
+	create := func(status int) {
+		t.Helper()
+		click(t, byRole(nav, *playwright.AriaRoleButton, "New collection"))
+		dialog := pageByRole(page, *playwright.AriaRoleDialog, "New collection")
+		fill(t, dialog.Locator("#new-collection-name"), name)
+		submitAndExpect(t, page, "/api/v1/dashboard/data/collections", status, byRole(dialog, *playwright.AriaRoleButton, "Create collection").Click)
+	}
+	create(303)
+	waitForPath(t, page, func(u *url.URL) bool { return u.Path == databasePath+"/documents/"+name })
+	must(t, expect.Locator(collection(name)).ToHaveAttribute("aria-current", "page"))
+	visible(t, page.GetByText("No documents match this collection and filter."))
+
+	create(409)
+	dialog := pageByRole(page, *playwright.AriaRoleDialog, "New collection")
+	must(t, expect.Locator(dialog.GetByRole(*playwright.AriaRoleAlert)).ToContainText("A collection named "+name+" already exists."))
+	must(t, page.Keyboard().Press("Escape"))
+
+	// A change returns to the layout, sort, and search it was made from.
+	goToOK(t, page, databasePath+"/documents/"+name+"?view=list&sort=total&order=desc")
+	click(t, pageByRole(page, *playwright.AriaRoleButton, "Add document"))
+	add := pageByRole(page, *playwright.AriaRoleDialog, "Add document")
+	codeEditor(t, page, "new-document-json")
+	fill(t, add.Locator("#new-document-json"), `{"total": 5}`)
+	submitAndExpect(t, page, "/api/v1/dashboard/data/documents", 303, byRole(add, *playwright.AriaRoleButton, "Add document").Click)
+	waitForPath(t, page, func(u *url.URL) bool {
+		return u.Path == databasePath+"/documents/"+name && u.Query().Get("view") == "list" && u.Query().Get("sort") == "total" && u.Query().Get("order") == "desc"
+	})
+	must(t, expect.Locator(rows).ToHaveCount(1))
+
+	// Narrow pages choose the collection from a select.
+	must(t, page.SetViewportSize(390, 844))
+	goToOK(t, page, databasePath+"/documents/"+name)
+	must(t, expect.Locator(nav.Locator("ul")).ToBeHidden())
+	selectOption(t, nav.Locator("#collection-select"), "orders")
+	click(t, byRole(nav, *playwright.AriaRoleButton, "Open"))
+	must(t, expect.Locator(nav.Locator("#collection-select")).ToHaveValue("orders"))
+	must(t, expect.Locator(page.Locator("#documents table tbody tr")).ToHaveCount(3))
 }
 
 func TestDataSchemaStartsValidAndExplainsRejectedSchemas(t *testing.T) {

@@ -392,9 +392,8 @@ func TestCutoverSeededDatabaseDetailTabsRetainControls(t *testing.T) {
 
 	click(t, tab("Documents"))
 	current("Documents")
-	fill(t, page.Locator("#collection"), "orders")
-	click(t, pageByRole(page, *playwright.AriaRoleButton, "Open"))
-	documents := page.Locator("table.ts-data-documents tbody tr")
+	click(t, byRole(pageByRole(page, *playwright.AriaRoleNavigation, "Collections"), *playwright.AriaRoleLink, "orders"))
+	documents := page.Locator("#documents table tbody tr")
 	must(t, expect.Locator(documents).ToHaveCount(3))
 	click(t, documents.First().Locator(`details.ts-menu > summary[aria-label="Actions for ord_1001"]`))
 	click(t, byRole(documents.First(), *playwright.AriaRoleLink, "Edit"))

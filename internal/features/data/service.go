@@ -1,6 +1,7 @@
 package data
 
 import (
+	"bytes"
 	"cmp"
 	"context"
 	stdjson "encoding/json"
@@ -9,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"math/big"
 	"slices"
 	"strconv"
 	"strings"
@@ -25,6 +27,10 @@ const (
 	maxDemoRows    = 100
 	maxSchemaBytes = 128 << 10
 	maxListLimit   = 100
+	// maxBrowseDocuments bounds what the documents tab reads per view.
+	// ponytail: one query of the first 1000 in sort order; page through
+	// cursors if collections outgrow it.
+	maxBrowseDocuments = 1000
 )
 
 var errDemoOnly = errors.New("index recommendations are only available in the in-memory demo")
@@ -189,15 +195,275 @@ func (s Service) Collections(ctx context.Context, p core.Principal, databaseID s
 	if err != nil {
 		return nil, err
 	}
-	page, err := client.Collections(ctx, v1.ListOptions{Limit: 200})
+	var names []string
+	for cursor := ""; ; {
+		page, err := client.Collections(ctx, v1.ListOptions{Limit: 200, Cursor: cursor})
+		if err != nil {
+			return nil, core.ProviderError{Action: "collection list", Err: err}
+		}
+		for _, item := range page.Items {
+			names = append(names, item.Name)
+		}
+		if cursor = page.NextCursor; cursor == "" {
+			return names, nil
+		}
+	}
+}
+
+// CreateCollection creates an empty collection; an existing name conflicts.
+func (s Service) CreateCollection(ctx context.Context, p core.Principal, databaseID, name string) error {
+	if !collectionName.MatchString(name) {
+		return core.Invalid("collection names start with a lowercase letter and use up to 63 lowercase letters, digits, hyphens, and underscores")
+	}
+	db, err := s.database(ctx, p, databaseID)
 	if err != nil {
-		return nil, core.ProviderError{Action: "collection list", Err: err}
+		return err
 	}
-	names := make([]string, 0, len(page.Items))
-	for _, item := range page.Items {
-		names = append(names, item.Name)
+	if err := core.Can(ctx, s.deps.Store, p, core.Organization.CanWrite); err != nil {
+		return err
 	}
-	return names, nil
+	if s.deps.LocalResources() {
+		return s.updateDatabase(ctx, p, db.ID, core.Organization.CanWrite, func(current *core.Database) error {
+			_, documents := current.Documents[name]
+			_, schema := current.Schemas[name]
+			_, indexes := current.Indexes[name]
+			if documents || schema || indexes {
+				return fmt.Errorf("%w: collection %q already exists", core.ErrConflict, name)
+			}
+			if current.Documents == nil {
+				current.Documents = make(map[string]map[string][]byte)
+			}
+			current.Documents[name] = make(map[string][]byte)
+			return nil
+		})
+	}
+	client, err := s.deps.Documents(p, db.Name)
+	if err != nil {
+		return err
+	}
+	if _, err := client.CreateCollection(ctx, name); err != nil {
+		if errors.Is(err, v1.ErrNameTaken) {
+			return fmt.Errorf("%w: collection %q already exists", core.ErrConflict, name)
+		}
+		return core.ProviderError{Action: "collection create", Err: err}
+	}
+	return nil
+}
+
+// documentSort orders a collection by a top-level field, or by ID when Field
+// is empty.
+type documentSort struct {
+	Field string
+	Desc  bool
+}
+
+// Browse reads the first maxBrowseDocuments of a collection in sort order;
+// more reports that the collection holds others.
+func (s Service) Browse(ctx context.Context, p core.Principal, databaseID, collection string, order documentSort) ([]documentView, bool, error) {
+	db, err := s.collectionDatabase(ctx, p, databaseID, collection)
+	if err != nil {
+		return nil, false, err
+	}
+	var docs []documentView
+	if s.deps.LocalResources() {
+		for id, body := range db.Documents[collection] {
+			docs = append(docs, documentView{ID: id, Value: jsontext.Value(body).Clone()})
+		}
+		sortDocuments(docs, order)
+		return docs, false, nil
+	}
+	client, err := s.deps.Documents(p, db.Name)
+	if err != nil {
+		return nil, false, err
+	}
+	path := v1.IDPath
+	if order.Field != "" {
+		path = "/" + strings.NewReplacer("~", "~0", "/", "~1").Replace(order.Field)
+	}
+	key := v1.Asc(path)
+	if order.Desc {
+		key = v1.Desc(path)
+	}
+	// Bounded scans may return short or empty pages with a cursor, so read
+	// on until the cap or the end.
+	query := v1.Query{Sort: []v1.SortKey{key}}
+	for {
+		query.Limit = maxBrowseDocuments - len(docs)
+		result, err := client.Collection(collection).Query(ctx, query)
+		if err != nil {
+			return nil, false, core.ProviderError{Action: "document query", Err: err}
+		}
+		for _, row := range result.Items {
+			docs = append(docs, documentView{ID: row.ID, Value: jsontext.Value(row.Document)})
+		}
+		if result.NextCursor == "" || len(docs) >= maxBrowseDocuments {
+			return docs, result.NextCursor != "", nil
+		}
+		query.Cursor = result.NextCursor
+	}
+}
+
+// sortDocuments orders documents by a top-level field, then by ID. Documents
+// without the field come first ascending; values of different JSON kinds
+// order null, bool, number, string, object, array. Each document's key is
+// read once, so sorting never reparses whole documents.
+func sortDocuments(docs []documentView, order documentSort) {
+	keys := make([]sortKey, len(docs))
+	for i, doc := range docs {
+		keys[i] = sortKey{doc: doc}
+		if order.Field != "" {
+			keys[i] = newSortKey(doc, fieldValue(doc.Value, order.Field))
+		}
+	}
+	slices.SortFunc(keys, func(a, b sortKey) int {
+		c := a.compare(b)
+		if c == 0 {
+			c = strings.Compare(a.doc.ID, b.doc.ID)
+		}
+		if order.Desc {
+			return -c
+		}
+		return c
+	})
+	for i, key := range keys {
+		docs[i] = key.doc
+	}
+}
+
+// sortKey is a document with its sort value decoded: numbers as exact
+// decimals, strings unquoted, anything else as its JSON text.
+type sortKey struct {
+	doc    documentView
+	rank   int
+	number *decimal
+	text   string
+}
+
+func newSortKey(doc documentView, value jsontext.Value) sortKey {
+	key := sortKey{doc: doc, rank: kindRank(value), text: string(value)}
+	switch value.Kind() {
+	case '0':
+		key.number = parseDecimal(string(value))
+	case '"':
+		_ = json.Unmarshal(value, &key.text)
+	}
+	return key
+}
+
+func (a sortKey) compare(b sortKey) int {
+	if c := cmp.Compare(a.rank, b.rank); c != 0 {
+		return c
+	}
+	if a.number != nil && b.number != nil {
+		return a.number.compare(*b.number)
+	}
+	return strings.Compare(a.text, b.text)
+}
+
+// decimal is a JSON number held exactly, whatever its size: its sign, its
+// significant digits without leading or trailing zeros, and the power of ten
+// of the first digit. Zero has no digits.
+type decimal struct {
+	negative bool
+	digits   string
+	exponent *big.Int
+}
+
+// parseDecimal reads a valid JSON number, or returns nil.
+func parseDecimal(number string) *decimal {
+	negative := strings.HasPrefix(number, "-")
+	mantissa, power, _ := strings.Cut(strings.TrimPrefix(number, "-"), "e")
+	if power == "" {
+		mantissa, power, _ = strings.Cut(mantissa, "E")
+	}
+	whole, fraction, _ := strings.Cut(mantissa, ".")
+	exponent := new(big.Int)
+	if power != "" {
+		if _, ok := exponent.SetString(power, 10); !ok {
+			return nil
+		}
+	}
+	all := whole + fraction
+	significant := strings.TrimLeft(all, "0")
+	leading := len(all) - len(significant)
+	d := &decimal{negative: negative, digits: strings.TrimRight(significant, "0"), exponent: exponent}
+	exponent.Add(exponent, big.NewInt(int64(len(whole)-1-leading)))
+	return d
+}
+
+func (d decimal) sign() int {
+	switch {
+	case d.digits == "":
+		return 0
+	case d.negative:
+		return -1
+	default:
+		return 1
+	}
+}
+
+func (a decimal) compare(b decimal) int {
+	sign := a.sign()
+	if c := cmp.Compare(sign, b.sign()); c != 0 || sign == 0 {
+		return c
+	}
+	// With equal leading powers, digit strings that start with a non-zero
+	// digit and end without zeros order like the fractions they spell.
+	c := a.exponent.Cmp(b.exponent)
+	if c == 0 {
+		c = strings.Compare(a.digits, b.digits)
+	}
+	return sign * c
+}
+
+// fieldValue is a document's top-level field, or nil when it has none. Other
+// members are skipped, not copied.
+func fieldValue(document jsontext.Value, field string) jsontext.Value {
+	if document.Kind() != '{' {
+		return nil
+	}
+	decoder := jsontext.NewDecoder(bytes.NewReader(document))
+	if _, err := decoder.ReadToken(); err != nil {
+		return nil
+	}
+	for decoder.PeekKind() == '"' {
+		name, err := decoder.ReadToken()
+		if err != nil {
+			return nil
+		}
+		if name.String() == field {
+			value, err := decoder.ReadValue()
+			if err != nil {
+				return nil
+			}
+			return value.Clone()
+		}
+		if decoder.SkipValue() != nil {
+			return nil
+		}
+	}
+	return nil
+}
+
+// kindRank orders JSON kinds for sorting; a missing value ranks first.
+func kindRank(v jsontext.Value) int {
+	if len(v) == 0 {
+		return 0
+	}
+	switch v.Kind() {
+	case 'n':
+		return 1
+	case 't', 'f':
+		return 2
+	case '0':
+		return 3
+	case '"':
+		return 4
+	case '{':
+		return 5
+	default:
+		return 6
+	}
 }
 
 // Documents lists one page of a collection, ordered by ID and filtered by a

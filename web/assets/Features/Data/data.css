@@ -4,11 +4,109 @@
   flex: 1 1 200px;
 }
 
-/* Tab head: the toolbar and its hint, kept tight above the section. */
-.ts-data-head {
+/* Documents: the collection list beside the open collection's documents. */
+.ts-data-browser {
   display: grid;
+  grid-template-columns: minmax(180px, 240px) minmax(0, 1fr);
+  align-items: start;
+  gap: var(--ts-s8);
+}
+
+.ts-data-browser-main {
+  display: grid;
+  gap: var(--ts-s4);
+  min-width: 0;
+}
+
+.ts-data-nav {
+  display: grid;
+  gap: var(--ts-s3);
+  min-width: 0;
+  padding-right: var(--ts-s6);
+  border-right: 1px solid var(--ts-line);
+}
+
+.ts-data-nav-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ts-s2);
+}
+
+.ts-data-nav-title {
+  color: var(--ts-ink-3);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+/* Long lists scroll inside the column instead of stretching the page. */
+.ts-data-nav-list {
+  display: grid;
+  gap: 1px;
+  max-height: min(70vh, 640px);
+  overflow-y: auto;
+  list-style: none;
+}
+
+.ts-data-nav-link {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   gap: var(--ts-s2);
   min-width: 0;
+  padding: 6px var(--ts-s2);
+  border-radius: var(--ts-radius);
+  color: var(--ts-ink-2);
+  font-family: var(--ts-font-mono);
+  font-size: var(--ts-fs-sm);
+  transition: background-color var(--ts-fast) var(--ts-ease), color var(--ts-fast) var(--ts-ease);
+}
+
+.ts-data-nav-link:hover {
+  background: var(--ts-surface-2);
+  color: var(--ts-ink);
+  text-decoration: none;
+}
+
+.ts-data-nav-link[aria-current="page"] {
+  background: var(--ts-accent-soft);
+  color: var(--ts-ink);
+  font-weight: 600;
+}
+
+/* Narrow pages choose the collection from a select. */
+.ts-data-nav-select {
+  display: none;
+  gap: var(--ts-s2);
+}
+
+.ts-data-nav-select > .ts-select {
+  flex: 1;
+  min-width: 0;
+}
+
+@container page (width < 768px) {
+  .ts-data-browser {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--ts-s4);
+  }
+
+  .ts-data-nav {
+    padding: 0 0 var(--ts-s4);
+    border-right: 0;
+    border-bottom: 1px solid var(--ts-line);
+  }
+
+  .ts-data-nav-list,
+  .ts-data-nav-filter {
+    display: none;
+  }
+
+  .ts-data-nav-select {
+    display: flex;
+  }
 }
 
 /* Tab toolbar: collection scope and view switches, actions on the right. */
@@ -119,6 +217,37 @@
   font-size: var(--ts-fs-xs);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Document grid: sortable column headings. */
+.ts-data-sort {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ts-s1);
+  color: inherit;
+}
+
+.ts-data-sort:hover {
+  color: var(--ts-ink);
+  text-decoration: none;
+}
+
+th[aria-sort] > .ts-data-sort {
+  color: var(--ts-ink);
+}
+
+.ts-num > .ts-data-sort {
+  flex-direction: row-reverse;
+}
+
+.ts-data-grid td.ts-data-result-id {
+  white-space: nowrap;
+}
+
+/* Result cells clip their text; the row menu must open past its cell. */
+.ts-data-grid td.ts-table-actions {
+  max-width: none;
+  overflow: visible;
 }
 
 /* SQL console: editor and results beside the saved queries. */

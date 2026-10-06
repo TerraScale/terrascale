@@ -3,6 +3,7 @@ package data
 import (
 	"fmt"
 	"net/url"
+	"strconv"
 	"strings"
 
 	"terrascale.tech/dashboard/internal/core"
@@ -13,12 +14,79 @@ import (
 
 // path links to a section of the open database, keeping the collection.
 func path(d pageData, section string, extra ...string) string {
-	query := url.Values{"collection": {d.Collection}}
+	query := url.Values{}
 	for i := 0; i+1 < len(extra); i += 2 {
 		query.Set(extra[i], extra[i+1])
 	}
+	if section == "documents" {
+		return browsePath(d, extra...)
+	}
+	query.Set("collection", d.Collection)
 	return sectionPath(d.Database.ID, section, query)
 }
+
+// browsePath links to the open collection's documents with the current
+// layout, sort, search, and page, changed by the key and value pairs in set;
+// an empty value drops its key.
+func browsePath(d pageData, set ...string) string {
+	query := browseQuery(d)
+	for i := 0; i+1 < len(set); i += 2 {
+		if set[i+1] == "" {
+			query.Del(set[i])
+		} else {
+			query.Set(set[i], set[i+1])
+		}
+	}
+	return documentsPath(d.Database.ID, d.Collection, query)
+}
+
+// browseQuery is the documents tab's browsing state as URL parameters,
+// leaving out defaults.
+func browseQuery(d pageData) url.Values {
+	query := url.Values{}
+	if d.Layout == "list" {
+		query.Set("view", "list")
+	}
+	if d.Order.Field != "" {
+		query.Set("sort", d.Order.Field)
+	}
+	if d.Order.Desc {
+		query.Set("order", "desc")
+	}
+	if d.Search != "" {
+		query.Set("q", d.Search)
+	}
+	if d.Page > 1 {
+		query.Set("page", strconv.Itoa(d.Page))
+	}
+	return query
+}
+
+// sortPath sorts the documents by field (the ID when empty), reversing the
+// order when they are already sorted by it ascending.
+func sortPath(d pageData, field string) string {
+	order := ""
+	if d.Order.Field == field && !d.Order.Desc {
+		order = "desc"
+	}
+	return browsePath(d, "sort", field, "order", order, "page", "")
+}
+
+// sortable reports whether a grid column can sort the collection: a real
+// field, named within the length the sort parameter keeps. An empty sort
+// field means the ID.
+func sortable(column sqlColumn) bool {
+	return !column.Root && column.Name != "" && len(column.Name) <= maxSortField
+}
+
+// pageSummary places the open page in the matching documents.
+func pageSummary(d pageData) string {
+	first := (d.Page-1)*documentsPerPage + 1
+	return fmt.Sprintf("%d–%d of %d documents · page %d of %d", first, first+len(d.Documents)-1, d.Matched, d.Page, d.PageCount)
+}
+
+// collectionFilter shows a collection while the filter is empty or matches it.
+const collectionFilter = "$collectionSearch === '' || el.dataset.collection.toLowerCase().includes($collectionSearch.trim().toLowerCase())"
 
 templ sectionPage(page core.Page, frame databases.FrameProps, d pageData) {
 	@databases.Frame(frame) {
@@ -62,44 +130,94 @@ templ collectionScope(d pageData, section string) {
 }
 
 templ documentsView(page core.Page, d pageData) {
-	<div class="ts-data-head">
-		<div class="ts-data-bar">
-			@collectionScope(d, "documents") {
-				<input class="ts-input ts-input-sm ts-data-search" type="search" name="q" value={ d.Search } placeholder="Search documents" aria-label="Search documents"/>
-				if d.Search != "" {
-					<a class="ts-btn ts-btn-ghost ts-btn-sm" href={ templ.SafeURL(path(d, "documents")) }>Clear</a>
+	<div class="ts-data-browser">
+		@collectionNav(d)
+		<div class="ts-data-browser-main">
+			if len(d.Collections) == 0 && d.Error == "" {
+				@ui.Empty("This database has no collections yet.", "Create a collection to start adding documents.") {
+					if d.CanWrite {
+						@ui.DialogTrigger(ui.DialogTriggerProps{Dialog: "new-collection", Label: "New collection", Icon: icons.Plus(16), Variant: "primary", Small: true})
+					}
+				}
+			} else {
+				<div class="ts-data-bar">
+					<form class="ts-filters ts-data-scope" method="get" action={ templ.SafeURL(documentsPath(d.Database.ID, d.Collection, nil)) } aria-label="Search documents">
+						if d.Layout == "list" {
+							<input type="hidden" name="view" value="list"/>
+						}
+						if d.Order.Field != "" {
+							<input type="hidden" name="sort" value={ d.Order.Field }/>
+						}
+						if d.Order.Desc {
+							<input type="hidden" name="order" value="desc"/>
+						}
+						<input class="ts-input ts-input-sm ts-data-search" type="search" name="q" value={ d.Search } placeholder={ "Search " + d.Collection } aria-label="Search documents"/>
+						if d.Search != "" {
+							<a class="ts-btn ts-btn-ghost ts-btn-sm" href={ templ.SafeURL(browsePath(d, "q", "", "page", "")) }>Clear</a>
+						}
+					</form>
+					<div class="ts-row">
+						<nav class="ts-segmented" aria-label="Document layout">
+							<a
+								class="ts-segment"
+								href={ templ.SafeURL(browsePath(d, "view", "")) }
+								if d.Layout == "grid" {
+									aria-current="page"
+								}
+							>Grid</a>
+							<a
+								class="ts-segment"
+								href={ templ.SafeURL(browsePath(d, "view", "list")) }
+								if d.Layout == "list" {
+									aria-current="page"
+								}
+							>List</a>
+						</nav>
+						if d.CanWrite {
+							@ui.DialogTrigger(ui.DialogTriggerProps{Dialog: "add-document", Label: "Add document", Icon: icons.Plus(16), Variant: "primary", Small: true})
+						}
+					</div>
+				</div>
+				if d.More {
+					<p class="ts-hint">{ fmt.Sprintf("This collection holds more than %d documents. The view, search, and pages cover the first %d in this order.", maxBrowseDocuments, maxBrowseDocuments) }</p>
+				}
+				@ui.Card(ui.CardProps{ID: "documents", Flush: true}) {
+					if len(d.Documents) == 0 {
+						@ui.Empty("No documents match this collection and filter.", "Open another collection or add a document.")
+					} else if d.Layout == "grid" {
+						@documentGrid(page, d)
+					} else {
+						@documentRows(page, d)
+					}
+					if d.Matched > 0 {
+						<nav class="ts-pager" aria-label="Document pages">
+							<span>{ pageSummary(d) }</span>
+							<div class="ts-row">
+								if d.Page > 1 {
+									<a class="ts-btn ts-btn-secondary ts-btn-sm" rel="prev" href={ templ.SafeURL(browsePath(d, "page", strconv.Itoa(d.Page-1))) }>Previous</a>
+								}
+								if d.Page < d.PageCount {
+									<a class="ts-btn ts-btn-secondary ts-btn-sm" rel="next" href={ templ.SafeURL(browsePath(d, "page", strconv.Itoa(d.Page+1))) }>Next</a>
+								}
+							</div>
+						</nav>
+					}
 				}
 			}
-			if d.CanWrite {
-				@ui.DialogTrigger(ui.DialogTriggerProps{Dialog: "add-document", Label: "Add document", Icon: icons.Plus(16), Variant: "primary", Small: true})
-			}
 		</div>
-		<p class="ts-hint">Collection listing is unavailable in the published SDK, so enter a collection name explicitly.</p>
 	</div>
-	@ui.Card(ui.CardProps{ID: "documents", Flush: true}) {
-		if len(d.Documents) > 0 {
-			<div class="ts-table-wrap">
-				<table class="ts-table ts-data-documents">
-					<thead>
-						<tr>
-							<th>ID</th>
-							<th>Document</th>
-							<th class="ts-table-actions"><span class="ts-sr-only">Actions</span></th>
-						</tr>
-					</thead>
-					<tbody>
-						for _, doc := range d.Documents {
-							<tr>
-								<td><a class="ts-data-doc-id" href={ templ.SafeURL(path(d, "documents", "edit", doc.ID)) }>{ doc.ID }</a></td>
-								<td><code class="ts-data-json">{ doc.Value.String() }</code></td>
-								<td class="ts-table-actions">@documentMenu(page, d, doc.ID)</td>
-							</tr>
-						}
-					</tbody>
-				</table>
-			</div>
-		} else {
-			@ui.Empty("No documents match this collection and filter.", "Open another collection or add a document.")
+	if d.CanWrite {
+		@ui.Dialog(ui.DialogProps{ID: "new-collection", Title: "New collection", Description: "Create an empty collection in " + d.Database.Name + ".", Open: d.Dialog == "new-collection"}) {
+			<form method="post" action="/api/v1/dashboard/data/collections" class="ts-form">
+				@documentScope(page, d)
+				@dialogError(d, "new-collection")
+				@ui.Field(ui.FieldProps{ID: "new-collection-name", Label: "Name", Hint: "A lowercase letter, then up to 62 lowercase letters, digits, hyphens, and underscores."}) {
+					<input class="ts-input ts-mono" id="new-collection-name" name="name" maxlength="63" pattern="[a-z][a-z0-9_\-]*" value={ d.NewCollection } required/>
+				}
+				@ui.DialogActions("new-collection") {
+					<button class="ts-btn ts-btn-primary" type="submit">Create collection</button>
+				}
+			</form>
 		}
 	}
 	if d.CanWrite {
@@ -126,6 +244,162 @@ templ documentsView(page core.Page, d pageData) {
 	if d.CanWrite && d.DeleteID != "" {
 		@deleteDocument(page, d)
 	}
+}
+
+// documentGrid shows the page as a table with one column per top-level
+// field. Column headings sort the collection.
+templ documentGrid(page core.Page, d pageData) {
+	<div class="ts-table-wrap">
+		<table class="ts-table ts-data-result ts-data-grid">
+			<thead>
+				<tr>
+					@sortHeading(d, "", "id", false)
+					for _, column := range d.Grid.Columns {
+						if !sortable(column) {
+							<th scope="col" class={ templ.KV("ts-num", column.Numeric) }>{ column.Name }</th>
+						} else {
+							@sortHeading(d, column.Name, column.Name, column.Numeric)
+						}
+					}
+					<th class="ts-table-actions"><span class="ts-sr-only">Actions</span></th>
+				</tr>
+			</thead>
+			<tbody>
+				for i, row := range d.Grid.Rows {
+					<tr>
+						<td class="ts-data-result-id"><a class="ts-data-doc-id" href={ templ.SafeURL(path(d, "documents", "edit", row.ID)) }>{ row.ID }</a></td>
+						for j, cell := range row.Cells {
+							<td
+								class={ templ.KV("ts-num", d.Grid.Columns[j].Numeric) }
+								data-kind={ cell.Kind }
+								if cell.Title != "" {
+									title={ cell.Title }
+								}
+							>
+								if cell.Kind == "missing" {
+									<span aria-hidden="true">—</span>
+									<span class="ts-sr-only">not set</span>
+								} else {
+									{ cell.Text }
+								}
+							</td>
+						}
+						<td class="ts-table-actions">@documentMenu(page, d, d.Documents[i].ID)</td>
+					</tr>
+				}
+			</tbody>
+		</table>
+	</div>
+	if d.Grid.HiddenColumns > 0 {
+		<p class="ts-hint">{ fmt.Sprintf("%d more fields are not shown; the list view has every field.", d.Grid.HiddenColumns) }</p>
+	}
+}
+
+// sortHeading is a column heading that sorts by field, marking the sorted
+// column for assistive technology.
+templ sortHeading(d pageData, field, label string, numeric bool) {
+	<th
+		scope="col"
+		class={ templ.KV("ts-num", numeric) }
+		if d.Order.Field == field {
+			aria-sort={ sortDirection(d.Order) }
+		}
+	>
+		<a class="ts-data-sort" href={ templ.SafeURL(sortPath(d, field)) }>
+			<span>{ label }</span>
+			if d.Order.Field == field && d.Order.Desc {
+				@icons.ChevronDown(12)
+			} else if d.Order.Field == field {
+				@icons.ChevronUp(12)
+			}
+		</a>
+	</th>
+}
+
+func sortDirection(order documentSort) string {
+	if order.Desc {
+		return "descending"
+	}
+	return "ascending"
+}
+
+// documentRows shows the page as one JSON preview per document.
+templ documentRows(page core.Page, d pageData) {
+	<div class="ts-table-wrap">
+		<table class="ts-table ts-data-documents">
+			<thead>
+				<tr>
+					@sortHeading(d, "", "ID", false)
+					<th>Document</th>
+					<th class="ts-table-actions"><span class="ts-sr-only">Actions</span></th>
+				</tr>
+			</thead>
+			<tbody>
+				for _, doc := range d.Documents {
+					<tr>
+						<td><a class="ts-data-doc-id" href={ templ.SafeURL(path(d, "documents", "edit", doc.ID)) }>{ doc.ID }</a></td>
+						<td><code class="ts-data-json">{ doc.Value.String() }</code></td>
+						<td class="ts-table-actions">@documentMenu(page, d, doc.ID)</td>
+					</tr>
+				}
+			</tbody>
+		</table>
+	</div>
+}
+
+// collectionNav lists every collection of the database beside its documents.
+// Narrow pages swap the list for a select.
+templ collectionNav(d pageData) {
+	<nav class="ts-data-nav" aria-label="Collections" data-signals="{collectionSearch: ''}">
+		<div class="ts-data-nav-head">
+			<h2 class="ts-data-nav-title">Collections</h2>
+			if d.CanWrite {
+				<button class="ts-icon-btn" type="button" command="show-modal" commandfor="new-collection" aria-label="New collection" title="New collection">@icons.Plus(16)</button>
+			}
+		</div>
+		if len(d.Collections) > 8 {
+			<input class="ts-input ts-input-sm ts-data-nav-filter" type="search" placeholder="Filter collections" aria-label="Filter collections" data-bind="collectionSearch"/>
+		}
+		if len(d.Collections) > 0 {
+			<ul class="ts-data-nav-list">
+				for _, collection := range d.Collections {
+					<li data-collection={ collection.Name } data-show={ collectionFilter }>
+						<a
+							class="ts-data-nav-link"
+							href={ templ.SafeURL(documentsPath(d.Database.ID, collection.Name, nil)) }
+							if collection.Name == d.Collection {
+								aria-current="page"
+							}
+						>
+							<span class="ts-truncate">{ collection.Name }</span>
+							if collection.Count != "" {
+								<span class="ts-tab-count">{ collection.Count }<span class="ts-sr-only">{ " documents" }</span></span>
+							}
+						</a>
+					</li>
+				}
+			</ul>
+			<form class="ts-data-nav-select" method="get" action={ templ.SafeURL(sectionPath(d.Database.ID, "documents", nil)) }>
+				<label class="ts-sr-only" for="collection-select">Collection</label>
+				<select class="ts-select ts-input-sm ts-mono" id="collection-select" name="collection">
+					for _, collection := range d.Collections {
+						<option value={ collection.Name } selected?={ collection.Name == d.Collection }>{ collectionOption(collection) }</option>
+					}
+				</select>
+				<button class="ts-btn ts-btn-secondary ts-btn-sm" type="submit">Open</button>
+			</form>
+		} else {
+			<p class="ts-meta">No collections yet.</p>
+		}
+	</nav>
+}
+
+// collectionOption labels a collection in the narrow-page select.
+func collectionOption(c collectionEntry) string {
+	if c.Count == "" {
+		return c.Name
+	}
+	return c.Name + " (" + c.Count + ")"
 }
 
 // dialogError shows a failed post's error inside the dialog it came from.
@@ -190,10 +464,19 @@ templ editDocument(page core.Page, d pageData) {
 	}
 }
 
+// documentScope names what a form changes; on the documents tab it also
+// carries the browsing state, so the page reopens where the change was made.
 templ documentScope(page core.Page, d pageData) {
 	<input type="hidden" name="_csrf" value={ page.CSRFToken }/>
 	<input type="hidden" name="databaseId" value={ d.Database.ID }/>
 	<input type="hidden" name="collection" value={ d.Collection }/>
+	if d.Section == "documents" {
+		for _, key := range browseKeys {
+			if value := browseQuery(d).Get(key); value != "" {
+				<input type="hidden" name={ key } value={ value }/>
+			}
+		}
+	}
 }
 
 templ historyView(d pageData) {

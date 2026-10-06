@@ -35,6 +35,9 @@ type sqlResult struct {
 type sqlColumn struct {
 	Name    string
 	Numeric bool
+	// Root marks the "value" column that holds whole non-object rows; it is
+	// not a field of the documents.
+	Root bool
 }
 
 type sqlResultRow struct {
@@ -55,20 +58,28 @@ type sqlCell struct {
 func newSQLResult(rows []documentView, matched int) sqlResult {
 	result := sqlResult{Matched: max(matched, len(rows))}
 	rows = rows[:min(len(rows), maxResultRows)]
-	fields := make([]map[string]jsontext.Value, len(rows))
-	index := make(map[string]int)
-	var columns []string
+	// A whole non-object row has its own column, apart from any member
+	// that happens to be named "value".
+	type columnKey struct {
+		name string
+		root bool
+	}
+	fields := make([]map[columnKey]jsontext.Value, len(rows))
+	index := make(map[columnKey]int)
+	var columns []columnKey
 	for i, row := range rows {
 		names, values, ok := objectMembers(row.Value)
-		if !ok {
+		root := !ok
+		if root {
 			names, values = []string{"value"}, []jsontext.Value{row.Value}
 		}
-		fields[i] = make(map[string]jsontext.Value, len(names))
+		fields[i] = make(map[columnKey]jsontext.Value, len(names))
 		for j, name := range names {
-			fields[i][name] = values[j]
-			if _, seen := index[name]; !seen {
-				index[name] = len(columns)
-				columns = append(columns, name)
+			key := columnKey{name, root}
+			fields[i][key] = values[j]
+			if _, seen := index[key]; !seen {
+				index[key] = len(columns)
+				columns = append(columns, key)
 			}
 		}
 	}
@@ -77,8 +88,8 @@ func newSQLResult(rows []documentView, matched int) sqlResult {
 		columns = columns[:maxResultColumns]
 	}
 	result.Columns = make([]sqlColumn, len(columns))
-	for j, name := range columns {
-		result.Columns[j] = sqlColumn{Name: name, Numeric: true}
+	for j, key := range columns {
+		result.Columns[j] = sqlColumn{Name: key.name, Numeric: true, Root: key.root}
 	}
 	for i, row := range rows {
 		cells := make([]sqlCell, len(columns))

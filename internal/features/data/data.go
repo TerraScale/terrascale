@@ -97,10 +97,46 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			return
 		}
 		if core.WantsHTML(r) {
-			http.Redirect(w, r, sectionPath(db.ID, "documents", url.Values{"collection": {collection}}), http.StatusSeeOther)
+			http.Redirect(w, r, documentsPath(db.ID, collection, browseState(r)), http.StatusSeeOther)
 			return
 		}
 		core.WriteJSON(w, http.StatusOK, result)
+	})
+	mux.HandleFunc("POST /api/v1/dashboard/data/collections", func(w http.ResponseWriter, r *http.Request) {
+		r.Body = http.MaxBytesReader(w, r.Body, 8<<10)
+		p, ok := deps.FormPrincipal(w, r)
+		if !ok {
+			return
+		}
+		ctx := r.Context()
+		db, err := service.database(ctx, p, r.FormValue("databaseId"))
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		name := strings.TrimSpace(r.FormValue("name"))
+		failed := func(status int, message string) {
+			formFailed(w, r, deps, db.ID, "documents", status, message, func(d *pageData) {
+				d.Dialog, d.NewCollection = "new-collection", name
+			})
+		}
+		if !collectionName.MatchString(name) {
+			failed(http.StatusBadRequest, "Collection names start with a lowercase letter and use up to 63 lowercase letters, digits, hyphens, and underscores.")
+			return
+		}
+		if err := service.CreateCollection(ctx, p, db.ID, name); err != nil {
+			if errors.Is(err, core.ErrConflict) {
+				failed(http.StatusConflict, "A collection named "+name+" already exists.")
+				return
+			}
+			failed(failure(err, "The data plane could not create the collection"))
+			return
+		}
+		if core.WantsHTML(r) {
+			http.Redirect(w, r, documentsPath(db.ID, name, nil), http.StatusSeeOther)
+			return
+		}
+		core.WriteJSON(w, http.StatusCreated, map[string]string{"collection": name, "status": "created"})
 	})
 	mux.HandleFunc("GET /api/v1/dashboard/schema", func(w http.ResponseWriter, r *http.Request) {
 		p, ok := principal(w, r, deps)
@@ -225,9 +261,14 @@ func principal(w http.ResponseWriter, r *http.Request, deps core.Deps) (core.Pri
 	return p, true
 }
 
+// validCollection accepts names the documents tab can address; dot segments
+// would be cleaned out of its /documents/<collection> links.
 func validCollection(collection string) bool {
-	return collection != "" && len(collection) <= 128 && !strings.ContainsAny(collection, "/\\\x00\n\r")
+	return collection != "" && collection != "." && collection != ".." && len(collection) <= 128 && !strings.ContainsAny(collection, "/\\\x00\n\r")
 }
+
+// collectionName is the TerraBase rule for naming a new collection.
+var collectionName = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,62}$`)
 
 func mergePatch(original, patch []byte) ([]byte, error) {
 	var changes map[string]jsontext.Value
