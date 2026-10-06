@@ -132,7 +132,7 @@ func (s Service) projectActivity(ctx context.Context, token string, account core
 		usage, err := s.deps.Usage.Usage(ctx, token, core.UsageScope{OrganizationID: org.ID, ProjectID: project.ID, Granularity: granularity, From: from})
 		switch {
 		case errors.Is(err, core.ErrNotMetered):
-			result.Note = "TerraBase doesn't store this project's databases yet, so their reads and writes aren't metered."
+			result.Note = "TerraBase doesn't report this project: it isn't stored there yet, or this account isn't a member of it there."
 		case err != nil:
 			result.Note = "Metered reads and writes could not be loaded. Try again shortly."
 		default:

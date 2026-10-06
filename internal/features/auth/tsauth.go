@@ -104,9 +104,9 @@ const (
 	// minRecheck is the wait before a session is rechecked with ts-auth
 	// when ts-auth does not say when its token expires.
 	minRecheck = 5 * time.Minute
-	// minRenewal is the shortest wait before a session is rechecked, so an
-	// issuer of very short-lived tokens cannot make every request refresh.
-	minRenewal = 30 * time.Second
+	// renewEarly is how long before its access token expires a session is
+	// rechecked, so TerraBase calls never carry a token about to expire.
+	renewEarly = 30 * time.Second
 )
 
 var (
@@ -490,17 +490,16 @@ func encodeRefresh(subject string, token *oauth2.Token) (string, error) {
 	return string(value), err
 }
 
-// recheckAt is when to recheck a session with ts-auth: when the access token
-// it issued expires, so the session renews it before TerraBase calls need it,
-// but not before minRenewal; after minRecheck when ts-auth does not say.
+// recheckAt is when to recheck a session with ts-auth: renewEarly before the
+// access token it issued expires, so the session always holds a live one for
+// TerraBase, or after minRecheck when ts-auth does not say. ts-auth issues
+// hour-long tokens; a token shorter than renewEarly is renewed on the next
+// request, one at a time per session.
 func recheckAt(token *oauth2.Token) time.Time {
 	if token.Expiry.IsZero() {
 		return time.Now().Add(minRecheck)
 	}
-	if earliest := time.Now().Add(minRenewal); token.Expiry.Before(earliest) {
-		return earliest
-	}
-	return token.Expiry
+	return token.Expiry.Add(-renewEarly)
 }
 
 // signInAgain is the sign-in page asking ts-auth for credentials even if the

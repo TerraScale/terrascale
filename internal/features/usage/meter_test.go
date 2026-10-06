@@ -125,7 +125,8 @@ func TestUsageExplainsUnmeteredScopes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if report.Totals.Available || report.Allowances[0].Measured || !strings.Contains(report.Totals.Source, "doesn't store this organization") {
+	if report.Totals.Available || report.Totals.StorageMeasured || report.Allowances[0].Measured || report.Allowances[2].Measured ||
+		!strings.Contains(report.Totals.Source, "doesn't report this organization") || len(meter.scopes) != 1 {
 		t.Fatalf("report = %+v", report)
 	}
 	if report, _ := service.Usage(t.Context(), principal, "", "", ""); report.Totals.Available || len(meter.scopes) != 1 {
@@ -151,8 +152,10 @@ func TestUsageAppliesEachTerraBaseAnswerOnItsOwn(t *testing.T) {
 	if reads := report.Allowances[0]; !reads.Measured || reads.Used != 50_000 || reads.Percent != 50 {
 		t.Fatalf("reads allowance = %+v, want the organization's month", reads)
 	}
-	if report.Totals.Available || !report.Totals.StorageMeasured || !strings.Contains(report.Totals.Source, "doesn't store this project") {
-		t.Fatalf("totals = %+v, want an unmetered project whose stored documents count", report.Totals)
+	// A 404 may mean the user isn't a member there, so the dashboard's own
+	// documents are not taken as the project's storage.
+	if report.Totals.Available || report.Totals.StorageMeasured || !strings.Contains(report.Totals.Source, "doesn't report this project") {
+		t.Fatalf("totals = %+v, want an unmetered project with unknown storage", report.Totals)
 	}
 
 	meter = &fakeMeter{reads: 4, writes: 2, orgErr: core.ErrUnavailable}

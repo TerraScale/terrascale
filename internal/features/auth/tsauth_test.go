@@ -618,13 +618,12 @@ func TestTSAuthRefreshKeepsTokenTSAuthDoesNotRotate(t *testing.T) {
 	}
 }
 
-func TestRecheckAtFollowsTheAccessTokenExpiry(t *testing.T) {
+func TestRecheckAtRenewsBeforeTheAccessTokenExpires(t *testing.T) {
 	now := time.Now()
-	if at := recheckAt(&oauth2.Token{Expiry: now.Add(2 * time.Minute)}); !at.Equal(now.Add(2 * time.Minute)) {
-		t.Fatalf("recheck of a 2-minute token at %v, want its expiry", at)
-	}
-	if at := recheckAt(&oauth2.Token{Expiry: now.Add(time.Second)}); at.Before(now.Add(minRenewal - time.Second)) {
-		t.Fatalf("recheck of a 1-second token at %v, want minRenewal later", at)
+	for _, lifetime := range []time.Duration{time.Hour, 2 * time.Minute, 10 * time.Second} {
+		if at := recheckAt(&oauth2.Token{Expiry: now.Add(lifetime)}); !at.Equal(now.Add(lifetime - renewEarly)) {
+			t.Fatalf("recheck of a %v token at %v, want renewEarly before it expires", lifetime, at.Sub(now))
+		}
 	}
 	if at := recheckAt(&oauth2.Token{}); at.Before(now.Add(minRecheck - time.Second)) {
 		t.Fatalf("recheck without an expiry at %v, want minRecheck later", at)

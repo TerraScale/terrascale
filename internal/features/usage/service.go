@@ -226,8 +226,9 @@ type metered struct {
 // answer gives this month's reads and writes and its projects' storage; the
 // selected project's or database's answer gives the range's totals, series
 // and databases. Each applies on its own. Storage counts as known where
-// TerraBase measured it or where TerraBase does not store the resource, so
-// the documents the dashboard holds are all of it (TS-472 phase 1).
+// TerraBase measured it, or without TerraBase, where the dashboard holds every
+// document. TerraBase's 404 does not say which: the resource may not be
+// stored there (TS-472 phase 1) or the user may not be a member there.
 func (s Service) meter(ctx context.Context, token string, org core.Organization, project core.Project, databaseFilter string, report *usageReport) metered {
 	totals := &report.Totals
 	var result metered
@@ -252,9 +253,8 @@ func (s Service) meter(ctx context.Context, token string, org core.Organization,
 			}
 		}
 	case errors.Is(err, core.ErrNotMetered):
-		// None of the organization's projects are in TerraBase either.
+		// TerraBase reports none of the organization's projects either.
 		meterError(totals, err, "organization")
-		totals.StorageMeasured, result.organizationStorage = true, true
 		return result
 	}
 	if project.ID == "" {
@@ -271,7 +271,6 @@ func (s Service) meter(ctx context.Context, token string, org core.Organization,
 	})
 	if err != nil {
 		meterError(totals, err, scope)
-		totals.StorageMeasured = errors.Is(err, core.ErrNotMetered)
 		return result
 	}
 	items := scoped.Items
@@ -296,7 +295,7 @@ func (s Service) meter(ctx context.Context, token string, org core.Organization,
 func meterError(totals *usageTotals, err error, scope string) {
 	switch {
 	case errors.Is(err, core.ErrNotMetered):
-		totals.Source = "TerraBase doesn't store this " + scope + " yet, so its reads and writes aren't metered."
+		totals.Source = "TerraBase doesn't report this " + scope + ": it isn't stored there yet, or this account isn't a member of it there."
 	case errors.Is(err, core.ErrUnauthorized):
 		totals.Source = "TerraBase didn't accept this sign-in. Sign out and in again to load metered reads and writes."
 	default:

@@ -80,7 +80,9 @@ func New(cfg config.Config) (*Application, error) {
 			return nil, err
 		}
 		db = client.Database(cfg.TerraBaseProjectID, cfg.TerraBaseDatabase)
-		// The Management API shares the Documents API's origin.
+		// The meter calls the Management API on TERRABASE_URL's client
+		// listener: it alone accepts the user's ts-auth token, while the
+		// loopback admin listener import-org may use answers 401 to tokens.
 		meter = terrabase.Meter{BaseURL: cfg.TerraBaseURL, Client: cfg.TerraBaseHTTPClient}
 		store = terrabase.New(db)
 		sessionStore = terrabase.NewSessions(db)
