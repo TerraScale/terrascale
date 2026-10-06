@@ -629,7 +629,9 @@ queries beyond the first, so it can hold fewer than `limit`.
   exact definition follows: `people_a`/`email` is `people_ua__email_<hash>` and `people`/`a_email` is
   `people__a_uemail_<hash>`. Distinct definitions get distinct names; only a name cut to 63 characters (the cut keeps
   room for the fields) relies on the hash alone.
-- `409` means the name, or the same collection and fields, already exists.
+- `409` `index_exists` means the name, or the same collection and fields, already exists.
+- Errors use the `{"error":{"code","message"}}` envelope: `400 invalid_request`, `403 forbidden_role` when a viewer
+  creates, drops or applies, `404 not_found` and `409`.
 - The index is built before the response, so `state` is always `active`. Writes to the database wait while it builds.
 - The index is a SQLite expression index on `(collection, fields…)` restricted to the live documents of its collection
   (`WHERE collection = … AND body IS NOT NULL`), so tombstones take no index space. After a build TerraBase analyzes only
@@ -647,6 +649,7 @@ queries beyond the first, so it can hold fewer than `limit`.
 - One recommendation per field counted by `POST …/sql` whose collection has no index that leads with it. Most queried first, then by id.
 - `POST …/index-recommendations/{id}/apply` creates a single-field index with the default name: `201 {"status":"applied","index":…}`,
   or `200 {"status":"already-applied","index":…}` when an index already leads with the field. An id with no count returns `404`.
+  When another index already has the default name, it returns `409` `name_taken`.
 - This is a deterministic workload rule, not the terrabase-rust auto-index decider (sampled statistics, scoring, 100-observation threshold).
 
 ### Project API keys

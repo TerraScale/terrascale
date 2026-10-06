@@ -21,6 +21,9 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
     // Runs when a transaction starts on an opened user database, before the store hands out a session.
     public Func<TenantContext, CancellationToken, ValueTask>? BeforeBegin { get; set; }
 
+    // A user database for which this returns true opens as missing storage, while the catalog still lists it.
+    public Func<TenantContext, bool>? Hidden { get; set; }
+
     public Gate PauseCommit(bool fail = false)
     {
         var gate = new Gate(fail);
@@ -82,7 +85,9 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
         public ValueTask RefreshStoragePressureAsync(CancellationToken cancellationToken) => inner.RefreshStoragePressureAsync(cancellationToken);
         public ValueTask<bool> CreateDatabaseAsync(TenantContext database, CancellationToken cancellationToken) => inner.CreateDatabaseAsync(database, cancellationToken);
         public async ValueTask<IDatabaseStore?> OpenDatabaseAsync(TenantContext database, CancellationToken cancellationToken) =>
-            await inner.OpenDatabaseAsync(database, cancellationToken) is { } store ? new Opened(store, database, hook) : null;
+            hook.Hidden?.Invoke(database) != true && await inner.OpenDatabaseAsync(database, cancellationToken) is { } store
+                ? new Opened(store, database, hook)
+                : null;
         public async ValueTask<bool> CopyDatabaseAsync(TenantContext source, TenantContext target, CancellationToken cancellationToken)
         {
             if (hook.BeforeCopy is { } beforeCopy)

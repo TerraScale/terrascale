@@ -85,7 +85,7 @@ malformed JSON body, with `400 invalid_request`.
 
 ## Checklist
 
-`throw new` counts in `src/TerraScale.TerraBase`, excluding generated `obj/` code: 295 (TS-538 recounted them
+`throw new` counts in `src/TerraScale.TerraBase`, excluding generated `obj/` code: 289 (TS-538 recounted them
 after TS-463, TS-464, TS-521 and TS-473; TS-518's figure of 127 predates them). "Expected" counts the
 `ApiException`/`BadHttpRequestException` constructions that `BanExpectedFailureExceptions` matches. The other throws
 in each row are invariants or configuration errors to review during the conversion.
@@ -97,9 +97,9 @@ in each row are invariants or configuration errors to review during the conversi
 | `Features/Management/Schema` | 0 | 0 | **Converted** (TS-538) |
 | `Features/Management/Credentials` | 0 | 0 | **Converted** (TS-538): `IApiKeyStore` project-key operations return unions; a viewer's change is `ManagementErrors.RoleTooLow` (`403 forbidden_role`) |
 | `Features/Management/Backups` | 2 | 0 | **Converted** (TS-538): create, policy and restore return unions; `ManagementRoute.CheckWritableDatabaseAsync` and `ManagementErrors.NameTaken` (`409 name_taken`) are shared. The two throws are invariants |
+| `Features/Management/Indexes` | 0 | 0 | **Converted** (TS-538): `IndexErrors.Exists` (`409 index_exists`) and `IndexErrors.DefaultNameTaken` (`409 name_taken`) |
 | `Features/Management` root (access, databases, catalog, recovery, commit invariants) | 23 | 6 | `ManagementError`/`ManagementResult` and throwing validators remain. The catalog version guard in `EnsureCatalogAsync` still throws `503 unavailable` under every operation, orgs and projects included; it becomes an `Unavailable` case when access and databases convert. |
 | `Features/Management/Usage` | 2 | 0 | Review: `QueryCapacityException` thrown and caught inside the folder |
-| `Features/Management/Indexes` | 6 | 6 | To do |
 | `Features/Management/Queries` | 33 | 1 | To do; most throws are the SQL subset parser's `SqlSubsetException` |
 | `Features/Documents` | 60 | 54 | To do (`ApiException` throughout) |
 | `Features/Replication` | 53 | 0 | Keep (TS-464): peer gRPC boundary only, no HTTP failures. `RpcException` status for peers, `InvalidDataException` for a protocol violation that ends the stream, and invariants |

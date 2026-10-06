@@ -18,6 +18,8 @@ public sealed class IndexApiTests
     private static readonly string[] StatusTotal = ["status", "total"];
     private static readonly string[] AbThenC = ["a_b", "c"];
     private static readonly string[] AThenBc = ["a", "b_c"];
+    private static readonly string[] PrimaryKey = ["_id"];
+    private static readonly string[] EmailTwice = ["email", "email"];
 
     [Test]
     public async Task Indexes_are_created_listed_and_dropped()
@@ -91,6 +93,77 @@ public sealed class IndexApiTests
 
         var list = await api.Client.GetFromJsonAsync<JsonElement>(Uri($"{database.Path}/indexes"));
         await Assert.That(list.GetProperty("items").GetArrayLength()).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task Index_errors_answer_their_code_and_message()
+    {
+        const string BadCollection = "collection must be a lowercase name of at most 63 characters";
+        const string BadCount = "fields must hold 1 to 4 distinct fields";
+        const string BadField = "fields must be dotted member paths of letters, digits and _, not _id or _rev";
+        const string BadName = "name must be a lowercase letter, then lowercase letters, digits or _, at most 63 characters";
+        const string RoleTooLow = "your role in the organization does not allow this";
+        await using var api = await ManagementApi.StartAsync();
+        var database = await api.CreateManagedDatabaseAsync();
+        var indexes = $"{database.Path}/indexes";
+        var unknown = $"{database.ProjectPath}/databases/{Guid.NewGuid()}";
+        using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
+        await ManagementApi.CreateCollectionAsync(data, database, "people");
+        (await data.PutAsJsonAsync(Uri(ManagementApi.DocumentPath(database, "people", "p1")), new { email = Faker.Internet.Email(), name = Faker.Name.FullName() }))
+            .EnsureSuccessStatusCode();
+        (await api.Client.PostAsJsonAsync(Uri($"{database.Path}/sql"), new { sql = "SELECT * FROM people WHERE email = 'a@example.com'" })).EnsureSuccessStatusCode();
+        // An index on another field takes the name the email recommendation's index would get.
+        (await api.Client.PostAsJsonAsync(Uri(indexes), new { collection = "people", fields = Name, name = "people_email" })).EnsureSuccessStatusCode();
+        using var viewer = api.As(await api.AddMemberAsync(api.Client, database.Organization, "viewer"));
+
+        await ErrorAssert.ErrorAsync(api.Client.PostAsJsonAsync(Uri(indexes), new { collection = "Bad Name", fields = Email }), HttpStatusCode.BadRequest, "invalid_request", BadCollection);
+        await ErrorAssert.ErrorAsync(api.Client.PostAsJsonAsync(Uri(indexes), new { collection = "people" }), HttpStatusCode.BadRequest, "invalid_request", BadCount);
+        await ErrorAssert.ErrorAsync(
+            api.Client.PostAsJsonAsync(Uri(indexes), new { collection = "people", fields = PrimaryKey }), HttpStatusCode.BadRequest, "invalid_request", BadField);
+        await ErrorAssert.ErrorAsync(
+            api.Client.PostAsJsonAsync(Uri(indexes), new { collection = "people", fields = EmailTwice }), HttpStatusCode.BadRequest, "invalid_request", BadCount);
+        await ErrorAssert.ErrorAsync(
+            api.Client.PostAsJsonAsync(Uri(indexes), new { collection = "people", fields = Email, name = "Bad-Name" }), HttpStatusCode.BadRequest, "invalid_request", BadName);
+        await ErrorAssert.ErrorAsync(
+            api.Client.PostAsJsonAsync(Uri(indexes), new { collection = "people", fields = Email, name = "people_email" }),
+            HttpStatusCode.Conflict, "index_exists", "an index with this name, or on these fields of the collection, already exists");
+        await ErrorAssert.ErrorAsync(api.Client.GetAsync(Uri($"{indexes}?collection=Bad!")), HttpStatusCode.BadRequest, "invalid_request", BadCollection);
+        await ErrorAssert.ErrorAsync(api.Client.DeleteAsync(Uri($"{indexes}/people_missing")), HttpStatusCode.NotFound, "not_found");
+        await ErrorAssert.ErrorAsync(
+            api.Client.PostAsync(Uri($"{database.Path}/index-recommendations/people:missing/apply"), null), HttpStatusCode.NotFound, "not_found");
+        await ErrorAssert.ErrorAsync(
+            api.Client.PostAsync(Uri($"{database.Path}/index-recommendations/people:email/apply"), null),
+            HttpStatusCode.Conflict, "name_taken", "another index already has the default name");
+        await ErrorAssert.ErrorAsync(api.Client.GetAsync(Uri($"{unknown}/indexes")), HttpStatusCode.NotFound, "not_found");
+        await ErrorAssert.ErrorAsync(api.Client.PostAsJsonAsync(Uri($"{unknown}/indexes"), new { collection = "people", fields = Email }), HttpStatusCode.NotFound, "not_found");
+        await ErrorAssert.ErrorAsync(api.Client.DeleteAsync(Uri($"{unknown}/indexes/people_email")), HttpStatusCode.NotFound, "not_found");
+        await ErrorAssert.ErrorAsync(api.Client.GetAsync(Uri($"{unknown}/index-recommendations")), HttpStatusCode.NotFound, "not_found");
+        await ErrorAssert.ErrorAsync(api.Client.PostAsync(Uri($"{unknown}/index-recommendations/people:email/apply"), null), HttpStatusCode.NotFound, "not_found");
+        await ErrorAssert.ErrorAsync(viewer.PostAsJsonAsync(Uri(indexes), new { collection = "people", fields = Email }), HttpStatusCode.Forbidden, "forbidden_role", RoleTooLow);
+        await ErrorAssert.ErrorAsync(viewer.DeleteAsync(Uri($"{indexes}/people_email")), HttpStatusCode.Forbidden, "forbidden_role", RoleTooLow);
+        await ErrorAssert.ErrorAsync(
+            viewer.PostAsync(Uri($"{database.Path}/index-recommendations/people:email/apply"), null), HttpStatusCode.Forbidden, "forbidden_role", RoleTooLow);
+    }
+
+    [Test]
+    public async Task Index_changes_on_a_database_whose_storage_is_missing_are_not_found()
+    {
+        var hook = new UsageCommitHook();
+        await using var api = await ManagementApi.StartAsync(services: hook.Install);
+        var database = await api.CreateManagedDatabaseAsync();
+        using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
+        await ManagementApi.CreateCollectionAsync(data, database, "people");
+        (await data.PutAsJsonAsync(Uri(ManagementApi.DocumentPath(database, "people", "p1")), new { email = Faker.Internet.Email() })).EnsureSuccessStatusCode();
+        (await api.Client.PostAsJsonAsync(Uri($"{database.Path}/sql"), new { sql = "SELECT * FROM people WHERE email = 'a@example.com'" })).EnsureSuccessStatusCode();
+        (await api.Client.PostAsJsonAsync(Uri($"{database.Path}/indexes"), new { collection = "people", fields = Name })).EnsureSuccessStatusCode();
+        // The catalog still lists the database, so each request reaches the index service, which finds no storage.
+        hook.Hidden = tenant => tenant.DatabaseId == database.Id;
+
+        await ErrorAssert.ErrorAsync(
+            api.Client.PostAsJsonAsync(Uri($"{database.Path}/indexes"), new { collection = "people", fields = Email }), HttpStatusCode.NotFound, "not_found");
+        await ErrorAssert.ErrorAsync(api.Client.DeleteAsync(Uri($"{database.Path}/indexes/people_name")), HttpStatusCode.NotFound, "not_found");
+        await ErrorAssert.ErrorAsync(
+            api.Client.PostAsync(Uri($"{database.Path}/index-recommendations/people:email/apply"), null), HttpStatusCode.NotFound, "not_found");
     }
 
     [Test]

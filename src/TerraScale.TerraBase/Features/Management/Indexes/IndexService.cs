@@ -3,8 +3,8 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
 using TerraScale.TerraBase.Engine;
+using TerraScale.TerraBase.Errors;
 using TerraScale.TerraBase.Features.Management.Queries;
-
 using TerraScale.TerraBase.Tenancy;
 
 namespace TerraScale.TerraBase.Features.Management.Indexes;
@@ -21,21 +21,22 @@ internal sealed partial class IndexService(IStorageEngine engine, QueryFieldReco
         return new IndexListBody([.. indexes.Where(index => collection is null || index.Collection == collection).Select(IndexBody.From)]);
     }
 
-    public ValueTask<ManagementResult<IndexBody>> CreateAsync(TenantContext database, IndexDefinition index, CancellationToken cancellationToken) =>
-        WriteAsync<IndexBody>(database, async transaction =>
+    public ValueTask<CreateIndexResult> CreateAsync(TenantContext database, IndexDefinition index, CancellationToken cancellationToken) =>
+        WriteAsync<CreateIndexResult>(database, new NotFound(), async transaction =>
         {
             var indexes = await transaction.ListIndexesAsync(cancellationToken).ConfigureAwait(false);
             if (indexes.Any(other => other.Name == index.Name || (other.Collection == index.Collection && other.Fields.SequenceEqual(index.Fields)))
                 || !await transaction.CreateIndexAsync(index, cancellationToken).ConfigureAwait(false))
             {
-                return ManagementError.NameTaken;
+                return IndexErrors.Exists;
             }
 
             return IndexBody.From(index);
         }, cancellationToken);
 
-    public async ValueTask<bool> DropAsync(TenantContext database, string name, CancellationToken cancellationToken) =>
-        (await WriteAsync<bool>(database, async transaction => await transaction.DropIndexAsync(name, cancellationToken).ConfigureAwait(false), cancellationToken).ConfigureAwait(false)).Value;
+    public ValueTask<DropIndexResult> DropAsync(TenantContext database, string name, CancellationToken cancellationToken) =>
+        WriteAsync<DropIndexResult>(database, new NotFound(), async transaction =>
+            await transaction.DropIndexAsync(name, cancellationToken).ConfigureAwait(false) ? new Done() : new NotFound(), cancellationToken);
 
     /// <remarks>
     /// A database keeps at most <see cref="QueryFieldUsage.MaxRecords"/> usage records, so this reads a bounded set. Counts
@@ -59,16 +60,16 @@ internal sealed partial class IndexService(IStorageEngine engine, QueryFieldReco
             .ThenBy(recommendation => recommendation.Id, StringComparer.Ordinal)]);
     }
 
-    public async ValueTask<ManagementResult<AppliedIndexRecommendation>> ApplyAsync(TenantContext database, string recommendationId, CancellationToken cancellationToken)
+    public async ValueTask<ApplyIndexRecommendationResult> ApplyAsync(TenantContext database, string recommendationId, CancellationToken cancellationToken)
     {
         var usage = (await UsagesAsync(database, cancellationToken).ConfigureAwait(false))
             .FirstOrDefault(usage => QueryFieldUsage.Key(usage.Collection, usage.Field) == recommendationId);
         if (usage is null || !DocumentField.TryParse(usage.Field, out var field))
         {
-            return ManagementError.NotFound;
+            return new NotFound();
         }
 
-        return await WriteAsync<AppliedIndexRecommendation>(database, async transaction =>
+        return await WriteAsync<ApplyIndexRecommendationResult>(database, new NotFound(), async transaction =>
         {
             if (Leading(await transaction.ListIndexesAsync(cancellationToken).ConfigureAwait(false), usage) is { } existing)
             {
@@ -78,7 +79,7 @@ internal sealed partial class IndexService(IStorageEngine engine, QueryFieldReco
             var index = new IndexDefinition(DefaultName(usage.Collection, [field]), usage.Collection, [field]);
             return await transaction.CreateIndexAsync(index, cancellationToken).ConfigureAwait(false)
                 ? new AppliedIndexRecommendation("applied", IndexBody.From(index))
-                : ManagementError.NameTaken;
+                : IndexErrors.DefaultNameTaken;
         }, cancellationToken).ConfigureAwait(false);
     }
 
@@ -155,13 +156,13 @@ internal sealed partial class IndexService(IStorageEngine engine, QueryFieldReco
         }
     }
 
-    // A committed write transaction on the database's storage; NotFound when the storage does not exist.
-    private async ValueTask<ManagementResult<T>> WriteAsync<T>(
-        TenantContext database, Func<IStorageTransaction, ValueTask<ManagementResult<T>>> write, CancellationToken cancellationToken)
+    // A committed write transaction on the database's storage; missing when the storage does not exist.
+    private async ValueTask<T> WriteAsync<T>(
+        TenantContext database, T missing, Func<IStorageTransaction, ValueTask<T>> write, CancellationToken cancellationToken)
     {
         if (await engine.BeginTransactionAsync(database, write: true, cancellationToken).ConfigureAwait(false) is not { } transaction)
         {
-            return ManagementError.NotFound;
+            return missing;
         }
 
         await using (transaction.ConfigureAwait(false))

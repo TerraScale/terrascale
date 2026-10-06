@@ -1,4 +1,5 @@
 using TerraScale.Endpoints;
+using TerraScale.TerraBase.Errors;
 using TerraScale.TerraBase.Features.UserAuth;
 using TerraScale.TerraBase.Hosting;
 
@@ -25,5 +26,5 @@ public sealed class ListIndexRecommendationsEndpoint(IManagementService manageme
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
         await ManagementRoute.DatabaseAsync(HttpContext, management, cancellationToken) is { } database
             ? TypedResults.Ok(await indexes.RecommendAsync(database, cancellationToken))
-            : TypedResults.NotFound();
+            : ErrorResponse.From(new NotFound());
 }

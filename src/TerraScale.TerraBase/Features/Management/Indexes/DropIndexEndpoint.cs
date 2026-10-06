@@ -1,6 +1,8 @@
 using TerraScale.Endpoints;
+using TerraScale.TerraBase.Errors;
 using TerraScale.TerraBase.Features.UserAuth;
 using TerraScale.TerraBase.Hosting;
+using TerraScale.TerraBase.Tenancy;
 
 namespace TerraScale.TerraBase.Features.Management.Indexes;
 
@@ -22,16 +24,15 @@ public sealed class DropIndexEndpoint(IManagementService management, IIndexServi
     }
 
     /// <inheritdoc />
-    public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
-    {
-        var writable = await ManagementRoute.WritableDatabaseAsync(HttpContext, management, cancellationToken);
-        if (writable.Value is not { } database)
+    public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
+        await ManagementRoute.CheckWritableDatabaseAsync(HttpContext, management, cancellationToken) switch
         {
-            return ManagementRoute.Error(writable.Error);
-        }
-
-        return await indexes.DropAsync(database, ManagementRoute.Value(HttpContext, "index"), cancellationToken)
-            ? TypedResults.NoContent()
-            : TypedResults.NotFound();
-    }
+            NotFound error => ErrorResponse.From(error),
+            Forbidden error => ErrorResponse.From(error),
+            TenantContext database => await indexes.DropAsync(database, ManagementRoute.Value(HttpContext, "index"), cancellationToken) switch
+            {
+                Done => TypedResults.NoContent(),
+                NotFound error => ErrorResponse.From(error),
+            },
+        };
 }

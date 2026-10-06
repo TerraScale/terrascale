@@ -1,5 +1,6 @@
 using TerraScale.Endpoints;
 using TerraScale.TerraBase.Engine;
+using TerraScale.TerraBase.Errors;
 using TerraScale.TerraBase.Features.UserAuth;
 using TerraScale.TerraBase.Hosting;
 
@@ -29,13 +30,16 @@ public sealed class ListIndexesEndpoint(IManagementService management, IIndexSer
         string? collection = null;
         if (HttpContext.Request.Query.TryGetValue("collection", out var raw))
         {
-            collection = DatabaseName.TryParse(raw, out var name)
-                ? name.Value
-                : throw new BadHttpRequestException("collection must be a lowercase name of at most 63 characters");
+            if (!DatabaseName.TryParse(raw, out var name))
+            {
+                return ErrorResponse.From(new Validation("collection must be a lowercase name of at most 63 characters"));
+            }
+
+            collection = name.Value;
         }
 
         return await ManagementRoute.DatabaseAsync(HttpContext, management, cancellationToken) is { } database
             ? TypedResults.Ok(await indexes.ListAsync(database, collection, cancellationToken))
-            : TypedResults.NotFound();
+            : ErrorResponse.From(new NotFound());
     }
 }

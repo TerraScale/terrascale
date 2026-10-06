@@ -1,7 +1,9 @@
 using TerraScale.Endpoints;
 using TerraScale.TerraBase.Engine;
+using TerraScale.TerraBase.Errors;
 using TerraScale.TerraBase.Features.UserAuth;
 using TerraScale.TerraBase.Hosting;
+using TerraScale.TerraBase.Tenancy;
 
 namespace TerraScale.TerraBase.Features.Management.Indexes;
 
@@ -31,51 +33,55 @@ public sealed class CreateIndexEndpoint(IManagementService management, IIndexSer
     public override async ValueTask<IResult> HandleAsync(CreateIndexRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
-        var index = IndexOf(request);
-        var writable = await ManagementRoute.WritableDatabaseAsync(HttpContext, management, cancellationToken);
-        if (writable.Value is not { } database)
+        return IndexOf(request) switch
         {
-            return ManagementRoute.Error(writable.Error);
-        }
-
-        var result = await indexes.CreateAsync(database, index, cancellationToken);
-        return result.Error switch
-        {
-            ManagementError.None => TypedResults.Created($"{ManagementRoute.DatabasePath(database)}/indexes/{index.Name}", result.Value),
-            ManagementError.NameTaken => TypedResults.Conflict("an index with this name, or on these fields of the collection, already exists"),
-            _ => ManagementRoute.Error(result.Error),
+            Validation error => ErrorResponse.From(error),
+            IndexDefinition index => await ManagementRoute.CheckWritableDatabaseAsync(HttpContext, management, cancellationToken) switch
+            {
+                NotFound error => ErrorResponse.From(error),
+                Forbidden error => ErrorResponse.From(error),
+                TenantContext database => await indexes.CreateAsync(database, index, cancellationToken) switch
+                {
+                    IndexBody created => TypedResults.Created($"{ManagementRoute.DatabasePath(database)}/indexes/{index.Name}", created),
+                    NotFound error => ErrorResponse.From(error),
+                    Conflict error => ErrorResponse.From(error),
+                },
+            },
         };
     }
 
-    private static IndexDefinition IndexOf(CreateIndexRequest request)
+    private static Valid<IndexDefinition> IndexOf(CreateIndexRequest request)
     {
         if (!DatabaseName.TryParse(request.Collection, out var collection))
         {
-            throw new BadHttpRequestException("collection must be a lowercase name of at most 63 characters");
+            return new Validation("collection must be a lowercase name of at most 63 characters");
         }
 
         // The count is checked before any field is parsed, so an oversized list is rejected without parsing its paths.
         if (request.Fields is not { Count: >= 1 and <= MaxFields } raws)
         {
-            throw new BadHttpRequestException("fields must hold 1 to 4 distinct fields");
+            return new Validation("fields must hold 1 to 4 distinct fields");
         }
 
         var fields = new List<DocumentField>(raws.Count);
         foreach (var raw in raws)
         {
-            fields.Add(DocumentField.TryParse(raw, out var field) && !field.IsMetadata
-                ? field
-                : throw new BadHttpRequestException("fields must be dotted member paths of letters, digits and _, not _id or _rev"));
+            if (!DocumentField.TryParse(raw, out var field) || field.IsMetadata)
+            {
+                return new Validation("fields must be dotted member paths of letters, digits and _, not _id or _rev");
+            }
+
+            fields.Add(field);
         }
 
         if (fields.Distinct().Count() != fields.Count)
         {
-            throw new BadHttpRequestException("fields must hold 1 to 4 distinct fields");
+            return new Validation("fields must hold 1 to 4 distinct fields");
         }
 
         var name = request.Name ?? IndexService.DefaultName(collection.Value, fields);
         return IndexService.IsValidName(name)
             ? new IndexDefinition(name, collection.Value, fields)
-            : throw new BadHttpRequestException("name must be a lowercase letter, then lowercase letters, digits or _, at most 63 characters");
+            : new Validation("name must be a lowercase letter, then lowercase letters, digits or _, at most 63 characters");
     }
 }

@@ -1,4 +1,5 @@
 using TerraScale.TerraBase.Engine;
+using TerraScale.TerraBase.Errors;
 
 using TerraScale.TerraBase.Tenancy;
 
@@ -41,21 +42,40 @@ public sealed record IndexRecommendationListBody(IReadOnlyList<IndexRecommendati
 /// <param name="Index">The created or existing index.</param>
 public sealed record AppliedIndexRecommendation(string Status, IndexBody Index);
 
+/// <summary>The created index, or why it was not created.</summary>
+public readonly union CreateIndexResult(IndexBody, NotFound, Conflict);
+
+/// <summary>A dropped index, or that it (or its database's storage) does not exist.</summary>
+public readonly union DropIndexResult(Done, NotFound);
+
+/// <summary>The applied or already existing index, or why the recommendation was not applied.</summary>
+public readonly union ApplyIndexRecommendationResult(AppliedIndexRecommendation, NotFound, Conflict);
+
+/// <summary>Index failures with their stable codes.</summary>
+internal static class IndexErrors
+{
+    /// <summary>An index has the name, or indexes the same fields of the collection.</summary>
+    public static readonly Conflict Exists = new("an index with this name, or on these fields of the collection, already exists", "index_exists");
+
+    /// <summary>Another index has the name a recommendation's index would get.</summary>
+    public static readonly Conflict DefaultNameTaken = new("another index already has the default name", "name_taken");
+}
+
 /// <summary>Secondary indexes of managed databases and recommendations from their query workload.</summary>
 public interface IIndexService
 {
     /// <summary>Lists the indexes of a database, optionally of one collection.</summary>
     ValueTask<IndexListBody> ListAsync(TenantContext database, string? collection, CancellationToken cancellationToken);
 
-    /// <summary>Builds an index; <see cref="ManagementError.NameTaken"/> when the name or the same collection and fields exist.</summary>
-    ValueTask<ManagementResult<IndexBody>> CreateAsync(TenantContext database, IndexDefinition index, CancellationToken cancellationToken);
+    /// <summary>Builds an index; <see cref="IndexErrors.Exists"/> when the name or the same collection and fields exist.</summary>
+    ValueTask<CreateIndexResult> CreateAsync(TenantContext database, IndexDefinition index, CancellationToken cancellationToken);
 
-    /// <summary>Drops an index; <see langword="false"/> when it does not exist.</summary>
-    ValueTask<bool> DropAsync(TenantContext database, string name, CancellationToken cancellationToken);
+    /// <summary>Drops an index.</summary>
+    ValueTask<DropIndexResult> DropAsync(TenantContext database, string name, CancellationToken cancellationToken);
 
     /// <summary>Recommends single-field indexes for fields queries used without one.</summary>
     ValueTask<IndexRecommendationListBody> RecommendAsync(TenantContext database, CancellationToken cancellationToken);
 
-    /// <summary>Creates the index a recommendation describes; <see cref="ManagementError.NotFound"/> for an unknown recommendation.</summary>
-    ValueTask<ManagementResult<AppliedIndexRecommendation>> ApplyAsync(TenantContext database, string recommendationId, CancellationToken cancellationToken);
+    /// <summary>Creates the index a recommendation describes; not found for an unknown recommendation.</summary>
+    ValueTask<ApplyIndexRecommendationResult> ApplyAsync(TenantContext database, string recommendationId, CancellationToken cancellationToken);
 }

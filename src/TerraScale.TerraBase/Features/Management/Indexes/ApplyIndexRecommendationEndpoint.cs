@@ -1,6 +1,8 @@
 using TerraScale.Endpoints;
+using TerraScale.TerraBase.Errors;
 using TerraScale.TerraBase.Features.UserAuth;
 using TerraScale.TerraBase.Hosting;
+using TerraScale.TerraBase.Tenancy;
 
 namespace TerraScale.TerraBase.Features.Management.Indexes;
 
@@ -25,22 +27,18 @@ public sealed class ApplyIndexRecommendationEndpoint(IManagementService manageme
     }
 
     /// <inheritdoc />
-    public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
-    {
-        var writable = await ManagementRoute.WritableDatabaseAsync(HttpContext, management, cancellationToken);
-        if (writable.Value is not { } database)
+    public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
+        await ManagementRoute.CheckWritableDatabaseAsync(HttpContext, management, cancellationToken) switch
         {
-            return ManagementRoute.Error(writable.Error);
-        }
-
-        var result = await indexes.ApplyAsync(database, ManagementRoute.Value(HttpContext, "recommendation"), cancellationToken);
-        var databasePath = ManagementRoute.DatabasePath(database);
-        return result switch
-        {
-            { Value: { Status: "applied" } applied } => TypedResults.Created($"{databasePath}/indexes/{applied.Index.Name}", applied),
-            { Value: { } existing } => TypedResults.Ok(existing),
-            { Error: ManagementError.NameTaken } => TypedResults.Conflict("another index already has the default name"),
-            _ => ManagementRoute.Error(result.Error),
+            NotFound error => ErrorResponse.From(error),
+            Forbidden error => ErrorResponse.From(error),
+            TenantContext database => await indexes.ApplyAsync(database, ManagementRoute.Value(HttpContext, "recommendation"), cancellationToken) switch
+            {
+                AppliedIndexRecommendation { Status: "applied" } applied =>
+                    TypedResults.Created($"{ManagementRoute.DatabasePath(database)}/indexes/{applied.Index.Name}", applied),
+                AppliedIndexRecommendation existing => TypedResults.Ok(existing),
+                NotFound error => ErrorResponse.From(error),
+                Conflict error => ErrorResponse.From(error),
+            },
         };
-    }
 }
