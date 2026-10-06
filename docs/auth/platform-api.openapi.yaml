@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: TerraScale Auth platform API
-  version: v1-contract
+  version: v1.1-contract
   license:
     name: Apache-2.0
     identifier: Apache-2.0
@@ -32,6 +32,10 @@ tags:
     description: Client credentials owned by an organization or project, exchanged at the token endpoint for short-lived tokens.
   - name: Audit
     description: Audit events of an organization's identity changes.
+  - name: Platform
+    description: Operations of the platform itself, without a user - project suspension (ts-dashboard) and platform administrators (operator).
+  - name: Headless
+    description: Headless endpoints for ts-dashboard, which signs users in and approves devices on its own pages.
   - name: OAuth
     description: Token endpoint grants for API keys (client credentials) and user organization or project tokens (token exchange).
 paths:
@@ -789,6 +793,154 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '503': { $ref: '#/components/responses/Unavailable' }
+  /v1/terrascale/organizations/{organization}/projects/{project}/suspension:
+    parameters:
+      - $ref: '#/components/parameters/Organization'
+      - $ref: '#/components/parameters/Project'
+    get:
+      operationId: get_project_suspension
+      tags: [Platform]
+      summary: Get a project's suspension
+      description: The platform client, or anyone with a role on the project. 404 when it is not suspended.
+      security:
+        - platformClient: []
+        - platformUser: []
+      responses:
+        '200':
+          description: The suspension.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Suspension' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+    put:
+      operationId: suspend_project
+      tags: [Platform]
+      summary: Suspend a project
+      description: |
+        A platform client only (TS_AUTH_PLATFORM_CLIENTS). While suspended, no organization key or user gets a project
+        token for it (invalid_target); organization tokens and the management API keep working. Suspending again keeps
+        the first suspended_at.
+      security:
+        - platformClient: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SuspendRequest' }
+            example: { reason: spending_cap }
+      responses:
+        '200':
+          description: The suspension.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Suspension' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+    delete:
+      operationId: lift_project_suspension
+      tags: [Platform]
+      summary: Lift a project's suspension
+      description: A platform client only. 404 when it is not suspended.
+      security:
+        - platformClient: []
+      responses:
+        '204': { description: 'Lifted.' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+  /v1/terrascale/users/{user}/platform-admin:
+    parameters:
+      - $ref: '#/components/parameters/User'
+    put:
+      operationId: set_platform_admin
+      tags: [Platform]
+      summary: Make a user a platform administrator
+      description: The operator key only. The user's next sign-in token carries platform_admin true.
+      security:
+        - operatorBearer: []
+      responses:
+        '204': { description: 'Set.' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+    delete:
+      operationId: clear_platform_admin
+      tags: [Platform]
+      summary: Stop a user being a platform administrator
+      description: The operator key only. Takes effect with the user's next token.
+      security:
+        - operatorBearer: []
+      responses:
+        '204': { description: 'Cleared.' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+  /terrascale/oauth/device:
+    post:
+      operationId: oauth_device_authorization
+      tags: [OAuth]
+      summary: Device authorization endpoint
+      description: RFC 8628 for the public ts-cli client. verification_uri is the dashboard's page; codes live 10 minutes.
+      security: [{}]
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema: { $ref: '#/components/schemas/DeviceAuthorizationRequest' }
+      responses:
+        '200':
+          description: The device and user codes.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeviceAuthorizationResponse' }
+        '400':
+          description: invalid_request, invalid_client, unauthorized_client or invalid_scope.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OAuthError' }
+  /terrascale/headless/v1/device/approve:
+    post:
+      operationId: headless_device_approve
+      tags: [Headless]
+      summary: Approve a device code for a signed-in user
+      description: |
+        ts-dashboard, with HTTP Basic, for the user signed in on its device page. 400 invalid_code for an unknown,
+        expired or already decided user code; 400 invalid_grant for a subject token that is not a live sign-in token
+        of the dashboard.
+      security:
+        - clientBasic: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DeviceDecisionRequest' }
+      responses:
+        '204': { description: 'Approved; the device gets its tokens at its next poll.' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+  /terrascale/headless/v1/device/deny:
+    post:
+      operationId: headless_device_deny
+      tags: [Headless]
+      summary: Deny a device code for a signed-in user
+      description: As approve; the device's next poll answers access_denied.
+      security:
+        - clientBasic: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DeviceDecisionRequest' }
+      responses:
+        '204': { description: 'Denied.' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '503': { $ref: '#/components/responses/Unavailable' }
   /terrascale/oauth/token:
     post:
       operationId: oauth_token
@@ -808,6 +960,7 @@ paths:
               oneOf:
                 - $ref: '#/components/schemas/ClientCredentialsGrant'
                 - $ref: '#/components/schemas/TokenExchangeGrant'
+                - $ref: '#/components/schemas/DeviceCodeGrant'
             examples:
               apiKey:
                 summary: An organization API key, for a project token
@@ -863,6 +1016,14 @@ components:
       type: http
       scheme: basic
       description: OAuth client authentication; for an API key, the key id and the whole key string.
+    platformClient:
+      type: http
+      scheme: basic
+      description: A confidential service client from TS_AUTH_SERVICE_CLIENTS whose id is listed in TS_AUTH_PLATFORM_CLIENTS.
+    operatorBearer:
+      type: http
+      scheme: bearer
+      description: The operator key (TS_AUTH_OPERATOR_KEY).
   headers:
     Location:
       description: The created resource.
@@ -975,7 +1136,7 @@ components:
       enum: [viewer, member, admin]
     Scope:
       type: string
-      enum: ['databases:read', 'databases:write', 'documents:read', 'documents:write', 'shapes:read']
+      enum: ['databases:read', 'databases:write', 'documents:read', 'documents:write', 'shapes:read', 'usage:read', 'billing:read', 'billing:write']
     ApiKeyId:
       type: string
       pattern: '^tsk_[0-9a-hjkmnp-tv-z]{20}$'
@@ -1321,6 +1482,8 @@ components:
             - api_key.created
             - api_key.rotated
             - api_key.revoked
+            - project.suspended
+            - project.unsuspended
         target: { type: ['string', 'null'], description: 'A user id, email, project id or key id.' }
         detail: { type: ['string', 'null'], description: 'The new role, name or scopes.' }
         occurred_at: { $ref: '#/components/schemas/Timestamp' }
@@ -1332,6 +1495,50 @@ components:
           type: array
           items: { $ref: '#/components/schemas/AuditEvent' }
         next: { type: ['string', 'null'] }
+    SuspendRequest:
+      type: object
+      required: [reason]
+      additionalProperties: false
+      properties:
+        reason: { type: string, minLength: 1, maxLength: 256 }
+    Suspension:
+      type: object
+      required: [project_id, reason, suspended_at]
+      properties:
+        project_id: { $ref: '#/components/schemas/Uuid' }
+        reason: { type: string }
+        suspended_at: { $ref: '#/components/schemas/Timestamp' }
+    DeviceAuthorizationRequest:
+      type: object
+      required: [client_id]
+      properties:
+        client_id: { type: string, const: ts-cli }
+        scope: { type: string, description: 'For example openid email offline_access.' }
+    DeviceAuthorizationResponse:
+      type: object
+      required: [device_code, user_code, verification_uri, expires_in, interval]
+      properties:
+        device_code: { type: string }
+        user_code: { type: string }
+        verification_uri: { type: string, format: uri }
+        verification_uri_complete: { type: string, format: uri }
+        expires_in: { type: integer }
+        interval: { type: integer }
+    DeviceDecisionRequest:
+      type: object
+      required: [user_code, subject_token]
+      additionalProperties: false
+      properties:
+        user_code: { type: string }
+        subject_token: { type: string, description: "The signed-in user's sign-in access token." }
+    DeviceCodeGrant:
+      type: object
+      description: ts-cli polling for the tokens of an approved device code (RFC 8628).
+      required: [grant_type, device_code, client_id]
+      properties:
+        grant_type: { type: string, const: 'urn:ietf:params:oauth:grant-type:device_code' }
+        device_code: { type: string }
+        client_id: { type: string, const: ts-cli }
     ClientCredentialsGrant:
       type: object
       description: An API key exchanged for an organization or project token.

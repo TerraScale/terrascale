@@ -60,7 +60,6 @@ organization permission checks) is in
 | JWT templates | Custom-claim tokens (`{{user.email}}` substitution) minted on demand |
 | Webhooks | HMAC-signed outbound events with retries, durable delivery status, dead-letter listing, and operator replay |
 | Audit logs | Signed audit events in production, with query and verification APIs |
-| Billing | Not ts-auth's: plans, subscriptions and Stripe belong to ts-dashboard (TS-597) |
 
 
 Target multi-instance design: one ts-auth deployment hosts many customer
@@ -143,9 +142,6 @@ nice -n 19 dotnet run --project src/TerraScale.Auth
 | `TS_AUTH_LISTEN` | Plain-HTTP listen address with an explicit port (default `http://0.0.0.0:8080`) |
 | `TS_AUTH_ENVIRONMENT` | `Development` waives the audit-signing key requirement and permits a loopback HTTPS TerraBase API origin |
 | `TS_AUTH_RATE_LIMIT` | Management API requests per key per window (default 1000) |
-| `TS_AUTH_STRIPE_SECRET_KEY` / `TS_AUTH_STRIPE_WEBHOOK_SECRET` | Stripe credentials |
-| `TS_AUTH_PRICE_PRO` / `TS_AUTH_PRICE_ENTERPRISE` | Stripe price ids for the plans |
-| `TS_AUTH_STRIPE_API_URL` | Stripe API origin (default `https://api.stripe.com`; test override) |
 | `TS_AUTH_SMTP_HOST` / `_PORT` / `_USERNAME` / `_PASSWORD` / `_FROM_ADDRESS` | SMTP delivery; host, username, password and from address are all or nothing, port defaults to 587 |
 | `TS_AUTH_SMTP_CHECK_REVOCATION` | `true` (default) or `false`: whether the relay certificate's revocation is checked online; see [Email delivery](#email-delivery-oci) |
 | `TS_AUTH_DASHBOARD_CLIENT_SECRET` | Optional secret of the confidential OIDC client `ts-dashboard`, 32 to 512 characters without whitespace. Required together with the redirect URIs; only OpenIddict's PBKDF2 hash is stored |
@@ -446,7 +442,7 @@ describes the TS-491 behaviour and its limits.
 - Hosted UI: `/ui/S/sign-in`, `/sign-up`, `/account`, `/account/sessions`,
   `/forgot-password`, `/reset-password`, `/verify-email`, `/magic-link`,
   `/passcode`, `/mfa/*`, `/passkeys/*`, `/connections/*`, `/admin`,
-  `/billing`, `/device`, `/invitations/{id}/accept`
+  `/device`, `/invitations/{id}/accept`
 - OAuth/OIDC: `/S/.well-known/openid-configuration`, `/S/.well-known/jwks.json`,
   `/S/oauth/{authorize,token,userinfo,revoke,introspect,logout,device_authorization}`,
   `/S/oauth/anonymous`, `/S/oauth/anonymous/upgrade{,/complete}`
@@ -457,13 +453,13 @@ describes the TS-491 behaviour and its limits.
   `/v1/S/directories*`, `/v1/S/organizations*` (incl. org `domains*`),
   `/v1/S/domains/{domain}/enroll`, `/v1/S/jwt-templates*`, `/v1/S/webhooks*`,
   `/v1/S/audit-events`, `/v1/S/audit-events/verify`, `/v1/S/roles*`,
-  `/v1/S/authorization/check`, `/v1/S/billing*`, `/v1/S/instance`
-- Billing webhook: `POST /v1/billing/webhook` (Stripe signature)
-- Quota repair: `POST /v1/{slug}/billing/quota/reconcile` removes expired pending seat claims whose user is absent, then recounts durable owners and unresolved admissions. Active claims remain reserved. It returns examined/removed/retained claim counts and requires the instance's authenticated management key.
+  `/v1/S/authorization/check`, `/v1/S/instance`
+- Platform management (the platform's organizations, projects, roles,
+  invitations and API keys, with the user's own sign-in token):
+  `/v1/terrascale/…`, specified in [`docs/platform-contract.md`](docs/platform-contract.md)
 
-Seat assignment currently probes create-only claims up to the plan cap to
-preserve race-safe ownership. Dense allocation can require work proportional to
-that cap; an indexed or atomic allocator contract remains future work.
+Billing, plans and seat quotas are not ts-auth's: ts-dashboard owns them
+(TS-597).
 
 Outbound webhook signing secrets are envelope-encrypted with `TS_AUTH_MASTER_KEY` at rest and are returned only once when an endpoint is created.
 Webhook delivery checkpoints are stored durably per instance, so a process restart resumes from the last successful tick and does not silently skip queued audit events.

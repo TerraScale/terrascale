@@ -7,7 +7,10 @@ ts-cli TS-600) and ts-dashboard (TS-599) build on. The machine-readable
 contract is [`platform-api.openapi.yaml`](platform-api.openapi.yaml)
 (`make openapi-check` lints it).
 
-Status: contract v1, 2026-10-06. Nothing here is served until its slice lands;
+Status: contract v1.1, 2026-10-06: v1 plus the TS-597 decisions (the
+`usage:read` and `billing:*` scopes, project suspension, platform
+administrators, the ts-cli device flow and ts-auth's own storage token).
+Nothing here is served until its slice lands;
 [`parity.md`](parity.md) tracks each slice. The served `/openapi/v1.json`
 (Scalar at `/scalar`) stays the contract of what is actually served. Any change
 to this contract is announced on TS-597.
@@ -92,7 +95,7 @@ organization ─┬─ members            (org roles)
 - Lists take `?limit=1..100` (default 20) and `?after=<cursor>` and answer
   `{"items":[…],"next":null|"<cursor>"}`. Pass `next` back as `after`.
 - ts-auth stores no plan, subscription, database or usage. Those belong to
-  ts-dashboard and TerraBase (section 8).
+  ts-dashboard and TerraBase (section 9).
 
 ## 3. Roles and permissions
 
@@ -132,21 +135,29 @@ Organization roles, from least to most privileged: `viewer`, `member`,
 | Organization API keys | organization `admin` |
 | Audit events | organization `admin` |
 
-**Scopes.** ts-auth turns roles into TerraBase scopes. This is the only place
-roles are interpreted; TerraBase checks scopes, never roles.
+**Scopes.** ts-auth turns roles into scopes. This is the only place roles are
+interpreted; TerraBase and the platform API check scopes, never roles.
 
-| Scope | TerraBase grants |
+| Scope | Grants |
 | --- | --- |
-| `databases:read` | Read databases, schema, indexes, backups, backup policies, usage and saved queries; read-only SQL |
-| `databases:write` | Create, branch and delete databases; backups, restores and policies; indexes; saved queries |
-| `documents:read` | Read collections and documents; queries |
-| `documents:write` | Write collections and documents; transactions |
-| `shapes:read` | Live shapes |
+| `databases:read` | TerraBase: read databases, schema, indexes, backups, backup policies and saved queries; read-only SQL |
+| `databases:write` | TerraBase: create, branch and delete databases; backups, restores and policies; indexes; saved queries |
+| `documents:read` | TerraBase: read collections and documents; queries |
+| `documents:write` | TerraBase: write collections and documents; transactions |
+| `shapes:read` | TerraBase: live shapes |
+| `usage:read` | TerraBase usage, and the platform API's usage views |
+| `billing:read` | Platform API (ts-dashboard): read the organization's plan, subscription, invoices and spending caps |
+| `billing:write` | Platform API: change the plan, payment method and spending caps |
 
-| Role | Scopes |
-| --- | --- |
-| `viewer` | `databases:read documents:read shapes:read` |
-| `member`, `admin`, `owner` | all five |
+| Token | Role | Scopes |
+| --- | --- | --- |
+| Project token | project `viewer` | `databases:read documents:read shapes:read usage:read` |
+| Project token | project `member`, `admin` | the viewer's and `databases:write documents:write` |
+| Organization token | organization `viewer` | the project viewer's and `billing:read` |
+| Organization token | organization `member`, `admin` | the project member's and `billing:read` |
+| Organization token | organization `owner` | the project member's, `billing:read` and `billing:write` |
+
+Project tokens never carry billing scopes.
 
 ## 4. Authentication
 
@@ -191,8 +202,11 @@ project. It is not a bearer token: code exchanges it at the token endpoint
 - **Scope.** A project key reaches only its project, and only one database if it
   has `database` (a TerraBase database name). An organization key reaches every
   project of its organization, one project per token. `scopes` is a non-empty
-  subset of section 3's scopes; a project key's scopes must be within the
-  creator's effective scopes.
+  set of section 3's scopes for the key's kind (a project key: the project
+  token scopes; an organization key: also `billing:read` and `billing:write`),
+  within the creator's own scopes there: only an owner creates an organization
+  key with `billing:write`. A project token of an organization key carries no
+  billing scope.
 - **Expiry.** `expires_at` is optional; an expired key is refused like a
   revoked one.
 - **Revocation.** `DELETE` revokes at once: no new token is issued. Tokens
@@ -276,6 +290,11 @@ to the next exchange.
 | `org_id` | no | the organization | the key's organization |
 | `project_id` | no | the project, for a project token | the project, for a project token |
 | `database` | no | no | the key's database, when it has one |
+| `platform_admin` | `true` for a platform administrator (section 8.2), otherwise absent | no | no |
+
+`aud` on gru-1 is `https://gru.api.terrascale.tech`,
+`https://platform.terrascale.tech` and `https://mcp.terrascale.tech` (plus the
+issuer on sign-in tokens): every resource server checks its own.
 
 Service client tokens are unchanged: `sub` = `client_id` = the service's id,
 configured audiences, no `scope`, `org_id` or `project_id`.
@@ -355,18 +374,57 @@ tokens expire:
   nominee becomes an owner and the owner who started it an `admin`. The offer
   lapses when its starter stops being an owner or either side leaves.
 - **Audit events** record every change of this API, newest first, for at
-  least 90 days. `actor` is a user id, `target` a user id, email, project id or
-  key id, `detail` the new role, name or scopes. Actions:
+  least 90 days. `actor` is a user id (or, for a suspension, the service
+  client's id), `target` a user id, email, project id or key id, `detail` the
+  new role, name, scopes or suspension reason. Actions:
   `organization.created`, `organization.renamed`, `member.role_changed`,
   `member.removed`, `member.left`, `member.joined`, `invitation.created`,
   `invitation.revoked`, `invitation.accepted`, `invitation.declined`,
   `ownership.transfer_started`, `ownership.transfer_confirmed`,
   `ownership.transfer_cancelled`, `project.created`, `project.renamed`,
   `project.deleted`, `project_member.role_set`, `project_member.removed`,
-  `api_key.created`, `api_key.rotated`, `api_key.revoked`. Deleting an
+  `api_key.created`, `api_key.rotated`, `api_key.revoked`,
+  `project.suspended`, `project.unsuspended`. Deleting an
   organization deletes its events.
 
-## 8. What ts-auth does not do
+## 8. Platform operations
+
+### 8.1 Project suspension
+
+ts-dashboard suspends a project, for example when it reaches a spending cap,
+without a signed-in user.
+
+| Method | Route | Answer |
+| --- | --- | --- |
+| `PUT` | `/v1/terrascale/organizations/{organization}/projects/{project}/suspension` | `{"reason":"…"}` (1 to 256 characters) → `200 {"project_id","reason","suspended_at"}`; suspending again keeps the first `suspended_at` |
+| `DELETE` | same | `204`; `404` when it is not suspended |
+| `GET` | same | `200`, or `404` when it is not suspended |
+
+- `PUT` and `DELETE` authenticate a confidential service client with HTTP
+  Basic: one registered in `TS_AUTH_SERVICE_CLIENTS` whose id is also listed in
+  `TS_AUTH_PLATFORM_CLIENTS`. `GET` accepts that client too, or the sign-in
+  token of anyone with a role on the project.
+- While a project is suspended, the client-credentials grant (project keys, and
+  organization keys asking for it) and the token exchange for it answer
+  `invalid_target`. Organization tokens and the management API keep working, so
+  the organization can still pay and manage the project. Tokens already issued
+  lapse within 15 minutes.
+- Suspensions are audited (`project.suspended`, `project.unsuspended`) with the
+  client id as the actor.
+
+### 8.2 Platform administrators
+
+- A user of the `terrascale` tenant can be a platform administrator. Its
+  sign-in access tokens and `userinfo` carry `"platform_admin": true`;
+  organization, project and API key tokens never do.
+- `PUT` and `DELETE /v1/terrascale/users/{user}/platform-admin` set and clear it
+  (`204`; `404` for an unknown user), with the operator key
+  (`Authorization: Bearer <TS_AUTH_OPERATOR_KEY>`). The TS-602 bootstrap makes
+  the first user an administrator this way.
+- The flag shows in the next token the user is issued: a refresh or a new
+  sign-in. ts-dashboard decides what an administrator may do in the platform.
+
+## 9. What ts-auth does not do
 
 - **TerraBase** owns databases, collections, documents, backups, indexes,
   schema and usage. ts-auth never calls TerraBase for users. Deleting a project
@@ -374,22 +432,57 @@ tokens expire:
   project is gone, no token reaches them.
 - **ts-dashboard** owns plans, subscriptions, billing and spending caps, and UI
   preferences such as a user's current organization. It reads identity through
-  this API, and suspends a project by revoking access through it.
-- ts-auth persists to TerraBase with a bootstrap `tb_…` key issued by
-  TerraBase's admin listener, never with a token it signed itself: TerraBase
-  validates tokens with ts-auth's JWKS, which ts-auth reads from TerraBase, so
-  that would deadlock a cold start.
+  this API and suspends a project through section 8.1.
+- **ts-auth's own storage.** ts-auth reaches TerraBase like any other client,
+  with a 15-minute token it signs itself, never a `tb_…` key:
+  - `iss` the `terrascale` issuer, `sub` `ts-auth`, `org_id` and `project_id`
+    of ts-auth's own organization and project (configured), `database` `auth`,
+    `scope` `databases:read databases:write documents:read documents:write`
+    (so it can create its own database at bootstrap), `aud` the TerraBase
+    audience.
+  - It is signed with a separate **storage key** (`TS_AUTH_STORAGE_SIGNING_KEY`,
+    an ES256 private key from Vault), not the key ring. The `terrascale` JWKS
+    publishes the storage key from configuration, so it answers even while the
+    key ring cannot be read: TerraBase reads ts-auth's JWKS and ts-auth reads
+    its key ring from TerraBase, and with both starting at once neither would
+    otherwise get going. TerraBase needs nothing beyond JWKS.
+  - Until TerraBase serves project-scoped data routes for these tokens (TS-589)
+    and ts-dotnet takes a token provider (TS-591), ts-auth keeps its `tb_…` key
+    (`TS_AUTH_TERRASCALE_API_KEY`), then deletes it.
 
-## 9. Clients
+## 10. Clients
 
 | Client | Type | Grants |
 | --- | --- | --- |
 | `ts-dashboard` | confidential | authorization code + S256 PKCE, refresh token, the headless grants (TS-582), token exchange |
-| `ts-cli` | public (RFC 8252 loopback redirect) | authorization code + S256 PKCE, refresh token, token exchange |
+| `ts-cli` | public | device code (RFC 8628), refresh token, token exchange |
 | service clients (`TS_AUTH_SERVICE_CLIENTS`) | confidential | client credentials |
 | API keys (`tsk_…`) | confidential | client credentials |
 
-## 10. Slices
+**Device flow for ts-cli.** Users sign in and approve on ts-dashboard's own
+pages, never on a ts-auth page:
+
+1. ts-cli posts `client_id=ts-cli` (and optionally `scope`, such as
+   `openid email offline_access`) to `POST /terrascale/oauth/device`. The
+   answer is RFC 8628's `{device_code, user_code, verification_uri,
+   verification_uri_complete, expires_in, interval}`; `verification_uri` is the
+   dashboard's page (`TS_AUTH_DEVICE_VERIFICATION_URI`, for example
+   `https://dash.terrascale.tech/device`). Codes live 10 minutes.
+2. The signed-in user enters or confirms the code on that page, and the
+   dashboard backend calls `POST /terrascale/headless/v1/device/approve` or
+   `…/deny` with its HTTP Basic credentials and the JSON body
+   `{"user_code":"…","subject_token":"<the user's sign-in access token>"}`
+   (`204`; `400 invalid_code` for an unknown, expired or decided code;
+   `400 invalid_grant` for a subject token that is not a live sign-in token of
+   the dashboard).
+3. ts-cli polls `POST /terrascale/oauth/token` with
+   `grant_type=urn:ietf:params:oauth:grant-type:device_code`, `device_code` and
+   `client_id`, at `interval` seconds, and handles `authorization_pending`,
+   `slow_down`, `access_denied` and `expired_token` as RFC 8628 says. Approved,
+   it gets a sign-in access token and a refresh token, and exchanges the access
+   token for organization and project tokens (section 6.2).
+
+## 11. Slices
 
 Each slice is one pull request with its integration tests, and updates
 [`parity.md`](parity.md) and the served OpenAPI.
@@ -399,6 +492,13 @@ Each slice is one pull request with its integration tests, and updates
    project members.
 3. API keys, the client-credentials exchange and the token exchange.
 4. Invitations, ownership transfer and audit events.
-5. Project tenants: per-project issuers, discovery, JWKS and key rings.
-6. The project tenant surface (its OAuth clients, end users, sign-in), in a
+5. The `usage:read` and `billing:*` scopes, project suspension and platform
+   administrators.
+6. The ts-cli device flow.
+7. Project tenants: per-project issuers, discovery, JWKS and key rings.
+8. ts-auth's own storage token (section 9), once TS-589 and TS-591 support it.
+9. The project tenant surface (its OAuth clients, end users, sign-in), in a
    later revision of this contract.
+
+OAuth for MCP clients (RFC 8707 resource indicators, RFC 7591 or client ID
+metadata documents) is a follow-up outside these slices.

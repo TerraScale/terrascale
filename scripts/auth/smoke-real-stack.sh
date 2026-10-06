@@ -273,11 +273,7 @@ print('yes' if hmac.compare_digest(expected, sig) else 'no')" "$DELIVERY" "$WH_S
     fi
 fi
 
-# ---- 9. Billing guard, passcodes, audit ------------------------------------------------
-
-BILLING=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H "Authorization: Bearer $API_KEY" \
-    -H 'Content-Type: application/json' -d '{"plan":"pro"}' "$SERVICE_LISTEN/v1/$SLUG/billing/checkout")
-check "billing answers 503 without Stripe configured" "503" "$BILLING"
+# ---- 9. Passcodes, audit ------------------------------------------------------------------
 
 PASSCODE=$(curl -sf -X POST "$SERVICE_LISTEN/ui/$SLUG/passcode/request" \
     -H "Origin: $SERVICE_LISTEN" -H 'Content-Type: application/json' \

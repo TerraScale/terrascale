@@ -34,11 +34,6 @@ public sealed partial record AuthOptions
         "audit-verify-keys",
         "operator-key",
         "rate-limit",
-        "stripe-secret-key",
-        "stripe-webhook-secret",
-        "stripe-api-url",
-        "price-pro",
-        "price-enterprise",
         "smtp-host",
         "smtp-port",
         "smtp-username",
@@ -104,21 +99,6 @@ public sealed partial record AuthOptions
 
     /// <summary>Protective per-process management request limit.</summary>
     public int RateLimitPerWindow { get; init; } = 1000;
-
-    /// <summary>Stripe secret API key.</summary>
-    public string? StripeSecretKey { get; init; }
-
-    /// <summary>Stripe webhook signing secret.</summary>
-    public string? StripeWebhookSecret { get; init; }
-
-    /// <summary>Stripe API origin; overridable for fixtures.</summary>
-    public required Uri StripeApiUrl { get; init; }
-
-    /// <summary>Stripe price for the Pro plan.</summary>
-    public string? PricePro { get; init; }
-
-    /// <summary>Stripe price for the Enterprise plan.</summary>
-    public string? PriceEnterprise { get; init; }
 
     /// <summary>SMTP relay host; all four SMTP credentials are set together or not at all.</summary>
     public string? SmtpHost { get; init; }
@@ -260,7 +240,6 @@ public sealed partial record AuthOptions
         {
             throw Invalid("TS_AUTH_TERRASCALE_API_KEY must contain at most 4096 characters without whitespace or controls");
         }
-        var stripeUrl = AbsoluteHttpUrl("stripe-api-url", Optional("stripe-api-url") ?? "https://api.stripe.com");
 
         var verifyValues = (Optional("audit-verify-keys") ?? string.Empty)
             .Split(';', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
@@ -311,11 +290,6 @@ public sealed partial record AuthOptions
             AuditVerificationKeys = [.. verifyValues.Select(raw => DecodeKey("audit-verify-keys", raw))],
             OperatorKey = Required("operator-key"),
             RateLimitPerWindow = rateLimit,
-            StripeSecretKey = Optional("stripe-secret-key"),
-            StripeWebhookSecret = Optional("stripe-webhook-secret"),
-            StripeApiUrl = stripeUrl,
-            PricePro = Optional("price-pro"),
-            PriceEnterprise = Optional("price-enterprise"),
             SmtpHost = smtp[0],
             SmtpPort = smtpPort,
             SmtpCheckRevocation = smtpCheckRevocation,
