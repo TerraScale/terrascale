@@ -318,6 +318,7 @@ dialog.ts-dialog::backdrop {
   width: 100%;
   aspect-ratio: 136 / 80;
   overflow: hidden;
+  container-type: inline-size;
   border: 1px solid var(--ts-line);
   border-radius: var(--ts-radius-lg);
   background: var(--ts-surface);
@@ -418,9 +419,10 @@ dialog.ts-dialog::backdrop {
   pointer-events: none;
 }
 
+/* The ring hugs the hub, clear of its flag and label. */
 .ts-region-map[data-select-id] button.ts-region-node:focus-visible {
   outline: 2px solid var(--ts-accent);
-  outline-offset: 2px;
+  outline-offset: -6px;
   border-radius: 50%;
 }
 
@@ -434,8 +436,7 @@ dialog.ts-dialog::backdrop {
   position: absolute;
   z-index: 1;
   top: 50%;
-  left: 22px;
-  min-width: 112px;
+  left: calc(50% + 14px);
   padding: 5px 8px;
   border: 1px solid var(--ts-line-strong);
   border-radius: var(--ts-radius);
@@ -450,14 +451,23 @@ dialog.ts-dialog::backdrop {
   transition: opacity var(--ts-fast) var(--ts-ease);
 }
 
-.ts-region-map[data-select-id] button.ts-region-node[data-flip] .ts-region-node-label {
-  left: auto;
-  right: 22px;
+/* Every label points right, so none crosses the left edge. SFO's hangs just
+   below its hub, between FRA's hub and GRU's flag; FRA's rises beside its
+   flag, above SFO's. The three stay apart down to a 186px-wide map. */
+.ts-region-map[data-select-id] button.ts-region-node[data-region="SFO"] .ts-region-node-label {
+  transform: translateY(calc(-50% + 6px));
 }
 
-.ts-region-map[data-select-id] button.ts-region-node[data-region="SFO"] .ts-region-node-label {
-  top: calc(50% + 22px);
-  transform: none;
+.ts-region-map[data-select-id] button.ts-region-node[data-region="FRA"] .ts-region-node-label {
+  top: calc(50% + 2px);
+  transform: translateY(-100%);
+}
+
+@container (width < 15rem) {
+  .ts-region-map[data-select-id] .ts-region-node-label {
+    padding: 2px 6px;
+    font-size: 11px;
+  }
 }
 
 .ts-region-map[data-select-id] .ts-region-node-label strong { display: block; }

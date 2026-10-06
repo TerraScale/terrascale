@@ -318,7 +318,7 @@ templ RegionMap(selectID string, selected ...string) {
 		}
 		for _, pin := range regionPins {
 			if selectID != "" {
-				<button type="button" class="ts-region-node" data-region={ pin.code } data-flip?={ pin.x > 136/2 } aria-label={ pin.name + " (" + pin.code + ")" } aria-pressed={ fmt.Sprint(slices.Contains(selected, pin.code)) } data-on:click={ regionPick(selectID) }>
+				<button type="button" class="ts-region-node" data-region={ pin.code } aria-label={ pin.name + " (" + pin.code + ")" } aria-pressed={ fmt.Sprint(slices.Contains(selected, pin.code)) } data-on:click={ regionPick(selectID) }>
 					<img class="ts-region-node-flag" src={ static.URL("flags/" + pin.country + ".svg") } alt="" aria-hidden="true"/>
 					<span class="ts-region-node-ring" aria-hidden="true"></span>
 					<span class="ts-region-node-core" aria-hidden="true"></span>
