@@ -58,18 +58,43 @@ public sealed class QueryDocumentsEndpoint(IDocumentService documents, ITenantDi
             },
         };
 
-    private async ValueTask<IResult> QueryAsync(TenantContext database, string collection, byte[] body, QueryRequest request, CancellationToken cancellationToken)
+    private async ValueTask<IResult> QueryAsync(TenantContext database, string collection, byte[] body, QueryRequest request, CancellationToken cancellationToken) =>
+        QueryParser.CheckParse(database, collection, request) switch
+        {
+            Validation error => ErrorResponse.From(error),
+            ParsedQuery query => request.Cursor is not { } cursor
+                ? await PageAsync(database, collection, body, request, query, after: null, cancellationToken)
+                : QueryParser.CheckPosition(cursor, query.Digest, query.Sort.Count) switch
+                {
+                    Validation error => ErrorResponse.From(error),
+                    QueryPosition after => await PageAsync(database, collection, body, request, query, after, cancellationToken),
+                },
+        };
+
+    private async ValueTask<IResult> PageAsync(
+        TenantContext database, string collection, byte[] body, QueryRequest request, ParsedQuery query, QueryPosition? after, CancellationToken cancellationToken)
     {
-        var query = QueryParser.Parse(database, collection, request);
-        var after = request.Cursor is { } cursor ? QueryParser.Position(cursor, query.Digest, query.Sort.Count) : null;
         var (page, count) = await documents.QueryAsync(
             database,
             new DocumentQuery(collection, query.Filter, query.Sort, after, query.Limit, DocumentRoute.MaxPageBytes),
             request.Count == true && after is null ? MaxCount : null,
             cancellationToken);
-        return TypedResults.Ok(new DocumentPageBody(
-            [.. page.Rows.Select(row => GetDocumentEndpoint.Body(collection, row.Document, query.Project, cancellationToken))],
-            page.HasMore ? QueryParser.Cursor(query.Digest, page.Rows[^1], body) : null,
-            count is var (n, complete) ? new CountBody(n.ToString(CultureInfo.InvariantCulture), complete) : null));
+        if (!page.HasMore)
+        {
+            return TypedResults.Ok(Body(collection, query, page, count, next: null, cancellationToken));
+        }
+
+        return QueryParser.CheckCursor(query.Digest, page.Rows[^1], body) switch
+        {
+            Validation error => ErrorResponse.From(error),
+            string next => TypedResults.Ok(Body(collection, query, page, count, next, cancellationToken)),
+        };
     }
+
+    private static DocumentPageBody Body(
+        string collection, ParsedQuery query, QueryPage page, (long Count, bool Complete)? count, string? next, CancellationToken cancellationToken) =>
+        new(
+            [.. page.Rows.Select(row => GetDocumentEndpoint.Body(collection, row.Document, query.Project, cancellationToken))],
+            next,
+            count is var (n, complete) ? new CountBody(n.ToString(CultureInfo.InvariantCulture), complete) : null);
 }

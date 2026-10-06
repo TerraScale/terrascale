@@ -36,7 +36,27 @@ internal static class QueryParser
     private const int MaxSegments = 16;
     private const int MaxPathLength = 4096;
 
-    public static ParsedQuery Parse(TenantContext database, string collection, QueryRequest request)
+    /// <summary>As <see cref="CheckParse"/>, for the callers not converted to unions yet.</summary>
+    public static ParsedQuery Parse(TenantContext database, string collection, QueryRequest request) => CheckParse(database, collection, request) switch
+    {
+        ParsedQuery query => query,
+        Validation error => throw DocumentRoute.Throwable(error),
+    };
+
+    /// <summary>A query request as an engine query, or the first rule it breaks (<c>invalid_query</c>).</summary>
+    public static Valid<ParsedQuery> CheckParse(TenantContext database, string collection, QueryRequest request)
+    {
+        try
+        {
+            return Parsed(database, collection, request);
+        }
+        catch (FormatException error)
+        {
+            return new Validation(error.Message, Code);
+        }
+    }
+
+    private static ParsedQuery Parsed(TenantContext database, string collection, QueryRequest request)
     {
         if (request.Explain.ValueKind != JsonValueKind.Undefined)
         {
@@ -49,6 +69,7 @@ internal static class QueryParser
         }
 
         var sort = request.Sort ?? [];
+        var nodes = 0;
         if (sort.Count > MaxSortKeys)
         {
             throw Invalid("sort has at most 4 keys");
@@ -59,7 +80,7 @@ internal static class QueryParser
             throw Invalid("project has at most 64 paths");
         }
 
-        var filter = request.Filter.ValueKind is JsonValueKind.Undefined or JsonValueKind.Null ? null : Filter(request.Filter);
+        var filter = request.Filter.ValueKind is JsonValueKind.Undefined or JsonValueKind.Null ? null : Filter(request.Filter, 1, ref nodes);
         var keys = sort.Select(key => new SortKey(Path(key.Path), key.Order switch
         {
             null or "asc" => false,
@@ -91,23 +112,31 @@ internal static class QueryParser
         return new ParsedQuery(filter, keys, project, request.Limit ?? DefaultLimit, digest);
     }
 
-    /// <summary>Parses a filter; <paramref name="code"/> names the error of a bad one.</summary>
-    public static DocumentFilter Filter(JsonElement filter, string code = Code)
+    /// <summary>As <see cref="CheckFilter"/>, for the callers not converted to unions yet.</summary>
+    public static DocumentFilter Filter(JsonElement filter, string code = Code) => CheckFilter(filter, code) switch
+    {
+        DocumentFilter parsed => parsed,
+        Validation error => throw DocumentRoute.Throwable(error),
+    };
+
+    /// <summary>Parses a filter, or answers the first rule it breaks; <paramref name="code"/> names the error of a bad one.</summary>
+    public static Valid<DocumentFilter> CheckFilter(JsonElement filter, string code = Code)
     {
         var nodes = 0;
-        return Filter(filter, 1, ref nodes, code);
+        try
+        {
+            return Filter(filter, 1, ref nodes);
+        }
+        catch (FormatException error)
+        {
+            return new Validation(error.Message, code);
+        }
     }
 
     /// <summary>
     /// Parses an RFC 6901 JSON Pointer of object members (1 to 16 segments, at most 4 KiB);
     /// <see langword="null"/> when <paramref name="pointer"/> is not one.
     /// </summary>
-    public static IReadOnlyList<string>? Pointer(string? pointer, string code)
-    {
-        var segments = ParsePointer(pointer, out var tooDeep);
-        return tooDeep ? throw new ApiException(StatusCodes.Status400BadRequest, code, TooDeep) : segments;
-    }
-
     /// <summary>
     /// The segments of an RFC 6901 JSON Pointer of object members (1 to 16 segments, at most 4 KiB), or the rule it
     /// breaks: <paramref name="invalid"/> when it is not one.
@@ -166,14 +195,21 @@ internal static class QueryParser
         return Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(text))[..16]);
     }
 
-    /// <summary>Encodes the position after <paramref name="row"/> as an opaque cursor.</summary>
-    public static string Cursor(string digest, QueryRow row, byte[]? requestBody = null)
+    /// <summary>As <see cref="CheckCursor"/>, for the callers not converted to unions yet.</summary>
+    public static string Cursor(string digest, QueryRow row, byte[]? requestBody = null) => CheckCursor(digest, row, requestBody) switch
+    {
+        string cursor => cursor,
+        Validation error => throw DocumentRoute.Throwable(error),
+    };
+
+    /// <summary>Encodes the position after <paramref name="row"/> as an opaque cursor, or answers why it cannot be one.</summary>
+    public static Valid<string> CheckCursor(string digest, QueryRow row, byte[]? requestBody = null)
     {
         // Four keys of at most 64 KiB UTF-8 remain below the 4 MiB request cap even after JSON
         // escaping (at most six bytes per source byte) and base64 expansion.
         if (row.Keys.OfType<string>().Any(text => Encoding.UTF8.GetByteCount(text) > 64 * 1024))
         {
-            throw new ApiException(StatusCodes.Status400BadRequest, "sort_requires_index", "cursor sort values are at most 64 KiB of UTF-8");
+            return SortRequiresIndex("cursor sort values are at most 64 KiB of UTF-8");
         }
 
         using var buffer = new MemoryStream();
@@ -207,7 +243,7 @@ internal static class QueryParser
         var cursor = Base64Url.EncodeToString(buffer.ToArray());
         if (cursor.Length > MaxCursorChars)
         {
-            throw new ApiException(StatusCodes.Status400BadRequest, "sort_requires_index", "encoded cursors are at most 1 MiB");
+            return SortRequiresIndex("encoded cursors are at most 1 MiB");
         }
 
         if (requestBody is not null)
@@ -230,15 +266,24 @@ internal static class QueryParser
             writer.Flush();
             if (writer.BytesCommitted > DocumentRoute.MaxRequestBytes)
             {
-                throw new ApiException(StatusCodes.Status400BadRequest, "sort_requires_index", "the query and cursor exceed the continuation request budget");
+                return SortRequiresIndex("the query and cursor exceed the continuation request budget");
             }
         }
 
         return cursor;
     }
 
+    private static Validation SortRequiresIndex(string message) => new(message, "sort_requires_index");
+
+    /// <summary>As <see cref="CheckPosition"/>, for the callers not converted to unions yet.</summary>
+    public static QueryPosition Position(string cursor, string digest, int sortKeys) => CheckPosition(cursor, digest, sortKeys) switch
+    {
+        QueryPosition position => position,
+        Validation error => throw DocumentRoute.Throwable(error),
+    };
+
     /// <summary>Decodes a cursor of the query bound to <paramref name="digest"/> with <paramref name="sortKeys"/> sort keys.</summary>
-    public static QueryPosition Position(string cursor, string digest, int sortKeys)
+    public static Valid<QueryPosition> CheckPosition(string cursor, string digest, int sortKeys)
     {
         try
         {
@@ -268,7 +313,7 @@ internal static class QueryParser
             // Falls through to invalid_cursor.
         }
 
-        throw new ApiException(StatusCodes.Status400BadRequest, "invalid_cursor", "the cursor does not belong to this query");
+        return new Validation("the cursor does not belong to this query", "invalid_cursor");
     }
 
     private static bool ValidSortValue(long rank, JsonElement value) => rank switch
@@ -287,16 +332,16 @@ internal static class QueryParser
         _ => throw new FormatException("a cursor key is a scalar"),
     };
 
-    private static DocumentFilter Filter(JsonElement filter, int depth, ref int nodes, string code)
+    private static DocumentFilter Filter(JsonElement filter, int depth, ref int nodes)
     {
         if (depth > MaxFilterDepth || ++nodes > MaxFilterNodes)
         {
-            throw Invalid("a filter nests at most 8 levels and has at most 256 nodes", code);
+            throw Invalid("a filter nests at most 8 levels and has at most 256 nodes");
         }
 
         if (filter.ValueKind != JsonValueKind.Object || filter.GetPropertyCount() != 1)
         {
-            throw Invalid("a filter is an object with exactly one operator", code);
+            throw Invalid("a filter is an object with exactly one operator");
         }
 
         var member = filter.EnumerateObject().First();
@@ -306,40 +351,40 @@ internal static class QueryParser
             case "and" or "or":
                 if (operand.ValueKind != JsonValueKind.Array || operand.GetArrayLength() is < 1 or > MaxChildren)
                 {
-                    throw Invalid($"{member.Name} takes 1 to 64 filters", code);
+                    throw Invalid($"{member.Name} takes 1 to 64 filters");
                 }
 
                 var children = new List<DocumentFilter>();
                 foreach (var child in operand.EnumerateArray())
                 {
-                    children.Add(Filter(child, depth + 1, ref nodes, code));
+                    children.Add(Filter(child, depth + 1, ref nodes));
                 }
 
                 return member.Name == "and" ? new AndFilter(children) : new OrFilter(children);
             case "not":
-                return new NotFilter(Filter(operand, depth + 1, ref nodes, code));
+                return new NotFilter(Filter(operand, depth + 1, ref nodes));
             case "exists":
-                return new ExistsFilter(Path(operand, code));
+                return new ExistsFilter(Path(operand));
         }
 
         if (operand.ValueKind != JsonValueKind.Array || operand.GetArrayLength() != 2)
         {
-            throw Invalid("a scalar filter takes [path, value]", code);
+            throw Invalid("a scalar filter takes [path, value]");
         }
 
-        var path = Path(operand[0], code);
+        var path = Path(operand[0]);
         var value = operand[1];
         switch (member.Name)
         {
             case "eq":
-                return new CompareFilter(path, Comparison.Equal, Scalar(value, code));
+                return new CompareFilter(path, Comparison.Equal, Scalar(value));
             case "ne":
-                return new NotFilter(new CompareFilter(path, Comparison.Equal, Scalar(value, code)));
+                return new NotFilter(new CompareFilter(path, Comparison.Equal, Scalar(value)));
             case "lt" or "lte" or "gt" or "gte":
-                var scalar = Scalar(value, code);
+                var scalar = Scalar(value);
                 if (scalar.Kind == ScalarKind.Null)
                 {
-                    throw Invalid("ordered comparisons reject null", code);
+                    throw Invalid("ordered comparisons reject null");
                 }
 
                 return new CompareFilter(path, member.Name switch
@@ -352,29 +397,27 @@ internal static class QueryParser
             case "in" or "nin":
                 if (value.ValueKind != JsonValueKind.Array || value.GetArrayLength() is < 1 or > MaxValues)
                 {
-                    throw Invalid($"{member.Name} takes [path, [1 to 256 values]]", code);
+                    throw Invalid($"{member.Name} takes [path, [1 to 256 values]]");
                 }
 
-                DocumentFilter any = new InFilter(path, [.. value.EnumerateArray().Select(item => Scalar(item, code))]);
+                DocumentFilter any = new InFilter(path, [.. value.EnumerateArray().Select(item => Scalar(item))]);
                 return member.Name == "in" ? any : new NotFilter(any);
             case "prefix":
                 return value.ValueKind == JsonValueKind.String
                     ? new PrefixFilter(path, value.GetString()!)
-                    : throw Invalid("prefix takes [path, string]", code);
+                    : throw Invalid("prefix takes [path, string]");
             case "contains":
-                return new ContainsFilter(path, Scalar(value, code));
+                return new ContainsFilter(path, Scalar(value));
             default:
-                throw Invalid("unknown filter operator", code);
+                throw Invalid("unknown filter operator");
         }
     }
 
-    private static DocumentPath Path(JsonElement path) => Path(path, Code);
-
-    private static DocumentPath Path(JsonElement path, string code)
+    private static DocumentPath Path(JsonElement path)
     {
         if (path.ValueKind == JsonValueKind.Object && path.TryGetProperty("lower", out _))
         {
-            throw Invalid("lower is not supported yet", code);
+            throw Invalid("lower is not supported yet");
         }
 
         if (path.ValueKind == JsonValueKind.String && path.GetString() == "$id")
@@ -382,11 +425,11 @@ internal static class QueryParser
             return DocumentPath.Id;
         }
 
-        return new DocumentPath(Pointer(path.ValueKind == JsonValueKind.String ? path.GetString() : null, code)
-            ?? throw Invalid("a path is \"$id\" or a JSON Pointer of 1 to 16 segments", code));
+        return new DocumentPath(ParsePointer(path.ValueKind == JsonValueKind.String ? path.GetString() : null, out var tooDeep)
+            ?? throw Invalid(tooDeep ? TooDeep : "a path is \"$id\" or a JSON Pointer of 1 to 16 segments"));
     }
 
-    private static ScalarValue Scalar(JsonElement value, string code)
+    private static ScalarValue Scalar(JsonElement value)
     {
         switch (value.ValueKind)
         {
@@ -397,7 +440,11 @@ internal static class QueryParser
             case JsonValueKind.String:
                 return new ScalarValue(ScalarKind.Text, value.GetString());
             case JsonValueKind.Number:
-                RequestJson.ValidateValue(value, code);
+                if (RequestJson.CheckValue(value, Code) is Validation limits)
+                {
+                    throw Invalid(limits.Message);
+                }
+
                 if (value.TryGetInt64(out var integer))
                 {
                     return new ScalarValue(ScalarKind.Number, integer);
@@ -405,14 +452,16 @@ internal static class QueryParser
 
                 return value.TryGetDouble(out var real) && double.IsFinite(real)
                     ? new ScalarValue(ScalarKind.Number, real)
-                    : throw Invalid("a number is out of range", code);
+                    : throw Invalid("a number is out of range");
             default:
-                throw Invalid("values are JSON scalars", code);
+                throw Invalid("values are JSON scalars");
         }
     }
 
     private static string Normalize(JsonElement element) =>
         element.ValueKind == JsonValueKind.Undefined ? "" : JsonSerializer.Serialize(element, TerraBaseJsonContext.Default.JsonElement);
 
-    private static ApiException Invalid(string message, string code = Code) => new(StatusCodes.Status400BadRequest, code, message);
+    // The translation rejects a node from deep in the filter tree; the Check… entry points catch it and answer the rule
+    // with their code, so it never leaves this class.
+    private static FormatException Invalid(string message) => new(message);
 }

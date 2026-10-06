@@ -173,27 +173,35 @@ public sealed class GetShapeEndpoint(IShapeService shapes, ITenantDirectory tena
         try
         {
             using var json = JsonDocument.Parse(where.ToString());
-            var filter = QueryParser.Filter(json.RootElement);
-            var buffer = new ArrayBufferWriter<byte>();
-            using (var writer = new Utf8JsonWriter(buffer, new JsonWriterOptions { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping }))
+            return QueryParser.CheckFilter(json.RootElement) switch
             {
-                json.RootElement.WriteTo(writer);
-            }
-
-            var canonical = Encoding.UTF8.GetString(buffer.WrittenSpan);
-            // The relaxed encoder still escapes some Unicode. Check the encoded target, reserving
-            // the longest snapshot continuation and 64 bytes for the request line: the longest head
-            // and the base64url of the longest stored id (1024 UTF-8 bytes, legacy ids included).
-            // A live log position with cursor is shorter than this snapshot offset.
-            var resume = Location(canonical, "h1-0000000000000000", $"snap.{long.MaxValue}.{LongestEncodedId}");
-            return resume.Length > (8 * 1024) - 64
-                ? new UriTooLong("the shape filter exceeds the supported continuation URL size")
-                : new ShapeFilter(filter, canonical);
+                Validation error => error,
+                Engine.DocumentFilter filter => Canonical(json.RootElement, filter),
+            };
         }
         catch (JsonException)
         {
             return new Validation("where must be a JSON filter", "invalid_query");
         }
+    }
+
+    private ShapeWhere Canonical(JsonElement where, Engine.DocumentFilter filter)
+    {
+        var buffer = new ArrayBufferWriter<byte>();
+        using (var writer = new Utf8JsonWriter(buffer, new JsonWriterOptions { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping }))
+        {
+            where.WriteTo(writer);
+        }
+
+        var canonical = Encoding.UTF8.GetString(buffer.WrittenSpan);
+        // The relaxed encoder still escapes some Unicode. Check the encoded target, reserving
+        // the longest snapshot continuation and 64 bytes for the request line: the longest head
+        // and the base64url of the longest stored id (1024 UTF-8 bytes, legacy ids included).
+        // A live log position with cursor is shorter than this snapshot offset.
+        var resume = Location(canonical, "h1-0000000000000000", $"snap.{long.MaxValue}.{LongestEncodedId}");
+        return resume.Length > (8 * 1024) - 64
+            ? new UriTooLong("the shape filter exceeds the supported continuation URL size")
+            : new ShapeFilter(filter, canonical);
     }
 
     // The canonical filter makes every client of a shape converge on the same URLs, and so on the same cache entries.

@@ -11,6 +11,56 @@ public sealed class QueryApiTests
 {
     private static readonly string[] CursorSortPaths = ["/a", "/b", "/c", "/d"];
     private static readonly string[] SiblingProjectionPaths = ["/payload", "/payload~1a/a"];
+    private static readonly string[] PathOnly = ["/a"];
+    private static readonly int[] OneValue = [1];
+
+    [Test]
+    public async Task Query_errors_answer_their_code_and_message()
+    {
+        await using var api = await DocumentApi.StartAsync();
+        // Two documents sorted by a value past 64 KiB: the first page's cursor would have to carry it.
+        var wide = new string('w', (64 * 1024) + 1);
+        await api.PutAsync(Ids["A"], new { s = wide });
+        await api.PutAsync(Ids["B"], new { s = wide + "w" });
+        var notNested = new { eq = new object[] { "/a", 1 } };
+        object deep = notNested;
+        for (var i = 0; i < 8; i++)
+        {
+            deep = new { not = deep };
+        }
+
+        const string Json = "application/json";
+        (ApiResponse Response, string Code, string Message)[] cases =
+        [
+            (await api.QueryAsync(new { explain = true }), "invalid_query", "explain is not supported yet"),
+            (await api.QueryAsync(new { limit = 0 }), "invalid_query", "limit must be between 1 and 1000"),
+            (await api.QueryAsync(new { sort = Enumerable.Range(0, 5).Select(i => new { path = $"/f{i}" }).ToArray() }), "invalid_query", "sort has at most 4 keys"),
+            (await api.QueryAsync(new { project = Enumerable.Range(0, 65).Select(i => $"/f{i}").ToArray() }), "invalid_query", "project has at most 64 paths"),
+            (await api.QueryAsync(new { sort = new[] { new { path = "/a", order = "up" } } }), "invalid_query", "sort order is asc or desc"),
+            (await api.QueryAsync(new { filter = deep }), "invalid_query", "a filter nests at most 8 levels and has at most 256 nodes"),
+            (await api.QueryAsync(new { filter = new { } }), "invalid_query", "a filter is an object with exactly one operator"),
+            (await api.QueryAsync(new { filter = new { and = Array.Empty<object>() } }), "invalid_query", "and takes 1 to 64 filters"),
+            (await api.QueryAsync(new { filter = new { eq = PathOnly } }), "invalid_query", "a scalar filter takes [path, value]"),
+            (await api.QueryAsync(new { filter = new { lt = new object?[] { "/a", null } } }), "invalid_query", "ordered comparisons reject null"),
+            (await api.QueryAsync(new { filter = new { @in = new object[] { "/a", Array.Empty<object>() } } }), "invalid_query", "in takes [path, [1 to 256 values]]"),
+            (await api.QueryAsync(new { filter = new { prefix = new object[] { "/a", 1 } } }), "invalid_query", "prefix takes [path, string]"),
+            (await api.QueryAsync(new { filter = new { near = new object[] { "/a", 1 } } }), "invalid_query", "unknown filter operator"),
+            (await api.QueryAsync(new { filter = new { eq = new object[] { new { lower = "/a" }, "x" } } }), "invalid_query", "lower is not supported yet"),
+            (await api.QueryAsync(new { filter = new { eq = new object[] { "a", 1 } } }), "invalid_query", "a path is \"$id\" or a JSON Pointer of 1 to 16 segments"),
+            (await api.QueryAsync(new { filter = new { eq = new object[] { string.Concat(Enumerable.Repeat("/a", 17)), 1 } } }), "invalid_query", "a path has at most 16 segments"),
+            (await api.QueryAsync(new { filter = new { eq = new object[] { "/a", OneValue } } }), "invalid_query", "values are JSON scalars"),
+            (await api.SendRawAsync(HttpMethod.Post, api.Query, """{"filter":{"eq":["/a",1e400]}}""", Json),
+                "invalid_query", "numbers have at most 128 significant digits and a magnitude of 0 or 1e-307 to below 1e308"),
+            (await api.QueryAsync(new { cursor = "not-a-cursor" }), "invalid_cursor", "the cursor does not belong to this query"),
+            (await api.SendAsync(HttpMethod.Get, api.Documents + "?cursor=not-a-cursor"), "invalid_cursor", "the cursor does not belong to this query"),
+            (await api.QueryAsync(new { sort = new[] { new { path = "/s" } }, limit = 1 }), "sort_requires_index", "cursor sort values are at most 64 KiB of UTF-8"),
+        ];
+
+        foreach (var (response, code, message) in cases)
+        {
+            await Assert.That((response.Status, response.Code, response.Message)).IsEqualTo((HttpStatusCode.BadRequest, code, message));
+        }
+    }
 
     [Test]
     public async Task Encoded_cursor_size_is_bounded_with_distinct_sort_keys()
@@ -74,7 +124,8 @@ public sealed class QueryApiTests
             or = new object[] { new { exists = "/s" }, new { eq = new object[] { "/unused", new string('x', 15 * 1024 * 1024 / 4) } } },
         };
         var tooLargeToResume = await api.QueryAsync(new { filter, sort, limit = 1 });
-        await Assert.That((tooLargeToResume.Status, tooLargeToResume.Code)).IsEqualTo((HttpStatusCode.BadRequest, "sort_requires_index"));
+        await Assert.That((tooLargeToResume.Status, tooLargeToResume.Code, tooLargeToResume.Message))
+            .IsEqualTo((HttpStatusCode.BadRequest, "sort_requires_index", "the query and cursor exceed the continuation request budget"));
     }
 
     [Test]

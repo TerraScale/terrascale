@@ -41,21 +41,43 @@ public sealed class ListDocumentsEndpoint(IDocumentService documents, ITenantDir
     private async ValueTask<IResult> ListAsync(TenantContext database, string collection, IQueryCollection query, CancellationToken cancellationToken)
     {
         var digest = QueryParser.Digest(database, collection, "list");
-        var after = query.TryGetValue("cursor", out var cursor) ? QueryParser.Position(cursor!, digest, 0) : null;
-        return DocumentRoute.CheckLimit(query, QueryParser.DefaultLimit, QueryParser.MaxLimit) switch
+        if (!query.TryGetValue("cursor", out var cursor))
+        {
+            return await PageAsync(database, collection, digest, query, after: null, cancellationToken);
+        }
+
+        return QueryParser.CheckPosition(cursor!, digest, 0) switch
+        {
+            Validation error => ErrorResponse.From(error),
+            QueryPosition after => await PageAsync(database, collection, digest, query, after, cancellationToken),
+        };
+    }
+
+    private async ValueTask<IResult> PageAsync(
+        TenantContext database, string collection, string digest, IQueryCollection query, QueryPosition? after, CancellationToken cancellationToken) =>
+        DocumentRoute.CheckLimit(query, QueryParser.DefaultLimit, QueryParser.MaxLimit) switch
         {
             Validation error => ErrorResponse.From(error),
             int limit => await PageAsync(database, collection, digest, after, limit, cancellationToken),
         };
-    }
 
     private async ValueTask<IResult> PageAsync(
         TenantContext database, string collection, string digest, QueryPosition? after, int limit, CancellationToken cancellationToken)
     {
         var (page, _) = await documents.QueryAsync(
             database, new DocumentQuery(collection, null, [], after, limit, DocumentRoute.MaxPageBytes), countLimit: null, cancellationToken);
-        return TypedResults.Ok(new DocumentPageBody(
-            [.. page.Rows.Select(row => GetDocumentEndpoint.Body(collection, row.Document, cancellationToken: cancellationToken))],
-            page.HasMore ? QueryParser.Cursor(digest, page.Rows[^1]) : null));
+        if (!page.HasMore)
+        {
+            return TypedResults.Ok(new DocumentPageBody(Bodies(collection, page, cancellationToken), null));
+        }
+
+        return QueryParser.CheckCursor(digest, page.Rows[^1]) switch
+        {
+            Validation error => ErrorResponse.From(error),
+            string next => TypedResults.Ok(new DocumentPageBody(Bodies(collection, page, cancellationToken), next)),
+        };
     }
+
+    private static List<DocumentBody> Bodies(string collection, QueryPage page, CancellationToken cancellationToken) =>
+        [.. page.Rows.Select(row => GetDocumentEndpoint.Body(collection, row.Document, cancellationToken: cancellationToken))];
 }
