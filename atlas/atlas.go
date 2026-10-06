@@ -23,7 +23,6 @@ import (
 	"net/url"
 	"slices"
 	"strconv"
-	"strings"
 	"time"
 )
 
@@ -100,7 +99,8 @@ func (e *Error) Error() string {
 
 // Publisher signs and posts documents. It is safe for concurrent use.
 type Publisher struct {
-	// BaseURL is the Atlas origin, such as https://atlas.terrascale.tech.
+	// BaseURL is the Atlas origin, such as https://atlas.terrascale.tech,
+	// without a path.
 	BaseURL string
 	// Key is a P-256 key whose public JWK is in Atlas' PUBLISH_KEYS.
 	Key *ecdsa.PrivateKey
@@ -112,10 +112,12 @@ type Publisher struct {
 // Publish signs doc with the current time and posts it.
 func (p *Publisher) Publish(ctx context.Context, doc Document) (*Report, error) {
 	base, err := url.Parse(p.BaseURL)
-	if err != nil || base.Host == "" || base.User != nil || base.RawQuery != "" || base.Fragment != "" ||
-		(base.Scheme != "https" && !(base.Scheme == "http" && loopback(base.Hostname()))) {
-		return nil, fmt.Errorf("atlas: BaseURL %q must be an https origin", p.BaseURL)
+	if err != nil || base.Host == "" || base.User != nil || base.RawQuery != "" || base.ForceQuery || base.Fragment != "" ||
+		(base.Path != "" && base.Path != "/") || (base.Scheme != "https" && !(base.Scheme == "http" && loopback(base.Hostname()))) {
+		return nil, fmt.Errorf("atlas: BaseURL %q must be an https origin without a path", p.BaseURL)
 	}
+	endpoint := *base
+	endpoint.Path, endpoint.RawPath = "/v1/publish", ""
 	body, err := json.Marshal(doc)
 	if err != nil {
 		return nil, fmt.Errorf("atlas: encode document: %w", err)
@@ -125,7 +127,7 @@ func (p *Publisher) Publish(ctx context.Context, doc Document) (*Report, error) 
 	if err != nil {
 		return nil, err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimSuffix(base.String(), "/")+"/v1/publish", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint.String(), bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}

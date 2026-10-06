@@ -63,6 +63,9 @@ func TestPublish(t *testing.T) {
 			Services: []atlas.Service{{ID: "terrabase", Name: "TerraBase", URL: "https://api.terrascale.tech", Health: "https://api.terrascale.tech/readyz"}}},
 		Placements: []atlas.Placement{{V: 1, Project: "p1", Region: "gru-1", Databases: map[string]string{"orders": "gru-1"}, Updated: 1791159807}},
 	}
+	if _, err := (&atlas.Publisher{BaseURL: srv.URL + "/", Key: key}).Publish(t.Context(), doc); err != nil {
+		t.Fatalf("trailing slash: %v", err)
+	}
 	p := atlas.Publisher{BaseURL: srv.URL, Key: key}
 	report, err := p.Publish(t.Context(), doc)
 	if err != nil {
