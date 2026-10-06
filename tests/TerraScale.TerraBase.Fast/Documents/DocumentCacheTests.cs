@@ -402,7 +402,7 @@ public sealed class DocumentCacheTests
         var recreatedPage = await ListAsync(tenant, "shop", "people", operationTimeout.Token);
 
         await Assert.That(applied.Version).IsNotEqualTo(initial);
-        await Assert.That(applied).IsEqualTo((ETags.Version(transaction.Incarnation, "people", StorageFixture.Id("p1"), committed, Encoding.UTF8.GetBytes("""{"name":"applied"}""")), "applied"));
+        await Assert.That(applied).IsEqualTo((ETags.Version(transaction.Scope, "people", StorageFixture.Id("p1"), committed, Encoding.UTF8.GetBytes("""{"name":"applied"}""")), "applied"));
         await Assert.That(appliedPage).IsEquivalentTo([$"{StorageFixture.Id("p1")}:applied"]);
         await Assert.That(recreated.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
         await Assert.That(recreatedPage).IsEmpty();
@@ -439,7 +439,7 @@ public sealed class DocumentCacheTests
             await Assert.That(stamps.Collection(shop, "items") - before).IsEqualTo(1);
         }
 
-        await Assert.That(await GetAsync(tenant, "shop", "items", "hot", operationTimeout.Token)).IsEqualTo((ETags.Version(transaction.Incarnation, "items", StorageFixture.Id("hot"), committed, Encoding.UTF8.GetBytes("""{"name":"applied"}""")), "applied"));
+        await Assert.That(await GetAsync(tenant, "shop", "items", "hot", operationTimeout.Token)).IsEqualTo((ETags.Version(transaction.Scope, "items", StorageFixture.Id("hot"), committed, Encoding.UTF8.GetBytes("""{"name":"applied"}""")), "applied"));
         await Assert.That(await ListAsync(tenant, "shop", "items", operationTimeout.Token)).IsEquivalentTo([$"{StorageFixture.Id("hot")}:applied"]);
     }
 
@@ -629,7 +629,7 @@ public sealed class DocumentCacheTests
         var store = (await server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(database, deadline.Token))!;
         var transaction = await store.BeginTransactionAsync(write: false, deadline.Token);
         await using var transactionCleanup = transaction;
-        var incarnation = transaction.Incarnation;
+        var scope = transaction.Scope;
         var initialOffset = (await transaction.GetAsync("items", StorageFixture.Id("hot"), deadline.Token))!.Version;
         var done = false;
         var stale = 0;
@@ -644,7 +644,7 @@ public sealed class DocumentCacheTests
                     ? await ListedDocumentAsync(tenant, cancellationToken)
                     : await GetAsync(tenant, "race", "items", "hot", cancellationToken);
                 var version = long.Parse(document.Name, System.Globalization.CultureInfo.InvariantCulture);
-                await Assert.That(document.Version).IsEqualTo(ETags.Version(incarnation, "items", StorageFixture.Id("hot"), initialOffset + version - 1,
+                await Assert.That(document.Version).IsEqualTo(ETags.Version(scope, "items", StorageFixture.Id("hot"), initialOffset + version - 1,
                     Encoding.UTF8.GetBytes($$"""{"name":"{{document.Name}}"}""")));
                 Interlocked.Increment(ref reads);
                 if (version < floor)

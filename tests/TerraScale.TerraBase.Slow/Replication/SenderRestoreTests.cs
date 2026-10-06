@@ -55,8 +55,9 @@ public sealed class SenderRestoreTests
                 origin = await read.GetOriginAsync(deadline.Token);
                 incarnation = store.Incarnation;
                 offset = await read.GetOffsetAsync(deadline.Token);
-                await Assert.That(await read.GetLastChangeSequenceAsync(deadline.Token)).IsEqualTo(3);
-                originalDigest = (await read.GetChangeDigestAsync(3, deadline.Token))!.Value;
+                // The collection's creation, two writes and a delete.
+                await Assert.That(await read.GetLastChangeSequenceAsync(deadline.Token)).IsEqualTo(4);
+                originalDigest = (await read.GetChangeDigestAsync(4, deadline.Token))!.Value;
                 await foreach (var document in read.ChangesAsync("items", null, 0, offset, deadline.Token))
                 {
                     history.Add((document.Id, document.Version, document.HistoryOffset, document.Deleted,
@@ -104,7 +105,7 @@ public sealed class SenderRestoreTests
                 var (resetSequence, resetDigest) = await read.GetAppliedFrontierAsync(legacyOrigin, deadline.Token);
                 await Assert.That(resetSequence).IsEqualTo(0);
                 await Assert.That(resetDigest.Span.SequenceEqual(JournalDigest.Initial(legacyOrigin))).IsTrue();
-                await Assert.That((await read.GetChangeDigestAsync(3, deadline.Token))!.Value.Span.SequenceEqual(originalDigest.Span)).IsTrue();
+                await Assert.That((await read.GetChangeDigestAsync(4, deadline.Token))!.Value.Span.SequenceEqual(originalDigest.Span)).IsTrue();
                 var migratedHistory = new List<(string Id, long Version, long? HistoryOffset, bool Deleted, string Body)>();
                 await foreach (var document in read.ChangesAsync("items", null, 0, offset, deadline.Token))
                 {
@@ -114,7 +115,7 @@ public sealed class SenderRestoreTests
 
                 await Assert.That(migratedHistory.SequenceEqual(history)).IsTrue();
                 var (applied, digest) = await remote.GetAppliedFrontierAsync(origin, deadline.Token);
-                await Assert.That(applied).IsEqualTo(3);
+                await Assert.That(applied).IsEqualTo(4);
                 await Assert.That(digest.Span.SequenceEqual(originalDigest.Span)).IsTrue();
                 await Assert.That((await read.GetVersionAsync("items", deleted, deadline.Token))!.Value.Deleted).IsTrue();
                 await Assert.That((await remote.GetVersionAsync("items", deleted, deadline.Token))!.Value.Deleted).IsTrue();
@@ -132,12 +133,12 @@ public sealed class SenderRestoreTests
             {
                 await using var read = await source.BeginTransactionAsync(write: false, deadline.Token);
                 await using var remote = await target.BeginTransactionAsync(write: false, deadline.Token);
-                await Assert.That(await read.GetLastChangeSequenceAsync(deadline.Token)).IsEqualTo(4);
-                var changes = (await read.ReadChangesAsync(4, deadline.Token))!;
-                var expected = JournalDigest.Compute(origin.Span, 4, originalDigest.Span, changes);
-                await Assert.That((await read.GetChangeDigestAsync(4, deadline.Token))!.Value.Span.SequenceEqual(expected)).IsTrue();
+                await Assert.That(await read.GetLastChangeSequenceAsync(deadline.Token)).IsEqualTo(5);
+                var changes = (await read.ReadChangesAsync(5, deadline.Token))!;
+                var expected = JournalDigest.Compute(origin.Span, 5, originalDigest.Span, changes);
+                await Assert.That((await read.GetChangeDigestAsync(5, deadline.Token))!.Value.Span.SequenceEqual(expected)).IsTrue();
                 var (applied, digest) = await remote.GetAppliedFrontierAsync(origin, deadline.Token);
-                await Assert.That(applied).IsEqualTo(4);
+                await Assert.That(applied).IsEqualTo(5);
                 await Assert.That(digest.Span.SequenceEqual(expected)).IsTrue();
                 using var reader = clientTls.CreateClient(receiver.ClientAddress!, await tenant.KeyAsync(receiver, "documents:read"));
                 await AssertBodyAsync(reader, tenant.Path("migrated"), id, "following", deadline.Token);
@@ -192,7 +193,8 @@ public sealed class SenderRestoreTests
             {
                 using var collection = await writer.PostAsJsonAsync(new Uri($"{path}/collections", UriKind.Relative), new { name = "items" });
                 collection.EnsureSuccessStatusCode();
-                for (var sequence = 1; sequence <= 90; sequence++)
+                // Group 1 created the collection; each write is the group of its sequence.
+                for (var sequence = 2; sequence <= 90; sequence++)
                 {
                     await PutAsync(writer, path, id, $"original-{sequence}");
                 }

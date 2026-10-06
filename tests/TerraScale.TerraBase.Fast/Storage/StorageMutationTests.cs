@@ -147,7 +147,7 @@ public sealed class StorageMutationTests
             await Assert.ThrowsAsync<InvalidOperationException>(() => MutateAsync(reader, mutation, id));
             await Assert.ThrowsAsync<InvalidOperationException>(() => reader.CommitAsync(CancellationToken.None).AsTask());
             var document = await reader.GetAsync(DocumentApi.Collection, id, CancellationToken.None);
-            await Assert.That(document!.Incarnation).IsEqualTo(reader.Incarnation);
+            await Assert.That(document!.Scope).IsEqualTo(reader.Scope);
         }
 
         var read = await api.GetAsync(id);
@@ -258,15 +258,15 @@ public sealed class StorageMutationTests
         await using (var reader = await store.BeginTransactionAsync(write: false, CancellationToken.None))
         {
             var document = (await reader.GetAsync(DocumentApi.Collection, id, CancellationToken.None))!;
-            await Assert.That(document.Incarnation).IsEqualTo(reader.Incarnation);
+            await Assert.That(document.Scope).IsEqualTo(reader.Scope);
             var query = new DocumentQuery(DocumentApi.Collection, null, [], null, 10, 1 << 20);
             var page = await reader.QueryAsync(query, CancellationToken.None);
-            await Assert.That(page.Rows[0].Document.Incarnation).IsEqualTo(reader.Incarnation);
+            await Assert.That(page.Rows[0].Document.Scope).IsEqualTo(reader.Scope);
             var snapshot = await reader.SnapshotAsync(query, document.Version, CancellationToken.None);
-            await Assert.That(snapshot.Rows[0].Document.Incarnation).IsEqualTo(reader.Incarnation);
+            await Assert.That(snapshot.Rows[0].Document.Scope).IsEqualTo(reader.Scope);
             await foreach (var change in reader.ChangesAsync(DocumentApi.Collection, null, 0, document.Version, CancellationToken.None))
             {
-                await Assert.That(change.Incarnation).IsEqualTo(reader.Incarnation);
+                await Assert.That(change.Scope).IsEqualTo(reader.Scope);
             }
         }
 
@@ -278,7 +278,7 @@ public sealed class StorageMutationTests
         await foreach (var change in deleted.ChangesAsync(DocumentApi.Collection, null, tombstone.Version - 1, tombstone.Version, CancellationToken.None))
         {
             await Assert.That(change.Deleted).IsTrue();
-            await Assert.That(change.Incarnation).IsEqualTo(deleted.Incarnation);
+            await Assert.That(change.Scope).IsEqualTo(deleted.Scope);
         }
     }
 

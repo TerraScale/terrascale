@@ -169,11 +169,11 @@ them. Replication before-images could remove those redundant deletes later.
 - `offset` echoes the request. `up_to_date` is `true` only on an open tail or live response whose
   `next_offset` is the head. Immutable snapshot pages and closed chunks never say it: a client is
   up to date only after a fresh read of the log.
-- `version` is `tbv1-` plus the first 16 bytes of SHA-256 over the persisted database incarnation,
+- `version` is `tbv1-` plus the first 16 bytes of SHA-256 over the database scope (derived from its ids, the same on every member),
   collection, document id, merge version and deletion bit, separated by NUL bytes, followed by a NUL
   and the raw UTF-8 document bytes (empty for a tombstone). An equal-version body winner or deletion
   changes this validator. Existing cached tokens must be refreshed after this change. Recreating or copying a
-  database changes the incarnation, so an old ETag cannot authorize a write or produce a false 304
+  database changes its ids, so an old ETag cannot authorize a write or produce a false 304
   even when the new database reuses the same offset and id.
 - `shape_id`: 32 lowercase hex characters, the first 16 bytes of
   SHA-256(`"TB-SHAPE-V1\0" database \0 collection \0 canonical filter \0 database incarnation \0 collection generation`).

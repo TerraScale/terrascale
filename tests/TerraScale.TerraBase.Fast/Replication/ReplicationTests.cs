@@ -76,12 +76,12 @@ public sealed class ReplicationTests
             var store = (await source.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(tenant.Database("legacy"), deadline.Token))!;
             await using (var read = await store.BeginTransactionAsync(write: false, deadline.Token))
             {
-                await Assert.That(await read.GetLastChangeSequenceAsync(deadline.Token)).IsEqualTo(allInvalid ? 0 : 1);
-                if (!allInvalid)
-                {
-                    var changes = (await read.ReadChangesAsync(1, deadline.Token))!;
-                    await Assert.That(ChangeGroup.Decode(ChangeGroup.Encode(changes)).Single().Id).IsEqualTo("after");
-                }
+                // Group 1 created the collection; the baseline repeats its record beside the admissible documents.
+                await Assert.That(await read.GetLastChangeSequenceAsync(deadline.Token)).IsEqualTo(2);
+                var changes = ChangeGroup.Decode(ChangeGroup.Encode((await read.ReadChangesAsync(2, deadline.Token))!));
+                string[] admitted = allInvalid ? [] : ["after"];
+                await Assert.That(changes.Where(change => change.Collection == "items").Select(change => change.Id)).IsEquivalentTo(admitted);
+                await Assert.That(changes.Single(change => change.Collection == DocumentChange.Collections).Id).IsEqualTo("items");
             }
 
             using var client = clientTls.CreateClient(source.ClientAddress!, await tenant.KeyAsync(source, "documents:write"));
@@ -183,8 +183,9 @@ public sealed class ReplicationTests
         await tenant.BindAsync(b);
         using var clientA = clientTls.CreateClient(a.ClientAddress!, await tenant.KeyAsync(a, "documents:read", "documents:write"));
         using var clientB = clientTls.CreateClient(b.ClientAddress!, await tenant.KeyAsync(b, "documents:read", "documents:write"));
+        // The collection created on a reaches b.
         await CreateCollectionAsync(tenant, clientA, "shop", "people");
-        await CreateCollectionAsync(tenant, clientB, "shop", "people");
+        await TerraBaseTestServer.ReplicatedAsync(a, b);
 
         // Both nodes write their own documents and the same "shared" document at once.
         await Task.WhenAll(PutAsync(tenant, clientA, "a1"), PutAsync(tenant, clientA, "a2"), PutAsync(tenant, clientA, "shared"), PutAsync(tenant, clientB, "b1"), PutAsync(tenant, clientB, "shared"));
@@ -222,6 +223,105 @@ public sealed class ReplicationTests
         await Assert.That(await VersionAsync(tenant, b, "shop", "people", ReplicationDocuments.Id("a1"))).IsEqualTo(changed);
         await Assert.That(secondA.Single(document => document.Id == ReplicationDocuments.Id("shared")).Data)
             .IsEqualTo(firstA.Single(document => document.Id == ReplicationDocuments.Id("shared")).Data);
+    }
+
+    [Test]
+    public async Task A_version_read_on_one_member_deletes_the_document_on_the_other()
+    {
+        using var peerTls = new PeerTls();
+        using var clientTls = new ClientTls();
+        var (a, b) = await TerraBaseTestServer.StartPairAsync((settings, port, peerPort) => Configure(settings, peerTls, clientTls, port, peerPort));
+        await using var disposeA = a;
+        await using var disposeB = b;
+        var tenant = await ReplicationTenant.CreateAsync(a, "shop");
+        await tenant.BindAsync(b);
+        using var clientA = clientTls.CreateClient(a.ClientAddress!, await tenant.KeyAsync(a, "documents:read", "documents:write"));
+        using var clientB = clientTls.CreateClient(b.ClientAddress!, await tenant.KeyAsync(b, "documents:read", "documents:write"));
+        await CreateCollectionAsync(tenant, clientA, "shop", "people");
+        await PutAsync(tenant, clientA, "probe");
+        await TerraBaseTestServer.ReplicatedAsync(a, b);
+
+        // ts-auth's readiness probe behind a round-robin balancer: read on one member, delete conditionally on the other.
+        var document = new Uri($"{tenant.Path("shop")}/collections/people/documents/{ReplicationDocuments.Id("probe")}", UriKind.Relative);
+        using var readA = await clientA.GetAsync(document);
+        using var readB = await clientB.GetAsync(document);
+        readA.EnsureSuccessStatusCode();
+        readB.EnsureSuccessStatusCode();
+        await Assert.That(readB.Headers.ETag).IsEqualTo(readA.Headers.ETag);
+        using var delete = new HttpRequestMessage(HttpMethod.Delete, document);
+        delete.Headers.IfMatch.Add(readA.Headers.ETag!);
+        using var deleted = await clientB.SendAsync(delete);
+        await Assert.That(deleted.StatusCode).IsEqualTo(HttpStatusCode.OK);
+
+        await TerraBaseTestServer.ReplicatedAsync(a, b);
+        using var tombstoneA = await clientA.GetAsync(document);
+        using var tombstoneB = await clientB.GetAsync(document);
+        await Assert.That(tombstoneA.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+        await Assert.That(tombstoneA.Headers.ETag).IsNotNull();
+        await Assert.That(tombstoneB.Headers.ETag).IsEqualTo(tombstoneA.Headers.ETag);
+    }
+
+    [Test]
+    public async Task Collections_and_indexes_created_and_dropped_on_one_member_follow_on_the_other()
+    {
+        using var peerTls = new PeerTls();
+        using var clientTls = new ClientTls();
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        var token = deadline.Token;
+        var (a, b) = await TerraBaseTestServer.StartPairAsync((settings, port, peerPort) => Configure(settings, peerTls, clientTls, port, peerPort));
+        await using var disposeA = a;
+        await using var disposeB = b;
+        var tenant = await ReplicationTenant.CreateAsync(a, "shop");
+        await tenant.BindAsync(b);
+        using var clientA = clientTls.CreateClient(a.ClientAddress!, await tenant.KeyAsync(a, "documents:read", "documents:write"));
+        using var clientB = clientTls.CreateClient(b.ClientAddress!, await tenant.KeyAsync(b, "documents:read", "documents:write"));
+        var collection = Faker.Random.String2(12, "abcdefghijklmnopqrstuvwxyz");
+        var path = new Uri($"{tenant.Path("shop")}/collections/{collection}", UriKind.Relative);
+        // Empty: nothing but the creation itself can bring it to b.
+        await CreateCollectionAsync(tenant, clientA, "shop", collection);
+        await Assert.That(DocumentField.TryParse("address.city", out var city)).IsTrue();
+        var index = new IndexDefinition($"{collection}_by_city", collection, [city, DocumentField.Id]);
+        await WriteAsync(a, transaction => transaction.CreateIndexAsync(index, token));
+        await TerraBaseTestServer.ReplicatedAsync(a, b);
+
+        using (var created = await clientA.GetAsync(path, token))
+        using (var replicated = await clientB.GetAsync(path, token))
+        {
+            replicated.EnsureSuccessStatusCode();
+            await Assert.That(await replicated.Content.ReadAsStringAsync(token)).IsEqualTo(await created.Content.ReadAsStringAsync(token));
+        }
+
+        var replicatedIndex = (await IndexesAsync(b)).Single();
+        await Assert.That(replicatedIndex.Name).IsEqualTo(index.Name);
+        await Assert.That(replicatedIndex.Fields).IsEquivalentTo(index.Fields);
+        using (var dropped = await clientA.DeleteAsync(path, token))
+        {
+            dropped.EnsureSuccessStatusCode();
+        }
+
+        await WriteAsync(a, transaction => transaction.DropIndexAsync(index.Name, token));
+        await TerraBaseTestServer.ReplicatedAsync(a, b);
+        using (var missing = await clientB.GetAsync(path, token))
+        {
+            await Assert.That(missing.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+        }
+
+        await Assert.That(await IndexesAsync(b)).IsEmpty();
+
+        async Task WriteAsync(TerraBaseTestServer node, Func<IStorageTransaction, ValueTask<bool>> write)
+        {
+            var store = await node.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(tenant.Database("shop"), token);
+            await using var transaction = await store!.BeginTransactionAsync(write: true, token);
+            await Assert.That(await write(transaction)).IsTrue();
+            await transaction.CommitAsync(token);
+        }
+
+        async Task<List<IndexDefinition>> IndexesAsync(TerraBaseTestServer node)
+        {
+            var store = await node.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(tenant.Database("shop"), token);
+            await using var transaction = await store!.BeginTransactionAsync(write: false, token);
+            return [.. (await transaction.ListIndexesAsync(token)).Where(found => found.Collection == collection)];
+        }
     }
 
     [Test]
@@ -597,8 +697,9 @@ public sealed class ReplicationTests
         await firstAttemptEnded.Task.WaitAsync(deadline.Token);
         try
         {
-            // An accepted malformed ACK would release this group; periodic replay alone cannot prove rejection.
-            await Assert.That(await sender.MetricAsync("terrabase_replication_sender_durable_lag", "", deadline.Token)).IsEqualTo(1);
+            // An accepted malformed ACK would release a group (the collection's creation or the put); periodic replay alone
+            // cannot prove rejection.
+            await Assert.That(await sender.MetricAsync("terrabase_replication_sender_durable_lag", "", deadline.Token)).IsEqualTo(2);
         }
         finally
         {
@@ -643,7 +744,8 @@ public sealed class ReplicationTests
                     limits.ByteCredit = 64;
                     break;
                 case "group":
-                    limits.MaxTransactionGroupBytes = 64;
+                    // Below the collection's creation (45 bytes) and the document.
+                    limits.MaxTransactionGroupBytes = 32;
                     break;
                 case "raised":
                     // Above what the sender offered: a Welcome may only lower a limit.
@@ -798,13 +900,14 @@ public sealed class ReplicationTests
                 await responses.WriteAsync(welcome, context.CancellationToken);
                 while (await requests.MoveNext(context.CancellationToken))
                 {
+                    // Group 1 creates the collection; group 2 is the first document.
                     var batch = requests.Current.CommittedGroup;
-                    if (batch.EventId.Sequence == 1)
+                    if (batch.EventId.Sequence == 2)
                     {
                         first.TrySetResult(batch);
                         await releaseAck.Task.WaitAsync(context.CancellationToken);
                     }
-                    else
+                    else if (batch.EventId.Sequence > 2)
                     {
                         second.TrySetResult(batch);
                     }
@@ -837,7 +940,7 @@ public sealed class ReplicationTests
             {
                 if (instrument.Name == "terrabase.replication.sent.groups")
                 {
-                    if (Interlocked.Add(ref sent, value) > 1 && !releaseAck.Task.IsCompleted)
+                    if (Interlocked.Add(ref sent, value) > 2 && !releaseAck.Task.IsCompleted)
                     {
                         blocked.TrySetException(new InvalidDataException("the sender exceeded byte credit before the held ACK was released"));
                     }
@@ -850,20 +953,21 @@ public sealed class ReplicationTests
             observer.Start();
             using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
             allowWelcome.SetResult();
-            // Positive evidence: group 2 is prepared, but the actual sender has reached its byte-credit wait.
-            await Assert.That(await blocked.Task.WaitAsync(deadline.Token)).IsEqualTo(1);
+            // Positive evidence: group 3 is prepared, but the actual sender has reached its byte-credit wait.
+            await Assert.That(await blocked.Task.WaitAsync(deadline.Token)).IsEqualTo(2);
             var held = await first.Task.WaitAsync(deadline.Token);
-            await Assert.That(held.EventId.Sequence).IsEqualTo(1UL);
+            await Assert.That(held.EventId.Sequence).IsEqualTo(2UL);
             await Assert.That((ulong)held.EncodedApplicationBytes).IsLessThanOrEqualTo(credit);
             await Assert.That(second.Task.IsCompleted).IsFalse();
-            await Assert.That(await sender.MetricAsync("terrabase_replication_sender_durable_lag", "", deadline.Token)).IsEqualTo(4);
+            // Only group 1's ACK went out.
+            await TerraBaseTestServer.EventuallyAsync(async token => await sender.MetricAsync("terrabase_replication_sender_durable_lag", "", token) == 4);
             releaseAck.SetResult();
             var released = await second.Task.WaitAsync(deadline.Token);
-            await Assert.That(released.EventId.Sequence).IsEqualTo(2UL);
+            await Assert.That(released.EventId.Sequence).IsEqualTo(3UL);
             await Assert.That((ulong)held.EncodedApplicationBytes + released.EncodedApplicationBytes).IsGreaterThan(credit);
             await Assert.That((ulong)released.EncodedApplicationBytes).IsLessThanOrEqualTo(credit);
             await TerraBaseTestServer.ReplicatedAsync(sender);
-            await Assert.That(Interlocked.Read(ref sent)).IsEqualTo(4);
+            await Assert.That(Interlocked.Read(ref sent)).IsEqualTo(5);
         }
         finally
         {
@@ -921,7 +1025,8 @@ public sealed class ReplicationTests
                     ulong outstanding = batch.EncodedApplicationBytes;
                     var count = 1;
                     reading = requests.MoveNext(context.CancellationToken);
-                    if (Volatile.Read(ref delivered) + count < 4)
+                    // Five groups: the collection's creation and four documents.
+                    if (Volatile.Read(ref delivered) + count < 5)
                     {
                         var blocked = waits.Reader.ReadAsync(context.CancellationToken).AsTask();
                         // Count any queued groups while withholding ACK, until the sender positively reports
@@ -969,7 +1074,7 @@ public sealed class ReplicationTests
             });
             observer.Start();
             ready.SetResult();
-            await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(Volatile.Read(ref delivered) == 4));
+            await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(Volatile.Read(ref delivered) == 5));
             await TerraBaseTestServer.ReplicatedAsync(sender);
             await Assert.That(mostUnacknowledgedBytes).IsGreaterThan(0UL);
             await Assert.That(mostUnacknowledgedBytes).IsLessThanOrEqualTo(credit);

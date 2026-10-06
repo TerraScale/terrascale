@@ -168,7 +168,7 @@ internal sealed partial class EngineManagementService
 
     /// <summary>The version of a dashboard document as the commit and read routes report it.</summary>
     internal static string DocumentVersion(StoredDocument document, string collection) =>
-        ETags.Version(document.Incarnation, DashboardSpace + collection, document.Id, document.Version, document.Json, document.Deleted);
+        ETags.Version(document.Scope, DashboardSpace + collection, document.Id, document.Version, document.Json, document.Deleted);
 
     /// <summary>Advances an organization's version, in the caller's write transaction; every Management change to it calls this.</summary>
     internal static async ValueTask TouchOrganizationAsync(IStorageTransaction transaction, string organizationId, CancellationToken cancellationToken) =>

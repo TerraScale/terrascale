@@ -54,6 +54,9 @@ support the shape seeks described below. `_system` has the same schema but retai
 | `MaterializeRetainedDeletions` | copy preparation, before resetting its journal | — | `SCAN changes USING INDEX changes_deleted`; groups keys in index order without a sorter and upserts only deletions that beat the copied document state |
 | `ApplyDocument`, `ApplyTombstone` | replicated merge | — | insert/upsert, no plan rows; conflicts probe the document primary key |
 | `CollectionDocumentIds` | captured collection drop | — | document primary-key range under a count limit; no JSON loaded |
+| `DroppedCollection`: `… WHERE collection = '_collections' AND id = ? AND version > ? AND body IS NULL` | replicated merge, per incoming document | — | `SEARCH documents USING PRIMARY KEY (collection=? AND id=?)`: one register lookup, no JSON |
+| `TombstoneCollection`: `UPDATE … WHERE collection = ? AND version < ? AND body IS NOT NULL RETURNING id` | replicated collection drop | — | `SEARCH documents USING PRIMARY KEY (collection=?)`: the dropped collection's key range only |
+| `LiveDocument` | replicated collection drop | — | `SEARCH documents USING INDEX documents_live (collection=?)`; stops at the first live row |
 | `LastSequence`, `NextSequence`, `AppendChange`, `ReadChanges` | journal append/send | — | journal primary-key search; insert has no plan rows |
 | `GetApplied`, `SetApplied` | received origin frontier | — | applied primary-key lookup; upsert has no plan rows |
 | `Complete`, `MarkComplete` | baseline state | — | integer-primary-key lookup on `replication_state` |

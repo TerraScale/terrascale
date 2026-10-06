@@ -16,12 +16,23 @@ format and open questions: [0007](decisions/0007-lz4-application-envelope-replic
   set, so the change log has no holes when peers are added, removed or the node restarts. Nothing
   truncates the log.
 - A database missing on the receiver is created under the exact organization, project and database UUIDs in the stream. Display names never address peer storage.
-- Replication uses the same persisted incarnation as document ETags (`IDatabaseStore.Incarnation`).
-  Schema v8 retains `changes`, `applied` and `replication_state` alongside the document API schema and adds chained journal-prefix proofs;
+- The persisted incarnation (`IDatabaseStore.Incarnation`) is the origin. Document ETags do not use it: they hash the
+  replicated state under the database's organization, project and database ids, so every member answers the same ETag
+  for the same state and a version read on one member satisfies `If-Match` on another (TS-574). Schema v8 retains
+  `changes`, `applied` and `replication_state` alongside the document API schema and adds chained journal-prefix proofs;
   documents and tombstones stay in the existing `documents` table.
-- Collection metadata is local; incoming changes create a default collection when needed. Dropping
-  a populated collection captures its document deletions within the same group bounds. Retained
-  journal deletions also prevent stale incoming states from reviving physically removed documents.
+- Collections and secondary indexes replicate as documents of two reserved collections that no client can name:
+  `_collections` (one document per collection, `{"created_at": …}`) and `_indexes` (one definition per index,
+  `{"collection": …, "fields": […]}`). Creating writes the document and dropping writes its tombstone in the same
+  captured group, so they merge like documents: the greater version wins, a drop over a create at the same version. Only
+  a winning state creates or drops the collection or index on the receiver. Collections and indexes created before this
+  change have no such document; their next create or drop replicates.
+- A document state implies its collection, whether or not its creation replicated. Dropping a populated collection also
+  captures its document deletions within the same group bounds (so a drop holds at most 1023 documents). A replicated
+  drop ends the live states of the collection older than itself, as the dropping member did, removes the collection once
+  nothing live remains, and refuses older incoming states afterwards; a write another member made at or after the drop
+  keeps the collection. Retained journal deletions also prevent stale incoming states from reviving physically removed
+  documents.
 
 Storage enforces one JSON admission contract for client Put/PATCH and replication Apply: a complete
 UTF-8 object without duplicate properties, at most 1 MiB, 16 container levels and 4096 values, with
@@ -269,6 +280,8 @@ through its own `IMeterFactory` plus process-wide ones (runtime), so several hos
 - Not interoperable with terrabase-rust (different change group format and merge policy).
 - `changes` and document tombstones are never truncated; retention needs membership to know all peers.
 - Database delete is not replicated.
+- No read-your-writes across members: within replication lag a read on another member can miss a write, and a
+  conditional write there fails with 412 or 404 until the write arrives.
 - A baseline is the whole current state, written into the change log in bounded chunks: it costs as much
   disk as the data it covers.
 - `DurableAck` follows the receiver's SQLite commit. Under decision 0003 (`synchronous = NORMAL`)

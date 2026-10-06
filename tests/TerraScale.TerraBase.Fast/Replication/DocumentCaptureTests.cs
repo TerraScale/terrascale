@@ -220,8 +220,9 @@ public sealed class DocumentCaptureTests
             initialOffset = await read.GetOffsetAsync(deadline.Token);
         }
 
+        // Group 1 created the collection, group 2 put a.
         var expectedOffset = initialOffset + 1;
-        var sequence = 2L;
+        var sequence = 3L;
         var expectedCount = 1;
         if (operation == "transaction")
         {
@@ -250,9 +251,10 @@ public sealed class DocumentCaptureTests
                 response.EnsureSuccessStatusCode();
             }
 
-            sequence = 4;
+            // The drop's group also holds the collection's tombstone.
+            sequence = 5;
             expectedOffset = initialOffset + 3;
-            expectedCount = 2;
+            expectedCount = 3;
         }
         else
         {
@@ -286,7 +288,7 @@ public sealed class DocumentCaptureTests
 
             if (operation is "rollbackDelete" or "rollbackDrop")
             {
-                sequence = 1;
+                sequence = 2;
                 expectedOffset = initialOffset;
             }
             else
@@ -303,12 +305,19 @@ public sealed class DocumentCaptureTests
         {
             origin = await sourceRead.GetOriginAsync(deadline.Token);
             await Assert.That(new Guid(origin.Span, bigEndian: true)).IsEqualTo(source.Incarnation);
-            await Assert.That(sourceRead.Incarnation).IsEqualTo(source.Incarnation);
             await Assert.That(await sourceRead.GetLastChangeSequenceAsync(deadline.Token)).IsEqualTo(sequence);
             await Assert.That(await targetRead.GetAppliedSequenceAsync(origin, deadline.Token)).IsEqualTo(sequence);
             changes = (await sourceRead.ReadChangesAsync(sequence, deadline.Token))!;
             await Assert.That(changes.Count).IsEqualTo(expectedCount);
             await Assert.That(changes.Select(change => change.Version).Distinct().Single()).IsEqualTo(expectedOffset);
+            if (operation == "drop")
+            {
+                await Assert.That(changes.Single(change => change.Collection == DocumentChange.Collections))
+                    .IsEqualTo(new DocumentChange(DocumentChange.Collections, "items", expectedOffset, null));
+                await Assert.That(await targetRead.GetCollectionAsync("items", deadline.Token)).IsNull();
+                changes = [.. changes.Where(change => change.Collection == "items")];
+            }
+
             foreach (var change in changes)
             {
                 var local = await sourceRead.GetVersionAsync("items", change.Id, deadline.Token);
@@ -398,9 +407,9 @@ public sealed class DocumentCaptureTests
             }
 
             // The system database captures its removals as one group for catalog followers (docs/decisions/0009); a client
-            // database captures nothing for an empty collection's drop.
+            // database captures only the empty collection's tombstone.
             await using var read = await store.BeginTransactionAsync(write: false, deadline.Token);
-            await Assert.That(await read.GetLastChangeSequenceAsync(deadline.Token)).IsEqualTo(store.Tenant is null ? before + 1 : 0);
+            await Assert.That(await read.GetLastChangeSequenceAsync(deadline.Token)).IsEqualTo(before + 1);
             await Assert.That(await read.GetVersionAsync("capture-tests", "physical", deadline.Token)).IsNull();
             await Assert.That(await read.GetVersionAsync("capture-tests", "dropped", deadline.Token)).IsNull();
             await Assert.That(await read.GetCollectionAsync(store.Tenant is null ? "capture-tests" : "items", deadline.Token)).IsNull();

@@ -140,6 +140,16 @@ internal static class SqliteStatements
             OR (excluded.version = documents.version AND documents.body IS NOT NULL);
         """;
 
+    // A replicated collection drop (a tombstone in _collections) removed every state of the collection older than itself.
+    public const string DroppedCollection =
+        $"SELECT 1 FROM documents WHERE collection = '{DocumentChange.Collections}' AND id = $collection AND version > $version AND body IS NULL;";
+
+    // A replicated drop ends the live states older than itself, as the dropping member did; ties go to the document.
+    public const string TombstoneCollection =
+        "UPDATE documents SET version = $version, body = NULL WHERE collection = $collection AND version < $version AND body IS NOT NULL RETURNING id;";
+
+    public const string LiveDocument = "SELECT 1 FROM documents INDEXED BY documents_live WHERE collection = $collection AND body IS NOT NULL LIMIT 1;";
+
     // A drop captures all live documents and tombstones without reading JSON.
     public const string CollectionDocumentIds = "SELECT id, octet_length(id) FROM documents WHERE collection = $collection ORDER BY id LIMIT $limit;";
 
@@ -274,6 +284,9 @@ internal static class SqliteStatements
         [nameof(MaterializeRetainedDeletions)] = MaterializeRetainedDeletions,
         [nameof(ApplyDocument)] = ApplyDocument,
         [nameof(ApplyTombstone)] = ApplyTombstone,
+        [nameof(DroppedCollection)] = DroppedCollection,
+        [nameof(TombstoneCollection)] = TombstoneCollection,
+        [nameof(LiveDocument)] = LiveDocument,
         [nameof(CollectionDocumentIds)] = CollectionDocumentIds,
         [nameof(Origin)] = Origin,
         [nameof(Complete)] = Complete,

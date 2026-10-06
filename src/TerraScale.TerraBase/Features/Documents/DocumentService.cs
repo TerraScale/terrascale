@@ -103,7 +103,7 @@ internal sealed class DocumentService(IStorageEngine engine, TimeProvider time, 
             // A deleted document comes back as its tombstone, without a body, so its 404 can carry its version.
             return await transaction.GetAsync(key.Collection, key.Id, cancellationToken).ConfigureAwait(false)
                 ?? (await transaction.GetVersionAsync(key.Collection, key.Id, cancellationToken).ConfigureAwait(false) is { Deleted: true } tombstone
-                    ? new StoredDocument(key.Id, tombstone.Version, ReadOnlyMemory<byte>.Empty, transaction.Incarnation, Deleted: true)
+                    ? new StoredDocument(key.Id, tombstone.Version, ReadOnlyMemory<byte>.Empty, transaction.Scope, Deleted: true)
                     : null);
         }
     }
@@ -230,7 +230,7 @@ internal sealed class DocumentService(IStorageEngine engine, TimeProvider time, 
                 usage.RecordWrites(database, writes);
             }
 
-            return new WriteResult(offset, results, transaction.Incarnation);
+            return new WriteResult(offset, results, transaction.Scope);
         }
     }
 
@@ -258,7 +258,7 @@ internal sealed class DocumentService(IStorageEngine engine, TimeProvider time, 
                     await CheckAsync(transaction, put.Precondition, put.Collection, put.Id, current, cancellationToken).ConfigureAwait(false);
                     var version = await transaction.PutAsync(put.Collection, put.Id, put.Json, cancellationToken).ConfigureAwait(false);
                     return new OperationResult(put.Id, version, current is not { Deleted: false }, null,
-                        ETags.Version(transaction.Incarnation, put.Collection, put.Id, version, put.Json));
+                        ETags.Version(transaction.Scope, put.Collection, put.Id, version, put.Json));
                 }
 
             case PatchOperation patch:
@@ -273,7 +273,7 @@ internal sealed class DocumentService(IStorageEngine engine, TimeProvider time, 
                     var json = JsonSerializer.SerializeToUtf8Bytes(document, TerraBaseJsonContext.Default.JsonObject);
                     var version = await transaction.PutAsync(patch.Collection, patch.Id, json, cancellationToken).ConfigureAwait(false);
                     return new OperationResult(patch.Id, version, false, null,
-                        ETags.Version(transaction.Incarnation, patch.Collection, patch.Id, version, json));
+                        ETags.Version(transaction.Scope, patch.Collection, patch.Id, version, json));
                 }
 
             case DeleteOperation delete:
@@ -287,7 +287,7 @@ internal sealed class DocumentService(IStorageEngine engine, TimeProvider time, 
                     await CheckAsync(transaction, delete.Precondition, delete.Collection, delete.Id, current, cancellationToken).ConfigureAwait(false);
                     var version = await transaction.TombstoneAsync(delete.Collection, delete.Id, cancellationToken).ConfigureAwait(false);
                     return new OperationResult(delete.Id, version, false, null,
-                        ETags.Version(transaction.Incarnation, delete.Collection, delete.Id, version!.Value, ReadOnlyMemory<byte>.Empty, deleted: true));
+                        ETags.Version(transaction.Scope, delete.Collection, delete.Id, version!.Value, ReadOnlyMemory<byte>.Empty, deleted: true));
                 }
 
             case AssertOperation { Filter: null } absent:
@@ -379,7 +379,7 @@ internal sealed class DocumentService(IStorageEngine engine, TimeProvider time, 
             // Wildcards and unconditional writes need only existence. Exact tags also identify equal-version body winners.
             var body = state.Deleted ? ReadOnlyMemory<byte>.Empty
                 : json ?? (await LiveAsync(transaction, collection, id, cancellationToken).ConfigureAwait(false)).Json;
-            version = ETags.Version(transaction.Incarnation, collection, id, state.Version, body, state.Deleted);
+            version = ETags.Version(transaction.Scope, collection, id, state.Version, body, state.Deleted);
         }
 
         ETags.Check(precondition, current is { Deleted: false }, version);

@@ -52,9 +52,11 @@ public sealed class ReplicationShapeTests
         await Assert.That(head).IsGreaterThan(mergeVersion);
         var store = (await server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(tenant.Database("db"), CancellationToken.None))!;
         long journalHead;
+        Guid etagScope;
         await using (var read = await store.BeginTransactionAsync(write: false, CancellationToken.None))
         {
             journalHead = await read.GetLastChangeSequenceAsync(CancellationToken.None);
+            etagScope = read.Scope;
         }
 
         // Observe this server's waiter registration before sending the peer change: no timing sleeps.
@@ -101,7 +103,7 @@ public sealed class ReplicationShapeTests
         await Assert.That(op.GetProperty("document").GetRawText()).IsEqualTo("{\"state\":\"z-winner\"}");
         var imported = await DocumentApi.SendAsync(client, HttpMethod.Get, $"{documents}/{id}");
         imported.Status.ShouldBe(HttpStatusCode.OK);
-        await Assert.That(imported.ETag).IsEqualTo(ETags.Version(store.Incarnation, "items", id, mergeVersion, "{\"state\":\"z-winner\"}"u8.ToArray()));
+        await Assert.That(imported.ETag).IsEqualTo(ETags.Version(etagScope, "items", id, mergeVersion, "{\"state\":\"z-winner\"}"u8.ToArray()));
         await Assert.That(imported.Version).IsEqualTo(imported.ETag);
         await Assert.That(op.GetProperty("version").GetString()).IsEqualTo(imported.Version);
         if (equalVersion)
@@ -166,7 +168,7 @@ public sealed class ReplicationShapeTests
         await Assert.That(deletionOp.GetProperty("id").GetString()).IsEqualTo(id);
         await Assert.That(deletionOp.TryGetProperty("version", out _)).IsFalse();
         await Assert.That(tombstone.ETag).IsNotEqualTo(imported.Version);
-        await Assert.That(tombstone.ETag).IsEqualTo(ETags.Version(store.Incarnation, "items", id, mergeVersion, ReadOnlyMemory<byte>.Empty, deleted: true));
+        await Assert.That(tombstone.ETag).IsEqualTo(ETags.Version(etagScope, "items", id, mergeVersion, ReadOnlyMemory<byte>.Empty, deleted: true));
         var staleRecreation = await DocumentApi.SendAsync(client, HttpMethod.Put, $"{documents}/{id}",
             JsonContent.Create(new { state = "stale-recreation" }), DocumentApi.IfMatch(imported.Version));
         staleRecreation.Status.ShouldBe(HttpStatusCode.PreconditionFailed);

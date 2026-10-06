@@ -47,6 +47,10 @@ public sealed class QueryPlanTests
         ["MaterializeRetainedDeletions"] = "SCAN changes USING INDEX changes_deleted",
         ["ApplyDocument"] = "",
         ["ApplyTombstone"] = "",
+        // Replicated collection metadata (TS-574): the drop register is a document; a drop walks one collection's key range.
+        ["DroppedCollection"] = "SEARCH documents USING PRIMARY KEY (collection=? AND id=?)",
+        ["TombstoneCollection"] = "SEARCH documents USING PRIMARY KEY (collection=?)",
+        ["LiveDocument"] = "SEARCH documents USING INDEX documents_live (collection=?)",
         ["CollectionDocumentIds"] = "SEARCH documents USING PRIMARY KEY (collection=?)",
         ["Origin"] = "SEARCH commit_offset USING INTEGER PRIMARY KEY (rowid=?)",
         ["Complete"] = "SEARCH replication_state USING INTEGER PRIMARY KEY (rowid=?)",

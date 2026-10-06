@@ -1,5 +1,7 @@
+using System.Buffers;
 using System.Globalization;
 using System.Text;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using Microsoft.Data.Sqlite;
 using SQLitePCL;
@@ -119,67 +121,79 @@ internal sealed partial class SqliteStorageTransaction
         {
             ArgumentNullException.ThrowIfNull(index);
             ThrowIfReadOnly();
-            if (!IndexName().IsMatch(index.Name) || !DatabaseName.TryParse(index.Collection, out _) || index.Fields.Count is < 1 or > 4)
-            {
-                throw new ArgumentException("invalid index definition", nameof(index));
-            }
-
-            if (IndexExists(index.Name))
+            if (!CreateIndex(index, cancellationToken))
             {
                 return false;
             }
 
-            // The collection leads the key, so the index also orders a whole collection by its fields (ORDER BY),
-            // not only answers equality on them.
-            var keys = "collection, " + string.Join(", ", index.Fields.Select(Column));
-            // Without statistics the planner prefers the primary key or documents_live, whose leading column (collection) is
-            // also an equality, over any secondary index. ANALYZE of the new index alone reads only that partial index, so
-            // the write lock is held for its collection's size, not the database's. The two collection-leading indexes get
-            // no full scan either: each is seeded or raised from the new index's row count when that establishes a larger
-            // lower bound for the table (SQLite lets applications write to sqlite_stat1), and the statistics are reloaded.
-            // The primary key's statistics row is named after the table (WITHOUT ROWID).
-            // ponytail: statistics are refreshed only when an index is built; run PRAGMA optimize periodically if data shifts a lot.
-            var name = IndexPrefix + index.Name;
-            var command = PlainCommand($"""
-            CREATE INDEX "{name}" ON documents ({keys}) WHERE collection = '{index.Collection}' AND body IS NOT NULL;
-            ANALYZE "{name}";
-            DELETE FROM sqlite_stat1
-                WHERE tbl = 'documents' AND idx IN ('documents', 'documents_live')
-                AND CAST(substr(stat, 1, instr(stat || ' ', ' ') - 1) AS INTEGER)
-                    < (SELECT CAST(substr(stat, 1, instr(stat || ' ', ' ') - 1) AS INTEGER) FROM sqlite_stat1 WHERE idx = '{name}');
-            INSERT INTO sqlite_stat1 (tbl, idx, stat)
-                SELECT 'documents', seeded.idx, rows || ' ' || rows || ' 1'
-                FROM (SELECT substr(stat, 1, instr(stat || ' ', ' ') - 1) AS rows FROM sqlite_stat1 WHERE idx = '{name}'),
-                    (SELECT 'documents' AS idx UNION ALL SELECT 'documents_live') AS seeded
-                WHERE NOT EXISTS (SELECT 1 FROM sqlite_stat1 WHERE tbl = 'documents' AND idx = seeded.idx);
-            ANALYZE sqlite_schema;
-            """);
-            using (command)
-            {
-                raw.sqlite3_progress_handler(session.Connection.Handle, 1000, _ => cancellationToken.IsCancellationRequested ? 1 : 0, null);
-                try
-                {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    command.ExecuteNonQuery();
-                }
-                catch (SqliteException error) when (error.SqliteErrorCode == raw.SQLITE_INTERRUPT && cancellationToken.IsCancellationRequested)
-                {
-                    _faulted = true;
-                    throw new OperationCanceledException("index build canceled", error, cancellationToken);
-                }
-                catch
-                {
-                    _faulted = true;
-                    throw;
-                }
-                finally
-                {
-                    StopQueryBudget();
-                }
-            }
-
+            WriteMetadata(DocumentChange.Indexes, index.Name, IndexMetadata(index));
             return true;
         }, cancellationToken, mutation: true);
+    }
+
+    // Worker-only, inside a mutation.
+    private bool CreateIndex(IndexDefinition index, CancellationToken cancellationToken)
+    {
+        if (!IndexName().IsMatch(index.Name) || !DatabaseName.TryParse(index.Collection, out _) || index.Fields.Count is < 1 or > 4)
+        {
+            throw new ArgumentException("invalid index definition", nameof(index));
+        }
+
+        if (IndexExists(index.Name))
+        {
+            return false;
+        }
+
+        // The collection leads the key, so the index also orders a whole collection by its fields (ORDER BY),
+        // not only answers equality on them.
+        var keys = "collection, " + string.Join(", ", index.Fields.Select(Column));
+        // Without statistics the planner prefers the primary key or documents_live, whose leading column (collection) is
+        // also an equality, over any secondary index. ANALYZE of the new index alone reads only that partial index, so
+        // the write lock is held for its collection's size, not the database's. The two collection-leading indexes get
+        // no full scan either: each is seeded or raised from the new index's row count when that establishes a larger
+        // lower bound for the table (SQLite lets applications write to sqlite_stat1), and the statistics are reloaded.
+        // The primary key's statistics row is named after the table (WITHOUT ROWID).
+        // ponytail: statistics are refreshed only when an index is built; run PRAGMA optimize periodically if data shifts a lot.
+        var name = IndexPrefix + index.Name;
+        var command = PlainCommand($"""
+        CREATE INDEX "{name}" ON documents ({keys}) WHERE collection = '{index.Collection}' AND body IS NOT NULL;
+        ANALYZE "{name}";
+        DELETE FROM sqlite_stat1
+            WHERE tbl = 'documents' AND idx IN ('documents', 'documents_live')
+            AND CAST(substr(stat, 1, instr(stat || ' ', ' ') - 1) AS INTEGER)
+                < (SELECT CAST(substr(stat, 1, instr(stat || ' ', ' ') - 1) AS INTEGER) FROM sqlite_stat1 WHERE idx = '{name}');
+        INSERT INTO sqlite_stat1 (tbl, idx, stat)
+            SELECT 'documents', seeded.idx, rows || ' ' || rows || ' 1'
+            FROM (SELECT substr(stat, 1, instr(stat || ' ', ' ') - 1) AS rows FROM sqlite_stat1 WHERE idx = '{name}'),
+                (SELECT 'documents' AS idx UNION ALL SELECT 'documents_live') AS seeded
+            WHERE NOT EXISTS (SELECT 1 FROM sqlite_stat1 WHERE tbl = 'documents' AND idx = seeded.idx);
+        ANALYZE sqlite_schema;
+        """);
+        using (command)
+        {
+            raw.sqlite3_progress_handler(session.Connection.Handle, 1000, _ => cancellationToken.IsCancellationRequested ? 1 : 0, null);
+            try
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                command.ExecuteNonQuery();
+            }
+            catch (SqliteException error) when (error.SqliteErrorCode == raw.SQLITE_INTERRUPT && cancellationToken.IsCancellationRequested)
+            {
+                _faulted = true;
+                throw new OperationCanceledException("index build canceled", error, cancellationToken);
+            }
+            catch
+            {
+                _faulted = true;
+                throw;
+            }
+            finally
+            {
+                StopQueryBudget();
+            }
+        }
+
+        return true;
     }
 
     public ValueTask<bool> DropIndexAsync(string name, CancellationToken cancellationToken)
@@ -187,28 +201,61 @@ internal sealed partial class SqliteStorageTransaction
         return RunAsync(() =>
         {
             ThrowIfReadOnly();
-            if (!IndexName().IsMatch(name) || !IndexExists(name))
+            if (!DropIndex(name, cancellationToken))
             {
                 return false;
             }
 
-            var command = PlainCommand($"DROP INDEX \"{IndexPrefix}{name}\";");
-            using (command)
-            {
-                try
-                {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    command.ExecuteNonQuery();
-                }
-                catch
-                {
-                    _faulted = true;
-                    throw;
-                }
-            }
-
+            WriteMetadata(DocumentChange.Indexes, name, null);
             return true;
         }, cancellationToken, mutation: true);
+    }
+
+    // Worker-only, inside a mutation.
+    private bool DropIndex(string name, CancellationToken cancellationToken)
+    {
+        if (!IndexName().IsMatch(name) || !IndexExists(name))
+        {
+            return false;
+        }
+
+        var command = PlainCommand($"DROP INDEX \"{IndexPrefix}{name}\";");
+        using (command)
+        {
+            try
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                command.ExecuteNonQuery();
+            }
+            catch
+            {
+                _faulted = true;
+                throw;
+            }
+        }
+
+        return true;
+    }
+
+    // The replicated definition of an index, as ReadMetadata reads it back.
+    private static string IndexMetadata(IndexDefinition index)
+    {
+        var buffer = new ArrayBufferWriter<byte>();
+        using (var writer = new Utf8JsonWriter(buffer))
+        {
+            writer.WriteStartObject();
+            writer.WriteString("collection", index.Collection);
+            writer.WriteStartArray("fields");
+            foreach (var field in index.Fields)
+            {
+                writer.WriteStringValue(field.Path);
+            }
+
+            writer.WriteEndArray();
+            writer.WriteEndObject();
+        }
+
+        return Encoding.UTF8.GetString(buffer.WrittenSpan);
     }
 
     private bool IndexExists(string name)

@@ -210,7 +210,7 @@ internal sealed class StampingStorageEngine(IStorageEngine inner, ISystemReplica
         private ulong[]? _written;
         private bool _collectionsWritten;
 
-        public Guid Incarnation => inner.Incarnation;
+        public Guid Scope => inner.Scope;
 
         public ValueTask<StoredDocument?> GetAsync(string collection, string id, CancellationToken cancellationToken) =>
             RunAsync(() => inner.GetAsync(collection, id, cancellationToken), cancellationToken);

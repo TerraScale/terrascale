@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
@@ -59,7 +60,7 @@ internal sealed partial class SqliteStorageTransaction(
 
     // Taken when the transaction begins: a catalog follower adopting its primary's incarnation never mixes it into a
     // snapshot read before.
-    public Guid Incarnation { get; } = store.Incarnation;
+    public Guid Scope { get; } = store.Scope;
 
     public ValueTask<StoredDocument?> GetAsync(string collection, string id, CancellationToken cancellationToken) =>
         RunAsync(() => ReadDocument(collection, id), cancellationToken);
@@ -71,7 +72,7 @@ internal sealed partial class SqliteStorageTransaction(
         command.Parameters.AddWithValue("$id", id);
         using var reader = command.ExecuteReader();
         return reader.Read() && !reader.IsDBNull(1)
-            ? new StoredDocument(id, reader.GetInt64(0), reader.GetFieldValue<byte[]>(1), Incarnation)
+            ? new StoredDocument(id, reader.GetInt64(0), reader.GetFieldValue<byte[]>(1), Scope)
             : null;
     }
 
@@ -285,7 +286,7 @@ internal sealed partial class SqliteStorageTransaction(
                 }
 
                 bytes += size;
-                documents.Add(new StoredDocument(reader.GetString(0), reader.GetInt64(1), reader.GetFieldValue<byte[]>(2), Incarnation));
+                documents.Add(new StoredDocument(reader.GetString(0), reader.GetInt64(1), reader.GetFieldValue<byte[]>(2), Scope));
             }
 
             return new DocumentPage(documents, HasMore: false);
@@ -542,7 +543,7 @@ internal sealed partial class SqliteStorageTransaction(
                     }
 
                     bytes += reader.GetInt64(4);
-                    rows.Add(new QueryRow(new StoredDocument(id, reader.GetInt64(2), ReadShapeJson(reader, 3), Incarnation), []));
+                    rows.Add(new QueryRow(new StoredDocument(id, reader.GetInt64(2), ReadShapeJson(reader, 3), Scope), []));
                     examined = id;
                     // The last row may cross the byte limit; the caller trims the page to its serialized size.
                     if (bytes >= query.MaxBytes)
@@ -634,9 +635,9 @@ internal sealed partial class SqliteStorageTransaction(
                         var document = !read ? null : query is not null
                             ? ReadDocument(query.Collection, changes.GetString(0))
                             : changes.IsDBNull(2)
-                                ? new StoredDocument(changes.GetString(0), changes.GetInt64(1), ReadOnlyMemory<byte>.Empty, Incarnation, Deleted: true,
+                                ? new StoredDocument(changes.GetString(0), changes.GetInt64(1), ReadOnlyMemory<byte>.Empty, Scope, Deleted: true,
                                     HistoryOffset: changes.GetInt64(3))
-                                : new StoredDocument(changes.GetString(0), changes.GetInt64(1), ReadShapeJson(changes, 2), Incarnation,
+                                : new StoredDocument(changes.GetString(0), changes.GetInt64(1), ReadShapeJson(changes, 2), Scope,
                                     HistoryOffset: changes.GetInt64(3));
                         if (queryBudget.Spent >= QueryDeadline)
                         {
@@ -708,8 +709,35 @@ internal sealed partial class SqliteStorageTransaction(
         return await RunAsync(() =>
         {
             ThrowIfReadOnly();
-            return CreateCollection(collection);
+            if (!CreateCollection(collection))
+            {
+                return false;
+            }
+
+            WriteMetadata(DocumentChange.Collections, collection.Name, string.Create(CultureInfo.InvariantCulture, $$"""{"created_at":{{collection.CreatedAt}}}"""));
+            return true;
         }, cancellationToken, mutation: true).ConfigureAwait(false);
+    }
+
+    // Client databases record their collections and indexes as documents of reserved collections, so creations and drops
+    // replicate with their transaction and merge like document states (TS-574). A replicated transaction's own metadata
+    // stays local: the imported states carry what it needs.
+    private void WriteMetadata(string collection, string name, string? body)
+    {
+        if (!Shaped || _importedFromOffset is not null)
+        {
+            return;
+        }
+
+        var offset = Offset();
+        var put = BodyCommand(SqliteStatements.Put, collection, name);
+        put.Parameters.AddWithValue("$version", offset);
+        put.Parameters.AddWithValue("$body", (object?)body ?? DBNull.Value);
+        put.ExecuteNonQuery();
+        if (_changes is not null)
+        {
+            Capture(new DocumentChange(collection, name, offset, body is null ? null : (ReadOnlyMemory<byte>?)Encoding.UTF8.GetBytes(body)));
+        }
     }
 
     private bool CreateCollection(CollectionInfo collection)
@@ -829,6 +857,7 @@ internal sealed partial class SqliteStorageTransaction(
             }
 
             Write(_ => { }, cancellationToken);
+            WriteMetadata(DocumentChange.Collections, name, null);
             return true;
         }, cancellationToken, mutation: true).ConfigureAwait(false);
     }
@@ -995,31 +1024,137 @@ internal sealed partial class SqliteStorageTransaction(
                 return false;
             }
 
-            // Replication carries document state, not collection metadata; provide the addressed collection.
-            CreateCollection(new CollectionInfo(change.Collection, 0));
-            bool changed;
-            if (change.Json is not null)
+            if (Shaped && change.Collection is DocumentChange.Collections or DocumentChange.Indexes)
             {
-                var document = BodyCommand(SqliteStatements.ApplyDocument, change.Collection, change.Id);
-                document.Parameters.AddWithValue("$version", change.Version);
-                document.Parameters.AddWithValue("$body", admittedBody!);
-                changed = document.ExecuteNonQuery() > 0;
-            }
-            else
-            {
-                var deletion = Command(SqliteStatements.ApplyTombstone, change.Collection);
-                deletion.Parameters.AddWithValue("$id", change.Id);
-                deletion.Parameters.AddWithValue("$version", change.Version);
-                changed = deletion.ExecuteNonQuery() > 0;
+                return ApplyMetadata(change, admittedBody, cancellationToken);
             }
 
-            if (changed && Shaped)
+            if (Shaped && Dropped(change))
             {
-                _appliedChanges.Add(change);
+                return false;
+            }
+
+            var changed = ApplyState(change, admittedBody);
+            if (changed)
+            {
+                // A winning state implies its collection, whether or not its creation replicated; a losing one changes
+                // nothing, so it cannot revive a collection a replicated drop removed.
+                CreateCollection(new CollectionInfo(change.Collection, 0));
+                if (Shaped)
+                {
+                    _appliedChanges.Add(change);
+                }
             }
 
             return changed;
         }, cancellationToken, mutation: true).ConfigureAwait(false);
+    }
+
+    private bool Dropped(DocumentChange change)
+    {
+        var dropped = Command(SqliteStatements.DroppedCollection, change.Collection);
+        dropped.Parameters.AddWithValue("$version", change.Version);
+        return dropped.ExecuteScalar() is not null;
+    }
+
+    private bool ApplyState(DocumentChange change, string? admittedBody)
+    {
+        if (change.Json is not null)
+        {
+            var document = BodyCommand(SqliteStatements.ApplyDocument, change.Collection, change.Id);
+            document.Parameters.AddWithValue("$version", change.Version);
+            document.Parameters.AddWithValue("$body", admittedBody!);
+            return document.ExecuteNonQuery() > 0;
+        }
+
+        var deletion = Command(SqliteStatements.ApplyTombstone, change.Collection);
+        deletion.Parameters.AddWithValue("$id", change.Id);
+        deletion.Parameters.AddWithValue("$version", change.Version);
+        return deletion.ExecuteNonQuery() > 0;
+    }
+
+    // Metadata merges like a document: only a winning state creates or drops the collection or index it describes.
+    private bool ApplyMetadata(DocumentChange change, string? body, CancellationToken cancellationToken)
+    {
+        var collections = change.Collection == DocumentChange.Collections;
+        if (collections ? !DatabaseName.TryParse(change.Id, out _) : !IndexName().IsMatch(change.Id))
+        {
+            throw new InvalidDataException("replicated metadata names an invalid collection or index");
+        }
+
+        var created = body is null ? null : ReadMetadata(change.Id, body, collections);
+        if (!ApplyState(change, body))
+        {
+            return false;
+        }
+
+        switch (created)
+        {
+            case CollectionInfo collection:
+                CreateCollection(collection);
+                break;
+            case IndexDefinition index:
+                DropIndex(index.Name, cancellationToken);
+                CreateIndex(index, cancellationToken);
+                break;
+            case null when collections:
+                DropReplicatedCollection(change.Id, change.Version, cancellationToken);
+                break;
+            default:
+                DropIndex(change.Id, cancellationToken);
+                break;
+        }
+
+        return true;
+    }
+
+    // The documents WriteMetadata records; anything else fails the replicated group.
+    private static object ReadMetadata(string name, string body, bool collection)
+    {
+        try
+        {
+            using var json = JsonDocument.Parse(body);
+            var root = json.RootElement;
+            if (collection)
+            {
+                return new CollectionInfo(name, root.GetProperty("created_at").GetInt64());
+            }
+
+            var fields = root.GetProperty("fields").EnumerateArray()
+                .Select(field => DocumentField.TryParse(field.GetString(), out var parsed) ? parsed : throw new InvalidDataException("invalid index field"))
+                .ToList();
+            return DatabaseName.TryParse(root.GetProperty("collection").GetString(), out var indexed) && fields.Count is >= 1 and <= 4
+                ? new IndexDefinition(name, indexed.Value, fields)
+                : throw new InvalidDataException("invalid index definition");
+        }
+        catch (Exception error) when (error is JsonException or KeyNotFoundException or InvalidOperationException or FormatException)
+        {
+            throw new InvalidDataException("replicated metadata is not a collection or index definition", error);
+        }
+    }
+
+    // A replicated drop ends every live state of the collection older than itself, as the dropping member did, and removes
+    // the collection once nothing live remains; a write another member made at or after the drop keeps it.
+    private void DropReplicatedCollection(string name, long version, CancellationToken cancellationToken)
+    {
+        var tombstones = Command(SqliteStatements.TombstoneCollection, name);
+        tombstones.Parameters.AddWithValue("$version", version);
+        using (var reader = tombstones.ExecuteReader())
+        {
+            while (reader.Read())
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                // ponytail: one entry per document the dropping member had not seen, bounded by replication lag, not a limit.
+                _appliedChanges.Add(new DocumentChange(name, reader.GetString(0), version, null));
+            }
+        }
+
+        if (Command(SqliteStatements.LiveDocument, name).ExecuteScalar() is null)
+        {
+            Command(SqliteStatements.DropHistory, name).ExecuteNonQuery();
+            _metadataChanged |= Command(SqliteStatements.DropCollection, name).ExecuteNonQuery() > 0;
+            _appliedChanges.RemoveAll(applied => applied.Collection == name);
+        }
     }
 
     public ValueTask<long> GetAppliedSequenceAsync(ReadOnlyMemory<byte> origin, CancellationToken cancellationToken) =>

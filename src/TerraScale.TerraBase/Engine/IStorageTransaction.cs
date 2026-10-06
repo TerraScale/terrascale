@@ -8,10 +8,10 @@ namespace TerraScale.TerraBase.Engine;
 /// <param name="Id">Document id, unique within its collection.</param>
 /// <param name="Version">Merge version of the last write: its originating database commit offset.</param>
 /// <param name="Json">UTF-8 JSON text; empty for a tombstone.</param>
-/// <param name="Incarnation">Persisted identity of the owning database incarnation.</param>
+/// <param name="Scope">Identity that scopes the document's ETag: the same on every member serving its database.</param>
 /// <param name="Deleted">Whether this is a tombstone left by a delete.</param>
 /// <param name="HistoryOffset">Local commit offset when read from shape history; separate from the merge version.</param>
-public sealed record StoredDocument(string Id, long Version, ReadOnlyMemory<byte> Json, Guid Incarnation, bool Deleted = false, long? HistoryOffset = null);
+public sealed record StoredDocument(string Id, long Version, ReadOnlyMemory<byte> Json, Guid Scope, bool Deleted = false, long? HistoryOffset = null);
 
 /// <summary>One page of documents in id order.</summary>
 /// <param name="Documents">The documents of this page.</param>
@@ -52,11 +52,20 @@ public sealed record CollectionInfo(string Name, long CreatedAt, long Generation
 /// <param name="Json">UTF-8 JSON text, or <see langword="null"/> for a deletion.</param>
 public sealed record DocumentChange(string Collection, string Id, long Version, ReadOnlyMemory<byte>? Json)
 {
+    /// <summary>
+    /// Reserved collection of a client database's collections: one document per collection, a tombstone once dropped, so
+    /// creations and drops replicate and merge like documents. No client collection can have the name.
+    /// </summary>
+    internal const string Collections = "_collections";
+
+    /// <summary>Reserved collection of a client database's secondary indexes: one definition per index, a tombstone once dropped.</summary>
+    internal const string Indexes = "_indexes";
+
     private static readonly UTF8Encoding Utf8 = new(false, true);
 
     internal static bool HasValidKey(string collection, string id)
     {
-        if (!DatabaseName.TryParse(collection, out _) || id.Length is 0 or > 256 || id.Any(char.IsControl))
+        if (!(DatabaseName.TryParse(collection, out _) || collection is Collections or Indexes) || id.Length is 0 or > 256 || id.Any(char.IsControl))
         {
             return false;
         }
@@ -88,8 +97,11 @@ public interface IStorageTransaction : IAsyncDisposable
     /// <summary>Most UTF-8 bytes of collections, ids and JSON one captured write transaction may commit.</summary>
     const int MaxChangeGroupBytes = 2 * 1024 * 1024;
 
-    /// <summary>Persisted identity of this database incarnation, distinct after deletion/recreation or copying.</summary>
-    Guid Incarnation { get; }
+    /// <summary>
+    /// Identity that scopes document ETags: derived from a client database's organization, project and database ids, so
+    /// it is the same on every member and distinct after deletion/recreation or copying; the system database's incarnation.
+    /// </summary>
+    Guid Scope { get; }
 
     /// <summary>Reads one live document, or <see langword="null"/> when it is absent or deleted.</summary>
     ValueTask<StoredDocument?> GetAsync(string collection, string id, CancellationToken cancellationToken);

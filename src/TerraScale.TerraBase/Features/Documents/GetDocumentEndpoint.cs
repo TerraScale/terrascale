@@ -17,7 +17,7 @@ public sealed class GetDocumentEndpoint(IDocumentService documents, ITenantDirec
         Get(DocumentRoute.Collection + "/{id}");
         Name("getDocument");
         Summary("Reads a JSON document");
-        Description("Sends the document state as a strong ETag, including the persisted database incarnation, merge version, JSON and deletion state. Equal-version replicated body changes get distinct validators. If-None-Match with the current version returns 304. A deleted document returns 404 not_found with its tombstone's ETag, so it can be recreated with If-Match.");
+        Description("Sends the document state as a strong ETag, including the database identity (the same on every member), merge version, JSON and deletion state. Equal-version replicated body changes get distinct validators. If-None-Match with the current version returns 304. A deleted document returns 404 not_found with its tombstone's ETag, so it can be recreated with If-Match.");
         Tags("Documents");
         Produces<DocumentBody>();
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
@@ -41,7 +41,7 @@ public sealed class GetDocumentEndpoint(IDocumentService documents, ITenantDirec
     private async ValueTask<IResult> ReadAsync(DocumentKey key, CancellationToken cancellationToken)
     {
         var document = await documents.GetAsync(key, cancellationToken);
-        var version = document is null ? null : ETags.Version(document.Incarnation, key.Collection, document.Id, document.Version, document.Json, document.Deleted);
+        var version = document is null ? null : ETags.Version(document.Scope, key.Collection, document.Id, document.Version, document.Json, document.Deleted);
         return ETags.CheckNotModified(HttpContext, document is { Deleted: false }, version) switch
         {
             Validation error => ErrorResponse.From(error),
@@ -71,6 +71,6 @@ public sealed class GetDocumentEndpoint(IDocumentService documents, ITenantDirec
         cancellationToken.ThrowIfCancellationRequested();
         using var json = JsonDocument.Parse(document.Json, RequestJson.StoredDocumentOptions);
         var body = project is null ? json.RootElement.Clone() : Projection.Apply(json.RootElement, project, cancellationToken);
-        return new DocumentBody(document.Id, ETags.Version(document.Incarnation, collection, document.Id, document.Version, document.Json), "value", body);
+        return new DocumentBody(document.Id, ETags.Version(document.Scope, collection, document.Id, document.Version, document.Json), "value", body);
     }
 }

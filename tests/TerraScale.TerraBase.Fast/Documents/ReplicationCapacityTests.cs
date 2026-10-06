@@ -48,9 +48,10 @@ public sealed class ReplicationCapacityTests
             await Assert.That((current.Status, current.Version)).IsEqualTo((HttpStatusCode.OK, versions[i]));
         }
 
-        await AssertStateAsync(api, 3, 3);
+        // Group 1 created the collection.
+        await AssertStateAsync(api, 3, 4);
         (await api.PutAsync(DocumentApi.NewId(), new { n = 1 })).Status.ShouldBe(HttpStatusCode.Created);
-        await AssertStateAsync(api, 4, 4);
+        await AssertStateAsync(api, 4, 5);
     }
 
     [Test]
@@ -65,9 +66,10 @@ public sealed class ReplicationCapacityTests
 
         await Assert.That((dropped.Status, dropped.Code, dropped.Op)).IsEqualTo((HttpStatusCode.ServiceUnavailable, "capacity", (int?)null));
         await Assert.That((await api.SendAsync(HttpMethod.Get, $"{api.Collections}/items")).Status).IsEqualTo(HttpStatusCode.OK);
-        await AssertStateAsync(api, 1025, 2);
+        // Group 1 created the collection.
+        await AssertStateAsync(api, 1025, 3);
         (await api.PutAsync(DocumentApi.NewId(), new { n = 3 })).Status.ShouldBe(HttpStatusCode.Created);
-        await AssertStateAsync(api, 1026, 3);
+        await AssertStateAsync(api, 1026, 4);
     }
 
     private static async Task AssertStateAsync(DocumentApi api, long count, long sequence)

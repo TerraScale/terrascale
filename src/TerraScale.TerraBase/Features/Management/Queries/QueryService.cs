@@ -277,7 +277,7 @@ internal sealed class QueryService(IStorageEngine engine, SystemCatalog catalog,
                     else if (field == DocumentField.Version)
                     {
                         // The version the data API reports for this document state, never the raw commit offset.
-                        writer.WriteStringValue(ETags.Version(document.Incarnation, collection, document.Id, document.Version, document.Json));
+                        writer.WriteStringValue(ETags.Version(document.Scope, collection, document.Id, document.Version, document.Json));
                     }
                     else if (Member(json.RootElement, field, members, cancellationToken) is { } value)
                     {

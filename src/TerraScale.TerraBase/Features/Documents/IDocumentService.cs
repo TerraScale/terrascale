@@ -67,8 +67,8 @@ public sealed record OperationResult(string? Id, long? Version, bool Created, lo
 /// <summary>Result of an atomic write.</summary>
 /// <param name="Offset">Database commit offset.</param>
 /// <param name="Results">One result per operation.</param>
-/// <param name="Incarnation">Persisted identity of the database that committed this write.</param>
-public sealed record WriteResult(long Offset, IReadOnlyList<OperationResult> Results, Guid Incarnation);
+/// <param name="Scope">ETag scope of the database that committed this write.</param>
+public sealed record WriteResult(long Offset, IReadOnlyList<OperationResult> Results, Guid Scope);
 
 /// <summary>
 /// JSON document operations for the client API, over <see cref="IStorageEngine"/>. Failures are

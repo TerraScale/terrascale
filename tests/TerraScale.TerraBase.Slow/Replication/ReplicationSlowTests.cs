@@ -119,7 +119,8 @@ public sealed class ReplicationSlowTests
                 {
                     var batch = requests.Current.CommittedGroup;
                     await responses.WriteAsync(FakePeer.Ack(member, batch, batch.EventId.Sequence), context.CancellationToken);
-                    if (!broken)
+                    // Group 1 created the healthy collection before the lock; group 2 is the write made under it.
+                    if (!broken && batch.EventId.Sequence == 2)
                     {
                         healthyReceived.TrySetResult();
                     }
@@ -151,8 +152,9 @@ public sealed class ReplicationSlowTests
             }
             else
             {
+                // The broken database's collection creation and write.
                 await TerraBaseTestServer.EventuallyAsync(async token =>
-                    await sender.MetricAsync("terrabase_replication_sender_durable_lag", "", token) == 1);
+                    await sender.MetricAsync("terrabase_replication_sender_durable_lag", "", token) == 2);
             }
 
             await Assert.That(locked).IsNotNull();
@@ -287,6 +289,12 @@ public sealed class ReplicationSlowTests
                         new { data = Convert.ToBase64String(faker.Random.Bytes(600 * 1024)) });
                     response.EnsureSuccessStatusCode();
                 }
+
+                // The peer already holds group 1, the collection's creation, so only the eight large groups travel.
+                var store = (await seed.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(tenant.Database("paced"), CancellationToken.None))!;
+                await using var read = await store.BeginTransactionAsync(write: false, CancellationToken.None);
+                applied = 1;
+                appliedDigest = Google.Protobuf.ByteString.CopyFrom((await read.GetChangeDigestAsync(1, CancellationToken.None))!.Value.Span);
             }
 
             await using var peer = await FakePeer.StartAsync(peerTls, async (requests, responses, context) =>
@@ -473,14 +481,15 @@ public sealed class ReplicationSlowTests
                 {
                     if (database == busyId && requests.Current.CommittedGroup is { } batch)
                     {
-                        if (batch.EventId.Sequence == 1)
+                        // Group 1 created the collection; group 2 is the initial write.
+                        if (batch.EventId.Sequence == 2)
                         {
                             firstBusy.TrySetResult();
                             await releaseFirst.Task.WaitAsync(token);
                         }
-                        else if (batch.EventId.Sequence == 258)
+                        else if (batch.EventId.Sequence == 259)
                         {
-                            // Initial head is one, followed by at most 256 groups in the next busy turn.
+                            // Initial head is two, followed by at most 256 groups in the next busy turn.
                             // A sender draining continuously reaches this gate before serving quiet.
                             if (!quietDurable.Task.IsCompletedSuccessfully)
                             {
@@ -517,7 +526,8 @@ public sealed class ReplicationSlowTests
                 while (await call.ResponseStream.MoveNext(token))
                 {
                     var response = call.ResponseStream.Current;
-                    if (database == quietId && response.Durable is { DurablePrefix: >= 1 })
+                    // Quiet's group 1 created its collection; group 2 is its write.
+                    if (database == quietId && response.Durable is { DurablePrefix: >= 2 })
                     {
                         quietDurable.TrySetResult();
                     }
@@ -556,7 +566,7 @@ public sealed class ReplicationSlowTests
             var source = (await sender.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(tenant.Database("busy"), stop.Token))!;
             await using (var read = await source.BeginTransactionAsync(write: false, stop.Token))
             {
-                await Assert.That(await read.GetLastChangeSequenceAsync(stop.Token)).IsEqualTo(1);
+                await Assert.That(await read.GetLastChangeSequenceAsync(stop.Token)).IsEqualTo(2);
             }
 
             busy = Task.WhenAll(Enumerable.Range(0, 4).Select(writerId => Task.Run(async () =>
@@ -606,7 +616,7 @@ public sealed class ReplicationSlowTests
             await using (var remote = await target.BeginTransactionAsync(write: false, stop.Token))
             {
                 var applied = await remote.GetAppliedSequenceAsync(await local.GetOriginAsync(stop.Token), stop.Token);
-                await Assert.That(applied).IsEqualTo(257);
+                await Assert.That(applied).IsEqualTo(258);
                 await Assert.That(await local.GetLastChangeSequenceAsync(stop.Token)).IsGreaterThan(applied);
             }
 

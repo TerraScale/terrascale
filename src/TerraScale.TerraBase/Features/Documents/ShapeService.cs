@@ -468,7 +468,7 @@ internal sealed class ShapeService : IShapeService
     }
 
     private static Op Upsert(string collection, StoredDocument document) =>
-        new("upsert", document.Id, ETags.Version(document.Incarnation, collection, document.Id, document.Version, document.Json), document.Json);
+        new("upsert", document.Id, ETags.Version(document.Scope, collection, document.Id, document.Version, document.Json), document.Json);
 
     // One op of a body: an upsert carries the version and the stored document bytes.
     private sealed record Op(string Kind, string Id, string? Version, ReadOnlyMemory<byte> Document);

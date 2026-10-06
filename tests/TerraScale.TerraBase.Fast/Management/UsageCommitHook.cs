@@ -197,7 +197,7 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
         public IAsyncEnumerable<StoredDocument> ChangesAsync(string collection, DocumentFilter? filter, long after, long through, CancellationToken cancellationToken) =>
             inner.ChangesAsync(collection, filter, after, through, cancellationToken);
 
-        public Guid Incarnation => inner.Incarnation;
+        public Guid Scope => inner.Scope;
         public ValueTask<StoredDocument?> GetAsync(string collection, string id, CancellationToken cancellationToken) => inner.GetAsync(collection, id, cancellationToken);
         public ValueTask<DocumentVersion?> GetVersionAsync(string collection, string id, CancellationToken cancellationToken) => inner.GetVersionAsync(collection, id, cancellationToken);
         public ValueTask<bool> DeleteAsync(string collection, string id, CancellationToken cancellationToken) => inner.DeleteAsync(collection, id, cancellationToken);

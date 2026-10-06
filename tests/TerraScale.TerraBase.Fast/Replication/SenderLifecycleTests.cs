@@ -67,16 +67,16 @@ public sealed class SenderLifecycleTests
         await PutAsync(tenant, writer, "first");
         await TerraBaseTestServer.ReplicatedAsync(sender);
         await completed.Task.WaitAsync(TimeSpan.FromSeconds(30));
-        await Assert.That(applied).IsEqualTo(1UL);
+        await Assert.That(applied).IsEqualTo(2UL);
 
         Volatile.Write(ref reject, 1);
         connection!.Abort();
         await refused.Task.WaitAsync(TimeSpan.FromSeconds(30));
         await TerraBaseTestServer.EventuallyAsync(async token =>
-            await sender.MetricAsync("terrabase_replication_sender_durable_lag", "", token) == 1);
+            await sender.MetricAsync("terrabase_replication_sender_durable_lag", "", token) == 2);
         Volatile.Write(ref reject, 0);
         await TerraBaseTestServer.ReplicatedAsync(sender);
-        await Assert.That(applied).IsEqualTo(1UL);
+        await Assert.That(applied).IsEqualTo(2UL);
     }
 
     [Test]
@@ -147,14 +147,14 @@ public sealed class SenderLifecycleTests
         await CreateAsync(tenant, writer);
         await PutAsync(tenant, writer, "first");
         await TerraBaseTestServer.ReplicatedAsync(sender);
-        await Assert.That(applied).IsEqualTo(1UL);
+        await Assert.That(applied).IsEqualTo(2UL);
         Volatile.Write(ref reject, 1);
         await refused.Task.WaitAsync(TimeSpan.FromSeconds(30));
         await TerraBaseTestServer.EventuallyAsync(async token =>
-            await sender.MetricAsync("terrabase_replication_sender_durable_lag", "", token) == 1);
+            await sender.MetricAsync("terrabase_replication_sender_durable_lag", "", token) == 2);
         Volatile.Write(ref reject, 0);
         await TerraBaseTestServer.ReplicatedAsync(sender);
-        await Assert.That(applied).IsEqualTo(1UL);
+        await Assert.That(applied).IsEqualTo(2UL);
     }
 
     [Test]
@@ -182,7 +182,11 @@ public sealed class SenderLifecycleTests
             {
                 var batch = requests.Current.CommittedGroup;
                 await responses.WriteAsync(FakePeer.Ack(member, batch, batch.EventId.Sequence), context.CancellationToken);
-                received.TrySetResult();
+                // Group 1 created the healthy collection; group 2 is the healthy document.
+                if (batch.EventId.Sequence == 2)
+                {
+                    received.TrySetResult();
+                }
             }
         });
         await using var sender = await TerraBaseTestServer.StartAsync(settings =>
@@ -208,7 +212,7 @@ public sealed class SenderLifecycleTests
         healthy.EnsureSuccessStatusCode();
         await received.Task.WaitAsync(TimeSpan.FromSeconds(30));
         await TerraBaseTestServer.EventuallyAsync(async token =>
-            await sender.MetricAsync("terrabase_replication_sender_durable_lag", "", token) == 1);
+            await sender.MetricAsync("terrabase_replication_sender_durable_lag", "", token) == 2);
     }
 
     private sealed class HeldRetryClock : TimeProvider
@@ -305,8 +309,9 @@ public sealed class SenderLifecycleTests
             {
                 var tenant = await ReplicationTenant.CreateAsync(seed, "backlog");
                 using var writer = clientTls.CreateClient(seed.ClientAddress!, await tenant.KeyAsync(seed, "documents:write"));
+                // 300 groups: the collection's creation and 299 writes.
                 await CreateAsync(tenant, writer);
-                for (var index = 0; index < 300; index++)
+                for (var index = 0; index < 299; index++)
                 {
                     await PutAsync(tenant, writer, "old");
                 }
@@ -402,7 +407,8 @@ public sealed class SenderLifecycleTests
                     heldNew.TrySetResult(batch);
                     await releaseNew.Task.WaitAsync(context.CancellationToken);
                 }
-                else if (batch.EventId.Sequence == 17)
+                // Groups 1 to 17 are the collection's creation and the first 16 writes.
+                else if (batch.EventId.Sequence == 18)
                 {
                     heldOld.TrySetResult(batch);
                     await releaseOld.Task.WaitAsync(context.CancellationToken);
@@ -443,22 +449,23 @@ public sealed class SenderLifecycleTests
 
         await Assert.That(await sender.MetricAsync("terrabase_replication_sender_durable_lag")).IsEqualTo(0);
         await engine.CreateDatabaseAsync(database, CancellationToken.None);
+        // The new database's groups: its collection's creation and the put.
         await CreateAsync(tenant, writer);
         await PutAsync(tenant, writer, "new");
-        await Assert.That(await sender.MetricAsync("terrabase_replication_sender_durable_lag")).IsEqualTo(1);
+        await Assert.That(await sender.MetricAsync("terrabase_replication_sender_durable_lag")).IsEqualTo(2);
         await orphan.CommitAsync(CancellationToken.None);
         await orphan.DisposeAsync();
-        await Assert.That(await sender.MetricAsync("terrabase_replication_sender_durable_lag")).IsEqualTo(1);
+        await Assert.That(await sender.MetricAsync("terrabase_replication_sender_durable_lag")).IsEqualTo(2);
         // Neither this old-origin ACK nor the old transaction's callback may revive retired state.
         releaseOld.SetResult();
         var batch = await heldNew.Task.WaitAsync(TimeSpan.FromSeconds(30));
         await Assert.That(batch.EventId.Sequence).IsEqualTo(1UL);
         await Assert.That(oldOrigin).IsNotNull();
         await Assert.That(batch.EventId.Origin.Incarnation.Span.SequenceEqual(oldOrigin!.Span)).IsFalse();
-        await Assert.That(await sender.MetricAsync("terrabase_replication_sender_durable_lag")).IsEqualTo(1);
+        await Assert.That(await sender.MetricAsync("terrabase_replication_sender_durable_lag")).IsEqualTo(2);
         releaseNew.SetResult();
         await TerraBaseTestServer.ReplicatedAsync(sender);
-        await Assert.That(prefixes[oldOrigin!]).IsEqualTo(17UL);
+        await Assert.That(prefixes[oldOrigin!]).IsEqualTo(18UL);
     }
 
     [Test]

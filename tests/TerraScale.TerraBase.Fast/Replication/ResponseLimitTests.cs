@@ -141,7 +141,8 @@ public sealed class ResponseLimitTests
                 written.EnsureSuccessStatusCode();
                 var store = (await seed.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(tenant.Database("db"), CancellationToken.None))!;
                 await using var read = await store.BeginTransactionAsync(write: false, CancellationToken.None);
-                proof = (await read.GetChangeDigestAsync(1, CancellationToken.None))!.Value;
+                // Group 1 created the collection; group 2 is the head.
+                proof = (await read.GetChangeDigestAsync(2, CancellationToken.None))!.Value;
             }
 
             var retry = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -168,7 +169,7 @@ public sealed class ResponseLimitTests
                 answer.Welcome.Frontiers.Add(new PeerFrontier
                 {
                     Origin = new OriginIdentity { ReplicaId = hello.LocalIdentity.MemberIncarnation, Incarnation = hello.LocalIdentity.MemberIncarnation },
-                    DurableSequence = 1,
+                    DurableSequence = 2,
                     JournalDigest = ByteString.CopyFrom(proof.Span),
                 });
                 using var encoded = new MemoryStream();
@@ -193,7 +194,7 @@ public sealed class ResponseLimitTests
                 settings["peer-addresses"] = peer.Address.ToString();
             });
             await retry.Task.WaitAsync(TimeSpan.FromSeconds(30));
-            await Assert.That(await sender.MetricAsync("terrabase_replication_sender_durable_lag")).IsEqualTo(1);
+            await Assert.That(await sender.MetricAsync("terrabase_replication_sender_durable_lag")).IsEqualTo(2);
             release.TrySetResult();
         }
         finally

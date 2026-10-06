@@ -210,7 +210,8 @@ public sealed class ClockAdmissionTests
             await Assert.That(stored.Version).IsEqualTo(VersionClock.MaxVersion);
             using var json = JsonDocument.Parse(stored.Json);
             await Assert.That(json.RootElement.GetProperty("value").GetString()).IsEqualTo(value);
-            await Assert.That(await remote.GetAppliedSequenceAsync(await local.GetOriginAsync(token), token)).IsEqualTo(1);
+            // Group 1 created the collection.
+            await Assert.That(await remote.GetAppliedSequenceAsync(await local.GetOriginAsync(token), token)).IsEqualTo(2);
             await Assert.That(await remote.GetOffsetAsync(token)).IsEqualTo(VersionClock.MaxVersion);
         }
 
@@ -218,7 +219,7 @@ public sealed class ClockAdmissionTests
         await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
         await using var final = await source.BeginTransactionAsync(write: false, token);
         await Assert.That(await final.GetOffsetAsync(token)).IsEqualTo(VersionClock.MaxVersion);
-        await Assert.That(await final.GetLastChangeSequenceAsync(token)).IsEqualTo(1);
+        await Assert.That(await final.GetLastChangeSequenceAsync(token)).IsEqualTo(2);
     }
 
     [Test]
