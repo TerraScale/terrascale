@@ -213,7 +213,7 @@ func overviewView(data pageData) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 12, "</div><a class=\"ts-link ts-meta\" href=\"/audit\">View persisted audit events →</a>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 12, "</div><a class=\"ts-link ts-meta\" href=\"/organization?tab=audit\">View persisted audit events →</a>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}

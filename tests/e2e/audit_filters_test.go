@@ -36,7 +36,7 @@ func TestAuditFiltersAndExportKeepAppliedValues(t *testing.T) {
 				return false
 			}
 		}
-		return u.Path == "/audit"
+		return u.Path == "/organization" && u.Query().Get("tab") == "audit"
 	})
 	for name, value := range values {
 		must(t, expect.Locator(filters.Locator(`[name="`+name+`"]`)).ToHaveValue(value))

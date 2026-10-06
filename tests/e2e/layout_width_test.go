@@ -50,14 +50,14 @@ func TestPageLayoutsFitContentColumn(t *testing.T) {
 						problems.push('.ts-main is not the named page container');
 					if (document.documentElement.scrollWidth > innerWidth + 1)
 						problems.push('horizontal page scroll: ' + document.documentElement.scrollWidth + ' > ' + innerWidth);
-					if (location.pathname === '/audit') {
+					if (location.pathname === '/organization' && new URLSearchParams(location.search).get('tab') === 'audit') {
 						const card = document.querySelector('#recent-activity');
 						const header = card?.querySelector('.ts-card-head');
 						if (!header?.querySelector('.ts-card-title') || !header?.querySelector('.ts-card-description') ||
 							header.querySelector('.ts-card-actions'))
 							problems.push('audit card head must hold only the title and description');
 						const filters = card?.querySelector('.ts-audit-filters');
-						const controls = filters ? [...filters.children] : [];
+						const controls = filters ? [...filters.children].filter(el => el.type !== 'hidden') : [];
 						const order = controls.map(el => el.htmlFor || (el.matches('.ts-audit-apply') ? 'apply' : 'export'));
 						if (order.join(',') !== 'audit-search,audit-action,audit-severity,audit-range,apply,export' ||
 							!controls[5]?.matches('.ts-menu') || card?.querySelectorAll('.ts-menu').length !== 1)

@@ -40,7 +40,7 @@ templ overviewView(data pageData) {
 			<div class="ts-chart-shell" role="region" aria-label="Activity chart. Scroll horizontally for the full plot." tabindex="0">
 				@charts.Line(data.ActivityChart)
 			</div>
-			<a class="ts-link ts-meta" href="/audit">View persisted audit events →</a>
+			<a class="ts-link ts-meta" href="/organization?tab=audit">View persisted audit events →</a>
 		}
 		@ui.Card(ui.CardProps{ID: "getting-started", Title: "Getting started", Description: "Get a database online and wire it into your stack."}) {
 			<ol class="ts-home-steps">

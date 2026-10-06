@@ -14,7 +14,7 @@ func TestOrganizationBillingTabsAndLegacyRedirect(t *testing.T) {
 		t.Fatalf("legacy billing did not redirect: %s", page.URL())
 	}
 	tabs := pageByRole(page, *playwright.AriaRoleNavigation, "Organization sections")
-	must(t, expect.Locator(tabs.Locator("a")).ToHaveText([]string{"Organization", "Members", "Projects", "Billing"}))
+	must(t, expect.Locator(tabs.Locator("a")).ToHaveText([]string{"Organization", "Members", "Projects", "Billing", "Audit"}))
 	must(t, expect.Locator(byRole(tabs, *playwright.AriaRoleLink, "Billing", true)).ToHaveAttribute("aria-current", "page"))
 	visible(t, pageByRole(page, *playwright.AriaRoleHeading, "Available plans"))
 	visible(t, pageByRole(page, *playwright.AriaRoleHeading, "Payment history"))
