@@ -12,6 +12,7 @@ import (
 
 	"github.com/a-h/templ"
 	"terrascale.tech/dashboard/internal/core"
+	"terrascale.tech/dashboard/internal/features/audit"
 	"terrascale.tech/dashboard/internal/features/payments"
 	"terrascale.tech/dashboard/internal/features/usage"
 	sdk "terrascale.tech/sdk"
@@ -173,7 +174,7 @@ func organizationPage(deps core.Deps, service Service, billing *payments.Stripe)
 			data.InvitationNotice = "Invitation declined"
 		}
 		data.Tab = r.URL.Query().Get("tab")
-		if !slices.Contains([]string{"organization", "members", "projects", "billing"}, data.Tab) {
+		if !slices.Contains([]string{"organization", "members", "projects", "billing", "audit"}, data.Tab) {
 			data.Tab = "organization"
 		}
 		if r.URL.Query().Get("newProject") == "1" {
@@ -182,6 +183,12 @@ func organizationPage(deps core.Deps, service Service, billing *payments.Stripe)
 		if data.Tab == "billing" {
 			usage.OrganizationBilling(deps, billing, func(page core.Page, content templ.Component) templ.Component {
 				return organizationBillingView(data, content)
+			})(w, r)
+			return
+		}
+		if data.Tab == "audit" {
+			audit.OrganizationAudit(deps, func(content templ.Component) templ.Component {
+				return organizationAuditView(data, content)
 			})(w, r)
 			return
 		}

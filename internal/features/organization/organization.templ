@@ -411,6 +411,7 @@ templ Tabs(active string) {
 		{Label: "Invitations", URL: "/organization?tab=invitations", Active: active == "invitations"},
 		{Label: "Projects", URL: "/organization?tab=projects", Active: active == "projects"},
 		{Label: "Billing", URL: "/organization?tab=billing", Active: active == "billing"},
+		{Label: "Audit", URL: "/organization?tab=audit", Active: active == "audit"},
 	})
 }
 
@@ -418,6 +419,14 @@ templ organizationBillingView(data organizationPageData, content templ.Component
 	<main class="ts-page">
 		@ui.PageHeader(data.Organization.Name)
 		@Tabs("billing")
+		@content
+	</main>
+}
+
+templ organizationAuditView(data organizationPageData, content templ.Component) {
+	<main class="ts-page ts-audit-page">
+		@ui.PageHeader(data.Organization.Name)
+		@Tabs("audit")
 		@content
 	</main>
 }

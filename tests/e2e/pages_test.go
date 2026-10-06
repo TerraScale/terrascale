@@ -34,7 +34,7 @@ var parityRouteStates = []routeState{
 	{key: "admin-usage", path: "/admin/usage", status: http.StatusForbidden},
 	{key: "admin-users", path: "/admin/users", status: http.StatusForbidden},
 	{key: "api-keys", path: "/api-keys", heading: "API keys"},
-	{key: "audit", path: "/audit", heading: "Audit"},
+	{key: "audit", path: "/organization?tab=audit", heading: "Recent activity"},
 	{key: "authentication", path: "/auth", heading: "Set up authentication"},
 	{key: "auth-audit", path: "/auth/audit", heading: "Audit log"},
 	{key: "auth-branding", path: "/auth/branding", heading: "Hosted page branding"},

@@ -19,8 +19,8 @@ import (
 // memberAccessibilityPaths are the signed-in account pages of the populated
 // sample account.
 var memberAccessibilityPaths = []string{
-	"/api-keys", "/organization?tab=members", "/organization?tab=members", "/organization?tab=invitations",
-	"/audit", "/usage", "/usage?tab=billing", "/subscriptions", "/billing",
+	"/api-keys", "/organization?tab=members", "/organization?tab=invitations",
+	"/organization?tab=audit", "/usage", "/usage?tab=billing", "/subscriptions", "/billing",
 	"/organization", "/organization?newOrganization=organization",
 	"/profile", "/profile?tab=security", "/profile?tab=sessions", "/notifications",
 	"/cli/approve", "/agent/approve",

@@ -172,7 +172,7 @@ var (
 		}},
 		{Label: "Secure", Items: []core.NavItem{
 			{Label: "API keys", URL: "/api-keys"},
-			{Label: "Authentication", URL: "/auth", Children: core.AuthNavigation()}, {Label: "Audit", URL: "/audit"},
+			{Label: "Authentication", URL: "/auth", Children: core.AuthNavigation()},
 		}},
 		{Label: "Manage", Items: []core.NavItem{
 			{Label: "Usage", URL: "/usage"},
