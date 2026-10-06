@@ -30,6 +30,19 @@ public sealed class CatalogDeletionTests
         var followerDirectory = Directory.CreateTempSubdirectory("terrabase-delete-follower-").FullName;
         TerraBaseTestServer? primary = null;
         TerraBaseTestServer? follower = null;
+        // A Sync stream for the database named here stops between its registration check and its open, until released.
+        string? paused = null;
+        using var reached = new SemaphoreSlim(0);
+        using var release = new SemaphoreSlim(0);
+        void Pause(string step, TenantContext database)
+        {
+            if (step == "replication.registered" && database.DatabaseId == Volatile.Read(ref paused))
+            {
+                reached.Release();
+                _ = release.Wait(TimeSpan.FromSeconds(30));
+            }
+        }
+
         Task<TerraBaseTestServer> StartFollowerAsync()
         {
             return TerraBaseTestServer.StartAsync(settings =>
@@ -38,7 +51,7 @@ public sealed class CatalogDeletionTests
                 tls.Apply(settings);
                 settings["data-directory"] = followerDirectory;
                 settings["catalog-primary"] = primary!.PeerAddress!.ToString();
-            });
+            }, services => services.AddSingleton<DatabaseLifecycleCheckpoint>(Pause));
         }
 
         try
@@ -75,24 +88,43 @@ public sealed class CatalogDeletionTests
 
             await Assert.That(File.Exists(FileOf(orders)) && File.Exists(FileOf(invoices))).IsTrue();
 
-            // Deleted while the follower follows: its file goes, and client replication cannot bring it back.
-            await Assert.That(await management.DeleteDatabaseAsync(user, organization.Id, project.Id, orders.DatabaseId!, token)).IsEqualTo(ManagementError.None);
-            await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(!File.Exists(FileOf(orders))));
+            // Deleted while the follower follows, and while a peer's Sync stream for it passed the registration check but has not
+            // opened it: the follower's file goes, the stream's reopened file goes too, and nothing brings it back.
+            using (var channel = peers.CreateChannel(follower.PeerAddress!))
+            {
+                var client = new Features.Replication.V1.Replication.ReplicationClient(channel);
+                Volatile.Write(ref paused, orders.DatabaseId);
+                var racing = HelloAsync(client, orders, token);
+                await reached.WaitAsync(token);
+                await Assert.That(await management.DeleteDatabaseAsync(user, organization.Id, project.Id, orders.DatabaseId!, token)).IsEqualTo(ManagementError.None);
+                await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(!File.Exists(FileOf(orders))));
+                release.Release();
+                var raced = await racing;
+                await Assert.That(raced.Error?.Code).IsEqualTo(StreamErrorCode.StreamErrorUnauthorized);
+                await Assert.That(File.Exists(FileOf(orders))).IsFalse();
+
+                var refused = await HelloAsync(client, orders, token);
+                await Assert.That(refused.Error?.Code).IsEqualTo(StreamErrorCode.StreamErrorUnauthorized);
+                await Assert.That(refused.Error!.Retryable).IsTrue();
+                await Assert.That(File.Exists(FileOf(orders))).IsFalse();
+                await Assert.That((await HelloAsync(client, invoices, token)).Welcome).IsNotNull();
+
+                // A catalog at a version this build does not read refuses streams, and deletes nothing on its account.
+                var engine = primary.Services.GetRequiredService<IStorageEngine>();
+                await WriteVersionAsync(engine, "\"99\""u8.ToArray(), token);
+                await TerraBaseTestServer.EventuallyAsync(async probe => (await HelloAsync(client, invoices, probe)).Error is not null);
+                await Assert.That(File.Exists(FileOf(invoices))).IsTrue();
+                await WriteVersionAsync(engine, "\"5\""u8.ToArray(), token);
+                await TerraBaseTestServer.EventuallyAsync(async probe => (await HelloAsync(client, invoices, probe)).Welcome is not null);
+            }
+
             using (var data = tls.CreateClient(follower.ClientAddress!, key))
             {
                 using var gone = await data.GetAsync(new Uri($"/v1/projects/{project.Id}/databases/orders/collections", UriKind.Relative), token);
                 await Assert.That(gone.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
             }
 
-            using (var channel = peers.CreateChannel(follower.PeerAddress!))
-            {
-                var client = new Features.Replication.V1.Replication.ReplicationClient(channel);
-                var refused = await HelloAsync(client, orders, token);
-                await Assert.That(refused.Error?.Code).IsEqualTo(StreamErrorCode.StreamErrorUnauthorized);
-                await Assert.That(refused.Error!.Retryable).IsTrue();
-                await Assert.That(File.Exists(FileOf(orders))).IsFalse();
-                await Assert.That((await HelloAsync(client, invoices, token)).Welcome).IsNotNull();
-            }
+            await Assert.That(File.Exists(FileOf(orders))).IsFalse();
 
             // Deleted while the follower is down: its file goes once it caught up; a file of no database is kept and counted.
             await follower.DisposeAsync();
@@ -193,6 +225,77 @@ public sealed class CatalogDeletionTests
     }
 
     [Test]
+    public async Task A_follower_retries_a_cleanup_that_failed_with_its_next_intents()
+    {
+        using var peers = new PeerTls();
+        var origin = RandomNumberGenerator.GetBytes(16);
+        var initial = JournalDigest.Initial(origin);
+        var (organization, project) = (Guid.NewGuid().ToString(), Guid.NewGuid().ToString());
+        var (failing, later) = (new TenantContext(organization, PlanTier.Hobby, project, Guid.NewGuid().ToString()),
+            new TenantContext(organization, PlanTier.Hobby, project, Guid.NewGuid().ToString()));
+        DocumentChange[] first = [new("pending_database_cleanup", failing.DatabaseId!, 10, JsonSerializer.SerializeToUtf8Bytes(failing, TerraBaseJsonContext.Default.TenantContext))];
+        DocumentChange[] second = [new("pending_database_cleanup", later.DatabaseId!, 11, JsonSerializer.SerializeToUtf8Bytes(later, TerraBaseJsonContext.Default.TenantContext))];
+        var firstDigest = JournalDigest.Compute(origin, 1, initial, first);
+        TaskCompletionSource[] send = [new(TaskCreationOptions.RunContinuationsAsynchronously), new(TaskCreationOptions.RunContinuationsAsynchronously)];
+        await using var fake = await FakePeer.StartCatalogAsync(peers, async (_, responses, context) =>
+        {
+            await responses.WriteAsync(new FollowResponse { Welcome = new CatalogWelcome { Protocol = 1, Origin = ByteString.CopyFrom(origin), Head = 0 } });
+            await responses.WriteAsync(new FollowResponse { SnapshotBegin = new SnapshotBegin { Sequence = 0, Digest = ByteString.CopyFrom(initial) } });
+            await responses.WriteAsync(new FollowResponse { Documents = CatalogProtocol.Page([Version]) });
+            await responses.WriteAsync(new FollowResponse { SnapshotEnd = new SnapshotEnd { Sequence = 0, Digest = ByteString.CopyFrom(initial), CommitOffset = 1 } });
+            await responses.WriteAsync(new FollowResponse { Heartbeat = new CatalogHeartbeat { Head = 0 } });
+            foreach (var (sequence, group, previous) in new[] { (1UL, first, initial), (2UL, second, firstDigest) })
+            {
+                await send[sequence - 1].Task.WaitAsync(context.CancellationToken);
+                await responses.WriteAsync(new FollowResponse { GroupBegin = new GroupBegin { Sequence = sequence, ChangeCount = 1 } });
+                await responses.WriteAsync(new FollowResponse { Changes = CatalogProtocol.Page(group) });
+                await responses.WriteAsync(new FollowResponse
+                {
+                    GroupEnd = new GroupEnd { Digest = ByteString.CopyFrom(JournalDigest.Compute(origin, (long)sequence, previous, group)) },
+                });
+                await responses.WriteAsync(new FollowResponse { Heartbeat = new CatalogHeartbeat { Head = sequence } });
+            }
+
+            await Task.Delay(Timeout.Infinite, context.CancellationToken);
+        });
+
+        // The first cleanup of the failing database fails, as a disk error would.
+        var failures = 0;
+        void Fail(string step, TenantContext database)
+        {
+            if (step == "follower.cleanup" && database.DatabaseId == failing.DatabaseId && Interlocked.Increment(ref failures) == 1)
+            {
+                throw new IOException("injected cleanup failure");
+            }
+        }
+
+        await using var follower = await TerraBaseTestServer.StartAsync(settings =>
+        {
+            peers.Apply(settings);
+            settings["catalog-primary"] = fake.Address.ToString();
+        }, services => services.AddSingleton<DatabaseLifecycleCheckpoint>(Fail));
+        await ReadyAsync(follower);
+        var engine = follower.Services.GetRequiredService<IStorageEngine>();
+        string FileOf(TenantContext database)
+        {
+            return Path.Combine(follower.DataDirectory, organization, project, database.DatabaseId + ".db");
+        }
+
+        foreach (var database in new[] { failing, later })
+        {
+            await Assert.That(await engine.CreateDatabaseAsync(database, CancellationToken.None)).IsTrue();
+        }
+
+        send[0].SetResult();
+        await TerraBaseTestServer.EventuallyAsync(async token => await follower.MetricAsync("terrabase_catalog_applied_sequence", "", token) == 1);
+        await Assert.That(File.Exists(FileOf(failing))).IsTrue();
+        send[1].SetResult();
+        await TerraBaseTestServer.EventuallyAsync(async token => await follower.MetricAsync("terrabase_catalog_applied_sequence", "", token) == 2);
+        await Assert.That(File.Exists(FileOf(failing))).IsFalse();
+        await Assert.That(File.Exists(FileOf(later))).IsFalse();
+    }
+
+    [Test]
     public async Task A_follower_acts_at_startup_on_the_cleanup_intents_its_catalog_holds()
     {
         // A follower that stopped right after it applied an intent: the intent is in its catalog, the file still on disk.
@@ -244,6 +347,14 @@ public sealed class CatalogDeletionTests
         {
             Directory.Delete(directory, recursive: true);
         }
+    }
+
+    private static async Task WriteVersionAsync(IStorageEngine engine, byte[] version, CancellationToken cancellationToken)
+    {
+        var store = await engine.OpenSystemDatabaseAsync(cancellationToken);
+        await using var transaction = await store.BeginTransactionAsync(write: true, cancellationToken);
+        await transaction.PutAsync("catalog", "version", version, cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
     }
 
     // The catalog version document of this build's catalog.

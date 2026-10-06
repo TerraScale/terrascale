@@ -128,7 +128,9 @@ it first caught up in a process, it runs the primary's startup audit, off its st
 answers `STREAM_ERROR_UNAUTHORIZED`, retryable: a peer that still has a deleted database cannot recreate it, and a
 follower takes a new database once its catalog applied the registration (the sender retries). The receiver and the
 follower's data plane check the registration again after opening, so a deletion applied in between removes the file
-they created.
+incarnation they created. A catalog at a version this build does not read registers nothing it can tell: streams are
+refused and nothing is deleted on its account. A cleanup that fails is retried with the next intents the follower
+applies.
 
 **A catalog is never discarded for another origin.** A follower takes a snapshot only when its catalog is empty
 or belongs to the primary's origin. A populated catalog of another origin (the member's own, a primary restarted
@@ -183,6 +185,8 @@ primary without `catalog-primary` while another one serves.
   cleared: the files of databases deleted meanwhile stay, counted as unknown, until an operator removes them. Its sender
   keeps offering them to peers, which refuse them, so its `terrabase_replication_sender_durable_lag` stays above 0 for
   as long and a drain that waits for 0 does not end.
+- A failed follower cleanup is retried only in memory: after a restart that finds its intent already cleared, the files
+  stay, counted as unknown.
 - A member with `peer-addresses` and a catalog of its own (before 0009) now refuses client replication of every
   database its catalog does not register.
 - Tombstones of dashboard documents are not replicated: a follower holds no row for a deleted document.

@@ -15,10 +15,11 @@ internal sealed partial class EngineManagementService
             .ConfigureAwait(false);
         // A follower serves a database the replicated catalog registers before any of its documents arrived: an empty
         // local file, which replication then fills like any other (docs/decisions/0009).
-        // A deletion it applies meanwhile could miss the new file: one this call created is checked again, and deleted with it.
+        // A deletion it applies meanwhile could miss the new file: one this call created is checked again, and deleted with it
+        // once the catalog, at a version this build reads, no longer registers the database.
         if (tenant is not null && options.CatalogPrimary is not null && await engine.OpenDatabaseAsync(tenant, cancellationToken).ConfigureAwait(false) is null
             && await engine.CreateDatabaseAsync(tenant, cancellationToken).ConfigureAwait(false)
-            && !await ExistsAsync(tenant, cancellationToken).ConfigureAwait(false))
+            && await RegisteredAsync(tenant, cancellationToken).ConfigureAwait(false) is false)
         {
             _ = await engine.DeleteDatabaseAsync(tenant, cancellationToken).ConfigureAwait(false);
             return null;
@@ -48,15 +49,15 @@ internal sealed partial class EngineManagementService
             : null;
     }
 
-    // A follower's catalog at a version this build does not read registers nothing it can tell.
-    public ValueTask<bool> ExistsAsync(TenantContext database, CancellationToken cancellationToken)
+    public ValueTask<bool?> RegisteredAsync(TenantContext database, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(database);
         return database.ProjectId is null || database.DatabaseId is null
-            ? ValueTask.FromResult(false)
-            : ReadCatalogAsync(async transaction =>
-                (options.CatalogPrimary is null || await GetAsync(transaction, Catalog, CatalogVersionId, Id, cancellationToken).ConfigureAwait(false) == CatalogVersion)
-                && await ScopeExistsUncheckedAsync(transaction, database.OrganizationId, database.ProjectId, database.DatabaseId, cancellationToken).ConfigureAwait(false),
+            ? ValueTask.FromResult<bool?>(false)
+            : ReadCatalogAsync<bool?>(async transaction =>
+                options.CatalogPrimary is not null && await GetAsync(transaction, Catalog, CatalogVersionId, Id, cancellationToken).ConfigureAwait(false) != CatalogVersion
+                    ? null
+                    : await ScopeExistsUncheckedAsync(transaction, database.OrganizationId, database.ProjectId, database.DatabaseId, cancellationToken).ConfigureAwait(false),
                 cancellationToken);
     }
 

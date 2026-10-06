@@ -3,6 +3,7 @@ using Grpc.Core;
 using TerraScale.TerraBase.Configuration;
 using TerraScale.TerraBase.Engine;
 using TerraScale.TerraBase.Features.Replication.V1;
+using TerraScale.TerraBase.Hosting;
 using TerraScale.TerraBase.Primitives;
 using TerraScale.TerraBase.Tenancy;
 
@@ -15,7 +16,8 @@ namespace TerraScale.TerraBase.Features.Replication;
 /// An invalid, unsupported or out-of-order group ends the stream with a <c>StreamError</c> and applies nothing.
 /// </summary>
 internal sealed partial class ReplicationService(
-    IStorageEngine engine, IReplicationJournal journal, ITenantDirectory tenants, ReplicationMetrics metrics, TerraBaseOptions options, ILogger<ReplicationService> logger)
+    IStorageEngine engine, IReplicationJournal journal, ITenantDirectory tenants, ReplicationMetrics metrics, TerraBaseOptions options, ILogger<ReplicationService> logger,
+    DatabaseLifecycleCheckpoint checkpoint)
     : V1.Replication.ReplicationBase
 {
     // One instance per node (registered as a singleton), so this bounds the node's open streams.
@@ -93,20 +95,22 @@ internal sealed partial class ReplicationService(
 
         // A member that replicates with others receives only databases its catalog registers: a deleted one is not recreated,
         // and a catalog follower takes a new one once its catalog has it. The sender retries. A deletion committed between the
-        // check and the open is caught by checking again; the file the open created then goes with it.
+        // check and the open is caught by checking again: a store other than the one open before the check is the open's own
+        // incarnation, which goes too once the catalog confirms the database is unregistered.
         var gated = options.PeerAddresses.Count > 0 || options.CatalogPrimary is not null;
-        var existed = !gated || await engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is not null;
-        if (gated && !await tenants.ExistsAsync(database, cancellationToken).ConfigureAwait(false))
+        var before = gated ? await engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) : null;
+        if (gated && await tenants.RegisteredAsync(database, cancellationToken).ConfigureAwait(false) is not true)
         {
             await stream.SendAsync(Error(StreamErrorCode.StreamErrorUnauthorized, retryable: true)).ConfigureAwait(false);
             return;
         }
 
+        checkpoint("replication.registered", database);
         // The receiving database's own origin identifies this node on the stream, in Welcome and in every acknowledgment.
         var (store, receiver, applied, digest) = await journal.OpenAsync(database, origin, cancellationToken).ConfigureAwait(false);
-        if (gated && !await tenants.ExistsAsync(database, cancellationToken).ConfigureAwait(false))
+        if (gated && await tenants.RegisteredAsync(database, cancellationToken).ConfigureAwait(false) is var registered && registered is not true)
         {
-            if (!existed)
+            if (registered is false && !ReferenceEquals(before, store))
             {
                 _ = await engine.DeleteDatabaseAsync(database, cancellationToken).ConfigureAwait(false);
             }

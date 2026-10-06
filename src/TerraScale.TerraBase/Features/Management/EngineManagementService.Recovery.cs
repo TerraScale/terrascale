@@ -12,6 +12,10 @@ internal sealed partial class EngineManagementService
     private readonly Meter _recoveryMeter = meters.Create(Telemetry.MeterName);
     private long _unknownDatabaseFiles;
 
+    // Follower cleanups that failed, retried with every later intent batch. ponytail: in memory, so a restart after the
+    // primary cleared the intent leaves the files, counted by the audit; persist them if failed deletions turn up.
+    private readonly HashSet<TenantContext> _failedCleanups = [];
+
     public async Task StartAsync(CancellationToken cancellationToken)
     {
         _recoveryMeter.CreateObservableGauge("terrabase.storage.unknown_files", () => _unknownDatabaseFiles,
@@ -91,17 +95,36 @@ internal sealed partial class EngineManagementService
             return;
         }
 
+        var cleanups = _failedCleanups.ToList();
+        _failedCleanups.Clear();
         foreach (var document in documents)
+        {
+            TenantContext? storage;
+            try
+            {
+                storage = JsonSerializer.Deserialize(document.Json!.Value.Span, TerraBaseJsonContext.Default.TenantContext);
+            }
+            catch (JsonException)
+            {
+                storage = null;
+            }
+
+            if (storage is null || document.Id != storage.DatabaseId || storage.ProjectId is null)
+            {
+                // Inconsistent metadata cannot authorize deletion of registered data.
+                LogInvalidReplicatedIntent(logger, null);
+            }
+            else
+            {
+                cleanups.Add(storage);
+            }
+        }
+
+        foreach (var storage in cleanups)
         {
             try
             {
-                var storage = JsonSerializer.Deserialize(document.Json!.Value.Span, TerraBaseJsonContext.Default.TenantContext);
-                if (storage is null || document.Id != storage.DatabaseId || storage.ProjectId is null)
-                {
-                    // Inconsistent metadata cannot authorize deletion of registered data.
-                    LogInvalidReplicatedIntent(logger, null);
-                }
-                else if (!await HasDatabaseRowAsync(storage, cancellationToken).ConfigureAwait(false))
+                if (!await HasDatabaseRowAsync(storage, cancellationToken).ConfigureAwait(false))
                 {
                     checkpoint("follower.cleanup", storage);
                     _ = await engine.DeleteDatabaseAsync(storage, cancellationToken).ConfigureAwait(false);
@@ -109,8 +132,12 @@ internal sealed partial class EngineManagementService
             }
             catch (Exception error) when (!cancellationToken.IsCancellationRequested)
             {
-                // One intent never holds back the others; the next start acts on it again while the catalog holds it.
+                // One cleanup never holds back the others; it is retried with the next batch.
                 LogInvalidReplicatedIntent(logger, error);
+                if (_failedCleanups.Count < MemberPage)
+                {
+                    _failedCleanups.Add(storage);
+                }
             }
         }
     }
