@@ -5,6 +5,7 @@ using System.Text.Encodings.Web;
 using System.Text.Json;
 using Microsoft.Net.Http.Headers;
 using TerraScale.Endpoints;
+using TerraScale.TerraBase.Errors;
 using TerraScale.TerraBase.Features.ApiKeys;
 using TerraScale.TerraBase.Hosting;
 using TerraScale.TerraBase.Tenancy;
@@ -50,30 +51,48 @@ public sealed class GetShapeEndpoint(IShapeService shapes, ITenantDirectory tena
         // Malformed route values first (400), then the tenant: another tenant's database is 404 whatever the query.
         var database = await DocumentRoute.TenantAsync(HttpContext, tenants, cancellationToken);
         var query = DocumentRoute.Parameters(HttpContext, "where", "handle", "offset", "live", "cursor");
-        var offset = (query.TryGetValue("offset", out var rawOffset) ? ShapeOffset.Parse(rawOffset.ToString()) : null)
-            ?? throw new ApiException("offset is required: -1, snap.<S>.<P> or a decimal log position");
+        if ((query.TryGetValue("offset", out var rawOffset) ? ShapeOffset.Parse(rawOffset.ToString()) : null) is not { } offset)
+        {
+            return ErrorResponse.From(new Validation("offset is required: -1, snap.<S>.<P> or a decimal log position"));
+        }
+
         var handle = query.TryGetValue("handle", out var rawHandle) ? rawHandle.ToString() : null;
         if (handle is null && offset.Kind != ShapeOffsetKind.Initial)
         {
-            throw new ApiException("handle is required unless offset is -1");
+            return ErrorResponse.From(new Validation("handle is required unless offset is -1"));
         }
 
         var live = query.TryGetValue("live", out var rawLive);
         if (live && (rawLive != "true" || offset.Kind != ShapeOffsetKind.Log))
         {
-            throw new ApiException("live must be true and needs a log position");
+            return ErrorResponse.From(new Validation("live must be true and needs a log position"));
         }
 
         long inputCursor = -1;
         if (query.TryGetValue("cursor", out var cursor)
             && (!live || !long.TryParse(cursor, NumberStyles.None, CultureInfo.InvariantCulture, out inputCursor) || inputCursor == long.MaxValue))
         {
-            throw new ApiException("cursor is a decimal live bucket and needs live=true");
+            return ErrorResponse.From(new Validation("cursor is a decimal live bucket and needs live=true"));
         }
 
-        var (filter, canonical) = Where(query);
-        var result = await shapes.ReadAsync(
-            new ShapeRequest(database, collection, filter, canonical, offset, handle, live), cancellationToken);
+        return Where(query) switch
+        {
+            Validation error => ErrorResponse.From(error),
+            UriTooLong error => ErrorResponse.From(error),
+            ShapeFilter where => await shapes.ReadAsync(
+                new ShapeRequest(database, collection, where.Filter, where.Canonical, offset, handle, live), cancellationToken) switch
+            {
+                ShapeResult result => Answer(result, where.Canonical, offset, live, inputCursor),
+                NotFound error => ErrorResponse.From(error),
+                Validation error => ErrorResponse.From(error),
+                QuotaExceeded error => ErrorResponse.From(error),
+            },
+        };
+    }
+
+    private IResult Answer(ShapeResult result, string canonical, ShapeOffset offset, bool live, long inputCursor)
+    {
+        var headers = HttpContext.Response.Headers;
         headers[ShapeHeaders.Handle] = result.Handle;
         if (result.Status == ShapeStatus.MustRefetch)
         {
@@ -112,11 +131,11 @@ public sealed class GetShapeEndpoint(IShapeService shapes, ITenantDirectory tena
     // Unpadded base64url of the longest id storage admits (1024 UTF-8 bytes): ceil(1024 * 4 / 3) characters.
     private static readonly string LongestEncodedId = new('A', ((1024 * 4) + 2) / 3);
 
-    private (Engine.DocumentFilter? Filter, string Canonical) Where(IQueryCollection query)
+    private ShapeWhere Where(IQueryCollection query)
     {
         if (!query.TryGetValue("where", out var where))
         {
-            return (null, "");
+            return new ShapeFilter(null, "");
         }
 
         // JsonDocument accepts lone surrogate escapes such as "\uD800"; reject them as a 400, like query bodies.
@@ -137,16 +156,13 @@ public sealed class GetShapeEndpoint(IShapeService shapes, ITenantDirectory tena
             // and the base64url of the longest stored id (1024 UTF-8 bytes, legacy ids included).
             // A live log position with cursor is shorter than this snapshot offset.
             var resume = Location(canonical, "h1-0000000000000000", $"snap.{long.MaxValue}.{LongestEncodedId}");
-            if (resume.Length > (8 * 1024) - 64)
-            {
-                throw new ApiException(StatusCodes.Status414UriTooLong, "uri_too_long", "the shape filter exceeds the supported continuation URL size");
-            }
-
-            return (filter, canonical);
+            return resume.Length > (8 * 1024) - 64
+                ? new UriTooLong("the shape filter exceeds the supported continuation URL size")
+                : new ShapeFilter(filter, canonical);
         }
         catch (JsonException)
         {
-            throw new ApiException(StatusCodes.Status400BadRequest, "invalid_query", "where must be a JSON filter");
+            return new Validation("where must be a JSON filter", "invalid_query");
         }
     }
 
@@ -157,6 +173,14 @@ public sealed class GetShapeEndpoint(IShapeService shapes, ITenantDirectory tena
         return $"{HttpContext.Request.PathBase}{HttpContext.Request.Path}?{parameters}handle={handle}&offset={offset}";
     }
 }
+
+/// <summary>A shape's parsed filter and its canonical JSON text.</summary>
+/// <param name="Filter">The filter; <see langword="null"/> for every document.</param>
+/// <param name="Canonical">Canonical JSON of the filter, empty without one.</param>
+internal sealed record ShapeFilter(Engine.DocumentFilter? Filter, string Canonical);
+
+/// <summary>A shape's filter, or why the <c>where</c> parameter is refused.</summary>
+internal readonly union ShapeWhere(ShapeFilter, Validation, UriTooLong);
 
 /// <summary>Response headers of shape reads.</summary>
 public static class ShapeHeaders

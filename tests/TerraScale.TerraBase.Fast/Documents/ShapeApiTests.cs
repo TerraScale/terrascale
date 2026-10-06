@@ -7,9 +7,11 @@ using Bogus;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using TerraScale.TerraBase.Engine;
+using TerraScale.TerraBase.Fast.Management;
 using TerraScale.TerraBase.Features.ApiKeys;
 using TerraScale.TerraBase.Features.Documents;
 using TerraScale.TerraBase.Hosting;
+using TerraScale.TerraBase.Testing;
 
 namespace TerraScale.TerraBase.Fast.Documents;
 
@@ -452,6 +454,44 @@ public sealed class ShapeApiTests
             await allCancel.CancelAsync();
             await victimCancel.CancelAsync();
         }
+    }
+
+    [Test]
+    public async Task Shape_errors_answer_their_code_and_message()
+    {
+        var clock = new SteppingClock();
+        var hook = new UsageCommitHook();
+        await using var api = await DocumentApi.StartAsync(services: services =>
+        {
+            hook.Install(services);
+            services.AddKeyedSingleton<TimeProvider>(EngineExtensions.QueryDeadlineClock, clock);
+        });
+        using var shapes = await api.ClientWithScopesAsync("shapes:read");
+        await api.PutAsync(DocumentApi.NewId(), new { n = 1 });
+
+        await ErrorAssert.ErrorAsync(
+            GetAsync(shapes, api.Shape), HttpStatusCode.BadRequest, "invalid_request", "offset is required: -1, snap.<S>.<P> or a decimal log position");
+        await ErrorAssert.ErrorAsync(GetAsync(shapes, $"{api.Shape}?offset=0"), HttpStatusCode.BadRequest, "invalid_request", "handle is required unless offset is -1");
+        await ErrorAssert.ErrorAsync(
+            GetAsync(shapes, $"{api.Shape}?offset=-1&live=true"), HttpStatusCode.BadRequest, "invalid_request", "live must be true and needs a log position");
+        await ErrorAssert.ErrorAsync(
+            GetAsync(shapes, $"{api.Shape}?offset=-1&cursor=1"), HttpStatusCode.BadRequest, "invalid_request", "cursor is a decimal live bucket and needs live=true");
+        await ErrorAssert.ErrorAsync(
+            GetAsync(shapes, $"{api.Shape}?where=%7B&offset=-1"), HttpStatusCode.BadRequest, "invalid_query", "where must be a JSON filter");
+        await ErrorAssert.ErrorAsync(
+            GetAsync(shapes, $"{api.Collections}/missing/shape?offset=-1"), HttpStatusCode.NotFound, "unknown_collection", "the collection does not exist");
+
+        // From the first read of the database on, every engine read outlasts the 5-second deadline.
+        using var start = await GetAsync(shapes, $"{api.Shape}?offset=-1");
+        await Assert.That(start.StatusCode).IsEqualTo(HttpStatusCode.TemporaryRedirect);
+        var database = await api.TenantOfAsync();
+        hook.BeforeBegin = (tenant, _) =>
+        {
+            clock.Armed |= tenant.DatabaseId == database.DatabaseId;
+            return ValueTask.CompletedTask;
+        };
+        await ErrorAssert.ErrorAsync(
+            GetAsync(shapes, start.Headers.Location!.OriginalString), HttpStatusCode.BadRequest, "invalid_query", "query too expensive");
     }
 
     [Test]

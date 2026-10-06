@@ -19,6 +19,7 @@ internal static class ErrorResponse
         Forbidden e => new Response(StatusCodes.Status403Forbidden, e.Code, e.Message, op),
         QuotaExceeded e => new Response(StatusCodes.Status429TooManyRequests, e.Code, e.Message, op),
         Unavailable e => new Response(StatusCodes.Status503ServiceUnavailable, e.Code, e.Message, op),
+        UriTooLong e => new Response(StatusCodes.Status414UriTooLong, e.Code, e.Message, op),
     };
 
     private sealed class Response(int status, string code, string? message, int? op) : IResult

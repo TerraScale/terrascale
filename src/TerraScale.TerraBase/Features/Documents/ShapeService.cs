@@ -4,6 +4,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using TerraScale.TerraBase.Engine;
+using TerraScale.TerraBase.Errors;
 using TerraScale.TerraBase.Hosting;
 
 namespace TerraScale.TerraBase.Features.Documents;
@@ -32,6 +33,13 @@ internal sealed class ShapeService : IShapeService
     private const long ChunkBytes = 1024 * 1024;
     private const long ChunkCommits = 4096;
 
+    private static readonly QuotaExceeded Busy = new("shape reads are at capacity; retry later", "shape_busy");
+    private static readonly NotFound UnknownDatabase = new("the database does not exist", "unknown_database");
+    private static readonly NotFound UnknownCollection = new("the collection does not exist", "unknown_collection");
+
+    // Same answer as a document query over the budget (TS-459): the shape's filter is too expensive.
+    private static readonly Validation TooExpensive = new("query too expensive", "invalid_query");
+
     private readonly Lock _gate = new();
     private readonly Dictionary<string, Flight> _flights = [];
     private readonly IStorageEngine _engine;
@@ -56,7 +64,7 @@ internal sealed class ShapeService : IShapeService
         _live = meter.CreateUpDownCounter<long>("terrabase.shape.live.waits", "{flight}", "Live shape reads waiting at the head for a commit.");
     }
 
-    public async ValueTask<ShapeResult> ReadAsync(ShapeRequest request, CancellationToken cancellationToken)
+    public async ValueTask<ShapeReadResult> ReadAsync(ShapeRequest request, CancellationToken cancellationToken)
     {
         var key = string.Join('\0', request.Scope, request.Handle, request.Offset, request.Live);
         Flight? flight;
@@ -65,14 +73,14 @@ internal sealed class ShapeService : IShapeService
         {
             if (_requesters >= MaxRequesters)
             {
-                throw Busy();
+                return Busy;
             }
 
             if (!_flights.TryGetValue(key, out flight))
             {
                 if (_running >= MaxFlights)
                 {
-                    throw Busy();
+                    return Busy;
                 }
 
                 _running++;
@@ -129,6 +137,7 @@ internal sealed class ShapeService : IShapeService
         }
         catch (Exception error)
         {
+            // Only unexpected failures: expected ones are results.
             flight.Result.SetException(error);
             // Every requester may have left; the exception is theirs, not the process's.
             _ = flight.Result.Task.Exception;
@@ -148,9 +157,7 @@ internal sealed class ShapeService : IShapeService
         }
     }
 
-    private static ApiException Busy() => new(StatusCodes.Status429TooManyRequests, "shape_busy", "shape reads are at capacity; retry later");
-
-    private async Task<ShapeResult> ReadCoreAsync(ShapeRequest request, CancellationToken cancellationToken)
+    private async Task<ShapeReadResult> ReadCoreAsync(ShapeRequest request, CancellationToken cancellationToken)
     {
         using var timeout = new CancellationTokenSource(request.Live ? LiveTimeout : Timeout.InfiniteTimeSpan, _time);
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeout.Token);
@@ -158,9 +165,12 @@ internal sealed class ShapeService : IShapeService
         {
             // A wake can come from a writer still finishing on a deleted file. Resolve the current
             // store every time, so its incarnation, not that old writer's, validates the handle.
-            var store = await _engine.OpenDatabaseAsync(request.Database, cancellationToken).ConfigureAwait(false)
-                ?? throw new ApiException(StatusCodes.Status404NotFound, "unknown_database", "the database does not exist");
-            ShapeResult result;
+            if (await _engine.OpenDatabaseAsync(request.Database, cancellationToken).ConfigureAwait(false) is not { } store)
+            {
+                return UnknownDatabase;
+            }
+
+            ShapeReadResult result;
             long sequence;
             try
             {
@@ -168,11 +178,10 @@ internal sealed class ShapeService : IShapeService
             }
             catch (QueryCapacityException)
             {
-                // Same answer as a document query over the budget (TS-459): the shape's filter is too expensive.
-                throw new ApiException(StatusCodes.Status400BadRequest, "invalid_query", "query too expensive");
+                return TooExpensive;
             }
 
-            if (result.Status != ShapeStatus.OpenTail || !result.Body.IsEmpty)
+            if (result is not ShapeResult { Status: ShapeStatus.OpenTail, Body.IsEmpty: true })
             {
                 return result;
             }
@@ -204,7 +213,7 @@ internal sealed class ShapeService : IShapeService
 
     // Returns the result and the commit sequence from before the read; an open tail without a body
     // means a live read must wait for a commit.
-    private async Task<(ShapeResult Result, long Sequence)> ReadOnceAsync(IDatabaseStore store, ShapeRequest request, CancellationToken cancellationToken)
+    private async Task<(ShapeReadResult Result, long Sequence)> ReadOnceAsync(IDatabaseStore store, ShapeRequest request, CancellationToken cancellationToken)
     {
         _reads.Add(1);
         // Taken before the snapshot: a commit racing the read wakes the wait instead of being missed.
@@ -212,8 +221,11 @@ internal sealed class ShapeService : IShapeService
         var transaction = await store.BeginTransactionAsync(write: false, cancellationToken).ConfigureAwait(false);
         await using (transaction.ConfigureAwait(false))
         {
-            var collection = await transaction.GetCollectionAsync(request.Collection, cancellationToken).ConfigureAwait(false)
-                ?? throw new ApiException(StatusCodes.Status404NotFound, "unknown_collection", "the collection does not exist");
+            if (await transaction.GetCollectionAsync(request.Collection, cancellationToken).ConfigureAwait(false) is not { } collection)
+            {
+                return (UnknownCollection, sequence);
+            }
+
             var (shapeId, handle) = Identify(request, store.Incarnation, collection);
             if (request.Handle is { } requested && requested != handle)
             {
@@ -463,7 +475,7 @@ internal sealed class ShapeService : IShapeService
 
     private sealed class Flight
     {
-        public TaskCompletionSource<ShapeResult> Result { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource<ShapeReadResult> Result { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         // Never disposed: it has no timer, and a late Cancel must not throw.
         public CancellationTokenSource Cancel { get; } = new();

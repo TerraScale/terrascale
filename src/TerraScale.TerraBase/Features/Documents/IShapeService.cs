@@ -2,7 +2,7 @@ using System.Buffers.Text;
 using System.Globalization;
 using System.Text;
 using TerraScale.TerraBase.Engine;
-using TerraScale.TerraBase.Hosting;
+using TerraScale.TerraBase.Errors;
 using TerraScale.TerraBase.Tenancy;
 
 namespace TerraScale.TerraBase.Features.Documents;
@@ -136,12 +136,17 @@ public sealed record ShapeResult(
     ShapeStatus Status, string ShapeId, string Handle, string NextOffset, bool UpToDate, ReadOnlyMemory<byte> Body, string Digest);
 
 /// <summary>
+/// A shape read result, or why there is none: an unknown database or collection (<c>404</c>), a filter over the engine
+/// read budget (<c>400 invalid_query</c>) or shape reads at capacity (<c>429 shape_busy</c>).
+/// </summary>
+public readonly union ShapeReadResult(ShapeResult, NotFound, Validation, QuotaExceeded);
+
+/// <summary>
 /// Reads shapes: a collection and filter served as a snapshot plus a log addressed by offsets
-/// (docs/shape-reads.md). Concurrent identical reads share one storage read. Failures are
-/// <see cref="ApiException"/>s.
+/// (docs/shape-reads.md). Concurrent identical reads share one storage read.
 /// </summary>
 public interface IShapeService
 {
     /// <summary>Reads one snapshot page or log chunk, waiting up to 20 seconds for a commit when live at the head.</summary>
-    ValueTask<ShapeResult> ReadAsync(ShapeRequest request, CancellationToken cancellationToken);
+    ValueTask<ShapeReadResult> ReadAsync(ShapeRequest request, CancellationToken cancellationToken);
 }

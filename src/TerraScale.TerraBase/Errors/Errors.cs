@@ -44,11 +44,16 @@ public sealed record QuotaExceeded(string Message, string Code = "quota_exceeded
 /// <param name="Code">Stable machine-readable code.</param>
 public sealed record Unavailable(string Message, string Code = "unavailable");
 
+/// <summary>The request target is longer than the server reads, such as a shape filter whose continuation URL would not fit.</summary>
+/// <param name="Message">The limit that was hit.</param>
+/// <param name="Code">Stable machine-readable code.</param>
+public sealed record UriTooLong(string Message, string Code = "uri_too_long");
+
 /// <summary>Success without a value, such as a deletion.</summary>
 public sealed record Done;
 
 /// <summary>Every expected failure; <see cref="ErrorResponse.From"/> maps each to its HTTP response.</summary>
-public readonly union Failure(NotFound, Conflict, Validation, PreconditionFailed, Unauthorized, Forbidden, QuotaExceeded, Unavailable);
+public readonly union Failure(NotFound, Conflict, Validation, PreconditionFailed, Unauthorized, Forbidden, QuotaExceeded, Unavailable, UriTooLong);
 
 /// <summary>A value read from a request, or the input rule it breaks.</summary>
 /// <typeparam name="T">The value type.</typeparam>
