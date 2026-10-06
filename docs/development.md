@@ -251,6 +251,35 @@ limited to ten per client address (using the same trusted proxy header and IPv6
 grant remains available for retry when the account's access-token quota is full;
 revoke an existing token and poll again after the advertised interval.
 
+## Sign-in design (do not revert)
+
+A user decision (TS-582): users sign in on **ts-dashboard's own pages**, never
+on ts-auth's hosted page.
+
+- `/login` (password), `/login/code` (emailed code), `/onboarding` (sign-up)
+  and `/reset-password` are dashboard pages. The backend calls ts-auth's
+  headless API: the password and email-code grants, `email-code/start`,
+  `sign-up` and `password-reset/*`. Shipped in #180, fixed in #186.
+- Only single sign-on and social providers (`/login/sso`) redirect to ts-auth's
+  hosted authorize page.
+- With `TS_AUTH_ISSUER` set, `GET /login` renders the dashboard's form
+  (`type="password"`, links to `/login/code` and `/login/sso`). It never
+  answers 303 to `<region>.auth.terrascale.tech/.../oauth/authorize`. The one
+  exception is ts-auth's discovery dropping the headless grants: the dashboard
+  then falls back to the redirect, and the deploy smoke fails on it.
+- **Incidents: fix forward.** Never roll the dashboard back past native login
+  to "restore" sign-in, because that brings back the hosted page. The only
+  allowed rollback target is the newest image that still has working native
+  login (#186, `9c7d62c3`, or later).
+- Tests that cover sign-in must use the TerraBase-backed stores (throttle,
+  sessions) as production does, not only the in-memory ones (the #180 → #186
+  incident). `TestNativeSignInThrottlesWithTerraBase` in `internal/app` does.
+- After each production deploy, `scripts/smoke-native-login.sh` checks that
+  `https://dash.terrascale.tech/login` renders the form, and that a password
+  sign-in for an unknown email is refused by ts-auth (401), not throttled
+  (429). On failure the deploy job fails, and it rolls back only to a
+  previous image that has working native login.
+
 ## Sign-in through ts-auth
 
 Set these to sign users in through ts-auth. The dashboard is a confidential

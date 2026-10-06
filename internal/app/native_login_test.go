@@ -49,11 +49,12 @@ func refusingTSAuth(t *testing.T) *httptest.Server {
 
 var csrfField = regexp.MustCompile(`name="_csrf" value="([^"]+)"`)
 
-// TestNativeSignInThrottlesWithTerraBase drives the dashboard's own sign-in
-// pages as production wires them: TerraBase state, ts-auth's headless API,
-// the Fly client address header and the CSRF guard. A first attempt from a
-// new client for a new email must reach ts-auth, and a refusal must ask for
-// a wait the budget allows.
+// TestNativeSignInThrottlesWithTerraBase guards the sign-in design with the
+// dashboard wired as production: TerraBase state, ts-auth's headless API,
+// the Fly client address header and the CSRF guard. /login renders the
+// dashboard's form; a first attempt from a new client for a new email
+// reaches ts-auth rather than being throttled (#180 → #186); a refusal asks
+// for a wait the budget allows.
 func TestNativeSignInThrottlesWithTerraBase(t *testing.T) {
 	if testing.Short() {
 		t.Skip("starts pinned TerraBase release")
@@ -88,9 +89,17 @@ func TestNativeSignInThrottlesWithTerraBase(t *testing.T) {
 	}
 	body, _ := io.ReadAll(page.Body)
 	page.Body.Close()
+	// Sign-in design (do not revert, docs/development.md): with ts-auth
+	// configured, /login is the dashboard's own form, never a redirect to
+	// ts-auth's hosted page; only /login/sso redirects.
 	token := csrfField.FindSubmatch(body)
-	if page.StatusCode != http.StatusOK || token == nil {
-		t.Fatalf("GET /login = %d, want the dashboard's sign-in form: %s", page.StatusCode, body)
+	if page.StatusCode != http.StatusOK || token == nil || strings.HasPrefix(page.Header.Get("Location"), tsAuth.URL) {
+		t.Fatalf("GET /login = %d Location %q, want the dashboard's sign-in form: %s", page.StatusCode, page.Header.Get("Location"), body)
+	}
+	for _, marker := range []string{`type="password"`, `href="/login/code`, `href="/login/sso`} {
+		if !strings.Contains(string(body), marker) {
+			t.Fatalf("GET /login has no %s: %s", marker, body)
+		}
 	}
 	post := func(path string, form url.Values) *http.Response {
 		t.Helper()
