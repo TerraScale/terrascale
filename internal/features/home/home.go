@@ -66,7 +66,7 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			Tab: tab, ProjectName: summary.ProjectName, ActivityRange: activity.Range,
 			ActivityNote: activity.Note, ActivityReads: activity.TotalReads, ActivityWrites: activity.TotalWrites,
 			ActivityChart: charts.NewLine("Reads and writes, "+demovisuals.RangeLabel(activity.Range)+": "+activity.Note,
-				demovisuals.TickLabels(activity.Range), activity.Labels, 180,
+				activityTicks(activity), activity.Labels, 180,
 				charts.Series{Name: "Reads", Values: activity.Reads}, charts.Series{Name: "Writes", Values: activity.Writes}),
 			DatabaseCount: summary.DatabaseCount, OrganizationMembers: summary.OrganizationMembers,
 			UnreadNotifications: summary.UnreadNotifications, TotalNotifications: summary.TotalNotifications,
@@ -107,4 +107,13 @@ func writeError(w http.ResponseWriter, err error) {
 	if !core.WriteAccessError(w, err) {
 		http.Error(w, "invalid request", http.StatusBadRequest)
 	}
+}
+
+// activityTicks labels a sample chart's axis by distance from now; measured
+// buckets keep their own timestamps.
+func activityTicks(activity activity) []string {
+	if activity.Metered {
+		return nil
+	}
+	return demovisuals.TickLabels(activity.Range)
 }

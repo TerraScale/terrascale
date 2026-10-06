@@ -41,3 +41,21 @@ func TestPlanLimitsForUtilization(t *testing.T) {
 		t.Fatalf("OperationsPerMonth must win over MonthlyRequests, got %d", plan.MonthlyOperations())
 	}
 }
+
+func TestUpgradeSeededPlanKeepsAdministratorChanges(t *testing.T) {
+	defaults := DefaultPlans()
+	seededFree := Plan{ID: "plan_free", Key: "free", Name: "Free", Visible: true, MaxDatabases: 1}
+	if got := UpgradeSeededPlan(seededFree); got != defaults[0] {
+		t.Fatalf("seeded Free upgraded to %+v, want %+v", got, defaults[0])
+	}
+	seededPro := defaults[2]
+	seededPro.StorageMiB = 0
+	if got := UpgradeSeededPlan(seededPro); got != defaults[2] {
+		t.Fatalf("seeded Pro upgraded to %+v, want %+v", got, defaults[2])
+	}
+	renamed := seededFree
+	renamed.Name = "Hobby"
+	if got := UpgradeSeededPlan(renamed); got != renamed {
+		t.Fatalf("administrator's Free plan changed to %+v", got)
+	}
+}

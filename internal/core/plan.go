@@ -39,6 +39,25 @@ func (plan Plan) monthlyAllowance(unit string) string {
 	return AllowanceUnpublished
 }
 
+// UpgradeSeededPlan returns today's default for a plan still exactly as an
+// earlier store seeded it, before plans carried a numeric storage limit and
+// Free its reads, writes and storage (TS-581). A plan an administrator
+// changed is returned as it is. Stores apply it to the plans they return;
+// an administrator's next save of the plan persists it.
+func UpgradeSeededPlan(plan Plan) Plan {
+	for _, current := range DefaultPlans() {
+		seeded := current
+		seeded.StorageMiB = 0
+		if seeded.ID == "plan_free" {
+			seeded.OperationsPerMonth, seeded.StorageLabel = 0, ""
+		}
+		if plan == seeded {
+			return current
+		}
+	}
+	return plan
+}
+
 // StorageBytes is the plan's included storage; 0 means no published limit.
 func (plan Plan) StorageBytes() int64 {
 	return plan.StorageMiB << 20

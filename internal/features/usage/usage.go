@@ -653,8 +653,8 @@ func buildPage(ctx context.Context, service Service, p core.Principal, token str
 		for i, point := range report.Totals.Series {
 			reads[i], writes[i], labels[i] = point.Reads, point.Writes, bucketLabel(point.Start, data.HistoryRange)
 		}
-		data.HistoryChart = charts.NewLine("Reads and writes, "+data.HistoryRangeLabel,
-			demovisuals.TickLabels(data.HistoryRange), labels, 200,
+		// The axis takes each tick's bucket timestamp.
+		data.HistoryChart = charts.NewLine("Reads and writes, "+data.HistoryRangeLabel, nil, labels, 200,
 			charts.Series{Name: "Reads", Values: reads}, charts.Series{Name: "Writes", Values: writes})
 		data.HistoryTotals = []historyTotal{
 			{Name: "Reads", Value: report.Totals.Reads, Class: "ts-cat-1"},

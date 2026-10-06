@@ -86,7 +86,7 @@ type LineData struct {
 // NewLine draws zero-based values and returns an empty view for inconsistent
 // series lengths, so chart paths cannot silently shift relative to each other.
 // ticks label the five x-axis ticks; points, when given, name every sample in
-// its tooltip.
+// its tooltip, and without ticks each tick takes its sample's point name.
 func NewLine(label string, ticks, points []string, height int, series ...Series) LineData {
 	const width, left, right, top, bottom = 720, 48, 12, 14, 32
 	data := LineData{
@@ -129,6 +129,8 @@ func NewLine(label string, ticks, points []string, height int, series ...Series)
 		label := ""
 		if step < len(ticks) {
 			label = ticks[step]
+		} else if ticks == nil && index < len(points) {
+			label = points[index]
 		}
 		anchor := "middle"
 		if step == 0 {
