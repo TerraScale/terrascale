@@ -13,10 +13,8 @@ func TestAuditFiltersAndExportKeepAppliedValues(t *testing.T) {
 	t.Parallel()
 	page := newPage(t)
 	registerAndOnboard(t, page, newAccount("audit-filters"))
-	goToOK(t, page, "/settings?tab=audit")
-	retention := page.Locator(`form[action="/api/v1/dashboard/settings/audit-retention"]`)
-	fill(t, retention.Locator(`[name="retentionDays"]`), "30")
-	submitAndExpect(t, page, "/api/v1/dashboard/settings/audit-retention", 303, byRole(retention, *playwright.AriaRoleButton, "Save retention").Click)
+	session := connectMCP(t, createAccessToken(t, page, journeyPassword, "audit filters assistant"))
+	callTool(t, session, "set_audit_retention", map[string]any{"days": 30}, &struct{ Saved bool }{})
 
 	goToOK(t, page, "/audit")
 	filters := page.Locator("#recent-activity .ts-audit-filters")
