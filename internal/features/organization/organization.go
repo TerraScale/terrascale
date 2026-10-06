@@ -447,7 +447,7 @@ func newOrganization(deps core.Deps, service Service) http.HandlerFunc {
 				writeProblem(w, err)
 				return
 			}
-			http.Redirect(w, r, "/organization", http.StatusSeeOther)
+			http.Redirect(w, r, "/organization?tab=projects", http.StatusSeeOther)
 		default:
 			http.Redirect(w, r, "/organization?newOrganization=organization", http.StatusSeeOther)
 		}
@@ -501,7 +501,7 @@ func renameOrganization(deps core.Deps, service Service) http.HandlerFunc {
 }
 
 func createProject(deps core.Deps, service Service) http.HandlerFunc {
-	return organizationMutation(deps, "/organization", func(p core.Principal, r *http.Request, form url.Values) error {
+	return organizationMutation(deps, "/organization?tab=projects", func(p core.Principal, r *http.Request, form url.Values) error {
 		_, err := service.CreateProject(r.Context(), p, form.Get("name"), form.Get("region"), form.Get("backupRegion"), form["regions"])
 		return err
 	})
@@ -514,10 +514,10 @@ func renameProject(deps core.Deps, service Service) http.HandlerFunc {
 			return
 		}
 		if err := service.RenameProject(r.Context(), p, r.PathValue("projectID"), form.Get("name"), form.Get("region"), form.Get("backupRegion"), form["regions"]); err != nil {
-			redirectWithError(w, r, "/organization", err)
+			redirectWithError(w, r, "/organization?tab=projects", err)
 			return
 		}
-		http.Redirect(w, r, "/organization", http.StatusSeeOther)
+		http.Redirect(w, r, "/organization?tab=projects", http.StatusSeeOther)
 	}
 }
 
