@@ -25,7 +25,8 @@ func (e formError) Is(target error) bool { return target == core.ErrInvalid }
 // Service manages the ts-auth instance of a principal's selected project.
 // HTTP handlers and MCP tools both call it.
 type Service struct {
-	deps core.Deps
+	deps   core.Deps
+	origin string
 }
 
 // scope returns the principal's selected organization and project.
@@ -52,12 +53,12 @@ func (s Service) Overview(ctx context.Context, p core.Principal) (overviewView, 
 	if err != nil {
 		return overviewView{}, err
 	}
-	data := buildPage(mustSection("overview"), project, org.CanManage(p.UserID), "", "")
+	data := buildPage(mustSection("overview"), project, s.origin, org.CanManage(p.UserID), "", "")
 	overview := overviewView{
 		InstanceName: data.InstanceName, Slug: data.Slug, CanManage: data.CanManage,
 		Issuer: data.issuer(), DiscoveryURL: data.issuer() + "/.well-known/openid-configuration",
 		JWKSURL: data.issuer() + "/.well-known/jwks.json", UserinfoURL: data.issuer() + "/oauth/userinfo",
-		SignInURL: data.hosted("/sign-in"), ManagementAPI: issuerOrigin + "/v1/" + data.Slug,
+		SignInURL: data.hosted("/sign-in"), ManagementAPI: data.Origin + "/v1/" + data.Slug,
 		Counts: data.Counts, BlockedUsers: data.Blocked, Strategies: strategyViews(data.Settings),
 		Branding:     brandingView{Name: data.InstanceName, LogoURL: project.AuthInstance.LogoURL, ThemeColor: project.AuthInstance.ThemeColor},
 		RecentEvents: eventViews(data.Events),
@@ -93,7 +94,7 @@ func (s Service) ListResources(ctx context.Context, p core.Principal, key, searc
 	list := resourcePage{Section: key, Resources: make([]resourceView, 0), CanManage: org.CanManage(p.UserID)}
 	for _, resource := range instance.Resources {
 		if resource.Section == key && matches(resource, names, strings.TrimSpace(search)) {
-			list.Resources = append(list.Resources, resourceViewOf(current, resource, names, slug))
+			list.Resources = append(list.Resources, resourceViewOf(current, resource, names, s.origin, slug))
 		}
 	}
 	slices.SortFunc(list.Resources, func(a, b resourceView) int {
@@ -257,7 +258,7 @@ func (s Service) resource(ctx context.Context, p core.Principal, current section
 	if index < 0 {
 		return resourceView{}, core.ErrNotFound
 	}
-	return resourceViewOf(current, instance.Resources[index], recordNames(instance), cmp.Or(project.Slug, project.ID)), nil
+	return resourceViewOf(current, instance.Resources[index], recordNames(instance), s.origin, cmp.Or(project.Slug, project.ID)), nil
 }
 
 // update applies change to the principal's project instance and records

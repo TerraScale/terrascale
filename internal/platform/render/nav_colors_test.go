@@ -17,8 +17,8 @@ func TestSidebarNavigationTonesDoNotRepeat(t *testing.T) {
 		layout string
 		count  int
 	}{
-		{name: "dashboard", layout: "shell", count: 10},
-		{name: "admin", layout: "admin", count: 9},
+		{name: "dashboard", layout: "shell", count: 9},
+		{name: "admin", layout: "admin", count: 8},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			shell := shellFor(core.Account{}, core.Principal{}, tc.layout, httptest.NewRequest("GET", "/", nil))

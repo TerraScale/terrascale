@@ -78,7 +78,9 @@ func run(m *testing.M) int {
 }
 
 func startDashboard() (*httptest.Server, error) {
-	application, err := app.New(config.Config{Demo: true, AdminEmail: admin.Email, AdminPassword: admin.Password})
+	application, err := app.New(config.Config{
+		Demo: true, AdminEmail: admin.Email, AdminPassword: admin.Password, TSAuthOrigin: "https://gru.auth.terrascale.tech",
+	})
 	if err != nil {
 		return nil, err
 	}

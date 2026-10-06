@@ -102,13 +102,7 @@ templ signedInDocument(page core.Page, body templ.Component, admin bool) {
 						@icons.PanelLeft(18)
 					</button>
 					<img class="ts-topbar-brand" src={ static.URL("brand/logo-terrascale-principal.svg") } alt="TerraScale" decoding="async"/>
-					{{ notifications := notificationsItem(page.Shell.UnreadNotifications) }}
-					<a class="ts-icon-btn ts-topbar-notifications" href={ notifications.URL } data-tone="amber" aria-label={ navLabel(notifications) }>
-						@icons.Bell(18)
-						if notifications.BadgeCount > 0 {
-							<span class="ts-nav-count" aria-hidden="true">{ countText(notifications.BadgeCount) }</span>
-						}
-					</a>
+					@NotificationsBell(page.Shell.UnreadNotifications)
 				</header>
 				@StatusBanner(page.Shell.Notices, page.Shell.NoticeScope, page.Nonce)
 				<div id="ts-main" class="ts-main" tabindex="-1">
@@ -116,6 +110,12 @@ templ signedInDocument(page core.Page, body templ.Component, admin bool) {
 				</div>
 			</div>
 		</div>
+		// The notifications inbox lives in the shell so the account menu and the
+		// top-bar bell open it on any page; its body is fetched through Datastar
+		// when one of them is used.
+		@Dialog(DialogProps{ID: "ts-notifications-dialog", Title: "Notifications"}) {
+			<div id="ts-notifications-body"></div>
+		}
 	}
 }
 
@@ -188,10 +188,6 @@ templ shellSidebar(page core.Page, admin bool) {
 				<a class="ts-nav-link" href="/" data-tone="slate">
 					<span class="ts-nav-icon" aria-hidden="true">@icons.ArrowLeft(16)</span>
 					<span class="ts-nav-label">Back to dashboard</span>
-				</a>
-				{{ notifications := notificationsItem(page.Shell.UnreadNotifications) }}
-				<a class="ts-nav-link" href={ notifications.URL } data-tone="amber" aria-label={ navLabel(notifications) }>
-					@navLinkContent(notifications)
 				</a>
 			}
 			@accountMenu(page)
@@ -292,12 +288,57 @@ templ accountMenu(page core.Page) {
 		if page.Principal.PlatformAdmin {
 			@MenuItem(MenuItemProps{Href: "/admin", Tone: "violet", Icon: icons.ShieldCheck(15), Label: "Administration"})
 		}
+		@NotificationsMenuItem(page.Shell.UnreadNotifications)
 		@MenuSeparator()
 		<form method="post" action="/api/v1/auth/logout">
 			@formToken(page.CSRFToken)
 			@MenuItem(MenuItemProps{Type: "submit", Icon: icons.LogOut(15), Label: "Sign out", Danger: true})
 		</form>
 	}
+}
+
+// NotificationsMenuItem is the account-menu entry that opens the
+// notifications dialog in place, so the page underneath stays where it is.
+// The notifications feature re-renders it in its dialog patches, keeping the
+// unread count current; its id is how the patch finds it.
+templ NotificationsMenuItem(unread int) {
+	<button
+		id="ts-notifications-menu"
+		class="ts-menu-item"
+		type="button"
+		data-tone="amber"
+		aria-label={ navLabel(notificationsItem(unread)) }
+		command="show-modal"
+		commandfor="ts-notifications-dialog"
+		data-on:click="(el.closest('details').open = false, @get('/notifications/dialog'))"
+	>
+		@icons.Bell(15)
+		<span class="ts-menu-label">Notifications</span>
+		if unread > 0 {
+			<span class="ts-nav-count" aria-hidden="true">{ countText(unread) }</span>
+		}
+	</button>
+}
+
+// NotificationsBell is the top-bar bell: like the account-menu entry, it opens
+// the notifications dialog instead of navigating, and is re-rendered by the
+// dialog patches to keep its unread count current.
+templ NotificationsBell(unread int) {
+	<button
+		id="ts-notifications-topbar"
+		class="ts-icon-btn ts-topbar-notifications"
+		type="button"
+		data-tone="amber"
+		aria-label={ navLabel(notificationsItem(unread)) }
+		command="show-modal"
+		commandfor="ts-notifications-dialog"
+		data-on:click="@get('/notifications/dialog')"
+	>
+		@icons.Bell(18)
+		if unread > 0 {
+			<span class="ts-nav-count" aria-hidden="true">{ countText(unread) }</span>
+		}
+	</button>
 }
 
 // accountTrigger is named by its visible text, so speech input can open it by

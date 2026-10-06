@@ -122,6 +122,6 @@ func authorizeSnippet(data pageData) string {
 }
 
 func managementSnippet(data pageData) string {
-	return "curl " + issuerOrigin + "/v1/" + data.Slug + "/users \\\n" +
+	return "curl " + data.Origin + "/v1/" + data.Slug + "/users \\\n" +
 		"  -H \"Authorization: Bearer $TS_AUTH_SECRET_KEY\""
 }

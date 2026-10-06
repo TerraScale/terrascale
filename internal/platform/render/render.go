@@ -163,7 +163,7 @@ func documentTitle(title string) string {
 var (
 	shellNavigation = []core.NavGroup{
 		{Items: []core.NavItem{
-			{Label: "Overview", URL: "/"}, {Label: "Notifications", URL: "/notifications"},
+			{Label: "Overview", URL: "/"},
 		}},
 		{Label: "Build", Items: []core.NavItem{
 			// Query subscriptions (/subscriptions) is hidden from the navigation;
@@ -279,9 +279,6 @@ func navItems(items []core.NavItem, path string, shell core.Shell) []core.NavIte
 		case "/organization":
 			items[i].BadgeCount = len(shell.Organizations)
 			items[i].BadgeLabel = ui.CountLabel(items[i].BadgeCount, "organization", "organizations")
-		case "/notifications":
-			items[i].BadgeCount = shell.UnreadNotifications
-			items[i].BadgeLabel = ui.UnreadLabel(shell.UnreadNotifications)
 		}
 	}
 	return items
