@@ -222,8 +222,9 @@ public sealed class ReplicationSlowTests
         using var clientA = clientTls.CreateClient(a.ClientAddress!, await tenant.KeyAsync(a, "documents:read", "documents:write"));
         using var clientB = clientTls.CreateClient(b.ClientAddress!, await tenant.KeyAsync(b, "documents:read", "documents:write"));
         var path = tenant.Path("race");
+        // Created once: it reaches b, and creating it on b as well would conflict.
         await CreateCollectionAsync(clientA, path);
-        await CreateCollectionAsync(clientB, path);
+        await TerraBaseTestServer.ReplicatedAsync(a, b);
         await PutAsync(clientA, path, "deleted", new Faker());
 
         // Four writers per node race over the same 20 documents: about one in four operations is a delete.
@@ -541,6 +542,9 @@ public sealed class ReplicationSlowTests
             peerTls.Apply(settings);
             clientTls.Apply(settings);
             settings["peer-addresses"] = gate.Address.ToString();
+            // This measures the sender's turns under writers that never pause; write-wait would hold every busy write
+            // on the group the gate holds.
+            settings["write-wait-ms"] = "0";
         });
         var tenant = await ReplicationTenant.CreateAsync(sender, "busy", "quiet");
         busyId = Google.Protobuf.ByteString.CopyFrom(Guid.Parse(tenant.Database("busy").DatabaseId!).ToByteArray(bigEndian: true));

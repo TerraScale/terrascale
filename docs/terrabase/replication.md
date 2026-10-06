@@ -39,6 +39,19 @@ UTF-8 object without duplicate properties, at most 1 MiB, 16 container levels an
 the document API numeric limits. Rejected writes fault their transaction; client transactions report
 the operation index. Shapes embed admitted JSON without reparsing it.
 
+## Write-wait
+
+A member answers a client write on a client database (documents, transactions, collection create and drop) only once
+every active peer durably acknowledged it, so a read on any member then sees it: read-your-writes across members.
+Design, guarantees and limits: [0010](decisions/0010-write-wait-and-synced-durable-ack.md).
+
+- The wait starts after the write transaction ended and lasts at most `write-wait-ms` (2 s by default). On expiry the
+  member answers the committed write as usual and counts a timeout; it never turns a committed write into an error.
+- A peer whose stream for the database is failing (unreachable, restarting) is not waited for until a stream to it
+  succeeds again.
+- Receivers sync the WAL (`synchronous = FULL`) before `DurableAck`, so an acknowledged group survives the peer's power
+  loss; local commits stay `NORMAL` ([0003](decisions/0003-sqlite-synchronous-normal.md)).
+
 The management catalog and API keys (`_system.db`) replicate separately, from one catalog primary to its
 followers: see [Catalog](#catalog). Client replication does not create or rename organizations, projects or their
 registered databases. There is no pre-tenancy directory migration; main's tenant layout and exclusive ownership
@@ -106,6 +119,7 @@ Metrics on the follower:
 | `peer-addresses` | Comma-separated, distinct `https://host:port` peer listeners to send to; requires `peer-port` |
 | `peers` | Every member as `name=host:port`, this node included under its `node-name`; sets `peer-addresses` to the others. Requires `peer-port` |
 | `catalog-primary` | The catalog primary this node follows: a member name of `peers` (this node's own makes it the primary) or an `https://host:port` peer listener; unset makes it a primary. Requires `peer-port` |
+| `write-wait-ms` | Milliseconds a client write waits for its active peers' `DurableAck` before it answers anyway, `0` to `60000`; `0` does not wait. Default `2000` |
 
 `peer-port` and the three files are set together. The files are read at startup; an unreadable
 file or any other invalid setting stops the process with exit code `2`. A node with `peer-port`
@@ -176,7 +190,7 @@ One `Replication.Sync` stream carries one database from one origin to one peer.
    limits (gRPC message size, encoded and decoded bytes, changes, byte credit, and 2 MiB of
    collection, id and JSON bytes per group): a group that does not fit fails the stream on the
    sender before it is written, and is refused by the receiver before it is decoded.
-4. Receiver, per batch: validate, apply and record the sequence in one SQLite transaction, then
+4. Receiver, per batch: validate, apply and record the sequence in one SQLite transaction synced to disk, then
    send `DurableAck` and `AppliedAck` with the new prefix. A duplicate is acknowledged without
    being applied, after consulting the pinned store. A gap ends the stream with a retryable
    `STREAM_ERROR_INVALID_BATCH`; an invalid batch with a non-retryable one, and an unsupported
@@ -280,6 +294,7 @@ through its own `IMeterFactory` plus process-wide ones (runtime), so several hos
 | `terrabase_replication_sent_encoded_bytes_total` | Envelope bytes sent, after LZ4 |
 | `terrabase_replication_received_groups_total{result}` | Groups received; `result` is `applied`, `duplicate` or `rejected` |
 | `terrabase_replication_sender_initialized` | `0` while persisted journal heads are being measured, `1` once all existing databases are initialized |
+| `terrabase_replication_write_wait_seconds{result}` | Histogram of the time client writes waited for their peers' `DurableAck`; `result` is `acknowledged` (every active peer acknowledged) or `timeout` (answered at `write-wait-ms`) |
 | `terrabase_replication_sender_durable_lag` | Committed groups some peer has not durably acknowledged, summed over peers and databases; `0` means the last validated prefixes acknowledge every group; receiver state loss is discovered by periodic reconciliation. It counts a commit before the commit returns, and a database's older groups before network progress; require `terrabase_replication_sender_initialized = 1` before interpreting zero lag |
 
 ## Not yet
@@ -287,14 +302,14 @@ through its own `IMeterFactory` plus process-wide ones (runtime), so several hos
 - Not interoperable with terrabase-rust (different change group format and merge policy).
 - `changes` and document tombstones are never truncated; retention needs membership to know all peers.
 - Database delete is not replicated.
-- No read-your-writes across members: within replication lag a read on another member can miss a write, and a
-  conditional write there fails with 412 or 404 until the write arrives.
+- Read-your-writes across members holds only for writes answered within `write-wait-ms` while every peer was active
+  ([0010](decisions/0010-write-wait-and-synced-durable-ack.md)): after a timeout, or on a peer that was failing or is
+  catching up after a restart, a read can miss a write and a conditional write there fails with 412 or 404 until it
+  arrives.
 - A baseline is the whole current state, written into the change log in bounded chunks: it costs as much
   disk as the data it covers.
-- `DurableAck` follows the receiver's SQLite commit. Under decision 0003 (`synchronous = NORMAL`)
-  that commit survives a crash of the process but not a power loss or an OS crash until the WAL is
-  synced at the next checkpoint. That is weaker than the terrabase-rust contract (a WAL sync before
-  `DurableAck`), so a peer's acknowledgment does not back a power-loss guarantee yet.
+- The member that accepted a write keeps decision 0003's `synchronous = NORMAL`: a power loss can roll its file back
+  behind what its peers applied, and that database then stops replicating from it until an operator recovers it.
 - No SQL write path exists yet; a future SQL write through `IStorageTransaction` is captured as
   one group.
 

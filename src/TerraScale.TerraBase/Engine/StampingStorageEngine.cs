@@ -148,6 +148,9 @@ internal sealed class StampingStorageEngine(IStorageEngine inner, ISystemReplica
 
         public async ValueTask<IStorageTransaction> BeginTransactionAsync(bool write, CancellationToken cancellationToken) =>
             new Transaction(engine, database, await inner.BeginTransactionAsync(write, cancellationToken).ConfigureAwait(false));
+
+        public async ValueTask<IStorageTransaction> BeginDurableTransactionAsync(CancellationToken cancellationToken) =>
+            new Transaction(engine, database, await inner.BeginDurableTransactionAsync(cancellationToken).ConfigureAwait(false));
     }
 
     // Replicated system writes move stamps like local ones: a revoked API key is not served from the cache.

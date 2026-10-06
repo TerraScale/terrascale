@@ -504,6 +504,8 @@ public sealed class SenderLifecycleTests
             peerTls.Apply(settings);
             clientTls.Apply(settings);
             settings["peer-addresses"] = peer.Address.ToString();
+            // The backlog accumulates while the peer stalls; write-wait would hold each write on the stalled stream.
+            settings["write-wait-ms"] = "0";
         });
         var tenant = await ReplicationTenant.CreateAsync(sender, "backlog");
         using var writer = clientTls.CreateClient(sender.ClientAddress!, await tenant.KeyAsync(sender, "documents:write"));

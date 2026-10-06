@@ -162,6 +162,9 @@ public sealed record TerraBaseOptions : IDisposable
 
     private const int MaxReadinessCacheSeconds = 60;
 
+    /// <summary>Default milliseconds a write waits for its active peers' durable acknowledgment (docs/decisions/0010).</summary>
+    public const int DefaultWriteWaitMilliseconds = 2000;
+
     /// <summary>Default directory for SQLite database files, relative to the working directory.</summary>
     public const string DefaultDataDirectory = "data";
 
@@ -179,7 +182,7 @@ public sealed record TerraBaseOptions : IDisposable
 
     private static readonly FrozenSet<string> Keys = FrozenSet.Create(
         StringComparer.Ordinal,
-        ["admin-port", "data-directory", "region", "node-name", "memory-budget", "client-port", .. ClientTlsKeys, "auth-issuer", "auth-audience", "management-credential-file", "management-legacy-owner", "peer-port", .. PeerTlsKeys, "peer-addresses", "peers", "catalog-primary", "shutdown-grace-seconds", "readiness-cache-seconds", "storage-threads", "storage-queue"]);
+        ["admin-port", "data-directory", "region", "node-name", "memory-budget", "client-port", .. ClientTlsKeys, "auth-issuer", "auth-audience", "management-credential-file", "management-legacy-owner", "peer-port", .. PeerTlsKeys, "peer-addresses", "peers", "catalog-primary", "write-wait-ms", "shutdown-grace-seconds", "readiness-cache-seconds", "storage-threads", "storage-queue"]);
 
     /// <summary>Every setting name, in <c>--name=value</c> form without the dashes.</summary>
     public static IReadOnlySet<string> SettingNames => Keys;
@@ -281,6 +284,12 @@ public sealed record TerraBaseOptions : IDisposable
     /// <c>peers</c>; naming this node makes it the primary.
     /// </summary>
     public Uri? CatalogPrimary { get; init; }
+
+    /// <summary>
+    /// How long a client write waits, after its commit, for every active peer in <see cref="PeerAddresses"/> to durably
+    /// acknowledge it before answering; on expiry it answers anyway (docs/decisions/0010). Zero answers right after the commit.
+    /// </summary>
+    public TimeSpan WriteWait { get; init; } = TimeSpan.FromMilliseconds(DefaultWriteWaitMilliseconds);
 
     /// <summary>
     /// Bytes of memory TerraBase plans for caches (<c>docs/memory.md</c>). Defaults to a quarter of the memory
@@ -433,6 +442,7 @@ public sealed record TerraBaseOptions : IDisposable
         var adminPort = ParsePort(values, "admin-port") ?? DefaultAdminPort;
         var shutdownGrace = TimeSpan.FromSeconds(ParseShutdownGraceSeconds(values));
         var readinessCacheTtl = TimeSpan.FromSeconds(ParseReadinessCacheSeconds(values));
+        var writeWait = TimeSpan.FromMilliseconds(ParseInteger(values, "write-wait-ms", 0, 60_000) ?? DefaultWriteWaitMilliseconds);
         X509Certificate2? clientCertificate = null;
         PeerCredentials.Snapshot? peerCredentialSnapshot = null;
         try
@@ -468,6 +478,7 @@ public sealed record TerraBaseOptions : IDisposable
                 PeerCredentialSnapshot = peerCredentialSnapshot,
                 PeerAddresses = peerAddresses,
                 CatalogPrimary = catalogPrimary,
+                WriteWait = writeWait,
                 ShutdownGrace = shutdownGrace,
                 ReadinessCacheTtl = readinessCacheTtl,
             };

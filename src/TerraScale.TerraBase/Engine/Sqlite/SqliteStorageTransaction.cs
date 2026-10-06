@@ -14,11 +14,12 @@ namespace TerraScale.TerraBase.Engine.Sqlite;
 /// <param name="transaction">The SQLite transaction.</param>
 /// <param name="io">Runs every SQLite call of this transaction.</param>
 /// <param name="write">Whether mutations are allowed.</param>
+/// <param name="durable">Whether the session runs with <c>synchronous = FULL</c> until disposal resets it to <c>NORMAL</c>.</param>
 /// <param name="committed">Runs after a commit advances the local shape history or its head.</param>
 /// <param name="changesCommitted">When set, local mutations are captured and it receives the group's sequence after commit.</param>
 /// <param name="ownsAdmission">Whether disposal releases this transaction's I/O admission.</param>
 internal sealed partial class SqliteStorageTransaction(
-    SqliteDatabaseStore store, SqliteSession session, SqliteTransaction transaction, SqliteIoPool io, bool write, Action? committed,
+    SqliteDatabaseStore store, SqliteSession session, SqliteTransaction transaction, SqliteIoPool io, bool write, bool durable, Action? committed,
     Action<long>? changesCommitted, bool ownsAdmission)
     : IStorageTransaction
 {
@@ -1354,6 +1355,14 @@ internal sealed partial class SqliteStorageTransaction(
                         using var writable = session.Connection.CreateCommand();
                         writable.CommandText = "PRAGMA query_only = OFF;";
                         writable.ExecuteNonQuery();
+                    }
+
+                    if (durable)
+                    {
+                        // Likewise a failed reset: pooled sessions keep decision 0003's NORMAL.
+                        using var normal = session.Connection.CreateCommand();
+                        normal.CommandText = "PRAGMA synchronous = NORMAL;";
+                        normal.ExecuteNonQuery();
                     }
                 }
                 catch

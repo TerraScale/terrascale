@@ -155,6 +155,7 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
         public bool IsClosed => inner.IsClosed;
         public long CommitSequence => inner.CommitSequence;
         public Task WaitForCommitAsync(long sequence, CancellationToken cancellationToken) => inner.WaitForCommitAsync(sequence, cancellationToken);
+        public ValueTask<IStorageTransaction> BeginDurableTransactionAsync(CancellationToken cancellationToken) => inner.BeginDurableTransactionAsync(cancellationToken);
 
         public async ValueTask<IStorageTransaction> BeginTransactionAsync(bool write, CancellationToken cancellationToken)
         {
@@ -175,6 +176,7 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
         public bool IsClosed => inner.IsClosed;
         public long CommitSequence => inner.CommitSequence;
         public Task WaitForCommitAsync(long sequence, CancellationToken cancellationToken) => inner.WaitForCommitAsync(sequence, cancellationToken);
+        public ValueTask<IStorageTransaction> BeginDurableTransactionAsync(CancellationToken cancellationToken) => inner.BeginDurableTransactionAsync(cancellationToken);
 
         public async ValueTask<IStorageTransaction> BeginTransactionAsync(bool write, CancellationToken cancellationToken)
         {

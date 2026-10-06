@@ -206,10 +206,8 @@ become operationally relevant.
   duplicates); its content reaches peers as a baseline.
 - `_system` (API keys, management catalog) is not replicated.
 - A baseline costs as much log space as the data it covers.
-- `DurableAck` follows the receiver's SQLite commit. Under decision 0003 (`synchronous = NORMAL`)
-  that commit survives a crash of the process but not a power loss or an OS crash until the WAL is
-  synced at the next checkpoint. That is weaker than the terrabase-rust contract (a WAL sync before
-  `DurableAck`), so a peer's acknowledgment does not back a power-loss guarantee yet.
+- `DurableAck` follows the receiver's SQLite commit, which [0010](0010-write-wait-and-synced-durable-ack.md) syncs to
+  disk (`synchronous = FULL` for replicated applies), as the terrabase-rust contract requires.
 - No SQL write path exists yet (`ISqlExecutor` is unimplemented). A future SQL write through
   `IStorageTransaction` is captured as one group.
 

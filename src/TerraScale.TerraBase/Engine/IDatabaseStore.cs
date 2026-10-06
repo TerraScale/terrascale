@@ -21,6 +21,12 @@ public interface IDatabaseStore
     /// </summary>
     ValueTask<IStorageTransaction> BeginTransactionAsync(bool write, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Starts a write transaction whose commit is synced to disk when <see cref="IStorageTransaction.CommitAsync"/> returns, so
+    /// it survives a power loss; other commits are synced at the next checkpoint (docs/decisions/0003, 0010).
+    /// </summary>
+    ValueTask<IStorageTransaction> BeginDurableTransactionAsync(CancellationToken cancellationToken);
+
     /// <summary>Counts this process's write commits to this database; read it before a read to wait for later commits.</summary>
     long CommitSequence { get; }
 

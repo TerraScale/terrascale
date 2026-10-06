@@ -12,6 +12,7 @@ internal sealed class ReplicationMetrics
     private readonly Counter<long> _receivedGroups;
     private readonly Counter<long> _creditWaits;
     private readonly Counter<long> _prefixMismatches;
+    private readonly Histogram<double> _writeWaits;
     private readonly Meter _meter;
 
     public ReplicationMetrics(IMeterFactory meters)
@@ -25,6 +26,9 @@ internal sealed class ReplicationMetrics
         _prefixMismatches = meter.CreateCounter<long>("terrabase.replication.sender.prefix.mismatches", description: "Peer journal prefixes rejected because their content differs");
         _creditWaits = meter.CreateCounter<long>(
             "terrabase.replication.sender.credit.waits", "{wait}", "Prepared groups held until durable acknowledgments release byte credit.");
+        _writeWaits = meter.CreateHistogram(
+            "terrabase.replication.write_wait", "s", "Time client writes waited for their peers' durable acknowledgment, by result: acknowledged or timeout.",
+            advice: new InstrumentAdvice<double> { HistogramBucketBoundaries = [0.0005, 0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10] });
     }
 
     public void Sent(V1.CommittedGroupBatch batch)
@@ -51,4 +55,7 @@ internal sealed class ReplicationMetrics
     public void PrefixMismatch() => _prefixMismatches.Add(1);
 
     public void CreditWait() => _creditWaits.Add(1);
+
+    public void WriteWaited(TimeSpan waited, bool timedOut) =>
+        _writeWaits.Record(waited.TotalSeconds, new KeyValuePair<string, object?>("result", timedOut ? "timeout" : "acknowledged"));
 }

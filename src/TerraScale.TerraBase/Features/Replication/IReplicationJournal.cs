@@ -4,7 +4,7 @@ using TerraScale.TerraBase.Tenancy;
 namespace TerraScale.TerraBase.Features.Replication;
 
 /// <summary>
-/// The incoming journal: a received change group becomes durable and visible in one local transaction
+/// The incoming journal: a received change group becomes durable (synced to disk) and visible in one local transaction
 /// that also records it as applied, and only then may a <c>DurableAck</c> or <c>AppliedAck</c> report it.
 /// </summary>
 public interface IReplicationJournal
@@ -48,8 +48,9 @@ internal sealed class EngineReplicationJournal(IStorageEngine engine) : IReplica
         ObjectDisposedException.ThrowIf(store.IsClosed, store);
 
         // The applied prefix is read inside the write transaction, which the engine serializes per database,
-        // so concurrent streams of one origin cannot both apply a group.
-        var transaction = await store.BeginTransactionAsync(write: true, cancellationToken).ConfigureAwait(false);
+        // so concurrent streams of one origin cannot both apply a group. A DurableAck reports the group: its commit is
+        // synced to disk before it returns (docs/decisions/0010).
+        var transaction = await store.BeginDurableTransactionAsync(cancellationToken).ConfigureAwait(false);
         await using (transaction.ConfigureAwait(false))
         {
             var applied = await transaction.GetAppliedFrontierAsync(origin, cancellationToken).ConfigureAwait(false);

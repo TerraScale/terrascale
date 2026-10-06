@@ -2,13 +2,19 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using TerraScale.TerraBase.Engine;
 using TerraScale.TerraBase.Features.Management.Usage;
+using TerraScale.TerraBase.Features.Replication;
 using TerraScale.TerraBase.Hosting;
 using TerraScale.TerraBase.Primitives;
 using TerraScale.TerraBase.Tenancy;
 
 namespace TerraScale.TerraBase.Features.Documents;
 
-internal sealed class DocumentService(IStorageEngine engine, TimeProvider time, DocumentCache cache, IUsageMeter usage) : IDocumentService, ISystemDocumentReader
+/// <remarks>
+/// A committed client write answers only after <see cref="IReplicationWait"/>, outside its transaction: the database's
+/// writer lock must not wait on the network, and a peer applying this member's groups needs it.
+/// </remarks>
+internal sealed class DocumentService(IStorageEngine engine, TimeProvider time, DocumentCache cache, IUsageMeter usage, IReplicationWait replication)
+    : IDocumentService, ISystemDocumentReader
 {
     // assert_count examines at most this many documents.
     private const long MaxAssertCount = 10_000;
@@ -16,17 +22,19 @@ internal sealed class DocumentService(IStorageEngine engine, TimeProvider time, 
     public async ValueTask<CollectionInfo> CreateCollectionAsync(TenantContext database, string name, CancellationToken cancellationToken)
     {
         var transaction = await BeginAsync(database, write: true, cancellationToken).ConfigureAwait(false);
+        var collection = new CollectionInfo(name, time.GetUtcNow().ToUnixTimeMilliseconds());
         await using (transaction.ConfigureAwait(false))
         {
-            var collection = new CollectionInfo(name, time.GetUtcNow().ToUnixTimeMilliseconds());
             if (!await transaction.CreateCollectionAsync(collection, cancellationToken).ConfigureAwait(false))
             {
                 throw new ApiException(StatusCodes.Status409Conflict, "name_taken", "the collection already exists");
             }
 
             await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
-            return collection;
         }
+
+        await replication.WaitAsync(database, cancellationToken).ConfigureAwait(false);
+        return collection;
     }
 
     public async ValueTask<CollectionInfo> GetCollectionAsync(TenantContext database, string name, CancellationToken cancellationToken)
@@ -51,9 +59,10 @@ internal sealed class DocumentService(IStorageEngine engine, TimeProvider time, 
     public async ValueTask<CollectionInfo> DropCollectionAsync(TenantContext database, string name, CancellationToken cancellationToken)
     {
         var transaction = await BeginAsync(database, write: true, cancellationToken).ConfigureAwait(false);
+        CollectionInfo collection;
         await using (transaction.ConfigureAwait(false))
         {
-            var collection = await CollectionAsync(transaction, name, cancellationToken).ConfigureAwait(false);
+            collection = await CollectionAsync(transaction, name, cancellationToken).ConfigureAwait(false);
             try
             {
                 await transaction.DropCollectionAsync(name, cancellationToken).ConfigureAwait(false);
@@ -63,8 +72,10 @@ internal sealed class DocumentService(IStorageEngine engine, TimeProvider time, 
             {
                 throw ChangeGroupCapacity();
             }
-            return collection;
         }
+
+        await replication.WaitAsync(database, cancellationToken).ConfigureAwait(false);
+        return collection;
     }
 
     public async ValueTask<StoredDocument?> GetAsync(DocumentKey key, CancellationToken cancellationToken)
@@ -159,6 +170,14 @@ internal sealed class DocumentService(IStorageEngine engine, TimeProvider time, 
     }
 
     public async ValueTask<WriteResult> WriteAsync(
+        TenantContext database, IReadOnlyList<DocumentOperation> operations, bool indexErrors, CancellationToken cancellationToken)
+    {
+        var written = await CommitAsync(database, operations, indexErrors, cancellationToken).ConfigureAwait(false);
+        await replication.WaitAsync(database, cancellationToken).ConfigureAwait(false);
+        return written;
+    }
+
+    private async ValueTask<WriteResult> CommitAsync(
         TenantContext database, IReadOnlyList<DocumentOperation> operations, bool indexErrors, CancellationToken cancellationToken)
     {
         var transaction = await BeginAsync(database, write: true, cancellationToken).ConfigureAwait(false);

@@ -14,14 +14,15 @@ namespace TerraScale.TerraBase.Features.Replication;
 /// one Sync stream that resumes after the peer's applied prefix from <c>Welcome</c>, sends groups in order
 /// within the in-flight window, and closes once every group is durably acknowledged. Failures retry with
 /// capped exponential backoff and jitter; the next stream resumes from the peer's prefix again. The durable
-/// lag gauge counts committed groups that some peer has not durably acknowledged yet.
+/// lag gauge counts committed groups that some peer has not durably acknowledged yet, and a client write waits for
+/// those acknowledgments before it answers (<see cref="IReplicationWait"/>).
 /// </summary>
 /// <remarks>
 /// ponytail: one database at a time per peer; run several streams per peer if many databases lag at once.
 /// </remarks>
 internal sealed partial class ReplicationSender(
     IStorageEngine engine, PeerCredentials credentials, TerraBaseOptions options, ReplicationMetrics metrics, ILogger<ReplicationSender> logger, TimeProvider time)
-    : BackgroundService
+    : BackgroundService, IReplicationWait
 {
     // Groups one stream sends before the database goes to the back of the queue, so a database that is
     // written as fast as it replicates cannot starve the others.
@@ -36,6 +37,11 @@ internal sealed partial class ReplicationSender(
     private readonly Dictionary<DatabaseIncarnation, long> _heads = [];
     private Peer[] _peers = [];
     private int _initialized;
+    private int _disposed;
+
+    // Completed and replaced, under _state, whenever a peer's acknowledged prefix or failure changes; waiting writes check again.
+    // ponytail: one signal wakes every waiting write; per-database signals if many concurrent writers wake each other.
+    private TaskCompletionSource _progress = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     private readonly record struct DatabaseIncarnation(string Organization, string Project, string Database, Guid Origin)
     {
@@ -46,49 +52,142 @@ internal sealed partial class ReplicationSender(
     {
         cancellationToken.ThrowIfCancellationRequested();
         metrics.ObserveDurableLag(() => Volatile.Read(ref _peers).Sum(peer => peer.Lag()), () => Volatile.Read(ref _initialized));
-        return base.StartAsync(cancellationToken);
-    }
-
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
-    {
+        // Here, not in ExecuteAsync (which runs later on the thread pool): hosted services start before the server listens,
+        // so every client write commits after its peers exist and its head is tracked, and write-wait covers it.
         var peers = new List<Peer>();
-        void OnCommitted(object? sender, ChangeGroupCommitted committed)
-        {
-            lock (_state)
-            {
-                // A commit on an unlinked file may finish after deletion; it belongs to the closed incarnation.
-                if (committed.Database.IsClosed)
-                {
-                    return;
-                }
-
-                var identity = RaiseHead(committed.Database, committed.Sequence);
-                peers.ForEach(peer => peer.MarkDirty(identity));
-            }
-        }
-
-        void OnDeleted(object? sender, IDatabaseStore store)
-        {
-            var identity = Identity(store);
-            lock (_state)
-            {
-                _heads.Remove(identity);
-                peers.ForEach(peer => peer.Forget(identity));
-            }
-        }
-
         try
         {
             foreach (var (address, number) in options.PeerAddresses.Select((address, number) => (address, number)))
             {
                 peers.Add(CreatePeer(number, address));
             }
+        }
+        catch
+        {
+            peers.ForEach(peer => peer.Dispose());
+            throw;
+        }
 
-            Volatile.Write(ref _peers, [.. peers]);
-            // Subscribe before listing, so no commit falls between the two.
-            // Deletions are observed before commits, so a commit during subscription cannot leave retired state.
-            engine.DatabaseDeleted += OnDeleted;
-            engine.ChangesCommitted += OnCommitted;
+        Volatile.Write(ref _peers, [.. peers]);
+        // Subscribe before listing, so no commit falls between the two.
+        // Deletions are observed before commits, so a commit during subscription cannot leave retired state.
+        engine.DatabaseDeleted += OnDeleted;
+        engine.ChangesCommitted += OnCommitted;
+        return base.StartAsync(cancellationToken);
+    }
+
+    // The container disposes it once per registration (the sender, IReplicationWait and IHostedService).
+    public override void Dispose()
+    {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+        {
+            return;
+        }
+
+        engine.ChangesCommitted -= OnCommitted;
+        engine.DatabaseDeleted -= OnDeleted;
+        foreach (var peer in Volatile.Read(ref _peers))
+        {
+            peer.Dispose();
+        }
+
+        base.Dispose();
+    }
+
+    private void OnCommitted(object? sender, ChangeGroupCommitted committed)
+    {
+        lock (_state)
+        {
+            // A commit on an unlinked file may finish after deletion; it belongs to the closed incarnation.
+            if (committed.Database.IsClosed)
+            {
+                return;
+            }
+
+            var identity = RaiseHead(committed.Database, committed.Sequence);
+            foreach (var peer in _peers)
+            {
+                peer.MarkDirty(identity);
+            }
+        }
+    }
+
+    private void OnDeleted(object? sender, IDatabaseStore store)
+    {
+        var identity = Identity(store);
+        lock (_state)
+        {
+            _heads.Remove(identity);
+            foreach (var peer in _peers)
+            {
+                peer.Forget(identity);
+            }
+        }
+    }
+
+    public async ValueTask WaitAsync(TenantContext database, CancellationToken cancellationToken)
+    {
+        var started = time.GetTimestamp();
+        if (options.WriteWait <= TimeSpan.Zero
+            || await engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is not { } store)
+        {
+            return;
+        }
+
+        // The caller's commit raised the head before it returned, so this head covers its group.
+        var identity = Identity(store);
+        long head;
+        lock (_state)
+        {
+            if (!_heads.TryGetValue(identity, out head))
+            {
+                return;
+            }
+        }
+
+        using var expiry = new CancellationTokenSource(options.WriteWait, time);
+        using var wait = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, expiry.Token);
+        while (true)
+        {
+            Task progress;
+            lock (_state)
+            {
+                if (Volatile.Read(ref _peers).All(peer => peer.Covers(identity, head)))
+                {
+                    metrics.WriteWaited(time.GetElapsedTime(started), timedOut: false);
+                    return;
+                }
+
+                progress = _progress.Task;
+            }
+
+            try
+            {
+                await progress.WaitAsync(wait.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (expiry.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+            {
+                // The write is committed and keeps replicating; failing it now would invite a retry of a write that succeeded.
+                metrics.WriteWaited(time.GetElapsedTime(started), timedOut: true);
+                return;
+            }
+        }
+    }
+
+    private void Progressed()
+    {
+        lock (_state)
+        {
+            _progress.SetResult();
+            _progress = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        }
+    }
+
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        var peers = Volatile.Read(ref _peers).ToList();
+        try
+        {
             // SQLite async APIs can block their caller. Start every peer independently before discovery
             // so healthy discovered databases and new commits can progress during another database's open.
             var workers = peers.Select(peer => Task.Run(() => RunAsync(peer, stoppingToken))).ToArray();
@@ -97,12 +196,6 @@ internal sealed partial class ReplicationSender(
         catch (Exception) when (stoppingToken.IsCancellationRequested)
         {
             // Shutdown: an interrupted stream ends as RpcException(Cancelled), not only OperationCanceledException.
-        }
-        finally
-        {
-            engine.ChangesCommitted -= OnCommitted;
-            engine.DatabaseDeleted -= OnDeleted;
-            peers.ForEach(peer => peer.Dispose());
         }
     }
 
@@ -204,6 +297,7 @@ internal sealed partial class ReplicationSender(
                 {
                     if (peer.Retry(database) is { } backoff)
                     {
+                        Progressed();
                         LogSyncFailed(logger, error, peer.Number, 1, backoff.TotalMilliseconds);
                     }
                 }
@@ -290,6 +384,7 @@ internal sealed partial class ReplicationSender(
         }
 
         peer.Welcomed(identity, receiverIncarnation, acknowledged);
+        Progressed();
         LogPeerRegion(logger, peer.Number, options.Region, peerMember.Region is "" ? "unknown" : peerMember.Region);
         var inFlight = new Queue<(long Sequence, uint Bytes, ReadOnlyMemory<byte> Digest)>();
         ulong inFlightBytes = 0;
@@ -410,6 +505,7 @@ internal sealed partial class ReplicationSender(
                 acknowledged = prefix;
                 acknowledgedProof = proof;
                 peer.Acknowledged(identity, receiverIncarnation, acknowledged);
+                Progressed();
                 var released = false;
                 while (inFlight.Count > 0 && inFlight.Peek().Sequence <= acknowledged)
                 {
@@ -603,6 +699,16 @@ internal sealed partial class ReplicationSender(
                 {
                     _acknowledged[database] = (receiver, prefix);
                 }
+            }
+        }
+
+        // Whether a write that waits for this database's group head need not wait for this peer: the peer durably
+        // acknowledged the head, or its stream for the database is failing and in backoff.
+        public bool Covers(DatabaseIncarnation database, long head)
+        {
+            lock (state)
+            {
+                return _retries.ContainsKey(database) || _acknowledged.GetValueOrDefault(database).Prefix >= head;
             }
         }
 

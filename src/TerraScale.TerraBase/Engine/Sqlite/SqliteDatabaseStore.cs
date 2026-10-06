@@ -253,13 +253,16 @@ internal sealed class SqliteDatabaseStore(
     internal bool Replica { get; init; }
 
     public async ValueTask<IStorageTransaction> BeginTransactionAsync(bool write, CancellationToken cancellationToken) =>
-        write && Replica ? throw new CatalogFollowerException() : await BeginAsync(write, capture: true, cancellationToken).ConfigureAwait(false);
+        write && Replica ? throw new CatalogFollowerException() : await BeginAsync(write, capture: true, durable: false, cancellationToken).ConfigureAwait(false);
+
+    public async ValueTask<IStorageTransaction> BeginDurableTransactionAsync(CancellationToken cancellationToken) =>
+        Replica ? throw new CatalogFollowerException() : await BeginAsync(write: true, capture: true, durable: true, cancellationToken).ConfigureAwait(false);
 
     /// <summary>The write transaction of a follower's replication applier; it captures nothing.</summary>
     internal ValueTask<SqliteStorageTransaction> BeginReplicaAsync(CancellationToken cancellationToken) =>
-        BeginAsync(write: true, capture: false, cancellationToken);
+        BeginAsync(write: true, capture: false, durable: false, cancellationToken);
 
-    private async ValueTask<SqliteStorageTransaction> BeginAsync(bool write, bool capture, CancellationToken cancellationToken)
+    private async ValueTask<SqliteStorageTransaction> BeginAsync(bool write, bool capture, bool durable, CancellationToken cancellationToken)
     {
         var ownsAdmission = !io.HasAdmission;
         if (ownsAdmission)
@@ -296,11 +299,19 @@ internal sealed class SqliteDatabaseStore(
                     readOnly.ExecuteNonQuery();
                 }
 
+                // SQLite refuses to change it inside a transaction; with FULL the commit syncs the WAL (decision 0010).
+                if (durable)
+                {
+                    using var full = connection.CreateCommand();
+                    full.CommandText = "PRAGMA synchronous = FULL;";
+                    full.ExecuteNonQuery();
+                }
+
                 // Writers take the lock up front (BEGIN IMMEDIATE) so they wait instead of failing on upgrade.
                 return connection.BeginTransaction(deferred: !write);
             }, cancellationToken).ConfigureAwait(false);
             return new SqliteStorageTransaction(
-                this, session, transaction, io, write, write ? Committed : null, write && capture ? changesCommitted : null, ownsAdmission);
+                this, session, transaction, io, write, durable, write ? Committed : null, write && capture ? changesCommitted : null, ownsAdmission);
         }
         catch
         {

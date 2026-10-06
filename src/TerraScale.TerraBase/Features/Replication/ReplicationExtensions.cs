@@ -13,8 +13,8 @@ public static class ReplicationExtensions
     /// <summary>
     /// Adds the peer listener (HTTP/2 over mutual TLS with certificates read again when their files change)
     /// and the <c>Replication</c> and <c>CatalogReplication</c> services, plus the sender when <c>peer-addresses</c> is
-    /// set and the catalog follower when <c>catalog-primary</c> is. Registers <see cref="ICatalogReadiness"/>; nothing else
-    /// when the peer listener is disabled. Payloads are LZ4 application envelopes; gRPC transport compression is not used.
+    /// set and the catalog follower when <c>catalog-primary</c> is. Registers <see cref="ICatalogReadiness"/> and
+    /// <see cref="IReplicationWait"/>; nothing else when the peer listener is disabled. Payloads are LZ4 application envelopes; gRPC transport compression is not used.
     /// </summary>
     public static WebApplicationBuilder AddTerraBaseReplication(this WebApplicationBuilder builder, TerraBaseOptions options)
     {
@@ -30,6 +30,11 @@ public static class ReplicationExtensions
             builder.Services.AddSingleton<ICatalogReadiness>(provider => provider.GetRequiredService<CatalogFollower>());
             builder.Services.AddHostedService(provider => provider.GetRequiredService<CatalogFollower>());
             builder.Services.AddSingleton<CatalogForwarder>();
+        }
+
+        if (options.PeerAddresses.Count == 0)
+        {
+            builder.Services.AddSingleton<IReplicationWait, NoReplicationWait>();
         }
 
         if (options.PeerPort is not { } port)
@@ -74,7 +79,9 @@ public static class ReplicationExtensions
         });
         if (options.PeerAddresses.Count > 0)
         {
-            builder.Services.AddHostedService<ReplicationSender>();
+            builder.Services.AddSingleton<ReplicationSender>();
+            builder.Services.AddSingleton<IReplicationWait>(provider => provider.GetRequiredService<ReplicationSender>());
+            builder.Services.AddHostedService(provider => provider.GetRequiredService<ReplicationSender>());
         }
 
         return builder;
