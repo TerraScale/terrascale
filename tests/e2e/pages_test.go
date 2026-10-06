@@ -84,9 +84,11 @@ func TestPagesMemberNavigationKeyboardAndMobile(t *testing.T) {
 
 	navigation := pageByRole(page, *playwright.AriaRoleNavigation, "Dashboard sections")
 	visible(t, byRole(navigation, *playwright.AriaRoleLink, "Overview"))
-	for _, label := range []string{"Databases", "Team", "Usage", "Billing"} {
+	for _, label := range []string{"Databases", "Team", "Usage"} {
 		visible(t, byRole(navigation, *playwright.AriaRoleLink, label, true))
 	}
+	visible(t, byRole(navigation, *playwright.AriaRoleLink, "Organization"))
+	must(t, expect.Locator(byRole(navigation, *playwright.AriaRoleLink, "Billing", true)).ToHaveCount(0))
 	must(t, expect.Locator(byRole(navigation, *playwright.AriaRoleLink, "Query subscriptions", true)).ToHaveCount(0))
 	viewportScreenshot(t, page, "member-desktop-navigation")
 
@@ -135,7 +137,7 @@ func TestPagesMemberNavigationKeyboardAndMobile(t *testing.T) {
 	goTo(t, page, "/databases")
 	screenshot(t, page, "data")
 	billing := goTo(t, page, "/billing")
-	if billing.Status() != http.StatusOK || currentPath(t, page) != "/billing" {
+	if billing.Status() != http.StatusOK || currentPath(t, page) != "/organization" {
 		t.Fatalf("GET /billing = %d at %s", billing.Status(), page.URL())
 	}
 	screenshot(t, page, "billing")
@@ -263,7 +265,7 @@ func TestPagesRegionMapIsLazyAndNativeRegionControlsWork(t *testing.T) {
 		t.Fatalf("overview requested the region map %d times, want 0", n)
 	}
 
-	goTo(t, mapPage, "/organization")
+	goTo(t, mapPage, "/organization?tab=projects")
 	click(t, mapPage.Locator(`button[command="show-modal"][commandfor="create-project"]`))
 	regionMap := mapPage.Locator(`.ts-region-map[data-select-id="project-region"]`)
 	must(t, expect.Locator(regionMap).ToHaveAttribute("role", "group"))
@@ -274,7 +276,7 @@ func TestPagesRegionMapIsLazyAndNativeRegionControlsWork(t *testing.T) {
 	eventually(t, "region map image request", func() bool { return mapImageRequests.Load() > 0 })
 
 	nativePage := watchedPage(t, cloneSession(t, page.Context(), false))
-	goTo(t, nativePage, "/organization")
+	goTo(t, nativePage, "/organization?tab=projects")
 	click(t, nativePage.Locator(`button[command="show-modal"][commandfor="create-project"]`))
 	projectForm := nativePage.Locator(`form[action="/api/v1/dashboard/organization/projects"]`)
 	region := projectForm.GetByLabel("Primary region")

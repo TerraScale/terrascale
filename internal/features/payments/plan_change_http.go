@@ -55,9 +55,9 @@ func mountPlanChanges(mux *http.ServeMux, deps core.Deps, flow BillingFlow, serv
 // billingOutcomePath is the billing tab announcing a plan change outcome.
 func billingOutcomePath(outcome string) string {
 	if outcome == OutcomeCurrent {
-		return "/usage?tab=billing"
+		return "/organization?tab=billing"
 	}
-	return "/usage?tab=billing&billing=" + outcome
+	return "/organization?tab=billing&billing=" + outcome
 }
 
 func validPlanChangeCSRF(deps core.Deps, w http.ResponseWriter, r *http.Request) bool {

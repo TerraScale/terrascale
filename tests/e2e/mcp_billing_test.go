@@ -74,7 +74,7 @@ func TestMCPBillingCheckoutPlanChangesAndPortal(t *testing.T) {
 	callTool(t, session, "create_checkout", map[string]any{"plan": "starter", "interval": "monthly"}, &checkout)
 	goTo(t, page, checkout.CheckoutURL)
 	click(t, pageByRole(page, *playwright.AriaRoleButton, "Confirm local demo setup"))
-	waitForPath(t, page, func(u *url.URL) bool { return u.Path == "/billing" && u.Query().Get("payment") == "success" })
+	waitForPath(t, page, func(u *url.URL) bool { return u.Path == "/organization" && u.Query().Get("payment") == "success" })
 	billing = getMCPBilling(t, session)
 	if !billing.HasSubscription || billing.PlanKey != "starter" {
 		t.Fatalf("after browser confirmation billing = %+v, want a starter subscription", billing)

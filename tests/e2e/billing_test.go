@@ -14,7 +14,7 @@ func TestDemoBillingUpgradesThroughLocalSimulator(t *testing.T) {
 	registerAndOnboard(t, page, newAccount("billing"))
 
 	response := goTo(t, page, "/billing")
-	if response.Status() != 200 || currentPath(t, page) != "/billing" {
+	if response.Status() != 200 || currentPath(t, page) != "/organization" {
 		t.Fatalf("GET /billing = %d at %s", response.Status(), page.URL())
 	}
 	visible(t, pageByRole(page, *playwright.AriaRoleHeading, "Plans and billing"))
@@ -35,7 +35,7 @@ func TestDemoBillingUpgradesThroughLocalSimulator(t *testing.T) {
 	confirm := pageByRole(page, *playwright.AriaRoleButton, "Confirm local demo setup")
 	click(t, confirm)
 	waitForPath(t, page, func(u *url.URL) bool {
-		return u.Path == "/billing" && u.Query().Get("payment") == "success"
+		return u.Path == "/organization" && u.Query().Get("payment") == "success"
 	})
 
 	currentPlan := page.Locator(`section[aria-labelledby="billing-summary-title"]`)
@@ -50,7 +50,7 @@ func TestDemoBillingUpgradesThroughLocalSimulator(t *testing.T) {
 	must(t, expect.Locator(proPlan).ToContainText("billed annually"))
 	visible(t, byRole(proPlan, *playwright.AriaRoleButton, "Switch to annual billing"))
 	click(t, byRole(proPlan, *playwright.AriaRoleButton, "Switch to annual billing"))
-	waitForPath(t, page, func(u *url.URL) bool { return u.Path == "/usage" && u.Query().Get("review") == "1" })
+	waitForPath(t, page, func(u *url.URL) bool { return u.Path == "/organization" && u.Query().Get("review") == "1" })
 	visible(t, pageByRole(page, *playwright.AriaRoleHeading, "Review plan change"))
 	click(t, pageByRole(page, *playwright.AriaRoleLink, "Close plan review"))
 

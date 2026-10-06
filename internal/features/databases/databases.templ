@@ -78,7 +78,7 @@ templ createDatabase(page core.Page, d pageData) {
 			<input type="hidden" name="_csrf" value={ page.CSRFToken }/>
 			if d.Limit != nil {
 				@ui.Alert("warning", "Database limit reached", planLimitMessage(*d.Limit)) {
-					<a class="ts-link" href="/billing">Compare plans</a>
+					<a class="ts-link" href="/organization?tab=billing">Compare plans</a>
 				}
 			} else if d.Error != "" && d.OpenCreate {
 				@ui.Alert("danger", "", d.Error)

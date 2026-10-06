@@ -139,7 +139,7 @@ func (s Service) StartCheckout(ctx context.Context, p core.Principal, planKey, i
 			return location, err
 		}
 	}
-	returnPath, err = NormalizeReturnPath(returnPath, "/billing")
+	returnPath, err = NormalizeReturnPath(returnPath, "/organization?tab=billing")
 	if err != nil {
 		return "", err
 	}
@@ -319,7 +319,7 @@ func (s Service) PortalURL(ctx context.Context, p core.Principal) (string, error
 	if organization.Billing.CustomerID == "" {
 		return "", conflict("no billing account is available for this organization")
 	}
-	portal, err := s.billing.provider.CreatePortalSession(ctx, organization.Billing.CustomerID, s.billing.config.PublicOrigin+"/billing", core.NewID("portal"))
+	portal, err := s.billing.provider.CreatePortalSession(ctx, organization.Billing.CustomerID, s.billing.config.PublicOrigin+"/organization?tab=billing", core.NewID("portal"))
 	if err != nil {
 		slog.Error("create Stripe billing portal", "organization_id", organization.ID, "error", err)
 		return "", providerError("Could not open the billing portal.")

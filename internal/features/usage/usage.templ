@@ -16,7 +16,6 @@ templ usageView(data pageData, csrfToken string) {
 		<div class="ts-toolbar">
 			@ui.Tabs("Usage sections", []ui.Tab{
 				{Label: "Overview", URL: usageTabHref("overview", data.SelectedProject), Active: data.Tab == "overview"},
-				{Label: "Billing", URL: usageTabHref("billing", data.SelectedProject), Active: data.Tab == "billing"},
 				{Label: "Spending controls", URL: usageTabHref("settings", data.SelectedProject), Active: data.Tab == "settings"},
 			})
 			if data.Tab == "overview" {
@@ -78,7 +77,7 @@ templ overviewFilters(data pageData) {
 }
 
 templ invoiceFilters(data pageData) {
-	<form class="ts-filters" method="get" action="/usage" role="search" aria-label="Filter payment history">
+	<form class="ts-filters" method="get" action="/organization" role="search" aria-label="Filter payment history">
 		<input type="hidden" name="tab" value="billing"/>
 		<input type="hidden" name="project" value={ data.SelectedProject }/>
 		<label class="ts-filter-inline" for="invoice-status">
@@ -242,7 +241,7 @@ templ historyTotals(data pageData) {
 }
 
 templ billingTab(data pageData, csrfToken string) {
-	@ui.Card(ui.CardProps{ID: "billing-summary", Title: "Billing summary", Description: "Plan and invoice information reported for this organization", Actions: billingActions(data)}) {
+	@ui.Card(ui.CardProps{ID: "billing-invoice-summary", Title: "Invoice summary", Description: "Invoice information reported for this organization", Actions: billingSummaryActions(data)}) {
 		<dl class="ts-stats ts-usage-billing-kpis ts-stats-compact">
 			<div class="ts-stat">
 				<dt class="ts-stat-label">Plan</dt>
@@ -277,10 +276,10 @@ templ billingTab(data pageData, csrfToken string) {
 			@ui.Stat("Outstanding balance", data.BillingSummary.Outstanding, data.BillingSummary.OutstandingDetail)
 			@ui.Stat("Current spending limit", data.EffectiveCap, "Configured for the selected project and database scope")
 		</dl>
-		if data.PendingPlan != "" {
+		if !data.OrganizationBilling && data.PendingPlan != "" {
 			<div class="ts-card-section">@ui.Alert("warning", "Awaiting payment", "Stripe is confirming the change to "+data.PendingPlan+". Your current plan stays active until confirmation.")</div>
 		}
-		if data.ScheduledPlan != "" {
+		if !data.OrganizationBilling && data.ScheduledPlan != "" {
 			<div class="ts-card-section ts-stack-sm">
 				@ui.Alert("info", "Change scheduled", "Your plan will change to "+data.ScheduledPlan+" "+whenScheduled(data.ScheduledAt)+".")
 				if data.CanManageBilling {
@@ -379,7 +378,7 @@ templ billingPlanDialog(data pageData) {
 				<div class="ts-dialog-header"><h2 class="ts-dialog-title" id="change-billing-plan-title">Choose a plan</h2><p class="ts-dialog-description">Select a plan and billing interval, then review the change.</p></div>
 				<button class="ts-icon-btn" type="button" aria-label="Close plan selection" command="close" commandfor="change-billing-plan">@icons.X(18)</button>
 			</div>
-			<form method="get" action="/usage" class="ts-form">
+			<form method="get" action="/organization" class="ts-form">
 				<input type="hidden" name="tab" value="billing"/>
 				<input type="hidden" name="review" value="1"/>
 				<fieldset class="ts-stack-sm"><legend class="ts-section-title">Plan</legend>
@@ -414,7 +413,7 @@ templ billingReviewDialog(data pageData, csrfToken string) {
 						}
 					</p>
 				</div>
-				<a class="ts-icon-btn" href="/usage?tab=billing" aria-label="Close plan review">@icons.X(18)</a>
+				<a class="ts-icon-btn" href="/organization?tab=billing" aria-label="Close plan review">@icons.X(18)</a>
 			</div>
 			if data.Review.Error != "" {
 				@ui.Alert("warning", "", data.Review.Error)
@@ -443,7 +442,7 @@ templ billingReviewDialog(data pageData, csrfToken string) {
 						<input type="hidden" name="_csrf" value={ csrfToken }/>
 						<input type="hidden" name="plan" value={ data.Review.Key }/>
 						<input type="hidden" name="interval" value={ data.Review.Interval }/>
-						<input type="hidden" name="return" value="/usage?tab=billing"/>
+						<input type="hidden" name="return" value="/organization?tab=billing"/>
 						<button class="ts-btn ts-btn-primary" type="submit">Confirm change</button>
 					</form>
 				}
@@ -545,4 +544,23 @@ func invoiceTone(status string) string {
 		return "danger"
 	}
 	return "neutral"
+}
+
+// Organization keeps plan management, invoice filters and reviews within Billing.
+templ organizationBillingContent(data pageData, csrfToken string, plans templ.Component) {
+	<div class="ts-stack ts-billing ts-usage">
+		if data.BillingNotice != "" {
+			@ui.Alert("info", "", data.BillingNotice)
+		}
+		@plans
+		<div class="ts-row">@billingActions(data)</div>
+		<div class="ts-toolbar">@invoiceFilters(data)</div>
+		@billingTab(data, csrfToken)
+	</div>
+}
+
+templ billingSummaryActions(data pageData) {
+	if !data.OrganizationBilling {
+		@billingActions(data)
+	}
 }

@@ -57,6 +57,15 @@ The command is idempotent:
 3. mirrors the organization, its projects and databases under their
    TerraBase IDs. Reruns rename and add; they never duplicate or delete.
 
+To open the `/admin` pages to an account, run the command on a dashboard
+machine, where the four variables above are already set:
+
+```sh
+fly ssh console -C "/dashboard grant-platform-admin --email mariogk@terrascale.tech"   # --revoke to undo
+```
+
+It is idempotent and records the change in the admin action log.
+
 ## 4. Deploy and verify
 
 ```sh

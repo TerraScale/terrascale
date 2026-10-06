@@ -149,7 +149,7 @@ func New(cfg config.Config) (*Application, error) {
 	onboarding.Mount(mux, deps, billing)
 	profile.Mount(mux, deps)
 	settings.Mount(mux, deps)
-	organization.Mount(mux, deps)
+	organization.Mount(mux, deps, billing)
 	access.Mount(mux, deps)
 	home.Mount(mux, deps)
 	databases.Mount(mux, deps)

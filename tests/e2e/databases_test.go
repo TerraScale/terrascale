@@ -171,7 +171,7 @@ func TestDatabaseFreePlanLimitIsExplainedAndHoldsForBranchesAndRestores(t *testi
 	dialog := pageByRole(page, *playwright.AriaRoleDialog, "New database")
 	visible(t, dialog)
 	must(t, expect.Locator(dialog.GetByRole(*playwright.AriaRoleAlert)).ToContainText("The Free plan includes 1 database"))
-	must(t, expect.Locator(byRole(dialog, *playwright.AriaRoleLink, "Compare plans")).ToHaveAttribute("href", "/billing"))
+	must(t, expect.Locator(byRole(dialog, *playwright.AriaRoleLink, "Compare plans")).ToHaveAttribute("href", "/organization?tab=billing"))
 	must(t, expect.Locator(dialog.Locator("#database-name")).ToHaveValue(second))
 	must(t, expect.Locator(dialog.Locator(`#database-region input[value="FRA"]`)).ToBeChecked())
 

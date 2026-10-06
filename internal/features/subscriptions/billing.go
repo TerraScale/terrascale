@@ -171,7 +171,7 @@ func (service BillingService) BeginDemoCheckout(ctx context.Context, principal c
 	if err != nil {
 		return core.CheckoutSession{}, err
 	}
-	returnPath, err = payments.NormalizeReturnPath(returnPath, "/billing")
+	returnPath, err = payments.NormalizeReturnPath(returnPath, "/organization?tab=billing")
 	if err != nil {
 		return core.CheckoutSession{}, err
 	}
@@ -266,7 +266,7 @@ func (service BillingService) CompleteDemoCheckout(ctx context.Context, principa
 		if !ok || session.ID != sessionID || session.OrganizationID != organization.ID || session.OwnerUserID != principal.UserID || session.Status != checkoutOpen || !session.ExpiresAt.After(service.now()) || organization.Billing.CheckoutID != sessionID {
 			return ErrCheckoutUnavailable
 		}
-		path, err := payments.NormalizeReturnPath(session.ReturnPath, "/billing")
+		path, err := payments.NormalizeReturnPath(session.ReturnPath, "/organization?tab=billing")
 		if err != nil {
 			return err
 		}
@@ -344,7 +344,7 @@ func (service BillingService) RecordExternalCheckout(ctx context.Context, princi
 	if err != nil {
 		return err
 	}
-	returnPath, err = payments.NormalizeReturnPath(returnPath, "/billing")
+	returnPath, err = payments.NormalizeReturnPath(returnPath, "/organization?tab=billing")
 	if err != nil {
 		return err
 	}
