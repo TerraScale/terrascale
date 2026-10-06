@@ -123,7 +123,7 @@ func checkoutContent(csrfToken string, data checkoutPage) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 8, "\"> <button class=\"ts-btn ts-btn-secondary ts-btn-lg ts-btn-block\" type=\"submit\">Cancel checkout</button></form><a class=\"ts-btn ts-btn-ghost ts-btn-block\" href=\"/billing\">Return to billing</a></div></section></main>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 8, "\"> <button class=\"ts-btn ts-btn-secondary ts-btn-lg ts-btn-block\" type=\"submit\">Cancel checkout</button></form><a class=\"ts-btn ts-btn-ghost ts-btn-block\" href=\"/organization?tab=billing\">Return to billing</a></div></section></main>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}

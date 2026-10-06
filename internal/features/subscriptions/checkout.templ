@@ -25,7 +25,7 @@ templ checkoutContent(csrfToken string, data checkoutPage) {
 					<input type="hidden" name="_csrf" value={ csrfToken }/>
 					<button class="ts-btn ts-btn-secondary ts-btn-lg ts-btn-block" type="submit">Cancel checkout</button>
 				</form>
-				<a class="ts-btn ts-btn-ghost ts-btn-block" href="/billing">Return to billing</a>
+				<a class="ts-btn ts-btn-ghost ts-btn-block" href="/organization?tab=billing">Return to billing</a>
 			</div>
 		</section>
 	</main>

@@ -29,7 +29,7 @@ func TestPersonalOwnerChangesPlanAndUndoesScheduledChange(t *testing.T) {
 	must(t, expect.Locator(review).ToContainText("Demo only; no Stripe charge"))
 	screenshot(t, page, "stripe-review-upgrade")
 	click(t, byRole(review, *playwright.AriaRoleButton, "Confirm change"))
-	waitForPath(t, page, func(u *url.URL) bool { return u.Path == "/usage" && u.Query().Get("billing") == "changed" })
+	waitForPath(t, page, func(u *url.URL) bool { return u.Path == "/organization" && u.Query().Get("billing") == "changed" })
 	summary := page.Locator("#billing-summary")
 	must(t, expect.Locator(summary).ToContainText("Pro"))
 
@@ -39,7 +39,7 @@ func TestPersonalOwnerChangesPlanAndUndoesScheduledChange(t *testing.T) {
 	must(t, expect.Locator(review).ToContainText("At renewal"))
 	click(t, byRole(review, *playwright.AriaRoleButton, "Confirm change"))
 	must(t, expect.Locator(summary).ToContainText("Change scheduled"))
-	must(t, expect.Locator(summary).ToContainText("Your plan will change to Starter"))
+	must(t, expect.Locator(summary).ToContainText("moves to Starter, billed"))
 	screenshot(t, page, "stripe-billing-scheduled")
 
 	// Billing accepts one change at a time, so the review offers Undo
@@ -64,7 +64,7 @@ func TestPersonalOwnerChangesPlanAndUndoesScheduledChange(t *testing.T) {
 	click(t, byRole(picker, *playwright.AriaRoleButton, "Review change"))
 	must(t, expect.Locator(review).ToContainText("No charge today"))
 	click(t, byRole(review, *playwright.AriaRoleButton, "Confirm change"))
-	must(t, expect.Locator(summary).ToContainText("Your plan will change to Free"))
+	must(t, expect.Locator(summary).ToContainText("moves to Free"))
 }
 
 func TestPlanReviewWarnsWhenDowngradeExceedsPlanLimits(t *testing.T) {

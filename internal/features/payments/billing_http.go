@@ -150,7 +150,7 @@ func NormalizeReturnPath(value, fallback string) (string, error) {
 func WithPaymentOutcome(returnPath, outcome string) string {
 	parsed, err := url.Parse(returnPath)
 	if err != nil {
-		return "/billing"
+		return "/organization?tab=billing"
 	}
 	query := parsed.Query()
 	query.Set("payment", outcome)

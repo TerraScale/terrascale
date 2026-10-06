@@ -297,7 +297,7 @@ func TestBillingPageHidesOwnerActionsFromMembers(t *testing.T) {
 		t.Fatalf("owner page = %#v", owner)
 	}
 	html := renderBillingPage(t, fixture.page(t, member, intervalMonthly))
-	for _, owned := range []string{`href="/billing/portal"`, `action="/usage"`, `action="/billing/checkout"`} {
+	for _, owned := range []string{`href="/billing/portal"`, `action="/organization"`, `action="/billing/checkout"`} {
 		if strings.Contains(html, owned) {
 			t.Errorf("member billing page offers owner action %q", owned)
 		}
