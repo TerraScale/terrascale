@@ -162,15 +162,19 @@ type pageData struct {
 	Reads                 int64
 	Writes                int64
 	LogicalSize           string
-	UsageSource           string
-	UsageError            string
-	UsageAvailable        bool
-	Saved                 string
-	CanManage             bool
-	CanManageBilling      bool
-	InvoiceCount          int
-	ActiveDatabases       int
-	RegionCount           int
+	// StorageMeasured covers the selected scope's storage and documents;
+	// OrganizationStorageMeasured the projects' storage.
+	StorageMeasured             bool
+	OrganizationStorageMeasured bool
+	UsageSource                 string
+	UsageError                  string
+	UsageAvailable              bool
+	Saved                       string
+	CanManage                   bool
+	CanManageBilling            bool
+	InvoiceCount                int
+	ActiveDatabases             int
+	RegionCount                 int
 }
 
 type billingPlanChoice struct {
@@ -626,6 +630,7 @@ func buildPage(ctx context.Context, service Service, p core.Principal, token str
 		ActiveDatabases: report.ActiveDatabases, RegionCount: report.RegionCount, CanManage: report.CanManage,
 		Reads: report.Totals.Reads, Writes: report.Totals.Writes, LogicalSize: formatBytes(report.Totals.LogicalBytes),
 		UsageSource: report.Totals.Source, UsageError: report.Totals.Error, UsageAvailable: report.Totals.Available,
+		StorageMeasured: report.Totals.StorageMeasured, OrganizationStorageMeasured: report.Allowances[2].Measured,
 		HistoryRange: report.Totals.Range, HistoryRangeLabel: demovisuals.RangeLabel(report.Totals.Range),
 	}
 	for _, item := range report.Allowances {

@@ -44,14 +44,17 @@ type databaseUsage struct {
 // writes in the range. Each document get, list page or query page is one
 // read; each committed put, patch or delete is one write.
 type usageTotals struct {
-	Available    bool              `json:"available" jsonschema:"Whether TerraBase's metered reads and writes could be loaded."`
-	Source       string            `json:"source"`
-	Error        string            `json:"error,omitempty"`
-	Range        string            `json:"range" jsonschema:"24h, 7d, or 30d."`
-	Reads        int64             `json:"reads"`
-	Writes       int64             `json:"writes"`
-	LogicalBytes int64             `json:"logicalBytes" jsonschema:"Logical storage of the selected scope."`
-	Series       []core.UsagePoint `json:"series" jsonschema:"Reads and writes per UTC hour (24h, 7d) or day (30d), oldest first."`
+	Available    bool   `json:"available" jsonschema:"Whether TerraBase's metered reads and writes could be loaded."`
+	Source       string `json:"source"`
+	Error        string `json:"error,omitempty"`
+	Range        string `json:"range" jsonschema:"24h, 7d, or 30d."`
+	Reads        int64  `json:"reads"`
+	Writes       int64  `json:"writes"`
+	LogicalBytes int64  `json:"logicalBytes" jsonschema:"Logical storage of the selected scope."`
+	// StorageMeasured is unset when TerraBase stores the scope but could not
+	// be asked; LogicalBytes and document counts are then not known.
+	StorageMeasured bool              `json:"storageMeasured" jsonschema:"Whether LogicalBytes and document counts are known: TerraBase measured them, or the dashboard holds the documents."`
+	Series          []core.UsagePoint `json:"series" jsonschema:"Reads and writes per UTC hour (24h, 7d) or day (30d), oldest first."`
 }
 
 // allowanceUsage is one plan allowance and how much of it the organization
@@ -180,7 +183,7 @@ func (s Service) report(ctx context.Context, p core.Principal, token string, org
 		})
 	}
 	report.RegionCount = len(regions)
-	month := s.meter(ctx, token, org, project, databaseFilter, &report)
+	metered := s.meter(ctx, token, org, project, databaseFilter, &report)
 	var organizationBytes, databaseBytes int64
 	for _, row := range report.Projects {
 		organizationBytes += row.LogicalBytes
@@ -200,53 +203,76 @@ func (s Service) report(ctx context.Context, p core.Principal, token string, org
 	// ponytail: storage counts each byte once; multiply by a database's
 	// regions once databases span several, as GB-region allowances do.
 	report.Allowances = []allowanceUsage{
-		allowance("Reads this month", plan.ReadsAllowance(), plan.MonthlyOperations(), month.Reads, report.Totals.Available),
-		allowance("Writes this month", plan.WritesAllowance(), plan.MonthlyOperations(), month.Writes, report.Totals.Available),
-		allowance("Storage", plan.StorageAllowance(), plan.StorageBytes(), organizationBytes, true),
+		allowance("Reads this month", plan.ReadsAllowance(), plan.MonthlyOperations(), metered.month.Reads, metered.monthMeasured),
+		allowance("Writes this month", plan.WritesAllowance(), plan.MonthlyOperations(), metered.month.Writes, metered.monthMeasured),
+		allowance("Storage", plan.StorageAllowance(), plan.StorageBytes(), organizationBytes, metered.organizationStorage),
 	}
 	report.PlanUsageNote = "Reads and writes count separately: each read is one read and each write one write. The month runs on UTC."
-	if !report.Totals.Available {
-		report.PlanUsageNote = "Reads and writes aren't metered here, so their utilization is unavailable."
+	if !metered.monthMeasured {
+		report.PlanUsageNote = "This month's reads and writes aren't metered here, so their utilization is unavailable."
 	}
 	return report, nil
 }
 
-// meter fills the report with TerraBase's metered usage over the range and
-// returns the organization's reads and writes this month. It leaves the
-// totals unavailable, and the stored figures as they are, when TerraBase
-// cannot meter the scope.
-func (s Service) meter(ctx context.Context, token string, org core.Organization, project core.Project, databaseFilter string, report *usageReport) core.UsagePeriod {
+// metered is what TerraBase answered for a report: the organization's reads
+// and writes this month, and whether its projects' storage is known.
+type metered struct {
+	month               core.UsagePeriod
+	monthMeasured       bool
+	organizationStorage bool
+}
+
+// meter fills the report with TerraBase's metered usage. The organization's
+// answer gives this month's reads and writes and its projects' storage; the
+// selected project's or database's answer gives the range's totals, series
+// and databases. Each applies on its own. Storage counts as known where
+// TerraBase measured it or where TerraBase does not store the resource, so
+// the documents the dashboard holds are all of it (TS-472 phase 1).
+func (s Service) meter(ctx context.Context, token string, org core.Organization, project core.Project, databaseFilter string, report *usageReport) metered {
 	totals := &report.Totals
+	var result metered
 	switch {
 	case s.deps.Usage == nil:
 		totals.Source = "This deployment has no TerraBase, which meters reads and writes."
-		return core.UsagePeriod{}
-	case project.ID == "":
-		totals.Source = "Create a project to meter its reads and writes."
-		return core.UsagePeriod{}
+		totals.StorageMeasured, result.organizationStorage = true, true
+		return result
 	case token == "":
 		totals.Source = "Metered reads and writes load in a browser session signed in through TerraScale."
-		return core.UsagePeriod{}
+		return result
 	}
 	now := time.Now().UTC()
 	monthStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
 	organization, err := s.deps.Usage.Usage(ctx, token, core.UsageScope{OrganizationID: org.ID, Granularity: "day", From: monthStart})
-	if err != nil {
-		meterError(totals, err)
-		return core.UsagePeriod{}
+	switch {
+	case err == nil:
+		result.month, result.monthMeasured, result.organizationStorage = organization.Period, true, true
+		for i, row := range report.Projects {
+			if item, ok := findUsage(organization.Items, func(u core.Usage) string { return u.ProjectID }, row.ID); ok {
+				report.Projects[i].LogicalBytes = item.LogicalBytes
+			}
+		}
+	case errors.Is(err, core.ErrNotMetered):
+		// None of the organization's projects are in TerraBase either.
+		meterError(totals, err, "organization")
+		totals.StorageMeasured, result.organizationStorage = true, true
+		return result
+	}
+	if project.ID == "" {
+		totals.Source = "Create a project to meter its reads and writes."
+		return result
+	}
+	scope := "project"
+	if databaseFilter != "" {
+		scope = "database"
 	}
 	granularity, from := core.UsageBuckets(totals.Range, now)
 	scoped, err := s.deps.Usage.Usage(ctx, token, core.UsageScope{
 		OrganizationID: org.ID, ProjectID: project.ID, DatabaseID: databaseFilter, Granularity: granularity, From: from,
 	})
 	if err != nil {
-		meterError(totals, err)
-		return core.UsagePeriod{}
-	}
-	for i, row := range report.Projects {
-		if item, ok := findUsage(organization.Items, func(u core.Usage) string { return u.ProjectID }, row.ID); ok {
-			report.Projects[i].LogicalBytes = item.LogicalBytes
-		}
+		meterError(totals, err, scope)
+		totals.StorageMeasured = errors.Is(err, core.ErrNotMetered)
+		return result
 	}
 	items := scoped.Items
 	if databaseFilter != "" {
@@ -260,16 +286,17 @@ func (s Service) meter(ctx context.Context, token string, org core.Organization,
 			report.Databases[i].Reads, report.Databases[i].Writes = item.Period.Reads, item.Period.Writes
 		}
 	}
-	totals.Available, totals.Source = true, "Metered by TerraBase."
+	totals.Available, totals.StorageMeasured, totals.Source = true, true, "Metered by TerraBase."
 	totals.Reads, totals.Writes, totals.Series = scoped.Period.Reads, scoped.Period.Writes, scoped.Series
-	return organization.Period
+	return result
 }
 
-// meterError explains why TerraBase's usage could not be read.
-func meterError(totals *usageTotals, err error) {
+// meterError explains why TerraBase's usage of the scope ("organization",
+// "project" or "database") could not be read.
+func meterError(totals *usageTotals, err error, scope string) {
 	switch {
 	case errors.Is(err, core.ErrNotMetered):
-		totals.Source = "TerraBase doesn't store this organization's databases yet, so their reads and writes aren't metered."
+		totals.Source = "TerraBase doesn't store this " + scope + " yet, so its reads and writes aren't metered."
 	case errors.Is(err, core.ErrUnauthorized):
 		totals.Source = "TerraBase didn't accept this sign-in. Sign out and in again to load metered reads and writes."
 	default:

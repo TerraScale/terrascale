@@ -17,8 +17,10 @@ import (
 type fakeMeter struct {
 	reads, writes, monthReads, monthWrites, logicalBytes int64
 	databaseID                                           string
-	err                                                  error
-	scopes                                               []core.UsageScope
+	// err fails every call; orgErr and scopeErr only the organization's or
+	// the selected scope's.
+	err, orgErr, scopeErr error
+	scopes                []core.UsageScope
 }
 
 func (m *fakeMeter) Usage(_ context.Context, token string, scope core.UsageScope) (core.Usage, error) {
@@ -30,7 +32,10 @@ func (m *fakeMeter) Usage(_ context.Context, token string, scope core.UsageScope
 		return core.Usage{}, m.err
 	}
 	if scope.ProjectID == "" {
-		return core.Usage{Period: core.UsagePeriod{Reads: m.monthReads, Writes: m.monthWrites}}, nil
+		return core.Usage{Period: core.UsagePeriod{Reads: m.monthReads, Writes: m.monthWrites}}, m.orgErr
+	}
+	if m.scopeErr != nil {
+		return core.Usage{}, m.scopeErr
 	}
 	database := core.Usage{DatabaseID: m.databaseID, LogicalBytes: m.logicalBytes, Documents: 2, Period: core.UsagePeriod{Reads: m.reads, Writes: m.writes}}
 	return core.Usage{
@@ -130,5 +135,53 @@ func TestUsageExplainsUnmeteredScopes(t *testing.T) {
 	mux.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/usage", nil))
 	if body := response.Body.String(); !strings.Contains(body, "Reads and writes are not metered here.") || !strings.Contains(body, "Not metered") {
 		t.Fatalf("usage page does not explain the missing meter: %s", body)
+	}
+}
+
+// TestUsageAppliesEachTerraBaseAnswerOnItsOwn covers a project TerraBase
+// doesn't store inside an organization it does, and an organization answer
+// that fails while the project's loads.
+func TestUsageAppliesEachTerraBaseAnswerOnItsOwn(t *testing.T) {
+	meter := &fakeMeter{monthReads: 50_000, monthWrites: 7, scopeErr: core.ErrNotMetered}
+	service, principal, _ := meterFixture(t, meter)
+	report, err := service.Usage(t.Context(), principal, "user-token", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reads := report.Allowances[0]; !reads.Measured || reads.Used != 50_000 || reads.Percent != 50 {
+		t.Fatalf("reads allowance = %+v, want the organization's month", reads)
+	}
+	if report.Totals.Available || !report.Totals.StorageMeasured || !strings.Contains(report.Totals.Source, "doesn't store this project") {
+		t.Fatalf("totals = %+v, want an unmetered project whose stored documents count", report.Totals)
+	}
+
+	meter = &fakeMeter{reads: 4, writes: 2, orgErr: core.ErrUnavailable}
+	service, principal, _ = meterFixture(t, meter)
+	if report, err = service.Usage(t.Context(), principal, "user-token", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if !report.Totals.Available || report.Totals.Reads != 4 || report.Totals.Error != "" || report.Allowances[0].Measured || report.Allowances[2].Measured {
+		t.Fatalf("report = %+v, want the project's range without this month's allowances", report)
+	}
+}
+
+// TestUsageClaimsStorageOnlyWhenItIsKnown checks that without a token a
+// deployment with TerraBase reports no storage figure rather than the
+// documents the dashboard happens to hold.
+func TestUsageClaimsStorageOnlyWhenItIsKnown(t *testing.T) {
+	service, principal, _ := meterFixture(t, &fakeMeter{})
+	report, err := service.Usage(t.Context(), principal, "", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Totals.StorageMeasured || report.Allowances[2].Measured {
+		t.Fatalf("storage without a token = %+v, %+v; want it unmeasured", report.Totals, report.Allowances[2])
+	}
+	service.deps.Usage = nil
+	if report, err = service.Usage(t.Context(), principal, "", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if !report.Totals.StorageMeasured || !report.Allowances[2].Measured {
+		t.Fatalf("storage without TerraBase = %+v; the dashboard holds every document", report.Totals)
 	}
 }

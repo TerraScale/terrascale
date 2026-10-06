@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"golang.org/x/oauth2"
 	"terrascale.tech/dashboard/internal/core"
 	"terrascale.tech/dashboard/internal/core/memstore"
 	"terrascale.tech/dashboard/internal/platform/csrf"
@@ -614,6 +615,19 @@ func TestTSAuthRefreshKeepsTokenTSAuthDoesNotRotate(t *testing.T) {
 	dashboard.expire(t)
 	if dashboard.signedIn(t) {
 		t.Fatal("session outlived its revoked, never-rotated refresh token")
+	}
+}
+
+func TestRecheckAtFollowsTheAccessTokenExpiry(t *testing.T) {
+	now := time.Now()
+	if at := recheckAt(&oauth2.Token{Expiry: now.Add(2 * time.Minute)}); !at.Equal(now.Add(2 * time.Minute)) {
+		t.Fatalf("recheck of a 2-minute token at %v, want its expiry", at)
+	}
+	if at := recheckAt(&oauth2.Token{Expiry: now.Add(time.Second)}); at.Before(now.Add(minRenewal - time.Second)) {
+		t.Fatalf("recheck of a 1-second token at %v, want minRenewal later", at)
+	}
+	if at := recheckAt(&oauth2.Token{}); at.Before(now.Add(minRecheck - time.Second)) {
+		t.Fatalf("recheck without an expiry at %v, want minRecheck later", at)
 	}
 }
 

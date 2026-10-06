@@ -161,7 +161,9 @@ templ overviewTab(data pageData) {
 			}
 		}
 		@ui.Card(ui.CardProps{ID: "usage-by-project", Title: shareTitle(data), Description: shareDescription(data)}) {
-			if data.ExplicitProjectFilter && len(data.Databases) > 0 {
+			if (data.ExplicitProjectFilter && !data.StorageMeasured) || (!data.ExplicitProjectFilter && !data.OrganizationStorageMeasured) {
+				@ui.Empty("Storage isn't measured here.", data.UsageSource)
+			} else if data.ExplicitProjectFilter && len(data.Databases) > 0 {
 				<ul class="ts-usage-share">
 					for _, database := range data.Databases {
 						<li>
@@ -202,7 +204,9 @@ templ overviewTab(data pageData) {
 				@ui.Stat("Reads", formatCount(data.Reads), data.HistoryRangeLabel)
 				@ui.Stat("Writes", formatCount(data.Writes), data.HistoryRangeLabel)
 			}
-			@ui.Stat("Logical storage", data.LogicalSize, "Live document bytes")
+			if data.StorageMeasured {
+				@ui.Stat("Logical storage", data.LogicalSize, "Live document bytes")
+			}
 		}
 	}
 	@ui.Card(ui.CardProps{ID: "database-usage", Title: "Project databases", Description: "Reads and writes " + lowerFirst(data.HistoryRangeLabel) + ", storage, and spending limits", Flush: true}) {
@@ -226,8 +230,13 @@ templ overviewTab(data pageData) {
 									<td class="ts-num ts-meta">Not metered</td>
 									<td class="ts-num ts-meta">Not metered</td>
 								}
-								<td class="ts-num">{ fmt.Sprint(database.Documents) }</td>
-								<td class="ts-num">{ database.LogicalSize }</td>
+								if data.StorageMeasured {
+									<td class="ts-num">{ fmt.Sprint(database.Documents) }</td>
+									<td class="ts-num">{ database.LogicalSize }</td>
+								} else {
+									<td class="ts-num ts-meta">Not measured</td>
+									<td class="ts-num ts-meta">Not measured</td>
+								}
 								<td>
 									if database.SpendCap != "" {
 										${ database.SpendCap }
