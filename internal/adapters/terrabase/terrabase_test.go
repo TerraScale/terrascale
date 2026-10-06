@@ -10,6 +10,7 @@ import (
 	"terrascale.tech/dashboard/internal/core/storetest"
 	"terrascale.tech/dashboard/internal/platform/session"
 	"terrascale.tech/dashboard/internal/platform/terrabasetest"
+	"terrascale.tech/dashboard/internal/platform/throttle"
 	v1 "terrascale.tech/sdk/v1"
 )
 
@@ -176,5 +177,26 @@ func TestSessionsReplaceOnlyUnchanged(t *testing.T) {
 	}
 	if err := sessions.Replace(t.Context(), key, current, next); !errors.Is(err, session.ErrNotFound) {
 		t.Fatalf("Replace of an ended session = %v, want session.ErrNotFound", err)
+	}
+}
+
+// TestThrottleAllowsAKeyItHasNeverSeen reserves a first attempt for a new
+// key, which a zero Due once turned into a refusal for centuries.
+func TestThrottleAllowsAKeyItHasNeverSeen(t *testing.T) {
+	if testing.Short() {
+		t.Skip("starts pinned TerraBase release")
+	}
+	tb := terrabasetest.Start(t)
+	db, _ := terrabasetest.Database(t, tb, "throttle")
+	if err := EnsureCollections(t.Context(), db); err != nil {
+		t.Fatal(err)
+	}
+	store, now := NewThrottle(db), time.Now()
+	bucket := throttle.Bucket{Key: "client 203.0.113.9", Budget: throttle.Budget{Burst: 2, Interval: time.Minute}}
+	for attempt, want := range []bool{true, true, false} {
+		wait, allowed, err := store.Reserve(t.Context(), now, []throttle.Bucket{bucket})
+		if err != nil || allowed != want || wait < 0 || wait > time.Minute {
+			t.Fatalf("attempt %d = %v %v %v, want allowed=%v with a wait within the interval", attempt+1, wait, allowed, err, want)
+		}
 	}
 }

@@ -1,7 +1,9 @@
 package throttle
 
 import (
+	"context"
 	"fmt"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -157,5 +159,20 @@ func TestMemoryStaysBounded(t *testing.T) {
 	}
 	if len(buckets(l)) != 1 {
 		t.Fatalf("tracking %d buckets after pruning, want 1", len(buckets(l)))
+	}
+}
+
+// overdue is a Store that asks for a wait no budget allows.
+type overdue struct{ Store }
+
+func (overdue) Reserve(context.Context, time.Time, []Bucket) (time.Duration, bool, error) {
+	return time.Duration(math.MaxInt64), false, nil
+}
+
+func TestWaitIsClampedToTheLongestBudget(t *testing.T) {
+	l, _ := newLimiter(Options{Store: overdue{NewMemoryStore()}})
+	wait, allowed := l.Allow(from("192.0.2.1:1"), "someone@example.test")
+	if allowed || wait != 10*30*time.Second {
+		t.Fatalf("Allow = %v %v, want a refusal for at most the account budget's whole burst", wait, allowed)
 	}
 }

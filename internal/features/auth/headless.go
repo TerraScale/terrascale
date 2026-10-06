@@ -117,8 +117,9 @@ func (t *TSAuth) post(ctx context.Context, target, contentType string, body []by
 	case status >= 200 && status < 300:
 		return answer, nil
 	case status == http.StatusTooManyRequests:
+		// Bounded before it becomes a Duration, which would overflow.
 		seconds, _ := strconv.Atoi(response.Header.Get("Retry-After"))
-		return nil, tooManyAttempts{wait: time.Duration(max(seconds, 1)) * time.Second}
+		return nil, tooManyAttempts{wait: time.Duration(min(max(seconds, 1), 3600)) * time.Second}
 	case status >= 400 && status < 500 && status != http.StatusUnauthorized:
 		return nil, decodeRefusal(status, answer)
 	}

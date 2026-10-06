@@ -79,7 +79,18 @@ func (l *Limiter) Allow(r *http.Request, account string) (time.Duration, bool) {
 		slog.Warn("throttle: reserve attempt", "error", err)
 		return l.opts.Client.Interval, false
 	}
+	// No budget refills slower than its whole burst, so a longer wait is a
+	// store's error and must not lock anyone out.
+	if most := l.maxWait(); wait > most {
+		slog.Warn("throttle: store asked for a longer wait than any budget allows", "wait", wait)
+		wait = most
+	}
 	return wait, ok
+}
+
+// maxWait is the longest wait a budget can ask for: its whole burst.
+func (l *Limiter) maxWait() time.Duration {
+	return max(time.Duration(l.opts.Client.Burst)*l.opts.Client.Interval, time.Duration(l.opts.Account.Burst)*l.opts.Account.Interval)
 }
 
 // Forgive returns the client's reservation and clears the account's budget

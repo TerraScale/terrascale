@@ -87,7 +87,12 @@ func (s *throttleStore) Reserve(ctx context.Context, now time.Time, buckets []th
 				records[hash] = rec
 			}
 			tolerance := time.Duration(bucket.Budget.Burst-1) * bucket.Budget.Interval
-			wait = max(wait, rec.doc.Due.Sub(now)-tolerance)
+			// A key never seen has a zero Due and owes nothing, like one whose
+			// Due has passed. Subtracting the tolerance from the saturated
+			// zero-Due distance would wrap around into a wait of centuries.
+			if rec.doc.Due.After(now) {
+				wait = max(wait, rec.doc.Due.Sub(now)-tolerance)
+			}
 		}
 		if wait > 0 {
 			return nil

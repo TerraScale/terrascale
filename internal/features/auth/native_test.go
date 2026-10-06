@@ -320,6 +320,12 @@ func TestNativePasswordSignInIsThrottled(t *testing.T) {
 	if response.Code != http.StatusTooManyRequests || response.Header().Get("Retry-After") != "42" {
 		t.Fatalf("ts-auth refusal = %d Retry-After %q, want 429 and ts-auth's wait", response.Code, response.Header().Get("Retry-After"))
 	}
+	// A wait too long to be one is bounded, not overflowed into nonsense.
+	limited.set(func(i *testIssuer) { i.headless.retryAfter = "99999999999" })
+	response = newTSAuthDashboard(t, limited).post("/login", url.Values{"email": {"grace@example.test"}, "password": {"guess guess guess"}})
+	if response.Code != http.StatusTooManyRequests || response.Header().Get("Retry-After") != "3600" {
+		t.Fatalf("ts-auth refusal with a huge wait = %d Retry-After %q, want 429 and an hour", response.Code, response.Header().Get("Retry-After"))
+	}
 }
 
 func TestNativeSignInRejectsUnprovenTokens(t *testing.T) {
