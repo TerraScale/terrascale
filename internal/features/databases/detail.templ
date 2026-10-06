@@ -15,7 +15,7 @@ type fact struct {
 
 templ detailContent(page core.Page, d detailData) {
 	@Frame(FrameProps{Database: d.Database, Tab: d.Tab}) {
-		if d.Error != "" && !d.OpenDelete {
+		if d.Error != "" && !d.OpenDelete && !restoreErrorInDialog(d) {
 			@ui.Alert("danger", "", d.Error)
 		}
 		switch d.Tab {
@@ -88,11 +88,11 @@ templ detailPlacement(d detailData) {
 
 templ detailBackups(page core.Page, d detailData) {
 	<div class="ts-split">
-		@ui.Card(ui.CardProps{ID: "restore-points", Title: "Restore points", Description: "Restore a snapshot side by side as a new database.", Actions: createBackupAction(page, d), Flush: true}) {
+		@ui.Card(ui.CardProps{ID: "restore-points", Title: "Restore points", Description: "Restore a snapshot over this database or into a new one.", Actions: createBackupAction(page, d), Flush: true}) {
 			if len(d.Info.Backups) > 0 {
 				<div class="ts-table-wrap">
 					<table class="ts-table">
-						<thead><tr><th>Created</th><th>Status</th><th class="ts-num">Size</th><th>Restore</th></tr></thead>
+						<thead><tr><th>Created</th><th>Status</th><th class="ts-num">Size</th><th>Actions</th></tr></thead>
 						<tbody>
 							for _, backup := range d.Info.Backups {
 								<tr>
@@ -100,15 +100,9 @@ templ detailBackups(page core.Page, d detailData) {
 									<td>@ui.Badge(backupTone(backup.Status), backup.Status)</td>
 									<td class="ts-num">{ byteSize(backup.SizeBytes) }</td>
 									<td>
-										if d.Info.CanRestoreBackups {
-											<form class="ts-db-restore" method="post" action="/api/v1/dashboard/backups/restore">
-												<input type="hidden" name="_csrf" value={ page.CSRFToken }/>
-												<input type="hidden" name="databaseId" value={ d.Database.ID }/>
-												<input type="hidden" name="backupId" value={ backup.ID }/>
-												<label class="ts-sr-only" for={ "restore-name-" + backup.ID }>New database name</label>
-												<input class="ts-input ts-input-sm" id={ "restore-name-" + backup.ID } name="name" value={ restoreName(d, backup.ID) } placeholder="New database name" pattern={ namePatternHTML } maxlength="63" title="Lowercase letters, digits, and hyphens" required/>
-												<button class="ts-btn ts-btn-secondary ts-btn-sm" type="submit">Restore side by side</button>
-											</form>
+										if d.Info.CanRestoreBackups || d.Info.CanOverwriteBackups {
+											@ui.DialogTrigger(ui.DialogTriggerProps{Dialog: "restore-" + backup.ID, Label: "Restore", Icon: icons.RotateCcw(15), Small: true})
+											@restoreDialog(page, d, backup)
 										} else {
 											<span class="ts-meta">Requires provisioning access</span>
 										}
@@ -168,6 +162,47 @@ templ detailBackups(page core.Page, d detailData) {
 			}
 		}
 	</div>
+}
+
+// restoreDialog restores backup over the database, after the user types its
+// name, or into a new database.
+templ restoreDialog(page core.Page, d detailData, backup core.Backup) {
+	{{ id := "restore-" + backup.ID }}
+	{{ taken := backup.CreatedAt.UTC().Format("2006-01-02 15:04 UTC") }}
+	@ui.Dialog(ui.DialogProps{ID: id, Title: "Restore backup", Description: "Restore the " + taken + " backup of " + d.Database.Name + ".", Open: restoreErrorInDialog(d) && d.Refill.RestoreBackupID == backup.ID}) {
+		if restoreErrorInDialog(d) && d.Refill.RestoreBackupID == backup.ID {
+			@ui.Alert("danger", "", d.Error)
+		}
+		@facts([]fact{{Label: "Database", Value: d.Database.Name}, {Label: "Backup taken", Value: taken}, {Label: "Size", Value: byteSize(backup.SizeBytes)}})
+		if d.Info.CanRestoreBackups {
+			<form method="post" action="/api/v1/dashboard/backups/restore" class="ts-form" aria-label="Restore into a new database">
+				<input type="hidden" name="_csrf" value={ page.CSRFToken }/>
+				<input type="hidden" name="databaseId" value={ d.Database.ID }/>
+				<input type="hidden" name="backupId" value={ backup.ID }/>
+				@ui.Field(ui.FieldProps{ID: id + "-name", Label: "New database name", Hint: "Leaves " + d.Database.Name + " unchanged."}) {
+					<input class="ts-input" id={ id + "-name" } name="name" value={ restoreName(d, backup.ID) } pattern={ namePatternHTML } maxlength="63" title="Lowercase letters, digits, and hyphens" required/>
+				}
+				<div class="ts-form-actions">
+					<button class="ts-btn ts-btn-secondary" type="submit">Restore as new database</button>
+				</div>
+			</form>
+		}
+		if d.Info.CanOverwriteBackups {
+			<form method="post" action="/api/v1/dashboard/backups/restore" class="ts-form" aria-label={ "Overwrite " + d.Database.Name }>
+				<input type="hidden" name="_csrf" value={ page.CSRFToken }/>
+				<input type="hidden" name="databaseId" value={ d.Database.ID }/>
+				<input type="hidden" name="backupId" value={ backup.ID }/>
+				<input type="hidden" name="replace" value="1"/>
+				@ui.Alert("warning", "This overwrites current data", "Every document, schema, and index in "+d.Database.Name+" is replaced with this backup. Changes made after "+taken+" are lost.")
+				@ui.Field(ui.FieldProps{ID: id + "-confirm", Label: "Type " + d.Database.Name + " to confirm"}) {
+					<input class="ts-input" id={ id + "-confirm" } name="confirmName" required autocomplete="off"/>
+				}
+				@ui.DialogActions(id) {
+					<button class="ts-btn ts-btn-danger" type="submit">Overwrite { d.Database.Name }</button>
+				}
+			</form>
+		}
+	}
 }
 
 templ createBackupAction(page core.Page, d detailData) {

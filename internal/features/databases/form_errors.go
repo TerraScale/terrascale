@@ -16,6 +16,7 @@ const (
 	ErrNameTaken      = "name-taken"
 	ErrPlanLimit      = "plan-limit"
 	ErrConfirmName    = "confirm-name"
+	ErrConfirmRestore = "confirm-restore"
 	ErrProvisioning   = "provisioning"
 	ErrNotReady       = "not-ready"
 	ErrForbidden      = "forbidden"
@@ -34,6 +35,7 @@ var formErrors = map[string]string{
 	ErrNameTaken:      "Another database in this project already uses that name. Choose a different one.",
 	ErrPlanLimit:      "Your plan's database limit is reached. Upgrade the plan or delete a database to create another.",
 	ErrConfirmName:    "The name you typed does not match. Type the database name exactly to delete it.",
+	ErrConfirmRestore: "The name you typed does not match. Type the database name exactly to overwrite it.",
 	ErrProvisioning:   "This database is still provisioning. Try again once it is ready.",
 	ErrNotReady:       "Only a ready database can be branched.",
 	ErrForbidden:      "Your role cannot make this change. Ask an organization owner or admin.",
