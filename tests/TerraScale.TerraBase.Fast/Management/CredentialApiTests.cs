@@ -187,26 +187,50 @@ public sealed class CredentialApiTests
     }
 
     [Test]
-    public async Task Project_key_requests_are_validated()
+    public async Task Project_key_requests_answer_their_error_code_and_message()
     {
         await using var api = await ManagementApi.StartAsync();
         var database = await api.CreateManagedDatabaseAsync();
         var foreign = await api.CreateManagedDatabaseAsync();
         var keys = $"{database.ProjectPath}/api-keys";
+        var unknownProject = $"/v1/management/organizations/{database.Organization}/projects/{Guid.NewGuid()}";
+        const string BadName = "name must be 1 to 128 characters, include a letter or digit and have no control characters";
+        const string BadScopes = "scopes must be a non-empty subset of: documents:read, documents:write";
+        const string BadLimit = "limit must be an integer between 1 and 100";
+        const string RoleTooLow = "your role in the organization does not allow this";
 
-        await Assert.That(await CreateStatusAsync(api, keys, new { name = " ", scopes = ReadWrite })).IsEqualTo(HttpStatusCode.BadRequest);
-        await Assert.That(await CreateStatusAsync(api, keys, new { name = new string('k', 129), scopes = ReadWrite })).IsEqualTo(HttpStatusCode.BadRequest);
-        await Assert.That(await CreateStatusAsync(api, keys, new { name = "ci", scopes = Array.Empty<string>() })).IsEqualTo(HttpStatusCode.BadRequest);
-        await Assert.That(await CreateStatusAsync(api, keys, new { name = "ci" })).IsEqualTo(HttpStatusCode.BadRequest);
-        await Assert.That(await CreateStatusAsync(api, keys, new { name = "ci", scopes = ManagementScope })).IsEqualTo(HttpStatusCode.BadRequest);
-        await Assert.That(await CreateStatusAsync(api, keys, new { name = "ci", scopes = UnknownScope })).IsEqualTo(HttpStatusCode.BadRequest);
-        await Assert.That(await CreateStatusAsync(api, keys, new { name = "ci", scopes = ReadOnly, databaseId = foreign.Id })).IsEqualTo(HttpStatusCode.NotFound);
-        await Assert.That(await CreateStatusAsync(api, $"/v1/management/organizations/{Guid.NewGuid()}/projects/{database.Project}/api-keys", new { name = "ci", scopes = ReadOnly })).IsEqualTo(HttpStatusCode.NotFound);
-        await Assert.That(await CreateStatusAsync(api, $"/v1/management/organizations/{foreign.Organization}/projects/{database.Project}/api-keys", new { name = "ci", scopes = ReadOnly })).IsEqualTo(HttpStatusCode.NotFound);
-        await Assert.That(await StatusAsync(api.Client.GetAsync(Uri($"/v1/management/organizations/{database.Organization}/projects/{Guid.NewGuid()}/api-keys")))).IsEqualTo(HttpStatusCode.NotFound);
-        await Assert.That(await StatusAsync(api.Client.GetAsync(Uri($"{keys}?limit=0")))).IsEqualTo(HttpStatusCode.BadRequest);
-        await Assert.That(await StatusAsync(api.Client.DeleteAsync(Uri($"{keys}/{Guid.NewGuid()}")))).IsEqualTo(HttpStatusCode.NotFound);
-        await Assert.That(await StatusAsync(api.Client.DeleteAsync(Uri($"/v1/management/organizations/{database.Organization}/projects/{Guid.NewGuid()}/api-keys/{Guid.NewGuid()}")))).IsEqualTo(HttpStatusCode.NotFound);
+        await ErrorAssert.ErrorAsync(api.Client.PostAsJsonAsync(Uri(keys), new { name = " ", scopes = ReadWrite }), HttpStatusCode.BadRequest, "invalid_request", BadName);
+        await ErrorAssert.ErrorAsync(
+            api.Client.PostAsJsonAsync(Uri(keys), new { name = new string('k', 129), scopes = ReadWrite }), HttpStatusCode.BadRequest, "invalid_request", BadName);
+        await ErrorAssert.ErrorAsync(
+            api.Client.PostAsJsonAsync(Uri(keys), new { name = "ci", scopes = Array.Empty<string>() }), HttpStatusCode.BadRequest, "invalid_request", BadScopes);
+        await ErrorAssert.ErrorAsync(api.Client.PostAsJsonAsync(Uri(keys), new { name = "ci" }), HttpStatusCode.BadRequest, "invalid_request", BadScopes);
+        await ErrorAssert.ErrorAsync(api.Client.PostAsJsonAsync(Uri(keys), new { name = "ci", scopes = ManagementScope }), HttpStatusCode.BadRequest, "invalid_request", BadScopes);
+        await ErrorAssert.ErrorAsync(api.Client.PostAsJsonAsync(Uri(keys), new { name = "ci", scopes = UnknownScope }), HttpStatusCode.BadRequest, "invalid_request", BadScopes);
+        await ErrorAssert.ErrorAsync(
+            api.Client.PostAsJsonAsync(Uri(keys), new { name = "ci", scopes = ReadOnly, databaseId = foreign.Id }), HttpStatusCode.NotFound, "not_found");
+        await ErrorAssert.ErrorAsync(
+            api.Client.PostAsJsonAsync(Uri($"/v1/management/organizations/{Guid.NewGuid()}/projects/{database.Project}/api-keys"), new { name = "ci", scopes = ReadOnly }),
+            HttpStatusCode.NotFound, "not_found");
+        await ErrorAssert.ErrorAsync(
+            api.Client.PostAsJsonAsync(Uri($"/v1/management/organizations/{foreign.Organization}/projects/{database.Project}/api-keys"), new { name = "ci", scopes = ReadOnly }),
+            HttpStatusCode.NotFound, "not_found");
+        await ErrorAssert.ErrorAsync(api.Client.GetAsync(Uri($"{unknownProject}/api-keys")), HttpStatusCode.NotFound, "not_found");
+        await ErrorAssert.ErrorAsync(api.Client.GetAsync(Uri($"{keys}?limit=0")), HttpStatusCode.BadRequest, "invalid_request", BadLimit);
+        await ErrorAssert.ErrorAsync(api.Client.GetAsync(Uri($"{keys}?limit=ten")), HttpStatusCode.BadRequest, "invalid_request", BadLimit);
+        await ErrorAssert.ErrorAsync(api.Client.DeleteAsync(Uri($"{keys}/{Guid.NewGuid()}")), HttpStatusCode.NotFound, "not_found");
+        await ErrorAssert.ErrorAsync(api.Client.DeleteAsync(Uri($"{unknownProject}/api-keys/{Guid.NewGuid()}")), HttpStatusCode.NotFound, "not_found");
+
+        // A viewer reads the project's keys but can neither issue nor revoke one.
+        using var created = await api.Client.PostAsJsonAsync(Uri(keys), new { name = "ci", scopes = ReadOnly });
+        var id = (await created.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("key").GetProperty("id").GetString();
+        using var viewer = api.As(await api.AddMemberAsync(api.Client, database.Organization, "viewer"));
+        using var listed = await viewer.GetAsync(Uri(keys));
+
+        await Assert.That(listed.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await ErrorAssert.ErrorAsync(viewer.PostAsJsonAsync(Uri(keys), new { name = "ci", scopes = ReadOnly }), HttpStatusCode.Forbidden, "forbidden_role", RoleTooLow);
+        await ErrorAssert.ErrorAsync(viewer.DeleteAsync(Uri($"{keys}/{id}")), HttpStatusCode.Forbidden, "forbidden_role", RoleTooLow);
+        await ErrorAssert.ErrorAsync(viewer.DeleteAsync(Uri($"{keys}/{Guid.NewGuid()}")), HttpStatusCode.NotFound, "not_found");
     }
 
     [Test]
@@ -323,9 +347,6 @@ public sealed class CredentialApiTests
 
     private static Task<HttpStatusCode> GetAsync(HttpClient client, ManagedDatabaseRef database) =>
         StatusAsync(client.GetAsync(Uri(ManagementApi.DocumentPath(database, "items", "doc"))));
-
-    private static Task<HttpStatusCode> CreateStatusAsync(ManagementApi api, string path, object body) =>
-        StatusAsync(api.Client.PostAsJsonAsync(Uri(path), body));
 
     private static Uri Uri(string path) => ManagementApi.Uri(path);
 

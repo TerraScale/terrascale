@@ -669,6 +669,8 @@ A project key is an API key of the project's organization narrowed to the projec
   transaction. Pagination uses the opaque `next` sequence as `after`, not the key UUID. Keys created at one timestamp,
   after a clock change or after a restart keep committed creation order.
 - `DELETE …/api-keys/{key}` returns 204. The key stops working at once: its next request gets 401.
+- A viewer lists keys but cannot issue or revoke them: `403` `forbidden_role`. Errors use the `{"error":{"code","message"}}`
+  envelope: `400 invalid_request`, `403 forbidden_role`, `404 not_found`.
 - A key belongs to its organization (the tenant) and project. The data API resolves a database only inside the key's
   organization (`ApiKey.Reaches`): TerraBase never looks a database up by name across organizations.
 - A database outside the key's project, or outside its `databaseId`, answers `404` like a database that does not exist,

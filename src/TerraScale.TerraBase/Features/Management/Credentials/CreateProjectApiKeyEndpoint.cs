@@ -1,4 +1,5 @@
 using TerraScale.Endpoints;
+using TerraScale.TerraBase.Errors;
 using TerraScale.TerraBase.Features.ApiKeys;
 using TerraScale.TerraBase.Features.UserAuth;
 using TerraScale.TerraBase.Hosting;
@@ -36,16 +37,24 @@ public sealed class CreateProjectApiKeyEndpoint(IApiKeyStore keys) : Endpoint<Cr
     public override async ValueTask<IResult> HandleAsync(CreateProjectApiKeyRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
-        var name = ManagementRoute.DisplayName(new NameRequest(request.Name));
-        if (request.Scopes is not { Count: > 0 } scopes || scopes.Except(DataScopes).Any())
+        var organization = ManagementRoute.OrganizationId(HttpContext);
+        return (ManagementRoute.CheckDisplayName(new NameRequest(request.Name)), Scopes(request.Scopes)) switch
         {
-            throw new BadHttpRequestException("scopes must be a non-empty subset of: documents:read, documents:write");
-        }
-
-        var result = await keys.CreateProjectKeyAsync(
-            ManagementRoute.UserId(HttpContext), ManagementRoute.OrganizationId(HttpContext), ManagementRoute.Value(HttpContext, "project"), name, [.. scopes.Distinct()], request.DatabaseId, cancellationToken);
-        return result.Value is { } value
-            ? TypedResults.Created($"{ManagementRoute.Organizations}/{ManagementRoute.OrganizationId(HttpContext)}/projects/{value.Key.ProjectId}/api-keys/{value.Key.Id}", value)
-            : ManagementRoute.Error(result.Error);
+            (Validation error, _) => ErrorResponse.From(error),
+            (_, Validation error) => ErrorResponse.From(error),
+            (string name, string[] scopes) => await keys.CreateProjectKeyAsync(
+                ManagementRoute.UserId(HttpContext), organization, ManagementRoute.Value(HttpContext, "project"), name, scopes, request.DatabaseId, cancellationToken) switch
+            {
+                CreatedProjectApiKey created => TypedResults.Created(
+                    $"{ManagementRoute.Organizations}/{organization}/projects/{created.Key.ProjectId}/api-keys/{created.Key.Id}", created),
+                NotFound error => ErrorResponse.From(error),
+                Forbidden error => ErrorResponse.From(error),
+            },
+        };
     }
+
+    private static Valid<string[]> Scopes(IReadOnlyList<string>? scopes) =>
+        scopes is { Count: > 0 } && !scopes.Except(DataScopes).Any()
+            ? scopes.Distinct().ToArray()
+            : new Validation("scopes must be a non-empty subset of: documents:read, documents:write");
 }

@@ -25,7 +25,7 @@
        status) outside the files below, which still do until their feature is converted. Each conversion removes
        its entry; the last one moves both constructors to BannedSymbols.txt and deletes this target. -->
   <PropertyGroup>
-    <ExpectedFailureExceptionFiles>[/\\]Features[/\\](Documents[/\\]|Management[/\\](ManagementRoute|EngineManagementService|Backups[/\\]SetBackupPolicyEndpoint|Credentials[/\\]CreateProjectApiKeyEndpoint|Indexes[/\\](CreateIndexEndpoint|ListIndexesEndpoint)|Queries[/\\]QueriesExtensions)\.cs$)</ExpectedFailureExceptionFiles>
+    <ExpectedFailureExceptionFiles>[/\\]Features[/\\](Documents[/\\]|Management[/\\](ManagementRoute|EngineManagementService|Backups[/\\]SetBackupPolicyEndpoint|Indexes[/\\](CreateIndexEndpoint|ListIndexesEndpoint)|Queries[/\\]QueriesExtensions)\.cs$)</ExpectedFailureExceptionFiles>
   </PropertyGroup>
   <Target Name="BanExpectedFailureExceptions" BeforeTargets="CoreCompile">
     <ItemGroup>

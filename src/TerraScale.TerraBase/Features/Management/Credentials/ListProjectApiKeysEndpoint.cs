@@ -1,4 +1,5 @@
 using TerraScale.Endpoints;
+using TerraScale.TerraBase.Errors;
 using TerraScale.TerraBase.Features.ApiKeys;
 using TerraScale.TerraBase.Features.UserAuth;
 using TerraScale.TerraBase.Hosting;
@@ -17,17 +18,22 @@ public sealed class ListProjectApiKeysEndpoint(IApiKeyStore keys) : EndpointWith
         Description("Query: after (exclusive sequence cursor from the previous page's next), limit (1 to 100, default 20). Items are in committed creation order. " + ManagementRoute.IdentityDescription);
         Tags(ManagementRoute.Tag);
         Produces<ManagementPage<ProjectApiKey>>();
+        Produces<ErrorBody>(StatusCodes.Status400BadRequest);
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
         RequireAuthorization(UserAuthExtensions.PolicyName);
         Metadata(ListenerMetadata.Management);
     }
 
     /// <inheritdoc />
-    public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
-    {
-        var (after, limit) = ManagementRoute.Page(HttpContext);
-        return await keys.ListProjectKeysAsync(ManagementRoute.UserId(HttpContext), ManagementRoute.OrganizationId(HttpContext), ManagementRoute.Value(HttpContext, "project"), after, limit, cancellationToken) is { } page
-            ? TypedResults.Ok(page)
-            : TypedResults.NotFound();
-    }
+    public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
+        ManagementRoute.CheckPage(HttpContext) switch
+        {
+            Validation error => ErrorResponse.From(error),
+            PageQuery page => await keys.ListProjectKeysAsync(
+                ManagementRoute.UserId(HttpContext), ManagementRoute.OrganizationId(HttpContext), ManagementRoute.Value(HttpContext, "project"), page.After, page.Limit, cancellationToken) switch
+            {
+                ManagementPage<ProjectApiKey> listed => TypedResults.Ok(listed),
+                NotFound error => ErrorResponse.From(error),
+            },
+        };
 }

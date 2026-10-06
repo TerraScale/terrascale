@@ -14,6 +14,11 @@ public sealed record NameRequest(string? Name);
 /// <param name="Plan"><c>hobby</c>, <c>pro</c> or <c>enterprise</c>.</param>
 public sealed record PlanRequest(string? Plan);
 
+/// <summary>A page request.</summary>
+/// <param name="After">Exclusive cursor from the previous page's <c>next</c>.</param>
+/// <param name="Limit">Page size, 1 to 100.</param>
+internal sealed record PageQuery(string? After, int Limit);
+
 /// <summary>Routes, validation and error mapping shared by the management endpoints.</summary>
 internal static class ManagementRoute
 {
@@ -127,6 +132,12 @@ internal static class ManagementRoute
         Validation error => throw new BadHttpRequestException(error.Message),
     };
 
+    private static PageQuery OrThrow(Valid<PageQuery> value) => value switch
+    {
+        PageQuery valid => valid,
+        Validation error => throw new BadHttpRequestException(error.Message),
+    };
+
     /// <summary>Validates a role. The enum converter also reads numbers, so undefined values are rejected here.</summary>
     public static OrganizationRole Role(OrganizationRole? role) =>
         role is { } value && Enum.IsDefined(value)
@@ -134,11 +145,14 @@ internal static class ManagementRoute
             : throw new BadHttpRequestException("role must be owner, admin, member or viewer");
 
     /// <summary>Validates an organization or project name and returns it trimmed.</summary>
-    public static string DisplayName(NameRequest request)
+    public static string DisplayName(NameRequest request) => OrThrow(CheckDisplayName(request));
+
+    /// <summary>An organization, project or key name, trimmed, or the rule it breaks.</summary>
+    public static Valid<string> CheckDisplayName(NameRequest request)
     {
         var name = request.Name?.Trim();
         return string.IsNullOrEmpty(name) || name.Length > MaxDisplayNameLength || name.Any(char.IsControl) || !name.Any(char.IsLetterOrDigit)
-            ? throw new BadHttpRequestException("name must be 1 to 128 characters, include a letter or digit and have no control characters")
+            ? new Validation("name must be 1 to 128 characters, include a letter or digit and have no control characters")
             : name;
     }
 
@@ -157,15 +171,22 @@ internal static class ManagementRoute
 
     public static (string? After, int Limit) Page(HttpContext context)
     {
+        var page = OrThrow(CheckPage(context));
+        return (page.After, page.Limit);
+    }
+
+    /// <summary>The <c>after</c> and <c>limit</c> query parameters, or the rule they break.</summary>
+    public static Valid<PageQuery> CheckPage(HttpContext context)
+    {
         var query = context.Request.Query;
         var limit = DefaultLimit;
         if (query.TryGetValue("limit", out var rawLimit)
             && (!int.TryParse(rawLimit, NumberStyles.None, CultureInfo.InvariantCulture, out limit) || limit is < 1 or > MaxLimit))
         {
-            throw new BadHttpRequestException("limit must be an integer between 1 and 100");
+            return new Validation("limit must be an integer between 1 and 100");
         }
 
-        return (query.TryGetValue("after", out var after) ? after.ToString() : null, limit);
+        return new PageQuery(query.TryGetValue("after", out var after) ? after.ToString() : null, limit);
     }
 
     public static IResult Error(ManagementError error) => error switch

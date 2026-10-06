@@ -1,4 +1,5 @@
 using TerraScale.Endpoints;
+using TerraScale.TerraBase.Errors;
 using TerraScale.TerraBase.Features.ApiKeys;
 using TerraScale.TerraBase.Features.UserAuth;
 using TerraScale.TerraBase.Hosting;
@@ -24,5 +25,11 @@ public sealed class RevokeProjectApiKeyEndpoint(IApiKeyStore keys) : EndpointWit
 
     /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
-        ManagementRoute.NoContent(await keys.RevokeProjectKeyAsync(ManagementRoute.UserId(HttpContext), ManagementRoute.OrganizationId(HttpContext), ManagementRoute.Value(HttpContext, "project"), ManagementRoute.Value(HttpContext, "key"), cancellationToken));
+        await keys.RevokeProjectKeyAsync(
+            ManagementRoute.UserId(HttpContext), ManagementRoute.OrganizationId(HttpContext), ManagementRoute.Value(HttpContext, "project"), ManagementRoute.Value(HttpContext, "key"), cancellationToken) switch
+        {
+            Done => TypedResults.NoContent(),
+            NotFound error => ErrorResponse.From(error),
+            Forbidden error => ErrorResponse.From(error),
+        };
 }

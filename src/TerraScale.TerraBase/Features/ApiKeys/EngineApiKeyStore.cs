@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using TerraScale.TerraBase.Engine;
+using TerraScale.TerraBase.Errors;
 using TerraScale.TerraBase.Features.Documents;
 using TerraScale.TerraBase.Features.Management;
 using TerraScale.TerraBase.Hosting;
@@ -58,25 +59,29 @@ internal sealed class EngineApiKeyStore(SystemCatalog catalog, TimeProvider time
             : key;
     }
 
-    public async ValueTask<ManagementResult<CreatedProjectApiKey>> CreateProjectKeyAsync(
+    public async ValueTask<CreateProjectKeyResult> CreateProjectKeyAsync(
         string userId, string organizationId, string projectId, string name, IReadOnlyList<string> scopes, string? databaseId, CancellationToken cancellationToken)
     {
         var secret = NewSecret();
-        return await catalog.WriteAsync<ManagementResult<CreatedProjectApiKey>>(async transaction =>
+        return await catalog.WriteAsync<CreateProjectKeyResult>(async transaction =>
         {
             var found = databaseId is null
                 ? await EngineManagementService.GetProjectAsync(transaction, userId, organizationId, projectId, cancellationToken).ConfigureAwait(false) is not null
                 : await EngineManagementService.GetDatabaseAsync(transaction, userId, organizationId, projectId, databaseId, cancellationToken).ConfigureAwait(false) is not null;
             if (!found)
             {
-                return ManagementError.NotFound;
+                return new NotFound();
             }
 
             // Keys are project state: a viewer cannot issue them, and issuing one changes the organization.
-            var writer = await EngineManagementService.WritableAsync(transaction, userId, organizationId, cancellationToken).ConfigureAwait(false);
-            if (writer != ManagementError.None)
+            switch (await EngineManagementService.WritableAsync(transaction, userId, organizationId, cancellationToken).ConfigureAwait(false))
             {
-                return writer;
+                case ManagementError.None:
+                    break;
+                case ManagementError.Forbidden:
+                    return ManagementErrors.RoleTooLow;
+                default:
+                    return new NotFound();
             }
 
             await EngineManagementService.TouchOrganizationAsync(transaction, organizationId, cancellationToken).ConfigureAwait(false);
@@ -85,13 +90,13 @@ internal sealed class EngineApiKeyStore(SystemCatalog catalog, TimeProvider time
         }, cancellationToken).ConfigureAwait(false);
     }
 
-    public ValueTask<ManagementPage<ProjectApiKey>?> ListProjectKeysAsync(
+    public ValueTask<Found<ManagementPage<ProjectApiKey>>> ListProjectKeysAsync(
         string userId, string organizationId, string projectId, string? after, int limit, CancellationToken cancellationToken) =>
-        catalog.ReadAsync<ManagementPage<ProjectApiKey>?>(async transaction =>
+        catalog.ReadAsync<Found<ManagementPage<ProjectApiKey>>>(async transaction =>
         {
             if (await EngineManagementService.GetProjectAsync(transaction, userId, organizationId, projectId, cancellationToken).ConfigureAwait(false) is null)
             {
-                return null;
+                return new NotFound();
             }
 
             var page = await transaction.ListAsync(ProjectKeyOrder(projectId), after, limit, MaxPageBytes, cancellationToken).ConfigureAwait(false);
@@ -107,26 +112,30 @@ internal sealed class EngineApiKeyStore(SystemCatalog catalog, TimeProvider time
             return new ManagementPage<ProjectApiKey>(keys, page.HasMore ? page.Documents[^1].Id : null);
         }, cancellationToken);
 
-    public async ValueTask<ManagementError> RevokeProjectKeyAsync(string userId, string organizationId, string projectId, string keyId, CancellationToken cancellationToken) =>
-        await catalog.WriteAsync(async transaction =>
+    public async ValueTask<RevokeProjectKeyResult> RevokeProjectKeyAsync(string userId, string organizationId, string projectId, string keyId, CancellationToken cancellationToken) =>
+        await catalog.WriteAsync<RevokeProjectKeyResult>(async transaction =>
         {
             if (await EngineManagementService.GetProjectAsync(transaction, userId, organizationId, projectId, cancellationToken).ConfigureAwait(false) is null
                 || await GetAsync(transaction, ProjectKeys(projectId), keyId, TerraBaseJsonContext.Default.ProjectKeyEntry, cancellationToken).ConfigureAwait(false) is not { } entry)
             {
-                return ManagementError.NotFound;
+                return new NotFound();
             }
 
-            var writer = await EngineManagementService.WritableAsync(transaction, userId, organizationId, cancellationToken).ConfigureAwait(false);
-            if (writer != ManagementError.None)
+            switch (await EngineManagementService.WritableAsync(transaction, userId, organizationId, cancellationToken).ConfigureAwait(false))
             {
-                return writer;
+                case ManagementError.None:
+                    break;
+                case ManagementError.Forbidden:
+                    return ManagementErrors.RoleTooLow;
+                default:
+                    return new NotFound();
             }
 
             await EngineManagementService.TouchOrganizationAsync(transaction, organizationId, cancellationToken).ConfigureAwait(false);
             await transaction.DeleteAsync(Collection, entry.Hash, cancellationToken).ConfigureAwait(false);
             await transaction.DeleteAsync(ProjectKeys(projectId), keyId, cancellationToken).ConfigureAwait(false);
             await transaction.DeleteAsync(ProjectKeyOrder(projectId), entry.Order, cancellationToken).ConfigureAwait(false);
-            return ManagementError.None;
+            return new Done();
         }, cancellationToken).ConfigureAwait(false);
 
     /// <summary>

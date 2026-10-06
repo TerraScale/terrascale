@@ -1,3 +1,4 @@
+using TerraScale.TerraBase.Errors;
 using TerraScale.TerraBase.Features.Management;
 using TerraScale.TerraBase.Tenancy;
 
@@ -68,6 +69,12 @@ public sealed record ProjectApiKey(
 /// <param name="Secret">The bearer secret for <c>Authorization: Bearer</c>.</param>
 public sealed record CreatedProjectApiKey(ProjectApiKey Key, string Secret);
 
+/// <summary>An issued project key with its secret, or why it was not issued.</summary>
+public readonly union CreateProjectKeyResult(CreatedProjectApiKey, NotFound, Forbidden);
+
+/// <summary>A revoked project key, or why it was not revoked.</summary>
+public readonly union RevokeProjectKeyResult(Done, NotFound, Forbidden);
+
 /// <summary>Issues and verifies scoped API keys. Only a hash of each secret is stored.</summary>
 public interface IApiKeyStore
 {
@@ -85,15 +92,16 @@ public interface IApiKeyStore
 
     /// <summary>
     /// Issues a key of a project for the acting user, optionally narrowed to one of its databases; not found when the user
-    /// is not a member of the organization or either does not exist. Checked in the same catalog write as the issue.
+    /// is not a member of the organization or either does not exist, forbidden for a viewer. Checked in the same catalog
+    /// write as the issue.
     /// </summary>
-    ValueTask<ManagementResult<CreatedProjectApiKey>> CreateProjectKeyAsync(
+    ValueTask<CreateProjectKeyResult> CreateProjectKeyAsync(
         string userId, string organizationId, string projectId, string name, IReadOnlyList<string> scopes, string? databaseId, CancellationToken cancellationToken);
 
-    /// <summary>Lists the keys of a project in creation order; <see langword="null"/> when it does not exist.</summary>
-    ValueTask<ManagementPage<ProjectApiKey>?> ListProjectKeysAsync(
+    /// <summary>Lists the keys of a project in creation order.</summary>
+    ValueTask<Found<ManagementPage<ProjectApiKey>>> ListProjectKeysAsync(
         string userId, string organizationId, string projectId, string? after, int limit, CancellationToken cancellationToken);
 
-    /// <summary>Revokes a key of a project; it stops authenticating immediately.</summary>
-    ValueTask<ManagementError> RevokeProjectKeyAsync(string userId, string organizationId, string projectId, string keyId, CancellationToken cancellationToken);
+    /// <summary>Revokes a key of a project; it stops authenticating immediately. Forbidden for a viewer.</summary>
+    ValueTask<RevokeProjectKeyResult> RevokeProjectKeyAsync(string userId, string organizationId, string projectId, string keyId, CancellationToken cancellationToken);
 }
