@@ -27,14 +27,7 @@ func importOrg(args []string) error {
 	if *org == "" || *owner == "" {
 		return errors.New("--org and --owner-email are required")
 	}
-	cfg, err := config.Load()
-	if err != nil {
-		return err
-	}
-	if cfg.TerraBaseURL == "" {
-		return errors.New("TERRABASE_URL, TERRABASE_API_KEY, TERRABASE_PROJECT_ID and TERRABASE_DATABASE are required")
-	}
-	client, err := v1.New(v1.Config{BaseURL: cfg.TerraBaseURL, Token: cfg.TerraBaseAPIKey})
+	cfg, db, err := openDatabase()
 	if err != nil {
 		return err
 	}
@@ -50,7 +43,6 @@ func importOrg(args []string) error {
 		return errors.New("TERRABASE_MANAGEMENT_USER_ID is required")
 	}
 	ctx := context.Background()
-	db := client.Database(cfg.TerraBaseProjectID, cfg.TerraBaseDatabase)
 	if err := terrabase.EnsureCollections(ctx, db); err != nil {
 		return fmt.Errorf("ensure collections: %w", err)
 	}
@@ -64,4 +56,20 @@ func importOrg(args []string) error {
 	}
 	fmt.Printf("imported organization %s (%s) with %d projects for %s\n", imported.Name, imported.ID, len(imported.Projects), *owner)
 	return nil
+}
+
+// openDatabase connects to the configured dashboard database.
+func openDatabase() (config.Config, *v1.Database, error) {
+	cfg, err := config.Load()
+	if err != nil {
+		return cfg, nil, err
+	}
+	if cfg.TerraBaseURL == "" {
+		return cfg, nil, errors.New("TERRABASE_URL, TERRABASE_API_KEY, TERRABASE_PROJECT_ID and TERRABASE_DATABASE are required")
+	}
+	client, err := v1.New(v1.Config{BaseURL: cfg.TerraBaseURL, Token: cfg.TerraBaseAPIKey})
+	if err != nil {
+		return cfg, nil, err
+	}
+	return cfg, client.Database(cfg.TerraBaseProjectID, cfg.TerraBaseDatabase), nil
 }

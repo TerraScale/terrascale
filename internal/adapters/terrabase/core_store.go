@@ -257,6 +257,11 @@ func (s *Store) RecordPlatformAdminAction(ctx context.Context, p core.Principal,
 	return s.writeCore(ctx, coreLoad{accounts: []string{p.AccountID}}, coreWrite{adminID: newCoreUUIDv7()}, func(m *memstore.Store) error { return m.RecordPlatformAdminAction(ctx, p, action, target, reason) })
 }
 
+func (s *Store) SetPlatformAdmin(ctx context.Context, accountID string, admin bool) (changed bool, err error) {
+	err = s.writeCore(ctx, coreLoad{accounts: []string{accountID}}, coreWrite{adminID: newCoreUUIDv7()}, func(m *memstore.Store) error { changed, err = m.SetPlatformAdmin(ctx, accountID, admin); return err })
+	return changed, err
+}
+
 func (s *Store) PlatformAdminActions(ctx context.Context, p core.Principal) (out []core.AdminAction, err error) {
 	if err = s.AuthorizePlatformAdmin(ctx, p); err != nil {
 		return

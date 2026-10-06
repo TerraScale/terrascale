@@ -20,6 +20,7 @@ func Run(t *testing.T, newStore func(*testing.T) core.Store) {
 		{"AcceptInvitationRejectsOrganizationPendingDeletion", TestAcceptInvitationRejectsOrganizationPendingDeletion},
 		{"DeletedProjectIsDeselectedForOtherMembers", TestDeletedProjectIsDeselectedForOtherMembers},
 		{"AuthorizePlatformAdmin", TestAuthorizePlatformAdmin},
+		{"SetPlatformAdmin", TestSetPlatformAdmin},
 		{"RenameReachesEveryOrganizationOfTheUser", TestRenameReachesEveryOrganizationOfTheUser},
 		{"AdminRenameReachesEveryOrganizationOfTheUser", TestAdminRenameReachesEveryOrganizationOfTheUser},
 		{"ChangeEmailReachesEveryOrganizationOfTheUser", TestChangeEmailReachesEveryOrganizationOfTheUser},

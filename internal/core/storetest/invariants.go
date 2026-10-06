@@ -334,3 +334,26 @@ func TestScopeGuardAndMembershipRemoval(t *testing.T, s core.Store) {
 	_, err = s.SnapshotAs(ctx, selected)
 	want(t, err, core.ErrForbidden)
 }
+
+func TestSetPlatformAdmin(t *testing.T, s core.Store) {
+	target := account(t, s, "ops@example.test")
+	reader, err := s.CreateAccount(ctx, core.User{Name: "Reader", Email: "reader@example.test", PasswordHash: "hash", PlatformAdmin: true})
+	want(t, err, nil)
+	for i, step := range []struct{ admin, changed bool }{{true, true}, {true, false}, {false, true}, {false, false}} {
+		changed, err := s.SetPlatformAdmin(ctx, target.ID, step.admin)
+		want(t, err, nil)
+		got, err := s.FindByEmail(ctx, "ops@example.test")
+		want(t, err, nil)
+		if changed != step.changed || got.User.PlatformAdmin != step.admin {
+			t.Fatalf("step %d: changed = %v, admin = %v, want %+v", i, changed, got.User.PlatformAdmin, step)
+		}
+	}
+	actions, err := s.PlatformAdminActions(ctx, reader.Principal())
+	want(t, err, nil)
+	if len(actions) != 2 || actions[0].Action != "platformAdmin.grant" || actions[1].Action != "platformAdmin.revoke" ||
+		actions[0].ActorUserID != target.User.ID || actions[0].Target != "ops@example.test" {
+		t.Fatalf("admin log = %+v", actions)
+	}
+	_, err = s.SetPlatformAdmin(ctx, "missing", true)
+	want(t, err, core.ErrNotFound)
+}
