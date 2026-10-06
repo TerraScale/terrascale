@@ -38,9 +38,17 @@ public sealed class GetDocumentEndpoint(IDocumentService documents, ITenantDirec
             },
         };
 
-    private async ValueTask<IResult> ReadAsync(DocumentKey key, CancellationToken cancellationToken)
+    private async ValueTask<IResult> ReadAsync(DocumentKey key, CancellationToken cancellationToken) =>
+        await documents.GetAsync(key, cancellationToken) switch
+        {
+            NotFound error => ErrorResponse.From(error),
+            Validation error => ErrorResponse.From(error),
+            StoredDocument document => Conditional(key, document, cancellationToken),
+            NeverWritten => Conditional(key, null, cancellationToken),
+        };
+
+    private IResult Conditional(DocumentKey key, StoredDocument? document, CancellationToken cancellationToken)
     {
-        var document = await documents.GetAsync(key, cancellationToken);
         var version = document is null ? null : ETags.Version(document.Scope, key.Collection, document.Id, document.Version, document.Json, document.Deleted);
         return ETags.CheckNotModified(HttpContext, document is { Deleted: false }, version) switch
         {

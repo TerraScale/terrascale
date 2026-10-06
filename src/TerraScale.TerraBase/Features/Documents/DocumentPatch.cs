@@ -1,10 +1,12 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using TerraScale.TerraBase.Errors;
-using TerraScale.TerraBase.Hosting;
 using TerraScale.TerraBase.Primitives;
 
 namespace TerraScale.TerraBase.Features.Documents;
+
+/// <summary>An applied patch, or why it does not apply: an invalid operand (400) or a target of the wrong type (409 <c>patch_conflict</c>).</summary>
+public readonly union PatchOutcome(Done, Validation, Conflict);
 
 /// <summary>A document patch: an RFC 7396 merge patch or a list of TerraBase patch operations.</summary>
 public abstract record DocumentPatch
@@ -17,15 +19,8 @@ public abstract record DocumentPatch
 
     private const int MaxOps = 256;
 
-    /// <summary>Applies the patch to a live document; fails with <c>patch_conflict</c> when a target has the wrong type.</summary>
-    public abstract void Apply(JsonObject document);
-
-    /// <summary>As <see cref="CheckMerge"/>, for the callers not converted to unions yet.</summary>
-    public static DocumentPatch Merge(JsonElement patch) => CheckMerge(patch) switch
-    {
-        DocumentPatch merge => merge,
-        Validation error => throw DocumentRoute.Throwable(error),
-    };
+    /// <summary>Applies the patch to a live document; <c>patch_conflict</c> when a target has the wrong type.</summary>
+    public abstract PatchOutcome Apply(JsonObject document);
 
     /// <summary>Parses a merge patch, which must be an object.</summary>
     public static Valid<DocumentPatch> CheckMerge(JsonElement patch)
@@ -43,13 +38,6 @@ public abstract record DocumentPatch
         DocumentPatch merge = new MergePatch(JsonObject.Create(patch.Clone())!);
         return merge;
     }
-
-    /// <summary>As <see cref="CheckOps"/>, for the callers not converted to unions yet.</summary>
-    public static DocumentPatch Ops(IReadOnlyList<PatchOpRequest>? ops) => CheckOps(ops) switch
-    {
-        DocumentPatch patch => patch,
-        Validation error => throw DocumentRoute.Throwable(error),
-    };
 
     /// <summary>Parses patch operations; the first invalid one names the rule it breaks.</summary>
     public static Valid<DocumentPatch> CheckOps(IReadOnlyList<PatchOpRequest>? ops)
@@ -108,14 +96,15 @@ public abstract record DocumentPatch
 
     private static Validation Invalid(string message) => new(message, "invalid_patch");
 
-    // Apply runs inside the document service, which still throws (docs/error-handling.md); it converts with the service.
-    private static ApiException Rejected(string message) => DocumentRoute.Throwable(Invalid(message));
-
-    private static ApiException Conflict(string message) => DocumentRoute.Throwable(new Conflict(message, "patch_conflict"));
+    private static Conflict PatchConflict(string message) => new(message, "patch_conflict");
 
     private sealed record MergePatch(JsonObject Patch) : DocumentPatch
     {
-        public override void Apply(JsonObject document) => MergeInto(document, Patch);
+        public override PatchOutcome Apply(JsonObject document)
+        {
+            MergeInto(document, Patch);
+            return new Done();
+        }
 
         // RFC 7396: null removes a member, an object merges recursively, anything else replaces.
         private static void MergeInto(JsonObject target, JsonObject patch)
@@ -146,23 +135,35 @@ public abstract record DocumentPatch
 
     private sealed record OpsPatch(IReadOnlyList<PatchStep> Steps) : DocumentPatch
     {
-        public override void Apply(JsonObject document)
+        public override PatchOutcome Apply(JsonObject document)
         {
             foreach (var step in Steps)
             {
-                step.Apply(document);
+                var outcome = step.Apply(document);
+                if (outcome is not Done)
+                {
+                    return outcome;
+                }
             }
+
+            return new Done();
         }
     }
 
     private sealed record PatchStep(string Op, IReadOnlyList<string> Path, JsonElement Value)
     {
-        public void Apply(JsonObject document)
+        public PatchOutcome Apply(JsonObject document)
         {
-            var parent = Parent(document, create: Op != "unset");
+            var parent = Parent(document, create: Op != "unset", out var crossed);
+            if (crossed)
+            {
+                // Missing parents are a no-op for unset; an existing non-object parent is a conflict for every op.
+                return PatchConflict("a patch path crosses a value that is not an object");
+            }
+
             if (parent is null)
             {
-                return;
+                return new Done();
             }
 
             var name = Path[^1];
@@ -178,7 +179,7 @@ public abstract record DocumentPatch
                 case "inc":
                     if (!ExactNumber.TryParse(Value.GetRawText(), out var by))
                     {
-                        throw Rejected("inc needs a number by");
+                        return Invalid("inc needs a number by");
                     }
 
                     var start = default(ExactNumber);
@@ -186,13 +187,13 @@ public abstract record DocumentPatch
                     {
                         if (current is not JsonValue number || number.GetValueKind() != JsonValueKind.Number)
                         {
-                            throw Conflict("inc needs a number");
+                            return PatchConflict("inc needs a number");
                         }
 
                         // Stored numbers are within the limits; only an earlier op of this patch can leave one outside.
                         if (!ExactNumber.TryParse(number.ToJsonString(), out start))
                         {
-                            throw DocumentRoute.Throwable(new Validation("numbers have at most 128 significant digits and a magnitude of 0 or 1e-307 to below 1e308"));
+                            return new Validation("numbers have at most 128 significant digits and a magnitude of 0 or 1e-307 to below 1e308");
                         }
                     }
 
@@ -206,14 +207,23 @@ public abstract record DocumentPatch
                         parent[name] = current;
                     }
 
-                    (current as JsonArray ?? throw Conflict("append needs an array")).Add(JsonNode.Parse(Value.GetRawText()));
+                    if (current is not JsonArray array)
+                    {
+                        return PatchConflict("append needs an array");
+                    }
+
+                    array.Add(JsonNode.Parse(Value.GetRawText()));
                     break;
             }
+
+            return new Done();
         }
 
-        // The object holding the last segment; missing parents are created, or null when not creating.
-        private JsonObject? Parent(JsonObject document, bool create)
+        // The object holding the last segment; missing parents are created, or null when not creating. Crossed when a
+        // parent on the path exists but is not an object.
+        private JsonObject? Parent(JsonObject document, bool create, out bool crossed)
         {
+            crossed = false;
             var node = document;
             foreach (var segment in Path.Take(Path.Count - 1))
             {
@@ -228,8 +238,13 @@ public abstract record DocumentPatch
                     node[segment] = child;
                 }
 
-                // Missing parents are a no-op for unset; an existing non-object parent is a conflict for every op.
-                node = child as JsonObject ?? throw Conflict("a patch path crosses a value that is not an object");
+                if (child is not JsonObject next)
+                {
+                    crossed = true;
+                    return null;
+                }
+
+                node = next;
             }
 
             return node;

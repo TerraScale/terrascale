@@ -36,13 +36,6 @@ internal static class QueryParser
     private const int MaxSegments = 16;
     private const int MaxPathLength = 4096;
 
-    /// <summary>As <see cref="CheckParse"/>, for the callers not converted to unions yet.</summary>
-    public static ParsedQuery Parse(TenantContext database, string collection, QueryRequest request) => CheckParse(database, collection, request) switch
-    {
-        ParsedQuery query => query,
-        Validation error => throw DocumentRoute.Throwable(error),
-    };
-
     /// <summary>A query request as an engine query, or the first rule it breaks (<c>invalid_query</c>).</summary>
     public static Valid<ParsedQuery> CheckParse(TenantContext database, string collection, QueryRequest request)
     {
@@ -111,13 +104,6 @@ internal static class QueryParser
             request.Project is null ? "" : JsonSerializer.Serialize(request.Project, TerraBaseJsonContext.Default.IReadOnlyListJsonElement));
         return new ParsedQuery(filter, keys, project, request.Limit ?? DefaultLimit, digest);
     }
-
-    /// <summary>As <see cref="CheckFilter"/>, for the callers not converted to unions yet.</summary>
-    public static DocumentFilter Filter(JsonElement filter, string code = Code) => CheckFilter(filter, code) switch
-    {
-        DocumentFilter parsed => parsed,
-        Validation error => throw DocumentRoute.Throwable(error),
-    };
 
     /// <summary>Parses a filter, or answers the first rule it breaks; <paramref name="code"/> names the error of a bad one.</summary>
     public static Valid<DocumentFilter> CheckFilter(JsonElement filter, string code = Code)
@@ -195,13 +181,6 @@ internal static class QueryParser
         return Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(text))[..16]);
     }
 
-    /// <summary>As <see cref="CheckCursor"/>, for the callers not converted to unions yet.</summary>
-    public static string Cursor(string digest, QueryRow row, byte[]? requestBody = null) => CheckCursor(digest, row, requestBody) switch
-    {
-        string cursor => cursor,
-        Validation error => throw DocumentRoute.Throwable(error),
-    };
-
     /// <summary>Encodes the position after <paramref name="row"/> as an opaque cursor, or answers why it cannot be one.</summary>
     public static Valid<string> CheckCursor(string digest, QueryRow row, byte[]? requestBody = null)
     {
@@ -274,13 +253,6 @@ internal static class QueryParser
     }
 
     private static Validation SortRequiresIndex(string message) => new(message, "sort_requires_index");
-
-    /// <summary>As <see cref="CheckPosition"/>, for the callers not converted to unions yet.</summary>
-    public static QueryPosition Position(string cursor, string digest, int sortKeys) => CheckPosition(cursor, digest, sortKeys) switch
-    {
-        QueryPosition position => position,
-        Validation error => throw DocumentRoute.Throwable(error),
-    };
 
     /// <summary>Decodes a cursor of the query bound to <paramref name="digest"/> with <paramref name="sortKeys"/> sort keys.</summary>
     public static Valid<QueryPosition> CheckPosition(string cursor, string digest, int sortKeys)

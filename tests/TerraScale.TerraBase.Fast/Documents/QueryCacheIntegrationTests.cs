@@ -4,6 +4,7 @@ using System.Runtime.InteropServices;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using TerraScale.TerraBase.Engine;
+using TerraScale.TerraBase.Errors;
 using TerraScale.TerraBase.Fast.Storage;
 using TerraScale.TerraBase.Features.Documents;
 using TerraScale.TerraBase.Hosting;
@@ -83,7 +84,7 @@ public sealed class QueryCacheIntegrationTests
         {
             if (kind == "point")
             {
-                return (await service.GetAsync(new DocumentKey(database, "items", id), CancellationToken.None))!;
+                return Ok(await service.GetAsync(new DocumentKey(database, "items", id), CancellationToken.None));
             }
             if (kind == "system")
             {
@@ -91,7 +92,7 @@ public sealed class QueryCacheIntegrationTests
             }
             var query = new DocumentQuery("items", null,
                 kind == "query" ? [new SortKey(new DocumentPath(["n"]), false)] : [], null, 50, 8 * 1024 * 1024);
-            return (await service.QueryAsync(database, query, kind == "query" ? 100_000 : null, CancellationToken.None)).Page.Rows[0].Document;
+            return Ok(await service.QueryAsync(database, query, kind == "query" ? 100_000 : null, CancellationToken.None)).Page.Rows[0].Document;
         }
     }
 
@@ -107,14 +108,14 @@ public sealed class QueryCacheIntegrationTests
         var service = api.Server.Services.GetRequiredService<IDocumentService>();
         var database = await api.TenantOfAsync(cancellationToken: deadline.Token);
         var query = new DocumentQuery("items", null, [new SortKey(new DocumentPath(["n"]), false)], null, 1, 8 * 1024 * 1024);
-        var (page, count) = await service.QueryAsync(database, query, 100_000, deadline.Token);
+        var (page, count) = Ok(await service.QueryAsync(database, query, 100_000, deadline.Token));
         var rows = (IList<QueryRow>)page.Rows;
         var keys = (IList<object?>)page.Rows[0].Keys;
         var originalKeys = keys.ToArray();
         keys[0] = 999L;
         rows.Clear();
         // The first caller owns its result; the cache retains a detached page.
-        var (cached, cachedCount) = await service.QueryAsync(database, query, 100_000, deadline.Token);
+        var (cached, cachedCount) = Ok(await service.QueryAsync(database, query, 100_000, deadline.Token));
         await Assert.That(ReferenceEquals(page, cached)).IsFalse();
         await Assert.That(cached.Rows[0].Document.Id).IsEqualTo(first);
         await Assert.That(cached.Rows[0].Keys).IsEquivalentTo(originalKeys);
@@ -168,13 +169,13 @@ public sealed class QueryCacheIntegrationTests
 
         var documents = management.Server.Services.GetRequiredService<IDocumentService>();
         var query = new DocumentQuery("items", new ExistsFilter(new DocumentPath(["n"])), [], null, 50, 8 * 1024 * 1024);
-        var (firstPage, firstCount) = await documents.QueryAsync(firstDatabase, query, 100_000, deadline.Token);
-        var (secondPage, secondCount) = await documents.QueryAsync(secondDatabase, query, 100_000, deadline.Token);
+        var (firstPage, firstCount) = Ok(await documents.QueryAsync(firstDatabase, query, 100_000, deadline.Token));
+        var (secondPage, secondCount) = Ok(await documents.QueryAsync(secondDatabase, query, 100_000, deadline.Token));
         await Assert.That(ReferenceEquals(firstPage, secondPage)).IsFalse();
         await Assert.That(firstCount).IsEqualTo(((long Count, bool Complete)?)(1L, true));
         await Assert.That(secondCount).IsEqualTo(((long Count, bool Complete)?)(2L, true));
-        var (firstAgain, _) = await documents.QueryAsync(firstDatabase, query, 100_000, deadline.Token);
-        var (secondAgain, _) = await documents.QueryAsync(secondDatabase, query, 100_000, deadline.Token);
+        var (firstAgain, _) = Ok(await documents.QueryAsync(firstDatabase, query, 100_000, deadline.Token));
+        var (secondAgain, _) = Ok(await documents.QueryAsync(secondDatabase, query, 100_000, deadline.Token));
         await Assert.That(ReferenceEquals(firstPage, firstAgain)).IsFalse();
         await Assert.That(ReferenceEquals(secondPage, secondAgain)).IsFalse();
     }
@@ -228,16 +229,16 @@ public sealed class QueryCacheIntegrationTests
             return new("items", new ExistsFilter(new DocumentPath(["n"])),
                 [new SortKey(new DocumentPath(["n"]), false)], null, 1, 8 * 1024 * 1024);
         }
-        var (firstPage, _) = await documents.QueryAsync(database, Query(), 100_000, deadline.Token);
-        var (equivalentPage, equivalentCount) = await documents.QueryAsync(database, Query(), 100_000, deadline.Token);
+        var (firstPage, _) = Ok(await documents.QueryAsync(database, Query(), 100_000, deadline.Token));
+        var (equivalentPage, equivalentCount) = Ok(await documents.QueryAsync(database, Query(), 100_000, deadline.Token));
         await Assert.That(ReferenceEquals(firstPage, equivalentPage)).IsFalse();
         await Assert.That(hits).IsEqualTo(2);
         await Assert.That(equivalentPage.Rows[0].Document.Id).IsEqualTo(firstId);
         await Assert.That(equivalentPage.Rows[0].Keys).IsEquivalentTo(firstPage.Rows[0].Keys);
         await Assert.That(equivalentCount).IsEqualTo(((long Count, bool Complete)?)(2L, true));
-        var (_, withoutCount) = await documents.QueryAsync(database, Query(), null, deadline.Token);
+        var (_, withoutCount) = Ok(await documents.QueryAsync(database, Query(), null, deadline.Token));
         await Assert.That(withoutCount).IsNull();
-        var (_, boundedCount) = await documents.QueryAsync(database, Query(), 1, deadline.Token);
+        var (_, boundedCount) = Ok(await documents.QueryAsync(database, Query(), 1, deadline.Token));
         await Assert.That(boundedCount).IsEqualTo(((long Count, bool Complete)?)(1L, false));
         var next = await api.QueryAsync(new
         {
@@ -302,46 +303,58 @@ public sealed class QueryCacheIntegrationTests
         await Assert.That(recreated.Json.GetProperty("count").GetProperty("value").GetString()).IsEqualTo("0");
         (await api.GetAsync(fresh, cancellationToken: deadline.Token)).Status.ShouldBe(HttpStatusCode.NotFound);
     }
+    private static QueryOutcome Ok(QueryResult result) => result switch
+    {
+        QueryOutcome outcome => outcome,
+        _ => throw new InvalidOperationException("the query was refused"),
+    };
+
+    private static StoredDocument Ok(DocumentRead read) => read switch
+    {
+        StoredDocument document => document,
+        _ => throw new InvalidOperationException("the document was not found"),
+    };
+
     private sealed class TenantDocuments(IDocumentService inner) : IDocumentService
     {
         public int Reads { get; private set; }
 
         public int Writes { get; private set; }
 
-        public ValueTask<CollectionInfo> CreateCollectionAsync(TenantContext database, string name, CancellationToken cancellationToken) =>
+        public ValueTask<CollectionResult> CreateCollectionAsync(TenantContext database, string name, CancellationToken cancellationToken) =>
             inner.CreateCollectionAsync(database, name, cancellationToken);
 
-        public ValueTask<CollectionInfo> GetCollectionAsync(TenantContext database, string name, CancellationToken cancellationToken) =>
+        public ValueTask<CollectionResult> GetCollectionAsync(TenantContext database, string name, CancellationToken cancellationToken) =>
             inner.GetCollectionAsync(database, name, cancellationToken);
 
-        public ValueTask<(IReadOnlyList<CollectionInfo> Collections, bool HasMore)> ListCollectionsAsync(
+        public ValueTask<Found<CollectionPage>> ListCollectionsAsync(
             TenantContext database, string? afterName, int limit, CancellationToken cancellationToken) =>
             inner.ListCollectionsAsync(database, afterName, limit, cancellationToken);
 
-        public ValueTask<CollectionInfo> DropCollectionAsync(TenantContext database, string name, CancellationToken cancellationToken) =>
+        public ValueTask<CollectionResult> DropCollectionAsync(TenantContext database, string name, CancellationToken cancellationToken) =>
             inner.DropCollectionAsync(database, name, cancellationToken);
 
-        public ValueTask<StoredDocument?> GetAsync(DocumentKey key, CancellationToken cancellationToken)
+        public ValueTask<DocumentRead> GetAsync(DocumentKey key, CancellationToken cancellationToken)
         {
             Reads++;
             return inner.GetAsync(key, cancellationToken);
         }
 
-        public ValueTask<(QueryPage Page, (long Count, bool Complete)? Count)> QueryAsync(
+        public ValueTask<QueryResult> QueryAsync(
             TenantContext database, DocumentQuery query, long? countLimit, CancellationToken cancellationToken) =>
             inner.QueryAsync(database, query, countLimit, cancellationToken);
 
-        public ValueTask<WriteResult> WriteAsync(
+        public ValueTask<WriteOutcome> WriteAsync(
             TenantContext database, IReadOnlyList<DocumentOperation> operations, bool indexErrors, CancellationToken cancellationToken)
         {
             Writes++;
             return inner.WriteAsync(database, operations, indexErrors, cancellationToken);
         }
 
-        public ValueTask<OperationResult> ApplyAsync(IStorageTransaction transaction, DocumentOperation operation, CancellationToken cancellationToken) =>
+        public ValueTask<ApplyOutcome> ApplyAsync(IStorageTransaction transaction, DocumentOperation operation, CancellationToken cancellationToken) =>
             inner.ApplyAsync(transaction, operation, cancellationToken);
 
-        public ValueTask<(QueryPage Page, (long Count, bool Complete)? Count)> QueryAsync(
+        public ValueTask<QueryResult> QueryAsync(
             IStorageTransaction transaction, DocumentQuery query, long? countLimit, CancellationToken cancellationToken) =>
             inner.QueryAsync(transaction, query, countLimit, cancellationToken);
     }

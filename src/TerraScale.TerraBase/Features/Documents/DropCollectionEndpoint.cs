@@ -36,7 +36,8 @@ public sealed class DropCollectionEndpoint(IDocumentService documents, ITenantDi
                 (Validation error, _, _) => ErrorResponse.From(error),
                 (_, Validation error, _) => ErrorResponse.From(error),
                 (_, _, Validation error) => ErrorResponse.From(error),
-                (string name, _, _) => TypedResults.Ok(CreateCollectionEndpoint.Body(await documents.DropCollectionAsync(database, name, cancellationToken))),
+                (string name, _, _) => CreateCollectionEndpoint.Answer(
+                    await documents.DropCollectionAsync(database, name, cancellationToken), collection => TypedResults.Ok(CreateCollectionEndpoint.Body(collection))),
             },
         };
 }

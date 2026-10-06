@@ -49,8 +49,8 @@ public sealed class PatchDocumentEndpoint(IDocumentService documents, ITenantDir
                     byte[] body => Patch(body) switch
                     {
                         Validation error => ErrorResponse.From(error),
-                        DocumentPatch patch => TypedResults.Ok((await DocumentRoute.WriteAsync(
-                            HttpContext, documents, key, new PatchOperation(key.Collection, key.Id, patch, precondition), cancellationToken)).Body),
+                        DocumentPatch patch => await DocumentRoute.WriteAsync(
+                            HttpContext, documents, key, new PatchOperation(key.Collection, key.Id, patch, precondition), (body, _) => TypedResults.Ok(body), cancellationToken),
                     },
                 },
             },

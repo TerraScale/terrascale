@@ -84,10 +84,18 @@ public sealed class CommitEndpoint(IManagementCommits commits) : EndpointWithout
     }
 
     /// <inheritdoc />
-    public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
+    public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
+        await DocumentRoute.CheckBodyAsync(HttpContext, DocumentRoute.MaxRequestBytes, "invalid_request", cancellationToken, DocumentRoute.JsonMediaType) switch
+        {
+            Validation error => ErrorResponse.From(error),
+            PayloadTooLarge error => ErrorResponse.From(error),
+            UnsupportedMediaType error => ErrorResponse.From(error),
+            byte[] body => await CommitAsync(body, cancellationToken),
+        };
+
+    private async ValueTask<IResult> CommitAsync(byte[] body, CancellationToken cancellationToken)
     {
         var userId = ManagementRoute.UserId(HttpContext);
-        var body = await DocumentRoute.ReadBodyAsync(HttpContext, DocumentRoute.MaxRequestBytes, "invalid_request", cancellationToken, DocumentRoute.JsonMediaType);
         JsonDocument envelope;
         try
         {
@@ -192,16 +200,12 @@ public sealed class CommitEndpoint(IManagementCommits commits) : EndpointWithout
         return new ParsedCommit(id.GetString()!, operations);
     }
 
-    // One operation; the Documents API parser and the Management validators still throw, so their errors are read here.
+    // One operation; the Management validators still throw (docs/error-handling.md), so their errors are read here.
     private static ValidOperation Operation(JsonElement json)
     {
         try
         {
             return Unchecked(json);
-        }
-        catch (ApiException error)
-        {
-            return new Validation(error.Detail ?? error.Code, error.Code);
         }
         catch (BadHttpRequestException error)
         {
@@ -218,7 +222,11 @@ public sealed class CommitEndpoint(IManagementCommits commits) : EndpointWithout
 
         if (json.TryGetProperty("collection", out _))
         {
-            return new DocumentCommitOperation(TransactionEndpoint.Operation(json));
+            return TransactionEndpoint.CheckOperation(json) switch
+            {
+                Validation error => error,
+                DocumentOperation operation => new DocumentCommitOperation(operation),
+            };
         }
 
         if (json.EnumerateObject().Any(member => member.Value.ValueKind == JsonValueKind.Null))
@@ -226,7 +234,15 @@ public sealed class CommitEndpoint(IManagementCommits commits) : EndpointWithout
             return new Validation("operation members cannot be null");
         }
 
-        var op = RequestJson.Deserialize<ManagementOpRequest>(JsonMarshal.GetRawUtf8Value(json), "invalid_request");
+        return RequestJson.Read<ManagementOpRequest>(JsonMarshal.GetRawUtf8Value(json), "invalid_request") switch
+        {
+            Validation error => error,
+            ManagementOpRequest op => Checked(json, op),
+        };
+    }
+
+    private static ValidOperation Checked(JsonElement json, ManagementOpRequest op)
+    {
         if (op.Op is null || !Members.TryGetValue(op.Op, out var members))
         {
             return new Validation("the operation's kind is invalid");
