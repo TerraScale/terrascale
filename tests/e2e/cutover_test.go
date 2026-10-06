@@ -95,15 +95,15 @@ func TestCutoverOwnerCreatesAndRevokesAPIKeyThenInvitesMember(t *testing.T) {
 	must(t, expect.Locator(keyRow).ToContainText("Revoked"))
 	must(t, expect.Locator(secret()).ToHaveCount(0))
 
-	goToOK(t, page, "/access")
+	goToOK(t, page, "/organization?tab=invitations&create=1")
 	invitee := newAccount("cutover-invitee").Email
-	invite := page.Locator(`form.ts-access-overview-invite[action="/api/v1/access/invitations"]`)
+	invite := page.Locator(`form.ts-access-invite[action="/api/v1/access/invitations?tab=invitations"]`)
 	fill(t, invite.Locator(`input[name="email"]`), invitee)
-	submitAndExpect(t, page, "/api/v1/access/invitations", 200, byRole(invite, *playwright.AriaRoleButton, "Send invite").Click)
+	submitAndExpect(t, page, "/api/v1/access/invitations", 200, byRole(invite, *playwright.AriaRoleButton, "Create invitation").Click)
 	invitation := page.Locator(`section[aria-labelledby="invitation-link-title"]`)
 	must(t, expect.Locator(invitation).ToContainText("Invitation created"))
 	must(t, expect.Locator(invitation.Locator(`a[href^="/invitations/"]`)).ToHaveCount(1))
-	must(t, expect.Locator(page.Locator(".ts-access-invitation-summary")).ToContainText(invitee))
+	must(t, expect.Locator(page.GetByText(invitee)).ToHaveCount(1))
 }
 
 func TestCutoverProfileSettingsPersistAndPasswordChangeEndsSession(t *testing.T) {

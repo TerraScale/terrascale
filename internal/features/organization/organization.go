@@ -80,6 +80,7 @@ type organizationPageData struct {
 	NewOrganization     string
 	NewOrganizationID   string
 	Error               string
+	InvitationNotice    string
 	PaymentCanceled     bool
 	Demo                bool
 	CanConfirmOwnership bool
@@ -94,7 +95,7 @@ type organizationPageData struct {
 func Mount(mux *http.ServeMux, deps core.Deps) {
 	service := NewService(deps.Store, deps.Sessions)
 	mountTools(deps.Tools, service)
-	mux.HandleFunc("GET /organization", organizationPage(deps, service))
+
 	mux.HandleFunc("POST /api/v1/dashboard/organization/new-organization", newOrganization(deps, service))
 	mux.HandleFunc("POST /api/v1/dashboard/switch-organization", switchOrganization(deps, service))
 	mux.HandleFunc("POST /api/v1/dashboard/organization/switch", switchOrganization(deps, service))
@@ -137,7 +138,13 @@ func wizardPlans(plans []core.Plan, org core.Organization) []planView {
 	return views
 }
 
-func organizationPage(deps core.Deps, service Service) http.HandlerFunc {
+// Page renders the organization overview. The access feature routes member tabs.
+func Page(deps core.Deps) http.HandlerFunc {
+	service := NewService(deps.Store, deps.Sessions)
+	return pageWithService(deps, service)
+}
+
+func pageWithService(deps core.Deps, service Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		p, ok := deps.Sessions.Principal(r)
 		if !ok {
@@ -157,6 +164,12 @@ func organizationPage(deps core.Deps, service Service) http.HandlerFunc {
 			return
 		}
 		data := makeOrganizationPage(account, org, p, r.URL.Query().Get("newOrganization"), r.URL.Query().Get("error"), time.Now())
+		switch r.URL.Query().Get("invitation") {
+		case "accepted":
+			data.InvitationNotice = "You are now a member of " + org.Name + "."
+		case "declined":
+			data.InvitationNotice = "Invitation declined"
+		}
 		data.NewOrganizationID = org.ID
 		data.PaymentCanceled = paymentVerified && r.URL.Query().Get("payment") == "canceled" && data.NewOrganization == "payment"
 		data.OpenCreateProject = r.URL.Query().Get("newProject") == "1"
@@ -178,6 +191,10 @@ func organizationPage(deps core.Deps, service Service) http.HandlerFunc {
 			http.Error(w, "could not render organization page", http.StatusInternalServerError)
 		}
 	}
+}
+
+func organizationPage(deps core.Deps, service Service) http.HandlerFunc {
+	return pageWithService(deps, service)
 }
 
 func resumeCheckoutOrganization(deps core.Deps, service Service, w http.ResponseWriter, r *http.Request, p core.Principal) (core.Principal, bool, error) {

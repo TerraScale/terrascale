@@ -39,7 +39,7 @@ func TestInvitationLifecycle(t *testing.T) {
 
 	goToOK(t, guest, declined)
 	submitAndExpect(t, guest, declined+"/respond", 303, pageByRole(guest, *playwright.AriaRoleButton, "Decline").Click)
-	waitForPath(t, guest, func(u *url.URL) bool { return u.Path == "/access" && u.Query().Get("invitation") == "declined" })
+	waitForPath(t, guest, func(u *url.URL) bool { return u.Path == "/organization" && u.Query().Get("invitation") == "declined" })
 	must(t, expect.Locator(guest.GetByRole(*playwright.AriaRoleStatus).First()).ToContainText("Invitation declined"))
 	if response := goTo(t, visitor, declined); response.Status() != 404 {
 		t.Fatalf("GET declined invitation = %d, want 404", response.Status())
@@ -55,7 +55,7 @@ func TestInvitationLifecycle(t *testing.T) {
 	click(t, byRole(form, *playwright.AriaRoleButton, "Sign in"))
 	waitForPath(t, guest, func(u *url.URL) bool { return u.Path == accepted })
 	submitAndExpect(t, guest, accepted+"/respond", 303, pageByRole(guest, *playwright.AriaRoleButton, "Accept invitation").Click)
-	waitForPath(t, guest, func(u *url.URL) bool { return u.Path == "/access" && u.Query().Get("invitation") == "accepted" })
+	waitForPath(t, guest, func(u *url.URL) bool { return u.Path == "/organization" && u.Query().Get("invitation") == "accepted" })
 	must(t, expect.Locator(guest.GetByRole(*playwright.AriaRoleStatus).First()).ToContainText("You are now a member of"))
 
 	stranger := invite(t, owner, newAccount("invitation-stranger").Email)
@@ -64,7 +64,7 @@ func TestInvitationLifecycle(t *testing.T) {
 	click(t, pageByRole(guest, *playwright.AriaRoleButton, "Sign out and switch account"))
 	waitForPath(t, guest, func(u *url.URL) bool { return u.Path == "/login" && u.Query().Get("returnTo") == stranger })
 
-	goToOK(t, owner, "/access?tab=members")
+	goToOK(t, owner, "/organization?tab=members")
 	member := owner.Locator("#team-members tbody tr").Filter(playwright.LocatorFilterOptions{HasText: guestAccount.Email})
 	click(t, byRole(member, *playwright.AriaRoleButton, "Remove access"))
 	confirm := owner.Locator("dialog[open]")
@@ -77,7 +77,7 @@ func TestInvitationLifecycle(t *testing.T) {
 // the path of its link.
 func invite(t *testing.T, page playwright.Page, email string) string {
 	t.Helper()
-	goToOK(t, page, "/access?tab=invitations")
+	goToOK(t, page, "/organization?tab=invitations")
 	form := page.Locator("#team-invite form")
 	fill(t, form.Locator(`[name="email"]`), email)
 	submitAndExpect(t, page, "/api/v1/access/invitations", 200, byRole(form, *playwright.AriaRoleButton, "Create invitation").Click)
@@ -91,6 +91,6 @@ func invitationLink(t *testing.T, page playwright.Page) string {
 	t.Helper()
 	link := page.Locator("#invitation-link")
 	must(t, expect.Locator(link).ToHaveText(regexp.MustCompile(`^https?://[^/]+/invitations/`)))
-	waitForPath(t, page, func(u *url.URL) bool { return u.Path == "/access" && u.Query().Get("tab") == "invitations" })
+	waitForPath(t, page, func(u *url.URL) bool { return u.Path == "/organization" && u.Query().Get("tab") == "invitations" })
 	return linkPath(t, page, link)
 }

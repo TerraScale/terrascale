@@ -69,7 +69,7 @@ func TestInvitationsTabIsPaged(t *testing.T) {
 	if len(data.Invitations) != 2 || data.First != 11 || data.Last != 12 || data.Total != 12 {
 		t.Fatalf("page 2 = %d invitations, %d–%d of %d; want 2, 11–12 of 12", len(data.Invitations), data.First, data.Last, data.Total)
 	}
-	if data.PreviousURL != "/access?page=1&tab=invitations" || data.NextURL != "" {
+	if data.PreviousURL != "/organization?page=1&tab=invitations" || data.NextURL != "" {
 		t.Fatalf("pager links = %q, %q", data.PreviousURL, data.NextURL)
 	}
 }

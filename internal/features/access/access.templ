@@ -12,7 +12,7 @@ import (
 
 templ accessPageView(page core.Page, data pageData) {
 	<main id="access-page" class="ts-page ts-access-page">
-		@ui.PageHeader("Team") {}
+		@ui.PageHeader("Organization") {}
 		if data.Error != "" {
 			@ui.Alert("warning", data.Error, "")
 		}
@@ -37,17 +37,16 @@ templ accessPageView(page core.Page, data pageData) {
 			</section>
 		}
 		<div class="ts-toolbar ts-access-toolbar">
-			@ui.Tabs("Team sections", []ui.Tab{
-				{Label: "Overview", URL: "/access", Active: data.Tab == "overview"},
-				{Label: "Members", URL: "/access?tab=members", Active: data.Tab == "members"},
-				{Label: "Projects", URL: "/access?tab=projects", Active: data.Tab == "projects"},
-				{Label: "Invitations", URL: "/access?tab=invitations", Active: data.Tab == "invitations"},
+			@ui.Tabs("Organization sections", []ui.Tab{
+				{Label: "Overview", URL: "/organization", Active: false},
+				{Label: "Members", URL: "/organization?tab=members", Active: data.Tab == "members"},
+				{Label: "Invitations", URL: "/organization?tab=invitations", Active: data.Tab == "invitations"},
 			})
 			if data.Tab == "members" {
 				@memberFilters(data)
 			}
 			if data.CanManage {
-				<a class="ts-btn ts-btn-primary" href="/access?tab=invitations&amp;create=1">@icons.UserPlus(16)<span>Invite member</span></a>
+				<a class="ts-btn ts-btn-primary" href="/organization?tab=invitations&amp;create=1">@icons.UserPlus(16)<span>Invite member</span></a>
 			}
 		</div>
 		switch data.Tab {
@@ -64,7 +63,7 @@ templ accessPageView(page core.Page, data pageData) {
 }
 
 templ memberFilters(data pageData) {
-	<form id="access-filter-form" method="get" action="/access" class="ts-filters ts-access-filters" role="search" aria-label="Filter members" data-on:submit="@get('/access', {contentType:'form'})">
+	<form id="access-filter-form" method="get" action="/organization" class="ts-filters ts-access-filters" role="search" aria-label="Filter members" data-on:submit="@get('/organization', {contentType:'form'})">
 		<input type="hidden" name="tab" value="members"/>
 		// The first submit button is the form's default, used when Enter is
 		// pressed; it keeps the current role. A clicked role option is sent after
@@ -84,7 +83,7 @@ templ memberFilters(data pageData) {
 			}
 		</div>
 		if data.Query != "" || data.RoleFilter != "all" {
-			<a class="ts-btn ts-btn-ghost ts-btn-sm" href="/access?tab=members">Clear</a>
+			<a class="ts-btn ts-btn-ghost ts-btn-sm" href="/organization?tab=members">Clear</a>
 		}
 	</form>
 }
@@ -112,7 +111,7 @@ templ accessOverview(page core.Page, data pageData) {
 		}
 	</div>
 	<div class="ts-grid-2">
-		@ui.Card(ui.CardProps{ID: "organization-members", Title: "Organization members", Description: "Users returned by the TerraScale Dashboard API", Actions: linkAction("/access?tab=members", "View all"), Flush: data.MemberCount > 0}) {
+		@ui.Card(ui.CardProps{ID: "organization-members", Title: "Organization members", Description: "Users returned by the TerraScale Dashboard API", Actions: linkAction("/organization?tab=members", "View all"), Flush: data.MemberCount > 0}) {
 			if data.MemberCount == 0 {
 				@noMembers()
 			} else {
@@ -126,7 +125,7 @@ templ accessOverview(page core.Page, data pageData) {
 				</ul>
 			}
 		}
-		@ui.Card(ui.CardProps{ID: "invitations-summary", Title: "Invitations and role changes", Description: "Persistent access mutations", Actions: linkAction("/access?tab=invitations", "Manage access")}) {
+		@ui.Card(ui.CardProps{ID: "invitations-summary", Title: "Invitations and role changes", Description: "Persistent access mutations", Actions: linkAction("/organization?tab=invitations", "Manage access")}) {
 			if data.CanManage {
 				<form method="post" action="/api/v1/access/invitations" class="ts-access-invite ts-access-overview-invite">
 					<input type="hidden" name="_csrf" value={ page.CSRFToken }/>
@@ -164,7 +163,7 @@ templ accessMembers(page core.Page, data pageData) {
 		} else if len(data.Members) == 0 {
 			@ui.Empty("No members match", "Adjust the search or role filter to see another organization member.") {
 				if data.Query != "" || data.RoleFilter != "all" {
-					<a class="ts-btn ts-btn-secondary ts-btn-sm" href="/access?tab=members">Clear filters</a>
+					<a class="ts-btn ts-btn-secondary ts-btn-sm" href="/organization?tab=members">Clear filters</a>
 				}
 			}
 		} else {
@@ -368,7 +367,7 @@ func tabPath(tab string) string {
 	if tab == "overview" {
 		return "/access"
 	}
-	return "/access?tab=" + tab
+	return "/organization?tab=" + tab
 }
 
 func roleFilterValue(role string) string {

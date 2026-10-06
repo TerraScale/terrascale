@@ -28,7 +28,7 @@ type routeState struct {
 
 var parityRouteStates = []routeState{
 	{key: "overview", path: "/", heading: "Overview"},
-	{key: "team", path: "/access", heading: "Team"},
+	{key: "team", path: "/organization?tab=members", heading: "Organization"},
 	{key: "admin-databases", path: "/admin/databases", status: http.StatusForbidden},
 	{key: "admin-estate", path: "/admin/estate", status: http.StatusForbidden},
 	{key: "admin-usage", path: "/admin/usage", status: http.StatusForbidden},
@@ -85,7 +85,7 @@ func TestPagesMemberNavigationKeyboardAndMobile(t *testing.T) {
 
 	navigation := pageByRole(page, *playwright.AriaRoleNavigation, "Dashboard sections")
 	visible(t, byRole(navigation, *playwright.AriaRoleLink, "Overview"))
-	for _, label := range []string{"Databases", "Team", "Usage", "Billing", "Project settings"} {
+	for _, label := range []string{"Databases", "Usage", "Billing", "Project settings"} {
 		visible(t, byRole(navigation, *playwright.AriaRoleLink, label, true))
 	}
 	must(t, expect.Locator(byRole(navigation, *playwright.AriaRoleLink, "Query subscriptions", true)).ToHaveCount(0))
@@ -388,9 +388,9 @@ func TestPagesMemberFilterPatchesThroughDatastar(t *testing.T) {
 	account.DisplayName += " " + rand.Text()[:8]
 	registerAndOnboard(t, page, account)
 
-	pageResponse := goTo(t, page, "/access?tab=members")
+	pageResponse := goTo(t, page, "/organization?tab=members")
 	if pageResponse.Status() != http.StatusOK {
-		t.Fatalf("GET /access?tab=members = %d", pageResponse.Status())
+		t.Fatalf("GET /organization?tab=members = %d", pageResponse.Status())
 	}
 	html, err := pageResponse.Text()
 	must(t, err)
@@ -427,7 +427,7 @@ func TestPagesMemberFilterPatchesThroughDatastar(t *testing.T) {
 	patchResponse, err := page.ExpectResponse(func(response playwright.Response) bool {
 		parsed, err := url.Parse(response.URL())
 		request := response.Request()
-		return err == nil && parsed.Path == "/access" && parsed.Query().Get("q") == search &&
+		return err == nil && parsed.Path == "/organization" && parsed.Query().Get("q") == search &&
 			request.Method() == http.MethodGet && request.Headers()["datastar-request"] == "true"
 	}, func() error { return memberSearch.Press("Enter") })
 	must(t, err)
@@ -478,14 +478,14 @@ func TestPagesMemberFilterSubmitsNativelyWithoutJavaScript(t *testing.T) {
 	registerAndOnboard(t, page, account)
 
 	nativePage := watchedPage(t, cloneSession(t, page.Context(), false))
-	goTo(t, nativePage, "/access?tab=members")
+	goTo(t, nativePage, "/organization?tab=members")
 
 	search := account.DisplayName
 	memberSearch := nativePage.Locator("#member-search")
 	fill(t, memberSearch, search)
 	navigation, err := nativePage.ExpectResponse(func(response playwright.Response) bool {
 		parsed, err := url.Parse(response.URL())
-		return err == nil && parsed.Path == "/access" && parsed.Query().Get("q") == search &&
+		return err == nil && parsed.Path == "/organization" && parsed.Query().Get("q") == search &&
 			response.Request().IsNavigationRequest()
 	}, func() error { return memberSearch.Press("Enter") })
 	must(t, err)

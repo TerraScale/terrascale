@@ -13,8 +13,16 @@ import (
 templ organizationPageView(page core.Page, data organizationPageData) {
 	<main class="ts-page">
 		@ui.PageHeader(data.Organization.Name) {
-			<a class="ts-btn ts-btn-secondary" href="/access">@icons.Users(16)<span>Manage team</span></a>
+			<a class="ts-btn ts-btn-secondary" href="/organization?tab=members">@icons.Users(16)<span>Manage members</span></a>
 			<a class="ts-btn ts-btn-primary" href="/organization?newOrganization=organization">@icons.Plus(16)<span>Create organization</span></a>
+		}
+		@ui.Tabs("Organization sections", []ui.Tab{
+ {Label: "Overview", URL: "/organization", Active: true},
+ {Label: "Members", URL: "/organization?tab=members"},
+ {Label: "Invitations", URL: "/organization?tab=invitations"},
+		})
+		if data.InvitationNotice != "" {
+			@ui.Alert("success", data.InvitationNotice, "")
 		}
 		if data.Error != "" {
 			@ui.Alert("danger", "", data.Error)
