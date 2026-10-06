@@ -21,4 +21,7 @@ public interface ITenantDirectory
     /// </summary>
     ValueTask<(TenantContext Database, bool Created)?> CreateDatabaseAsync(
         string organizationId, string projectId, string database, CancellationToken cancellationToken);
+
+    /// <summary>Whether the catalog registers <paramref name="database"/>: its organization, project and database ids.</summary>
+    ValueTask<bool> ExistsAsync(TenantContext database, CancellationToken cancellationToken);
 }

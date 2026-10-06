@@ -19,6 +19,22 @@ public interface ICatalogReadiness
     bool IsReady { get; }
 }
 
+/// <summary>
+/// Reacts to the catalog a follower applied (docs/decisions/0009). Called on the follower's stream loop after the transaction
+/// committed, with the catalog in that state: keep it short, and never write the catalog.
+/// </summary>
+public interface ICatalogApplyObserver
+{
+    /// <summary>The system collection whose applied documents (not deletions) <see cref="AppliedAsync"/> receives.</summary>
+    string Collection { get; }
+
+    /// <summary>Called with the documents of <see cref="Collection"/> one group or snapshot applied.</summary>
+    ValueTask AppliedAsync(IReadOnlyList<DocumentChange> documents, CancellationToken cancellationToken);
+
+    /// <summary>Called once per process, when the follower first caught up with its primary.</summary>
+    ValueTask CaughtUpAsync(CancellationToken cancellationToken);
+}
+
 /// <summary>A catalog primary is always ready.</summary>
 internal sealed class CatalogPrimaryReadiness : ICatalogReadiness
 {
@@ -44,6 +60,14 @@ internal sealed partial class CatalogFollower : BackgroundService, ICatalogReadi
     private readonly TimeProvider _time;
 
     private readonly Counter<long> _failures;
+    private readonly ICatalogApplyObserver[] _observers;
+    private readonly HashSet<string> _observedCollections;
+
+    // Observers acting on the first catch-up, off the stream loop (a file audit can take long); awaited when the follower stops.
+    private Task _caughtUpObservers = Task.CompletedTask;
+
+    // Documents of an observed collection the current transaction applied; only the stream loop uses it.
+    private readonly List<DocumentChange> _observed = [];
     private volatile bool _caughtUp;
     private int _connected;
     private long _applied;
@@ -51,10 +75,12 @@ internal sealed partial class CatalogFollower : BackgroundService, ICatalogReadi
     private Progress _progress = new(Guid.Empty, 0);
 
     public CatalogFollower(
-        ISystemReplication system, PeerCredentials credentials, TerraBaseOptions options, ILogger<CatalogFollower> logger, TimeProvider time, IMeterFactory meters)
+        ISystemReplication system, PeerCredentials credentials, TerraBaseOptions options, ILogger<CatalogFollower> logger, TimeProvider time, IMeterFactory meters,
+        IEnumerable<ICatalogApplyObserver> observers)
     {
         ArgumentNullException.ThrowIfNull(meters);
-        (_system, _credentials, _options, _logger, _time) = (system, credentials, options, logger, time);
+        (_system, _credentials, _options, _logger, _time, _observers) = (system, credentials, options, logger, time, observers.ToArray());
+        _observedCollections = new HashSet<string>(_observers.Select(observer => observer.Collection), StringComparer.Ordinal);
         var meter = meters.Create(Telemetry.MeterName);
         meter.CreateObservableGauge("terrabase.catalog.follower.connected", () => Volatile.Read(ref _connected), "{state}",
             "One while a catalog follower holds a stream to its primary.");
@@ -88,6 +114,12 @@ internal sealed partial class CatalogFollower : BackgroundService, ICatalogReadi
         {
             await progress.Next.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
         }
+    }
+
+    public override async Task StopAsync(CancellationToken cancellationToken)
+    {
+        await base.StopAsync(cancellationToken).ConfigureAwait(false);
+        await _caughtUpObservers.WaitAsync(cancellationToken).ConfigureAwait(false);
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -174,12 +206,15 @@ internal sealed partial class CatalogFollower : BackgroundService, ICatalogReadi
             switch (frame.FrameCase)
             {
                 case FollowResponse.FrameOneofCase.SnapshotBegin:
+                    _observed.Clear();
                     position = await ApplySnapshotAsync(stream, origin, frame.SnapshotBegin, sameLineage: position is not null, stoppingToken)
                         .ConfigureAwait(false);
                     Applied(position);
                     Interlocked.Exchange(ref _head, (long)welcome.Head);
+                    await NotifyAsync(stoppingToken).ConfigureAwait(false);
                     break;
                 case FollowResponse.FrameOneofCase.GroupBegin:
+                    _observed.Clear();
                     var replica = await _system.BeginReplicaAsync(adopt: null, stoppingToken).ConfigureAwait(false);
                     await using (replica.ConfigureAwait(false))
                     {
@@ -188,6 +223,7 @@ internal sealed partial class CatalogFollower : BackgroundService, ICatalogReadi
                         await replica.CommitAsync(position, 0, stoppingToken).ConfigureAwait(false);
                     }
 
+                    await NotifyAsync(stoppingToken).ConfigureAwait(false);
                     break;
                 case FollowResponse.FrameOneofCase.Heartbeat:
                     Interlocked.Exchange(ref _head, (long)frame.Heartbeat.Head);
@@ -196,6 +232,13 @@ internal sealed partial class CatalogFollower : BackgroundService, ICatalogReadi
                     {
                         _caughtUp = true;
                         LogCaughtUp(_logger, position.Sequence);
+                        _caughtUpObservers = Task.Run(async () =>
+                        {
+                            foreach (var observer in _observers)
+                            {
+                                await ObserveAsync(() => observer.CaughtUpAsync(stoppingToken), stoppingToken).ConfigureAwait(false);
+                            }
+                        }, CancellationToken.None);
                     }
 
                     break;
@@ -252,6 +295,7 @@ internal sealed partial class CatalogFollower : BackgroundService, ICatalogReadi
                         {
                             await replica.ReplaceAsync(document.Json is null ? throw new InvalidDataException("a catalog snapshot holds a deletion") : document,
                                 cancellationToken).ConfigureAwait(false);
+                            Observe(document);
                         }
 
                         break;
@@ -277,7 +321,7 @@ internal sealed partial class CatalogFollower : BackgroundService, ICatalogReadi
     }
 
     // Applies one group into replica: its sequence must follow position, and its digest must chain from position's.
-    private static async Task<JournalPosition> ApplyGroupAsync(
+    private async Task<JournalPosition> ApplyGroupAsync(
         Frames stream, ISystemReplicaTransaction replica, JournalPosition position, GroupBegin begin, CancellationToken cancellationToken)
     {
         if ((long)begin.Sequence != position.Sequence + 1 || begin.ChangeCount is 0 or > ISystemReplication.MaxGroupChanges)
@@ -306,6 +350,7 @@ internal sealed partial class CatalogFollower : BackgroundService, ICatalogReadi
                 }
 
                 await replica.ReplaceAsync(change, cancellationToken).ConfigureAwait(false);
+                Observe(change);
                 applied++;
             }
         }
@@ -315,6 +360,45 @@ internal sealed partial class CatalogFollower : BackgroundService, ICatalogReadi
         return end.FrameCase == FollowResponse.FrameOneofCase.GroupEnd && end.GroupEnd.Digest.Span.SequenceEqual(computed)
             ? new JournalPosition(position.Origin, (long)begin.Sequence, computed)
             : throw new InvalidDataException("a catalog group's digest does not match its changes");
+    }
+
+    private void Observe(DocumentChange change)
+    {
+        if (change.Json is not null && _observedCollections.Contains(change.Collection))
+        {
+            _observed.Add(change);
+        }
+    }
+
+    // After the transaction that applied them committed. Observers run on this loop; their failures never end the stream.
+    private async Task NotifyAsync(CancellationToken cancellationToken)
+    {
+        foreach (var observer in _observers)
+        {
+            var documents = _observed.Where(change => string.Equals(change.Collection, observer.Collection, StringComparison.Ordinal)).ToList();
+            if (documents.Count > 0)
+            {
+                await ObserveAsync(() => observer.AppliedAsync(documents, cancellationToken), cancellationToken).ConfigureAwait(false);
+            }
+        }
+
+        _observed.Clear();
+    }
+
+    private async Task ObserveAsync(Func<ValueTask> observe, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await observe().ConfigureAwait(false);
+        }
+        catch (Exception error) when (!cancellationToken.IsCancellationRequested)
+        {
+            LogObserverFailed(_logger, error);
+        }
+        catch (OperationCanceledException)
+        {
+            // Stopping.
+        }
     }
 
     // Reads the next frame within the progress timeout; the primary heartbeats while idle.
@@ -357,6 +441,9 @@ internal sealed partial class CatalogFollower : BackgroundService, ICatalogReadi
 
     [LoggerMessage(Level = LogLevel.Error, Message = "This member's catalog is not empty and belongs to another origin than its catalog primary's journal; it is kept and this member does not follow. Point catalog-primary at the primary of this catalog, or remove its _system.db files to follow this one")]
     private static partial void LogLineage(ILogger logger);
+
+    [LoggerMessage(Level = LogLevel.Error, Message = "Acting on an applied catalog change failed; the catalog itself was applied")]
+    private static partial void LogObserverFailed(ILogger logger, Exception error);
 
     [LoggerMessage(Level = LogLevel.Information, Message = "Applied a catalog snapshot through primary group {Sequence}")]
     private static partial void LogSnapshot(ILogger logger, long sequence);

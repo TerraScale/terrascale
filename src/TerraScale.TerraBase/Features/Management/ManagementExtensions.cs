@@ -4,6 +4,7 @@ using TerraScale.TerraBase.Features.Management.Indexes;
 using TerraScale.TerraBase.Features.Management.Queries;
 using TerraScale.TerraBase.Features.Management.Schema;
 using TerraScale.TerraBase.Features.Management.Usage;
+using TerraScale.TerraBase.Features.Replication;
 using TerraScale.TerraBase.Tenancy;
 
 namespace TerraScale.TerraBase.Features.Management;
@@ -27,6 +28,7 @@ public static class ManagementExtensions
         services.AddSingleton<IManagementCommits>(provider => provider.GetRequiredService<EngineManagementService>());
         services.AddSingleton<ITenantDirectory>(provider => provider.GetRequiredService<EngineManagementService>());
         services.AddSingleton<ICatalogGuard>(provider => provider.GetRequiredService<EngineManagementService>());
+        services.AddSingleton<ICatalogApplyObserver>(provider => provider.GetRequiredService<EngineManagementService>());
         services.AddSingleton<SystemCatalog>();
         return services
             .AddTerraBaseManagementBackups()

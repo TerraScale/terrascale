@@ -1,5 +1,6 @@
 using System.Diagnostics.Metrics;
 using System.Text.Json;
+using TerraScale.TerraBase.Engine;
 using TerraScale.TerraBase.Features.Management.Backups;
 using TerraScale.TerraBase.Hosting;
 using TerraScale.TerraBase.Tenancy;
@@ -17,16 +18,29 @@ internal sealed partial class EngineManagementService
             description: "Files found at startup without a registered database; preserved for operator recovery.");
         if (options.CatalogPrimary is not null)
         {
-            // A follower's intents are the primary's (it replays them); its catalog may still be catching up, so an audit
-            // against it would report databases it has not received yet.
+            // A follower's intents are the primary's: it acts on them as it applies them (AppliedAsync), and here on those its
+            // catalog still holds, which a stop right after their group committed left undone. Its catalog may still be
+            // catching up, so it audits its files once it caught up (CaughtUpAsync).
+            if (engine.SystemDatabaseExists)
+            {
+                string? after = null;
+                DocumentPage page;
+                do
+                {
+                    page = await ReadCatalogAsync(transaction => transaction.ListAsync(PendingDatabaseCleanup, after, MemberPage, MaxPageBytes, cancellationToken),
+                        cancellationToken).ConfigureAwait(false);
+                    await AppliedAsync([.. page.Documents.Select(document => new DocumentChange(PendingDatabaseCleanup, document.Id, 1, document.Json))],
+                        cancellationToken).ConfigureAwait(false);
+                    after = page.Documents.Count > 0 ? page.Documents[^1].Id : after;
+                }
+                while (page.HasMore);
+            }
+
             return;
         }
 
         // Older catalogs contain no intents. Keep their existing lazy migration/503 behavior.
-        var hasCatalog = engine.SystemDatabaseExists;
-        var version = hasCatalog
-            ? await ReadCatalogAsync(transaction => GetAsync(transaction, Catalog, CatalogVersionId, Id, cancellationToken), cancellationToken).ConfigureAwait(false)
-            : null;
+        var (hasCatalog, version) = await CatalogStateAsync(cancellationToken).ConfigureAwait(false);
         if (version is IntentCatalogVersion or CatalogVersion)
         {
             while (true)
@@ -55,6 +69,70 @@ internal sealed partial class EngineManagementService
             }
         }
 
+        await AuditFilesAsync(hasCatalog, version, cancellationToken).ConfigureAwait(false);
+    }
+
+    public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+
+    /// <summary>The catalog collection of database cleanup intents, which a catalog follower acts on.</summary>
+    public string Collection => PendingDatabaseCleanup;
+
+    /// <summary>
+    /// On a catalog follower: deletes the local files of each database whose cleanup intent the primary's catalog recorded and
+    /// that it no longer registers (a deleted database, or one whose creation was abandoned). An intent of a creation in
+    /// progress names a database no follower has files of yet. The primary clears the intents.
+    /// </summary>
+    public async ValueTask AppliedAsync(IReadOnlyList<DocumentChange> documents, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(documents);
+        // Rows of a catalog version this build does not read could be anywhere: never delete on their absence.
+        if (documents.Count == 0 || (await CatalogStateAsync(cancellationToken).ConfigureAwait(false)).Version != CatalogVersion)
+        {
+            return;
+        }
+
+        foreach (var document in documents)
+        {
+            try
+            {
+                var storage = JsonSerializer.Deserialize(document.Json!.Value.Span, TerraBaseJsonContext.Default.TenantContext);
+                if (storage is null || document.Id != storage.DatabaseId || storage.ProjectId is null)
+                {
+                    // Inconsistent metadata cannot authorize deletion of registered data.
+                    LogInvalidReplicatedIntent(logger, null);
+                }
+                else if (!await HasDatabaseRowAsync(storage, cancellationToken).ConfigureAwait(false))
+                {
+                    checkpoint("follower.cleanup", storage);
+                    _ = await engine.DeleteDatabaseAsync(storage, cancellationToken).ConfigureAwait(false);
+                }
+            }
+            catch (Exception error) when (!cancellationToken.IsCancellationRequested)
+            {
+                // One intent never holds back the others; the next start acts on it again while the catalog holds it.
+                LogInvalidReplicatedIntent(logger, error);
+            }
+        }
+    }
+
+    /// <summary>On a catalog follower that caught up with its primary: the startup file audit a primary runs.</summary>
+    public async ValueTask CaughtUpAsync(CancellationToken cancellationToken)
+    {
+        var (hasCatalog, version) = await CatalogStateAsync(cancellationToken).ConfigureAwait(false);
+        await AuditFilesAsync(hasCatalog, version, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async ValueTask<(bool HasCatalog, string? Version)> CatalogStateAsync(CancellationToken cancellationToken)
+    {
+        var hasCatalog = engine.SystemDatabaseExists;
+        return (hasCatalog, hasCatalog
+            ? await ReadCatalogAsync(transaction => GetAsync(transaction, Catalog, CatalogVersionId, Id, cancellationToken), cancellationToken).ConfigureAwait(false)
+            : null);
+    }
+
+    // Counts and logs files without a registered database; they are preserved for operator recovery.
+    private async ValueTask AuditFilesAsync(bool hasCatalog, string? version, CancellationToken cancellationToken)
+    {
         // ponytail: one page of fixed-size UUID keys bounds items/bytes; partition the scan if interleaved files defeat reuse.
         var registrations = new Dictionary<(string Organization, string Project, string Database), bool>();
         foreach (var file in engine.EnumerateDatabaseFiles(cancellationToken))
@@ -86,8 +164,6 @@ internal sealed partial class EngineManagementService
             }
         }
     }
-
-    public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 
     // A database of the project, or a backup snapshot its organization still tracks there (the storage sweep deletes it).
     private ValueTask<bool> IsRegisteredAsync(TenantContext storage, CancellationToken cancellationToken) =>
@@ -148,6 +224,9 @@ internal sealed partial class EngineManagementService
             await engine.CompleteDatabaseIntentAsync(storage, CancellationToken.None).ConfigureAwait(false);
         }
     }
+
+    [LoggerMessage(Level = LogLevel.Error, Message = "A replicated database cleanup intent is invalid or failed; nothing more was deleted for it")]
+    private static partial void LogInvalidReplicatedIntent(ILogger logger, Exception? error);
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Preserved database file without a catalog registration: {Path}")]
     private static partial void LogUnknownDatabaseFile(ILogger logger, string path);

@@ -74,6 +74,11 @@ follows it. Design, limits and failover: [0009](decisions/0009-catalog-replicati
 - A follower authenticates API keys and resolves organizations, projects and databases from its replica, and
   serves a registered database before any of its documents arrived (an empty local file that client replication
   fills).
+- A deleted database goes from every follower: a follower deletes its local files when it applies the deletion's
+  cleanup intent, and a member that replicates receives client replication only for databases its catalog
+  registers (`STREAM_ERROR_UNAUTHORIZED`, retryable, otherwise), so no peer brings a deleted one back. A follower
+  never deletes a file only because it is unregistered; once caught up it counts such files in
+  `terrabase_storage_unknown_files`, as a primary does at startup.
 - `/readyz` of a follower answers 503 until it has applied the primary's head once in its process, and while its
   primary reports a head it has not applied yet; a primary that cannot be reached leaves the last head, so a
   caught-up follower stays ready while the primary restarts. Before stopping a member, a drain waits for its

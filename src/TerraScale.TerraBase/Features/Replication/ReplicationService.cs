@@ -4,6 +4,7 @@ using TerraScale.TerraBase.Configuration;
 using TerraScale.TerraBase.Engine;
 using TerraScale.TerraBase.Features.Replication.V1;
 using TerraScale.TerraBase.Primitives;
+using TerraScale.TerraBase.Tenancy;
 
 namespace TerraScale.TerraBase.Features.Replication;
 
@@ -14,7 +15,8 @@ namespace TerraScale.TerraBase.Features.Replication;
 /// An invalid, unsupported or out-of-order group ends the stream with a <c>StreamError</c> and applies nothing.
 /// </summary>
 internal sealed partial class ReplicationService(
-    IStorageEngine engine, IReplicationJournal journal, ReplicationMetrics metrics, TerraBaseOptions options, ILogger<ReplicationService> logger) : V1.Replication.ReplicationBase
+    IStorageEngine engine, IReplicationJournal journal, ITenantDirectory tenants, ReplicationMetrics metrics, TerraBaseOptions options, ILogger<ReplicationService> logger)
+    : V1.Replication.ReplicationBase
 {
     // One instance per node (registered as a singleton), so this bounds the node's open streams.
     private int _streams;
@@ -89,8 +91,30 @@ internal sealed partial class ReplicationService(
             throw new RpcException(new Status(StatusCode.ResourceExhausted, "the negotiated gRPC cap cannot carry required control responses"));
         }
 
+        // A member that replicates with others receives only databases its catalog registers: a deleted one is not recreated,
+        // and a catalog follower takes a new one once its catalog has it. The sender retries. A deletion committed between the
+        // check and the open is caught by checking again; the file the open created then goes with it.
+        var gated = options.PeerAddresses.Count > 0 || options.CatalogPrimary is not null;
+        var existed = !gated || await engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is not null;
+        if (gated && !await tenants.ExistsAsync(database, cancellationToken).ConfigureAwait(false))
+        {
+            await stream.SendAsync(Error(StreamErrorCode.StreamErrorUnauthorized, retryable: true)).ConfigureAwait(false);
+            return;
+        }
+
         // The receiving database's own origin identifies this node on the stream, in Welcome and in every acknowledgment.
         var (store, receiver, applied, digest) = await journal.OpenAsync(database, origin, cancellationToken).ConfigureAwait(false);
+        if (gated && !await tenants.ExistsAsync(database, cancellationToken).ConfigureAwait(false))
+        {
+            if (!existed)
+            {
+                _ = await engine.DeleteDatabaseAsync(database, cancellationToken).ConfigureAwait(false);
+            }
+
+            await stream.SendAsync(Error(StreamErrorCode.StreamErrorUnauthorized, retryable: true)).ConfigureAwait(false);
+            return;
+        }
+
         void OnDeleted(object? sender, IDatabaseStore deleted)
         {
             if (ReferenceEquals(store, deleted))

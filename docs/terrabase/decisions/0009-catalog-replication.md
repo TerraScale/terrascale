@@ -116,6 +116,20 @@ member it stops to reach 0 while its peers are up.
 before any of its documents arrived: the data plane creates the missing local file, which then receives
 replication like any other.
 
+**Deletions.** A database deletion commits its cleanup intent (`pending_database_cleanup`) in the same group that
+unregisters it; the primary deletes its files and then clears the intent. A follower acts on every intent a group or
+snapshot it applies, once that transaction committed, and at startup on those its catalog still holds (a stop right
+after the commit): when its catalog, at this build's version, no longer registers the database, it deletes the local
+files. An intent of a creation in progress names a database no follower has files of yet. A follower never deletes a
+file only because its catalog does not register it, as a catalog restored from an older backup would make it do; after
+it first caught up in a process, it runs the primary's startup audit, off its stream, which counts and logs such files
+(`terrabase_storage_unknown_files`) and keeps them. A client-replication receiver of a member that replicates (it has
+`peer-addresses` or a `catalog-primary`) takes a Sync stream only for a database its catalog registers, and otherwise
+answers `STREAM_ERROR_UNAUTHORIZED`, retryable: a peer that still has a deleted database cannot recreate it, and a
+follower takes a new database once its catalog applied the registration (the sender retries). The receiver and the
+follower's data plane check the registration again after opening, so a deletion applied in between removes the file
+they created.
+
 **A catalog is never discarded for another origin.** A follower takes a snapshot only when its catalog is empty
 or belongs to the primary's origin. A populated catalog of another origin (the member's own, a primary restarted
 on a new volume, a mistyped address, another cluster's primary under the same CA) is kept: the follower counts the
@@ -165,8 +179,12 @@ primary without `catalog-primary` while another one serves.
   forward them).
 - A follower serves a registered database from an empty local file until client replication delivers its
   documents; for a branch or restore of a populated database that is a short window of missing documents.
-- Database deletion is still not replicated to client-database files, and a client-replication receiver still
-  creates databases the catalog does not register.
+- A follower that catches up with a snapshot (behind the 1,024 retained groups) misses the intents the primary already
+  cleared: the files of databases deleted meanwhile stay, counted as unknown, until an operator removes them. Its sender
+  keeps offering them to peers, which refuse them, so its `terrabase_replication_sender_durable_lag` stays above 0 for
+  as long and a drain that waits for 0 does not end.
+- A member with `peer-addresses` and a catalog of its own (before 0009) now refuses client replication of every
+  database its catalog does not register.
 - Tombstones of dashboard documents are not replicated: a follower holds no row for a deleted document.
 
 ## Alternatives considered
