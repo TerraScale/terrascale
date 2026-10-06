@@ -110,6 +110,7 @@ type invoicePage struct {
 }
 
 type pageData struct {
+	OrganizationBilling   bool
 	Tab                   string
 	Projects              []projectRow
 	DatabaseOptions       []databaseOption
@@ -186,7 +187,19 @@ type limitWarning struct {
 func Mount(mux *http.ServeMux, deps core.Deps, billing *payments.Stripe) {
 	service := Service{deps: deps}
 	mountTools(deps.Tools, service)
-	mux.HandleFunc("GET /usage", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /usage", pageHandler(deps, billing, nil))
+
+	mux.HandleFunc("POST /api/v1/dashboard/usage/spending-controls", spendingHandler(deps, service))
+}
+
+// OrganizationBilling renders existing billing controls through the organization shell.
+func OrganizationBilling(deps core.Deps, billing *payments.Stripe, wrap func(core.Page, templ.Component) templ.Component) http.HandlerFunc {
+	return pageHandler(deps, billing, wrap)
+}
+
+func pageHandler(deps core.Deps, billing *payments.Stripe, wrap func(core.Page, templ.Component) templ.Component) http.HandlerFunc {
+	service := Service{deps: deps}
+	return func(w http.ResponseWriter, r *http.Request) {
 		p, account, ok := signedIn(deps, w, r)
 		if !ok {
 			return
@@ -197,6 +210,10 @@ func Mount(mux *http.ServeMux, deps core.Deps, billing *payments.Stripe) {
 			return
 		}
 		tab := r.URL.Query().Get("tab")
+		if wrap == nil && tab == "billing" {
+			http.Redirect(w, r, "/organization?"+r.URL.RawQuery, http.StatusSeeOther)
+			return
+		}
 		if !slices.Contains([]string{"overview", "billing", "settings"}, tab) {
 			tab = "overview"
 		}
@@ -284,6 +301,7 @@ func Mount(mux *http.ServeMux, deps core.Deps, billing *payments.Stripe) {
 		if tab == "billing" && data.CanManageBilling && r.URL.Query().Get("review") == "1" {
 			data.Review = reviewBillingPlan(r, deps, billing, org, data)
 		}
+		data.OrganizationBilling = wrap != nil
 		data.Saved = r.URL.Query().Get("saved")
 		if tab == "billing" {
 			switch r.URL.Query().Get("billing") {
@@ -297,18 +315,38 @@ func Mount(mux *http.ServeMux, deps core.Deps, billing *payments.Stripe) {
 				data.BillingNotice = "The scheduled change was undone."
 			}
 		}
+		var plans templ.Component
+		csrf := ""
+		if wrap != nil {
+			if deps.CSRF != nil {
+				csrf = deps.CSRF.Token(w, r)
+			}
+			plans, err = subscriptions.BillingContent(deps, r, p, csrf)
+			if err != nil {
+				writeLoadError(w, err)
+				return
+			}
+		}
 		page := core.Page{
-			Layout: "shell", Title: "Usage", Principal: p,
+			Layout: "shell", Title: "Usage", Principal: p, CSRFToken: csrf,
 			View: func(view core.Page) templ.Component {
+				if wrap != nil {
+					return wrap(view, organizationBillingContent(data, view.CSRFToken, plans))
+				}
 				return usageView(data, view.CSRFToken)
 			},
+		}
+		if wrap != nil {
+			page.Title = "Organization · TerraScale"
 		}
 		if err := deps.Render.Page(w, r, page); err != nil {
 			http.Error(w, "could not render usage", http.StatusInternalServerError)
 		}
-	})
+	}
+}
 
-	mux.HandleFunc("POST /api/v1/dashboard/usage/spending-controls", func(w http.ResponseWriter, r *http.Request) {
+func spendingHandler(deps core.Deps, service Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
 		if !deps.VerifyCSRF(w, r) {
 			return
 		}
@@ -347,7 +385,7 @@ func Mount(mux *http.ServeMux, deps core.Deps, billing *payments.Stripe) {
 			return
 		}
 		redirect(w, r, "ok")
-	})
+	}
 }
 
 func priceUSD(cents int64) string {
@@ -642,7 +680,7 @@ func (page invoicePage) Href(project string, number int) string {
 	if number > 1 {
 		query.Set("page", strconv.Itoa(number))
 	}
-	return "/usage?" + query.Encode()
+	return "/organization?" + query.Encode()
 }
 
 func billingTabHref(project string) string {

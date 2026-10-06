@@ -96,38 +96,13 @@ func Mount(mux *http.ServeMux, deps core.Deps, billing *payments.Stripe) {
 	service := NewBillingService(deps.Store)
 	mountTools(deps.Tools, service)
 	mux.HandleFunc("GET /billing", func(w http.ResponseWriter, r *http.Request) {
-		principal, ok := requestPrincipal(deps, w, r)
+		_, ok := requestPrincipal(deps, w, r)
 		if !ok {
 			return
 		}
-		ctx := r.Context()
-		view, err := service.Snapshot(ctx, principal)
-		if err != nil {
-			if !core.WriteAccessError(w, err) {
-				http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-			}
-			return
-		}
-		interval := intervalMonthly
-		if r.URL.Query().Get("interval") == intervalAnnual {
-			interval = intervalAnnual
-		}
-		data, err := billingPage(ctx, deps.Store, principal, view, interval)
-		if err != nil {
-			if !core.WriteAccessError(w, err) {
-				http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-			}
-			return
-		}
-		data.PaymentNotice = paymentNotice(r.URL.Query().Get("payment"))
-		if err := deps.Render.Page(w, r, core.Page{
-			Layout: "shell", Title: "Billing | TerraScale", Principal: principal,
-			View: func(page core.Page) templ.Component {
-				return subscriptionsContent(page.CSRFToken, data)
-			},
-		}); err != nil {
-			http.Error(w, "Could not render billing.", http.StatusInternalServerError)
-		}
+		query := r.URL.Query()
+		query.Set("tab", "billing")
+		http.Redirect(w, r, "/organization?"+query.Encode(), http.StatusSeeOther)
 	})
 
 	mux.HandleFunc("GET /checkout/{sessionID}", func(w http.ResponseWriter, r *http.Request) {
@@ -511,4 +486,22 @@ func formatRenewal(value time.Time) string {
 
 func formatUSD(cents int64) string {
 	return fmt.Sprintf("$%d.%02d", cents/100, cents%100)
+}
+
+// BillingContent reuses the plan catalog and billing rules inside Organization.
+func BillingContent(deps core.Deps, r *http.Request, principal core.Principal, csrf string) (templ.Component, error) {
+	view, err := NewBillingService(deps.Store).Snapshot(r.Context(), principal)
+	if err != nil {
+		return nil, err
+	}
+	interval := intervalMonthly
+	if r.URL.Query().Get("interval") == intervalAnnual {
+		interval = intervalAnnual
+	}
+	data, err := billingPage(r.Context(), deps.Store, principal, view, interval)
+	if err != nil {
+		return nil, err
+	}
+	data.PaymentNotice = paymentNotice(r.URL.Query().Get("payment"))
+	return subscriptionsContent(csrf, data), nil
 }

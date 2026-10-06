@@ -12,6 +12,8 @@ import (
 
 	"github.com/a-h/templ"
 	"terrascale.tech/dashboard/internal/core"
+	"terrascale.tech/dashboard/internal/features/payments"
+	"terrascale.tech/dashboard/internal/features/usage"
 	sdk "terrascale.tech/sdk"
 )
 
@@ -64,6 +66,7 @@ type memberView struct {
 }
 
 type organizationPageData struct {
+	Tab                 string
 	Organization        organizationView
 	Organizations       []organizationView
 	Projects            []projectView
@@ -91,10 +94,10 @@ type organizationPageData struct {
 }
 
 // Mount registers organization, project, and organization-scope routes.
-func Mount(mux *http.ServeMux, deps core.Deps) {
+func Mount(mux *http.ServeMux, deps core.Deps, billing *payments.Stripe) {
 	service := NewService(deps.Store, deps.Sessions)
 	mountTools(deps.Tools, service)
-	mux.HandleFunc("GET /organization", organizationPage(deps, service))
+	mux.HandleFunc("GET /organization", organizationPage(deps, service, billing))
 	mux.HandleFunc("POST /api/v1/dashboard/organization/new-organization", newOrganization(deps, service))
 	mux.HandleFunc("POST /api/v1/dashboard/switch-organization", switchOrganization(deps, service))
 	mux.HandleFunc("POST /api/v1/dashboard/organization/switch", switchOrganization(deps, service))
@@ -137,7 +140,7 @@ func wizardPlans(plans []core.Plan, org core.Organization) []planView {
 	return views
 }
 
-func organizationPage(deps core.Deps, service Service) http.HandlerFunc {
+func organizationPage(deps core.Deps, service Service, billing *payments.Stripe) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		p, ok := deps.Sessions.Principal(r)
 		if !ok {
@@ -157,6 +160,19 @@ func organizationPage(deps core.Deps, service Service) http.HandlerFunc {
 			return
 		}
 		data := makeOrganizationPage(account, org, p, r.URL.Query().Get("newOrganization"), r.URL.Query().Get("error"), time.Now())
+		data.Tab = r.URL.Query().Get("tab")
+		if !slices.Contains([]string{"organization", "members", "projects", "billing"}, data.Tab) {
+			data.Tab = "organization"
+		}
+		if r.URL.Query().Get("newProject") == "1" {
+			data.Tab = "projects"
+		}
+		if data.Tab == "billing" {
+			usage.OrganizationBilling(deps, billing, func(page core.Page, content templ.Component) templ.Component {
+				return organizationBillingView(data, content)
+			})(w, r)
+			return
+		}
 		data.NewOrganizationID = org.ID
 		data.PaymentCanceled = paymentVerified && r.URL.Query().Get("payment") == "canceled" && data.NewOrganization == "payment"
 		data.OpenCreateProject = r.URL.Query().Get("newProject") == "1"

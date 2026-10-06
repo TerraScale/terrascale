@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/a-h/templ"
 	"terrascale.tech/dashboard/internal/core"
 	"terrascale.tech/dashboard/internal/core/memstore"
 	"terrascale.tech/dashboard/internal/features/subscriptions"
@@ -52,21 +53,22 @@ func newReviewFixture(t *testing.T) reviewFixture {
 		t.Fatal(err)
 	}
 	fixture := reviewFixture{store: store, billing: subscriptions.NewBillingService(store), principal: account.Principal(), mux: http.NewServeMux()}
-	session, err := fixture.billing.BeginDemoCheckout(t.Context(), fixture.principal, "starter", "monthly", "/usage?tab=billing")
+	session, err := fixture.billing.BeginDemoCheckout(t.Context(), fixture.principal, "starter", "monthly", "/organization?tab=billing")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := fixture.billing.CompleteDemoCheckout(t.Context(), fixture.principal, session.ID, false); err != nil {
 		t.Fatal(err)
 	}
-	Mount(fixture.mux, core.Deps{Store: store, Sessions: reviewSessions{principal: fixture.principal}, Render: viewRenderer{}, Tools: core.NewTools(store), Demo: true}, nil)
+	deps := core.Deps{Store: store, Sessions: reviewSessions{principal: fixture.principal}, Render: viewRenderer{}, Tools: core.NewTools(store), Demo: true}
+	fixture.mux.HandleFunc("GET /organization", OrganizationBilling(deps, nil, func(_ core.Page, content templ.Component) templ.Component { return content }))
 	return fixture
 }
 
 func (fixture reviewFixture) review(t *testing.T, plan, interval string) string {
 	t.Helper()
 	response := httptest.NewRecorder()
-	fixture.mux.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/usage?tab=billing&review=1&plan="+plan+"&interval="+interval, nil))
+	fixture.mux.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/organization?tab=billing&review=1&plan="+plan+"&interval="+interval, nil))
 	if response.Code != http.StatusOK {
 		t.Fatalf("review %s %s = %d: %s", plan, interval, response.Code, response.Body.String())
 	}
@@ -132,7 +134,7 @@ func TestPlanReviewBlocksChangesWhileAChangeIsScheduled(t *testing.T) {
 		t.Fatal(err)
 	}
 	html := fixture.review(t, "business", "monthly")
-	requireContains(t, html, "A change to Free is scheduled to take effect on Oct 27, 2026.", `action="/billing/change/undo"`, "Your plan will change to Free on Oct 27, 2026.")
+	requireContains(t, html, "A change to Free is scheduled to take effect on Oct 27, 2026.", `action="/billing/change/undo"`, "moves to Free")
 	requireOmits(t, html, "Confirm change")
 }
 
@@ -142,7 +144,7 @@ func TestPlanReviewNamesTheNextRenewalWhenTheScheduledDateIsUnknown(t *testing.T
 		org.Billing.ScheduledPlanKey, org.Billing.ScheduledInterval = "free", ""
 	})
 	html := fixture.review(t, "business", "monthly")
-	requireContains(t, html, "A change to Free is scheduled to take effect at the next renewal.", "Your plan will change to Free at the next renewal.")
+	requireContains(t, html, "A change to Free is scheduled to take effect at the next renewal.", "moves to Free")
 	requireOmits(t, html, "Jan 1, 1")
 }
 
@@ -152,7 +154,7 @@ func TestPlanReviewBlocksChangesWhileAnUpgradeAwaitsPayment(t *testing.T) {
 		org.Billing.PendingPlanKey, org.Billing.PendingInterval = "pro", "monthly"
 	})
 	html := fixture.review(t, "business", "monthly")
-	requireContains(t, html, "Stripe is still confirming the change to Pro.", "Stripe is confirming the change to Pro.")
+	requireContains(t, html, "Stripe is still confirming the change to Pro.", "Stripe is confirming the change to Pro, billed monthly")
 	requireOmits(t, html, "Confirm change", `action="/billing/change/undo"`)
 }
 
@@ -225,8 +227,9 @@ func TestUsagePageReportsAnUnavailableStore(t *testing.T) {
 	fixture := newReviewFixture(t)
 	mux := http.NewServeMux()
 	store := unavailablePlans{fixture.store}
-	Mount(mux, core.Deps{Store: store, Sessions: reviewSessions{principal: fixture.principal}, Render: viewRenderer{}, Tools: core.NewTools(store), Demo: true}, nil)
-	for _, path := range []string{"/usage?tab=billing", "/usage?tab=billing&review=1&plan=pro&interval=monthly"} {
+	deps := core.Deps{Store: store, Sessions: reviewSessions{principal: fixture.principal}, Render: viewRenderer{}, Tools: core.NewTools(store), Demo: true}
+	mux.HandleFunc("GET /organization", OrganizationBilling(deps, nil, func(_ core.Page, content templ.Component) templ.Component { return content }))
+	for _, path := range []string{"/organization?tab=billing", "/organization?tab=billing&review=1&plan=pro&interval=monthly"} {
 		response := httptest.NewRecorder()
 		mux.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
 		if response.Code != http.StatusServiceUnavailable {

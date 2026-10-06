@@ -81,7 +81,7 @@ func portalContent(data portalPage) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 5, "</dd></dl><a class=\"ts-btn ts-btn-secondary ts-btn-block\" href=\"/billing\">Return to billing</a></section></main>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 5, "</dd></dl><a class=\"ts-btn ts-btn-secondary ts-btn-block\" href=\"/organization?tab=billing\">Return to billing</a></section></main>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
