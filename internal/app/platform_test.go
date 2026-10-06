@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -27,6 +28,8 @@ import (
 type tsAuthTenant struct {
 	server *httptest.Server
 	key    *ecdsa.PrivateKey
+	// keysDown makes the JWKS answer 503.
+	keysDown atomic.Bool
 }
 
 func newTSAuthTenant(t *testing.T) *tsAuthTenant {
@@ -51,6 +54,10 @@ func newTSAuthTenant(t *testing.T) *tsAuthTenant {
 		})
 	})
 	mux.HandleFunc("GET /.well-known/jwks.json", func(w http.ResponseWriter, _ *http.Request) {
+		if tenant.keysDown.Load() {
+			http.Error(w, "unavailable", http.StatusServiceUnavailable)
+			return
+		}
 		point, err := key.PublicKey.Bytes()
 		if err != nil {
 			t.Error(err)
@@ -190,6 +197,13 @@ func testPlatformHosts(t *testing.T, cfg config.Config, subject, address, organi
 		t.Fatalf("OpenAPI document = %+v", document)
 	}
 
+	// Keys ts-auth cannot serve say nothing about the token.
+	tenant.keysDown.Store(true)
+	if response := call(http.MethodGet, organizationURL+"/billing", token(nil), ""); response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("platform API without ts-auth keys = %d %s, want 503", response.Code, response.Body)
+	}
+	tenant.keysDown.Store(false)
+
 	refused := map[string]string{
 		"no token":         "",
 		"identity token":   token(func(header, _ map[string]any) { header["typ"] = "JWT" }),
@@ -197,6 +211,7 @@ func testPlatformHosts(t *testing.T, cfg config.Config, subject, address, organi
 		"other audience":   token(func(_, claims map[string]any) { claims["aud"] = []string{"https://gru.api.terrascale.tech"} }),
 		"API key token":    token(func(_, claims map[string]any) { claims["sub"] = "tsk_3k9f2m8q1x7v4c6n0b5z"; delete(claims, "email") }),
 		"unverified email": token(func(_, claims map[string]any) { claims["email_verified"] = false }),
+		"no scopes":        token(func(_, claims map[string]any) { claims["scope"] = " " }),
 		"expired":          token(func(_, claims map[string]any) { claims["exp"] = time.Now().Add(-time.Minute).Unix() }),
 		"other issuer":     token(func(_, claims map[string]any) { claims["iss"] = "https://gru.auth.terrascale.tech/other" }),
 	}
@@ -261,6 +276,7 @@ func testPlatformHosts(t *testing.T, cfg config.Config, subject, address, organi
 		{"a malformed query", http.MethodGet, organizationURL + "/invoices?page=first", organizationToken, "", http.StatusBadRequest, "invalid_request"},
 		{"an unknown field", http.MethodPut, organizationURL + "/spending-controls", organizationToken, `{"unknown":1}`, http.StatusBadRequest, "invalid_request"},
 		{"a body that is not an object", http.MethodPut, organizationURL + "/spending-controls", organizationToken, `[1]`, http.StatusBadRequest, "invalid_request"},
+		{"a null body", http.MethodPut, organizationURL + "/spending-controls", organizationToken, `null`, http.StatusBadRequest, "invalid_request"},
 		{"a dashboard page", http.MethodGet, base + "/login", organizationToken, "", http.StatusNotFound, "not_found"},
 	} {
 		decode(call(c.method, c.target, c.token, c.body), c.status, &failure)

@@ -122,6 +122,9 @@ func arguments(w http.ResponseWriter, r *http.Request, input *jsonschema.Schema)
 		if err := json.Unmarshal(body, &args); err != nil {
 			return nil, err
 		}
+		if args == nil {
+			return nil, errors.New("the body is null")
+		}
 	}
 	for name, values := range r.URL.Query() {
 		args[name] = queryValue(input.Properties[name], values[len(values)-1])
@@ -283,7 +286,7 @@ func openAPI(routes []core.Route) map[string]any {
 			"schemas": map[string]any{"Error": errorSchema},
 			"securitySchemes": map[string]any{"tsAuth": map[string]any{
 				"type": "http", "scheme": "bearer", "bearerFormat": "JWT",
-				"description": "An organization token (or, for project routes, a project token) of ts-auth's terrascale tenant (https://gru.auth.terrascale.tech/terrascale): an ES256 at+jwt whose aud includes " + Audience + ". Exchange a sign-in token for one with ts-auth's token exchange. Each operation lists the scope it needs.",
+				"description": "A token of ts-auth's terrascale tenant (https://gru.auth.terrascale.tech/terrascale): an ES256 at+jwt whose aud includes " + Audience + ". Organization routes take an organization token; project routes take a project token of that project, since an organization token reaches no project route (ts-auth platform contract, section 6.4). Exchange a sign-in token for one with ts-auth's token exchange. Each operation lists the scope it needs.",
 			}},
 		},
 	}

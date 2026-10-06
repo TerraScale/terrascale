@@ -17,10 +17,10 @@ import (
 // terrascale tenant as ts-auth's docs/platform-contract.md (§6.4) asks a
 // resource server to: an ES256 at+jwt signed with a key of the issuer's
 // JWKS, whose iss is the issuer and whose aud includes audience, unexpired
-// and naming an organization. It returns what the token grants, acting as
-// the user it was exchanged for, whose account it links or opens as signing
-// in does. A token that grants nothing fails with core.ErrUnauthorized; any
-// other error means ts-auth could not be reached.
+// and naming an organization and scopes. It returns what the token grants,
+// acting as the user it was exchanged for, whose account it links or opens
+// as signing in does. A token that grants nothing fails with
+// core.ErrUnauthorized; any other error means ts-auth could not be reached.
 //
 // API key tokens name no user, and the dashboard's tools still act as one,
 // so they are refused until the identity store moves to ts-auth.
@@ -32,8 +32,16 @@ func (t *TSAuth) ResourceToken(ctx context.Context, store core.Store, audience, 
 	if err != nil {
 		return platformapi.Grant{}, err
 	}
-	verifier := provider.issuer.Verifier(&oidc.Config{ClientID: audience, SupportedSigningAlgs: []string{oidc.ES256}})
-	token, err := verifier.Verify(oidc.ClientContext(ctx, t.client), raw)
+	// The verifier reports a key set it could not fetch as it reports a bad
+	// signature, so the signature is checked here first: the key set wraps
+	// only fetch failures, which say nothing about the token.
+	if _, err := provider.keys.VerifySignature(ctx, raw); errors.Unwrap(err) != nil {
+		return platformapi.Grant{}, fmt.Errorf("fetch ts-auth keys: %w", err)
+	} else if err != nil {
+		return platformapi.Grant{}, fmt.Errorf("%w: %w", core.ErrUnauthorized, err)
+	}
+	verifier := oidc.NewVerifier(t.cfg.Issuer, provider.keys, &oidc.Config{ClientID: audience, SupportedSigningAlgs: []string{oidc.ES256}})
+	token, err := verifier.Verify(ctx, raw)
 	if err != nil {
 		return platformapi.Grant{}, fmt.Errorf("%w: %w", core.ErrUnauthorized, err)
 	}
@@ -44,7 +52,11 @@ func (t *TSAuth) ResourceToken(ctx context.Context, store core.Store, audience, 
 		ProjectID      string `json:"project_id"`
 		Scope          string `json:"scope"`
 	}
-	if err := token.Claims(&claims); err != nil || claims.OrganizationID == "" {
+	if err := token.Claims(&claims); err != nil {
+		return platformapi.Grant{}, core.ErrUnauthorized
+	}
+	scopes := strings.Fields(claims.Scope)
+	if claims.OrganizationID == "" || len(scopes) == 0 {
 		return platformapi.Grant{}, core.ErrUnauthorized
 	}
 	email := ""
@@ -63,7 +75,7 @@ func (t *TSAuth) ResourceToken(ctx context.Context, store core.Store, audience, 
 	}
 	return platformapi.Grant{
 		Principal: account.Principal(), OrganizationID: claims.OrganizationID, ProjectID: claims.ProjectID,
-		Scopes: strings.Fields(claims.Scope),
+		Scopes: scopes,
 	}, nil
 }
 
