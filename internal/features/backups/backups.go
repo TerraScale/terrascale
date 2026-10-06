@@ -85,6 +85,20 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			return
 		}
 		databaseID := r.FormValue("databaseId")
+		if r.FormValue("replace") == "1" {
+			backupID := r.FormValue("backupId")
+			overwritten, err := service.Overwrite(r.Context(), p, databaseID, backupID, r.FormValue("confirmName"))
+			if err != nil {
+				formFailed(w, r, err, databaseID, url.Values{"restore": {backupID}})
+				return
+			}
+			if core.WantsHTML(r) {
+				http.Redirect(w, r, databases.TabPath(databaseID, "overview", nil), http.StatusSeeOther)
+				return
+			}
+			core.WriteJSON(w, http.StatusOK, overwritten)
+			return
+		}
 		in := RestoreInput{Name: strings.TrimSpace(r.FormValue("name")), BackupID: r.FormValue("backupId")}
 		if text := r.FormValue("atMillis"); text != "" {
 			value, err := strconv.ParseInt(text, 10, 64)
@@ -143,6 +157,8 @@ func failure(err error) (int, string) {
 		return http.StatusBadRequest, databases.ErrRetention
 	case errors.Is(err, errSchedule):
 		return http.StatusBadRequest, databases.ErrSchedule
+	case errors.Is(err, errConfirmName):
+		return http.StatusBadRequest, databases.ErrConfirmRestore
 	case errors.Is(err, core.ErrInvalid):
 		return http.StatusBadRequest, databases.ErrInvalidName
 	case errors.Is(err, errBackupMissing):

@@ -93,6 +93,7 @@ type detailInfo struct {
 	CanCreateBackups    bool
 	CanEditBackupPolicy bool
 	CanRestoreBackups   bool
+	CanOverwriteBackups bool
 	CanBranch           bool
 	Demo                bool
 	Collections         int
@@ -117,6 +118,7 @@ func makeDetailInfo(demo bool, principal core.Principal, account core.Account, p
 		CanCreateBackups:    demo && canManage,
 		CanEditBackupPolicy: demo && canManage,
 		CanRestoreBackups:   canMutate,
+		CanOverwriteBackups: demo && canManage,
 		CanBranch:           canMutate && db.Status == "ready",
 		Demo:                demo,
 		Collections:         len(db.Documents),
@@ -186,6 +188,15 @@ func regionChoiceSummary(codes []string) string {
 const namePatternHTML = `[a-z0-9]([a-z0-9\-]{0,61}[a-z0-9])?`
 
 // restoreName refills the restore form of the backup a refused restore used.
+// restoreErrorInDialog reports whether a refused restore's error shows in
+// the restore dialog of its backup, which renders only while that backup
+// exists and the user may restore it; otherwise the page shows the error.
+func restoreErrorInDialog(d detailData) bool {
+	return d.Error != "" && d.Refill.RestoreBackupID != "" &&
+		(d.Info.CanRestoreBackups || d.Info.CanOverwriteBackups) &&
+		slices.ContainsFunc(d.Info.Backups, func(b core.Backup) bool { return b.ID == d.Refill.RestoreBackupID })
+}
+
 func restoreName(d detailData, backupID string) string {
 	if d.Refill.RestoreBackupID == backupID {
 		return d.Refill.RestoreName

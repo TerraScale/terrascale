@@ -428,6 +428,7 @@ type CLIGrantSessions interface {
 // reservation after a correct password, so only failures count.
 type Throttle interface {
 	ClientKey(r *http.Request) string
+	ClientAddr(r *http.Request) string
 	Allow(r *http.Request, account string) (time.Duration, bool)
 	Forgive(r *http.Request, account string)
 }
@@ -580,9 +581,6 @@ type Deps struct {
 	// TODO(TS-463, TS-521): resource provisioning and unsupported data features
 	// retain their local Store behavior until the Management mapping lands.
 	DocumentsOnly bool
-	// ExternalSignIn is set when ts-auth is the only way to sign in or sign
-	// up, which disables password sign-in and registration.
-	ExternalSignIn bool
 }
 
 func (d Deps) LocalResources() bool { return d.Demo || d.DocumentsOnly }

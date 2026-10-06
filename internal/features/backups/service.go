@@ -23,6 +23,7 @@ var (
 	errRetention     = core.Invalid("Set snapshot retention from 1 to 35 days.")
 	errSchedule      = core.Invalid("Enter schedules as five cron fields, such as 0 2 * * *, or leave them empty.")
 	errRestoreName   = core.Invalid("Name the restored database with 1 to 63 lowercase letters, digits, and inner hyphens.")
+	errConfirmName   = core.Invalid("Type the database name to confirm overwriting its data.")
 	errBackupMissing = fmt.Errorf("%w: that restore point is no longer available", core.ErrNotFound)
 )
 
@@ -309,6 +310,43 @@ func (s Service) Restore(ctx context.Context, p core.Principal, databaseID strin
 	}
 	result.Operation, result.Status = operation, operation.State
 	return result, s.setStatus(statusCtx, p, target.ID, operation.State)
+}
+
+// Overwrite replaces databaseID's documents, schemas, and indexes with those
+// of its backup backupID once confirmName repeats the database name. Only the
+// demo can: the live data plane restores into a new database only.
+func (s Service) Overwrite(ctx context.Context, p core.Principal, databaseID, backupID, confirmName string) (restoreResult, error) {
+	db, err := s.managedDatabase(ctx, p, databaseID)
+	if err != nil {
+		return restoreResult{}, err
+	}
+	if confirmName != db.Name {
+		return restoreResult{}, errConfirmName
+	}
+	if !s.deps.LocalResources() {
+		return restoreResult{}, ErrUnavailable
+	}
+	err = s.update(ctx, p, core.Organization.CanManage, func(a *core.Account, project *core.Project) error {
+		current, ok := project.Databases[db.ID]
+		if !ok {
+			return core.ErrNotFound
+		}
+		index := slices.IndexFunc(current.Backups, func(b core.Backup) bool { return b.ID == backupID && b.Status == "ready" })
+		if index < 0 {
+			return errBackupMissing
+		}
+		backup := current.Backups[index]
+		current.Documents = core.CloneDocuments(backup.Documents)
+		current.Schemas = core.CloneSchemas(backup.Schemas)
+		current.Indexes = core.CloneIndexes(backup.Indexes)
+		project.Databases[db.ID] = current
+		a.RecordAudit(p, "backup.overwritten", current.Name+" ← "+backup.CreatedAt.UTC().Format(time.RFC3339), "database", time.Now().UTC())
+		return nil
+	})
+	if err != nil {
+		return restoreResult{}, err
+	}
+	return restoreResult{DatabaseID: db.ID, Name: db.Name, Status: db.Status}, nil
 }
 
 // validCron accepts an empty schedule, which leaves that backup kind

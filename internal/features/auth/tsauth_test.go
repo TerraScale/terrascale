@@ -54,6 +54,16 @@ type testIssuer struct {
 	// keepRefresh answers refresh grants without a new refresh token, so the
 	// one presented stays valid.
 	keepRefresh bool
+	// headless is the fake headless API (native_test.go).
+	headless   *fakeHeadless
+	revocation bool
+	// legacy leaves the headless grants out of discovery, as ts-auth did
+	// before TS-582.
+	legacy bool
+	// discoveryGate, when set, holds discovery answers until it closes,
+	// after reporting each on discoveryEntered.
+	discoveryEntered chan struct{}
+	discoveryGate    chan struct{}
 }
 
 type issuedCode struct {
@@ -68,12 +78,13 @@ func newTestIssuer(t *testing.T) *testIssuer {
 	}
 	issuer := &testIssuer{
 		key: key, codes: map[string]issuedCode{}, refreshes: map[string]string{},
-		endSession: true, pkce: []string{"S256"}, claims: func(map[string]any) {},
+		endSession: true, revocation: true, pkce: []string{"S256"}, claims: func(map[string]any) {},
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /.well-known/openid-configuration", issuer.discovery)
 	mux.HandleFunc("GET /keys", issuer.keys)
 	mux.HandleFunc("POST /token", issuer.token)
+	issuer.mountHeadless(mux)
 	issuer.server = httptest.NewServer(mux)
 	t.Cleanup(issuer.server.Close)
 	return issuer
@@ -82,6 +93,13 @@ func newTestIssuer(t *testing.T) *testIssuer {
 func (i *testIssuer) url() string { return i.server.URL }
 
 func (i *testIssuer) discovery(w http.ResponseWriter, _ *http.Request) {
+	i.mu.Lock()
+	entered, gate := i.discoveryEntered, i.discoveryGate
+	i.mu.Unlock()
+	if gate != nil {
+		entered <- struct{}{}
+		<-gate
+	}
 	i.mu.Lock()
 	defer i.mu.Unlock()
 	document := map[string]any{
@@ -92,6 +110,12 @@ func (i *testIssuer) discovery(w http.ResponseWriter, _ *http.Request) {
 	}
 	if i.endSession {
 		document["end_session_endpoint"] = i.url() + "/logout?ui=1"
+	}
+	if i.revocation {
+		document["revocation_endpoint"] = i.url() + "/revoke"
+	}
+	if !i.legacy {
+		document["grant_types_supported"] = []string{"authorization_code", "refresh_token", passwordGrant, emailCodeGrant}
 	}
 	writeJSON(w, http.StatusOK, document)
 }
@@ -164,6 +188,9 @@ func (i *testIssuer) token(w http.ResponseWriter, r *http.Request) {
 		}
 		delete(i.refreshes, r.PostFormValue("refresh_token"))
 		subject = owner
+	case passwordGrant, emailCodeGrant:
+		i.headlessGrant(w, r)
+		return
 	default:
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "unsupported_grant_type"})
 		return
@@ -187,6 +214,11 @@ func (i *testIssuer) idToken(subject, nonce string) string {
 		claims["nonce"] = nonce
 	}
 	i.claims(claims)
+	return i.sign(claims)
+}
+
+// sign signs claims as an RS256 JWT; i.mu is held.
+func (i *testIssuer) sign(claims map[string]any) string {
 	header, _ := json.Marshal(map[string]string{"alg": "RS256", "kid": "test-key", "typ": "JWT"})
 	payload, _ := json.Marshal(claims)
 	signed := base64.RawURLEncoding.EncodeToString(header) + "." + base64.RawURLEncoding.EncodeToString(payload)
@@ -221,9 +253,13 @@ type tsAuthDashboard struct {
 	records  *session.MemoryStore
 	sessions *session.Manager
 	cookies  map[string]*http.Cookie
+	tsAuth   *TSAuth
+	deps     core.Deps
 }
 
-func newTSAuthDashboard(t *testing.T, issuer *testIssuer) *tsAuthDashboard {
+// newTSAuthDashboard mounts the auth feature for issuer; wrap, when given,
+// wraps the store the feature sees.
+func newTSAuthDashboard(t *testing.T, issuer *testIssuer, wrap ...func(core.Store) core.Store) *tsAuthDashboard {
 	t.Helper()
 	tsAuth, err := NewTSAuth(TSAuthConfig{
 		Issuer: issuer.url(), ClientID: testClientID, ClientSecret: testClientSecret, RedirectURL: testRedirectURL,
@@ -232,15 +268,19 @@ func newTSAuthDashboard(t *testing.T, issuer *testIssuer) *tsAuthDashboard {
 		t.Fatal(err)
 	}
 	store, records := memstore.New(), session.NewMemoryStore()
-	sessions := session.New(store, session.Options{Store: records, Refresh: tsAuth.RefreshSession})
+	sessions := session.New(store, session.Options{Store: records, Refresh: tsAuth.RefreshSession, Revoke: tsAuth.RevokeSession})
 	guard := csrf.New(sessions, csrf.Options{})
+	var featureStore core.Store = store
+	for _, w := range wrap {
+		featureStore = w(featureStore)
+	}
 	deps := core.Deps{
-		Store: store, Sessions: sessions, CSRF: guard, Render: render.New(store, guard, nil, sessions.NoticeScope, false),
-		Throttle: throttle.New(throttle.Options{}), ExternalSignIn: true,
+		Store: featureStore, Sessions: sessions, CSRF: guard, Render: render.New(store, guard, nil, sessions.NoticeScope, false),
+		Throttle: throttle.New(throttle.Options{}),
 	}
 	mux := http.NewServeMux()
 	Mount(mux, deps, tsAuth)
-	return &tsAuthDashboard{mux: mux, store: store, records: records, sessions: sessions, cookies: map[string]*http.Cookie{}}
+	return &tsAuthDashboard{mux: mux, store: store, records: records, sessions: sessions, cookies: map[string]*http.Cookie{}, tsAuth: tsAuth, deps: deps}
 }
 
 // do sends a request with the browser's cookies and keeps the ones the
@@ -299,7 +339,7 @@ func TestTSAuthSignInCreatesLinkedAccount(t *testing.T) {
 	issuer := newTestIssuer(t)
 	dashboard := newTSAuthDashboard(t, issuer)
 
-	response := dashboard.signIn(t, issuer, "/login?returnTo="+url.QueryEscape("/databases?tab=all"))
+	response := dashboard.signIn(t, issuer, "/login/sso?returnTo="+url.QueryEscape("/databases?tab=all"))
 	if response.Code != http.StatusSeeOther || response.Header().Get("Location") != "/databases?tab=all" {
 		t.Fatalf("callback = %d %q, want the return path", response.Code, response.Header().Get("Location"))
 	}
@@ -323,7 +363,7 @@ func TestTSAuthSignInCreatesLinkedAccount(t *testing.T) {
 	// Signing in again from another browser reuses the linked account, and
 	// without a return path an account in setup continues setup.
 	dashboard.cookies = map[string]*http.Cookie{}
-	response = dashboard.signIn(t, issuer, "/login")
+	response = dashboard.signIn(t, issuer, "/login/sso")
 	if location := response.Header().Get("Location"); location != "/onboarding" {
 		t.Fatalf("callback location = %q, want /onboarding for an account in setup", location)
 	}
@@ -342,7 +382,7 @@ func TestTSAuthSignInLinksVerifiedEmail(t *testing.T) {
 	}
 
 	issuer.set(func(i *testIssuer) { i.claims = func(c map[string]any) { c["email_verified"] = false } })
-	if response := dashboard.signIn(t, issuer, "/login"); response.Code != http.StatusForbidden || !strings.Contains(response.Body.String(), "must be verified") {
+	if response := dashboard.signIn(t, issuer, "/login/sso"); response.Code != http.StatusForbidden || !strings.Contains(response.Body.String(), "must be verified") {
 		t.Fatalf("unverified email callback = %d, want 403 asking for a verified email", response.Code)
 	}
 	if _, err := dashboard.store.FindBySubject(t.Context(), testSubject); !errors.Is(err, core.ErrNotFound) {
@@ -350,7 +390,7 @@ func TestTSAuthSignInLinksVerifiedEmail(t *testing.T) {
 	}
 
 	issuer.set(func(i *testIssuer) { i.claims = func(map[string]any) {} })
-	if response := dashboard.signIn(t, issuer, "/login"); response.Code != http.StatusSeeOther {
+	if response := dashboard.signIn(t, issuer, "/login/sso"); response.Code != http.StatusSeeOther {
 		t.Fatalf("verified email callback = %d %s", response.Code, response.Body)
 	}
 	linked, err := dashboard.store.FindBySubject(t.Context(), testSubject)
@@ -368,7 +408,7 @@ func TestTSAuthSignInRefusesEmailLinkedToAnotherSubject(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if response := dashboard.signIn(t, issuer, "/login"); response.Code != http.StatusForbidden || dashboard.signedIn(t) {
+	if response := dashboard.signIn(t, issuer, "/login/sso"); response.Code != http.StatusForbidden || dashboard.signedIn(t) {
 		t.Fatalf("callback for an email linked elsewhere = %d, want 403 without a session", response.Code)
 	}
 }
@@ -404,7 +444,7 @@ func TestTSAuthCallbackRejectsForgedOrInvalidResponses(t *testing.T) {
 				issuer.set(tc.issuer)
 			}
 			dashboard := newTSAuthDashboard(t, issuer)
-			code, state := issuer.approve(t, dashboard.do(http.MethodGet, "/login").Header().Get("Location"))
+			code, state := issuer.approve(t, dashboard.do(http.MethodGet, "/login/sso").Header().Get("Location"))
 			if tc.state != nil {
 				state = tc.state(state)
 			}
@@ -423,7 +463,7 @@ func TestTSAuthCallbackWithoutFlowOrAfterUse(t *testing.T) {
 	t.Parallel()
 	issuer := newTestIssuer(t)
 	dashboard := newTSAuthDashboard(t, issuer)
-	code, state := issuer.approve(t, dashboard.do(http.MethodGet, "/login").Header().Get("Location"))
+	code, state := issuer.approve(t, dashboard.do(http.MethodGet, "/login/sso").Header().Get("Location"))
 	callback := "/login/callback?" + url.Values{"code": {code}, "state": {state}}.Encode()
 
 	stranger := newTSAuthDashboard(t, issuer)
@@ -442,7 +482,7 @@ func TestTSAuthCallbackReportsRefusedSignIn(t *testing.T) {
 	t.Parallel()
 	issuer := newTestIssuer(t)
 	dashboard := newTSAuthDashboard(t, issuer)
-	_, state := issuer.approve(t, dashboard.do(http.MethodGet, "/login").Header().Get("Location"))
+	_, state := issuer.approve(t, dashboard.do(http.MethodGet, "/login/sso").Header().Get("Location"))
 	response := dashboard.do(http.MethodGet, "/login/callback?"+url.Values{"error": {"access_denied"}, "state": {state}}.Encode())
 	if response.Code != http.StatusUnauthorized || !strings.Contains(response.Body.String(), "ts-auth did not sign you in") {
 		t.Fatalf("refused sign-in = %d, want 401 with an explanation", response.Code)
@@ -454,7 +494,7 @@ func TestTSAuthLoginKeepsReturnPathOnTheDashboard(t *testing.T) {
 	issuer := newTestIssuer(t)
 	for _, returnTo := range []string{"https://evil.example/", "//evil.example", `/\evil.example`} {
 		dashboard := newTSAuthDashboard(t, issuer)
-		response := dashboard.signIn(t, issuer, "/login?returnTo="+url.QueryEscape(returnTo))
+		response := dashboard.signIn(t, issuer, "/login/sso?returnTo="+url.QueryEscape(returnTo))
 		if location := response.Header().Get("Location"); !strings.HasPrefix(location, "/") || strings.HasPrefix(location, "//") {
 			t.Fatalf("returnTo %q signed in to %q, want a dashboard path", returnTo, location)
 		}
@@ -465,22 +505,29 @@ func TestTSAuthLoginForwardsPromptLogin(t *testing.T) {
 	t.Parallel()
 	issuer := newTestIssuer(t)
 	dashboard := newTSAuthDashboard(t, issuer)
-	location, _ := url.Parse(dashboard.do(http.MethodGet, "/login?prompt=login").Header().Get("Location"))
+	location, _ := url.Parse(dashboard.do(http.MethodGet, "/login/sso?prompt=login").Header().Get("Location"))
 	if location.Query().Get("prompt") != "login" {
 		t.Fatalf("authorization request = %v, want prompt=login", location.Query())
 	}
-	location, _ = url.Parse(dashboard.do(http.MethodGet, "/login?prompt=none").Header().Get("Location"))
+	location, _ = url.Parse(dashboard.do(http.MethodGet, "/login/sso?prompt=none").Header().Get("Location"))
 	if location.Query().Has("prompt") {
 		t.Fatalf("authorization request = %v, want no other prompt passed on", location.Query())
 	}
 }
 
-func TestTSAuthDisablesPasswordSignIn(t *testing.T) {
+func TestTSAuthLoginPageIsTheDashboards(t *testing.T) {
 	t.Parallel()
 	dashboard := newTSAuthDashboard(t, newTestIssuer(t))
-	if response := dashboard.do(http.MethodPost, "/login"); response.Code != http.StatusMethodNotAllowed {
-		t.Fatalf("POST /login = %d, want 405", response.Code)
+	response := dashboard.do(http.MethodGet, "/login?prompt=login&returnTo=%2Fdatabases")
+	body := response.Body.String()
+	if response.Code != http.StatusOK || !strings.Contains(body, `action="/login"`) ||
+		!strings.Contains(body, `href="/login/sso?prompt=login&amp;returnTo=%2Fdatabases"`) || !strings.Contains(body, `href="/login/code?returnTo=%2Fdatabases"`) {
+		t.Fatalf("GET /login = %d, want the password form with code and single sign-on links: %s", response.Code, body)
 	}
+	if strings.Contains(body, "in-memory demo") {
+		t.Fatal("ts-auth sign-in page shows the demo's disabled providers")
+	}
+	// The dashboard's own password store is not consulted with ts-auth.
 	if response := dashboard.do(http.MethodPost, "/api/v1/auth/password/login"); response.Code != http.StatusNotFound {
 		t.Fatalf("password API = %d, want 404", response.Code)
 	}
@@ -491,18 +538,18 @@ func TestTSAuthUnavailableIssuer(t *testing.T) {
 	issuer := newTestIssuer(t)
 	issuer.set(func(i *testIssuer) { i.pkce = nil })
 	dashboard := newTSAuthDashboard(t, issuer)
-	if response := dashboard.do(http.MethodGet, "/login"); response.Code != http.StatusServiceUnavailable {
+	if response := dashboard.do(http.MethodGet, "/login/sso"); response.Code != http.StatusServiceUnavailable {
 		t.Fatalf("login without PKCE support = %d, want 503", response.Code)
 	}
 	// Discovery is retried after a failure.
 	issuer.set(func(i *testIssuer) { i.pkce = []string{"plain", "S256"} })
-	if response := dashboard.do(http.MethodGet, "/login"); response.Code != http.StatusSeeOther {
+	if response := dashboard.do(http.MethodGet, "/login/sso"); response.Code != http.StatusSeeOther {
 		t.Fatalf("login after ts-auth recovered = %d, want a redirect", response.Code)
 	}
 
 	issuer.server.Close()
 	down := newTSAuthDashboard(t, issuer)
-	if response := down.do(http.MethodGet, "/login"); response.Code != http.StatusServiceUnavailable {
+	if response := down.do(http.MethodGet, "/login/sso"); response.Code != http.StatusServiceUnavailable {
 		t.Fatalf("login with ts-auth down = %d, want 503", response.Code)
 	}
 }
@@ -521,7 +568,7 @@ func TestTSAuthRefreshRechecksSession(t *testing.T) {
 	t.Parallel()
 	issuer := newTestIssuer(t)
 	dashboard := newTSAuthDashboard(t, issuer)
-	dashboard.signIn(t, issuer, "/login")
+	dashboard.signIn(t, issuer, "/login/sso")
 	before, _ := dashboard.record(t)
 
 	dashboard.expire(t)
@@ -551,7 +598,7 @@ func TestTSAuthRefreshKeepsTokenTSAuthDoesNotRotate(t *testing.T) {
 	t.Parallel()
 	issuer := newTestIssuer(t)
 	dashboard := newTSAuthDashboard(t, issuer)
-	dashboard.signIn(t, issuer, "/login")
+	dashboard.signIn(t, issuer, "/login/sso")
 	before, _ := dashboard.record(t)
 	issuer.set(func(i *testIssuer) { i.keepRefresh = true })
 	for range 2 {
@@ -593,7 +640,7 @@ func TestTSAuthRefreshRejectsAnotherSubject(t *testing.T) {
 	t.Parallel()
 	issuer := newTestIssuer(t)
 	dashboard := newTSAuthDashboard(t, issuer)
-	dashboard.signIn(t, issuer, "/login")
+	dashboard.signIn(t, issuer, "/login/sso")
 	issuer.set(func(i *testIssuer) { i.claims = func(c map[string]any) { c["sub"] = "someone_else" } })
 	dashboard.expire(t)
 	if dashboard.signedIn(t) {
@@ -605,7 +652,7 @@ func TestTSAuthRefreshKeepsSessionWhileTSAuthIsDown(t *testing.T) {
 	t.Parallel()
 	issuer := newTestIssuer(t)
 	dashboard := newTSAuthDashboard(t, issuer)
-	dashboard.signIn(t, issuer, "/login")
+	dashboard.signIn(t, issuer, "/login/sso")
 	issuer.server.Close()
 	dashboard.expire(t)
 	if !dashboard.signedIn(t) {
@@ -620,7 +667,7 @@ func TestTSAuthLogoutEndsTSAuthSession(t *testing.T) {
 	t.Parallel()
 	issuer := newTestIssuer(t)
 	dashboard := newTSAuthDashboard(t, issuer)
-	dashboard.signIn(t, issuer, "/login")
+	dashboard.signIn(t, issuer, "/login/sso")
 
 	response := dashboard.do(http.MethodPost, "/api/v1/auth/logout")
 	location, err := url.Parse(response.Header().Get("Location"))
@@ -637,7 +684,7 @@ func TestTSAuthLogoutEndsTSAuthSession(t *testing.T) {
 
 	issuer.set(func(i *testIssuer) { i.endSession = false })
 	without := newTSAuthDashboard(t, issuer)
-	without.signIn(t, issuer, "/login")
+	without.signIn(t, issuer, "/login/sso")
 	if location := without.do(http.MethodPost, "/api/v1/auth/logout").Header().Get("Location"); location != "/login?prompt=login" {
 		t.Fatalf("logout without end_session_endpoint = %q, want a sign-in that asks for credentials", location)
 	}

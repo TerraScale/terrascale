@@ -385,3 +385,86 @@ func TestStartReturnsPreviousSessionLookupError(t *testing.T) {
 		t.Fatalf("Start = %v, want %v", err, sessions.getErr)
 	}
 }
+
+// revoked records the refresh states Options.Revoke is given.
+type revoked struct {
+	mu     sync.Mutex
+	states []string
+}
+
+func (v *revoked) revoke(_ context.Context, refresh string) error {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	v.states = append(v.states, refresh)
+	return nil
+}
+
+func (v *revoked) got() []string {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return append([]string(nil), v.states...)
+}
+
+// TestSignOutDuringRefreshRevokesTheRenewal signs out while ts-auth renews
+// the session: the token the refresh could not save is revoked too.
+func TestSignOutDuringRefreshRevokesTheRenewal(t *testing.T) {
+	var m *Manager
+	var r *http.Request
+	hook := &refreshHook{fn: func(context.Context, string) (string, time.Time, error) {
+		if err := m.End(httptest.NewRecorder(), r); err != nil {
+			return "", time.Time{}, err
+		}
+		return "r2", time.Now().Add(time.Hour), nil
+	}}
+	accounts := memstore.New()
+	a, err := accounts.CreateAccount(t.Context(), core.User{Name: "Refresh", Email: "refresh@example.test", PasswordHash: "unused"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var v revoked
+	m = New(accounts, Options{Store: NewMemoryStore(), Refresh: hook.refresh, Revoke: v.revoke})
+	r, _ = startRefreshable(t, m, a.Principal(), time.Now())
+	if _, ok := m.Principal(r); ok {
+		t.Fatal("session signed out during its refresh is valid")
+	}
+	if got := v.got(); fmt.Sprint(got) != "[r1 r2]" {
+		t.Fatalf("revoked %v, want the state signed out and the one renewed meanwhile", got)
+	}
+}
+
+// rotatedFirst is a Store in which another refresh saves "r2" just before
+// the first Replace, as one racing a sign-out would.
+type rotatedFirst struct {
+	Store
+	once sync.Once
+}
+
+func (s *rotatedFirst) Replace(ctx context.Context, key [32]byte, old, next Record) error {
+	s.once.Do(func() {
+		renewed := old
+		renewed.Refresh = "r2"
+		_ = s.Store.Replace(ctx, key, old, renewed)
+	})
+	return s.Store.Replace(ctx, key, old, next)
+}
+
+func TestSignOutRevokesTheNewestRefresh(t *testing.T) {
+	accounts := memstore.New()
+	a, err := accounts.CreateAccount(t.Context(), core.User{Name: "Refresh", Email: "refresh@example.test", PasswordHash: "unused"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var v revoked
+	sessions := &rotatedFirst{Store: NewMemoryStore()}
+	m := New(accounts, Options{Store: sessions, Refresh: (&refreshHook{}).refresh, Revoke: v.revoke})
+	r, key := startRefreshable(t, m, a.Principal(), time.Now().Add(time.Hour))
+	if err := m.End(httptest.NewRecorder(), r); err != nil {
+		t.Fatal(err)
+	}
+	if got := v.got(); fmt.Sprint(got) != "[r2]" {
+		t.Fatalf("revoked %v, want the refresh saved during sign-out", got)
+	}
+	if _, err := sessions.Get(t.Context(), key, time.Now()); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("signed-out session lookup = %v, want ErrNotFound", err)
+	}
+}

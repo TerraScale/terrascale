@@ -1,12 +1,15 @@
 package auth
 
 import (
+	"net/url"
+
 	"terrascale.tech/dashboard/internal/ui"
 	static "terrascale.tech/dashboard/web/static"
 )
 
-// loginView pairs a full-bleed region map with the sign-in column.
-templ loginView(data loginPageData, csrfToken string) {
+// authPanel pairs a full-bleed region map with the sign-in column, around
+// every sign-in page's forms. footer, when set, closes the panel.
+templ authPanel(title, subtitle string, footer templ.Component) {
 	<main class="ts-login">
 		<section class="ts-login-hero" aria-hidden="true">
 			@ui.RegionMap("")
@@ -22,46 +25,169 @@ templ loginView(data loginPageData, csrfToken string) {
 					<div class="ts-login-heading">
 						<img class="ts-login-logo" src={ static.URL("brand/logo-terrascale-blue.svg") } alt="TerraScale" decoding="async"/>
 						<div class="ts-auth-heading">
-							<h1 class="ts-auth-title" id="login-title">Sign in</h1>
-							<p class="ts-auth-subtitle">Access your databases and cloud operations.</p>
+							<h1 class="ts-auth-title" id="login-title">{ title }</h1>
+							<p class="ts-auth-subtitle">{ subtitle }</p>
 						</div>
 					</div>
-					if data.Error != "" {
-						@ui.Alert("danger", "", data.Error)
-					}
-					<form class="ts-form" method="post" action="/login" data-submit-once novalidate>
-						<input type="hidden" name="_csrf" value={ csrfToken }/>
-						<input type="hidden" name="redirectTo" value={ data.RedirectTo }/>
-						{{ email := ui.FieldProps{ID: "email", Label: "Email", Error: data.EmailError} }}
-						@ui.Field(email) {
-							<input class="ts-input ts-input-lg" type="email" id="email" name="email" value={ data.Email } autocomplete="email" placeholder="name@company.com" required { email.ControlAttrs()... }/>
-						}
-						<div class="ts-field">
-							<div class="ts-row-between">
-								<label class="ts-label" for="password">Password</label>
-								<a class="ts-link ts-meta" href="/reset-password">Forgot password</a>
-							</div>
-							@ui.PasswordInput(ui.PasswordProps{ID: "password", Autocomplete: "current-password", Placeholder: "Enter your password", Attrs: passwordAttrs(data)})
-							if data.PasswordError != "" {
-								<p class="ts-field-error" id="password-error">{ data.PasswordError }</p>
-							}
-						</div>
-						<button class="ts-btn ts-btn-primary ts-btn-lg ts-btn-block" type="submit">Sign in</button>
-					</form>
-					<div class="ts-auth-divider" aria-hidden="true">Other sign-in options</div>
-					<div class="ts-auth-providers">
-						<button class="ts-btn ts-btn-secondary" type="button" disabled aria-label="Passkey sign-in unavailable in the in-memory demo" title="Unavailable in the in-memory demo">Passkey</button>
-						<button class="ts-btn ts-btn-secondary" type="button" disabled aria-label="Google sign-in unavailable in the in-memory demo" title="Unavailable in the in-memory demo"><img src={ static.URL("brand/google.svg") } alt="" aria-hidden="true" width="18" height="18"/></button>
-						<button class="ts-btn ts-btn-secondary" type="button" disabled aria-label="GitHub sign-in unavailable in the in-memory demo" title="Unavailable in the in-memory demo"><img src={ static.URL("brand/github.svg") } alt="" aria-hidden="true" width="18" height="18"/></button>
-					</div>
+					{ children... }
 				</div>
-				<p class="ts-auth-footer">New to TerraScale? <a class="ts-link" href={ signUpURL(data.RedirectTo) }>Create account</a></p>
+				if footer != nil {
+					@footer
+				}
 			</div>
 			<footer class="ts-login-footer">
 				@localeSelect()
 			</footer>
 		</div>
 	</main>
+}
+
+templ loginView(data loginPageData, csrfToken string) {
+	@authPanel("Sign in", "Access your databases and cloud operations.", signUpFooter(data.RedirectTo)) {
+		if data.Error != "" {
+			@ui.Alert("danger", "", data.Error)
+		}
+		if data.Notice != "" {
+			@ui.Alert("success", "", data.Notice)
+		}
+		<form class="ts-form" method="post" action="/login" data-submit-once novalidate>
+			<input type="hidden" name="_csrf" value={ csrfToken }/>
+			<input type="hidden" name="redirectTo" value={ data.RedirectTo }/>
+			if data.PromptLogin {
+				<input type="hidden" name="prompt" value="login"/>
+			}
+			{{ email := ui.FieldProps{ID: "email", Label: "Email", Error: data.EmailError} }}
+			@ui.Field(email) {
+				<input class="ts-input ts-input-lg" type="email" id="email" name="email" value={ data.Email } autocomplete="email" placeholder="name@company.com" required { email.ControlAttrs()... }/>
+			}
+			<div class="ts-field">
+				<div class="ts-row-between">
+					<label class="ts-label" for="password">Password</label>
+					<a class="ts-link ts-meta" href="/reset-password">Forgot password</a>
+				</div>
+				@ui.PasswordInput(ui.PasswordProps{ID: "password", Autocomplete: "current-password", Placeholder: "Enter your password", Attrs: passwordAttrs(data)})
+				if data.PasswordError != "" {
+					<p class="ts-field-error" id="password-error">{ data.PasswordError }</p>
+				}
+			</div>
+			<button class="ts-btn ts-btn-primary ts-btn-lg ts-btn-block" type="submit">Sign in</button>
+		</form>
+		<div class="ts-auth-divider" aria-hidden="true">Other sign-in options</div>
+		if data.TSAuth {
+			<div class="ts-auth-providers ts-auth-providers-stack">
+				<a class="ts-btn ts-btn-secondary" href={ templ.SafeURL(codeURL(data.Email, data.RedirectTo)) }>Email me a code</a>
+				<a class="ts-btn ts-btn-secondary" href={ templ.SafeURL(ssoURL(data.RedirectTo, data.PromptLogin)) }>Single sign-on</a>
+			</div>
+		} else {
+			<div class="ts-auth-providers">
+				<button class="ts-btn ts-btn-secondary" type="button" disabled aria-label="Passkey sign-in unavailable in the in-memory demo" title="Unavailable in the in-memory demo">Passkey</button>
+				<button class="ts-btn ts-btn-secondary" type="button" disabled aria-label="Google sign-in unavailable in the in-memory demo" title="Unavailable in the in-memory demo"><img src={ static.URL("brand/google.svg") } alt="" aria-hidden="true" width="18" height="18"/></button>
+				<button class="ts-btn ts-btn-secondary" type="button" disabled aria-label="GitHub sign-in unavailable in the in-memory demo" title="Unavailable in the in-memory demo"><img src={ static.URL("brand/github.svg") } alt="" aria-hidden="true" width="18" height="18"/></button>
+			</div>
+		}
+	}
+}
+
+templ signUpFooter(returnTo string) {
+	<p class="ts-auth-footer">New to TerraScale? <a class="ts-link" href={ signUpURL(returnTo) }>Create account</a></p>
+}
+
+templ backToSignIn(returnTo string) {
+	<p class="ts-auth-footer"><a class="ts-link" href={ templ.SafeURL(loginURL(returnTo)) }>← Back to sign in</a></p>
+}
+
+// codeView asks where to email a sign-in code, then takes it.
+templ codeView(data codePageData, csrfToken string) {
+	if !data.CodeStep {
+		@authPanel("Sign in with a code", "We email you a one-time code instead of asking for your password.", backToSignIn(data.RedirectTo)) {
+			if data.Error != "" {
+				@ui.Alert("danger", "", data.Error)
+			}
+			<form class="ts-form" method="post" action="/login/code" data-submit-once novalidate>
+				<input type="hidden" name="_csrf" value={ csrfToken }/>
+				<input type="hidden" name="redirectTo" value={ data.RedirectTo }/>
+				@ui.Field(ui.FieldProps{ID: "email", Label: "Email"}) {
+					<input class="ts-input ts-input-lg" type="email" id="email" name="email" value={ data.Email } autocomplete="email" placeholder="name@company.com" required autofocus/>
+				}
+				<button class="ts-btn ts-btn-primary ts-btn-lg ts-btn-block" type="submit">Email me a code</button>
+			</form>
+		}
+	} else {
+		@authPanel(codeTitle(data.SignUp), codeSubtitle(data), backToSignIn(data.RedirectTo)) {
+			if data.Error != "" {
+				@ui.Alert("danger", "", data.Error)
+			}
+			<form class="ts-form" method="post" action="/login/code/verify" data-submit-once novalidate>
+				<input type="hidden" name="_csrf" value={ csrfToken }/>
+				<input type="hidden" name="redirectTo" value={ data.RedirectTo }/>
+				<input type="hidden" name="email" value={ data.Email }/>
+				if data.SignUp {
+					<input type="hidden" name="signUp" value="1"/>
+					<input type="hidden" name="name" value={ data.Name }/>
+				}
+				{{ code := ui.FieldProps{ID: "code", Label: "Code", Error: data.CodeError} }}
+				@ui.Field(code) {
+					<input class="ts-input ts-input-lg" id="code" name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="64" required autofocus { code.ControlAttrs()... }/>
+				}
+				<button class="ts-btn ts-btn-primary ts-btn-lg ts-btn-block" type="submit">Continue</button>
+			</form>
+			if data.SignUp {
+				// ts-auth mails a new sign-up code only with the password, which
+				// the dashboard does not keep.
+				<p class="ts-meta">No email? <a class="ts-link" href={ signUpURL(data.RedirectTo) }>Sign up again</a> to get a new code.</p>
+			} else {
+				<form class="ts-form" method="post" action="/login/code" data-submit-once>
+					<input type="hidden" name="_csrf" value={ csrfToken }/>
+					<input type="hidden" name="redirectTo" value={ data.RedirectTo }/>
+					<input type="hidden" name="email" value={ data.Email }/>
+					<button class="ts-btn ts-btn-secondary ts-btn-block" type="submit">Send a new code</button>
+				</form>
+			}
+		}
+	}
+}
+
+// resetView asks where to email a password reset code, then takes it with
+// the new password.
+templ resetView(data resetPageData, csrfToken string) {
+	if !data.CodeStep {
+		@authPanel("Reset password", "We email you a code to choose a new password.", backToSignIn("/")) {
+			if data.Error != "" && data.ErrorField == "" {
+				@ui.Alert("danger", "", data.Error)
+			}
+			<form class="ts-form" method="post" action="/reset-password" data-submit-once novalidate>
+				<input type="hidden" name="_csrf" value={ csrfToken }/>
+				{{ email := resetField(data, "email", "Email") }}
+				@ui.Field(email) {
+					<input class="ts-input ts-input-lg" type="email" id="email" name="email" value={ data.Email } autocomplete="email" placeholder="name@company.com" required { email.ControlAttrs()... }/>
+				}
+				<button class="ts-btn ts-btn-primary ts-btn-lg ts-btn-block" type="submit">Email me a code</button>
+			</form>
+		}
+	} else {
+		@authPanel("Choose a new password", "If "+data.Email+" has a TerraScale account, we emailed it a code. It expires in 10 minutes.", backToSignIn("/")) {
+			if data.Error != "" && data.ErrorField == "" {
+				@ui.Alert("danger", "", data.Error)
+			}
+			<form class="ts-form" method="post" action="/reset-password/complete" data-submit-once novalidate>
+				<input type="hidden" name="_csrf" value={ csrfToken }/>
+				<input type="hidden" name="email" value={ data.Email }/>
+				{{ code := resetField(data, "code", "Code") }}
+				@ui.Field(code) {
+					<input class="ts-input ts-input-lg" id="code" name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="64" required { code.ControlAttrs()... }/>
+				}
+				{{ password := resetField(data, "password", "New password") }}
+				@ui.Field(password) {
+					@ui.PasswordInput(ui.PasswordProps{ID: "password", Autocomplete: "new-password", MinLength: 12, Attrs: password.ControlAttrs()})
+				}
+				{{ confirmPassword := resetField(data, "confirmPassword", "Confirm new password") }}
+				@ui.Field(confirmPassword) {
+					@ui.PasswordInput(ui.PasswordProps{ID: "confirmPassword", Autocomplete: "new-password", Attrs: confirmPassword.ControlAttrs()})
+				}
+				<button class="ts-btn ts-btn-primary ts-btn-lg ts-btn-block" type="submit">Change password</button>
+			</form>
+		}
+	}
 }
 
 templ localeSelect() {
@@ -101,7 +227,17 @@ templ authStatusView(data authStatusPageData, csrfToken string) {
 				</div>
 				<div class="ts-alert ts-alert-warning" role="status">
 					<p class="ts-alert-body">{ data.Message }</p>
+					if data.Reference != "" {
+						<p class="ts-alert-body">Reference: <code>{ data.Reference }</code></p>
+					}
 				</div>
+				if data.Recovery {
+					<div class="ts-form">
+						<a class="ts-btn ts-btn-primary ts-btn-lg ts-btn-block" href={ templ.SafeURL(retryURL(data.ReturnTo)) }>Try again</a>
+						<a class="ts-btn ts-btn-secondary ts-btn-block" href={ templ.SafeURL(codeURL("", data.ReturnTo)) }>Sign in with an emailed code</a>
+					</div>
+					<p class="ts-meta">Still failing? Check <a class="ts-link" href="https://status.terrascale.tech">TerraScale status</a>, and quote the reference when you contact us.</p>
+				}
 				if data.ShowEmailForm {
 					<form class="ts-form" method="post" action="/reset-password" data-submit-once>
 						<input type="hidden" name="_csrf" value={ csrfToken }/>
@@ -111,9 +247,78 @@ templ authStatusView(data authStatusPageData, csrfToken string) {
 						<button class="ts-btn ts-btn-primary ts-btn-lg ts-btn-block" type="submit">Request reset instructions</button>
 					</form>
 				}
-				<p class="ts-auth-footer"><a class="ts-link" href="/login">← Back to sign in</a></p>
+				if !data.Recovery {
+					<p class="ts-auth-footer"><a class="ts-link" href="/login">← Back to sign in</a></p>
+				}
 			</div>
 			@localeSelect()
 		</main>
 	}
+}
+
+func codeTitle(signUp bool) string {
+	if signUp {
+		return "Verify your email"
+	}
+	return "Check your email"
+}
+
+func codeSubtitle(data codePageData) string {
+	if data.SignUp {
+		return "Enter the code we emailed to " + data.Email + " to verify the address. It expires in 10 minutes."
+	}
+	return "If " + data.Email + " has a TerraScale account, we emailed it a code. It expires in 10 minutes."
+}
+
+// ssoURL starts single sign-on, continuing to returnTo afterwards.
+func ssoURL(returnTo string, promptLogin bool) string {
+	query := url.Values{"returnTo": {returnTo}}
+	if promptLogin {
+		query.Set("prompt", "login")
+	}
+	return "/login/sso?" + query.Encode()
+}
+
+// retryURL signs in again after a failure, continuing to returnTo. ts-auth
+// is asked for credentials, so a browser still signed in there is not sent
+// straight back into the same failure.
+func retryURL(returnTo string) string {
+	query := url.Values{"prompt": {"login"}}
+	if returnTo != "/" && returnTo != "" {
+		query.Set("returnTo", returnTo)
+	}
+	return "/login?" + query.Encode()
+}
+
+// loginURL opens the sign-in page, continuing to returnTo afterwards.
+func loginURL(returnTo string) string {
+	if returnTo == "/" || returnTo == "" {
+		return "/login"
+	}
+	return "/login?" + url.Values{"returnTo": {returnTo}}.Encode()
+}
+
+// codeURL opens sign-in with an emailed code for email, continuing to
+// returnTo afterwards.
+func codeURL(email, returnTo string) string {
+	query := url.Values{}
+	if email != "" {
+		query.Set("email", email)
+	}
+	if returnTo != "/" {
+		query.Set("returnTo", returnTo)
+	}
+	if len(query) == 0 {
+		return "/login/code"
+	}
+	return "/login/code?" + query.Encode()
+}
+
+// resetField is a reset form field carrying its error when it has one.
+func resetField(data resetPageData, id, label string) ui.FieldProps {
+	field := ui.FieldProps{ID: id, Label: label}
+	if data.ErrorField == id {
+		field.Error = data.Error
+	}
+	return field
 }

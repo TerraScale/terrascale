@@ -183,11 +183,12 @@ func TestDatabaseFreePlanLimitIsExplainedAndHoldsForBranchesAndRestores(t *testi
 
 	goToOK(t, page, databasePath+"/backups")
 	submitAndExpect(t, page, "/api/v1/dashboard/backups", 303, pageByRole(page, *playwright.AriaRoleButton, "Create backup").Click)
-	restore := page.Locator("form.ts-db-restore").First()
+	click(t, pageByRole(page, *playwright.AriaRoleButton, "Restore", true).First())
+	restore := pageByRole(page, *playwright.AriaRoleDialog, "Restore backup")
 	fill(t, restore.Locator(`[name="name"]`), uniqueName("restored"))
-	submitAndExpect(t, page, "/api/v1/dashboard/backups/restore", 303, byRole(restore, *playwright.AriaRoleButton, "Restore side by side").Click)
+	submitAndExpect(t, page, "/api/v1/dashboard/backups/restore", 303, byRole(restore, *playwright.AriaRoleButton, "Restore as new database").Click)
 	waitForPath(t, page, func(u *url.URL) bool { return u.Path == databasePath+"/backups" })
-	must(t, expect.Locator(page.Locator("main").GetByRole(*playwright.AriaRoleAlert)).ToContainText("database limit is reached"))
+	visible(t, restore.GetByText("database limit is reached"))
 
 	goToOK(t, page, "/databases")
 	must(t, expect.Locator(page.Locator("#project-databases tbody tr")).ToHaveCount(1))
@@ -231,9 +232,11 @@ func TestBackupFormsReturnToTheBackupsTabWithTheirErrors(t *testing.T) {
 	t.Parallel()
 	page := newPage(t)
 	registerAndOnboard(t, page, newAccount("backups"), "starter")
-	createDatabase(t, page, uniqueName("orders"), "GRU")
+	database := uniqueName("orders")
+	createDatabase(t, page, database, "GRU")
 	waitForPath(t, page, func(u *url.URL) bool { return strings.HasPrefix(u.Path, "/databases/db_") })
-	backupsPath := currentPath(t, page) + "/backups"
+	databasePath := currentPath(t, page)
+	backupsPath := databasePath + "/backups"
 	onBackups := func() {
 		t.Helper()
 		waitForPath(t, page, func(u *url.URL) bool { return u.Path == backupsPath })
@@ -262,19 +265,42 @@ func TestBackupFormsReturnToTheBackupsTabWithTheirErrors(t *testing.T) {
 	must(t, expect.Locator(alert).ToHaveCount(0))
 	visible(t, page.GetByText("The saved backup policy is enabled."))
 
+	// Overwriting the database takes its name typed exactly; a mismatch
+	// reopens the dialog with the error.
+	restore := pageByRole(page, *playwright.AriaRoleDialog, "Restore backup")
+	openRestore := func() {
+		t.Helper()
+		click(t, byRole(restorePoints.First(), *playwright.AriaRoleButton, "Restore", true))
+		visible(t, restore)
+	}
+	overwrite := func(confirmation string) {
+		t.Helper()
+		fill(t, restore.Locator(`[name="confirmName"]`), confirmation)
+		submitAndExpect(t, page, "/api/v1/dashboard/backups/restore", 303, byRole(restore, *playwright.AriaRoleButton, "Overwrite "+database).Click)
+	}
+	openRestore()
+	must(t, expect.Locator(restore).ToContainText("This overwrites current data"))
+	overwrite("wrong-name")
+	onBackups()
+	visible(t, restore)
+	visible(t, restore.GetByText("The name you typed does not match."))
+	overwrite(database)
+	waitForPath(t, page, func(u *url.URL) bool { return u.Path == databasePath })
+
 	// Restore names follow the database name rules on the server too.
-	restore := page.Locator("form.ts-db-restore").First()
+	goToOK(t, page, backupsPath)
+	openRestore()
 	name := restore.Locator(`[name="name"]`)
 	_, err := name.Evaluate(`input => input.removeAttribute("pattern")`, nil)
 	must(t, err)
 	fill(t, name, "Bad_Name")
-	submitAndExpect(t, page, "/api/v1/dashboard/backups/restore", 303, byRole(restore, *playwright.AriaRoleButton, "Restore side by side").Click)
+	submitAndExpect(t, page, "/api/v1/dashboard/backups/restore", 303, byRole(restore, *playwright.AriaRoleButton, "Restore as new database").Click)
 	onBackups()
-	must(t, expect.Locator(alert).ToContainText("lowercase letters, digits, and hyphens"))
+	visible(t, restore.GetByText("lowercase letters, digits, and hyphens"))
 	must(t, expect.Locator(name).ToHaveValue("Bad_Name"))
 
 	restored := uniqueName("restored")
 	fill(t, name, restored)
-	submitAndExpect(t, page, "/api/v1/dashboard/backups/restore", 303, byRole(restore, *playwright.AriaRoleButton, "Restore side by side").Click)
+	submitAndExpect(t, page, "/api/v1/dashboard/backups/restore", 303, byRole(restore, *playwright.AriaRoleButton, "Restore as new database").Click)
 	visible(t, pageByRole(page, *playwright.AriaRoleHeading, restored))
 }
