@@ -1,6 +1,8 @@
 using TerraScale.Endpoints;
+using TerraScale.TerraBase.Errors;
 using TerraScale.TerraBase.Features.UserAuth;
 using TerraScale.TerraBase.Hosting;
+using TerraScale.TerraBase.Tenancy;
 
 namespace TerraScale.TerraBase.Features.Management.Backups;
 
@@ -23,18 +25,15 @@ public sealed class CreateBackupEndpoint(IManagementService management, IManaged
     }
 
     /// <inheritdoc />
-    public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
-    {
-        var writable = await ManagementRoute.WritableDatabaseAsync(HttpContext, management, cancellationToken);
-        if (writable.Value is not { } database)
+    public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
+        await ManagementRoute.CheckWritableDatabaseAsync(HttpContext, management, cancellationToken) switch
         {
-            return ManagementRoute.Error(writable.Error);
-        }
-
-        var organization = ManagementRoute.OrganizationId(HttpContext);
-        var result = await backups.CreateBackupAsync(ManagementRoute.UserId(HttpContext), organization, database, cancellationToken);
-        return result.Value is { } backup
-            ? TypedResults.Created($"{ManagementRoute.DatabasePath(database)}/backups/{backup.Id}", backup)
-            : ManagementRoute.Error(result.Error);
-    }
+            NotFound error => ErrorResponse.From(error),
+            Forbidden error => ErrorResponse.From(error),
+            TenantContext database => await backups.CreateBackupAsync(ManagementRoute.UserId(HttpContext), ManagementRoute.OrganizationId(HttpContext), database, cancellationToken) switch
+            {
+                DatabaseBackup backup => TypedResults.Created($"{ManagementRoute.DatabasePath(database)}/backups/{backup.Id}", backup),
+                NotFound error => ErrorResponse.From(error),
+            },
+        };
 }

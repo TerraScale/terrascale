@@ -450,6 +450,8 @@ can be restored.
   - `name` is optional and follows the database name rules. A taken name returns `409`.
   - Without a name, the first free name of `<source>-restore`, `<source>-restore-2`, … is used. The source part is shortened to stay within 63 characters.
   - `branchedFrom` is the backed-up database. An unknown backup returns `404`.
+- Errors use the `{"error":{"code","message"}}` envelope: `400 invalid_request` (cron, retention, limit or name), `403
+  forbidden_role` when a viewer backs up, restores or saves a policy, `404 not_found`, and `409 name_taken`.
 
 #### Lifecycle
 

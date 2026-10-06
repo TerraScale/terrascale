@@ -1,6 +1,8 @@
 using TerraScale.Endpoints;
+using TerraScale.TerraBase.Errors;
 using TerraScale.TerraBase.Features.UserAuth;
 using TerraScale.TerraBase.Hosting;
+using TerraScale.TerraBase.Tenancy;
 
 namespace TerraScale.TerraBase.Features.Management.Backups;
 
@@ -28,17 +30,32 @@ public sealed class RestoreBackupEndpoint(IManagementService management, IManage
     public override async ValueTask<IResult> HandleAsync(NameRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
-        var name = request.Name is null ? null : ManagementRoute.DatabaseName(request);
-        var writable = await ManagementRoute.WritableDatabaseAsync(HttpContext, management, cancellationToken);
-        if (writable.Value is not { } database)
+        string? name = null;
+        if (request.Name is not null)
         {
-            return ManagementRoute.Error(writable.Error);
+            switch (ManagementRoute.CheckDatabaseName(request))
+            {
+                case Validation error:
+                    return ErrorResponse.From(error);
+                case string valid:
+                    name = valid;
+                    break;
+            }
         }
 
         var organization = ManagementRoute.OrganizationId(HttpContext);
-        var result = await backups.RestoreAsync(ManagementRoute.UserId(HttpContext), organization, database, ManagementRoute.Value(HttpContext, "backup"), name, cancellationToken);
-        return result.Value is { } value
-            ? TypedResults.Created($"{ManagementRoute.Organizations}/{organization}/projects/{value.ProjectId}/databases/{value.Id}", value)
-            : ManagementRoute.Error(result.Error);
+        return await ManagementRoute.CheckWritableDatabaseAsync(HttpContext, management, cancellationToken) switch
+        {
+            NotFound error => ErrorResponse.From(error),
+            Forbidden error => ErrorResponse.From(error),
+            TenantContext database => await backups.RestoreAsync(
+                ManagementRoute.UserId(HttpContext), organization, database, ManagementRoute.Value(HttpContext, "backup"), name, cancellationToken) switch
+            {
+                ManagedDatabase restored => TypedResults.Created($"{ManagementRoute.Organizations}/{organization}/projects/{restored.ProjectId}/databases/{restored.Id}", restored),
+                NotFound error => ErrorResponse.From(error),
+                Conflict error => ErrorResponse.From(error),
+                Forbidden error => ErrorResponse.From(error),
+            },
+        };
     }
 }

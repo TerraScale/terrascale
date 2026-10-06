@@ -339,6 +339,41 @@ public sealed class BackupApiTests
     }
 
     [Test]
+    public async Task Backup_errors_answer_their_code_and_message()
+    {
+        const string BadCron = "fullBackupCron must be a standard 5-field cron expression";
+        const string BadRetention = "retentionDays must be an integer between 1 and 35";
+        const string BadLimit = "limit must be an integer between 1 and 100";
+        const string BadName = "name must be a lowercase database name of at most 63 characters";
+        const string RoleTooLow = "your role in the organization does not allow this";
+        await using var api = await ManagementApi.StartAsync();
+        var database = await api.CreateManagedDatabaseAsync("main");
+        using var created = await api.Client.PostAsync(Uri($"{database.Path}/backups"), content: null);
+        var backup = $"{database.Path}/backups/{(await created.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString()}";
+        var unknown = $"{database.ProjectPath}/databases/{Guid.NewGuid()}";
+        using var viewer = api.As(await api.AddMemberAsync(api.Client, database.Organization, "viewer"));
+
+        await ErrorAssert.ErrorAsync(
+            api.Client.PutAsJsonAsync(Uri($"{database.Path}/backup-policy"), new { fullBackupCron = "every day", retentionDays = 7 }), HttpStatusCode.BadRequest, "invalid_request", BadCron);
+        await ErrorAssert.ErrorAsync(
+            api.Client.PutAsJsonAsync(Uri($"{database.Path}/backup-policy"), new { retentionDays = 36 }), HttpStatusCode.BadRequest, "invalid_request", BadRetention);
+        await ErrorAssert.ErrorAsync(api.Client.PutAsJsonAsync(Uri($"{database.Path}/backup-policy"), new { }), HttpStatusCode.BadRequest, "invalid_request", BadRetention);
+        await ErrorAssert.ErrorAsync(api.Client.PutAsJsonAsync(Uri($"{unknown}/backup-policy"), new { retentionDays = 7 }), HttpStatusCode.NotFound, "not_found");
+        await ErrorAssert.ErrorAsync(api.Client.GetAsync(Uri($"{unknown}/backup-policy")), HttpStatusCode.NotFound, "not_found");
+        await ErrorAssert.ErrorAsync(api.Client.GetAsync(Uri($"{database.Path}/backups?limit=0")), HttpStatusCode.BadRequest, "invalid_request", BadLimit);
+        await ErrorAssert.ErrorAsync(api.Client.GetAsync(Uri($"{unknown}/backups")), HttpStatusCode.NotFound, "not_found");
+        await ErrorAssert.ErrorAsync(api.Client.PostAsync(Uri($"{unknown}/backups"), content: null), HttpStatusCode.NotFound, "not_found");
+        await ErrorAssert.ErrorAsync(api.Client.PostAsJsonAsync(Uri($"{backup}/restore"), new { name = "Not Valid" }), HttpStatusCode.BadRequest, "invalid_request", BadName);
+        await ErrorAssert.ErrorAsync(api.Client.PostAsJsonAsync(Uri($"{backup}/restore"), new { name = "main" }), HttpStatusCode.Conflict, "name_taken", "name is already taken");
+        await ErrorAssert.ErrorAsync(
+            api.Client.PostAsJsonAsync(Uri($"{database.Path}/backups/{Guid.NewGuid()}/restore"), new { }), HttpStatusCode.NotFound, "not_found");
+        await ErrorAssert.ErrorAsync(api.Client.PostAsJsonAsync(Uri($"{unknown}/backups/{Guid.NewGuid()}/restore"), new { }), HttpStatusCode.NotFound, "not_found");
+        await ErrorAssert.ErrorAsync(viewer.PutAsJsonAsync(Uri($"{database.Path}/backup-policy"), new { retentionDays = 7 }), HttpStatusCode.Forbidden, "forbidden_role", RoleTooLow);
+        await ErrorAssert.ErrorAsync(viewer.PostAsync(Uri($"{database.Path}/backups"), content: null), HttpStatusCode.Forbidden, "forbidden_role", RoleTooLow);
+        await ErrorAssert.ErrorAsync(viewer.PostAsJsonAsync(Uri($"{backup}/restore"), new { }), HttpStatusCode.Forbidden, "forbidden_role", RoleTooLow);
+    }
+
+    [Test]
     public async Task The_backup_policy_has_defaults_and_is_validated_and_saved()
     {
         await using var api = await ManagementApi.StartAsync();

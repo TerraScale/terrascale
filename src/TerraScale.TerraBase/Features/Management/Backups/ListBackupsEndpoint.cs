@@ -1,4 +1,5 @@
 using TerraScale.Endpoints;
+using TerraScale.TerraBase.Errors;
 using TerraScale.TerraBase.Features.UserAuth;
 using TerraScale.TerraBase.Hosting;
 
@@ -23,11 +24,12 @@ public sealed class ListBackupsEndpoint(IManagementService management, IManagedB
     }
 
     /// <inheritdoc />
-    public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
-    {
-        var (after, limit) = ManagementRoute.Page(HttpContext);
-        return await ManagementRoute.DatabaseAsync(HttpContext, management, cancellationToken) is { } database
-            ? TypedResults.Ok(await backups.ListBackupsAsync(database.OrganizationId, database.DatabaseId!, after, limit, cancellationToken))
-            : TypedResults.NotFound();
-    }
+    public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
+        ManagementRoute.CheckPage(HttpContext) switch
+        {
+            Validation error => ErrorResponse.From(error),
+            PageQuery page => await ManagementRoute.DatabaseAsync(HttpContext, management, cancellationToken) is { } database
+                ? TypedResults.Ok(await backups.ListBackupsAsync(database.OrganizationId, database.DatabaseId!, page.After, page.Limit, cancellationToken))
+                : ErrorResponse.From(new NotFound()),
+        };
 }

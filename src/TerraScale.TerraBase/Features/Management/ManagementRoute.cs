@@ -14,6 +14,9 @@ public sealed record NameRequest(string? Name);
 /// <param name="Plan"><c>hobby</c>, <c>pro</c> or <c>enterprise</c>.</param>
 public sealed record PlanRequest(string? Plan);
 
+/// <summary>A database the acting user may change, or why not.</summary>
+public readonly union WritableDatabase(TenantContext, NotFound, Forbidden);
+
 /// <summary>A page request.</summary>
 /// <param name="After">Exclusive cursor from the previous page's <c>next</c>.</param>
 /// <param name="Limit">Page size, 1 to 100.</param>
@@ -80,6 +83,15 @@ internal static class ManagementRoute
     /// <summary>As <see cref="DatabaseAsync"/> for a change: a viewer, which is read-only, gets <see cref="ManagementError.Forbidden"/>.</summary>
     public static ValueTask<ManagementResult<TenantContext>> WritableDatabaseAsync(HttpContext context, IManagementService management, CancellationToken cancellationToken) =>
         management.GetWritableDatabaseTenantAsync(UserId(context), OrganizationId(context), Value(context, "project"), Value(context, "database"), cancellationToken);
+
+    /// <summary>As <see cref="WritableDatabaseAsync"/>, as a union: a viewer gets <see cref="ManagementErrors.RoleTooLow"/>.</summary>
+    public static async ValueTask<WritableDatabase> CheckWritableDatabaseAsync(HttpContext context, IManagementService management, CancellationToken cancellationToken) =>
+        await WritableDatabaseAsync(context, management, cancellationToken).ConfigureAwait(false) switch
+        {
+            { Value: { } database } => database,
+            { Error: ManagementError.Forbidden } => ManagementErrors.RoleTooLow,
+            _ => new NotFound(),
+        };
 
     /// <summary>As <see cref="ProjectAsync"/> for a change: a viewer, which is read-only, gets <see cref="ManagementError.Forbidden"/>.</summary>
     public static ValueTask<ManagementResult<Project>> WritableProjectAsync(HttpContext context, IManagementService management, CancellationToken cancellationToken) =>
@@ -164,10 +176,13 @@ internal static class ManagementRoute
         _ => throw new BadHttpRequestException("plan must be hobby, pro or enterprise"),
     };
 
-    public static string DatabaseName(NameRequest request) =>
+    public static string DatabaseName(NameRequest request) => OrThrow(CheckDatabaseName(request));
+
+    /// <summary>A database name, or the rule it breaks.</summary>
+    public static Valid<string> CheckDatabaseName(NameRequest request) =>
         Engine.DatabaseName.TryParse(request.Name, out var name)
             ? name.Value
-            : throw new BadHttpRequestException("name must be a lowercase database name of at most 63 characters");
+            : new Validation("name must be a lowercase database name of at most 63 characters");
 
     public static (string? After, int Limit) Page(HttpContext context)
     {

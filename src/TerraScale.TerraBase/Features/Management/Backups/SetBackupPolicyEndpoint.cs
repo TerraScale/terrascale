@@ -1,7 +1,9 @@
 using Cronos;
 using TerraScale.Endpoints;
+using TerraScale.TerraBase.Errors;
 using TerraScale.TerraBase.Features.UserAuth;
 using TerraScale.TerraBase.Hosting;
+using TerraScale.TerraBase.Tenancy;
 
 namespace TerraScale.TerraBase.Features.Management.Backups;
 
@@ -33,21 +35,25 @@ public sealed class SetBackupPolicyEndpoint(IManagementService management, IMana
         var cron = string.IsNullOrWhiteSpace(request.FullBackupCron) ? null : request.FullBackupCron.Trim();
         if (cron is not null && !CronExpression.TryParse(cron, CronFormat.Standard, out _))
         {
-            throw new BadHttpRequestException("fullBackupCron must be a standard 5-field cron expression");
+            return ErrorResponse.From(new Validation("fullBackupCron must be a standard 5-field cron expression"));
         }
 
-        if (request.RetentionDays is not (>= 1 and <= MaxRetentionDays))
+        if (request.RetentionDays is not { } retentionDays || retentionDays is < 1 or > MaxRetentionDays)
         {
-            throw new BadHttpRequestException("retentionDays must be an integer between 1 and 35");
+            return ErrorResponse.From(new Validation("retentionDays must be an integer between 1 and 35"));
         }
 
-        var writable = await ManagementRoute.WritableDatabaseAsync(HttpContext, management, cancellationToken);
-        if (writable.Value is not { } database)
+        return await ManagementRoute.CheckWritableDatabaseAsync(HttpContext, management, cancellationToken) switch
         {
-            return ManagementRoute.Error(writable.Error);
-        }
-
-        return ManagementRoute.Ok(await backups.SetPolicyAsync(
-            ManagementRoute.UserId(HttpContext), ManagementRoute.OrganizationId(HttpContext), database, cron, request.RetentionDays.Value, request.Disabled ?? false, cancellationToken));
+            NotFound error => ErrorResponse.From(error),
+            Forbidden error => ErrorResponse.From(error),
+            TenantContext database => await backups.SetPolicyAsync(
+                ManagementRoute.UserId(HttpContext), ManagementRoute.OrganizationId(HttpContext), database, cron, retentionDays, request.Disabled ?? false, cancellationToken) switch
+            {
+                BackupPolicy policy => TypedResults.Ok(policy),
+                NotFound error => ErrorResponse.From(error),
+                Forbidden error => ErrorResponse.From(error),
+            },
+        };
     }
 }

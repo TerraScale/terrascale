@@ -4,6 +4,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
 using Cronos;
 using TerraScale.TerraBase.Engine;
+using TerraScale.TerraBase.Errors;
 using TerraScale.TerraBase.Hosting;
 using TerraScale.TerraBase.Tenancy;
 using static TerraScale.TerraBase.Features.Management.SystemCatalog;
@@ -75,7 +76,7 @@ internal sealed partial class EngineManagedBackupService(
             return new ManagementPage<DatabaseBackup>(backups, page.HasMore ? page.Documents[^1].Id : null);
         }, cancellationToken);
 
-    public async ValueTask<ManagementResult<DatabaseBackup>> CreateBackupAsync(
+    public async ValueTask<CreateBackupResult> CreateBackupAsync(
         string userId, string organizationId, TenantContext database, CancellationToken cancellationToken)
     {
         var record = NewRecord(DatabaseOwner.Of(database), Manual);
@@ -92,7 +93,7 @@ internal sealed partial class EngineManagedBackupService(
                 await RecordPendingAsync(transaction, record, cancellationToken).ConfigureAwait(false);
                 return true;
             }, cancellationToken).ConfigureAwait(false);
-            return recorded ? await SnapshotAsync(userId, record, cancellationToken).ConfigureAwait(false) : ManagementError.NotFound;
+            return recorded ? await SnapshotAsync(userId, record, cancellationToken).ConfigureAwait(false) : new NotFound();
         }
         finally
         {
@@ -103,23 +104,27 @@ internal sealed partial class EngineManagedBackupService(
     public async ValueTask<BackupPolicy> GetPolicyAsync(string databaseId, CancellationToken cancellationToken) =>
         await catalog.ReadAsync(transaction => GetPolicyAsync(transaction, databaseId, cancellationToken), cancellationToken).ConfigureAwait(false);
 
-    public async ValueTask<ManagementResult<BackupPolicy>> SetPolicyAsync(
+    public async ValueTask<SetBackupPolicyResult> SetPolicyAsync(
         string userId, string organizationId, TenantContext database, string? fullBackupCron, int retentionDays, bool disabled, CancellationToken cancellationToken)
     {
         var policy = new BackupPolicy(fullBackupCron, retentionDays, disabled, time.GetUtcNow());
         var owner = DatabaseOwner.Of(database);
-        return await catalog.WriteAsync<ManagementResult<BackupPolicy>>(async transaction =>
+        return await catalog.WriteAsync<SetBackupPolicyResult>(async transaction =>
         {
             if (await EngineManagementService.GetDatabaseAsync(transaction, userId, organizationId, owner.ProjectId, owner.DatabaseId, cancellationToken).ConfigureAwait(false) is null)
             {
-                return ManagementError.NotFound;
+                return new NotFound();
             }
 
             // A backup policy is project state of the organization: a viewer cannot set it, and setting it changes the organization.
-            var writer = await EngineManagementService.WritableAsync(transaction, userId, organizationId, cancellationToken).ConfigureAwait(false);
-            if (writer != ManagementError.None)
+            switch (await EngineManagementService.WritableAsync(transaction, userId, organizationId, cancellationToken).ConfigureAwait(false))
             {
-                return writer;
+                case ManagementError.None:
+                    break;
+                case ManagementError.Forbidden:
+                    return ManagementErrors.RoleTooLow;
+                default:
+                    return new NotFound();
             }
 
             await EngineManagementService.TouchOrganizationAsync(transaction, organizationId, cancellationToken).ConfigureAwait(false);
@@ -133,7 +138,7 @@ internal sealed partial class EngineManagedBackupService(
     /// ponytail: a backup that expires while it is being restored can have its snapshot swept mid-copy, which fails the
     /// restore cleanly; hold a restore lease on the record if restores of nearly expired backups must always succeed.
     /// </remarks>
-    public async ValueTask<ManagementResult<ManagedDatabase>> RestoreAsync(
+    public async ValueTask<RestoreBackupResult> RestoreAsync(
         string userId, string organizationId, TenantContext database, string backupId, string? name, CancellationToken cancellationToken)
     {
         var owner = DatabaseOwner.Of(database);
@@ -143,13 +148,13 @@ internal sealed partial class EngineManagedBackupService(
             cancellationToken).ConfigureAwait(false);
         if (record is not { State: BackupState.Registered } || record.DatabaseId != owner.DatabaseId || source is null)
         {
-            return ManagementError.NotFound;
+            return new NotFound();
         }
 
         // The snapshot is an engine database of the backed-up database's project, which the restore copies within.
         if (name is not null)
         {
-            return await management.CopyDatabaseAsync(userId, organizationId, owner.ProjectId, record.Id, name, owner.DatabaseId, cancellationToken).ConfigureAwait(false);
+            return Restored(await management.CopyDatabaseAsync(userId, organizationId, owner.ProjectId, record.Id, name, owner.DatabaseId, cancellationToken).ConfigureAwait(false));
         }
 
         // A taken name fails on the registration precheck, before any copy is made.
@@ -160,12 +165,21 @@ internal sealed partial class EngineManagedBackupService(
             var result = await management.CopyDatabaseAsync(userId, organizationId, owner.ProjectId, record.Id, candidate, owner.DatabaseId, cancellationToken).ConfigureAwait(false);
             if (result.Error != ManagementError.NameTaken)
             {
-                return result;
+                return Restored(result);
             }
         }
 
-        return ManagementError.NameTaken;
+        return ManagementErrors.NameTaken;
     }
+
+    // CopyDatabaseAsync fails with NotFound, Forbidden (a viewer) or NameTaken only.
+    private static RestoreBackupResult Restored(ManagementResult<ManagedDatabase> copied) => copied switch
+    {
+        { Value: { } database } => database,
+        { Error: ManagementError.NameTaken } => ManagementErrors.NameTaken,
+        { Error: ManagementError.Forbidden } => ManagementErrors.RoleTooLow,
+        _ => new NotFound(),
+    };
 
     public async ValueTask RunScheduleAsync(CancellationToken cancellationToken)
     {
@@ -239,7 +253,8 @@ internal sealed partial class EngineManagedBackupService(
             {
                 try
                 {
-                    await SnapshotAsync(userId: null, record, cancellationToken).ConfigureAwait(false);
+                    // A scheduled attempt records its own outcome; a database deleted meanwhile has nothing to report.
+                    _ = await SnapshotAsync(userId: null, record, cancellationToken).ConfigureAwait(false);
                 }
                 catch (Exception error) when (error is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
                 {
@@ -260,7 +275,7 @@ internal sealed partial class EngineManagedBackupService(
     // pending → snapshotting → registered, or → expiring on any failure. Each step re-reads the record and the
     // database in its transaction. A user's backup re-checks their membership; a scheduled one (no user) only that the
     // database still exists. Every scheduled attempt ends in exactly one schedule update: success or failure.
-    private async ValueTask<ManagementResult<DatabaseBackup>> SnapshotAsync(string? userId, BackupRecord record, CancellationToken cancellationToken)
+    private async ValueTask<CreateBackupResult> SnapshotAsync(string? userId, BackupRecord record, CancellationToken cancellationToken)
     {
         TenantContext? source;
         try
@@ -292,7 +307,7 @@ internal sealed partial class EngineManagedBackupService(
         if (source is null)
         {
             await SweepBackupAsync(record.OrganizationId, record.Id).ConfigureAwait(false);
-            return ManagementError.NotFound;
+            return new NotFound();
         }
 
         BackupRecord? registered;
@@ -304,7 +319,7 @@ internal sealed partial class EngineManagedBackupService(
             if (!await engine.CopyDatabaseAsync(source, snapshot, cancellationToken).ConfigureAwait(false))
             {
                 await FailAsync(record).ConfigureAwait(false);
-                return ManagementError.NotFound;
+                return new NotFound();
             }
 
             var size = await engine.GetDatabaseSizeAsync(snapshot, cancellationToken).ConfigureAwait(false) ?? 0;
@@ -320,7 +335,7 @@ internal sealed partial class EngineManagedBackupService(
         {
             // The database went away during the copy: the snapshot was expired with it.
             await SweepBackupAsync(record.OrganizationId, record.Id).ConfigureAwait(false);
-            return ManagementError.NotFound;
+            return new NotFound();
         }
 
         return registered.ToBackup();

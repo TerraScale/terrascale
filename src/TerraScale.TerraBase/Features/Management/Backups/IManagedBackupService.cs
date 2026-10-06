@@ -1,3 +1,4 @@
+using TerraScale.TerraBase.Errors;
 using TerraScale.TerraBase.Tenancy;
 
 namespace TerraScale.TerraBase.Features.Management.Backups;
@@ -24,6 +25,15 @@ public sealed record BackupPolicy(string? FullBackupCron, int RetentionDays, boo
 /// <param name="Disabled">Whether scheduled backups are paused; defaults to false.</param>
 public sealed record BackupPolicyRequest(string? FullBackupCron, int? RetentionDays, bool? Disabled);
 
+/// <summary>A completed backup, or that its database is gone or out of the user's reach.</summary>
+public readonly union CreateBackupResult(DatabaseBackup, NotFound);
+
+/// <summary>The saved policy, or why it was not saved.</summary>
+public readonly union SetBackupPolicyResult(BackupPolicy, NotFound, Forbidden);
+
+/// <summary>The database a backup was restored into, or why it was not restored; a taken name is a conflict.</summary>
+public readonly union RestoreBackupResult(ManagedDatabase, NotFound, Conflict, Forbidden);
+
 /// <summary>Backups of managed databases, their policy, and restoring them into new databases.</summary>
 public interface IManagedBackupService
 {
@@ -31,20 +41,20 @@ public interface IManagedBackupService
     ValueTask<ManagementPage<DatabaseBackup>> ListBackupsAsync(string organizationId, string databaseId, string? after, int limit, CancellationToken cancellationToken);
 
     /// <summary>Takes a backup of <paramref name="database"/> now.</summary>
-    ValueTask<ManagementResult<DatabaseBackup>> CreateBackupAsync(string userId, string organizationId, TenantContext database, CancellationToken cancellationToken);
+    ValueTask<CreateBackupResult> CreateBackupAsync(string userId, string organizationId, TenantContext database, CancellationToken cancellationToken);
 
     /// <summary>Reads the policy of a database, or the default policy when none was saved.</summary>
     ValueTask<BackupPolicy> GetPolicyAsync(string databaseId, CancellationToken cancellationToken);
 
     /// <summary>Saves the policy of a database; the values are validated by the caller.</summary>
-    ValueTask<ManagementResult<BackupPolicy>> SetPolicyAsync(
+    ValueTask<SetBackupPolicyResult> SetPolicyAsync(
         string userId, string organizationId, TenantContext database, string? fullBackupCron, int retentionDays, bool disabled, CancellationToken cancellationToken);
 
     /// <summary>
     /// Restores a backup into a new database in the same project, named <paramref name="name"/> or, when
     /// <see langword="null"/>, <c>&lt;source&gt;-restore</c>, <c>-restore-2</c>, … whichever is free first.
     /// </summary>
-    ValueTask<ManagementResult<ManagedDatabase>> RestoreAsync(
+    ValueTask<RestoreBackupResult> RestoreAsync(
         string userId, string organizationId, TenantContext database, string backupId, string? name, CancellationToken cancellationToken);
 
     /// <summary>One scheduler pass: a page of the storage sweep, retention, then the scheduled backups that are due.</summary>
