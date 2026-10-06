@@ -214,6 +214,30 @@ report, err := p.Publish(ctx, atlas.Document{Topology: &topology}) // report.Top
 var atlasErr *atlas.Error // errors.As: Status, Code (invalid_signature, invalid_topology, …), Message, Fix
 ```
 
+## ts-auth tokens (`terrascale.tech/sdk/tsauth`)
+
+ts-auth's platform contract (TS-598) issues every token TerraBase accepts.
+`tsauth` turns credentials into short-lived tokens:
+
+- `NewAPIKeySource` exchanges an API key (`tsk_…`, an OAuth client
+  credential) at `{issuer}/oauth/token` for an organization or project token
+  (`Project`, optional `Scopes`).
+- `NewExchangeSource` exchanges a signed-in user's token (RFC 8693) for an
+  organization or project token, as ts-dashboard (confidential, `ClientSecret`)
+  or ts-cli (public) does.
+
+Both return a `*tsauth.TokenSource`: it caches the token until 60 seconds
+before it expires, concurrent callers share one request, failures are not
+cached, and `Invalidate(token)` drops a token a resource server refused. It
+satisfies `v1.TokenSource`. Errors from the token endpoint are
+`*tsauth.Error{Status, Code, Description, RetryAfter}`. The issuer defaults to
+`https://gru.auth.terrascale.tech/terrascale`.
+
+```go
+tokens, err := tsauth.NewAPIKeySource(tsauth.APIKeyConfig{Key: apiKey, Project: projectID})
+token, err := tokens.Token(ctx) // or pass tokens as a client's TokenSource
+```
+
 ## Checks
 
 The edge artifacts and pins are in `contracts/edge/v1`.

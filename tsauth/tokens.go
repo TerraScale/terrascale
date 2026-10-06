@@ -1,0 +1,331 @@
+// Package tsauth is the client of ts-auth's platform identity contract
+// (ts-auth docs/platform-contract.md, TS-598): the token sources that turn an
+// API key or a user's sign-in into short-lived access tokens for TerraBase
+// and other resource servers.
+//
+//	tokens, err := tsauth.NewAPIKeySource(tsauth.APIKeyConfig{Key: apiKey, Project: projectID})
+//	tb, err := v1.New(v1.Config{BaseURL: origin, TokenSource: tokens})
+package tsauth
+
+import (
+	"context"
+	"encoding/base64"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"math"
+	"net"
+	"net/http"
+	"net/url"
+	"regexp"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+)
+
+// DefaultIssuer is the terrascale tenant, which issues every platform token.
+const DefaultIssuer = "https://gru.auth.terrascale.tech/terrascale"
+
+// TerraBase scopes a token can carry (contract section 3).
+const (
+	ScopeDatabasesRead  = "databases:read"
+	ScopeDatabasesWrite = "databases:write"
+	ScopeDocumentsRead  = "documents:read"
+	ScopeDocumentsWrite = "documents:write"
+	ScopeShapesRead     = "shapes:read"
+)
+
+// APIKeyConfig configures an API key token source (contract section 6.1).
+type APIKeyConfig struct {
+	// Issuer is the tenant issuer; empty means DefaultIssuer.
+	Issuer string
+	// Key is the whole API key, tsk_<20>_<52>. It is the client secret; its
+	// first 24 characters are the client id.
+	Key string
+	// Project is the project an organization key's token acts in; empty
+	// yields an organization token. A project key may name its own project.
+	Project string
+	// Scopes narrows the key's scopes; empty means all of them.
+	Scopes []string
+	// HTTPClient nil uses a client with a 30 s timeout. It is copied and
+	// never follows redirects.
+	HTTPClient *http.Client
+}
+
+// ExchangeConfig configures a token exchange source (contract section 6.2):
+// a signed-in user's token becomes an organization or project token.
+type ExchangeConfig struct {
+	// Issuer is the tenant issuer; empty means DefaultIssuer.
+	Issuer string
+	// ClientID is the exchanging OAuth client, the one the subject token was
+	// issued to, such as ts-dashboard or ts-cli.
+	ClientID string
+	// ClientSecret authenticates a confidential client; empty for a public one.
+	ClientSecret string
+	// SubjectToken returns the user's current sign-in access token.
+	SubjectToken func(context.Context) (string, error)
+	// Organization is required; Project, when set, yields a project token.
+	Organization string
+	Project      string
+	// Scopes narrows what the user's role allows; empty means all of it.
+	Scopes []string
+	// HTTPClient nil uses a client with a 30 s timeout. It is copied and
+	// never follows redirects.
+	HTTPClient *http.Client
+}
+
+var keyPattern = regexp.MustCompile(`^tsk_[0-9a-hjkmnp-tv-z]{20}_[0-9a-hjkmnp-tv-z]{52}$`)
+
+// NewAPIKeySource returns a source of tokens for an API key.
+func NewAPIKeySource(cfg APIKeyConfig) (*TokenSource, error) {
+	if !keyPattern.MatchString(cfg.Key) {
+		return nil, errors.New("tsauth: Key must be an API key, tsk_ followed by 20 and 52 base32 characters")
+	}
+	endpoint, err := tokenEndpoint(cfg.Issuer)
+	if err != nil {
+		return nil, err
+	}
+	form := url.Values{"grant_type": {"client_credentials"}}
+	if cfg.Project != "" {
+		form.Set("project", cfg.Project)
+	}
+	if len(cfg.Scopes) > 0 {
+		form.Set("scope", strings.Join(cfg.Scopes, " "))
+	}
+	client := cfg.Key[:24]
+	return newSource(cfg.HTTPClient, func(ctx context.Context, hc *http.Client) (*tokenResponse, error) {
+		return requestToken(ctx, hc, endpoint, form, client, cfg.Key)
+	}), nil
+}
+
+// NewExchangeSource returns a source of organization or project tokens for
+// a signed-in user.
+func NewExchangeSource(cfg ExchangeConfig) (*TokenSource, error) {
+	if cfg.ClientID == "" || cfg.SubjectToken == nil || cfg.Organization == "" {
+		return nil, errors.New("tsauth: ClientID, SubjectToken and Organization are required")
+	}
+	endpoint, err := tokenEndpoint(cfg.Issuer)
+	if err != nil {
+		return nil, err
+	}
+	return newSource(cfg.HTTPClient, func(ctx context.Context, hc *http.Client) (*tokenResponse, error) {
+		subject, err := cfg.SubjectToken(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("tsauth: subject token: %w", err)
+		}
+		form := url.Values{
+			"grant_type":         {"urn:ietf:params:oauth:grant-type:token-exchange"},
+			"subject_token":      {subject},
+			"subject_token_type": {"urn:ietf:params:oauth:token-type:access_token"},
+			"organization":       {cfg.Organization},
+		}
+		if cfg.Project != "" {
+			form.Set("project", cfg.Project)
+		}
+		if len(cfg.Scopes) > 0 {
+			form.Set("scope", strings.Join(cfg.Scopes, " "))
+		}
+		if cfg.ClientSecret == "" {
+			form.Set("client_id", cfg.ClientID) // a public client
+		}
+		return requestToken(ctx, hc, endpoint, form, cfg.ClientID, cfg.ClientSecret)
+	}), nil
+}
+
+// TokenSource caches one access token: Token returns it until 60 s before
+// it expires, then requests a new one. Concurrent callers share one request.
+// It is safe for concurrent use and satisfies v1.TokenSource.
+type TokenSource struct {
+	hc    *http.Client
+	fetch func(context.Context, *http.Client) (*tokenResponse, error)
+	now   func() time.Time
+
+	mu        sync.Mutex
+	token     string
+	refreshAt time.Time
+	flight    *flight
+}
+
+type flight struct {
+	done  chan struct{}
+	token string
+	err   error
+}
+
+func newSource(hc *http.Client, fetch func(context.Context, *http.Client) (*tokenResponse, error)) *TokenSource {
+	copied := http.Client{Timeout: 30 * time.Second}
+	if hc != nil {
+		copied = *hc
+	}
+	// A redirect would carry the client secret or subject token elsewhere.
+	copied.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	return &TokenSource{hc: &copied, fetch: fetch, now: time.Now}
+}
+
+// Token returns a valid access token. A request that fails is not cached:
+// the next call requests again.
+func (s *TokenSource) Token(ctx context.Context) (string, error) {
+	s.mu.Lock()
+	if s.token != "" && s.now().Before(s.refreshAt) {
+		token := s.token
+		s.mu.Unlock()
+		return token, nil
+	}
+	f := s.flight
+	if f == nil {
+		f = &flight{done: make(chan struct{})}
+		s.flight = f
+		// The request outlives a caller that gives up: others may wait on it.
+		go s.run(context.WithoutCancel(ctx), f)
+	}
+	s.mu.Unlock()
+	select {
+	case <-f.done:
+		return f.token, f.err
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
+}
+
+func (s *TokenSource) run(ctx context.Context, f *flight) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	start := s.now()
+	res, err := s.fetch(ctx, s.hc)
+	var lifetime time.Duration
+	if err == nil {
+		// Its lifetime counts from before the request: a short-lived token
+		// may expire in transit.
+		if lifetime = time.Duration(res.ExpiresIn) * time.Second; !s.now().Before(start.Add(lifetime)) {
+			err = errors.New("tsauth: the access token expired before it arrived")
+		}
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err == nil {
+		s.token, s.refreshAt = res.AccessToken, start.Add(lifetime-min(time.Minute, lifetime/2))
+		f.token = res.AccessToken
+	}
+	f.err = err
+	s.flight = nil
+	close(f.done)
+}
+
+// Invalidate drops token when a resource server refused it (401), so the
+// next Token requests a new one. Other tokens are kept.
+func (s *TokenSource) Invalidate(token string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.token == token {
+		s.token = ""
+	}
+}
+
+// Error is a token endpoint error (RFC 6749 section 5.2), such as 401
+// invalid_client (an unknown, wrong, revoked or expired key), 400
+// invalid_scope or invalid_target, or 429 rate_limited.
+type Error struct {
+	Status      int
+	Code        string `json:"error"`
+	Description string `json:"error_description"`
+	// RetryAfter is the parsed Retry-After of a 429.
+	RetryAfter time.Duration
+}
+
+func (e *Error) Error() string {
+	msg := fmt.Sprintf("tsauth: token endpoint answered %d %s", e.Status, e.Code)
+	if e.Description != "" {
+		msg += ": " + e.Description
+	}
+	return msg
+}
+
+type tokenResponse struct {
+	AccessToken string `json:"access_token"`
+	TokenType   string `json:"token_type"`
+	ExpiresIn   int64  `json:"expires_in"`
+	Scope       string `json:"scope"`
+}
+
+// retryAfter parses Retry-After: delta-seconds or an HTTP-date (RFC 9110
+// section 10.2.3); zero when absent, invalid or past.
+func retryAfter(v string) time.Duration {
+	if s, err := strconv.ParseUint(strings.TrimSpace(v), 10, 32); err == nil {
+		return time.Duration(s) * time.Second
+	}
+	if t, err := http.ParseTime(v); err == nil {
+		return max(time.Until(t), 0)
+	}
+	return 0
+}
+
+func tokenEndpoint(issuer string) (string, error) {
+	u, err := parseIssuer(issuer)
+	if err != nil {
+		return "", err
+	}
+	u.Path += "/oauth/token"
+	return u.String(), nil
+}
+
+// parseIssuer validates an issuer, empty meaning DefaultIssuer: an https
+// URL (http for loopback) without user info, query, fragment or escaped
+// path segments; a trailing slash is dropped.
+func parseIssuer(issuer string) (*url.URL, error) {
+	if issuer == "" {
+		issuer = DefaultIssuer
+	}
+	u, err := url.Parse(issuer)
+	// A RawPath means escapes such as %2F that the decoded Path loses.
+	if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || u.RawPath != "" ||
+		(u.Scheme != "https" && !(u.Scheme == "http" && loopback(u.Hostname()))) {
+		return nil, fmt.Errorf("tsauth: Issuer %q must be an https URL without a query or escaped path", issuer)
+	}
+	u.Path = strings.TrimSuffix(u.Path, "/")
+	return u, nil
+}
+
+func loopback(host string) bool {
+	ip := net.ParseIP(host)
+	return host == "localhost" || ip != nil && ip.IsLoopback()
+}
+
+// requestToken posts form with client authentication: HTTP Basic when the
+// client has a secret (client_secret_basic, both parts form-encoded per
+// RFC 6749 section 2.3.1).
+func requestToken(ctx context.Context, hc *http.Client, endpoint string, form url.Values, client, secret string) (*tokenResponse, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(form.Encode()))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json")
+	if secret != "" {
+		req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte(url.QueryEscape(client)+":"+url.QueryEscape(secret))))
+	}
+	res, err := hc.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("tsauth: token request: %w", err)
+	}
+	defer res.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(res.Body, 64<<10))
+	if err != nil {
+		return nil, fmt.Errorf("tsauth: read token response: %w", err)
+	}
+	if res.StatusCode != http.StatusOK {
+		e := &Error{Status: res.StatusCode}
+		json.Unmarshal(body, e) // a malformed body leaves Code empty
+		e.RetryAfter = retryAfter(res.Header.Get("Retry-After"))
+		return nil, e
+	}
+	// Decoding errors quote the body's values, which can be credentials:
+	// the cause is dropped.
+	var tr tokenResponse
+	if json.Unmarshal(body, &tr) != nil || tr.AccessToken == "" || !strings.EqualFold(tr.TokenType, "Bearer") ||
+		tr.ExpiresIn <= 0 || tr.ExpiresIn > math.MaxInt64/int64(time.Second) {
+		return nil, errors.New("tsauth: the token response is not a Bearer access_token with a valid expires_in")
+	}
+	return &tr, nil
+}
