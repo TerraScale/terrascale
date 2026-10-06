@@ -98,6 +98,9 @@ internal sealed partial class PressureSignals : BackgroundService, IPressureSign
             using var timer = new PeriodicTimer(TimeSpan.FromSeconds(1), _time);
             while (await timer.WaitForNextTickAsync(stoppingToken).ConfigureAwait(false))
             {
+                // The tick resumes this loop on the clock's callback thread. Leave it, so ticks that fire while this
+                // samples coalesce: a test clock advanced by days would otherwise sample once per second inline.
+                await Task.Yield();
                 Sample();
             }
         }, stoppingToken),
@@ -106,6 +109,8 @@ internal sealed partial class PressureSignals : BackgroundService, IPressureSign
             using var timer = new PeriodicTimer(TimeSpan.FromSeconds(10), _time);
             do
             {
+                // The storage walk is synchronous: leave the clock's callback thread first, as the process loop does.
+                await Task.Yield();
                 StoragePressure stored;
                 try
                 {

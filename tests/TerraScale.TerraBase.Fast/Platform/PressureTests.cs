@@ -6,6 +6,7 @@ using System.Reflection;
 using System.Text.Json;
 using Bogus;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Time.Testing;
 using TerraScale.TerraBase.Engine;
 using TerraScale.TerraBase.Fast.Documents;
 using TerraScale.TerraBase.Testing;
@@ -200,6 +201,56 @@ public sealed class PressureTests
     }
 
     [Test]
+    public async Task Sampling_leaves_the_clock_callback_and_coalesces_the_ticks_that_fire_meanwhile()
+    {
+        using var time = new TickClock();
+        await using var server = await TerraBaseTestServer.StartAsync(services: services => services.AddSingleton<TimeProvider>(time));
+        var start = time.GetUtcNow();
+        // The storage loop reads the clock right after creating its timer.
+        await time.ProcessTimerCreated.Task.WaitAsync(TimeSpan.FromSeconds(25));
+        await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(time.StorageReads > 0), TimeSpan.FromSeconds(25));
+
+        // Ticks fire on the caller of Advance; a sample that ran there would read the clock inside the callback.
+        for (var second = 0; second < 20; second++)
+        {
+            time.Advance(TimeSpan.FromSeconds(1));
+            var now = time.GetUtcNow();
+            await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(time.LastProcessRead >= now), TimeSpan.FromSeconds(25));
+        }
+
+        await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(time.LastStorageRead >= start.AddSeconds(10)), TimeSpan.FromSeconds(25));
+        await Assert.That(time.ReadsInCallbacks).IsEqualTo(0);
+
+        // With both samplers held mid-sample, two days of ticks leave one pending tick each: after the release each
+        // samples at most once more, plus once per tick of the final ten seconds.
+        int process;
+        int storage;
+        DateTimeOffset end;
+        try
+        {
+            time.Hold();
+            time.Advance(TimeSpan.FromSeconds(10));
+            await time.ProcessHeld.Task.WaitAsync(TimeSpan.FromSeconds(25));
+            await time.StorageHeld.Task.WaitAsync(TimeSpan.FromSeconds(25));
+            (process, storage) = (time.ProcessReads, time.StorageReads);
+            time.Advance(TimeSpan.FromDays(2));
+        }
+        finally
+        {
+            time.Release();
+        }
+
+        time.Advance(TimeSpan.FromSeconds(10));
+        end = time.GetUtcNow();
+        await TerraBaseTestServer.EventuallyAsync(
+            _ => Task.FromResult(time.LastProcessRead >= end && time.LastStorageRead >= end), TimeSpan.FromSeconds(25));
+
+        await Assert.That(time.ProcessReads - process).IsLessThanOrEqualTo(11);
+        await Assert.That(time.StorageReads - storage).IsLessThanOrEqualTo(2);
+        await Assert.That(time.ReadsInCallbacks).IsEqualTo(0);
+    }
+
+    [Test]
     public async Task Concurrent_fetches_read_complete_cached_snapshots_without_rewriting_the_sampling_time()
     {
         var clock = new SamplingClock(pauseProcess: true);
@@ -351,6 +402,101 @@ public sealed class PressureTests
             (line.StartsWith(name + " ", StringComparison.Ordinal) || line.StartsWith(name + "{", StringComparison.Ordinal))
             && (label is null || line.Contains(label, StringComparison.Ordinal)))
             .Select(line => double.Parse(line.Split(' ', StringSplitOptions.RemoveEmptyEntries)[1], CultureInfo.InvariantCulture))];
+
+    // A fake clock that counts the pressure samplers' clock reads by sampler (one per process sample, one per storage
+    // sample), can hold them mid-sample, and counts the reads made inside a 1- or 10-second timer callback (the
+    // samplers' periods; usage flushes also tick every 10 seconds).
+    private sealed class TickClock() : FakeTimeProvider(DateTimeOffset.UtcNow), IDisposable
+    {
+        [ThreadStatic]
+        private static bool t_inCallback;
+
+        private readonly ManualResetEventSlim _released = new(initialState: true);
+        private int _readsInCallbacks;
+        private int _processReads;
+        private int _storageReads;
+        private long _lastProcessRead;
+        private long _lastStorageRead;
+
+        public TaskCompletionSource ProcessTimerCreated { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource ProcessHeld { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource StorageHeld { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public int ReadsInCallbacks => Volatile.Read(ref _readsInCallbacks);
+
+        public int ProcessReads => Volatile.Read(ref _processReads);
+
+        public int StorageReads => Volatile.Read(ref _storageReads);
+
+        public DateTimeOffset LastProcessRead => new(Volatile.Read(ref _lastProcessRead), TimeSpan.Zero);
+
+        public DateTimeOffset LastStorageRead => new(Volatile.Read(ref _lastStorageRead), TimeSpan.Zero);
+
+        // Holds the next sampler reads until Release (call both in one try/finally); a read inside a timer callback
+        // is never held.
+        public void Hold() => _released.Reset();
+
+        public void Release() => _released.Set();
+
+        public void Dispose() => _released.Dispose();
+
+        public override DateTimeOffset GetUtcNow()
+        {
+            if (t_inCallback)
+            {
+                Interlocked.Increment(ref _readsInCallbacks);
+            }
+
+            var stack = Environment.StackTrace;
+            var process = stack.Contains("PressureSignals.Sample", StringComparison.Ordinal);
+            if (!process && !stack.Contains("PressureSignals", StringComparison.Ordinal))
+            {
+                return base.GetUtcNow();
+            }
+
+            Interlocked.Increment(ref process ? ref _processReads : ref _storageReads);
+            if (!t_inCallback && !_released.IsSet)
+            {
+                (process ? ProcessHeld : StorageHeld).TrySetResult();
+                // Until the test's finally releases it: a hold that expired would let the sampler run ticks early.
+                _released.Wait();
+            }
+
+            var now = base.GetUtcNow();
+            Volatile.Write(ref process ? ref _lastProcessRead : ref _lastStorageRead, now.UtcTicks);
+            return now;
+        }
+
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+        {
+            if (period != TimeSpan.FromSeconds(1) && period != TimeSpan.FromSeconds(10))
+            {
+                return base.CreateTimer(callback, state, dueTime, period);
+            }
+
+            var timer = base.CreateTimer(
+                value =>
+                {
+                    t_inCallback = true;
+                    try
+                    {
+                        callback(value);
+                    }
+                    finally
+                    {
+                        t_inCallback = false;
+                    }
+                }, state, dueTime, period);
+            if (period == TimeSpan.FromSeconds(1))
+            {
+                ProcessTimerCreated.TrySetResult();
+            }
+
+            return timer;
+        }
+    }
 
     private sealed class SamplingClock(bool pauseProcess = false) : TimeProvider
     {
