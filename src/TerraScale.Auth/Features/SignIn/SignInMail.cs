@@ -10,19 +10,19 @@ namespace TerraScale.Auth.Features.SignIn;
 /// when the host stops are still sent within its shutdown timeout. A full queue drops the code and logs it; the user
 /// can ask for another.
 /// </summary>
-public sealed partial class SignInMail(IEmailSender email, ILogger<SignInMail> logger) : BackgroundService
+public sealed partial class SignInMail(IEmailSender email, AuthEmails emails, ILogger<SignInMail> logger) : BackgroundService
 {
     /// <summary>Codes waiting for delivery before new ones are dropped.</summary>
     public const int Capacity = 256;
 
     // ponytail: one sequential sender, add workers if a healthy relay cannot keep up with sign-in volume.
-    private readonly Channel<IssuedPasscode> queue = Channel.CreateBounded<IssuedPasscode>(new BoundedChannelOptions(Capacity) { SingleReader = true });
+    private readonly Channel<(IssuedPasscode Passcode, string Locale)> queue = Channel.CreateBounded<(IssuedPasscode, string)>(new BoundedChannelOptions(Capacity) { SingleReader = true });
 
-    /// <summary>Queues <paramref name="passcode"/> for delivery without waiting for it.</summary>
-    public void Enqueue(IssuedPasscode passcode)
+    /// <summary>Queues <paramref name="passcode"/> for delivery in <paramref name="locale"/> without waiting for it.</summary>
+    public void Enqueue(IssuedPasscode passcode, string locale = AuthEmails.English)
     {
         ArgumentNullException.ThrowIfNull(passcode);
-        if (!this.queue.Writer.TryWrite(passcode))
+        if (!this.queue.Writer.TryWrite((passcode, locale)))
         {
             LogDropped(logger);
         }
@@ -40,13 +40,13 @@ public sealed partial class SignInMail(IEmailSender email, ILogger<SignInMail> l
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         // Not stoppingToken: codes already issued are still delivered while the host shuts down.
-        await foreach (var passcode in this.queue.Reader.ReadAllAsync(CancellationToken.None))
+        await foreach (var (passcode, locale) in this.queue.Reader.ReadAllAsync(CancellationToken.None))
         {
             try
             {
-                await email.SendAsync(passcode.Email, "Your TerraScale sign-in code",
-                    $"Your TerraScale sign-in code is {passcode.Code}. It expires in 10 minutes.\n\nIf you did not try to sign in, ignore this email.",
-                    CancellationToken.None);
+                var message = await emails.RenderAsync(AuthEmailKind.SignInCode, locale,
+                    new AuthEmailValues(passcode.Email) { Code = passcode.Code, ExpiresIn = Passcodes.Lifetime }, CancellationToken.None);
+                await email.SendAsync(passcode.Email, message, CancellationToken.None);
             }
             catch (Exception failure) when (failure is not OutOfMemoryException)
             {

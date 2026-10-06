@@ -18,7 +18,7 @@ namespace TerraScale.Auth.Tests;
 /// <summary>Captures sent mail so tests can read sign-in codes. Nothing leaves the process.</summary>
 public sealed partial class CapturingEmailSender : IEmailSender
 {
-    private readonly Channel<(string Recipient, string Body)> sent = Channel.CreateUnbounded<(string, string)>();
+    private readonly Channel<(string Recipient, EmailMessage Message)> sent = Channel.CreateUnbounded<(string, EmailMessage)>();
     private readonly Lock counting = new();
     private int inFlight;
     private int maxInFlight;
@@ -50,7 +50,7 @@ public sealed partial class CapturingEmailSender : IEmailSender
         }
     }
 
-    public async Task SendAsync(string recipient, string subject, string body, CancellationToken cancellationToken)
+    public async Task SendAsync(string recipient, EmailMessage message, CancellationToken cancellationToken)
     {
         lock (this.counting)
         {
@@ -64,7 +64,7 @@ public sealed partial class CapturingEmailSender : IEmailSender
                 await gate.Task.WaitAsync(cancellationToken);
             }
 
-            await this.sent.Writer.WriteAsync((recipient, body), cancellationToken);
+            await this.sent.Writer.WriteAsync((recipient, message), cancellationToken);
         }
         finally
         {
@@ -81,16 +81,16 @@ public sealed partial class CapturingEmailSender : IEmailSender
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         while (true)
         {
-            var (to, body) = await this.sent.Reader.ReadAsync(timeout.Token);
+            var (to, message) = await this.sent.Reader.ReadAsync(timeout.Token);
             if (string.Equals(to, recipient.Trim(), StringComparison.OrdinalIgnoreCase))
             {
-                return SixDigits().Match(body).Value;
+                return SixDigits().Match(message.Text).Value;
             }
         }
     }
 
     /// <summary>The next mail sent to anyone.</summary>
-    public async Task<(string Recipient, string Body)> NextAsync()
+    public async Task<(string Recipient, EmailMessage Message)> NextAsync()
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         return await this.sent.Reader.ReadAsync(timeout.Token);

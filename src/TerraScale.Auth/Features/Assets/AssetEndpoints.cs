@@ -10,6 +10,9 @@ public static class EmbeddedAssets
         ["admin.css"] = ("assets/admin/admin.css", "text/css; charset=utf-8"),
         ["datastar.js"] = ("assets/admin/datastar.js", "text/javascript; charset=utf-8"),
         ["logo.svg"] = ("assets/admin/logo.svg", "image/svg+xml"),
+        // Email clients do not show SVG; these are the dashboard's horizontal logos rasterized at 2x.
+        ["email-logo.png"] = ("assets/email/logo.png", "image/png"),
+        ["email-logo-dark.png"] = ("assets/email/logo-dark.png", "image/png"),
     };
 
     private static readonly Dictionary<string, (string Resource, string ContentType)> Fonts = new(StringComparer.Ordinal)

@@ -1,4 +1,5 @@
 using TerraScale.Auth.Configuration;
+using TerraScale.Auth.Features.Email;
 using TerraScale.Auth.Features.Identity;
 using TerraScale.Auth.Features.Oidc;
 using TerraScale.Auth.Features.Ui;
@@ -66,7 +67,7 @@ public sealed class RequestPasscodeEndpoint(Passcodes passcodes, SignInMail mail
         var address = form.Email?.Trim() ?? string.Empty;
         if (await passcodes.RequestAsync(OidcIssuer.InstanceId, address, cancellationToken) is { } issued)
         {
-            mail.Enqueue(issued);
+            mail.Enqueue(issued, AuthEmails.Locale(this.HttpContext.Request.Headers.AcceptLanguage));
         }
 
         return SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.Code, OidcIssuer.Slug, address, SignInFlow.SafeNext(form.Next)));

@@ -275,7 +275,9 @@ the email is sent after the response, so its timing does not reveal it either.
 `SignInMail`, a hosted service, queues at most 256 codes and sends them one at
 a time, so a slow relay holds at most one SMTP connection. Codes still queued
 when the host stops are sent within its shutdown timeout; a full queue drops
-a code and logs that (the user can request another). Delivery uses `SmtpEmailSender` when `TS_AUTH_SMTP_*` is set; otherwise
+a code and logs that (the user can request another). The code email is
+rendered by `AuthEmails` (TS-583) as HTML with a plain-text alternative, in
+English or, when `Accept-Language` prefers Portuguese, Brazilian Portuguese. Delivery uses `SmtpEmailSender` when `TS_AUTH_SMTP_*` is set; otherwise
 `LoggingEmailSender` delivers nothing and logs only message sizes. Both are
 copied from TS-488.
 

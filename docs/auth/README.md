@@ -302,6 +302,18 @@ tofu output -raw smtp_username   # full string incl. the @oci suffix
 tofu output -raw smtp_password
 ```
 
+Every email is a `multipart/alternative` message: a plain-text part and a
+responsive HTML part (`Features/Email/AuthEmails.cs` and
+`AuthEmailLayout.cshtml`) that follows the reader's light or dark mode, keeps
+the code large and selectable, states the expiry and ends with a "didn't
+request this?" note. Copy exists for the sign-in code, magic link, email
+verification, password reset, invitation, MFA code and new-device alert, in
+English and Brazilian Portuguese; the hosted sign-in page picks the locale from
+`Accept-Language`. The copy takes `{{ name }}` placeholders only (no logic), and
+the layout HTML-encodes every value. The logos come from
+`/admin/email-logo.png` and `/admin/email-logo-dark.png` on the public origin,
+so mail clients must be able to reach it.
+
 DNS prerequisites (terrascale.tech is hosted at Purelymail — not editable from
 this repo):
 

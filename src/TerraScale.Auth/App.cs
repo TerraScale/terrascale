@@ -70,6 +70,7 @@ public static partial class App
             builder.Services.AddSingleton<IEmailSender, SmtpEmailSender>();
         }
 
+        builder.Services.AddSingleton<AuthEmails>();
         builder.Services.AddSingleton<SignInMail>();
         builder.Services.AddHostedService(services => services.GetRequiredService<SignInMail>());
         builder.Services.AddOidc(options);

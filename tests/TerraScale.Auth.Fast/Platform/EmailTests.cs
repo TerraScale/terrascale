@@ -27,6 +27,7 @@ public sealed class EmailTests
     private const string Recipient = "private-person@example.test";
     private const string Subject = "Reset your password";
     private const string Body = "https://auth.test.invalid/reset?token=one-time-secret-8d2f";
+    private const string Html = $"<p><a href=\"{Body}\">Reset your password</a></p>";
     private const string SmtpPassword = "smtp-password-5c1e";
 
     [Test]
@@ -78,14 +79,14 @@ public sealed class EmailTests
         {
             app.MapPost("/__test/email", async (IEmailSender sender, CancellationToken cancellationToken) =>
             {
-                await sender.SendAsync(Recipient, Subject, Body, cancellationToken);
+                await sender.SendAsync(Recipient, new EmailMessage(Subject, Body, Html), cancellationToken);
                 return Results.Accepted();
             });
             app.MapPost("/__test/email/canceled", async (IEmailSender sender, string? recipient) =>
             {
                 try
                 {
-                    await sender.SendAsync(recipient ?? Recipient, Subject, Body, new CancellationToken(canceled: true));
+                    await sender.SendAsync(recipient ?? Recipient, new EmailMessage(Subject, Body, Html), new CancellationToken(canceled: true));
                     return Results.Accepted();
                 }
                 catch (OperationCanceledException)
@@ -104,7 +105,7 @@ public sealed class EmailTests
         using var response = await server.Client.PostAsync("/__test/email", null);
 
         await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Accepted);
-        await Assert.That(logs.Text).Contains($"Email not delivered: no SMTP relay is configured (recipient {Recipient.Length}, subject {Subject.Length}, body {Body.Length} characters)");
+        await Assert.That(logs.Text).Contains($"Email not delivered: no SMTP relay is configured (recipient {Recipient.Length}, subject {Subject.Length}, text {Body.Length}, HTML {Html.Length} characters)");
         await AssertNoMessageDataAsync(logs.Text);
     }
 
@@ -222,7 +223,9 @@ public sealed class EmailTests
         await Assert.That(conversation.Any(line => line.StartsWith("MAIL FROM:<no-reply@auth.test.invalid>", StringComparison.Ordinal))).IsTrue();
         await Assert.That(conversation.Any(line => line.StartsWith($"RCPT TO:<{Recipient}>", StringComparison.Ordinal))).IsTrue();
         await Assert.That(delivered.Subject).IsEqualTo(Subject);
+        await Assert.That(delivered.Body?.ContentType.MimeType).IsEqualTo("multipart/alternative");
         await Assert.That(delivered.TextBody?.TrimEnd()).IsEqualTo(Body);
+        await Assert.That(delivered.HtmlBody?.TrimEnd()).IsEqualTo(Html);
         await Assert.That(logs.Text).DoesNotContain("SMTP delivery failed");
         await AssertNoMessageDataAsync(logs.Text);
         await Assert.That(used!.CheckCertificateRevocation).IsTrue();

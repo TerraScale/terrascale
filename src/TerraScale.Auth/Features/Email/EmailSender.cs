@@ -5,14 +5,24 @@ using TerraScale.Auth.Configuration;
 
 namespace TerraScale.Auth.Features.Email;
 
+/// <summary>An email to send: a plain-text body and, optionally, an HTML alternative of the same content.</summary>
+/// <param name="Subject">The subject line.</param>
+/// <param name="Text">The plain-text body.</param>
+/// <param name="Html">The HTML body, or <see langword="null"/> for a plain-text message.</param>
+public sealed record EmailMessage(string Subject, string Text, string? Html = null)
+{
+    /// <summary>Omits the content, so formatting or logging the message never discloses a code or a link.</summary>
+    public override string ToString() => nameof(EmailMessage);
+}
+
 /// <summary>
 /// Sends transactional email. Delivery failures are logged and swallowed, so a flow's outcome
 /// never reveals whether mail could be delivered. Only caller cancellation propagates.
 /// </summary>
 public interface IEmailSender
 {
-    /// <summary>Sends a plain-text message.</summary>
-    Task SendAsync(string recipient, string subject, string body, CancellationToken cancellationToken);
+    /// <summary>Sends <paramref name="message"/> to <paramref name="recipient"/>.</summary>
+    Task SendAsync(string recipient, EmailMessage message, CancellationToken cancellationToken);
 }
 
 /// <summary>
@@ -22,11 +32,10 @@ public interface IEmailSender
 public sealed partial class LoggingEmailSender(ILogger<LoggingEmailSender> logger) : IEmailSender
 {
     /// <inheritdoc />
-    public Task SendAsync(string recipient, string subject, string body, CancellationToken cancellationToken)
+    public Task SendAsync(string recipient, EmailMessage message, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(recipient);
-        ArgumentNullException.ThrowIfNull(subject);
-        ArgumentNullException.ThrowIfNull(body);
+        ArgumentNullException.ThrowIfNull(message);
         if (cancellationToken.IsCancellationRequested)
         {
             return Task.FromCanceled(cancellationToken);
@@ -35,7 +44,7 @@ public sealed partial class LoggingEmailSender(ILogger<LoggingEmailSender> logge
         // Best effort, like the SMTP sender's failure log: a failing provider must not fail the flow.
         try
         {
-            LogNotDelivered(logger, recipient.Length, subject.Length, body.Length);
+            LogNotDelivered(logger, recipient.Length, message.Subject.Length, message.Text.Length, message.Html?.Length ?? 0);
         }
         catch (Exception logFailure) when (logFailure is not OutOfMemoryException)
         {
@@ -45,8 +54,8 @@ public sealed partial class LoggingEmailSender(ILogger<LoggingEmailSender> logge
         return Task.CompletedTask;
     }
 
-    [LoggerMessage(Level = LogLevel.Warning, Message = "Email not delivered: no SMTP relay is configured (recipient {RecipientLength}, subject {SubjectLength}, body {BodyLength} characters)")]
-    private static partial void LogNotDelivered(ILogger logger, int recipientLength, int subjectLength, int bodyLength);
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Email not delivered: no SMTP relay is configured (recipient {RecipientLength}, subject {SubjectLength}, text {TextLength}, HTML {HtmlLength} characters)")]
+    private static partial void LogNotDelivered(ILogger logger, int recipientLength, int subjectLength, int textLength, int htmlLength);
 }
 
 /// <summary>
@@ -62,23 +71,24 @@ public sealed partial class SmtpEmailSender(AuthOptions options, ILogger<SmtpEma
     private const int TimeoutMilliseconds = 30_000;
 
     /// <inheritdoc />
-    public async Task SendAsync(string recipient, string subject, string body, CancellationToken cancellationToken)
+    public async Task SendAsync(string recipient, EmailMessage message, CancellationToken cancellationToken)
     {
         try
         {
-            using var message = new MimeMessage();
+            using var mime = new MimeMessage();
             // Bare addresses only: Parse would turn "Name <other@example>" into a different recipient.
-            message.From.Add(new MailboxAddress(string.Empty, options.SmtpFromAddress!));
-            message.To.Add(new MailboxAddress(string.Empty, recipient));
-            message.Subject = subject;
-            message.Body = new TextPart("plain") { Text = body };
+            mime.From.Add(new MailboxAddress(string.Empty, options.SmtpFromAddress!));
+            mime.To.Add(new MailboxAddress(string.Empty, recipient));
+            mime.Subject = message.Subject;
+            // multipart/alternative with the text part first, when there is HTML.
+            mime.Body = new BodyBuilder { TextBody = message.Text, HtmlBody = message.Html }.ToMessageBody();
 
             using var client = createClient?.Invoke() ?? new SmtpClient();
             client.Timeout = TimeoutMilliseconds;
             client.CheckCertificateRevocation = options.SmtpCheckRevocation;
             await client.ConnectAsync(options.SmtpHost!, options.SmtpPort, SecureSocketOptions.StartTls, cancellationToken);
             await client.AuthenticateAsync(options.SmtpUsername!, options.SmtpPassword!, cancellationToken);
-            await client.SendAsync(message, cancellationToken);
+            await client.SendAsync(mime, cancellationToken);
             await client.DisconnectAsync(quit: true, cancellationToken);
         }
         catch (Exception exception) when (exception is not OutOfMemoryException)
