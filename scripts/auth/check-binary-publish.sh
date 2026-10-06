@@ -15,6 +15,7 @@ mkdir -p "$sandbox/repo/scripts/ci" "$sandbox/bin" "$sandbox/state/assets"
 cp "$repo/scripts/ci/publish-binary.sh" "$repo/scripts/ci/stage-release.sh" "$sandbox/repo/scripts/ci/"
 commit=$(printf '%040d' 1)
 token=fixture-job-token-6d1e
+read_token=fixture-org-read-token-91c2
 
 # The arm64 smoke check records which binary it was given; FAIL_SMOKE makes it fail.
 cat > "$sandbox/repo/scripts/ci/smoke-arm64.sh" <<'STUB'
@@ -58,28 +59,34 @@ case "$1 $2" in
         fi
         [[ ${CORRUPT_UPLOAD:-} != "$6" ]] || printf 'x' >> "$STATE/assets/$6" ;;
       delete) rm -f "$STATE/assets/$5" ;;
-      download)
-        [[ ${FAIL_DOWNLOAD:-} != "$5" ]] || exit 1
-        while (($#)); do if [[ $1 == -o ]]; then out=$2; fi; shift; done
-        name=$(basename "$out")
-        [[ -e $STATE/assets/$name ]] && cp "$STATE/assets/$name" "$out" ;;
     esac ;;
 esac
 STUB
-# The releases API: 404 without a release, else its asset names. The token must arrive in a
-# header file, never in argv (which is recorded).
+# The releases API (job token): 404 without a release, else its asset names. Release
+# downloads (read token only, as on the server): an asset, or a --fail exit. Tokens must
+# arrive in a header file, never in argv (which is recorded).
 cat > "$sandbox/bin/curl" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
 printf 'curl %s\n' "$*" >> "$CALLS"
-[[ ${FAIL_LIST:-} != 1 ]] || exit 7
 while (($#)); do
   case $1 in
     --output) out=$2; shift ;;
     --header) header=${2#@}; shift ;;
+    --proto-redir) shift ;;
+    --*) ;;
+    *) url=$1 ;;
   esac
   shift
 done
+if [[ $url == */releases/download/* ]]; then
+  name=${url##*/}
+  grep -Fxq "Authorization: token $(cat "$READ_TOKEN_FILE")" "$header" || exit 22
+  [[ ${FAIL_DOWNLOAD:-} != "$name" && -e $STATE/assets/$name ]] || exit 22
+  cp "$STATE/assets/$name" "$out"
+  exit 0
+fi
+[[ ${FAIL_LIST:-} != 1 ]] || exit 7
 grep -Fxq "Authorization: token $(cat "$STATE/token")" "$header"
 if [[ -e $STATE/release ]]; then
   (cd "$STATE/assets" && find . -maxdepth 1 -type f -printf '%f\n') | jq -R . | jq -s '{assets: map({name: .})}' > "$out"
@@ -91,6 +98,8 @@ STUB
 chmod +x "$sandbox/bin/"*
 export PATH="$sandbox/bin:$PATH" CALLS="$sandbox/calls" STATE="$sandbox/state"
 export FORGEJO_REF=refs/heads/main FORGEJO_SHA=$commit FORGEJO_REPOSITORY=TerraScale/ts-auth FORGEJO_TOKEN=$token
+printf '%s' "$read_token" > "$sandbox/read-token"
+export ORG_READ_TOKEN=$read_token READ_TOKEN_FILE="$sandbox/read-token"
 publish="$sandbox/repo/scripts/ci/publish-binary.sh"
 tag="v0.1.0-dev.$commit"
 
@@ -112,6 +121,7 @@ reject env -u FORGEJO_SHA bash "$publish"
 reject env FORGEJO_REPOSITORY='../evil' bash "$publish"
 reject env -u FORGEJO_REPOSITORY bash "$publish"
 reject env -u FORGEJO_TOKEN bash "$publish"
+reject env -u ORG_READ_TOKEN bash "$publish"
 
 # A fresh release: binary first, checksum last, and the published pair verifies.
 reset
@@ -122,8 +132,8 @@ called "^release create $tag .*--create-tag --branch $commit"
 # The smoke check ran, on the staged binary, before anything reached the release.
 [[ $(grep -n '' "$CALLS" | grep -m1 -E '^[0-9]+:(smoke|release|curl)' | cut -d: -f2-) == "smoke "*"/stage/ts-auth" ]]
 [[ $(grep '^release asset create' "$CALLS" | awk '{print $6}' | paste -sd,) == ts-auth-linux-arm64,ts-auth-linux-arm64.sha256 ]]
-# The token reaches fj on stdin only and never the build environment.
-if grep -Fq "$token" "$CALLS" "$STATE/dotnet-env"; then echo "token leaked into argv or the build" >&2; exit 1; fi
+# The tokens reach fj on stdin and curl in header files only, and never the build environment.
+if grep -Fq -e "$token" -e "$read_token" "$CALLS" "$STATE/dotnet-env"; then echo "token leaked into argv or the build" >&2; exit 1; fi
 mkdir "$sandbox/substitute"
 cp "$STATE/assets/"* "$sandbox/substitute/"
 
@@ -204,5 +214,14 @@ if SUBSTITUTE_UPLOADS="$sandbox/substitute" bash "$publish" > "$sandbox/failed" 
 fi
 verified
 grep -Fq 'do not match the smoke-checked files' "$sandbox/failed"
+
+# A read-back the server refuses (here a token the download URL rejects) fails as a
+# download, never as a checksum mismatch that would replace a good release on a rerun.
+reset
+if ORG_READ_TOKEN=refused-read-token bash "$publish" > "$sandbox/failed" 2>&1; then
+  echo "a refused read-back passed" >&2
+  exit 1
+fi
+grep -Fq 'could not download the published assets' "$sandbox/failed"
 
 echo "binary publish guards passed"

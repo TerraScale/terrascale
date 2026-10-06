@@ -181,6 +181,7 @@ jobs:
       - name: Publish the linux-arm64 release assets
         env:
           FORGEJO_TOKEN: ${{ forgejo.token }}
+          ORG_READ_TOKEN: ${{ secrets.ORG_READ_TOKEN }}
           FORGEJO_REF: ${{ forgejo.ref }}
           FORGEJO_REPOSITORY: ${{ forgejo.repository }}
         run: bash scripts/ci/publish-binary.sh

@@ -15,7 +15,9 @@
 # publishers of the same tag never overlap.
 #
 # Environment: FORGEJO_TOKEN (job token with release write), FORGEJO_REF,
-# FORGEJO_SHA and FORGEJO_REPOSITORY, or their GITHUB_* equivalents.
+# FORGEJO_SHA and FORGEJO_REPOSITORY, or their GITHUB_* equivalents, and
+# ORG_READ_TOKEN, which reads the assets back: release download URLs of a
+# private repository answer 404 to the job token.
 set -euo pipefail
 
 test "$#" -eq 0 || { echo "usage: $0" >&2; exit 2; }
@@ -23,8 +25,10 @@ test "$#" -eq 0 || { echo "usage: $0" >&2; exit 2; }
 # The build below must never see the token: MSBuild exposes every environment
 # variable as a property to all imported targets.
 token=${FORGEJO_TOKEN:-${GITHUB_TOKEN:-}}
-unset FORGEJO_TOKEN GITHUB_TOKEN
+read_token=${ORG_READ_TOKEN:-}
+unset FORGEJO_TOKEN GITHUB_TOKEN ORG_READ_TOKEN
 [[ -n $token ]] || { echo "FORGEJO_TOKEN (or GITHUB_TOKEN) is required" >&2; exit 2; }
+[[ -n $read_token ]] || { echo "ORG_READ_TOKEN is required" >&2; exit 2; }
 
 host=git.terrascale.tech
 asset=ts-auth-linux-arm64
@@ -62,7 +66,8 @@ install -m 0755 -- "$work/stage/ts-auth" "$work/assets/$asset"
 export XDG_DATA_HOME="$work/fj-data" XDG_CONFIG_HOME="$work/fj-config"
 printf '%s\n' "$token" | fj auth add-token --host "$host" >/dev/null
 printf 'Authorization: token %s\n' "$token" > "$work/auth-header"
-unset token
+printf 'Authorization: token %s\n' "$read_token" > "$work/read-header"
+unset token read_token
 
 # The release's asset names after "present", or "absent" when the API answers 404.
 # Any other answer or a transport failure stops the run.
@@ -77,11 +82,17 @@ release_state() {
   esac
 }
 
-# Downloads both assets into a fresh check directory.
+# Downloads both assets into a fresh check directory. A refused or missing download
+# fails here rather than leaving an error page to fail the checksum. The download URL
+# may redirect to the stored attachment; curl follows it over HTTPS only and does not
+# send the read token's Authorization header to another host.
 download_pair() {
-  rm -rf -- "$work/check" && mkdir -- "$work/check" &&
-    fj release asset download "$tag" "$asset" --host "$host" --repo "$repository" -o "$work/check/$asset" >/dev/null &&
-    fj release asset download "$tag" "$asset.sha256" --host "$host" --repo "$repository" -o "$work/check/$asset.sha256" >/dev/null
+  rm -rf -- "$work/check" && mkdir -- "$work/check" || return 1
+  local name
+  for name in "$asset" "$asset.sha256"; do
+    curl --fail --location --proto-redir =https --silent --show-error --header @"$work/read-header" \
+      --output "$work/check/$name" "https://$host/$repository/releases/download/$tag/$name" || return 1
+  done
 }
 
 # Whether the downloaded checksum file is exactly the one line sha256sum writes for the
