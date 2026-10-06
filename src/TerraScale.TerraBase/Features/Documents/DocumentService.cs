@@ -253,15 +253,25 @@ internal sealed class DocumentService(IStorageEngine engine, TimeProvider time, 
         }
     }
 
+    // One operation, with the engine's limits read where they are hit.
     public async ValueTask<ApplyOutcome> ApplyAsync(IStorageTransaction transaction, DocumentOperation operation, CancellationToken cancellationToken)
     {
         try
         {
             return await ApplyOperationAsync(transaction, operation, cancellationToken).ConfigureAwait(false);
         }
+        catch (DocumentValidationException error)
+        {
+            return new DocumentRejected(error.TooLarge ? new PayloadTooLarge(error.Message) : new Validation(error.Message));
+        }
         catch (StorageWriteLimitException)
         {
+            // One commit must fit one shape log chunk (docs/shape-reads.md).
             return new DocumentRejected(WriteLimits);
+        }
+        catch (ChangeGroupCapacityException)
+        {
+            return new DocumentRejected(ChangeGroupCapacity);
         }
         catch (OverflowException)
         {
@@ -326,37 +336,17 @@ internal sealed class DocumentService(IStorageEngine engine, TimeProvider time, 
         }
     }
 
-    // One operation of a client transaction, with the engine's limits read where they are hit.
-    private static async ValueTask<ApplyOutcome> ApplyCheckedAsync(
+    // One operation of a client transaction: its collection must exist.
+    private async ValueTask<ApplyOutcome> ApplyCheckedAsync(
         IStorageTransaction transaction, DocumentOperation operation, HashSet<string> collections, CancellationToken cancellationToken)
     {
-        try
+        if (collections.Add(operation.Collection)
+            && await transaction.GetCollectionAsync(operation.Collection, cancellationToken).ConfigureAwait(false) is null)
         {
-            if (collections.Add(operation.Collection)
-                && await transaction.GetCollectionAsync(operation.Collection, cancellationToken).ConfigureAwait(false) is null)
-            {
-                return new DocumentRejected(UnknownCollection);
-            }
+            return new DocumentRejected(UnknownCollection);
+        }
 
-            return await ApplyOperationAsync(transaction, operation, cancellationToken).ConfigureAwait(false);
-        }
-        catch (DocumentValidationException error)
-        {
-            return new DocumentRejected(error.TooLarge ? new PayloadTooLarge(error.Message) : new Validation(error.Message));
-        }
-        catch (StorageWriteLimitException)
-        {
-            // One commit must fit one shape log chunk (docs/shape-reads.md).
-            return new DocumentRejected(WriteLimits);
-        }
-        catch (ChangeGroupCapacityException)
-        {
-            return new DocumentRejected(ChangeGroupCapacity);
-        }
-        catch (OverflowException)
-        {
-            return new DocumentRejected(OffsetExhausted);
-        }
+        return await ApplyAsync(transaction, operation, cancellationToken).ConfigureAwait(false);
     }
 
     private static async ValueTask<ApplyOutcome> ApplyOperationAsync(
