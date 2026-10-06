@@ -22,7 +22,7 @@ func TestWizardPlansAreCheapestFirstWithAllowancesAndTrial(t *testing.T) {
 		t.Fatalf("wizard plans = %q, want %q", keys, want)
 	}
 	starter := plans[0]
-	if want := []string{"5 GB-region storage", "1M operations/month", "5 databases", "5 team members"}; !slices.Equal(starter.Allowances, want) {
+	if want := []string{"5 GB-region storage", "1M reads/month", "1M writes/month", "5 databases", "5 team members"}; !slices.Equal(starter.Allowances, want) {
 		t.Errorf("Starter allowances = %q, want %q", starter.Allowances, want)
 	}
 	if starter.Trial != "30-day free trial" {

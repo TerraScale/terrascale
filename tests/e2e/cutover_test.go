@@ -30,7 +30,7 @@ func TestCutoverBusinessOrganizationRetriesCanceledAnnualCheckoutAsMonthly(t *te
 	payment := wizardStep(page, wizard, "payment-method")
 	plans := payment.Locator(".ts-org-plan")
 	must(t, expect.Locator(plans).ToHaveCount(3))
-	for _, text := range []string{"Starter", "$5.00", "5 GB-region storage", "1M operations/month", "5 databases", "5 team members", "30-day free trial"} {
+	for _, text := range []string{"Starter", "$5.00", "5 GB-region storage", "1M reads/month", "1M writes/month", "5 databases", "5 team members", "30-day free trial"} {
 		must(t, expect.Locator(plans.First()).ToContainText(text))
 	}
 	must(t, expect.Locator(plans.Last()).ToContainText("Business"))
@@ -229,28 +229,21 @@ func TestCutoverSamplePaymentHistoryFiltersAndPaginatesInvoices(t *testing.T) {
 	must(t, expect.Locator(rows).ToHaveCount(10))
 }
 
-func TestCutoverFreshAccountChartsShowZeroBaseline(t *testing.T) {
+// TestCutoverFreshAccountChartsExplainTheMissingMeter checks that without
+// TerraBase metering neither chart plots invented reads or writes.
+func TestCutoverFreshAccountChartsExplainTheMissingMeter(t *testing.T) {
 	t.Parallel()
 	page := newPage(t)
 	registerAndOnboard(t, page, newAccount("cutover-empty-charts"))
-	activity := page.Locator("#home-activity svg.ts-chart")
-	visible(t, activity)
-	must(t, expect.Locator(activity).ToHaveAttribute("aria-label", regexp.MustCompile(`Illustrative zero baseline`)))
-	must(t, expect.Locator(page.Locator(".ts-home-activity-total")).ToContainText("Plotted operations"))
-	line := requiredAttribute(t, activity.Locator("path.ts-chart-line"), "d", "activity chart must plot a line")
-	coordinates := regexp.MustCompile(`[\d.]+,([\d.]+)`).FindAllStringSubmatch(line, -1)
-	if len(coordinates) < 2 {
-		t.Fatalf("zero baseline path %q must plot more than one point", line)
-	}
-	for _, coordinate := range coordinates {
-		if coordinate[1] != coordinates[0][1] {
-			t.Fatalf("zero baseline path %q must be flat", line)
-		}
-	}
+	visible(t, page.Locator("#home-activity").GetByText("No measured reads or writes to plot."))
+	must(t, expect.Locator(page.Locator("#home-activity svg.ts-chart")).ToHaveCount(0))
 
 	goToOK(t, page, "/usage")
-	visible(t, pageByRole(page, *playwright.AriaRoleHeading, "Workload history"))
-	visible(t, page.GetByText("Workload history is unavailable."))
+	visible(t, pageByRole(page, *playwright.AriaRoleHeading, "Reads and writes"))
+	visible(t, page.GetByText("Reads and writes are not metered here."))
+	for _, gone := range []string{"Read and write operations", "Write units", "Workload history"} {
+		must(t, expect.Locator(page.GetByText(gone)).ToHaveCount(0))
+	}
 	must(t, expect.Locator(page.Locator(".ts-usage-sample-gauges .ts-usage-ring")).ToHaveCount(0))
 	must(t, expect.Locator(page.Locator(".ts-usage-chart-shell svg.ts-chart")).ToHaveCount(0))
 }
@@ -262,11 +255,12 @@ func TestCutoverSeededChartsRenderLabelledSamplesForSelectedRange(t *testing.T) 
 	activity := page.Locator("#home-activity svg.ts-chart")
 	visible(t, activity)
 	must(t, expect.Locator(activity).ToHaveAttribute("aria-label", regexp.MustCompile(`Sample organization activity`)))
-	sevenDayLine := requiredAttribute(t, activity.Locator("path.ts-chart-line"), "d", "activity chart must plot a line")
-	must(t, expect.Locator(page.Locator(".ts-home-activity-total")).ToContainText("Sample operations"))
+	sevenDayLine := requiredAttribute(t, activity.Locator("path.ts-chart-line.ts-cat-1"), "d", "activity chart must plot reads")
+	must(t, expect.Locator(activity.Locator("path.ts-chart-line.ts-cat-2")).ToHaveCount(1))
+	must(t, expect.Locator(page.Locator(".ts-home-activity-total")).ToContainText("Writes"))
 	goToOK(t, page, "/?range=24h")
 	must(t, expect.Locator(page.Locator("#home-activity svg.ts-chart")).ToHaveAttribute("aria-label", regexp.MustCompile(`Last 24 hours`)))
-	if requiredAttribute(t, page.Locator("#home-activity path.ts-chart-line"), "d", "24h activity chart must plot a line") == sevenDayLine {
+	if requiredAttribute(t, page.Locator("#home-activity path.ts-chart-line.ts-cat-1"), "d", "24h activity chart must plot reads") == sevenDayLine {
 		t.Fatal("24h activity must plot a different line than 7d")
 	}
 

@@ -31,7 +31,7 @@ func TestUsageAndSpendingControlsSupportOrganizationWithoutProjects(t *testing.T
 	}
 	service := Service{deps: core.Deps{Store: store, Demo: true}}
 
-	report, err := service.Usage(t.Context(), principal, "")
+	report, err := service.Usage(t.Context(), principal, "", "", "")
 	if err != nil {
 		t.Fatalf("Usage without a project: %v", err)
 	}
@@ -43,7 +43,7 @@ func TestUsageAndSpendingControlsSupportOrganizationWithoutProjects(t *testing.T
 	if err := service.SetSpendingControls(t.Context(), principal, spendingControls{OrganizationCapCents: &cap}); err != nil {
 		t.Fatalf("SetSpendingControls without a project: %v", err)
 	}
-	updated, err := service.Usage(t.Context(), principal, "")
+	updated, err := service.Usage(t.Context(), principal, "", "", "")
 	if err != nil {
 		t.Fatalf("Usage after spending-control update: %v", err)
 	}

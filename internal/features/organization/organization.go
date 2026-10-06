@@ -128,7 +128,7 @@ func wizardPlans(plans []core.Plan, org core.Organization) []planView {
 			Key: plan.Key, Name: plan.Name, PriceCents: plan.PriceCents, AnnualPriceCents: plan.AnnualPriceCents,
 			MonthlyPrice: fmt.Sprintf("$%.2f", float64(plan.PriceCents)/100),
 			AnnualPrice:  fmt.Sprintf("$%.2f", float64(plan.AnnualPriceCents)/100),
-			Allowances:   []string{plan.StorageAllowance(), plan.OperationsAllowance(), plan.DatabaseAllowance(), plan.MemberAllowance()},
+			Allowances:   []string{plan.StorageAllowance(), plan.ReadsAllowance(), plan.WritesAllowance(), plan.DatabaseAllowance(), plan.MemberAllowance()},
 		}
 		if plan.TrialDays > 0 && !org.Billing.TrialUsed {
 			view.Trial = fmt.Sprintf("%d-day free trial", plan.TrialDays)

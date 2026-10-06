@@ -576,6 +576,8 @@ type Deps struct {
 	Render   Renderer
 	Events   Events
 	SDK      SDKFactory
+	// Usage reads TerraBase's metered usage; nil without TerraBase.
+	Usage    UsageMeter
 	Throttle Throttle
 	Tools    *Tools
 	Demo     bool

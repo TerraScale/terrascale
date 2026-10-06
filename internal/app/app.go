@@ -61,6 +61,7 @@ func New(cfg config.Config) (*Application, error) {
 	grants := auth.DeviceGrants(auth.NewMemoryDeviceGrants())
 	probe := status.Options{Backend: "memstore"}
 	var db *v1.Database
+	var meter core.UsageMeter
 	cfg.Demo = cfg.TerraBaseURL == ""
 	if cfg.Demo {
 		store = memstore.New()
@@ -79,6 +80,8 @@ func New(cfg config.Config) (*Application, error) {
 			return nil, err
 		}
 		db = client.Database(cfg.TerraBaseProjectID, cfg.TerraBaseDatabase)
+		// The Management API shares the Documents API's origin.
+		meter = terrabase.Meter{BaseURL: cfg.TerraBaseURL, Client: cfg.TerraBaseHTTPClient}
 		store = terrabase.New(db)
 		sessionStore = terrabase.NewSessions(db)
 		throttleStore = terrabase.NewThrottle(db)
@@ -116,7 +119,7 @@ func New(cfg config.Config) (*Application, error) {
 		if err != nil {
 			return nil, err
 		}
-		sessionOptions.Refresh, sessionOptions.Revoke = tsAuth.RefreshSession, tsAuth.RevokeSession
+		sessionOptions.Refresh, sessionOptions.UserToken, sessionOptions.Revoke = tsAuth.RefreshSession, auth.AccessToken, tsAuth.RevokeSession
 	}
 	sessions := session.New(store, sessionOptions)
 	guard := csrf.New(sessions, csrf.Options{Secure: cfg.SecureCookies, Secret: cfg.CSRFSecret})
@@ -132,7 +135,7 @@ func New(cfg config.Config) (*Application, error) {
 	deps := core.Deps{
 		Store: store, Sessions: sessions, CSRF: guard, Render: renderer,
 		Events: datastar.Events{}, Demo: cfg.Demo, Tools: core.NewTools(store),
-		SDK: sdkFactory, DocumentsOnly: db != nil,
+		SDK: sdkFactory, Usage: meter, DocumentsOnly: db != nil,
 		Throttle: throttle.New(throttle.Options{ClientHeader: cfg.ClientIPHeader, Store: throttleStore}),
 	}
 	mux := http.NewServeMux()

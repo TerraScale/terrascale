@@ -268,7 +268,7 @@ func newTSAuthDashboard(t *testing.T, issuer *testIssuer, wrap ...func(core.Stor
 		t.Fatal(err)
 	}
 	store, records := memstore.New(), session.NewMemoryStore()
-	sessions := session.New(store, session.Options{Store: records, Refresh: tsAuth.RefreshSession, Revoke: tsAuth.RevokeSession})
+	sessions := session.New(store, session.Options{Store: records, Refresh: tsAuth.RefreshSession, Revoke: tsAuth.RevokeSession, UserToken: AccessToken})
 	guard := csrf.New(sessions, csrf.Options{})
 	var featureStore core.Store = store
 	for _, w := range wrap {
@@ -607,13 +607,57 @@ func TestTSAuthRefreshKeepsTokenTSAuthDoesNotRotate(t *testing.T) {
 			t.Fatal("session refreshed without a new refresh token was signed out")
 		}
 	}
-	if after, _ := dashboard.record(t); after.Refresh != before.Refresh || issuer.refreshCount() != 2 {
+	if after, _ := dashboard.record(t); refreshToken(t, after.Refresh) != refreshToken(t, before.Refresh) || issuer.refreshCount() != 2 {
 		t.Fatalf("refreshes=%d kept=%v; want two refreshes with the same token", issuer.refreshCount(), after.Refresh == before.Refresh)
 	}
 	issuer.set(func(i *testIssuer) { clear(i.refreshes) })
 	dashboard.expire(t)
 	if dashboard.signedIn(t) {
 		t.Fatal("session outlived its revoked, never-rotated refresh token")
+	}
+}
+
+func refreshToken(t *testing.T, refresh string) string {
+	t.Helper()
+	var state refreshState
+	if err := json.Unmarshal([]byte(refresh), &state); err != nil {
+		t.Fatal(err)
+	}
+	return state.Token
+}
+
+// TestTSAuthSessionKeepsTheAccessTokenForTerraBase checks the session hands
+// out ts-auth's latest access token, which TerraBase's usage API accepts,
+// and none once it expires.
+func TestTSAuthSessionKeepsTheAccessTokenForTerraBase(t *testing.T) {
+	t.Parallel()
+	issuer := newTestIssuer(t)
+	dashboard := newTSAuthDashboard(t, issuer)
+	dashboard.signIn(t, issuer, "/login")
+	userToken := func() string {
+		request := httptest.NewRequest(http.MethodGet, "http://dashboard.test/", nil)
+		for _, cookie := range dashboard.cookies {
+			request.AddCookie(cookie)
+		}
+		return dashboard.sessions.UserToken(request)
+	}
+	first := userToken()
+	if first == "" {
+		t.Fatal("signed-in session has no access token")
+	}
+	dashboard.expire(t)
+	if !dashboard.signedIn(t) {
+		t.Fatal("refreshed session was signed out")
+	}
+	if second := userToken(); second == "" || second == first {
+		t.Fatalf("access token after refresh = %q, want ts-auth's new one", second)
+	}
+	expired, err := json.Marshal(refreshState{Subject: testSubject, Token: "r", Access: "a", AccessExpiry: time.Now().Add(-time.Second)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if AccessToken(string(expired)) != "" || AccessToken("not json") != "" {
+		t.Fatal("an expired or unreadable refresh state yielded an access token")
 	}
 }
 

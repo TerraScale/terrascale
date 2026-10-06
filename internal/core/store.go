@@ -217,13 +217,15 @@ func NewAccount(user User) (Account, error) {
 	}, nil
 }
 
-// DefaultPlans is the catalog a new store starts with.
+// DefaultPlans is the catalog a new store starts with. Free's limits are
+// the public Hobby plan's (terrascale.tech/pricing.json). StorageMiB counts
+// a label's GB as a GiB, so utilization never runs out before the label.
 func DefaultPlans() []Plan {
 	return []Plan{
-		{ID: "plan_free", Key: "free", Name: "Free", Visible: true, MaxDatabases: 1},
-		{ID: "plan_starter", Key: "starter", Name: "Starter", PriceCents: 500, AnnualPriceCents: 5000, TrialDays: 30, Visible: true, MaxDatabases: 5, MaxMembers: 5, OperationsPerMonth: 1_000_000, StorageLabel: "5 GB-region storage"},
-		{ID: "plan_pro", Key: "pro", Name: "Pro", PriceCents: 5000, AnnualPriceCents: 50000, TrialDays: 30, Visible: true, MaxDatabases: 25, MaxMembers: 25, OperationsPerMonth: 100_000_000, StorageLabel: "25 GB-region storage"},
-		{ID: "plan_business", Key: "business", Name: "Business", PriceCents: 9900, AnnualPriceCents: 99000, TrialDays: 30, Visible: true, MaxDatabases: 100, MaxMembers: 100, OperationsPerMonth: 50_000_000, StorageLabel: "5 TB-region storage"},
+		{ID: "plan_free", Key: "free", Name: "Free", Visible: true, MaxDatabases: 1, OperationsPerMonth: 100_000, StorageMiB: 100, StorageLabel: "0.1 GB-region storage"},
+		{ID: "plan_starter", Key: "starter", Name: "Starter", PriceCents: 500, AnnualPriceCents: 5000, TrialDays: 30, Visible: true, MaxDatabases: 5, MaxMembers: 5, OperationsPerMonth: 1_000_000, StorageMiB: 5 << 10, StorageLabel: "5 GB-region storage"},
+		{ID: "plan_pro", Key: "pro", Name: "Pro", PriceCents: 5000, AnnualPriceCents: 50000, TrialDays: 30, Visible: true, MaxDatabases: 25, MaxMembers: 25, OperationsPerMonth: 100_000_000, StorageMiB: 25 << 10, StorageLabel: "25 GB-region storage"},
+		{ID: "plan_business", Key: "business", Name: "Business", PriceCents: 9900, AnnualPriceCents: 99000, TrialDays: 30, Visible: true, MaxDatabases: 100, MaxMembers: 100, OperationsPerMonth: 50_000_000, StorageMiB: 5 << 20, StorageLabel: "5 TB-region storage"},
 	}
 }
 

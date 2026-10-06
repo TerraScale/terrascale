@@ -32,10 +32,12 @@ type databaseRow struct {
 	SpendCap     string
 	Effective    string
 	Status       string
-	Documents    int
-	StoredBytes  int64
-	StoredSize   string
+	Documents    int64
+	LogicalSize  string
 	SharePercent int
+	Metered      bool
+	Reads        int64
+	Writes       int64
 }
 
 type databaseOption struct {
@@ -51,9 +53,20 @@ type projectRow struct {
 	SpendCap      string
 	Effective     string
 	Selected      bool
-	StoredBytes   int64
-	StoredSize    string
+	LogicalSize   string
 	SharePercent  int
+}
+
+// allowanceGauge is one plan allowance and this month's use of it.
+type allowanceGauge struct {
+	Name      string
+	Allowance string
+	Used      string
+	Note      string
+	// HasRing is set when both the use and the limit are known.
+	HasRing bool
+	Percent int
+	Ring    charts.RingData
 }
 
 type sampleGauge struct {
@@ -134,8 +147,7 @@ type pageData struct {
 	ScheduledAt           time.Time
 	BillingPlans          []billingPlanChoice
 	Review                billingPlanReview
-	PlanStorageAllowance  string
-	PlanRequestAllowance  string
+	Allowances            []allowanceGauge
 	PlanUsageNote         string
 	HistoryRange          string
 	HistoryRangeLabel     string
@@ -147,10 +159,9 @@ type pageData struct {
 	BillingRenewal        time.Time
 	BillingSummary        billingSummary
 	InvoicePage           invoicePage
-	Requests              int64
 	Reads                 int64
 	Writes                int64
-	StorageByteSeconds    int64
+	LogicalSize           string
 	UsageSource           string
 	UsageError            string
 	UsageAvailable        bool
@@ -163,12 +174,12 @@ type pageData struct {
 }
 
 type billingPlanChoice struct {
-	Key, Name, MonthlyPrice, AnnualPrice, Storage, Requests, Databases, Members string
+	Key, Name, MonthlyPrice, AnnualPrice, Storage, Reads, Writes, Databases, Members string
 }
 
 type billingPlanReview struct {
-	Open, Ready, Immediate                                                                     bool
-	Key, Name, Interval, Price, Effect, Estimate, Storage, Requests, Databases, Members, Error string
+	Open, Ready, Immediate                                                                          bool
+	Key, Name, Interval, Price, Effect, Estimate, Storage, Reads, Writes, Databases, Members, Error string
 	// CanUndo offers to undo the scheduled change that blocks this one.
 	CanUndo bool
 	// Warnings name the allowances the organization already exceeds on the
@@ -233,14 +244,16 @@ func pageHandler(deps core.Deps, billing *payments.Stripe, wrap func(core.Page, 
 			databaseFilter = ""
 		}
 		ctx := r.Context()
-		data, err := buildPage(ctx, service, p, org, project, tab, databaseFilter)
+		token := ""
+		if tab == "overview" {
+			token = deps.UserToken(r)
+		}
+		data, err := buildPage(ctx, service, p, token, org, project, tab, databaseFilter, r.URL.Query().Get("range"))
 		if err != nil {
 			writeLoadError(w, err)
 			return
 		}
 		data.ExplicitProjectFilter = r.URL.Query().Get("project") == project.ID
-		data.HistoryRange = demovisuals.NormalizeRange(r.URL.Query().Get("range"))
-		data.HistoryRangeLabel = demovisuals.RangeLabel(data.HistoryRange)
 		if demovisuals.IsSeededMarioAccount(deps.Demo, account, org) {
 			addMarioSampleVisuals(&data)
 		}
@@ -281,7 +294,7 @@ func pageHandler(deps core.Deps, billing *payments.Stripe, wrap func(core.Page, 
 			}
 			data.BillingPlans = append(data.BillingPlans, billingPlanChoice{
 				Key: key, Name: plan.Name, MonthlyPrice: priceUSD(plan.PriceCents), AnnualPrice: priceUSD(plan.AnnualPriceCents),
-				Storage: plan.StorageAllowance(), Requests: plan.OperationsAllowance(), Databases: plan.DatabaseAllowance(), Members: plan.MemberAllowance(),
+				Storage: plan.StorageAllowance(), Reads: plan.ReadsAllowance(), Writes: plan.WritesAllowance(), Databases: plan.DatabaseAllowance(), Members: plan.MemberAllowance(),
 			})
 		}
 		plan, err := deps.Store.Plan(ctx, org.PlanID)
@@ -431,7 +444,8 @@ func reviewBillingPlan(r *http.Request, deps core.Deps, billing *payments.Stripe
 		free, err := deps.Store.Plan(r.Context(), "free")
 		switch {
 		case err == nil:
-			review.Storage, review.Requests, review.Databases, review.Members = free.StorageAllowance(), free.OperationsAllowance(), free.DatabaseAllowance(), free.MemberAllowance()
+			review.Storage, review.Reads, review.Writes = free.StorageAllowance(), free.ReadsAllowance(), free.WritesAllowance()
+			review.Databases, review.Members = free.DatabaseAllowance(), free.MemberAllowance()
 			review.Warnings = limitWarnings(org, free, time.Now())
 		case !errors.Is(err, core.ErrNotFound):
 			// Without the Free plan's limits the review cannot warn about
@@ -460,7 +474,8 @@ func reviewBillingPlan(r *http.Request, deps core.Deps, billing *payments.Stripe
 	if interval == "annual" {
 		review.Price = priceUSD(plan.AnnualPriceCents) + " / year"
 	}
-	review.Storage, review.Requests, review.Databases, review.Members = plan.StorageAllowance(), plan.OperationsAllowance(), plan.DatabaseAllowance(), plan.MemberAllowance()
+	review.Storage, review.Reads, review.Writes = plan.StorageAllowance(), plan.ReadsAllowance(), plan.WritesAllowance()
+	review.Databases, review.Members = plan.DatabaseAllowance(), plan.MemberAllowance()
 	review.Warnings = limitWarnings(org, plan, time.Now())
 	if !data.BillingSubscription {
 		review.Effect = "After Stripe confirms checkout"
@@ -575,8 +590,8 @@ func writeLoadError(w http.ResponseWriter, err error) {
 	http.Error(w, "could not load usage", http.StatusInternalServerError)
 }
 
-func buildPage(ctx context.Context, service Service, p core.Principal, org core.Organization, project core.Project, tab, databaseFilter string) (pageData, error) {
-	report, err := service.report(ctx, p, org, project, databaseFilter)
+func buildPage(ctx context.Context, service Service, p core.Principal, token string, org core.Organization, project core.Project, tab, databaseFilter, rangeKey string) (pageData, error) {
+	report, err := service.report(ctx, p, token, org, project, databaseFilter, rangeKey)
 	if err != nil {
 		return pageData{}, err
 	}
@@ -585,14 +600,15 @@ func buildPage(ctx context.Context, service Service, p core.Principal, org core.
 		projects = append(projects, projectRow{
 			ID: item.ID, Name: item.Name, Region: item.Region, DatabaseCount: item.DatabaseCount,
 			SpendCap: dollars(item.SpendCapCents), Effective: capLabel(item.EffectiveCapCents), Selected: item.Selected,
-			StoredBytes: item.StoredBytes, StoredSize: formatStoredBytes(item.StoredBytes), SharePercent: item.SharePercent,
+			LogicalSize: formatBytes(item.LogicalBytes), SharePercent: item.SharePercent,
 		})
 	}
 	databases := make([]databaseRow, 0, len(report.Databases))
 	for _, item := range report.Databases {
 		databases = append(databases, databaseRow{
 			ID: item.ID, Name: item.Name, Region: item.Region, SpendCap: dollars(item.SpendCapCents), Effective: capLabel(item.EffectiveCapCents),
-			Status: item.Status, Documents: item.Documents, StoredBytes: item.StoredBytes, StoredSize: formatStoredBytes(item.StoredBytes), SharePercent: item.SharePercent,
+			Status: item.Status, Documents: item.Documents, LogicalSize: formatBytes(item.LogicalBytes), SharePercent: item.SharePercent,
+			Metered: item.Metered, Reads: item.Reads, Writes: item.Writes,
 		})
 	}
 	databaseOptions := make([]databaseOption, 0, len(project.Databases))
@@ -600,19 +616,65 @@ func buildPage(ctx context.Context, service Service, p core.Principal, org core.
 		databaseOptions = append(databaseOptions, databaseOption{ID: database.ID, Name: database.Name})
 	}
 	slices.SortFunc(databaseOptions, func(a, b databaseOption) int { return strings.Compare(a.Name, b.Name) })
-	return pageData{
+	data := pageData{
 		Tab: tab, Projects: projects, DatabaseOptions: databaseOptions, Databases: databases, SelectedProject: project.ID,
 		SelectedDatabase: databaseFilter, OrganizationCap: dollars(report.SpendCapCents),
 		PaidExcess: report.PaidExcessEnabled, EffectiveCap: capLabel(report.ProjectEffectiveCapCents),
-		PlanName: report.PlanName, PlanStorageAllowance: report.PlanStorageAllowance, PlanRequestAllowance: report.PlanRequestAllowance,
-		PlanUsageNote: report.PlanUsageNote, BillingStatus: org.BillingStatus, BillingRenewal: org.BillingRenewal,
+		PlanName: report.PlanName, PlanUsageNote: report.PlanUsageNote, BillingStatus: org.BillingStatus, BillingRenewal: org.BillingRenewal,
 		BillingSummary:  summarizeBilling(org.Billing.Invoices, time.Now().UTC()),
 		InvoiceCount:    len(org.Billing.Invoices),
 		ActiveDatabases: report.ActiveDatabases, RegionCount: report.RegionCount, CanManage: report.CanManage,
-		Requests: report.Totals.Requests, Reads: report.Totals.Reads, Writes: report.Totals.Writes,
-		StorageByteSeconds: report.Totals.StorageByteSeconds, UsageSource: report.Totals.Source,
-		UsageError: report.Totals.Error, UsageAvailable: report.Totals.Available,
-	}, nil
+		Reads: report.Totals.Reads, Writes: report.Totals.Writes, LogicalSize: formatBytes(report.Totals.LogicalBytes),
+		UsageSource: report.Totals.Source, UsageError: report.Totals.Error, UsageAvailable: report.Totals.Available,
+		HistoryRange: report.Totals.Range, HistoryRangeLabel: demovisuals.RangeLabel(report.Totals.Range),
+	}
+	for _, item := range report.Allowances {
+		gauge := allowanceGauge{Name: item.Name, Allowance: item.Allowance, Used: "Not metered", Note: item.Allowance}
+		if item.Measured {
+			gauge.Used = formatCount(item.Used)
+			if item.Name == "Storage" {
+				gauge.Used = formatBytes(item.Used)
+			}
+		}
+		if item.Measured && item.Limit > 0 {
+			gauge.HasRing, gauge.Percent = true, item.Percent
+			gauge.Ring = charts.NewRing(item.Name, item.Used, item.Limit)
+			gauge.Ring.Label = fmt.Sprintf("%s: %d%% of the %s plan's allowance", item.Name, item.Percent, report.PlanName)
+		}
+		data.Allowances = append(data.Allowances, gauge)
+	}
+	if report.Totals.Available {
+		reads, writes, labels := make([]int64, len(report.Totals.Series)), make([]int64, len(report.Totals.Series)), make([]string, len(report.Totals.Series))
+		for i, point := range report.Totals.Series {
+			reads[i], writes[i], labels[i] = point.Reads, point.Writes, bucketLabel(point.Start, data.HistoryRange)
+		}
+		data.HistoryChart = charts.NewLine("Reads and writes, "+data.HistoryRangeLabel,
+			demovisuals.TickLabels(data.HistoryRange), labels, 200,
+			charts.Series{Name: "Reads", Values: reads}, charts.Series{Name: "Writes", Values: writes})
+		data.HistoryTotals = []historyTotal{
+			{Name: "Reads", Value: report.Totals.Reads, Class: "ts-cat-1"},
+			{Name: "Writes", Value: report.Totals.Writes, Class: "ts-cat-2"},
+		}
+	}
+	return data, nil
+}
+
+// bucketLabel names a series bucket by its UTC start: the hour for hourly
+// ranges, the day for 30d.
+func bucketLabel(start time.Time, rangeKey string) string {
+	if rangeKey == "30d" {
+		return start.UTC().Format("Jan 2")
+	}
+	return start.UTC().Format("Jan 2, 15:04 UTC")
+}
+
+// formatCount writes n with thousands separators, such as 8,140,200.
+func formatCount(n int64) string {
+	text := strconv.FormatInt(n, 10)
+	for i := len(text) - 3; i > 0 && text[i-1] != '-'; i -= 3 {
+		text = text[:i] + "," + text[i:]
+	}
+	return text
 }
 
 // makeInvoicePage pages invoices for the billing tab. Filter values the
@@ -712,14 +774,16 @@ func signedIn(deps core.Deps, w http.ResponseWriter, r *http.Request) (core.Prin
 	return p, account, true
 }
 
-func formatStoredBytes(value int64) string {
-	if value < 1024 {
+func formatBytes(value int64) string {
+	switch {
+	case value < 1<<10:
 		return fmt.Sprintf("%d B", value)
+	case value < 1<<20:
+		return fmt.Sprintf("%.1f KiB", float64(value)/(1<<10))
+	case value < 1<<30:
+		return fmt.Sprintf("%.1f MiB", float64(value)/(1<<20))
 	}
-	if value < 1024*1024 {
-		return fmt.Sprintf("%.1f KiB", float64(value)/1024)
-	}
-	return fmt.Sprintf("%.1f MiB", float64(value)/(1024*1024))
+	return fmt.Sprintf("%.1f GiB", float64(value)/(1<<30))
 }
 
 func addMarioSampleVisuals(data *pageData) {

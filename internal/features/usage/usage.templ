@@ -3,6 +3,7 @@ package usage
 import (
 	"fmt"
 	"net/url"
+	"strings"
 
 	"terrascale.tech/dashboard/internal/ui"
 	"terrascale.tech/dashboard/internal/ui/aria"
@@ -106,11 +107,22 @@ templ invoiceFilters(data pageData) {
 }
 
 templ overviewTab(data pageData) {
-	@ui.Card(ui.CardProps{ID: "usage-allowance", Title: "Plan allowance", Description: "Configured limits for the " + data.PlanName + " plan"}) {
-		<div class="ts-stats-compact">
-			@ui.Stats("Plan allowance") {
-				@ui.Stat("Included storage", data.PlanStorageAllowance, "")
-				@ui.Stat("Monthly operations", data.PlanRequestAllowance, "")
+	@ui.Card(ui.CardProps{ID: "usage-allowance", Title: "Plan allowance", Description: "Use of the " + data.PlanName + " plan this month"}) {
+		<div class="ts-usage-gauges">
+			for _, gauge := range data.Allowances {
+				<div class="ts-usage-gauge">
+					if gauge.HasRing {
+						<div class="ts-usage-ring">
+							@charts.Ring(gauge.Ring)
+							<span class="ts-usage-ring-value"><strong>{ fmt.Sprint(gauge.Percent) }%</strong><small>used</small></span>
+						</div>
+					}
+					<div class="ts-stack-sm">
+						<span class="ts-stat-label">{ gauge.Name }</span>
+						<span class="ts-usage-gauge-value">{ gauge.Used }</span>
+						<span class="ts-meta">{ gauge.Note }</span>
+					</div>
+				</div>
 			}
 		</div>
 		<p class="ts-meta">{ data.PlanUsageNote }</p>
@@ -136,14 +148,16 @@ templ overviewTab(data pageData) {
 		}
 	}
 	<div class="ts-split">
-		@ui.Card(ui.CardProps{ID: "usage-history", Title: "Workload history", Description: historyDescription(data), Actions: historyTotals(data)}) {
-			if data.SampleHistory {
-				<div class="ts-chart-shell ts-usage-chart-shell" role="region" aria-label="Sample workload chart. Scroll horizontally for the full plot." tabindex="0">
+		@ui.Card(ui.CardProps{ID: "usage-history", Title: "Reads and writes", Description: historyDescription(data), Actions: historyTotals(data)}) {
+			if data.UsageAvailable || data.SampleHistory {
+				<div class="ts-chart-shell ts-usage-chart-shell" role="region" aria-label="Reads and writes chart. Scroll horizontally for the full plot." tabindex="0">
 					@charts.Line(data.HistoryChart)
 				</div>
-				<p class="ts-meta">Reads, writes, and replication are deterministic demo series. They are separate from saved document counts and billing facts.</p>
+				if data.SampleHistory {
+					<p class="ts-meta">Reads, writes, and replication are deterministic demo series. They are separate from saved document counts and billing facts.</p>
+				}
 			} else {
-				@ui.Empty("Workload history is unavailable.", "This deployment has no timestamped workload source. Aggregate database totals cannot be shown as time-series history.")
+				@ui.Empty("Reads and writes are not metered here.", data.UsageSource)
 			}
 		}
 		@ui.Card(ui.CardProps{ID: "usage-by-project", Title: shareTitle(data), Description: shareDescription(data)}) {
@@ -151,9 +165,9 @@ templ overviewTab(data pageData) {
 				<ul class="ts-usage-share">
 					for _, database := range data.Databases {
 						<li>
-							<div class="ts-row-between"><span class="ts-strong">{ database.Name }</span><span class="ts-mono">{ database.StoredSize }</span></div>
-							@charts.Bar(charts.NewBar(database.Name, database.SharePercent, "stored document bytes in this scope"))
-							<span class="ts-meta">{ fmt.Sprint(database.Documents) } saved documents</span>
+							<div class="ts-row-between"><span class="ts-strong">{ database.Name }</span><span class="ts-mono">{ database.LogicalSize }</span></div>
+							@charts.Bar(charts.NewBar(database.Name, database.SharePercent, "logical storage in this scope"))
+							<span class="ts-meta">{ fmt.Sprint(database.Documents) } documents</span>
 						</li>
 					}
 				</ul>
@@ -165,9 +179,9 @@ templ overviewTab(data pageData) {
 						<li>
 							<div class="ts-row-between">
 								<a class="ts-strong" href={ usageTabHref("overview", project.ID) } aria-current={ aria.CurrentPage(project.Selected) }>{ project.Name }</a>
-								<span class="ts-mono">{ project.StoredSize }</span>
+								<span class="ts-mono">{ project.LogicalSize }</span>
 							</div>
-							@charts.Bar(charts.NewBar(project.Name, project.SharePercent, "stored document bytes in this organization"))
+							@charts.Bar(charts.NewBar(project.Name, project.SharePercent, "logical storage in this organization"))
 							<span class="ts-meta">{ fmt.Sprint(project.DatabaseCount) } databases · Region: { project.Region } · Effective spending cap: { project.Effective }</span>
 						</li>
 					}
@@ -181,27 +195,22 @@ templ overviewTab(data pageData) {
 		if data.UsageError != "" {
 			@ui.Alert("warning", "", data.UsageError)
 		}
-		if data.UsageAvailable {
-			@ui.Stats("Project usage summary") {
-				@ui.Stat("Databases in project", fmt.Sprint(data.ActiveDatabases), "")
-				@ui.Stat("Regions in project", fmt.Sprint(data.RegionCount), "")
-				@ui.Stat("Read operations", fmt.Sprint(data.Reads), "")
-				@ui.Stat("Write units", fmt.Sprint(data.Writes), "")
-				@ui.Stat("Read and write operations", fmt.Sprint(data.Requests), "")
-				if data.StorageByteSeconds > 0 {
-					@ui.Stat("Storage activity", fmt.Sprint(data.StorageByteSeconds), "byte-seconds")
-				}
+		@ui.Stats("Project usage summary") {
+			@ui.Stat("Databases in project", fmt.Sprint(data.ActiveDatabases), "")
+			@ui.Stat("Regions in project", fmt.Sprint(data.RegionCount), "")
+			if data.UsageAvailable {
+				@ui.Stat("Reads", formatCount(data.Reads), data.HistoryRangeLabel)
+				@ui.Stat("Writes", formatCount(data.Writes), data.HistoryRangeLabel)
 			}
-		} else {
-			@ui.Empty("Usage totals are unavailable.", data.UsageError)
+			@ui.Stat("Logical storage", data.LogicalSize, "Live document bytes")
 		}
 	}
-	@ui.Card(ui.CardProps{ID: "database-usage", Title: "Project databases", Description: "Database state and configured spending limits", Flush: true}) {
+	@ui.Card(ui.CardProps{ID: "database-usage", Title: "Project databases", Description: "Reads and writes " + lowerFirst(data.HistoryRangeLabel) + ", storage, and spending limits", Flush: true}) {
 		if len(data.Databases) > 0 {
 			<div class="ts-table-wrap" tabindex="0" role="region" aria-label="Project databases table. Scroll horizontally to see all columns.">
 				<table class="ts-table">
-					<caption class="ts-sr-only">Databases in the selected project and their configured spending limits</caption>
-					<thead><tr><th scope="col">Database</th><th scope="col">Region</th><th scope="col">Status</th><th scope="col" class="ts-num">Documents</th><th scope="col">Spend cap</th><th scope="col">Effective limit</th></tr></thead>
+					<caption class="ts-sr-only">Databases in the selected project with their reads, writes, storage, and spending limits</caption>
+					<thead><tr><th scope="col">Database</th><th scope="col">Region</th><th scope="col">Status</th><th scope="col" class="ts-num">Reads</th><th scope="col" class="ts-num">Writes</th><th scope="col" class="ts-num">Documents</th><th scope="col" class="ts-num">Logical storage</th><th scope="col">Spend cap</th><th scope="col">Effective limit</th></tr></thead>
 					<tbody>
 						for _, database := range data.Databases {
 							<tr>
@@ -210,7 +219,15 @@ templ overviewTab(data pageData) {
 								<td>
 									@ui.Badge(statusTone(database.Status), database.Status)
 								</td>
+								if database.Metered {
+									<td class="ts-num">{ formatCount(database.Reads) }</td>
+									<td class="ts-num">{ formatCount(database.Writes) }</td>
+								} else {
+									<td class="ts-num ts-meta">Not metered</td>
+									<td class="ts-num ts-meta">Not metered</td>
+								}
 								<td class="ts-num">{ fmt.Sprint(database.Documents) }</td>
+								<td class="ts-num">{ database.LogicalSize }</td>
 								<td>
 									if database.SpendCap != "" {
 										${ database.SpendCap }
@@ -232,7 +249,7 @@ templ overviewTab(data pageData) {
 
 templ historyTotals(data pageData) {
 	if len(data.HistoryTotals) > 0 {
-		<dl class="ts-usage-figures" aria-label="Sample totals for this range">
+		<dl class="ts-usage-figures" aria-label="Totals for this range">
 			for _, total := range data.HistoryTotals {
 				<div><dt><span class={ "ts-chart-swatch " + total.Class }></span>{ total.Name }</dt><dd>{ fmt.Sprint(total.Value) }</dd></div>
 			}
@@ -383,7 +400,7 @@ templ billingPlanDialog(data pageData) {
 				<input type="hidden" name="review" value="1"/>
 				<fieldset class="ts-stack-sm"><legend class="ts-section-title">Plan</legend>
 					for _, plan := range data.BillingPlans {
-						<label class="ts-check"><input type="radio" name="plan" value={ plan.Key } required checked?={ plan.Key == data.BillingPlanKey }/><span><strong>{ plan.Name }</strong> · { plan.MonthlyPrice } / month or { plan.AnnualPrice } / year<br/><small>{ plan.Databases } · { plan.Storage } · { plan.Requests } · { plan.Members }</small></span></label>
+						<label class="ts-check"><input type="radio" name="plan" value={ plan.Key } required checked?={ plan.Key == data.BillingPlanKey }/><span><strong>{ plan.Name }</strong> · { plan.MonthlyPrice } / month or { plan.AnnualPrice } / year<br/><small>{ plan.Databases } · { plan.Storage } · { plan.Reads } · { plan.Writes } · { plan.Members }</small></span></label>
 					}
 					if data.Personal && data.BillingSubscription {
 						<label class="ts-check"><input type="radio" name="plan" value="free"/><span><strong>Free</strong> · at renewal</span></label>
@@ -430,7 +447,8 @@ templ billingReviewDialog(data pageData, csrfToken string) {
 					<div><dt>Charge today</dt><dd>{ data.Review.Estimate }</dd></div>
 					<div><dt>Effective</dt><dd>{ data.Review.Effect }</dd></div>
 					<div><dt>Storage</dt><dd>{ data.Review.Storage }</dd></div>
-					<div><dt>Operations</dt><dd>{ data.Review.Requests }</dd></div>
+					<div><dt>Reads</dt><dd>{ data.Review.Reads }</dd></div>
+					<div><dt>Writes</dt><dd>{ data.Review.Writes }</dd></div>
 					<div><dt>Databases</dt><dd>{ data.Review.Databases }</dd></div>
 					<div><dt>Team</dt><dd>{ data.Review.Members }</dd></div>
 				</dl>
@@ -507,7 +525,17 @@ func historyDescription(data pageData) string {
 	if data.SampleHistory {
 		return "Sample organization operations, " + data.HistoryRangeLabel + ". Not measured provider traffic."
 	}
-	return "Timestamped activity by operation"
+	if data.SelectedDatabase != "" {
+		return "The selected database, " + lowerFirst(data.HistoryRangeLabel)
+	}
+	return "The selected project, " + lowerFirst(data.HistoryRangeLabel)
+}
+
+func lowerFirst(text string) string {
+	if text == "" {
+		return text
+	}
+	return strings.ToLower(text[:1]) + text[1:]
 }
 
 func shareTitle(data pageData) string {
@@ -519,9 +547,9 @@ func shareTitle(data pageData) string {
 
 func shareDescription(data pageData) string {
 	if data.ExplicitProjectFilter {
-		return "Stored dashboard document bytes in the selected project and database scope"
+		return "Logical storage in the selected project and database scope"
 	}
-	return "Stored dashboard document bytes across this organization; not metered logical storage"
+	return "Logical storage across this organization"
 }
 
 func statusTone(status string) string {

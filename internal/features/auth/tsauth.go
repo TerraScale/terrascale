@@ -74,10 +74,24 @@ type signInFlow struct {
 }
 
 // refreshState is a session's Refresh: the ts-auth refresh token and the
-// subject every ID token it yields must name.
+// subject every ID token it yields must name, with the latest access token,
+// which TerraBase's Management API accepts for the user until it expires.
 type refreshState struct {
-	Subject string `json:"sub"`
-	Token   string `json:"token"`
+	Subject      string    `json:"sub"`
+	Token        string    `json:"token"`
+	Access       string    `json:"access,omitempty"`
+	AccessExpiry time.Time `json:"accessExpiry,omitzero"`
+}
+
+// AccessToken is the ts-auth access token a session's refresh state keeps,
+// or empty once it has expired. A session rechecks with ts-auth, renewing
+// it, when it expires.
+func AccessToken(refresh string) string {
+	var state refreshState
+	if json.Unmarshal([]byte(refresh), &state) != nil || !state.AccessExpiry.IsZero() && !time.Now().Before(state.AccessExpiry) {
+		return ""
+	}
+	return state.Access
 }
 
 // refreshableSessions starts sessions that ts-auth rechecks.
@@ -469,7 +483,7 @@ func encodeRefresh(subject string, token *oauth2.Token) (string, error) {
 		// ts-auth issued no refresh token: the session is not rechecked.
 		return "", nil
 	}
-	value, err := json.Marshal(refreshState{Subject: subject, Token: token.RefreshToken})
+	value, err := json.Marshal(refreshState{Subject: subject, Token: token.RefreshToken, Access: token.AccessToken, AccessExpiry: token.Expiry})
 	return string(value), err
 }
 

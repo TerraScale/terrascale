@@ -10,16 +10,17 @@ import (
 )
 
 type planSummary struct {
-	Key                string   `json:"key"`
-	Name               string   `json:"name"`
-	MonthlyPriceCents  int64    `json:"monthlyPriceCents"`
-	AnnualPriceCents   int64    `json:"annualPriceCents" jsonschema:"Price for a year billed annually; 0 when the plan bills monthly only."`
-	TrialDays          int      `json:"trialDays"`
-	MaxDatabases       int      `json:"maxDatabases" jsonschema:"Database limit; 0 means unlimited."`
-	MaxMembers         int      `json:"maxMembers" jsonschema:"Member limit; 0 means unlimited."`
-	OperationsPerMonth int64    `json:"operationsPerMonth"`
-	Features           []string `json:"features"`
-	Current            bool     `json:"current" jsonschema:"Whether the organization is on this plan."`
+	Key               string   `json:"key"`
+	Name              string   `json:"name"`
+	MonthlyPriceCents int64    `json:"monthlyPriceCents"`
+	AnnualPriceCents  int64    `json:"annualPriceCents" jsonschema:"Price for a year billed annually; 0 when the plan bills monthly only."`
+	TrialDays         int      `json:"trialDays"`
+	MaxDatabases      int      `json:"maxDatabases" jsonschema:"Database limit; 0 means unlimited."`
+	MaxMembers        int      `json:"maxMembers" jsonschema:"Member limit; 0 means unlimited."`
+	ReadsPerMonth     int64    `json:"readsPerMonth" jsonschema:"Included reads per month; 0 means no published limit."`
+	WritesPerMonth    int64    `json:"writesPerMonth" jsonschema:"Included writes per month, counted apart from reads; 0 means no published limit."`
+	Features          []string `json:"features"`
+	Current           bool     `json:"current" jsonschema:"Whether the organization is on this plan."`
 }
 
 type planList struct {
@@ -100,7 +101,7 @@ func (service BillingService) PlanList(ctx context.Context, principal core.Princ
 		list.Plans = append(list.Plans, planSummary{
 			Key: key, Name: plan.Name, MonthlyPriceCents: plan.PriceCents, AnnualPriceCents: plan.AnnualPriceCents,
 			TrialDays: plan.TrialDays, MaxDatabases: plan.MaxDatabases, MaxMembers: plan.MaxMembers,
-			OperationsPerMonth: plan.OperationsPerMonth, Features: planFeatures(plan), Current: key == current,
+			ReadsPerMonth: plan.MonthlyOperations(), WritesPerMonth: plan.MonthlyOperations(), Features: planFeatures(plan), Current: key == current,
 		})
 	}
 	return list, nil

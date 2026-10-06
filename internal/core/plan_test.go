@@ -12,12 +12,14 @@ func TestPlanAllowances(t *testing.T) {
 		{"whole GiB", Plan{StorageMiB: 10240}.StorageAllowance(), "10 GiB storage"},
 		{"MiB", Plan{StorageMiB: 512}.StorageAllowance(), "512 MiB storage"},
 		{"no storage", Plan{}.StorageAllowance(), "Limit not published"},
-		{"operations", Plan{OperationsPerMonth: 100_000_000, MonthlyRequests: 5}.OperationsAllowance(), "100M operations/month"},
-		{"thousand operations", Plan{OperationsPerMonth: 250_000}.OperationsAllowance(), "250K operations/month"},
-		{"fractional millions", Plan{OperationsPerMonth: 1_500_000}.OperationsAllowance(), "1.5M operations/month"},
-		{"billions", Plan{OperationsPerMonth: 1_000_000_000}.OperationsAllowance(), "1B operations/month"},
-		{"inexact count", Plan{OperationsPerMonth: 1_234_567}.OperationsAllowance(), "1234567 operations/month"},
-		{"requests", Plan{MonthlyRequests: 1_500}.OperationsAllowance(), "1500 requests/month"},
+		{"reads", Plan{OperationsPerMonth: 100_000_000, MonthlyRequests: 5}.ReadsAllowance(), "100M reads/month"},
+		{"writes", Plan{OperationsPerMonth: 100_000_000, MonthlyRequests: 5}.WritesAllowance(), "100M writes/month"},
+		{"thousand reads", Plan{OperationsPerMonth: 250_000}.ReadsAllowance(), "250K reads/month"},
+		{"fractional millions", Plan{OperationsPerMonth: 1_500_000}.WritesAllowance(), "1.5M writes/month"},
+		{"billions", Plan{OperationsPerMonth: 1_000_000_000}.ReadsAllowance(), "1B reads/month"},
+		{"inexact count", Plan{OperationsPerMonth: 1_234_567}.ReadsAllowance(), "1234567 reads/month"},
+		{"monthly requests", Plan{MonthlyRequests: 1_500}.WritesAllowance(), "1500 writes/month"},
+		{"no reads limit", Plan{}.ReadsAllowance(), "Limit not published"},
 		{"one database", Plan{MaxDatabases: 1}.DatabaseAllowance(), "1 database"},
 		{"databases", Plan{MaxDatabases: 25}.DatabaseAllowance(), "25 databases"},
 		{"one member", Plan{MaxMembers: 1}.MemberAllowance(), "1 team member"},
@@ -27,5 +29,15 @@ func TestPlanAllowances(t *testing.T) {
 		if test.got != test.want {
 			t.Errorf("%s = %q, want %q", test.name, test.got, test.want)
 		}
+	}
+}
+
+func TestPlanLimitsForUtilization(t *testing.T) {
+	plan := Plan{MonthlyRequests: 7, StorageMiB: 3}
+	if plan.MonthlyOperations() != 7 || plan.StorageBytes() != 3<<20 {
+		t.Fatalf("limits = %d operations, %d bytes", plan.MonthlyOperations(), plan.StorageBytes())
+	}
+	if plan := (Plan{OperationsPerMonth: 9, MonthlyRequests: 7}); plan.MonthlyOperations() != 9 {
+		t.Fatalf("OperationsPerMonth must win over MonthlyRequests, got %d", plan.MonthlyOperations())
 	}
 }

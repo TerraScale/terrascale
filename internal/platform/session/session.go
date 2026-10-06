@@ -31,6 +31,9 @@ type Options struct {
 	// Revoke is given the refresh state of a session End ends, so the
 	// provider can end its sign-in too. Its failure does not stop sign-out.
 	Revoke func(ctx context.Context, refresh string) error
+	// UserToken reads the user's ts-auth access token from a session's
+	// refresh state.
+	UserToken func(refresh string) string
 }
 
 // refreshTimeout bounds one Options.Refresh call.
@@ -199,6 +202,21 @@ func (m *Manager) BearerPrincipal(r *http.Request) (core.Principal, bool) {
 		return core.Principal{}, false
 	}
 	return m.principalFor(r.Context(), token)
+}
+
+// UserToken is the ts-auth access token of the request's session, or empty
+// for a session without one. It reads the session the request's Principal
+// already resolved and refreshed.
+func (m *Manager) UserToken(r *http.Request) string {
+	token, ok := m.Token(r)
+	if !ok || m.opts.UserToken == nil {
+		return ""
+	}
+	item, err := m.sessions.Get(r.Context(), sha256.Sum256([]byte(token)), time.Now())
+	if err != nil || item.Refresh == "" {
+		return ""
+	}
+	return m.opts.UserToken(item.Refresh)
 }
 
 func (m *Manager) Token(r *http.Request) (string, bool) {

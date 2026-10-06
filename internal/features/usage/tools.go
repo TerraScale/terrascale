@@ -10,6 +10,7 @@ import (
 type usageInput struct {
 	core.Scope
 	DatabaseID string `json:"databaseId,omitempty" jsonschema:"Report only this database of the project."`
+	Range      string `json:"range,omitempty" jsonschema:"24h, 7d (the default), or 30d."`
 }
 
 type capChange struct {
@@ -28,9 +29,10 @@ type spendingControlsInput struct {
 func mountTools(tools *core.Tools, service Service) {
 	core.AddTool(tools, core.ToolSpec{
 		Name: "get_usage", Title: "Get usage", ReadOnly: true,
-		Description: "Report an organization's plan allowances and spending controls with the selected project's per-database storage and operation totals.",
+		Description: "Report an organization's plan allowances and spending controls with the selected project's per-database storage, reads, and writes. TerraBase meters reads and writes for browser sessions signed in through TerraScale; tool calls report storage only.",
 	}, func(ctx context.Context, p core.Principal, in usageInput) (usageReport, error) {
-		return service.Usage(ctx, p, in.DatabaseID)
+		// MCP access tokens carry no ts-auth token to read TerraBase with.
+		return service.Usage(ctx, p, "", in.DatabaseID, in.Range)
 	})
 	core.AddTool(tools, core.ToolSpec{
 		Name: "set_spending_controls", Title: "Set spending controls", Idempotent: true,
@@ -61,6 +63,6 @@ func mountTools(tools *core.Tools, service Service) {
 		if err := service.SetSpendingControls(ctx, p, controls); err != nil {
 			return usageReport{}, err
 		}
-		return service.Usage(ctx, p, "")
+		return service.Usage(ctx, p, "", "", "")
 	})
 }

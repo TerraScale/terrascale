@@ -74,7 +74,7 @@ func renderBillingPage(t *testing.T, page subscriptionsPage) string {
 func TestPlanCardsListEveryAllowance(t *testing.T) {
 	fixture := newBillingFixture(t)
 	starter := fixture.page(t, fixture.principal, intervalMonthly).card(t, "starter")
-	for _, want := range []string{"5 GB-region storage", "1M operations/month", "5 databases", "5 team members"} {
+	for _, want := range []string{"5 GB-region storage", "1M reads/month", "1M writes/month", "5 databases", "5 team members"} {
 		if !slices.Contains(starter.Features, want) {
 			t.Errorf("Starter features %q are missing %q", starter.Features, want)
 		}
