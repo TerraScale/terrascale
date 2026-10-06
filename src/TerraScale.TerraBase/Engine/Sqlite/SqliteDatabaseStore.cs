@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using Microsoft.Data.Sqlite;
 using TerraScale.TerraBase.Tenancy;
 
@@ -211,7 +212,13 @@ internal sealed class SqliteDatabaseStore(
     // busy handler would hold every I/O thread while the writer that holds the lock waits for one.
     private readonly SemaphoreSlim _writer = new(1, 1);
 
-    public Guid Incarnation { get; private set; }
+    // Boxed so a catalog follower can adopt its primary's incarnation without torn reads.
+    private volatile StrongBox<Guid> _incarnation = new(Guid.Empty);
+
+    public Guid Incarnation => _incarnation.Value;
+
+    /// <summary>Publishes the incarnation a catalog follower's committed snapshot adopted (docs/decisions/0009).</summary>
+    internal void AdoptIncarnation(Guid incarnation) => _incarnation = new(incarnation);
 
     public TenantContext? Tenant { get; } = tenant;
 
@@ -229,7 +236,20 @@ internal sealed class SqliteDatabaseStore(
     /// <summary>Idle sessions of this database, for tests.</summary>
     internal int IdleCount => pool.IdleCountOf(this);
 
-    public async ValueTask<IStorageTransaction> BeginTransactionAsync(bool write, CancellationToken cancellationToken)
+    /// <summary>
+    /// Whether this is a catalog follower's system database: it refuses write transactions except
+    /// <see cref="BeginReplicaAsync"/>'s (docs/decisions/0009).
+    /// </summary>
+    internal bool Replica { get; init; }
+
+    public async ValueTask<IStorageTransaction> BeginTransactionAsync(bool write, CancellationToken cancellationToken) =>
+        write && Replica ? throw new CatalogFollowerException() : await BeginAsync(write, capture: true, cancellationToken).ConfigureAwait(false);
+
+    /// <summary>The write transaction of a follower's replication applier; it captures nothing.</summary>
+    internal ValueTask<SqliteStorageTransaction> BeginReplicaAsync(CancellationToken cancellationToken) =>
+        BeginAsync(write: true, capture: false, cancellationToken);
+
+    private async ValueTask<SqliteStorageTransaction> BeginAsync(bool write, bool capture, CancellationToken cancellationToken)
     {
         var ownsAdmission = !io.HasAdmission;
         if (ownsAdmission)
@@ -270,7 +290,7 @@ internal sealed class SqliteDatabaseStore(
                 return connection.BeginTransaction(deferred: !write);
             }, cancellationToken).ConfigureAwait(false);
             return new SqliteStorageTransaction(
-                this, session, transaction, io, write, write ? Committed : null, write ? changesCommitted : null, ownsAdmission);
+                this, session, transaction, io, write, write ? Committed : null, write && capture ? changesCommitted : null, ownsAdmission);
         }
         catch
         {
@@ -492,9 +512,9 @@ internal sealed class SqliteDatabaseStore(
             {
                 // A migration is atomic and rolls back before a lock error leaves this scope.
                 Migrate(name, session.Connection, cancellationToken);
-                Incarnation = Guid.ParseExact(
+                _incarnation = new(Guid.ParseExact(
                     (string)(Scalar(session.Connection, null, SqliteStatements.Incarnation)
-                        ?? throw new InvalidOperationException("database incarnation is missing")), "N");
+                        ?? throw new InvalidOperationException("database incarnation is missing")), "N"));
                 return true;
             }, cancellationToken).ConfigureAwait(false);
         }

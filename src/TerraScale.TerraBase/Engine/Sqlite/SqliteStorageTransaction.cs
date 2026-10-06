@@ -57,7 +57,9 @@ internal sealed partial class SqliteStorageTransaction(
     // This transaction's local commit offset, separate from incoming document merge versions.
     private long? _offset;
 
-    public Guid Incarnation => store.Incarnation;
+    // Taken when the transaction begins: a catalog follower adopting its primary's incarnation never mixes it into a
+    // snapshot read before.
+    public Guid Incarnation { get; } = store.Incarnation;
 
     public ValueTask<StoredDocument?> GetAsync(string collection, string id, CancellationToken cancellationToken) =>
         RunAsync(() => ReadDocument(collection, id), cancellationToken);
@@ -779,7 +781,12 @@ internal sealed partial class SqliteStorageTransaction(
         {
             ThrowIfReadOnly();
             DocumentMutation(replicated: false);
-            if (_changes is not null)
+            if (store.IsSystem && _changes is not null)
+            {
+                // A system group replays every mutation: each removed document, without the client bounds below.
+                CaptureSystemDeletions(name, name + '\0', cancellationToken);
+            }
+            else if (_changes is not null)
             {
                 // Release every pending body in this collection before admitting uncaptured deletions.
                 // The final tombstone group must fit independently of the stored ids' enumeration order.
@@ -871,7 +878,7 @@ internal sealed partial class SqliteStorageTransaction(
         }, cancellationToken).ConfigureAwait(false);
 
         // Imported clock progress wakes shape waiters even when every document state lost the merge.
-        if (_offset is not null || (_importedFromOffset is { } previousHead && offset > previousHead))
+        if (_offset is not null || _replicaChanged || (_importedFromOffset is { } previousHead && offset > previousHead))
         {
             committed?.Invoke();
         }
@@ -890,7 +897,10 @@ internal sealed partial class SqliteStorageTransaction(
     private byte[] GetOrigin() => (byte[])Command(SqliteStatements.Origin).ExecuteScalar()!;
 
     public ValueTask<long> GetLastChangeSequenceAsync(CancellationToken cancellationToken) =>
-        RunAsync(() => (long)Command(SqliteStatements.LastSequence).ExecuteScalar()!, cancellationToken, retry: true);
+        RunAsync(LastSequence, cancellationToken, retry: true);
+
+    // The system journal may hold its head digest without the group (a truncated tail, a follower's snapshot).
+    private long LastSequence() => (long)Command(store.IsSystem ? SqliteStatements.SystemLastSequence : SqliteStatements.LastSequence).ExecuteScalar()!;
 
     public async ValueTask<IReadOnlyList<DocumentChange>?> ReadChangesAsync(long sequence, CancellationToken cancellationToken)
     {
@@ -1412,6 +1422,12 @@ internal sealed partial class SqliteStorageTransaction(
 
     private void Capture(DocumentChange change)
     {
+        if (store.IsSystem)
+        {
+            CaptureSystem(change);
+            return;
+        }
+
         if (!DocumentChange.HasValidKey(change.Collection, change.Id))
         {
             throw new InvalidDataException("a captured change has an invalid collection or id");
@@ -1439,17 +1455,22 @@ internal sealed partial class SqliteStorageTransaction(
     // transaction, which the database's writer gate serializes.
     private long AppendChanges(List<DocumentChange> changes, CancellationToken cancellationToken)
     {
-        if (changes.Count > IStorageTransaction.MaxChangeGroupChanges || _changeBytes > IStorageTransaction.MaxChangeGroupBytes)
+        if (!store.IsSystem && (changes.Count > IStorageTransaction.MaxChangeGroupChanges || _changeBytes > IStorageTransaction.MaxChangeGroupBytes))
         {
             throw new ChangeGroupCapacityException(
                 $"a replicated transaction holds at most {IStorageTransaction.MaxChangeGroupChanges} changes and {IStorageTransaction.MaxChangeGroupBytes} bytes");
         }
 
-        var sequence = Command(SqliteStatements.NextSequence).ExecuteScalar() is long next
-            ? next
-            : throw new OverflowException("the change sequence is exhausted");
+        var sequence = store.IsSystem ? checked(LastSequence() + 1)
+            : Command(SqliteStatements.NextSequence).ExecuteScalar() is long next ? next : throw new OverflowException("the change sequence is exhausted");
         var previous = GetChangeDigest(sequence - 1) ?? throw new InvalidDataException("the preceding journal digest is missing");
-        var digest = JournalDigest.Compute(GetOrigin(), sequence, previous.Span, changes);
+        byte[] digest;
+        using (var group = new JournalDigest.Group(GetOrigin(), sequence, previous.Span, changes.Count))
+        {
+            changes.ForEach(group.Append);
+            digest = group.Complete();
+        }
+
         var ordinal = 0;
         foreach (var change in changes)
         {
@@ -1467,6 +1488,10 @@ internal sealed partial class SqliteStorageTransaction(
         prefix.Parameters.AddWithValue("$sequence", sequence);
         prefix.Parameters.AddWithValue("$digest", digest);
         prefix.ExecuteNonQuery();
+        if (store.IsSystem)
+        {
+            TruncateSystemJournal(sequence - ISystemReplication.RetainedGroups);
+        }
 
         return sequence;
     }

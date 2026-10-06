@@ -28,10 +28,43 @@ UTF-8 object without duplicate properties, at most 1 MiB, 16 container levels an
 the document API numeric limits. Rejected writes fault their transaction; client transactions report
 the operation index. Shapes embed admitted JSON without reparsing it.
 
-Management catalog and API-key data remain local. Provision the same catalog identities on each
-node before exposing replicated files through the client API; peer replication does not create or
-rename organizations, projects or their registered databases. There is no pre-tenancy directory
-migration; main's tenant layout and exclusive ownership checks apply.
+The management catalog and API keys (`_system.db`) replicate separately, from one catalog primary to its
+followers: see [Catalog](#catalog). Client replication does not create or rename organizations, projects or their
+registered databases. There is no pre-tenancy directory migration; main's tenant layout and exclusive ownership
+checks apply.
+
+## Catalog
+
+One member is the catalog primary; every other member sets `catalog-primary` to the primary's peer listener and
+follows it. Design, limits and failover: [0009](decisions/0009-catalog-replication.md).
+
+- Only the primary writes the catalog. A follower answers every catalog write (Management API writes, API key
+  issues, a data-plane database creation under a new name) with `503 not_primary` and `Retry-After: 1`, and runs
+  no catalog writer of its own (intent recovery, migration, backups, usage flushes).
+- A follower authenticates API keys and resolves organizations, projects and databases from its replica, and
+  serves a registered database before any of its documents arrived (an empty local file that client replication
+  fills).
+- `/readyz` of a follower answers 503 until it has applied the primary's head once in its process, and while its
+  primary reports a head it has not applied yet; a primary that cannot be reached leaves the last head, so a
+  caught-up follower stays ready while the primary restarts. Before stopping a member, a drain waits for its
+  `terrabase_replication_sender_durable_lag` to reach 0 (decision 0009 explains why readiness does not).
+- A follower takes a snapshot only into an empty catalog or one of the primary's origin; it never replaces a
+  catalog of another origin.
+
+Three nodes, `a` the primary: every node sets the [peer listener](#configuration), and `b` and `c` add
+
+```sh
+TERRABASE_CATALOG_PRIMARY=https://a.internal:7443
+```
+
+Metrics on the follower:
+
+| Prometheus name | Meaning |
+| --- | --- |
+| `terrabase_catalog_follower_connected` | `1` while the follower holds a stream to its primary |
+| `terrabase_catalog_follower_lag` | Catalog groups the primary last reported that the follower has not applied |
+| `terrabase_catalog_applied_sequence` | The primary's last group the follower applied; the highest one is the best failover candidate |
+| `terrabase_catalog_follower_failures_total{reason}` | Streams that failed: `lineage` (a catalog of another origin, kept), `invalid` (a frame failed validation; nothing of it applied) or `stream` |
 
 ## Configuration
 
@@ -42,6 +75,7 @@ migration; main's tenant layout and exclusive ownership checks apply.
 | `peer-private-key` | PEM private key of `peer-certificate` |
 | `peer-client-ca` | PEM CA certificate that every peer certificate must chain to, in both directions |
 | `peer-addresses` | Comma-separated, distinct `https://host:port` peer listeners to send to; requires `peer-port` |
+| `catalog-primary` | `https://host:port` peer listener of the catalog primary this node follows; unset makes it a primary. Requires `peer-port` |
 
 `peer-port` and the three files are set together. The files are read at startup; an unreadable
 file or any other invalid setting stops the process with exit code `2`. A node with `peer-port`
@@ -223,7 +257,6 @@ through its own `IMeterFactory` plus process-wide ones (runtime), so several hos
 - Not interoperable with terrabase-rust (different change group format and merge policy).
 - `changes` and document tombstones are never truncated; retention needs membership to know all peers.
 - Database delete is not replicated.
-- `_system` (API keys, management catalog) is not replicated.
 - A baseline is the whole current state, written into the change log in bounded chunks: it costs as much
   disk as the data it covers.
 - `DurableAck` follows the receiver's SQLite commit. Under decision 0003 (`synchronous = NORMAL`)

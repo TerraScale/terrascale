@@ -11,7 +11,7 @@ namespace TerraScale.TerraBase.Engine;
 /// ponytail: stamps live in fixed stripes, so unrelated documents or collections that share a stripe
 /// invalidate each other (about 1 in 4096); more stripes if cache hit rates under writes suffer.
 /// </remarks>
-internal sealed class StampingStorageEngine(IStorageEngine inner) : IStorageEngine, IWriteStamps
+internal sealed class StampingStorageEngine(IStorageEngine inner, ISystemReplication system) : IStorageEngine, IWriteStamps, ISystemReplication
 {
     private const int Stripes = 4096;
 
@@ -100,6 +100,27 @@ internal sealed class StampingStorageEngine(IStorageEngine inner) : IStorageEngi
 
     public ValueTask DisposeAsync() => inner.DisposeAsync();
 
+    public ValueTask<SystemDocumentPage> ReadDocumentsAsync(
+        string? afterCollection, string? afterId, int maxDocuments, int maxBytes, CancellationToken cancellationToken) =>
+        system.ReadDocumentsAsync(afterCollection, afterId, maxDocuments, maxBytes, cancellationToken);
+
+    public ValueTask<SystemGroupPage> ReadGroupAsync(long sequence, int skip, int maxChanges, int maxBytes, CancellationToken cancellationToken) =>
+        system.ReadGroupAsync(sequence, skip, maxChanges, maxBytes, cancellationToken);
+
+    public ValueTask<JournalPosition> GetHeadAsync(CancellationToken cancellationToken) => system.GetHeadAsync(cancellationToken);
+
+    public async ValueTask<ISystemReplicaTransaction> BeginReplicaAsync(ReadOnlyMemory<byte>? adopt, CancellationToken cancellationToken)
+    {
+        var reset = adopt is not null;
+        if (reset)
+        {
+            // A reset removes documents no stamp names; the epoch covers them, before and after the commit.
+            Interlocked.Increment(ref _epoch);
+        }
+
+        return new ReplicaTransaction(this, await system.BeginReplicaAsync(adopt, cancellationToken).ConfigureAwait(false), reset);
+    }
+
     // Plans can change while a store remains open; only storage identity participates in invalidation.
     // Null is reserved for system storage and cannot be a valid tenant database.
     private static int DocumentStripe(TenantContext? database, string collection, string id) =>
@@ -127,6 +148,50 @@ internal sealed class StampingStorageEngine(IStorageEngine inner) : IStorageEngi
 
         public async ValueTask<IStorageTransaction> BeginTransactionAsync(bool write, CancellationToken cancellationToken) =>
             new Transaction(engine, database, await inner.BeginTransactionAsync(write, cancellationToken).ConfigureAwait(false));
+    }
+
+    // Replicated system writes move stamps like local ones: a revoked API key is not served from the cache.
+    private sealed class ReplicaTransaction(StampingStorageEngine engine, ISystemReplicaTransaction inner, bool reset) : ISystemReplicaTransaction
+    {
+        // One bit per stripe written, as in Transaction; the applier calls this transaction sequentially.
+        private readonly ulong[] _written = new ulong[Stripes / 64];
+
+        public ValueTask ReplaceAsync(DocumentChange change, CancellationToken cancellationToken)
+        {
+            ArgumentNullException.ThrowIfNull(change);
+            foreach (var stripe in (ReadOnlySpan<int>)[DocumentStripe(null, change.Collection, change.Id), CollectionStripe(null, change.Collection)])
+            {
+                engine.Touch(stripe);
+                _written[stripe / 64] |= 1UL << (stripe % 64);
+            }
+
+            return inner.ReplaceAsync(change, cancellationToken);
+        }
+
+        public async ValueTask CommitAsync(JournalPosition head, long offset, CancellationToken cancellationToken)
+        {
+            try
+            {
+                await inner.CommitAsync(head, offset, cancellationToken).ConfigureAwait(false);
+            }
+            finally
+            {
+                if (reset)
+                {
+                    Interlocked.Increment(ref engine._epoch);
+                }
+
+                for (var word = 0; word < _written.Length; word++)
+                {
+                    for (var bits = _written[word]; bits != 0; bits &= bits - 1)
+                    {
+                        engine.Touch((word * 64) + System.Numerics.BitOperations.TrailingZeroCount(bits));
+                    }
+                }
+            }
+        }
+
+        public ValueTask DisposeAsync() => inner.DisposeAsync();
     }
 
     // Stamps move before each write reaches storage, so nothing cached earlier stays valid, and again after the

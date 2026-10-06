@@ -1,0 +1,93 @@
+syntax = "proto3";
+
+package terrabase.v1;
+
+import "terrabase/v1/replication.proto";
+
+option csharp_namespace = "TerraScale.TerraBase.Features.Replication.V1";
+
+// Internal: a catalog follower replicates TerraBase's own database (management catalog, API key hashes,
+// dashboard documents) from its catalog primary, the only member that writes it (docs/decisions/0009).
+// TerraBase C# only; terrabase-rust has no equivalent. Pages are TBDCG001 change groups inside a
+// TBLZ4E01 LZ4 application envelope, as in Replication.Sync; gRPC transport compression stays disabled.
+service CatalogReplication {
+  // One request, then the primary streams until the follower cancels. A member that is not a
+  // catalog primary answers FAILED_PRECONDITION.
+  rpc Follow(FollowRequest) returns (stream FollowResponse);
+}
+
+message FollowRequest {
+  // Catalog protocol version: 1.
+  uint32 protocol = 1;
+  // Accepted payload codecs; must include PAYLOAD_CODEC_LZ4_BLOCK_V1.
+  repeated PayloadCodec codecs = 2;
+  // The follower's journal head: its 16-byte origin (the primary's, once it took a snapshot), sequence
+  // and 32-byte prefix digest. The primary resumes after it only when it is a prefix of its own journal.
+  bytes origin = 3;
+  uint64 sequence = 4;
+  bytes digest = 5;
+  // Descriptive follower region, TERRABASE_REGION syntax.
+  string region = 6;
+}
+
+message FollowResponse {
+  oneof frame {
+    // Always first.
+    CatalogWelcome welcome = 1;
+    // A snapshot: SnapshotBegin, documents pages, the groups committed meanwhile, SnapshotEnd.
+    SnapshotBegin snapshot_begin = 2;
+    CatalogPage documents = 3;
+    SnapshotEnd snapshot_end = 4;
+    // A group: GroupBegin, its changes pages, GroupEnd.
+    GroupBegin group_begin = 5;
+    CatalogPage changes = 6;
+    GroupEnd group_end = 7;
+    // At least every 5 seconds once the follower has every group.
+    CatalogHeartbeat heartbeat = 8;
+  }
+}
+
+message CatalogWelcome {
+  uint32 protocol = 1;
+  // The primary's 16-byte journal origin.
+  bytes origin = 2;
+  // Its last committed group.
+  uint64 head = 3;
+  string region = 4;
+}
+
+// The snapshot starts at journal position `sequence`; its pages are live documents read after it.
+message SnapshotBegin {
+  uint64 sequence = 1;
+  bytes digest = 2;
+}
+
+// The snapshot is complete at `sequence`, the last group sent inside it.
+message SnapshotEnd {
+  uint64 sequence = 1;
+  bytes digest = 2;
+  // The primary's commit offset, at least the version of every write through `sequence`.
+  uint64 commit_offset = 3;
+}
+
+message GroupBegin {
+  uint64 sequence = 1;
+  // Changes in the whole group, across its pages.
+  uint32 change_count = 2;
+}
+
+message GroupEnd {
+  // Prefix digest through this group.
+  bytes digest = 1;
+}
+
+// At most 4096 changes and 2 MiB of collection, id and JSON bytes, except one larger document alone.
+message CatalogPage {
+  PayloadCodec codec = 1;
+  bytes envelope = 2;
+}
+
+message CatalogHeartbeat {
+  // The primary's last committed group.
+  uint64 head = 1;
+}

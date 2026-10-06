@@ -9,8 +9,19 @@ namespace TerraScale.TerraBase.Features.Management;
 /// </summary>
 internal sealed partial class EngineManagementService
 {
-    public ValueTask<TenantContext?> FindDatabaseAsync(string organizationId, string projectId, string database, CancellationToken cancellationToken) =>
-        ReadAsync(transaction => FindDatabaseAsync(transaction, organizationId, projectId, database, cancellationToken), cancellationToken);
+    public async ValueTask<TenantContext?> FindDatabaseAsync(string organizationId, string projectId, string database, CancellationToken cancellationToken)
+    {
+        var tenant = await ReadAsync(transaction => FindDatabaseAsync(transaction, organizationId, projectId, database, cancellationToken), cancellationToken)
+            .ConfigureAwait(false);
+        // A follower serves a database the replicated catalog registers before any of its documents arrived: an empty
+        // local file, which replication then fills like any other (docs/decisions/0009).
+        if (tenant is not null && options.CatalogPrimary is not null && await engine.OpenDatabaseAsync(tenant, cancellationToken).ConfigureAwait(false) is null)
+        {
+            _ = await engine.CreateDatabaseAsync(tenant, cancellationToken).ConfigureAwait(false);
+        }
+
+        return tenant;
+    }
 
     public async ValueTask<(TenantContext Database, bool Created)?> CreateDatabaseAsync(
         string organizationId, string projectId, string database, CancellationToken cancellationToken)

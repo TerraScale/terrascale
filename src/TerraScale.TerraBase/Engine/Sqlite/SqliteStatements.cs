@@ -204,6 +204,34 @@ internal static class SqliteStatements
         ORDER BY collection, id LIMIT $limit;
         """;
 
+    // System database replication (docs/decisions/0009). A snapshot reads live documents in key order, any collection.
+    public const string SystemDocumentsFirst = "SELECT collection, id, version, body FROM documents WHERE body IS NOT NULL ORDER BY collection, id LIMIT $limit;";
+
+    public const string SystemDocumentsAfter = """
+        SELECT collection, id, version, body FROM documents WHERE (collection, id) > ($collection, $id) AND body IS NOT NULL
+        ORDER BY collection, id LIMIT $limit;
+        """;
+
+    public const string GroupSize = "SELECT count(*) FROM changes WHERE sequence = $sequence;";
+
+    // Ordinals of a group are 0, 1, …, so a page resumes at an index.
+    public const string ReadGroupPage = "SELECT collection, id, version, body FROM changes WHERE sequence = $sequence AND ordinal >= $skip ORDER BY ordinal LIMIT $limit;";
+
+    // A system prefix drop captures each deletion: the same range as DeleteCollectionDocuments.
+    public const string CollectionRangeIds = "SELECT collection, id FROM documents WHERE collection >= $from AND collection < $to;";
+
+    public const string ReplaceDocument = """
+        INSERT INTO documents (collection, id, version, body) VALUES ($collection, $id, $version, $body)
+        ON CONFLICT (collection, id) DO UPDATE SET version = excluded.version, body = excluded.body;
+        """;
+
+    // The system journal keeps a bounded tail (and a follower only its head), so its head is the last stored digest.
+    public const string SystemLastSequence = "SELECT coalesce(max(sequence), 0) FROM journal_prefixes;";
+
+    public const string TruncateChanges = "DELETE FROM changes WHERE sequence <= $floor;";
+
+    public const string TruncatePrefixes = "DELETE FROM journal_prefixes WHERE sequence <= $floor;";
+
     /// <summary>Statement name and text, for query-plan checks.</summary>
     public static IReadOnlyDictionary<string, string> All { get; } = new Dictionary<string, string>(StringComparer.Ordinal)
     {
@@ -258,5 +286,14 @@ internal static class SqliteStatements
         [nameof(BaselineDocumentsAfter)] = BaselineDocumentsAfter,
         [nameof(BaselineTombstonesFirst)] = BaselineTombstonesFirst,
         [nameof(BaselineTombstonesAfter)] = BaselineTombstonesAfter,
+        [nameof(SystemDocumentsFirst)] = SystemDocumentsFirst,
+        [nameof(SystemDocumentsAfter)] = SystemDocumentsAfter,
+        [nameof(GroupSize)] = GroupSize,
+        [nameof(ReadGroupPage)] = ReadGroupPage,
+        [nameof(CollectionRangeIds)] = CollectionRangeIds,
+        [nameof(ReplaceDocument)] = ReplaceDocument,
+        [nameof(SystemLastSequence)] = SystemLastSequence,
+        [nameof(TruncateChanges)] = TruncateChanges,
+        [nameof(TruncatePrefixes)] = TruncatePrefixes,
     };
 }

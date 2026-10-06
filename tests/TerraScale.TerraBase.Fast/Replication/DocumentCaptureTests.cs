@@ -337,7 +337,7 @@ public sealed class DocumentCaptureTests
     }
 
     [Test]
-    public async Task System_and_empty_mutations_keep_physical_removal_without_capture()
+    public async Task Empty_mutations_capture_nothing_and_system_removals_stay_physical_in_one_catalog_group()
     {
         using var tls = new ClientTls();
         await using var server = await TerraBaseTestServer.StartAsync(tls.Apply);
@@ -362,6 +362,12 @@ public sealed class DocumentCaptureTests
             await engine.OpenSystemDatabaseAsync(deadline.Token),
         })
         {
+            long before;
+            await using (var head = await store.BeginTransactionAsync(write: false, deadline.Token))
+            {
+                before = await head.GetLastChangeSequenceAsync(deadline.Token);
+            }
+
             await using (var write = await store.BeginTransactionAsync(write: true, deadline.Token))
             {
                 await Assert.That(await write.DeleteAsync("capture-tests", "missing", deadline.Token)).IsFalse();
@@ -383,8 +389,10 @@ public sealed class DocumentCaptureTests
                 await write.CommitAsync(deadline.Token);
             }
 
+            // The system database captures its removals as one group for catalog followers (docs/decisions/0009); a client
+            // database captures nothing for an empty collection's drop.
             await using var read = await store.BeginTransactionAsync(write: false, deadline.Token);
-            await Assert.That(await read.GetLastChangeSequenceAsync(deadline.Token)).IsEqualTo(0);
+            await Assert.That(await read.GetLastChangeSequenceAsync(deadline.Token)).IsEqualTo(store.Tenant is null ? before + 1 : 0);
             await Assert.That(await read.GetVersionAsync("capture-tests", "physical", deadline.Token)).IsNull();
             await Assert.That(await read.GetVersionAsync("capture-tests", "dropped", deadline.Token)).IsNull();
             await Assert.That(await read.GetCollectionAsync(store.Tenant is null ? "capture-tests" : "items", deadline.Token)).IsNull();

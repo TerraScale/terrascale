@@ -1,9 +1,14 @@
+using TerraScale.TerraBase.Configuration;
 using TerraScale.TerraBase.Features.Management.Queries;
 
 namespace TerraScale.TerraBase.Features.Management.Usage;
 
-/// <summary>Flushes <see cref="UsageMeter"/> and <see cref="QueryFieldRecorder"/> every 10 seconds and once more on shutdown.</summary>
-internal sealed partial class UsageFlushService(UsageMeter meter, QueryFieldRecorder recorder, TimeProvider time, ILogger<UsageFlushService> logger) : BackgroundService
+/// <summary>
+/// Flushes <see cref="UsageMeter"/> and <see cref="QueryFieldRecorder"/> every 10 seconds and once more on shutdown. A catalog
+/// follower writes no catalog: its counts stay in memory, bounded by the databases it serves, and are lost on restart.
+/// </summary>
+internal sealed partial class UsageFlushService(
+    UsageMeter meter, QueryFieldRecorder recorder, TimeProvider time, TerraBaseOptions options, ILogger<UsageFlushService> logger) : BackgroundService
 {
     private static readonly TimeSpan Interval = TimeSpan.FromSeconds(10);
 
@@ -12,7 +17,7 @@ internal sealed partial class UsageFlushService(UsageMeter meter, QueryFieldReco
     public override async Task StopAsync(CancellationToken cancellationToken)
     {
         await base.StopAsync(cancellationToken).ConfigureAwait(false);
-        foreach (var flush in Flushes)
+        foreach (var flush in options.CatalogPrimary is null ? Flushes : [])
         {
             try
             {
@@ -27,6 +32,11 @@ internal sealed partial class UsageFlushService(UsageMeter meter, QueryFieldReco
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        if (options.CatalogPrimary is not null)
+        {
+            return;
+        }
+
         using var timer = new PeriodicTimer(Interval, time);
         while (await timer.WaitForNextTickAsync(stoppingToken).ConfigureAwait(false))
         {

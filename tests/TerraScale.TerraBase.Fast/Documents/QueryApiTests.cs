@@ -1,6 +1,9 @@
 using System.Net;
 using System.Text;
 using System.Text.Json;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Time.Testing;
+using TerraScale.TerraBase.Engine;
 
 namespace TerraScale.TerraBase.Fast.Documents;
 
@@ -483,7 +486,9 @@ public sealed class QueryApiTests
     [Test]
     public async Task Large_membership_filters_stay_within_sqlite_parameter_limits()
     {
-        await using var api = await SeedAsync();
+        // The deadline clock stays still: this checks parameter limits, and only the deterministic step budget may end the
+        // query, not a busy runner's wall clock.
+        await using var api = await SeedAsync(services => services.AddKeyedSingleton<TimeProvider>(EngineExtensions.QueryDeadlineClock, new FakeTimeProvider()));
         var values = string.Join(',', Enumerable.Range(0, 256));
         var group = "{\"and\":[" + string.Join(',', Enumerable.Repeat($$"""{"in":["/n",[{{values}}]]}""", 64)) + "]}";
         var filter = "{\"and\":[" + string.Join(',', Enumerable.Repeat(group, 3)) + "]}";
@@ -505,9 +510,9 @@ public sealed class QueryApiTests
         await Assert.That((result.Status, result.Code)).IsEqualTo((HttpStatusCode.NotFound, "unknown_collection"));
     }
 
-    private static async Task<DocumentApi> SeedAsync()
+    private static async Task<DocumentApi> SeedAsync(Action<IServiceCollection>? services = null)
     {
-        var api = await DocumentApi.StartAsync();
+        var api = await DocumentApi.StartAsync(services: services);
         try
         {
             var ops = string.Join(',', Seed.Select(pair => $$"""{"op":"create","collection":"items","id":"{{Ids[pair.Key]}}","document":{{pair.Value}}}"""));

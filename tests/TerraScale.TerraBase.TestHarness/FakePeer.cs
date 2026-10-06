@@ -12,8 +12,8 @@ using TerraScale.TerraBase.Features.Replication.V1;
 namespace TerraScale.TerraBase.Testing;
 
 /// <summary>
-/// A scripted <c>Replication</c> receiver on its own mutual TLS listener, for tests that need a peer to answer
-/// in ways a real node never does. Each Sync stream runs <c>serve</c>.
+/// A scripted <c>Replication</c> receiver or <c>CatalogReplication</c> primary on its own mutual TLS listener, for tests that
+/// need a peer to answer in ways a real node never does. Each stream runs <c>serve</c>.
 /// </summary>
 public sealed class FakePeer : IAsyncDisposable
 {
@@ -31,9 +31,21 @@ public sealed class FakePeer : IAsyncDisposable
     public Uri Address { get; }
 
     /// <summary>Starts a fake peer that serves the node certificate of <paramref name="tls"/>.</summary>
-    public static async Task<FakePeer> StartAsync(
+    public static Task<FakePeer> StartAsync(
         PeerTls tls, Func<IAsyncStreamReader<SyncRequest>, IServerStreamWriter<SyncResponse>, ServerCallContext, Task> serve,
-        Action<HttpsConnectionAdapterOptions>? configureTls = null)
+        Action<HttpsConnectionAdapterOptions>? configureTls = null) =>
+        StartAsync(tls, configureTls, services => services.AddSingleton(new Service(serve)), app => app.MapGrpcService<Service>());
+
+    /// <summary>
+    /// Starts a fake catalog primary (<c>CatalogReplication</c>) that serves the node certificate of <paramref name="tls"/>; each
+    /// Follow stream runs <paramref name="serve"/>.
+    /// </summary>
+    public static Task<FakePeer> StartCatalogAsync(
+        PeerTls tls, Func<FollowRequest, IServerStreamWriter<FollowResponse>, ServerCallContext, Task> serve) =>
+        StartAsync(tls, null, services => services.AddSingleton(new CatalogService(serve)), app => app.MapGrpcService<CatalogService>());
+
+    private static async Task<FakePeer> StartAsync(
+        PeerTls tls, Action<HttpsConnectionAdapterOptions>? configureTls, Action<IServiceCollection> register, Action<WebApplication> map)
     {
         ArgumentNullException.ThrowIfNull(tls);
         // Kestrel does not own a ServerCertificate: this peer disposes it after the application stops.
@@ -41,7 +53,7 @@ public sealed class FakePeer : IAsyncDisposable
         WebApplication? app = null;
         try
         {
-            app = await BuildAsync(certificate, serve, configureTls);
+            app = await BuildAsync(certificate, configureTls, register, map);
             var port = new Uri(app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single()).Port;
             return new FakePeer(app, certificate, new Uri($"https://localhost:{port}"));
         }
@@ -58,8 +70,7 @@ public sealed class FakePeer : IAsyncDisposable
     }
 
     private static async Task<WebApplication> BuildAsync(
-        X509Certificate2 certificate, Func<IAsyncStreamReader<SyncRequest>, IServerStreamWriter<SyncResponse>, ServerCallContext, Task> serve,
-        Action<HttpsConnectionAdapterOptions>? configureTls)
+        X509Certificate2 certificate, Action<HttpsConnectionAdapterOptions>? configureTls, Action<IServiceCollection> register, Action<WebApplication> map)
     {
         var builder = WebApplication.CreateSlimBuilder();
         builder.WebHost.ConfigureKestrel(kestrel => kestrel.Listen(IPAddress.Loopback, 0, listen =>
@@ -74,9 +85,9 @@ public sealed class FakePeer : IAsyncDisposable
             });
         }));
         builder.Services.AddGrpc();
-        builder.Services.AddSingleton(new Service(serve));
+        register(builder.Services);
         var app = builder.Build();
-        app.MapGrpcService<Service>();
+        map(app);
         try
         {
             await app.StartAsync();
@@ -136,6 +147,13 @@ public sealed class FakePeer : IAsyncDisposable
     {
         await _app.DisposeAsync();
         _certificate.Dispose();
+    }
+
+    private sealed class CatalogService(Func<FollowRequest, IServerStreamWriter<FollowResponse>, ServerCallContext, Task> serve)
+        : CatalogReplication.CatalogReplicationBase
+    {
+        public override Task Follow(FollowRequest request, IServerStreamWriter<FollowResponse> responseStream, ServerCallContext context) =>
+            serve(request, responseStream, context);
     }
 
     private sealed class Service(Func<IAsyncStreamReader<SyncRequest>, IServerStreamWriter<SyncResponse>, ServerCallContext, Task> serve)

@@ -69,6 +69,7 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine
 
     // Published under _creation.
     private SqliteDatabaseStore? _system;
+    private readonly bool _systemReplica;
 
     // Protects only probe bookkeeping, never disk work or an await. Task state distinguishes idle/completed/running,
     // independently of timestamps (including zero).
@@ -298,12 +299,14 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine
     /// <param name="checkpoint">A per-host lifecycle checkpoint for integration tests.</param>
     /// <param name="time">The clock of the query deadline; the system clock by default.</param>
     /// <param name="afterMigration">Optional integration-test hook before a tenant database's baseline is seeded.</param>
+    /// <param name="systemReplica">Whether this node follows a catalog primary: its system database accepts only replicated writes.</param>
     public SqliteStorageEngine(
         string dataDirectory, int threads, int queue, long memoryBudget, Meter meter, ILogger<SqliteStorageEngine> logger,
         TimeSpan shutdownGrace, int? maxIdle = null, int? maxIdlePerDatabase = null, Func<ThreadStart, Thread>? createWorker = null,
         TimeSpan? readinessCacheTtl = null, DatabaseLifecycleCheckpoint? checkpoint = null, TimeProvider? time = null,
-        Action<SqliteDatabaseStore>? afterMigration = null)
+        Action<SqliteDatabaseStore>? afterMigration = null, bool systemReplica = false)
     {
+        _systemReplica = systemReplica;
         _dataDirectory = dataDirectory;
         _memoryBudget = memoryBudget;
         _logger = logger;
@@ -706,7 +709,11 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine
                 // Once published, complete the opening even if cancellation arrives.
                 var openingToken = created ? CancellationToken.None : cancellationToken;
                 await InitializeHeapAsync(openingToken).ConfigureAwait(false);
-                system = new SqliteDatabaseStore(SystemName, path, Pool, Io, _pragmas, Time, RecordCommittedWrite);
+                // Every write is captured into its journal for catalog followers (docs/decisions/0009); no engine event.
+                system = new SqliteDatabaseStore(SystemName, path, Pool, Io, _pragmas, null, Time, static _ => { }, RecordCommittedWrite)
+                {
+                    Replica = _systemReplica,
+                };
                 try
                 {
                     await system.MigrateAsync(openingToken).ConfigureAwait(false);

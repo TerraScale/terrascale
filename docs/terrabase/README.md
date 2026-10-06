@@ -70,6 +70,7 @@ never its value. Port `0` picks a free port.
 | `--peer-private-key` / `TERRABASE_PEER_PRIVATE_KEY` | unset | PEM private key file of `peer-certificate`. Requires `peer-port` and the other peer TLS settings |
 | `--peer-client-ca` / `TERRABASE_PEER_CLIENT_CA` | unset | PEM CA bundle that every peer certificate must chain to, in both directions. Requires `peer-port` and the other peer TLS settings |
 | `--peer-addresses` / `TERRABASE_PEER_ADDRESSES` | unset | Comma-separated `https://host:port` peers to send changes to; requires `peer-port` |
+| `--catalog-primary` / `TERRABASE_CATALOG_PRIMARY` | unset (this node is a catalog primary) | `https://host:port` peer listener of the catalog primary this node replicates the management catalog and API keys from; it then writes no catalog itself. Requires `peer-port`. See `docs/replication.md#catalog` |
 | `--shutdown-grace-seconds` / `TERRABASE_SHUTDOWN_GRACE_SECONDS` | `10` | Seconds shutdown waits for transactions to return their database connections (0 to 3600). It never closes them; the data directory stays owned until they do or the process exits |
 | `--readiness-cache-seconds` / `TERRABASE_READINESS_CACHE_SECONDS` | `1` | Seconds completed readiness filesystem results are cached (positive integer, 1 to 60). Zero is prohibited to bound disk work from anonymous traffic. Shutdown bypasses the cache |
 | `memory-budget` | ¼ of available memory | Bytes for caches; see `docs/memory.md` |
@@ -84,7 +85,8 @@ when `client-port` is set, on the client TLS listener.
 - `GET /healthz`: liveness, `200 {"status":"ok","version":"<version>","region":"<region>"}`.
 - `GET /readyz`: readiness. `200 {"status":"ready","version":"<version>","region":"<region>"}` only when the storage
   engine is open, the data directory is writable, ts-auth's signing keys have been fetched once (only when
-  `auth-issuer` is set) and the server is not shutting down; otherwise
+  `auth-issuer` is set), a catalog follower has applied its primary's head once and is not behind a head its primary
+  reported (only when `catalog-primary` is set) and the server is not shutting down; otherwise
   `503 {"status":"unavailable","version":"<version>","region":"<region>"}`. Writable means it can create and remove an
   empty probe file there, so a disk with free inodes but no free blocks still reads as writable.
   Completed filesystem results are cached for one second by default, configurable with `readiness-cache-seconds`,

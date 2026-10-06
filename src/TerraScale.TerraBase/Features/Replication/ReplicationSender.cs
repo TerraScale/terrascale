@@ -1,5 +1,3 @@
-using System.Net.Security;
-using System.Security.Cryptography.X509Certificates;
 using System.Threading.Channels;
 using Grpc.Core;
 using Grpc.Net.Client;
@@ -465,29 +463,7 @@ internal sealed partial class ReplicationSender(
         // worker replaces it between streams when rotation publishes a new context.
         GrpcChannel CreateChannel(PeerCredentials.Lease snapshot)
         {
-            var handler = new SocketsHttpHandler
-            {
-                ConnectTimeout = ReplicationProtocol.ProgressTimeout,
-                // HTTP/2 pings find a silently dropped connection in seconds, not at the TCP retransmission timeout.
-                KeepAlivePingDelay = TimeSpan.FromSeconds(10),
-                KeepAlivePingTimeout = TimeSpan.FromSeconds(5),
-                KeepAlivePingPolicy = HttpKeepAlivePingPolicy.Always,
-                SslOptions = new SslClientAuthenticationOptions
-                {
-                    CertificateChainPolicy = snapshot.Policy(PeerTlsFiles.ServerAuthentication),
-                    ClientCertificateContext = snapshot.CertificateContext,
-                    RemoteCertificateValidationCallback = (_, certificate, chain, errors) =>
-                        (errors & ~SslPolicyErrors.RemoteCertificateChainErrors) == SslPolicyErrors.None
-                        && certificate is X509Certificate2 server && snapshot.IsTrusted(server, PeerTlsFiles.ServerAuthentication, chain),
-                },
-            };
-            return GrpcChannel.ForAddress(address, new GrpcChannelOptions
-            {
-                HttpHandler = handler,
-                DisposeHttpClient = true,
-                MaxSendMessageSize = ReplicationProtocol.MaxMessageBytes,
-                MaxReceiveMessageSize = ReplicationProtocol.MaxMessageBytes,
-            });
+            return PeerChannel.Create(address, snapshot);
         }
 
         var initial = credentials.Capture();

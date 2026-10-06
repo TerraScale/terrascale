@@ -848,6 +848,20 @@ internal sealed partial class EngineManagementService(
             return;
         }
 
+        if (options.CatalogPrimary is not null)
+        {
+            // A follower migrates nothing: the primary's migration and backfills replicate. It checks every time, since
+            // replication can bring a version this build does not read.
+            if (await ReadCatalogAsync(transaction => GetAsync(transaction, Catalog, CatalogVersionId, Id, cancellationToken), cancellationToken)
+                .ConfigureAwait(false) != CatalogVersion)
+            {
+                throw new BadHttpRequestException(
+                    "the replicated management catalog is not at a version this build supports", StatusCodes.Status503ServiceUnavailable);
+            }
+
+            return;
+        }
+
         var migrated = await WriteCatalogAsync(async transaction =>
         {
             var version = await GetAsync(transaction, Catalog, CatalogVersionId, Id, cancellationToken).ConfigureAwait(false);

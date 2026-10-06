@@ -1,10 +1,17 @@
+using TerraScale.TerraBase.Configuration;
+
 namespace TerraScale.TerraBase.Features.Management.Backups;
 
-/// <summary>Once a minute, takes the scheduled backups that are due and applies retention.</summary>
-internal sealed partial class BackupScheduler(IManagedBackupService backups, TimeProvider time, ILogger<BackupScheduler> logger) : BackgroundService
+/// <summary>Once a minute, takes the scheduled backups that are due and applies retention; on the catalog primary only.</summary>
+internal sealed partial class BackupScheduler(IManagedBackupService backups, TimeProvider time, TerraBaseOptions options, ILogger<BackupScheduler> logger) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        if (options.CatalogPrimary is not null)
+        {
+            return;
+        }
+
         using var timer = new PeriodicTimer(TimeSpan.FromMinutes(1), time);
         while (await timer.WaitForNextTickAsync(stoppingToken).ConfigureAwait(false))
         {

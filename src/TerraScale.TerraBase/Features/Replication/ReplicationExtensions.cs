@@ -12,13 +12,25 @@ public static class ReplicationExtensions
 {
     /// <summary>
     /// Adds the peer listener (HTTP/2 over mutual TLS with certificates read again when their files change)
-    /// and the <c>Replication</c> service, plus the sender when <c>peer-addresses</c> is set. No-op when the
-    /// peer listener is disabled. Payloads are LZ4 application envelopes; gRPC transport compression is not used.
+    /// and the <c>Replication</c> and <c>CatalogReplication</c> services, plus the sender when <c>peer-addresses</c> is
+    /// set and the catalog follower when <c>catalog-primary</c> is. Registers <see cref="ICatalogReadiness"/>; nothing else
+    /// when the peer listener is disabled. Payloads are LZ4 application envelopes; gRPC transport compression is not used.
     /// </summary>
     public static WebApplicationBuilder AddTerraBaseReplication(this WebApplicationBuilder builder, TerraBaseOptions options)
     {
         ArgumentNullException.ThrowIfNull(builder);
         ArgumentNullException.ThrowIfNull(options);
+        if (options.CatalogPrimary is null)
+        {
+            builder.Services.AddSingleton<ICatalogReadiness, CatalogPrimaryReadiness>();
+        }
+        else
+        {
+            builder.Services.AddSingleton<CatalogFollower>();
+            builder.Services.AddSingleton<ICatalogReadiness>(provider => provider.GetRequiredService<CatalogFollower>());
+            builder.Services.AddHostedService(provider => provider.GetRequiredService<CatalogFollower>());
+        }
+
         if (options.PeerPort is not { } port)
         {
             return builder;
@@ -52,6 +64,7 @@ public static class ReplicationExtensions
         builder.Services.AddSingleton<ReplicationMetrics>();
         builder.Services.AddSingleton<IReplicationJournal, EngineReplicationJournal>();
         builder.Services.AddSingleton<ReplicationService>();
+        builder.Services.AddSingleton<CatalogFeed>();
         builder.Services.AddGrpc(grpc =>
         {
             grpc.MaxReceiveMessageSize = ReplicationProtocol.MaxMessageBytes;
@@ -65,13 +78,14 @@ public static class ReplicationExtensions
         return builder;
     }
 
-    /// <summary>Maps the <c>Replication</c> service onto the peer listener.</summary>
+    /// <summary>Maps the <c>Replication</c> and <c>CatalogReplication</c> services onto the peer listener.</summary>
     public static WebApplication MapTerraBaseReplication(this WebApplication app)
     {
         ArgumentNullException.ThrowIfNull(app);
         if (app.Services.GetRequiredService<TerraBaseOptions>().PeerPort is not null)
         {
             app.MapGrpcService<ReplicationService>().WithMetadata(ListenerMetadata.Peer);
+            app.MapGrpcService<CatalogFeed>().WithMetadata(ListenerMetadata.Peer);
         }
 
         return app;

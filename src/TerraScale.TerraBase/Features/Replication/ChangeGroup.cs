@@ -48,11 +48,13 @@ public static class ChangeGroup
     /// <summary>
     /// Decodes and validates a change group: 1 to <paramref name="maxChanges"/> changes, at most
     /// <paramref name="maxContentBytes"/> bytes of collections, ids and JSON (framing excluded, as when a
-    /// group is captured), valid collection names and document ids, positive versions and JSON objects.
+    /// group is captured), valid collection names and document ids, positive versions and JSON objects. A
+    /// <paramref name="system"/> page (docs/decisions/0009) needs only non-empty keys and JSON values.
     /// </summary>
     /// <exception cref="InvalidDataException">The bytes are not a valid change group.</exception>
     public static List<DocumentChange> Decode(
-        ReadOnlySpan<byte> plain, int maxChanges = IStorageTransaction.MaxChangeGroupChanges, int maxContentBytes = IStorageTransaction.MaxChangeGroupBytes)
+        ReadOnlySpan<byte> plain, int maxChanges = IStorageTransaction.MaxChangeGroupChanges, int maxContentBytes = IStorageTransaction.MaxChangeGroupBytes,
+        bool system = false)
     {
         if (plain.Length < Magic.Length + sizeof(uint) || !plain[..Magic.Length].SequenceEqual(Magic))
         {
@@ -83,7 +85,7 @@ public static class ChangeGroup
                     throw new InvalidDataException($"a change group holds at most {maxContentBytes} bytes of collections, ids and documents");
                 }
 
-                changes.Add(Validate(kind, Utf8.GetString(collection), Utf8.GetString(id), version, json));
+                changes.Add(Validate(kind, Utf8.GetString(collection), Utf8.GetString(id), version, json, system));
             }
         }
         catch (Exception error) when (error is DecoderFallbackException or OverflowException)
@@ -101,9 +103,10 @@ public static class ChangeGroup
         return changes.Sum(change => (long)Utf8.GetByteCount(change.Collection) + Utf8.GetByteCount(change.Id) + (change.Json?.Length ?? 0));
     }
 
-    private static DocumentChange Validate(byte kind, string collection, string id, ulong version, ReadOnlySpan<byte> json)
+    private static DocumentChange Validate(byte kind, string collection, string id, ulong version, ReadOnlySpan<byte> json, bool system)
     {
-        if (kind > 1 || !DocumentChange.HasValidKey(collection, id) || version is 0 or > (ulong)VersionClock.MaxVersion)
+        if (kind > 1 || version is 0 or > (ulong)VersionClock.MaxVersion
+            || (system ? collection.Length == 0 || id.Length == 0 : !DocumentChange.HasValidKey(collection, id)))
         {
             throw new InvalidDataException("a change has an invalid kind, collection, id or version");
         }
@@ -116,7 +119,7 @@ public static class ChangeGroup
         var body = json.ToArray();
         try
         {
-            _ = DocumentJson.Read(body, requireObject: true);
+            _ = DocumentJson.Read(body, requireObject: !system);
         }
         catch (DocumentValidationException error)
         {

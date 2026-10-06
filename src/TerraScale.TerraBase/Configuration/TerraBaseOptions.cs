@@ -1,4 +1,5 @@
 using System.Collections.Frozen;
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
@@ -178,7 +179,7 @@ public sealed record TerraBaseOptions : IDisposable
 
     private static readonly FrozenSet<string> Keys = FrozenSet.Create(
         StringComparer.Ordinal,
-        ["admin-port", "data-directory", "region", "node-name", "memory-budget", "client-port", .. ClientTlsKeys, "auth-issuer", "auth-audience", "management-credential-file", "management-legacy-owner", "peer-port", .. PeerTlsKeys, "peer-addresses", "shutdown-grace-seconds", "readiness-cache-seconds", "storage-threads", "storage-queue"]);
+        ["admin-port", "data-directory", "region", "node-name", "memory-budget", "client-port", .. ClientTlsKeys, "auth-issuer", "auth-audience", "management-credential-file", "management-legacy-owner", "peer-port", .. PeerTlsKeys, "peer-addresses", "catalog-primary", "shutdown-grace-seconds", "readiness-cache-seconds", "storage-threads", "storage-queue"]);
 
     /// <summary>Every setting name, in <c>--name=value</c> form without the dashes.</summary>
     public static IReadOnlySet<string> SettingNames => Keys;
@@ -272,6 +273,13 @@ public sealed record TerraBaseOptions : IDisposable
     /// certificate it presents.
     /// </summary>
     public IReadOnlyList<Uri> PeerAddresses { get; init; } = [];
+
+    /// <summary>
+    /// The peer listener (<c>https://host:port</c>) of the catalog primary this node follows: it replicates the system
+    /// database from there and writes none of it (docs/decisions/0009). <see langword="null"/> makes this node a catalog
+    /// primary. Requires <see cref="PeerPort"/>, whose certificate it presents.
+    /// </summary>
+    public Uri? CatalogPrimary { get; init; }
 
     /// <summary>
     /// Bytes of memory TerraBase plans for caches (<c>docs/memory.md</c>). Defaults to a quarter of the memory
@@ -398,6 +406,13 @@ public sealed record TerraBaseOptions : IDisposable
             throw new TerraBaseConfigurationException("peer-addresses requires peer-port");
         }
 
+        Uri? catalogPrimary = null;
+        if (values.TryGetValue("catalog-primary", out var primary)
+            && (!TryParsePeerAddress(primary, out catalogPrimary) || peerPort is null))
+        {
+            throw new TerraBaseConfigurationException("catalog-primary must be one https://host:port address and requires peer-port");
+        }
+
         // Validate the remaining settings before allocating certificates.
         var adminPort = ParsePort(values, "admin-port") ?? DefaultAdminPort;
         var shutdownGrace = TimeSpan.FromSeconds(ParseShutdownGraceSeconds(values));
@@ -436,6 +451,7 @@ public sealed record TerraBaseOptions : IDisposable
                 PeerTls = peerTls,
                 PeerCredentialSnapshot = peerCredentialSnapshot,
                 PeerAddresses = peerAddresses,
+                CatalogPrimary = catalogPrimary,
                 ShutdownGrace = shutdownGrace,
                 ReadinessCacheTtl = readinessCacheTtl,
             };
@@ -589,13 +605,7 @@ public sealed record TerraBaseOptions : IDisposable
         var addresses = new List<Uri>();
         foreach (var entry in raw.Split(',', StringSplitOptions.TrimEntries))
         {
-            if (!Uri.TryCreate(entry, UriKind.Absolute, out var address)
-                || address.Scheme != Uri.UriSchemeHttps
-                || address.Port == 0
-                || address.PathAndQuery != "/"
-                || address.Fragment.Length > 0
-                || address.UserInfo.Length > 0
-                || addresses.Contains(address))
+            if (!TryParsePeerAddress(entry, out var address) || addresses.Contains(address))
             {
                 throw new TerraBaseConfigurationException("peer-addresses must be a comma-separated list of distinct https://host:port addresses");
             }
@@ -605,6 +615,15 @@ public sealed record TerraBaseOptions : IDisposable
 
         return addresses;
     }
+
+    // An https://host:port origin of a peer listener.
+    private static bool TryParsePeerAddress(string value, [NotNullWhen(true)] out Uri? address) =>
+        Uri.TryCreate(value, UriKind.Absolute, out address)
+        && address.Scheme == Uri.UriSchemeHttps
+        && address.Port != 0
+        && address.PathAndQuery == "/"
+        && address.Fragment.Length == 0
+        && address.UserInfo.Length == 0;
 
     // Messages name the settings, never the paths or file contents.
     private static T LoadPem<T>(Func<T> load, string message)

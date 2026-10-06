@@ -15,6 +15,12 @@ internal sealed partial class EngineManagementService
     {
         _recoveryMeter.CreateObservableGauge("terrabase.storage.unknown_files", () => _unknownDatabaseFiles,
             description: "Files found at startup without a registered database; preserved for operator recovery.");
+        if (options.CatalogPrimary is not null)
+        {
+            // A follower's intents are the primary's (it replays them); its catalog may still be catching up, so an audit
+            // against it would report databases it has not received yet.
+            return;
+        }
 
         // Older catalogs contain no intents. Keep their existing lazy migration/503 behavior.
         var hasCatalog = engine.SystemDatabaseExists;

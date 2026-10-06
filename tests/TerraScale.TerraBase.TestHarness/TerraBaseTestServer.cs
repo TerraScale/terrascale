@@ -198,6 +198,12 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// A port free right now, for a server that must listen on the same port again after a restart. Another process may
+    /// still take it meanwhile.
+    /// </summary>
+    public static int FreePort() => FreePorts().A;
+
     // Keep both probes bound until distinct ports are selected. Another process may still take them later.
     private static (int A, int B) FreePorts()
     {

@@ -65,6 +65,16 @@ public sealed class QueryPlanTests
         ["BaselineDocumentsAfter"] = "SEARCH documents USING INDEX documents_live ((collection,id)>(?,?))",
         ["BaselineTombstonesFirst"] = "SCAN documents",
         ["BaselineTombstonesAfter"] = "SEARCH documents USING PRIMARY KEY ((collection,id)>(?,?))",
+        // System database replication: snapshot pages, group pages, prefix drops, replica writes, journal tail.
+        ["SystemDocumentsFirst"] = "SCAN documents USING INDEX documents_live",
+        ["SystemDocumentsAfter"] = "SEARCH documents USING INDEX documents_live ((collection,id)>(?,?))",
+        ["GroupSize"] = "SEARCH changes USING PRIMARY KEY (sequence=?)",
+        ["ReadGroupPage"] = "SEARCH changes USING PRIMARY KEY (sequence=? AND ordinal>?)",
+        ["CollectionRangeIds"] = "SEARCH documents USING PRIMARY KEY (collection>? AND collection<?)",
+        ["ReplaceDocument"] = "",
+        ["SystemLastSequence"] = "SEARCH journal_prefixes USING PRIMARY KEY",
+        ["TruncateChanges"] = "SEARCH changes USING PRIMARY KEY (sequence<?)",
+        ["TruncatePrefixes"] = "SEARCH journal_prefixes USING PRIMARY KEY (sequence<?)",
     };
 
     [Test]

@@ -111,6 +111,13 @@ public static partial class BadRequests
                 context.Response.Headers.RetryAfter = "1";
                 await WriteAsync(context, StatusCodes.Status503ServiceUnavailable, "storage_busy", error.Message, op: null).ConfigureAwait(false);
             }
+            catch (CatalogFollowerException error) when (!context.Response.HasStarted)
+            {
+                // Nothing was written; the catalog primary accepts it (docs/decisions/0009).
+                Replace(context.Response);
+                context.Response.Headers.RetryAfter = "1";
+                await WriteAsync(context, StatusCodes.Status503ServiceUnavailable, "not_primary", error.Message, op: null).ConfigureAwait(false);
+            }
             catch (Exception error) when (!context.Response.HasStarted && !context.RequestAborted.IsCancellationRequested)
             {
                 // A server fault: log it, and answer without its details.
