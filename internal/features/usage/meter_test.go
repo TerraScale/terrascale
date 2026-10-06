@@ -1,6 +1,7 @@
 package usage
 
 import (
+	"cmp"
 	"context"
 	"net/http"
 	"net/http/httptest"
@@ -17,6 +18,9 @@ import (
 type fakeMeter struct {
 	reads, writes, monthReads, monthWrites, logicalBytes int64
 	databaseID                                           string
+	// organizationBytes and projectBytes are TerraBase's own sums, which
+	// may count resources the dashboard doesn't list.
+	organizationBytes, projectBytes int64
 	// err fails every call; orgErr and scopeErr only the organization's or
 	// the selected scope's.
 	err, orgErr, scopeErr error
@@ -32,14 +36,14 @@ func (m *fakeMeter) Usage(_ context.Context, token string, scope core.UsageScope
 		return core.Usage{}, m.err
 	}
 	if scope.ProjectID == "" {
-		return core.Usage{Period: core.UsagePeriod{Reads: m.monthReads, Writes: m.monthWrites}}, m.orgErr
+		return core.Usage{LogicalBytes: m.organizationBytes, Period: core.UsagePeriod{Reads: m.monthReads, Writes: m.monthWrites}}, m.orgErr
 	}
 	if m.scopeErr != nil {
 		return core.Usage{}, m.scopeErr
 	}
 	database := core.Usage{DatabaseID: m.databaseID, LogicalBytes: m.logicalBytes, Documents: 2, Period: core.UsagePeriod{Reads: m.reads, Writes: m.writes}}
 	return core.Usage{
-		Period: database.Period, LogicalBytes: m.logicalBytes, Items: []core.Usage{database},
+		Period: database.Period, LogicalBytes: cmp.Or(m.projectBytes, m.logicalBytes), Items: []core.Usage{database},
 		Series: []core.UsagePoint{{Start: scope.From, Reads: m.reads - 1, Writes: m.writes}, {Start: scope.From.Add(time.Hour), Reads: 1}},
 	}, nil
 }
@@ -192,5 +196,21 @@ func TestUsageClaimsStorageOnlyWhenItIsKnown(t *testing.T) {
 	}
 	if !report.Totals.StorageMeasured || !report.Allowances[2].Measured {
 		t.Fatalf("storage without TerraBase = %+v; the dashboard holds every document", report.Totals)
+	}
+}
+
+// TestUsageTakesStorageTotalsFromTerraBase covers resources TerraBase stores
+// but the dashboard doesn't list, such as a database created after import:
+// the totals use TerraBase's sums, the share bars the listed rows.
+func TestUsageTakesStorageTotalsFromTerraBase(t *testing.T) {
+	meter := &fakeMeter{logicalBytes: 2048, projectBytes: 5000, organizationBytes: 9000}
+	service, principal, _ := meterFixture(t, meter)
+	report, err := service.Usage(t.Context(), principal, "user-token", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Totals.LogicalBytes != 5000 || report.Allowances[2].Used != 9000 || report.Databases[0].LogicalBytes != 2048 || report.Databases[0].SharePercent != 100 {
+		t.Fatalf("storage = totals %d, allowance %d, row %+v; want TerraBase's sums with rows for shares",
+			report.Totals.LogicalBytes, report.Allowances[2].Used, report.Databases[0])
 	}
 }

@@ -185,19 +185,26 @@ func (s Service) report(ctx context.Context, p core.Principal, token string, org
 	}
 	report.RegionCount = len(regions)
 	metered := s.meter(ctx, token, org, project, databaseFilter, &report)
+	// Shares compare the listed rows; totals take TerraBase's own sums when
+	// it answered, which also count resources the dashboard doesn't list.
 	var organizationBytes, databaseBytes int64
 	for _, row := range report.Projects {
 		organizationBytes += row.LogicalBytes
 	}
 	for _, row := range report.Databases {
 		databaseBytes += row.LogicalBytes
-		report.Totals.LogicalBytes += row.LogicalBytes
 	}
 	for i := range report.Projects {
 		report.Projects[i].SharePercent = sharePercent(report.Projects[i].LogicalBytes, organizationBytes)
 	}
 	for i := range report.Databases {
 		report.Databases[i].SharePercent = sharePercent(report.Databases[i].LogicalBytes, databaseBytes)
+	}
+	if !report.Totals.Available {
+		report.Totals.LogicalBytes = databaseBytes
+	}
+	if metered.monthMeasured {
+		organizationBytes = metered.organizationBytes
 	}
 	slices.SortFunc(report.Projects, func(a, b projectUsage) int { return strings.Compare(a.Name, b.Name) })
 	slices.SortFunc(report.Databases, func(a, b databaseUsage) int { return strings.Compare(a.Name, b.Name) })
@@ -220,6 +227,7 @@ func (s Service) report(ctx context.Context, p core.Principal, token string, org
 // and writes this month, and whether its projects' storage is known.
 type metered struct {
 	month               core.UsagePeriod
+	organizationBytes   int64
 	monthMeasured       bool
 	organizationStorage bool
 	// monthError is why the organization's answer failed, other than
@@ -252,6 +260,7 @@ func (s Service) meter(ctx context.Context, token string, org core.Organization,
 	switch {
 	case err == nil:
 		result.month, result.monthMeasured, result.organizationStorage = organization.Period, true, true
+		result.organizationBytes = organization.LogicalBytes
 		for i, row := range report.Projects {
 			if item, ok := findUsage(organization.Items, func(u core.Usage) string { return u.ProjectID }, row.ID); ok {
 				report.Projects[i].LogicalBytes = item.LogicalBytes
@@ -297,6 +306,7 @@ func (s Service) meter(ctx context.Context, token string, org core.Organization,
 	}
 	totals.Available, totals.StorageMeasured, totals.Source = true, true, "Metered by TerraBase."
 	totals.Reads, totals.Writes, totals.Series = scoped.Period.Reads, scoped.Period.Writes, scoped.Series
+	totals.LogicalBytes = scoped.LogicalBytes
 	return result
 }
 

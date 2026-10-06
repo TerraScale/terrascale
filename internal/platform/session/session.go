@@ -219,14 +219,17 @@ func (m *Manager) UserToken(r *http.Request) string {
 	if err != nil || item.Refresh == "" {
 		return ""
 	}
-	user, renew := m.opts.UserToken(item.Refresh)
-	if !renew || m.opts.Refresh == nil {
+	// A state without a token renews now, unless a recheck just failed
+	// and set RefreshAt within refreshRetry: then it waits like any other.
+	renewDue := func(rec Record) bool {
+		_, renew := m.opts.UserToken(rec.Refresh)
+		return renew && (refreshDue(rec) || rec.RefreshAt.After(time.Now().Add(refreshRetry)))
+	}
+	user, _ := m.opts.UserToken(item.Refresh)
+	if !renewDue(item) || m.opts.Refresh == nil {
 		return user
 	}
-	item, err = m.refresh(r.Context(), key, func(rec Record) bool {
-		_, renew := m.opts.UserToken(rec.Refresh)
-		return renew
-	})
+	item, err = m.refresh(r.Context(), key, renewDue)
 	if err != nil {
 		return ""
 	}
@@ -302,6 +305,11 @@ func (m *Manager) principalForHash(ctx context.Context, key [32]byte) (core.Prin
 // refreshDue reports whether a session's RefreshAt has passed.
 func refreshDue(rec Record) bool { return !time.Now().Before(rec.RefreshAt) }
 
+// refreshRetry is how long a session whose recheck failed waits before the
+// next attempt. A failure sets RefreshAt that close, so an early renewal
+// that failed waits too instead of retrying on every request.
+const refreshRetry = time.Minute
+
 // refresh rechecks the session under key with Options.Refresh if it is still
 // due, once however many of its requests arrive together, and returns its
 // record afterwards or ErrNotFound once the session ended.
@@ -322,7 +330,7 @@ func (m *Manager) refresh(ctx context.Context, key [32]byte, due func(Record) bo
 			updated = ended(current)
 		case err != nil:
 			slog.Warn("refresh session", "error", err)
-			updated.RefreshAt = time.Now().Add(time.Minute)
+			updated.RefreshAt = time.Now().Add(refreshRetry)
 		default:
 			updated.Refresh, updated.RefreshAt = next, at
 		}

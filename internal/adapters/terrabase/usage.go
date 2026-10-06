@@ -16,8 +16,10 @@ import (
 // Meter reads usage from TerraBase's Management API (GET …/usage on the
 // organization, project and database routes) with the signed-in user's
 // ts-auth access token.
-// ponytail: a dashboard-side client until ts-go's Management client accepts
-// user tokens; move it there then.
+// ponytail: a dashboard-side client, against "services talk only through the
+// SDKs", until ts-go's Management client (which acts as ts-auth users since
+// ts-go#19) gains the usage routes of terrabase#42 and the dashboard moves to
+// that ts-go; then call it and delete this type.
 type Meter struct {
 	BaseURL string
 	Client  *http.Client

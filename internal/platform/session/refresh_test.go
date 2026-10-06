@@ -468,3 +468,39 @@ func TestSignOutRevokesTheNewestRefresh(t *testing.T) {
 		t.Fatalf("signed-out session lookup = %v, want ErrNotFound", err)
 	}
 }
+
+// TestUserTokenRenewsTokenlessSessionsOnceUntilRetry covers sessions saved
+// before they kept the access token: the first lookup rechecks at once, and
+// a failed recheck waits refreshRetry instead of repeating on every lookup.
+func TestUserTokenRenewsTokenlessSessionsOnceUntilRetry(t *testing.T) {
+	accounts := memstore.New()
+	a, err := accounts.CreateAccount(t.Context(), core.User{Name: "Tokenless", Email: "tokenless@example.test", PasswordHash: "unused"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hook := &refreshHook{fn: func(context.Context, string) (string, time.Time, error) {
+		return "", time.Time{}, errors.New("ts-auth unavailable")
+	}}
+	userToken := func(refresh string) (string, bool) {
+		if refresh == "r1" {
+			return "", true
+		}
+		return "token-" + refresh, false
+	}
+	m := New(accounts, Options{Refresh: hook.refresh, UserToken: userToken})
+	r, _ := startRefreshable(t, m, a.Principal(), time.Now().Add(time.Hour))
+	for range 3 {
+		if token := m.UserToken(r); token != "" {
+			t.Fatalf("token %q from a failed recheck", token)
+		}
+	}
+	if calls := hook.calls.Load(); calls != 1 {
+		t.Fatalf("rechecks = %d, want one until refreshRetry passes", calls)
+	}
+	hook.fn = func(context.Context, string) (string, time.Time, error) { return "r2", time.Now().Add(time.Hour), nil }
+	m2 := New(accounts, Options{Refresh: hook.refresh, UserToken: userToken})
+	r2, _ := startRefreshable(t, m2, a.Principal(), time.Now().Add(time.Hour))
+	if token := m2.UserToken(r2); token != "token-r2" {
+		t.Fatalf("token after an early renewal = %q, want token-r2", token)
+	}
+}
