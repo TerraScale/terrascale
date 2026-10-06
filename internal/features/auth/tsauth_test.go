@@ -646,7 +646,7 @@ func TestTSAuthSessionKeepsTheAccessTokenForTerraBase(t *testing.T) {
 	t.Parallel()
 	issuer := newTestIssuer(t)
 	dashboard := newTSAuthDashboard(t, issuer)
-	dashboard.signIn(t, issuer, "/login")
+	dashboard.signIn(t, issuer, "/login/sso")
 	userToken := func() string {
 		request := httptest.NewRequest(http.MethodGet, "http://dashboard.test/", nil)
 		for _, cookie := range dashboard.cookies {
@@ -684,7 +684,7 @@ func TestTSAuthSessionSavedBeforeAccessTokensRenewsAtOnce(t *testing.T) {
 	t.Parallel()
 	issuer := newTestIssuer(t)
 	dashboard := newTSAuthDashboard(t, issuer)
-	dashboard.signIn(t, issuer, "/login")
+	dashboard.signIn(t, issuer, "/login/sso")
 	record, key := dashboard.record(t)
 	legacy, err := json.Marshal(refreshState{Subject: testSubject, Token: refreshToken(t, record.Refresh)})
 	if err != nil {
