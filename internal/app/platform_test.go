@@ -260,14 +260,15 @@ func testPlatformHosts(t *testing.T, cfg config.Config, subject, address, organi
 	if controls.SpendCapCents != 5000 {
 		t.Fatalf("spend cap = %d, want 5000", controls.SpendCapCents)
 	}
-	projectToken := token(func(_, claims map[string]any) { claims["project_id"] = project })
 	var usage struct {
-		ProjectID string `json:"projectId"`
+		OrganizationID string `json:"organizationId"`
+		ProjectID      string `json:"projectId"`
 	}
-	decode(call(http.MethodGet, organizationURL+"/projects/"+project+"/usage", projectToken, ""), http.StatusOK, &usage)
-	if usage.ProjectID != project {
-		t.Fatalf("usage project = %q, want %q", usage.ProjectID, project)
+	decode(call(http.MethodGet, organizationURL+"/usage", organizationToken, ""), http.StatusOK, &usage)
+	if usage.OrganizationID != organization || usage.ProjectID != project {
+		t.Fatalf("usage = %+v, want organization %q and its default project %q", usage, organization, project)
 	}
+	projectToken := token(func(_, claims map[string]any) { claims["project_id"] = project })
 
 	var failure struct {
 		Error struct {
@@ -282,9 +283,8 @@ func testPlatformHosts(t *testing.T, cfg config.Config, subject, address, organi
 		{"another organization", http.MethodGet, base + "/v1/organizations/org_someone_else/billing", organizationToken, "", http.StatusNotFound, "not_found"},
 		{"an organization the user is not in", http.MethodGet, base + "/v1/organizations/org_someone_else/billing",
 			tenant.token(t, subject, "org_someone_else", email), "", http.StatusNotFound, "not_found"},
-		{"a project route with an organization token", http.MethodGet, organizationURL + "/projects/" + project + "/usage", organizationToken, "", http.StatusNotFound, "not_found"},
-		{"another project", http.MethodGet, organizationURL + "/projects/prj_elsewhere/usage", projectToken, "", http.StatusNotFound, "not_found"},
 		{"an organization route with a project token", http.MethodPut, organizationURL + "/spending-controls", projectToken, `{"organizationCapCents":1}`, http.StatusNotFound, "not_found"},
+		{"organization usage with a project token", http.MethodGet, organizationURL + "/usage", projectToken, "", http.StatusNotFound, "not_found"},
 		{"a missing scope", http.MethodPut, organizationURL + "/spending-controls",
 			token(func(_, claims map[string]any) { claims["scope"] = "billing:read usage:read" }), `{"organizationCapCents":1}`, http.StatusForbidden, "insufficient_scope"},
 		{"a malformed query", http.MethodGet, organizationURL + "/invoices?page=first", organizationToken, "", http.StatusBadRequest, "invalid_request"},

@@ -12,16 +12,15 @@ the routes below.
 ## Authentication
 
 The API is a resource server under ts-auth's `docs/platform-contract.md`
-(v1.1, §6.4). Every operation needs `Authorization: Bearer <token>` with an
-organization token of ts-auth's `terrascale` tenant, or a project token for
-project routes:
+(v1.1, §6.4). Every operation is an organization route and needs
+`Authorization: Bearer <token>` with an organization token of ts-auth's
+`terrascale` tenant:
 
 - an ES256 `at+jwt` from the issuer's JWKS, `iss` the issuer, `aud` including
   `https://platform.terrascale.tech`, unexpired;
-- `org_id` equal to the path's organization, and `project_id` equal to its
-  project, or absent when the path names none; anything else answers `404`,
-  so an organization token reaches no project route and a project token no
-  organization route;
+- `org_id` equal to the path's organization and no `project_id`; anything
+  else answers `404`, so a project token reaches no route here (a route under
+  `…/projects/{projectId}` would need that project's token);
 - the operation's scope in `scope` (`403 insufficient_scope` otherwise):
   `billing:read`, `billing:write` (owners) or `usage:read`.
 
@@ -52,7 +51,7 @@ Routes are under `/v1/organizations/{organizationId}`:
 | `undo_plan_change` | `DELETE …/plan/scheduled-change` | `billing:write` |
 | `get_billing_portal_url` | `POST …/billing-portal` | `billing:write` |
 | `set_spending_controls` | `PUT …/spending-controls` | `billing:write` |
-| `get_usage` | `GET …/projects/{projectId}/usage` (project token) | `usage:read` |
+| `get_usage` | `GET …/usage` | `usage:read` |
 
 Errors use ts-auth's envelope, `{"error":{"code","message"}}`: `400
 invalid_request`, `401 unauthorized`, `403 insufficient_scope` or

@@ -28,7 +28,9 @@ type spendingControlsInput struct {
 func mountTools(tools *core.Tools, service Service) {
 	core.AddTool(tools, core.ToolSpec{
 		Name: "get_usage", Title: "Get usage", ReadOnly: true,
-		Route:       "GET /v1/organizations/{organizationId}/projects/{projectId}/usage",
+		// The report lists every project of the organization, so it is an
+		// organization route: a project token must not see its siblings.
+		Route:       "GET /v1/organizations/{organizationId}/usage",
 		RouteScope:  "usage:read",
 		Description: "Report an organization's plan allowances and spending controls with the selected project's per-database storage and operation totals.",
 	}, func(ctx context.Context, p core.Principal, in usageInput) (usageReport, error) {
