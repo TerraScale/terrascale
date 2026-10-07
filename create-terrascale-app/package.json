@@ -9,6 +9,7 @@
   "files": [
     "bin/",
     "template/",
+    "qualification/ownership-migration.md",
     "README.md"
   ],
   "scripts": {

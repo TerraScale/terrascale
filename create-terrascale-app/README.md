@@ -73,9 +73,17 @@ it writes posts through the published typed `client.documents.put` API. There is
 
 ## Status
 
-The template pins the current SDK surface (`@terrascale/sdk` 0.3.0: schema/SQL
-builders, typed document writes, and `TerraScaleSyncV1Client`). Tenant
-provisioning and application sign-in remain unqualified. The OAuth sign-in
+Migration preparation for ts-auth project JWTs and the new TerraBase API is
+tracked in the [ownership migration checklist](qualification/ownership-migration.md).
+`template/connection.ts` validates the target project UUID, database name, and
+API origin; integration into the app awaits a released JWT-capable SDK. This
+preparation does not qualify the current template or change its sign-in flow.
+
+The existing template pins `@terrascale/sdk` 0.3.0, which is not published on
+npm. Its factory, schema/SQL builder imports, and reactive client also differ
+from the published 0.0.2 package. Installing and running a generated app remains
+blocked until the template is migrated to a released JWT-capable SDK. Tenant
+provisioning and application sign-in remain unqualified. The existing OAuth sign-in
 flow requires the deployed authorization provider to accept the registered
 callback and authorize the resulting bearer for the selected cloud branch.
 Full docs:

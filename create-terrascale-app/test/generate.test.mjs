@@ -38,6 +38,7 @@ test("scaffold is deterministic, cloud-only, and complete", async () => {
         "next-env.d.ts",
         "schema.ts",
         "auth.ts",
+        "connection.ts",
         "terrascale.schema.json",
         "seed.ts",
         "app/page.tsx",
