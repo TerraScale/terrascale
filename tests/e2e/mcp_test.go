@@ -76,6 +76,9 @@ func TestMCPDatabaseLifecycleThroughAccessToken(t *testing.T) {
 		t.Errorf("set_database_regions outside discovery error = %q, want unknown region", message)
 	}
 
+	if message := callToolError(t, session, "create_database", map[string]any{"name": "removed-region", "regions": []string{"GRU", "FRA"}}); !strings.Contains(message, "unknown region") {
+		t.Errorf("removed placement region error = %q, want unknown region", message)
+	}
 	if message := callToolError(t, session, "create_database", map[string]any{"name": "Not Valid"}); !strings.Contains(message, "lowercase") {
 		t.Errorf("invalid create_database error = %q, want the naming rule", message)
 	}

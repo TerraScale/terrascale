@@ -250,10 +250,9 @@ func paidPlans(ctx context.Context, store core.Store) ([]core.Plan, error) {
 }
 
 func normalizedRegion(region string) string {
-	switch region = strings.ToUpper(strings.TrimSpace(region)); region {
-	case "GRU", "SFO":
-		return region
-	default:
+	code, err := core.ParsePlacementRegion(region)
+	if err != nil {
 		return ""
 	}
+	return string(code)
 }

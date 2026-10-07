@@ -55,6 +55,9 @@ func TestMCPOrganizationContextProjectsAndSelection(t *testing.T) {
 	if created.OrganizationID != personal.ID || !slices.Equal(created.Regions, []string{"SFO"}) {
 		t.Fatalf("create_project = %+v, want an SFO project in %s", created, personal.ID)
 	}
+	if message := callToolError(t, session, "update_project", map[string]any{"projectId": created.ID, "name": "Analytics", "regions": []string{"FRA"}}); !strings.Contains(message, "unknown region") {
+		t.Errorf("removed project region error = %q, want unknown region", message)
+	}
 	callTool(t, session, "update_project", map[string]any{"projectId": created.ID, "name": "Analytics BR", "regions": []string{"GRU"}}, nil)
 	callTool(t, session, "get_context", nil, &context)
 	if context.Selection.ProjectID == created.ID {
@@ -83,7 +86,7 @@ func TestMCPOrganizationContextProjectsAndSelection(t *testing.T) {
 		t.Errorf("get_organization = %+v, want the renamed personal organization with its projects", detail)
 	}
 
-	if message := callToolError(t, session, "create_project", map[string]any{"name": "Nowhere", "region": "XXX"}); !strings.Contains(message, "unknown region") {
+	if message := callToolError(t, session, "create_project", map[string]any{"name": "Nowhere", "region": "FRA"}); !strings.Contains(message, "unknown region") {
 		t.Errorf("invalid region error = %q, want unknown region", message)
 	}
 	if message := callToolError(t, session, "leave_organization", nil); !strings.Contains(message, "personal") {
