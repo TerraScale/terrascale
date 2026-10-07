@@ -676,7 +676,7 @@ func (s Service) WriteDocument(ctx context.Context, p core.Principal, databaseID
 	id = strings.TrimSpace(id)
 	// TerraBase names a new document itself.
 	if operation == "create" && id == "" && s.deps.LocalResources() {
-		id = core.NewID("doc")
+		id = core.NewULID()
 	}
 	if id == "" && operation != "create" || len(id) > 256 {
 		return documentWrite{}, core.Invalid("document IDs use 1-256 characters")

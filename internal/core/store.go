@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"crypto/rand"
+	"encoding/base32"
 	"encoding/hex"
 	"errors"
 	"maps"
@@ -175,6 +176,21 @@ func NewID(prefix string) string {
 	var b [16]byte
 	rand.Read(b[:])
 	return prefix + "_" + hex.EncodeToString(b[:])
+}
+
+// NewULID returns a Crockford base32 ID with a 48-bit millisecond timestamp
+// and 80 bits of cryptographic randomness.
+func NewULID() string {
+	const alphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+	var timestamp [10]byte
+	ms := uint64(time.Now().UnixMilli())
+	for i := len(timestamp) - 1; i >= 0; i-- {
+		timestamp[i] = alphabet[ms&31]
+		ms >>= 5
+	}
+	var entropy [10]byte
+	rand.Read(entropy[:])
+	return string(timestamp[:]) + base32.NewEncoding(alphabet).EncodeToString(entropy[:])
 }
 
 // NewAccount builds the account Store.CreateAccount registers: the user with
