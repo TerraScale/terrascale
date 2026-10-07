@@ -112,7 +112,13 @@ project, err := u.CreateProject(ctx, org.ID, "Production")
 db, err := u.CreateDatabase(ctx, org.ID, project.ID, "main") // then c.Database(project.ID, "main")
 inv, err := u.CreateInvitation(ctx, org.ID, "bia@example.com", tb.RoleAdmin)
 page, err := u.Members(ctx, org.ID, tb.PageOptions{After: next})
+usage, err := u.Usage(ctx, org.ID, project.ID, "", tb.UsageOptions{Granularity: "day", From: monthStart})
 ```
+
+`Usage` reads a project (database ID empty) or one database, with UTC
+`hour`/`day` buckets and optional inclusive `From`/exclusive `To`. `Period`
+is nil on servers without windowed metering; lifetime counters must not be
+used for a monthly bill. Organization usage is the sum of its ts-auth projects.
 
 It also covers `Organizations`, `RenameOrganization`, `SetPlan`,
 `DeleteOrganization`, `CurrentOrganization`/`SetCurrentOrganization`, project

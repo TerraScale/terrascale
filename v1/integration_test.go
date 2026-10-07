@@ -534,6 +534,12 @@ func testDocuments(t *testing.T, tb *terrabasetest.Server, hc *http.Client) {
 	if usage.DatabaseID != info.ID || usage.Collections != 2 || usage.Documents != 1 || usage.StorageBytes <= 0 {
 		t.Fatalf("usage: %+v", usage)
 	}
+	window := v1.UsageOptions{Granularity: "day", From: time.Now().UTC().Add(-24 * time.Hour), To: time.Now().UTC()}
+	databaseUsage := must(u.Usage(ctx, org.ID, project.ID, info.ID, window))(t)
+	projectUsage := must(u.Usage(ctx, org.ID, project.ID, "", window))(t)
+	if databaseUsage.DatabaseID != info.ID || databaseUsage.Documents != 1 || projectUsage.ProjectID != project.ID || len(projectUsage.Items) != 1 || projectUsage.Items[0].DatabaseID != info.ID {
+		t.Fatalf("windowed usage: database=%+v project=%+v", databaseUsage, projectUsage)
+	}
 	idx := must(u.CreateIndex(ctx, org.ID, project.ID, info.ID, v1.IndexRequest{Collection: "users", Fields: []string{"email"}}))(t)
 	if idx.Name != "users_email" || idx.Collection != "users" || !slices.Equal(idx.Fields, []string{"email"}) || idx.State != "active" {
 		t.Fatalf("index: %+v", idx)

@@ -169,10 +169,17 @@ func TestLocalRejection(t *testing.T) {
 
 // captureTransport records each request as "METHOD /path body" and fails it
 // without answering: it checks what the client sends, never fakes TerraBase.
-type captureTransport struct{ got []string }
+type captureTransport struct {
+	got     []string
+	queries []string
+}
 
 func (c *captureTransport) RoundTrip(r *http.Request) (*http.Response, error) {
-	body, _ := io.ReadAll(r.Body)
+	var body []byte
+	if r.Body != nil {
+		body, _ = io.ReadAll(r.Body)
+	}
+	c.queries = append(c.queries, r.URL.RawQuery)
 	c.got = append(c.got, r.Method+" "+r.URL.EscapedPath()+" "+string(body))
 	return nil, errors.New("captured")
 }
