@@ -498,9 +498,16 @@ func TestUserTokenRenewsTokenlessSessionsOnceUntilRetry(t *testing.T) {
 		t.Fatalf("rechecks = %d, want one until refreshRetry passes", calls)
 	}
 	hook.fn = func(context.Context, string) (string, time.Time, error) { return "r2", time.Now().Add(time.Hour), nil }
-	m2 := New(accounts, Options{Refresh: hook.refresh, UserToken: userToken})
-	r2, _ := startRefreshable(t, m2, a.Principal(), time.Now().Add(time.Hour))
-	if token := m2.UserToken(r2); token != "token-r2" {
-		t.Fatalf("token after an early renewal = %q, want token-r2", token)
+	// A normal recheck due within refreshRetry is no failure backoff: the
+	// session still renews at once.
+	for _, refreshAt := range []time.Duration{time.Hour, 30 * time.Second} {
+		m2 := New(accounts, Options{Refresh: hook.refresh, UserToken: userToken})
+		r2, key := startRefreshable(t, m2, a.Principal(), time.Now().Add(refreshAt))
+		if token := m2.UserToken(r2); token != "token-r2" {
+			t.Fatalf("token after an early renewal of a session due in %v = %q, want token-r2", refreshAt, token)
+		}
+		if rec := storedRecord(t, m2.sessions, key); !rec.RetryAt.IsZero() {
+			t.Fatalf("RetryAt after a successful recheck = %v, want cleared", rec.RetryAt)
+		}
 	}
 }

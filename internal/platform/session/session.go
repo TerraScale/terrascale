@@ -120,7 +120,7 @@ func (m *Manager) rotate(w http.ResponseWriter, r *http.Request, p core.Principa
 		if err != nil {
 			return err
 		}
-		token, key, err := m.put(ctx, p, "", false, Record{Refresh: prev.Refresh, RefreshAt: prev.RefreshAt})
+		token, key, err := m.put(ctx, p, "", false, Record{Refresh: prev.Refresh, RefreshAt: prev.RefreshAt, RetryAt: prev.RetryAt})
 		if err != nil {
 			return err
 		}
@@ -219,11 +219,11 @@ func (m *Manager) UserToken(r *http.Request) string {
 	if err != nil || item.Refresh == "" {
 		return ""
 	}
-	// A state without a token renews now, unless a recheck just failed
-	// and set RefreshAt within refreshRetry: then it waits like any other.
+	// A state without a token renews now rather than at RefreshAt, unless
+	// a recheck failed and its RetryAt has not passed.
 	renewDue := func(rec Record) bool {
 		_, renew := m.opts.UserToken(rec.Refresh)
-		return renew && (refreshDue(rec) || rec.RefreshAt.After(time.Now().Add(refreshRetry)))
+		return renew && !time.Now().Before(rec.RetryAt)
 	}
 	user, _ := m.opts.UserToken(item.Refresh)
 	if !renewDue(item) || m.opts.Refresh == nil {
@@ -306,8 +306,7 @@ func (m *Manager) principalForHash(ctx context.Context, key [32]byte) (core.Prin
 func refreshDue(rec Record) bool { return !time.Now().Before(rec.RefreshAt) }
 
 // refreshRetry is how long a session whose recheck failed waits before the
-// next attempt. A failure sets RefreshAt that close, so an early renewal
-// that failed waits too instead of retrying on every request.
+// next attempt, scheduled or early (Record.RetryAt).
 const refreshRetry = time.Minute
 
 // refresh rechecks the session under key with Options.Refresh if it is still
@@ -331,8 +330,9 @@ func (m *Manager) refresh(ctx context.Context, key [32]byte, due func(Record) bo
 		case err != nil:
 			slog.Warn("refresh session", "error", err)
 			updated.RefreshAt = time.Now().Add(refreshRetry)
+			updated.RetryAt = updated.RefreshAt
 		default:
-			updated.Refresh, updated.RefreshAt = next, at
+			updated.Refresh, updated.RefreshAt, updated.RetryAt = next, at, time.Time{}
 		}
 		// Only an unchanged session is updated or ended: one signed out or
 		// rotated during the refresh stays so, and one another machine
