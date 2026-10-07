@@ -26,7 +26,6 @@ type estateRegionDefinition struct {
 var estateRegionDefinitions = [...]estateRegionDefinition{
 	{Code: string(sdk.RegionGRU), Location: "São Paulo"},
 	{Code: string(sdk.RegionSFO), Location: "San Francisco"},
-	{Code: string(sdk.RegionFRA), Location: "Frankfurt"},
 }
 
 // Service applies platform administrator actions through the store's guarded
@@ -210,12 +209,6 @@ func (s Service) page(ctx context.Context, principal core.Principal, section, ra
 			region := observedRegion(regions, definition.Code)
 			region.Location = definition.Location
 			if matching(query, region.Region, region.Location) {
-				data.Regions = append(data.Regions, *region)
-			}
-			delete(regions, definition.Code)
-		}
-		for _, region := range regions {
-			if matching(query, region.Region) {
 				data.Regions = append(data.Regions, *region)
 			}
 		}

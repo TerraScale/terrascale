@@ -272,6 +272,7 @@ func TestPagesRegionMapIsLazyAndNativeRegionControlsWork(t *testing.T) {
 	click(t, mapPage.Locator(`button[command="show-modal"][commandfor="create-project"]`))
 	regionMap := mapPage.Locator(`.ts-region-map[data-select-id="project-region"]`)
 	must(t, expect.Locator(regionMap).ToHaveAttribute("role", "group"))
+	must(t, expect.Locator(regionMap.Locator(`button[data-region]`)).ToHaveCount(2))
 	mapImage := regionMap.Locator("img.ts-region-map-image")
 	must(t, expect.Locator(mapImage).ToHaveAttribute("src", assetURL("/brand/region-map.svg")))
 	must(t, expect.Locator(mapImage).ToHaveAttribute("loading", "lazy"))
@@ -284,17 +285,13 @@ func TestPagesRegionMapIsLazyAndNativeRegionControlsWork(t *testing.T) {
 	projectForm := nativePage.Locator(`form[action="/api/v1/dashboard/organization/projects"]`)
 	region := projectForm.GetByLabel("Primary region")
 	visible(t, region)
-	regionOptions := region.Locator("option")
-	count, err := regionOptions.Count()
-	must(t, err)
-	if count <= 1 {
-		t.Fatalf("primary region offers %d options, want more than 1", count)
+	for _, name := range []string{"regions", "region", "backupRegion"} {
+		selectField := projectForm.Locator(`select[name="` + name + `"]`)
+		must(t, expect.Locator(selectField.Locator("option")).ToHaveCount(2))
+		must(t, expect.Locator(selectField.Locator(`option[value="GRU"]`)).ToHaveCount(1))
+		must(t, expect.Locator(selectField.Locator(`option[value="SFO"]`)).ToHaveCount(1))
 	}
-	selectedRegion, err := regionOptions.Nth(1).GetAttribute("value")
-	must(t, err)
-	if selectedRegion == "" {
-		t.Fatal("second region option must have a value")
-	}
+	selectedRegion := "SFO"
 	selectOption(t, region, selectedRegion)
 	must(t, expect.Locator(region).ToHaveValue(selectedRegion))
 	projectName := "E2E Native Region " + rand.Text()[:8]

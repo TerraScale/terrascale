@@ -134,7 +134,7 @@ func TestNoticesSkipMaintenanceOutsideTheWindowAndSanitizeLinks(t *testing.T) {
 }
 
 func TestNoticesQuoteTheFirstParagraphOfLongUpdates(t *testing.T) {
-	sentence := "We are investigating elevated latency for queries routed through the Frankfurt hub. "
+	sentence := "We are investigating elevated latency for queries routed through the São Paulo hub. "
 	long := strings.Repeat(sentence, 4)
 	for _, tc := range []struct{ name, body, want string }{
 		{"short", "A fix is rolling out.", "A fix is rolling out."},

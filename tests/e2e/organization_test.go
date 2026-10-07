@@ -92,7 +92,7 @@ func TestProjectDialogRegionLabelsStayInsideMapsApart(t *testing.T) {
 	must(t, page.SetViewportSize(1680, 1000))
 	login(t, page, sampleAccount.Email, sampleAccount.Password)
 	goToOK(t, page, "/organization?tab=projects")
-	all := []string{"SFO", "GRU", "FRA"}
+	all := []string{"SFO", "GRU"}
 
 	click(t, page.Locator(`button[command="show-modal"][commandfor="create-project"]`))
 	create := page.Locator("dialog#create-project")
@@ -107,7 +107,6 @@ func TestProjectDialogRegionLabelsStayInsideMapsApart(t *testing.T) {
 	allowed := edit.Locator(`.ts-region-map[data-select-id^="project-regions-"]`)
 	must(t, expect.Locator(allowed).ToHaveAttribute("data-selected", "SFO"))
 	click(t, allowed.Locator(`button[data-region="GRU"]`))
-	click(t, allowed.Locator(`button[data-region="FRA"]`))
 	must(t, page.Mouse().Move(0, 0))
 	expectRegionLabels(t, allowed, all...)
 	expectRegionLabelsClear(t, edit)
@@ -123,7 +122,8 @@ func TestProjectDialogRegionLabelsStayInsideMapsApart(t *testing.T) {
 // expectRegionLabels waits until regionMap shows exactly the labels of codes.
 func expectRegionLabels(t *testing.T, regionMap playwright.Locator, codes ...string) {
 	t.Helper()
-	for _, code := range []string{"SFO", "GRU", "FRA"} {
+	must(t, expect.Locator(regionMap.Locator(`button[data-region]`)).ToHaveCount(2))
+	for _, code := range []string{"SFO", "GRU"} {
 		opacity := "0"
 		if slices.Contains(codes, code) {
 			opacity = "1"
@@ -151,14 +151,14 @@ func expectRegionLabelsClear(t *testing.T, scope playwright.Locator) {
 		bounds, err := regionMap.BoundingBox()
 		must(t, err)
 		var labels, obstacles []*rect
-		for _, code := range []string{"SFO", "GRU", "FRA"} {
+		for _, code := range []string{"SFO", "GRU"} {
 			for _, part := range []string{".ts-region-node-flag", ".ts-region-node-core"} {
 				box, err := regionMap.Locator(`button[data-region="` + code + `"] ` + part).BoundingBox()
 				must(t, err)
 				obstacles = append(obstacles, box)
 			}
 		}
-		for _, code := range []string{"SFO", "GRU", "FRA"} {
+		for _, code := range []string{"SFO", "GRU"} {
 			label := regionMap.Locator(`button[data-region="` + code + `"] .ts-region-node-label`)
 			opacity, err := label.Evaluate(`el => getComputedStyle(el).opacity`, nil)
 			must(t, err)

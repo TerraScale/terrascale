@@ -683,8 +683,8 @@ func normalizeRegions(regions []string) ([]string, error) {
 
 func parseRegion(value string) (string, error) {
 	region, err := sdk.ParseRegionCode(value)
-	if err != nil {
-		return "", core.Invalid(fmt.Sprintf("unknown region %q; use GRU, SFO, or FRA", value))
+	if err != nil || !slices.Contains(supportedRegions, string(region)) {
+		return "", core.Invalid(fmt.Sprintf("unknown region %q; use GRU or SFO", value))
 	}
 	return string(region), nil
 }

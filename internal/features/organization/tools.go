@@ -86,7 +86,7 @@ type scopedNameInput struct {
 type projectInput struct {
 	core.Scope
 	Name         string   `json:"name" jsonschema:"Project name: 1-128 characters including a letter or digit."`
-	Region       string   `json:"region,omitempty" jsonschema:"Primary region code: GRU, SFO, or FRA. Defaults to the first listed region."`
+	Region       string   `json:"region,omitempty" jsonschema:"Primary region code: GRU or SFO. Defaults to the first listed region."`
 	BackupRegion string   `json:"backupRegion,omitempty" jsonschema:"Backup region code. Defaults to the first listed region."`
 	Regions      []string `json:"regions,omitempty" jsonschema:"Region codes the project may use. Defaults to the primary region."`
 }

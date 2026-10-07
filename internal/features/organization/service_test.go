@@ -8,7 +8,21 @@ import (
 
 	"terrascale.tech/dashboard/internal/core"
 	"terrascale.tech/dashboard/internal/core/memstore"
+	sdk "terrascale.tech/sdk"
 )
+
+func TestProjectRegionsSupportOnlyGRUAndSFO(t *testing.T) {
+	for _, tc := range []struct{ input, want string }{
+		{" gru ", "GRU"}, {"sfo", "SFO"}, {"XXX", ""},
+		// The SDK still recognizes this retired hub; the dashboard must reject it.
+		{string(sdk.RegionFRA), ""},
+	} {
+		got, err := parseRegion(tc.input)
+		if got != tc.want || (tc.want == "" && !errors.Is(err, core.ErrInvalid)) || (tc.want != "" && err != nil) {
+			t.Errorf("parseRegion(%q) = %q, %v; want %q", tc.input, got, err, tc.want)
+		}
+	}
+}
 
 func TestCreateInvitationReportsTheMemberLimit(t *testing.T) {
 	store := memstore.New()

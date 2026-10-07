@@ -347,7 +347,6 @@ dialog.ts-dialog::backdrop {
 }
 
 .ts-region-arc:nth-child(2) { animation-delay: 0.45s; }
-.ts-region-arc:nth-child(3) { animation-delay: 0.9s; }
 
 .ts-region-node {
   position: absolute;
@@ -358,7 +357,6 @@ dialog.ts-dialog::backdrop {
 
 .ts-region-node[data-region="SFO"] { top: 35.73%; left: 15.44%; }
 .ts-region-node[data-region="GRU"] { top: 74.7%; left: 36.76%; }
-.ts-region-node[data-region="FRA"] { top: 25.98%; left: 52.57%; }
 
 .ts-region-node-core,
 .ts-region-node-ring {
@@ -451,16 +449,10 @@ dialog.ts-dialog::backdrop {
   transition: opacity var(--ts-fast) var(--ts-ease);
 }
 
-/* Every label points right, so none crosses the left edge. SFO's hangs just
-   below its hub, between FRA's hub and GRU's flag; FRA's rises beside its
-   flag, above SFO's. The three stay apart down to a 186px-wide map. */
+/* Both labels point right, so neither crosses the left edge. SFO's hangs
+   just below its hub, clear of GRU's flag down to a 186px-wide map. */
 .ts-region-map[data-select-id] button.ts-region-node[data-region="SFO"] .ts-region-node-label {
   transform: translateY(calc(-50% + 6px));
-}
-
-.ts-region-map[data-select-id] button.ts-region-node[data-region="FRA"] .ts-region-node-label {
-  top: calc(50% + 2px);
-  transform: translateY(-100%);
 }
 
 @container (width < 15rem) {
@@ -507,14 +499,12 @@ dialog.ts-dialog::backdrop {
 }
 
 .ts-region-map[data-selected~="SFO"] .ts-region-node[data-region="SFO"],
-.ts-region-map[data-selected~="GRU"] .ts-region-node[data-region="GRU"],
-.ts-region-map[data-selected~="FRA"] .ts-region-node[data-region="FRA"] {
+.ts-region-map[data-selected~="GRU"] .ts-region-node[data-region="GRU"] {
   opacity: 1;
 }
 
 .ts-region-map[data-selected~="SFO"] [data-region="SFO"] .ts-region-node-ring,
-.ts-region-map[data-selected~="GRU"] [data-region="GRU"] .ts-region-node-ring,
-.ts-region-map[data-selected~="FRA"] [data-region="FRA"] .ts-region-node-ring {
+.ts-region-map[data-selected~="GRU"] [data-region="GRU"] .ts-region-node-ring {
   animation: ts-pin-pulse 2.6s var(--ts-ease) infinite;
 }
 

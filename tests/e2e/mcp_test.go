@@ -72,7 +72,7 @@ func TestMCPDatabaseLifecycleThroughAccessToken(t *testing.T) {
 	if !slices.Equal(placed.Placement, []string{"GRU", "SFO"}) {
 		t.Errorf("set_database_regions = %+v, want GRU and SFO", placed)
 	}
-	if message := callToolError(t, session, "set_database_regions", map[string]any{"databaseId": created.ID, "regions": []string{"FRA"}}); !strings.Contains(message, "unknown region") {
+	if message := callToolError(t, session, "set_database_regions", map[string]any{"databaseId": created.ID, "regions": []string{"XXX"}}); !strings.Contains(message, "unknown region") {
 		t.Errorf("set_database_regions outside discovery error = %q, want unknown region", message)
 	}
 

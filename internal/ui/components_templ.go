@@ -1364,7 +1364,7 @@ type regionPin struct {
 }
 
 // regionPins are the hub positions in the 136×80 viewBox of brand/region-map.svg.
-var regionPins = []regionPin{{"SFO", "San Francisco", "us", 21, 28.58}, {"GRU", "São Paulo", "br", 50, 59.76}, {"FRA", "Frankfurt", "de", 71.5, 20.78}}
+var regionPins = []regionPin{{"SFO", "San Francisco", "us", 21, 28.58}, {"GRU", "São Paulo", "br", 50, 59.76}}
 
 // RegionMap mirrors a native select or checkbox group and lets pointer users
 // choose a hub on the map. The form controls remain canonical without scripts.
@@ -1548,7 +1548,7 @@ func regionMap(selectID string, available []string, pings map[string]string, sel
 				return templ_7745c5c3_Err
 			}
 		} else {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 105, " data-highlights=\"SFO,GRU,FRA\"")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 105, " data-highlights=\"SFO,GRU\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}

@@ -55,14 +55,14 @@ func TestMCPOrganizationContextProjectsAndSelection(t *testing.T) {
 	if created.OrganizationID != personal.ID || !slices.Equal(created.Regions, []string{"SFO"}) {
 		t.Fatalf("create_project = %+v, want an SFO project in %s", created, personal.ID)
 	}
-	callTool(t, session, "update_project", map[string]any{"projectId": created.ID, "name": "Analytics EU", "regions": []string{"FRA"}}, nil)
+	callTool(t, session, "update_project", map[string]any{"projectId": created.ID, "name": "Analytics BR", "regions": []string{"GRU"}}, nil)
 	callTool(t, session, "get_context", nil, &context)
 	if context.Selection.ProjectID == created.ID {
 		t.Fatalf("scoping a call to project %s must not change the saved selection", created.ID)
 	}
 	updated := projectByID(t, organizationByID(t, context.Organizations, personal.ID).Projects, created.ID)
-	if updated.Name != "Analytics EU" || updated.Region != "FRA" {
-		t.Errorf("updated project = %+v, want Analytics EU in FRA", updated)
+	if updated.Name != "Analytics BR" || updated.Region != "GRU" {
+		t.Errorf("updated project = %+v, want Analytics BR in GRU", updated)
 	}
 
 	var selection struct{ OrganizationID, ProjectID string }

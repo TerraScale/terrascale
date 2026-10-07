@@ -742,4 +742,4 @@ func safeReturnURL(candidate, fallback string) string {
 }
 
 // supportedRegions lists the placement choices offered in project forms.
-var supportedRegions = []string{string(sdk.RegionGRU), string(sdk.RegionSFO), string(sdk.RegionFRA)}
+var supportedRegions = []string{string(sdk.RegionGRU), string(sdk.RegionSFO)}

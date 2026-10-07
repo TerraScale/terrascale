@@ -33,7 +33,7 @@ func TestSaveStepSucceedsDuringCatalogOutage(t *testing.T) {
 		{name: "account information", current: "account-information", next: "payment-method", input: stepInput{Step: "account-information", DisplayName: "New Name"}},
 		{name: "free payment", current: "payment-method", next: "project", input: stepInput{Step: "payment-method", Bypass: true}},
 		{name: "paid checkout", current: "payment-method", next: "payment-method", input: stepInput{Step: "payment-method", Plan: "starter", Interval: "monthly"}, checkout: true},
-		{name: "project", current: "project", input: stepInput{Step: "project", Name: "First project", Region: "FRA"}, completed: true},
+		{name: "project", current: "project", input: stepInput{Step: "project", Name: "First project", Region: "SFO"}, completed: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			store := memstore.New()

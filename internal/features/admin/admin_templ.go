@@ -1407,7 +1407,7 @@ func estateSection(data pageData, csrfToken string) templ.Component {
 				}
 				return nil
 			})
-			templ_7745c5c3_Err = ui.Card(ui.CardProps{ID: "admin-estate-regions", Title: "Regions", Description: demoText(data.Demo, "Recorded database and project placements across the three supported demo region codes. Provider availability is not reported by this local store.", "Recorded database and project placements across the three supported region codes. Provider availability is not reported here."), Flush: true}).Render(templ.WithChildren(ctx, templ_7745c5c3_Var56), templ_7745c5c3_Buffer)
+			templ_7745c5c3_Err = ui.Card(ui.CardProps{ID: "admin-estate-regions", Title: "Regions", Description: demoText(data.Demo, "Recorded database and project placements across GRU and SFO. Provider availability is not reported by this local store.", "Recorded database and project placements across GRU and SFO. Provider availability is not reported here."), Flush: true}).Render(templ.WithChildren(ctx, templ_7745c5c3_Var56), templ_7745c5c3_Buffer)
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}

@@ -44,7 +44,7 @@ type stepInput struct {
 	Plan        string `json:"plan,omitempty" jsonschema:"payment-method: paid plan key to check out, such as starter, pro, or business."`
 	Interval    string `json:"interval,omitempty" jsonschema:"payment-method: billing interval, monthly or annual."`
 	Name        string `json:"name,omitempty" jsonschema:"project: project name, up to 100 characters."`
-	Region      string `json:"region,omitempty" jsonschema:"project: region code GRU, SFO, or FRA."`
+	Region      string `json:"region,omitempty" jsonschema:"project: region code GRU or SFO."`
 }
 
 type stepResult struct {
@@ -251,7 +251,7 @@ func paidPlans(ctx context.Context, store core.Store) ([]core.Plan, error) {
 
 func normalizedRegion(region string) string {
 	switch region = strings.ToUpper(strings.TrimSpace(region)); region {
-	case "GRU", "SFO", "FRA":
+	case "GRU", "SFO":
 		return region
 	default:
 		return ""

@@ -16,11 +16,9 @@ func seedMarioDemoFixture(account *core.Account) {
 		sandboxProjectID = "prj_01JC9S4Y6R8T0V2X4Z6B8D1FE"
 	)
 
-	// The Go region catalog has SFO, FRA, and GRU. These are displayed as the
-	// supported US, EU, and South America demo locations; they do not claim a
-	// one-to-one mapping from the source fixture's AWS region slugs.
+	// Demo projects use only the supported GRU and SFO regions.
 	coreProject := newMarioProject(coreProjectID, "core-platform", "SFO", true, demoTime(2026, time.January, 12, 9, 24))
-	edgeProject := newMarioProject(edgeProjectID, "edge-analytics", "FRA", false, demoTime(2026, time.February, 3, 14, 2))
+	edgeProject := newMarioProject(edgeProjectID, "edge-analytics", "GRU", false, demoTime(2026, time.February, 3, 14, 2))
 	sandboxProject := newMarioProject(sandboxProjectID, "staging-sandbox", "GRU", false, demoTime(2026, time.March, 21, 11, 47))
 
 	corePrimaryID := "db_01JC9Q8Y5N7P9R3T5V7X9Z2AC"
@@ -43,7 +41,7 @@ func seedMarioDemoFixture(account *core.Account) {
 	}
 	edgeProject.Databases[edgeEventsID] = core.Database{
 		ID: edgeEventsID, ProjectID: edgeProjectID, Name: "edge-events", Status: "ready",
-		Region: "FRA", CreatedAt: demoTime(2026, time.February, 3, 14, 11),
+		Region: "GRU", CreatedAt: demoTime(2026, time.February, 3, 14, 11),
 		Documents: map[string]map[string][]byte{
 			"events": {
 				"evt_1001": []byte(`{"type":"checkout.completed","occurredAt":"2026-09-17T14:10:00Z"}`),

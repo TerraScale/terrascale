@@ -188,8 +188,6 @@ func regionDisplay(code string) string {
 		return "SFO · San Francisco"
 	case "GRU":
 		return "GRU · São Paulo"
-	case "FRA":
-		return "FRA · Frankfurt"
 	case "":
 		return "Not configured"
 	default:

@@ -15,13 +15,22 @@ func TestOnboardingRegionTooltipsShowPing(t *testing.T) {
 	click(t, byRole(onboardingStep(t, page, "payment-method"), *playwright.AriaRoleButton, "Continue on Free"))
 	project := onboardingStep(t, page, "project")
 	regionMap := project.Locator(`.ts-region-map[data-select-id="region"]`)
+	must(t, expect.Locator(regionMap.Locator(`button[data-region]`)).ToHaveCount(2))
+
+	nativePage := watchedPage(t, cloneSession(t, page.Context(), false))
+	goTo(t, nativePage, "/onboarding")
+	nativeRegion := onboardingStep(t, nativePage, "project").Locator("#region")
+	must(t, expect.Locator(nativeRegion.Locator("option")).ToHaveCount(2))
+	must(t, expect.Locator(nativeRegion.Locator(`option[value="GRU"]`)).ToHaveCount(1))
+	must(t, expect.Locator(nativeRegion.Locator(`option[value="SFO"]`)).ToHaveCount(1))
+	selectOption(t, nativeRegion, "SFO")
+	must(t, expect.Locator(nativeRegion).ToHaveValue("SFO"))
 
 	for _, viewport := range []struct{ width, height int }{{1280, 800}, {320, 700}} {
 		must(t, page.SetViewportSize(viewport.width, viewport.height))
 		for _, tc := range []struct{ code, ping string }{
 			{"SFO", "Ping: 28 ms (demo)"},
 			{"GRU", "Ping: 118 ms (demo)"},
-			{"FRA", "Ping: 74 ms (demo)"},
 		} {
 			pin := regionMap.Locator(`button[data-region="` + tc.code + `"]`)
 			label := pin.Locator(".ts-region-node-label")
@@ -59,13 +68,14 @@ func TestOnboardingRegionTooltipsShowPing(t *testing.T) {
 
 	must(t, page.SetViewportSize(1280, 800))
 	must(t, project.Locator("#projectName").Hover())
-	frankfurt := regionMap.Locator(`button[data-region="FRA"]`)
-	must(t, regionMap.Locator(`button[data-region="GRU"]`).Focus())
+	selectOption(t, project.Locator("#region"), "SFO")
+	saoPaulo := regionMap.Locator(`button[data-region="GRU"]`)
+	must(t, regionMap.Locator(`button[data-region="SFO"]`).Focus())
 	must(t, page.Keyboard().Press("Tab"))
-	must(t, expect.Locator(frankfurt).ToBeFocused())
-	must(t, expect.Locator(frankfurt.Locator(".ts-region-node-label")).ToHaveCSS("opacity", "1"))
-	must(t, expect.Locator(frankfurt.Locator(".ts-region-node-ping")).ToHaveText("Ping: 74 ms (demo)"))
-	must(t, frankfurt.Press("Space"))
-	must(t, expect.Locator(project.Locator("#region")).ToHaveValue("FRA"))
+	must(t, expect.Locator(saoPaulo).ToBeFocused())
+	must(t, expect.Locator(saoPaulo.Locator(".ts-region-node-label")).ToHaveCSS("opacity", "1"))
+	must(t, expect.Locator(saoPaulo.Locator(".ts-region-node-ping")).ToHaveText("Ping: 118 ms (demo)"))
+	must(t, saoPaulo.Press("Space"))
+	must(t, expect.Locator(project.Locator("#region")).ToHaveValue("GRU"))
 	expectAccessible(t, page, "onboarding region ping tooltips", "")
 }

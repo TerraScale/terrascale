@@ -41,7 +41,7 @@ func TestDatabasePlacementIsGRUSFOOrBothFromDiscovery(t *testing.T) {
 	}
 
 	service, p := regionService(t)
-	if _, err := service.Create(t.Context(), p, "orders", "FRA"); !errors.Is(err, core.ErrInvalid) {
+	if _, err := service.Create(t.Context(), p, "orders", "XXX"); !errors.Is(err, core.ErrInvalid) {
 		t.Fatalf("create in a region discovery does not list = %v, want invalid", err)
 	}
 	if _, err := service.Create(t.Context(), p, "orders", "GRU", "gru"); !errors.Is(err, core.ErrInvalid) {

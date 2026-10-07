@@ -320,7 +320,7 @@ templ estateSection(data pageData, csrfToken string) {
 	@ui.Tabs("Estate sections", estateTabs(data.EstateTab))
 	switch data.EstateTab {
 		case "regions":
-			@ui.Card(ui.CardProps{ID: "admin-estate-regions", Title: "Regions", Description: demoText(data.Demo, "Recorded database and project placements across the three supported demo region codes. Provider availability is not reported by this local store.", "Recorded database and project placements across the three supported region codes. Provider availability is not reported here."), Flush: true}) {
+			@ui.Card(ui.CardProps{ID: "admin-estate-regions", Title: "Regions", Description: demoText(data.Demo, "Recorded database and project placements across GRU and SFO. Provider availability is not reported by this local store.", "Recorded database and project placements across GRU and SFO. Provider availability is not reported here."), Flush: true}) {
 				if len(data.Regions) > 0 {
 					<div class="ts-table-wrap">
 						<table class="ts-table">

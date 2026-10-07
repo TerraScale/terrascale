@@ -8,16 +8,18 @@ import (
 
 func TestRegionMapRendersInitialSelection(t *testing.T) {
 	var out strings.Builder
-	if err := RegionMap("region", "GRU", "FRA").Render(t.Context(), &out); err != nil {
+	if err := RegionMap("region", "GRU").Render(t.Context(), &out); err != nil {
 		t.Fatal(err)
 	}
 	markup := html.UnescapeString(out.String())
+	if got := strings.Count(markup, `data-region="`); got != 2 {
+		t.Fatalf("map renders %d pins, want only GRU and SFO", got)
+	}
 	for _, tc := range []struct {
 		code, pressed string
 	}{
 		{"SFO", "false"},
 		{"GRU", "true"},
-		{"FRA", "true"},
 	} {
 		button := `data-region="` + tc.code + `"`
 		start := strings.Index(markup, button)
@@ -25,7 +27,7 @@ func TestRegionMapRendersInitialSelection(t *testing.T) {
 			t.Errorf("%s pin should start with aria-pressed=%s", tc.code, tc.pressed)
 		}
 	}
-	if !strings.Contains(markup, `data-selected="GRU FRA"`) {
+	if !strings.Contains(markup, `data-selected="GRU"`) {
 		t.Fatal("map does not show the initial selection before JavaScript runs")
 	}
 }

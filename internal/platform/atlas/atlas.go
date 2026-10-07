@@ -100,12 +100,18 @@ func (c *Catalog) fetch(ctx context.Context) ([]core.Region, error) {
 	return regions, nil
 }
 
-// Code is the dashboard region code of an Atlas region id, the projection
-// Atlas's own /api/v1/regions uses: gru-1 is GRU.
+// Code maps supported Atlas region ids to GRU or SFO. Legacy ids use the hub prefix.
 func Code(id string) string {
-	prefix, _, _ := strings.Cut(id, "-")
-	if prefix == "" || strings.Trim(prefix, "abcdefghijklmnopqrstuvwxyz") != "" {
-		return ""
+	switch id {
+	case "sa-saopaulo-1":
+		return "GRU"
+	case "us-sanjose-1":
+		return "SFO"
 	}
-	return strings.ToUpper(prefix)
+	prefix, _, _ := strings.Cut(id, "-")
+	switch prefix {
+	case "gru", "sfo":
+		return strings.ToUpper(prefix)
+	}
+	return ""
 }

@@ -287,7 +287,7 @@ type regionPin struct {
 }
 
 // regionPins are the hub positions in the 136×80 viewBox of brand/region-map.svg.
-var regionPins = []regionPin{{"SFO", "San Francisco", "us", 21, 28.58}, {"GRU", "São Paulo", "br", 50, 59.76}, {"FRA", "Frankfurt", "de", 71.5, 20.78}}
+var regionPins = []regionPin{{"SFO", "San Francisco", "us", 21, 28.58}, {"GRU", "São Paulo", "br", 50, 59.76}}
 
 // RegionMap mirrors a native select or checkbox group and lets pointer users
 // choose a hub on the map. The form controls remain canonical without scripts.
@@ -321,7 +321,7 @@ templ regionMap(selectID string, available []string, pings map[string]string, se
 			data-init={ regionSync(selectID) }
 			data-on:change__window={ "document.getElementById(" + regionJSString(selectID) + ").contains(evt.target) && (" + regionSync(selectID) + ")" }
 		} else {
-			data-highlights="SFO,GRU,FRA"
+			data-highlights="SFO,GRU"
 		}
 	>
 		<img class="ts-region-map-image" src={ static.URL("brand/region-map.svg") } alt="" loading="lazy" decoding="async"/>

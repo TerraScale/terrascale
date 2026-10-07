@@ -25,9 +25,9 @@ func TestFreshAccountRegistrationOnboardingSessionAndSignIn(t *testing.T) {
 	page := newPage(t)
 
 	goTo(t, page, "/login")
-	highlightedMap := page.Locator(`.ts-region-map[data-highlights="SFO,GRU,FRA"]`)
+	highlightedMap := page.Locator(`.ts-region-map[data-highlights="SFO,GRU"]`)
 	must(t, expect.Locator(highlightedMap).ToHaveAttribute("aria-hidden", "true"))
-	must(t, expect.Locator(highlightedMap.Locator(".ts-region-node")).ToHaveCount(3))
+	must(t, expect.Locator(highlightedMap.Locator(".ts-region-node")).ToHaveCount(2))
 	mapImage := highlightedMap.Locator("img.ts-region-map-image")
 	must(t, expect.Locator(mapImage).ToHaveAttribute("src", assetURL("/brand/region-map.svg")))
 	must(t, expect.Locator(mapImage).ToHaveAttribute("loading", "lazy"))
