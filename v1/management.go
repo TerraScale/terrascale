@@ -169,6 +169,24 @@ type SQLRow struct {
 	Value json.RawMessage `json:"value"`
 }
 
+// Index is a secondary index of a database's collection.
+type Index struct {
+	Name       string `json:"name"`
+	Collection string `json:"collection"`
+	// Fields are the key fields in order, as dotted member paths.
+	Fields []string `json:"fields"`
+	// State is active: TerraBase builds an index before creating it.
+	State string `json:"state"`
+}
+
+// IndexRequest describes an index to create: Fields are 1-4 distinct dotted
+// member paths. An empty Name is derived from the collection and fields.
+type IndexRequest struct {
+	Collection string   `json:"collection"`
+	Fields     []string `json:"fields"`
+	Name       string   `json:"name,omitempty"`
+}
+
 // ProjectAPIKey is a project's data API key (tb_…) without its secret.
 type ProjectAPIKey struct {
 	ID        string   `json:"id"`
@@ -500,6 +518,29 @@ func (u *ManagementUser) SQL(ctx context.Context, org, project, databaseID, stat
 // consistent snapshot copy of the database databaseID.
 func (u *ManagementUser) BranchDatabase(ctx context.Context, org, project, databaseID, name string) (*ManagedDatabase, error) {
 	return send[ManagedDatabase](ctx, u, http.MethodPost, databasePath(org, project, databaseID, "branches"), nameBody{name})
+}
+
+// CreateIndex builds a secondary index before it returns; a viewer cannot. An
+// index with the name, or on the same fields of the collection, fails with
+// ErrIndexExists.
+func (u *ManagementUser) CreateIndex(ctx context.Context, org, project, databaseID string, req IndexRequest) (*Index, error) {
+	return send[Index](ctx, u, http.MethodPost, databasePath(org, project, databaseID, "indexes"), req)
+}
+
+// Indexes lists every secondary index of a database, in name order.
+func (u *ManagementUser) Indexes(ctx context.Context, org, project, databaseID string) ([]Index, error) {
+	out, err := get[struct {
+		Items []Index `json:"items"`
+	}](ctx, u, databasePath(org, project, databaseID, "indexes"), nil)
+	if err != nil {
+		return nil, err
+	}
+	return out.Items, nil
+}
+
+// DropIndex drops a secondary index by name; a viewer cannot.
+func (u *ManagementUser) DropIndex(ctx context.Context, org, project, databaseID, name string) error {
+	return u.call(ctx, http.MethodDelete, databasePath(org, project, databaseID, "indexes", name), nil, nil, nil)
 }
 
 // CreateProjectAPIKey issues a data API key of a project, a Config.Token for

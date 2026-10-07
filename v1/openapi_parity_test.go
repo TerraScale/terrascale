@@ -60,7 +60,6 @@ func pinnedRoutes(doc openAPIDoc) []string {
 // notInClient lists the pinned routes the client does not call yet; TS-590
 // adds them group by group.
 var notInClient = []string{
-	"DELETE /v1/management/organizations/{organization}/projects/{project}/databases/{database}/indexes/{index}",
 	"DELETE /v1/management/organizations/{organization}/projects/{project}/saved-queries/{query}",
 	"GET /v1/management/commits/{id}",
 	"GET /v1/management/documents/{collection}/{id}",
@@ -68,7 +67,6 @@ var notInClient = []string{
 	"GET /v1/management/organizations/{organization}/projects/{project}/databases/{database}/backups",
 	"GET /v1/management/organizations/{organization}/projects/{project}/databases/{database}/collections/{collection}/schema",
 	"GET /v1/management/organizations/{organization}/projects/{project}/databases/{database}/index-recommendations",
-	"GET /v1/management/organizations/{organization}/projects/{project}/databases/{database}/indexes",
 	"GET /v1/management/organizations/{organization}/projects/{project}/saved-queries",
 	"GET /v1/management/organizations/{organization}/projects/{project}/saved-queries/{query}",
 	"GET /v1/management/organizations/{organization}/projects/{project}/usage",
@@ -79,7 +77,6 @@ var notInClient = []string{
 	"POST /v1/management/organizations/{organization}/projects/{project}/databases/{database}/backups",
 	"POST /v1/management/organizations/{organization}/projects/{project}/databases/{database}/backups/{backup}/restore",
 	"POST /v1/management/organizations/{organization}/projects/{project}/databases/{database}/index-recommendations/{recommendation}/apply",
-	"POST /v1/management/organizations/{organization}/projects/{project}/databases/{database}/indexes",
 	"POST /v1/management/organizations/{organization}/projects/{project}/databases/{database}/sql/check",
 	"POST /v1/management/organizations/{organization}/projects/{project}/saved-queries",
 	"PUT /v1/management/organizations/{organization}/projects/{project}/databases/{database}/backup-policy",
@@ -125,7 +122,7 @@ func TestOpenAPIParityEnums(t *testing.T) {
 		v1.ErrUnknownDatabase, v1.ErrUnknownCollection, v1.ErrUnknownRoute, v1.ErrMethodNotAllowed, v1.ErrNameTaken,
 		v1.ErrPatchConflict, v1.ErrPreconditionFailed, v1.ErrPayloadTooLarge, v1.ErrUnsupportedMediaType,
 		v1.ErrRateLimited, v1.ErrInternalError, v1.ErrCapacity, v1.ErrStorageUnavailable, v1.ErrStoredCorruption,
-		v1.ErrCommitUncertain, v1.ErrDependenciesUnavail, v1.ErrDatabaseReplicated, v1.ErrWrongRegion,
+		v1.ErrCommitUncertain, v1.ErrDependenciesUnavail, v1.ErrDatabaseReplicated, v1.ErrIndexExists, v1.ErrWrongRegion,
 	} {
 		known[string(c)] = true
 	}

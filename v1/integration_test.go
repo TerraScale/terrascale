@@ -534,6 +534,21 @@ func testDocuments(t *testing.T, tb *terrabasetest.Server, hc *http.Client) {
 	if usage.DatabaseID != info.ID || usage.Collections != 2 || usage.Documents != 1 || usage.StorageBytes <= 0 {
 		t.Fatalf("usage: %+v", usage)
 	}
+	idx := must(u.CreateIndex(ctx, org.ID, project.ID, info.ID, v1.IndexRequest{Collection: "users", Fields: []string{"email"}}))(t)
+	if idx.Name != "users_email" || idx.Collection != "users" || !slices.Equal(idx.Fields, []string{"email"}) || idx.State != "active" {
+		t.Fatalf("index: %+v", idx)
+	}
+	_, err = u.CreateIndex(ctx, org.ID, project.ID, info.ID, v1.IndexRequest{Collection: "users", Fields: []string{"email"}, Name: "again"})
+	wantCode(t, err, v1.ErrIndexExists)
+	if got := must(u.Indexes(ctx, org.ID, project.ID, info.ID))(t); len(got) != 1 || got[0].Name != idx.Name {
+		t.Fatalf("indexes: %+v", got)
+	}
+	if err := u.DropIndex(ctx, org.ID, project.ID, info.ID, idx.Name); err != nil {
+		t.Fatal(err)
+	}
+	if got := must(u.Indexes(ctx, org.ID, project.ID, info.ID))(t); len(got) != 0 {
+		t.Fatalf("indexes after drop: %+v", got)
+	}
 
 	id := v1.DocumentIDFor("users", "bia@example.com")
 	put := must(users.Put(ctx, id, map[string]any{"email": "bia@example.com"}, v1.IfNoneMatchAny()))(t)
