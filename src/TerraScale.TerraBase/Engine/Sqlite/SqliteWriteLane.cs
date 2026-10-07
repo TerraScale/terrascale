@@ -85,17 +85,29 @@ internal sealed class SqliteWriteLane(string database) : SqliteRunner
             }
 
             Interlocked.Increment(ref _executing);
+            T? value = default;
+            Exception? failure = null;
             try
             {
-                result.TrySetResult(call());
+                value = call();
             }
             catch (Exception error)
             {
-                result.TrySetException(error);
+                failure = error;
             }
             finally
             {
                 Interlocked.Decrement(ref _executing);
+            }
+
+            // An awaiting caller can release the writer immediately; publish only after this call is marked finished.
+            if (failure is not null)
+            {
+                result.TrySetException(failure);
+            }
+            else
+            {
+                result.TrySetResult(value!);
             }
         }
     }
