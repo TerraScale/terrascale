@@ -66,7 +66,7 @@ public static class CheckNugetVulnerabilities
             entry.ValueKind != JsonValueKind.Object
             || !entry.TryGetProperty("path", out var path)
             || path.ValueKind != JsonValueKind.String
-            || Path.GetFullPath(path.GetString()!) != Path.GetFullPath(project)
+            || !SameProject(path.GetString()!, project)
         )
         {
             throw new AuditReportException("audited project does not match requested project");
@@ -180,7 +180,18 @@ public static class CheckNugetVulnerabilities
         var vulnerable = 0;
         foreach (var project in projects)
         {
-            var (exitCode, stdOut, stdErr) = runAudit(project);
+            int exitCode;
+            string stdOut, stdErr;
+            try
+            {
+                (exitCode, stdOut, stdErr) = runAudit(project);
+            }
+            catch (Exception exception) when (exception is System.ComponentModel.Win32Exception or IOException or InvalidOperationException)
+            {
+                // Infrastructure failures fail the gate the same controlled way.
+                Console.Error.WriteLine($"NuGet audit could not run for {project}: {exception.Message}");
+                return 1;
+            }
             if (exitCode != 0)
             {
                 Console.Error.WriteLine($"NuGet audit failed for {project}: {stdErr.Trim()}");
@@ -196,23 +207,27 @@ public static class CheckNugetVulnerabilities
                 Console.Error.WriteLine($"NuGet audit returned invalid JSON for {project}");
                 return 1;
             }
-            List<JsonElement> findings;
-            try
+            // The findings are elements of this document; dispose it only after printing them.
+            using (report)
             {
-                findings = ValidateReport(report, project);
-            }
-            catch (AuditReportException exception)
-            {
-                Console.Error.WriteLine(
-                    $"NuGet audit returned incomplete or malformed output for {project}: {exception.Message}");
-                return 1;
-            }
-            foreach (var package in findings)
-            {
-                vulnerable++;
-                Console.Error.WriteLine(
-                    $"vulnerable NuGet package in {project}: {package.GetProperty("id").GetString()} " +
-                    $"{package.GetProperty("resolvedVersion").GetString()}");
+                List<JsonElement> findings;
+                try
+                {
+                    findings = ValidateReport(report, project);
+                }
+                catch (AuditReportException exception)
+                {
+                    Console.Error.WriteLine(
+                        $"NuGet audit returned incomplete or malformed output for {project}: {exception.Message}");
+                    return 1;
+                }
+                foreach (var package in findings)
+                {
+                    vulnerable++;
+                    Console.Error.WriteLine(
+                        $"vulnerable NuGet package in {project}: {package.GetProperty("id").GetString()} " +
+                        $"{package.GetProperty("resolvedVersion").GetString()}");
+                }
             }
         }
         if (vulnerable > 0)
@@ -224,24 +239,115 @@ public static class CheckNugetVulnerabilities
         return 0;
     }
 
-    private static (int, string, string) RunDotnetList(string project)
+    // Kills the scanner's process group, which outlives an exited leader. If kill fails, falls
+    // back to the process tree .NET can still see and reports the failure to the caller.
+    private static string KillGroup(Process process)
     {
-        var start = new ProcessStartInfo("dotnet")
+        string failure;
+        try
+        {
+            using var kill = Process.Start(new ProcessStartInfo("kill", ["-KILL", "--", $"-{process.Id}"])
+            {
+                RedirectStandardError = true,
+            })!;
+            var killErr = kill.StandardError.ReadToEndAsync();
+            if (!kill.WaitForExit(TimeSpan.FromSeconds(10)))
+            {
+                kill.Kill();
+                failure = "kill did not exit within 10 seconds";
+            }
+            else if (kill.ExitCode != 0)
+            {
+                failure = $"kill exited {kill.ExitCode}: {killErr.Result.Trim()}";
+            }
+            else
+            {
+                return string.Empty;
+            }
+        }
+        catch (Exception exception) when (exception is System.ComponentModel.Win32Exception or IOException or InvalidOperationException)
+        {
+            failure = $"kill could not run: {exception.Message}";
+        }
+
+        try
+        {
+            process.Kill(entireProcessTree: true);
+            process.WaitForExit(TimeSpan.FromSeconds(10));
+        }
+        catch (Exception exception) when (exception is System.ComponentModel.Win32Exception or InvalidOperationException)
+        {
+            failure += $"; fallback kill failed: {exception.Message}";
+        }
+        return $" (process group cleanup failed, descendants may remain: {failure})";
+    }
+
+    // Empty or NUL-bearing paths are valid JSON strings but not valid paths; treat them
+    // as a mismatched report rather than letting GetFullPath throw past the handler.
+    private static bool SameProject(string reported, string requested)
+    {
+        if (string.IsNullOrWhiteSpace(reported) || reported.Contains('\0', StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        try
+        {
+            return Path.GetFullPath(reported) == Path.GetFullPath(requested);
+        }
+        catch (Exception exception) when (exception is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return false;
+        }
+    }
+
+    private static (int, string, string) RunDotnetList(string project) =>
+        RunScanner(
+            ["dotnet", "list", project, "package", "--vulnerable", "--include-transitive", "--format", "json"],
+            TimeSpan.FromMinutes(10));
+
+    /// <summary>Runs a scanner command; output that stalls past the timeout fails with exit code 1.</summary>
+    public static (int ExitCode, string StdOut, string StdErr) RunScanner(IReadOnlyList<string> command, TimeSpan timeout)
+    {
+        // setsid starts the scanner as the leader of a new process group, so a timeout can
+        // end every descendant (including one that outlives the scanner holding a pipe).
+        var start = new ProcessStartInfo("setsid")
         {
             RedirectStandardOutput = true,
             RedirectStandardError = true,
         };
-        start.ArgumentList.Add("list");
-        start.ArgumentList.Add(project);
-        start.ArgumentList.Add("package");
-        start.ArgumentList.Add("--vulnerable");
-        start.ArgumentList.Add("--include-transitive");
-        start.ArgumentList.Add("--format");
-        start.ArgumentList.Add("json");
+        foreach (var argument in command)
+        {
+            start.ArgumentList.Add(argument);
+        }
+        var name = string.Join(' ', command.Take(2));
         using var process = Process.Start(start)!;
-        var stdOut = process.StandardOutput.ReadToEnd();
-        var stdErr = process.StandardError.ReadToEnd();
-        process.WaitForExit();
-        return (process.ExitCode, stdOut, stdErr);
+        // Drain both pipes at once: reading them one after the other deadlocks when the
+        // child fills the unread pipe's buffer.
+        var stdOut = process.StandardOutput.ReadToEndAsync();
+        var stdErr = process.StandardError.ReadToEndAsync();
+        // One deadline covers the exit and both pipes: a grandchild that inherited a pipe
+        // can keep it open after the scanner exits. A stall fails the gate instead of the job timeout.
+        var clock = Stopwatch.StartNew();
+        var exited = process.WaitForExit(timeout);
+        var remaining = timeout - clock.Elapsed;
+        bool drained;
+        try
+        {
+            drained = exited && Task.WaitAll([stdOut, stdErr], remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero);
+        }
+        catch (AggregateException readFailure)
+        {
+            var cleanup = KillGroup(process);
+            return (1, string.Empty, $"reading {name} output failed: {readFailure.InnerException?.Message}{cleanup}");
+        }
+
+        if (!drained)
+        {
+            var cleanup = KillGroup(process);
+            return (1, string.Empty, $"{name} did not finish within {timeout.TotalSeconds:0} seconds{cleanup}");
+        }
+
+        return (process.ExitCode, stdOut.Result, stdErr.Result);
     }
 }

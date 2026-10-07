@@ -32,7 +32,7 @@ jobs:
           persist-credentials: false
 
       - name: Verify dependency audit failure handling
-        run: dotnet run scripts/check-nuget-vulnerabilities.tests.cs -- --minimum-expected-tests 13
+        run: dotnet run scripts/check-nuget-vulnerabilities.tests.cs -- --minimum-expected-tests 18
 
       - name: Fail closed on vulnerable NuGet packages
         run: dotnet run scripts/check-nuget-vulnerabilities.cs src/TerraScale.DotNet/TerraScale.DotNet.csproj
