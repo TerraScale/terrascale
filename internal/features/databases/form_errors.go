@@ -14,6 +14,9 @@ const (
 	ErrInvalidName    = "invalid-name"
 	ErrInvalidRegions = "invalid-regions"
 	ErrNoRegions      = "regions-unavailable"
+	ErrHomeRegion     = "home-region"
+	ErrWrongRegion    = "wrong-region"
+	ErrReplicated     = "replicated"
 	ErrNameTaken      = "name-taken"
 	ErrPlanLimit      = "plan-limit"
 	ErrConfirmName    = "confirm-name"
@@ -33,6 +36,9 @@ var formErrors = map[string]string{
 	ErrInvalidName:    "Use 1 to 63 lowercase letters, digits, and hyphens, starting and ending with a letter or digit.",
 	ErrInvalidRegions: "Select one or more valid regions for this database.",
 	ErrNoRegions:      "The region list is unavailable right now, so placement cannot be checked. Try again shortly.",
+	ErrHomeRegion:     "A database stays in the region it was created in. Keep that region selected, or create a new database to move the data.",
+	ErrWrongRegion:    "That region does not hold this database. Check the database's regions and try again.",
+	ErrReplicated:     "This database is replicated. Remove its other regions first, then delete it.",
 	ErrNameTaken:      "Another database in this project already uses that name. Choose a different one.",
 	ErrPlanLimit:      "Your plan's database limit is reached. Upgrade the plan or delete a database to create another.",
 	ErrConfirmName:    "The name you typed does not match. Type the database name exactly to delete it.",

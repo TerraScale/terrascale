@@ -51,12 +51,19 @@ func TestDatabasePlacementIsGRUSFOOrBothFromDiscovery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The home region leads whatever order the regions come in, and stays.
 	moved, err := service.SetRegions(t.Context(), p, db.ID, "SFO", "GRU")
-	if err != nil || !slices.Equal(moved.Placement, []string{"SFO", "GRU"}) || moved.Region != "SFO" {
+	if err != nil || !slices.Equal(moved.Placement, []string{"GRU", "SFO"}) || moved.Region != "GRU" {
 		t.Fatalf("set regions = %+v, %v", moved, err)
 	}
-	if got := replicationDisplay(moved.Placement); got != "Replicated across SFO, GRU · lag not reported" {
+	if got := replicationDisplay(moved.Placement); got != "Replicated across GRU, SFO · lag not reported" {
 		t.Fatalf("replication = %q", got)
+	}
+	if _, err := service.SetRegions(t.Context(), p, db.ID, "SFO"); !errors.Is(err, errHomeRegion) {
+		t.Fatalf("set regions without the home = %v, want refused", err)
+	}
+	if status, code := failure(errHomeRegion, ErrInvalidRegions); status != 400 || code != ErrHomeRegion {
+		t.Fatalf("home region failure = %d %s", status, code)
 	}
 	if _, err := service.SetRegions(t.Context(), p, db.ID); !errors.Is(err, core.ErrInvalid) {
 		t.Fatalf("set no regions = %v, want invalid", err)

@@ -169,13 +169,16 @@ type Project struct {
 }
 
 type Database struct {
-	ID                   string
-	ProjectID            string
-	Name                 string
-	Status               string
-	Region               string
-	Regions              []string
-	Endpoint             string
+	ID        string
+	ProjectID string
+	Name      string
+	Status    string
+	Region    string
+	Regions   []string
+	Endpoint  string
+	// Provisioned marks a database the dashboard created in TerraBase, whose
+	// ID is TerraBase's; see SystemDatabase.
+	Provisioned          bool
 	CreatedAt            time.Time
 	Documents            map[string]map[string][]byte   // collection -> document ID -> JSON bytes
 	DocumentHistory      map[string]map[string][][]byte // collection -> document ID -> revisions
@@ -591,10 +594,11 @@ type Deps struct {
 }
 
 // Region is a region ts-atlas discovery lists. Code is the dashboard's
-// region code, such as GRU for Atlas's gru-1.
+// region code, such as GRU; ID is the Atlas region id TerraBase places
+// databases in, such as gru-1; API is the region's TerraBase origin.
 type Region struct {
-	Code, Name, Country string
-	Healthy             bool
+	Code, ID, Name, Country, API string
+	Healthy                      bool
 }
 
 func (d Deps) LocalResources() bool { return d.Demo || d.DocumentsOnly }
