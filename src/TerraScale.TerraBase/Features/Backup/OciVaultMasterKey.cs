@@ -18,7 +18,7 @@ internal interface IMasterKey
     Task<byte[]> UnwrapAsync(string wrapped, CancellationToken cancellationToken);
 }
 
-/// <summary>Body of OCI Vault's <c>generateDataKey</c>.</summary>
+/// <summary>Body of OCI Vault's <c>generateDataEncryptionKey</c>.</summary>
 /// <param name="KeyId">The master key OCID.</param>
 /// <param name="IncludePlaintextKey">Whether the response carries the key in the clear.</param>
 /// <param name="KeyShape">The data key to generate.</param>
@@ -34,9 +34,9 @@ public sealed record OciKeyShape(string Algorithm, int Length);
 /// <param name="Ciphertext">A wrapped data key.</param>
 public sealed record OciDecryptRequest(string KeyId, string Ciphertext);
 
-/// <summary>What OCI Vault's <c>generateDataKey</c> and <c>decrypt</c> answer (the fields TerraBase reads).</summary>
+/// <summary>What OCI Vault's <c>generateDataEncryptionKey</c> and <c>decrypt</c> answer (the fields TerraBase reads).</summary>
 /// <param name="Plaintext">The data key in the clear, base64.</param>
-/// <param name="Ciphertext">The wrapped data key (<c>generateDataKey</c> only).</param>
+/// <param name="Ciphertext">The wrapped data key (<c>generateDataEncryptionKey</c> only).</param>
 public sealed record OciKeyResponse(string? Plaintext, string? Ciphertext);
 
 /// <summary>
@@ -53,7 +53,7 @@ internal sealed class OciVaultMasterKey(BackupSettings settings, IHttpClientFact
 
     public async Task<(byte[] Key, string Wrapped)> GenerateDataKeyAsync(CancellationToken cancellationToken)
     {
-        var response = await SendAsync("/20180608/generateDataKey",
+        var response = await SendAsync("/20180608/generateDataEncryptionKey",
             JsonSerializer.SerializeToUtf8Bytes(new OciGenerateDataKeyRequest(settings.KmsKeyId, true, new("AES", KeyBytes)), TerraBaseJsonContext.Default.OciGenerateDataKeyRequest),
             cancellationToken).ConfigureAwait(false);
         return response.Ciphertext is { Length: > 0 } wrapped ? (Key(response), wrapped) : throw new InvalidDataException("OCI Vault returned no wrapped data key");
@@ -103,8 +103,9 @@ internal sealed class OciVaultMasterKey(BackupSettings settings, IHttpClientFact
         using var response = await http.CreateClient(HttpClientName).SendAsync(request, cancellationToken).ConfigureAwait(false);
         if (!response.IsSuccessStatusCode)
         {
-            // The body may echo request details; the status is enough to act on.
-            throw new HttpRequestException($"OCI Vault answered {(int)response.StatusCode}", null, response.StatusCode);
+            // OCI errors carry a code and a message, never key material; anything longer is cut.
+            var error = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+            throw new HttpRequestException($"OCI Vault answered {(int)response.StatusCode}: {error[..Math.Min(error.Length, 300)]}", null, response.StatusCode);
         }
 
         return await response.Content.ReadFromJsonAsync(TerraBaseJsonContext.Default.OciKeyResponse, cancellationToken).ConfigureAwait(false)

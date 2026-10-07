@@ -29,6 +29,9 @@ public sealed class FakeOci : IDisposable
     private int _badSignatures;
     private int _generatedKeys;
 
+    /// <summary>Objects the bucket's retention rule protects from deletion, as OCI answers <c>RetentionRuleViolation</c>.</summary>
+    public Func<string, bool> Locked { get; set; } = _ => false;
+
     /// <summary>Every stored object, by key.</summary>
     public IReadOnlyDictionary<string, byte[]> Objects => _objects;
 
@@ -131,6 +134,11 @@ public sealed class FakeOci : IDisposable
             return get;
         }
 
+        if (request.Method == HttpMethod.Delete && _objects.ContainsKey(key) && Locked(key))
+        {
+            return S3Error(HttpStatusCode.Forbidden, "RetentionRuleViolation");
+        }
+
         if (request.Method == HttpMethod.Delete)
         {
             // Like S3: deleting a missing key succeeds too.
@@ -156,7 +164,7 @@ public sealed class FakeOci : IDisposable
         }
 
         JsonObject response;
-        if (request.RequestUri!.AbsolutePath == "/20180608/generateDataKey")
+        if (request.RequestUri!.AbsolutePath == "/20180608/generateDataEncryptionKey")
         {
             Interlocked.Increment(ref _generatedKeys);
             var key = Convert.ToBase64String(RandomNumberGenerator.GetBytes((int)json["keyShape"]!["length"]!));

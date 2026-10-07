@@ -10,7 +10,8 @@ The older scheduled backups (`…/backups`, local snapshot files next to the dat
 ## Status of the work
 
 Slices 1 (shipping and restore), 2 (shipper leases) and 3 (retention by plan, daily restore drills, records in TerraBase)
-of TS-633 are done. Not done yet:
+of TS-633 are done. The gru-1 rollout is prepared and checked against real OCI ([gru-1 rollout](#gru-1-rollout)) and is
+applied after the TS-647 cutover. Not done yet:
 
 - No restore over an existing database, and no disaster-recovery path that rebuilds a whole data directory
   (`_system.db` included) from the bucket.
@@ -103,7 +104,7 @@ starts a new generation once the bucket answers.
 
 Each object is sealed before upload (`Features/Backup/BackupObject.cs`, format 1): chunks of up to 1 MiB, LZ4-compressed
 when smaller, AES-256-GCM. Each object's AES key is HKDF-SHA256 of its project's data key, a random salt and the object's
-own key in the bucket, so an object moved elsewhere does not decrypt. Data keys come from OCI Vault (`generateDataKey`
+own key in the bucket, so an object moved elsewhere does not decrypt. Data keys come from OCI Vault (`generateDataEncryptionKey`
 on the master key) and are stored in the bucket wrapped. Only the Vault can unwrap them. Each project gets its own data
 key, and `_system.db` gets one too.
 
@@ -125,8 +126,8 @@ A restore always creates a new database, so a new incarnation that reaches the o
 TS-647, through anti-entropy). Backups taken before the TS-602 wipe use the old schema and do not need to restore after
 it (user decision, 2026-10-07). Production backup starts right after that cutover.
 
-`GET …/databases/{database}/point-in-time` returns the restore window: the oldest snapshot and the newest data in the
-bucket. `POST …/databases/{database}/point-in-time/restore` with `{"pointInTime": "…", "name": "…"}` restores into a
+`GET …/databases/{database}/point-in-time` returns the restore window: from the oldest snapshot, but no earlier than the
+plan's retention window (a bucket rule may keep older objects), to the newest data in the bucket. `POST …/databases/{database}/point-in-time/restore` with `{"pointInTime": "…", "name": "…"}` restores into a
 new database of the same project (`branchedFrom` set, like a backup restore). The restore:
 
 1. takes the newest snapshot at or before `pointInTime`;
@@ -149,6 +150,11 @@ interrupted pass never leaves segments that no snapshot reaches.
 The extra hour covers a restore that picked a snapshot just inside the window, as Litestream learned (#1450). Plans move
 to ts-dashboard (TS-599); this setting stays the fallback.
 
+A bucket retention rule (an OCI object lock) refuses deleting objects younger than its duration
+(`RetentionRuleViolation`). Retention deletes segments oldest first, stops at the first refused one without counting a
+failure, and deletes a generation's snapshots only once all its expired segments are gone. Objects therefore stay as long
+as the longer of the plan and the rule, and a pass costs at most one refused call while the rule holds.
+
 ## Restore drills
 
 At least once a day, when it stores a snapshot, the shipper checks it: it rebuilds the file from the bucket alone (the
@@ -166,6 +172,72 @@ After each hourly retention pass and each drill, the shipper writes the file's r
 shipping member, generation, last shipped time, lag, bucket size (measured daily), retention days and the last drill.
 The database's state is deleted with it. A catalog follower cannot write the catalog, so it keeps the record in memory
 only (`GET /v1/backup`) until TS-647 makes `_system` writable on every member.
+
+## gru-1 rollout
+
+Applied right after the TS-647 cutover, so the new engine has backups from day one. Pre-wipe data needs none (decision,
+2026-10-07).
+
+### OCI resources (created 2026-10-07, tagged `ts-issue=TS-633`)
+
+| Resource | Name | OCID |
+| --- | --- | --- |
+| Bucket (existing, compartment `gru-1-control`, namespace `grxnmoqvrcdv`) | `gru-1-backup` | |
+| Group | `gru-1-terrabase-backup` | `ocid1.group.oc1..aaaaaaaapzjw62quoebz4axjajz76vrv2tso4wvja7ihenkw6mahuxh2nt5a` |
+| User (API keys and customer secret keys only; no console, auth tokens, SMTP or OAuth) | `gru-1-terrabase-backup` | `ocid1.user.oc1..aaaaaaaa7nflod4z5m5b2mudqxeoxs7jcz2fm7brpzc5lpfdc2zlsg2c6mka` |
+| Policy (`gru-1-control`) | `gru-1-terrabase-backup` | `ocid1.policy.oc1..aaaaaaaaycaasxiqjfjljvvlgtpbmiek6qy7zhppq6jgggygs6raipfju7ea` |
+| Master key (HSM, AES-256, `gru-1-vault`) | `gru-1-terrabase-backup` | `ocid1.key.oc1.sa-saopaulo-1.ffvmfu2naagt6.abtxeljruhejdps4hz4tqyfmuokgfz3yunzaqnbx6ywr4r24cd2oevmcjacq` |
+| Vault secret: S3 customer secret key | `gru-1-terrabase-backup-secret-key` | `ocid1.vaultsecret.oc1.sa-saopaulo-1.amaaaaaappuhpdqa36qdp2azrk6xf6hdbj3jmqiiykoiwnb6zxxjx33nv7yq` |
+| Vault secret: API signing key (PEM) | `gru-1-terrabase-backup-kms-private-key` | `ocid1.vaultsecret.oc1.sa-saopaulo-1.amaaaaaappuhpdqafkht4blffc6rlfcwurchuu2htw62uetxtqqzhb6gx5qq` |
+
+The policy allows exactly two things: `manage objects` in the compartment where `target.bucket.name = 'gru-1-backup'`,
+and `use keys` where `target.key.id` is the master key above. Customer secret key (access key)
+`8a2eb8f587ae642e8da2cafc4e4c849900831df3`; API key fingerprint `47:c2:d8:93:d4:0b:67:4e:ae:c0:b0:83:5f:c4:3e:7d`. The
+secrets exist only in Vault.
+
+The bucket has the retention rule `backup-retention` (35 days, unlocked, created 2026-10-04): OCI refuses deleting or
+overwriting an object younger than that (`RetentionRuleViolation`). TerraBase never overwrites. Retention by plan waits
+for the rule instead of failing (see [Retention](#retention)), so every backup stays at least 35 days while restores stay
+limited to the plan's window. A 5-byte probe object `probe/ts633` from the compatibility check stays until about
+2026-11-11.
+
+### Profile change
+
+Add [`rollout/gru-1-backup-profile.json`](rollout/gru-1-backup-profile.json) to the `terrabase` profile of the gru-1 cell
+spec (root-signed): its `env` keys and its `secrets`, whose `_FILE` keys ts-orchestrator turns into 0600 files (TS-651).
+The host sets the NATS identity (`TERRABASE_NATS_*`) itself; the bucket `terrabase_backup_leases` is created by
+ts-orchestrator. The members restart one at a time with the change (TS-610 fenced release).
+
+### Verify and measure after the restart
+
+1. On each member, `curl -s http://127.0.0.1:9464/v1/backup`: every file is shipped by exactly one member
+   (`shipping`), `lagSeconds` stays under 2, `lastDrill.passed` is true, `lastError` is null.
+2. `/metrics`: `terrabase_backup_lag_seconds`, `terrabase_backup_last_success_seconds`, no rising
+   `terrabase_backup_failures_total` or `terrabase_backup_holes_total`.
+3. RPO: write a document, then time how long `/v1/backup`'s `lastShippedAt` of its file takes to pass the write.
+4. Restore time: `POST …/point-in-time/restore` of a scratch database to a second between two writes; check the first write
+   is in the new database and the second is not; delete the restored database.
+5. Post the numbers on Ku TS-633.
+
+### Pre-production check against real OCI (2026-10-07)
+
+A local `terrabase` shipped to a scratch bucket with this identity, key and endpoints. That bucket and its policy
+statement were deleted afterwards. The real S3 compatibility API and Vault crypto endpoint found two bugs the fakes had
+hidden, both fixed:
+
+- **Vault path:** the data key call is `POST /20180608/generateDataEncryptionKey` (it was `generateDataKey`).
+- **Retention:** the bucket's retention rule refuses deletes, which retention now waits for.
+
+| Measure | Result |
+| --- | --- |
+| Committed write → in the bucket (10 writes) | median 0.60 s, max 1.34 s |
+| Point-in-time restore through the API, new database | 0.45 s (small database) |
+| Restored state | the write before the chosen second present, the write after it absent |
+| Generation-start drills | passed, about 0.09 s |
+| Stored objects | sealed `TBK1` objects only |
+
+A new customer secret key took about 10 minutes to authenticate on the S3 API. A rotated key needs that wait before the
+old one is deleted.
 
 ## Compared with Litestream
 

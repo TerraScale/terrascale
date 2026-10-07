@@ -1,3 +1,4 @@
+using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Tenancy;
 
@@ -23,7 +24,9 @@ public interface IPointInTimeRestore
 }
 
 /// <summary>Restores from the newest snapshot at or before the time, rolled forward through its generation's segments.</summary>
-internal sealed class PointInTimeRestore(IWalBackup engine, IObjectStore store, BackupReader reader, IContinuousBackup shipper) : IPointInTimeRestore
+internal sealed class PointInTimeRestore(
+    IWalBackup engine, IObjectStore store, BackupReader reader, IContinuousBackup shipper, ITenantDirectory tenants, BackupSettings settings, TimeProvider time)
+    : IPointInTimeRestore
 {
     public async Task<RestoreWindow?> GetWindowAsync(TenantContext database, CancellationToken cancellationToken)
     {
@@ -55,7 +58,9 @@ internal sealed class PointInTimeRestore(IWalBackup engine, IObjectStore store, 
             }
         }
 
-        return new(first.At, latest > last.At ? latest : last.At);
+        // The plan's window, not the bucket's: retention keeps a snapshot from before it, and an object lock may keep more.
+        var plan = time.GetUtcNow() - TimeSpan.FromDays(settings.RetentionDays[await tenants.PlanAsync(database.OrganizationId, cancellationToken).ConfigureAwait(false)]);
+        return new(first.At > plan ? first.At : plan, latest > last.At ? latest : last.At);
     }
 
     public async Task<bool> RestoreAsync(TenantContext source, DateTimeOffset at, TenantContext target, CancellationToken cancellationToken)

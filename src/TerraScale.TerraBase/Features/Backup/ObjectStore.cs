@@ -24,8 +24,11 @@ internal interface IObjectStore
     /// <summary>Lists the objects under <paramref name="prefix"/> in key order, after <paramref name="startAfter"/> when set.</summary>
     IAsyncEnumerable<StoredObject> ListAsync(string prefix, string? startAfter, CancellationToken cancellationToken);
 
-    /// <summary>Deletes <paramref name="key"/>; deleting a missing object succeeds.</summary>
-    Task DeleteAsync(string key, CancellationToken cancellationToken);
+    /// <summary>
+    /// Deletes <paramref name="key"/>; deleting a missing object succeeds. <see langword="false"/> when the bucket's retention
+    /// rule (an object lock) still protects it.
+    /// </summary>
+    Task<bool> DeleteAsync(string key, CancellationToken cancellationToken);
 }
 
 /// <summary>
@@ -99,8 +102,18 @@ internal sealed class S3ObjectStore(BackupSettings settings, IHttpClientFactory 
         }
     }
 
-    public async Task DeleteAsync(string key, CancellationToken cancellationToken) =>
-        await _s3.DeleteObjectAsync(settings.Bucket, key, cancellationToken).ConfigureAwait(false);
+    public async Task<bool> DeleteAsync(string key, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await _s3.DeleteObjectAsync(settings.Bucket, key, cancellationToken).ConfigureAwait(false);
+            return true;
+        }
+        catch (AmazonS3Exception error) when (error.ErrorCode == "RetentionRuleViolation")
+        {
+            return false;
+        }
+    }
 
     public void Dispose() => _s3.Dispose();
 

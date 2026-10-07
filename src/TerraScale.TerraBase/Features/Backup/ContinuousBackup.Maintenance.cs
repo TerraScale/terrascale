@@ -81,11 +81,15 @@ internal sealed partial class ContinuousBackup
                 expired.Add(item.Key);
             }
 
-            // Segments first: an interrupted pass leaves old snapshots whose segments are gone, outside the window, and the
-            // next pass deletes them; never segments that no snapshot reaches.
-            await DeleteAsync(expired, cancellationToken).ConfigureAwait(false);
-            await DeleteAsync([.. snapshots[..floor].Select(snapshot => snapshot.Key)], cancellationToken).ConfigureAwait(false);
-            LogRetained(_logger, file.Prefix, floor, expired.Count);
+            // Segments first, oldest first: an interrupted pass leaves old snapshots whose segments are gone, outside the
+            // window, and the next pass deletes them; never segments that no snapshot reaches. A bucket retention rule (OCI
+            // object lock) refuses deleting younger objects: the pass stops at the first, and later passes go on once it expires.
+            expired.Sort((left, right) => (BackupLayout.ParseSegment(left)?.At ?? default).CompareTo(BackupLayout.ParseSegment(right)?.At ?? default));
+            if (await DeleteAsync(expired, cancellationToken).ConfigureAwait(false)
+                && await DeleteAsync([.. snapshots[..floor].Select(snapshot => snapshot.Key)], cancellationToken).ConfigureAwait(false))
+            {
+                LogRetained(_logger, file.Prefix, floor, expired.Count);
+            }
         }
 
         if (now - file.SizedAt >= SizeInterval)
@@ -102,9 +106,20 @@ internal sealed partial class ContinuousBackup
         await RecordAsync(file, cancellationToken).ConfigureAwait(false);
     }
 
-    private async Task DeleteAsync(List<string> keys, CancellationToken cancellationToken) =>
-        await Parallel.ForEachAsync(keys, new ParallelOptions { MaxDegreeOfParallelism = 16, CancellationToken = cancellationToken },
-            async (key, token) => await _store.DeleteAsync(key, token).ConfigureAwait(false)).ConfigureAwait(false);
+    // Deletes keys sixteen at a time in order; false once the bucket's retention rule still protects one of them.
+    private async Task<bool> DeleteAsync(List<string> keys, CancellationToken cancellationToken)
+    {
+        foreach (var chunk in keys.Chunk(16))
+        {
+            var deleted = await Task.WhenAll(chunk.Select(key => _store.DeleteAsync(key, cancellationToken))).ConfigureAwait(false);
+            if (!deleted.All(done => done))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
 
     // Rebuilds the file from the bucket up to the snapshot just stored, from the generation's previous snapshot when it has
     // one, and compares it with that snapshot's local copy: the live file at the same frame position.

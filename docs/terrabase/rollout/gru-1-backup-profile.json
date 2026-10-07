@@ -1,0 +1,21 @@
+{
+  "env": {
+    "TERRABASE_BACKUP_ENDPOINT": "https://grxnmoqvrcdv.compat.objectstorage.sa-saopaulo-1.oraclecloud.com",
+    "TERRABASE_BACKUP_REGION": "sa-saopaulo-1",
+    "TERRABASE_BACKUP_BUCKET": "gru-1-backup",
+    "TERRABASE_BACKUP_ACCESS_KEY_ID": "8a2eb8f587ae642e8da2cafc4e4c849900831df3",
+    "TERRABASE_BACKUP_KMS_ENDPOINT": "https://ffvmfu2naagt6-crypto.kms.sa-saopaulo-1.oraclecloud.com",
+    "TERRABASE_BACKUP_KMS_KEY_ID": "ocid1.key.oc1.sa-saopaulo-1.ffvmfu2naagt6.abtxeljruhejdps4hz4tqyfmuokgfz3yunzaqnbx6ywr4r24cd2oevmcjacq",
+    "TERRABASE_BACKUP_KMS_API_KEY": "ocid1.tenancy.oc1..aaaaaaaae4zbeypc66rholaayphrk6h2eg7j4up6tfncehv6agji6o5v4yga/ocid1.user.oc1..aaaaaaaa7nflod4z5m5b2mudqxeoxs7jcz2fm7brpzc5lpfdc2zlsg2c6mka/47:c2:d8:93:d4:0b:67:4e:ae:c0:b0:83:5f:c4:3e:7d"
+  },
+  "secrets": {
+    "TERRABASE_BACKUP_SECRET_KEY_FILE": {
+      "vault": "ocid1.vault.oc1.sa-saopaulo-1.ffvmfu2naagt6.abtxeljr7ebplea4ua3memgthsupcfn3crg6d56vipsw7o2butchdrx3urmq",
+      "name": "gru-1-terrabase-backup-secret-key"
+    },
+    "TERRABASE_BACKUP_KMS_PRIVATE_KEY_FILE": {
+      "vault": "ocid1.vault.oc1.sa-saopaulo-1.ffvmfu2naagt6.abtxeljr7ebplea4ua3memgthsupcfn3crg6d56vipsw7o2butchdrx3urmq",
+      "name": "gru-1-terrabase-backup-kms-private-key"
+    }
+  }
+}

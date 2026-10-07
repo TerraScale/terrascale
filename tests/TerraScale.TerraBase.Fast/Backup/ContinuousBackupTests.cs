@@ -282,12 +282,50 @@ public sealed class ContinuousBackupTests
         await Assert.That(hobbySnapshots.Count).IsEqualTo(2);
         await Assert.That(proSnapshots.Count).IsEqualTo(3);
         await Assert.That(segmentsBefore).IsEqualTo(0);
-        await Assert.That(window.RootElement.GetProperty("earliest").GetDateTimeOffset()).IsEqualTo(oldestAt);
+        // Retention keeps the snapshot before the window; the window itself is the plan's day.
+        await Assert.That(oldestAt).IsLessThan(time.GetUtcNow() - TimeSpan.FromDays(1));
+        await Assert.That(window.RootElement.GetProperty("earliest").GetDateTimeOffset()).IsEqualTo(time.GetUtcNow() - TimeSpan.FromDays(1));
         await Assert.That(hobbyRecord.GetProperty("retentionDays").GetInt32()).IsEqualTo(1);
         await Assert.That(proRecord.GetProperty("retentionDays").GetInt32()).IsEqualTo(7);
         await Assert.That(hobbyRecord.GetProperty("lastDrill").GetProperty("passed").GetBoolean()).IsTrue();
         await Assert.That(hobbyRecord.GetProperty("sizeBytes").GetInt64()).IsGreaterThan(0);
         await Assert.That(status.LastDrill!.Passed).IsTrue();
+    }
+
+    [Test]
+    public async Task Retention_waits_for_the_buckets_retention_rule_without_failing()
+    {
+        using var oci = new FakeOci { Locked = _ => true };
+        var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 7, 12, 0, 0, TimeSpan.Zero));
+        await using var api = await ManagementApi.StartAsync(oci.Configure, oci.Route, time);
+        var backup = api.Server.Services.GetRequiredService<IContinuousBackup>();
+        var database = await api.CreateManagedDatabaseAsync("main");
+        using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
+        await ManagementApi.CreateCollectionAsync(data, database, "people");
+        time.Advance(TimeSpan.FromSeconds(10));
+        await backup.RunOnceAsync(CancellationToken.None);
+        (await data.PutAsJsonAsync(Uri(ManagementApi.DocumentPath(database, "people", "kept")), new { text = Faker.Lorem.Sentence(8) })).EnsureSuccessStatusCode();
+        for (var day = 0; day < 2; day++)
+        {
+            time.Advance(TimeSpan.FromDays(1) + TimeSpan.FromSeconds(1));
+            await backup.RunOnceAsync(CancellationToken.None);
+        }
+
+        time.Advance(TimeSpan.FromHours(2));
+        await backup.RunOnceAsync(CancellationToken.None);
+        var locked = Snapshots(oci, database).Count;
+        var status = backup.Status.Files.Single(file => file.File == File(database));
+        using var window = JsonDocument.Parse(await api.Client.GetStringAsync(Uri($"{database.Path}/point-in-time")));
+
+        // The rule lapses: the next hourly pass deletes what the plan no longer needs.
+        oci.Locked = _ => false;
+        time.Advance(TimeSpan.FromHours(1));
+        await backup.RunOnceAsync(CancellationToken.None);
+
+        await Assert.That(locked).IsEqualTo(3);
+        await Assert.That(status.LastError).IsNull();
+        await Assert.That(window.RootElement.GetProperty("earliest").GetDateTimeOffset()).IsEqualTo(time.GetUtcNow() - TimeSpan.FromHours(1) - TimeSpan.FromDays(1));
+        await Assert.That(Snapshots(oci, database).Count).IsEqualTo(2);
     }
 
     [Test]
