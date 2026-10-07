@@ -157,8 +157,10 @@ billing document's plan id. A concurrent plan change then fails one of the two c
 Members are snake_case. Names, emails and roles follow the REST rules in [management-api.md](management-api.md).
 `organization` and `project` are ids; `id` on a create is an optional lowercase hyphenated UUID chosen by the
 client (otherwise a UUIDv7 is generated), which lets later operations and dashboard documents in the same
-commit refer to the new resource. A client id already used by any organization (or any project) is `409 id_taken`, even one of another tenant:
-ids are random UUIDs, so this reveals only that a UUID the client already holds is in use.
+commit refer to the new resource. A client id already used by any organization (or any project, or any database, deleted
+ones included) is `409 id_taken`, even one of another tenant: ids are random UUIDs, so this reveals only that a UUID the
+client already holds is in use. A database id is chosen to register, in another region, a database that region replicates
+under the same ids ([cross-region replication](cross-region.md#registering-a-database-in-both-regions)).
 
 | `op` | Members | Needs | `value` |
 | --- | --- | --- | --- |
@@ -170,7 +172,7 @@ ids are random UUIDs, so this reveals only that a UUID the client already holds 
 | `create_project` | `organization`, `name`, `id`? | member | project |
 | `rename_project` | `organization`, `project`, `name` | member | project |
 | `delete_project` | `organization`, `project` | member | none |
-| `create_database` | `organization`, `project`, `name` | member | database (with `region`) |
+| `create_database` | `organization`, `project`, `name`, `id`? | member | database (with `region`) |
 | `branch_database` | `organization`, `project`, `database`, `name` | member | database (with `region`) |
 | `delete_database` | `organization`, `project`, `database` | member | none |
 | `change_role` | `organization`, `user`, `role` | admin; owner for owners | member |

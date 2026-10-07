@@ -6,6 +6,7 @@ using System.Text.Json.Serialization.Metadata;
 using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.Documents;
+using TerraBase.Features.Management.Backups;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
 
@@ -404,6 +405,12 @@ internal sealed partial class EngineManagementService
                         return Failed(ManagementError.NotFound);
                     }
 
+                    if (op.Id is not null
+                        && await transaction.GetVersionAsync(EngineManagedBackupService.BackedUpDatabases, added.Database.Id, cancellationToken).ConfigureAwait(false) is not null)
+                    {
+                        return Failed(ManagementError.IdTaken);
+                    }
+
                     var registered = await RegisterDatabaseAsync(
                         transaction, project => MemberProjectAsync(project, userId, organization, op.Project!, cancellationToken), added.Database, cancellationToken).ConfigureAwait(false);
                     return registered == ManagementError.None
@@ -502,6 +509,13 @@ internal sealed partial class EngineManagementService
                 var mayGrant = earlier.Any(grant => grant is { Op: "accept_invitation" } || (grant is { Op: "confirm_transfer" } && grant.Organization == op.Organization));
                 var target = await ReadAsync<ManagementResult<(TenantContext Tenant, ManagedDatabase? Source)>>(async transaction =>
                 {
+                    // A chosen id registers a database another region holds under the same ids (docs/cross-region.md).
+                    if (op.Id is { } id && (prepared.Values.Any(added => added.Database.Id == id)
+                        || await transaction.GetVersionAsync(EngineManagedBackupService.BackedUpDatabases, id, cancellationToken).ConfigureAwait(false) is not null))
+                    {
+                        return ManagementError.IdTaken;
+                    }
+
                     var organization = await GetAsync(transaction, Organizations, op.Organization!, TerraBaseJsonContext.Default.Organization, cancellationToken).ConfigureAwait(false);
                     if (organization is null && createsOrganization)
                     {
@@ -542,7 +556,7 @@ internal sealed partial class EngineManagementService
                 }
 
                 var (project, source) = target.Value;
-                var database = new ManagedDatabase(NewId(), op.Project!, op.Name!, source?.Id, time.GetUtcNow());
+                var database = new ManagedDatabase(op.Id ?? NewId(), op.Project!, op.Name!, source?.Id, time.GetUtcNow());
                 var storage = project with { DatabaseId = database.Id };
                 if (!await PrepareDatabaseAsync(storage, source is null ? null : project with { DatabaseId = source.Id }, cancellationToken).ConfigureAwait(false))
                 {

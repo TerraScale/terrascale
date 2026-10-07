@@ -182,7 +182,7 @@ public sealed record TerraBaseOptions : IDisposable
 
     private static readonly FrozenSet<string> Keys = FrozenSet.Create(
         StringComparer.Ordinal,
-        ["admin-port", "data-directory", "region", "node-name", "memory-budget", "client-port", .. ClientTlsKeys, "auth-issuer", "auth-audience", "management-credential-file", "management-legacy-owner", "peer-port", .. PeerTlsKeys, "peer-addresses", "peers", "catalog-primary", "write-wait-ms", "shutdown-grace-seconds", "readiness-cache-seconds", "storage-threads", "storage-queue", .. BackupSettings.Keys, .. NatsSettings.Keys]);
+        ["admin-port", "data-directory", "region", "node-name", "memory-budget", "client-port", .. ClientTlsKeys, "auth-issuer", "auth-audience", "management-credential-file", "management-legacy-owner", "peer-port", .. PeerTlsKeys, "peer-addresses", "peers", "catalog-primary", "write-wait-ms", "shutdown-grace-seconds", "readiness-cache-seconds", "storage-threads", "storage-queue", .. BackupSettings.Keys, .. NatsSettings.Keys, .. WanSettings.Keys]);
 
     /// <summary>Every setting name, in <c>--name=value</c> form without the dashes.</summary>
     public static IReadOnlySet<string> SettingNames => Keys;
@@ -324,6 +324,9 @@ public sealed record TerraBaseOptions : IDisposable
     /// <summary>ts-orchestrator's NATS, which holds the backup shippers' leases; <see langword="null"/> when not set.</summary>
     public NatsSettings? Nats { get; init; }
 
+    /// <summary>Cross-region replication over NATS (<c>docs/cross-region.md</c>); <see langword="null"/> turns it off.</summary>
+    public WanSettings? Wan { get; init; }
+
     /// <summary>Reads and validates the configuration of this process.</summary>
     public static TerraBaseOptions FromProcess(IReadOnlyList<string> args)
     {
@@ -454,6 +457,7 @@ public sealed record TerraBaseOptions : IDisposable
         var writeWait = TimeSpan.FromMilliseconds(ParseInteger(values, "write-wait-ms", 0, 60_000) ?? DefaultWriteWaitMilliseconds);
         var backup = BackupSettings.Parse(values);
         var nats = NatsSettings.Parse(values);
+        var wan = WanSettings.Parse(values, region, nodeName, nats);
         if (backup is not null && nats is null && (peerAddresses.Count > 0 || catalogPrimary is not null))
         {
             // Without NATS leases every member would ship every file.
@@ -499,6 +503,7 @@ public sealed record TerraBaseOptions : IDisposable
                 ReadinessCacheTtl = readinessCacheTtl,
                 Backup = backup,
                 Nats = nats,
+                Wan = wan,
                 Peers = peers,
             };
         }

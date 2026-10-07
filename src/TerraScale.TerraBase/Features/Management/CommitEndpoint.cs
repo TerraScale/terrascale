@@ -42,7 +42,7 @@ public sealed class CommitEndpoint(IManagementCommits commits) : EndpointWithout
         ["create_project"] = ["organization", "name", "id?"],
         ["rename_project"] = ["organization", "project", "name"],
         ["delete_project"] = ["organization", "project"],
-        ["create_database"] = ["organization", "project", "name"],
+        ["create_database"] = ["organization", "project", "name", "id?"],
         ["branch_database"] = ["organization", "project", "database", "name"],
         ["delete_database"] = ["organization", "project", "database"],
         ["change_role"] = ["organization", "user", "role"],

@@ -121,6 +121,9 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
                 ["admin-port"] = "0",
                 ["data-directory"] = dataDirectory,
                 ["region"] = "test-region",
+                // Each server starts its read threads eagerly, one per core by default: on a 46-core host the parallel suite
+                // held about 7,400 threads and exhausted the user's process limit. Production nodes resolve this to 1.
+                ["storage-threads"] = "2",
             };
             settings?.Invoke(values);
 

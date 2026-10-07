@@ -5,6 +5,7 @@ using TerraBase.Engine.Cluster;
 using TerraBase.Features.ApiKeys;
 using TerraBase.Features.ApiReference;
 using TerraBase.Features.Backup;
+using TerraBase.Features.CrossRegion;
 using TerraBase.Features.Documents;
 using TerraBase.Features.Management;
 using TerraBase.Features.Management.Usage;
@@ -86,6 +87,7 @@ builder.Services.AddTerraBaseCluster(options);
 builder.Services.AddTerraBaseBackup(options);
 builder.Services.AddTerraBasePressure();
 builder.AddTerraBaseReplication(options);
+builder.Services.AddTerraBaseCrossRegion(options);
 
 await using var app = builder.Build();
 try

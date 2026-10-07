@@ -91,7 +91,7 @@ internal sealed class NatsMemberStore(NatsSettings settings, ILoggerFactory logg
     // The client certificate and the CA the servers chain to, as the files hold them now. The certificate file holds the
     // leaf and its intermediates (ts-orchestrator's host issuer) while the servers trust only the root, so the client
     // presents the whole chain: a bare leaf makes the broker bridge close the connection right after the handshake.
-    private static ValueTask ConfigureTls(NatsSettings settings, SslClientAuthenticationOptions options)
+    internal static ValueTask ConfigureTls(NatsSettings settings, SslClientAuthenticationOptions options)
     {
         var certificate = X509Certificate2.CreateFromPemFile(settings.CertificateFile!, settings.PrivateKeyFile);
         var chain = new X509Certificate2Collection();

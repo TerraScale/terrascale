@@ -1,0 +1,77 @@
+syntax = "proto3";
+
+package terrabase.v1;
+
+import "terrabase/v1/replication.proto";
+
+option csharp_namespace = "TerraBase.Features.CrossRegion.V1";
+
+// Version 1 of cross-region (WAN) replication over NATS request/reply (docs/cross-region.md). A member of one
+// region pulls the change groups of every origin of another region from the member that originated them, after
+// its own applied prefix. Every request and reply is at most 1 MiB, NATS's default max_payload.
+
+// A request on ts.orch.v1.<cell>.query.terrabase-wan.heads, which every member of the cell answers with the first
+// page of its heads, or on ts.orch.v1.<cell>.query.terrabase-wan.member.<member>, which one member answers.
+message WanRequest {
+  // 1.
+  uint32 version = 1;
+  oneof request {
+    HeadsRequest heads = 2;
+    PullRequest pull = 3;
+  }
+}
+
+message HeadsRequest {
+  // The page starts after this database: its tenant, project and database UUIDs (16 bytes each, RFC order),
+  // concatenated; empty for the first page.
+  bytes after = 1;
+}
+
+// The last change group an origin committed in one database.
+message Head {
+  // Canonical 16-byte UUIDs in RFC byte order.
+  bytes tenant_id = 1;
+  bytes project_id = 2;
+  bytes database_id = 3;
+  // The 16-byte origin (the database's incarnation on the answering member).
+  bytes origin = 4;
+  uint64 sequence = 5;
+}
+
+message HeadsReply {
+  // The answering member's node name: lowercase letters, digits and hyphens, at most 63 characters.
+  string member = 1;
+  // Ordered by database.
+  repeated Head heads = 2;
+  // Whether more heads follow the last one; ask the member for the next page.
+  bool more = 3;
+}
+
+message PullRequest {
+  bytes tenant_id = 1;
+  bytes project_id = 2;
+  bytes database_id = 3;
+  bytes origin = 4;
+  // The receiver's applied prefix of the origin: the reply starts at group after + 1.
+  uint64 after = 5;
+  // For a group whose envelope does not fit one reply: the byte offset of the envelope to continue from.
+  uint32 offset = 6;
+}
+
+message PullReply {
+  enum Status {
+    STATUS_OK = 0;
+    // The answering member does not hold this origin (any more): ask the heads again.
+    STATUS_UNKNOWN_ORIGIN = 1;
+    // The receiver applied groups the origin never committed (its file went back in time).
+    STATUS_AHEAD = 2;
+    // The request is invalid or of another version.
+    STATUS_INVALID = 3;
+  }
+
+  Status status = 1;
+  // Complete groups from after + 1 on, in order. When group after + 1 alone does not fit, exactly one batch
+  // whose application_envelope holds the bytes from the request's offset on, fewer than its
+  // encoded_application_bytes until the last part.
+  repeated CommittedGroupBatch groups = 2;
+}

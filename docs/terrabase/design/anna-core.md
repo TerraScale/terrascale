@@ -330,6 +330,8 @@ database name per project is an owner `If-None-Match: *`. Usage counts from ever
   regions in batches, asynchronously, tolerant of long partitions, over ts-orchestrator's NATS fabric (TS-562) with
   regions found through Atlas. Dots already carry the region, so causal contexts merge across regions; causal reads
   stay per region until a region covers a token. Owner operations stay in the database's home region.
+  Stage 1 of it runs on today's engine: every member pulls each remote origin's groups over NATS request/reply
+  ([cross-region replication](../cross-region.md)).
 
 ## 11. Failure modes (stage 1)
 
