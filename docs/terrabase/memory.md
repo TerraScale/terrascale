@@ -28,6 +28,24 @@ values bypass SQLite; tenant-directory checks still read the catalog. Keys store
 still cannot authenticate. Cache hits honor caller cancellation.
 Absent documents and databases are not cached; tombstone metadata can be cached.
 
+The clean read tier uses CLOCK eviction (TS-649). It holds at most 4 096 entries; estimated charged bytes
+are bounded to a quarter of the node's `memory-budget`, including key and entry overhead. This is not
+a bound on process RSS. A read sets an entry's reference bit.
+New entries start unreferenced; a hit earns a second chance. When a read needs space, the clock hand
+clears referenced entries' bits and evicts the first
+unreferenced entry, releasing its reservation immediately. Oversized reads bypass the tier without
+evicting useful entries. SQLite remains the durable tier: evicting a clean copy requires no write-back,
+and the next read loads it from SQLite. Disposal releases every reservation synchronously.
+
+This is the independent memory-tier groundwork for TS-649. Selective hot-key replication, SLO policy
+actions and SDK-based node autoscaling remain pending; replacing the cache does not implement them.
+The remaining work depends on TS-647's persisted lattice state, replica placement and per-origin streams
+([Anna design](design/anna-core.md)), which have not landed. At the inspected ts-orchestrator `origin/main`
+(`6643f0e0`), `docs/machines-api.md` still lists node-pool and scaling mutations as planned;
+`internal/hostpool/pool.go` explicitly excludes dedicated TerraBase members from generic host pools.
+The inspected ts-dotnet `origin/main` (`13f795b`) has no orchestrator client. Autoscaling needs the public
+producer contract and its .NET SDK before TerraBase can call it under the service-ownership rules.
+
 Freshness comes from write stamps (`Engine/IWriteStamps.cs`), not from deleting entries. Every write
 through `IStorageEngine` (document API, Management, and replication apply, which must write through
 an engine transaction) moves the stamp of the document and of its collection before the write reaches
@@ -66,6 +84,9 @@ closed. Nothing is forcibly closed. An admitted copy can need further SQLite cal
 | Instrument | Meaning |
 | --- | --- |
 | `terrabase.document_cache.lookups` (`cache` = `document`, `page`; `result` = `hit`, `miss`) | Cache lookups |
+| `terrabase.document_cache.promotions` | Clean snapshots admitted from SQLite |
+| `terrabase.document_cache.evictions` (`reason` = `capacity`, `stale`, `disposed`) | Clean snapshots removed |
+| `terrabase.document_cache.bytes`, `terrabase.document_cache.entries` | Estimated retained bytes and entry count |
 | `terrabase.memory.reserved` | Bytes reserved from `memory-budget` |
 | `terrabase.storage.admitted` | Storage transactions and maintenance calls admitted |
 | `terrabase.storage.rejected` | Storage work rejected as busy (full admission or a 30 s writer wait), each a `503` |

@@ -18,6 +18,45 @@ namespace TerraBase.Fast.Documents;
 public sealed class DocumentCacheTests
 {
     [Test]
+    public async Task Clock_eviction_gives_recently_read_documents_a_second_chance()
+    {
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
+        const long Budget = 4 * 1024 * 1024;
+        await using var management = await ManagementApi.StartAsync(settings =>
+            settings["memory-budget"] = Budget.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        using var tenant = await CreateTenantAsync(management, "clock", deadline.Token);
+        var padding = new string('x', 300 * 1024);
+        foreach (var id in new[] { "a", "b", "c", "d", "e" })
+        {
+            using var written = await tenant.Data.PutAsJsonAsync(
+                tenant.Database("clock", $"/collections/items/documents/{StorageFixture.Id(id)}"),
+                new { name = "first", padding }, deadline.Token);
+            written.EnsureSuccessStatusCode();
+        }
+
+        // The tier holds three of these bodies. No writes run after it warms, so all entries are clean.
+        foreach (var id in new[] { "a", "b", "c" })
+        {
+            await Assert.That((await GetAsync(tenant, "clock", "items", id, deadline.Token)).Name).IsEqualTo("first");
+        }
+
+        // Only a miss can see this disk edit; it bypasses the application's write invalidation.
+        await StorageFixture.ExecuteAsync(await tenant.FileAsync(management.Server, "clock", deadline.Token),
+            """UPDATE documents SET body = json_set(body, '$.name', 'disk') WHERE collection = 'items';""");
+        await GetAsync(tenant, "clock", "items", "d", deadline.Token);
+        await Assert.That((await GetAsync(tenant, "clock", "items", "b", deadline.Token)).Name).IsEqualTo("first");
+        await GetAsync(tenant, "clock", "items", "e", deadline.Token);
+
+        // B earned a second chance from a cache hit; C stayed cold and yields its slot.
+        await Assert.That((await GetAsync(tenant, "clock", "items", "b", deadline.Token)).Name).IsEqualTo("first");
+        await Assert.That((await GetAsync(tenant, "clock", "items", "c", deadline.Token)).Name).IsEqualTo("disk");
+        await Assert.That((await GetAsync(tenant, "clock", "items", "a", deadline.Token)).Name).IsEqualTo("disk");
+        using var rest = management.Server.Services.GetRequiredService<IMemoryBudget>()
+            .TryReserve(MemoryLane.Foreground, Budget - (Budget / 4));
+        await Assert.That(rest).IsNotNull();
+    }
+
+    [Test]
     [Arguments(false)]
     [Arguments(true)]
     public async Task An_old_snapshot_finishing_last_keeps_the_newer_cache_entry(bool page)
@@ -279,16 +318,11 @@ public sealed class DocumentCacheTests
             var document = list ? json.RootElement.GetProperty("items")[0] : json.RootElement;
             await Assert.That(document.GetProperty("document").GetProperty("name").GetString()).IsEqualTo("first");
 
-            // Authentication also cached an API-key document; wait for Clear's asynchronous eviction
-            // callbacks, then verify the completed read retained no reservation.
+            // Authentication also cached an API-key document; disposal must release it synchronously,
+            // and the completed storage read must retain no reservation.
             var budget = server.Services.GetRequiredService<IMemoryBudget>();
-            IMemoryReservation? all;
-            while ((all = budget.TryReserve(MemoryLane.Foreground, Budget)) is null)
-            {
-                await Task.Delay(10, operationTimeout.Token);
-            }
-
-            using var recoveredBudget = all;
+            using var recoveredBudget = budget.TryReserve(MemoryLane.Foreground, Budget);
+            await Assert.That(recoveredBudget).IsNotNull();
             // Further requests bypass the disposed cache as well.
             using var subsequent = await client.GetAsync(new Uri(path, UriKind.Relative), operationTimeout.Token);
             subsequent.EnsureSuccessStatusCode();
@@ -527,25 +561,15 @@ public sealed class DocumentCacheTests
             await GetAsync(tenant, "big", "blobs", $"b{i}");
         }
 
-        // Measured through the budget, which reading would not change: the cache holds entries, and once the
-        // entries it refused have returned their reservations (callbacks run on the thread pool) it holds at
-        // most its quarter.
+        // Measured through the budget: capacity eviction releases reservations synchronously and the
+        // tier holds at most its quarter immediately after the last read.
         var budget = server.Services.GetRequiredService<IMemoryBudget>();
         using (var everything = budget.TryReserve(MemoryLane.Foreground, Budget))
         {
             await Assert.That(everything).IsNull();
         }
 
-        IMemoryReservation? rest = null;
-        using (var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken))
-        {
-            while ((rest = budget.TryReserve(MemoryLane.Foreground, Budget - (Budget / 4))) is null && !deadline.IsCancellationRequested)
-            {
-                await Task.Delay(10, TUnit.Core.TestContext.Current!.Execution.CancellationToken);
-            }
-        }
-
-        using var recovered = rest;
+        using var recovered = budget.TryReserve(MemoryLane.Foreground, Budget - (Budget / 4));
         await Assert.That(recovered).IsNotNull();
     }
 
@@ -571,8 +595,8 @@ public sealed class DocumentCacheTests
         using var tenant = await CreateTenantAsync(management, "oversized");
         var client = tenant.Data;
         var file = await tenant.FileAsync(server, "oversized");
-        // Above MemoryCache's 95% compaction target, but below its 1 MiB limit: a rejected oversized
-        // entry would evict this useful entry. Each test warms either a point read or a list page.
+        // Near the 1 MiB tier limit: a rejected oversized entry must preserve this useful entry.
+        // Each test warms either a point read or a list page.
         using (var response = await client.PutAsJsonAsync(
             new Uri($"/v1/projects/{tenant.ProjectId}/databases/oversized/collections/small/documents/{StorageFixture.Id("a")}", UriKind.Relative),
             new { name = "first", padding = new string('x', 1000 * 1024) }))

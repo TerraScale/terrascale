@@ -1,7 +1,6 @@
 using System.Diagnostics.Metrics;
 using System.Text.Json;
 using System.Text.Json.Nodes;
-using Microsoft.Extensions.Caching.Memory;
 using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Features.Memory;
@@ -13,13 +12,14 @@ namespace TerraBase.Features.Documents;
 /// <summary>
 /// Read-through cache of documents and list pages. Each entry keeps the <see cref="IWriteStamps"/> stamp taken
 /// before its storage read and is served only while that stamp is unchanged, so no read returns a version older
-/// than a write this node acknowledged. Bounded to a quarter of <c>memory-budget</c>; every entry is also charged
-/// to <see cref="IMemoryBudget"/>.
+/// than a write this node acknowledged. Clean snapshots share a CLOCK ring bounded to 4096 entries and a quarter
+/// of <c>memory-budget</c>; every entry is also charged to <see cref="IMemoryBudget"/>.
 /// </summary>
 internal sealed class DocumentCache : IDisposable
 {
     // Rough per-entry overhead: entry, key, value objects and the cache's own bookkeeping.
     private const long EntryOverhead = 256;
+    private const int EntryLimit = 4096;
 
     // Rough per-document overhead beyond its JSON and id characters: the StoredDocument, array and string
     // headers, and its slot in a page's list.
@@ -28,10 +28,16 @@ internal sealed class DocumentCache : IDisposable
     private readonly IMemoryBudget _budget;
     private readonly IWriteStamps _stamps;
     private readonly long _sizeLimit;
-    private readonly MemoryCache _cache;
+    private readonly Dictionary<object, LinkedListNode<Entry>> _entries = [];
+    private readonly LinkedList<Entry> _clock = new();
     private readonly Counter<long> _lookups;
-    // ponytail: one gate for cache operations; split it only if measured contention warrants it.
+    private readonly Counter<long> _promotions;
+    private readonly Counter<long> _evictions;
+    // ponytail: one gate includes retained copies; split admission only if measured contention warrants it.
     private readonly Lock _gate = new();
+    private LinkedListNode<Entry>? _hand;
+    private long _bytes;
+    private int _entryCount;
     private bool _disposed;
 
     public DocumentCache(TerraBaseOptions options, IMemoryBudget budget, IWriteStamps stamps, IMeterFactory meters)
@@ -39,9 +45,17 @@ internal sealed class DocumentCache : IDisposable
         _budget = budget;
         _stamps = stamps;
         _sizeLimit = options.MemoryBudget / 4;
-        _cache = new MemoryCache(new MemoryCacheOptions { SizeLimit = _sizeLimit });
-        _lookups = meters.Create(Telemetry.MeterName).CreateCounter<long>(
+        var meter = meters.Create(Telemetry.MeterName);
+        _lookups = meter.CreateCounter<long>(
             "terrabase.document_cache.lookups", description: "Document and list-page cache lookups by cache and result (hit, miss).");
+        _promotions = meter.CreateCounter<long>(
+            "terrabase.document_cache.promotions", description: "Clean snapshots admitted to the memory cache on storage reads.");
+        _evictions = meter.CreateCounter<long>(
+            "terrabase.document_cache.evictions", description: "Clean snapshots removed by reason (capacity, stale, disposed).");
+        meter.CreateObservableGauge("terrabase.document_cache.bytes", () => Volatile.Read(ref _bytes), "By",
+            "Estimated retained bytes charged to memory-budget.");
+        meter.CreateObservableGauge("terrabase.document_cache.entries", () => Volatile.Read(ref _entryCount),
+            description: "Retained clean snapshots across documents, system documents and query pages.");
     }
 
     public ValueTask<StoredDocument?> GetAsync(DocumentKey key, Func<ValueTask<StoredDocument?>> read) =>
@@ -133,9 +147,10 @@ internal sealed class DocumentCache : IDisposable
             }
 
             _disposed = true;
-            // Clear evicts every entry, so each returns its reservation to the budget; Dispose alone would not.
-            _cache.Clear();
-            _cache.Dispose();
+            while (_clock.First is { } entry)
+            {
+                Remove(entry, "disposed");
+            }
         }
     }
 
@@ -146,17 +161,19 @@ internal sealed class DocumentCache : IDisposable
         T? hit = null;
         lock (_gate)
         {
-            if (!_disposed && _cache.TryGetValue(key, out Entry? cached))
+            if (!_disposed && _entries.TryGetValue(key, out var node))
             {
-                if (cached!.Stamp == stamp)
+                var cached = node.Value;
+                if (cached.Stamp == stamp)
                 {
+                    cached.Referenced = true;
                     hit = (T)cached.Value;
                 }
 
                 else if (cached.Stamp < stamp)
                 {
                     // Evict older generations only: a delayed lookup must preserve a newer warmed entry.
-                    _cache.Remove(key);
+                    Remove(node, "stale");
                 }
             }
         }
@@ -175,34 +192,54 @@ internal sealed class DocumentCache : IDisposable
         }
 
         var bytes = size(value) + EntryOverhead;
-        // Reject before admission: MemoryCache would refuse it and compact useful entries anyway.
+        // Oversized reads bypass admission without displacing useful snapshots.
         if (bytes > _sizeLimit || currentStamp() != stamp)
         {
             return value;
         }
 
-        if (_budget.TryReserve(MemoryLane.Foreground, bytes) is { } reservation)
+        lock (_gate)
         {
+            // Delayed reads must neither replace nor displace a newer warmed entry.
+            if (_disposed || currentStamp() != stamp
+                || (_entries.TryGetValue(key, out var existing) && existing.Value.Stamp >= stamp))
+            {
+                return value;
+            }
+
+            if (existing is not null)
+            {
+                Remove(existing, "stale");
+            }
+
+            while (_entries.Count >= EntryLimit || bytes > _sizeLimit - _bytes)
+            {
+                Evict();
+            }
+
+            if (_budget.TryReserve(MemoryLane.Foreground, bytes) is not { } reservation)
+            {
+                return value;
+            }
+
             var published = false;
             try
             {
                 // Reserve before retaining a detached copy; callers never receive cache-owned buffers.
                 var retained = copy(value);
-                lock (_gate)
+                if (currentStamp() != stamp)
                 {
-                    // Reads in flight may finish after disposal, but cannot publish another entry.
-                    if (!_disposed && currentStamp() == stamp
-                        && (!_cache.TryGetValue(key, out Entry? existing) || existing!.Stamp < stamp))
-                    {
-                        using (var entry = _cache.CreateEntry(key))
-                        {
-                            entry.Value = new Entry(retained, stamp, reservation);
-                            entry.Size = bytes;
-                            entry.RegisterPostEvictionCallback(static (_, evicted, _, _) => ((Entry)evicted!).Reservation.Dispose());
-                        }
-                        published = true;
-                    }
+                    return value;
                 }
+
+                var entry = new LinkedListNode<Entry>(new Entry(key, retained, stamp, bytes, reservation));
+                _entries.Add(key, entry);
+                _clock.AddLast(entry);
+                _hand ??= entry;
+                _bytes += bytes;
+                _entryCount = _entries.Count;
+                published = true;
+                _promotions.Add(1);
             }
             finally
             {
@@ -216,6 +253,44 @@ internal sealed class DocumentCache : IDisposable
         return value;
     }
 
+    private void Evict()
+    {
+        // Every retained entry is a clean storage snapshot, so no dirty state needs flushing or skipping.
+        while (_hand is { } entry)
+        {
+            _hand = entry.Next ?? _clock.First;
+            if (entry.Value.Referenced)
+            {
+                entry.Value.Referenced = false;
+            }
+            else
+            {
+                Remove(entry, "capacity");
+                return;
+            }
+        }
+    }
+
+    private void Remove(LinkedListNode<Entry> entry, string reason)
+    {
+        if (_hand == entry)
+        {
+            _hand = entry.Next ?? _clock.First;
+            if (_hand == entry)
+            {
+                _hand = null;
+            }
+        }
+
+        _clock.Remove(entry);
+        _entries.Remove(entry.Value.Key);
+        _bytes -= entry.Value.Bytes;
+        _entryCount = _entries.Count;
+        // Release synchronously, before another admission or Dispose can finish.
+        entry.Value.Reservation.Dispose();
+        _evictions.Add(1, new KeyValuePair<string, object?>("reason", reason));
+    }
+
     private static long Size(StoredDocument document) => DocumentOverhead + document.Json.Length + Chars(document.Id);
 
     private static long TenantSize(TenantContext database) =>
@@ -223,7 +298,11 @@ internal sealed class DocumentCache : IDisposable
 
     private static long Chars(string? value) => (value?.Length ?? 0) * sizeof(char);
 
-    private sealed record Entry(object Value, long Stamp, IMemoryReservation Reservation);
+    private sealed record Entry(object Key, object Value, long Stamp, long Bytes, IMemoryReservation Reservation)
+    {
+        // Admission stays read-through; a subsequent hit earns a CLOCK second chance.
+        public bool Referenced { get; set; }
+    }
 }
 
 /// <summary>A normalized query over raw documents, including its optional bounded count.</summary>
