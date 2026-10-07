@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/auth"
@@ -148,7 +149,19 @@ func newRoute[In, Out any](t *Tools, spec ToolSpec, handler ToolHandler[In, Out]
 	if spec.Admin || spec.RouteScope == "" {
 		panic("tool " + spec.Name + ": a platform API route needs a scope and a tool every user has")
 	}
+	// The path names the organization the token is checked against, and
+	// Call scopes the principal to it, so a route that could not would act
+	// on the caller's dashboard selection instead.
+	segments := strings.Split(spec.Route, "/")
+	if _, ok := any(*new(In)).(scoped); !ok || !slices.Contains(segments, "{organizationId}") {
+		panic("tool " + spec.Name + ": a platform API route needs an input embedding Scope and an {organizationId} wildcard")
+	}
 	input := enumSchema[In](spec)
+	for _, segment := range segments {
+		if name, ok := strings.CutPrefix(segment, "{"); ok && input.Properties[strings.TrimSuffix(name, "}")] == nil {
+			panic("tool " + spec.Name + ": route wildcard " + segment + " names no input property")
+		}
+	}
 	output, err := jsonschema.For[Out](nil)
 	if err != nil {
 		panic(fmt.Sprintf("tool %s: output schema: %v", spec.Name, err))

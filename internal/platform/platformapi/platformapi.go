@@ -69,14 +69,15 @@ func New(routes []core.Route, authenticate Authenticate) http.Handler {
 func serve(route core.Route, authenticate Authenticate) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
-		token, bearer := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
-		if !bearer || strings.TrimSpace(token) == "" {
-			unauthorized(w)
+		scheme, token, _ := strings.Cut(r.Header.Get("Authorization"), " ")
+		token = strings.TrimSpace(token)
+		if token == "" || !strings.EqualFold(scheme, "Bearer") {
+			unauthorized(w, false)
 			return
 		}
-		grant, err := authenticate(r.Context(), strings.TrimSpace(token))
+		grant, err := authenticate(r.Context(), token)
 		if errors.Is(err, core.ErrUnauthorized) {
-			unauthorized(w)
+			unauthorized(w, true)
 			return
 		}
 		if err != nil {
@@ -163,8 +164,14 @@ func queryValue(property *jsonschema.Schema, raw string) any {
 	return raw
 }
 
-func unauthorized(w http.ResponseWriter) {
-	w.Header().Set("WWW-Authenticate", `Bearer realm="TerraScale platform", error="invalid_token"`)
+// unauthorized answers 401 with a Bearer challenge, whose error names a
+// token that was presented and refused (RFC 6750, section 3.1).
+func unauthorized(w http.ResponseWriter, refused bool) {
+	challenge := `Bearer realm="TerraScale platform"`
+	if refused {
+		challenge += `, error="invalid_token"`
+	}
+	w.Header().Set("WWW-Authenticate", challenge)
 	writeError(w, http.StatusUnauthorized, "unauthorized", "a ts-auth organization or project token for this API is required")
 }
 
@@ -188,7 +195,7 @@ func writeCallError(w http.ResponseWriter, operation string, err error) {
 		}
 	}
 	if errors.Is(err, core.ErrUnauthorized) {
-		unauthorized(w)
+		unauthorized(w, true)
 		return
 	}
 	slog.Error("platform API operation failed", "operation", operation, "error", err)

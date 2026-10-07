@@ -216,9 +216,14 @@ func testPlatformHosts(t *testing.T, cfg config.Config, subject, address, organi
 		"other issuer":     token(func(_, claims map[string]any) { claims["iss"] = "https://gru.auth.terrascale.tech/other" }),
 	}
 	for name, refusedToken := range refused {
+		// The challenge names an error only for a token that was presented.
+		challenge := `Bearer realm="TerraScale platform", error="invalid_token"`
+		if refusedToken == "" {
+			challenge = `Bearer realm="TerraScale platform"`
+		}
 		response := call(http.MethodGet, organizationURL+"/billing", refusedToken, "")
-		if response.Code != http.StatusUnauthorized || !strings.HasPrefix(response.Header().Get("WWW-Authenticate"), "Bearer ") {
-			t.Errorf("%s: platform API = %d %q, want 401 with a Bearer challenge", name, response.Code, response.Header().Get("WWW-Authenticate"))
+		if response.Code != http.StatusUnauthorized || response.Header().Get("WWW-Authenticate") != challenge {
+			t.Errorf("%s: platform API = %d %q, want 401 with %q", name, response.Code, response.Header().Get("WWW-Authenticate"), challenge)
 		}
 	}
 	// The MCP server keeps personal access tokens until MCP OAuth ships.
@@ -240,6 +245,14 @@ func testPlatformHosts(t *testing.T, cfg config.Config, subject, address, organi
 		Page int `json:"page"`
 	}
 	decode(call(http.MethodGet, organizationURL+"/invoices?page=1&status=paid", organizationToken, ""), http.StatusOK, &invoices)
+	// Authentication schemes are case-insensitive (RFC 9110, section 11.1).
+	lowercase := httptest.NewRequest(http.MethodGet, organizationURL+"/plans", nil)
+	lowercase.Header.Set("Authorization", "bearer "+organizationToken)
+	response := httptest.NewRecorder()
+	application.Handler.ServeHTTP(response, lowercase)
+	if response.Code != http.StatusOK {
+		t.Fatalf("plans with a lowercase bearer scheme = %d %s", response.Code, response.Body)
+	}
 	var controls struct {
 		SpendCapCents int64 `json:"spendCapCents"`
 	}
