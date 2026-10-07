@@ -43,6 +43,11 @@ func refusingTSAuth(t *testing.T) *httptest.Server {
 	mux.HandleFunc("POST /headless/v1/email-code/start", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusAccepted)
 	})
+	mux.HandleFunc("POST /headless/v1/sign-up", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = io.WriteString(w, `{"pending_token":"pending-sign-up-token"}`)
+	})
 	server = httptest.NewServer(mux)
 	t.Cleanup(server.Close)
 	return server
@@ -107,11 +112,12 @@ func TestNativeSignInThrottlesWithTerraBase(t *testing.T) {
 	var handler http.Handler
 	dashboard := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { handler.ServeHTTP(w, r) }))
 	t.Cleanup(dashboard.Close)
-	application, err := New(config.Config{
+	settings := config.Config{
 		TerraBaseURL: tb.URL, TerraBaseAPIKey: key, TerraBaseProjectID: db.Project(), TerraBaseDatabase: db.Name(),
 		TerraBaseHTTPClient: tb.Client, CSRFSecret: []byte(strings.Repeat("r", 32)), ClientIPHeader: "Fly-Client-IP",
 		TSAuth: config.TSAuth{Issuer: tsAuth.URL, ClientID: "ts-dashboard", ClientSecret: "secret", RedirectURL: dashboard.URL + "/login/callback"},
-	})
+	}
+	application, err := New(settings)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,6 +166,34 @@ func TestNativeSignInThrottlesWithTerraBase(t *testing.T) {
 	}
 	if response := post("/login/code", url.Values{"email": {"code-first-time@example.test"}}); response.StatusCode != http.StatusOK {
 		t.Fatalf("first code request = %d Retry-After %q, want the code step", response.StatusCode, response.Header.Get("Retry-After"))
+	}
+	if response := post("/onboarding", url.Values{
+		"displayName": {"Verification Test"}, "email": {"signup-first-time@example.test"},
+		"password": {"Verification-test-123!"}, "confirmPassword": {"Verification-test-123!"}, "terms": {"true"},
+	}); response.StatusCode != http.StatusOK {
+		t.Fatalf("first sign-up = %d, want verification", response.StatusCode)
+	}
+	// A different dashboard replica reads the same encrypted retry cookie
+	// and persisted budget; it cannot resend inside the initial minute.
+	replica, err := New(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replicaServer := httptest.NewServer(replica.Handler)
+	t.Cleanup(replicaServer.Close)
+	request, _ := http.NewRequestWithContext(t.Context(), http.MethodPost, replicaServer.URL+"/login/code/resend",
+		strings.NewReader(url.Values{"_csrf": {string(token[1])}}.Encode()))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	request.Header.Set("Origin", replicaServer.URL)
+	request.Header.Set("Fly-Client-IP", "203.0.113.10")
+	resent, err := browser.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resent.Body.Close()
+	retryWait, _ := strconv.Atoi(resent.Header.Get("Retry-After"))
+	if resent.StatusCode != http.StatusTooManyRequests || retryWait < 1 || retryWait > 60 {
+		t.Fatalf("resend on another replica = %d Retry-After %q, want 429 within a minute", resent.StatusCode, resent.Header.Get("Retry-After"))
 	}
 	// Spending the email's budget refuses the next guess for a wait the
 	// budget allows, not until the end of time.

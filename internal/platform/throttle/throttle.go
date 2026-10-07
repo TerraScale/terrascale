@@ -21,6 +21,8 @@ type Budget struct {
 
 // Options configure a Limiter. A zero budget uses the default.
 type Options struct {
+	// KeyPrefix separates independent budgets sharing the same store.
+	KeyPrefix string
 	// Store keeps the buckets; nil keeps them in this process's memory.
 	Store Store
 	// ClientHeader names the header in which a trusted reverse proxy reports
@@ -71,7 +73,7 @@ func New(opts Options) *Limiter {
 func (l *Limiter) Allow(r *http.Request, account string) (time.Duration, bool) {
 	buckets := []Bucket{{Key: l.ClientKey(r), Budget: l.opts.Client}}
 	if account != "" {
-		buckets = append(buckets, Bucket{Key: accountKey(account), Budget: l.opts.Account})
+		buckets = append(buckets, Bucket{Key: l.opts.KeyPrefix + accountKey(account), Budget: l.opts.Account})
 	}
 	wait, ok, err := l.store.Reserve(r.Context(), l.now(), buckets)
 	if err != nil {
@@ -100,7 +102,7 @@ func (l *Limiter) Forgive(r *http.Request, account string) {
 	ctx := r.Context()
 	_ = l.store.Refund(ctx, l.now(), Bucket{Key: l.ClientKey(r), Budget: l.opts.Client})
 	if account != "" {
-		_ = l.store.Reset(ctx, accountKey(account))
+		_ = l.store.Reset(ctx, l.opts.KeyPrefix+accountKey(account))
 	}
 }
 
@@ -110,9 +112,9 @@ func (l *Limiter) ClientKey(r *http.Request) string {
 	addr := l.ClientAddr(r)
 	if parsed, err := netip.ParseAddr(addr); err == nil && parsed.Is6() {
 		prefix, _ := parsed.Prefix(64)
-		return "client " + prefix.String()
+		return l.opts.KeyPrefix + "client " + prefix.String()
 	}
-	return "client " + addr
+	return l.opts.KeyPrefix + "client " + addr
 }
 
 // ClientAddr is the request's client address as the trusted proxy header

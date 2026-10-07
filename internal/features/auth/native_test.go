@@ -6,6 +6,7 @@ import (
 	"crypto/rsa"
 	"encoding/json/v2"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -131,7 +132,13 @@ func (i *testIssuer) serveHeadless(w http.ResponseWriter, r *http.Request) {
 			h.codes[email] = "123456"
 		} else {
 			h.signUps[email] = fakeSignUp{password: fields["password"], token: token}
-			h.codes[email] = "654321"
+			issued := 0
+			for _, call := range h.calls {
+				if call.path == headlessSignUp && call.fields["email"] == email {
+					issued++
+				}
+			}
+			h.codes[email] = fmt.Sprintf("%06d", 654320+issued)
 		}
 		writeJSON(w, http.StatusAccepted, map[string]string{"pending_token": token})
 		return

@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json/v2"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -20,13 +22,15 @@ import (
 // a new account's address, and Name is the one given at sign-up, which ts-auth
 // does not keep.
 type codePageData struct {
-	CodeStep   bool
-	SignUp     bool
-	Name       string
-	Email      string
-	RedirectTo string
-	Error      string
-	CodeError  string
+	CodeStep      bool
+	SignUp        bool
+	Name          string
+	Email         string
+	RedirectTo    string
+	Error         string
+	CodeError     string
+	ResendSeconds int
+	Notice        string
 }
 
 // resetPageData is password recovery: the email step asks where to send a
@@ -65,6 +69,7 @@ func (t *TSAuth) mountNative(mux *http.ServeMux, deps core.Deps) {
 	})
 	mux.HandleFunc("POST /login/code", t.sendCode(deps))
 	mux.HandleFunc("POST /login/code/verify", t.verifyCode(deps))
+	mux.HandleFunc("POST /login/code/resend", t.resendSignUpCode(deps))
 	mux.HandleFunc("GET /reset-password", func(w http.ResponseWriter, r *http.Request) {
 		renderReset(w, r, deps, http.StatusOK, resetPageData{})
 	})
@@ -223,6 +228,9 @@ func (t *TSAuth) verifyCode(deps core.Deps) http.HandlerFunc {
 			RedirectTo: SafeRedirectTarget(r.PostForm.Get("redirectTo")),
 			SignUp:     r.PostForm.Get("signUp") == "1", Name: signUpName(r.PostForm.Get("name")),
 		}
+		if retry, err := t.readSignUpRetry(r); err == nil && data.SignUp && retry.Email == data.Email {
+			data.ResendSeconds = retry.remaining()
+		}
 		code := emailedCode(r.PostForm.Get("code"))
 		if !usableEmail(data.Email) {
 			data.CodeStep, data.Error = false, "Enter a valid email address, like name@company.com."
@@ -246,6 +254,7 @@ func (t *TSAuth) verifyCode(deps core.Deps) http.HandlerFunc {
 		})
 		if err == nil {
 			t.setSignUpCookie(w, "", -1)
+			t.setSignUpRetryCookie(w, "", -1)
 		}
 		switch refused, throttled := errors.AsType[tooManyAttempts](err); {
 		case throttled:
@@ -277,8 +286,19 @@ func (t *TSAuth) SignUp(w http.ResponseWriter, r *http.Request, deps core.Deps, 
 	if err != nil {
 		return err
 	}
+	if deps.SignUpMail == nil {
+		return core.ErrUnavailable
+	}
+	if wait, allowed := deps.SignUpMail.Allow(r, email); !allowed {
+		seconds := resendSeconds(wait)
+		w.Header().Set("Retry-After", strconv.Itoa(seconds))
+		return InputError{Message: fmt.Sprintf("Please wait %d seconds before resending the code.", seconds)}
+	}
 	answer, err := t.mailed(r, deps, email, headlessSignUp, map[string]string{"password": input.Password})
 	if refused, ok := errors.AsType[tooManyAttempts](err); ok {
+		// The sign-up budget has already reserved its minute, even when
+		// another mail limit asks for a shorter wait.
+		refused.wait = max(refused.wait, time.Minute)
 		return InputError{Message: refused.retryAfter(w)}
 	}
 	if err = passwordRefused(err, "password"); err != nil {
@@ -295,8 +315,22 @@ func (t *TSAuth) SignUp(w http.ResponseWriter, r *http.Request, deps core.Deps, 
 		logFailure("ts-auth sign-up", errors.New("ts-auth answered without a pending token"))
 		return core.ErrUnavailable
 	}
+	now := time.Now()
+	retry := signUpRetry{
+		Name: name, Email: email, Password: input.Password, Token: pending.Token,
+		ReturnTo: SafeRedirectTarget(returnTo), Expires: now.Add(time.Hour), ResendAt: now.Add(time.Minute),
+	}
+	sealed, err := t.sealSignUpRetry(retry)
+	if err != nil {
+		return core.ErrUnavailable
+	}
 	t.setSignUpCookie(w, pending.Token, int(time.Hour.Seconds()))
-	renderCode(w, r, deps, http.StatusOK, codePageData{CodeStep: true, SignUp: true, Name: name, Email: email, RedirectTo: SafeRedirectTarget(returnTo)})
+	t.setSignUpRetryCookie(w, sealed, int(time.Hour.Seconds()))
+	data := retry.pageData()
+	if r.URL.Path == "/login/code/resend" {
+		data.Notice = "Check your email for a new code."
+	}
+	renderCode(w, r, deps, http.StatusOK, data)
 	return nil
 }
 

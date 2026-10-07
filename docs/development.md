@@ -344,6 +344,14 @@ With the variables set:
   API failures stay on the native pages. Discovery advertising headless
   grants does not control whether these forms appear. `/login/sso` is the
   only explicit hosted sign-in redirect.
+- The verification page's outline **Resend code** button becomes available
+  after 60 seconds. A separate persisted throttle enforces the same limit
+  per address across dashboard replicas. Since ts-auth requires the original
+  password to issue another sign-up code, the request is held in an
+  authenticated AES-GCM encrypted HttpOnly cookie for up to one hour, bound
+  to the pending token. It is removed after successful verification. The
+  confidential client's secret derives the cookie key, so rotating that
+  secret expires pending resend requests.
 - `/login/sso` redirects to ts-auth with the scopes `openid email profile
   offline_access`, a PKCE S256 challenge, `state` and `nonce`. ts-auth returns
   to `/login/callback`.

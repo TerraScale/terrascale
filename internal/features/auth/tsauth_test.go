@@ -277,7 +277,8 @@ func newTSAuthDashboard(t *testing.T, issuer *testIssuer, wrap ...func(core.Stor
 	}
 	deps := core.Deps{
 		Store: featureStore, Sessions: sessions, CSRF: guard, Render: render.New(store, guard, nil, sessions.NoticeScope, false),
-		Throttle: throttle.New(throttle.Options{}),
+		Throttle:   throttle.New(throttle.Options{}),
+		SignUpMail: throttle.New(throttle.Options{KeyPrefix: "signup-mail ", Account: throttle.Budget{Burst: 1, Interval: time.Minute}}),
 	}
 	mux := http.NewServeMux()
 	Mount(mux, deps, tsAuth)

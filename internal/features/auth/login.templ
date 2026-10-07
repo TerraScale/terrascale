@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"fmt"
 	"net/url"
 
 	"terrascale.tech/dashboard/internal/ui"
@@ -113,6 +114,9 @@ templ codeView(data codePageData, csrfToken string) {
 		}
 	} else {
 		@authPanel(codeTitle(data.SignUp), codeSubtitle(data), backToSignIn(data.RedirectTo)) {
+			if data.Notice != "" {
+				<p class="ts-meta" role="status">{ data.Notice }</p>
+			}
 			if data.Error != "" {
 				@ui.Alert("danger", "", data.Error)
 			}
@@ -131,9 +135,29 @@ templ codeView(data codePageData, csrfToken string) {
 				<button class="ts-btn ts-btn-primary ts-btn-lg ts-btn-block" type="submit">Continue</button>
 			</form>
 			if data.SignUp {
-				// ts-auth mails a new sign-up code only with the password, which
-				// the dashboard does not keep.
-				<p class="ts-meta">No email? <a class="ts-link" href={ signUpURL(data.RedirectTo) }>Sign up again</a> to get a new code.</p>
+				<form
+					class="ts-form"
+					method="post"
+					action="/login/code/resend"
+					data-submit-once
+					data-signals={ fmt.Sprintf("{_resendSeconds: %d, _resendUntil: Date.now() + %d * 1000}", data.ResendSeconds, data.ResendSeconds) }
+					data-on-interval="$_resendSeconds = Math.max(0, Math.ceil(($_resendUntil - Date.now()) / 1000))"
+				>
+					<input type="hidden" name="_csrf" value={ csrfToken }/>
+					<button
+						class="ts-btn ts-btn-outline ts-btn-lg ts-btn-block"
+						type="submit"
+						disabled?={ data.ResendSeconds > 0 }
+						data-attr:disabled="$_resendSeconds > 0 || $_navPending"
+						data-text="$_resendSeconds > 0 ? 'Resend code (' + $_resendSeconds + 's)' : 'Resend code'"
+					>
+						if data.ResendSeconds > 0 {
+							{ fmt.Sprintf("Resend code (%ds)", data.ResendSeconds) }
+						} else {
+							Resend code
+						}
+					</button>
+				</form>
 			} else {
 				<form class="ts-form" method="post" action="/login/code" data-submit-once>
 					<input type="hidden" name="_csrf" value={ csrfToken }/>
@@ -143,6 +167,12 @@ templ codeView(data codePageData, csrfToken string) {
 				</form>
 			}
 		}
+	}
+}
+
+templ signUpRetryExpiredView() {
+	@authPanel("Verify your email", "Your verification session has expired. Create your account again to request a new code.", backToSignIn("/")) {
+		<a class="ts-btn ts-btn-outline ts-btn-lg ts-btn-block" href="/onboarding">Create account</a>
 	}
 }
 
