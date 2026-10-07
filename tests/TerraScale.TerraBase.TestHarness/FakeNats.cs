@@ -75,18 +75,21 @@ public sealed class FakeNats : IAsyncDisposable
     {
         using (client)
         {
-            var stream = new BufferedStream(client.GetStream());
+            // Reads go through a buffer; replies go straight to the socket, as a BufferedStream refuses writes while it holds
+            // read-ahead from a client that already sent its next command.
+            var socket = client.GetStream();
+            var stream = new BufferedStream(socket);
             Dictionary<string, string> subscriptions = [with(StringComparer.Ordinal)];
             try
             {
-                await WriteAsync(stream, "INFO {\"server_id\":\"fake\",\"server_name\":\"fake\",\"version\":\"2.12.0\",\"proto\":1,\"headers\":true,\"max_payload\":1048576,\"jetstream\":true}\r\n", [], cancellationToken);
+                await WriteAsync(socket, "INFO {\"server_id\":\"fake\",\"server_name\":\"fake\",\"version\":\"2.12.0\",\"proto\":1,\"headers\":true,\"max_payload\":1048576,\"jetstream\":true}\r\n", [], cancellationToken);
                 while (await ReadLineAsync(stream, cancellationToken) is { } line)
                 {
                     var parts = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
                     switch (parts.ElementAtOrDefault(0)?.ToUpperInvariant())
                     {
                         case "PING":
-                            await WriteAsync(stream, "PONG\r\n", [], cancellationToken);
+                            await WriteAsync(socket, "PONG\r\n", [], cancellationToken);
                             break;
                         case "SUB":
                             subscriptions[parts[^1]] = parts[1];
@@ -105,12 +108,12 @@ public sealed class FakeNats : IAsyncDisposable
                             if (answer is null)
                             {
                                 _ = Interlocked.Increment(ref _violations);
-                                await WriteAsync(stream, $"-ERR 'Permissions Violation for Publish to \"{parts[1]}\"'\r\n", [], cancellationToken);
+                                await WriteAsync(socket, $"-ERR 'Permissions Violation for Publish to \"{parts[1]}\"'\r\n", [], cancellationToken);
                             }
                             else if (reply is not null && subscriptions.FirstOrDefault(subscription => Matches(subscription.Value, reply)).Key is { } sid)
                             {
                                 var data = Encoding.UTF8.GetBytes(answer.ToJsonString());
-                                await WriteAsync(stream, $"MSG {reply} {sid} {data.Length}\r\n", data, cancellationToken);
+                                await WriteAsync(socket, $"MSG {reply} {sid} {data.Length}\r\n", data, cancellationToken);
                             }
 
                             break;
