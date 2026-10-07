@@ -10,6 +10,8 @@ name: Fast integration
 #   header. On a push to main or of a v* tag it attaches them to a draft release
 #   (scripts/ci/release.sh draft).
 # - publish: once both pass, publishes that draft. Nothing is rebuilt.
+# - deploy: on main, hands the published release to ts-orchestrator, which
+#   rolls it out to every region (scripts/ci/deploy.sh, TS-610).
 #
 # The Slow suite runs separately (slow.yml) and never blocks.
 
@@ -87,6 +89,9 @@ jobs:
       - name: Check the release script against a fake release API
         run: bash scripts/ci/check-release.sh
 
+      - name: Check the deploy script against a stub API and ts-orch
+        run: bash scripts/ci/check-deploy.sh
+
       - name: Publish and check the release executables
         run: bash scripts/ci/stage-release.sh artifacts/dist
 
@@ -118,3 +123,39 @@ jobs:
           FORGEJO_TOKEN: ${{ forgejo.token }}
           RELEASE_ID: ${{ needs.release.outputs.release_id }}
         run: bash scripts/ci/release.sh publish "$RELEASE_ID"
+
+  # TS-610: hand the published release to ts-orchestrator, which rolls it out
+  # to every region, canary first, health-gated with automatic rollback.
+  # Off until the repository variable TS_AUTO_DEPLOY_CELLS names the cells;
+  # scripts/ci/deploy.sh lists every input.
+  deploy:
+    name: deploy
+    needs: [publish]
+    if: ${{ vars.TS_AUTO_DEPLOY_CELLS != '' && forgejo.event_name == 'push' && forgejo.ref == 'refs/heads/main' }}
+    runs-on: terrascale-builder
+    timeout-minutes: 40
+    steps:
+      - name: Check out the event revision
+        uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          github-server-url: "https://git.terrascale.tech"
+          ref: ${{ forgejo.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Roll the release out to every region
+        env:
+          ORG_READ_TOKEN: ${{ secrets.ORG_READ_TOKEN }}
+          TS_RELEASE_OCI_KEY: ${{ secrets.TS_RELEASE_OCI_KEY }}
+          TS_AUTO_DEPLOY_CELLS: ${{ vars.TS_AUTO_DEPLOY_CELLS }}
+          TS_ORCH_RELEASE: ${{ vars.TS_ORCH_RELEASE }}
+          TS_ORCH_SHA256: ${{ vars.TS_ORCH_SHA256 }}
+          TS_AUTO_DEPLOY_ENVIRONMENT: ${{ vars.TS_AUTO_DEPLOY_ENVIRONMENT }}
+          TS_OBJECT_NAMESPACE: ${{ vars.TS_OBJECT_NAMESPACE }}
+          TS_RELEASE_VAULT_ID: ${{ vars.TS_RELEASE_VAULT_ID }}
+          TS_RELEASE_KEY_SECRET: ${{ vars.TS_RELEASE_KEY_SECRET }}
+          TS_RELEASE_ACTOR: ${{ vars.TS_RELEASE_ACTOR }}
+          TS_RELEASE_OCI_USER: ${{ vars.TS_RELEASE_OCI_USER }}
+          TS_RELEASE_OCI_TENANCY: ${{ vars.TS_RELEASE_OCI_TENANCY }}
+          TS_RELEASE_OCI_FINGERPRINT: ${{ vars.TS_RELEASE_OCI_FINGERPRINT }}
+        run: bash scripts/ci/deploy.sh terrabase terrabase-linux-arm64 "ci-${GITHUB_SHA}-run-${GITHUB_RUN_ID}"
