@@ -12,6 +12,8 @@ type databaseDetail struct {
 	Regions             []string `json:"regions"`
 	Collections         int      `json:"collections"`
 	Documents           int      `json:"documents"`
+	Bytes               int64    `json:"bytes" jsonschema:"Total JSON bytes of the documents."`
+	Unavailable         string   `json:"unavailable,omitempty" jsonschema:"Why a system database's counts are missing."`
 	BackupsEnabled      bool     `json:"backupsEnabled"`
 	BackupRetentionDays int      `json:"backupRetentionDays,omitempty"`
 	CanManage           bool     `json:"canManage" jsonschema:"Whether the caller may branch, back up, or delete this database."`

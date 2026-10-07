@@ -23,9 +23,6 @@ type Record struct {
 	// session that is never rechecked.
 	Refresh   string
 	RefreshAt time.Time
-	// RetryAt is set when a recheck failed: no recheck, scheduled or early,
-	// runs before it. A successful recheck clears it.
-	RetryAt time.Time
 }
 
 // Entry is a stored session with its key.

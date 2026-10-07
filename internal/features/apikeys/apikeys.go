@@ -7,16 +7,15 @@ import (
 	"net/http"
 
 	"terrascale.tech/dashboard/internal/core"
-	sdk "terrascale.tech/sdk"
 )
 
 // CredentialIssuer is the unpublished live producer key boundary. The current
 // application does not inject one because the producer has no pinned public
 // issuance contract; live requests fail explicitly until that exists.
 type CredentialIssuer interface {
-	Create(context.Context, core.Principal, sdk.CreateProjectAPIKeyRequest) (*sdk.ProjectAPIKeySecret, error)
-	Rotate(context.Context, core.Principal, string) (*sdk.ProjectAPIKeySecret, error)
-	Revoke(context.Context, core.Principal, string) (*sdk.ProjectAPIKeyRevocation, error)
+	Create(context.Context, core.Principal, CreateProjectAPIKeyRequest) (*ProjectAPIKeySecret, error)
+	Rotate(context.Context, core.Principal, string) (*ProjectAPIKeySecret, error)
+	Revoke(context.Context, core.Principal, string) (*ProjectAPIKeyRevocation, error)
 }
 
 func Mount(mux *http.ServeMux, deps core.Deps) { MountWithIssuer(mux, deps, nil) }
@@ -40,11 +39,11 @@ func MountWithIssuer(mux *http.ServeMux, deps core.Deps, issuer CredentialIssuer
 			writeError(w, err)
 			return
 		}
-		keys := make([]sdk.ProjectAPIKey, 0, len(list))
+		keys := make([]ProjectAPIKey, 0, len(list))
 		for _, key := range list {
 			keys = append(keys, key.ProjectAPIKey)
 		}
-		core.WriteJSON(w, http.StatusOK, sdk.ProjectAPIKeyPage{APIKeys: keys})
+		core.WriteJSON(w, http.StatusOK, ProjectAPIKeyPage{APIKeys: keys})
 	})
 	mux.HandleFunc("POST "+root, func(w http.ResponseWriter, r *http.Request) {
 		p, err := bearerPrincipal(deps, r)
@@ -53,7 +52,7 @@ func MountWithIssuer(mux *http.ServeMux, deps core.Deps, issuer CredentialIssuer
 			return
 		}
 		r.Body = http.MaxBytesReader(w, r.Body, 32<<10)
-		var input sdk.CreateProjectAPIKeyRequest
+		var input CreateProjectAPIKeyRequest
 		if err := json.UnmarshalRead(r.Body, &input); err != nil {
 			http.Error(w, "invalid JSON request", http.StatusBadRequest)
 			return

@@ -32,7 +32,7 @@ type databaseRow struct {
 	SpendCap     string
 	Effective    string
 	Status       string
-	Documents    int64
+	Documents    string
 	LogicalSize  string
 	SharePercent int
 	Metered      bool
@@ -251,7 +251,7 @@ func pageHandler(deps core.Deps, billing *payments.Stripe, wrap func(core.Page, 
 		ctx := r.Context()
 		token := ""
 		if tab == "overview" {
-			token = deps.UserToken(r)
+			token = core.UserToken(r.Context())
 		}
 		data, err := buildPage(ctx, service, p, token, org, project, tab, databaseFilter, r.URL.Query().Get("range"))
 		if err != nil {
@@ -605,14 +605,15 @@ func buildPage(ctx context.Context, service Service, p core.Principal, token str
 		projects = append(projects, projectRow{
 			ID: item.ID, Name: item.Name, Region: item.Region, DatabaseCount: item.DatabaseCount,
 			SpendCap: dollars(item.SpendCapCents), Effective: capLabel(item.EffectiveCapCents), Selected: item.Selected,
-			LogicalSize: formatBytes(item.LogicalBytes), SharePercent: item.SharePercent,
+			LogicalSize: measured(item.Unavailable, formatBytes(item.LogicalBytes)), SharePercent: item.SharePercent,
 		})
 	}
 	databases := make([]databaseRow, 0, len(report.Databases))
 	for _, item := range report.Databases {
 		databases = append(databases, databaseRow{
 			ID: item.ID, Name: item.Name, Region: item.Region, SpendCap: dollars(item.SpendCapCents), Effective: capLabel(item.EffectiveCapCents),
-			Status: item.Status, Documents: item.Documents, LogicalSize: formatBytes(item.LogicalBytes), SharePercent: item.SharePercent,
+			Status: item.Status, Documents: measured(item.Unavailable, strconv.FormatInt(item.Documents, 10)),
+			LogicalSize: measured(item.Unavailable, formatBytes(item.LogicalBytes)), SharePercent: item.SharePercent,
 			Metered: item.Metered, Reads: item.Reads, Writes: item.Writes,
 		})
 	}
@@ -663,6 +664,14 @@ func buildPage(ctx context.Context, service Service, p core.Principal, token str
 		}
 	}
 	return data, nil
+}
+
+// measured is value, or "Unavailable" when TerraBase did not report it.
+func measured(unavailable bool, value string) string {
+	if unavailable {
+		return "Unavailable"
+	}
+	return value
 }
 
 // bucketLabel names a series bucket by its UTC start: the hour for hourly

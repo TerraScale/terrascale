@@ -229,3 +229,18 @@ func speculationScript(nonce string) templ.Component {
 	}
 	return templ.Raw(`<script type="speculationrules"` + attr + `>` + speculationRules + `</script>`)
 }
+
+// FormatBytes formats a size in bytes with binary units, B to PiB, rounding
+// up a unit rather than showing 1024.0 of the one below.
+func FormatBytes(n int64) string {
+	const unit = 1024
+	if n < unit {
+		return strconv.FormatInt(n, 10) + " B"
+	}
+	value, exponent := float64(n)/unit, 0
+	for value >= unit-0.05 && exponent < 4 {
+		value /= unit
+		exponent++
+	}
+	return strconv.FormatFloat(value, 'f', 1, 64) + " " + [...]string{"KiB", "MiB", "GiB", "TiB", "PiB"}[exponent]
+}

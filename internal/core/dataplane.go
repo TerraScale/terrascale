@@ -3,7 +3,6 @@ package core
 import (
 	"errors"
 
-	sdk "terrascale.tech/sdk"
 	"terrascale.tech/sdk/v1"
 )
 
@@ -30,15 +29,3 @@ func (d Deps) Documents(p Principal, database string) (*v1.Database, error) {
 
 func (e ProviderError) Error() string { return e.Action + " failed: " + e.Err.Error() }
 func (e ProviderError) Unwrap() error { return e.Err }
-
-// DataPlane returns an SDK client for the principal's selected project.
-func (d Deps) DataPlane(p Principal) (*sdk.Client, error) {
-	if d.SDK == nil {
-		return nil, ErrDataPlane
-	}
-	client, err := d.SDK.ForScope(p.OrganizationID, p.ProjectID)
-	if err != nil {
-		return nil, ErrDataPlane
-	}
-	return client, nil
-}

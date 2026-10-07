@@ -469,45 +469,21 @@ func TestSignOutRevokesTheNewestRefresh(t *testing.T) {
 	}
 }
 
-// TestUserTokenRenewsTokenlessSessionsOnceUntilRetry covers sessions saved
-// before they kept the access token: the first lookup rechecks at once, and
-// a failed recheck waits refreshRetry instead of repeating on every lookup.
-func TestUserTokenRenewsTokenlessSessionsOnceUntilRetry(t *testing.T) {
-	accounts := memstore.New()
-	a, err := accounts.CreateAccount(t.Context(), core.User{Name: "Tokenless", Email: "tokenless@example.test", PasswordHash: "unused"})
-	if err != nil {
-		t.Fatal(err)
-	}
+// TestRefreshStateIsTheRecheckedSessions covers what the system data pages
+// read the ts-auth access token from: a due session is rechecked first, and
+// a request without a session has none.
+func TestRefreshStateIsTheRecheckedSessions(t *testing.T) {
 	hook := &refreshHook{fn: func(context.Context, string) (string, time.Time, error) {
-		return "", time.Time{}, errors.New("ts-auth unavailable")
+		return "r2", time.Now().Add(time.Hour), nil
 	}}
-	userToken := func(refresh string) (string, bool) {
-		if refresh == "r1" {
-			return "", true
-		}
-		return "token-" + refresh, false
+	m, _, r, _ := refreshFixture(t, NewMemoryStore(), time.Now().Add(-time.Second), hook)
+	if got := m.RefreshState(r); got != "r2" || hook.calls.Load() != 1 {
+		t.Fatalf("refresh state = %q after %d rechecks, want r2 after one", got, hook.calls.Load())
 	}
-	m := New(accounts, Options{Refresh: hook.refresh, UserToken: userToken})
-	r, _ := startRefreshable(t, m, a.Principal(), time.Now().Add(time.Hour))
-	for range 3 {
-		if token := m.UserToken(r); token != "" {
-			t.Fatalf("token %q from a failed recheck", token)
-		}
+	if got := m.RefreshState(r); got != "r2" || hook.calls.Load() != 1 {
+		t.Fatalf("refresh state = %q after %d rechecks, want r2 without another", got, hook.calls.Load())
 	}
-	if calls := hook.calls.Load(); calls != 1 {
-		t.Fatalf("rechecks = %d, want one until refreshRetry passes", calls)
-	}
-	hook.fn = func(context.Context, string) (string, time.Time, error) { return "r2", time.Now().Add(time.Hour), nil }
-	// A normal recheck due within refreshRetry is no failure backoff: the
-	// session still renews at once.
-	for _, refreshAt := range []time.Duration{time.Hour, 30 * time.Second} {
-		m2 := New(accounts, Options{Refresh: hook.refresh, UserToken: userToken})
-		r2, key := startRefreshable(t, m2, a.Principal(), time.Now().Add(refreshAt))
-		if token := m2.UserToken(r2); token != "token-r2" {
-			t.Fatalf("token after an early renewal of a session due in %v = %q, want token-r2", refreshAt, token)
-		}
-		if rec := storedRecord(t, m2.sessions, key); !rec.RetryAt.IsZero() {
-			t.Fatalf("RetryAt after a successful recheck = %v, want cleared", rec.RetryAt)
-		}
+	if got := m.RefreshState(httptest.NewRequest(http.MethodGet, "/", nil)); got != "" {
+		t.Fatalf("refresh state without a session = %q", got)
 	}
 }

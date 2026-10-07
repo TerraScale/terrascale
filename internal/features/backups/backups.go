@@ -9,7 +9,6 @@ import (
 
 	"terrascale.tech/dashboard/internal/core"
 	"terrascale.tech/dashboard/internal/features/databases"
-	sdk "terrascale.tech/sdk"
 )
 
 // Mount owns the backup routes and tools of the selected project's databases.
@@ -25,10 +24,6 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 		listing, err := service.List(r.Context(), p, r.URL.Query().Get("databaseId"))
 		if err != nil {
 			writeError(w, err)
-			return
-		}
-		if listing.Readiness != nil {
-			core.WriteJSON(w, http.StatusOK, listing.Readiness)
 			return
 		}
 		core.WriteJSON(w, http.StatusOK, struct {
@@ -100,14 +95,6 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			return
 		}
 		in := RestoreInput{Name: strings.TrimSpace(r.FormValue("name")), BackupID: r.FormValue("backupId")}
-		if text := r.FormValue("atMillis"); text != "" {
-			value, err := strconv.ParseInt(text, 10, 64)
-			if err != nil {
-				writeError(w, core.Invalid("invalid restore timestamp"))
-				return
-			}
-			in.AtMillis = &value
-		}
 		restored, err := service.Restore(r.Context(), p, databaseID, in)
 		if err != nil {
 			// Refill the name in the restore form of the chosen backup.
@@ -116,13 +103,6 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 		}
 		if core.WantsHTML(r) {
 			http.Redirect(w, r, databases.TabPath(restored.DatabaseID, "overview", nil), http.StatusSeeOther)
-			return
-		}
-		if restored.Operation != nil {
-			core.WriteJSON(w, http.StatusAccepted, struct {
-				DatabaseID string                     `json:"dashboardDatabaseId"`
-				Operation  *sdk.ProvisioningOperation `json:"operation"`
-			}{DatabaseID: restored.DatabaseID, Operation: restored.Operation})
 			return
 		}
 		core.WriteJSON(w, http.StatusCreated, struct {

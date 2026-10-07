@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/a-h/templ"
-	sdk "terrascale.tech/sdk"
 	"terrascale.tech/sdk/v1"
 )
 
@@ -563,7 +562,6 @@ type Events interface {
 // SDKFactory returns a new official SDK client after the handler has checked
 // the principal against the requested organization and project in Store.
 type SDKFactory interface {
-	ForScope(tenantID, projectID string) (*sdk.Client, error)
 	ForDocuments(tenantID, projectID string) (*v1.Client, error)
 }
 
@@ -576,6 +574,9 @@ type Deps struct {
 	Render   Renderer
 	Events   Events
 	SDK      SDKFactory
+	// Management reads TerraBase's system databases for platform admins;
+	// see System. Nil in the demo.
+	Management *v1.Management
 	// Usage reads TerraBase's metered usage; nil without TerraBase.
 	Usage    UsageMeter
 	Throttle Throttle

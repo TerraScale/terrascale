@@ -24,19 +24,18 @@ type sessionDocument struct {
 	ExpiresAt   time.Time `json:"expires_at"`
 	Refresh     string    `json:"refresh,omitempty"`
 	RefreshAt   time.Time `json:"refresh_at,omitzero"`
-	RetryAt     time.Time `json:"retry_at,omitzero"`
 }
 
 func NewSessions(db *v1.Database) session.Store { return &sessionsStore{db: db} }
 
 func (d sessionDocument) record() session.Record {
-	return session.Record{AccountID: d.AccountID, UserID: d.UserID, AuthVersion: d.AuthVersion, ExpiresAt: d.ExpiresAt, Refresh: d.Refresh, RefreshAt: d.RefreshAt, RetryAt: d.RetryAt}
+	return session.Record{AccountID: d.AccountID, UserID: d.UserID, AuthVersion: d.AuthVersion, ExpiresAt: d.ExpiresAt, Refresh: d.Refresh, RefreshAt: d.RefreshAt}
 }
 
 func newSessionDocument(key [32]byte, rec session.Record) sessionDocument {
 	return sessionDocument{
 		Kind: "session", TokenHash: digestText(key), AccountID: rec.AccountID, UserID: rec.UserID, AuthVersion: rec.AuthVersion,
-		ExpiresAt: rec.ExpiresAt.UTC(), Refresh: rec.Refresh, RefreshAt: rec.RefreshAt.UTC(), RetryAt: rec.RetryAt.UTC(),
+		ExpiresAt: rec.ExpiresAt.UTC(), Refresh: rec.Refresh, RefreshAt: rec.RefreshAt.UTC(),
 	}
 }
 
@@ -44,7 +43,7 @@ func newSessionDocument(key [32]byte, rec session.Record) sessionDocument {
 // document carries no monotonic reading or the caller's location.
 func sameSession(a, b session.Record) bool {
 	return a.AccountID == b.AccountID && a.UserID == b.UserID && a.AuthVersion == b.AuthVersion && a.Refresh == b.Refresh &&
-		a.ExpiresAt.Equal(b.ExpiresAt) && a.RefreshAt.Equal(b.RefreshAt) && a.RetryAt.Equal(b.RetryAt)
+		a.ExpiresAt.Equal(b.ExpiresAt) && a.RefreshAt.Equal(b.RefreshAt)
 }
 
 func (d sessionDocument) validate(id string) error {

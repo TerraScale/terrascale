@@ -34,7 +34,13 @@ type TSAuthConfig struct {
 	RedirectURL string
 	// Secure sends the sign-in cookie over HTTPS only.
 	Secure bool
+	// AdminSignIn runs when a platform admin signs in, with the admin's
+	// ts-auth access token. Its failure is logged and never blocks sign-in.
+	AdminSignIn func(ctx context.Context, account core.Account, accessToken string) error
 }
+
+// adminSignInTimeout bounds TSAuthConfig.AdminSignIn.
+const adminSignInTimeout = 10 * time.Second
 
 // TSAuth signs users in through ts-auth with the authorization code flow,
 // PKCE (S256), state and nonce, rechecks their sessions with refresh tokens,
@@ -55,8 +61,11 @@ type TSAuth struct {
 }
 
 type tsAuthProvider struct {
-	oauth      oauth2.Config
-	verifier   *oidc.IDTokenVerifier
+	oauth    oauth2.Config
+	verifier *oidc.IDTokenVerifier
+	// keys are the issuer's signing keys, for resource tokens
+	// (resource_token.go).
+	keys       oidc.KeySet
 	endSession string
 	revocation string
 	// headless is whether discovery lists the headless grants, which the
@@ -73,31 +82,14 @@ type signInFlow struct {
 	ReturnTo string `json:"returnTo"`
 }
 
-// refreshState is a session's Refresh: the ts-auth refresh token and the
-// subject every ID token it yields must name, with the latest access token,
-// which TerraBase's Management API accepts for the user until it expires.
+// refreshState is a session's Refresh: the ts-auth refresh token, the
+// subject every ID token it yields must name, and the access token it last
+// yielded, which reads TerraBase as the user.
 type refreshState struct {
-	Subject      string    `json:"sub"`
-	Token        string    `json:"token"`
-	Access       string    `json:"access,omitempty"`
-	AccessExpiry time.Time `json:"accessExpiry,omitzero"`
-}
-
-// AccessToken is the ts-auth access token a session's refresh state keeps,
-// or empty once it has expired; a session renews it before then. renew is
-// set for a state saved before sessions kept the token, which a recheck with
-// ts-auth gives one.
-func AccessToken(refresh string) (token string, renew bool) {
-	var state refreshState
-	switch {
-	case json.Unmarshal([]byte(refresh), &state) != nil:
-		return "", false
-	case state.Access == "":
-		return "", state.Token != ""
-	case !state.AccessExpiry.IsZero() && !time.Now().Before(state.AccessExpiry):
-		return "", false
-	}
-	return state.Access, false
+	Subject string    `json:"sub"`
+	Token   string    `json:"token"`
+	Access  string    `json:"access,omitempty"`
+	Expiry  time.Time `json:"expiry,omitzero"`
 }
 
 // refreshableSessions starts sessions that ts-auth rechecks.
@@ -107,12 +99,9 @@ type refreshableSessions interface {
 
 const (
 	signInFlowLifetime = 10 * time.Minute
-	// minRecheck is the wait before a session is rechecked with ts-auth
-	// when ts-auth does not say when its token expires.
+	// minRecheck is the shortest wait before a session is rechecked with
+	// ts-auth, used too when ts-auth does not say when its token expires.
 	minRecheck = 5 * time.Minute
-	// renewEarly is how long before its access token expires a session is
-	// rechecked, so TerraBase calls never carry a token about to expire.
-	renewEarly = 30 * time.Second
 )
 
 var (
@@ -188,6 +177,7 @@ func (t *TSAuth) fetchDiscovery(ctx context.Context) (*tsAuthProvider, error) {
 		Revocation string   `json:"revocation_endpoint"`
 		PKCE       []string `json:"code_challenge_methods_supported"`
 		Grants     []string `json:"grant_types_supported"`
+		JWKS       string   `json:"jwks_uri"`
 	}
 	if err := provider.Claims(&metadata); err != nil {
 		return nil, fmt.Errorf("discover ts-auth: %w", err)
@@ -202,6 +192,7 @@ func (t *TSAuth) fetchDiscovery(ctx context.Context) (*tsAuthProvider, error) {
 			Scopes:   []string{oidc.ScopeOpenID, "email", "profile", oidc.ScopeOfflineAccess},
 		},
 		verifier:   provider.Verifier(&oidc.Config{ClientID: t.cfg.ClientID}),
+		keys:       oidc.NewRemoteKeySet(oidc.ClientContext(context.Background(), t.client), metadata.JWKS),
 		endSession: metadata.EndSession,
 		revocation: metadata.Revocation,
 		headless:   slices.Contains(metadata.Grants, passwordGrant) && slices.Contains(metadata.Grants, emailCodeGrant),
@@ -310,6 +301,13 @@ func (t *TSAuth) startSession(w http.ResponseWriter, r *http.Request, deps core.
 	account, err := tsAuthAccount(r.Context(), deps.Store, identity)
 	if err != nil {
 		return "", err
+	}
+	if account.User.PlatformAdmin && t.cfg.AdminSignIn != nil {
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), adminSignInTimeout)
+		if err := t.cfg.AdminSignIn(ctx, account, token.AccessToken); err != nil {
+			slog.Warn("platform admin sign-in hook", "error", err)
+		}
+		cancel()
 	}
 	sessions, ok := deps.Sessions.(refreshableSessions)
 	if !ok {
@@ -448,12 +446,8 @@ func tsAuthAccount(ctx context.Context, store core.Store, identity tsAuthIdentit
 // names the session's subject. A refused token ends the session.
 func (t *TSAuth) RefreshSession(ctx context.Context, refresh string) (string, time.Time, error) {
 	var state refreshState
-	switch {
-	case json.Unmarshal([]byte(refresh), &state) != nil || state.Token == "" && state.Access == "":
+	if json.Unmarshal([]byte(refresh), &state) != nil || state.Token == "" {
 		return "", time.Time{}, fmt.Errorf("unreadable ts-auth refresh state: %w", core.ErrUnauthorized)
-	case state.Token == "":
-		// An access-only session has nothing to recheck with; it is kept.
-		return refresh, noRecheck, nil
 	}
 	provider, err := t.discover(ctx)
 	if err != nil {
@@ -491,34 +485,33 @@ func (t *TSAuth) RevokeSession(ctx context.Context, refresh string) error {
 	return t.revoke(ctx, state.Token)
 }
 
-// encodeRefresh is a session's refresh state. Without a refresh token from
-// ts-auth it keeps only the access token, and recheckAt never rechecks the
-// session: it lasts its lifetime, and TerraBase calls work until the token
-// expires.
 func encodeRefresh(subject string, token *oauth2.Token) (string, error) {
-	if token.RefreshToken == "" && token.AccessToken == "" {
+	if token.RefreshToken == "" {
+		// ts-auth issued no refresh token: the session is not rechecked.
 		return "", nil
 	}
-	value, err := json.Marshal(refreshState{Subject: subject, Token: token.RefreshToken, Access: token.AccessToken, AccessExpiry: token.Expiry})
+	value, err := json.Marshal(refreshState{Subject: subject, Token: token.RefreshToken, Access: token.AccessToken, Expiry: token.Expiry})
 	return string(value), err
 }
 
-// noRecheck is the RefreshAt of a session nothing can recheck.
-var noRecheck = time.Date(9999, time.January, 1, 0, 0, 0, 0, time.UTC)
+// AccessToken returns the unexpired ts-auth access token in a session's
+// Refresh. Sessions started before tokens were kept have none until their
+// next recheck.
+func AccessToken(refresh string) (string, bool) {
+	var state refreshState
+	if json.Unmarshal([]byte(refresh), &state) != nil || state.Access == "" || !time.Now().Before(state.Expiry) {
+		return "", false
+	}
+	return state.Access, true
+}
 
-// recheckAt is when to recheck a session with ts-auth: renewEarly before the
-// access token it issued expires, so the session always holds a live one for
-// TerraBase, or after minRecheck when ts-auth does not say. ts-auth issues
-// hour-long tokens; a token shorter than renewEarly is renewed on the next
-// request, one at a time per session.
+// recheckAt is when to recheck a session with ts-auth: when the access token
+// it issued expires, but not before minRecheck.
 func recheckAt(token *oauth2.Token) time.Time {
-	if token.RefreshToken == "" {
-		return noRecheck
+	if earliest := time.Now().Add(minRecheck); token.Expiry.Before(earliest) {
+		return earliest
 	}
-	if token.Expiry.IsZero() {
-		return time.Now().Add(minRecheck)
-	}
-	return token.Expiry.Add(-renewEarly)
+	return token.Expiry
 }
 
 // signInAgain is the sign-in page asking ts-auth for credentials even if the

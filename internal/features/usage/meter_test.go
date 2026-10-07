@@ -48,9 +48,6 @@ func (m *fakeMeter) Usage(_ context.Context, token string, scope core.UsageScope
 	}, nil
 }
 
-type tokenSessions struct{ reviewSessions }
-
-func (tokenSessions) UserToken(*http.Request) string { return "user-token" }
 
 // meterFixture is a Free organization owner with one database whose reads
 // and writes the fake meter reports.
@@ -73,10 +70,15 @@ func meterFixture(t *testing.T, meter *fakeMeter) (Service, core.Principal, *htt
 	}); err != nil {
 		t.Fatal(err)
 	}
-	deps := core.Deps{Store: store, Sessions: tokenSessions{reviewSessions{principal: principal}}, Render: viewRenderer{}, Tools: core.NewTools(store), Usage: meter}
+	deps := core.Deps{Store: store, Sessions: reviewSessions{principal: principal}, Render: viewRenderer{}, Tools: core.NewTools(store), Usage: meter}
 	mux := http.NewServeMux()
 	Mount(mux, deps, nil)
-	return Service{deps: deps}, principal, mux
+	// The app adds the session's ts-auth token to every request's context.
+	withToken := http.NewServeMux()
+	withToken.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mux.ServeHTTP(w, r.WithContext(core.WithUserToken(r.Context(), func() (string, bool) { return "user-token", true })))
+	}))
+	return Service{deps: deps}, principal, withToken
 }
 
 func TestUsageShowsMeteredReadsAndWritesSeparately(t *testing.T) {

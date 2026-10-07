@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"crypto"
 	"crypto/rand"
 	"crypto/rsa"
@@ -18,7 +19,6 @@ import (
 	"testing"
 	"time"
 
-	"golang.org/x/oauth2"
 	"terrascale.tech/dashboard/internal/core"
 	"terrascale.tech/dashboard/internal/core/memstore"
 	"terrascale.tech/dashboard/internal/platform/csrf"
@@ -52,8 +52,6 @@ type testIssuer struct {
 	refreshed  int
 	endSession bool
 	pkce       []string
-	// noRefresh answers sign-ins without a refresh token.
-	noRefresh bool
 	// keepRefresh answers refresh grants without a new refresh token, so the
 	// one presented stays valid.
 	keepRefresh bool
@@ -200,14 +198,10 @@ func (i *testIssuer) token(w http.ResponseWriter, r *http.Request) {
 	}
 	refresh := rand.Text()
 	i.refreshes[refresh] = subject
-	body := map[string]any{
+	writeJSON(w, http.StatusOK, map[string]any{
 		"access_token": rand.Text(), "token_type": "Bearer", "expires_in": 3600,
 		"refresh_token": refresh, "id_token": i.idToken(subject, nonce),
-	}
-	if i.noRefresh {
-		delete(body, "refresh_token")
-	}
-	writeJSON(w, http.StatusOK, body)
+	})
 }
 
 // idToken signs an RS256 ID token; i.mu is held.
@@ -275,7 +269,7 @@ func newTSAuthDashboard(t *testing.T, issuer *testIssuer, wrap ...func(core.Stor
 		t.Fatal(err)
 	}
 	store, records := memstore.New(), session.NewMemoryStore()
-	sessions := session.New(store, session.Options{Store: records, Refresh: tsAuth.RefreshSession, Revoke: tsAuth.RevokeSession, UserToken: AccessToken})
+	sessions := session.New(store, session.Options{Store: records, Refresh: tsAuth.RefreshSession, Revoke: tsAuth.RevokeSession})
 	guard := csrf.New(sessions, csrf.Options{})
 	var featureStore core.Store = store
 	for _, w := range wrap {
@@ -614,129 +608,18 @@ func TestTSAuthRefreshKeepsTokenTSAuthDoesNotRotate(t *testing.T) {
 			t.Fatal("session refreshed without a new refresh token was signed out")
 		}
 	}
-	if after, _ := dashboard.record(t); refreshToken(t, after.Refresh) != refreshToken(t, before.Refresh) || issuer.refreshCount() != 2 {
-		t.Fatalf("refreshes=%d kept=%v; want two refreshes with the same token", issuer.refreshCount(), after.Refresh == before.Refresh)
+	after, _ := dashboard.record(t)
+	kept := refreshToken(t, after.Refresh) == refreshToken(t, before.Refresh)
+	if !kept || issuer.refreshCount() != 2 {
+		t.Fatalf("refreshes=%d kept=%v; want two refreshes with the same token", issuer.refreshCount(), kept)
+	}
+	if _, ok := AccessToken(after.Refresh); !ok {
+		t.Error("the refreshed session lost its access token")
 	}
 	issuer.set(func(i *testIssuer) { clear(i.refreshes) })
 	dashboard.expire(t)
 	if dashboard.signedIn(t) {
 		t.Fatal("session outlived its revoked, never-rotated refresh token")
-	}
-}
-
-func TestRecheckAtRenewsBeforeTheAccessTokenExpires(t *testing.T) {
-	now := time.Now()
-	for _, lifetime := range []time.Duration{time.Hour, 2 * time.Minute, 10 * time.Second} {
-		if at := recheckAt(&oauth2.Token{RefreshToken: "r", Expiry: now.Add(lifetime)}); !at.Equal(now.Add(lifetime - renewEarly)) {
-			t.Fatalf("recheck of a %v token at %v, want renewEarly before it expires", lifetime, at.Sub(now))
-		}
-	}
-	if at := recheckAt(&oauth2.Token{RefreshToken: "r"}); at.Before(now.Add(minRecheck - time.Second)) {
-		t.Fatalf("recheck without an expiry at %v, want minRecheck later", at)
-	}
-	if at := recheckAt(&oauth2.Token{Expiry: now.Add(time.Hour)}); !at.Equal(noRecheck) {
-		t.Fatalf("recheck without a refresh token at %v, want never", at)
-	}
-}
-
-func refreshToken(t *testing.T, refresh string) string {
-	t.Helper()
-	var state refreshState
-	if err := json.Unmarshal([]byte(refresh), &state); err != nil {
-		t.Fatal(err)
-	}
-	return state.Token
-}
-
-// TestTSAuthSessionKeepsTheAccessTokenForTerraBase checks the session hands
-// out ts-auth's latest access token, which TerraBase's usage API accepts,
-// and none once it expires.
-func TestTSAuthSessionKeepsTheAccessTokenForTerraBase(t *testing.T) {
-	t.Parallel()
-	issuer := newTestIssuer(t)
-	dashboard := newTSAuthDashboard(t, issuer)
-	dashboard.signIn(t, issuer, "/login/sso")
-	userToken := func() string {
-		request := httptest.NewRequest(http.MethodGet, "http://dashboard.test/", nil)
-		for _, cookie := range dashboard.cookies {
-			request.AddCookie(cookie)
-		}
-		return dashboard.sessions.UserToken(request)
-	}
-	first := userToken()
-	if first == "" {
-		t.Fatal("signed-in session has no access token")
-	}
-	dashboard.expire(t)
-	if !dashboard.signedIn(t) {
-		t.Fatal("refreshed session was signed out")
-	}
-	if second := userToken(); second == "" || second == first {
-		t.Fatalf("access token after refresh = %q, want ts-auth's new one", second)
-	}
-	expired, err := json.Marshal(refreshState{Subject: testSubject, Token: "r", Access: "a", AccessExpiry: time.Now().Add(-time.Second)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if token, _ := AccessToken(string(expired)); token != "" {
-		t.Fatal("an expired refresh state yielded an access token")
-	}
-	if token, renew := AccessToken("not json"); token != "" || renew {
-		t.Fatal("an unreadable refresh state yielded an access token or a renewal")
-	}
-}
-
-// TestTSAuthSessionSavedBeforeAccessTokensRenewsAtOnce covers sessions
-// started before they kept the access token: the first TerraBase call
-// rechecks them instead of waiting for their RefreshAt.
-func TestTSAuthSessionSavedBeforeAccessTokensRenewsAtOnce(t *testing.T) {
-	t.Parallel()
-	issuer := newTestIssuer(t)
-	dashboard := newTSAuthDashboard(t, issuer)
-	dashboard.signIn(t, issuer, "/login/sso")
-	record, key := dashboard.record(t)
-	legacy, err := json.Marshal(refreshState{Subject: testSubject, Token: refreshToken(t, record.Refresh)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	record.Refresh, record.RefreshAt = string(legacy), time.Now().Add(time.Hour)
-	if err := dashboard.records.Put(t.Context(), key, record); err != nil {
-		t.Fatal(err)
-	}
-	request := httptest.NewRequest(http.MethodGet, "http://dashboard.test/", nil)
-	for _, cookie := range dashboard.cookies {
-		request.AddCookie(cookie)
-	}
-	if token := dashboard.sessions.UserToken(request); token == "" || issuer.refreshCount() != 1 {
-		t.Fatalf("access token %q after %d refreshes, want one from an immediate recheck", token, issuer.refreshCount())
-	}
-}
-
-// TestTSAuthSessionWithoutRefreshTokenKeepsTheAccessToken covers a ts-auth
-// that issues no refresh token: the session lasts its lifetime without a
-// recheck, as before, and still hands out the access token for TerraBase.
-func TestTSAuthSessionWithoutRefreshTokenKeepsTheAccessToken(t *testing.T) {
-	t.Parallel()
-	issuer := newTestIssuer(t)
-	issuer.set(func(i *testIssuer) { i.noRefresh = true })
-	dashboard := newTSAuthDashboard(t, issuer)
-	dashboard.signIn(t, issuer, "/login/sso")
-	record, _ := dashboard.record(t)
-	if !record.RefreshAt.Equal(noRecheck) {
-		t.Fatalf("access-only session rechecks at %v, want never", record.RefreshAt)
-	}
-	request := httptest.NewRequest(http.MethodGet, "http://dashboard.test/", nil)
-	for _, cookie := range dashboard.cookies {
-		request.AddCookie(cookie)
-	}
-	if token := dashboard.sessions.UserToken(request); token == "" || issuer.refreshCount() != 0 {
-		t.Fatalf("access token %q after %d refreshes, want the sign-in's token without a recheck", token, issuer.refreshCount())
-	}
-	if next, at, err := (&TSAuth{}).RefreshSession(t.Context(), record.Refresh); err != nil || next != record.Refresh || !at.Equal(noRecheck) {
-		t.Fatalf("RefreshSession(access-only) = %q, %v, %v; want it kept", next, at, err)
-	}
-	if !dashboard.signedIn(t) {
-		t.Fatal("access-only session was signed out")
 	}
 }
 
@@ -851,5 +734,49 @@ func TestTSAuthLiveIssuer(t *testing.T) {
 	authorize.Body.Close()
 	if authorize.StatusCode >= http.StatusBadRequest {
 		t.Fatalf("ts-auth authorization endpoint = %d for the dashboard's request", authorize.StatusCode)
+	}
+}
+
+// refreshToken is the ts-auth refresh token a session's Refresh holds.
+func refreshToken(t *testing.T, refresh string) string {
+	t.Helper()
+	var state refreshState
+	if err := json.Unmarshal([]byte(refresh), &state); err != nil || state.Token == "" {
+		t.Fatalf("refresh state %q: %v", refresh, err)
+	}
+	return state.Token
+}
+
+// TestAdminSignInHookGetsTheAccessToken covers how a platform admin's
+// sign-in mirrors every service's TerraBase database: only admins run the
+// hook, with their ts-auth access token, and its failure never blocks the
+// sign-in.
+func TestAdminSignInHookGetsTheAccessToken(t *testing.T) {
+	t.Parallel()
+	issuer := newTestIssuer(t)
+	dashboard := newTSAuthDashboard(t, issuer)
+	var tokens []string
+	dashboard.tsAuth.cfg.AdminSignIn = func(_ context.Context, account core.Account, accessToken string) error {
+		tokens = append(tokens, accessToken)
+		return errors.New("TerraBase is down")
+	}
+	dashboard.signIn(t, issuer, "/login/sso")
+	if len(tokens) != 0 {
+		t.Fatalf("hook ran %d times for a member, want none", len(tokens))
+	}
+	account, err := dashboard.store.FindBySubject(t.Context(), testSubject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dashboard.store.SetPlatformAdmin(t.Context(), account.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	dashboard.signIn(t, issuer, "/login/sso")
+	if !dashboard.signedIn(t) {
+		t.Fatal("a failing hook blocked the admin's sign-in")
+	}
+	record, _ := dashboard.record(t)
+	if access, ok := AccessToken(record.Refresh); len(tokens) != 1 || !ok || tokens[0] != access {
+		t.Fatalf("hook got %v, want the session's access token %q", tokens, access)
 	}
 }

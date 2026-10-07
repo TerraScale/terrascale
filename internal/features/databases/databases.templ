@@ -1,6 +1,7 @@
 package databases
 
 import (
+	"cmp"
 	"fmt"
 	"slices"
 	"strings"
@@ -68,7 +69,7 @@ templ databaseStats(s databaseSummary) {
 			@ui.ToneStat("rose", "Failed", fmt.Sprint(s.Failed), "Provisioning did not finish")
 		}
 		@ui.ToneStat("cyan", "Regions", fmt.Sprint(len(s.Regions)), strings.Join(s.Regions, " · "))
-		@ui.ToneStat("violet", "Documents", fmt.Sprint(s.Documents), fmt.Sprintf("Across %d %s", s.Collections, plural(s.Collections, "collection", "collections")))
+		@ui.ToneStat("violet", "Documents", fmt.Sprint(s.Documents), cmp.Or(s.Unavailable, fmt.Sprintf("Across %d %s, %s", s.Collections, plural(s.Collections, "collection", "collections"), ui.FormatBytes(s.Bytes))))
 	}
 }
 

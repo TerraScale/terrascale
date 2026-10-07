@@ -24,6 +24,8 @@ type sqlResult struct {
 	Rows    []sqlResultRow
 	// Matched counts every row the query matched; the table may show fewer.
 	Matched int
+	// More reports rows past the shown ones whose count is unknown.
+	More bool
 	// HiddenColumns counts the fields beyond maxResultColumns.
 	HiddenColumns int
 	// JSON is the shown rows, indented, for the raw view.
@@ -111,7 +113,7 @@ func newSQLResult(rows []documentView, matched int) sqlResult {
 }
 
 // Truncated reports whether the query matched more rows than the table shows.
-func (r sqlResult) Truncated() bool { return r.Matched > len(r.Rows) }
+func (r sqlResult) Truncated() bool { return r.More || r.Matched > len(r.Rows) }
 
 // objectMembers returns the members of a JSON object in document order.
 func objectMembers(value jsontext.Value) ([]string, []jsontext.Value, bool) {

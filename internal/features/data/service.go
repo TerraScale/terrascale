@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"maps"
 	"math/big"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -34,6 +35,64 @@ const (
 )
 
 var errDemoOnly = errors.New("index recommendations are only available in the in-memory demo")
+
+// systemCollection is a TerraBase collection name, quoted in SQL;
+// systemField is a top-level field TerraBase SQL can sort by.
+var (
+	systemCollection = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,62}$`)
+	systemField      = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,127}$`)
+)
+
+// systemRows reads a system database's collection through TerraBase SQL,
+// SELECT * FROM collection followed by clauses, with secrets masked. more
+// reports rows the statement's limit cut.
+func (s Service) systemRows(ctx context.Context, p core.Principal, db core.Database, collection, clauses string) (docs []documentView, more bool, err error) {
+	if !systemCollection.MatchString(collection) {
+		return nil, false, core.Invalid("TerraBase collection names use 1-63 lowercase letters, digits, hyphens, and underscores")
+	}
+	management, err := s.deps.System(ctx, p)
+	if err != nil {
+		return nil, false, err
+	}
+	result, err := management.SQL(ctx, p.OrganizationID, db.ProjectID, db.ID, `SELECT * FROM "`+collection+`" `+clauses)
+	if err != nil {
+		return nil, false, systemSQLError(err)
+	}
+	docs, err = systemDocuments(result.Rows)
+	return docs, result.Truncated, err
+}
+
+func systemSQLError(err error) error {
+	if apiErr, ok := errors.AsType[*v1.APIError](err); ok && apiErr.Code == v1.ErrInvalidRequest {
+		return core.Invalid(apiErr.Message)
+	}
+	return core.ProviderError{Action: "system document query", Err: err}
+}
+
+// systemDocuments masks the secrets of SQL rows. A row that cannot be
+// masked fails the read rather than show unmasked.
+func systemDocuments(rows []v1.SQLRow) ([]documentView, error) {
+	docs := make([]documentView, 0, len(rows))
+	for _, row := range rows {
+		decoder := stdjson.NewDecoder(bytes.NewReader(row.Value))
+		decoder.UseNumber()
+		var value any
+		if err := decoder.Decode(&value); err != nil {
+			return nil, core.ProviderError{Action: "system document decode", Err: err}
+		}
+		masked, err := stdjson.Marshal(core.MaskSecrets(value))
+		if err != nil {
+			return nil, core.ProviderError{Action: "system document mask", Err: err}
+		}
+		docs = append(docs, documentView{ID: row.ID, Value: jsontext.Value(masked)})
+	}
+	return docs, nil
+}
+
+// sqlString quotes a SQL string literal.
+func sqlString(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "''") + "'"
+}
 
 // documentOperations are the writes a document form or tool may request.
 var documentOperations = []string{"create", "replace", "patch", "delete"}
@@ -149,6 +208,9 @@ func (s Service) updateDatabase(ctx context.Context, p core.Principal, databaseI
 		if !ok || current.ProjectID != project.ID {
 			return core.ErrNotFound
 		}
+		if core.SystemDatabase(current) {
+			return core.ErrSystemReadOnly
+		}
 		if err := mutate(&current); err != nil {
 			return err
 		}
@@ -185,6 +247,14 @@ func (s Service) Collections(ctx context.Context, p core.Principal, databaseID s
 	db, err := s.database(ctx, p, databaseID)
 	if err != nil {
 		return nil, err
+	}
+	if core.SystemDatabase(db) {
+		stats, err := s.deps.SystemCollections(ctx, p, db)
+		names := make([]string, 0, len(stats))
+		for _, collection := range stats {
+			names = append(names, collection.Name)
+		}
+		return names, err
 	}
 	if s.deps.LocalResources() {
 		names := slices.Concat(slices.Collect(maps.Keys(db.Documents)), slices.Collect(maps.Keys(db.Schemas)), slices.Collect(maps.Keys(db.Indexes)))
@@ -263,6 +333,17 @@ func (s Service) Browse(ctx context.Context, p core.Principal, databaseID, colle
 	db, err := s.collectionDatabase(ctx, p, databaseID, collection)
 	if err != nil {
 		return nil, false, err
+	}
+	if core.SystemDatabase(db) {
+		// A sort by a secret member would reveal its order.
+		key := "_id"
+		if systemField.MatchString(order.Field) && !core.SecretField(order.Field) {
+			key = order.Field
+		}
+		if order.Desc {
+			key += " DESC"
+		}
+		return s.systemRows(ctx, p, db, collection, fmt.Sprintf("ORDER BY %s LIMIT %d", key, maxBrowseDocuments))
 	}
 	var docs []documentView
 	if s.deps.LocalResources() {
@@ -477,7 +558,15 @@ func (s Service) Documents(ctx context.Context, p core.Principal, databaseID str
 		return nil, core.Invalid("limit must be 1 to 100")
 	}
 	var docs []documentView
-	if s.deps.LocalResources() {
+	if core.SystemDatabase(db) {
+		where := ""
+		if query.After != "" {
+			where = "WHERE _id > " + sqlString(query.After) + " "
+		}
+		if docs, _, err = s.systemRows(ctx, p, db, query.Collection, fmt.Sprintf("%sORDER BY _id LIMIT %d", where, cmp.Or(query.Limit, maxListLimit))); err != nil {
+			return nil, err
+		}
+	} else if s.deps.LocalResources() {
 		for id, body := range db.Documents[query.Collection] {
 			if query.After == "" || id > query.After {
 				docs = append(docs, documentView{ID: id, Value: jsontext.Value(body).Clone()})
@@ -513,6 +602,16 @@ func (s Service) Document(ctx context.Context, p core.Principal, databaseID, col
 	db, err := s.collectionDatabase(ctx, p, databaseID, collection)
 	if err != nil {
 		return documentView{}, err
+	}
+	if core.SystemDatabase(db) {
+		docs, _, err := s.systemRows(ctx, p, db, collection, "WHERE _id = "+sqlString(id)+" LIMIT 1")
+		if err != nil {
+			return documentView{}, err
+		}
+		if len(docs) == 0 {
+			return documentView{}, fmt.Errorf("%w: document %q", core.ErrNotFound, id)
+		}
+		return docs[0], nil
 	}
 	if s.deps.LocalResources() {
 		body, ok := db.Documents[collection][id]
@@ -663,23 +762,11 @@ func (s Service) Schema(ctx context.Context, p core.Principal, databaseID, colle
 	if err != nil {
 		return nil, err
 	}
-	if s.deps.LocalResources() {
-		body, ok := db.Schemas[collection]
-		if !ok {
-			return nil, fmt.Errorf("%w: no schema for collection %q", core.ErrNotFound, collection)
-		}
-		return jsontext.Value(body).Clone(), nil
+	body, ok := db.Schemas[collection]
+	if !ok {
+		return nil, fmt.Errorf("%w: no schema for collection %q", core.ErrNotFound, collection)
 	}
-	client, err := s.deps.DataPlane(p)
-	if err != nil {
-		return nil, err
-	}
-	schema, err := client.Databases.GetCollectionSchema(ctx, db.Name, collection)
-	if err != nil {
-		return nil, core.ProviderError{Action: "schema read", Err: err}
-	}
-	encoded, err := json.Marshal(schema.Schema)
-	return jsontext.Value(encoded), err
+	return jsontext.Value(body).Clone(), nil
 }
 
 // SetSchema applies a collection schema whose name matches the collection.
@@ -695,27 +782,13 @@ func (s Service) SetSchema(ctx context.Context, p core.Principal, databaseID, co
 	if len(body) == 0 || len(body) > maxSchemaBytes || json.Unmarshal(body, &schema) != nil || schema.Name != collection || schema.Validate() != nil {
 		return core.Invalid("schema must be valid JSON for the selected collection, with name equal to the collection")
 	}
-	if s.deps.LocalResources() {
-		return s.updateDatabase(ctx, p, db.ID, core.Organization.CanManage, func(current *core.Database) error {
-			if current.Schemas == nil {
-				current.Schemas = make(map[string][]byte)
-			}
-			current.Schemas[collection] = slices.Clone(body)
-			return nil
-		})
-	}
-	client, err := s.deps.DataPlane(p)
-	if err != nil {
-		return err
-	}
-	current, err := client.Databases.GetCollectionSchema(ctx, db.Name, collection)
-	if err == nil {
-		_, err = client.Databases.PutCollectionSchema(ctx, db.Name, collection, schema, sdk.WithIdempotencyKey(core.NewID("schema")), sdk.WithSchemaGeneration(current.Generation))
-	}
-	if err != nil {
-		return core.ProviderError{Action: "schema apply", Err: err}
-	}
-	return nil
+	return s.updateDatabase(ctx, p, db.ID, core.Organization.CanManage, func(current *core.Database) error {
+		if current.Schemas == nil {
+			current.Schemas = make(map[string][]byte)
+		}
+		current.Schemas[collection] = slices.Clone(body)
+		return nil
+	})
 }
 
 // Indexes lists a collection's indexed fields and their build state.
@@ -724,30 +797,15 @@ func (s Service) Indexes(ctx context.Context, p core.Principal, databaseID, coll
 	if err != nil {
 		return nil, err
 	}
-	if s.deps.LocalResources() {
-		indexes := make([]indexView, 0, len(db.Indexes[collection]))
-		for _, field := range db.Indexes[collection] {
-			state := "ready"
-			for _, build := range db.IndexBuilds {
-				if build.Collection == collection && build.Field == field {
-					state = build.Status
-				}
+	indexes := make([]indexView, 0, len(db.Indexes[collection]))
+	for _, field := range db.Indexes[collection] {
+		state := "ready"
+		for _, build := range db.IndexBuilds {
+			if build.Collection == collection && build.Field == field {
+				state = build.Status
 			}
-			indexes = append(indexes, indexView{Field: field, State: state})
 		}
-		return indexes, nil
-	}
-	client, err := s.deps.DataPlane(p)
-	if err != nil {
-		return nil, err
-	}
-	page, err := client.Databases.ListIndexes(ctx, db.Name, collection, sdk.PageRequest{})
-	if err != nil {
-		return nil, core.ProviderError{Action: "index list", Err: err}
-	}
-	indexes := make([]indexView, 0, len(page.Indexes))
-	for _, index := range page.Indexes {
-		indexes = append(indexes, indexView{Field: index.Field, State: index.State, BackfillRemaining: index.BackfillRemaining})
+		indexes = append(indexes, indexView{Field: field, State: state})
 	}
 	return indexes, nil
 }
@@ -765,25 +823,15 @@ func (s Service) CreateIndex(ctx context.Context, p core.Principal, databaseID, 
 	if field == "" || len(field) > 128 {
 		return core.Invalid("index fields use 1-128 characters")
 	}
-	if s.deps.LocalResources() {
-		return s.updateDatabase(ctx, p, db.ID, core.Organization.CanManage, func(current *core.Database) error {
-			if current.Indexes == nil {
-				current.Indexes = make(map[string][]string)
-			}
-			if !slices.Contains(current.Indexes[collection], field) {
-				current.Indexes[collection] = append(current.Indexes[collection], field)
-			}
-			return nil
-		})
-	}
-	client, err := s.deps.DataPlane(p)
-	if err != nil {
-		return err
-	}
-	if _, err := client.Databases.CreateIndex(ctx, db.Name, collection, sdk.CreateIndexRequest{Field: field}, sdk.WithIdempotencyKey(core.NewID("index"))); err != nil {
-		return core.ProviderError{Action: "index create", Err: err}
-	}
-	return nil
+	return s.updateDatabase(ctx, p, db.ID, core.Organization.CanManage, func(current *core.Database) error {
+		if current.Indexes == nil {
+			current.Indexes = make(map[string][]string)
+		}
+		if !slices.Contains(current.Indexes[collection], field) {
+			current.Indexes[collection] = append(current.Indexes[collection], field)
+		}
+		return nil
+	})
 }
 
 // Recommendations lists a database's index recommendations, optionally for
@@ -932,7 +980,29 @@ func (s Service) RunSQL(ctx context.Context, p core.Principal, databaseID, state
 	}
 	var result any
 	var table sqlResult
-	if s.deps.LocalResources() {
+	if core.SystemDatabase(db) {
+		// Only whole documents leave a system database, so masking sees
+		// every member under its own name: a projection could rename a
+		// secret, and a filter or sort on one would reveal it.
+		matches := selectPattern.FindStringSubmatch(statement)
+		if matches == nil {
+			return sqlRun{}, core.Invalid("System databases run SELECT * FROM collection [LIMIT n] only, so secrets stay masked.")
+		}
+		limit := cmp.Or(matches[2], strconv.Itoa(maxDemoRows))
+		if n, err := strconv.Atoi(limit); err != nil || n < 1 || n > maxBrowseDocuments {
+			return sqlRun{}, core.Invalid("System queries return 1 to " + strconv.Itoa(maxBrowseDocuments) + " rows; use a LIMIT in that range.")
+		}
+		rows, more, err := s.systemRows(ctx, p, db, matches[1], "ORDER BY _id LIMIT "+limit)
+		if err != nil {
+			return sqlRun{}, err
+		}
+		result = struct {
+			Rows []documentView `json:"rows"`
+		}{Rows: rows}
+		// TerraBase reports that rows were cut, not how many matched.
+		table = newSQLResult(rows, len(rows))
+		table.More = more
+	} else if s.deps.LocalResources() {
 		rows, matched, err := demoSelect(db, statement)
 		if err != nil {
 			return sqlRun{}, err

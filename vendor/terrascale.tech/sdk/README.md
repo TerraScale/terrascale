@@ -2,8 +2,8 @@
 
 Package `v1` is the TerraBase client: documents, collections, queries and
 transactions with an API key, and the Management API for the dashboard
-backend. The root package holds the product clients, hosted TSAuth clients and
-the pure schema and SQL builders.
+backend. The root package holds the hosted TSAuth clients and the pure schema
+and SQL builders.
 
 ## TerraBase v1 client (`terrascale.tech/sdk/v1`)
 
@@ -95,14 +95,16 @@ for page, err := range users.Pages(ctx, q) { … }    // page.NextCursor, page.C
 ### Management API
 
 The ts-dashboard backend manages organizations, projects, databases, members,
-invitations, ownership transfers and the audit log with the dashboard service
-credential. `As` acts as one ts-auth user: it sends `X-TerraBase-User-Id` on
-every call and `X-TerraBase-Organization-Id` on organization routes. Take the
-user id from the session, never from browser input.
+invitations, ownership transfers and the audit log as one ts-auth user.
+`WithToken` presents the user's ts-auth access token on the client listener.
+`As` names the user in `X-TerraBase-User-Id` with the management service
+credential (`Config.Token`), which TerraBase accepts only on its loopback admin
+listener, for bootstrap work such as `AddMember`. Take the user id from the
+session, never from browser input.
 
 ```go
-m, err := tb.NewManagement(tb.Config{BaseURL: origin, Token: dashboardCredential})
-u := m.As(session.UserID)
+m, err := tb.NewManagement(tb.Config{BaseURL: origin})
+u := m.WithToken(session.AccessToken)
 org, err := u.CreateOrganization(ctx, "Acme")
 project, err := u.CreateProject(ctx, org.ID, "Production")
 db, err := u.CreateDatabase(ctx, org.ID, project.ID, "main") // then c.Database(project.ID, "main")
@@ -114,14 +116,19 @@ It also covers `Organizations`, `RenameOrganization`, `SetPlan`,
 `DeleteOrganization`, `CurrentOrganization`/`SetCurrentOrganization`, project
 and database reads, renames and deletes, `BranchDatabase`, `SetMemberRole`,
 `RemoveMember`, `Leave`, `Invitations`, `RevokeInvitation`,
-`AcceptInvitation`, `OwnershipTransfer` and its start, cancel and confirm,
-`AuditRetention`/`SetAuditRetention` and `AuditEvents`. A 404 (`ErrUnknownRoute`)
+`AcceptInvitation` (the access token's verified email must match),
+`OwnershipTransfer` and its start, cancel and confirm,
+`AuditRetention`/`SetAuditRetention`, `AuditEvents`, and the read-only
+database tooling: `Collections` (document counts and bytes), `DatabaseUsage`
+and `SQL` (rows of the dashboard SQL subset). A 404 (`ErrUnknownRoute`)
 means an unknown id or an organization the user is not a member of; bare
 message errors map to `ErrInvalidRequest` (400), `ErrForbidden` (403, role too
-low) and `ErrConflict` (409).
+low) and `ErrConflict` (409). A rejected token or credential is `ErrInvalidKey`.
 
-Not served by TerraBase yet, so not in the client: shapes (reactive queries),
-query `explain`, `Idempotency-Key`, and the `/v1/dashboard` control plane.
+Served by TerraBase but not in the client yet (TS-590 adds them): shapes,
+database tooling (backups, indexes, schema, project usage, SQL check) and saved queries,
+project API keys, invitation lookup and Management commits. Not served:
+query `explain`, `Idempotency-Key` and the `/v1/dashboard` control plane.
 
 ### Tests
 
@@ -130,8 +137,9 @@ fake server. The importable `terrascale.tech/sdk/terrabasetest` package is the
 shared harness for SDK and downstream tests: it pins the release
 by version and SHA-256, downloads it once with `TERRABASE_TOKEN` (read access
 to TerraScale/terrabase) into the user cache directory (or `TERRABASE_CACHE`),
-and starts it per test with a generated TLS certificate and dashboard
-credential file. TerraBase assigns both listener ports. Startup is bounded to
+and starts it per test with a generated TLS certificate, management credential
+file and local ts-auth issuer, whose access tokens `Server.Token` mints.
+TerraBase assigns both listener ports. Startup is bounded to
 30 seconds; admin requests, including their response bodies, are bounded to
 10 seconds.
 
@@ -141,18 +149,21 @@ TERRABASE_TOKEN=… TERRABASE_REQUIRE=1 nice -n 19 go test ./v1/ ./terrabasetest
 
 `v1/integration_test.go` exercises every SDK call against it. Its recording
 transport checks the real traffic: each request is a route of
-`v1/testdata/openapi.json` (the executable's own `/openapi/v1.json`, admin port
-9464) and each of those routes is called, no request carries
-`Idempotency-Key`, and the Management headers are present. Retry tests inject
+`v1/testdata/openapi.json` (the executable's own `/openapi/v1.json` on the
+client listener; `TERRABASE_REPIN=1` rewrites it) or an admin-listener route,
+each of those routes is called unless the test lists it as not in the client
+yet, no request carries `Idempotency-Key`, and no access token goes with
+`X-TerraBase-User-Id`. Retry tests inject
 faults into that transport in front of the real server. Tests skip only on an
 unsupported platform or when neither a cached executable nor a token is
 available; CI sets `TERRABASE_REQUIRE=1` to fail instead. Checksum, download
 and filesystem errors always fail, including in local runs.
 
 Downstream tests call `terrabasetest.Start(t)` to get a fresh real server.
-Use its `URL`, `Credential`, and trusted `Client` with `v1.NewManagement`
-to create an organization and project, then `Server.APIKey` to issue a
-project-scoped document credential. Pass `Server.Client` as `Config.HTTPClient`
+Use its `URL` and trusted `Client` with `v1.NewManagement` and
+`WithToken(Server.Token(t, user, email))` to create an organization and
+project, then `Server.APIKey` to issue a project-scoped document credential.
+The management service `Credential` works with `As` on `AdminURL` only. Pass `Server.Client` as `Config.HTTPClient`
 so SDK clients trust the generated TLS certificate. The process and temporary
 data, TLS, and credential files are cleaned up automatically when the test ends.
 
@@ -167,19 +178,20 @@ Consume this package from the SDK module's merged Go pseudo-version; this repo
 has no tag or release-on-merge workflow. The TerraBase executable version and
 SHA-256 remain pinned by the helper, independently of the SDK module version.
 
-## Product, TSAuth, and builders
-
-Product calls require an explicit `APIBaseURL`. `AccessToken` and
-`TokenProvider` configure their management credential. `ProjectAPIKeys`
-uses the authenticated Dashboard project API-key routes. The routes require
-the owning session and project membership.
+## TSAuth and builders
 
 TSAuth calls require an explicit `TSAuthBaseURL`, or a suitable explicit
 `APIBaseURL`. Use `client.TSAuth.Instance("slug")` for the scoped families.
 Management methods use the instance credential. The OIDC application API uses
 explicit issuer and OAuth client authentication, verifies authorization-code
 responses and ID tokens, and exposes introspection, revocation, and logout
-flows. Accepted OIDC source
+flows. ts-auth issues from its regional host, for example
+`https://gru.auth.terrascale.tech/<slug>`. A regional issuer
+(`https://<region>.auth.terrascale.tech`) is accepted only when
+`TSAuthBaseURL` is the Atlas proxy `https://auth.terrascale.tech`: the OIDC
+and resource clients then call the issuer's region directly, or the proxy with
+`TSAuthUseReverseProxy`. Any other issuer must be the base origin itself.
+Accepted OIDC source
 checks do not qualify an actual hosted-provider journey.
 
 Schema and SQL builders construct and validate statements locally and do not
@@ -187,8 +199,74 @@ execute SQL over HTTP. The explicit pgx-backed PostgreSQL client uses separate
 listener configuration, credentials, and CA trust. Actual PostgreSQL execution
 requires its producer protocol and an admitted signed listener; source and
 package checks do not qualify an actual admitted PostgreSQL runtime.
-Retained product methods do not establish management, provisioning, or restore
-runtime qualification.
+
+## Atlas publishing (`terrascale.tech/sdk/atlas`)
+
+`atlas.Publisher` posts signed documents to ts-atlas (`POST /v1/publish`,
+ts-atlas `docs/discovery-v1.md`): the whole topology of regions and services,
+and project placements. The key is the P-256 key whose public JWK is in
+Atlas' `PUBLISH_KEYS`; each publish is signed with ES256 over
+`atlas-publish-v1\n<timestamp>\n<body>`. Atlas keeps the newest `Updated`,
+so a retry (for example after `502 store_unavailable`) never rolls a document
+back.
+
+```go
+p := atlas.Publisher{BaseURL: "https://atlas.terrascale.tech", Key: publishKey}
+report, err := p.Publish(ctx, atlas.Document{Topology: &topology}) // report.Topology: updated, stale or skipped
+var atlasErr *atlas.Error // errors.As: Status, Code (invalid_signature, invalid_topology, …), Message, Fix
+```
+
+## ts-auth tokens (`terrascale.tech/sdk/tsauth`)
+
+ts-auth's platform contract (TS-598) issues every token TerraBase accepts.
+`tsauth` turns credentials into short-lived tokens:
+
+- `NewAPIKeySource` exchanges an API key (`tsk_…`, an OAuth client
+  credential) at `{issuer}/oauth/token` for an organization or project token
+  (`Project`, optional `Scopes`).
+- `NewExchangeSource` exchanges a signed-in user's token (RFC 8693) for an
+  organization or project token, as ts-dashboard (confidential, `ClientSecret`)
+  or ts-cli (public) does.
+
+Both return a `*tsauth.TokenSource`: it caches the token until 60 seconds
+before it expires, concurrent callers share one request, failures are not
+cached, and `Invalidate(token)` drops a token a resource server refused. It
+satisfies `v1.TokenSource`. Errors from the token endpoint are
+`*tsauth.Error{Status, Code, Description, RetryAfter}`. The issuer defaults to
+`https://gru.auth.terrascale.tech/terrascale`.
+
+```go
+tokens, err := tsauth.NewAPIKeySource(tsauth.APIKeyConfig{Key: apiKey, Project: projectID})
+token, err := tokens.Token(ctx) // or pass tokens as a client's TokenSource
+```
+
+### ts-auth management
+
+`tsauth.New(Config{Issuer})` calls the platform management API of the
+tenant (`{origin}/v1/terrascale/…`) as a signed-in user, `WithToken(token)`:
+organizations (`CreateOrganization`, `Organizations`, `Organization`,
+`RenameOrganization`, `DeleteOrganization`), members (`Members`,
+`SetMemberRole`, `RemoveMember`, `Leave`), invitations to the organization or
+one project (`CreateInvitation`, `Invitations`, `RevokeInvitation`,
+`LookupInvitation`, `AcceptInvitation`, `DeclineInvitation`), ownership
+transfers, projects and project members, organization and project API keys
+(`CreateAPIKey`, `APIKeys`, `APIKey`, `RotateAPIKey`, `RevokeAPIKey`; an empty
+project means an organization key) and `AuditEvents`. Errors are
+`*tsauth.APIError`, and each code is an `errors.Is` value such as
+`tsauth.ErrNotFound` (also an organization the user cannot reach),
+`ErrForbiddenRole` or `ErrLastOwner`.
+
+```go
+c, err := tsauth.New(tsauth.Config{})
+u := c.WithToken(signInToken)
+org, err := u.CreateOrganization(ctx, "Acme")
+project, err := u.CreateProject(ctx, org.ID, "Production")
+key, err := u.CreateAPIKey(ctx, org.ID, project.ID, tsauth.APIKeyRequest{Name: "ci", Scopes: []string{tsauth.ScopeDocumentsWrite}})
+tokens, err := tsauth.NewAPIKeySource(tsauth.APIKeyConfig{Key: key.Key}) // key.Key is shown once
+```
+
+ts-auth does not serve this contract yet. Its tests check every operation
+against the pinned contract, `tsauth/testdata/platform-api.openapi.json`.
 
 ## Checks
 
@@ -203,8 +281,7 @@ go test -race ./...
 
 The module requires Go 1.25 and has no CGO dependency. CI runs the pinned
 vulnerability scanner alongside formatting, vet, build and race tests,
-including the v1 integration tests against the pinned TerraBase. BLAKE3
-remains a dependency of the retained product artifact verification.
+including the v1 integration tests against the pinned TerraBase.
 
 ## Resource OAuth
 
@@ -215,7 +292,7 @@ they do not substitute for either OAuth credential role.
 
 ```go
 origin, err := instance.NewResourceClient(sdk.TSAuthResourceClientConfig{
-    Issuer: "https://auth.terrascale.tech/example",
+    Issuer: "https://gru.auth.terrascale.tech/example",
     ResourceAudience: "https://api.example.test/management",
     Authentication: sdk.TSAuthOAuthClientAuthentication{
         ClientID: originClientID, ClientSecret: originSecret,
@@ -226,7 +303,7 @@ if err != nil { return err }
 grant, err := origin.RequestClientCredentials(ctx, []string{"management:read"})
 if err != nil { return err }
 resource, err := instance.NewResourceIntrospector(sdk.TSAuthResourceIntrospectorConfig{
-    Issuer: "https://auth.terrascale.tech/example",
+    Issuer: "https://gru.auth.terrascale.tech/example",
     ResourceAudience: "https://api.example.test/management",
     Authentication: sdk.TSAuthResourceAuthentication{
         ClientID: introspectionClientID, Secret: introspectionSecret,

@@ -25,6 +25,29 @@ func ImportOrganization(ctx context.Context, store core.Store, m *v1.ManagementU
 	if err != nil {
 		return core.Organization{}, err
 	}
+	return mirror(ctx, store, m, remote, ownerEmail)
+}
+
+// MirrorOrganizations mirrors every TerraBase organization the user of m
+// belongs to into the account of email, as ImportOrganization does. A
+// platform admin's sign-in runs it, so every service's database in
+// TerraBase (ts-auth, ts-dashboard, ts-router, ts-status, …) appears in the
+// dashboard as soon as TerraBase holds it.
+func MirrorOrganizations(ctx context.Context, store core.Store, m *v1.ManagementUser, email string) error {
+	orgs, err := all(func(o v1.PageOptions) (*v1.Page[v1.Organization], error) { return m.Organizations(ctx, o) })
+	if err != nil {
+		return fmt.Errorf("list organizations: %w", err)
+	}
+	var errs []error
+	for _, org := range orgs {
+		if _, err := mirror(ctx, store, m, org, email); err != nil {
+			errs = append(errs, fmt.Errorf("mirror %s: %w", org.ID, err))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+func mirror(ctx context.Context, store core.Store, m *v1.ManagementUser, remote v1.Organization, ownerEmail string) (core.Organization, error) {
 	projects, err := all(func(o v1.PageOptions) (*v1.Page[v1.Project], error) { return m.Projects(ctx, remote.ID, o) })
 	if err != nil {
 		return core.Organization{}, fmt.Errorf("list projects: %w", err)

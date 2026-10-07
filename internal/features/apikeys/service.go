@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"terrascale.tech/dashboard/internal/core"
-	sdk "terrascale.tech/sdk"
 )
 
 const (
@@ -32,7 +31,7 @@ func (e issuerError) Unwrap() error { return e.err }
 
 // credential is a project API key or M2M client without its secret.
 type credential struct {
-	sdk.ProjectAPIKey
+	ProjectAPIKey
 	Kind string `json:"kind" jsonschema:"api-key for a project API key or m2m for a machine-to-machine client."`
 }
 
@@ -86,24 +85,24 @@ func (s Service) List(ctx context.Context, p core.Principal, filter credentialFi
 }
 
 // Create issues a credential of kind and returns its one-time secret.
-func (s Service) Create(ctx context.Context, p core.Principal, kind string, input sdk.CreateProjectAPIKeyRequest) (sdk.ProjectAPIKeySecret, error) {
+func (s Service) Create(ctx context.Context, p core.Principal, kind string, input CreateProjectAPIKeyRequest) (ProjectAPIKeySecret, error) {
 	a, project, err := s.selected(ctx, p)
 	if err != nil {
-		return sdk.ProjectAPIKeySecret{}, err
+		return ProjectAPIKeySecret{}, err
 	}
 	if err := core.Can(ctx, s.deps.Store, p, core.Organization.CanManage); err != nil {
-		return sdk.ProjectAPIKeySecret{}, err
+		return ProjectAPIKeySecret{}, err
 	}
 	if err := validateInput(project, input); err != nil {
-		return sdk.ProjectAPIKeySecret{}, err
+		return ProjectAPIKeySecret{}, err
 	}
 	if !s.deps.LocalResources() {
 		if s.issuer == nil || kind == kindM2M {
-			return sdk.ProjectAPIKeySecret{}, errLiveCredentials
+			return ProjectAPIKeySecret{}, errLiveCredentials
 		}
 		issued, err := s.issuer.Create(ctx, p, input)
 		if err != nil {
-			return sdk.ProjectAPIKeySecret{}, issuerError{action: "credential issuance", err: err}
+			return ProjectAPIKeySecret{}, issuerError{action: "credential issuance", err: err}
 		}
 		return *issued, nil
 	}
@@ -128,26 +127,26 @@ func (s Service) Create(ctx context.Context, p core.Principal, kind string, inpu
 		return nil
 	})
 	if err != nil {
-		return sdk.ProjectAPIKeySecret{}, err
+		return ProjectAPIKeySecret{}, err
 	}
-	return sdk.ProjectAPIKeySecret{APIKey: publicKey(key, a.User.Email), Secret: secret}, nil
+	return ProjectAPIKeySecret{APIKey: publicKey(key, a.User.Email), Secret: secret}, nil
 }
 
 // Rotate replaces a live credential's secret and returns the new one. A
 // non-empty kind restricts which credential kind may be rotated.
-func (s Service) Rotate(ctx context.Context, p core.Principal, keyID, kind string) (sdk.ProjectAPIKeySecret, error) {
+func (s Service) Rotate(ctx context.Context, p core.Principal, keyID, kind string) (ProjectAPIKeySecret, error) {
 	a, existing, err := s.existing(ctx, p, keyID, kind)
 	if err != nil {
-		return sdk.ProjectAPIKeySecret{}, err
+		return ProjectAPIKeySecret{}, err
 	}
 	if !s.deps.LocalResources() {
 		// The producer issuer only manages project API keys.
 		if s.issuer == nil || existing.Kind == kindM2M {
-			return sdk.ProjectAPIKeySecret{}, errLiveCredentials
+			return ProjectAPIKeySecret{}, errLiveCredentials
 		}
 		issued, err := s.issuer.Rotate(ctx, p, keyID)
 		if err != nil {
-			return sdk.ProjectAPIKeySecret{}, issuerError{action: "credential rotation", err: err}
+			return ProjectAPIKeySecret{}, issuerError{action: "credential rotation", err: err}
 		}
 		return *issued, nil
 	}
@@ -171,25 +170,25 @@ func (s Service) Rotate(ctx context.Context, p core.Principal, keyID, kind strin
 		return nil
 	})
 	if err != nil {
-		return sdk.ProjectAPIKeySecret{}, err
+		return ProjectAPIKeySecret{}, err
 	}
-	return sdk.ProjectAPIKeySecret{APIKey: publicKey(key, a.User.Email), Secret: secret}, nil
+	return ProjectAPIKeySecret{APIKey: publicKey(key, a.User.Email), Secret: secret}, nil
 }
 
 // Revoke permanently disables a credential. A non-empty kind restricts which
 // credential kind may be revoked.
-func (s Service) Revoke(ctx context.Context, p core.Principal, keyID, kind string) (sdk.ProjectAPIKeyRevocation, error) {
+func (s Service) Revoke(ctx context.Context, p core.Principal, keyID, kind string) (ProjectAPIKeyRevocation, error) {
 	_, existing, err := s.existing(ctx, p, keyID, kind)
 	if err != nil {
-		return sdk.ProjectAPIKeyRevocation{}, err
+		return ProjectAPIKeyRevocation{}, err
 	}
 	if !s.deps.LocalResources() {
 		if s.issuer == nil || existing.Kind == kindM2M {
-			return sdk.ProjectAPIKeyRevocation{}, errLiveCredentials
+			return ProjectAPIKeyRevocation{}, errLiveCredentials
 		}
 		result, err := s.issuer.Revoke(ctx, p, keyID)
 		if err != nil {
-			return sdk.ProjectAPIKeyRevocation{}, issuerError{action: "credential revocation", err: err}
+			return ProjectAPIKeyRevocation{}, issuerError{action: "credential revocation", err: err}
 		}
 		return *result, nil
 	}
@@ -203,9 +202,9 @@ func (s Service) Revoke(ctx context.Context, p core.Principal, keyID, kind strin
 		return nil
 	})
 	if err != nil {
-		return sdk.ProjectAPIKeyRevocation{}, err
+		return ProjectAPIKeyRevocation{}, err
 	}
-	return sdk.ProjectAPIKeyRevocation{KeyID: keyID, Revoked: true}, nil
+	return ProjectAPIKeyRevocation{KeyID: keyID, Revoked: true}, nil
 }
 
 // existing checks that the principal may manage credentials and returns the
@@ -250,7 +249,7 @@ func (s Service) update(ctx context.Context, p core.Principal, mutate func(*core
 // the project.
 var errUnknownDatabase = fmt.Errorf("%w: database", core.ErrNotFound)
 
-func validateInput(project core.Project, input sdk.CreateProjectAPIKeyRequest) error {
+func validateInput(project core.Project, input CreateProjectAPIKeyRequest) error {
 	if strings.TrimSpace(input.Name) == "" || len(input.Name) > 128 {
 		return core.Invalid("credential names use 1-128 characters")
 	}
@@ -275,8 +274,8 @@ func hash(secret string) string {
 	return hex.EncodeToString(digest[:])
 }
 
-func publicKey(key core.APIKey, createdBy string) sdk.ProjectAPIKey {
-	return sdk.ProjectAPIKey{
+func publicKey(key core.APIKey, createdBy string) ProjectAPIKey {
+	return ProjectAPIKey{
 		ID: key.ID, ProjectID: key.ProjectID, Name: key.Name, Prefix: key.Prefix, LastFour: key.LastFour,
 		Scopes: slices.Clone(key.Scopes), DatabaseID: key.DatabaseID, CreatedBy: createdBy,
 		CreatedAt: key.CreatedAt.Format(time.RFC3339), ExpiresAt: formatTime(key.ExpiresAt), RevokedAt: formatTime(key.RevokedAt),

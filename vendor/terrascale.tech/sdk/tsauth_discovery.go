@@ -23,6 +23,24 @@ type tsAuthEndpointDiscovery struct {
 	expires time.Time
 }
 
+// issuerBase returns the origin that serves issuer for this instance. ts-auth
+// issues from its regional host, https://<region>.auth.terrascale.tech, which
+// is admitted only behind the public Atlas proxy base. Atlas resolution could
+// rank another region, which is another issuer, so the issuer's region is
+// called directly; TSAuthUseReverseProxy keeps the proxy. Any other issuer
+// must be the base origin itself.
+func (i *TSAuthInstanceClient) issuerBase(issuer *url.URL) (string, bool) {
+	proxy := i.c.cfg.TSAuthUseReverseProxy
+	region, regional := strings.CutSuffix(issuer.Host, ".auth.terrascale.tech")
+	if i.base == publicAuthBaseURL && issuer.Scheme == "https" && regional && region == strings.ToLower(region) && IsRegionCode(region) {
+		if proxy {
+			return i.base, true
+		}
+		return "https://" + issuer.Host, true
+	}
+	return i.base, issuer.Scheme+"://"+issuer.Host == i.base && !(issuer.Hostname() == "auth.terrascale.tech" && proxy)
+}
+
 // Auth requests never follow redirects, so a regional response cannot move
 // a management credential or discovery request to another origin.
 func tsAuthNoRedirectClient(client *http.Client) *http.Client {

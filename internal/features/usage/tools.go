@@ -29,6 +29,10 @@ type spendingControlsInput struct {
 func mountTools(tools *core.Tools, service Service) {
 	core.AddTool(tools, core.ToolSpec{
 		Name: "get_usage", Title: "Get usage", ReadOnly: true,
+		// The report lists every project of the organization, so it is an
+		// organization route: a project token must not see its siblings.
+		Route:       "GET /v1/organizations/{organizationId}/usage",
+		RouteScope:  "usage:read",
 		Description: "Report an organization's plan allowances and spending controls with the selected project's per-database storage, reads, and writes. TerraBase meters reads and writes for browser sessions signed in through TerraScale; tool calls report storage only.",
 	}, func(ctx context.Context, p core.Principal, in usageInput) (usageReport, error) {
 		// MCP access tokens carry no ts-auth token to read TerraBase with.
@@ -36,6 +40,8 @@ func mountTools(tools *core.Tools, service Service) {
 	})
 	core.AddTool(tools, core.ToolSpec{
 		Name: "set_spending_controls", Title: "Set spending controls", Idempotent: true,
+		Route:       "PUT /v1/organizations/{organizationId}/spending-controls",
+		RouteScope:  "billing:write",
 		Description: "Set monthly spend caps for the organization, its projects, and its databases, and whether usage above the plan allowance is billed. Requires an owner or admin role.",
 	}, func(ctx context.Context, p core.Principal, in spendingControlsInput) (usageReport, error) {
 		controls := spendingControls{

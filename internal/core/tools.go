@@ -3,9 +3,11 @@ package core
 import (
 	"cmp"
 	"context"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/auth"
@@ -64,6 +66,23 @@ type ToolSpec struct {
 	// Enums restricts top-level string input properties, by JSON name, to
 	// the listed values.
 	Enums map[string][]string
+	// Route also serves the tool on the platform REST API, as a ServeMux
+	// pattern such as "GET /v1/organizations/{organizationId}/billing".
+	// Its wildcards name input properties.
+	Route string
+	// RouteScope is the ts-auth scope, such as billing:read, a token needs
+	// for Route.
+	RouteScope string
+}
+
+// Route is a tool the platform REST API serves.
+type Route struct {
+	Spec          ToolSpec
+	Input, Output *jsonschema.Schema
+	// Call validates args against Input, narrows p to the scope they name,
+	// and runs the tool. It returns the access and ErrInvalid errors
+	// unphrased, for the API to map to statuses.
+	Call func(ctx context.Context, p Principal, args map[string]any) (any, error)
 }
 
 // ToolHandler runs one MCP tool call as the authenticated principal, already
@@ -81,6 +100,7 @@ type registeredTool struct {
 	name     string
 	admin    bool
 	register func(*mcp.Server)
+	route    *Route
 }
 
 func NewTools(store Store) *Tools {
@@ -103,7 +123,11 @@ func AddTool[In, Out any](t *Tools, spec ToolSpec, handler ToolHandler[In, Out])
 	if len(spec.Enums) > 0 {
 		tool.InputSchema = enumSchema[In](spec)
 	}
-	t.tools = append(t.tools, registeredTool{name: spec.Name, admin: spec.Admin, register: func(server *mcp.Server) {
+	var route *Route
+	if spec.Route != "" {
+		route = newRoute(t, spec, handler)
+	}
+	t.tools = append(t.tools, registeredTool{name: spec.Name, admin: spec.Admin, route: route, register: func(server *mcp.Server) {
 		mcp.AddTool(server, tool, func(ctx context.Context, req *mcp.CallToolRequest, input In) (*mcp.CallToolResult, Out, error) {
 			var zero Out
 			p, err := t.principal(ctx, req, input)
@@ -117,6 +141,67 @@ func AddTool[In, Out any](t *Tools, spec ToolSpec, handler ToolHandler[In, Out])
 			return nil, out, nil
 		})
 	}})
+}
+
+// newRoute serves handler on the platform REST API with the schemas the MCP
+// tool has, validating arguments as the SDK does.
+func newRoute[In, Out any](t *Tools, spec ToolSpec, handler ToolHandler[In, Out]) *Route {
+	if spec.Admin || spec.RouteScope == "" {
+		panic("tool " + spec.Name + ": a platform API route needs a scope and a tool every user has")
+	}
+	// The path names the organization the token is checked against, and
+	// Call scopes the principal to it, so a route that could not would act
+	// on the caller's dashboard selection instead.
+	segments := strings.Split(spec.Route, "/")
+	if _, ok := any(*new(In)).(scoped); !ok || !slices.Contains(segments, "{organizationId}") {
+		panic("tool " + spec.Name + ": a platform API route needs an input embedding Scope and an {organizationId} wildcard")
+	}
+	input := enumSchema[In](spec)
+	for _, segment := range segments {
+		if name, ok := strings.CutPrefix(segment, "{"); ok && input.Properties[strings.TrimSuffix(name, "}")] == nil {
+			panic("tool " + spec.Name + ": route wildcard " + segment + " names no input property")
+		}
+	}
+	output, err := jsonschema.For[Out](nil)
+	if err != nil {
+		panic(fmt.Sprintf("tool %s: output schema: %v", spec.Name, err))
+	}
+	resolved, err := input.Resolve(nil)
+	if err != nil {
+		panic(fmt.Sprintf("tool %s: input schema: %v", spec.Name, err))
+	}
+	return &Route{Spec: spec, Input: input, Output: output, Call: func(ctx context.Context, p Principal, args map[string]any) (any, error) {
+		if err := resolved.Validate(args); err != nil {
+			return nil, Invalid(err.Error())
+		}
+		encoded, err := json.Marshal(args)
+		if err != nil {
+			return nil, err
+		}
+		var in In
+		if err := json.Unmarshal(encoded, &in); err != nil {
+			return nil, Invalid(err.Error())
+		}
+		var scope Scope
+		if s, ok := any(in).(scoped); ok {
+			scope = s.toolScope()
+		}
+		if p, err = t.store.ScopedPrincipal(ctx, p, scope); err != nil {
+			return nil, err
+		}
+		return handler(ctx, p, in)
+	}}
+}
+
+// Routes returns the tools the platform REST API serves, in name order.
+func (t *Tools) Routes() []Route {
+	var routes []Route
+	for _, tool := range slices.SortedFunc(slices.Values(t.tools), func(a, b registeredTool) int { return cmp.Compare(a.name, b.name) }) {
+		if tool.route != nil {
+			routes = append(routes, *tool.route)
+		}
+	}
+	return routes
 }
 
 // enumSchema infers In's input schema and applies spec.Enums to it. The SDK

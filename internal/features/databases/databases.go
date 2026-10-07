@@ -2,14 +2,17 @@ package databases
 
 import (
 	"cmp"
+	"context"
 	"errors"
 	"net/http"
 	"net/url"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/a-h/templ"
+	"golang.org/x/sync/errgroup"
 	"terrascale.tech/dashboard/internal/core"
 	sdk "terrascale.tech/sdk"
 )
@@ -166,9 +169,42 @@ type databaseSummary struct {
 	Regions     []string
 	Collections int
 	Documents   int
+	Bytes       int64
+	// Unavailable explains system databases whose contents TerraBase did
+	// not report; they count as empty.
+	Unavailable string
 }
 
-func summarize(databases map[string]core.Database) databaseSummary {
+// contents counts a database's collections, documents and their JSON
+// bytes: TerraBase's live counts for a system database, its record's
+// otherwise.
+func contents(ctx context.Context, deps core.Deps, p core.Principal, db core.Database) (collections, documents int, bytes int64, err error) {
+	if !core.SystemDatabase(db) {
+		for _, docs := range db.Documents {
+			collections++
+			documents += len(docs)
+			for _, doc := range docs {
+				bytes += int64(len(doc))
+			}
+		}
+		return collections, documents, bytes, nil
+	}
+	stats, err := deps.SystemCollections(ctx, p, db)
+	for _, collection := range stats {
+		collections++
+		documents += int(collection.Documents)
+		bytes += collection.Bytes
+	}
+	return collections, documents, bytes, err
+}
+
+// countBudget bounds the TerraBase lookups behind one page's counts, so a
+// slow TerraBase shows them unavailable instead of holding the page.
+var countBudget = 5 * time.Second
+
+func summarize(ctx context.Context, deps core.Deps, p core.Principal, databases map[string]core.Database) databaseSummary {
+	ctx, cancel := context.WithTimeout(ctx, countBudget)
+	defer cancel()
 	var summary databaseSummary
 	for _, db := range databases {
 		summary.Total++
@@ -185,18 +221,30 @@ func summarize(databases map[string]core.Database) databaseSummary {
 				summary.Regions = append(summary.Regions, region)
 			}
 		}
-		summary.Collections += len(db.Documents)
-		for _, documents := range db.Documents {
-			summary.Documents += len(documents)
-		}
 	}
+	// System databases are counted by TerraBase, a few at a time under one
+	// deadline; the failure named is the first database's by name.
+	var mu sync.Mutex
+	var group errgroup.Group
+	group.SetLimit(4)
+	failed := ""
+	for _, db := range databases {
+		group.Go(func() error {
+			collections, documents, bytes, err := contents(ctx, deps, p, db)
+			mu.Lock()
+			defer mu.Unlock()
+			if err != nil && (failed == "" || db.Name < failed) {
+				failed, summary.Unavailable = db.Name, unavailable(err)
+			}
+			summary.Collections += collections
+			summary.Documents += documents
+			summary.Bytes += bytes
+			return nil
+		})
+	}
+	_ = group.Wait()
 	slices.Sort(summary.Regions)
 	return summary
-}
-
-// provisioning reports whether a database is still being created.
-func provisioning(status string) bool {
-	return status == "provisioning" || status == "accepted" || status == "pending"
 }
 
 // statusTone colors a database status: ready, in progress, failed, or other.
@@ -226,7 +274,7 @@ func renderList(w http.ResponseWriter, r *http.Request, deps core.Deps) {
 	query := r.URL.Query()
 	data := pageData{
 		ProjectID:  project.ID,
-		Summary:    summarize(project.Databases),
+		Summary:    summarize(r.Context(), deps, p, project.Databases),
 		Regions:    []string{cmp.Or(project.Region, "GRU")},
 		Error:      formError(query.Get("error")),
 		Search:     strings.TrimSpace(query.Get("q")),
@@ -292,8 +340,6 @@ func failure(err error, invalid string) (int, string) {
 		return http.StatusBadRequest, invalid
 	case errors.Is(err, errNotReady):
 		return http.StatusConflict, ErrNotReady
-	case errors.Is(err, errProvisioning):
-		return http.StatusConflict, ErrProvisioning
 	case errors.Is(err, core.ErrDatabaseLimit):
 		return http.StatusConflict, ErrPlanLimit
 	case errors.Is(err, core.ErrConflict):

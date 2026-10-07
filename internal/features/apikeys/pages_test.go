@@ -12,7 +12,6 @@ import (
 
 	"terrascale.tech/dashboard/internal/core"
 	"terrascale.tech/dashboard/internal/core/memstore"
-	sdk "terrascale.tech/sdk"
 )
 
 func TestDatabaseFilterKeepsFullSelectedName(t *testing.T) {
@@ -40,7 +39,7 @@ func TestRotateReturnsTheRotatedKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	service, owner := Service{deps: core.Deps{Store: store, Demo: true}}, account.Principal()
-	created, err := service.Create(t.Context(), owner, kindAPIKey, sdk.CreateProjectAPIKeyRequest{Name: "ci-deploy", Scopes: []string{"database:read"}})
+	created, err := service.Create(t.Context(), owner, kindAPIKey, CreateProjectAPIKeyRequest{Name: "ci-deploy", Scopes: []string{"database:read"}})
 	if err != nil {
 		t.Fatal(err)
 	}

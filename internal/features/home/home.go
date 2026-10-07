@@ -45,7 +45,7 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 		if !ok {
 			return
 		}
-		summary, err := service.Overview(r.Context(), p, deps.UserToken(r), r.URL.Query().Get("range"))
+		summary, err := service.Overview(r.Context(), p, core.UserToken(r.Context()), r.URL.Query().Get("range"))
 		switch {
 		case errors.Is(err, errFirstProjectNeeded):
 			http.Redirect(w, r, "/organization?newOrganization=project", http.StatusSeeOther)

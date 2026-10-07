@@ -32,9 +32,12 @@ templ detailContent(page core.Page, d detailData) {
 					</div>
 				}
 			default:
+				if d.Info.Unavailable != "" {
+					@ui.Alert("warning", "Counts unavailable", d.Info.Unavailable)
+				}
 				@ui.Stats("Database summary") {
-					@ui.ToneStat("violet", "Collections", strconv.Itoa(d.Info.Collections), "With stored documents")
-					@ui.ToneStat("blue", "Documents", strconv.Itoa(d.Info.Documents), "Across all collections")
+					@ui.ToneStat("violet", "Collections", strconv.Itoa(d.Info.Collections), "In this database")
+					@ui.ToneStat("blue", "Documents", strconv.Itoa(d.Info.Documents), ui.FormatBytes(d.Info.Bytes)+" across all collections")
 					@ui.ToneStat("teal", "Restore points", strconv.Itoa(len(d.Info.Backups)), backupStatusDescription(d.Info))
 					@ui.ToneStat("slate", "Created", d.Database.CreatedAt.UTC().Format("Jan 2"), d.Database.CreatedAt.UTC().Format("2006 · 15:04 UTC"))
 				}
@@ -98,7 +101,7 @@ templ detailBackups(page core.Page, d detailData) {
 								<tr>
 									<td class="ts-mono">{ backup.CreatedAt.UTC().Format("2006-01-02 15:04 UTC") }</td>
 									<td>@ui.Badge(backupTone(backup.Status), backup.Status)</td>
-									<td class="ts-num">{ byteSize(backup.SizeBytes) }</td>
+									<td class="ts-num">{ ui.FormatBytes(backup.SizeBytes) }</td>
 									<td>
 										if d.Info.CanRestoreBackups || d.Info.CanOverwriteBackups {
 											@ui.DialogTrigger(ui.DialogTriggerProps{Dialog: "restore-" + backup.ID, Label: "Restore", Icon: icons.RotateCcw(15), Small: true})
@@ -173,7 +176,7 @@ templ restoreDialog(page core.Page, d detailData, backup core.Backup) {
 		if restoreErrorInDialog(d) && d.Refill.RestoreBackupID == backup.ID {
 			@ui.Alert("danger", "", d.Error)
 		}
-		@facts([]fact{{Label: "Database", Value: d.Database.Name}, {Label: "Backup taken", Value: taken}, {Label: "Size", Value: byteSize(backup.SizeBytes)}})
+		@facts([]fact{{Label: "Database", Value: d.Database.Name}, {Label: "Backup taken", Value: taken}, {Label: "Size", Value: ui.FormatBytes(backup.SizeBytes)}})
 		if d.Info.CanRestoreBackups {
 			<form method="post" action="/api/v1/dashboard/backups/restore" class="ts-form" aria-label="Restore into a new database">
 				<input type="hidden" name="_csrf" value={ page.CSRFToken }/>

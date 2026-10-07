@@ -3,7 +3,6 @@ package core
 import (
 	"context"
 	"errors"
-	"net/http"
 	"time"
 )
 
@@ -74,17 +73,13 @@ type UsagePoint struct {
 	Writes int64     `json:"writes"`
 }
 
-// UserTokens is a Sessions that keeps the signed-in user's ts-auth access
-// token, which TerraBase's Management API accepts.
-type UserTokens interface {
-	UserToken(*http.Request) string
-}
-
-// UserToken is the request's ts-auth access token, or empty when the session
-// has none, as with password and MCP sign-ins.
-func (d Deps) UserToken(r *http.Request) string {
-	if tokens, ok := d.Sessions.(UserTokens); ok {
-		return tokens.UserToken(r)
+// UserToken is the request's ts-auth access token (WithUserToken), or empty
+// without one, as for MCP and API callers.
+func UserToken(ctx context.Context) string {
+	token, _ := ctx.Value(userTokenKey{}).(func() (string, bool))
+	if token == nil {
+		return ""
 	}
-	return ""
+	access, _ := token()
+	return access
 }

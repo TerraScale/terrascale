@@ -3,14 +3,14 @@
 // It talks to the C# TerraBase server: the Documents API v1 (databases,
 // collections, documents, queries and transactions under
 // /v1/projects/{project}/databases/{database}) with a tb_ API key, and the
-// Management API (/v1/management) with the dashboard service credential.
+// Management API (/v1/management) as a ts-auth user.
 //
 // Document values are never decoded through float64: documents are returned
 // as json.RawMessage, and Decode helpers use json.Decoder.UseNumber, so
 // numbers keep their exact decimal text as json.Number.
 //
 // A data-plane client is created with New and an API key; the Management API
-// uses NewManagement with the dashboard credential:
+// uses NewManagement and a user's ts-auth access token:
 //
 //	c, err := v1.New(v1.Config{BaseURL: "https://gru.terrabase.example", Token: apiKey})
 //	users := c.Database(projectID, "main").Collection("users")
@@ -58,8 +58,8 @@ type Config struct {
 	// BaseURL; BaseURL uses a StaticResolver. Resolver must be safe for
 	// concurrent use. Resolved URLs follow the same rules as BaseURL.
 	Resolver Resolver
-	// Token is the tb_ API key for Client, or the dashboard service
-	// credential for Management.
+	// Token is the tb_ API key for Client. For Management it is empty, or
+	// the management service credential (admin listener only, see As).
 	Token string
 	// HTTPClient is used for every request. Nil uses a client that requires
 	// TLS 1.3. The client is copied and its redirect policy replaced, so the
@@ -182,6 +182,8 @@ type request struct {
 	body        []byte
 	contentType string
 	header      http.Header
+	// token replaces the client's bearer token for this request.
+	token string
 	// replaySafe permits retries after 429 or a known transient rejection:
 	// reads, read-only POSTs and If-Match writes.
 	replaySafe bool
@@ -324,7 +326,7 @@ func (c *Client) send(ctx context.Context, req request, target string) (*respons
 	for k, v := range req.header {
 		hr.Header[k] = v
 	}
-	hr.Header.Set("Authorization", "Bearer "+c.token)
+	hr.Header.Set("Authorization", "Bearer "+cmp.Or(req.token, c.token))
 	hr.Header.Set("Accept", "application/json")
 	if req.body != nil {
 		hr.Header.Set("Content-Type", cmp.Or(req.contentType, "application/json"))

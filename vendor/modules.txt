@@ -124,9 +124,6 @@ github.com/klauspost/compress/internal/le
 github.com/klauspost/compress/internal/snapref
 github.com/klauspost/compress/zstd
 github.com/klauspost/compress/zstd/internal/xxhash
-# github.com/klauspost/cpuid/v2 v2.0.12
-## explicit; go 1.15
-github.com/klauspost/cpuid/v2
 # github.com/mattn/go-colorable v0.1.13
 ## explicit; go 1.15
 github.com/mattn/go-colorable
@@ -182,18 +179,6 @@ github.com/valyala/bytebufferpool
 # github.com/yosida95/uritemplate/v3 v3.0.2
 ## explicit; go 1.14
 github.com/yosida95/uritemplate/v3
-# github.com/zeebo/blake3 v0.2.4
-## explicit; go 1.18
-github.com/zeebo/blake3
-github.com/zeebo/blake3/internal/alg
-github.com/zeebo/blake3/internal/alg/compress
-github.com/zeebo/blake3/internal/alg/compress/compress_pure
-github.com/zeebo/blake3/internal/alg/compress/compress_sse41
-github.com/zeebo/blake3/internal/alg/hash
-github.com/zeebo/blake3/internal/alg/hash/hash_avx2
-github.com/zeebo/blake3/internal/alg/hash/hash_pure
-github.com/zeebo/blake3/internal/consts
-github.com/zeebo/blake3/internal/utils
 # golang.org/x/mod v0.37.0
 ## explicit; go 1.25.0
 golang.org/x/mod/internal/lazyregexp
@@ -261,9 +246,9 @@ golang.org/x/tools/internal/stdlib
 golang.org/x/tools/internal/typeparams
 golang.org/x/tools/internal/typesinternal
 golang.org/x/tools/internal/versions
-# terrascale.tech/sdk v0.0.0-20261005130518-b911817c6e63 => git.terrascale.tech/TerraScale/ts-go v0.0.0-20261005130518-b911817c6e63
+# terrascale.tech/sdk v0.0.0-20261005130518-b911817c6e63 => git.terrascale.tech/TerraScale/ts-go v0.0.0-20261006232458-fed35ea95369
 ## explicit; go 1.25.0
 terrascale.tech/sdk
 terrascale.tech/sdk/terrabasetest
 terrascale.tech/sdk/v1
-# terrascale.tech/sdk => git.terrascale.tech/TerraScale/ts-go v0.0.0-20261005130518-b911817c6e63
+# terrascale.tech/sdk => git.terrascale.tech/TerraScale/ts-go v0.0.0-20261006232458-fed35ea95369

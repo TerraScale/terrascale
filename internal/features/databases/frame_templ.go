@@ -153,15 +153,25 @@ var frameTabList = []frameTab{
 }
 
 func frameTabs(p FrameProps) []ui.Tab {
-	tabs := make([]ui.Tab, len(frameTabList))
-	for i, tab := range frameTabList {
+	tabs := make([]ui.Tab, 0, len(frameTabList))
+	for _, tab := range frameTabList {
+		if !Shows(p.Database, tab.Key) {
+			continue
+		}
 		var query url.Values
 		if tab.Scoped && p.Collection != "" {
 			query = url.Values{"collection": {p.Collection}}
 		}
-		tabs[i] = ui.Tab{Label: tab.Label, URL: TabPath(p.Database.ID, tab.Key, query), Active: p.Tab == tab.Key}
+		tabs = append(tabs, ui.Tab{Label: tab.Label, URL: TabPath(p.Database.ID, tab.Key, query), Active: p.Tab == tab.Key})
 	}
 	return tabs
+}
+
+// Shows reports whether a database has the tab. A system database shows
+// what TerraBase reports, its overview, documents and SQL; its schema,
+// indexes, backups and branches are not the dashboard's.
+func Shows(db core.Database, tab string) bool {
+	return !core.SystemDatabase(db) || tab == "overview" || tab == "documents" || tab == "sql"
 }
 
 // TabPath is the URL of one database detail tab; the overview is the

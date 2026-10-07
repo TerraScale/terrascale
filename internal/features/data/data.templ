@@ -90,6 +90,9 @@ const collectionFilter = "$collectionSearch === '' || el.dataset.collection.toLo
 
 templ sectionPage(page core.Page, frame databases.FrameProps, d pageData) {
 	@databases.Frame(frame) {
+		if d.System {
+			@ui.Alert("info", "System database", "TerraScale's own data, read live from TerraBase with your ts-auth sign-in. Secrets are masked and nothing can be changed here.")
+		}
 		if d.Error != "" {
 			@ui.Alert("danger", "", d.Error)
 		}
@@ -416,7 +419,9 @@ templ documentMenu(page core.Page, d pageData, id string) {
 		} else {
 			@ui.MenuItem(ui.MenuItemProps{Href: path(d, "documents", "edit", id), Icon: icons.Eye(15), Label: "View"})
 		}
-		@ui.MenuItem(ui.MenuItemProps{Href: path(d, "history", "id", id), Icon: icons.History(15), Label: "History"})
+		if !d.System {
+			@ui.MenuItem(ui.MenuItemProps{Href: path(d, "history", "id", id), Icon: icons.History(15), Label: "History"})
+		}
 		if d.CanWrite {
 			@ui.MenuSeparator()
 			@ui.MenuItem(ui.MenuItemProps{Href: path(d, "documents", "delete", id), Icon: icons.Trash2(15), Label: "Delete", Danger: true})
@@ -798,7 +803,10 @@ func newDocument(d pageData) string {
 
 func resultSummary(r sqlResult) string {
 	summary := plural(len(r.Rows), "row", "rows")
-	if r.Truncated() {
+	switch {
+	case r.More:
+		summary = fmt.Sprintf("First %d rows; more matched, add a LIMIT up to 1000 to see more", len(r.Rows))
+	case r.Truncated():
 		summary = fmt.Sprintf("First %d of %d matched rows; add a LIMIT to narrow the query", len(r.Rows), r.Matched)
 	}
 	if r.HiddenColumns > 0 {

@@ -7,10 +7,13 @@ import (
 	"math"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
+	"golang.org/x/sync/errgroup"
 	"terrascale.tech/dashboard/internal/core"
 	"terrascale.tech/dashboard/internal/features/demovisuals"
+	"terrascale.tech/sdk/v1"
 )
 
 type projectUsage struct {
@@ -21,6 +24,7 @@ type projectUsage struct {
 	SpendCapCents     int64  `json:"spendCapCents" jsonschema:"The project's own monthly spend cap in US cents; 0 means none."`
 	EffectiveCapCents int64  `json:"effectiveCapCents" jsonschema:"The smallest of the organization and project caps in US cents; 0 means no limit."`
 	LogicalBytes      int64  `json:"logicalBytes" jsonschema:"Logical storage: the bytes of the project's live documents."`
+	Unavailable       bool   `json:"unavailable,omitempty" jsonschema:"TerraBase did not report one of its system databases, so LogicalBytes is incomplete."`
 	SharePercent      int    `json:"sharePercent" jsonschema:"The project's share of the organization's logical storage."`
 	Selected          bool   `json:"selected"`
 }
@@ -32,6 +36,7 @@ type databaseUsage struct {
 	Status            string `json:"status"`
 	Documents         int64  `json:"documents"`
 	LogicalBytes      int64  `json:"logicalBytes" jsonschema:"Logical storage: the bytes of the database's live documents."`
+	Unavailable       bool   `json:"unavailable,omitempty" jsonschema:"TerraBase did not report this system database, so its counts are unknown."`
 	SharePercent      int    `json:"sharePercent" jsonschema:"The database's share of the listed databases' logical storage."`
 	Metered           bool   `json:"metered" jsonschema:"Whether TerraBase meters this database; its reads and writes are 0 otherwise."`
 	Reads             int64  `json:"reads" jsonschema:"Reads in the range."`
@@ -153,6 +158,20 @@ func (s Service) report(ctx context.Context, p core.Principal, token string, org
 	case !errors.Is(err, core.ErrNotFound):
 		return usageReport{}, err
 	}
+	// System databases (TS-611) are TerraBase's: their counts come from it.
+	live, failed := s.systemUsage(ctx, p, org)
+	documents := func(database core.Database) int64 {
+		if core.SystemDatabase(database) {
+			return live[database.ID].Documents
+		}
+		return int64(documentCount(database))
+	}
+	stored := func(database core.Database) int64 {
+		if core.SystemDatabase(database) {
+			return live[database.ID].StorageBytes
+		}
+		return storedDocumentBytes(database)
+	}
 	// Storage starts from the documents the dashboard holds (TS-472 phase
 	// 1), the same bytes TerraBase meters as logical storage; metered
 	// figures replace them below where TerraBase stores the resource.
@@ -165,7 +184,10 @@ func (s Service) report(ctx context.Context, p core.Principal, token string, org
 			row.Region = "Not configured"
 		}
 		for _, database := range item.Databases {
-			row.LogicalBytes += storedDocumentBytes(database)
+			row.LogicalBytes += stored(database)
+			if failed[database.ID] != nil {
+				row.Unavailable = true
+			}
 		}
 		report.Projects = append(report.Projects, row)
 	}
@@ -179,7 +201,7 @@ func (s Service) report(ctx context.Context, p core.Principal, token string, org
 		}
 		report.Databases = append(report.Databases, databaseUsage{
 			ID: database.ID, Name: database.Name, Region: database.Region, Status: database.Status,
-			Documents: int64(documentCount(database)), LogicalBytes: storedDocumentBytes(database), SpendCapCents: max(database.SpendCapCents, 0),
+			Documents: documents(database), LogicalBytes: stored(database), Unavailable: failed[database.ID] != nil, SpendCapCents: max(database.SpendCapCents, 0),
 			EffectiveCapCents: effectiveCapCents(org.Billing.SpendCapCents, project.SpendCapCents, database.SpendCapCents),
 		})
 	}
@@ -220,7 +242,85 @@ func (s Service) report(ctx context.Context, p core.Principal, token string, org
 	if !metered.monthMeasured && metered.monthError == "" {
 		report.PlanUsageNote = "This month's reads and writes aren't metered here, so their utilization is unavailable."
 	}
+	if !report.Totals.Available {
+		systemTotals(project, databaseFilter, live, failed, &report)
+	}
 	return report, nil
+}
+
+// systemUsageBudget bounds every TerraBase lookup behind one usage report,
+// so a slow TerraBase marks databases unavailable instead of holding it.
+var systemUsageBudget = 5 * time.Second
+
+// systemUsage reads the usage of the organization's system databases from
+// TerraBase, keyed by database ID, a few at a time under one deadline. Each
+// database is read on its own, so one failure marks only that database
+// unavailable.
+func (s Service) systemUsage(ctx context.Context, p core.Principal, org core.Organization) (live map[string]v1.DatabaseUsage, failed map[string]error) {
+	live, failed = make(map[string]v1.DatabaseUsage), make(map[string]error)
+	var system []core.Database
+	for _, project := range org.Projects {
+		for _, database := range project.Databases {
+			if core.SystemDatabase(database) {
+				system = append(system, database)
+			}
+		}
+	}
+	if len(system) == 0 {
+		return live, failed
+	}
+	management, err := s.deps.System(ctx, p)
+	if err != nil {
+		for _, database := range system {
+			failed[database.ID] = err
+		}
+		return live, failed
+	}
+	ctx, cancel := context.WithTimeout(ctx, systemUsageBudget)
+	defer cancel()
+	var mu sync.Mutex
+	var group errgroup.Group
+	group.SetLimit(4)
+	for _, database := range system {
+		group.Go(func() error {
+			usage, err := management.DatabaseUsage(ctx, org.ID, database.ProjectID, database.ID)
+			mu.Lock()
+			defer mu.Unlock()
+			if err != nil {
+				failed[database.ID] = core.ProviderError{Action: "system database usage", Err: err}
+			} else {
+				live[database.ID] = *usage
+			}
+			return nil
+		})
+	}
+	_ = group.Wait()
+	return live, failed
+}
+
+// systemTotals fills totals the meter could not with TerraBase's lifetime
+// reads and writes of the system databases in scope, the only databases it
+// reports to a platform admin without the meter (TS-611).
+func systemTotals(project core.Project, databaseFilter string, live map[string]v1.DatabaseUsage, failed map[string]error, report *usageReport) {
+	totals := &report.Totals
+	var system bool
+	var reads, writes int64
+	for _, database := range project.Databases {
+		if databaseFilter != "" && database.ID != databaseFilter || !core.SystemDatabase(database) {
+			continue
+		}
+		system = true
+		if err := failed[database.ID]; err != nil && totals.Error == "" {
+			totals.Error = "System database usage could not be loaded. " + core.SystemUnavailable(err)
+		}
+		reads += live[database.ID].Reads
+		writes += live[database.ID].Writes
+	}
+	if !system || totals.Error != "" {
+		return
+	}
+	totals.Available, totals.Source = true, "Lifetime usage of the system databases from TerraBase."
+	totals.Reads, totals.Writes = reads, writes
 }
 
 // metered is what TerraBase answered for a report: the organization's reads

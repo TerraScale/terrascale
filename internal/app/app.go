@@ -7,6 +7,8 @@ import (
 	"net/mail"
 	"os"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/CAFxX/httpcompression"
 	"terrascale.tech/dashboard/internal/adapters/terrabase"
@@ -39,6 +41,7 @@ import (
 	"terrascale.tech/dashboard/internal/platform/datastar"
 	"terrascale.tech/dashboard/internal/platform/errortracking"
 	"terrascale.tech/dashboard/internal/platform/mcpserver"
+	"terrascale.tech/dashboard/internal/platform/platformapi"
 	"terrascale.tech/dashboard/internal/platform/render"
 	"terrascale.tech/dashboard/internal/platform/session"
 	"terrascale.tech/dashboard/internal/platform/statuspage"
@@ -81,8 +84,7 @@ func New(cfg config.Config) (*Application, error) {
 		}
 		db = client.Database(cfg.TerraBaseProjectID, cfg.TerraBaseDatabase)
 		// The meter calls the Management API on TERRABASE_URL's client
-		// listener: it alone accepts the user's ts-auth token, while the
-		// loopback admin listener import-org may use answers 401 to tokens.
+		// listener: it alone accepts the user's ts-auth token.
 		meter = terrabase.Meter{BaseURL: cfg.TerraBaseURL, Client: cfg.TerraBaseHTTPClient}
 		store = terrabase.New(db)
 		sessionStore = terrabase.NewSessions(db)
@@ -110,6 +112,21 @@ func New(cfg config.Config) (*Application, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Platform admins see every service's TerraBase database: each sign-in
+	// mirrors the TerraBase organizations they belong to, and pages read
+	// the databases through Management with their ts-auth access token.
+	var management *v1.Management
+	if cfg.TSAuth.Issuer != "" && db != nil {
+		// A stalled TerraBase must not hold a page: every Management call
+		// gets a deadline.
+		client := cfg.TerraBaseHTTPClient
+		if client == nil {
+			client = &http.Client{Timeout: 15 * time.Second}
+		}
+		if management, err = v1.NewManagement(v1.Config{BaseURL: cfg.TerraBaseURL, HTTPClient: client}); err != nil {
+			return nil, err
+		}
+	}
 	// With TS_AUTH_ISSUER set, ts-auth holds every credential.
 	var tsAuth *auth.TSAuth
 	sessionOptions := session.Options{Secure: cfg.SecureCookies, Store: sessionStore}
@@ -117,11 +134,17 @@ func New(cfg config.Config) (*Application, error) {
 		tsAuth, err = auth.NewTSAuth(auth.TSAuthConfig{
 			Issuer: cfg.TSAuth.Issuer, ClientID: cfg.TSAuth.ClientID, ClientSecret: cfg.TSAuth.ClientSecret,
 			RedirectURL: cfg.TSAuth.RedirectURL, Secure: cfg.SecureCookies,
+			AdminSignIn: func(ctx context.Context, account core.Account, accessToken string) error {
+				if management == nil {
+					return nil
+				}
+				return terrabase.MirrorOrganizations(ctx, store, management.WithToken(accessToken), account.User.Email)
+			},
 		})
 		if err != nil {
 			return nil, err
 		}
-		sessionOptions.Refresh, sessionOptions.UserToken, sessionOptions.Revoke = tsAuth.RefreshSession, auth.AccessToken, tsAuth.RevokeSession
+		sessionOptions.Refresh, sessionOptions.Revoke = tsAuth.RefreshSession, tsAuth.RevokeSession
 	}
 	sessions := session.New(store, sessionOptions)
 	guard := csrf.New(sessions, csrf.Options{Secure: cfg.SecureCookies, Secret: cfg.CSRFSecret})
@@ -137,7 +160,7 @@ func New(cfg config.Config) (*Application, error) {
 	deps := core.Deps{
 		Store: store, Sessions: sessions, CSRF: guard, Render: renderer,
 		Events: datastar.Events{}, Demo: cfg.Demo, Tools: core.NewTools(store),
-		SDK: sdkFactory, Usage: meter, DocumentsOnly: db != nil,
+		SDK: sdkFactory, Management: management, Usage: meter, DocumentsOnly: db != nil,
 		Throttle: throttle.New(throttle.Options{ClientHeader: cfg.ClientIPHeader, Store: throttleStore}),
 	}
 	mux := http.NewServeMux()
@@ -176,17 +199,36 @@ func New(cfg config.Config) (*Application, error) {
 	if err != nil {
 		return nil, err
 	}
-	// The MCP endpoint authenticates every request with a bearer access
-	// token instead of cookies, so it sits outside the CSRF guard.
+	// The MCP server and the platform API authenticate every request with a
+	// bearer token instead of cookies, so they sit outside the CSRF guard.
+	mcp := mcpserver.New(store, deps.Tools)
+	platform := platformapi.New(deps.Tools.Routes(), func(ctx context.Context, token string) (platformapi.Grant, error) {
+		if tsAuth == nil {
+			return platformapi.Grant{}, core.ErrUnauthorized
+		}
+		return tsAuth.ResourceToken(ctx, store, platformapi.Audience, token)
+	})
 	root := http.NewServeMux()
-	root.Handle(core.MCPPath, mcpserver.New(store, deps.Tools))
+	root.Handle(core.MCPPath, mcp)
+	root.Handle(mcpserver.Host+"/", mcp)
+	root.Handle(platformapi.Host+"/", platform)
 	root.Handle("/api/v1/dashboard/cli/", deviceAuthorization.PublicHandler())
-	root.Handle("/", invalidatePrefetch(dropForeignMessages(guard.Protect(mux))))
+	root.Handle("/", withUserToken(sessions, invalidatePrefetch(dropForeignMessages(guard.Protect(mux)))))
 	var handler http.Handler = securityHeaders(cfg.SecureCookies, root)
 	if cfg.SentryDSN != "" {
 		handler = errortracking.Middleware(handler)
 	}
 	return &Application{Handler: compress(handler)}, nil
+}
+
+// withUserToken lets features read TerraBase as the signed-in user with the
+// ts-auth access token of the request's session.
+func withUserToken(sessions *session.Manager, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Read the session once per request, and only when a feature asks.
+		token := sync.OnceValues(func() (string, bool) { return auth.AccessToken(sessions.RefreshState(r)) })
+		next.ServeHTTP(w, r.WithContext(core.WithUserToken(r.Context(), token)))
+	})
 }
 
 // securityHeaders sets the headers every response shares; rendered pages add
