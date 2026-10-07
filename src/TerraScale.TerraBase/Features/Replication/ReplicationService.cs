@@ -93,13 +93,12 @@ internal sealed partial class ReplicationService(
             throw new RpcException(new Status(StatusCode.ResourceExhausted, "the negotiated gRPC cap cannot carry required control responses"));
         }
 
-        // A member that replicates with others receives only databases its catalog registers: a deleted one is not recreated,
-        // and a catalog follower takes a new one once its catalog has it. The sender retries. A deletion committed between the
-        // check and the open is caught by checking again: a store other than the one open before the check is the open's own
-        // incarnation, which goes too once the catalog confirms the database is unregistered.
-        var gated = options.PeerAddresses.Count > 0 || options.CatalogPrimary is not null;
-        var before = gated ? await engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) : null;
-        if (gated && await tenants.RegisteredAsync(database, cancellationToken).ConfigureAwait(false) is not true)
+        // A member receives only databases its catalog registers: a deleted one is not recreated, and a catalog follower takes a
+        // new one once its catalog has it. The sender retries. A deletion committed between the check and the open is caught by
+        // checking again: an incarnation other than the one before the check is the open's own, which goes too once the catalog
+        // confirms the database is unregistered.
+        var before = (await engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false))?.Incarnation;
+        if (await tenants.RegisteredAsync(database, cancellationToken).ConfigureAwait(false) is not true)
         {
             await stream.SendAsync(Error(StreamErrorCode.StreamErrorUnauthorized, retryable: true)).ConfigureAwait(false);
             return;
@@ -108,9 +107,9 @@ internal sealed partial class ReplicationService(
         checkpoint("replication.registered", database);
         // The receiving database's own origin identifies this node on the stream, in Welcome and in every acknowledgment.
         var (store, receiver, applied, digest) = await journal.OpenAsync(database, origin, cancellationToken).ConfigureAwait(false);
-        if (gated && await tenants.RegisteredAsync(database, cancellationToken).ConfigureAwait(false) is var registered && registered is not true)
+        if (await tenants.RegisteredAsync(database, cancellationToken).ConfigureAwait(false) is var registered && registered is not true)
         {
-            if (registered is false && !ReferenceEquals(before, store))
+            if (registered is false && before != store.Incarnation)
             {
                 _ = await engine.DeleteDatabaseAsync(database, cancellationToken).ConfigureAwait(false);
             }

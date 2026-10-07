@@ -75,10 +75,10 @@ follows it. Design, limits and failover: [0009](decisions/0009-catalog-replicati
   serves a registered database before any of its documents arrived (an empty local file that client replication
   fills).
 - A deleted database goes from every follower: a follower deletes its local files when it applies the deletion's
-  cleanup intent, and a member that replicates receives client replication only for databases its catalog
-  registers (`STREAM_ERROR_UNAUTHORIZED`, retryable, otherwise), so no peer brings a deleted one back. A follower
-  never deletes a file only because it is unregistered; once caught up it counts such files in
-  `terrabase_storage_unknown_files`, as a primary does at startup.
+  cleanup intent (a failure stops it from following until the deletion succeeds), and every member receives client
+  replication only for databases its catalog registers (`STREAM_ERROR_UNAUTHORIZED`, retryable, otherwise), so no
+  peer brings a deleted one back. A follower never deletes a file only because it is unregistered; once caught up it
+  counts such files in `terrabase_storage_unknown_files`, as a primary does at startup.
 - `/readyz` of a follower answers 503 until it has applied the primary's head once in its process, and while its
   primary reports a head it has not applied yet; a primary that cannot be reached leaves the last head, so a
   caught-up follower stays ready while the primary restarts. Before stopping a member, a drain waits for its
@@ -110,7 +110,7 @@ Metrics on the follower:
 | `terrabase_catalog_follower_connected` | `1` while the follower holds a stream to its primary |
 | `terrabase_catalog_follower_lag` | Catalog groups the primary last reported that the follower has not applied |
 | `terrabase_catalog_applied_sequence` | The primary's last group the follower applied; the highest one is the best failover candidate |
-| `terrabase_catalog_follower_failures_total{reason}` | Streams that failed: `lineage` (a catalog of another origin, kept), `invalid` (a frame failed validation; nothing of it applied) or `stream` |
+| `terrabase_catalog_follower_failures_total{reason}` | Streams that failed: `lineage` (a catalog of another origin, kept), `invalid` (a frame failed validation; nothing of it applied), `apply` (acting on applied changes, such as a database deletion, failed; retried before the next stream) or `stream` |
 | `terrabase_catalog_forwarded_total{result}` | Requests the follower forwarded to its primary: `answered`, `lagging` (answered before the follower applied what it wrote, after 5 seconds) or `unavailable` (503, or a reset once the response started) |
 
 ## Configuration

@@ -225,45 +225,45 @@ public sealed class CatalogDeletionTests
     }
 
     [Test]
-    public async Task A_follower_retries_a_cleanup_that_failed_with_its_next_intents()
+    public async Task A_follower_whose_cleanup_fails_applies_nothing_more_until_it_succeeds()
     {
         using var peers = new PeerTls();
         var origin = RandomNumberGenerator.GetBytes(16);
         var initial = JournalDigest.Initial(origin);
-        var (organization, project) = (Guid.NewGuid().ToString(), Guid.NewGuid().ToString());
-        var (failing, later) = (new TenantContext(organization, PlanTier.Hobby, project, Guid.NewGuid().ToString()),
-            new TenantContext(organization, PlanTier.Hobby, project, Guid.NewGuid().ToString()));
-        DocumentChange[] first = [new("pending_database_cleanup", failing.DatabaseId!, 10, JsonSerializer.SerializeToUtf8Bytes(failing, TerraBaseJsonContext.Default.TenantContext))];
-        DocumentChange[] second = [new("pending_database_cleanup", later.DatabaseId!, 11, JsonSerializer.SerializeToUtf8Bytes(later, TerraBaseJsonContext.Default.TenantContext))];
-        var firstDigest = JournalDigest.Compute(origin, 1, initial, first);
-        TaskCompletionSource[] send = [new(TaskCreationOptions.RunContinuationsAsynchronously), new(TaskCreationOptions.RunContinuationsAsynchronously)];
+        var deleted = new TenantContext(Guid.NewGuid().ToString(), PlanTier.Hobby, Guid.NewGuid().ToString(), Guid.NewGuid().ToString());
+        DocumentChange[] group = [new("pending_database_cleanup", deleted.DatabaseId!, 10, JsonSerializer.SerializeToUtf8Bytes(deleted, TerraBaseJsonContext.Default.TenantContext))];
+        var send = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var streams = 0;
         await using var fake = await FakePeer.StartCatalogAsync(peers, async (_, responses, context) =>
         {
-            await responses.WriteAsync(new FollowResponse { Welcome = new CatalogWelcome { Protocol = 1, Origin = ByteString.CopyFrom(origin), Head = 0 } });
-            await responses.WriteAsync(new FollowResponse { SnapshotBegin = new SnapshotBegin { Sequence = 0, Digest = ByteString.CopyFrom(initial) } });
-            await responses.WriteAsync(new FollowResponse { Documents = CatalogProtocol.Page([Version]) });
-            await responses.WriteAsync(new FollowResponse { SnapshotEnd = new SnapshotEnd { Sequence = 0, Digest = ByteString.CopyFrom(initial), CommitOffset = 1 } });
-            await responses.WriteAsync(new FollowResponse { Heartbeat = new CatalogHeartbeat { Head = 0 } });
-            foreach (var (sequence, group, previous) in new[] { (1UL, first, initial), (2UL, second, firstDigest) })
+            if (Interlocked.Increment(ref streams) == 1)
             {
-                await send[sequence - 1].Task.WaitAsync(context.CancellationToken);
-                await responses.WriteAsync(new FollowResponse { GroupBegin = new GroupBegin { Sequence = sequence, ChangeCount = 1 } });
+                // The first stream brings the intent; its cleanup fails, which ends the stream.
+                await responses.WriteAsync(new FollowResponse { Welcome = new CatalogWelcome { Protocol = 1, Origin = ByteString.CopyFrom(origin), Head = 0 } });
+                await responses.WriteAsync(new FollowResponse { SnapshotBegin = new SnapshotBegin { Sequence = 0, Digest = ByteString.CopyFrom(initial) } });
+                await responses.WriteAsync(new FollowResponse { Documents = CatalogProtocol.Page([Version]) });
+                await responses.WriteAsync(new FollowResponse { SnapshotEnd = new SnapshotEnd { Sequence = 0, Digest = ByteString.CopyFrom(initial), CommitOffset = 1 } });
+                await responses.WriteAsync(new FollowResponse { Heartbeat = new CatalogHeartbeat { Head = 0 } });
+                await send.Task.WaitAsync(context.CancellationToken);
+                await responses.WriteAsync(new FollowResponse { GroupBegin = new GroupBegin { Sequence = 1, ChangeCount = 1 } });
                 await responses.WriteAsync(new FollowResponse { Changes = CatalogProtocol.Page(group) });
-                await responses.WriteAsync(new FollowResponse
-                {
-                    GroupEnd = new GroupEnd { Digest = ByteString.CopyFrom(JournalDigest.Compute(origin, (long)sequence, previous, group)) },
-                });
-                await responses.WriteAsync(new FollowResponse { Heartbeat = new CatalogHeartbeat { Head = sequence } });
+                await responses.WriteAsync(new FollowResponse { GroupEnd = new GroupEnd { Digest = ByteString.CopyFrom(JournalDigest.Compute(origin, 1, initial, group)) } });
+            }
+            else
+            {
+                // Later streams bring nothing new: the follower acts on the intent its catalog still holds before it follows.
+                await responses.WriteAsync(new FollowResponse { Welcome = new CatalogWelcome { Protocol = 1, Origin = ByteString.CopyFrom(origin), Head = 1 } });
+                await responses.WriteAsync(new FollowResponse { Heartbeat = new CatalogHeartbeat { Head = 1 } });
             }
 
             await Task.Delay(Timeout.Infinite, context.CancellationToken);
         });
 
-        // The first cleanup of the failing database fails, as a disk error would.
+        // The first cleanup fails, as a disk error would.
         var failures = 0;
         void Fail(string step, TenantContext database)
         {
-            if (step == "follower.cleanup" && database.DatabaseId == failing.DatabaseId && Interlocked.Increment(ref failures) == 1)
+            if (step == "follower.cleanup" && database.DatabaseId == deleted.DatabaseId && Interlocked.Increment(ref failures) == 1)
             {
                 throw new IOException("injected cleanup failure");
             }
@@ -275,28 +275,19 @@ public sealed class CatalogDeletionTests
             settings["catalog-primary"] = fake.Address.ToString();
         }, services => services.AddSingleton<DatabaseLifecycleCheckpoint>(Fail));
         await ReadyAsync(follower);
-        var engine = follower.Services.GetRequiredService<IStorageEngine>();
-        string FileOf(TenantContext database)
-        {
-            return Path.Combine(follower.DataDirectory, organization, project, database.DatabaseId + ".db");
-        }
+        await Assert.That(await follower.Services.GetRequiredService<IStorageEngine>().CreateDatabaseAsync(deleted, CancellationToken.None)).IsTrue();
+        var file = Path.Combine(follower.DataDirectory, deleted.OrganizationId, deleted.ProjectId!, deleted.DatabaseId + ".db");
 
-        foreach (var database in new[] { failing, later })
-        {
-            await Assert.That(await engine.CreateDatabaseAsync(database, CancellationToken.None)).IsTrue();
-        }
-
-        send[0].SetResult();
-        await TerraBaseTestServer.EventuallyAsync(async token => await follower.MetricAsync("terrabase_catalog_applied_sequence", "", token) == 1);
-        await Assert.That(File.Exists(FileOf(failing))).IsTrue();
-        send[1].SetResult();
-        await TerraBaseTestServer.EventuallyAsync(async token => await follower.MetricAsync("terrabase_catalog_applied_sequence", "", token) == 2);
-        await Assert.That(File.Exists(FileOf(failing))).IsFalse();
-        await Assert.That(File.Exists(FileOf(later))).IsFalse();
+        send.SetResult();
+        await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(!File.Exists(file)));
+        await Assert.That(Volatile.Read(ref failures)).IsEqualTo(2);
+        await Assert.That(await follower.MetricAsync("terrabase_catalog_follower_failures_total", "reason=\"apply\"")).IsEqualTo(1);
+        // The retry came before a new stream, which the follower opens once it succeeded.
+        await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(Volatile.Read(ref streams) >= 2));
     }
 
     [Test]
-    public async Task A_follower_acts_at_startup_on_the_cleanup_intents_its_catalog_holds()
+    public async Task A_restarted_follower_acts_on_the_cleanup_intents_its_catalog_holds_before_it_follows()
     {
         // A follower that stopped right after it applied an intent: the intent is in its catalog, the file still on disk.
         using var peers = new PeerTls();
@@ -307,7 +298,7 @@ public sealed class CatalogDeletionTests
         var streams = 0;
         await using var fake = await FakePeer.StartCatalogAsync(peers, async (_, responses, context) =>
         {
-            // Only the first stream gets the catalog: the restarted follower acts before any stream.
+            // Only the first stream gets the catalog: the restarted follower acts on what its catalog holds, with no stream.
             if (Interlocked.Increment(ref streams) == 1)
             {
                 await responses.WriteAsync(new FollowResponse { Welcome = new CatalogWelcome { Protocol = 1, Origin = ByteString.CopyFrom(origin), Head = 0 } });
@@ -341,7 +332,7 @@ public sealed class CatalogDeletionTests
 
             await Assert.That(File.Exists(file)).IsTrue();
             await using var restarted = await StartFollowerAsync();
-            await Assert.That(File.Exists(file)).IsFalse();
+            await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(!File.Exists(file)));
         }
         finally
         {

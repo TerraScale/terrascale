@@ -118,19 +118,19 @@ replication like any other.
 
 **Deletions.** A database deletion commits its cleanup intent (`pending_database_cleanup`) in the same group that
 unregisters it; the primary deletes its files and then clears the intent. A follower acts on every intent a group or
-snapshot it applies, once that transaction committed, and at startup on those its catalog still holds (a stop right
-after the commit): when its catalog, at this build's version, no longer registers the database, it deletes the local
-files. An intent of a creation in progress names a database no follower has files of yet. A follower never deletes a
-file only because its catalog does not register it, as a catalog restored from an older backup would make it do; after
-it first caught up in a process, it runs the primary's startup audit, off its stream, which counts and logs such files
-(`terrabase_storage_unknown_files`) and keeps them. A client-replication receiver of a member that replicates (it has
-`peer-addresses` or a `catalog-primary`) takes a Sync stream only for a database its catalog registers, and otherwise
-answers `STREAM_ERROR_UNAUTHORIZED`, retryable: a peer that still has a deleted database cannot recreate it, and a
-follower takes a new database once its catalog applied the registration (the sender retries). The receiver and the
-follower's data plane check the registration again after opening, so a deletion applied in between removes the file
-incarnation they created. A catalog at a version this build does not read registers nothing it can tell: streams are
-refused and nothing is deleted on its account. A cleanup that fails is retried with the next intents the follower
-applies.
+snapshot it applies, once that transaction committed, and before each stream on those its catalog still holds: when its
+catalog, at this build's version, no longer registers the database, it deletes the local files. A deletion that fails
+ends the stream (`terrabase_catalog_follower_failures_total{reason="apply"}`) and is retried before the next one, with
+backoff: the follower applies nothing more, so the intent stays in its catalog, until it succeeds. An intent of a
+creation in progress names a database no follower has files of yet. A follower never deletes a file only because its
+catalog does not register it, as a catalog restored from an older backup would make it do; after it first caught up in
+a process, it runs the primary's startup audit, off its stream, which counts and logs such files
+(`terrabase_storage_unknown_files`) and keeps them. Every client-replication receiver takes a Sync stream only for a
+database its catalog registers, and otherwise answers `STREAM_ERROR_UNAUTHORIZED`, retryable: a peer that still has a
+deleted database cannot recreate it, and a follower takes a new database once its catalog applied the registration (the
+sender retries). The receiver and the follower's data plane check the registration again after opening, so a deletion
+applied in between removes the incarnation they created. A catalog at a version this member does not read registers
+nothing it can tell: streams are refused and nothing is deleted on its account.
 
 **A catalog is never discarded for another origin.** A follower takes a snapshot only when its catalog is empty
 or belongs to the primary's origin. A populated catalog of another origin (the member's own, a primary restarted
@@ -185,10 +185,8 @@ primary without `catalog-primary` while another one serves.
   cleared: the files of databases deleted meanwhile stay, counted as unknown, until an operator removes them. Its sender
   keeps offering them to peers, which refuse them, so its `terrabase_replication_sender_durable_lag` stays above 0 for
   as long and a drain that waits for 0 does not end.
-- A failed follower cleanup is retried only in memory: after a restart that finds its intent already cleared, the files
-  stay, counted as unknown.
-- A member with `peer-addresses` and a catalog of its own (before 0009) now refuses client replication of every
-  database its catalog does not register.
+- A member with a catalog of its own (before 0009) refuses client replication of every database its catalog does not
+  register, and a follower whose disk cannot delete a database's files stops following until it can.
 - Tombstones of dashboard documents are not replicated: a follower holds no row for a deleted document.
 
 ## Alternatives considered

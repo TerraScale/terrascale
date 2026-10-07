@@ -20,16 +20,21 @@ public interface ICatalogReadiness
 }
 
 /// <summary>
-/// Reacts to the catalog a follower applied (docs/decisions/0009). Called on the follower's stream loop after the transaction
-/// committed, with the catalog in that state: keep it short, and never write the catalog.
+/// Acts on the catalog a follower applied (docs/decisions/0009), on the follower's stream loop, with the catalog in the state
+/// it acts on: keep it short, and never write the catalog. A failure of <see cref="AppliedAsync"/> or
+/// <see cref="ResumeAsync"/> stops the follower from applying more until <see cref="ResumeAsync"/> succeeds, so work the
+/// catalog still names is never skipped.
 /// </summary>
 public interface ICatalogApplyObserver
 {
     /// <summary>The system collection whose applied documents (not deletions) <see cref="AppliedAsync"/> receives.</summary>
     string Collection { get; }
 
-    /// <summary>Called with the documents of <see cref="Collection"/> one group or snapshot applied.</summary>
+    /// <summary>Called with the documents of <see cref="Collection"/> one group or snapshot applied, after it committed.</summary>
     ValueTask AppliedAsync(IReadOnlyList<DocumentChange> documents, CancellationToken cancellationToken);
+
+    /// <summary>Called before each stream: acts on what the catalog holds, which a stop or a failure may have left undone.</summary>
+    ValueTask ResumeAsync(CancellationToken cancellationToken);
 
     /// <summary>Called once per process, when the follower first caught up with its primary.</summary>
     ValueTask CaughtUpAsync(CancellationToken cancellationToken);
@@ -89,7 +94,7 @@ internal sealed partial class CatalogFollower : BackgroundService, ICatalogReadi
         meter.CreateObservableGauge("terrabase.catalog.applied_sequence", () => Interlocked.Read(ref _applied), "{group}",
             "The last catalog primary group this follower applied.");
         _failures = meter.CreateCounter<long>("terrabase.catalog.follower.failures", "{stream}",
-            "Catalog streams that ended in failure, by reason: lineage (a populated local catalog of another origin), invalid (a frame failed validation) or stream.");
+            "Catalog streams that ended in failure, by reason: lineage (a populated local catalog of another origin), invalid (a frame failed validation), apply (acting on applied changes failed; retried before the next stream) or stream.");
     }
 
     // Not ready before the first catch-up, nor while the primary reports a head this follower has not applied (after a
@@ -129,6 +134,11 @@ internal sealed partial class CatalogFollower : BackgroundService, ICatalogReadi
         {
             try
             {
+                foreach (var observer in _observers)
+                {
+                    await ActAsync(() => observer.ResumeAsync(stoppingToken)).ConfigureAwait(false);
+                }
+
                 using var credentials = _credentials.Capture();
                 using var channel = PeerChannel.Create(_options.CatalogPrimary!, credentials);
                 await FollowAsync(new CatalogReplication.CatalogReplicationClient(channel), stoppingToken).ConfigureAwait(false);
@@ -136,6 +146,11 @@ internal sealed partial class CatalogFollower : BackgroundService, ICatalogReadi
             catch (Exception) when (stoppingToken.IsCancellationRequested)
             {
                 return;
+            }
+            catch (ObserverException error)
+            {
+                _failures.Add(1, new KeyValuePair<string, object?>("reason", "apply"));
+                LogObserverFailed(_logger, error.InnerException!);
             }
             catch (LineageException)
             {
@@ -370,7 +385,7 @@ internal sealed partial class CatalogFollower : BackgroundService, ICatalogReadi
         }
     }
 
-    // After the transaction that applied them committed. Observers run on this loop; their failures never end the stream.
+    // After the transaction that applied them committed, on this loop.
     private async Task NotifyAsync(CancellationToken cancellationToken)
     {
         foreach (var observer in _observers)
@@ -378,11 +393,24 @@ internal sealed partial class CatalogFollower : BackgroundService, ICatalogReadi
             var documents = _observed.Where(change => string.Equals(change.Collection, observer.Collection, StringComparison.Ordinal)).ToList();
             if (documents.Count > 0)
             {
-                await ObserveAsync(() => observer.AppliedAsync(documents, cancellationToken), cancellationToken).ConfigureAwait(false);
+                await ActAsync(() => observer.AppliedAsync(documents, cancellationToken)).ConfigureAwait(false);
             }
         }
 
         _observed.Clear();
+    }
+
+    // Ends the stream on a failure: what failed is retried by ResumeAsync before the next one.
+    private static async Task ActAsync(Func<ValueTask> observe)
+    {
+        try
+        {
+            await observe().ConfigureAwait(false);
+        }
+        catch (Exception error) when (error is not OperationCanceledException)
+        {
+            throw new ObserverException(error);
+        }
     }
 
     private async Task ObserveAsync(Func<ValueTask> observe, CancellationToken cancellationToken)
@@ -430,6 +458,8 @@ internal sealed partial class CatalogFollower : BackgroundService, ICatalogReadi
 
         public TaskCompletionSource Next { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     }
+
+    private sealed class ObserverException(Exception inner) : Exception("acting on applied catalog changes failed", inner);
 
     private sealed class LineageException() : Exception("the local catalog belongs to another origin than the catalog primary's");
 

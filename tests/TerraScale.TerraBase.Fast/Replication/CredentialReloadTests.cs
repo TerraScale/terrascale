@@ -50,7 +50,7 @@ public sealed class CredentialReloadTests
                 return (Fingerprint(files.Certificate), Fingerprint(files.PrivateKey), Fingerprint(files.Authority));
             }, clock);
         }));
-        var hello = Hello();
+        var hello = await HelloAsync(server);
         original.OverwriteWith(rotated, preserveTimestamps: true);
         pauseReload = true;
         clock.Advance();
@@ -112,7 +112,7 @@ public sealed class CredentialReloadTests
                     HttpHandler = original.CreateHandler(),
                     DisposeHttpClient = true,
                 });
-                var hello = Hello();
+                var hello = await HelloAsync(server);
                 await WelcomeAsync(oldConnection, hello);
                 original.OverwriteWith(rotated, preserveTimestamps: true);
                 clock.Advance();
@@ -169,7 +169,7 @@ public sealed class CredentialReloadTests
             File.WriteAllBytes(path, new byte[PeerTlsFiles.MaxPemFileBytes + 1]);
         }
 
-        var hello = Hello();
+        var hello = await HelloAsync(server);
         clock.Advance();
         await WelcomeAsync(original, server.PeerAddress!, hello);
         original.OverwriteWith(rotated, preserveTimestamps: true);
@@ -182,10 +182,10 @@ public sealed class CredentialReloadTests
 
     private static string Fingerprint(string path) => Convert.ToHexString(SHA256.HashData(PeerTlsFiles.ReadPemBytes(path)));
 
-    private static Hello Hello()
+    private static async Task<Hello> HelloAsync(TerraBaseTestServer server)
     {
         var fake = new Faker();
-        var database = new TenantContext(fake.Random.Guid().ToString("D"), PlanTier.Hobby, fake.Random.Guid().ToString("D"), fake.Random.Guid().ToString("D"));
+        var database = await server.RegisterAsync(new TenantContext(fake.Random.Guid().ToString("D"), PlanTier.Hobby, fake.Random.Guid().ToString("D"), fake.Random.Guid().ToString("D")));
         return ReplicationProtocol.CreateHello(database, RandomNumberGenerator.GetBytes(16));
     }
 

@@ -55,10 +55,19 @@ internal sealed partial class EngineManagementService
         return database.ProjectId is null || database.DatabaseId is null
             ? ValueTask.FromResult<bool?>(false)
             : ReadCatalogAsync<bool?>(async transaction =>
-                options.CatalogPrimary is not null && await GetAsync(transaction, Catalog, CatalogVersionId, Id, cancellationToken).ConfigureAwait(false) != CatalogVersion
+                !Interprets(await GetAsync(transaction, Catalog, CatalogVersionId, Id, cancellationToken).ConfigureAwait(false))
                     ? null
                     : await ScopeExistsUncheckedAsync(transaction, database.OrganizationId, database.ProjectId, database.DatabaseId, cancellationToken).ConfigureAwait(false),
                 cancellationToken);
+    }
+
+    // Whether this member reads registrations of a catalog at version: a primary every version it migrates from, which keep
+    // the registration rows, as its startup audit does; a follower, which migrates nothing, only its own.
+    private bool Interprets(string? version)
+    {
+        return options.CatalogPrimary is null
+            ? version is null or MembershipCatalogVersion or "3" or IntentCatalogVersion or CatalogVersion
+            : version == CatalogVersion;
     }
 
     /// <summary>

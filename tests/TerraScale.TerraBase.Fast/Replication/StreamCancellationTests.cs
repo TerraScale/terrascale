@@ -27,8 +27,8 @@ public sealed class StreamCancellationTests
         using var channel = tls.CreateChannel(server.PeerAddress!);
         var client = new Features.Replication.V1.Replication.ReplicationClient(channel);
         var fake = new Faker();
-        var database = new TenantContext(fake.Random.Guid().ToString("D"), PlanTier.Hobby,
-            fake.Random.Guid().ToString("D"), fake.Random.Guid().ToString("D"));
+        var database = await server.RegisterAsync(new TenantContext(fake.Random.Guid().ToString("D"), PlanTier.Hobby,
+            fake.Random.Guid().ToString("D"), fake.Random.Guid().ToString("D")));
         var hello = ReplicationProtocol.CreateHello(database, RandomNumberGenerator.GetBytes(16));
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token);

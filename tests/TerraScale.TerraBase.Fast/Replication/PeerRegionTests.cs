@@ -25,7 +25,7 @@ public sealed class PeerRegionTests
             tls.Apply(settings);
             settings["region"] = "gru-1";
         });
-        var database = new TenantContext(Guid.NewGuid().ToString(), PlanTier.Hobby, Guid.NewGuid().ToString(), Guid.NewGuid().ToString());
+        var database = await receiver.RegisterAsync(new TenantContext(Guid.NewGuid().ToString(), PlanTier.Hobby, Guid.NewGuid().ToString(), Guid.NewGuid().ToString()));
         using var channel = tls.CreateChannel(receiver.PeerAddress!);
         using var call = new Features.Replication.V1.Replication.ReplicationClient(channel).Sync(deadline: DateTime.UtcNow.AddSeconds(30));
         await call.RequestStream.WriteAsync(new SyncRequest

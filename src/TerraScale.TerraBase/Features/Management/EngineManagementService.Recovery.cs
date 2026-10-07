@@ -1,4 +1,5 @@
 using System.Diagnostics.Metrics;
+using System.Runtime.ExceptionServices;
 using System.Text.Json;
 using TerraScale.TerraBase.Engine;
 using TerraScale.TerraBase.Features.Management.Backups;
@@ -12,34 +13,14 @@ internal sealed partial class EngineManagementService
     private readonly Meter _recoveryMeter = meters.Create(Telemetry.MeterName);
     private long _unknownDatabaseFiles;
 
-    // Follower cleanups that failed, retried with every later intent batch. ponytail: in memory, so a restart after the
-    // primary cleared the intent leaves the files, counted by the audit; persist them if failed deletions turn up.
-    private readonly HashSet<TenantContext> _failedCleanups = [];
-
     public async Task StartAsync(CancellationToken cancellationToken)
     {
         _recoveryMeter.CreateObservableGauge("terrabase.storage.unknown_files", () => _unknownDatabaseFiles,
             description: "Files found at startup without a registered database; preserved for operator recovery.");
         if (options.CatalogPrimary is not null)
         {
-            // A follower's intents are the primary's: it acts on them as it applies them (AppliedAsync), and here on those its
-            // catalog still holds, which a stop right after their group committed left undone. Its catalog may still be
-            // catching up, so it audits its files once it caught up (CaughtUpAsync).
-            if (engine.SystemDatabaseExists)
-            {
-                string? after = null;
-                DocumentPage page;
-                do
-                {
-                    page = await ReadCatalogAsync(transaction => transaction.ListAsync(PendingDatabaseCleanup, after, MemberPage, MaxPageBytes, cancellationToken),
-                        cancellationToken).ConfigureAwait(false);
-                    await AppliedAsync([.. page.Documents.Select(document => new DocumentChange(PendingDatabaseCleanup, document.Id, 1, document.Json))],
-                        cancellationToken).ConfigureAwait(false);
-                    after = page.Documents.Count > 0 ? page.Documents[^1].Id : after;
-                }
-                while (page.HasMore);
-            }
-
+            // A follower's intents are the primary's: it acts on them as it applies them (AppliedAsync) and before each stream
+            // (ResumeAsync). Its catalog may still be catching up, so it audits its files once it caught up (CaughtUpAsync).
             return;
         }
 
@@ -84,7 +65,9 @@ internal sealed partial class EngineManagementService
     /// <summary>
     /// On a catalog follower: deletes the local files of each database whose cleanup intent the primary's catalog recorded and
     /// that it no longer registers (a deleted database, or one whose creation was abandoned). An intent of a creation in
-    /// progress names a database no follower has files of yet. The primary clears the intents.
+    /// progress names a database no follower has files of yet. The primary clears the intents. A failed deletion fails the
+    /// call once every intent was tried: the follower then applies nothing more, so the intent stays in its catalog, until
+    /// <see cref="ResumeAsync"/> succeeds.
     /// </summary>
     public async ValueTask AppliedAsync(IReadOnlyList<DocumentChange> documents, CancellationToken cancellationToken)
     {
@@ -95,8 +78,7 @@ internal sealed partial class EngineManagementService
             return;
         }
 
-        var cleanups = _failedCleanups.ToList();
-        _failedCleanups.Clear();
+        var cleanups = new List<TenantContext>(documents.Count);
         foreach (var document in documents)
         {
             TenantContext? storage;
@@ -120,6 +102,7 @@ internal sealed partial class EngineManagementService
             }
         }
 
+        Exception? failed = null;
         foreach (var storage in cleanups)
         {
             try
@@ -132,14 +115,36 @@ internal sealed partial class EngineManagementService
             }
             catch (Exception error) when (!cancellationToken.IsCancellationRequested)
             {
-                // One cleanup never holds back the others; it is retried with the next batch.
-                LogInvalidReplicatedIntent(logger, error);
-                if (_failedCleanups.Count < MemberPage)
-                {
-                    _failedCleanups.Add(storage);
-                }
+                // One cleanup never holds back the others.
+                failed ??= error;
             }
         }
+
+        if (failed is not null)
+        {
+            ExceptionDispatchInfo.Throw(failed);
+        }
+    }
+
+    /// <summary>On a catalog follower, before each stream: acts on the cleanup intents its catalog holds (see <see cref="AppliedAsync"/>).</summary>
+    public async ValueTask ResumeAsync(CancellationToken cancellationToken)
+    {
+        if (!engine.SystemDatabaseExists)
+        {
+            return;
+        }
+
+        string? after = null;
+        DocumentPage page;
+        do
+        {
+            page = await ReadCatalogAsync(transaction => transaction.ListAsync(PendingDatabaseCleanup, after, MemberPage, MaxPageBytes, cancellationToken),
+                cancellationToken).ConfigureAwait(false);
+            await AppliedAsync([.. page.Documents.Select(document => new DocumentChange(PendingDatabaseCleanup, document.Id, 1, document.Json))],
+                cancellationToken).ConfigureAwait(false);
+            after = page.Documents.Count > 0 ? page.Documents[^1].Id : after;
+        }
+        while (page.HasMore);
     }
 
     /// <summary>On a catalog follower that caught up with its primary: the startup file audit a primary runs.</summary>
@@ -252,7 +257,7 @@ internal sealed partial class EngineManagementService
         }
     }
 
-    [LoggerMessage(Level = LogLevel.Error, Message = "A replicated database cleanup intent is invalid or failed; nothing more was deleted for it")]
+    [LoggerMessage(Level = LogLevel.Error, Message = "A replicated database cleanup intent is invalid; nothing was deleted for it")]
     private static partial void LogInvalidReplicatedIntent(ILogger logger, Exception? error);
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Preserved database file without a catalog registration: {Path}")]
