@@ -48,6 +48,24 @@ body.ts-nav-pending form[data-submit-once] .ts-btn[type="submit"] {
   color: var(--ts-on-accent);
 }
 
+.ts-btn.ts-btn-loading {
+  cursor: progress;
+  opacity: 0.7;
+}
+
+.ts-btn-loading > .ts-btn-idle-icon {
+  display: none;
+}
+
+.ts-btn-spinner {
+  flex: none;
+  animation: ts-button-spin 800ms linear infinite;
+}
+
+@keyframes ts-button-spin {
+  to { transform: rotate(360deg); }
+}
+
 .ts-btn-primary:hover {
   background: var(--ts-accent-fill-hover);
 }

@@ -47,10 +47,13 @@ together and update both hashes in `internal/ui/datastar_pins.go` from the
 official release. Git
 preserves the bundle's bytes without normalizing line endings.
 Behavior lives in Go handlers, templ components, native HTML (`<details>`,
-`<dialog>` with `command`/`commandfor`) and Datastar attributes. The one custom
-script is the code editor (`web/assets/js/code-editor/`): `ui.CodeEditor`
-renders a textarea that it upgrades into Monaco (modern-monaco) once the page
-has loaded, and only pages that render one load the script and widen the
+`<dialog>` with `command`/`commandfor`) and Datastar attributes. The shared
+`web/assets/js/button-loading.js` script replaces action button icons with a
+spinner during native submissions, button-link navigations, and Datastar requests, blocks repeated
+submissions, and restores the controls after completion or navigation
+cancellation. The code editor (`web/assets/js/code-editor/`) upgrades the
+textarea rendered by `ui.CodeEditor` into Monaco (modern-monaco) once the page
+has loaded. Only pages that render an editor load its script and widen the
 Content-Security-Policy for its styles. `scripts/build-js.mjs` bundles it with
 esbuild into the generated, uncommitted `web/static/js/`, self-hosting every
 Monaco chunk, worker, grammar, and font; release builds (`--release`, used by

@@ -194,8 +194,11 @@ async function build() {
 
   const mainResult = await esbuild.build({
     ...shared,
-    entryPoints: [resolve(source, 'code-editor/index.js')],
-    entryNames: 'code-editor',
+    entryPoints: {
+      'code-editor': resolve(source, 'code-editor/index.js'),
+      'button-loading': resolve(source, 'button-loading.js'),
+    },
+    entryNames: '[name]',
     chunkNames: '[name].[hash]',
     splitting: true,
     plugins: [patchPlugin(monacoPatches(workerFiles, codicon.name))],
