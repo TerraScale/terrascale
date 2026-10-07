@@ -48,7 +48,6 @@ func (m *fakeMeter) Usage(_ context.Context, token string, scope core.UsageScope
 	}, nil
 }
 
-
 // meterFixture is a Free organization owner with one database whose reads
 // and writes the fake meter reports.
 func meterFixture(t *testing.T, meter *fakeMeter) (Service, core.Principal, *http.ServeMux) {
