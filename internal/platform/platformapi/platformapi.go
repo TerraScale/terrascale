@@ -85,10 +85,10 @@ func serve(route core.Route, authenticate Authenticate) http.HandlerFunc {
 			writeError(w, http.StatusServiceUnavailable, "temporarily_unavailable", "authentication is temporarily unavailable")
 			return
 		}
-		// An organization token reaches its organization's routes and a
-		// project token its project's too; anything else does not exist
+		// An organization token reaches only its organization's routes and
+		// a project token only its project's; anything else does not exist
 		// for the caller.
-		if project := r.PathValue("projectId"); r.PathValue("organizationId") != grant.OrganizationID || (project != "" && project != grant.ProjectID) {
+		if r.PathValue("organizationId") != grant.OrganizationID || r.PathValue("projectId") != grant.ProjectID {
 			writeError(w, http.StatusNotFound, "not_found", "not found")
 			return
 		}
@@ -293,7 +293,7 @@ func openAPI(routes []core.Route) map[string]any {
 			"schemas": map[string]any{"Error": errorSchema},
 			"securitySchemes": map[string]any{"tsAuth": map[string]any{
 				"type": "http", "scheme": "bearer", "bearerFormat": "JWT",
-				"description": "A token of ts-auth's terrascale tenant (https://gru.auth.terrascale.tech/terrascale): an ES256 at+jwt whose aud includes " + Audience + ". Organization routes take an organization token; project routes take a project token of that project, since an organization token reaches no project route (ts-auth platform contract, section 6.4). Exchange a sign-in token for one with ts-auth's token exchange. Each operation lists the scope it needs.",
+				"description": "A token of ts-auth's terrascale tenant (https://gru.auth.terrascale.tech/terrascale): an ES256 at+jwt whose aud includes " + Audience + ". Organization routes take only an organization token, and project routes only a project token of that project (ts-auth platform contract, section 6.4). Exchange a sign-in token for one with ts-auth's token exchange. Each operation lists the scope it needs.",
 			}},
 		},
 	}

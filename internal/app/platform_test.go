@@ -284,6 +284,7 @@ func testPlatformHosts(t *testing.T, cfg config.Config, subject, address, organi
 			tenant.token(t, subject, "org_someone_else", email), "", http.StatusNotFound, "not_found"},
 		{"a project route with an organization token", http.MethodGet, organizationURL + "/projects/" + project + "/usage", organizationToken, "", http.StatusNotFound, "not_found"},
 		{"another project", http.MethodGet, organizationURL + "/projects/prj_elsewhere/usage", projectToken, "", http.StatusNotFound, "not_found"},
+		{"an organization route with a project token", http.MethodPut, organizationURL + "/spending-controls", projectToken, `{"organizationCapCents":1}`, http.StatusNotFound, "not_found"},
 		{"a missing scope", http.MethodPut, organizationURL + "/spending-controls",
 			token(func(_, claims map[string]any) { claims["scope"] = "billing:read usage:read" }), `{"organizationCapCents":1}`, http.StatusForbidden, "insufficient_scope"},
 		{"a malformed query", http.MethodGet, organizationURL + "/invoices?page=first", organizationToken, "", http.StatusBadRequest, "invalid_request"},

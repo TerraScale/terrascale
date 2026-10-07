@@ -19,8 +19,9 @@ project routes:
 - an ES256 `at+jwt` from the issuer's JWKS, `iss` the issuer, `aud` including
   `https://platform.terrascale.tech`, unexpired;
 - `org_id` equal to the path's organization, and `project_id` equal to its
-  project; anything else answers `404`, so an organization token reaches no
-  project route;
+  project, or absent when the path names none; anything else answers `404`,
+  so an organization token reaches no project route and a project token no
+  organization route;
 - the operation's scope in `scope` (`403 insufficient_scope` otherwise):
   `billing:read`, `billing:write` (owners) or `usage:read`.
 
