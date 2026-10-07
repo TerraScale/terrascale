@@ -41,6 +41,7 @@ func TestIntegration(t *testing.T) {
 	hc := &http.Client{Transport: rec}
 	t.Run("PinnedOpenAPI", func(t *testing.T) { testPinnedOpenAPI(t, tb) })
 	t.Run("Management", func(t *testing.T) { testManagement(t, tb, hc) })
+	t.Run("RegisterProject", func(t *testing.T) { testRegisterProject(t, tb, hc) })
 	t.Run("Documents", func(t *testing.T) { testDocuments(t, tb, hc) })
 	t.Run("Retries", func(t *testing.T) { testRetries(t, tb, hc, rec) })
 	rec.mu.Lock()
@@ -209,6 +210,29 @@ func testPinnedOpenAPI(t *testing.T, tb *terrabasetest.Server) {
 	b, _ := json.Marshal(pinned)
 	if !bytes.Equal(a, b) {
 		t.Fatal("testdata/openapi.json differs from the pinned executable's /openapi/v1.json; re-pin it")
+	}
+}
+
+// testRegisterProject registers an organization and project that "another
+// region" created, under their ids, as a replica region needs (TS-643).
+func testRegisterProject(t *testing.T, tb *terrabasetest.Server, hc *http.Client) {
+	ctx := t.Context()
+	cara := user(t, tb, management(t, tb, hc), "user-cara", "cara@example.com")
+	org := v1.Organization{ID: "0199c0de-0000-7000-8000-000000000001", Name: "Replicated"}
+	project := v1.Project{ID: "0199c0de-0000-7000-8000-000000000002", Name: "Orders"}
+	must(0, cara.RegisterProject(ctx, org, project))(t)
+	must(0, cara.RegisterProject(ctx, org, project))(t) // registered: nothing to do
+	if got := must(cara.Project(ctx, org.ID, project.ID))(t); got.Name != project.Name {
+		t.Fatalf("project: %+v", got)
+	}
+	// An organization the region has gets only the missing project.
+	second := v1.Project{ID: "0199c0de-0000-7000-8000-000000000003", Name: "Billing"}
+	must(0, cara.RegisterProject(ctx, org, second))(t)
+	if got := must(cara.Organization(ctx, org.ID))(t); got.Name != org.Name {
+		t.Fatalf("organization: %+v", got)
+	}
+	if got := must(cara.Project(ctx, org.ID, second.ID))(t); got.Name != second.Name {
+		t.Fatalf("project: %+v", got)
 	}
 }
 
