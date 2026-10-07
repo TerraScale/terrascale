@@ -169,6 +169,34 @@ type SQLRow struct {
 	Value json.RawMessage `json:"value"`
 }
 
+// ProjectAPIKey is a project's data API key (tb_…) without its secret.
+type ProjectAPIKey struct {
+	ID        string   `json:"id"`
+	ProjectID string   `json:"projectId"`
+	Name      string   `json:"name"`
+	Scopes    []string `json:"scopes"`
+	// DatabaseID is the only database the key reaches; empty for every
+	// database of the project.
+	DatabaseID string    `json:"databaseId"`
+	LastFour   string    `json:"lastFour"`
+	CreatedAt  time.Time `json:"createdAt"`
+}
+
+// ProjectAPIKeyRequest describes a key to issue: Name is 1-128 characters and
+// Scopes a non-empty subset of documents:read and documents:write. An empty
+// DatabaseID reaches every database of the project.
+type ProjectAPIKeyRequest struct {
+	Name       string   `json:"name"`
+	Scopes     []string `json:"scopes"`
+	DatabaseID string   `json:"databaseId,omitempty"`
+}
+
+// CreatedProjectAPIKey is a new key with its secret, returned only once.
+type CreatedProjectAPIKey struct {
+	Key    ProjectAPIKey `json:"key"`
+	Secret string        `json:"secret"`
+}
+
 // Member is a user's membership in an organization.
 type Member struct {
 	UserID   string    `json:"userId"`
@@ -472,6 +500,23 @@ func (u *ManagementUser) SQL(ctx context.Context, org, project, databaseID, stat
 // consistent snapshot copy of the database databaseID.
 func (u *ManagementUser) BranchDatabase(ctx context.Context, org, project, databaseID, name string) (*ManagedDatabase, error) {
 	return send[ManagedDatabase](ctx, u, http.MethodPost, databasePath(org, project, databaseID, "branches"), nameBody{name})
+}
+
+// CreateProjectAPIKey issues a data API key of a project, a Config.Token for
+// New; a viewer cannot.
+func (u *ManagementUser) CreateProjectAPIKey(ctx context.Context, org, project string, req ProjectAPIKeyRequest) (*CreatedProjectAPIKey, error) {
+	return send[CreatedProjectAPIKey](ctx, u, http.MethodPost, projectPath(org, project, "api-keys"), req)
+}
+
+// ProjectAPIKeys lists a project's data API keys in creation order.
+func (u *ManagementUser) ProjectAPIKeys(ctx context.Context, org, project string, opts PageOptions) (*Page[ProjectAPIKey], error) {
+	return get[Page[ProjectAPIKey]](ctx, u, projectPath(org, project, "api-keys"), opts.query())
+}
+
+// RevokeProjectAPIKey revokes a project's data API key; it stops
+// authenticating immediately. A viewer cannot.
+func (u *ManagementUser) RevokeProjectAPIKey(ctx context.Context, org, project, key string) error {
+	return u.call(ctx, http.MethodDelete, projectPath(org, project, "api-keys", key), nil, nil, nil)
 }
 
 // Members lists an organization's members in user id order.

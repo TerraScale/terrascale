@@ -60,12 +60,10 @@ func pinnedRoutes(doc openAPIDoc) []string {
 // notInClient lists the pinned routes the client does not call yet; TS-590
 // adds them group by group.
 var notInClient = []string{
-	"DELETE /v1/management/organizations/{organization}/projects/{project}/api-keys/{key}",
 	"DELETE /v1/management/organizations/{organization}/projects/{project}/databases/{database}/indexes/{index}",
 	"DELETE /v1/management/organizations/{organization}/projects/{project}/saved-queries/{query}",
 	"GET /v1/management/commits/{id}",
 	"GET /v1/management/documents/{collection}/{id}",
-	"GET /v1/management/organizations/{organization}/projects/{project}/api-keys",
 	"GET /v1/management/organizations/{organization}/projects/{project}/databases/{database}/backup-policy",
 	"GET /v1/management/organizations/{organization}/projects/{project}/databases/{database}/backups",
 	"GET /v1/management/organizations/{organization}/projects/{project}/databases/{database}/collections/{collection}/schema",
@@ -78,7 +76,6 @@ var notInClient = []string{
 	"GET /v1/projects/{project}/databases/{database}/collections/{collection}/shape",
 	"POST /v1/management/documents/{collection}/query",
 	"POST /v1/management/invitations/lookup",
-	"POST /v1/management/organizations/{organization}/projects/{project}/api-keys",
 	"POST /v1/management/organizations/{organization}/projects/{project}/databases/{database}/backups",
 	"POST /v1/management/organizations/{organization}/projects/{project}/databases/{database}/backups/{backup}/restore",
 	"POST /v1/management/organizations/{organization}/projects/{project}/databases/{database}/index-recommendations/{recommendation}/apply",
