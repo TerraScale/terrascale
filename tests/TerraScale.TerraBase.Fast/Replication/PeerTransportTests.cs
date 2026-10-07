@@ -14,6 +14,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using TerraBase.Configuration;
+using TerraBase.Fast.Storage;
 using TerraBase.Features.Replication;
 using TerraBase.Features.Replication.V1;
 using TerraBase.Tenancy;
@@ -66,26 +67,76 @@ public sealed class PeerTransportTests
         await using var server = await TerraBaseTestServer.StartAsync(tls.Apply);
         using var channel = tls.CreateChannel(server.PeerAddress!);
         var client = new Features.Replication.V1.Replication.ReplicationClient(channel);
+        var hellos = new List<SyncRequest>();
+        for (var i = 0; i <= ReplicationProtocol.MaxOpenStreams; i++)
+        {
+            hellos.Add(new SyncRequest { Hello = ReplicationProtocol.CreateHello(await server.RegisterAsync(), RandomNumberGenerator.GetBytes(16)) });
+        }
+
+        using var stop = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         var calls = new List<AsyncDuplexStreamingCall<SyncRequest, SyncResponse>>();
+        var answers = new List<SyncResponse>();
+        var maintenance = new List<Task>();
+        Exception? primaryFailure = null;
         try
         {
             for (var i = 0; i <= ReplicationProtocol.MaxOpenStreams; i++)
             {
-                var hello = new SyncRequest { Hello = ReplicationProtocol.CreateHello(await server.RegisterAsync(), RandomNumberGenerator.GetBytes(16)) };
-                var call = client.Sync(cancellationToken: TUnit.Core.TestContext.Current!.Execution.CancellationToken);
+                var call = client.Sync(cancellationToken: stop.Token);
                 calls.Add(call);
-                await call.RequestStream.WriteAsync(hello);
-                await call.ResponseStream.MoveNext(CancellationToken.None);
+                await call.RequestStream.WriteAsync(hellos[i], stop.Token);
+                await Assert.That(await call.ResponseStream.MoveNext(stop.Token)).IsTrue();
+                answers.Add(call.ResponseStream.Current);
+                if (i < ReplicationProtocol.MaxOpenStreams)
+                {
+                    await Assert.That(answers[^1].Welcome).IsNotNull();
+                    maintenance.Add(KeepAliveAsync(call));
+                }
             }
 
-            var answers = calls.Select(call => call.ResponseStream.Current).ToList();
             await Assert.That(answers.Take((int)ReplicationProtocol.MaxOpenStreams).All(answer => answer.Welcome is not null)).IsTrue();
+            await Assert.That(answers[^1].Error).IsNotNull();
             await Assert.That(answers[^1].Error.Code).IsEqualTo(StreamErrorCode.StreamErrorResourceExhausted);
             await Assert.That(answers[^1].Error.Retryable).IsTrue();
         }
+        catch (Exception error)
+        {
+            primaryFailure = error;
+            throw;
+        }
         finally
         {
-            calls.ForEach(call => call.Dispose());
+            try
+            {
+                await StoragePoolTests.JoinCleanupAsync(maintenance.Append(stop.CancelAsync()), primaryFailure);
+            }
+            finally
+            {
+                calls.ForEach(call => call.Dispose());
+            }
+        }
+
+        async Task KeepAliveAsync(AsyncDuplexStreamingCall<SyncRequest, SyncResponse> call)
+        {
+            // Keep every accepted slot occupied while later handshakes run, and drain the protocol's echoes.
+            using var timer = new PeriodicTimer(ReplicationProtocol.IdleTimeout / 3);
+            try
+            {
+                do
+                {
+                    await call.RequestStream.WriteAsync(new SyncRequest { KeepAlive = new KeepAlive { Nonce = 7 } }, stop.Token);
+                    await Assert.That(await call.ResponseStream.MoveNext(stop.Token)).IsTrue();
+                    await Assert.That(call.ResponseStream.Current.FrameCase).IsEqualTo(SyncResponse.FrameOneofCase.KeepAlive);
+                    await Assert.That(call.ResponseStream.Current.KeepAlive.Nonce).IsEqualTo(7UL);
+                }
+                while (await timer.WaitForNextTickAsync(stop.Token));
+            }
+            catch (OperationCanceledException) when (stop.IsCancellationRequested)
+            {
+            }
+            catch (RpcException error) when (error.StatusCode == StatusCode.Cancelled && stop.IsCancellationRequested)
+            {
+            }
         }
     }
 

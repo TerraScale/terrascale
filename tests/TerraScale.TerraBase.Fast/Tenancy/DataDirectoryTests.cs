@@ -125,6 +125,8 @@ public sealed class DataDirectoryTests
             await transaction.CommitAsync(CancellationToken.None);
             await transaction.DisposeAsync();
             await shutdown.WaitAsync(TimeSpan.FromSeconds(30));
+            await server.Services.GetRequiredService<SqliteStorageEngine>().CleanupCompletion
+                .WaitAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
             await Assert.That(TerraBaseTestServer.IsDataDirectoryOwned(dataDirectory)).IsFalse();
             serverDisposed = true;
             await server.DisposeAsync();
