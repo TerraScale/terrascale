@@ -3,6 +3,7 @@ using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http.HttpResults;
+using TerraBase.Configuration;
 using TerraBase.Errors;
 using TerraBase.Features.Documents;
 using TerraBase.Features.UserAuth;
@@ -42,7 +43,8 @@ public sealed class CommitEndpoint(IManagementCommits commits) : EndpointWithout
         ["create_project"] = ["organization", "name", "id?"],
         ["rename_project"] = ["organization", "project", "name"],
         ["delete_project"] = ["organization", "project"],
-        ["create_database"] = ["organization", "project", "name", "id?"],
+        ["create_database"] = ["organization", "project", "name", "id?", "home_region?", "replica_regions?"],
+        ["set_database_regions"] = ["organization", "project", "database", "replica_regions"],
         ["branch_database"] = ["organization", "project", "database", "name"],
         ["delete_database"] = ["organization", "project", "database"],
         ["change_role"] = ["organization", "user", "role"],
@@ -268,6 +270,8 @@ public sealed class CommitEndpoint(IManagementCommits commits) : EndpointWithout
         : !IsIdentifier(op.Database) ? new Validation("database must be an id")
         : !IsIdentifier(op.Invitation) ? new Validation("invitation must be an id")
         : op.Id is { } id && !IsNewId(id) ? new Validation("id must be a lowercase hyphenated UUID")
+        : op.HomeRegion is { } home && !TerraBaseOptions.IsRegion(home) ? new Validation("home_region must be a region id")
+        : op.ReplicaRegions?.Any(region => region is null || !TerraBaseOptions.IsRegion(region)) == true ? new Validation("replica_regions must be region ids")
         : op.TokenHash is { } hash && !(hash.Length == 64 && hash.All(char.IsAsciiHexDigitLower)) ? new Validation("token_hash must be 64 lowercase hex characters")
         : op.Version is { Length: 0 or > 32 } ? new Validation("version must be 1 to 32 characters")
         : op.Account is false ? new Validation("account is true or absent")

@@ -106,18 +106,20 @@ internal sealed partial class WanResponder(
                 head = await read.GetLastChangeSequenceAsync(cancellationToken).ConfigureAwait(false);
             }
 
-            if (head > 0)
+            // Every database, written to or not, so other regions learn its placement as soon as it is created.
+            var record = await tenants.DatabaseRecordAsync(database, cancellationToken).ConfigureAwait(false);
+            reply.Heads.Add(new Head
             {
-                reply.Heads.Add(new Head
-                {
-                    TenantId = WanProtocol.Id(database.OrganizationId),
-                    ProjectId = WanProtocol.Id(database.ProjectId!),
-                    DatabaseId = WanProtocol.Id(database.DatabaseId!),
-                    Origin = ByteString.CopyFrom(origin.Span),
-                    Sequence = (ulong)head,
-                    DatabaseName = await tenants.DatabaseNameAsync(database, cancellationToken).ConfigureAwait(false) ?? "",
-                });
-            }
+                TenantId = WanProtocol.Id(database.OrganizationId),
+                ProjectId = WanProtocol.Id(database.ProjectId!),
+                DatabaseId = WanProtocol.Id(database.DatabaseId!),
+                Origin = ByteString.CopyFrom(origin.Span),
+                Sequence = (ulong)head,
+                DatabaseName = record?.Name ?? "",
+                HomeRegion = record?.Placement.Home ?? "",
+                ReplicaRegions = { record?.Placement.Replicas ?? [] },
+                PlacementVersion = (ulong)(record?.Placement.Version ?? 0),
+            });
         }
 
         return reply;
@@ -134,6 +136,12 @@ internal sealed partial class WanResponder(
         if (await engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is not { } store)
         {
             return new PullReply { Status = PullReply.Types.Status.UnknownOrigin };
+        }
+
+        // A database's data goes only to the regions its placement names (docs/cross-region.md).
+        if ((await tenants.DatabaseRecordAsync(database, cancellationToken).ConfigureAwait(false))?.Placement.Includes(request.Region) != true)
+        {
+            return new PullReply { Status = PullReply.Types.Status.NotPlaced };
         }
 
         // One short read transaction, bounded by the reply: it ends before the reply is sent.

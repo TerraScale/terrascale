@@ -418,9 +418,22 @@ internal sealed partial class EngineManagementService
                         : Failed(registered);
                 }
 
+            case "set_database_regions":
+                {
+                    if (DatabaseRegions.Check(options, options.Region, op.ReplicaRegions!) is { } invalid)
+                    {
+                        return new OperationFailed(invalid);
+                    }
+
+                    var placed = await SetDatabaseRegionsAsync(transaction, userId, organization, op.Project!, op.Database!, op.ReplicaRegions!, cancellationToken).ConfigureAwait(false);
+                    return placed.Error == ManagementError.None
+                        ? Body(ManagedDatabaseBody.From(placed.Value!, options.Region), TerraBaseJsonContext.Default.ManagedDatabaseBody)
+                        : Failed(placed.Error);
+                }
+
             case "delete_database":
                 {
-                    var unregistered = await UnregisterDatabaseAsync(transaction, userId, organization, op.Project!, op.Database!, cancellationToken).ConfigureAwait(false);
+                    var unregistered = await UnregisterDatabaseAsync(transaction, userId, organization, op.Project!, op.Database!, options.Region, cancellationToken).ConfigureAwait(false);
                     if (unregistered.Value is not { } storage)
                     {
                         return Failed(unregistered.Error);
@@ -546,9 +559,11 @@ internal sealed partial class EngineManagementService
                         return (tenant, null);
                     }
 
-                    return await GetAsync(transaction, Databases(op.Project!), op.Database!, TerraBaseJsonContext.Default.ManagedDatabase, cancellationToken).ConfigureAwait(false) is { } source
-                        ? (tenant, source)
-                        : ManagementError.NotFound;
+                    // A branch copies the home region's file and lives there only (docs/cross-region.md).
+                    return await GetAsync(transaction, Databases(op.Project!), op.Database!, TerraBaseJsonContext.Default.ManagedDatabase, cancellationToken).ConfigureAwait(false) is not { } source
+                        ? ManagementError.NotFound
+                        : source.Home(options.Region) != options.Region ? ManagementError.WrongRegion
+                        : (tenant, source);
                 }, cancellationToken).ConfigureAwait(false);
                 if (target.Error != ManagementError.None)
                 {
@@ -556,7 +571,20 @@ internal sealed partial class EngineManagementService
                 }
 
                 var (project, source) = target.Value;
-                var database = new ManagedDatabase(op.Id ?? NewId(), op.Project!, op.Name!, source?.Id, time.GetUtcNow());
+                // A database is created in its home region, the one the commit is sent to (docs/cross-region.md).
+                var replicas = op.ReplicaRegions ?? [];
+                if ((op.HomeRegion ?? options.Region) != options.Region)
+                {
+                    return await AbandonAsync(prepared, new CommitRejected(Failure(ManagementError.WrongRegion), i)).ConfigureAwait(false);
+                }
+
+                if (DatabaseRegions.Check(options, options.Region, replicas) is { } invalid)
+                {
+                    return await AbandonAsync(prepared, new CommitRejected(invalid, i)).ConfigureAwait(false);
+                }
+
+                var database = new ManagedDatabase(
+                    op.Id ?? NewId(), op.Project!, op.Name!, source?.Id, time.GetUtcNow(), options.Region, replicas.Count == 0 ? null : [.. replicas], 1);
                 var storage = project with { DatabaseId = database.Id };
                 if (!await PrepareDatabaseAsync(storage, source is null ? null : project with { DatabaseId = source.Id }, cancellationToken).ConfigureAwait(false))
                 {
@@ -666,6 +694,8 @@ internal sealed partial class EngineManagementService
         ManagementError.IdTaken => "id_taken",
         ManagementError.InvitationClosed => "invitation_closed",
         ManagementError.TokenTaken => "token_taken",
+        ManagementError.WrongRegion => "wrong_region",
+        ManagementError.Replicated => "database_replicated",
         _ => throw new ArgumentOutOfRangeException(nameof(error)),
     };
 
@@ -683,6 +713,8 @@ internal sealed partial class EngineManagementService
         ManagementError.IdTaken => "the id is already taken",
         ManagementError.InvitationClosed => "the invitation is no longer pending",
         ManagementError.TokenTaken => "another invitation has this token",
+        ManagementError.WrongRegion => "the database is managed in another region: send it to its home region",
+        ManagementError.Replicated => "remove the database's replica regions first",
         _ => throw new ArgumentOutOfRangeException(nameof(error)),
     };
 

@@ -230,6 +230,8 @@ internal static class ManagementRoute
         ManagementError.IdTaken => TypedResults.Conflict("the id is already taken"),
         ManagementError.InvitationClosed => TypedResults.Conflict("the invitation is no longer pending"),
         ManagementError.TokenTaken => TypedResults.Conflict("another invitation has this token"),
+        ManagementError.WrongRegion => ErrorResponse.From(new Conflict("the database is managed in its home region", "wrong_region")),
+        ManagementError.Replicated => ErrorResponse.From(new Conflict("remove the database's replica regions first", "database_replicated")),
         _ => throw new ArgumentOutOfRangeException(nameof(error)),
     };
 

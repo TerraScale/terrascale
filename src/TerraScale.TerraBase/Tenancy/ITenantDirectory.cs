@@ -23,8 +23,9 @@ public interface ITenantDirectory
         string organizationId, string projectId, string database, CancellationToken cancellationToken);
 
     /// <summary>
-    /// Whether the catalog registers <paramref name="database"/> (its organization, project and database ids):
-    /// <see langword="null"/> when this member's catalog is at a version this build does not read, so neither is known.
+    /// Whether the catalog registers <paramref name="database"/> (its organization, project and database ids) for this region:
+    /// it is recorded and its placement names this region. <see langword="null"/> when this member's catalog is at a version
+    /// this build does not read, so neither is known.
     /// </summary>
     ValueTask<bool?> RegisteredAsync(TenantContext database, CancellationToken cancellationToken);
 
@@ -36,15 +37,31 @@ public interface ITenantDirectory
     /// </summary>
     ValueTask<bool?> ReplicatesAsync(TenantContext database, CancellationToken cancellationToken);
 
-    /// <summary>The name of <paramref name="database"/>, or <see langword="null"/> when the catalog does not register it.</summary>
-    ValueTask<string?> DatabaseNameAsync(TenantContext database, CancellationToken cancellationToken);
+    /// <summary>
+    /// The name and placement of <paramref name="database"/> as this region's catalog records it, or <see langword="null"/>
+    /// when it records none.
+    /// </summary>
+    ValueTask<(string Name, DatabasePlacement Placement)?> DatabaseRecordAsync(TenantContext database, CancellationToken cancellationToken);
 
     /// <summary>
-    /// Registers <paramref name="database"/> under its organization, project and database ids and <paramref name="name"/>, as
-    /// another region holds it, when this region registers its organization and project under the same ids
-    /// (docs/cross-region.md). Only a catalog primary registers.
+    /// Records <paramref name="database"/> under its organization, project and database ids, <paramref name="name"/> and
+    /// <paramref name="placement"/>, as another region holds it, when this region registers its organization and project under
+    /// the same ids (docs/cross-region.md). A database placed here also gets its file; one placed elsewhere only its record,
+    /// so this region can say where it is served. Only a catalog primary registers.
     /// </summary>
-    ValueTask<DatabaseAdoption> AdoptDatabaseAsync(TenantContext database, string name, CancellationToken cancellationToken);
+    ValueTask<DatabaseAdoption> AdoptDatabaseAsync(TenantContext database, string name, DatabasePlacement placement, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Takes <paramref name="placement"/>, which the database's home region decided, when it is newer than the recorded one;
+    /// whether it was taken. Only a catalog primary records.
+    /// </summary>
+    ValueTask<bool> UpdatePlacementAsync(TenantContext database, DatabasePlacement placement, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Deletes this region's record and copy of <paramref name="database"/>, which its home region (another one) deleted, so
+    /// that nothing brings it back; whether it did. Only a catalog primary deletes; its followers follow its catalog.
+    /// </summary>
+    ValueTask<bool> ForgetDatabaseAsync(TenantContext database, CancellationToken cancellationToken);
 
     /// <summary>
     /// The plan of organization <paramref name="organizationId"/>: <see cref="PlanTier.Hobby"/> when it does not exist (or no
@@ -53,10 +70,23 @@ public interface ITenantDirectory
     ValueTask<PlanTier> PlanAsync(string organizationId, CancellationToken cancellationToken);
 }
 
+/// <summary>Where a database is served (docs/cross-region.md): its home region and replica regions.</summary>
+/// <param name="Home">The region the database is created and managed in.</param>
+/// <param name="Replicas">The other regions that hold a full copy.</param>
+/// <param name="Version">Raised by the home region on every change; the highest one wins elsewhere.</param>
+public sealed record DatabasePlacement(string Home, IReadOnlyList<string> Replicas, long Version)
+{
+    /// <summary>Whether <paramref name="region"/> serves the database.</summary>
+    public bool Includes(string region) => Home == region || Replicas.Contains(region);
+
+    /// <summary>The home region, then the replica regions.</summary>
+    public IReadOnlyList<string> Regions => [Home, .. Replicas];
+}
+
 /// <summary>The outcome of <see cref="ITenantDirectory.AdoptDatabaseAsync"/>.</summary>
 public enum DatabaseAdoption
 {
-    /// <summary>The database is registered now.</summary>
+    /// <summary>The database is recorded now (with its file when this region serves it).</summary>
     Registered,
 
     /// <summary>This region does not register its organization and project under the same ids: the project does not replicate here.</summary>

@@ -22,6 +22,10 @@ public sealed class CrossRegionTests
 {
     private static readonly Faker Faker = new();
     private static readonly string[] Scopes = ["documents:read", "documents:write"];
+    private static readonly string[] InSfo = ["sfo-1"];
+    private static readonly string[] InGru = ["gru-1"];
+    private static readonly string[] SfoTwice = ["sfo-1", "sfo-1"];
+    private static readonly string[] Unknown = ["iad-1"];
 
     [Test]
     public async Task A_write_in_either_region_is_readable_in_the_other_with_the_same_version()
@@ -151,51 +155,143 @@ public sealed class CrossRegionTests
     }
 
     [Test]
-    public async Task A_database_created_in_either_region_of_a_shared_project_appears_in_the_other()
+    [Arguments("gru-1")]
+    [Arguments("sfo-1")]
+    public async Task A_database_placed_in_one_region_is_served_there_and_refused_with_its_home_in_the_other(string home)
     {
         await using var regions = await Regions.StartAsync();
-        foreach (var (writer, reader, name) in new[] { (regions.Gru, regions.Sfo, "orders"), (regions.Sfo, regions.Gru, "events") })
-        {
-            var path = $"/v1/projects/{regions.Project}/databases/{name}";
-            using var created = await writer.PutAsync(new Uri(path, UriKind.Relative), null);
-            await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created);
-            var id = (await created.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString();
-            (await writer.PostAsJsonAsync(new Uri($"{path}/collections", UriKind.Relative), new { name = "items" })).EnsureSuccessStatusCode();
-            var document = new Uri($"{path}/collections/items/documents/{ReplicationDocuments.Id(name)}", UriKind.Relative);
-            (await writer.PutAsJsonAsync(document, new { value = name })).EnsureSuccessStatusCode();
+        var (homeApi, otherApi) = home == "gru-1" ? (regions.GruApi, regions.SfoApi) : (regions.SfoApi, regions.GruApi);
+        var (homeData, otherData) = home == "gru-1" ? (regions.Gru, regions.Sfo) : (regions.Sfo, regions.Gru);
+        var created = await regions.CreateAsync(homeApi, "orders", home);
+        await Assert.That(created.GetProperty("homeRegion").GetString()).IsEqualTo(home);
+        await Assert.That(created.GetProperty("replicaRegions").GetArrayLength()).IsEqualTo(0);
+        var path = $"/v1/projects/{regions.Project}/databases/orders";
+        (await homeData.PostAsJsonAsync(new Uri($"{path}/collections", UriKind.Relative), new { name = "items" })).EnsureSuccessStatusCode();
+        var document = new Uri($"{path}/collections/items/documents/{ReplicationDocuments.Id("x")}", UriKind.Relative);
+        (await homeData.PutAsJsonAsync(document, new { value = "here" })).EnsureSuccessStatusCode();
 
-            // Registered in the other region under the same id and name, with its documents.
-            _ = await Regions.EventuallyReadAsync(reader, document, name);
-            using var listed = await reader.PutAsync(new Uri(path, UriKind.Relative), null);
-            await Assert.That(listed.StatusCode).IsEqualTo(HttpStatusCode.OK);
-            await Assert.That((await listed.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString()).IsEqualTo(id);
-        }
+        // The other region learns where the database is served, and answers its data requests with that.
+        var id = created.GetProperty("id").GetString();
+        await TerraBaseTestServer.EventuallyAsync(async token =>
+            (await otherApi.Client.GetAsync(regions.Management($"databases/{id}"), token)).StatusCode == HttpStatusCode.OK);
+        var record = await otherApi.Client.GetFromJsonAsync<JsonElement>(regions.Management($"databases/{id}"));
+        await Assert.That(record.GetProperty("homeRegion").GetString()).IsEqualTo(home);
+        await Regions.WrongRegionAsync(otherData.GetAsync(document), home, home);
+        await Regions.WrongRegionAsync(otherData.PutAsJsonAsync(document, new { value = "elsewhere" }), home, home);
+        await Regions.WrongRegionAsync(otherApi.Client.PostAsJsonAsync(regions.Management($"databases/{id}/branches"), new { name = "copy" }), home, home);
+        using var read = await homeData.GetAsync(document);
+        await Assert.That(read.StatusCode).IsEqualTo(HttpStatusCode.OK);
     }
 
     [Test]
-    public async Task A_database_deleted_in_one_region_is_not_brought_back_and_a_name_clash_is_counted()
+    public async Task A_database_placed_in_both_regions_is_written_and_read_in_either_and_its_placement_follows_its_home()
+    {
+        await using var regions = await Regions.StartAsync();
+        var created = await regions.CreateAsync(regions.GruApi, "orders", "gru-1", "sfo-1");
+        var id = created.GetProperty("id").GetString();
+        var path = $"/v1/projects/{regions.Project}/databases/orders";
+        (await regions.Gru.PostAsJsonAsync(new Uri($"{path}/collections", UriKind.Relative), new { name = "items" })).EnsureSuccessStatusCode();
+        var fromGru = new Uri($"{path}/collections/items/documents/{ReplicationDocuments.Id("gru")}", UriKind.Relative);
+        var fromSfo = new Uri($"{path}/collections/items/documents/{ReplicationDocuments.Id("sfo")}", UriKind.Relative);
+        (await regions.Gru.PutAsJsonAsync(fromGru, new { value = "gru" })).EnsureSuccessStatusCode();
+        _ = await Regions.EventuallyReadAsync(regions.Sfo, fromGru, "gru");
+        (await regions.Sfo.PutAsJsonAsync(fromSfo, new { value = "sfo" })).EnsureSuccessStatusCode();
+        _ = await Regions.EventuallyReadAsync(regions.Gru, fromSfo, "sfo");
+
+        // Only the home region changes the placement or deletes; it deletes once no replica is left.
+        await Regions.WrongRegionAsync(regions.SfoApi.Client.PatchAsJsonAsync(regions.Management($"databases/{id}"), new { replicaRegions = Array.Empty<string>() }), "gru-1", "gru-1,sfo-1");
+        await Regions.WrongRegionAsync(regions.SfoApi.Client.DeleteAsync(regions.Management($"databases/{id}")), "gru-1", "gru-1,sfo-1");
+        await ErrorAssert.ErrorAsync(regions.GruApi.Client.DeleteAsync(regions.Management($"databases/{id}")), HttpStatusCode.Conflict, "database_replicated",
+            "remove the database's replica regions first");
+
+        // sfo is removed: it stops serving the database at once and keeps its copy, unserved.
+        using var removed = await regions.GruApi.Client.PatchAsJsonAsync(regions.Management($"databases/{id}"), new { replicaRegions = Array.Empty<string>() });
+        await Assert.That(removed.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        var file = Path.Combine(regions.SfoApi.Server.DataDirectory, regions.Organization, regions.Project, id + ".db");
+        await TerraBaseTestServer.EventuallyAsync(async token => (await regions.Sfo.GetAsync(fromGru, token)).StatusCode == HttpStatusCode.MisdirectedRequest);
+        await Regions.WrongRegionAsync(regions.Sfo.GetAsync(fromGru), "gru-1", "gru-1");
+        await Assert.That(File.Exists(file)).IsTrue();
+
+        // Added back, sfo serves its copy again, with everything both regions wrote.
+        using var added = await regions.GruApi.Client.PatchAsJsonAsync(regions.Management($"databases/{id}"), new { replicaRegions = InSfo });
+        await Assert.That((await added.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("replicaRegions")[0].GetString()).IsEqualTo("sfo-1");
+        _ = await Regions.EventuallyReadAsync(regions.Sfo, fromSfo, "sfo");
+        _ = await Regions.EventuallyReadAsync(regions.Sfo, fromGru, "gru");
+
+        // Made local to gru again and deleted there: sfo deletes its record and its copy too.
+        using var dropped = await regions.GruApi.Client.PatchAsJsonAsync(regions.Management($"databases/{id}"), new { replicaRegions = Array.Empty<string>() });
+        dropped.EnsureSuccessStatusCode();
+        using var deleted = await regions.GruApi.Client.DeleteAsync(regions.Management($"databases/{id}"));
+        await Assert.That(deleted.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
+        await TerraBaseTestServer.EventuallyAsync(async token =>
+            (await regions.SfoApi.Client.GetAsync(regions.Management($"databases/{id}"), token)).StatusCode == HttpStatusCode.NotFound && !File.Exists(file));
+        using var gone = await regions.Sfo.GetAsync(fromGru);
+        await Assert.That(gone.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+    }
+
+    [Test]
+    public async Task A_placement_is_checked_where_it_is_created_and_through_commits()
+    {
+        await using var regions = await Regions.StartAsync();
+        // Created in its home region only; replicas are regions this deployment replicates with, once each, besides the home.
+        await Regions.WrongRegionAsync(regions.GruApi.Client.PostAsJsonAsync(regions.Management("databases"), new { name = "elsewhere", homeRegion = "sfo-1" }), "sfo-1", "sfo-1");
+        await ErrorAssert.ErrorAsync(regions.GruApi.Client.PostAsJsonAsync(regions.Management("databases"), new { name = "unknown", replicaRegions = Unknown }),
+            HttpStatusCode.BadRequest, "invalid_request", "replicaRegions must name regions this deployment replicates with");
+        await ErrorAssert.ErrorAsync(regions.GruApi.Client.PostAsJsonAsync(regions.Management("databases"), new { name = "home", replicaRegions = InGru }),
+            HttpStatusCode.BadRequest, "invalid_request", "replicaRegions must not name the home region");
+        await ErrorAssert.ErrorAsync(regions.GruApi.Client.PostAsJsonAsync(regions.Management("databases"), new { name = "twice", replicaRegions = SfoTwice }),
+            HttpStatusCode.BadRequest, "invalid_request", "replicaRegions must not repeat a region");
+
+        // The same through a commit: created with a replica, then made local to gru.
+        var database = Guid.NewGuid().ToString("D");
+        using var created = await Regions.Commit(regions.GruApi, new { op = "create_database", organization = regions.Organization, project = regions.Project, name = "committed", id = database, replica_regions = InSfo });
+        created.EnsureSuccessStatusCode();
+        var path = $"/v1/projects/{regions.Project}/databases/committed";
+        (await regions.Gru.PostAsJsonAsync(new Uri($"{path}/collections", UriKind.Relative), new { name = "items" })).EnsureSuccessStatusCode();
+        await TerraBaseTestServer.EventuallyAsync(async token =>
+            (await regions.Sfo.GetAsync(new Uri($"{path}/collections/items", UriKind.Relative), token)).StatusCode == HttpStatusCode.OK);
+        using var local = await Regions.Commit(regions.GruApi, new { op = "set_database_regions", organization = regions.Organization, project = regions.Project, database, replica_regions = Array.Empty<string>() });
+        local.EnsureSuccessStatusCode();
+        await TerraBaseTestServer.EventuallyAsync(async token =>
+            (await regions.Sfo.GetAsync(new Uri($"{path}/collections/items", UriKind.Relative), token)).StatusCode == HttpStatusCode.MisdirectedRequest);
+        using var refused = await Regions.Commit(regions.SfoApi, new { op = "set_database_regions", organization = regions.Organization, project = regions.Project, database, replica_regions = InGru });
+        await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
+        await Assert.That((await refused.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("error").GetProperty("code").GetString()).IsEqualTo("wrong_region");
+    }
+
+    [Test]
+    public async Task A_database_deleted_in_its_home_is_not_brought_back_and_a_name_clash_is_counted()
     {
         await using var regions = await Regions.StartAsync();
 
-        // sfo deletes the canary; gru keeps writing to it.
-        using var deleted = await regions.SfoApi.Client.DeleteAsync(
-            new Uri($"/v1/management/organizations/{regions.Organization}/projects/{regions.Project}/databases/{regions.Database}", UriKind.Relative));
-        await Assert.That(deleted.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
-        (await regions.Gru.PutAsJsonAsync(regions.Document(ReplicationDocuments.Id("after-delete")), new { value = "gru" })).EnsureSuccessStatusCode();
-
-        // sfo has a database "clash" that was never written; gru then creates and writes its own "clash".
+        // sfo has a database "clash" that was never written; gru then creates and writes its own "clash", local to gru.
         (await regions.Sfo.PutAsync(new Uri($"/v1/projects/{regions.Project}/databases/clash", UriKind.Relative), null)).EnsureSuccessStatusCode();
         var clash = $"/v1/projects/{regions.Project}/databases/clash";
         (await regions.Gru.PutAsync(new Uri(clash, UriKind.Relative), null)).EnsureSuccessStatusCode();
         (await regions.Gru.PostAsJsonAsync(new Uri($"{clash}/collections", UriKind.Relative), new { name = "items" })).EnsureSuccessStatusCode();
-
         await TerraBaseTestServer.EventuallyAsync(async token =>
-            await regions.SfoApi.Server.MetricAsync("terrabase_wan_unregistered", "region=\"gru-1\"", token) == 1
-            && await regions.SfoApi.Server.MetricAsync("terrabase_wan_conflicts", "region=\"gru-1\"", token) == 1);
-        using var gone = await regions.Sfo.GetAsync(regions.Document(ReplicationDocuments.Id("after-delete")));
-        await Assert.That(gone.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+            await regions.SfoApi.Server.MetricAsync("terrabase_wan_conflicts", "region=\"gru-1\"", token) == 1);
         using var own = await regions.Sfo.GetAsync(new Uri($"{clash}/collections/items", UriKind.Relative));
         await Assert.That(own.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+
+        // An sfo database with a replica in gru is made local to sfo and deleted there: gru deletes its record and copy.
+        var created = await regions.CreateAsync(regions.SfoApi, "brief", "sfo-1", "gru-1");
+        var id = created.GetProperty("id").GetString();
+        var brief = $"/v1/projects/{regions.Project}/databases/brief";
+        (await regions.Sfo.PostAsJsonAsync(new Uri($"{brief}/collections", UriKind.Relative), new { name = "items" })).EnsureSuccessStatusCode();
+        await TerraBaseTestServer.EventuallyAsync(async token =>
+            (await regions.Gru.GetAsync(new Uri($"{brief}/collections/items", UriKind.Relative), token)).StatusCode == HttpStatusCode.OK);
+        (await regions.SfoApi.Client.PatchAsJsonAsync(regions.Management($"databases/{id}"), new { replicaRegions = Array.Empty<string>() })).EnsureSuccessStatusCode();
+        await TerraBaseTestServer.EventuallyAsync(async token =>
+            (await regions.Gru.GetAsync(new Uri($"{brief}/collections/items", UriKind.Relative), token)).StatusCode == HttpStatusCode.MisdirectedRequest);
+        using var deleted = await regions.SfoApi.Client.DeleteAsync(regions.Management($"databases/{id}"));
+        await Assert.That(deleted.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
+        await TerraBaseTestServer.EventuallyAsync(async token =>
+            (await regions.GruApi.Client.GetAsync(regions.Management($"databases/{id}"), token)).StatusCode == HttpStatusCode.NotFound);
+        using var gone = await regions.Gru.GetAsync(new Uri($"{brief}/collections/items", UriKind.Relative));
+        await Assert.That(gone.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+        // Deleted for good: gru never takes it again, whatever an older head still says.
+        await Assert.That(File.Exists(Path.Combine(regions.GruApi.Server.DataDirectory, regions.Organization, regions.Project, id + ".db"))).IsFalse();
     }
 
     [Test]
@@ -243,10 +339,9 @@ public sealed class CrossRegionTests
                 settings => Regions.Configure(settings, credentials, "sfo-1", "sfo-a"),
                 services => Regions.Join(services, network, "sfo", new FakeMemberStore(TimeProvider.System)));
             var (organization, project, database) = (Guid.NewGuid().ToString("D"), Guid.NewGuid().ToString("D"), Guid.NewGuid().ToString("D"));
-            foreach (var api in new[] { gruA, sfo })
+            foreach (var (api, commit) in new[] { (gruA, Regions.Registration(organization, project, database, "canary", "sfo-1")), (sfo, Regions.Registration(organization, project, null, "canary")) })
             {
-                using var registered = await api.Client.PostAsync(
-                    new Uri("/v1/management/commits", UriKind.Relative), new StringContent(Regions.Registration(organization, project, database, "canary"), Encoding.UTF8, "application/json"));
+                using var registered = await api.Client.PostAsync(new Uri("/v1/management/commits", UriKind.Relative), new StringContent(commit, Encoding.UTF8, "application/json"));
                 registered.EnsureSuccessStatusCode();
             }
 
@@ -355,6 +450,32 @@ public sealed class CrossRegionTests
 
         public Uri Document(string id) => new($"/v1/projects/{Project}/databases/canary/collections/items/documents/{id}", UriKind.Relative);
 
+        // A Management route under the canary's project.
+        public Uri Management(string path) => new($"/v1/management/organizations/{Organization}/projects/{Project}/{path}", UriKind.Relative);
+
+        // Creates a database through api, which must be its home region's, with the replicas.
+        public async Task<JsonElement> CreateAsync(ManagementApi api, string name, string home, params string[] replicas)
+        {
+            using var created = await api.Client.PostAsJsonAsync(Management("databases"), new { name, homeRegion = home, replicaRegions = replicas });
+            await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created);
+            return await created.Content.ReadFromJsonAsync<JsonElement>();
+        }
+
+        // Sends a commit of one operation through api.
+        public static Task<HttpResponseMessage> Commit(ManagementApi api, object op) =>
+            api.Client.PostAsync(new Uri("/v1/management/commits", UriKind.Relative), new StringContent(
+                JsonSerializer.Serialize(new { id = Guid.NewGuid().ToString("D"), ops = new[] { op } }), Encoding.UTF8, "application/json"));
+
+        // The answer of a region outside a database's placement: 421 wrong_region, naming its home and its regions.
+        public static async Task WrongRegionAsync(Task<HttpResponseMessage> sending, string home, string regions)
+        {
+            using var response = await sending;
+            await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.MisdirectedRequest);
+            await Assert.That((await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("error").GetProperty("code").GetString()).IsEqualTo("wrong_region");
+            await Assert.That(response.Headers.GetValues("X-TerraBase-Database-Home").Single()).IsEqualTo(home);
+            await Assert.That(response.Headers.GetValues("X-TerraBase-Database-Regions").Single()).IsEqualTo(regions);
+        }
+
         public static async Task<Regions> StartAsync()
         {
             var network = new FakeRegionNetwork();
@@ -381,15 +502,15 @@ public sealed class CrossRegionTests
         }
 
         // An organization, project and database with chosen ids, in one commit.
-        public static string Registration(string organization, string project, string database, string name) => JsonSerializer.Serialize(new
+        public static string Registration(string organization, string project, string? database, string name, params string[] replicas) => JsonSerializer.Serialize(new
         {
             id = Guid.NewGuid().ToString("D"),
-            ops = new object[]
+            ops = new object?[]
             {
                 new { op = "create_organization", id = organization, name = $"canary-{organization[..8]}" },
                 new { op = "create_project", organization, id = project, name = "canary" },
-                new { op = "create_database", organization, project, name, id = database },
-            },
+                database is null ? null : new { op = "create_database", organization, project, name, id = database, replica_regions = replicas },
+            }.OfType<object>(),
         });
 
         // The document at uri once its value is expected, with its version.
@@ -491,9 +612,9 @@ public sealed class CrossRegionTests
 
         private async Task RegisterAsync()
         {
-            foreach (var api in new[] { GruApi, SfoApi })
+            // The project in both regions; the canary at home in gru with a replica in sfo, which takes it from gru's heads.
+            foreach (var (api, commit) in new[] { (GruApi, Registration(Organization, Project, Database, "canary", "sfo-1")), (SfoApi, Registration(Organization, Project, null, "canary")) })
             {
-                var commit = Registration(Organization, Project, Database, "canary");
                 using var response = await api.Client.PostAsync(new Uri("/v1/management/commits", UriKind.Relative), new StringContent(commit, Encoding.UTF8, "application/json"));
                 response.EnsureSuccessStatusCode();
             }
