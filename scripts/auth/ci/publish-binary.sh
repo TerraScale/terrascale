@@ -45,6 +45,9 @@ commit=$(git rev-parse HEAD)
 version=$(dotnet msbuild src/TerraScale.Auth/TerraScale.Auth.csproj -getProperty:Version -nologo)
 [[ $version =~ ^[0-9]+\.[0-9]+\.[0-9]+[0-9A-Za-z.-]*$ ]] || { echo "invalid version '$version'" >&2; exit 1; }
 tag="v$version-dev.$commit"
+# The deploy job (scripts/ci/deploy.sh) rolls this release out; it runs only if this job passed.
+output=${FORGEJO_OUTPUT:-${GITHUB_OUTPUT:-}}
+[[ -z $output ]] || printf 'tag=%s\n' "$tag" >> "$output"
 
 umask 077
 work=$(mktemp -d)

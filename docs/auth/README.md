@@ -534,6 +534,19 @@ both assets into one directory and verify with
 `sha256sum -c ts-auth-linux-arm64.sha256`; the checksum detects a corrupt or
 mismatched download, it is not a signature.
 
+Then `deploy` (TS-610, `scripts/ci/deploy.sh`) hands that release to
+ts-orchestrator while the repository variable `TS_AUTO_DEPLOY_CELLS` names the
+cells, canary first. `ts-orch release service-deploy` (the ts-orchestrator CI
+build pinned by `TS_ORCH_RELEASE` and its `TS_ORCH_SHA256`) signs a release claim
+with the scoped release key it reads from OCI Vault, publishes it with the
+binary in each region's head bucket and waits until that region's
+orchestrator reports the replicas serving it; the orchestrator gates the
+rollout on `/healthz` and `/readyz` and rolls a release that never serves
+back, which fails the job before later regions see it. No operator steps
+remain. See ts-orchestrator `docs/continuous-delivery.md`, "Automatic service
+releases". `scripts/ci/check-deploy.sh` (in `fast`) runs the script against a
+stub API and ts-orch.
+
 The executable extracts its bundled native library (libsodium, used for
 Argon2id) at startup into `DOTNET_BUNDLE_EXTRACT_BASE_DIR` (default
 `$HOME/.net`). Point it at a private directory writable only by the service
