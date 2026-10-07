@@ -54,9 +54,10 @@ internal sealed partial class StoreMembership(IMemberStore store, TerraBaseOptio
                 // only a renewal that also read the others counts: a member never acts on a view older than its fence.
                 Interlocked.Exchange(ref _renewed, started);
             }
-            catch (Exception error) when (!cancellationToken.IsCancellationRequested)
+            catch (Exception error) when (error is not OperationCanceledException)
             {
-                // The last view stays; the lease ends on its own once renewals keep failing.
+                // The last view stays; the lease ends on its own once renewals keep failing. A failure that coincides with
+                // shutdown is only logged too, so the heartbeat never fails the host's stop.
                 LogFailed(logger, error);
             }
 

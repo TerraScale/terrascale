@@ -79,13 +79,17 @@ internal sealed class NatsMemberStore(NatsSettings settings, ILoggerFactory logg
     // NATS keys allow letters, digits and -/_=. only; a node name may also hold colons and pluses.
     private static string Key(string name) => Prefix + Base64Url.EncodeToString(Encoding.UTF8.GetBytes(name));
 
-    // The client certificate and the CA the servers chain to, as the files hold them now.
+    // The client certificate and the CA the servers chain to, as the files hold them now. The certificate file holds the
+    // leaf and its intermediates (ts-orchestrator's host issuer) while the servers trust only the root, so the client
+    // presents the whole chain: a bare leaf makes the broker bridge close the connection right after the handshake.
     private static ValueTask ConfigureTls(NatsSettings settings, SslClientAuthenticationOptions options)
     {
         var certificate = X509Certificate2.CreateFromPemFile(settings.CertificateFile!, settings.PrivateKeyFile);
+        var chain = new X509Certificate2Collection();
+        chain.ImportFromPemFile(settings.CertificateFile!);
         var authorities = new X509Certificate2Collection();
         authorities.ImportFromPemFile(settings.CaFile!);
-        options.ClientCertificates = [certificate];
+        options.ClientCertificateContext = SslStreamCertificateContext.Create(certificate, [.. chain.Skip(1), .. authorities], offline: true);
         options.CertificateChainPolicy = new X509ChainPolicy { TrustMode = X509ChainTrustMode.CustomRootTrust, RevocationMode = X509RevocationMode.NoCheck };
         options.CertificateChainPolicy.CustomTrustStore.AddRange(authorities);
         return ValueTask.CompletedTask;

@@ -57,7 +57,7 @@ that member holds its member lease.
 | --- | --- |
 | `nats-url` | Comma-separated `tls://host:port` (or `nats://host:port`) servers of the cell's NATS |
 | `nats-credentials-file` | NATS user credentials (`.creds`: user JWT and nkey seed), required with `nats-url` |
-| `nats-certificate`, `nats-private-key`, `nats-ca` | PEM client certificate, its key and the servers' CA, for mutual TLS; all or none. With them the connection is TLS first, as ts-orchestrator's broker bridge expects; a plain nats-server needs `handshake_first: true` in its `tls` block |
+| `nats-certificate`, `nats-private-key`, `nats-ca` | PEM client certificate (followed by its intermediates, which are sent with it), its key and the servers' CA, for mutual TLS; all or none. With them the connection is TLS first, as ts-orchestrator's broker bridge expects; a plain nats-server needs `handshake_first: true` in its `tls` block |
 
 - Each member rewrites its key every 5 s and reads the others in the same refresh. The bucket's `max_age` of 15 s (with
   subject delete markers) expires a member nobody rewrites; the bucket is created on first use with three replicas, one
