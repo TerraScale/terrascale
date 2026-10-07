@@ -178,6 +178,7 @@ type brandingInput struct {
 var actionSections = map[string]string{"block": "users", "toggle": "connections", "rotate": "directories"}
 
 func mountTools(tools *core.Tools, service Service) {
+	mountEmailTools(tools, service)
 	sectionEnum := map[string][]string{"section": listSectionKeys()}
 	core.AddTool(tools, core.ToolSpec{
 		Name: "auth_get_overview", Title: "Get authentication overview", ReadOnly: true,

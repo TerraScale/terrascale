@@ -475,3 +475,128 @@ button.ts-idp-provider:focus-visible {
     flex-basis: 100%;
   }
 }
+
+/* Emails: the editor beside a sticky preview of the selected email. */
+.ts-idp-emails {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 560px);
+  align-items: start;
+  gap: var(--ts-s8);
+}
+
+@media (max-width: 79.99rem) {
+  .ts-idp-emails {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.ts-idp-emails-editor {
+  display: grid;
+  gap: var(--ts-s6);
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.ts-idp-email-kinds {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ts-s2);
+  margin-bottom: var(--ts-s4);
+}
+
+.ts-idp-email-kind {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ts-s2);
+  padding: var(--ts-s1) var(--ts-s3);
+  border: 1px solid var(--ts-line);
+  border-radius: 999px;
+  color: var(--ts-ink-2);
+  font-size: var(--ts-fs-sm);
+}
+
+.ts-idp-email-kind:hover {
+  color: var(--ts-ink);
+  text-decoration: none;
+}
+
+.ts-idp-email-kind[aria-current="page"] {
+  border-color: var(--ts-accent);
+  background: var(--ts-accent-soft);
+  color: var(--ts-ink);
+}
+
+.ts-idp-email-body {
+  min-height: 8rem;
+  resize: vertical;
+}
+
+.ts-idp-email-variables {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ts-s2);
+}
+
+.ts-idp-email-variables code {
+  padding: 1px 6px;
+  border-radius: var(--ts-radius-sm);
+  background: var(--ts-surface-3);
+  font-family: var(--ts-font-mono);
+  font-size: var(--ts-fs-xs);
+}
+
+.ts-idp-email-test-status {
+  margin-right: auto;
+}
+
+.ts-idp-email-test-status[data-tone="success"] {
+  color: var(--ts-success);
+}
+
+.ts-idp-email-test-status[data-tone="danger"] {
+  color: var(--ts-danger);
+}
+
+.ts-idp-email-preview {
+  position: sticky;
+  top: var(--ts-s6);
+  display: grid;
+  gap: var(--ts-s3);
+  min-width: 0;
+  margin: 0;
+  padding: var(--ts-s4);
+  border-radius: var(--ts-radius-lg);
+  background: var(--ts-surface);
+}
+
+.ts-idp-email-preview-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ts-s3);
+}
+
+.ts-idp-email-preview-bar > .ts-strong {
+  margin-right: auto;
+}
+
+.ts-idp-email-preview iframe {
+  justify-self: center;
+  width: 100%;
+  height: 720px;
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius);
+  background: #ffffff;
+}
+
+.ts-idp-email-preview:has(input[value="mobile"]:checked) iframe {
+  width: 375px;
+  max-width: 100%;
+}
+
+.ts-idp-email-preview:has(input[value="dark"]:checked) iframe {
+  background: #09090b;
+}

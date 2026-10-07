@@ -61,7 +61,7 @@ func TestSidebarScrollHandoffIsScopedToDashboardNavigation(t *testing.T) {
 		}
 		for _, want := range []string{
 			`<details class="ts-nav-collapsible" data-tone="emerald" open>`,
-			`href="/auth/branding" aria-current="page"`,
+			`href="/auth/emails" aria-current="page"`,
 		} {
 			if !strings.Contains(markup, want) {
 				t.Errorf("admin=%t: missing native navigation markup %s", admin, want)

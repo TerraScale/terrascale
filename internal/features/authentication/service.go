@@ -27,6 +27,7 @@ func (e formError) Is(target error) bool { return target == core.ErrInvalid }
 type Service struct {
 	deps   core.Deps
 	origin string
+	emails EmailBackend
 }
 
 // scope returns the principal's selected organization and project.

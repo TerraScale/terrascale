@@ -1,0 +1,229 @@
+package authentication
+
+import (
+	"cmp"
+	"strconv"
+
+	"terrascale.tech/dashboard/internal/ui"
+	"terrascale.tech/dashboard/internal/ui/icons"
+)
+
+// refreshPreview reloads the preview frame with the form's drafts, replacing
+// its history entry so typing never fills the back button. The CSRF token
+// stays out of the URL.
+const refreshPreview = `document.getElementById('email-preview').contentWindow.location.replace('/auth/emails/preview?' + new URLSearchParams([...new FormData(el)].filter(([key]) => key !== '_csrf' && key !== 'preview_device')))`
+
+// emailsSection edits the branding and templates of the emails ts-auth
+// sends, beside a live preview of the selected one.
+templ emailsSection(e emailsPage, csrfToken string) {
+	if e.Unavailable != "" {
+		@ui.Alert("info", "", e.Unavailable)
+	} else {
+		<form
+			class="ts-idp-emails"
+			method="post"
+			action="/api/v1/auth-management/emails"
+			data-on:input__debounce.400ms={ refreshPreview }
+			if e.Drafted {
+				data-init={ refreshPreview }
+			}
+		>
+			<input type="hidden" name="_csrf" value={ csrfToken }/>
+			<input type="hidden" name="template" value={ e.Kind.Value }/>
+			<input type="hidden" name="locale" value={ e.Locale.Value }/>
+			<input type="hidden" name="version" value={ strconv.Itoa(e.View.Version) }/>
+			<fieldset class="ts-idp-emails-editor" disabled?={ !e.View.CanManage }>
+				<legend class="ts-sr-only">Email settings</legend>
+				@emailBrandingCard(e.View.Branding, e.View.Defaults)
+				@emailTemplateCard(e)
+				if e.View.CanManage {
+					<div class="ts-form-actions">
+						<button class="ts-btn ts-btn-primary" type="submit" name="intent" value="save">Save changes</button>
+					</div>
+				}
+			</fieldset>
+			@emailPreviewPane(e)
+		</form>
+	}
+}
+
+templ emailBrandingCard(b, defaults emailBranding) {
+	@ui.Card(ui.CardProps{ID: "auth-email-branding", Title: "Branding and sender", Description: "Applies to every email and language. Empty fields use ts-auth's defaults."}) {
+		<div class="ts-form">
+			<div class="ts-form-grid">
+				@ui.Field(ui.FieldProps{ID: "email-brand-name", Label: "Brand name", Hint: "Shown as {{ app_name }}."}) {
+					<input class="ts-input" id="email-brand-name" name="brand_name" maxlength="80" value={ b.BrandName } placeholder={ defaults.BrandName } aria-describedby="email-brand-name-hint"/>
+				}
+				@ui.Field(ui.FieldProps{ID: "email-sender-name", Label: "Sender name", Hint: "The From display name."}) {
+					<input class="ts-input" id="email-sender-name" name="sender_name" maxlength="80" value={ b.SenderName } placeholder={ defaults.SenderName } aria-describedby="email-sender-name-hint"/>
+				}
+				@ui.Field(ui.FieldProps{ID: "email-reply-to", Label: "Reply-to address"}) {
+					<input class="ts-input" id="email-reply-to" type="email" name="reply_to" value={ b.ReplyTo } placeholder={ cmp.Or(defaults.ReplyTo, "support@example.com") }/>
+				}
+				@ui.Field(ui.FieldProps{ID: "email-logo-url", Label: "Logo URL", Hint: "HTTPS PNG, JPEG, or GIF; email clients do not show SVG."}) {
+					<input class="ts-input" id="email-logo-url" type="url" name="logo_url" value={ b.LogoURL } placeholder={ cmp.Or(defaults.LogoURL, "https://assets.example.com/logo.png") } aria-describedby="email-logo-url-hint"/>
+				}
+				@ui.Field(ui.FieldProps{ID: "email-logo-width", Label: "Logo width", Hint: "Pixels, 16 to 400. Required with a logo."}) {
+					<input class="ts-input" id="email-logo-width" type="number" name="logo_width" min="16" max="400" value={ pixelValue(b.LogoWidth) } placeholder={ pixelValue(defaults.LogoWidth) } aria-describedby="email-logo-width-hint"/>
+				}
+				@ui.Field(ui.FieldProps{ID: "email-logo-height", Label: "Logo height", Hint: "Pixels, 16 to 120. Required with a logo."}) {
+					<input class="ts-input" id="email-logo-height" type="number" name="logo_height" min="16" max="120" value={ pixelValue(b.LogoHeight) } placeholder={ pixelValue(defaults.LogoHeight) } aria-describedby="email-logo-height-hint"/>
+				}
+				@ui.Field(ui.FieldProps{ID: "email-logo-dark-url", Label: "Dark mode logo URL"}) {
+					<input class="ts-input" id="email-logo-dark-url" type="url" name="logo_dark_url" value={ b.LogoDarkURL } placeholder={ cmp.Or(defaults.LogoDarkURL, "https://assets.example.com/logo-dark.png") }/>
+				}
+				@ui.Field(ui.FieldProps{ID: "email-icon-url", Label: "Icon URL", Hint: "Square image used when there is no logo."}) {
+					<input class="ts-input" id="email-icon-url" type="url" name="icon_url" value={ b.IconURL } placeholder={ cmp.Or(defaults.IconURL, "https://assets.example.com/icon.png") } aria-describedby="email-icon-url-hint"/>
+				}
+				@ui.Field(ui.FieldProps{ID: "email-theme", Label: "Theme"}) {
+					@optionSelect("email-theme", "theme", emailThemes, cmp.Or(b.Theme, defaults.Theme))
+				}
+				@ui.Field(ui.FieldProps{ID: "email-primary-color", Label: "Primary color", Hint: "Button fill."}) {
+					<input class="ts-idp-color" id="email-primary-color" type="color" name="primary_color" value={ cmp.Or(b.PrimaryColor, defaults.PrimaryColor, "#2563eb") } aria-describedby="email-primary-color-hint"/>
+				}
+				@ui.Field(ui.FieldProps{ID: "email-accent-color", Label: "Accent color", Hint: "Links and the code box."}) {
+					<input class="ts-idp-color" id="email-accent-color" type="color" name="accent_color" value={ cmp.Or(b.AccentColor, defaults.AccentColor, "#3b82f6") } aria-describedby="email-accent-color-hint"/>
+				}
+				@ui.Field(ui.FieldProps{ID: "email-button-style", Label: "Button style"}) {
+					@optionSelect("email-button-style", "button_style", buttonStyles, cmp.Or(b.ButtonStyle, defaults.ButtonStyle))
+				}
+				@ui.Field(ui.FieldProps{ID: "email-support-email", Label: "Support email"}) {
+					<input class="ts-input" id="email-support-email" type="email" name="support_email" value={ b.SupportEmail } placeholder={ cmp.Or(defaults.SupportEmail, "support@example.com") }/>
+				}
+				@ui.Field(ui.FieldProps{ID: "email-support-url", Label: "Support link"}) {
+					<input class="ts-input" id="email-support-url" type="url" name="support_url" value={ b.SupportURL } placeholder={ cmp.Or(defaults.SupportURL, "https://example.com/help") }/>
+				}
+				@ui.Field(ui.FieldProps{ID: "email-website-url", Label: "Website"}) {
+					<input class="ts-input" id="email-website-url" type="url" name="website_url" value={ b.WebsiteURL } placeholder={ cmp.Or(defaults.WebsiteURL, "https://example.com") }/>
+				}
+			</div>
+			@ui.Field(ui.FieldProps{ID: "email-footer", Label: "Footer", Hint: "Company name and postal address, up to 500 characters."}) {
+				<textarea class="ts-input" id="email-footer" name="footer_text" maxlength="500" rows="2" placeholder={ defaults.FooterText } aria-describedby="email-footer-hint">{ b.FooterText }</textarea>
+			}
+		</div>
+	}
+}
+
+templ emailTemplateCard(e emailsPage) {
+	@ui.Card(ui.CardProps{ID: "auth-email-template", Title: "Templates", Description: "Each email has its wording per language. Variables such as {{ code }} are filled in when it is sent; the code box, button, and expiry line are always shown."}) {
+		<nav class="ts-idp-email-kinds" aria-label="Emails">
+			for _, kind := range emailKinds {
+				<a
+					class="ts-idp-email-kind"
+					href={ templ.SafeURL(e.pageURL(kind.Value, e.Locale.Value)) }
+					if kind.Value == e.Kind.Value {
+						aria-current="page"
+					}
+				>
+					<span>{ kind.Label }</span>
+					if e.Customized[kind.Value] {
+						@ui.Badge("info", "Custom")
+					}
+				</a>
+			}
+		</nav>
+		@ui.Tabs("Language", localeTabs(e))
+		<div class="ts-form">
+			@ui.Field(ui.FieldProps{ID: "email-subject", Label: "Subject"}) {
+				<input class="ts-input" id="email-subject" name="subject" maxlength="200" value={ e.Fields.Subject }/>
+			}
+			@ui.Field(ui.FieldProps{ID: "email-preheader", Label: "Preheader", Hint: "Inbox preview text after the subject."}) {
+				<input class="ts-input" id="email-preheader" name="preheader" maxlength="200" value={ e.Fields.Preheader } aria-describedby="email-preheader-hint"/>
+			}
+			@ui.Field(ui.FieldProps{ID: "email-heading", Label: "Heading"}) {
+				<input class="ts-input" id="email-heading" name="heading" maxlength="200" value={ e.Fields.Heading }/>
+			}
+			@ui.Field(ui.FieldProps{ID: "email-body", Label: "Body", Hint: "Plain text. Separate paragraphs with a blank line."}) {
+				<textarea class="ts-input ts-idp-email-body" id="email-body" name="body" maxlength="2000" rows="6" aria-describedby="email-body-hint">{ e.Fields.Body }</textarea>
+			}
+			if e.offers("link") {
+				@ui.Field(ui.FieldProps{ID: "email-button", Label: "Button label"}) {
+					<input class="ts-input" id="email-button" name="button" maxlength="60" value={ e.Fields.Button }/>
+				}
+			}
+			@ui.Field(ui.FieldProps{ID: "email-footnote", Label: "Footnote", Hint: "What to do if the reader did not ask for this email."}) {
+				<textarea class="ts-input" id="email-footnote" name="footnote" maxlength="500" rows="2" aria-describedby="email-footnote-hint">{ e.Fields.Footnote }</textarea>
+			}
+			<div class="ts-idp-email-variables">
+				<span class="ts-meta">Variables</span>
+				for _, variable := range e.View.Template.Variables {
+					<code>{ "{{ " + variable + " }}" }</code>
+				}
+			</div>
+			if e.View.CanManage {
+				<div class="ts-form-actions">
+					<p class="ts-meta ts-idp-email-test-status" id="email-test-status" role="status"></p>
+					if e.View.Template.Overridden {
+						<button class="ts-btn ts-btn-ghost" type="submit" name="intent" value="reset" formnovalidate>
+							@icons.RotateCcw(14)
+							<span>Reset to default</span>
+						</button>
+					}
+					<button class="ts-btn ts-btn-outline" type="button" data-on:click="@post('/api/v1/auth-management/emails/test', {contentType: 'form'})">
+						@icons.Send(14)
+						<span>Send test to { e.TestTo }</span>
+					</button>
+				</div>
+			}
+		</div>
+	}
+}
+
+templ emailTestStatus(tone, message string) {
+	<p class="ts-meta ts-idp-email-test-status" id="email-test-status" role="status" data-tone={ tone }>{ message }</p>
+}
+
+// emailPreviewPane frames the rendered email in a sandbox. ts-auth renders
+// it light or dark; the width toggle only resizes the frame, so its events
+// stop before the form reloads the preview.
+templ emailPreviewPane(e emailsPage) {
+	<figure class="ts-idp-email-preview" aria-labelledby="email-preview-title">
+		<div class="ts-idp-email-preview-bar">
+			<span class="ts-strong" id="email-preview-title">Preview</span>
+			<fieldset class="ts-segmented">
+				<legend class="ts-sr-only">Appearance</legend>
+				<label><input type="radio" name="color_scheme" value="light" checked/><span>Light</span></label>
+				<label><input type="radio" name="color_scheme" value="dark"/><span>Dark</span></label>
+			</fieldset>
+			<fieldset class="ts-segmented" data-on:input="evt.stopPropagation()">
+				<legend class="ts-sr-only">Width</legend>
+				<label>
+					<input type="radio" name="preview_device" value="desktop" checked/>
+					@icons.Monitor(14)
+					<span>Desktop</span>
+				</label>
+				<label>
+					<input type="radio" name="preview_device" value="mobile"/>
+					@icons.Smartphone(14)
+					<span>Mobile</span>
+				</label>
+			</fieldset>
+		</div>
+		<iframe id="email-preview" name="email-preview" title={ e.Kind.Label + " email preview" } src={ e.previewURL() } sandbox referrerpolicy="no-referrer"></iframe>
+		<figcaption class="ts-meta">Rendered by ts-auth with sample values. Unsaved changes show as you type.</figcaption>
+	</figure>
+}
+
+templ optionSelect(id, name string, options []option, selected string) {
+	<select class="ts-select" id={ id } name={ name }>
+		for _, item := range options {
+			<option value={ item.Value } selected?={ item.Value == selected }>{ item.Label }</option>
+		}
+	</select>
+}
+
+func localeTabs(e emailsPage) []ui.Tab {
+	tabs := make([]ui.Tab, 0, len(emailLocales))
+	for _, locale := range emailLocales {
+		tabs = append(tabs, ui.Tab{Label: locale.Label, URL: e.pageURL(e.Kind.Value, locale.Value), Active: locale.Value == e.Locale.Value})
+	}
+	return tabs
+}
+
+// pixelValue shows a logo dimension, empty when unset.
+func pixelValue(pixels int) string {
+	if pixels == 0 {
+		return ""
+	}
+	return strconv.Itoa(pixels)
+}
