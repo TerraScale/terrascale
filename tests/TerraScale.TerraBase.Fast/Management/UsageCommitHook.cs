@@ -21,6 +21,12 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
     // Runs when a transaction starts on an opened user database, before the store hands out a session.
     public Func<TenantContext, CancellationToken, ValueTask>? BeforeBegin { get; set; }
 
+    // Runs before a user database's size is read.
+    public Func<TenantContext, CancellationToken, ValueTask>? BeforeSize { get; set; }
+
+    // Runs before a page of a catalog collection is listed; while it is set, catalog reads go through the hook too.
+    public Action<string>? BeforeList { get; set; }
+
     // A user database for which this returns true opens as missing storage, while the catalog still lists it.
     public Func<TenantContext, bool>? Hidden { get; set; }
 
@@ -127,7 +133,16 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
             inner.RecordDatabaseDeleteIntentAsync(database, recordIntent, cancellationToken);
         public ValueTask<bool> IsReadyAsync(CancellationToken cancellationToken) => inner.IsReadyAsync(cancellationToken);
         public IEnumerable<StoredDatabaseFile> EnumerateDatabaseFiles(CancellationToken cancellationToken = default) => inner.EnumerateDatabaseFiles(cancellationToken);
-        public ValueTask<long?> GetDatabaseSizeAsync(TenantContext database, CancellationToken cancellationToken) => inner.GetDatabaseSizeAsync(database, cancellationToken);
+        public async ValueTask<long?> GetDatabaseSizeAsync(TenantContext database, CancellationToken cancellationToken)
+        {
+            if (hook.BeforeSize is { } before)
+            {
+                await before(database, cancellationToken);
+            }
+
+            return await inner.GetDatabaseSizeAsync(database, cancellationToken);
+        }
+
         public IAsyncEnumerable<TenantContext> ListDatabasesAsync(CancellationToken cancellationToken) => inner.ListDatabasesAsync(cancellationToken);
         public ValueTask DisposeAsync() => inner.DisposeAsync();
 
@@ -165,7 +180,7 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
             }
 
             var transaction = await inner.BeginTransactionAsync(write, cancellationToken);
-            return write ? new Transaction(transaction, hook) : transaction;
+            return write || hook.BeforeList is not null ? new Transaction(transaction, hook) : transaction;
         }
     }
 
@@ -204,7 +219,12 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
         public ValueTask<DocumentVersion?> GetVersionAsync(string collection, string id, CancellationToken cancellationToken) => inner.GetVersionAsync(collection, id, cancellationToken);
         public ValueTask<bool> DeleteAsync(string collection, string id, CancellationToken cancellationToken) => inner.DeleteAsync(collection, id, cancellationToken);
         public ValueTask<long?> TombstoneAsync(string collection, string id, CancellationToken cancellationToken) => inner.TombstoneAsync(collection, id, cancellationToken);
-        public ValueTask<DocumentPage> ListAsync(string collection, string? afterId, int limit, long maxBytes, CancellationToken cancellationToken) => inner.ListAsync(collection, afterId, limit, maxBytes, cancellationToken);
+        public ValueTask<DocumentPage> ListAsync(string collection, string? afterId, int limit, long maxBytes, CancellationToken cancellationToken)
+        {
+            hook.BeforeList?.Invoke(collection);
+            return inner.ListAsync(collection, afterId, limit, maxBytes, cancellationToken);
+        }
+
         public ValueTask<QueryPage> QueryAsync(DocumentQuery query, CancellationToken cancellationToken) => inner.QueryAsync(query, cancellationToken);
         public ValueTask<(long Count, bool Complete)> CountAsync(string collection, DocumentFilter? filter, long maxExamined, CancellationToken cancellationToken) => inner.CountAsync(collection, filter, maxExamined, cancellationToken);
         public ValueTask<bool> CreateCollectionAsync(CollectionInfo collection, CancellationToken cancellationToken) => inner.CreateCollectionAsync(collection, cancellationToken);
@@ -212,7 +232,6 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
         public ValueTask<(IReadOnlyList<CollectionInfo> Collections, bool HasMore)> ListCollectionsAsync(string? afterName, int limit, CancellationToken cancellationToken) => inner.ListCollectionsAsync(afterName, limit, cancellationToken);
         public ValueTask<bool> DropCollectionAsync(string name, CancellationToken cancellationToken) => inner.DropCollectionAsync(name, cancellationToken);
         public ValueTask<long> CountDocumentsAsync(string collection, CancellationToken cancellationToken) => inner.CountDocumentsAsync(collection, cancellationToken);
-        public ValueTask<IReadOnlyList<CollectionCount>> CountCollectionsAsync(CancellationToken cancellationToken) => inner.CountCollectionsAsync(cancellationToken);
         public ValueTask<IReadOnlyList<CollectionStats>> ListCollectionStatsAsync(CancellationToken cancellationToken) => inner.ListCollectionStatsAsync(cancellationToken);
         public IAsyncEnumerable<StoredDocument> QuerySqlAsync(SqlQuery query, CancellationToken cancellationToken) => inner.QuerySqlAsync(query, cancellationToken);
         public ValueTask<SqlQueryPlan> ExplainSqlAsync(SqlQuery query, CancellationToken cancellationToken) => inner.ExplainSqlAsync(query, cancellationToken);

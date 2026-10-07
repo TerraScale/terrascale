@@ -1,4 +1,5 @@
 using TerraBase.Engine;
+using TerraBase.Errors;
 using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
@@ -6,12 +7,15 @@ using TerraScale.Endpoints;
 namespace TerraBase.Features.Management.Usage;
 
 /// <summary><c>GET …/databases/{database}/usage</c>: reads the storage and operation usage of a database.</summary>
-public sealed class GetDatabaseUsageEndpoint(IManagementService management, IUsageService usage) : EndpointWithoutRequest<IResult>
+public sealed class GetDatabaseUsageEndpoint(IManagementService management, IUsageService usage, TimeProvider time) : EndpointWithoutRequest<IResult>
 {
     /// <summary>What the read and write counts guarantee, for every usage route.</summary>
     internal const string CountsDescription =
-        "Reads and writes are best-effort dashboard usage, not billing data: they are saved every 10 seconds and at a clean shutdown, "
-        + "a failed save is retried, and a crash loses the operations counted since the last successful save.";
+        "Each request the engine answers is one read, however many documents it returns; each committed put, patch or delete is one write. "
+        + "period sums the series; reads and writes are totals since each database was created. "
+        + "Reads and writes are best-effort dashboard usage, not billing data: they are saved every 10 seconds and at a clean shutdown "
+        + "(a catalog follower sends its counts to its primary as often), a failed save is retried, and a crash loses the operations "
+        + "counted since the last successful save. " + UsageWindow.Description;
 
     /// <inheritdoc />
     public override void Configure()
@@ -19,7 +23,7 @@ public sealed class GetDatabaseUsageEndpoint(IManagementService management, IUsa
         Get(ManagementRoute.Database + "/usage");
         Name("getDatabaseUsage");
         Summary("Reads the usage of a database");
-        Description("Bytes on disk, collections, live documents, and document reads (gets, list and query pages) and writes (committed puts, patches and deletes, each operation of a transaction) since the database was created. " + CountsDescription + " " + ManagementRoute.IdentityDescription);
+        Description("Bytes on disk, JSON bytes of the live documents (logicalBytes), collections, live documents, and document reads (gets, list, query and shape pages, SQL runs) and writes (committed puts, patches and deletes, each operation of a transaction), with one point per hour or day of the period. " + CountsDescription + " " + ManagementRoute.IdentityDescription);
         Tags(ManagementRoute.Tag);
         Produces<DatabaseUsage>();
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
@@ -29,12 +33,19 @@ public sealed class GetDatabaseUsageEndpoint(IManagementService management, IUsa
     }
 
     /// <inheritdoc />
-    public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
+    public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
+        UsageWindow.Parse(HttpContext.Request.Query, time.GetUtcNow()) switch
+        {
+            Validation error => ErrorResponse.From(error),
+            UsageWindow window => await ReadAsync(window, cancellationToken),
+        };
+
+    private async ValueTask<IResult> ReadAsync(UsageWindow window, CancellationToken cancellationToken)
     {
         try
         {
             return await ManagementRoute.DatabaseAsync(HttpContext, management, cancellationToken) is { } database
-                && await usage.GetDatabaseUsageAsync(database, cancellationToken) is { } result
+                && await usage.GetDatabaseUsageAsync(database, window, cancellationToken) is { } result
                 ? TypedResults.Ok(result)
                 : TypedResults.NotFound();
         }

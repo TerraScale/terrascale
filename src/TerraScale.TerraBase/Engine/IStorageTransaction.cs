@@ -199,9 +199,6 @@ public interface IStorageTransaction : IAsyncDisposable
     /// </summary>
     ValueTask<long> CountDocumentsAsync(string collection, CancellationToken cancellationToken);
 
-    /// <summary>Counts the live documents of every collection, in name order, without reading document bodies.</summary>
-    ValueTask<IReadOnlyList<CollectionCount>> CountCollectionsAsync(CancellationToken cancellationToken);
-
     /// <summary>Lists every collection, in name order, with its live documents and their JSON size (read from size metadata).</summary>
     ValueTask<IReadOnlyList<CollectionStats>> ListCollectionStatsAsync(CancellationToken cancellationToken);
 

@@ -34,10 +34,10 @@ public interface ISchemaService
     ValueTask<ListCollectionsResult> ListCollectionsAsync(TenantContext database, CancellationToken cancellationToken);
 
     /// <summary>
-    /// Counts the live documents of each collection without reading their bodies; <see langword="null"/> when the storage is
-    /// missing, also when the database was deleted while the count started.
+    /// Counts the live documents of each collection and their JSON bytes without reading their bodies; <see langword="null"/>
+    /// when the storage is missing, also when the database was deleted while the count started.
     /// </summary>
-    ValueTask<IReadOnlyList<CollectionCount>?> CountCollectionsAsync(TenantContext database, CancellationToken cancellationToken);
+    ValueTask<IReadOnlyList<CollectionStats>?> CountCollectionsAsync(TenantContext database, CancellationToken cancellationToken);
 
     /// <summary>Infers the fields of <paramref name="collection"/>.</summary>
     ValueTask<InferSchemaResult> InferAsync(TenantContext database, string collection, CancellationToken cancellationToken);

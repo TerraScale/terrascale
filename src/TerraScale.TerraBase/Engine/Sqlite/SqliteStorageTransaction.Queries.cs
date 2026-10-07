@@ -25,20 +25,6 @@ internal sealed partial class SqliteStorageTransaction
         RunAsync(() => WithQueryBudget(() =>
             (long)Command(SqliteStatements.CountDocuments, collection).ExecuteScalar()!, cancellationToken), cancellationToken);
 
-    public ValueTask<IReadOnlyList<CollectionCount>> CountCollectionsAsync(CancellationToken cancellationToken) =>
-        RunAsync(() => WithQueryBudget<IReadOnlyList<CollectionCount>>(() =>
-        {
-            var collections = new List<CollectionCount>();
-            using var reader = session.Command(SqliteStatements.CountCollections, transaction).ExecuteReader();
-            while (reader.Read())
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                collections.Add(new CollectionCount(reader.GetString(0), reader.GetInt64(1)));
-            }
-
-            return collections;
-        }, cancellationToken), cancellationToken);
-
     public ValueTask<IReadOnlyList<CollectionStats>> ListCollectionStatsAsync(CancellationToken cancellationToken) =>
         RunAsync(() => WithQueryBudget<IReadOnlyList<CollectionStats>>(() =>
         {

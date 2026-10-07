@@ -45,7 +45,7 @@ internal sealed partial class SchemaService(IStorageEngine engine) : ISchemaServ
         }
     }
 
-    public async ValueTask<IReadOnlyList<CollectionCount>?> CountCollectionsAsync(TenantContext database, CancellationToken cancellationToken)
+    public async ValueTask<IReadOnlyList<CollectionStats>?> CountCollectionsAsync(TenantContext database, CancellationToken cancellationToken)
     {
         var transaction = await BeginAsync(database, cancellationToken).ConfigureAwait(false);
         if (transaction is null)
@@ -55,7 +55,7 @@ internal sealed partial class SchemaService(IStorageEngine engine) : ISchemaServ
 
         await using (transaction.ConfigureAwait(false))
         {
-            return await transaction.CountCollectionsAsync(cancellationToken).ConfigureAwait(false);
+            return await transaction.ListCollectionStatsAsync(cancellationToken).ConfigureAwait(false);
         }
     }
 

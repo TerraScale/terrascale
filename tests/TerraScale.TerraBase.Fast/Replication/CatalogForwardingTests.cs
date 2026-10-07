@@ -2,15 +2,19 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
+using Bogus;
 using Google.Protobuf;
 using Grpc.Core;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
 using TerraBase.Features.ApiKeys;
 using TerraBase.Features.Management;
+using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Replication;
 using TerraBase.Features.Replication.V1;
+using TerraBase.Tenancy;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Replication;
@@ -557,6 +561,283 @@ public sealed class CatalogForwardingTests
         }
 
         await Assert.That(await follower.MetricAsync("terrabase_catalog_forwarded_total", "result=\"unavailable\"")).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task A_followers_reads_and_writes_reach_its_primarys_usage_once_also_when_an_acknowledgement_is_lost()
+    {
+        using var peers = new PeerTls();
+        using var tls = new ClientTls();
+        using var issuer = new TestIssuer();
+        await using var primary = await TerraBaseTestServer.StartAsync(settings =>
+        {
+            peers.Apply(settings);
+            tls.Apply(settings);
+            TestIssuer.Configure(settings);
+        }, issuer.Route);
+        // The primary adds the follower's first batch, but its acknowledgement never arrives. The follower's clock stands
+        // still, so only the explicit flushes below send.
+        var time = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        TerraBaseTestServer? follower = await StartFollowerAsync(peers, tls, issuer, primary.PeerAddress!, services => services
+            .AddSingleton<TimeProvider>(time)
+            .AddSingleton<CatalogPrimaryClient>()
+            .AddSingleton<LostFirstAcknowledgement>()
+            .AddSingleton<ICatalogPrimaryClient>(provider => provider.GetRequiredService<LostFirstAcknowledgement>()));
+        try
+        {
+            await ReadyAsync(follower);
+            var user = Guid.NewGuid().ToString();
+            using var dashboard = tls.CreateClient(primary.ClientAddress!, issuer.Mint(user));
+            var organization = await CreatedIdAsync(dashboard, "/v1/management/organizations", new { name = "Metered" });
+            var project = await CreatedIdAsync(dashboard, $"/v1/management/organizations/{organization}/projects", new { name = "main" });
+            var database = await CreatedIdAsync(dashboard, $"/v1/management/organizations/{organization}/projects/{project}/databases", new { name = "orders" });
+            string key;
+            using (var issued = await dashboard.PostAsJsonAsync(
+                Relative($"/v1/management/organizations/{organization}/projects/{project}/api-keys"), new { name = "app", scopes = Scopes }))
+            {
+                key = (await issued.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("secret").GetString()!;
+            }
+
+            // N reads and M writes served by the follower, once it applied the key and the database.
+            using var data = tls.CreateClient(follower.ClientAddress!, key);
+            await TerraBaseTestServer.EventuallyAsync(async token =>
+            {
+                using var known = await data.GetAsync(Relative($"/v1/projects/{project}/databases/orders/collections"), token);
+                return known.StatusCode == HttpStatusCode.OK;
+            });
+            var orders = $"/v1/projects/{project}/databases/orders/collections";
+            (await data.PostAsJsonAsync(Relative(orders), new { name = "items" })).EnsureSuccessStatusCode();
+            var faker = new Faker();
+            var (writes, reads, later) = (faker.Random.Int(1, 4), faker.Random.Int(1, 4), faker.Random.Int(1, 4));
+            for (var i = 0; i < writes; i++)
+            {
+                (await data.PutAsJsonAsync(Relative($"{orders}/items/documents/{ManagementApi.DocumentId($"d{i}")}"), new { total = i })).EnsureSuccessStatusCode();
+            }
+
+            async Task ReadAsync(int count)
+            {
+                for (var i = 0; i < count; i++)
+                {
+                    (await data.GetAsync(Relative($"{orders}/items/documents/{ManagementApi.DocumentId("d0")}"))).EnsureSuccessStatusCode();
+                }
+            }
+
+            await ReadAsync(reads);
+            var usagePath = $"/v1/management/organizations/{organization}/projects/{project}/databases/{database}/usage";
+            async Task<(long Reads, long Writes)> UsageAsync(HttpClient client)
+            {
+                var usage = await client.GetFromJsonAsync<JsonElement>(Relative(usagePath));
+                return (usage.GetProperty("reads").GetInt64(), usage.GetProperty("writes").GetInt64());
+            }
+
+            var flush = follower.Services.GetServices<IHostedService>().OfType<UsageFlushService>().Single();
+            var sent = follower.Services.GetRequiredService<LostFirstAcknowledgement>();
+            await flush.FlushAsync(CancellationToken.None);
+            await Assert.That(await UsageAsync(dashboard)).IsEqualTo((reads, writes));
+
+            // The primary saves the batch and it replicates here before its acknowledgement does: a usage read served by the
+            // follower counts it once, from the replicated totals, though the batch is still unsent here.
+            await primary.Services.GetRequiredService<UsageMeter>().FlushAsync(CancellationToken.None);
+            var local = follower.Services.GetRequiredService<UsageMeter>();
+            var tenant = new TenantContext(organization, PlanTier.Hobby, project, database);
+            var thisHour = new UsageWindow(UsageWindow.Hour, time.GetUtcNow().ToUnixTimeSeconds() / 3600, 1);
+            await TerraBaseTestServer.EventuallyAsync(async token => (await local.GetAsync(tenant, thisHour, token)).Lifetime.Reads >= reads);
+            await Assert.That((await local.GetAsync(tenant, thisHour, CancellationToken.None)).Lifetime).IsEqualTo(new OpCounts(reads, writes));
+
+            // A usage read served by the follower itself settles nothing of the unacknowledged batch. More reads arrive; the
+            // next flush sends that batch again with its sequence, which the primary adds once, and the one after the new reads.
+            var hour = time.GetUtcNow().ToUnixTimeSeconds() / 3600;
+            var meter = follower.Services.GetRequiredService<UsageMeter>();
+            await meter.GetAsync(new TenantContext(organization, PlanTier.Hobby, project, database), new UsageWindow(UsageWindow.Hour, hour, 1), CancellationToken.None);
+            await ReadAsync(later);
+            await flush.FlushAsync(CancellationToken.None);
+            await flush.FlushAsync(CancellationToken.None);
+            await Assert.That(await UsageAsync(dashboard)).IsEqualTo((reads + later, writes));
+            await Assert.That(sent.Sequences).IsEquivalentTo([1UL, 1UL, 2UL], TUnit.Assertions.Enums.CollectionOrdering.Matching);
+
+            // The follower's client reports a batch the primary refuses, here an hour two days ahead of its clock, as refused.
+            var ahead = Batch(ByteString.CopyFrom(Guid.NewGuid().ToByteArray()), 1, organization, project, database, hour + 48, reads: 1, sender: "ahead");
+            await Assert.That(await follower.Services.GetRequiredService<CatalogPrimaryClient>().AddUsageAsync(ahead, CancellationToken.None)).IsFalse();
+
+            // A clean shutdown sends every pending batch, not only the first 4,096 database hours: here 4,097, one of them this
+            // database's. The others belong to a project the primary does not have, which it checks once and drops.
+            meter.Add(new UsageKey(new DatabaseOwner(organization, project, database), hour), new OpCounts(1, 0));
+            var gone = Guid.NewGuid().ToString();
+            for (var i = 0; i < UsageMeter.MaxBatch; i++)
+            {
+                meter.Add(new UsageKey(new DatabaseOwner(organization, gone, Guid.NewGuid().ToString()), hour), new OpCounts(1, 0));
+            }
+
+            await follower.DisposeAsync();
+            follower = null;
+            await Assert.That(await UsageAsync(dashboard)).IsEqualTo((reads + later + 1, writes));
+            await Assert.That(sent.Sequences).IsEquivalentTo([1UL, 1UL, 2UL, 3UL, 4UL], TUnit.Assertions.Enums.CollectionOrdering.Matching);
+
+            // A batch at or below the highest sequence of its sender's process counts once, also when an attempt arrives after
+            // a later batch; a new process starts over. Only valid batches are taken.
+            var epoch = ByteString.CopyFrom(Guid.NewGuid().ToByteArray());
+            using var channel = peers.CreateChannel(primary.PeerAddress!);
+            var client = new CatalogUsage.CatalogUsageClient(channel);
+            var (beforeReads, beforeWrites) = await UsageAsync(dashboard);
+            await client.AddAsync(Batch(epoch, 1, organization, project, database, hour, reads: 7));
+            await client.AddAsync(Batch(epoch, 2, organization, project, database, hour, reads: 2));
+            await client.AddAsync(Batch(epoch, 1, organization, project, database, hour, reads: 7));
+            // A restarted process (a new epoch) starts over; a delayed attempt of the previous process still counts once.
+            var restarted = ByteString.CopyFrom(Guid.NewGuid().ToByteArray());
+            await client.AddAsync(Batch(restarted, 1, organization, project, database, hour, reads: 1));
+            await client.AddAsync(Batch(epoch, 2, organization, project, database, hour, reads: 2));
+            await client.AddAsync(Batch(restarted, 1, organization, project, database, hour, reads: 1));
+            await Assert.That(await UsageAsync(dashboard)).IsEqualTo((beforeReads + 7 + 2 + 1, beforeWrites));
+            // A day-only count adds to its day and the lifetime totals, never to the hour it is filed at.
+            var midnight = DateTimeOffset.FromUnixTimeSeconds(hour / 24 * 24 * 3600).ToString("yyyy-MM-dd'T'HH", System.Globalization.CultureInfo.InvariantCulture);
+            async Task<long> PeriodReadsAsync(string query)
+            {
+                return (await dashboard.GetFromJsonAsync<JsonElement>(Relative(usagePath + query))).GetProperty("period").GetProperty("reads").GetInt64();
+            }
+            var (hourBefore, dayBefore) = (await PeriodReadsAsync($"?from={midnight}:00:00Z&to={midnight}:59:59Z"), await PeriodReadsAsync("?granularity=day"));
+            var dayOnly = Batch(epoch, 3, organization, project, database, hour / 24 * 24, reads: 4);
+            dayOnly.Counts[0].Scope = Features.Replication.V1.UsageScope.Day;
+            await client.AddAsync(dayOnly);
+            await Assert.That(await UsageAsync(dashboard)).IsEqualTo((beforeReads + 7 + 2 + 1 + 4, beforeWrites));
+            await Assert.That(await PeriodReadsAsync($"?from={midnight}:00:00Z&to={midnight}:59:59Z")).IsEqualTo(hourBefore);
+            await Assert.That(await PeriodReadsAsync("?granularity=day")).IsEqualTo(dayBefore + 4);
+            foreach (var invalid in new[]
+            {
+                Batch(ByteString.CopyFromUtf8("short"), 3, organization, project, database, hour, reads: 1),
+                Batch(epoch, 0, organization, project, database, hour, reads: 1),
+                Batch(epoch, 3, organization, project, database, hour + 25, reads: 1),
+                Batch(epoch, 3, organization, project, database, long.MaxValue, reads: 1),
+                Batch(epoch, 3, organization, project, database, hour, reads: UsageMeter.MaxCount + 1),
+                Batch(epoch, 3, organization, project, database, hour, reads: 1, sender: ""),
+                Scoped(Batch(epoch, 3, organization, project, database, hour / 24 * 24 + 1, reads: 1), Features.Replication.V1.UsageScope.Day),
+                Scoped(Batch(epoch, 3, organization, project, database, hour, reads: 1), Features.Replication.V1.UsageScope.Lifetime),
+                Scoped(Batch(epoch, 3, organization, project, database, 0, reads: 1), (Features.Replication.V1.UsageScope)7),
+            })
+            {
+                var refused = await Assert.ThrowsAsync<RpcException>(async () => await client.AddAsync(invalid));
+                await Assert.That(refused!.StatusCode).IsEqualTo(StatusCode.InvalidArgument);
+            }
+
+            // A batch full of databases this catalog does not name holds no memory for them: only the real one counts.
+            var flood = Batch(epoch, 4, organization, project, database, hour, reads: 1);
+            for (var i = 1; i < UsageMeter.MaxBatch; i++)
+            {
+                flood.Counts.Add(new UsageCount { OrganizationId = organization, ProjectId = project, DatabaseId = Guid.NewGuid().ToString(), Hour = hour, Reads = 1 });
+            }
+
+            await client.AddAsync(flood);
+            await Assert.That(primary.Services.GetRequiredService<UsageMeter>().PendingDatabases).IsLessThanOrEqualTo(1);
+            await Assert.That(await UsageAsync(dashboard)).IsEqualTo((beforeReads + 7 + 2 + 1 + 4 + 1, beforeWrites));
+        }
+        finally
+        {
+            if (follower is not null)
+            {
+                await follower.DisposeAsync();
+            }
+        }
+    }
+
+    [Test]
+    public async Task A_batch_sent_again_after_its_primary_restarted_counts_once_since_its_sequence_was_saved_with_its_counts()
+    {
+        using var peers = new PeerTls();
+        using var tls = new ClientTls();
+        using var issuer = new TestIssuer();
+        var directory = Directory.CreateTempSubdirectory("terrabase-usage-senders-").FullName;
+        try
+        {
+            void Configure(Dictionary<string, string> settings)
+            {
+                peers.Apply(settings);
+                tls.Apply(settings);
+                TestIssuer.Configure(settings);
+                settings["data-directory"] = directory;
+            }
+
+            var user = Guid.NewGuid().ToString();
+            var epoch = ByteString.CopyFrom(Guid.NewGuid().ToByteArray());
+            var hour = DateTimeOffset.UtcNow.ToUnixTimeSeconds() / 3600;
+            string organization, project, database, usagePath;
+            await using (var primary = await TerraBaseTestServer.StartAsync(Configure, issuer.Route))
+            {
+                using var dashboard = tls.CreateClient(primary.ClientAddress!, issuer.Mint(user));
+                organization = await CreatedIdAsync(dashboard, "/v1/management/organizations", new { name = "Restarted" });
+                project = await CreatedIdAsync(dashboard, $"/v1/management/organizations/{organization}/projects", new { name = "main" });
+                database = await CreatedIdAsync(dashboard, $"/v1/management/organizations/{organization}/projects/{project}/databases", new { name = "orders" });
+                usagePath = $"/v1/management/organizations/{organization}/projects/{project}/databases/{database}/usage";
+                using var channel = peers.CreateChannel(primary.PeerAddress!);
+                await new CatalogUsage.CatalogUsageClient(channel).AddAsync(Batch(epoch, 1, organization, project, database, hour, reads: 7));
+                await primary.Services.GetRequiredService<UsageMeter>().FlushAsync(CancellationToken.None);
+            }
+
+            // Its acknowledgement was lost: the follower sends the batch again to the restarted primary, then its next one.
+            await using (var primary = await TerraBaseTestServer.StartAsync(Configure, issuer.Route))
+            {
+                using var dashboard = tls.CreateClient(primary.ClientAddress!, issuer.Mint(user));
+                using var channel = peers.CreateChannel(primary.PeerAddress!);
+                var client = new CatalogUsage.CatalogUsageClient(channel);
+                await client.AddAsync(Batch(epoch, 1, organization, project, database, hour, reads: 7));
+                await client.AddAsync(Batch(epoch, 2, organization, project, database, hour, reads: 2));
+
+                var usage = await dashboard.GetFromJsonAsync<JsonElement>(Relative(usagePath));
+                await Assert.That(usage.GetProperty("reads").GetInt64()).IsEqualTo(9);
+            }
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Test]
+    public async Task A_follower_refuses_usage_batches()
+    {
+        using var peers = new PeerTls();
+        using var tls = new ClientTls();
+        using var issuer = new TestIssuer();
+        await using var follower = await StartFollowerAsync(peers, tls, issuer, new Uri($"https://localhost:{TerraBaseTestServer.FreePort()}"));
+        using var channel = peers.CreateChannel(follower.PeerAddress!);
+
+        var notPrimary = await Assert.ThrowsAsync<RpcException>(async () => await new CatalogUsage.CatalogUsageClient(channel)
+            .AddAsync(Batch(ByteString.CopyFrom(Guid.NewGuid().ToByteArray()), 1, "o", "p", "d", 0, reads: 1)));
+
+        await Assert.That(notPrimary!.StatusCode).IsEqualTo(StatusCode.FailedPrecondition);
+    }
+
+    private static UsageBatch Batch(
+        ByteString epoch, ulong sequence, string organization, string project, string database, long hour, ulong reads, string sender = "test")
+    {
+        var batch = new UsageBatch { Protocol = 1, Epoch = epoch, Sequence = sequence, Sender = sender };
+        batch.Counts.Add(new UsageCount { OrganizationId = organization, ProjectId = project, DatabaseId = database, Hour = hour, Reads = reads });
+        return batch;
+    }
+
+    private static UsageBatch Scoped(UsageBatch batch, Features.Replication.V1.UsageScope scope)
+    {
+        batch.Counts[0].Scope = scope;
+        return batch;
+    }
+
+    // Delivers every batch, but fails the first call as if its acknowledgement had been lost.
+    private sealed class LostFirstAcknowledgement(CatalogPrimaryClient inner) : ICatalogPrimaryClient
+    {
+        public List<ulong> Sequences { get; } = [];
+
+        public async Task<bool> AddUsageAsync(UsageBatch batch, CancellationToken cancellationToken)
+        {
+            var added = await inner.AddUsageAsync(batch, cancellationToken);
+            lock (Sequences)
+            {
+                Sequences.Add(batch.Sequence);
+                if (Sequences.Count == 1)
+                {
+                    throw new RpcException(new Status(StatusCode.Unavailable, "the acknowledgement was lost"));
+                }
+            }
+
+            return added;
+        }
     }
 
     private static Uri Relative(string path) => new(path, UriKind.Relative);

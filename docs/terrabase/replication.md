@@ -70,7 +70,8 @@ follows it. Design, limits and failover: [0009](decisions/0009-catalog-replicati
   A primary that cannot be reached answers `503 catalog_primary_unavailable` with `Retry-After: 1`. The
   administrative listener is never forwarded: on a follower its catalog writes (`POST /admin/api-keys`, the
   service credential's Management writes) answer `503 not_primary`. A follower runs no catalog writer of its own
-  (intent recovery, migration, backups, usage flushes).
+  (intent recovery, migration, backups, usage flushes); it sends its usage counts to the primary every 10 seconds
+  over `CatalogUsage.Add`, numbered per process, which the primary adds once per sequence.
 - A follower authenticates API keys and resolves organizations, projects and databases from its replica, and
   serves a registered database before any of its documents arrived (an empty local file that client replication
   fills).

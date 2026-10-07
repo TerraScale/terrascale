@@ -141,7 +141,9 @@ The Management collection list moves here, so `D/collections` has one meaning: t
 | GET | `D/usage` | `getDatabaseUsage` | `databases:read` | `MD/usage` |
 
 ts-dashboard reads usage here for plans, billing and spending caps; those stay in the dashboard. New metering
-routes (TS-581) go in this group and follow these conventions.
+routes (TS-581) go in this group and follow these conventions. Both routes take `granularity` (`hour` or `day`),
+`from` and `to`, and answer that period's reads and writes and one point per bucket (TS-581,
+[management API](management-api.md#usage)). There is no organization usage: ts-dashboard sums its projects.
 
 ## Data
 

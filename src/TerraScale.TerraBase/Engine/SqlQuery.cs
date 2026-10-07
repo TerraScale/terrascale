@@ -115,11 +115,6 @@ public sealed record SqlOrder(DocumentField Field, bool Descending);
 /// <param name="Limit">Maximum documents.</param>
 public sealed record SqlQuery(string Collection, SqlFilter? Filter, IReadOnlyList<SqlOrder> Order, int Limit);
 
-/// <summary>A collection and its live document count.</summary>
-/// <param name="Name">Collection name.</param>
-/// <param name="Documents">Live documents (tombstones are not counted).</param>
-public sealed record CollectionCount(string Name, long Documents);
-
 /// <summary>A collection and its size.</summary>
 /// <param name="Name">Collection name.</param>
 /// <param name="Documents">Live documents (tombstones are not counted).</param>

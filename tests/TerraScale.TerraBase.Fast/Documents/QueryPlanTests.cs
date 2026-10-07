@@ -36,7 +36,6 @@ public sealed class QueryPlanTests
         ["HistoryFloor"] = "SEARCH shape_history USING INTEGER PRIMARY KEY (rowid=?)",
         ["DropHistory"] = "SEARCH change_log USING INDEX change_log_by_offset (collection=? AND generation=?) | SCALAR SUBQUERY 1 | SEARCH collections USING PRIMARY KEY (name=?)",
         ["CountDocuments"] = "SEARCH documents USING PRIMARY KEY (collection=?)",
-        ["CountCollections"] = "SCAN collections | CORRELATED SCALAR SUBQUERY 1 | SEARCH documents USING PRIMARY KEY (collection=?)",
         ["ListCollectionStats"] = "SCAN collections | SEARCH documents USING PRIMARY KEY (collection=?) LEFT-JOIN",
         ["DeleteCollectionDocuments"] = "SEARCH documents USING PRIMARY KEY (collection>? AND collection<?)",
         ["DeleteCollectionNames"] = "SEARCH collections USING PRIMARY KEY (name>? AND name<?)",
