@@ -37,10 +37,13 @@ public sealed class ContinuousBackupTests
         await backup.RunOnceAsync(CancellationToken.None);
         var snapshotted = time.GetUtcNow();
         time.Advance(TimeSpan.FromSeconds(5));
+        var written = time.GetUtcNow();
         (await data.PutAsJsonAsync(Uri(ManagementApi.DocumentPath(database, "people", "after")), new { text = after })).EnsureSuccessStatusCode();
         time.Advance(TimeSpan.FromSeconds(1));
         await backup.RunOnceAsync(CancellationToken.None);
         var shipped = time.GetUtcNow();
+        // The service's own timer, fired by Advance, may ship the write in its pass at :15 before this one at :16.
+        var lastShipped = backup.Status.Files.Single(file => file.File == File(database)).LastShippedAt;
 
         using var window = await api.Client.GetAsync(Uri($"{database.Path}/point-in-time"));
         var bounds = await window.Content.ReadFromJsonAsync<JsonElement>();
@@ -59,7 +62,8 @@ public sealed class ContinuousBackupTests
 
         await Assert.That(window.StatusCode).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(bounds.GetProperty("earliest").GetDateTimeOffset()).IsEqualTo(snapshotted);
-        await Assert.That(bounds.GetProperty("latest").GetDateTimeOffset()).IsEqualTo(shipped);
+        await Assert.That(lastShipped).IsNotNull().And.IsGreaterThanOrEqualTo(written);
+        await Assert.That(bounds.GetProperty("latest").GetDateTimeOffset()).IsEqualTo(lastShipped!.Value);
         await Assert.That(earlier.StatusCode).IsEqualTo(HttpStatusCode.Created);
         await Assert.That(earlierName).IsEqualTo("main-restore");
         await Assert.That(earlierDatabase.GetProperty("branchedFrom").GetString()).IsEqualTo(database.Id);
