@@ -1,4 +1,6 @@
+using System.Globalization;
 using System.Security.Cryptography;
+using TerraBase.Tenancy;
 
 namespace TerraBase.Configuration;
 
@@ -8,8 +10,11 @@ namespace TerraBase.Configuration;
 /// </summary>
 public sealed class BackupSettings
 {
-    /// <summary>Every backup setting; all are required together.</summary>
-    internal static readonly string[] Keys =
+    /// <summary>Every backup setting.</summary>
+    internal static string[] Keys => [.. Required, "backup-retention-days"];
+
+    // Required together; the rest are optional.
+    private static readonly string[] Required =
     [
         "backup-endpoint", "backup-region", "backup-bucket", "backup-access-key-id", "backup-secret-key-file",
         "backup-kms-endpoint", "backup-kms-key-id", "backup-kms-api-key", "backup-kms-private-key-file",
@@ -42,6 +47,14 @@ public sealed class BackupSettings
     /// <summary>PEM private key of <see cref="KmsApiKey"/>.</summary>
     public required string KmsPrivateKeyPem { get; init; }
 
+    /// <summary>
+    /// Days each plan keeps backups (<c>backup-retention-days</c>, default <c>hobby=1,pro=7,enterprise=30</c>): a database
+    /// restores to any time in that window. Plans move to ts-dashboard (TS-599); this stays the fallback.
+    /// </summary>
+    public IReadOnlyDictionary<PlanTier, int> RetentionDays { get; init; } = DefaultRetentionDays;
+
+    private static readonly Dictionary<PlanTier, int> DefaultRetentionDays = new() { [PlanTier.Hobby] = 1, [PlanTier.Pro] = 7, [PlanTier.Enterprise] = 30 };
+
     /// <summary>Names the bucket only: the credentials stay out of logs.</summary>
     public override string ToString() => $"backup to {Bucket}";
 
@@ -53,9 +66,9 @@ public sealed class BackupSettings
             return null;
         }
 
-        if (!Keys.All(values.ContainsKey))
+        if (!Required.All(values.ContainsKey))
         {
-            throw new TerraBaseConfigurationException($"{string.Join(", ", Keys)} must be set together");
+            throw new TerraBaseConfigurationException($"{string.Join(", ", Required)} must be set together");
         }
 
         return new BackupSettings
@@ -73,7 +86,27 @@ public sealed class BackupSettings
                 ? values["backup-kms-api-key"]
                 : throw new TerraBaseConfigurationException("backup-kms-api-key must be <tenancy OCID>/<user OCID>/<fingerprint>"),
             KmsPrivateKeyPem = ReadPrivateKey(values["backup-kms-private-key-file"]),
+            RetentionDays = values.TryGetValue("backup-retention-days", out var retention) ? ParseRetention(retention) : DefaultRetentionDays,
         };
+    }
+
+    // plan=days pairs, each 1 to 3650; plans not named keep their default.
+    private static Dictionary<PlanTier, int> ParseRetention(string value)
+    {
+        var days = new Dictionary<PlanTier, int>(DefaultRetentionDays);
+        foreach (var entry in value.Split(',', StringSplitOptions.TrimEntries))
+        {
+            var parts = entry.Split('=', 2);
+            PlanTier? plan = parts[0] switch { "hobby" => PlanTier.Hobby, "pro" => PlanTier.Pro, "enterprise" => PlanTier.Enterprise, _ => null };
+            if (parts.Length != 2 || plan is null || !int.TryParse(parts[1], NumberStyles.None, CultureInfo.InvariantCulture, out var count) || count is < 1 or > 3650)
+            {
+                throw new TerraBaseConfigurationException("backup-retention-days must be comma-separated plan=days pairs (hobby, pro, enterprise; 1 to 3650 days)");
+            }
+
+            days[plan.Value] = count;
+        }
+
+        return days;
     }
 
     private static Uri Https(IReadOnlyDictionary<string, string> values, string key) =>

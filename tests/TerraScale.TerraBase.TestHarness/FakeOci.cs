@@ -131,6 +131,13 @@ public sealed class FakeOci : IDisposable
             return get;
         }
 
+        if (request.Method == HttpMethod.Delete)
+        {
+            // Like S3: deleting a missing key succeeds too.
+            _objects.TryRemove(key, out _);
+            return new HttpResponseMessage(HttpStatusCode.NoContent) { Content = new ByteArrayContent([]) };
+        }
+
         return S3Error(HttpStatusCode.MethodNotAllowed, "MethodNotAllowed");
     }
 

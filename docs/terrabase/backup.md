@@ -9,11 +9,13 @@ The older scheduled backups (`…/backups`, local snapshot files next to the dat
 
 ## Status of the work
 
-Slices 1 (shipping and restore) and 2 (NATS leases) of TS-633 are done. Not done yet:
+Slices 1 (shipping and restore), 2 (shipper leases) and 3 (retention by plan, daily restore drills, records in TerraBase)
+of TS-633 are done. Not done yet:
 
-- Nothing is deleted from the bucket. Next: retention by plan (1 day hobby, 7 days pro, 30 days enterprise).
-- No daily restore drill, metrics stored in TerraBase, or restore over an existing database.
-- No disaster-recovery path that rebuilds a whole data directory (`_system.db` included) from the bucket.
+- No restore over an existing database, and no disaster-recovery path that rebuilds a whole data directory
+  (`_system.db` included) from the bucket.
+- Backups of a deleted database stay in the bucket: retention runs on files a member still ships.
+- No segment compaction (see [Compared with Litestream](#compared-with-litestream)).
 
 ## Settings
 
@@ -31,6 +33,7 @@ values.
 | `backup-kms-key-id` | OCID of the master encryption key |
 | `backup-kms-api-key` | OCI API signing key id, `<tenancy OCID>/<user OCID>/<fingerprint>` |
 | `backup-kms-private-key-file` | PEM private key of that API key |
+| `backup-retention-days` | Optional. Days each plan keeps backups, `hobby=1,pro=7,enterprise=30` by default; a plan not named keeps its default (1 to 3650 days) |
 
 Give the backup identity only what it needs: object read, write and list in the backup bucket, and `use` of the one
 master key.
@@ -132,6 +135,35 @@ new database of the same project (`branchedFrom` set, like a backup restore). Th
 The result holds every transaction the shipper read by `pointInTime`. The shipper reads every second, so a transaction
 committed in the second before `pointInTime` may be missing.
 
+## Retention
+
+Every hour the member that ships a file trims its backup to the plan of the file's organization (`backup-retention-days`;
+`_system.db` keeps the longest). With a window of `d` days it keeps every snapshot taken in the last `d` days plus one hour,
+and the newest snapshot before that, so any time in the window still restores. It deletes older snapshots, the segments
+before the oldest kept snapshot in its generation, and generations left without snapshots. Segments go first, so an
+interrupted pass never leaves segments that no snapshot reaches.
+
+The extra hour covers a restore that picked a snapshot just inside the window, as Litestream learned (#1450). Plans move
+to ts-dashboard (TS-599); this setting stays the fallback.
+
+## Restore drills
+
+At least once a day, when it stores a snapshot, the shipper checks it: it rebuilds the file from the bucket alone (the
+generation's previous snapshot, or the new one at generation start, rolled forward through the segments up to the new
+snapshot's exact frame position), then compares a SHA-256 of the schema and every row of every table with the local copy
+the snapshot was made from, which is the live file at that position. A drill exercises download, decryption, contiguity,
+roll-forward and `integrity_check`.
+
+A failed drill is logged as an error and counted in `terrabase_backup_drills_total{result="failed"}`.
+
+## Records in TerraBase
+
+After each hourly retention pass and each drill, the shipper writes the file's record into `_system`: collection
+`databases/<database id>/backup_status`, id `current` (`backup_status`/`_system` for `_system.db`). The record holds the
+shipping member, generation, last shipped time, lag, bucket size (measured daily), retention days and the last drill.
+The database's state is deleted with it. A catalog follower cannot write the catalog, so it keeps the record in memory
+only (`GET /v1/backup`) until TS-647 makes `_system` writable on every member.
+
 ## Compared with Litestream
 
 Checked against Litestream 0.5.17 (August 2026): its design and its bug fixes from 0.3 to 0.5.17.
@@ -148,7 +180,7 @@ Checked against Litestream 0.5.17 (August 2026): its design and its bug fixes fr
 | aws-chunked off for S3-compatible stores (0.5.6); payload signed (0.5.5). | Same: `UseChunkEncoding = false`, signed payload hash, checksums only when required. |
 | Sync backoff up to 5 minutes. | Same. |
 | Resumes a generation across restarts. | A new generation, so a new snapshot, per member start. |
-| Retention keeps the snapshot before the window (0.5.14); a restore raced retention (#1450). | Retention is not built yet; it must keep the snapshot before the window start and leave a margin for running restores. |
+| Retention keeps the snapshot before the window (0.5.14); a restore raced retention (#1450). | Same: the newest snapshot before the window is kept, plus one hour of grace. |
 | Leases: S3 conditional writes (0.5.8) or a single process. | NATS KV leases with self-fencing before expiry. |
 | Optional age encryption (0.3). | Always sealed: AES-256-GCM, per-project data keys wrapped by OCI Vault. |
 
@@ -159,7 +191,8 @@ Checked against Litestream 0.5.17 (August 2026): its design and its bug fixes fr
 - Metrics, over the files this member ships: `terrabase_backup_lag_seconds` (oldest data not yet in the bucket),
   `terrabase_backup_last_success_seconds` (Unix time of the least recently shipped file) and `terrabase_backup_files`.
   Also `terrabase_backup_uploaded_bytes_total{kind}`, `terrabase_backup_failures_total`, `terrabase_backup_holes_total`
-  and `terrabase_backup_generations_total` (a rising count means snapshots too often).
+  and `terrabase_backup_generations_total` (a rising count means snapshots too often), `terrabase_backup_drills_total{result}`
+  and `terrabase_backup_stored_bytes` (bucket bytes of the files this member ships).
 - `GET /v1/backup` also shows, per file, whether this member ships it.
 - Scratch files (frames waiting for upload, snapshots, sealed objects) live in `<data-directory>/.backup`, which is
   emptied at start.

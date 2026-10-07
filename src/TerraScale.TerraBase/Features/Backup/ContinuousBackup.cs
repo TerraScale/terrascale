@@ -16,8 +16,11 @@ namespace TerraBase.Features.Backup;
 /// <param name="PendingBytes">Frames read and not yet stored.</param>
 /// <param name="LastError">The kind of the last failure, cleared by the next successful pass.</param>
 /// <param name="Shipping">Whether this node ships the file now (<see cref="IShipperLeases"/>).</param>
+/// <param name="SizeBytes">Bytes the file's backup occupies in the bucket, measured daily by its shipper.</param>
+/// <param name="LastDrill">The last restore drill this member ran on the file.</param>
 public sealed record BackupFileStatus(
-    string File, string? Generation, long Frames, DateTimeOffset? LastShippedAt, double LagSeconds, long PendingBytes, string? LastError, bool Shipping);
+    string File, string? Generation, long Frames, DateTimeOffset? LastShippedAt, double LagSeconds, long PendingBytes, string? LastError, bool Shipping,
+    long? SizeBytes, BackupDrill? LastDrill);
 
 /// <summary>Continuous backup on this node: what it ships.</summary>
 /// <param name="Shipping">Whether backup is configured on this node.</param>
@@ -63,6 +66,10 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
     private readonly TimeProvider _time;
     private readonly ILogger<ContinuousBackup> _logger;
     private readonly IShipperLeases _shippers;
+    private readonly BackupReader _reader;
+    private readonly ITenantDirectory _tenants;
+    private readonly BackupSettings _settings;
+    private readonly string _node;
     private readonly string _scratch;
     private readonly ConcurrentDictionary<string, ShippedFile> _files = new(StringComparer.Ordinal);
     private readonly SemaphoreSlim _pass = new(1, 1);
@@ -72,21 +79,26 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
     private readonly Counter<long> _failures;
     private readonly Counter<long> _holes;
     private readonly Counter<long> _generations;
+    private readonly Counter<long> _drills;
     private DateTimeOffset _nextDiscovery = DateTimeOffset.MinValue;
 
     public ContinuousBackup(
         IWalBackup engine, IStorageEngine storage, IObjectStore store, DataKeys keys, TerraBaseOptions options, TimeProvider time,
-        IMeterFactory meters, ILogger<ContinuousBackup> logger, IShipperLeases shippers)
+        IMeterFactory meters, ILogger<ContinuousBackup> logger, IShipperLeases shippers, BackupReader reader, ITenantDirectory tenants, BackupSettings settings)
     {
         ArgumentNullException.ThrowIfNull(options);
         ArgumentNullException.ThrowIfNull(meters);
         (_engine, _storage, _store, _keys, _time, _logger, _shippers) = (engine, storage, store, keys, time, logger, shippers);
+        (_reader, _tenants, _settings, _node) = (reader, tenants, settings, options.NodeName);
         _scratch = Scratch(options);
         var meter = meters.Create(Telemetry.MeterName);
         _uploaded = meter.CreateCounter<long>("terrabase.backup.uploaded", "By", "Sealed backup bytes stored in the bucket, by kind (snapshot, segment).");
         _failures = meter.CreateCounter<long>("terrabase.backup.failures", description: "Backup passes of a file that failed.");
         _holes = meter.CreateCounter<long>("terrabase.backup.holes", description: "Logs found checkpointed or rewritten by someone else, each ending a generation.");
         _generations = meter.CreateCounter<long>("terrabase.backup.generations", description: "Generations started (each stores a snapshot).");
+        _drills = meter.CreateCounter<long>("terrabase.backup.drills", description: "Restore drills, by result (passed, failed).");
+        meter.CreateObservableGauge("terrabase.backup.stored", () => Shipped().Sum(file => file.SizeBytes ?? 0), "By",
+            "Bytes the backups of the files this member ships occupy in the bucket, measured daily.");
         meter.CreateObservableGauge("terrabase.backup.files", () => Shipped().Count(), description: "Storage files this node ships.");
         meter.CreateObservableGauge("terrabase.backup.lag", () => Shipped().Select(file => Lag(file, _time.GetUtcNow())).DefaultIfEmpty().Max(),
             "s", "Seconds the oldest committed data not yet in the bucket has waited, over every file this node ships.");
@@ -103,7 +115,8 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
         {
             var now = _time.GetUtcNow();
             return new(true, [.. _files.Values.OrderBy(file => file.Prefix, StringComparer.Ordinal).Select(file => new BackupFileStatus(
-                file.Prefix, file.Generation?.ToString(), file.Position, file.LastShipped, Lag(file, now), file.PendingBytes, file.LastError, file.Shipping))]);
+                file.Prefix, file.Generation?.ToString(), file.Position, file.LastShipped, Lag(file, now), file.PendingBytes, file.LastError, file.Shipping,
+                file.SizeBytes, file.LastDrill))]);
         }
     }
 
@@ -308,6 +321,19 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
                 await SnapshotAsync(file, cancellationToken).ConfigureAwait(false);
             }
 
+            if (due && file.Generation is not null && now - file.RetainedAt >= RetentionInterval)
+            {
+                try
+                {
+                    await RetainAsync(file, cancellationToken).ConfigureAwait(false);
+                }
+                catch (Exception error) when (!cancellationToken.IsCancellationRequested)
+                {
+                    // Retention retries next hour; shipping goes on.
+                    LogRetentionFailed(_logger, file.Prefix, error);
+                }
+            }
+
             if (due)
             {
                 (file.LastError, file.Failures) = (null, 0);
@@ -365,9 +391,14 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
             file.Pending.SetLength(0);
             await file.Tap.SnapshotAsync(Stream.Null, snapshot, cancellationToken).ConfigureAwait(false);
             var at = _time.GetUtcNow();
-            await StoreAsync(file, BackupLayout.Snapshot(file.Prefix, at, generation, 0), snapshot, "snapshot", cancellationToken).ConfigureAwait(false);
+            var key = BackupLayout.Snapshot(file.Prefix, at, generation, 0);
+            await StoreAsync(file, key, snapshot, "snapshot", cancellationToken).ConfigureAwait(false);
             (file.Generation, file.Position, file.PendingStart, file.LastSnapshot, file.LastShipped, file.BehindSince) = (generation, 0, 0, at, at, null);
             _generations.Add(1);
+            if (at - file.DrilledAt >= DrillInterval)
+            {
+                await DrillAsync(file, new SnapshotKey(key, at, generation, 0), snapshot, cancellationToken).ConfigureAwait(false);
+            }
         }
         finally
         {
@@ -412,9 +443,13 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
                 await UploadPendingAsync(file, cancellationToken).ConfigureAwait(false);
             }
 
-            await StoreAsync(file, BackupLayout.Snapshot(file.Prefix, at, file.Generation!.Value, file.Position), snapshot, "snapshot", cancellationToken)
-                .ConfigureAwait(false);
+            var key = BackupLayout.Snapshot(file.Prefix, at, file.Generation!.Value, file.Position);
+            await StoreAsync(file, key, snapshot, "snapshot", cancellationToken).ConfigureAwait(false);
             (file.LastSnapshot, file.LastShipped) = (at, at);
+            if (at - file.DrilledAt >= DrillInterval)
+            {
+                await DrillAsync(file, new SnapshotKey(key, at, file.Generation.Value, file.Position), snapshot, cancellationToken).ConfigureAwait(false);
+            }
         }
         finally
         {
@@ -473,12 +508,8 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
 
     private string ScratchFile(string extension) => Path.Combine(_scratch, Guid.NewGuid().ToString("N") + extension);
 
-    // SQLite may leave a rollback journal next to a snapshot it wrote.
-    private static void DeleteSnapshot(string path)
-    {
-        File.Delete(path);
-        File.Delete(path + "-journal");
-    }
+    // SQLite may leave a journal, and a drill a log, next to a snapshot.
+    private static void DeleteSnapshot(string path) => BackupReader.Delete(path);
 
     private static async Task Use(Stream stream, Func<Stream, Task> use)
     {
@@ -505,6 +536,9 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "The log of {File} has a hole; its backup starts a new generation")]
     private static partial void LogHole(ILogger logger, string file);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Retention of {File} failed; it retries next hour")]
+    private static partial void LogRetentionFailed(ILogger logger, string file, Exception error);
 
     [LoggerMessage(Level = LogLevel.Information, Message = "This member now ships {File}")]
     private static partial void LogShipping(ILogger logger, string file);
@@ -546,6 +580,19 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
 
         /// <summary><see cref="Pending"/>'s length after the last pass, for status readers on other threads.</summary>
         public long PendingBytes { get; set; }
+
+        /// <summary>Maintenance: last retention pass, measured bucket size, plan retention and last restore drill.</summary>
+        public DateTimeOffset RetainedAt { get; set; } = DateTimeOffset.MinValue;
+
+        public DateTimeOffset SizedAt { get; set; } = DateTimeOffset.MinValue;
+
+        public long? SizeBytes { get; set; }
+
+        public int RetentionDays { get; set; }
+
+        public BackupDrill? LastDrill { get; set; }
+
+        public DateTimeOffset DrilledAt { get; set; } = DateTimeOffset.MinValue;
 
         public async ValueTask DisposeAsync()
         {

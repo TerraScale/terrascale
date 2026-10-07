@@ -45,4 +45,10 @@ public interface IWalBackup
     /// starts over from a baseline. Throws when the database already exists.
     /// </summary>
     ValueTask ImportDatabaseAsync(TenantContext database, string file, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// A SHA-256 of the logical content of the database file <paramref name="file"/>: its schema and every row of every
+    /// table in a fixed order, so two copies of the same state match whatever their page layout. For restore drills.
+    /// </summary>
+    ValueTask<byte[]> ChecksumAsync(string file, CancellationToken cancellationToken);
 }

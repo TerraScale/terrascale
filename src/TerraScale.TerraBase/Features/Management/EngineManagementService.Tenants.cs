@@ -53,6 +53,13 @@ internal sealed partial class EngineManagementService
             : null;
     }
 
+    public ValueTask<PlanTier> PlanAsync(string organizationId, CancellationToken cancellationToken) =>
+        ReadCatalogAsync(async transaction =>
+            Interprets(await GetAsync(transaction, Catalog, CatalogVersionId, Id, cancellationToken).ConfigureAwait(false))
+                ? await PlanUncheckedAsync(transaction, organizationId, cancellationToken).ConfigureAwait(false)
+                : PlanTier.Hobby,
+            cancellationToken);
+
     public ValueTask<bool?> RegisteredAsync(TenantContext database, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(database);

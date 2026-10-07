@@ -7,6 +7,11 @@ using TerraBase.Configuration;
 
 namespace TerraBase.Features.Backup;
 
+/// <summary>An object in the bucket.</summary>
+/// <param name="Key">Its key.</param>
+/// <param name="Size">Its stored bytes.</param>
+internal readonly record struct StoredObject(string Key, long Size);
+
 /// <summary>The backup bucket: whole objects addressed by key.</summary>
 internal interface IObjectStore
 {
@@ -16,8 +21,11 @@ internal interface IObjectStore
     /// <summary>Streams <paramref name="key"/> to <paramref name="read"/>; <see langword="false"/> when it does not exist.</summary>
     Task<bool> ReadAsync(string key, Func<Stream, Task> read, CancellationToken cancellationToken);
 
-    /// <summary>Lists the keys under <paramref name="prefix"/> in key order, after <paramref name="startAfter"/> when set.</summary>
-    IAsyncEnumerable<string> ListAsync(string prefix, string? startAfter, CancellationToken cancellationToken);
+    /// <summary>Lists the objects under <paramref name="prefix"/> in key order, after <paramref name="startAfter"/> when set.</summary>
+    IAsyncEnumerable<StoredObject> ListAsync(string prefix, string? startAfter, CancellationToken cancellationToken);
+
+    /// <summary>Deletes <paramref name="key"/>; deleting a missing object succeeds.</summary>
+    Task DeleteAsync(string key, CancellationToken cancellationToken);
 }
 
 /// <summary>
@@ -71,7 +79,7 @@ internal sealed class S3ObjectStore(BackupSettings settings, IHttpClientFactory 
         }
     }
 
-    public async IAsyncEnumerable<string> ListAsync(string prefix, string? startAfter, [EnumeratorCancellation] CancellationToken cancellationToken)
+    public async IAsyncEnumerable<StoredObject> ListAsync(string prefix, string? startAfter, [EnumeratorCancellation] CancellationToken cancellationToken)
     {
         var request = new ListObjectsV2Request { BucketName = settings.Bucket, Prefix = prefix, StartAfter = startAfter };
         while (true)
@@ -79,7 +87,7 @@ internal sealed class S3ObjectStore(BackupSettings settings, IHttpClientFactory 
             var page = await _s3.ListObjectsV2Async(request, cancellationToken).ConfigureAwait(false);
             foreach (var item in page.S3Objects ?? [])
             {
-                yield return item.Key;
+                yield return new(item.Key, item.Size ?? 0);
             }
 
             if (page.IsTruncated != true)
@@ -90,6 +98,9 @@ internal sealed class S3ObjectStore(BackupSettings settings, IHttpClientFactory 
             request.ContinuationToken = page.NextContinuationToken;
         }
     }
+
+    public async Task DeleteAsync(string key, CancellationToken cancellationToken) =>
+        await _s3.DeleteObjectAsync(settings.Bucket, key, cancellationToken).ConfigureAwait(false);
 
     public void Dispose() => _s3.Dispose();
 

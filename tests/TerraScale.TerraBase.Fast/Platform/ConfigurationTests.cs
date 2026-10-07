@@ -1,4 +1,5 @@
 using TerraBase.Configuration;
+using TerraBase.Tenancy;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Platform;
@@ -56,6 +57,33 @@ public sealed class ConfigurationTests
         {
             Directory.Delete(directory, recursive: true);
         }
+    }
+
+    [Test]
+    public async Task Backup_retention_defaults_to_one_seven_and_thirty_days_and_takes_plan_overrides()
+    {
+        using var oci = new FakeOci();
+        var values = new Dictionary<string, string>();
+        oci.Configure(values);
+        var defaults = TerraBaseOptions.FromValues(values).Backup!.RetentionDays;
+        values["backup-retention-days"] = "pro=14, enterprise=90";
+        var overridden = TerraBaseOptions.FromValues(values).Backup!.RetentionDays;
+        values["backup-retention-days"] = "free=1";
+        var unknownPlan = await Assert.That(() => TerraBaseOptions.FromValues(values)).Throws<TerraBaseConfigurationException>();
+        values["backup-retention-days"] = "hobby=0";
+        var zero = await Assert.That(() => TerraBaseOptions.FromValues(values)).Throws<TerraBaseConfigurationException>();
+        var withoutBackup = await Assert.That(() => TerraBaseOptions.FromValues(new Dictionary<string, string> { ["backup-retention-days"] = "hobby=2" }))
+            .Throws<TerraBaseConfigurationException>();
+
+        await Assert.That(defaults[PlanTier.Hobby]).IsEqualTo(1);
+        await Assert.That(defaults[PlanTier.Pro]).IsEqualTo(7);
+        await Assert.That(defaults[PlanTier.Enterprise]).IsEqualTo(30);
+        await Assert.That(overridden[PlanTier.Hobby]).IsEqualTo(1);
+        await Assert.That(overridden[PlanTier.Pro]).IsEqualTo(14);
+        await Assert.That(overridden[PlanTier.Enterprise]).IsEqualTo(90);
+        await Assert.That(unknownPlan!.Message).Contains("backup-retention-days");
+        await Assert.That(zero!.Message).Contains("backup-retention-days");
+        await Assert.That(withoutBackup!.Message).Contains("backup-endpoint");
     }
 
     [Test]

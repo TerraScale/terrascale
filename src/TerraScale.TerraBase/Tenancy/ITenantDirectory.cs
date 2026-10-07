@@ -27,4 +27,10 @@ public interface ITenantDirectory
     /// <see langword="null"/> when this member's catalog is at a version this build does not read, so neither is known.
     /// </summary>
     ValueTask<bool?> RegisteredAsync(TenantContext database, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// The plan of organization <paramref name="organizationId"/>: <see cref="PlanTier.Hobby"/> when it does not exist (or no
+    /// longer does), or when this member's catalog is at a version this build does not read.
+    /// </summary>
+    ValueTask<PlanTier> PlanAsync(string organizationId, CancellationToken cancellationToken);
 }

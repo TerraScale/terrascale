@@ -29,9 +29,9 @@ internal sealed class DataKeys(IObjectStore store, IMasterKey master, TimeProvid
         try
         {
             string? newest = null;
-            await foreach (var key in store.ListAsync(BackupLayout.Keys(scope), null, cancellationToken).ConfigureAwait(false))
+            await foreach (var item in store.ListAsync(BackupLayout.Keys(scope), null, cancellationToken).ConfigureAwait(false))
             {
-                newest = key;
+                newest = item.Key;
             }
 
             if (newest is not null)

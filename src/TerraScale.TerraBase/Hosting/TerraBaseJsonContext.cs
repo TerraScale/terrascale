@@ -27,6 +27,7 @@ namespace TerraBase.Hosting;
 [JsonSerializable(typeof(AuditRetention))]
 [JsonSerializable(typeof(BackupPolicy))]
 [JsonSerializable(typeof(BackupStatus))]
+[JsonSerializable(typeof(BackupStatusRecord))]
 [JsonSerializable(typeof(BackupPolicyRequest))]
 [JsonSerializable(typeof(BackupRecord))]
 [JsonSerializable(typeof(BackupSchedule))]

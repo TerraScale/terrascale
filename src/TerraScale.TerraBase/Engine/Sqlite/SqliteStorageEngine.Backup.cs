@@ -1,3 +1,7 @@
+using System.Buffers.Binary;
+using System.Globalization;
+using System.Security.Cryptography;
+using System.Text;
 using Microsoft.Data.Sqlite;
 using TerraBase.Tenancy;
 
@@ -104,5 +108,104 @@ internal sealed partial class SqliteStorageEngine
         }
 
         await initialization.ConfigureAwait(false);
+    }
+
+    /// <remarks>ponytail: sorts every table by all its columns, a full scan each; fine for a daily drill of small databases.</remarks>
+    public async ValueTask<byte[]> ChecksumAsync(string file, CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(file);
+        Io.Admit();
+        try
+        {
+            return await Io.RunAsync(() =>
+            {
+                using var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+                {
+                    DataSource = file,
+                    Mode = SqliteOpenMode.ReadWrite,
+                    Pooling = false,
+                }.ToString());
+                connection.Open();
+                using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+                var tables = new List<string>();
+                using (var schema = connection.CreateCommand())
+                {
+                    schema.CommandText = "SELECT type, name, sql FROM sqlite_schema ORDER BY type, name;";
+                    using var rows = schema.ExecuteReader();
+                    while (rows.Read())
+                    {
+                        Append(hash, rows);
+                        if (rows.GetString(0) == "table" && !rows.GetString(1).StartsWith("sqlite_", StringComparison.Ordinal))
+                        {
+                            tables.Add(rows.GetString(1));
+                        }
+                    }
+                }
+
+                foreach (var table in tables)
+                {
+                    var name = "\"" + table.Replace("\"", "\"\"", StringComparison.Ordinal) + "\"";
+                    using var command = connection.CreateCommand();
+                    command.CommandText = $"SELECT * FROM {name} LIMIT 0;";
+                    int columns;
+                    using (var shape = command.ExecuteReader())
+                    {
+                        columns = shape.FieldCount;
+                    }
+
+                    command.CommandText = $"SELECT * FROM {name} ORDER BY {string.Join(", ", Enumerable.Range(1, columns).Select(column => column.ToString(CultureInfo.InvariantCulture)))};";
+                    using var rows = command.ExecuteReader();
+                    hash.AppendData(Encoding.UTF8.GetBytes(table + "\0"));
+                    while (rows.Read())
+                    {
+                        Append(hash, rows);
+                    }
+                }
+
+                return hash.GetHashAndReset();
+            }, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            Io.Release();
+        }
+
+        // Each value with a type tag and, for text and blobs, its length, so no two rows hash alike by concatenation.
+        static void Append(IncrementalHash hash, SqliteDataReader row)
+        {
+            Span<byte> scalar = stackalloc byte[9];
+            for (var i = 0; i < row.FieldCount; i++)
+            {
+                switch (row.IsDBNull(i) ? null : row.GetValue(i))
+                {
+                    case null:
+                        hash.AppendData([0]);
+                        break;
+                    case long integer:
+                        scalar[0] = 1;
+                        BinaryPrimitives.WriteInt64BigEndian(scalar[1..], integer);
+                        hash.AppendData(scalar);
+                        break;
+                    case double real:
+                        scalar[0] = 2;
+                        BinaryPrimitives.WriteDoubleBigEndian(scalar[1..], real);
+                        hash.AppendData(scalar);
+                        break;
+                    case string text:
+                        var bytes = Encoding.UTF8.GetBytes(text);
+                        scalar[0] = 3;
+                        BinaryPrimitives.WriteInt64BigEndian(scalar[1..], bytes.Length);
+                        hash.AppendData(scalar);
+                        hash.AppendData(bytes);
+                        break;
+                    case byte[] blob:
+                        scalar[0] = 4;
+                        BinaryPrimitives.WriteInt64BigEndian(scalar[1..], blob.Length);
+                        hash.AppendData(scalar);
+                        hash.AppendData(blob);
+                        break;
+                }
+            }
+        }
     }
 }
