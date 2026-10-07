@@ -4,7 +4,7 @@
 usage: prod-replication-check [--canary FILE] [--docs N] [--max-lag-seconds S] [--log-minutes M] [--host-exec CMD]
 
 Writes only to the canary database named in FILE: creates, replaces, patches and deletes N fixed documents
-(UUIDv5 ids) of collection "canary" through the API, with If-None-Match and If-Match, and checks that stale
+(UUIDv5 ids per host; runs on one host take turns through FILE.lock) of collection "canary" through the API, with If-None-Match and If-Match, and checks that stale
 conditional writes answer 412. Then it reads every document directly from every member and compares status,
 JSON and version (ETag, tombstones included) with what the API answered, until they agree or S seconds pass.
 With host access it also reads each member's admin /metrics (replication durable lag, catalog follower lag,
@@ -17,9 +17,11 @@ by the member's address, and an empty CMD skips the host checks.
 """
 import argparse
 import concurrent.futures
+import fcntl
 import json
 import os
 import re
+import socket
 import ssl
 import stat
 import subprocess
@@ -146,7 +148,7 @@ def write(api, ids, run):
     return expected
 
 
-def compare(member, api, expected, deadline):
+def compare(member, api, expected, deadline, expected_run):
     """Polls one member until it answers every expected state; returns (matched, seconds, differences)."""
     started = time.monotonic()
     pending = dict(expected)
@@ -161,7 +163,9 @@ def compare(member, api, expected, deadline):
                 del pending[id_]
                 differences.pop(id_, None)
             else:
-                differences[id_] = f"HTTP {got[0]} version {got[1] or '-'}, expected HTTP {status} version {version}"
+                writer = (body.get("document") or {}).get("run")
+                differences[id_] = (f"HTTP {got[0]} version {got[1] or '-'}, expected HTTP {status} version {version}"
+                                    + (f" (written by run {writer}: another check ran concurrently)" if writer and writer != expected_run else ""))
         if not pending or time.monotonic() > deadline:
             return len(expected) - len(pending), time.monotonic() - started, differences
         time.sleep(0.5)
@@ -270,12 +274,22 @@ def main():
     if not 1 <= options.docs <= 100:
         parser.error("--docs must be 1 to 100")
     canary = load_canary(options.canary)
+    # Runs on this host take turns, so one never rewrites the documents another is still comparing; another host has its own.
+    lock = open(options.canary + ".lock", "w", encoding="utf-8")  # held until the process exits
+    for _ in range(180):
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            break
+        except BlockingIOError:
+            time.sleep(1)
+    else:
+        sys.exit(f"another prod-replication-check has held {options.canary}.lock for 3 minutes")
     members = {
         member: Api(f"https://{member}", canary["secret"], ssl.create_default_context(cadata=canary["member_ca"]), canary["project"], canary["database"])
         for member in canary["members"]}
     api = Api(canary["api"], canary["secret"], ssl.create_default_context(), canary["project"], canary["database"])
     # Stable ids, so every run cycles the same documents and the canary does not grow.
-    ids = [str(uuid.uuid5(uuid.NAMESPACE_URL, f"terrabase-prod-replication-check/{index}")) for index in range(options.docs)]
+    ids = [str(uuid.uuid5(uuid.NAMESPACE_URL, f"terrabase-prod-replication-check/{socket.gethostname()}/{index}")) for index in range(options.docs)]
     run = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime()) + "-" + uuid.uuid4().hex[:8]
     print(f"run {run}: {options.docs} documents in {canary['api']} database {canary['database']}, {len(members)} members", flush=True)
 
@@ -287,7 +301,7 @@ def main():
         print(f"wrote: {sum(1 for state in expected.values() if state[0] == 200)} live, {sum(1 for state in expected.values() if state[0] == 404)} deleted", flush=True)
         for member, client in members.items():
             try:
-                matched, seconds, differences = compare(member, client, expected, deadline)
+                matched, seconds, differences = compare(member, client, expected, deadline, run)
                 live = listing(client)
             except (OSError, RuntimeError, ValueError) as error:
                 fail(f"{member}: {error}")
