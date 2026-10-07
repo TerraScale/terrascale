@@ -1,24 +1,27 @@
 #!/usr/bin/env python3
-"""Cross-region replication check (TS-643, docs/cross-region.md).
+"""Cross-region replication check (TS-643, docs/cross-region.md, docs/rollout/ts-643-cross-region.md).
 
 Writes to a dedicated canary database through each region's public API and reads the write back through the other
-region, in both directions, then writes one document in both regions at once and waits until both serve the same
+region, in both directions, then writes one document in every region at once and waits until all serve the same
 winner with the same version. Exits 0 when every check passed within the lag threshold, 1 otherwise, 2 on bad usage.
 
-Only the canary database is written, always the same three documents, so it does not grow.
+usage: cross-region-check.py [--canary FILE] [--lag-threshold SECONDS]
 
-    TS643_KEY_GRU_1=... TS643_KEY_SFO_1=... scripts/cross-region-check.py \\
-        --region gru-1=https://gru.api.terrascale.tech --region sfo-1=https://sfo.api.terrascale.tech \\
-        --project <project id> [--database canary] [--lag-threshold 60]
+Only the canary database is written, always the same documents (UUIDv5 ids) of collection "canary", so it does not
+grow. Use a database of its own: TS-660's in-region check owns its canary database.
 
-Each region's API key (documents:read and documents:write on the canary) comes from the environment variable
-TS643_KEY_<REGION>, the region upper-cased with hyphens as underscores; keys never go on the command line.
+FILE (mode 0600, default ~/.config/terrabase/cross-region-canary.json) is JSON:
+{"project": "<project id>", "database": "<database name>",
+ "regions": [{"region": "gru-1", "api": "https://gru.api.terrascale.tech", "secret": "tb_..."},
+             {"region": "sfo-1", "api": "https://sfo.api.terrascale.tech", "secret": "tb_..."}]}
+Each secret is an API key of that region with documents:read and documents:write on the canary database.
 """
 
 import argparse
 import concurrent.futures
 import json
 import os
+import stat
 import ssl
 import sys
 import time
@@ -113,42 +116,45 @@ def convergence(regions, nonce, threshold):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--region", action="append", required=True, metavar="REGION=URL", help="a region and its public API, at least two")
-    parser.add_argument("--project", required=True, help="the canary's project id")
-    parser.add_argument("--database", default="canary", help="the canary database's name (default canary)")
-    parser.add_argument("--lag-threshold", type=float, default=60, metavar="SECONDS", help="longest a write may take to show up in the other region (default 60)")
+    parser.add_argument("--canary", default=os.path.expanduser("~/.config/terrabase/cross-region-canary.json"), metavar="FILE")
+    parser.add_argument("--lag-threshold", type=float, default=60, metavar="SECONDS", help="longest a write may take to show up in another region (default 60)")
     args = parser.parse_args()
 
-    regions = []
-    for entry in args.region:
-        name, _, url = entry.partition("=")
-        key = os.environ.get(f"TS643_KEY_{name.upper().replace('-', '_')}")
-        if not url or not key:
-            print(f"cross-region-check: --region {name} needs REGION=URL and TS643_KEY_{name.upper().replace('-', '_')}", file=sys.stderr)
+    try:
+        if os.stat(args.canary).st_mode & (stat.S_IRWXG | stat.S_IRWXO):
+            print(f"cross-region-check: {args.canary} holds API keys; make it mode 0600", file=sys.stderr)
             return 2
-        regions.append(Region(name, url, key, args.project, args.database))
+        with open(args.canary, encoding="utf-8") as file:
+            canary = json.load(file)
+        regions = [Region(entry["region"], entry["api"], entry["secret"], canary["project"], canary["database"]) for entry in canary["regions"]]
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        print(f"cross-region-check: cannot read the canary file: {error!r}", file=sys.stderr)
+        return 2
     if len(regions) < 2:
-        print("cross-region-check: give at least two --region", file=sys.stderr)
+        print("cross-region-check: the canary file needs at least two regions", file=sys.stderr)
         return 2
 
     nonce = str(uuid.uuid4())
     results = []
     for source in regions:
         # The collection exists after the first run; 409 means it does.
-        status, _, _ = source.request("POST", "/collections", {"name": COLLECTION})
-        if status not in (200, 201, 409):
-            results.append({"check": f"{source.name}-collection", "ok": False, "error": f"creating the collection answered {status}"})
+        try:
+            status, _, _ = source.request("POST", "/collections", {"name": COLLECTION})
+            if status not in (200, 201, 409):
+                results.append({"check": f"{source.name}-collection", "ok": False, "error": f"creating the collection answered {status}"})
+        except OSError as error:
+            results.append({"check": f"{source.name}-collection", "ok": False, "error": repr(error)})
     for source in regions:
         for target in regions:
             if source is not target:
                 try:
                     results.append(direction(source, target, nonce, args.lag_threshold))
-                except (RuntimeError, OSError) as error:
-                    results.append({"check": f"{source.name}-to-{target.name}", "ok": False, "error": str(error)})
+                except (RuntimeError, OSError, ValueError, KeyError) as error:
+                    results.append({"check": f"{source.name}-to-{target.name}", "ok": False, "error": repr(error)})
     try:
         results.append(convergence(regions, nonce, args.lag_threshold))
-    except (RuntimeError, OSError) as error:
-        results.append({"check": "written-in-every-region", "ok": False, "error": str(error)})
+    except (RuntimeError, OSError, ValueError, KeyError) as error:
+        results.append({"check": "written-in-every-region", "ok": False, "error": repr(error)})
 
     ok = all(result["ok"] for result in results)
     print(json.dumps({"ok": ok, "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "results": results}))

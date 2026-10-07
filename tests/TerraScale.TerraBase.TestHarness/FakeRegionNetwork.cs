@@ -4,9 +4,10 @@ using TerraBase.Features.CrossRegion;
 namespace TerraBase.Testing;
 
 /// <summary>
-/// Core NATS request/reply between regions, in memory, shared by the servers of a test: every responder of a subject
-/// answers a scattered request, one answers a single request, and a request to a subject nobody serves fails as
-/// NATS's no-responders does. <see cref="Partition"/> cuts two cells apart, as a dropped leafnode link would, until
+/// Core NATS request/reply between regions, in memory, shared by the servers of a test, as ts-orchestrator's interregion
+/// link serves it: a request to another cell gets one reply (the link imports each cell's <c>query</c> subjects as a
+/// Singleton service), and a request to a subject nobody serves fails as NATS's no-responders does. Within a cell every
+/// responder answers a scattered request. <see cref="Partition"/> cuts two cells apart, as a dropped link would, until
 /// <see cref="Heal"/>.
 /// </summary>
 internal sealed class FakeRegionNetwork
@@ -41,7 +42,8 @@ internal sealed class FakeRegionNetwork
     {
         lock (_gate)
         {
-            return [.. _responders.Where(responder => responder.Subject == subject && !_cut.Contains((from, responder.Cell))).Select(responder => responder.Answer)];
+            var responders = _responders.Where(responder => responder.Subject == subject && !_cut.Contains((from, responder.Cell))).ToList();
+            return [.. responders.Take(responders.Any(responder => responder.Cell != from) ? 1 : responders.Count).Select(responder => responder.Answer)];
         }
     }
 

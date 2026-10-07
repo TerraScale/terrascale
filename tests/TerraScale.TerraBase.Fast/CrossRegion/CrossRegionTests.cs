@@ -157,6 +157,74 @@ public sealed class CrossRegionTests
     }
 
     [Test]
+    public async Task Every_member_of_a_region_reaches_every_member_of_the_other_through_single_replies()
+    {
+        // gru has two members, a catalog primary and its follower, which replicate to each other over the peer link; the
+        // link between regions gives a request one reply, so sfo learns gru-b from gru-a's member list.
+        using var peerTls = new PeerTls();
+        var network = new FakeRegionNetwork();
+        var directory = Directory.CreateTempSubdirectory("terrabase-wan-members-").FullName;
+        var credentials = Path.Combine(directory, "user.creds");
+        await File.WriteAllTextAsync(credentials, Regions.Credentials);
+        var gruMembers = new FakeMemberStore(TimeProvider.System);
+        var (portA, portB) = (TerraBaseTestServer.FreePort(), TerraBaseTestServer.FreePort());
+        Task<ManagementApi> StartGruAsync(string name, int port)
+        {
+            return ManagementApi.StartAsync(settings =>
+            {
+                peerTls.Apply(settings);
+                settings["peer-port"] = port.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                settings["peers"] = $"gru-a=localhost:{portA},gru-b=localhost:{portB}";
+                settings["catalog-primary"] = "gru-a";
+                Regions.Configure(settings, credentials, "gru-1", name);
+            }, services => Regions.Join(services, network, "gru", gruMembers));
+        }
+
+        try
+        {
+            await using var gruA = await StartGruAsync("gru-a", portA);
+            await using var gruB = await StartGruAsync("gru-b", portB);
+            await using var sfo = await ManagementApi.StartAsync(
+                settings => Regions.Configure(settings, credentials, "sfo-1", "sfo-a"),
+                services => Regions.Join(services, network, "sfo", new FakeMemberStore(TimeProvider.System)));
+            var (organization, project, database) = (Guid.NewGuid().ToString("D"), Guid.NewGuid().ToString("D"), Guid.NewGuid().ToString("D"));
+            foreach (var api in new[] { gruA, sfo })
+            {
+                using var registered = await api.Client.PostAsync(
+                    new Uri("/v1/management/commits", UriKind.Relative), new StringContent(Regions.Registration(organization, project, database, "canary"), Encoding.UTF8, "application/json"));
+                registered.EnsureSuccessStatusCode();
+            }
+
+            var key = await gruA.Server.IssueAsync(organization, Scopes);
+            using var clientA = gruA.DataClient(key);
+            using var clientB = gruB.DataClient(key);
+            using var clientSfo = await sfo.CreateClientAsync(organization, Scopes);
+            var collection = new Uri($"/v1/projects/{project}/databases/canary/collections/items", UriKind.Relative);
+            (await clientA.PostAsJsonAsync(new Uri($"/v1/projects/{project}/databases/canary/collections", UriKind.Relative), new { name = "items" })).EnsureSuccessStatusCode();
+            await TerraBaseTestServer.EventuallyAsync(async token =>
+                (await clientB.GetAsync(collection, token)).StatusCode == HttpStatusCode.OK && (await clientSfo.GetAsync(collection, token)).StatusCode == HttpStatusCode.OK);
+
+            Uri Document(string id)
+            {
+                return new($"/v1/projects/{project}/databases/canary/collections/items/documents/{ReplicationDocuments.Id(id)}", UriKind.Relative);
+            }
+
+            (await clientA.PutAsJsonAsync(Document("from-a"), new { value = "a" })).EnsureSuccessStatusCode();
+            (await clientB.PutAsJsonAsync(Document("from-b"), new { value = "b" })).EnsureSuccessStatusCode();
+            (await clientSfo.PutAsJsonAsync(Document("from-sfo"), new { value = "sfo" })).EnsureSuccessStatusCode();
+            _ = await Regions.EventuallyReadAsync(clientSfo, Document("from-a"), "a");
+            _ = await Regions.EventuallyReadAsync(clientSfo, Document("from-b"), "b");
+            _ = await Regions.EventuallyReadAsync(clientA, Document("from-sfo"), "sfo");
+            _ = await Regions.EventuallyReadAsync(clientB, Document("from-sfo"), "sfo");
+            await Assert.That(await sfo.Server.MetricAsync("terrabase_wan_members", "region=\"gru-1\"")).IsEqualTo(2);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Test]
     [Arguments("gru-1=gru", true)]
     [Arguments("sfo-1=sfo,iad-1=iad", true)]
     [Arguments("gru-1=gru,sfo-1=gru", true)]
@@ -313,19 +381,26 @@ public sealed class CrossRegionTests
             }
         }
 
+        // A member of the group gru-1=gru, sfo-1=sfo, on the in-memory region bus and member store.
+        public static void Configure(Dictionary<string, string> settings, string credentials, string region, string node)
+        {
+            settings["region"] = region;
+            settings["node-name"] = node;
+            settings["wan-regions"] = "gru-1=gru,sfo-1=sfo";
+            settings["nats-url"] = "nats://127.0.0.1:4222";
+            settings["nats-credentials-file"] = credentials;
+        }
+
+        public static void Join(IServiceCollection services, FakeRegionNetwork network, string cell, FakeMemberStore members)
+        {
+            services.AddSingleton(network.Join(cell));
+            services.AddSingleton<IMemberStore>(members);
+        }
+
         private static Task<ManagementApi> StartRegionAsync(FakeRegionNetwork network, string credentials, string region, string cell) =>
-            ManagementApi.StartAsync(settings =>
-            {
-                settings["region"] = region;
-                settings["node-name"] = $"{cell}-member";
-                settings["wan-regions"] = "gru-1=gru,sfo-1=sfo";
-                settings["nats-url"] = "nats://127.0.0.1:4222";
-                settings["nats-credentials-file"] = credentials;
-            }, services =>
-            {
-                services.AddSingleton(network.Join(cell));
-                services.AddSingleton<IMemberStore>(new FakeMemberStore(TimeProvider.System));
-            });
+            ManagementApi.StartAsync(
+                settings => Configure(settings, credentials, region, $"{cell}-member"),
+                services => Join(services, network, cell, new FakeMemberStore(TimeProvider.System)));
 
         // Every document of "items" with its version and body, in id order.
         private async Task<string> ListAsync(HttpClient client, CancellationToken token)

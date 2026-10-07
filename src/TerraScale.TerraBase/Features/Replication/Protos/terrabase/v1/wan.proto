@@ -45,6 +45,10 @@ message HeadsReply {
   repeated Head heads = 2;
   // Whether more heads follow the last one; ask the member for the next page.
   bool more = 3;
+  // Every member of the cell the answering member sees, itself included, by node name. Across ts-orchestrator's
+  // interregion link a request gets one reply (a Singleton service import), so the asking member reaches the
+  // others through their own subjects.
+  repeated string members = 4;
 }
 
 message PullRequest {

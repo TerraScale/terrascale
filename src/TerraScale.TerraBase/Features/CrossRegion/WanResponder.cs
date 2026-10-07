@@ -1,6 +1,7 @@
 using Google.Protobuf;
 using TerraBase.Configuration;
 using TerraBase.Engine;
+using TerraBase.Engine.Cluster;
 using TerraBase.Features.CrossRegion.V1;
 using TerraBase.Features.Replication;
 using TerraBase.Tenancy;
@@ -12,7 +13,8 @@ namespace TerraBase.Features.CrossRegion;
 /// and an origin's change groups after a prefix, read from its journal as the in-region sender reads them. Requests only
 /// read; a request this member cannot answer gets an empty reply, which the asking member counts as a failure.
 /// </summary>
-internal sealed partial class WanResponder(IRegionBus bus, IStorageEngine engine, TerraBaseOptions options, WanMetrics metrics, ILogger<WanResponder> logger)
+internal sealed partial class WanResponder(
+    IRegionBus bus, IStorageEngine engine, IMembership membership, TerraBaseOptions options, WanMetrics metrics, ILogger<WanResponder> logger)
     : BackgroundService
 {
     private const int MaxGroupsPerReply = 1024;
@@ -80,6 +82,7 @@ internal sealed partial class WanResponder(IRegionBus bus, IStorageEngine engine
 
         databases.Sort((a, b) => a.Key.AsSpan().SequenceCompareTo(b.Key));
         var reply = new HeadsReply { Member = options.NodeName };
+        reply.Members.AddRange((await membership.RefreshAsync(cancellationToken).ConfigureAwait(false)).Members.Select(member => member.Name));
         foreach (var (_, database) in databases)
         {
             if (reply.Heads.Count == WanProtocol.MaxHeadsPerReply)

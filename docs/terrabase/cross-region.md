@@ -13,9 +13,13 @@ now, with every simplification marked `anna-full (TS-643)` in the code.
 
 Every member of a region **pulls** each other region's change groups:
 
-1. **Heads.** Once a second, a member asks `ts.orch.v1.<cell>.query.terrabase-wan.heads`. Every member of that region
-   answers with the head of each origin it holds: one origin per database that it wrote to, with the sequence of its
-   last committed change group. More than 4096 heads page through the member's own subject.
+1. **Heads.** Once a second, a member asks `ts.orch.v1.<cell>.query.terrabase-wan.heads`. A member of that region answers
+   with the head of each origin it holds: one origin per database that it wrote to, with the sequence of its last
+   committed change group. More than 4096 heads page through the member's own subject.
+
+   The answer also lists every member the answering member sees in its cell. ts-orchestrator's interregion link
+   imports each cell's `query` subjects as a Singleton service, so a request gets one reply across the link. The asking
+   member therefore sends the heads request to each other listed member on that member's own subject.
 2. **Pull.** For each origin it is behind on, the member asks the member that holds it, on
    `ts.orch.v1.<cell>.query.terrabase-wan.member.<node-name>`, for the change groups after its own applied prefix.
    Replies hold whole groups, LZ4-compressed in the same versioned envelope as in-region replication
@@ -70,12 +74,14 @@ Unset, the node does not replicate across regions.
 
 ### What ts-orchestrator provides
 
-Before `wan-regions` works between two regions:
+TS-668 provides these before `wan-regions` works between two regions:
 
-1. The regions' NATS clusters are linked (`nats.embedded.interregion`, leafnodes rooted at gru).
-2. The interregion contract exports `ts.orch.v1.<cell>.query.terrabase-wan.>` as a service to every peer region.
-3. The terrabase role may subscribe to `ts.orch.v1.<own cell>.query.terrabase-wan.>` and publish to
-   `ts.orch.v1.<peer cell>.query.terrabase-wan.>` (requests) and `_INBOX.>` (replies).
+1. The regions' NATS clusters are linked (`nats.embedded.interregion`, leafnodes rooted at gru). The interregion contract
+   already carries every cell's `ts.orch.v1.<cell>.query.>` as a service.
+2. The terrabase role may:
+   - subscribe to `ts.orch.v1.<own cell>.query.terrabase-wan.>`;
+   - publish to `ts.orch.v1.*.query.terrabase-wan.>`;
+   - answer the requests it receives (`allow_responses`).
 
 ## Metrics
 
@@ -120,5 +126,6 @@ Alert on `terrabase_wan_staleness_seconds` above a minute, and on any `ahead` fa
 ## Live check
 
 `scripts/cross-region-check.py` writes a unique value to a dedicated canary database through each region's public API
-and reads it back through the other, in both directions, plus one document written in both regions that must converge.
-It exits non-zero on a mismatch or when a write takes longer than the lag threshold to show up.
+and reads it back through the other, in both directions. It also writes one document in both regions at once, which
+must converge. It exits non-zero on a mismatch, or when a write takes longer than the lag threshold to show up. Setup
+and the exact command are in the [rollout](rollout/ts-643-cross-region.md).

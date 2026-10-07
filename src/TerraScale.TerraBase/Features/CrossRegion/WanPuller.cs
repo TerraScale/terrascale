@@ -171,36 +171,62 @@ internal sealed partial class WanPuller(
         return (progressed && lag > 0, failures);
     }
 
-    // Every answering member's heads, all pages.
+    // Every member's heads, all pages: the members that answer the scattered request, and every other member they list,
+    // asked on its own subject.
     private async Task<(int Members, List<(string Member, Head Head)> Heads)> HeadsAsync(string cell, CancellationToken cancellationToken)
     {
-        var members = new HashSet<string>(StringComparer.Ordinal);
-        var heads = new List<(string Member, Head Head)>();
+        var answered = new Dictionary<string, List<Head>>(StringComparer.Ordinal);
+        var listed = new HashSet<string>(StringComparer.Ordinal);
         var first = new WanRequest { Version = WanProtocol.Version, Heads = new HeadsRequest() }.ToByteArray();
         await foreach (var data in bus.RequestManyAsync(WanProtocol.HeadsSubject(cell), first, cancellationToken).ConfigureAwait(false))
         {
-            var reply = Parse(data);
-            if (reply is null || !members.Add(reply.Member))
+            if (Parse(data) is { } reply && !answered.ContainsKey(reply.Member))
             {
-                continue;
-            }
-
-            while (true)
-            {
-                heads.AddRange(reply.Heads.Select(head => (reply.Member, head)));
-                if (!reply.More || reply.Heads.Count == 0)
-                {
-                    break;
-                }
-
-                var last = reply.Heads[^1];
-                var next = new WanRequest { Version = WanProtocol.Version, Heads = new HeadsRequest { After = ByteString.CopyFrom([.. last.TenantId.Span, .. last.ProjectId.Span, .. last.DatabaseId.Span]) } };
-                reply = Parse(await bus.RequestAsync(WanProtocol.MemberSubject(cell, reply.Member), next.ToByteArray(), cancellationToken).ConfigureAwait(false))
-                    ?? throw new InvalidDataException("a member answered a heads page with an invalid reply");
+                answered[reply.Member] = await PagesAsync(reply).ConfigureAwait(false);
+                listed.UnionWith(reply.Members);
             }
         }
 
-        return (members.Count, heads);
+        var others = listed.Where(member => !answered.ContainsKey(member) && WanProtocol.IsMember(member)).ToList();
+        var asked = await Task.WhenAll(others.Select(async member =>
+        {
+            try
+            {
+                return Parse(await bus.RequestAsync(WanProtocol.MemberSubject(cell, member), first, cancellationToken).ConfigureAwait(false)) is { } reply
+                    && reply.Member == member
+                    ? (member, await PagesAsync(reply).ConfigureAwait(false))
+                    : (member, null);
+            }
+            catch (Exception) when (!cancellationToken.IsCancellationRequested)
+            {
+                // A member that left or does not answer now: its origins wait for a later round.
+                return (member, (List<Head>?)null);
+            }
+        })).ConfigureAwait(false);
+        foreach (var (member, heads) in asked.Where(asked => asked.Item2 is not null))
+        {
+            answered[member] = heads!;
+        }
+
+        return (answered.Count, [.. answered.SelectMany(member => member.Value.Select(head => (member.Key, head)))]);
+
+        // The heads of the member that sent reply, with the pages after it.
+        async Task<List<Head>> PagesAsync(HeadsReply reply)
+        {
+            var heads = new List<Head>(reply.Heads);
+            while (reply.More && reply.Heads.Count > 0)
+            {
+                var last = reply.Heads[^1];
+                var next = new WanRequest { Version = WanProtocol.Version, Heads = new HeadsRequest { After = ByteString.CopyFrom([.. last.TenantId.Span, .. last.ProjectId.Span, .. last.DatabaseId.Span]) } };
+                var member = reply.Member;
+                reply = Parse(await bus.RequestAsync(WanProtocol.MemberSubject(cell, member), next.ToByteArray(), cancellationToken).ConfigureAwait(false)) is { } page && page.Member == member
+                    ? page
+                    : throw new InvalidDataException("a member answered a heads page with an invalid reply");
+                heads.AddRange(reply.Heads);
+            }
+
+            return heads;
+        }
 
         static HeadsReply? Parse(ReadOnlyMemory<byte> data)
         {
