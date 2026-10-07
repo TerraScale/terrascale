@@ -5,7 +5,17 @@
 
 # Quickstart: a live Next.js query
 
-This is the shortest path from a new Next.js app to a cloud-backed live query.
+::: warning Legacy SDK reference — not publicly runnable
+This guide retains the `@terrascale/sdk` 0.3.0 starter contract. That package
+version is not published on npm. The published `@terrascale/sdk@0.0.2` does
+not establish compatibility, and local stub results do not qualify browser
+sign-in or live updates. Use the [C# quickstart](/hi/getting-started/csharp) for
+the candidate project-scoped TerraBase API and read
+[SDK compatibility](/hi/guides/sdks) for release and qualification limits.
+:::
+
+This legacy guide describes the intended path from a new Next.js app to a
+cloud-backed live query.
 With Node, the TerraScale CLI, and an API key already available, the path is
 designed to take less than five minutes. There is no local database process to install:
 `terrascale dev` creates or reuses a cloud development branch, and dev and
@@ -104,11 +114,11 @@ branch name, source, and selected region; it does not print credentials or a
 database id. Use the dashboard/API response to obtain the branch database id,
 then set the public project ID, branch database ID, API URL, auth URL, and
 exact registered callback URL in `.env.local` (`.env.example` lists the names).
-The API URL stays the global origin; the SDK consults discovery at
-atlas.terrascale.tech automatically, once per database, and then calls
-regional endpoints directly — no proxy fallback exists, and a failed
-discovery falls back to the region catalog (first available regional
-endpoint).
+The old starter's routing behavior is a legacy reference. Current
+project-scoped SDK candidates require an explicit endpoint or caller-supplied
+resolver; automatic Atlas integration is deferred. Do not assume a region
+catalog or proxy fallback. See [Atlas discovery](/hi/guides/atlas) for the candidate
+`/v1/discovery` and project/database `/v1/resolve` contract.
 Export `TERRASCALE_API_KEY` separately for CLI commands; no API key belongs
 in the browser’s public settings. The branch runs in the cloud
 service, not in a local database process or customer-run emulator.
@@ -174,8 +184,9 @@ resumed.close()
 
 `Query.raw(sql, parameters)` remains available for a validated, parameterized
 read-only statement when a schema-bound builder is not practical. It cannot
-perform DDL or DML. The starter uses the typed builder and the public `client.documents.put`
-operation for document writes.
+perform DDL or DML. The legacy starter uses the typed builder and its
+`client.documents.put` facade for document writes. This is separate from candidate query-v1 and
+project-scoped Documents routes.
 
 ## 5. Verify it is live
 

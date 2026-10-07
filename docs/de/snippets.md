@@ -5,7 +5,18 @@
 
 # Snippets
 
-Runnable snippets can be qualified against a real cloud sandbox branch
+::: warning Legacy SDK fixtures
+These fixtures retain the `@terrascale/sdk` 0.3.0 contract. That pin is not
+published on npm; the published `@terrascale/sdk@0.0.2` does not establish
+compatibility with it. The deterministic stub checks fixture behavior only.
+For candidate project-scoped TerraBase CRUD, use the
+[C# quickstart](/de/getting-started/csharp). See
+[SDK compatibility](/de/guides/sdks) for separate package, real-binary and
+production JWT qualification gates, and the [legacy Next.js guide](/de/getting-started/)
+for the retained browser example.
+:::
+
+The legacy remote lane requires a matching real cloud sandbox branch
 pre-filled with the reader's key. `npm test` is the deterministic local stub
 check used by CI. The explicit remote, fail-closed launch gate is
 `npm run test:remote`; it requires all three sandbox environment variables and
@@ -28,10 +39,11 @@ requests use the short-lived `X-TerraScale-Capability` header returned by view
 attach. The capability is valid for at most 1,200 seconds; after expiry,
 attach the view again. Do not send an API key on reactive cache requests.
 
-The runnable examples target the published `@terrascale/sdk` 0.3.0 surface.
+The examples target the legacy `@terrascale/sdk` 0.3.0 surface, not a
+publicly installable package or the candidate Documents API.
 Tenant and project-scoped branch/backup fixtures await producer contracts.
-Database-scoped branch, backup, and export routes are published; the export
-fixture remains source-only pending qualification. Downloads return plaintext
+The legacy contract records database-scoped branch, backup, and export routes;
+the export fixture remains source-only pending qualification. Downloads return plaintext
 artifact bytes with the declared length
 and BLAKE3 checksum from the `X-TerraScale-Artifact-Length` and
 `X-TerraScale-Artifact-Checksum` headers. The stub mode is deterministic and
@@ -52,9 +64,9 @@ never counts as remote qualification.
 ## Database per tenant
 
 Tenant = database. Tenant provisioning is not published yet, so this fixture
-is intentionally skipped in both modes. Ordinary database CRUD remains
-available after a database is provisioned through its published control-plane
-workflow.
+is intentionally skipped in both modes. This skipped fixture does not establish
+candidate provisioning. Auth owns users, organizations and projects; application data belongs in TerraBase.
+Do not create duplicate management models from this fixture.
 
 <<< @/snippets/tenants.ts
 
@@ -62,8 +74,8 @@ workflow.
 
 This fixture exercises the project-scoped branch producer, which is not in the
 pinned public contract yet. It is intentionally skipped in both modes.
-Database-scoped branch listing and creation are published; the connected
-cloud workflow still requires qualification.
+The legacy contract describes database-scoped branch listing and creation;
+the connected cloud workflow still requires qualification.
 
 <<< @/snippets/branches.ts
 
@@ -71,15 +83,15 @@ cloud workflow still requires qualification.
 
 This fixture exercises project-scoped backup policy and confirmation routes,
 which are not in the pinned public contract yet. It is intentionally skipped
-in both modes. Database-scoped backup listing and restoration are published;
-the connected recovery workflow still requires qualification.
+in both modes. The legacy contract describes database-scoped backup listing
+and restoration; the connected recovery workflow still requires qualification.
 
 <<< @/snippets/backups.ts
 
 ## Logical export
 
-The database-scoped typed export operation is available, but its real-service
-qualification remains pending. This fixture remains in the source tree and is
+The retained database-scoped typed export operation is source-only; its
+real-service qualification remains pending. This fixture remains in the source tree and is
 intentionally skipped by both runner modes. The intended API returns plaintext
 artifact bytes plus declared length and BLAKE3 checksum metadata from response
 headers.

@@ -1,24 +1,29 @@
 # TerraScale docs — llms.txt (P-8)
 
-> TerraScale is a multi-region document database-as-a-service: leaderless
-> causal replication across selected Regions, CDN-backed reactive
-> live queries, SQL over documents (SQLite dialect), per-document history
-> with deterministic conflict explanations, PITR/branching, and a database
-> per tenant. Usage is metered in operation units (each started 4 KiB read
+> TerraScale is a multi-region document database-as-a-service. The current
+> C# TerraBase candidate exposes project-scoped JSON Documents APIs, typed
+> filter queries and transactions. Retained SQL, reactive, branching and
+> tenant guides describe separate legacy contracts and product targets;
+> they are not evidence of candidate runtime or launch qualification.
+> Usage is metered in operation units (each started 4 KiB read
 > or written; writes count once per selected region, reads only in the
 > serving region) and storage across regions. Plans use hard allowances with
 > no paid overages during Public Alpha.
-> SQL is the only query language (D-78). A write counts once per selected
-> region regardless of views/subscribers (D-22).
+> SQL-only querying (D-78) belongs to the retained legacy design, not candidate
+> Documents query-v1. A write counts once per selected region regardless of
+> views/subscribers (D-22).
 
 Base URL: https://docs.terrascale.tech
 
 ## Docs map
 
 - TerraScale docs home: what TerraScale is, quickstart with an unqualified five-minute target.: https://docs.terrascale.tech/
-- Quickstart: create-terrascale-app to development write and live query; sign-in journey unqualified.: https://docs.terrascale.tech/getting-started
-- Quickstart: cloud dev branch, document write, and live query; real browser journey unqualified.: https://docs.terrascale.tech/getting-started/
-- Core concepts: documents, SQL-only queries (D-78), live queries vs collection sync (D-38), branches, tenants, placement.: https://docs.terrascale.tech/concepts
+- Legacy Next.js starter: unpublished SDK pin; sign-in and live-update journey unqualified.: https://docs.terrascale.tech/getting-started
+- Legacy Next.js live-query guide: @terrascale/sdk 0.3.0 is not published; stub success does not qualify the browser journey.: https://docs.terrascale.tech/getting-started/
+- C# candidate quickstart: project-scoped TerraBase Documents CRUD through an exact SDK package; isolated real-binary qualification is separate from production JWTs.: https://docs.terrascale.tech/getting-started/csharp
+- Atlas candidate: /v1/discovery, project/database /v1/resolve, JWKS and 600-second ES256 routing pins; automatic SDK integration deferred.: https://docs.terrascale.tech/guides/atlas
+- SDK compatibility: project-scoped C#, JavaScript and Go candidates; public release, real-runtime and customer-journey gates are distinct.: https://docs.terrascale.tech/guides/sdks
+- Product concepts and legacy SQL/live-query design; candidate Documents query-v1 is a separate contract.: https://docs.terrascale.tech/concepts
 - Replication guarantees: causal sessions, conflict limits, RegionalDurable/GlobalDurable.: https://docs.terrascale.tech/concepts/replication
 - Sync model: shared views, immutable delta log, CDN delivery.: https://docs.terrascale.tech/concepts/sync
 - SQL: live subset, allow-list, typed builder, auto-indexing.: https://docs.terrascale.tech/concepts/sql
@@ -27,7 +32,7 @@ Base URL: https://docs.terrascale.tech
 - Pricing (generated from the canonical https://terrascale.tech/pricing.json): plans, operation units, storage across regions.: https://docs.terrascale.tech/pricing
 - Pricing & limits: plans, quotas, guards, shared organization allowances.: https://docs.terrascale.tech/pricing/
 - Limits and unbilled abuse guards, generated from the same source as pricing.: https://docs.terrascale.tech/limits
-- Runnable snippets: CRUD, SQL, and live subscriptions run against a real sandbox branch pre-filled with the reader's key; database-scoped branch, backup, and export routes are published, while tenant and project-scoped branch/backup fixtures await contracts and the export fixture awaits qualification.: https://docs.terrascale.tech/snippets
+- Legacy CRUD, SQL and live-subscription fixtures use an unpublished 0.3.0 pin; database-scoped branch, backup, and export routes are published in the retained legacy contract only, not qualified by these fixtures. Candidate APIs require separate evidence.: https://docs.terrascale.tech/snippets
 - Superseded launch post draft: Reads are free — how.: https://docs.terrascale.tech/blog/reads-are-free
 - Benchmark publication policy: no measured results published.: https://docs.terrascale.tech/blog/benchmarks
 - Draft: choosing durability across Regions.: https://docs.terrascale.tech/blog/replication
@@ -41,8 +46,10 @@ Base URL: https://docs.terrascale.tech
 - Storage across regions: Stored bytes count once in every selected region.
 - Plans use hard allowances during Public Alpha. New billable work stops at the allowance. Reads, exports, deletion, and usage reduction remain available.
 
-## Snippet harness
+## Legacy snippet harness
 
+- Fixtures retain @terrascale/sdk 0.3.0, which is not published on npm.
+  Stub success does not establish candidate producer compatibility.
 - Snippet sources: docs/snippets/*.ts. Runnable snippets export `run(sandbox)`.
 - Local mode (the default): `npm test` runs the deterministic stub harness.
 - Remote qualification (explicit, fail-closed): set TERRASCALE_SANDBOX_URL,
@@ -54,22 +61,41 @@ Base URL: https://docs.terrascale.tech
 
 Base domain terrascale.tech. Regions at launch: GRU (São Paulo), SFO (San Jose), FRA (Frankfurt).
 
-- Discovery: GET https://atlas.terrascale.tech/api/v1/discovery?database=…
-  (optional branch, rev, stale) — served by ts-atlas, a metadata-only Worker:
-  credential-free KV-backed metadata that returns ranked regional endpoints
-  with capabilities, residency, a routing revision, and a refresh policy. The
-  TS SDK calls it once per database/branch/scope, then connects directly
-  (HTTPS + WebSocket).
-- Region catalog: GET https://atlas.terrascale.tech/api/v1/regions — also
-  ts-atlas; the catalog-selection fallback when discovery fails and the
-  selector for database-less member routes.
-- Nearest-region API router: https://api.terrascale.tech — forwards requests
-  to the nearest configured regional TerraBase HTTPS API. SDKs use discovery
-  to select direct regional origins.
-- Direct regional REST + WebSocket: https://gru.api.terrascale.tech,
+- Atlas candidate discovery: GET https://atlas.terrascale.tech/v1/discovery
+  returns ranked regions, closest and the public service catalog.
+- Atlas candidate resolve: GET https://atlas.terrascale.tech/v1/resolve?project=…&database=…
+  (database optional; fresh=1 requests refreshed resolution) returns project/database
+  placement, api/auth origins and a 600-second ES256 session pin.
+- Atlas candidate keys: GET https://atlas.terrascale.tech/v1/keys returns JWKS.
+  Verify pin signature, issuer, scope, api and expiry before routing; send
+  X-TerraScale-Region-Pin: <region>, not the signed JWS. A routing pin grants
+  no database permissions. Re-resolution on expiry, 421 or redirect requires
+  caller integration; do not forward credentials through automatic redirects
+  or replay uncertain mutations. Deployment and integrated SDK qualification
+  remain pending.
+- Current SDK candidates require an explicit HTTPS endpoint or caller-supplied
+  resolver. Automatic Atlas integration is deferred; no catalog or proxy
+  fallback is promised. A configured endpoint proves only its own lane.
+- Deprecated compatibility catalogs: /api/v1/regions and /api/v1/auth/discovery;
+  new clients use /v1/discovery and regions[].auth.
+- API router: https://api.terrascale.tech. Configure the service endpoint explicitly;
+  the SDK candidates do not select it implicitly.
+- Regional API origins: https://gru.api.terrascale.tech,
   https://sfo.api.terrascale.tech,
-  https://fra.api.terrascale.tech — direct
-  routing with catalog fallback; SDK data requests go straight to the region.
+  https://fra.api.terrascale.tech.
+  Use configured or verified resolved endpoints, not a hardcoded region default.
+- Candidate documents: GET/PUT/PATCH/DELETE
+  /v1/projects/{project}/databases/{database}/collections/{collection}/documents/{id};
+  POST to the collection's /documents route creates a document.
+- Candidate queries: POST
+  /v1/projects/{project}/databases/{database}/collections/{collection}/query
+  uses filter, sort, project, limit, cursor and count; cursors are opaque.
+- Candidate transactions: POST /v1/projects/{project}/databases/{database}/transactions.
+  Versions are opaque ETags. C# requests go once; mutation deduplication is not
+  promised and Idempotency-Key is rejected.
+
+## Retained legacy API references (not candidate qualification)
+
 - Reactive HTTP (live queries; CDN-backed long-polling, capability header):
   https://sync.api.terrascale.tech
 - SQL (read-only; JSON or MessagePack):
@@ -85,8 +111,27 @@ Base domain terrascale.tech. Regions at launch: GRU (São Paulo), SFO (San Jose)
 
 ## SDKs
 
-TypeScript (@terrascale/sdk), C#, Go, and Rust are supported SDK projects.
-Use each published package's pinned public contract for its available methods;
-cross-SDK parity and connected customer journeys still require qualification.
-Tenant provisioning is awaiting its producer contract. Framework adapters
-(React, TanStack, Better Auth) are TypeScript-only launch scope.
+C# candidate: TerraScale.DotNet.TerraBase.TerraBaseDocumentsClient with
+Database(projectId, databaseName), document CRUD, QueryAsync and TransactAsync.
+JavaScript candidate: @terrascale/sdk createTerraBaseV1Client with explicit
+baseUrl or endpointResolver. Go candidate: terrascale.tech/sdk/v1 with an
+explicit Config.BaseURL or Config.Resolver. Retired NativeClient and UUID/shard
+admission are legacy and do not describe this project-scoped contract.
+
+Current NuGet/npm candidates are not publicly released. As checked October 7,
+2026, the latest public @terrascale/sdk version on npm is 0.0.2; it does not qualify the
+candidate or the legacy 0.3.0 pin. An exact locally packaged C# candidate passed
+real C# binary CRUD/query, stale-version, credential-denial and cleanup checks
+through the SDK Testing helper. Its source-bound receipt is checked in at
+examples/terrabase-dotnet/qualification.json.
+Compilation, isolated compatibility, public package availability and deployed
+customer qualification are separate gates. Follow /getting-started/csharp for
+the current qualification evidence; cross-SDK parity is not established.
+
+The candidate C# Documents client accepts historical tb_ keys in isolated
+compatibility tests. The product design accepts ts-auth JWTs; production JWT
+validation, deployed sign-in and authorization remain unqualified. A historical
+key receipt does not pass that gate. Auth owns users, organizations and projects;
+all application data belongs in TerraBase. Do not duplicate identity/management
+models. Dashboard sign-in stays on native pages. Other SDK/runtime, Atlas and
+connected customer journeys need independent qualification.

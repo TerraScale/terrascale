@@ -2,6 +2,7 @@
 // --sandbox=remote is reserved for explicit cloud qualification and fails
 // closed when its sandbox credentials are absent.
 import { strict as assert } from "node:assert";
+import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -10,6 +11,13 @@ import { canonicalEnvelope, runAll } from "./run-snippets.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const read = (path) => readFileSync(join(root, path), "utf8");
+// A changed C# example or qualification consumer requires fresh real-process evidence.
+const csharpReceipt = JSON.parse(read("examples/terrabase-dotnet/qualification.json"));
+assert.equal(csharpReceipt.status, "PASS_REAL_TERRABASE_STARTER");
+for (const [source, expected] of Object.entries(csharpReceipt.source_sha256)) {
+  assert.equal(createHash("sha256").update(readFileSync(join(root, source))).digest("hex"), expected,
+    `${source} changed; rerun qualify:dotnet with exact artifacts`);
+}
 const stub = process.argv.includes("--sandbox=stub");
 if (stub && process.argv.includes("--sandbox=remote")) throw new Error("choose one sandbox mode");
 // Canonical parity: the vendored data/canonical/*.json must equal what
@@ -112,7 +120,8 @@ assert.ok(!llms.includes("live subscriptions, and tenants run"), "llms does not 
 for (const route of [
   "/", "/getting-started", "/getting-started/", "/concepts",
   "/concepts/replication", "/concepts/sync", "/concepts/sql", "/concepts/pricing-philosophy",
-  "/guides/", "/pricing", "/pricing/", "/limits", "/snippets",
+  "/guides/", "/getting-started/csharp", "/guides/atlas", "/guides/sdks",
+  "/pricing", "/pricing/", "/limits", "/snippets",
   "/blog/reads-are-free", "/blog/benchmarks", "/blog/replication", "/blog/database-per-customer",
   "/changelog", "sync.api.terrascale.tech",
 ]) assert.ok(llms.includes(route), `llms.txt lists ${route}`);

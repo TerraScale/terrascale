@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <StartupObject>Qualification</StartupObject>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../examples/terrabase-dotnet/Program.cs" Link="Starter.cs" />
+    <PackageReference Include="TerraScale.DotNet" Version="$(TerraBaseSdkPackageVersion)" />
+    <PackageReference Include="TerraScale.DotNet.Testing" Version="$(TerraBaseSdkPackageVersion)" />
+  </ItemGroup>
+</Project>

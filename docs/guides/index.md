@@ -32,6 +32,13 @@ published are retained as non-runnable references.
 
 ## Tooling
 
+- [C# TerraBase quickstart](/getting-started/csharp) — CRUD, query, version
+  preconditions and a package-only real-binary qualification lane.
+- [Atlas discovery](/guides/atlas) — project-scoped discovery and resolution,
+  signed regional pins and the SDK integration boundary.
+- [SDK compatibility and qualification](/guides/sdks) — artifact availability,
+  API families, capabilities and real-binary qualification gates.
+
 - **`terrascale dev`** — a personal cloud dev branch. The CLI supports data-file
   seeds, bounded branch diagnostic polling, and local schema codegen watch.
   TypeScript seed functions are not executed. See the installed CLI’s help

@@ -15,7 +15,8 @@
     "test:stub": "npm run test:local && node scripts/check-build.mjs --sandbox=stub",
     "i18n:sync": "node scripts/i18n-sync.mjs",
     "i18n:status": "node scripts/i18n-status.mjs",
-    "test:local": "node --test scripts/wire-decoder.test.mjs && npm ci --prefix create-terrascale-app --ignore-scripts && npm test --prefix create-terrascale-app",
+    "test:local": "node --test scripts/wire-decoder.test.mjs scripts/qualify-dotnet.test.mjs && npm ci --prefix create-terrascale-app --ignore-scripts && npm test --prefix create-terrascale-app",
+    "qualify:dotnet": "python3 scripts/qualify-dotnet.py",
     "deploy": "npm run build && wrangler deploy"
   },
   "dependencies": {

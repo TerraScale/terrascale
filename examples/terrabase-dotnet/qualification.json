@@ -1,0 +1,16 @@
+{
+  "sdk_sha256": "c945ed1a0c5f775a7a2fe38eba9c911eb6a97f7bcec00fffb8f147d7a6858203",
+  "testing_sha256": "8078fe3705a111b864b7330e099cacce91c03cfb5c427352f555b9d463c2eddf",
+  "sdk_version": "0.1.0-ts508.g13f795b",
+  "producer_sha256": "e07d173fc2bbab19dcb1fde8b121b0207b07d55452a5b19a406871d220e05e13",
+  "sdk_source_revision": "13f795b661654b0d50453acf71b70a681d0458c0",
+  "source_sha256": {
+    "examples/terrabase-dotnet/Program.cs": "a1d5006314d17f981790b7b2795fa31d000c699f7ef33163db8d9d76585cc466",
+    "examples/terrabase-dotnet/TerraBaseStarter.csproj": "09e020dd57b04c02fe98546b91c3ce0f6996bf94e1e723cd3547f0ec34732105",
+    "scripts/qualification-dotnet/Qualification.cs": "c7adbe64f636ac3b652290ab16c576dc717e4ecae2ebce7cbc73e4b11e08830d",
+    "scripts/qualification-dotnet/Qualification.csproj": "c0661cbefeb721aad1689cfd0929747f6002f178cc3cf7b3b97a89c8c5bc294a",
+    "scripts/qualify-dotnet.py": "cb306b5d8fe1d7887fb46cef15777ce7ca4d01e547d966241507ed69991b59ec"
+  },
+  "status": "PASS_REAL_TERRABASE_STARTER",
+  "phase": "real_binary"
+}

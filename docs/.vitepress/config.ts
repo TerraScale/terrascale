@@ -39,7 +39,7 @@ function titleOf(localePrefix: string, link: string): string {
 // drafts (noindex, Draft banner) and stay out of the nav and sidebar until
 // the legal entity details exist.
 const TREES: Record<string, { groups: { header: string; items: string[] }[] }> = {
-  '/getting-started/': { groups: [{ header: 'quickstart', items: ['/getting-started/'] }] },
+  '/getting-started/': { groups: [{ header: 'quickstart', items: ['/getting-started/', '/getting-started/csharp'] }] },
   '/concepts/': {
     groups: [
       {
@@ -53,7 +53,7 @@ const TREES: Record<string, { groups: { header: string; items: string[] }[] }> =
       },
     ],
   },
-  '/guides/': { groups: [{ header: 'guides', items: ['/guides/'] }] },
+  '/guides/': { groups: [{ header: 'guides', items: ['/guides/', '/guides/atlas', '/guides/sdks'] }] },
   '/blog/': {
     groups: [
       {
