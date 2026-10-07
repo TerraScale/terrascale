@@ -964,20 +964,27 @@ async function runDocumentSampleChecks(checks, sampleSource) {
     ${checks}
   `
   return spawnSync(process.execPath, ['--input-type=module', '-e', script], {
-    encoding: 'utf8', timeout: 2000, env: { TERRASCALE_SAMPLE_PROCESS: 'child' },
+    encoding: 'utf8', timeout: 2000, killSignal: 'SIGKILL',
+    env: { TERRASCALE_SAMPLE_PROCESS: 'child' },
   })
 }
 
-test('document sample rejects unsafe discovered and overridden origins before sending a key', async () => {
+test('document sample rejects unsafe discovered and overridden origins before reading a key', async () => {
   const result = await runDocumentSampleChecks(`
+    Object.defineProperty(inputs.process.env, 'TERRABASE_API_KEY', {
+      get() { throw new Error('Credentials read before trust validation'); },
+    });
     const trusted = ['https://region.example.test'];
     for (const origin of [
       'http://region.example.test', '/relative', 'https://untrusted.example.test',
       'https://user:password@region.example.test', 'https://region.example.test/path',
       'https://region.example.test/?query=1', 'https://region.example.test/#fragment',
+      'https://region.example.test:8443', 'https://region.example.test.evil.example',
     ]) {
-      await assert.rejects(sample(async () => origin, trusted, 'project', 'database', 'collection'));
-      await assert.rejects(sample(async () => trusted[0], trusted, 'project', 'database', 'collection', origin));
+      await assert.rejects(sample(async () => origin, trusted, 'project', 'database', 'collection'),
+        /trusted HTTPS origin|Invalid URL/);
+      await assert.rejects(sample(async () => trusted[0], trusted, 'project', 'database', 'collection', origin),
+        /trusted HTTPS origin|Invalid URL/);
     }
     assert.equal(requests, 0);
   `)
@@ -1008,7 +1015,23 @@ test('sample invocation deadline terminates synchronous loops and pending async 
     const result = await runDocumentSampleChecks(checks,
       `async function createAndQueryCustomers() { ${body} }`)
     assert.equal(result.error?.code, 'ETIMEDOUT')
+    assert.equal(result.signal, 'SIGKILL')
   }
+})
+
+test('pre-cancelled sample callers never start discovery or read credentials', async () => {
+  const result = await runDocumentSampleChecks(`
+    Object.defineProperty(inputs.process.env, 'TERRABASE_API_KEY', {
+      get() { throw new Error('Credentials read after cancellation'); },
+    });
+    const controller = new AbortController();
+    const reason = new Error('caller cancelled');
+    controller.abort(reason);
+    await assert.rejects(sample(() => { throw new Error('Discovery must not start'); },
+      [], 'project', 'database', 'collection', undefined, controller.signal), error => error === reason);
+    assert.equal(requests, 0);
+  `)
+  assert.equal(result.status, 0, result.stderr || result.error?.message)
 })
 
 test('sample harness treats the disposable subprocess as the execution boundary', async () => {
