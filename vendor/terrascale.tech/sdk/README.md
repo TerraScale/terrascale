@@ -122,7 +122,11 @@ and database reads, renames and deletes, `BranchDatabase`, `SetMemberRole`,
 `OwnershipTransfer` and its start, cancel and confirm,
 `AuditRetention`/`SetAuditRetention`, `AuditEvents`, and the read-only
 database tooling: `Collections` (document counts and bytes), `DatabaseUsage`
-and `SQL` (rows of the dashboard SQL subset). A 404 (`ErrUnknownRoute`)
+and `SQL` (rows of the dashboard SQL subset), secondary indexes
+(`CreateIndex`, `Indexes`, `DropIndex`; a duplicate is `ErrIndexExists`), and
+project data API keys:
+`CreateProjectAPIKey` (the `tb_…` secret is returned only once),
+`ProjectAPIKeys` and `RevokeProjectAPIKey`. A 404 (`ErrUnknownRoute`)
 means an unknown id or an organization the user is not a member of; bare
 message errors map to `ErrInvalidRequest` (400), `ErrForbidden` (403, role too
 low) and `ErrConflict` (409). A rejected token or credential is `ErrInvalidKey`.
@@ -142,8 +146,8 @@ registers the organization and project there under the ids they have in the
 home region (one Management commit; what exists is left as it is).
 
 Served by TerraBase but not in the client yet (TS-590 adds them): shapes,
-database tooling (backups, indexes, schema, project usage, SQL check) and saved queries,
-project API keys, invitation lookup and general Management commits. Not served:
+database tooling (backups, index recommendations, schema, project usage, SQL check) and saved queries,
+invitation lookup and general Management commits. Not served:
 query `explain`, `Idempotency-Key` and the `/v1/dashboard` control plane.
 
 ### Tests

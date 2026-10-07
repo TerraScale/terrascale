@@ -96,7 +96,6 @@ func New(cfg config.Config) (*Application, error) {
 			return err
 		}}
 	}
-	sdkFactory := tsgo.Factory{APIBaseURL: cfg.SDKBaseURL, AccessToken: cfg.SDKAccessToken}
 	billingLookup := func(name string) string {
 		switch name {
 		case "TS_BILLING_TENANT_ID":
@@ -113,19 +112,26 @@ func New(cfg config.Config) (*Application, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Platform admins see every service's TerraBase database: each sign-in
-	// mirrors the TerraBase organizations they belong to, and pages read
-	// the databases through Management with their ts-auth access token.
+	// Every database outside the demo lives in TerraBase: its documents
+	// through each project's data key (sdkFactory), and its organization,
+	// project and key through Management as the signed-in user with their
+	// ts-auth access token. Platform admins also see every service's
+	// TerraBase database: each sign-in mirrors the TerraBase organizations
+	// they belong to.
+	var sdkFactory core.SDKFactory
 	var management *v1.Management
-	if cfg.TSAuth.Issuer != "" && db != nil {
-		// A stalled TerraBase must not hold a page: every Management call
-		// gets a deadline.
+	if db != nil {
+		// A stalled TerraBase must not hold a page: every call gets a
+		// deadline.
 		client := cfg.TerraBaseHTTPClient
 		if client == nil {
 			client = &http.Client{Timeout: 15 * time.Second}
 		}
-		if management, err = v1.NewManagement(v1.Config{BaseURL: cfg.TerraBaseURL, HTTPClient: client}); err != nil {
-			return nil, err
+		sdkFactory = tsgo.Factory{HTTPClient: client}
+		if cfg.TSAuth.Issuer != "" {
+			if management, err = v1.NewManagement(v1.Config{BaseURL: cfg.TerraBaseURL, HTTPClient: client}); err != nil {
+				return nil, err
+			}
 		}
 	}
 	// With TS_AUTH_ISSUER set, ts-auth holds every credential.
@@ -161,7 +167,7 @@ func New(cfg config.Config) (*Application, error) {
 	deps := core.Deps{
 		Store: store, Sessions: sessions, CSRF: guard, Render: renderer,
 		Events: datastar.Events{}, Demo: cfg.Demo, Tools: core.NewTools(store),
-		SDK: sdkFactory, Management: management, Usage: meter, DocumentsOnly: db != nil,
+		SDK: sdkFactory, Management: management, Usage: meter, DocumentsOnly: db != nil && management == nil,
 		Throttle: throttle.New(throttle.Options{ClientHeader: cfg.ClientIPHeader, Store: throttleStore}),
 	}
 	if cfg.AtlasURL != "" {

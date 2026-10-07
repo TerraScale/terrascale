@@ -17,6 +17,7 @@ type databaseChoice struct{ ID, Name string }
 type pageData struct {
 	ProjectID string
 	CanWrite  bool
+	Demo      bool
 	Databases []databaseChoice
 	Configs   []core.SharedResultConfig
 	// Error explains why a pause, resume, or detach was refused; FormError
@@ -93,7 +94,7 @@ func render(w http.ResponseWriter, r *http.Request, deps core.Deps, status int, 
 		writeError(w, err)
 		return
 	}
-	data := pageData{ProjectID: project.ID, CanWrite: core.Can(r.Context(), deps.Store, p, core.Organization.CanWrite) == nil, Form: configForm{Query: "SELECT * FROM documents LIMIT 100", Transport: "http"}}
+	data := pageData{ProjectID: project.ID, Demo: deps.Demo, CanWrite: core.Can(r.Context(), deps.Store, p, core.Organization.CanWrite) == nil, Form: configForm{Query: "SELECT * FROM documents LIMIT 100", Transport: "http"}}
 	for _, db := range project.Databases {
 		data.Databases = append(data.Databases, databaseChoice{ID: db.ID, Name: db.Name})
 	}

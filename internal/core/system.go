@@ -18,9 +18,9 @@ var terraBaseID = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a
 // SystemDatabase reports whether a database record mirrors a TerraBase
 // database by its TerraBase ID: a database of a TerraScale service, which a
 // platform admin's sign-in (or import-org) mirrored. Its contents live in
-// TerraBase, never in the record. A database the dashboard provisioned in
-// TerraBase also has a TerraBase ID but is the user's own.
-func SystemDatabase(db Database) bool { return terraBaseID.MatchString(db.ID) && !db.Provisioned }
+// TerraBase, never in the record. A database a user created keeps its
+// dashboard ID and records TerraBase's in TerraBaseID.
+func SystemDatabase(db Database) bool { return terraBaseID.MatchString(db.ID) }
 
 // ErrSystemReadOnly refuses changes to a system database: TerraBase lets the
 // dashboard read them with a ts-auth token, and their services own them.
@@ -42,6 +42,12 @@ func (d Deps) System(ctx context.Context, p Principal) (*v1.ManagementUser, erro
 	if !p.PlatformAdmin {
 		return nil, ErrForbidden
 	}
+	return d.user(ctx)
+}
+
+// user returns the TerraBase Management API acting as the signed-in user,
+// with the request's ts-auth access token.
+func (d Deps) user(ctx context.Context) (*v1.ManagementUser, error) {
 	if d.Management == nil {
 		return nil, fmt.Errorf("%w: TerraBase Management is not configured", ErrDataPlane)
 	}
@@ -49,11 +55,11 @@ func (d Deps) System(ctx context.Context, p Principal) (*v1.ManagementUser, erro
 	if token == nil {
 		// MCP and API callers present a dashboard access token, which
 		// TerraBase does not accept.
-		return nil, fmt.Errorf("%w: system data is shown on the dashboard's pages only", ErrDataPlane)
+		return nil, fmt.Errorf("%w: this TerraBase request is made from the dashboard's pages only", ErrDataPlane)
 	}
 	access, ok := token()
 	if !ok {
-		return nil, fmt.Errorf("%w: sign in again to read system data", ErrDataPlane)
+		return nil, fmt.Errorf("%w: sign in again to reach TerraBase", ErrDataPlane)
 	}
 	return d.Management.WithToken(access), nil
 }

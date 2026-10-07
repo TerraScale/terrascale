@@ -30,12 +30,12 @@ func TestSystemDatabaseCountsComeFromTerraBase(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	deps := core.Deps{Store: store, Management: system.Management, DocumentsOnly: true}
+	deps := core.Deps{Store: store, Management: system.Management}
 	p, db := system.Principal, system.Database
 	// A stale local collection in the record never counts.
 	db.Documents = map[string]map[string][]byte{"test": {"doc": []byte(`{}`)}}
 
-	summary := summarize(system.WithToken(ctx), deps, p, map[string]core.Database{db.ID: db})
+	summary := summarize(system.WithToken(ctx), deps, p, core.Project{Databases: map[string]core.Database{db.ID: db}})
 	if summary.Collections != 3 || summary.Documents != 2 || summary.Bytes <= 0 || summary.Unavailable != "" {
 		t.Fatalf("summary = %+v; want 3 collections, 2 documents and their bytes", summary)
 	}
@@ -51,7 +51,7 @@ func TestSystemDatabaseCountsComeFromTerraBase(t *testing.T) {
 	if _, err := (Service{deps: deps}).Branch(system.WithToken(ctx), p, db.ID, ""); err != core.ErrSystemReadOnly {
 		t.Fatalf("branch = %v, want read-only", err)
 	}
-	if summary := summarize(ctx, deps, p, map[string]core.Database{db.ID: db}); summary.Documents != 0 || summary.Unavailable == "" {
+	if summary := summarize(ctx, deps, p, core.Project{Databases: map[string]core.Database{db.ID: db}}); summary.Documents != 0 || summary.Unavailable == "" {
 		t.Fatalf("summary without a ts-auth token = %+v; want it unavailable", summary)
 	}
 }
@@ -73,7 +73,7 @@ func TestStalledTerraBaseLeavesCountsUnavailable(t *testing.T) {
 	p := core.Principal{UserID: "usr_admin", OrganizationID: "01a11059-a8df-7b4d-b9b9-ac5ba2d25c35", PlatformAdmin: true}
 	ctx := core.WithUserToken(t.Context(), func() (string, bool) { return "access-token", true })
 	start := time.Now()
-	summary := summarize(ctx, core.Deps{Management: management}, p, map[string]core.Database{db.ID: db})
+	summary := summarize(ctx, core.Deps{Management: management}, p, core.Project{Databases: map[string]core.Database{db.ID: db}})
 	if elapsed := time.Since(start); elapsed > 5*time.Second || summary.Unavailable == "" {
 		t.Fatalf("summary = %+v after %v; want it unavailable within the budget", summary, elapsed)
 	}

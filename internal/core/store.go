@@ -325,6 +325,7 @@ func CloneOrganization(org Organization) Organization {
 		p.SavedQueries = cloneMap(project.SavedQueries)
 		p.SharedResultConfigs = maps.Clone(project.SharedResultConfigs)
 		p.BackupPolicies = cloneMap(project.BackupPolicies)
+		p.DataKeys = maps.Clone(project.DataKeys)
 		p.APIKeys = make(map[string]APIKey, len(project.APIKeys))
 		for keyID, key := range project.APIKeys {
 			key.Scopes = slices.Clone(key.Scopes)

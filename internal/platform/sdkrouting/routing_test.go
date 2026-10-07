@@ -14,8 +14,8 @@ func TestDocumentsSDKUsesConfiguredRegionalOrigin(t *testing.T) {
 	}
 	server := terrabasetest.Start(t)
 	provisioned, key := terrabasetest.Database(t, server, "dashboard")
-	factory := tsgo.Factory{APIBaseURL: server.URL, AccessToken: key, HTTPClient: server.Client}
-	client, err := factory.ForDocuments("terrascale-internal", provisioned.Project())
+	factory := tsgo.Factory{HTTPClient: server.Client}
+	client, err := factory.Documents(server.URL, key)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -30,7 +30,7 @@ func TestDocumentsSDKUsesConfiguredRegionalOrigin(t *testing.T) {
 	if _, err := db.Collection("records").Get(t.Context(), id); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := (tsgo.Factory{AccessToken: key}).ForDocuments("terrascale-internal", provisioned.Project()); err == nil {
+	if _, err := (tsgo.Factory{}).Documents("", key); err == nil {
 		t.Fatal("missing resolver override accepted")
 	}
 }

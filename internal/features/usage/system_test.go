@@ -26,7 +26,7 @@ func TestSystemDatabaseUsageComesFromTerraBase(t *testing.T) {
 	if _, err := system.Documents.Collection("users").Create(ctx, map[string]any{"email": "ana@example.com"}); err != nil {
 		t.Fatal(err)
 	}
-	service := Service{deps: core.Deps{Store: store, Management: system.Management, DocumentsOnly: true}}
+	service := Service{deps: core.Deps{Store: store, Management: system.Management}}
 	report, err := service.Usage(system.WithToken(ctx), system.Principal, core.UserToken(system.WithToken(ctx)), "", "")
 	if err != nil {
 		t.Fatal(err)
@@ -83,7 +83,7 @@ func TestSystemDatabaseOfAnotherMember(t *testing.T) {
 	system := terrabasetest.SystemDatabase(t, tb, store)
 	outsider := tb.Token(t, "user-"+rand.Text(), "outsider@example.test")
 	ctx := core.WithUserToken(t.Context(), func() (string, bool) { return outsider, true })
-	deps := core.Deps{Store: store, Management: system.Management, DocumentsOnly: true}
+	deps := core.Deps{Store: store, Management: system.Management}
 
 	_, err := deps.SystemCollections(ctx, system.Principal, system.Database)
 	if !errors.Is(err, v1.ErrNotFound) && !errors.Is(err, v1.ErrUnknownRoute) {

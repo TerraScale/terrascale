@@ -12,9 +12,9 @@ require (
 	github.com/mxschmitt/playwright-go v0.6201.1
 	github.com/starfederation/datastar-go v1.2.2
 	github.com/stripe/stripe-go/v86 v86.4.2
-	golang.org/x/net v0.56.0
+	golang.org/x/net v0.57.0
 	golang.org/x/oauth2 v0.36.0
-	golang.org/x/sync v0.21.0
+	golang.org/x/sync v0.22.0
 	terrascale.tech/sdk v0.0.0-20261005130518-b911817c6e63
 )
 
@@ -39,15 +39,15 @@ require (
 	github.com/segmentio/encoding v0.5.4 // indirect
 	github.com/valyala/bytebufferpool v1.0.0 // indirect
 	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
-	golang.org/x/mod v0.37.0 // indirect
-	golang.org/x/sys v0.46.0 // indirect
-	golang.org/x/text v0.39.0 // indirect
+	golang.org/x/mod v0.38.0 // indirect
+	golang.org/x/sys v0.47.0 // indirect
+	golang.org/x/text v0.41.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
-	golang.org/x/tools v0.47.0 // indirect
+	golang.org/x/tools v0.48.0 // indirect
 )
 
 tool github.com/a-h/templ/cmd/templ
 
 // The SDK declares this vanity module path, which does not yet serve go-import
 // metadata. Resolve the pinned source through its public Forgejo repository.
-replace terrascale.tech/sdk => git.terrascale.tech/TerraScale/ts-go v0.0.0-20261007183620-f070c91a4513
+replace terrascale.tech/sdk => git.terrascale.tech/TerraScale/ts-go v0.0.0-20261007193824-3dfbe22c80df

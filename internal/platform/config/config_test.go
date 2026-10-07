@@ -210,3 +210,26 @@ func TestTSAuthConfiguration(t *testing.T) {
 		})
 	}
 }
+
+// TestFlyTerraBaseNeedsTSAuth covers production: on Fly.io with TerraBase,
+// users' databases must live in TerraBase, which needs the user's ts-auth
+// token, so the dashboard refuses to start without ts-auth.
+func TestFlyTerraBaseNeedsTSAuth(t *testing.T) {
+	for key, value := range map[string]string{
+		"TERRABASE_URL": "https://gru.api.example", "TERRABASE_API_KEY": "tb_key", "TERRABASE_PROJECT_ID": "project",
+		"TERRABASE_DATABASE": "dashboard", "TS_DASHBOARD_CSRF_SECRET": strings.Repeat("s", 32), "FLY_APP_NAME": "ts-dashboard",
+		"DASHBOARD_PUBLIC_URL": "https://dash.example", "DASHBOARD_DEMO_ADMIN_EMAIL": "", "DASHBOARD_DEMO_ADMIN_PASSWORD": "",
+		"TS_AUTH_ISSUER": "", "TS_AUTH_CLIENT_ID": "", "TS_AUTH_CLIENT_SECRET": "", "TS_AUTH_REDIRECT_URL": "",
+	} {
+		t.Setenv(key, value)
+	}
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "TS_AUTH_ISSUER") {
+		t.Fatalf("Fly with TerraBase and no ts-auth = %v, want refused", err)
+	}
+	t.Setenv("TS_AUTH_ISSUER", "https://gru.auth.example/terrascale")
+	t.Setenv("TS_AUTH_CLIENT_ID", "ts-dashboard")
+	t.Setenv("TS_AUTH_CLIENT_SECRET", "secret")
+	if cfg, err := Load(); err != nil || cfg.Demo {
+		t.Fatalf("Fly with TerraBase and ts-auth = %+v, %v; want live", cfg, err)
+	}
+}

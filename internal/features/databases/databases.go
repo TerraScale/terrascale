@@ -14,6 +14,7 @@ import (
 	"github.com/a-h/templ"
 	"golang.org/x/sync/errgroup"
 	"terrascale.tech/dashboard/internal/core"
+	"terrascale.tech/sdk/v1"
 )
 
 type databaseView struct {
@@ -197,10 +198,13 @@ type databaseSummary struct {
 }
 
 // contents counts a database's collections, documents and their JSON
-// bytes: TerraBase's live counts for a system database, its record's
-// otherwise.
-func contents(ctx context.Context, deps core.Deps, p core.Principal, db core.Database) (collections, documents int, bytes int64, err error) {
-	if !core.SystemDatabase(db) {
+// bytes: TerraBase's live counts, or its record's in the demo.
+func contents(ctx context.Context, deps core.Deps, p core.Principal, project core.Project, db core.Database) (collections, documents int, bytes int64, err error) {
+	var stats []v1.CollectionStats
+	switch {
+	case core.SystemDatabase(db):
+		stats, err = deps.SystemCollections(ctx, p, db)
+	case deps.LocalResources():
 		for _, docs := range db.Documents {
 			collections++
 			documents += len(docs)
@@ -209,8 +213,16 @@ func contents(ctx context.Context, deps core.Deps, p core.Principal, db core.Dat
 			}
 		}
 		return collections, documents, bytes, nil
+	case db.TerraBaseID == "":
+		// Not used yet, so TerraBase holds nothing of it.
+		return 0, 0, 0, nil
+	default:
+		var m *v1.ManagementUser
+		var org, proj string
+		if m, org, proj, db, err = deps.ManageDatabase(ctx, p, project, db); err == nil {
+			stats, err = m.Collections(ctx, org, proj, db.TerraBaseID)
+		}
 	}
-	stats, err := deps.SystemCollections(ctx, p, db)
 	for _, collection := range stats {
 		collections++
 		documents += int(collection.Documents)
@@ -223,11 +235,11 @@ func contents(ctx context.Context, deps core.Deps, p core.Principal, db core.Dat
 // slow TerraBase shows them unavailable instead of holding the page.
 var countBudget = 5 * time.Second
 
-func summarize(ctx context.Context, deps core.Deps, p core.Principal, databases map[string]core.Database) databaseSummary {
+func summarize(ctx context.Context, deps core.Deps, p core.Principal, project core.Project) databaseSummary {
 	ctx, cancel := context.WithTimeout(ctx, countBudget)
 	defer cancel()
 	var summary databaseSummary
-	for _, db := range databases {
+	for _, db := range project.Databases {
 		summary.Total++
 		switch statusTone(db.Status) {
 		case "emerald":
@@ -243,15 +255,15 @@ func summarize(ctx context.Context, deps core.Deps, p core.Principal, databases 
 			}
 		}
 	}
-	// System databases are counted by TerraBase, a few at a time under one
+	// Databases are counted by TerraBase, a few at a time under one
 	// deadline; the failure named is the first database's by name.
 	var mu sync.Mutex
 	var group errgroup.Group
 	group.SetLimit(4)
 	failed := ""
-	for _, db := range databases {
+	for _, db := range project.Databases {
 		group.Go(func() error {
-			collections, documents, bytes, err := contents(ctx, deps, p, db)
+			collections, documents, bytes, err := contents(ctx, deps, p, project, db)
 			mu.Lock()
 			defer mu.Unlock()
 			if err != nil && (failed == "" || db.Name < failed) {
@@ -295,7 +307,7 @@ func renderList(w http.ResponseWriter, r *http.Request, deps core.Deps) {
 	query := r.URL.Query()
 	data := pageData{
 		ProjectID:  project.ID,
-		Summary:    summarize(r.Context(), deps, p, project.Databases),
+		Summary:    summarize(r.Context(), deps, p, project),
 		Regions:    []string{cmp.Or(project.Region, "GRU")},
 		Error:      formError(query.Get("error")),
 		Search:     strings.TrimSpace(query.Get("q")),

@@ -28,8 +28,6 @@ type Config struct {
 	SecureCookies      bool
 	AdminEmail         string
 	AdminPassword      string
-	SDKBaseURL         string
-	SDKAccessToken     string
 	TerraBaseURL       string
 	TerraBaseAPIKey    string
 	TerraBaseProjectID string
@@ -90,8 +88,6 @@ func Load() (Config, error) {
 		Dev:                os.Getenv("DASHBOARD_DEV") == "1",
 		AdminEmail:         strings.TrimSpace(os.Getenv("DASHBOARD_DEMO_ADMIN_EMAIL")),
 		AdminPassword:      os.Getenv("DASHBOARD_DEMO_ADMIN_PASSWORD"),
-		SDKBaseURL:         strings.TrimSpace(os.Getenv("TS_API_BASE_URL")),
-		SDKAccessToken:     os.Getenv("TS_API_ACCESS_TOKEN"),
 		TerraBaseURL:       strings.TrimSpace(os.Getenv("TERRABASE_URL")),
 		TerraBaseAPIKey:    strings.TrimSpace(os.Getenv("TERRABASE_API_KEY")),
 		TerraBaseProjectID: strings.TrimSpace(os.Getenv("TERRABASE_PROJECT_ID")),
@@ -160,6 +156,11 @@ func Load() (Config, error) {
 	}
 	if err := c.loadTSAuth(); err != nil {
 		return Config{}, err
+	}
+	// Users' databases live in TerraBase only when the dashboard can act
+	// as the user there, with their ts-auth access token.
+	if !c.Demo && c.TSAuth.Issuer == "" && os.Getenv("FLY_APP_NAME") != "" {
+		return Config{}, errors.New("TS_AUTH_ISSUER is required with TerraBase on Fly.io: without it users' databases would not live in TerraBase")
 	}
 	if (c.AdminEmail == "") != (c.AdminPassword == "") {
 		return Config{}, errors.New("demo admin email and password must both be set")

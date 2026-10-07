@@ -6,11 +6,13 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"time"
 
 	"terrascale.tech/dashboard/internal/core"
+	"terrascale.tech/sdk/v1"
 )
 
 const (
@@ -18,7 +20,15 @@ const (
 	kindM2M    = "m2m"
 )
 
-var errLiveCredentials = errors.New("live credentials are unavailable until a published producer contract exists")
+var errLiveCredentials = errors.New("TerraBase data keys cannot be rotated, and machine clients are not issued yet")
+
+// terraBaseScopes maps a key's scopes onto TerraBase's data key scopes;
+// the dashboard's database:* name the same access.
+// TODO(TS-589, TS-599): ts-auth API keys replace TerraBase data keys.
+var terraBaseScopes = map[string]string{
+	"database:read": "documents:read", "database:write": "documents:write",
+	"documents:read": "documents:read", "documents:write": "documents:write",
+}
 
 // issuerError is a live credential request the producer rejected or failed.
 type issuerError struct {
@@ -44,10 +54,11 @@ type credentialFilter struct {
 }
 
 // Service owns project credentials in a principal's selected project. HTTP
-// handlers and MCP tools both call it.
+// handlers and MCP tools both call it. Outside the demo, API keys are
+// TerraBase data keys of the project's TerraBase project, managed as the
+// signed-in user.
 type Service struct {
-	deps   core.Deps
-	issuer CredentialIssuer
+	deps core.Deps
 }
 
 func (s Service) selected(ctx context.Context, p core.Principal) (core.Account, core.Project, error) {
@@ -68,10 +79,18 @@ func (s Service) List(ctx context.Context, p core.Principal, filter credentialFi
 	if err != nil {
 		return nil, err
 	}
+	keys, createdBy := slices.Collect(maps.Values(project.APIKeys)), a.User.Email
+	if !s.deps.LocalResources() {
+		// TerraBase does not say who created a key.
+		if keys, err = s.terraBaseKeys(ctx, project); err != nil {
+			return nil, err
+		}
+		createdBy = ""
+	}
 	search := strings.ToLower(strings.TrimSpace(filter.Search))
-	list := make([]credential, 0, len(project.APIKeys))
-	for _, key := range project.APIKeys {
-		item := credential{ProjectAPIKey: publicKey(key, a.User.Email), Kind: key.Kind}
+	list := make([]credential, 0, len(keys))
+	for _, key := range keys {
+		item := credential{ProjectAPIKey: publicKey(key, createdBy), Kind: key.Kind}
 		if filter.Kind != "" && key.Kind != filter.Kind ||
 			filter.Status == "active" && !item.Active || filter.Status == "inactive" && item.Active ||
 			filter.DatabaseID != "" && key.DatabaseID != filter.DatabaseID ||
@@ -97,14 +116,10 @@ func (s Service) Create(ctx context.Context, p core.Principal, kind string, inpu
 		return ProjectAPIKeySecret{}, err
 	}
 	if !s.deps.LocalResources() {
-		if s.issuer == nil || kind == kindM2M {
+		if kind == kindM2M {
 			return ProjectAPIKeySecret{}, errLiveCredentials
 		}
-		issued, err := s.issuer.Create(ctx, p, input)
-		if err != nil {
-			return ProjectAPIKeySecret{}, issuerError{action: "credential issuance", err: err}
-		}
-		return *issued, nil
+		return s.issue(ctx, p, project, input)
 	}
 	prefix := "tsk_demo_"
 	if kind == kindM2M {
@@ -135,20 +150,12 @@ func (s Service) Create(ctx context.Context, p core.Principal, kind string, inpu
 // Rotate replaces a live credential's secret and returns the new one. A
 // non-empty kind restricts which credential kind may be rotated.
 func (s Service) Rotate(ctx context.Context, p core.Principal, keyID, kind string) (ProjectAPIKeySecret, error) {
-	a, existing, err := s.existing(ctx, p, keyID, kind)
+	if !s.deps.LocalResources() {
+		return ProjectAPIKeySecret{}, errLiveCredentials
+	}
+	a, _, err := s.existing(ctx, p, keyID, kind)
 	if err != nil {
 		return ProjectAPIKeySecret{}, err
-	}
-	if !s.deps.LocalResources() {
-		// The producer issuer only manages project API keys.
-		if s.issuer == nil || existing.Kind == kindM2M {
-			return ProjectAPIKeySecret{}, errLiveCredentials
-		}
-		issued, err := s.issuer.Rotate(ctx, p, keyID)
-		if err != nil {
-			return ProjectAPIKeySecret{}, issuerError{action: "credential rotation", err: err}
-		}
-		return *issued, nil
 	}
 	var key core.APIKey
 	var secret string
@@ -178,21 +185,13 @@ func (s Service) Rotate(ctx context.Context, p core.Principal, keyID, kind strin
 // Revoke permanently disables a credential. A non-empty kind restricts which
 // credential kind may be revoked.
 func (s Service) Revoke(ctx context.Context, p core.Principal, keyID, kind string) (ProjectAPIKeyRevocation, error) {
-	_, existing, err := s.existing(ctx, p, keyID, kind)
-	if err != nil {
+	if !s.deps.LocalResources() {
+		return s.revoke(ctx, p, keyID, kind)
+	}
+	if _, _, err := s.existing(ctx, p, keyID, kind); err != nil {
 		return ProjectAPIKeyRevocation{}, err
 	}
-	if !s.deps.LocalResources() {
-		if s.issuer == nil || existing.Kind == kindM2M {
-			return ProjectAPIKeyRevocation{}, errLiveCredentials
-		}
-		result, err := s.issuer.Revoke(ctx, p, keyID)
-		if err != nil {
-			return ProjectAPIKeyRevocation{}, issuerError{action: "credential revocation", err: err}
-		}
-		return *result, nil
-	}
-	err = s.update(ctx, p, func(project *core.Project) error {
+	err := s.update(ctx, p, func(project *core.Project) error {
 		key, ok := project.APIKeys[keyID]
 		if !ok {
 			return core.ErrNotFound
@@ -288,4 +287,120 @@ func formatTime(t time.Time) string {
 		return ""
 	}
 	return t.Format(time.RFC3339)
+}
+
+// terraBaseKeys lists the data keys of the project's TerraBase project in
+// every region it is registered in, without the dashboard's own.
+func (s Service) terraBaseKeys(ctx context.Context, project core.Project) ([]core.APIKey, error) {
+	regions, err := s.deps.DataKeyRegions(ctx, project)
+	if err != nil {
+		return nil, issuerError{action: "credential list", err: err}
+	}
+	databases := make(map[string]string, len(project.Databases))
+	for _, db := range project.Databases {
+		databases[db.TerraBaseID] = db.ID
+	}
+	org, proj := project.TerraBaseIDs(project.OrganizationID)
+	var keys []core.APIKey
+	for _, region := range regions {
+		m, err := s.deps.Manage(ctx, region)
+		if err != nil {
+			return nil, issuerError{action: "credential list", err: err}
+		}
+		for opts := (v1.PageOptions{Limit: 100}); ; {
+			page, err := m.ProjectAPIKeys(ctx, org, proj, opts)
+			if err != nil {
+				return nil, issuerError{action: "credential list", err: err}
+			}
+			for _, key := range page.Items {
+				if key.ID == project.DataKeys[region.ID].ID {
+					continue
+				}
+				keys = append(keys, core.APIKey{
+					ID: key.ID, Kind: kindAPIKey, ProjectID: project.ID, DatabaseID: databases[key.DatabaseID], Name: key.Name,
+					Prefix: "tb_", LastFour: key.LastFour, Scopes: key.Scopes, CreatedAt: key.CreatedAt,
+				})
+			}
+			if opts.After = page.Next; opts.After == "" {
+				break
+			}
+		}
+	}
+	return keys, nil
+}
+
+// issue mints a TerraBase data key for the project in its region, or for one
+// of its databases in that database's home region.
+func (s Service) issue(ctx context.Context, p core.Principal, project core.Project, input CreateProjectAPIKeyRequest) (ProjectAPIKeySecret, error) {
+	request := v1.ProjectAPIKeyRequest{Name: strings.TrimSpace(input.Name)}
+	for _, scope := range input.Scopes {
+		mapped, ok := terraBaseScopes[strings.TrimSpace(scope)]
+		if !ok {
+			return ProjectAPIKeySecret{}, core.Invalid("TerraBase keys take the scopes database:read and database:write")
+		}
+		if !slices.Contains(request.Scopes, mapped) {
+			request.Scopes = append(request.Scopes, mapped)
+		}
+	}
+	region, err := s.deps.Region(ctx, project.Region)
+	if input.DatabaseID != "" {
+		db := project.Databases[input.DatabaseID]
+		if db, err = s.deps.Ensure(ctx, p, project, db); err != nil {
+			return ProjectAPIKeySecret{}, err
+		}
+		request.DatabaseID = db.TerraBaseID
+		region, err = s.deps.Home(ctx, project, db)
+	}
+	if err != nil {
+		return ProjectAPIKeySecret{}, err
+	}
+	// The project's keys are listed in the regions the dashboard holds its
+	// own data key in.
+	m, org, proj, err := s.deps.ManageProject(ctx, p, project, region)
+	if err != nil {
+		return ProjectAPIKeySecret{}, err
+	}
+	created, err := m.CreateProjectAPIKey(ctx, org, proj, request)
+	if err != nil {
+		return ProjectAPIKeySecret{}, issuerError{action: "credential issuance", err: err}
+	}
+	key := core.APIKey{
+		ID: created.Key.ID, Kind: kindAPIKey, ProjectID: project.ID, DatabaseID: input.DatabaseID, Name: created.Key.Name,
+		Prefix: "tb_", LastFour: created.Key.LastFour, Scopes: created.Key.Scopes, CreatedAt: created.Key.CreatedAt,
+	}
+	return ProjectAPIKeySecret{APIKey: publicKey(key, ""), Secret: created.Secret}, nil
+}
+
+// revoke revokes a TerraBase data key of the project in the region holding
+// it. The dashboard's own keys are not the project's to revoke.
+func (s Service) revoke(ctx context.Context, p core.Principal, keyID, kind string) (ProjectAPIKeyRevocation, error) {
+	_, project, err := s.selected(ctx, p)
+	if err != nil {
+		return ProjectAPIKeyRevocation{}, err
+	}
+	if err := core.Can(ctx, s.deps.Store, p, core.Organization.CanManage); err != nil {
+		return ProjectAPIKeyRevocation{}, err
+	}
+	missing := fmt.Errorf("%w: credential %q", core.ErrNotFound, keyID)
+	if kind == kindM2M || slices.ContainsFunc(slices.Collect(maps.Values(project.DataKeys)), func(key core.DataKey) bool { return key.ID == keyID }) {
+		return ProjectAPIKeyRevocation{}, missing
+	}
+	regions, err := s.deps.DataKeyRegions(ctx, project)
+	if err != nil {
+		return ProjectAPIKeyRevocation{}, err
+	}
+	org, proj := project.TerraBaseIDs(p.OrganizationID)
+	for _, region := range regions {
+		m, err := s.deps.Manage(ctx, region)
+		if err != nil {
+			return ProjectAPIKeyRevocation{}, err
+		}
+		switch err := m.RevokeProjectAPIKey(ctx, org, proj, keyID); {
+		case err == nil:
+			return ProjectAPIKeyRevocation{KeyID: keyID, Revoked: true}, nil
+		case !errors.Is(err, v1.ErrNotFound) && !errors.Is(err, v1.ErrUnknownRoute):
+			return ProjectAPIKeyRevocation{}, issuerError{action: "credential revocation", err: err}
+		}
+	}
+	return ProjectAPIKeyRevocation{}, missing
 }

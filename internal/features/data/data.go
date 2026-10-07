@@ -43,7 +43,7 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			return
 		}
 		ctx := r.Context()
-		db, err := service.database(ctx, p, r.FormValue("databaseId"))
+		_, db, err := service.database(ctx, p, r.FormValue("databaseId"))
 		if err != nil {
 			writeError(w, err)
 			return
@@ -109,7 +109,7 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			return
 		}
 		ctx := r.Context()
-		db, err := service.database(ctx, p, r.FormValue("databaseId"))
+		_, db, err := service.database(ctx, p, r.FormValue("databaseId"))
 		if err != nil {
 			writeError(w, err)
 			return
@@ -157,7 +157,7 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			return
 		}
 		ctx := r.Context()
-		db, err := service.database(ctx, p, r.FormValue("databaseId"))
+		_, db, err := service.database(ctx, p, r.FormValue("databaseId"))
 		if err != nil {
 			writeError(w, err)
 			return
@@ -221,7 +221,7 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			return
 		}
 		ctx := r.Context()
-		db, err := service.database(ctx, p, r.FormValue("databaseId"))
+		_, db, err := service.database(ctx, p, r.FormValue("databaseId"))
 		if err != nil {
 			writeError(w, err)
 			return
@@ -309,7 +309,7 @@ func writeError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, core.ErrDataPlane):
 		http.Error(w, err.Error(), http.StatusServiceUnavailable)
-	case errors.Is(err, errDemoOnly):
+	case errors.Is(err, errDemoOnly), errors.Is(err, errNoSchemas):
 		http.Error(w, err.Error(), http.StatusNotImplemented)
 	case errors.As(err, &provider):
 		http.Error(w, err.Error(), http.StatusBadGateway)
