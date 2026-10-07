@@ -43,6 +43,16 @@ Forgejo Actions on the `terrascale-builder` runner (ts-builder image, .NET SDK 1
 - **slow**: `scripts/ci/check-reporter.sh` first proves that the failure reporter redacts and
   stays within its memory bound, then `make test-slow CONFIGURATION=Release` runs. A failure opens the issue "Slow test suite
   failed", or comments on it if it is already open (`scripts/ci/report-slow-failure.sh`).
+- **prune** (TS-608, `prune-releases.yml`, daily and on dispatch with `dry_run`): deletes
+  the CI pre-releases past the newest 20 that are older than 7 days through the Forgejo API
+  (their attachments leave the ts-forgejo bucket; tags stay), except releases a region pins:
+  the `terrabase` digest each head bucket's `status.json` serves (`ts-orch release
+  fleet-status --role terrabase`, run from `TS_PRUNE_ORCH_RELEASE`/`TS_PRUNE_ORCH_SHA256`, or
+  else `TS_ORCH_RELEASE`/`TS_ORCH_SHA256`) and the variable `TS_RELEASE_PINS` (revisions,
+  digests or tags, e.g. a rollback target). It logs each deletion and one
+  `TS_RELEASE_PRUNE_V1` summary line. `scripts/ci/prune-releases.sh` is ts-orchestrator's
+  script, tested there; ts-orchestrator `docs/continuous-delivery.md`, "CI pre-release
+  retention", has the rules.
 
 Branch protection on `main` should require `Fast integration / fast` and
 `Fast integration / release`.
