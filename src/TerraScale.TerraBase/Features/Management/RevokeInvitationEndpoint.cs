@@ -1,8 +1,8 @@
+using TerraBase.Features.UserAuth;
+using TerraBase.Hosting;
 using TerraScale.Endpoints;
-using TerraScale.TerraBase.Features.UserAuth;
-using TerraScale.TerraBase.Hosting;
 
-namespace TerraScale.TerraBase.Features.Management;
+namespace TerraBase.Features.Management;
 
 /// <summary><c>DELETE …/organizations/{organization}/invitations/{invitation}</c>: revokes an invitation.</summary>
 public sealed class RevokeInvitationEndpoint(IAccessService access) : EndpointWithoutRequest<IResult>

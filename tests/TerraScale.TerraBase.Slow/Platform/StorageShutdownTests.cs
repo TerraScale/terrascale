@@ -1,7 +1,7 @@
 using Bogus;
-using TerraScale.TerraBase.Testing;
+using TerraBase.Testing;
 
-namespace TerraScale.TerraBase.Slow.Platform;
+namespace TerraBase.Slow.Platform;
 
 public sealed class StorageShutdownTests
 {

@@ -1,6 +1,6 @@
 using TerraScale.Endpoints;
 
-namespace TerraScale.TerraBase.Features.Pressure;
+namespace TerraBase.Features.Pressure;
 
 /// <summary>Loopback-only cached node telemetry, deliberately unavailable as autoscaler evidence.</summary>
 public sealed class PressureEndpoint(IPressureSignals pressure) : EndpointWithoutRequest<PressureBody>

@@ -1,12 +1,12 @@
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
-using TerraScale.TerraBase.Engine;
-using TerraScale.TerraBase.Errors;
-using TerraScale.TerraBase.Hosting;
-using TerraScale.TerraBase.Tenancy;
+using TerraBase.Engine;
+using TerraBase.Errors;
+using TerraBase.Hosting;
+using TerraBase.Tenancy;
 
-namespace TerraScale.TerraBase.Features.Management.Schema;
+namespace TerraBase.Features.Management.Schema;
 
 /// <summary>Infers fields from the first live documents of a collection in id order.</summary>
 internal sealed partial class SchemaService(IStorageEngine engine) : ISchemaService

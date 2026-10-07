@@ -2,13 +2,13 @@ using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using Bogus;
 using Microsoft.Extensions.DependencyInjection;
-using TerraScale.TerraBase.Configuration;
-using TerraScale.TerraBase.Features.Replication;
-using TerraScale.TerraBase.Features.Replication.V1;
-using TerraScale.TerraBase.Tenancy;
-using TerraScale.TerraBase.Testing;
+using TerraBase.Configuration;
+using TerraBase.Features.Replication;
+using TerraBase.Features.Replication.V1;
+using TerraBase.Tenancy;
+using TerraBase.Testing;
 
-namespace TerraScale.TerraBase.Fast.Replication;
+namespace TerraBase.Fast.Replication;
 
 public sealed class StartupCredentialsTests
 {

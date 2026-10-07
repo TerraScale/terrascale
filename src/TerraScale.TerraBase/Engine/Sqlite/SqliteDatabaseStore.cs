@@ -2,9 +2,9 @@ using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 using System.Text;
 using Microsoft.Data.Sqlite;
-using TerraScale.TerraBase.Tenancy;
+using TerraBase.Tenancy;
 
-namespace TerraScale.TerraBase.Engine.Sqlite;
+namespace TerraBase.Engine.Sqlite;
 
 /// <param name="name">Names the database in error messages: its id, or <c>_system</c>.</param>
 /// <param name="path">The database file.</param>

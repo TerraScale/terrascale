@@ -5,12 +5,12 @@ using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Time.Testing;
-using TerraScale.TerraBase.Engine;
-using TerraScale.TerraBase.Features.Management.Backups;
-using TerraScale.TerraBase.Tenancy;
-using TerraScale.TerraBase.Testing;
+using TerraBase.Engine;
+using TerraBase.Features.Management.Backups;
+using TerraBase.Tenancy;
+using TerraBase.Testing;
 
-namespace TerraScale.TerraBase.Fast.Management;
+namespace TerraBase.Fast.Management;
 
 public sealed class BackupApiTests
 {

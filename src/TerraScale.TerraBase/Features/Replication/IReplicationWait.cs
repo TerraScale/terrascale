@@ -1,6 +1,6 @@
-using TerraScale.TerraBase.Tenancy;
+using TerraBase.Tenancy;
 
-namespace TerraScale.TerraBase.Features.Replication;
+namespace TerraBase.Features.Replication;
 
 /// <summary>Write-wait (docs/decisions/0010): read-your-writes on every member that a client write may be read from next.</summary>
 public interface IReplicationWait

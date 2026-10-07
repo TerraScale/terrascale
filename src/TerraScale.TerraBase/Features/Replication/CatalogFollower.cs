@@ -2,12 +2,12 @@ using System.Diagnostics.Metrics;
 using System.Text;
 using Google.Protobuf;
 using Grpc.Core;
-using TerraScale.TerraBase.Configuration;
-using TerraScale.TerraBase.Engine;
-using TerraScale.TerraBase.Features.Replication.V1;
-using TerraScale.TerraBase.Hosting;
+using TerraBase.Configuration;
+using TerraBase.Engine;
+using TerraBase.Features.Replication.V1;
+using TerraBase.Hosting;
 
-namespace TerraScale.TerraBase.Features.Replication;
+namespace TerraBase.Features.Replication;
 
 /// <summary>Whether this member may serve: a catalog follower only once it has caught up with its primary.</summary>
 public interface ICatalogReadiness

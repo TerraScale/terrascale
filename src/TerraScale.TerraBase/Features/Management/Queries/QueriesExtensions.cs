@@ -1,6 +1,6 @@
-using TerraScale.TerraBase.Errors;
+using TerraBase.Errors;
 
-namespace TerraScale.TerraBase.Features.Management.Queries;
+namespace TerraBase.Features.Management.Queries;
 
 /// <summary>Registers the SQL and saved-query part of the Management slice.</summary>
 public static class QueriesExtensions

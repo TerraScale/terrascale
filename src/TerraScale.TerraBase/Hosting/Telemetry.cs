@@ -1,12 +1,15 @@
 using System.Diagnostics.Metrics;
 using OpenTelemetry.Metrics;
 
-namespace TerraScale.TerraBase.Hosting;
+namespace TerraBase.Hosting;
 
 /// <summary>Prometheus-compatible metrics for the process and its features.</summary>
 public static class Telemetry
 {
-    /// <summary>Meter that every TerraBase feature records its instruments on.</summary>
+    /// <summary>
+    /// Meter that every TerraBase feature records its instruments on. It keeps its name across the TerraBase
+    /// rename (TS-589): Prometheus series carry it as <c>otel_scope_name</c>.
+    /// </summary>
     public const string MeterName = "TerraScale.TerraBase";
 
     /// <summary>Path of the Prometheus scrape endpoint on the administrative listener.</summary>

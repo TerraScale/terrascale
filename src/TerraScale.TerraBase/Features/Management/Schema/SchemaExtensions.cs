@@ -1,4 +1,4 @@
-namespace TerraScale.TerraBase.Features.Management.Schema;
+namespace TerraBase.Features.Management.Schema;
 
 /// <summary>Registers the collection and schema views.</summary>
 public static class SchemaExtensions

@@ -1,8 +1,8 @@
+using TerraBase.Features.UserAuth;
+using TerraBase.Hosting;
 using TerraScale.Endpoints;
-using TerraScale.TerraBase.Features.UserAuth;
-using TerraScale.TerraBase.Hosting;
 
-namespace TerraScale.TerraBase.Features.Management;
+namespace TerraBase.Features.Management;
 
 /// <summary>An invitation to create.</summary>
 /// <param name="Email">The address to invite.</param>

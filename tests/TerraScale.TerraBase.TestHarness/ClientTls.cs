@@ -1,7 +1,7 @@
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 
-namespace TerraScale.TerraBase.Testing;
+namespace TerraBase.Testing;
 
 /// <summary>
 /// A self-signed localhost certificate for the client listener, written as PEM files to a

@@ -1,4 +1,4 @@
-namespace TerraScale.TerraBase.Engine;
+namespace TerraBase.Engine;
 
 /// <summary>A storage write exceeded the document, identifier or transaction admission limit.</summary>
 public sealed class StorageWriteLimitException : InvalidOperationException

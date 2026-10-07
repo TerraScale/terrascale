@@ -1,7 +1,7 @@
-using TerraScale.TerraBase.Configuration;
-using TerraScale.TerraBase.Features.Management.Queries;
+using TerraBase.Configuration;
+using TerraBase.Features.Management.Queries;
 
-namespace TerraScale.TerraBase.Features.Management.Usage;
+namespace TerraBase.Features.Management.Usage;
 
 /// <summary>
 /// Flushes <see cref="UsageMeter"/> and <see cref="QueryFieldRecorder"/> every 10 seconds and once more on shutdown. A catalog

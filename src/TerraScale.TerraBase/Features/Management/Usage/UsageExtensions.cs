@@ -1,4 +1,4 @@
-namespace TerraScale.TerraBase.Features.Management.Usage;
+namespace TerraBase.Features.Management.Usage;
 
 /// <summary>Registers usage metering and reporting.</summary>
 public static class UsageExtensions

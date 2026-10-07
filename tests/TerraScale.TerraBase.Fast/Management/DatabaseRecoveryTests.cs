@@ -6,14 +6,14 @@ using System.Text.Json;
 using Bogus;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-using TerraScale.TerraBase.Configuration;
-using TerraScale.TerraBase.Engine;
-using TerraScale.TerraBase.Features.Management;
-using TerraScale.TerraBase.Hosting;
-using TerraScale.TerraBase.Tenancy;
-using TerraScale.TerraBase.Testing;
+using TerraBase.Configuration;
+using TerraBase.Engine;
+using TerraBase.Features.Management;
+using TerraBase.Hosting;
+using TerraBase.Tenancy;
+using TerraBase.Testing;
 
-namespace TerraScale.TerraBase.Fast.Management;
+namespace TerraBase.Fast.Management;
 
 public sealed class DatabaseRecoveryTests
 {

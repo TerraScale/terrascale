@@ -1,11 +1,11 @@
+using TerraBase.Configuration;
+using TerraBase.Engine;
+using TerraBase.Features.Replication;
+using TerraBase.Features.UserAuth;
+using TerraBase.Hosting;
 using TerraScale.Endpoints;
-using TerraScale.TerraBase.Configuration;
-using TerraScale.TerraBase.Engine;
-using TerraScale.TerraBase.Features.Replication;
-using TerraScale.TerraBase.Features.UserAuth;
-using TerraScale.TerraBase.Hosting;
 
-namespace TerraScale.TerraBase.Features.Health;
+namespace TerraBase.Features.Health;
 
 /// <summary>
 /// <c>GET /readyz</c>: 200 only while the storage engine is open, the data directory is writable, ts-auth's signing keys

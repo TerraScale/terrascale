@@ -7,11 +7,11 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using OpenTelemetry.Exporter;
-using TerraScale.TerraBase.Configuration;
-using TerraScale.TerraBase.Engine;
-using TerraScale.TerraBase.Engine.Sqlite;
+using TerraBase.Configuration;
+using TerraBase.Engine;
+using TerraBase.Engine.Sqlite;
 
-namespace TerraScale.TerraBase.Testing;
+namespace TerraBase.Testing;
 
 /// <summary>
 /// Runs the real TerraBase <c>Program</c> on real Kestrel listeners bound to ephemeral ports,

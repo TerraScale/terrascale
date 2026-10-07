@@ -1,11 +1,11 @@
+using TerraBase.Engine;
+using TerraBase.Errors;
+using TerraBase.Features.ApiKeys;
+using TerraBase.Hosting;
+using TerraBase.Tenancy;
 using TerraScale.Endpoints;
-using TerraScale.TerraBase.Engine;
-using TerraScale.TerraBase.Errors;
-using TerraScale.TerraBase.Features.ApiKeys;
-using TerraScale.TerraBase.Hosting;
-using TerraScale.TerraBase.Tenancy;
 
-namespace TerraScale.TerraBase.Features.Documents;
+namespace TerraBase.Features.Documents;
 
 /// <summary><c>GET …/documents?limit=&amp;cursor=</c>: lists a collection in id order.</summary>
 public sealed class ListDocumentsEndpoint(IDocumentService documents, ITenantDirectory tenants) : EndpointWithoutRequest<IResult>

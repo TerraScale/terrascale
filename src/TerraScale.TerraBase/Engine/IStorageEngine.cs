@@ -1,6 +1,6 @@
-using TerraScale.TerraBase.Tenancy;
+using TerraBase.Tenancy;
 
-namespace TerraScale.TerraBase.Engine;
+namespace TerraBase.Engine;
 
 /// <summary>Change groups of <paramref name="Database"/> are committed up to <paramref name="Sequence"/>.</summary>
 /// <param name="Database">The database, including its creation-time incarnation and lifetime.</param>

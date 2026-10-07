@@ -1,8 +1,8 @@
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
-using TerraScale.TerraBase.Engine;
+using TerraBase.Engine;
 
-namespace TerraScale.TerraBase.Features.Management;
+namespace TerraBase.Features.Management;
 
 /// <summary>Brings the management catalog to the version this build supports, or refuses an unsupported one (503).</summary>
 internal interface ICatalogGuard

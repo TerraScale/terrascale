@@ -1,8 +1,8 @@
+using TerraBase.Features.UserAuth;
+using TerraBase.Hosting;
 using TerraScale.Endpoints;
-using TerraScale.TerraBase.Features.UserAuth;
-using TerraScale.TerraBase.Hosting;
 
-namespace TerraScale.TerraBase.Features.Management;
+namespace TerraBase.Features.Management;
 
 /// <summary>The role to give a member.</summary>
 /// <param name="Role">owner, admin, member or viewer.</param>

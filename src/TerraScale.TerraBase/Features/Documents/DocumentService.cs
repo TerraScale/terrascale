@@ -1,14 +1,14 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
-using TerraScale.TerraBase.Engine;
-using TerraScale.TerraBase.Errors;
-using TerraScale.TerraBase.Features.Management.Usage;
-using TerraScale.TerraBase.Features.Replication;
-using TerraScale.TerraBase.Hosting;
-using TerraScale.TerraBase.Primitives;
-using TerraScale.TerraBase.Tenancy;
+using TerraBase.Engine;
+using TerraBase.Errors;
+using TerraBase.Features.Management.Usage;
+using TerraBase.Features.Replication;
+using TerraBase.Hosting;
+using TerraBase.Primitives;
+using TerraBase.Tenancy;
 
-namespace TerraScale.TerraBase.Features.Documents;
+namespace TerraBase.Features.Documents;
 
 /// <remarks>
 /// A committed client write answers only after <see cref="IReplicationWait"/>, outside its transaction: the database's

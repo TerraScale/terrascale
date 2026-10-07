@@ -1,10 +1,10 @@
+using TerraBase.Engine;
+using TerraBase.Errors;
+using TerraBase.Features.UserAuth;
+using TerraBase.Hosting;
 using TerraScale.Endpoints;
-using TerraScale.TerraBase.Engine;
-using TerraScale.TerraBase.Errors;
-using TerraScale.TerraBase.Features.UserAuth;
-using TerraScale.TerraBase.Hosting;
 
-namespace TerraScale.TerraBase.Features.Management.Schema;
+namespace TerraBase.Features.Management.Schema;
 
 /// <summary><c>GET …/databases/{database}/collections/{collection}/schema</c>: infers the fields of a collection.</summary>
 public sealed class GetCollectionSchemaEndpoint(IManagementService management, ISchemaService schema) : EndpointWithoutRequest<IResult>

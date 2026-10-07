@@ -5,13 +5,13 @@ using System.Threading.Channels;
 using Bogus;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-using TerraScale.TerraBase.Engine;
-using TerraScale.TerraBase.Fast.Documents;
-using TerraScale.TerraBase.Features.Replication;
-using TerraScale.TerraBase.Features.Replication.V1;
-using TerraScale.TerraBase.Testing;
+using TerraBase.Engine;
+using TerraBase.Fast.Documents;
+using TerraBase.Features.Replication;
+using TerraBase.Features.Replication.V1;
+using TerraBase.Testing;
 
-namespace TerraScale.TerraBase.Fast.Replication;
+namespace TerraBase.Fast.Replication;
 
 /// <summary>Real nodes replicating to each other over mutual TLS gRPC with LZ4 envelopes.</summary>
 public sealed class ReplicationTests

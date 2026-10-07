@@ -1,9 +1,9 @@
+using TerraBase.Errors;
+using TerraBase.Features.UserAuth;
+using TerraBase.Hosting;
 using TerraScale.Endpoints;
-using TerraScale.TerraBase.Errors;
-using TerraScale.TerraBase.Features.UserAuth;
-using TerraScale.TerraBase.Hosting;
 
-namespace TerraScale.TerraBase.Features.Management;
+namespace TerraBase.Features.Management;
 
 /// <summary><c>GET /v1/management/versions</c>: versions of the acting user's account and of organizations, for fences.</summary>
 public sealed class GetVersionsEndpoint(IManagementCommits commits) : EndpointWithoutRequest<IResult>

@@ -2,11 +2,11 @@ using System.Net;
 using System.Text.Json;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
-using TerraScale.TerraBase.Engine;
-using TerraScale.TerraBase.Tenancy;
-using TerraScale.TerraBase.Testing;
+using TerraBase.Engine;
+using TerraBase.Tenancy;
+using TerraBase.Testing;
 
-namespace TerraScale.TerraBase.Slow.Documents;
+namespace TerraBase.Slow.Documents;
 
 public sealed class CountBoundTests
 {

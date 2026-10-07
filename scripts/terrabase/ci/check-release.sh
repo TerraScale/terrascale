@@ -129,9 +129,9 @@ export FORGEJO_TOKEN=check-token GITHUB_REPOSITORY=TerraScale/terrabase GITHUB_R
 # main: A (v1.2.1) - B - M (merges side: S1 - S2, tagged v1.2.2-side) - C (v1.2.3).
 repo=$work/repo
 git init -q -b main "$repo"
-mkdir -p "$repo/src/TerraScale.TerraBase" "$repo/dist"
+mkdir -p "$repo/src/TerraBase" "$repo/dist"
 echo '<Project><PropertyGroup><Version>1.2.3</Version></PropertyGroup></Project>' \
-  > "$repo/src/TerraScale.TerraBase/TerraScale.TerraBase.csproj"
+  > "$repo/src/TerraBase/TerraBase.csproj"
 echo dist/ > "$repo/.gitignore"
 commit() { git -C "$repo" add -A && git -C "$repo" commit -q --allow-empty -m "$1"; }
 commit 'Add A' && git -C "$repo" tag v1.2.1

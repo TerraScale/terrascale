@@ -1,9 +1,9 @@
+using TerraBase.Errors;
+using TerraBase.Features.UserAuth;
+using TerraBase.Hosting;
 using TerraScale.Endpoints;
-using TerraScale.TerraBase.Errors;
-using TerraScale.TerraBase.Features.UserAuth;
-using TerraScale.TerraBase.Hosting;
 
-namespace TerraScale.TerraBase.Features.Management.Backups;
+namespace TerraBase.Features.Management.Backups;
 
 /// <summary><c>GET …/databases/{database}/backups</c>: lists the backups of a database.</summary>
 public sealed class ListBackupsEndpoint(IManagementService management, IManagedBackupService backups) : EndpointWithoutRequest<IResult>

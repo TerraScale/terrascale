@@ -1,9 +1,9 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
-using TerraScale.TerraBase.Engine;
-using TerraScale.TerraBase.Hosting;
+using TerraBase.Engine;
+using TerraBase.Hosting;
 
-namespace TerraScale.TerraBase.Features.Documents;
+namespace TerraBase.Features.Documents;
 
 /// <summary>Query projection: keeps only the listed members, with their parent objects.</summary>
 internal static class Projection

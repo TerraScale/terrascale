@@ -12,8 +12,8 @@ fallback was not needed.
 
 | Where | What |
 |-------|------|
-| `src/TerraScale.TerraBase/Errors/Errors.cs` | The failure kinds `NotFound`, `Conflict`, `Validation`, `PreconditionFailed` (a stale version, TS-521), `Unauthorized`, `Forbidden`, `QuotaExceeded`, `Unavailable`, `UriTooLong` (a shape filter whose continuation URL would not fit), `PayloadTooLarge` and `UnsupportedMediaType` (request bodies). Each has a message (the rule that failed, never client input) and a stable `Code`. Also `Done` (success without a value), `Failure` (all kinds), `Valid<T>` (a request value or `Validation`) and `Found<T>` (a resource or `NotFound`). |
-| `src/TerraScale.TerraBase/Errors/ErrorResponse.cs` | `ErrorResponse.From(Failure, op)`, the single mapping to HTTP: 404, 409, 400, 412, 401, 403, 429, 503, 414, 413, 415. `op` names the failing operation of a batch (`error.op`), as Management commits do. The body is the existing `{"error":{"code","message"}}` envelope (decision 0004), with `Cache-Control: no-store`. |
+| `src/TerraBase/Errors/Errors.cs` | The failure kinds `NotFound`, `Conflict`, `Validation`, `PreconditionFailed` (a stale version, TS-521), `Unauthorized`, `Forbidden`, `QuotaExceeded`, `Unavailable`, `UriTooLong` (a shape filter whose continuation URL would not fit), `PayloadTooLarge` and `UnsupportedMediaType` (request bodies). Each has a message (the rule that failed, never client input) and a stable `Code`. Also `Done` (success without a value), `Failure` (all kinds), `Valid<T>` (a request value or `Validation`) and `Found<T>` (a resource or `NotFound`). |
+| `src/TerraBase/Errors/ErrorResponse.cs` | `ErrorResponse.From(Failure, op)`, the single mapping to HTTP: 404, 409, 400, 412, 401, 403, 429, 503, 414, 413, 415. `op` names the failing operation of a batch (`error.op`), as Management commits do. The body is the existing `{"error":{"code","message"}}` envelope (decision 0004), with `Cache-Control: no-store`. |
 | The feature | One `union` per operation that lists exactly its outcomes, for example `public readonly union DeleteProjectResult(Done, NotFound, Conflict);`. It also holds shared instances with feature codes, such as `ManagementErrors.NameTaken` (`name_taken`). |
 
 `Errors/` is shared from the start, unlike other shared primitives that wait for a second feature: every folder
@@ -57,10 +57,10 @@ To validate several inputs, switch over a tuple: `(Validation error, _) => …, 
 
 1. **Non-exhaustive switch:** CS8509, an error because `TreatWarningsAsErrors` is on. Adding a case to a union
    breaks every caller until it handles the new case.
-2. **Discarded result:** TB0001 from `src/TerraScale.TerraBase.Analyzers`, an analyzer-only reference that is not
+2. **Discarded result:** TB0001 from `src/TerraBase.Analyzers`, an analyzer-only reference that is not
    in the binary. It fires on a statement that drops a union value, a `Task`/`ValueTask` of one, a `?.` call
    or a `ConfigureAwait` of either, including `await service.DeleteAsync(...);`. Write `_ = …` to discard on purpose.
-   `make analyzer-check` compiles the native-union fixture in `src/TerraScale.TerraBase.Analyzers.BuildCheck` and
+   `make analyzer-check` compiles the native-union fixture in `src/TerraBase.Analyzers.BuildCheck` and
    checks the expected diagnostics for direct, awaited, configured, nullable, constrained-generic and derived-task
    results; assigned values and explicit `_ =` statements are negative controls.
 3. **Throwing expected failures:** the `BanExpectedFailureExceptions` target in `Directory.Build.targets` fails
@@ -87,7 +87,7 @@ malformed JSON body, with `400 invalid_request`.
 
 ## Checklist
 
-`throw new` counts in `src/TerraScale.TerraBase`, excluding generated `obj/` code: 295 (TS-538 recounted them
+`throw new` counts in `src/TerraBase`, excluding generated `obj/` code: 295 (TS-538 recounted them
 after TS-463, TS-464, TS-521, TS-473, TS-561, TS-574 and the Documents conversion; TS-518's figure of 127 predates them). "Expected" counts the
 `ApiException`/`BadHttpRequestException` constructions that `BanExpectedFailureExceptions` matches. The other throws
 in each row are invariants or configuration errors to review during the conversion.

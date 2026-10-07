@@ -1,4 +1,4 @@
-namespace TerraScale.TerraBase.Features.ApiKeys;
+namespace TerraBase.Features.ApiKeys;
 
 /// <summary>Registers API-key authentication and one authorization policy per scope.</summary>
 public static class ApiKeysExtensions

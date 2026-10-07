@@ -1,7 +1,7 @@
 using System.Net;
-using TerraScale.TerraBase.Testing;
+using TerraBase.Testing;
 
-namespace TerraScale.TerraBase.Fast.Platform;
+namespace TerraBase.Fast.Platform;
 
 public sealed class MetricsTests
 {

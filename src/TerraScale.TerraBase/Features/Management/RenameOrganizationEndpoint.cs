@@ -1,8 +1,8 @@
+using TerraBase.Features.UserAuth;
+using TerraBase.Hosting;
 using TerraScale.Endpoints;
-using TerraScale.TerraBase.Features.UserAuth;
-using TerraScale.TerraBase.Hosting;
 
-namespace TerraScale.TerraBase.Features.Management;
+namespace TerraBase.Features.Management;
 
 /// <summary><c>PATCH /v1/management/organizations/{organization}</c>: renames an organization.</summary>
 public sealed class RenameOrganizationEndpoint(IManagementService management) : Endpoint<NameRequest, IResult>

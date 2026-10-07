@@ -4,7 +4,7 @@ using System.Text.Encodings.Web;
 using System.Text.Json;
 using Microsoft.Data.Sqlite;
 
-namespace TerraScale.TerraBase.Engine.Sqlite;
+namespace TerraBase.Engine.Sqlite;
 
 /// <summary>
 /// Compiles a <see cref="DocumentQuery"/> into one SQLite statement over the <c>documents</c> table,

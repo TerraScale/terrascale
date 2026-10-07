@@ -1,7 +1,7 @@
 using System.Runtime.CompilerServices;
-using TerraScale.TerraBase.Tenancy;
+using TerraBase.Tenancy;
 
-namespace TerraScale.TerraBase.Engine;
+namespace TerraBase.Engine;
 
 /// <summary>
 /// Wraps any <see cref="IStorageEngine"/> and moves <see cref="IWriteStamps"/> on every write that goes

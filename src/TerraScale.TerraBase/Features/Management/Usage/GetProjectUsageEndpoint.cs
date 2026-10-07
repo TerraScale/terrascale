@@ -1,9 +1,9 @@
+using TerraBase.Engine;
+using TerraBase.Features.UserAuth;
+using TerraBase.Hosting;
 using TerraScale.Endpoints;
-using TerraScale.TerraBase.Engine;
-using TerraScale.TerraBase.Features.UserAuth;
-using TerraScale.TerraBase.Hosting;
 
-namespace TerraScale.TerraBase.Features.Management.Usage;
+namespace TerraBase.Features.Management.Usage;
 
 /// <summary><c>GET …/projects/{project}/usage</c>: sums the usage of every database of a project.</summary>
 public sealed class GetProjectUsageEndpoint(IUsageService usage) : EndpointWithoutRequest<IResult>

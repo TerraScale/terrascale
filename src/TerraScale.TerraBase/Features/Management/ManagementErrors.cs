@@ -1,6 +1,6 @@
-using TerraScale.TerraBase.Errors;
+using TerraBase.Errors;
 
-namespace TerraScale.TerraBase.Features.Management;
+namespace TerraBase.Features.Management;
 
 /// <summary>Management failures shared by several operations, with their stable codes.</summary>
 internal static class ManagementErrors

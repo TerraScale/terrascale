@@ -4,13 +4,13 @@ using System.Runtime.ExceptionServices;
 using Google.Protobuf;
 using Grpc.Core;
 using Microsoft.AspNetCore.Http.Features;
-using TerraScale.TerraBase.Configuration;
-using TerraScale.TerraBase.Engine;
-using TerraScale.TerraBase.Features.Memory;
-using TerraScale.TerraBase.Features.Replication.V1;
-using TerraScale.TerraBase.Hosting;
+using TerraBase.Configuration;
+using TerraBase.Engine;
+using TerraBase.Features.Memory;
+using TerraBase.Features.Replication.V1;
+using TerraBase.Hosting;
 
-namespace TerraScale.TerraBase.Features.Replication;
+namespace TerraBase.Features.Replication;
 
 /// <summary>
 /// The catalog primary's side of <c>CatalogForwarding.Forward</c>: serves a request a follower forwarded through this member's

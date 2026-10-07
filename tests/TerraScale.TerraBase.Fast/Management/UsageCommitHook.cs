@@ -1,9 +1,9 @@
 using System.Collections.Concurrent;
 using Microsoft.Extensions.DependencyInjection;
-using TerraScale.TerraBase.Engine;
-using TerraScale.TerraBase.Tenancy;
+using TerraBase.Engine;
+using TerraBase.Tenancy;
 
-namespace TerraScale.TerraBase.Fast.Management;
+namespace TerraBase.Fast.Management;
 
 // Decorates the real engine. Only the catalog commits that put a matching document (usage, unless told otherwise) or one
 // explicitly armed write start are intercepted.

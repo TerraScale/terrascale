@@ -1,10 +1,10 @@
 using System.Diagnostics.Metrics;
 using Microsoft.Extensions.DependencyInjection.Extensions;
-using TerraScale.TerraBase.Configuration;
-using TerraScale.TerraBase.Engine.Sqlite;
-using TerraScale.TerraBase.Hosting;
+using TerraBase.Configuration;
+using TerraBase.Engine.Sqlite;
+using TerraBase.Hosting;
 
-namespace TerraScale.TerraBase.Engine;
+namespace TerraBase.Engine;
 
 /// <summary>Registers the storage engine.</summary>
 public static class EngineExtensions

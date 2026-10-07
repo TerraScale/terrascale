@@ -3,9 +3,9 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
-using TerraScale.TerraBase.Engine;
+using TerraBase.Engine;
 
-namespace TerraScale.TerraBase.Fast.Documents;
+namespace TerraBase.Fast.Documents;
 
 public sealed class QueryApiTests
 {

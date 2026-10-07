@@ -2,7 +2,7 @@ using System.Buffers.Binary;
 using System.Security.Cryptography;
 using System.Text;
 
-namespace TerraScale.TerraBase.Engine;
+namespace TerraBase.Engine;
 
 /// <summary>
 /// Version 1 SHA-256 identity of a contiguous journal prefix. Lengths and integers are little-endian;

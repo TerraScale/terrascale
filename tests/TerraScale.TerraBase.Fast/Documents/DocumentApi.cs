@@ -4,11 +4,11 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
-using TerraScale.TerraBase.Engine;
-using TerraScale.TerraBase.Tenancy;
-using TerraScale.TerraBase.Testing;
+using TerraBase.Engine;
+using TerraBase.Tenancy;
+using TerraBase.Testing;
 
-namespace TerraScale.TerraBase.Fast.Documents;
+namespace TerraBase.Fast.Documents;
 
 /// <summary>A response read to the end: status, JSON body (Undefined when empty) and the headers tests check.</summary>
 internal sealed record ApiResponse(HttpStatusCode Status, JsonElement Json, string? ETag, Uri? Location)

@@ -1,6 +1,6 @@
 using System.Diagnostics.Metrics;
 
-namespace TerraScale.TerraBase.Features.Pressure;
+namespace TerraBase.Features.Pressure;
 
 internal sealed partial class PressureSignals
 {

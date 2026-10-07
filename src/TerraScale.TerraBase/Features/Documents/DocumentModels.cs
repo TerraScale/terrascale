@@ -1,7 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
-namespace TerraScale.TerraBase.Features.Documents;
+namespace TerraBase.Features.Documents;
 
 /// <summary>A document as returned by point reads, lists and queries.</summary>
 /// <param name="Id">Document id.</param>

@@ -1,9 +1,9 @@
+using TerraBase.Engine;
+using TerraBase.Features.UserAuth;
+using TerraBase.Hosting;
 using TerraScale.Endpoints;
-using TerraScale.TerraBase.Engine;
-using TerraScale.TerraBase.Features.UserAuth;
-using TerraScale.TerraBase.Hosting;
 
-namespace TerraScale.TerraBase.Features.Management.Usage;
+namespace TerraBase.Features.Management.Usage;
 
 /// <summary><c>GET …/databases/{database}/usage</c>: reads the storage and operation usage of a database.</summary>
 public sealed class GetDatabaseUsageEndpoint(IManagementService management, IUsageService usage) : EndpointWithoutRequest<IResult>

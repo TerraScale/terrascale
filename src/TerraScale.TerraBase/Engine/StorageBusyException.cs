@@ -1,4 +1,4 @@
-namespace TerraScale.TerraBase.Engine;
+namespace TerraBase.Engine;
 
 /// <summary>
 /// The engine already runs as much storage work as it admits (<c>storage-queue</c>); retry later.

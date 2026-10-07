@@ -2,12 +2,12 @@ using System.Diagnostics;
 using System.Globalization;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.Net.Http.Headers;
-using TerraScale.TerraBase.Engine;
-using TerraScale.TerraBase.Errors;
-using TerraScale.TerraBase.Features.ApiKeys;
-using TerraScale.TerraBase.Tenancy;
+using TerraBase.Engine;
+using TerraBase.Errors;
+using TerraBase.Features.ApiKeys;
+using TerraBase.Tenancy;
 
-namespace TerraScale.TerraBase.Features.Documents;
+namespace TerraBase.Features.Documents;
 
 /// <summary>The request's tenant, or why it has none: a malformed database name, or a database the key does not reach.</summary>
 internal readonly union TenantResult(TenantContext, Validation, NotFound);

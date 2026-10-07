@@ -5,7 +5,7 @@ using System.Text.Json;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 
-namespace TerraScale.TerraBase.Testing;
+namespace TerraBase.Testing;
 
 /// <summary>
 /// A server with the client listener that trusts a <see cref="TestIssuer"/>, and clients that call it like ts-dashboard

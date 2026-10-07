@@ -1,9 +1,9 @@
 using System.Collections.Concurrent;
-using TerraScale.TerraBase.Hosting;
-using TerraScale.TerraBase.Tenancy;
-using static TerraScale.TerraBase.Features.Management.SystemCatalog;
+using TerraBase.Hosting;
+using TerraBase.Tenancy;
+using static TerraBase.Features.Management.SystemCatalog;
 
-namespace TerraScale.TerraBase.Features.Management.Usage;
+namespace TerraBase.Features.Management.Usage;
 
 /// <summary>Operation counts; persisted per managed database as document <c>ops</c> of its <c>usage</c> state collection.</summary>
 /// <param name="Reads">Document reads.</param>

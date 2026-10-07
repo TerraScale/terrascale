@@ -1,8 +1,8 @@
-using TerraScale.TerraBase.Engine;
-using TerraScale.TerraBase.Features.Management.Schema;
-using TerraScale.TerraBase.Tenancy;
+using TerraBase.Engine;
+using TerraBase.Features.Management.Schema;
+using TerraBase.Tenancy;
 
-namespace TerraScale.TerraBase.Features.Management.Usage;
+namespace TerraBase.Features.Management.Usage;
 
 internal sealed class UsageService(IStorageEngine engine, IManagementService management, ISchemaService schema, UsageMeter meter, TimeProvider time)
     : IUsageService

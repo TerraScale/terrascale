@@ -1,6 +1,6 @@
 using System.Diagnostics.Metrics;
 
-namespace TerraScale.TerraBase.Engine.Sqlite;
+namespace TerraBase.Engine.Sqlite;
 
 /// <summary>
 /// Runs SQLite calls on dedicated threads. Microsoft.Data.Sqlite has no true async I/O: its async

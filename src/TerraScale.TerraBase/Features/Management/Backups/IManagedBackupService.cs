@@ -1,7 +1,7 @@
-using TerraScale.TerraBase.Errors;
-using TerraScale.TerraBase.Tenancy;
+using TerraBase.Errors;
+using TerraBase.Tenancy;
 
-namespace TerraScale.TerraBase.Features.Management.Backups;
+namespace TerraBase.Features.Management.Backups;
 
 /// <summary>A consistent snapshot of a managed database.</summary>
 /// <param name="Id">Lowercase hyphenated UUID.</param>

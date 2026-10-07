@@ -1,9 +1,9 @@
+using TerraBase.Errors;
+using TerraBase.Features.UserAuth;
+using TerraBase.Hosting;
 using TerraScale.Endpoints;
-using TerraScale.TerraBase.Errors;
-using TerraScale.TerraBase.Features.UserAuth;
-using TerraScale.TerraBase.Hosting;
 
-namespace TerraScale.TerraBase.Features.Management.Queries;
+namespace TerraBase.Features.Management.Queries;
 
 /// <summary><c>POST …/projects/{project}/saved-queries</c>: saves a query in a project.</summary>
 public sealed class CreateSavedQueryEndpoint(IManagementService management, IQueryService queries) : Endpoint<SavedQueryRequest, IResult>

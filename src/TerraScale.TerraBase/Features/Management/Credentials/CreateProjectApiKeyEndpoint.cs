@@ -1,10 +1,10 @@
+using TerraBase.Errors;
+using TerraBase.Features.ApiKeys;
+using TerraBase.Features.UserAuth;
+using TerraBase.Hosting;
 using TerraScale.Endpoints;
-using TerraScale.TerraBase.Errors;
-using TerraScale.TerraBase.Features.ApiKeys;
-using TerraScale.TerraBase.Features.UserAuth;
-using TerraScale.TerraBase.Hosting;
 
-namespace TerraScale.TerraBase.Features.Management.Credentials;
+namespace TerraBase.Features.Management.Credentials;
 
 /// <summary>A project key to issue.</summary>
 /// <param name="Name">Label, 1 to 128 characters.</param>

@@ -1,6 +1,6 @@
-using TerraScale.TerraBase.Tenancy;
+using TerraBase.Tenancy;
 
-namespace TerraScale.TerraBase.Features.Management.Usage;
+namespace TerraBase.Features.Management.Usage;
 
 /// <summary>What one database uses. Counters are best-effort totals since the database was created (dashboard usage, not billing).</summary>
 /// <param name="DatabaseId">The database.</param>

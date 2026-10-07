@@ -4,12 +4,12 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
-using TerraScale.TerraBase.Engine;
-using TerraScale.TerraBase.Engine.Sqlite;
-using TerraScale.TerraBase.Testing;
+using TerraBase.Engine;
+using TerraBase.Engine.Sqlite;
+using TerraBase.Testing;
 using TUnit.Core.Enums;
 
-namespace TerraScale.TerraBase.Fast.Platform;
+namespace TerraBase.Fast.Platform;
 
 public sealed class HealthTests
 {

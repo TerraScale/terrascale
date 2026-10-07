@@ -1,14 +1,14 @@
 using System.Net;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
-using TerraScale.TerraBase.Engine;
-using TerraScale.TerraBase.Features.Management.Usage;
-using TerraScale.TerraBase.Features.Replication;
-using TerraScale.TerraBase.Features.Replication.V1;
-using TerraScale.TerraBase.Tenancy;
-using TerraScale.TerraBase.Testing;
+using TerraBase.Engine;
+using TerraBase.Features.Management.Usage;
+using TerraBase.Features.Replication;
+using TerraBase.Features.Replication.V1;
+using TerraBase.Tenancy;
+using TerraBase.Testing;
 
-namespace TerraScale.TerraBase.Fast.Replication;
+namespace TerraBase.Fast.Replication;
 
 public sealed class DocumentCaptureTests
 {

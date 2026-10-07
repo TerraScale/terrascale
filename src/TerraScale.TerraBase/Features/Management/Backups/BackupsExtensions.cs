@@ -1,4 +1,4 @@
-namespace TerraScale.TerraBase.Features.Management.Backups;
+namespace TerraBase.Features.Management.Backups;
 
 /// <summary>Registers database backups.</summary>
 public static class BackupsExtensions

@@ -1,9 +1,9 @@
 using System.Net;
 using System.Text.Json;
-using TerraScale.TerraBase.Hosting;
-using TerraScale.TerraBase.Testing;
+using TerraBase.Hosting;
+using TerraBase.Testing;
 
-namespace TerraScale.TerraBase.Fast.Platform;
+namespace TerraBase.Fast.Platform;
 
 public sealed class ApiReferenceTests
 {

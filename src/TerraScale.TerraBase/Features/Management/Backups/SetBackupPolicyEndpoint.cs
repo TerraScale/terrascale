@@ -1,11 +1,11 @@
 using Cronos;
+using TerraBase.Errors;
+using TerraBase.Features.UserAuth;
+using TerraBase.Hosting;
+using TerraBase.Tenancy;
 using TerraScale.Endpoints;
-using TerraScale.TerraBase.Errors;
-using TerraScale.TerraBase.Features.UserAuth;
-using TerraScale.TerraBase.Hosting;
-using TerraScale.TerraBase.Tenancy;
 
-namespace TerraScale.TerraBase.Features.Management.Backups;
+namespace TerraBase.Features.Management.Backups;
 
 /// <summary><c>PUT …/databases/{database}/backup-policy</c>: saves the backup policy of a database.</summary>
 public sealed class SetBackupPolicyEndpoint(IManagementService management, IManagedBackupService backups) : Endpoint<BackupPolicyRequest, IResult>

@@ -3,13 +3,13 @@ using System.Net;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
-using TerraScale.TerraBase.Engine;
-using TerraScale.TerraBase.Engine.Sqlite;
-using TerraScale.TerraBase.Fast.Documents;
-using TerraScale.TerraBase.Primitives;
-using TerraScale.TerraBase.Tenancy;
+using TerraBase.Engine;
+using TerraBase.Engine.Sqlite;
+using TerraBase.Fast.Documents;
+using TerraBase.Primitives;
+using TerraBase.Tenancy;
 
-namespace TerraScale.TerraBase.Fast.Storage;
+namespace TerraBase.Fast.Storage;
 
 public sealed class StorageHistoryTests
 {

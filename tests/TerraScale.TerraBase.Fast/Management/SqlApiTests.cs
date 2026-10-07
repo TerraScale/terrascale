@@ -3,12 +3,12 @@ using System.Text.Json;
 using Bogus;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
-using TerraScale.TerraBase.Engine;
-using TerraScale.TerraBase.Features.Documents;
-using TerraScale.TerraBase.Tenancy;
-using TerraScale.TerraBase.Testing;
+using TerraBase.Engine;
+using TerraBase.Features.Documents;
+using TerraBase.Tenancy;
+using TerraBase.Testing;
 
-namespace TerraScale.TerraBase.Fast.Management;
+namespace TerraBase.Fast.Management;
 
 public sealed class SqlApiTests
 {
@@ -326,7 +326,7 @@ public sealed class SqlApiTests
 
         await Assert.That(read).IsEqualTo(5);
         // The deadline ran on the faked clock, so the 30 seconds the consumer took were seen and not counted.
-        await Assert.That(api.Server.Services.GetRequiredService<TerraScale.TerraBase.Engine.Sqlite.SqliteStorageEngine>().Time).IsSameReferenceAs(time);
+        await Assert.That(api.Server.Services.GetRequiredService<TerraBase.Engine.Sqlite.SqliteStorageEngine>().Time).IsSameReferenceAs(time);
     }
 
     [Test]

@@ -1,4 +1,4 @@
-namespace TerraScale.TerraBase.Engine;
+namespace TerraBase.Engine;
 
 /// <summary>A position in a journal: its 16-byte origin, a group sequence (0 before the first) and that prefix's digest.</summary>
 /// <param name="Origin">The origin the journal belongs to.</param>

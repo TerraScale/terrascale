@@ -1,8 +1,8 @@
+using TerraBase.Features.UserAuth;
+using TerraBase.Hosting;
 using TerraScale.Endpoints;
-using TerraScale.TerraBase.Features.UserAuth;
-using TerraScale.TerraBase.Hosting;
 
-namespace TerraScale.TerraBase.Features.Management;
+namespace TerraBase.Features.Management;
 
 /// <summary><c>PATCH …/projects/{project}</c>: renames a project.</summary>
 public sealed class RenameProjectEndpoint(IManagementService management) : Endpoint<NameRequest, IResult>

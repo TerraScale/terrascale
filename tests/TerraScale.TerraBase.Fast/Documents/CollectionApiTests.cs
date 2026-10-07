@@ -1,7 +1,7 @@
 using System.Net;
 using System.Text.Json;
 
-namespace TerraScale.TerraBase.Fast.Documents;
+namespace TerraBase.Fast.Documents;
 
 public sealed class CollectionApiTests
 {

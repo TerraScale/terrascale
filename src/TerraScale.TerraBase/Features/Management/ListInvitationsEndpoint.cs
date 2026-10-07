@@ -1,8 +1,8 @@
+using TerraBase.Features.UserAuth;
+using TerraBase.Hosting;
 using TerraScale.Endpoints;
-using TerraScale.TerraBase.Features.UserAuth;
-using TerraScale.TerraBase.Hosting;
 
-namespace TerraScale.TerraBase.Features.Management;
+namespace TerraBase.Features.Management;
 
 /// <summary><c>GET …/organizations/{organization}/invitations</c>: lists pending invitations.</summary>
 public sealed class ListInvitationsEndpoint(IAccessService access) : EndpointWithoutRequest<IResult>

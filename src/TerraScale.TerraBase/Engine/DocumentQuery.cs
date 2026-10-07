@@ -1,4 +1,4 @@
-namespace TerraScale.TerraBase.Engine;
+namespace TerraBase.Engine;
 
 /// <summary>A path into a document: object member names from the root, or the document id.</summary>
 /// <param name="Segments">Member names; <see langword="null"/> for the document id (<c>$id</c>).</param>

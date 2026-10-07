@@ -4,7 +4,7 @@ package terrabase.v1;
 
 import "terrabase/v1/replication.proto";
 
-option csharp_namespace = "TerraScale.TerraBase.Features.Replication.V1";
+option csharp_namespace = "TerraBase.Features.Replication.V1";
 
 // Internal: a catalog follower replicates TerraBase's own database (management catalog, API key hashes,
 // dashboard documents) from its catalog primary, the only member that writes it (docs/decisions/0009).

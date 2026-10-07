@@ -1,4 +1,4 @@
-namespace TerraScale.TerraBase.Tenancy;
+namespace TerraBase.Tenancy;
 
 /// <summary>
 /// Resolves and registers the databases of a tenant for callers that act for an organization, not for a user

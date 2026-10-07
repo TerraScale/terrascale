@@ -1,4 +1,4 @@
-namespace TerraScale.TerraBase.Engine;
+namespace TerraBase.Engine;
 
 /// <summary>A query exceeded the engine's execution or sort-buffer budget.</summary>
 public sealed class QueryCapacityException : Exception

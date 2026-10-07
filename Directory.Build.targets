@@ -46,7 +46,7 @@
   </PropertyGroup>
 
   <ItemGroup Condition="'$(IsTestProject)' == 'true'">
-    <ProjectReference Include="$(MSBuildThisFileDirectory)src/TerraScale.TerraBase/TerraScale.TerraBase.csproj" />
+    <ProjectReference Include="$(MSBuildThisFileDirectory)src/TerraBase/TerraBase.csproj" />
     <PackageReference Include="TUnit" />
     <PackageReference Include="Bogus" />
     <PackageReference Include="Microsoft.Extensions.TimeProvider.Testing" />

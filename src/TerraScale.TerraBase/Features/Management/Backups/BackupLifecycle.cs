@@ -1,6 +1,6 @@
-using TerraScale.TerraBase.Tenancy;
+using TerraBase.Tenancy;
 
-namespace TerraScale.TerraBase.Features.Management.Backups;
+namespace TerraBase.Features.Management.Backups;
 
 /// <summary>
 /// The states of a backup. A backup moves only forward:

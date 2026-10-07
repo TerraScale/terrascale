@@ -1,14 +1,14 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-using TerraScale.TerraBase.Engine;
-using TerraScale.TerraBase.Errors;
-using TerraScale.TerraBase.Features.Documents;
-using TerraScale.TerraBase.Features.Management;
-using TerraScale.TerraBase.Hosting;
-using static TerraScale.TerraBase.Features.Management.SystemCatalog;
+using TerraBase.Engine;
+using TerraBase.Errors;
+using TerraBase.Features.Documents;
+using TerraBase.Features.Management;
+using TerraBase.Hosting;
+using static TerraBase.Features.Management.SystemCatalog;
 
-namespace TerraScale.TerraBase.Features.ApiKeys;
+namespace TerraBase.Features.ApiKeys;
 
 /// <summary>
 /// Keeps keys as documents in the system database (<see cref="IStorageEngine.OpenSystemDatabaseAsync"/>), keyed by the

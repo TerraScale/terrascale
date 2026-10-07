@@ -3,11 +3,11 @@ using System.Net;
 using System.Text.Json;
 using Bogus;
 using Microsoft.Extensions.DependencyInjection;
-using TerraScale.TerraBase.Engine;
-using TerraScale.TerraBase.Features.Documents;
-using TerraScale.TerraBase.Testing;
+using TerraBase.Engine;
+using TerraBase.Features.Documents;
+using TerraBase.Testing;
 
-namespace TerraScale.TerraBase.Fast.Documents;
+namespace TerraBase.Fast.Documents;
 
 public sealed class DocumentApiTests
 {

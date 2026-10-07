@@ -1,8 +1,8 @@
 # TerraBase .NET targets. Locally, run them at low CPU priority, e.g.
 # `nice -n 19 make test-fast`; CI runs them at full priority. Nothing here
 # applies nice itself.
-SOLUTION := TerraScale.TerraBase.slnx
-ANALYZER_CHECK_PROJECT := src/TerraScale.TerraBase.Analyzers.BuildCheck/TerraScale.TerraBase.Analyzers.BuildCheck.csproj
+SOLUTION := TerraBase.slnx
+ANALYZER_CHECK_PROJECT := src/TerraBase.Analyzers.BuildCheck/TerraBase.Analyzers.BuildCheck.csproj
 CONFIGURATION ?= Debug
 RUNTIME ?= linux-x64
 PUBLISH_DIR ?= artifacts/publish
@@ -36,20 +36,20 @@ analyzer-check:
 	if grep -v 'error TB0001' "$$log" | grep -q ': error '; then echo 'unexpected compiler error in TB0001 build check' >&2; exit 1; fi
 
 test-fast: build
-	dotnet run --project src/Tests/TerraScale.TerraBase.Fast --configuration $(CONFIGURATION) --no-build
+	dotnet run --project src/Tests/TerraBase.Fast --configuration $(CONFIGURATION) --no-build
 
 test-slow: build
-	dotnet run --project src/Tests/TerraScale.TerraBase.Slow --configuration $(CONFIGURATION) --no-build
+	dotnet run --project src/Tests/TerraBase.Slow --configuration $(CONFIGURATION) --no-build
 
 # Everything required before a push.
 check: lint analyzer-check test-fast
 
 run:
-	dotnet run --project src/TerraScale.TerraBase --configuration $(CONFIGURATION)
+	dotnet run --project src/TerraBase --configuration $(CONFIGURATION)
 
 # Self-contained single-file binary (JIT): $(PUBLISH_DIR)/terrabase
 publish:
-	dotnet publish src/TerraScale.TerraBase --configuration Release --runtime $(RUNTIME) --self-contained --output "$(PUBLISH_DIR)" --nologo
+	dotnet publish src/TerraBase --configuration Release --runtime $(RUNTIME) --self-contained --output "$(PUBLISH_DIR)" --nologo
 
 clean:
 	dotnet clean $(SOLUTION) --configuration $(CONFIGURATION) --nologo

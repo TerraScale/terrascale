@@ -1,4 +1,4 @@
-namespace TerraScale.TerraBase.Features.ObjectTier;
+namespace TerraBase.Features.ObjectTier;
 
 /// <summary>An immutable object's identity and size.</summary>
 /// <param name="Key">Object key within the configured bucket and prefix.</param>

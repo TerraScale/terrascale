@@ -6,14 +6,14 @@ using Google.Protobuf;
 using Grpc.Core;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
-using TerraScale.TerraBase.Engine;
-using TerraScale.TerraBase.Features.ApiKeys;
-using TerraScale.TerraBase.Features.Management;
-using TerraScale.TerraBase.Features.Replication;
-using TerraScale.TerraBase.Features.Replication.V1;
-using TerraScale.TerraBase.Testing;
+using TerraBase.Engine;
+using TerraBase.Features.ApiKeys;
+using TerraBase.Features.Management;
+using TerraBase.Features.Replication;
+using TerraBase.Features.Replication.V1;
+using TerraBase.Testing;
 
-namespace TerraScale.TerraBase.Fast.Replication;
+namespace TerraBase.Fast.Replication;
 
 /// <summary>A catalog follower forwards what its catalog primary serves (docs/decisions/0009).</summary>
 public sealed class CatalogForwardingTests

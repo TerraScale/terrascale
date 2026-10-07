@@ -1,9 +1,9 @@
+using TerraBase.Errors;
+using TerraBase.Features.UserAuth;
+using TerraBase.Hosting;
 using TerraScale.Endpoints;
-using TerraScale.TerraBase.Errors;
-using TerraScale.TerraBase.Features.UserAuth;
-using TerraScale.TerraBase.Hosting;
 
-namespace TerraScale.TerraBase.Features.Management.Queries;
+namespace TerraBase.Features.Management.Queries;
 
 /// <summary><c>PUT …/saved-queries/{query}</c>: replaces the name and SQL of a saved query.</summary>
 public sealed class UpdateSavedQueryEndpoint(IManagementService management, IQueryService queries) : Endpoint<SavedQueryRequest, IResult>

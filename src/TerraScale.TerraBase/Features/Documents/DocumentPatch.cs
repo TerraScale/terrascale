@@ -1,9 +1,9 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
-using TerraScale.TerraBase.Errors;
-using TerraScale.TerraBase.Primitives;
+using TerraBase.Errors;
+using TerraBase.Primitives;
 
-namespace TerraScale.TerraBase.Features.Documents;
+namespace TerraBase.Features.Documents;
 
 /// <summary>An applied patch, or why it does not apply: an invalid operand (400) or a target of the wrong type (409 <c>patch_conflict</c>).</summary>
 public readonly union PatchOutcome(Done, Validation, Conflict);

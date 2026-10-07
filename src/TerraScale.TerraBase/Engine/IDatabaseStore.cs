@@ -1,6 +1,6 @@
-using TerraScale.TerraBase.Tenancy;
+using TerraBase.Tenancy;
 
-namespace TerraScale.TerraBase.Engine;
+namespace TerraBase.Engine;
 
 /// <summary>One open database. The engine owns its lifetime.</summary>
 public interface IDatabaseStore

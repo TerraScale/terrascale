@@ -8,14 +8,14 @@ using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
-using TerraScale.TerraBase.Engine;
-using TerraScale.TerraBase.Engine.Sqlite;
-using TerraScale.TerraBase.Features.Replication;
-using TerraScale.TerraBase.Features.Replication.V1;
-using TerraScale.TerraBase.Tenancy;
-using TerraScale.TerraBase.Testing;
+using TerraBase.Engine;
+using TerraBase.Engine.Sqlite;
+using TerraBase.Features.Replication;
+using TerraBase.Features.Replication.V1;
+using TerraBase.Tenancy;
+using TerraBase.Testing;
 
-namespace TerraScale.TerraBase.Slow.Replication;
+namespace TerraBase.Slow.Replication;
 
 public sealed class ReplicationSlowTests
 {

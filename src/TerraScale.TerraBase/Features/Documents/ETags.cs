@@ -4,9 +4,9 @@ using System.Security.Cryptography;
 using System.Text;
 using Microsoft.Extensions.Primitives;
 using Microsoft.Net.Http.Headers;
-using TerraScale.TerraBase.Errors;
+using TerraBase.Errors;
 
-namespace TerraScale.TerraBase.Features.Documents;
+namespace TerraBase.Features.Documents;
 
 /// <summary>Whether a read answers 304, or why its conditions refuse it.</summary>
 internal readonly union NotModifiedResult(bool, Validation, PreconditionFailed);

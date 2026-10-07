@@ -3,9 +3,9 @@ using System.Text.Json;
 using Bogus;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Time.Testing;
-using TerraScale.TerraBase.Testing;
+using TerraBase.Testing;
 
-namespace TerraScale.TerraBase.Fast.Management;
+namespace TerraBase.Fast.Management;
 
 public sealed class CredentialApiTests
 {

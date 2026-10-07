@@ -1,12 +1,12 @@
 using System.Globalization;
+using TerraBase.Engine;
+using TerraBase.Errors;
+using TerraBase.Features.ApiKeys;
+using TerraBase.Hosting;
+using TerraBase.Tenancy;
 using TerraScale.Endpoints;
-using TerraScale.TerraBase.Engine;
-using TerraScale.TerraBase.Errors;
-using TerraScale.TerraBase.Features.ApiKeys;
-using TerraScale.TerraBase.Hosting;
-using TerraScale.TerraBase.Tenancy;
 
-namespace TerraScale.TerraBase.Features.Documents;
+namespace TerraBase.Features.Documents;
 
 /// <summary><c>POST …/collections/{collection}/query</c>: filters, sorts and projects documents (query v1).</summary>
 public sealed class QueryDocumentsEndpoint(IDocumentService documents, ITenantDirectory tenants) : EndpointWithoutRequest<IResult>

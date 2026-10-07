@@ -1,10 +1,10 @@
+using TerraBase.Engine;
+using TerraBase.Errors;
+using TerraBase.Features.UserAuth;
+using TerraBase.Hosting;
 using TerraScale.Endpoints;
-using TerraScale.TerraBase.Engine;
-using TerraScale.TerraBase.Errors;
-using TerraScale.TerraBase.Features.UserAuth;
-using TerraScale.TerraBase.Hosting;
 
-namespace TerraScale.TerraBase.Features.Management.Indexes;
+namespace TerraBase.Features.Management.Indexes;
 
 /// <summary><c>GET …/databases/{database}/indexes</c>: lists the indexes of a database.</summary>
 public sealed class ListIndexesEndpoint(IManagementService management, IIndexService indexes) : EndpointWithoutRequest<IResult>

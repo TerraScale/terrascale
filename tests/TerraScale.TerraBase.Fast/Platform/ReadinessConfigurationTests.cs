@@ -1,10 +1,10 @@
 using System.Diagnostics;
 using System.Net;
 using Microsoft.Extensions.DependencyInjection;
-using TerraScale.TerraBase.Configuration;
-using TerraScale.TerraBase.Testing;
+using TerraBase.Configuration;
+using TerraBase.Testing;
 
-namespace TerraScale.TerraBase.Fast.Platform;
+namespace TerraBase.Fast.Platform;
 
 public sealed class ReadinessConfigurationTests
 {

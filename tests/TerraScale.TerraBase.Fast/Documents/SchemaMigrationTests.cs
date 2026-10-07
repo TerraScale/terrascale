@@ -2,11 +2,11 @@ using System.Globalization;
 using System.Net;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
-using TerraScale.TerraBase.Engine;
-using TerraScale.TerraBase.Tenancy;
-using TerraScale.TerraBase.Testing;
+using TerraBase.Engine;
+using TerraBase.Tenancy;
+using TerraBase.Testing;
 
-namespace TerraScale.TerraBase.Fast.Documents;
+namespace TerraBase.Fast.Documents;
 
 public sealed class SchemaMigrationTests
 {

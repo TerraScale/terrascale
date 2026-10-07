@@ -1,4 +1,4 @@
-namespace TerraScale.TerraBase.Engine;
+namespace TerraBase.Engine;
 
 /// <summary>A write transaction exceeded its bounded replication change group.</summary>
 public sealed class ChangeGroupCapacityException : InvalidOperationException

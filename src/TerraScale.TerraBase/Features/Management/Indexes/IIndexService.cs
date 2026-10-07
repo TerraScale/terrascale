@@ -1,9 +1,9 @@
-using TerraScale.TerraBase.Engine;
-using TerraScale.TerraBase.Errors;
+using TerraBase.Engine;
+using TerraBase.Errors;
 
-using TerraScale.TerraBase.Tenancy;
+using TerraBase.Tenancy;
 
-namespace TerraScale.TerraBase.Features.Management.Indexes;
+namespace TerraBase.Features.Management.Indexes;
 
 /// <summary>A secondary index of a managed database.</summary>
 /// <param name="Name">Index name, unique per database.</param>

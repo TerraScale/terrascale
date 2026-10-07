@@ -1,8 +1,8 @@
+using TerraBase.Features.UserAuth;
+using TerraBase.Hosting;
 using TerraScale.Endpoints;
-using TerraScale.TerraBase.Features.UserAuth;
-using TerraScale.TerraBase.Hosting;
 
-namespace TerraScale.TerraBase.Features.Management;
+namespace TerraBase.Features.Management;
 
 /// <summary><c>POST …/databases/{database}/branches</c>: creates a database as a snapshot copy of another.</summary>
 public sealed class BranchManagedDatabaseEndpoint(IManagementService management) : Endpoint<NameRequest, IResult>

@@ -1,6 +1,6 @@
-using TerraScale.TerraBase.Tenancy;
+using TerraBase.Tenancy;
 
-namespace TerraScale.TerraBase.Engine;
+namespace TerraBase.Engine;
 
 /// <summary>A file or symbolic link in the data directory, with its database identity when its path is recognized.</summary>
 /// <param name="Path">The full file path.</param>

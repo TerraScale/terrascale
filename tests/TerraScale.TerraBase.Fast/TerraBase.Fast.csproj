@@ -3,7 +3,7 @@
        merge, deployment and release.
        Test references and conventions come from Directory.Build.targets. -->
   <PropertyGroup>
-    <RootNamespace>TerraScale.TerraBase.Fast</RootNamespace>
+    <RootNamespace>TerraBase.Fast</RootNamespace>
     <OutputType>Exe</OutputType>
     <IsTestProject>true</IsTestProject>
   </PropertyGroup>

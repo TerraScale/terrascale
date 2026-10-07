@@ -1,6 +1,6 @@
 using System.Reflection;
 
-namespace TerraScale.TerraBase.Hosting;
+namespace TerraBase.Hosting;
 
 /// <summary>Version of the running build.</summary>
 public static class ServiceVersion

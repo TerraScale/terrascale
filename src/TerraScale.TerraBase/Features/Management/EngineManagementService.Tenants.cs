@@ -1,8 +1,8 @@
-using TerraScale.TerraBase.Engine;
-using TerraScale.TerraBase.Hosting;
-using TerraScale.TerraBase.Tenancy;
+using TerraBase.Engine;
+using TerraBase.Hosting;
+using TerraBase.Tenancy;
 
-namespace TerraScale.TerraBase.Features.Management;
+namespace TerraBase.Features.Management;
 
 /// <summary>
 /// The catalog as a <see cref="ITenantDirectory"/> for API keys, which act for an organization rather than a user.

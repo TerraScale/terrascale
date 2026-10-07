@@ -2,13 +2,13 @@ using System.Diagnostics.Metrics;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.Extensions.Caching.Memory;
-using TerraScale.TerraBase.Configuration;
-using TerraScale.TerraBase.Engine;
-using TerraScale.TerraBase.Features.Memory;
-using TerraScale.TerraBase.Hosting;
-using TerraScale.TerraBase.Tenancy;
+using TerraBase.Configuration;
+using TerraBase.Engine;
+using TerraBase.Features.Memory;
+using TerraBase.Hosting;
+using TerraBase.Tenancy;
 
-namespace TerraScale.TerraBase.Features.Documents;
+namespace TerraBase.Features.Documents;
 
 /// <summary>
 /// Read-through cache of documents and list pages. Each entry keeps the <see cref="IWriteStamps"/> stamp taken

@@ -6,14 +6,14 @@ using System.Text.Json;
 using Bogus;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
-using TerraScale.TerraBase.Engine;
-using TerraScale.TerraBase.Fast.Management;
-using TerraScale.TerraBase.Features.ApiKeys;
-using TerraScale.TerraBase.Features.Documents;
-using TerraScale.TerraBase.Hosting;
-using TerraScale.TerraBase.Testing;
+using TerraBase.Engine;
+using TerraBase.Fast.Management;
+using TerraBase.Features.ApiKeys;
+using TerraBase.Features.Documents;
+using TerraBase.Hosting;
+using TerraBase.Testing;
 
-namespace TerraScale.TerraBase.Fast.Documents;
+namespace TerraBase.Fast.Documents;
 
 public sealed class ShapeApiTests
 {
@@ -775,7 +775,7 @@ public sealed class ShapeApiTests
         var (handle, head) = await SnapshotAsync(shapes, $"{api.Shape}?offset=-1");
 
         // No listener deletes a database by its data-API name, so delete it through the engine; recreate it over HTTP.
-        var engine = api.Server.Services.GetRequiredService<TerraScale.TerraBase.Engine.IStorageEngine>();
+        var engine = api.Server.Services.GetRequiredService<TerraBase.Engine.IStorageEngine>();
         await api.DeleteDatabaseAsync();
 
         await api.SendAsync(HttpMethod.Put, api.DatabasePath());

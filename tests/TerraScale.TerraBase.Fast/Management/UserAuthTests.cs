@@ -3,10 +3,10 @@ using System.Text.Json;
 using Bogus;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.IdentityModel.Tokens;
-using TerraScale.TerraBase.Features.UserAuth;
-using TerraScale.TerraBase.Testing;
+using TerraBase.Features.UserAuth;
+using TerraBase.Testing;
 
-namespace TerraScale.TerraBase.Fast.Management;
+namespace TerraBase.Fast.Management;
 
 /// <summary>ts-auth access tokens authenticate Management API users (TS-519).</summary>
 public sealed class UserAuthTests

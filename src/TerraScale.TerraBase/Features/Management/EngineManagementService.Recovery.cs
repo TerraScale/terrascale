@@ -2,12 +2,12 @@ using System.Diagnostics.CodeAnalysis;
 using System.Diagnostics.Metrics;
 using System.Runtime.ExceptionServices;
 using System.Text.Json;
-using TerraScale.TerraBase.Engine;
-using TerraScale.TerraBase.Features.Management.Backups;
-using TerraScale.TerraBase.Hosting;
-using TerraScale.TerraBase.Tenancy;
+using TerraBase.Engine;
+using TerraBase.Features.Management.Backups;
+using TerraBase.Hosting;
+using TerraBase.Tenancy;
 
-namespace TerraScale.TerraBase.Features.Management;
+namespace TerraBase.Features.Management;
 
 internal sealed partial class EngineManagementService
 {

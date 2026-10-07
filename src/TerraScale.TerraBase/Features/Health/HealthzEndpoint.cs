@@ -1,9 +1,9 @@
 using System.Text.Json.Serialization;
+using TerraBase.Configuration;
+using TerraBase.Hosting;
 using TerraScale.Endpoints;
-using TerraScale.TerraBase.Configuration;
-using TerraScale.TerraBase.Hosting;
 
-namespace TerraScale.TerraBase.Features.Health;
+namespace TerraBase.Features.Health;
 
 /// <summary>Probe body.</summary>
 /// <param name="Status"><c>ok</c> for liveness; <c>ready</c> or <c>unavailable</c> for readiness.</param>

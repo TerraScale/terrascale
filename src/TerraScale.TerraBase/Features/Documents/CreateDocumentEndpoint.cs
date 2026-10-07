@@ -1,11 +1,11 @@
 using System.Text.Json;
+using TerraBase.Errors;
+using TerraBase.Features.ApiKeys;
+using TerraBase.Hosting;
+using TerraBase.Tenancy;
 using TerraScale.Endpoints;
-using TerraScale.TerraBase.Errors;
-using TerraScale.TerraBase.Features.ApiKeys;
-using TerraScale.TerraBase.Hosting;
-using TerraScale.TerraBase.Tenancy;
 
-namespace TerraScale.TerraBase.Features.Documents;
+namespace TerraBase.Features.Documents;
 
 /// <summary><c>POST …/documents</c>: creates a JSON document with a server-generated UUIDv7 id.</summary>
 public sealed class CreateDocumentEndpoint(IDocumentService documents, ITenantDirectory tenants) : EndpointWithoutRequest<IResult>

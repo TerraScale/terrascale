@@ -1,6 +1,6 @@
-using TerraScale.TerraBase.Tenancy;
+using TerraBase.Tenancy;
 
-namespace TerraScale.TerraBase.Features.Sql;
+namespace TerraBase.Features.Sql;
 
 /// <summary>A tabular result.</summary>
 /// <param name="Columns">Column names.</param>

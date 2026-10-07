@@ -1,11 +1,11 @@
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
-using TerraScale.TerraBase.Engine;
-using TerraScale.TerraBase.Features.Management;
-using TerraScale.TerraBase.Hosting;
-using TerraScale.TerraBase.Tenancy;
+using TerraBase.Engine;
+using TerraBase.Features.Management;
+using TerraBase.Hosting;
+using TerraBase.Tenancy;
 
-namespace TerraScale.TerraBase.Testing;
+namespace TerraBase.Testing;
 
 /// <summary>
 /// Registers databases of chosen ids in a server's catalog: a replication receiver takes only databases its catalog registers.

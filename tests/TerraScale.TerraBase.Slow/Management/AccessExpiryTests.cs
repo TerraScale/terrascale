@@ -3,9 +3,9 @@ using System.Text.Json;
 using Bogus;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
-using TerraScale.TerraBase.Testing;
+using TerraBase.Testing;
 
-namespace TerraScale.TerraBase.Slow.Management;
+namespace TerraBase.Slow.Management;
 
 public sealed class AccessExpiryTests
 {

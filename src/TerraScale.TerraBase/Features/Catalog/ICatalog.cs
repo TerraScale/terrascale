@@ -1,6 +1,6 @@
-using TerraScale.TerraBase.Tenancy;
+using TerraBase.Tenancy;
 
-namespace TerraScale.TerraBase.Features.Catalog;
+namespace TerraBase.Features.Catalog;
 
 /// <summary>A collection and its document count.</summary>
 /// <param name="Name">Collection name.</param>

@@ -3,7 +3,7 @@
        It runs independently and never blocks.
        Test references and conventions come from Directory.Build.targets. -->
   <PropertyGroup>
-    <RootNamespace>TerraScale.TerraBase.Slow</RootNamespace>
+    <RootNamespace>TerraBase.Slow</RootNamespace>
     <OutputType>Exe</OutputType>
     <IsTestProject>true</IsTestProject>
   </PropertyGroup>

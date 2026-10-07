@@ -40,7 +40,7 @@ draft() {
     [[ -s $dist/$name ]] || fail "missing staged release executable: $dist/$name"
   done
   [[ $(git rev-parse HEAD) == "$GITHUB_SHA" ]] || fail "checkout is not the event revision $GITHUB_SHA"
-  version=$(sed -n 's:.*<Version>\(.*\)</Version>.*:\1:p' src/TerraScale.TerraBase/TerraScale.TerraBase.csproj)
+  version=$(sed -n 's:.*<Version>\(.*\)</Version>.*:\1:p' src/TerraBase/TerraBase.csproj)
 
   case $GITHUB_REF in
     refs/heads/main)

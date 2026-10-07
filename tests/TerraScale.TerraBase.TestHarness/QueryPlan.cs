@@ -1,7 +1,7 @@
 using System.Text.RegularExpressions;
 using Microsoft.Data.Sqlite;
 
-namespace TerraScale.TerraBase.Testing;
+namespace TerraBase.Testing;
 
 /// <summary>Reads SQLite query plans from a database file a test server created.</summary>
 public static partial class QueryPlan

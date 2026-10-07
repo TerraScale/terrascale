@@ -1,4 +1,4 @@
-namespace TerraScale.TerraBase.Features.Management;
+namespace TerraBase.Features.Management;
 
 /// <summary>A managed database and the region of the node serving it; region is not persisted in the catalog.</summary>
 /// <param name="Id">Database id.</param>

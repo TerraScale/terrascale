@@ -1,11 +1,11 @@
 using System.Buffers.Text;
 using System.Globalization;
 using System.Text;
-using TerraScale.TerraBase.Engine;
-using TerraScale.TerraBase.Errors;
-using TerraScale.TerraBase.Tenancy;
+using TerraBase.Engine;
+using TerraBase.Errors;
+using TerraBase.Tenancy;
 
-namespace TerraScale.TerraBase.Features.Documents;
+namespace TerraBase.Features.Documents;
 
 /// <summary>Kinds of shape offsets (docs/shape-reads.md).</summary>
 public enum ShapeOffsetKind

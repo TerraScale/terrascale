@@ -1,6 +1,6 @@
 using Microsoft.Data.Sqlite;
 
-namespace TerraScale.TerraBase.Testing;
+namespace TerraBase.Testing;
 
 /// <summary>Writes and reads database files directly, the way an older build left them on disk.</summary>
 public static class DocumentFiles

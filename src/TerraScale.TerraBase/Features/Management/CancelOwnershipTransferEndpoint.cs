@@ -1,8 +1,8 @@
+using TerraBase.Features.UserAuth;
+using TerraBase.Hosting;
 using TerraScale.Endpoints;
-using TerraScale.TerraBase.Features.UserAuth;
-using TerraScale.TerraBase.Hosting;
 
-namespace TerraScale.TerraBase.Features.Management;
+namespace TerraBase.Features.Management;
 
 /// <summary><c>DELETE …/organizations/{organization}/ownership-transfer</c>: cancels the pending ownership transfer.</summary>
 public sealed class CancelOwnershipTransferEndpoint(IAccessService access) : EndpointWithoutRequest<IResult>

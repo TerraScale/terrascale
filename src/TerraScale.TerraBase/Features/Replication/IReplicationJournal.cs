@@ -1,7 +1,7 @@
-using TerraScale.TerraBase.Engine;
-using TerraScale.TerraBase.Tenancy;
+using TerraBase.Engine;
+using TerraBase.Tenancy;
 
-namespace TerraScale.TerraBase.Features.Replication;
+namespace TerraBase.Features.Replication;
 
 /// <summary>
 /// The incoming journal: a received change group becomes durable (synced to disk) and visible in one local transaction

@@ -3,11 +3,11 @@ using System.Diagnostics.Metrics;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-using TerraScale.TerraBase.Engine;
-using TerraScale.TerraBase.Errors;
-using TerraScale.TerraBase.Hosting;
+using TerraBase.Engine;
+using TerraBase.Errors;
+using TerraBase.Hosting;
 
-namespace TerraScale.TerraBase.Features.Documents;
+namespace TerraBase.Features.Documents;
 
 /// <summary>
 /// Shape reads over append-only document history: snapshots read the state at their offset, and

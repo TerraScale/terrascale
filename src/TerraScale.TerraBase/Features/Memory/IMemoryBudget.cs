@@ -1,4 +1,4 @@
-namespace TerraScale.TerraBase.Features.Memory;
+namespace TerraBase.Features.Memory;
 
 /// <summary>Who a reservation is charged to. Bounded set; never a tenant-controlled value as a metric label.</summary>
 public enum MemoryLane

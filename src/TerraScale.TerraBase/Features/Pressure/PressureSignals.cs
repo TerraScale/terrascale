@@ -2,12 +2,12 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
 using System.Reflection;
-using TerraScale.TerraBase.Configuration;
-using TerraScale.TerraBase.Engine;
-using TerraScale.TerraBase.Hosting;
-using TerraScale.TerraBase.Tenancy;
+using TerraBase.Configuration;
+using TerraBase.Engine;
+using TerraBase.Hosting;
+using TerraBase.Tenancy;
 
-namespace TerraScale.TerraBase.Features.Pressure;
+namespace TerraBase.Features.Pressure;
 
 internal sealed partial class PressureSignals : BackgroundService, IPressureSignals
 {

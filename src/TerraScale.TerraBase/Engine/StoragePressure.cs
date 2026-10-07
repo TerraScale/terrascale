@@ -1,4 +1,4 @@
-namespace TerraScale.TerraBase.Engine;
+namespace TerraBase.Engine;
 
 /// <summary>A cached physical-storage sample, independent of logical document sizes.</summary>
 /// <param name="PhysicalBytes">Total tenant database, WAL and SHM file lengths; null before a complete scan or after a failed scan. Excludes the system database.</param>

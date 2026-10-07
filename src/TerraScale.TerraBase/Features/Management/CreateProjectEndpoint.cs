@@ -1,8 +1,8 @@
+using TerraBase.Features.UserAuth;
+using TerraBase.Hosting;
 using TerraScale.Endpoints;
-using TerraScale.TerraBase.Features.UserAuth;
-using TerraScale.TerraBase.Hosting;
 
-namespace TerraScale.TerraBase.Features.Management;
+namespace TerraBase.Features.Management;
 
 /// <summary><c>POST …/organizations/{organization}/projects</c>: creates a project.</summary>
 public sealed class CreateProjectEndpoint(IManagementService management) : Endpoint<NameRequest, IResult>

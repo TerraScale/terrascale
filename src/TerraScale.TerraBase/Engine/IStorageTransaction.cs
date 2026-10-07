@@ -1,6 +1,6 @@
 using System.Text;
 
-namespace TerraScale.TerraBase.Engine;
+namespace TerraBase.Engine;
 
 /// <summary>
 /// A JSON document as stored: UTF-8 JSON text, or a tombstone once deleted, and its merge version.

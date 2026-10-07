@@ -1,6 +1,6 @@
 using TerraScale.Endpoints;
 
-namespace TerraScale.TerraBase.Features.ApiKeys;
+namespace TerraBase.Features.ApiKeys;
 
 /// <summary>A key to issue.</summary>
 /// <param name="Name">Operator-chosen label, 1 to 100 characters.</param>

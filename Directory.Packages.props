@@ -10,7 +10,7 @@
   <ItemGroup Label="Global analyzers">
     <GlobalPackageReference Include="Microsoft.CodeAnalysis.BannedApiAnalyzers" Version="4.14.0" />
   </ItemGroup>
-  <!-- Roslyn for src/TerraScale.TerraBase.Analyzers: keep at or below the compiler in the pinned SDK
+  <!-- Roslyn for src/TerraBase.Analyzers: keep at or below the compiler in the pinned SDK
        (5.11 on 11.0.100-rc.1), or the analyzer fails to load (CS8032). -->
   <ItemGroup Label="Analyzer authoring">
     <PackageVersion Include="Microsoft.CodeAnalysis.CSharp" Version="5.9.0" />

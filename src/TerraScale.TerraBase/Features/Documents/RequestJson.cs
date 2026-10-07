@@ -3,11 +3,11 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.Json.Serialization.Metadata;
-using TerraScale.TerraBase.Errors;
-using TerraScale.TerraBase.Hosting;
-using TerraScale.TerraBase.Primitives;
+using TerraBase.Errors;
+using TerraBase.Hosting;
+using TerraBase.Primitives;
 
-namespace TerraScale.TerraBase.Features.Documents;
+namespace TerraBase.Features.Documents;
 
 /// <summary>
 /// The boundary validator for client JSON. Request bodies deserialize strictly through <see cref="Read{T}"/>;

@@ -1,4 +1,4 @@
-namespace TerraScale.TerraBase.Features.Management.Indexes;
+namespace TerraBase.Features.Management.Indexes;
 
 /// <summary>Registers the index part of the Management slice.</summary>
 public static class IndexesExtensions

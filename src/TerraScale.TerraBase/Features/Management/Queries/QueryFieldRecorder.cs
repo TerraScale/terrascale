@@ -1,8 +1,8 @@
-using TerraScale.TerraBase.Hosting;
-using TerraScale.TerraBase.Tenancy;
-using static TerraScale.TerraBase.Features.Management.SystemCatalog;
+using TerraBase.Hosting;
+using TerraBase.Tenancy;
+using static TerraBase.Features.Management.SystemCatalog;
 
-namespace TerraScale.TerraBase.Features.Management.Queries;
+namespace TerraBase.Features.Management.Queries;
 
 /// <summary>
 /// Counts the fields SQL runs used without an index in memory and saves them to the catalog in one write per flush, with

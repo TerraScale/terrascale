@@ -1,6 +1,6 @@
 using System.Net;
 
-namespace TerraScale.TerraBase.Fast.Documents;
+namespace TerraBase.Fast.Documents;
 
 public sealed class DocumentIdValidationTests
 {

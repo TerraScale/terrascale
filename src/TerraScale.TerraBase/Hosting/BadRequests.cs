@@ -1,8 +1,8 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using TerraScale.TerraBase.Engine;
+using TerraBase.Engine;
 
-namespace TerraScale.TerraBase.Hosting;
+namespace TerraBase.Hosting;
 
 /// <summary>An API error: <c>{"error":{"code":…,"message":…,"op":…}}</c> (Documents API v1 errors).</summary>
 /// <param name="Error">The error.</param>

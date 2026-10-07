@@ -2,7 +2,7 @@ using System.Buffers.Binary;
 using System.Numerics;
 using NativeCompressions;
 
-namespace TerraScale.TerraBase.Features.Replication;
+namespace TerraBase.Features.Replication;
 
 /// <summary>
 /// The versioned <c>TBLZ4E01</c> application envelope of terrabase-rust (<c>tb-format/src/envelope.rs</c>):

@@ -1,10 +1,10 @@
+using TerraBase.Errors;
+using TerraBase.Features.ApiKeys;
+using TerraBase.Hosting;
+using TerraBase.Tenancy;
 using TerraScale.Endpoints;
-using TerraScale.TerraBase.Errors;
-using TerraScale.TerraBase.Features.ApiKeys;
-using TerraScale.TerraBase.Hosting;
-using TerraScale.TerraBase.Tenancy;
 
-namespace TerraScale.TerraBase.Features.Documents;
+namespace TerraBase.Features.Documents;
 
 /// <summary><c>DELETE /v1/projects/{project}/databases/{database}/collections/{collection}</c>: drops a collection.</summary>
 public sealed class DropCollectionEndpoint(IDocumentService documents, ITenantDirectory tenants) : EndpointWithoutRequest<IResult>

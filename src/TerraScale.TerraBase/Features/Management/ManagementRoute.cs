@@ -1,10 +1,10 @@
 using System.Globalization;
 using System.Net.Mail;
-using TerraScale.TerraBase.Errors;
-using TerraScale.TerraBase.Features.UserAuth;
-using TerraScale.TerraBase.Tenancy;
+using TerraBase.Errors;
+using TerraBase.Features.UserAuth;
+using TerraBase.Tenancy;
 
-namespace TerraScale.TerraBase.Features.Management;
+namespace TerraBase.Features.Management;
 
 /// <summary>A body that carries only a name: create, rename and branch.</summary>
 /// <param name="Name">Organization or project display name, or database name.</param>

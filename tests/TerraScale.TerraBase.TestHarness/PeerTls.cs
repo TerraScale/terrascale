@@ -3,7 +3,7 @@ using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using Grpc.Net.Client;
 
-namespace TerraScale.TerraBase.Testing;
+namespace TerraBase.Testing;
 
 /// <summary>
 /// A throwaway peer PKI for one test: a CA, a node certificate for localhost (served by the peer

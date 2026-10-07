@@ -1,8 +1,8 @@
+using TerraBase.Features.UserAuth;
+using TerraBase.Hosting;
 using TerraScale.Endpoints;
-using TerraScale.TerraBase.Features.UserAuth;
-using TerraScale.TerraBase.Hosting;
 
-namespace TerraScale.TerraBase.Features.Management;
+namespace TerraBase.Features.Management;
 
 /// <summary><c>DELETE …/organizations/{organization}/members/{user}</c>: removes a member.</summary>
 public sealed class RemoveMemberEndpoint(IAccessService access) : EndpointWithoutRequest<IResult>

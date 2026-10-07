@@ -1,13 +1,13 @@
 <Solution>
   <Folder Name="/src/">
-    <Project Path="src/TerraScale.TerraBase.Analyzers/TerraScale.TerraBase.Analyzers.csproj" />
-    <Project Path="src/TerraScale.TerraBase.Analyzers.BuildCheck/TerraScale.TerraBase.Analyzers.BuildCheck.csproj">
+    <Project Path="src/TerraBase.Analyzers/TerraBase.Analyzers.csproj" />
+    <Project Path="src/TerraBase.Analyzers.BuildCheck/TerraBase.Analyzers.BuildCheck.csproj">
       <Build Project="false" />
     </Project>
-    <Project Path="src/TerraScale.TerraBase/TerraScale.TerraBase.csproj" />
+    <Project Path="src/TerraBase/TerraBase.csproj" />
   </Folder>
   <Folder Name="/src/Tests/">
-    <Project Path="src/Tests/TerraScale.TerraBase.Fast/TerraScale.TerraBase.Fast.csproj" />
-    <Project Path="src/Tests/TerraScale.TerraBase.Slow/TerraScale.TerraBase.Slow.csproj" />
+    <Project Path="src/Tests/TerraBase.Fast/TerraBase.Fast.csproj" />
+    <Project Path="src/Tests/TerraBase.Slow/TerraBase.Slow.csproj" />
   </Folder>
 </Solution>

@@ -14,7 +14,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.IdentityModel.JsonWebTokens;
 using Microsoft.IdentityModel.Tokens;
 
-namespace TerraScale.TerraBase.Testing;
+namespace TerraBase.Testing;
 
 /// <summary>
 /// An in-process stand-in for ts-auth: its OIDC discovery document and JWKS, and access tokens signed with its keys.

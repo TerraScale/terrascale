@@ -1,7 +1,7 @@
 using System.Net;
 using System.Text.Json;
 
-namespace TerraScale.TerraBase.Testing;
+namespace TerraBase.Testing;
 
 /// <summary>Asserts expected failures: <c>{"error":{"code","message"}}</c> as JSON, never cached (docs/error-handling.md).</summary>
 public static class ErrorAssert

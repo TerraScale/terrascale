@@ -1,8 +1,8 @@
+using TerraBase.Features.UserAuth;
+using TerraBase.Hosting;
 using TerraScale.Endpoints;
-using TerraScale.TerraBase.Features.UserAuth;
-using TerraScale.TerraBase.Hosting;
 
-namespace TerraScale.TerraBase.Features.Management;
+namespace TerraBase.Features.Management;
 
 /// <summary><c>GET /v1/management/current-organization</c>: reads the organization the acting user last switched to.</summary>
 public sealed class GetCurrentOrganizationEndpoint(IManagementService management) : EndpointWithoutRequest<IResult>

@@ -1,7 +1,7 @@
+using TerraBase.Hosting;
 using TerraScale.Endpoints;
-using TerraScale.TerraBase.Hosting;
 
-namespace TerraScale.TerraBase.Features.ApiReference;
+namespace TerraBase.Features.ApiReference;
 
 /// <summary>
 /// <c>GET /</c>: redirects to the Scalar API reference. The <c>Location</c> is relative, so it holds on every regional host

@@ -1,6 +1,6 @@
-using TerraScale.TerraBase.Configuration;
+using TerraBase.Configuration;
 
-namespace TerraScale.TerraBase.Features.Management.Backups;
+namespace TerraBase.Features.Management.Backups;
 
 /// <summary>Once a minute, takes the scheduled backups that are due and applies retention; on the catalog primary only.</summary>
 internal sealed partial class BackupScheduler(IManagedBackupService backups, TimeProvider time, TerraBaseOptions options, ILogger<BackupScheduler> logger) : BackgroundService

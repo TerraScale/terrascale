@@ -2,11 +2,11 @@ using System.Diagnostics.Metrics;
 using System.Text.Json;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
-using TerraScale.TerraBase.Engine;
-using TerraScale.TerraBase.Features.Replication;
-using TerraScale.TerraBase.Testing;
+using TerraBase.Engine;
+using TerraBase.Features.Replication;
+using TerraBase.Testing;
 
-namespace TerraScale.TerraBase.Slow.Replication;
+namespace TerraBase.Slow.Replication;
 
 public sealed class SenderRestoreTests
 {

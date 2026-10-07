@@ -1,4 +1,4 @@
-namespace TerraScale.TerraBase.Features.Membership;
+namespace TerraBase.Features.Membership;
 
 /// <summary>Member lifecycle, in order.</summary>
 public enum MemberState

@@ -1,13 +1,13 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.OpenApi;
 using Scalar.AspNetCore;
+using TerraBase.Configuration;
+using TerraBase.Features.ApiKeys;
+using TerraBase.Features.UserAuth;
+using TerraBase.Hosting;
 using TerraScale.Endpoints;
-using TerraScale.TerraBase.Configuration;
-using TerraScale.TerraBase.Features.ApiKeys;
-using TerraScale.TerraBase.Features.UserAuth;
-using TerraScale.TerraBase.Hosting;
 
-namespace TerraScale.TerraBase.Features.ApiReference;
+namespace TerraBase.Features.ApiReference;
 
 /// <summary>
 /// The public API reference: the OpenAPI document and Scalar, served anonymously on the client listener only. The document

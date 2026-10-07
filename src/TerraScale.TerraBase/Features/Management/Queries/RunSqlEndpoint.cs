@@ -1,9 +1,9 @@
+using TerraBase.Errors;
+using TerraBase.Features.UserAuth;
+using TerraBase.Hosting;
 using TerraScale.Endpoints;
-using TerraScale.TerraBase.Errors;
-using TerraScale.TerraBase.Features.UserAuth;
-using TerraScale.TerraBase.Hosting;
 
-namespace TerraScale.TerraBase.Features.Management.Queries;
+namespace TerraBase.Features.Management.Queries;
 
 /// <summary><c>POST …/databases/{database}/sql</c>: runs a read-only SQL statement.</summary>
 public sealed class RunSqlEndpoint(IManagementService management, IQueryService queries) : Endpoint<SqlRequest, IResult>

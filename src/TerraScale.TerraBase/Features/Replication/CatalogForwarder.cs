@@ -4,13 +4,13 @@ using System.Globalization;
 using Google.Protobuf;
 using Grpc.Core;
 using Microsoft.AspNetCore.Http.Features;
-using TerraScale.TerraBase.Configuration;
-using TerraScale.TerraBase.Engine;
-using TerraScale.TerraBase.Features.Memory;
-using TerraScale.TerraBase.Features.Replication.V1;
-using TerraScale.TerraBase.Hosting;
+using TerraBase.Configuration;
+using TerraBase.Engine;
+using TerraBase.Features.Memory;
+using TerraBase.Features.Replication.V1;
+using TerraBase.Hosting;
 
-namespace TerraScale.TerraBase.Features.Replication;
+namespace TerraBase.Features.Replication;
 
 /// <summary>
 /// Endpoint metadata: a catalog follower serves the endpoint's requests itself, and forwards one to its catalog primary when

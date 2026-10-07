@@ -3,13 +3,13 @@ using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http.HttpResults;
+using TerraBase.Errors;
+using TerraBase.Features.Documents;
+using TerraBase.Features.UserAuth;
+using TerraBase.Hosting;
 using TerraScale.Endpoints;
-using TerraScale.TerraBase.Errors;
-using TerraScale.TerraBase.Features.Documents;
-using TerraScale.TerraBase.Features.UserAuth;
-using TerraScale.TerraBase.Hosting;
 
-namespace TerraScale.TerraBase.Features.Management;
+namespace TerraBase.Features.Management;
 
 /// <summary>A commit: its id and operations (docs/management-commits.md). Its schema documents the request; the endpoint reads it itself.</summary>
 /// <param name="Id">Client-chosen lowercase UUID, the same on every retry of one logical update.</param>

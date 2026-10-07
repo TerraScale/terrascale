@@ -1,12 +1,12 @@
+using TerraBase.Engine;
+using TerraBase.Errors;
+using TerraBase.Features.ApiKeys;
+using TerraBase.Features.Replication;
+using TerraBase.Hosting;
+using TerraBase.Tenancy;
 using TerraScale.Endpoints;
-using TerraScale.TerraBase.Engine;
-using TerraScale.TerraBase.Errors;
-using TerraScale.TerraBase.Features.ApiKeys;
-using TerraScale.TerraBase.Features.Replication;
-using TerraScale.TerraBase.Hosting;
-using TerraScale.TerraBase.Tenancy;
 
-namespace TerraScale.TerraBase.Features.Documents;
+namespace TerraBase.Features.Documents;
 
 /// <summary>Database as returned by the client API.</summary>
 /// <param name="Id">Database id (a lowercase hyphenated UUID), for keys narrowed to it.</param>

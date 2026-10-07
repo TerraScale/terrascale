@@ -1,7 +1,7 @@
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authentication;
 
-namespace TerraScale.TerraBase.Features.UserAuth;
+namespace TerraBase.Features.UserAuth;
 
 /// <summary>Registers ts-auth user authentication and reads the authenticated user.</summary>
 public static class UserAuthExtensions

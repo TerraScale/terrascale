@@ -1,10 +1,10 @@
+using TerraBase.Errors;
+using TerraBase.Features.ApiKeys;
+using TerraBase.Hosting;
+using TerraBase.Tenancy;
 using TerraScale.Endpoints;
-using TerraScale.TerraBase.Errors;
-using TerraScale.TerraBase.Features.ApiKeys;
-using TerraScale.TerraBase.Hosting;
-using TerraScale.TerraBase.Tenancy;
 
-namespace TerraScale.TerraBase.Features.Documents;
+namespace TerraBase.Features.Documents;
 
 /// <summary><c>GET /v1/projects/{project}/databases/{database}/collections/{collection}</c>: reads a collection.</summary>
 public sealed class GetCollectionEndpoint(IDocumentService documents, ITenantDirectory tenants) : EndpointWithoutRequest<IResult>

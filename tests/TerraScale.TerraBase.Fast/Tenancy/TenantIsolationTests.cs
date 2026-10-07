@@ -5,10 +5,10 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
-using TerraScale.TerraBase.Hosting;
-using TerraScale.TerraBase.Testing;
+using TerraBase.Hosting;
+using TerraBase.Testing;
 
-namespace TerraScale.TerraBase.Fast.Tenancy;
+namespace TerraBase.Fast.Tenancy;
 
 /// <summary>The organization is the tenant: nothing of one organization is reachable from another.</summary>
 public sealed class TenantIsolationTests

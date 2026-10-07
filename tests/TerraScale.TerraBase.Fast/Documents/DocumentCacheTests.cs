@@ -3,15 +3,15 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
-using TerraScale.TerraBase.Engine;
-using TerraScale.TerraBase.Engine.Sqlite;
-using TerraScale.TerraBase.Fast.Storage;
-using TerraScale.TerraBase.Features.Documents;
-using TerraScale.TerraBase.Features.Memory;
-using TerraScale.TerraBase.Tenancy;
-using TerraScale.TerraBase.Testing;
+using TerraBase.Engine;
+using TerraBase.Engine.Sqlite;
+using TerraBase.Fast.Storage;
+using TerraBase.Features.Documents;
+using TerraBase.Features.Memory;
+using TerraBase.Tenancy;
+using TerraBase.Testing;
 
-namespace TerraScale.TerraBase.Fast.Documents;
+namespace TerraBase.Fast.Documents;
 
 // Each test changes the database file behind the server's back (DocumentFiles): a read that still returns
 // the old value was a cache hit, a read that returns the file's value was a miss.

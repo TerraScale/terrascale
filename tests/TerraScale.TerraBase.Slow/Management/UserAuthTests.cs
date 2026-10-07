@@ -1,7 +1,7 @@
 using System.Net;
-using TerraScale.TerraBase.Testing;
+using TerraBase.Testing;
 
-namespace TerraScale.TerraBase.Slow.Management;
+namespace TerraBase.Slow.Management;
 
 /// <summary>ts-auth access tokens against a real clock and, once TS-491 lands, a real ts-auth.</summary>
 public sealed class UserAuthTests

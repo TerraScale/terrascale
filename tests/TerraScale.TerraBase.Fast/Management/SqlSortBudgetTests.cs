@@ -1,8 +1,8 @@
 using System.Net;
 using System.Text.Json;
-using TerraScale.TerraBase.Testing;
+using TerraBase.Testing;
 
-namespace TerraScale.TerraBase.Fast.Management;
+namespace TerraBase.Fast.Management;
 
 public sealed class SqlSortBudgetTests
 {

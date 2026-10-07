@@ -1,10 +1,10 @@
 using Google.Protobuf;
-using TerraScale.TerraBase.Configuration;
-using TerraScale.TerraBase.Engine;
-using TerraScale.TerraBase.Features.Replication.V1;
-using TerraScale.TerraBase.Tenancy;
+using TerraBase.Configuration;
+using TerraBase.Engine;
+using TerraBase.Features.Replication.V1;
+using TerraBase.Tenancy;
 
-namespace TerraScale.TerraBase.Features.Replication;
+namespace TerraBase.Features.Replication;
 
 /// <summary>
 /// Protocol 1.0 of the <c>Replication.Sync</c> stream between TerraBase nodes. One stream carries the

@@ -1,10 +1,10 @@
 using System.Diagnostics.Metrics;
 using Microsoft.IdentityModel.Protocols.OpenIdConnect;
 using Microsoft.IdentityModel.Tokens;
-using TerraScale.TerraBase.Configuration;
-using TerraScale.TerraBase.Hosting;
+using TerraBase.Configuration;
+using TerraBase.Hosting;
 
-namespace TerraScale.TerraBase.Features.UserAuth;
+namespace TerraBase.Features.UserAuth;
 
 /// <summary>
 /// ts-auth's signing keys, read through OIDC discovery (<c>{auth-issuer}/.well-known/openid-configuration</c>, then its

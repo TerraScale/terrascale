@@ -2,10 +2,10 @@ using System.Globalization;
 using SqlParser;
 using SqlParser.Ast;
 using SqlParser.Dialects;
-using TerraScale.TerraBase.Engine;
-using TerraScale.TerraBase.Errors;
+using TerraBase.Engine;
+using TerraBase.Errors;
 
-namespace TerraScale.TerraBase.Features.Management.Queries;
+namespace TerraBase.Features.Management.Queries;
 
 /// <summary>A statement of the dashboard SQL subset, translated to an engine query.</summary>
 /// <param name="Query">The engine query.</param>

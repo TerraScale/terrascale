@@ -1,11 +1,11 @@
+using TerraBase.Engine;
+using TerraBase.Errors;
+using TerraBase.Features.Documents;
+using TerraBase.Features.UserAuth;
+using TerraBase.Hosting;
 using TerraScale.Endpoints;
-using TerraScale.TerraBase.Engine;
-using TerraScale.TerraBase.Errors;
-using TerraScale.TerraBase.Features.Documents;
-using TerraScale.TerraBase.Features.UserAuth;
-using TerraScale.TerraBase.Hosting;
 
-namespace TerraScale.TerraBase.Features.Management;
+namespace TerraBase.Features.Management;
 
 /// <summary><c>GET /v1/management/documents/{collection}/{id}</c>: reads a document of the dashboard document space.</summary>
 public sealed class GetDashboardDocumentEndpoint(IManagementCommits commits) : EndpointWithoutRequest<IResult>

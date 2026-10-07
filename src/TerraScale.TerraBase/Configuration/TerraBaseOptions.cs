@@ -4,9 +4,9 @@ using System.Globalization;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
-using TerraScale.TerraBase.Features.Replication;
+using TerraBase.Features.Replication;
 
-namespace TerraScale.TerraBase.Configuration;
+namespace TerraBase.Configuration;
 
 /// <summary>An invalid or incomplete <c>TERRABASE_*</c> configuration. The process must not start.</summary>
 public sealed class TerraBaseConfigurationException(string message) : Exception(message);

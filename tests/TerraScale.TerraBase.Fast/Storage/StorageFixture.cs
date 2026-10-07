@@ -1,12 +1,12 @@
 using System.Text;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
-using TerraScale.TerraBase.Engine;
-using TerraScale.TerraBase.Engine.Sqlite;
-using TerraScale.TerraBase.Tenancy;
-using TerraScale.TerraBase.Testing;
+using TerraBase.Engine;
+using TerraBase.Engine.Sqlite;
+using TerraBase.Tenancy;
+using TerraBase.Testing;
 
-namespace TerraScale.TerraBase.Fast.Storage;
+namespace TerraBase.Fast.Storage;
 
 /// <summary>Stable, ordered UUID addresses and explicit collection creation for document fixtures.</summary>
 internal static class StorageFixture

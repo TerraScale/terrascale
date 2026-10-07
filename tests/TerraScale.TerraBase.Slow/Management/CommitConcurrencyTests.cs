@@ -6,10 +6,10 @@ using System.Text.Json;
 using Bogus;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
-using TerraScale.TerraBase.Hosting;
-using TerraScale.TerraBase.Testing;
+using TerraBase.Hosting;
+using TerraBase.Testing;
 
-namespace TerraScale.TerraBase.Slow.Management;
+namespace TerraBase.Slow.Management;
 
 public sealed class CommitConcurrencyTests
 {

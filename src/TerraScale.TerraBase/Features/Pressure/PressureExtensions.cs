@@ -1,9 +1,9 @@
 using System.Diagnostics;
-using TerraScale.TerraBase.Features.ApiKeys;
-using TerraScale.TerraBase.Hosting;
-using TerraScale.TerraBase.Tenancy;
+using TerraBase.Features.ApiKeys;
+using TerraBase.Hosting;
+using TerraBase.Tenancy;
 
-namespace TerraScale.TerraBase.Features.Pressure;
+namespace TerraBase.Features.Pressure;
 
 /// <summary>Cached node telemetry and HTTP request accounting.</summary>
 public interface IPressureSignals

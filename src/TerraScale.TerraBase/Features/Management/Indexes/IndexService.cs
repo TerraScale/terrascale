@@ -2,12 +2,12 @@ using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
-using TerraScale.TerraBase.Engine;
-using TerraScale.TerraBase.Errors;
-using TerraScale.TerraBase.Features.Management.Queries;
-using TerraScale.TerraBase.Tenancy;
+using TerraBase.Engine;
+using TerraBase.Errors;
+using TerraBase.Features.Management.Queries;
+using TerraBase.Tenancy;
 
-namespace TerraScale.TerraBase.Features.Management.Indexes;
+namespace TerraBase.Features.Management.Indexes;
 
 /// <remarks>Indexes live in the managed database's storage; recommendations come from the <see cref="QueryFieldUsage"/> records the SQL endpoint keeps.</remarks>
 internal sealed partial class IndexService(IStorageEngine engine, QueryFieldRecorder recorder) : IIndexService

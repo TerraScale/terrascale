@@ -1,10 +1,10 @@
 using System.Net;
 using Microsoft.Extensions.DependencyInjection;
-using TerraScale.TerraBase.Engine;
-using TerraScale.TerraBase.Engine.Sqlite;
-using TerraScale.TerraBase.Testing;
+using TerraBase.Engine;
+using TerraBase.Engine.Sqlite;
+using TerraBase.Testing;
 
-namespace TerraScale.TerraBase.Fast.Storage;
+namespace TerraBase.Fast.Storage;
 
 public sealed class StoragePoolTests
 {

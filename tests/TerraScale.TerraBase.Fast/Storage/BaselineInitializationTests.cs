@@ -2,14 +2,14 @@ using System.Diagnostics.Metrics;
 using Bogus;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-using TerraScale.TerraBase.Configuration;
-using TerraScale.TerraBase.Engine;
-using TerraScale.TerraBase.Engine.Sqlite;
-using TerraScale.TerraBase.Hosting;
-using TerraScale.TerraBase.Tenancy;
-using TerraScale.TerraBase.Testing;
+using TerraBase.Configuration;
+using TerraBase.Engine;
+using TerraBase.Engine.Sqlite;
+using TerraBase.Hosting;
+using TerraBase.Tenancy;
+using TerraBase.Testing;
 
-namespace TerraScale.TerraBase.Fast.Storage;
+namespace TerraBase.Fast.Storage;
 
 public sealed class BaselineInitializationTests
 {

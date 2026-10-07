@@ -1,6 +1,6 @@
 using System.Text.Json.Serialization;
 
-namespace TerraScale.TerraBase.Features.Pressure;
+namespace TerraBase.Features.Pressure;
 
 /// <summary>One cached pressure sample. Null means unavailable, never zero load.</summary>
 public sealed record PressureBody

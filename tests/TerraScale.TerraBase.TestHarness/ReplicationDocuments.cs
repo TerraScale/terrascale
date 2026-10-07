@@ -1,7 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 
-namespace TerraScale.TerraBase.Testing;
+namespace TerraBase.Testing;
 
 internal static class ReplicationDocuments
 {

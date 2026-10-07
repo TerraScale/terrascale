@@ -1,9 +1,9 @@
 using System.Net;
 using Microsoft.Extensions.DependencyInjection;
-using TerraScale.TerraBase.Engine;
-using TerraScale.TerraBase.Testing;
+using TerraBase.Engine;
+using TerraBase.Testing;
 
-namespace TerraScale.TerraBase.Fast.Management;
+namespace TerraBase.Fast.Management;
 
 public sealed class ManagementApiCleanupTests
 {

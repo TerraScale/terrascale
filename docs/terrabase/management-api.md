@@ -1,6 +1,6 @@
 # Management API (`/v1/management`)
 
-The Management feature (`src/TerraScale.TerraBase/Features/Management`, OpenAPI tag
+The Management feature (`src/TerraBase/Features/Management`, OpenAPI tag
 `Management`) stores organizations, projects and the databases they own, so ts-dashboard
 has a server-side home for state it keeps in memory today. This document maps every
 ts-dashboard feature to the TerraBase endpoint that backs it, or to the service that owns it

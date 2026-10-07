@@ -1,13 +1,13 @@
 using System.Globalization;
+using TerraBase.Engine;
+using TerraBase.Errors;
+using TerraBase.Features.Documents;
+using TerraBase.Features.UserAuth;
+using TerraBase.Hosting;
+using TerraBase.Tenancy;
 using TerraScale.Endpoints;
-using TerraScale.TerraBase.Engine;
-using TerraScale.TerraBase.Errors;
-using TerraScale.TerraBase.Features.Documents;
-using TerraScale.TerraBase.Features.UserAuth;
-using TerraScale.TerraBase.Hosting;
-using TerraScale.TerraBase.Tenancy;
 
-namespace TerraScale.TerraBase.Features.Management;
+namespace TerraBase.Features.Management;
 
 /// <summary><c>POST /v1/management/documents/{collection}/query</c>: queries the dashboard document space (query v1).</summary>
 public sealed class QueryDashboardDocumentsEndpoint(IManagementCommits commits) : EndpointWithoutRequest<IResult>

@@ -1,13 +1,13 @@
 using Google.Protobuf;
 using Grpc.Core;
-using TerraScale.TerraBase.Configuration;
-using TerraScale.TerraBase.Engine;
-using TerraScale.TerraBase.Features.Replication.V1;
-using TerraScale.TerraBase.Hosting;
-using TerraScale.TerraBase.Primitives;
-using TerraScale.TerraBase.Tenancy;
+using TerraBase.Configuration;
+using TerraBase.Engine;
+using TerraBase.Features.Replication.V1;
+using TerraBase.Hosting;
+using TerraBase.Primitives;
+using TerraBase.Tenancy;
 
-namespace TerraScale.TerraBase.Features.Replication;
+namespace TerraBase.Features.Replication;
 
 /// <summary>
 /// Receiving side of <c>Replication.Sync</c> (see <see cref="ReplicationProtocol"/>). Groups are applied one at a

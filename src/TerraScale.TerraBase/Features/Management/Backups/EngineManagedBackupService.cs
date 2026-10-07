@@ -3,13 +3,13 @@ using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
 using Cronos;
-using TerraScale.TerraBase.Engine;
-using TerraScale.TerraBase.Errors;
-using TerraScale.TerraBase.Hosting;
-using TerraScale.TerraBase.Tenancy;
-using static TerraScale.TerraBase.Features.Management.SystemCatalog;
+using TerraBase.Engine;
+using TerraBase.Errors;
+using TerraBase.Hosting;
+using TerraBase.Tenancy;
+using static TerraBase.Features.Management.SystemCatalog;
 
-namespace TerraScale.TerraBase.Features.Management.Backups;
+namespace TerraBase.Features.Management.Backups;
 
 /// <summary>
 /// Backups as a state machine persisted in the catalog (<see cref="BackupState"/>, <see cref="BackupRecord"/>). Every

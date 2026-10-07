@@ -6,11 +6,11 @@ using Bogus;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
-using TerraScale.TerraBase.Features.Management;
-using TerraScale.TerraBase.Features.Management.Usage;
-using TerraScale.TerraBase.Testing;
+using TerraBase.Features.Management;
+using TerraBase.Features.Management.Usage;
+using TerraBase.Testing;
 
-namespace TerraScale.TerraBase.Fast.Management;
+namespace TerraBase.Fast.Management;
 
 public sealed class UsageApiTests
 {

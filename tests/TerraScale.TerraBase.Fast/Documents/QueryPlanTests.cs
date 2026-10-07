@@ -1,8 +1,8 @@
 using Bogus;
-using TerraScale.TerraBase.Engine.Sqlite;
-using TerraScale.TerraBase.Testing;
+using TerraBase.Engine.Sqlite;
+using TerraBase.Testing;
 
-namespace TerraScale.TerraBase.Fast.Documents;
+namespace TerraBase.Fast.Documents;
 
 public sealed class QueryPlanTests
 {
@@ -129,7 +129,7 @@ public sealed class QueryPlanTests
 
         var databaseFile = await api.DatabaseFileAsync();
         using var command = new Microsoft.Data.Sqlite.SqliteCommand();
-        var sql = new SqliteQueryCompiler(command.Parameters).Compile(new TerraScale.TerraBase.Engine.DocumentQuery(
+        var sql = new SqliteQueryCompiler(command.Parameters).Compile(new TerraBase.Engine.DocumentQuery(
             "items", null, [], null, 1, 1024));
         var plan = await QueryPlan.ExplainAsync(databaseFile, sql);
         await Assert.That(plan.Contains("USING INDEX documents_live", StringComparison.Ordinal)).IsTrue();
@@ -138,13 +138,13 @@ public sealed class QueryPlanTests
         {
             foreach (var duplicate in new[] { false, true })
             {
-                var idSort = new TerraScale.TerraBase.Engine.SortKey(TerraScale.TerraBase.Engine.DocumentPath.Id, descending);
-                TerraScale.TerraBase.Engine.SortKey[] keys = duplicate ? [idSort, idSort] : [idSort];
+                var idSort = new TerraBase.Engine.SortKey(TerraBase.Engine.DocumentPath.Id, descending);
+                TerraBase.Engine.SortKey[] keys = duplicate ? [idSort, idSort] : [idSort];
                 foreach (var cursor in new[] { false, true })
                 {
                     using var idCommand = new Microsoft.Data.Sqlite.SqliteCommand();
-                    var position = cursor ? new TerraScale.TerraBase.Engine.QueryPosition(duplicate ? [5L, live, 5L, live] : [5L, live], live) : null;
-                    var idSql = new SqliteQueryCompiler(idCommand.Parameters).Compile(new TerraScale.TerraBase.Engine.DocumentQuery(
+                    var position = cursor ? new TerraBase.Engine.QueryPosition(duplicate ? [5L, live, 5L, live] : [5L, live], live) : null;
+                    var idSql = new SqliteQueryCompiler(idCommand.Parameters).Compile(new TerraBase.Engine.DocumentQuery(
                         "items", null, keys, position, 1, 1024));
                     var idPlan = await QueryPlan.ExplainAsync(databaseFile, idSql);
                     var range = cursor ? (descending ? " AND id<?" : " AND id>?") : "";
@@ -165,9 +165,9 @@ public sealed class QueryPlanTests
         await using var api = await DocumentApi.StartAsync();
         (await api.PutAsync(DocumentApi.NewId(), new { status = "open" })).Status.ShouldBe(System.Net.HttpStatusCode.Created);
         var path = await api.DatabaseFileAsync();
-        var filter = new TerraScale.TerraBase.Engine.CompareFilter(
-            new TerraScale.TerraBase.Engine.DocumentPath(["status"]), TerraScale.TerraBase.Engine.Comparison.Equal,
-            new TerraScale.TerraBase.Engine.ScalarValue(TerraScale.TerraBase.Engine.ScalarKind.Text, "open"));
+        var filter = new TerraBase.Engine.CompareFilter(
+            new TerraBase.Engine.DocumentPath(["status"]), TerraBase.Engine.Comparison.Equal,
+            new TerraBase.Engine.ScalarValue(TerraBase.Engine.ScalarKind.Text, "open"));
         using (var command = new Microsoft.Data.Sqlite.SqliteCommand())
         {
             var sql = new SqliteQueryCompiler(command.Parameters).CompileSnapshot(filter, 1, 10);

@@ -3,7 +3,7 @@ using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.Diagnostics;
 using Microsoft.CodeAnalysis.Operations;
 
-namespace TerraScale.TerraBase.Analyzers;
+namespace TerraBase.Analyzers;
 
 /// <summary>
 /// TB0001: a union value is a result, and expected failures are union cases, so dropping one silently ignores a

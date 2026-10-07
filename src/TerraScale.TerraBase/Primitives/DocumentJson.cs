@@ -2,7 +2,7 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 
-namespace TerraScale.TerraBase.Primitives;
+namespace TerraBase.Primitives;
 
 /// <summary>A stored document violates the shared JSON contract.</summary>
 public sealed class DocumentValidationException(string message, bool tooLarge = false) : Exception(message)

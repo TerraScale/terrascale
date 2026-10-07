@@ -1,8 +1,8 @@
+using TerraBase.Features.UserAuth;
+using TerraBase.Hosting;
 using TerraScale.Endpoints;
-using TerraScale.TerraBase.Features.UserAuth;
-using TerraScale.TerraBase.Hosting;
 
-namespace TerraScale.TerraBase.Features.Management;
+namespace TerraBase.Features.Management;
 
 /// <summary><c>DELETE …/projects/{project}</c>: deletes a project without databases or API keys.</summary>
 public sealed class DeleteProjectEndpoint(IManagementService management) : EndpointWithoutRequest<IResult>

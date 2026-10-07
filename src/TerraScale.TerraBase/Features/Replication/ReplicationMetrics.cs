@@ -1,7 +1,7 @@
 using System.Diagnostics.Metrics;
-using TerraScale.TerraBase.Hosting;
+using TerraBase.Hosting;
 
-namespace TerraScale.TerraBase.Features.Replication;
+namespace TerraBase.Features.Replication;
 
 /// <summary>Replication instruments. Tags are bounded: a result name, never a database, peer or origin.</summary>
 internal sealed class ReplicationMetrics

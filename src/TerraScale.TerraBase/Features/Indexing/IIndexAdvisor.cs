@@ -1,6 +1,6 @@
-using TerraScale.TerraBase.Tenancy;
+using TerraBase.Tenancy;
 
-namespace TerraScale.TerraBase.Features.Indexing;
+namespace TerraBase.Features.Indexing;
 
 /// <summary>A suggested secondary index over JSON paths.</summary>
 /// <param name="Collection">Collection.</param>

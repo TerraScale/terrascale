@@ -1,4 +1,4 @@
-namespace TerraScale.TerraBase.Errors;
+namespace TerraBase.Errors;
 
 // Expected failures are values, not exceptions (docs/error-handling.md). A feature returns a union of its
 // success types and the failures below that it can produce; callers handle every case in a switch, which

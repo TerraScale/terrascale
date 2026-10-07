@@ -1,12 +1,12 @@
 using System.Threading.Channels;
 using Grpc.Core;
 using Grpc.Net.Client;
-using TerraScale.TerraBase.Configuration;
-using TerraScale.TerraBase.Engine;
-using TerraScale.TerraBase.Features.Replication.V1;
-using TerraScale.TerraBase.Tenancy;
+using TerraBase.Configuration;
+using TerraBase.Engine;
+using TerraBase.Features.Replication.V1;
+using TerraBase.Tenancy;
 
-namespace TerraScale.TerraBase.Features.Replication;
+namespace TerraBase.Features.Replication;
 
 /// <summary>
 /// Sends this node's captured change groups to every peer in <see cref="TerraBaseOptions.PeerAddresses"/>

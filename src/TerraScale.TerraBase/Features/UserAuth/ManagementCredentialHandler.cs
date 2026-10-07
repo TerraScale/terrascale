@@ -4,10 +4,10 @@ using System.Text;
 using System.Text.Encodings.Web;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.Extensions.Options;
-using TerraScale.TerraBase.Configuration;
-using TerraScale.TerraBase.Hosting;
+using TerraBase.Configuration;
+using TerraBase.Hosting;
 
-namespace TerraScale.TerraBase.Features.UserAuth;
+namespace TerraBase.Features.UserAuth;
 
 /// <summary>
 /// Authenticates the management service credential, <c>Authorization: Bearer &lt;secret&gt;</c>, acting as the user named

@@ -1,6 +1,6 @@
 using System.Text.Json.Serialization;
 
-namespace TerraScale.TerraBase.Tenancy;
+namespace TerraBase.Tenancy;
 
 /// <summary>An organization's plan, stored on the organization. Quality-of-service work keys off it.</summary>
 [JsonConverter(typeof(JsonStringEnumConverter<PlanTier>))]

@@ -1,6 +1,6 @@
-using TerraScale.TerraBase.Hosting;
+using TerraBase.Hosting;
 
-namespace TerraScale.TerraBase.Errors;
+namespace TerraBase.Errors;
 
 /// <summary>
 /// The single mapping from an expected failure to its HTTP response at the endpoint edge: the status for its

@@ -1,4 +1,4 @@
-namespace TerraScale.TerraBase.Engine.Sqlite;
+namespace TerraBase.Engine.Sqlite;
 
 /// <summary>Replication of the system database between a catalog primary and its followers (docs/decisions/0009).</summary>
 internal sealed partial class SqliteStorageEngine : ISystemReplication

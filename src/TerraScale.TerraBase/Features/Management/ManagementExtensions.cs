@@ -1,13 +1,13 @@
-using TerraScale.TerraBase.Features.Documents;
-using TerraScale.TerraBase.Features.Management.Backups;
-using TerraScale.TerraBase.Features.Management.Indexes;
-using TerraScale.TerraBase.Features.Management.Queries;
-using TerraScale.TerraBase.Features.Management.Schema;
-using TerraScale.TerraBase.Features.Management.Usage;
-using TerraScale.TerraBase.Features.Replication;
-using TerraScale.TerraBase.Tenancy;
+using TerraBase.Features.Documents;
+using TerraBase.Features.Management.Backups;
+using TerraBase.Features.Management.Indexes;
+using TerraBase.Features.Management.Queries;
+using TerraBase.Features.Management.Schema;
+using TerraBase.Features.Management.Usage;
+using TerraBase.Features.Replication;
+using TerraBase.Tenancy;
 
-namespace TerraScale.TerraBase.Features.Management;
+namespace TerraBase.Features.Management;
 
 /// <summary>Registers the Management slice.</summary>
 public static class ManagementExtensions

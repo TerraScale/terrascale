@@ -1,9 +1,9 @@
 using System.Collections.Concurrent;
 using System.Net;
 using System.Text.Json;
-using TerraScale.TerraBase.Testing;
+using TerraBase.Testing;
 
-namespace TerraScale.TerraBase.Slow.Tenancy;
+namespace TerraBase.Slow.Tenancy;
 
 public sealed class StorageConcurrencyTests
 {

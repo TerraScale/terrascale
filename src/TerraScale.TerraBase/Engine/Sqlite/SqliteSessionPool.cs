@@ -1,4 +1,4 @@
-namespace TerraScale.TerraBase.Engine.Sqlite;
+namespace TerraBase.Engine.Sqlite;
 
 /// <summary>
 /// The idle sessions of every database of one engine, bounded per database and in total. When the

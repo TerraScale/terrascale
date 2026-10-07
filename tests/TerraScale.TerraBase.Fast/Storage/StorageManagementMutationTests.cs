@@ -1,10 +1,10 @@
 using System.Net;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
-using TerraScale.TerraBase.Engine;
-using TerraScale.TerraBase.Fast.Documents;
+using TerraBase.Engine;
+using TerraBase.Fast.Documents;
 
-namespace TerraScale.TerraBase.Fast.Storage;
+namespace TerraBase.Fast.Storage;
 
 public sealed class StorageManagementMutationTests
 {

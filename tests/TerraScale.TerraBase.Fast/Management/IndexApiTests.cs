@@ -3,10 +3,10 @@ using System.Text.Json;
 using Bogus;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
-using TerraScale.TerraBase.Features.Management.Queries;
-using TerraScale.TerraBase.Testing;
+using TerraBase.Features.Management.Queries;
+using TerraBase.Testing;
 
-namespace TerraScale.TerraBase.Fast.Management;
+namespace TerraBase.Fast.Management;
 
 public sealed class IndexApiTests
 {

@@ -4,15 +4,15 @@ using System.Globalization;
 using System.Text;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
-using TerraScale.TerraBase.Configuration;
-using TerraScale.TerraBase.Engine;
-using TerraScale.TerraBase.Fast.Storage;
-using TerraScale.TerraBase.Features.Memory;
-using TerraScale.TerraBase.Hosting;
-using TerraScale.TerraBase.Tenancy;
-using TerraScale.TerraBase.Testing;
+using TerraBase.Configuration;
+using TerraBase.Engine;
+using TerraBase.Fast.Storage;
+using TerraBase.Features.Memory;
+using TerraBase.Hosting;
+using TerraBase.Tenancy;
+using TerraBase.Testing;
 
-namespace TerraScale.TerraBase.Fast.Platform;
+namespace TerraBase.Fast.Platform;
 
 public sealed class MemoryBudgetTests
 {
@@ -301,7 +301,7 @@ public sealed class MemoryBudgetTests
             }
 
             start.ArgumentList.Add("--treenode-filter");
-            start.ArgumentList.Add("/TerraScale.TerraBase.Fast/TerraScale.TerraBase.Fast.Platform/MemoryBudgetTests/" + nameof(Engines_starting_together_never_lower_the_process_heap_limit));
+            start.ArgumentList.Add("/TerraBase.Fast/TerraBase.Fast.Platform/MemoryBudgetTests/" + nameof(Engines_starting_together_never_lower_the_process_heap_limit));
             start.ArgumentList.Add("--minimum-expected-tests");
             start.ArgumentList.Add("1");
             start.ArgumentList.Add("--no-progress");

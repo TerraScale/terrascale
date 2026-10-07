@@ -1,4 +1,4 @@
-namespace TerraScale.TerraBase.Engine;
+namespace TerraBase.Engine;
 
 /// <summary>The shared admission limits for local offsets and imported document versions.</summary>
 public static class VersionClock

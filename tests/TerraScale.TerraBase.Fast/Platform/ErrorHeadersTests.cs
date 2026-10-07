@@ -1,10 +1,10 @@
 using System.Net;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
-using TerraScale.TerraBase.Fast.Documents;
-using TerraScale.TerraBase.Features.Documents;
+using TerraBase.Fast.Documents;
+using TerraBase.Features.Documents;
 
-namespace TerraScale.TerraBase.Fast.Platform;
+namespace TerraBase.Fast.Platform;
 
 public sealed class ErrorHeadersTests
 {

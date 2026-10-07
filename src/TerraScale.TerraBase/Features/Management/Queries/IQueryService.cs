@@ -1,8 +1,8 @@
 using System.Text.Json;
-using TerraScale.TerraBase.Errors;
-using TerraScale.TerraBase.Tenancy;
+using TerraBase.Errors;
+using TerraBase.Tenancy;
 
-namespace TerraScale.TerraBase.Features.Management.Queries;
+namespace TerraBase.Features.Management.Queries;
 
 /// <summary>A body that carries SQL of the dashboard subset.</summary>
 /// <param name="Sql">The statement.</param>

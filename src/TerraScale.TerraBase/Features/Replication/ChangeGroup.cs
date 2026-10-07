@@ -1,9 +1,9 @@
 using System.Buffers.Binary;
 using System.Text;
-using TerraScale.TerraBase.Engine;
-using TerraScale.TerraBase.Primitives;
+using TerraBase.Engine;
+using TerraBase.Primitives;
 
-namespace TerraScale.TerraBase.Features.Replication;
+namespace TerraBase.Features.Replication;
 
 /// <summary>
 /// Version 1 binary form of one committed change group, the plaintext inside an

@@ -4,16 +4,16 @@ using System.Text.Json;
 using Google.Protobuf;
 using Grpc.Core;
 using Microsoft.Extensions.DependencyInjection;
-using TerraScale.TerraBase.Engine;
-using TerraScale.TerraBase.Errors;
-using TerraScale.TerraBase.Features.ApiKeys;
-using TerraScale.TerraBase.Features.Management;
-using TerraScale.TerraBase.Features.Replication;
-using TerraScale.TerraBase.Features.Replication.V1;
-using TerraScale.TerraBase.Tenancy;
-using TerraScale.TerraBase.Testing;
+using TerraBase.Engine;
+using TerraBase.Errors;
+using TerraBase.Features.ApiKeys;
+using TerraBase.Features.Management;
+using TerraBase.Features.Replication;
+using TerraBase.Features.Replication.V1;
+using TerraBase.Tenancy;
+using TerraBase.Testing;
 
-namespace TerraScale.TerraBase.Fast.Replication;
+namespace TerraBase.Fast.Replication;
 
 /// <summary>Catalog primary and followers (docs/decisions/0009).</summary>
 public sealed class CatalogReplicationTests
@@ -111,10 +111,10 @@ public sealed class CatalogReplicationTests
         await using (primary)
         await using (follower)
         {
-            var (catalog, replica) = primary.Services.GetRequiredService<TerraScale.TerraBase.Configuration.TerraBaseOptions>().CatalogPrimary is null
+            var (catalog, replica) = primary.Services.GetRequiredService<TerraBase.Configuration.TerraBaseOptions>().CatalogPrimary is null
                 ? (primary, follower)
                 : (follower, primary);
-            await Assert.That(replica.Services.GetRequiredService<TerraScale.TerraBase.Configuration.TerraBaseOptions>().CatalogPrimary).IsNotNull();
+            await Assert.That(replica.Services.GetRequiredService<TerraBase.Configuration.TerraBaseOptions>().CatalogPrimary).IsNotNull();
             var tenant = await CatalogTenant.CreateAsync(catalog, "orders");
             await ReadyAsync(replica);
 

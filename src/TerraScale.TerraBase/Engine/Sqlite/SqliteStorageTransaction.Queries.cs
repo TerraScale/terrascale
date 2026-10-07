@@ -6,7 +6,7 @@ using System.Text.RegularExpressions;
 using Microsoft.Data.Sqlite;
 using SQLitePCL;
 
-namespace TerraScale.TerraBase.Engine.Sqlite;
+namespace TerraBase.Engine.Sqlite;
 
 /// <remarks>
 /// SQL-subset queries and indexes compile to SQL over the live rows of the <c>documents</c> table (<c>body IS NOT NULL</c>;

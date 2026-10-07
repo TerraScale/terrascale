@@ -1,6 +1,6 @@
-using TerraScale.TerraBase.Tenancy;
+using TerraBase.Tenancy;
 
-namespace TerraScale.TerraBase.Features.Management;
+namespace TerraBase.Features.Management;
 
 /// <summary>An organization: the tenant, which owns billing, and the top-level owner of projects.</summary>
 /// <param name="Id">Lowercase hyphenated UUID.</param>

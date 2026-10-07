@@ -1,8 +1,8 @@
+using TerraBase.Features.UserAuth;
+using TerraBase.Hosting;
 using TerraScale.Endpoints;
-using TerraScale.TerraBase.Features.UserAuth;
-using TerraScale.TerraBase.Hosting;
 
-namespace TerraScale.TerraBase.Features.Management;
+namespace TerraBase.Features.Management;
 
 /// <summary><c>DELETE …/databases/{database}</c>: deletes a database and its data.</summary>
 public sealed class DeleteManagedDatabaseEndpoint(IManagementService management) : EndpointWithoutRequest<IResult>

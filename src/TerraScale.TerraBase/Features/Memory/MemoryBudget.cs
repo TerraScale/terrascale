@@ -1,6 +1,6 @@
 using System.Diagnostics.Metrics;
 
-namespace TerraScale.TerraBase.Features.Memory;
+namespace TerraBase.Features.Memory;
 
 /// <summary>A fixed number of bytes shared by every lane.</summary>
 /// <remarks>

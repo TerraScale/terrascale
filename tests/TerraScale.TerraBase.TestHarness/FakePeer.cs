@@ -7,9 +7,9 @@ using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.AspNetCore.Server.Kestrel.Https;
 using Microsoft.Extensions.DependencyInjection;
-using TerraScale.TerraBase.Features.Replication.V1;
+using TerraBase.Features.Replication.V1;
 
-namespace TerraScale.TerraBase.Testing;
+namespace TerraBase.Testing;
 
 /// <summary>
 /// A scripted <c>Replication</c> receiver or <c>CatalogReplication</c> primary on its own mutual TLS listener, for tests that

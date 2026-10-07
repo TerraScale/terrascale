@@ -1,9 +1,9 @@
 using System.Net.Security;
 using System.Security.Cryptography.X509Certificates;
 using Grpc.Net.Client;
-using TerraScale.TerraBase.Configuration;
+using TerraBase.Configuration;
 
-namespace TerraScale.TerraBase.Features.Replication;
+namespace TerraBase.Features.Replication;
 
 /// <summary>gRPC channels to another member's peer listener over mutual TLS.</summary>
 internal static class PeerChannel

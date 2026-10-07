@@ -1,7 +1,7 @@
 using System.Text.Json.Serialization;
-using TerraScale.TerraBase.Errors;
+using TerraBase.Errors;
 
-namespace TerraScale.TerraBase.Features.Management;
+namespace TerraBase.Features.Management;
 
 /// <summary>A member's role in an organization, from least to most privileged. Numbers keep their meaning from before viewer.</summary>
 [JsonConverter(typeof(JsonStringEnumConverter<OrganizationRole>))]

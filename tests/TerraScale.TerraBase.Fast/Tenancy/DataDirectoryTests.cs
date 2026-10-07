@@ -7,13 +7,13 @@ using Bogus;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-using TerraScale.TerraBase.Configuration;
-using TerraScale.TerraBase.Engine;
-using TerraScale.TerraBase.Engine.Sqlite;
-using TerraScale.TerraBase.Tenancy;
-using TerraScale.TerraBase.Testing;
+using TerraBase.Configuration;
+using TerraBase.Engine;
+using TerraBase.Engine.Sqlite;
+using TerraBase.Tenancy;
+using TerraBase.Testing;
 
-namespace TerraScale.TerraBase.Fast.Tenancy;
+namespace TerraBase.Fast.Tenancy;
 
 /// <summary>One process owns a data directory, and only a directory in the tenancy layout (or an empty one) is accepted.</summary>
 public sealed class DataDirectoryTests

@@ -1,10 +1,10 @@
 using Google.Protobuf;
 using Grpc.Core;
-using TerraScale.TerraBase.Configuration;
-using TerraScale.TerraBase.Engine;
-using TerraScale.TerraBase.Features.Replication.V1;
+using TerraBase.Configuration;
+using TerraBase.Engine;
+using TerraBase.Features.Replication.V1;
 
-namespace TerraScale.TerraBase.Features.Replication;
+namespace TerraBase.Features.Replication;
 
 /// <summary>Bounds and timing of <c>CatalogReplication.Follow</c> (docs/decisions/0009).</summary>
 internal static class CatalogProtocol

@@ -1,13 +1,13 @@
 using System.Buffers;
 using System.Text.Json;
-using TerraScale.TerraBase.Engine;
-using TerraScale.TerraBase.Errors;
-using TerraScale.TerraBase.Features.Documents;
-using TerraScale.TerraBase.Hosting;
-using TerraScale.TerraBase.Tenancy;
-using static TerraScale.TerraBase.Features.Management.SystemCatalog;
+using TerraBase.Engine;
+using TerraBase.Errors;
+using TerraBase.Features.Documents;
+using TerraBase.Hosting;
+using TerraBase.Tenancy;
+using static TerraBase.Features.Management.SystemCatalog;
 
-namespace TerraScale.TerraBase.Features.Management.Queries;
+namespace TerraBase.Features.Management.Queries;
 
 /// <remarks>
 /// Statements run on the managed database's storage; usage records and saved queries live in <see cref="SystemCatalog"/>

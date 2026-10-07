@@ -1,10 +1,10 @@
+using TerraBase.Errors;
+using TerraBase.Features.ApiKeys;
+using TerraBase.Features.UserAuth;
+using TerraBase.Hosting;
 using TerraScale.Endpoints;
-using TerraScale.TerraBase.Errors;
-using TerraScale.TerraBase.Features.ApiKeys;
-using TerraScale.TerraBase.Features.UserAuth;
-using TerraScale.TerraBase.Hosting;
 
-namespace TerraScale.TerraBase.Features.Management.Credentials;
+namespace TerraBase.Features.Management.Credentials;
 
 /// <summary><c>DELETE …/api-keys/{key}</c>: revokes a data API key of a project.</summary>
 public sealed class RevokeProjectApiKeyEndpoint(IApiKeyStore keys) : EndpointWithoutRequest<IResult>

@@ -1,9 +1,9 @@
-using TerraScale.TerraBase.Engine;
-using TerraScale.TerraBase.Hosting;
-using TerraScale.TerraBase.Tenancy;
-using static TerraScale.TerraBase.Features.Management.SystemCatalog;
+using TerraBase.Engine;
+using TerraBase.Hosting;
+using TerraBase.Tenancy;
+using static TerraBase.Features.Management.SystemCatalog;
 
-namespace TerraScale.TerraBase.Features.Management.Backups;
+namespace TerraBase.Features.Management.Backups;
 
 /// <summary>A unit of storage cleanup the sweep owes.</summary>
 /// <param name="Kind"><see cref="StorageSweep.Backup"/> or <see cref="StorageSweep.DatabaseBackups"/>.</param>

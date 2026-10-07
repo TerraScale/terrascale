@@ -1,6 +1,6 @@
-using TerraScale.TerraBase.Tenancy;
+using TerraBase.Tenancy;
 
-namespace TerraScale.TerraBase.Features.Backup;
+namespace TerraBase.Features.Backup;
 
 /// <summary>A completed backup.</summary>
 /// <param name="BackupId">Backup identifier (sortable by creation time).</param>

@@ -1,10 +1,10 @@
+using TerraBase.Errors;
+using TerraBase.Features.ApiKeys;
+using TerraBase.Features.UserAuth;
+using TerraBase.Hosting;
 using TerraScale.Endpoints;
-using TerraScale.TerraBase.Errors;
-using TerraScale.TerraBase.Features.ApiKeys;
-using TerraScale.TerraBase.Features.UserAuth;
-using TerraScale.TerraBase.Hosting;
 
-namespace TerraScale.TerraBase.Features.Management.Credentials;
+namespace TerraBase.Features.Management.Credentials;
 
 /// <summary><c>GET …/projects/{project}/api-keys</c>: lists the data API keys of a project, without secrets.</summary>
 public sealed class ListProjectApiKeysEndpoint(IApiKeyStore keys) : EndpointWithoutRequest<IResult>

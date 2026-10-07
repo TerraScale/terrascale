@@ -1,10 +1,10 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using TerraScale.TerraBase.Engine;
-using TerraScale.TerraBase.Errors;
-using TerraScale.TerraBase.Features.Documents;
+using TerraBase.Engine;
+using TerraBase.Errors;
+using TerraBase.Features.Documents;
 
-namespace TerraScale.TerraBase.Features.Management;
+namespace TerraBase.Features.Management;
 
 /// <summary>One Management operation of a commit (docs/management-commits.md), as sent: snake_case, every member optional.</summary>
 /// <param name="Op">The operation, for example <c>create_project</c>.</param>

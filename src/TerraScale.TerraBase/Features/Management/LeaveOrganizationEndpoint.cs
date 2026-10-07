@@ -1,8 +1,8 @@
+using TerraBase.Features.UserAuth;
+using TerraBase.Hosting;
 using TerraScale.Endpoints;
-using TerraScale.TerraBase.Features.UserAuth;
-using TerraScale.TerraBase.Hosting;
 
-namespace TerraScale.TerraBase.Features.Management;
+namespace TerraBase.Features.Management;
 
 /// <summary><c>POST …/organizations/{organization}/leave</c>: the acting user leaves the organization.</summary>
 public sealed class LeaveOrganizationEndpoint(IAccessService access) : EndpointWithoutRequest<IResult>

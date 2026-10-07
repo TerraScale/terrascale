@@ -3,12 +3,12 @@ using System.Net;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
-using TerraScale.TerraBase.Configuration;
-using TerraScale.TerraBase.Engine.Sqlite;
-using TerraScale.TerraBase.Hosting;
-using TerraScale.TerraBase.Testing;
+using TerraBase.Configuration;
+using TerraBase.Engine.Sqlite;
+using TerraBase.Hosting;
+using TerraBase.Testing;
 
-namespace TerraScale.TerraBase.Fast.Storage;
+namespace TerraBase.Fast.Storage;
 
 public sealed class StorageConstructionTests
 {

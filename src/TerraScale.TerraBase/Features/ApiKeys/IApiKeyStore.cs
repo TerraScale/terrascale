@@ -1,8 +1,8 @@
-using TerraScale.TerraBase.Errors;
-using TerraScale.TerraBase.Features.Management;
-using TerraScale.TerraBase.Tenancy;
+using TerraBase.Errors;
+using TerraBase.Features.Management;
+using TerraBase.Tenancy;
 
-namespace TerraScale.TerraBase.Features.ApiKeys;
+namespace TerraBase.Features.ApiKeys;
 
 /// <summary>Scopes an API key can grant. Each scope is also the name of its authorization policy.</summary>
 public static class ApiKeyScopes

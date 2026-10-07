@@ -1,8 +1,8 @@
+using TerraBase.Features.UserAuth;
+using TerraBase.Hosting;
 using TerraScale.Endpoints;
-using TerraScale.TerraBase.Features.UserAuth;
-using TerraScale.TerraBase.Hosting;
 
-namespace TerraScale.TerraBase.Features.Management;
+namespace TerraBase.Features.Management;
 
 /// <summary><c>GET …/organizations/{organization}/projects</c>: lists the projects of an organization.</summary>
 public sealed class ListProjectsEndpoint(IManagementService management) : EndpointWithoutRequest<IResult>

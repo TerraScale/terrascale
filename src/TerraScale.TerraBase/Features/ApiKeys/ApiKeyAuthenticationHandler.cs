@@ -3,7 +3,7 @@ using System.Text.Encodings.Web;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.Extensions.Options;
 
-namespace TerraScale.TerraBase.Features.ApiKeys;
+namespace TerraBase.Features.ApiKeys;
 
 /// <summary>
 /// Authenticates <c>Authorization: Bearer &lt;api key&gt;</c>, emits one <c>scope</c> claim per granted scope and keeps the

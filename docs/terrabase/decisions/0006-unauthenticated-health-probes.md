@@ -1,7 +1,7 @@
 # 0006: Unauthenticated health probes on the client listener
 
 - Status: accepted (TS-483 acceptance criteria, 2026-10-04)
-- Scope: `src/TerraScale.TerraBase/Features/Health`, `Hosting/Listeners.cs` (`ListenerMetadata.Probe`)
+- Scope: `src/TerraBase/Features/Health`, `Hosting/Listeners.cs` (`ListenerMetadata.Probe`)
 
 ## Context
 

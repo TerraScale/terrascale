@@ -1,8 +1,8 @@
+using TerraBase.Features.UserAuth;
+using TerraBase.Hosting;
 using TerraScale.Endpoints;
-using TerraScale.TerraBase.Features.UserAuth;
-using TerraScale.TerraBase.Hosting;
 
-namespace TerraScale.TerraBase.Features.Management;
+namespace TerraBase.Features.Management;
 
 /// <summary><c>GET …/organizations/{organization}/ownership-transfer</c>: reads the pending ownership transfer.</summary>
 public sealed class GetOwnershipTransferEndpoint(IAccessService access) : EndpointWithoutRequest<IResult>

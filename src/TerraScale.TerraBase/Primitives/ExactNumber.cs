@@ -2,7 +2,7 @@ using System.Globalization;
 using System.Numerics;
 using System.Text;
 
-namespace TerraScale.TerraBase.Primitives;
+namespace TerraBase.Primitives;
 
 /// <summary>
 /// An exact decimal, <c>Mantissa × 10^Exponent</c>: the one number rule for client JSON and the arithmetic of

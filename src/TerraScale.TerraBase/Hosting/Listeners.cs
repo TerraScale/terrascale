@@ -1,10 +1,10 @@
 using Microsoft.AspNetCore.Connections.Features;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.OpenApi;
-using TerraScale.TerraBase.Configuration;
-using TerraScale.TerraBase.Features.Pressure;
+using TerraBase.Configuration;
+using TerraBase.Features.Pressure;
 
-namespace TerraScale.TerraBase.Hosting;
+namespace TerraBase.Hosting;
 
 /// <summary>The listeners TerraBase serves; every endpoint belongs to exactly one.</summary>
 public enum TerraBaseListener

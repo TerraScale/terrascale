@@ -4,9 +4,9 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.Data.Sqlite;
 using SQLitePCL;
-using TerraScale.TerraBase.Primitives;
+using TerraBase.Primitives;
 
-namespace TerraScale.TerraBase.Engine.Sqlite;
+namespace TerraBase.Engine.Sqlite;
 
 /// <summary>One transaction; every SQLite call that reads or writes runs on the <see cref="SqliteIoPool"/>.</summary>
 /// <param name="store">The database this transaction belongs to.</param>

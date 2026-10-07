@@ -1,20 +1,20 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
-using TerraScale.TerraBase.Features.ApiKeys;
-using TerraScale.TerraBase.Features.Documents;
-using TerraScale.TerraBase.Features.Health;
-using TerraScale.TerraBase.Features.Management;
-using TerraScale.TerraBase.Features.Management.Backups;
-using TerraScale.TerraBase.Features.Management.Credentials;
-using TerraScale.TerraBase.Features.Management.Indexes;
-using TerraScale.TerraBase.Features.Management.Queries;
-using TerraScale.TerraBase.Features.Management.Schema;
-using TerraScale.TerraBase.Features.Management.Usage;
-using TerraScale.TerraBase.Features.Pressure;
-using TerraScale.TerraBase.Tenancy;
+using TerraBase.Features.ApiKeys;
+using TerraBase.Features.Documents;
+using TerraBase.Features.Health;
+using TerraBase.Features.Management;
+using TerraBase.Features.Management.Backups;
+using TerraBase.Features.Management.Credentials;
+using TerraBase.Features.Management.Indexes;
+using TerraBase.Features.Management.Queries;
+using TerraBase.Features.Management.Schema;
+using TerraBase.Features.Management.Usage;
+using TerraBase.Features.Pressure;
+using TerraBase.Tenancy;
 
-namespace TerraScale.TerraBase.Hosting;
+namespace TerraBase.Hosting;
 
 /// <summary>Source-generated JSON metadata for every request and response type (fast startup, no reflection-based serialization).</summary>
 [JsonSourceGenerationOptions(JsonSerializerDefaults.Web, MaxDepth = RequestJson.StoredDocumentMaxDepth + 8)]

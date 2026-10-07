@@ -1,10 +1,10 @@
 using System.Net;
 using Bogus;
 using Microsoft.Extensions.DependencyInjection;
-using TerraScale.TerraBase.Engine;
-using TerraScale.TerraBase.Testing;
+using TerraBase.Engine;
+using TerraBase.Testing;
 
-namespace TerraScale.TerraBase.Fast.Documents;
+namespace TerraBase.Fast.Documents;
 
 public sealed class ReplicationCapacityTests
 {

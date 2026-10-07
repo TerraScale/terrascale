@@ -1,8 +1,8 @@
+using TerraBase.Features.UserAuth;
+using TerraBase.Hosting;
 using TerraScale.Endpoints;
-using TerraScale.TerraBase.Features.UserAuth;
-using TerraScale.TerraBase.Hosting;
 
-namespace TerraScale.TerraBase.Features.Management;
+namespace TerraBase.Features.Management;
 
 /// <summary><c>PUT …/organizations/{organization}/audit-retention</c>: sets how long audit events are kept.</summary>
 public sealed class SetAuditRetentionEndpoint(IAccessService access) : Endpoint<AuditRetention, IResult>

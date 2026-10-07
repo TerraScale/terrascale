@@ -1,9 +1,9 @@
 using System.Net.Security;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
-using TerraScale.TerraBase.Configuration;
+using TerraBase.Configuration;
 
-namespace TerraScale.TerraBase.Features.Replication;
+namespace TerraBase.Features.Replication;
 
 /// <summary>
 /// This node's peer certificate and the peer certificate authorities, read from <see cref="PeerTlsFiles"/>

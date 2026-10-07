@@ -1,6 +1,6 @@
 using Microsoft.IdentityModel.Tokens;
 
-namespace TerraScale.TerraBase.Features.UserAuth;
+namespace TerraBase.Features.UserAuth;
 
 /// <summary>The signing keys of the configured token issuer (ts-auth), cached in memory.</summary>
 public interface IIssuerKeys

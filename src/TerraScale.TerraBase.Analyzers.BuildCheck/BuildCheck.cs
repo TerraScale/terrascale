@@ -1,6 +1,6 @@
 using System.Runtime.CompilerServices;
 
-namespace TerraScale.TerraBase.Analyzers.BuildCheck;
+namespace TerraBase.Analyzers.BuildCheck;
 
 internal readonly union ProbeResult(Success, Failure);
 internal sealed record Success;

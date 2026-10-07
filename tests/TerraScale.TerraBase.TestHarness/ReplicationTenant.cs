@@ -1,9 +1,9 @@
 using Microsoft.Extensions.DependencyInjection;
-using TerraScale.TerraBase.Engine;
-using TerraScale.TerraBase.Features.Management;
-using TerraScale.TerraBase.Tenancy;
+using TerraBase.Engine;
+using TerraBase.Features.Management;
+using TerraBase.Tenancy;
 
-namespace TerraScale.TerraBase.Testing;
+namespace TerraBase.Testing;
 
 // The system catalog is local to each node. Tests provision the same identity explicitly before replicating tenant data.
 internal sealed class ReplicationTenant

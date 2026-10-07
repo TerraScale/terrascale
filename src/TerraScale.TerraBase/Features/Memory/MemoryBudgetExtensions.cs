@@ -1,9 +1,9 @@
 using System.Diagnostics.Metrics;
 using Microsoft.Extensions.DependencyInjection.Extensions;
-using TerraScale.TerraBase.Configuration;
-using TerraScale.TerraBase.Hosting;
+using TerraBase.Configuration;
+using TerraBase.Hosting;
 
-namespace TerraScale.TerraBase.Features.Memory;
+namespace TerraBase.Features.Memory;
 
 /// <summary>Registers the process memory budget.</summary>
 public static class MemoryBudgetExtensions

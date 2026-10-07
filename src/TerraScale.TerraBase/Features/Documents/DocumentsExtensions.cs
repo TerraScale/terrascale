@@ -1,4 +1,4 @@
-namespace TerraScale.TerraBase.Features.Documents;
+namespace TerraBase.Features.Documents;
 
 /// <summary>Registers the Documents slice.</summary>
 public static class DocumentsExtensions

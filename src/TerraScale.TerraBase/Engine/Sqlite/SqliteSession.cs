@@ -2,7 +2,7 @@ using System.Diagnostics;
 using Microsoft.Data.Sqlite;
 using SQLitePCL;
 
-namespace TerraScale.TerraBase.Engine.Sqlite;
+namespace TerraBase.Engine.Sqlite;
 
 /// <summary>
 /// One open connection with its per-connection settings applied and its statements prepared once,

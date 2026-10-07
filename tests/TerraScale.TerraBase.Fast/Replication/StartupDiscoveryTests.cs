@@ -1,9 +1,9 @@
 using System.Text.Json;
 using Bogus;
 using Microsoft.Data.Sqlite;
-using TerraScale.TerraBase.Testing;
+using TerraBase.Testing;
 
-namespace TerraScale.TerraBase.Fast.Replication;
+namespace TerraBase.Fast.Replication;
 
 public sealed class StartupDiscoveryTests
 {

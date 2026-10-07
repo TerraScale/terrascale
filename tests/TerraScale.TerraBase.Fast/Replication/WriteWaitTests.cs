@@ -2,9 +2,9 @@ using System.Globalization;
 using System.Net;
 using System.Net.Http.Headers;
 using Bogus;
-using TerraScale.TerraBase.Testing;
+using TerraBase.Testing;
 
-namespace TerraScale.TerraBase.Fast.Replication;
+namespace TerraBase.Fast.Replication;
 
 /// <summary>Write-wait (docs/decisions/0010): a member answers a client write once its active peers durably acknowledged it.</summary>
 public sealed class WriteWaitTests

@@ -1,16 +1,16 @@
 using System.Diagnostics.Metrics;
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
-using TerraScale.TerraBase.Configuration;
-using TerraScale.TerraBase.Engine;
-using TerraScale.TerraBase.Features.ApiKeys;
-using TerraScale.TerraBase.Features.Documents;
-using TerraScale.TerraBase.Features.Management.Backups;
-using TerraScale.TerraBase.Features.Replication;
-using TerraScale.TerraBase.Hosting;
-using TerraScale.TerraBase.Tenancy;
+using TerraBase.Configuration;
+using TerraBase.Engine;
+using TerraBase.Features.ApiKeys;
+using TerraBase.Features.Documents;
+using TerraBase.Features.Management.Backups;
+using TerraBase.Features.Replication;
+using TerraBase.Hosting;
+using TerraBase.Tenancy;
 
-namespace TerraScale.TerraBase.Features.Management;
+namespace TerraBase.Features.Management;
 
 /// <summary>
 /// Keeps the management catalog as documents in the system database (<see cref="IStorageEngine.OpenSystemDatabaseAsync"/>). Every

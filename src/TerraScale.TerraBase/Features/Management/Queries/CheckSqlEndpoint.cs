@@ -1,9 +1,9 @@
+using TerraBase.Errors;
+using TerraBase.Features.UserAuth;
+using TerraBase.Hosting;
 using TerraScale.Endpoints;
-using TerraScale.TerraBase.Errors;
-using TerraScale.TerraBase.Features.UserAuth;
-using TerraScale.TerraBase.Hosting;
 
-namespace TerraScale.TerraBase.Features.Management.Queries;
+namespace TerraBase.Features.Management.Queries;
 
 /// <summary><c>POST …/databases/{database}/sql/check</c>: validates and explains a SQL statement without running it.</summary>
 public sealed class CheckSqlEndpoint(IManagementService management, IQueryService queries) : Endpoint<SqlRequest, IResult>

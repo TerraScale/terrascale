@@ -1,7 +1,7 @@
 using Microsoft.AspNetCore.OpenApi;
 using Microsoft.OpenApi;
 
-namespace TerraScale.TerraBase.Hosting;
+namespace TerraBase.Hosting;
 
 /// <summary>
 /// Documents a request body in OpenAPI only. Unlike <c>Accepts</c>, it adds no routing constraint:

@@ -2,10 +2,10 @@ using System.Net.Security;
 using System.Security.Cryptography.X509Certificates;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.AspNetCore.Server.Kestrel.Https;
-using TerraScale.TerraBase.Configuration;
-using TerraScale.TerraBase.Hosting;
+using TerraBase.Configuration;
+using TerraBase.Hosting;
 
-namespace TerraScale.TerraBase.Features.Replication;
+namespace TerraBase.Features.Replication;
 
 /// <summary>Registers the inter-node gRPC listener, the <c>Replication</c> service and the sender.</summary>
 public static class ReplicationExtensions

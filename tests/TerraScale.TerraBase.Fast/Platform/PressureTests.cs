@@ -7,11 +7,11 @@ using System.Text.Json;
 using Bogus;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
-using TerraScale.TerraBase.Engine;
-using TerraScale.TerraBase.Fast.Documents;
-using TerraScale.TerraBase.Testing;
+using TerraBase.Engine;
+using TerraBase.Fast.Documents;
+using TerraBase.Testing;
 
-namespace TerraScale.TerraBase.Fast.Platform;
+namespace TerraBase.Fast.Platform;
 
 public sealed class PressureTests
 {

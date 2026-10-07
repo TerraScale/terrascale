@@ -3,15 +3,15 @@ using System.Net;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
-using TerraScale.TerraBase.Engine;
-using TerraScale.TerraBase.Errors;
-using TerraScale.TerraBase.Fast.Storage;
-using TerraScale.TerraBase.Features.Documents;
-using TerraScale.TerraBase.Hosting;
-using TerraScale.TerraBase.Tenancy;
-using TerraScale.TerraBase.Testing;
+using TerraBase.Engine;
+using TerraBase.Errors;
+using TerraBase.Fast.Storage;
+using TerraBase.Features.Documents;
+using TerraBase.Hosting;
+using TerraBase.Tenancy;
+using TerraBase.Testing;
 
-namespace TerraScale.TerraBase.Fast.Documents;
+namespace TerraBase.Fast.Documents;
 
 public sealed class QueryCacheIntegrationTests
 {

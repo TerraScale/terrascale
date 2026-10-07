@@ -3,11 +3,11 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
-using TerraScale.TerraBase.Engine;
-using TerraScale.TerraBase.Engine.Sqlite;
-using TerraScale.TerraBase.Fast.Documents;
+using TerraBase.Engine;
+using TerraBase.Engine.Sqlite;
+using TerraBase.Fast.Documents;
 
-namespace TerraScale.TerraBase.Fast.Storage;
+namespace TerraBase.Fast.Storage;
 
 public sealed class StorageMutationTests
 {

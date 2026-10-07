@@ -1,6 +1,6 @@
 using System.Text;
 
-namespace TerraScale.TerraBase.Engine.Sqlite;
+namespace TerraBase.Engine.Sqlite;
 
 /// <summary>Capture and replication of TerraBase's own database (docs/decisions/0009).</summary>
 internal sealed partial class SqliteStorageTransaction

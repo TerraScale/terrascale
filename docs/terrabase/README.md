@@ -26,7 +26,7 @@ Every push to `main` that passes CI publishes the tested binaries as the prerele
 its `.sha256`). To cut a versioned release:
 
 1. Merge a pull request that sets `<Version>` in
-   `src/TerraScale.TerraBase/TerraScale.TerraBase.csproj` to the new version, e.g. `0.2.0`.
+   `src/TerraBase/TerraBase.csproj` to the new version, e.g. `0.2.0`.
 2. Tag that commit on `main` and push the tag:
 
    ```sh
@@ -130,5 +130,5 @@ See [signal definitions and follow-ups](docs/node-pressure.md).
 
 ## Layout
 
-Feature-sliced: `src/TerraScale.TerraBase/Features/<Feature>/` holds everything
+Feature-sliced: `src/TerraBase/Features/<Feature>/` holds everything
 a slice needs. See `AGENTS.md` for the full structure and rules.
