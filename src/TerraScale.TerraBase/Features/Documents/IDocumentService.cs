@@ -69,8 +69,7 @@ public sealed record OperationResult(string? Id, long? Version, bool Created, lo
 /// <param name="Offset">Database commit offset.</param>
 /// <param name="Results">One result per operation.</param>
 /// <param name="Scope">ETag scope of the database that committed this write.</param>
-/// <param name="Durability">What the commit survives: <c>local_durable</c>, or <c>memory</c> under <c>core=anna</c> until its disk tier ships.</param>
-public sealed record WriteResult(long Offset, IReadOnlyList<OperationResult> Results, Guid Scope, string Durability = DocumentRoute.Durability);
+public sealed record WriteResult(long Offset, IReadOnlyList<OperationResult> Results, Guid Scope);
 
 /// <summary>A refused document request: the failure, and the failing operation's index when the caller asked for it.</summary>
 /// <param name="Error">The failure, with its Documents API v1 code.</param>
@@ -99,11 +98,8 @@ public readonly union DocumentRead(StoredDocument, NeverWritten, NotFound, Valid
 /// <param name="Count">Matches among at most the count limit, and whether that count is exact.</param>
 public sealed record QueryOutcome(QueryPage Page, (long Count, bool Complete)? Count);
 
-/// <summary>
-/// A query's page, or why there is none: an unknown database or collection, a query over the engine budget, or a core
-/// that cannot run queries yet (<c>core=anna</c>).
-/// </summary>
-public readonly union QueryResult(QueryOutcome, NotFound, Validation, Unavailable);
+/// <summary>A query's page, or why there is none: an unknown database or collection, or a query over the engine budget.</summary>
+public readonly union QueryResult(QueryOutcome, NotFound, Validation);
 
 /// <summary>An atomic write's result, or the operation that refused it.</summary>
 public readonly union WriteOutcome(WriteResult, DocumentRejected);

@@ -8,11 +8,11 @@ namespace TerraBase.Engine.Lattices;
 /// <param name="Stamp">When the value was written.</param>
 /// <param name="Replica">The replica that wrote it; breaks ties between equal stamps.</param>
 /// <param name="Value">The value.</param>
-public readonly record struct LwwRegister<T>(Hlc Stamp, ulong Replica, T Value) : ILattice<LwwRegister<T>>
+public readonly record struct LwwRegister<T>(Hlc Stamp, ReplicaId Replica, T Value) : ILattice<LwwRegister<T>>
 {
     static LwwRegister<T> ILattice<LwwRegister<T>>.Bottom => default;
 
     /// <inheritdoc />
     public LwwRegister<T> Join(LwwRegister<T> other) =>
-        Stamp.Value > other.Stamp.Value || (Stamp.Value == other.Stamp.Value && Replica >= other.Replica) ? this : other;
+        Stamp.Value > other.Stamp.Value || (Stamp.Value == other.Stamp.Value && Replica.Value >= other.Replica.Value) ? this : other;
 }

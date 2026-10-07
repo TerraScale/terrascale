@@ -137,10 +137,9 @@ public sealed record ShapeResult(
 
 /// <summary>
 /// A shape read result, or why there is none: an unknown database or collection (<c>404</c>), a filter over the engine
-/// read budget (<c>400 invalid_query</c>), shape reads at capacity (<c>429 shape_busy</c>) or a core that cannot serve
-/// shapes yet (<c>503</c>, <c>core=anna</c>).
+/// read budget (<c>400 invalid_query</c>) or shape reads at capacity (<c>429 shape_busy</c>).
 /// </summary>
-public readonly union ShapeReadResult(ShapeResult, NotFound, Validation, QuotaExceeded, Unavailable);
+public readonly union ShapeReadResult(ShapeResult, NotFound, Validation, QuotaExceeded);
 
 /// <summary>
 /// Reads shapes: a collection and filter served as a snapshot plus a log addressed by offsets

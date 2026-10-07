@@ -15,6 +15,14 @@ public sealed record MvRegister<T> : ILattice<MvRegister<T>>
     {
     }
 
+    /// <summary>
+    /// An empty register that has already seen <paramref name="floor"/>: a new key starts from its database's floor of
+    /// collected dots (tombstone GC), and a write that failed leaves its dot behind, so no dot is ever minted twice.
+    /// </summary>
+    public MvRegister(CausalContext floor) : this([], floor ?? throw new ArgumentNullException(nameof(floor)))
+    {
+    }
+
     private MvRegister(ImmutableDictionary<Dot, T> values, CausalContext context)
     {
         Values = values;
@@ -30,14 +38,14 @@ public sealed record MvRegister<T> : ILattice<MvRegister<T>>
     public CausalContext Context { get; }
 
     /// <summary>The delta of <paramref name="replica"/> writing <paramref name="value"/> over every value this state knows.</summary>
-    public MvRegister<T> WriteDelta(ulong replica, T value) => WriteDelta(replica, value, Context);
+    public MvRegister<T> WriteDelta(ReplicaId replica, T value) => WriteDelta(replica, value, Context);
 
     /// <summary>
     /// The delta of <paramref name="replica"/> writing <paramref name="value"/> over the writes in
     /// <paramref name="observed"/> only; values written concurrently with it stay. This state must be
     /// <paramref name="replica"/>'s own, so the new dot is fresh.
     /// </summary>
-    public MvRegister<T> WriteDelta(ulong replica, T value, CausalContext observed)
+    public MvRegister<T> WriteDelta(ReplicaId replica, T value, CausalContext observed)
     {
         ArgumentNullException.ThrowIfNull(observed);
         var dot = new Dot(replica, Math.Max(Context.Max(replica), observed.Max(replica)) + 1);
@@ -45,13 +53,27 @@ public sealed record MvRegister<T> : ILattice<MvRegister<T>>
     }
 
     /// <inheritdoc />
+    /// <exception cref="InvalidOperationException">A dot carries two different values: a replica minted it twice.</exception>
     public MvRegister<T> Join(MvRegister<T> other)
     {
+        ArgumentNullException.ThrowIfNull(other);
+
         // A value survives when both sides hold it, or when the other side never saw its write.
         var values = ImmutableDictionary.CreateBuilder<Dot, T>();
         foreach (var (dot, value) in Values)
         {
-            if (other.Values.ContainsKey(dot) || !other.Context.Contains(dot))
+            if (other.Values.TryGetValue(dot, out var theirs))
+            {
+                // Merging on would keep one value and silently drop the other everywhere (Riak kv679): refuse.
+                if (!EqualityComparer<T>.Default.Equals(value, theirs))
+                {
+                    throw new InvalidOperationException(
+                        $"dot ({dot.Replica.Value}, {dot.Counter}) carries two different values: a replica minted it twice");
+                }
+
+                values[dot] = value;
+            }
+            else if (!other.Context.Contains(dot))
             {
                 values[dot] = value;
             }

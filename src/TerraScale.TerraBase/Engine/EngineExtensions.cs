@@ -1,7 +1,6 @@
 using System.Diagnostics.Metrics;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using TerraBase.Configuration;
-using TerraBase.Engine.Anna;
 using TerraBase.Engine.Sqlite;
 using TerraBase.Hosting;
 
@@ -48,11 +47,6 @@ public static class EngineExtensions
         });
         services.AddSingleton<IStorageEngine>(provider => provider.GetRequiredService<StampingStorageEngine>());
         services.AddSingleton<ISystemReplication>(provider => provider.GetRequiredService<StampingStorageEngine>());
-        if (options.Core is StorageCore.Anna)
-        {
-            services.AddSingleton<IDocumentActors, DocumentActors>();
-        }
-
         return services.AddSingleton<IWriteStamps>(provider => provider.GetRequiredService<StampingStorageEngine>());
     }
 }

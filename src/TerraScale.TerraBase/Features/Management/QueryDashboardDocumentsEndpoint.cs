@@ -79,7 +79,6 @@ public sealed class QueryDashboardDocumentsEndpoint(IManagementCommits commits) 
         {
             NotFound error => ErrorResponse.From(error),
             Validation error => ErrorResponse.From(error),
-            Unavailable error => ErrorResponse.From(error),
             QueryOutcome outcome => Page(collection, body, query, outcome, cancellationToken),
         };
 

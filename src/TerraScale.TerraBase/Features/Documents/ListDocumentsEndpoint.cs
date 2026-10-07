@@ -68,7 +68,6 @@ public sealed class ListDocumentsEndpoint(IDocumentService documents, ITenantDir
         {
             NotFound error => ErrorResponse.From(error),
             Validation error => ErrorResponse.From(error),
-            Unavailable error => ErrorResponse.From(error),
             QueryOutcome outcome => Page(collection, digest, outcome.Page, cancellationToken),
         };
 

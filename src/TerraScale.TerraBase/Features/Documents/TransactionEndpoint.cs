@@ -108,7 +108,7 @@ public sealed class TransactionEndpoint(IDocumentService documents, IAuthorizati
             DocumentRejected rejected => ErrorResponse.From(rejected.Error, rejected.Op),
             WriteResult written => TypedResults.Ok(new TransactionBody(
                 DocumentRoute.Decimal(written.Offset),
-                written.Durability,
+                DocumentRoute.Durability,
                 [.. written.Results.Select(result => result switch
                 {
                     { ETag: { } version } => new TransactionResultBody(result.Id, version, null, null),

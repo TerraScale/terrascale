@@ -32,7 +32,7 @@ public sealed record AwSet<T> : ILattice<AwSet<T>> where T : notnull
     public bool Contains(T item) => Entries.ContainsKey(item);
 
     /// <summary>The delta of <paramref name="replica"/> adding <paramref name="item"/>. This state must be <paramref name="replica"/>'s own.</summary>
-    public AwSet<T> AddDelta(ulong replica, T item)
+    public AwSet<T> AddDelta(ReplicaId replica, T item)
     {
         var dot = new Dot(replica, Context.Max(replica) + 1);
         return new(ImmutableDictionary<T, ImmutableHashSet<Dot>>.Empty.Add(item, [dot]), CausalContext.Of(Dots(item)).Add(dot));
