@@ -247,9 +247,9 @@ golang.org/x/tools/internal/stdlib
 golang.org/x/tools/internal/typeparams
 golang.org/x/tools/internal/typesinternal
 golang.org/x/tools/internal/versions
-# terrascale.tech/sdk v0.0.0-20261005130518-b911817c6e63 => git.terrascale.tech/TerraScale/ts-go v0.0.0-20261007193824-3dfbe22c80df
+# terrascale.tech/sdk v0.0.0-20261005130518-b911817c6e63 => git.terrascale.tech/TerraScale/ts-go v0.0.0-20261007203632-9135698aeaf6
 ## explicit; go 1.25.0
 terrascale.tech/sdk
 terrascale.tech/sdk/terrabasetest
 terrascale.tech/sdk/v1
-# terrascale.tech/sdk => git.terrascale.tech/TerraScale/ts-go v0.0.0-20261007193824-3dfbe22c80df
+# terrascale.tech/sdk => git.terrascale.tech/TerraScale/ts-go v0.0.0-20261007203632-9135698aeaf6

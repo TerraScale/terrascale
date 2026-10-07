@@ -361,7 +361,7 @@ func (s Service) meter(ctx context.Context, token string, org core.Organization,
 	}
 	now := time.Now().UTC()
 	monthStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
-	organization, err := s.deps.Usage.Usage(ctx, token, core.UsageScope{OrganizationID: orgID, Granularity: "day", From: monthStart})
+	organization, err := s.organizationUsage(ctx, token, org, monthStart)
 	switch {
 	case err == nil:
 		result.month, result.monthMeasured, result.organizationStorage = organization.Period, true, true
@@ -372,8 +372,7 @@ func (s Service) meter(ctx context.Context, token string, org core.Organization,
 			}
 		}
 	case errors.Is(err, core.ErrNotMetered):
-		// TerraBase meters projects and databases, not organizations: the
-		// selected scope's answer below still applies.
+		result.monthError = "This month's organization usage is incomplete because TerraBase doesn't report every project's monthly usage."
 	case errors.Is(err, core.ErrUnauthorized):
 		result.monthError = "TerraBase didn't accept this sign-in, so this month's reads and writes didn't load. Sign out and in again."
 	default:
@@ -412,6 +411,33 @@ func (s Service) meter(ctx context.Context, token string, org core.Organization,
 	totals.Reads, totals.Writes, totals.Series = scoped.Period.Reads, scoped.Period.Writes, scoped.Series
 	totals.LogicalBytes = scoped.LogicalBytes
 	return result
+}
+
+// TerraBase meters projects; ts-auth owns organizations. A failed project
+// makes the organization's usage unknown, never a smaller measured total.
+func (s Service) organizationUsage(ctx context.Context, token string, org core.Organization, from time.Time) (core.Usage, error) {
+	ctx, cancel := context.WithTimeout(ctx, systemUsageBudget)
+	defer cancel()
+	total := core.Usage{OrganizationID: org.ID, Period: core.UsagePeriod{From: from, Granularity: "day"}}
+	for _, project := range org.Projects {
+		orgID, projectID := project.TerraBaseIDs(org.ID)
+		usage, err := s.deps.Usage.Usage(ctx, token, core.UsageScope{OrganizationID: orgID, ProjectID: projectID, Granularity: "day", From: from})
+		if err != nil {
+			return core.Usage{}, err
+		}
+		if usage.Period.Reads < 0 || usage.Period.Writes < 0 || usage.LogicalBytes < 0 ||
+			usage.Period.Reads > math.MaxInt64-total.Period.Reads || usage.Period.Writes > math.MaxInt64-total.Period.Writes || usage.LogicalBytes > math.MaxInt64-total.LogicalBytes {
+			return core.Usage{}, fmt.Errorf("%w: invalid organization usage totals", core.ErrUnavailable)
+		}
+		total.Period.Reads += usage.Period.Reads
+		total.Period.Writes += usage.Period.Writes
+		total.LogicalBytes += usage.LogicalBytes
+		// Rows use the dashboard's project IDs, while TerraBase uses the
+		// derived IDs in the request above.
+		usage.ProjectID = project.ID
+		total.Items = append(total.Items, usage)
+	}
+	return total, nil
 }
 
 // meterError explains why TerraBase's usage of the scope ("organization",

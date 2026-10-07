@@ -112,7 +112,13 @@ project, err := u.CreateProject(ctx, org.ID, "Production")
 db, err := u.CreateDatabase(ctx, org.ID, project.ID, "main") // then c.Database(project.ID, "main")
 inv, err := u.CreateInvitation(ctx, org.ID, "bia@example.com", tb.RoleAdmin)
 page, err := u.Members(ctx, org.ID, tb.PageOptions{After: next})
+usage, err := u.Usage(ctx, org.ID, project.ID, "", tb.UsageOptions{Granularity: "day", From: monthStart})
 ```
+
+`Usage` reads a project (database ID empty) or one database, with UTC
+`hour`/`day` buckets and optional inclusive `From`/exclusive `To`. `Period`
+is nil on servers without windowed metering; lifetime counters must not be
+used for a monthly bill. Organization usage is the sum of its ts-auth projects.
 
 It also covers `Organizations`, `RenameOrganization`, `SetPlan`,
 `DeleteOrganization`, `CurrentOrganization`/`SetCurrentOrganization`, project
@@ -293,12 +299,22 @@ against the pinned contract, `tsauth/testdata/platform-api.openapi.json`.
 headless API (TS-582) for a first-party confidential client that signs users
 in on its own pages, as ts-dashboard does: `SignInWithPassword`,
 `SignInWithEmailCode` (with the `pendingToken` of `SignUp` for a sign-up
-code), `StartEmailCode`, `SignUp`, `StartPasswordReset`,
+code), `StartEmailCode`, `ResendEmailCode`, `SignUp`, `StartPasswordReset`,
 `CompletePasswordReset`, `Refresh` and `Revoke`. Every sign-in and step
 takes the end user's IP address, which ts-auth's rate limits key on. Grants
 answer `*tsauth.Tokens` or a `*tsauth.Error` (`invalid_grant` for any wrong
 credential); the JSON steps fail with `*tsauth.APIError` (`ErrInvalidCode`,
 `ErrInvalidPassword`, `ErrRateLimited` with `RetryAfter`, `ErrInvalidClient`).
+`ResendEmailCode(ctx, email, clientIP, pendingToken)` uses the same email-code
+endpoint; pass the `SignUp` token to preserve the pending sign-up, or `""`
+for a sign-in code. Invalid pending tokens succeed without sending an email
+to prevent account enumeration. Respect `APIError.RetryAfter` before retrying.
+
+Issuers require HTTPS, except for loopback HTTP. For development only, set
+`HeadlessConfig.AllowInsecureHTTP: true` to use an issuer such as
+`http://ts-auth:8080/terrascale`. The option defaults to false; keep it false
+in production because HTTP exposes credentials and tokens. Other issuer URL
+validation still applies, and other SDK clients retain their HTTPS requirement.
 
 ```go
 h, err := tsauth.NewHeadless(tsauth.HeadlessConfig{ClientID: "ts-dashboard", ClientSecret: secret})
