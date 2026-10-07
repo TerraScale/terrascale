@@ -155,6 +155,7 @@ public sealed class HarnessShutdownTests
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         SqliteStorageEngine? engine = null;
         Task? completion = null;
+        Task? cleanup = null;
         string? directory = null;
         var startup = TerraBaseTestServer.StartAsync(settings => directory = settings["data-directory"], services =>
             services.AddSingleton<IHostedService>(provider =>
@@ -162,7 +163,7 @@ public sealed class HarnessShutdownTests
                 engine = provider.GetRequiredService<SqliteStorageEngine>();
                 completion = provider.GetRequiredService<ApplicationRunCompletion>().Completion.Task;
                 return new HeldStarting(entered, release, token);
-            }), cancellationToken: execution.Token);
+            }), cancellationToken: execution.Token, failedStartCleanup: task => cleanup = task);
         try
         {
             await entered.Task.WaitAsync(token);
@@ -171,6 +172,8 @@ public sealed class HarnessShutdownTests
             await Assert.That(error is OperationCanceledException
                 || error is AggregateException aggregate && aggregate.Flatten().InnerExceptions.All(cause => cause is OperationCanceledException)).IsTrue();
             await Assert.That(completion!.IsCompleted).IsFalse();
+            await Assert.That(cleanup is not null).IsTrue();
+            await Assert.That(cleanup!.IsCompleted).IsFalse();
             await Assert.That(TerraBaseTestServer.IsDataDirectoryOwned(directory!)).IsTrue();
         }
         finally
@@ -178,6 +181,7 @@ public sealed class HarnessShutdownTests
             release.TrySetResult();
             await Assert.That(async () => await completion!.WaitAsync(token)).ThrowsException();
             await engine!.CleanupCompletion.WaitAsync(token);
+            await cleanup!.WaitAsync(token);
             await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(!Directory.Exists(directory)));
         }
     }
