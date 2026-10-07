@@ -379,10 +379,16 @@ func selected(deps core.Deps, r *http.Request) (core.Principal, core.Account, co
 func failure(err error, invalid string) (int, string) {
 	var provider core.ProviderError
 	switch {
+	case errors.Is(err, errHomeRegion):
+		return http.StatusBadRequest, ErrHomeRegion
 	case errors.Is(err, core.ErrInvalid):
 		return http.StatusBadRequest, invalid
 	case errors.Is(err, errRegionsUnavailable):
 		return http.StatusServiceUnavailable, ErrNoRegions
+	case errors.Is(err, errWrongRegion):
+		return http.StatusConflict, ErrWrongRegion
+	case errors.Is(err, errReplicated):
+		return http.StatusConflict, ErrReplicated
 	case errors.Is(err, errNotReady):
 		return http.StatusConflict, ErrNotReady
 	case errors.Is(err, core.ErrDatabaseLimit):

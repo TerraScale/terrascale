@@ -42,7 +42,7 @@ func (i *TSAuthInstanceClient) issuerBase(issuer *url.URL) (string, bool) {
 }
 
 // Auth requests never follow redirects, so a regional response cannot move
-// a management credential or discovery request to another origin.
+// a credential or discovery request to another origin.
 func tsAuthNoRedirectClient(client *http.Client) *http.Client {
 	copy := *client
 	copy.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }

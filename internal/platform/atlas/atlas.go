@@ -74,6 +74,7 @@ func (c *Catalog) fetch(ctx context.Context) ([]core.Region, error) {
 			ID      string `json:"id"`
 			Name    string `json:"name"`
 			Country string `json:"country"`
+			API     string `json:"api"`
 			Health  string `json:"health"`
 		} `json:"regions"`
 	}
@@ -90,7 +91,7 @@ func (c *Catalog) fetch(ctx context.Context) ([]core.Region, error) {
 		if code == "" || slices.ContainsFunc(regions, func(have core.Region) bool { return have.Code == code }) {
 			continue
 		}
-		regions = append(regions, core.Region{Code: code, Name: r.Name, Country: strings.ToLower(r.Country), Healthy: r.Health != "down"})
+		regions = append(regions, core.Region{Code: code, ID: r.ID, Name: r.Name, Country: strings.ToLower(r.Country), API: r.API, Healthy: r.Health != "down"})
 	}
 	if len(regions) == 0 {
 		return nil, errors.New("discovery lists no regions")

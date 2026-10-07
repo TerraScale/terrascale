@@ -2,6 +2,7 @@ package databases
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -18,34 +19,6 @@ var (
 	// ts-atlas region discovery did not answer.
 	errRegionsUnavailable = fmt.Errorf("%w: region discovery is unavailable", core.ErrDataPlane)
 )
-
-// placement checks regions against ts-atlas discovery and returns their
-// codes in the order given; the first is the primary region. One region
-// keeps the database there; more replicate it between them.
-func (s Service) placement(ctx context.Context, regions []string) ([]string, error) {
-	if s.deps.Regions == nil {
-		return nil, errRegionsUnavailable
-	}
-	catalog, err := s.deps.Regions(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("%w: %w", errRegionsUnavailable, err)
-	}
-	codes := make([]string, 0, len(regions))
-	for _, region := range regions {
-		code := strings.ToUpper(strings.TrimSpace(region))
-		if !slices.ContainsFunc(catalog, func(r core.Region) bool { return r.Code == code }) {
-			return nil, core.Invalid(fmt.Sprintf("unknown region %q", region))
-		}
-		if slices.Contains(codes, code) {
-			return nil, core.Invalid(fmt.Sprintf("duplicate region %q", region))
-		}
-		codes = append(codes, code)
-	}
-	if len(codes) == 0 {
-		return nil, core.Invalid("choose at least one region")
-	}
-	return codes, nil
-}
 
 // Service owns the database lifecycle in a principal's selected project.
 // HTTP handlers and MCP tools both call it.
@@ -105,7 +78,7 @@ func (s Service) Detail(ctx context.Context, p core.Principal, databaseID string
 // Create provisions a database across the selected regions. No region uses
 // the project's primary region for callers that omit placement.
 func (s Service) Create(ctx context.Context, p core.Principal, name string, regions ...string) (databaseView, error) {
-	_, project, err := s.selected(ctx, p)
+	a, project, err := s.selected(ctx, p)
 	if err != nil {
 		return databaseView{}, err
 	}
@@ -116,13 +89,25 @@ func (s Service) Create(ctx context.Context, p core.Principal, name string, regi
 	if len(regions) == 0 || len(regions) == 1 && regions[0] == "" {
 		regions = []string{project.Region}
 	}
-	codes, err := s.placement(ctx, regions)
+	placed, err := s.placement(ctx, regions)
 	if err != nil {
 		return databaseView{}, err
 	}
+	codes := codesOf(placed)
 	db := core.Database{
 		ID: core.NewID("db"), ProjectID: p.ProjectID, Name: name, Region: codes[0], Regions: codes, Status: "ready",
 		CreatedAt: time.Now().UTC(), Documents: make(map[string]map[string][]byte),
+	}
+	org := a.Organizations[p.OrganizationID]
+	if !s.deps.LocalResources() {
+		if !org.CanProvisionResources(p.UserID) {
+			return databaseView{}, core.ErrForbidden
+		}
+		managed, err := createPlaced(ctx, org, project, name, placed)
+		if err != nil {
+			return databaseView{}, err
+		}
+		db.ID, db.CreatedAt, db.Documents, db.Provisioned = managed.ID, managed.CreatedAt, nil, true
 	}
 	// The store refuses the commit with core.ErrDatabaseLimit when the plan's
 	// database allowance is used up.
@@ -149,17 +134,23 @@ func (s Service) Create(ctx context.Context, p core.Principal, name string, regi
 		return nil
 	})
 	if err != nil {
+		if !s.deps.LocalResources() {
+			// ponytail: best-effort cleanup; a failed drop leaves the database
+			// in TerraBase, unrecorded, until a Management commit creates both
+			// together (TS-671).
+			if dropErr := dropPlaced(ctx, org, project, db.ID, placed); dropErr != nil {
+				err = errors.Join(err, dropErr)
+			}
+		}
 		return databaseView{}, err
 	}
 	return view(db), nil
 }
 
-// SetRegions changes where a database lives: one region, or several that
-// replicate it between them.
-// TODO(TS-643): ask TerraBase to place the database once its database
-// regions API is published; until then the dashboard records the placement.
+// SetRegions changes where a database lives: its home region alone, or with
+// replicas. The home region never changes.
 func (s Service) SetRegions(ctx context.Context, p core.Principal, databaseID string, regions ...string) (databaseView, error) {
-	_, project, err := s.selected(ctx, p)
+	a, project, err := s.selected(ctx, p)
 	if err != nil {
 		return databaseView{}, err
 	}
@@ -173,10 +164,19 @@ func (s Service) SetRegions(ctx context.Context, p core.Principal, databaseID st
 	if core.SystemDatabase(db) {
 		return databaseView{}, core.ErrSystemReadOnly
 	}
-	codes, err := s.placement(ctx, regions)
+	placed, err := s.placement(ctx, regions)
 	if err != nil {
 		return databaseView{}, err
 	}
+	if placed, err = homeFirst(db.Region, placed); err != nil {
+		return databaseView{}, err
+	}
+	if !s.deps.LocalResources() {
+		if err := setPlaced(ctx, a.Organizations[p.OrganizationID], project, db.ID, placed); err != nil {
+			return databaseView{}, err
+		}
+	}
+	codes := codesOf(placed)
 	err = s.deps.Store.UpdateAs(ctx, p, func(a *core.Account) error {
 		project, err := a.ProjectFor(p, p.OrganizationID, p.ProjectID)
 		if err != nil {

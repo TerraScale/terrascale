@@ -75,8 +75,12 @@ templ detailPlacement(page core.Page, d detailData) {
 				<input type="hidden" name="databaseId" value={ d.Database.ID }/>
 				<div class="ts-field">
 					<span class="ts-label">Regions</span>
-					@regionCheckboxes("database-placement", d.Choices, databaseRegions(d.Database))
-					@regionHint(d.RegionsError)
+					@regionCheckboxes("database-placement", d.Choices, databaseRegions(d.Database), d.Database.Region)
+					if d.RegionsError != "" {
+						@regionHint(d.RegionsError)
+					} else {
+						<p class="ts-hint">{ regionDisplay(d.Database.Region) } is the home region and stays selected. Add a region to replicate the database there; remove one to stop serving it there.</p>
+					}
 				</div>
 				<div class="ts-row">
 					<button class="ts-btn ts-btn-secondary" type="submit">Save regions</button>
