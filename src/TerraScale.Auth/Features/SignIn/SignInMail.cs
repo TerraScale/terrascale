@@ -6,7 +6,7 @@ using TerraScale.Auth.Features.Oidc;
 namespace TerraScale.Auth.Features.SignIn;
 
 /// <summary>
-/// Delivers emailed codes (sign-in, password reset, sign-up) after the response, so request timing never tells an account from a stranger. One worker
+/// Delivers emailed codes (sign-in, password reset, sign-up) and invitations (TS-598) after the response, so request timing never tells an account from a stranger. One worker
 /// sends them in order, so a slow relay holds at most one SMTP connection however many requests arrive. Codes queued
 /// when the host stops are still sent within its shutdown timeout. A full queue drops the code and logs it; the user
 /// can ask for another.
@@ -26,8 +26,8 @@ public sealed partial class SignInMail(IEmailSender email, AuthEmails emails, Em
     private DateTimeOffset configRetryAt;
 
     // ponytail: one sequential sender, add workers if a healthy relay cannot keep up with sign-in volume.
-    private readonly Channel<(Func<Task<IssuedPasscode?>> Issue, string Locale)> queue =
-        Channel.CreateBounded<(Func<Task<IssuedPasscode?>>, string)>(new BoundedChannelOptions(Capacity) { SingleReader = true });
+    private readonly Channel<(Func<Task<Outgoing?>> Prepare, string Locale)> queue =
+        Channel.CreateBounded<(Func<Task<Outgoing?>>, string)>(new BoundedChannelOptions(Capacity) { SingleReader = true });
 
     /// <summary>Queues <paramref name="passcode"/> for delivery in <paramref name="locale"/> without waiting for it.</summary>
     public void Enqueue(IssuedPasscode passcode, string locale = AuthEmails.English)
@@ -43,10 +43,21 @@ public sealed partial class SignInMail(IEmailSender email, AuthEmails emails, Em
     public void EnqueueIssue(Func<Task<IssuedPasscode?>> issue, string locale = AuthEmails.English)
     {
         ArgumentNullException.ThrowIfNull(issue);
-        if (!this.queue.Writer.TryWrite((issue, locale)))
-        {
-            LogDropped(logger);
-        }
+        this.Enqueue(async () => await issue().ConfigureAwait(false) is { } passcode
+            ? new Outgoing(passcode.Email, passcode.Purpose switch
+            {
+                PasscodePurpose.PasswordReset => AuthEmailKind.PasswordReset,
+                PasscodePurpose.SignUp => AuthEmailKind.VerifyEmail,
+                _ => AuthEmailKind.SignInCode,
+            }, new AuthEmailValues(passcode.Email) { Code = passcode.Code, ExpiresIn = Passcodes.Lifetime })
+            : null, locale);
+    }
+
+    /// <summary>Queues an invitation to <paramref name="values"/>'s address, with its accept link, for delivery.</summary>
+    public void EnqueueInvitation(AuthEmailValues values, string locale = AuthEmails.English)
+    {
+        ArgumentNullException.ThrowIfNull(values);
+        this.Enqueue(() => Task.FromResult<Outgoing?>(new Outgoing(values.Email, AuthEmailKind.Invitation, values)), locale);
     }
 
     /// <inheritdoc />
@@ -61,24 +72,17 @@ public sealed partial class SignInMail(IEmailSender email, AuthEmails emails, Em
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         // Not stoppingToken: codes already issued are still delivered while the host shuts down.
-        await foreach (var (issue, locale) in this.queue.Reader.ReadAllAsync(CancellationToken.None))
+        await foreach (var (prepare, locale) in this.queue.Reader.ReadAllAsync(CancellationToken.None))
         {
             try
             {
-                if (await issue().ConfigureAwait(false) is not { } passcode)
+                if (await prepare().ConfigureAwait(false) is not { } outgoing)
                 {
                     continue;
                 }
 
-                var kind = passcode.Purpose switch
-                {
-                    PasscodePurpose.PasswordReset => AuthEmailKind.PasswordReset,
-                    PasscodePurpose.SignUp => AuthEmailKind.VerifyEmail,
-                    _ => AuthEmailKind.SignInCode,
-                };
-                var message = await emails.RenderAsync(kind, locale,
-                    new AuthEmailValues(passcode.Email) { Code = passcode.Code, ExpiresIn = Passcodes.Lifetime }, await this.ConfigAsync(), cancellationToken: CancellationToken.None);
-                await email.SendAsync(passcode.Email, message, CancellationToken.None);
+                var message = await emails.RenderAsync(outgoing.Kind, locale, outgoing.Values, await this.ConfigAsync(), cancellationToken: CancellationToken.None);
+                await email.SendAsync(outgoing.To, message, CancellationToken.None);
             }
             catch (Exception failure) when (failure is not OutOfMemoryException)
             {
@@ -114,6 +118,14 @@ public sealed partial class SignInMail(IEmailSender email, AuthEmails emails, Em
         }
     }
 
+    private void Enqueue(Func<Task<Outgoing?>> prepare, string locale)
+    {
+        if (!this.queue.Writer.TryWrite((prepare, locale)))
+        {
+            LogDropped(logger);
+        }
+    }
+
     [LoggerMessage(Level = LogLevel.Warning, Message = "Email configuration unavailable; sending the sign-in code with the defaults")]
     private static partial void LogConfigUnavailable(ILogger logger, Exception exception);
 
@@ -122,4 +134,7 @@ public sealed partial class SignInMail(IEmailSender email, AuthEmails emails, Em
 
     [LoggerMessage(Level = LogLevel.Error, Message = "Sign-in code delivery failed")]
     private static partial void LogFailed(ILogger logger, Exception exception);
+
+    // One email to render and send; Values never formats its code or link.
+    private sealed record Outgoing(string To, AuthEmailKind Kind, AuthEmailValues Values);
 }

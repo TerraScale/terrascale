@@ -50,7 +50,7 @@ public sealed class StorageReadinessTests(TerraBaseFixture fixture)
         using var unavailable = await missing.Client.GetAsync("/readyz");
         await Assert.That(unavailable.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
         await Assert.That((await database.ListCollectionsAsync()).Items.Select(collection => collection.Name))
-            .IsEquivalentTo(["email_config_versions", "email_configs", "memberships", "oidc_applications", "oidc_authorizations", "oidc_tokens", "organizations", "passcodes", "project_members", "projects", "rate_limits", "sessions", "signing_key_rings", "storage_health", "uniques", "users", "verification_tokens"]);
+            .IsEquivalentTo(["api_keys", "audit_events", "email_config_versions", "email_configs", "invitations", "memberships", "oidc_applications", "oidc_authorizations", "oidc_tokens", "organizations", "passcodes", "project_members", "projects", "rate_limits", "sessions", "signing_key_rings", "storage_health", "uniques", "users", "verification_tokens"]);
     }
 
     [Test]

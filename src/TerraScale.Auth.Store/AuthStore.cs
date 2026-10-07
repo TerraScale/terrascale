@@ -60,6 +60,15 @@ public sealed class AuthStore(TerraBaseDatabase database, TimeProvider clock)
     /// <summary>Explicit project roles, addressed by instance and <c>{project}/{user}</c>.</summary>
     public const string ProjectMemberCollection = "project_members";
 
+    /// <summary>API keys, addressed by instance and key id.</summary>
+    public const string ApiKeyCollection = "api_keys";
+
+    /// <summary>Invitations to an organization or project, addressed by instance and id.</summary>
+    public const string InvitationCollection = "invitations";
+
+    /// <summary>Audit events of the platform's organizations, addressed by instance and id.</summary>
+    public const string AuditEventCollection = "audit_events";
+
     /// <summary>
     /// Every collection the service needs; provisioning creates them and readiness requires them. <c>signing_key_rings</c>
     /// belongs to the TS-488 key ring, which signs OpenID Connect tokens; <c>rate_limits</c> to the TS-488 attempt limiter,
@@ -71,7 +80,8 @@ public sealed class AuthStore(TerraBaseDatabase database, TimeProvider clock)
         UniqueCollection, ChallengeCollection, HealthCollection, UserCollection, SessionCollection, PasscodeCollection,
         "signing_key_rings", OidcApplicationCollection, OidcAuthorizationCollection, OidcTokenCollection,
         "rate_limits", "email_configs", "email_config_versions",
-        OrganizationCollection, MembershipCollection, ProjectCollection, ProjectMemberCollection,
+        OrganizationCollection, MembershipCollection, ProjectCollection, ProjectMemberCollection, ApiKeyCollection,
+        InvitationCollection, AuditEventCollection,
     ];
 
     private static readonly UTF8Encoding StrictUtf8 = new(false, true);
@@ -413,10 +423,11 @@ public sealed class AuthStore(TerraBaseDatabase database, TimeProvider clock)
 
     /// <summary>
     /// One page of the instance's documents in <paramref name="collection"/> matching every condition (TerraBase query
-    /// filters), sorted by <paramref name="sort"/> then id. <paramref name="cursor"/> is a previous page's
-    /// <c>NextCursor</c> for the same conditions and sort; TerraBase refuses any other (<c>invalid_cursor</c>).
+    /// filters), sorted by <paramref name="sort"/> then id, newest first when <paramref name="descending"/>.
+    /// <paramref name="cursor"/> is a previous page's <c>NextCursor</c> for the same conditions and sort; TerraBase refuses
+    /// any other (<c>invalid_cursor</c>).
     /// </summary>
-    public Task<TerraBaseDocumentPage> PageAsync(string collection, string instanceId, IReadOnlyList<JsonObject> conditions, IReadOnlyList<string> sort, int limit, string? cursor, CancellationToken cancellationToken = default)
+    public Task<TerraBaseDocumentPage> PageAsync(string collection, string instanceId, IReadOnlyList<JsonObject> conditions, IReadOnlyList<string> sort, int limit, string? cursor, bool descending = false, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(conditions);
         ArgumentNullException.ThrowIfNull(sort);
@@ -430,7 +441,7 @@ public sealed class AuthStore(TerraBaseDatabase database, TimeProvider clock)
         return database.QueryAsync(collection, new TerraBaseQuery
         {
             Filter = parsed.RootElement.Clone(),
-            Sort = [.. sort.Select(path => new TerraBaseSort(path))],
+            Sort = [.. sort.Select(path => new TerraBaseSort(path, descending ? "desc" : null))],
             Cursor = cursor,
             Limit = limit,
         }, cancellationToken);
@@ -442,6 +453,15 @@ public sealed class AuthStore(TerraBaseDatabase database, TimeProvider clock)
         ArgumentException.ThrowIfNullOrWhiteSpace(ownerId);
         var claim = JsonSerializer.SerializeToElement(new UniqueClaim(instanceId, kind, ownerId), StoreJsonContext.Default.UniqueClaim);
         return new(TerraBaseTransactionOperation.Create(UniqueCollection, claim, NaturalKeyId(instanceId, kind, normalizedKey)));
+    }
+
+    /// <summary>Hands a scoped natural key held at <paramref name="version"/> to <paramref name="ownerId"/>.</summary>
+    public static StoreOperation Reclaim(string instanceId, string kind, string normalizedKey, string ownerId, string version)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(ownerId);
+        ArgumentException.ThrowIfNullOrEmpty(version);
+        var claim = JsonSerializer.SerializeToElement(new UniqueClaim(instanceId, kind, ownerId), StoreJsonContext.Default.UniqueClaim);
+        return new(TerraBaseTransactionOperation.Put(UniqueCollection, NaturalKeyId(instanceId, kind, normalizedKey), claim, version));
     }
 
     /// <summary>Releases a scoped natural key at the <paramref name="version"/> its owner read (<see cref="FindUniqueAsync"/>).</summary>

@@ -9,6 +9,7 @@ using TerraScale.Auth.Configuration;
 using TerraScale.Auth.Contracts;
 using TerraScale.Auth.Features.Headless;
 using TerraScale.Auth.Features.Identity;
+using TerraScale.Auth.Features.Platform;
 using TerraScale.Auth.Features.Ui;
 using TerraScale.Auth.Hosting;
 using TerraScale.Endpoints;
@@ -146,7 +147,7 @@ public sealed class AuthorizeEndpoint(Sessions sessions, TimeProvider clock, Aut
 /// client-credentials access token. Each code and refresh token works once: a second presentation, even a concurrent
 /// one, fails and revokes every token of that sign-in. Tokens are refused once the user signed out everywhere.
 /// </summary>
-public sealed class TokenEndpoint(Users users, HeadlessAuth headless, AuthOptions options) : EndpointWithoutRequest<IResult>
+public sealed class TokenEndpoint(Users users, HeadlessAuth headless, PlatformGrants platform, AuthOptions options) : EndpointWithoutRequest<IResult>
 {
     /// <inheritdoc />
     public override void Configure()
@@ -174,8 +175,26 @@ public sealed class TokenEndpoint(Users users, HeadlessAuth headless, AuthOption
 
         if (request.GrantType is HeadlessGrants.Password or HeadlessGrants.EmailCode)
         {
-            // OpenIddict has authenticated the client and checked its permission for this grant.
+            // OpenIddict has authenticated the client and checked its permission for this grant. Scopes a sign-in never
+            // grants are refused before the code or password is spent, so a corrected request still succeeds.
+            if (request.GetScopes().Except(OidcResults.SignInScopes).Any())
+            {
+                return OidcResults.Forbid(Errors.InvalidScope, "A sign-in grants only openid, email, profile and offline_access.");
+            }
+
             return await headless.GrantAsync(request, cancellationToken);
+        }
+
+        if (request.IsClientCredentialsGrantType() && ApiKeys.IsKeyId(request.ClientId))
+        {
+            // An API key (TS-598) OpenIddict has authenticated: an organization or project token.
+            return await platform.ApiKeyAsync(this.HttpContext, request, cancellationToken);
+        }
+
+        if (request.IsTokenExchangeGrantType())
+        {
+            // OpenIddict has validated the subject token and the client's token-exchange permission.
+            return await platform.ExchangeAsync(this.HttpContext, request, cancellationToken);
         }
 
         if (request.IsClientCredentialsGrantType())
@@ -302,6 +321,9 @@ internal static class OidcResults
         [OpenIddictServerAspNetCoreConstants.Properties.ErrorDescription] = description,
     });
 
+    /// <summary>The only scopes a sign-in grants.</summary>
+    public static readonly IReadOnlyList<string> SignInScopes = [Scopes.OpenId, Scopes.Email, Scopes.Profile, Scopes.OfflineAccess];
+
     public static IResult Forbid(string error, string description) =>
         Results.Forbid(Error(error, description), [OpenIddictServerAspNetCoreDefaults.AuthenticationScheme]);
 
@@ -313,6 +335,13 @@ internal static class OidcResults
     /// </summary>
     public static IResult SignIn(UserRecord user, DateTimeOffset authenticatedAt, IEnumerable<string> scopes, IReadOnlyList<string> audiences)
     {
+        // TerraBase and platform scopes come only from the role-checked token exchange (TS-598), never with a sign-in,
+        // although ts-dashboard holds their permissions for the exchange.
+        if (scopes.Except(SignInScopes).Any())
+        {
+            return Forbid(Errors.InvalidScope, "A sign-in grants only openid, email, profile and offline_access.");
+        }
+
         var identity = new ClaimsIdentity(TokenValidationParameters.DefaultAuthenticationType, Claims.Name, Claims.Role)
             .SetClaim(Claims.Subject, user.Id)
             .SetClaim(Claims.Email, user.Email)

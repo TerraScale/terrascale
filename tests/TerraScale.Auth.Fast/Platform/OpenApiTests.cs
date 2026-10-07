@@ -122,21 +122,29 @@ public sealed partial class OpenApiTests
     public async Task Served_platform_operations_match_the_published_contract()
     {
         // docs/platform-api.openapi.yaml is the contract TerraBase, the SDKs and the dashboard build on (TS-598); every
-        // platform operation the service maps must appear there with the same path, method, operationId and response codes.
+        // platform operation the service maps must appear there with the same path, method, operationId and response codes,
+        // and every platform operation published there must be served.
         var root = new DirectoryInfo(AppContext.BaseDirectory);
         while (root is not null && !File.Exists(Path.Combine(root.FullName, "TerraScale.Auth.slnx")))
         {
             root = root.Parent;
         }
 
+        // The YAML is read line by line in the layout this repository writes; a line this cannot place fails the test
+        // rather than being skipped, so no published operation goes unchecked.
         var contract = new Dictionary<(string Path, string Method, string Id), SortedSet<string>>();
         string? path = null, method = null;
         SortedSet<string>? statuses = null;
+        var operationIds = 0;
+        var planned = new HashSet<(string Path, string Method, string Id)>();
+        (string Path, string Method, string Id)? current = null;
         foreach (var line in await File.ReadAllLinesAsync(Path.Combine(root!.FullName, "docs", "platform-api.openapi.yaml")))
         {
+            operationIds += line.TrimStart().StartsWith("operationId:", StringComparison.Ordinal) ? 1 : 0;
             if (ContractPath().Match(line) is { Success: true } pathMatch)
             {
                 path = pathMatch.Groups["path"].Value;
+                method = null;
                 statuses = null;
             }
             else if (ContractMethod().Match(line) is { Success: true } methodMatch)
@@ -144,10 +152,22 @@ public sealed partial class OpenApiTests
                 method = methodMatch.Groups["method"].Value;
                 statuses = null;
             }
+            else if (ContractPathMember().IsMatch(line))
+            {
+                // A path's parameters, summary or description: not an operation.
+                method = null;
+                statuses = null;
+            }
             else if (ContractOperation().Match(line) is { Success: true } operation && path is not null && method is not null)
             {
                 statuses = [];
-                contract.Add((path, method, operation.Groups["id"].Value), statuses);
+                current = (path, method, operation.Groups["id"].Value);
+                contract.Add(current.Value, statuses);
+            }
+            else if (line == "      x-planned: true" && current is { } marked)
+            {
+                // Published ahead of its slice: documented, not served yet.
+                planned.Add(marked);
             }
             else if (ContractResponse().Match(line) is { Success: true } documentedStatus)
             {
@@ -158,7 +178,7 @@ public sealed partial class OpenApiTests
         await using var server = await AuthTestServer.StartAsync();
         using var response = await server.Client.GetAsync("/openapi/v1.json");
         var paths = JsonSerializer.Deserialize<JsonElement>(await response.Content.ReadAsStringAsync()).GetProperty("paths");
-        var served = 0;
+        var served = new HashSet<(string Path, string Method, string Id)>();
         List<string> mismatches = [];
         foreach (var item in paths.EnumerateObject().Where(item => item.Name.StartsWith("/v1/terrascale/", StringComparison.Ordinal)))
         {
@@ -174,12 +194,16 @@ public sealed partial class OpenApiTests
                 }
 
                 await Assert.That(operation.GetProperty("security").EnumerateArray().Single().EnumerateObject().Single().Name).IsEqualTo("platformUser");
-                served++;
+                served.Add((item.Name, verb, id));
             }
         }
 
-        await Assert.That(served).IsGreaterThan(0);
+        await Assert.That(contract.Count).IsEqualTo(operationIds);
+        await Assert.That(served.Count).IsGreaterThan(0);
         await Assert.That(mismatches).IsEmpty();
+        var unserved = contract.Keys.Where(key => key.Path.StartsWith("/v1/terrascale/", StringComparison.Ordinal) && !served.Contains(key) && !planned.Contains(key)).Select(key => key.Id).ToArray();
+        await Assert.That(served.Where(planned.Contains).Select(key => key.Id).ToArray()).IsEmpty();
+        await Assert.That(unserved).IsEmpty();
     }
 
     [Test]
@@ -256,12 +280,15 @@ public sealed partial class OpenApiTests
     [GeneratedRegex("^  (?<path>/[^:]*):$")]
     private static partial Regex ContractPath();
 
-    [GeneratedRegex("^    (?<method>get|put|post|delete|patch):$")]
+    [GeneratedRegex("^    (?<method>get|put|post|delete|patch|head|options|trace):$")]
     private static partial Regex ContractMethod();
 
-    [GeneratedRegex("^      operationId: (?<id>[a-z_]+)$")]
+    [GeneratedRegex("^    [^ ]")]
+    private static partial Regex ContractPathMember();
+
+    [GeneratedRegex("""^      operationId: (?<quote>['"]?)(?<id>[A-Za-z0-9_.-]+)\k<quote>$""")]
     private static partial Regex ContractOperation();
 
-    [GeneratedRegex("^        '(?<status>[1-5][0-9]{2})':")]
+    [GeneratedRegex("""^        (?<quote>['"]?)(?<status>[1-5][0-9]{2})\k<quote>:""")]
     private static partial Regex ContractResponse();
 }

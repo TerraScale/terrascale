@@ -237,6 +237,11 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
+        '429':
+          description: rate_limited; at most 100 invitations per organization per hour.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
         '503': { $ref: '#/components/responses/Unavailable' }
     get:
       operationId: list_invitations
@@ -367,13 +372,12 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
-        '409': { $ref: '#/components/responses/Conflict' }
         '503': { $ref: '#/components/responses/Unavailable' }
     get:
       operationId: get_ownership_transfer
       tags: [Ownership transfer]
       summary: Get the pending transfer
-      description: Needs any organization role. 404 when there is none.
+      description: Needs any organization role (a collaborator gets 403). 404 when none is pending.
       responses:
         '200':
           description: The pending transfer.
@@ -381,6 +385,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/OwnershipTransfer' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '503': { $ref: '#/components/responses/Unavailable' }
     delete:
@@ -800,6 +805,7 @@ paths:
       - $ref: '#/components/parameters/Project'
     get:
       operationId: get_project_suspension
+      x-planned: true
       tags: [Platform]
       summary: Get a project's suspension
       description: The platform client, or anyone with a role on the project. 404 when it is not suspended.
@@ -817,6 +823,7 @@ paths:
         '503': { $ref: '#/components/responses/Unavailable' }
     put:
       operationId: suspend_project
+      x-planned: true
       tags: [Platform]
       summary: Suspend a project
       description: |
@@ -843,6 +850,7 @@ paths:
         '503': { $ref: '#/components/responses/Unavailable' }
     delete:
       operationId: lift_project_suspension
+      x-planned: true
       tags: [Platform]
       summary: Lift a project's suspension
       description: A platform client only. 404 when it is not suspended.
@@ -858,6 +866,7 @@ paths:
       - $ref: '#/components/parameters/User'
     put:
       operationId: set_platform_admin
+      x-planned: true
       tags: [Platform]
       summary: Make a user a platform administrator
       description: The operator key only. The user's next sign-in token carries platform_admin true.
@@ -870,6 +879,7 @@ paths:
         '503': { $ref: '#/components/responses/Unavailable' }
     delete:
       operationId: clear_platform_admin
+      x-planned: true
       tags: [Platform]
       summary: Stop a user being a platform administrator
       description: The operator key only. Takes effect with the user's next token.
@@ -1227,9 +1237,9 @@ components:
         organization_id: { $ref: '#/components/schemas/Uuid' }
         name: { type: string }
         issuer:
-          type: string
+          type: [string, 'null']
           format: uri
-          description: The project tenant's issuer, {public origin}/{project id}.
+          description: The project tenant's issuer, {public origin}/{project id}; null until project tenants are served (slice 5).
         created_by: { $ref: '#/components/schemas/Uuid' }
         created_at: { $ref: '#/components/schemas/Timestamp' }
         role:
@@ -1238,7 +1248,7 @@ components:
         id: 0199b3e4-5b6a-7c8d-9e0f-1a2b3c4d5e6f
         organization_id: 0199b3e4-0000-7000-8000-000000000001
         name: Production
-        issuer: https://gru.auth.terrascale.tech/0199b3e4-5b6a-7c8d-9e0f-1a2b3c4d5e6f
+        issuer: null
         created_by: 4f1c2d3e-5a6b-4c7d-8e9f-0a1b2c3d4e5f
         created_at: '2026-10-06T12:00:00Z'
         role: admin

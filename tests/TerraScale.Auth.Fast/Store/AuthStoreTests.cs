@@ -41,6 +41,19 @@ public sealed class AuthStoreTests(TerraBaseFixture fixture)
             AuthStore.Replace(AuthStore.MembershipCollection, "terrascale", "org/user", Json("""{"role":"member"}"""), current),
         ])).Throws<ArgumentException>();
 
+        // A server-side failure after an omitted assertion names the caller's operation, not the one sent, and nothing
+        // commits: here the claim (index 3) is already taken, so the write and the create before it roll back.
+        await Assert.That(await store.TransactAsync([AuthStore.Claim("terrascale", "test-name", "taken", "owner-a")])).IsNull();
+        await Assert.That(await store.TransactAsync(
+        [
+            AuthStore.Require(AuthStore.MembershipCollection, "terrascale", "org/user", Json("""{"in":["/role",["member"]]}"""), current),
+            AuthStore.Replace(AuthStore.MembershipCollection, "terrascale", "org/user", Json("""{"role":"admin"}"""), current),
+            AuthStore.Create(AuthStore.MembershipCollection, "terrascale", "org/other", Json("""{"role":"viewer"}""")),
+            AuthStore.Claim("terrascale", "test-name", "taken", "owner-b"),
+        ])).IsEqualTo(3);
+        await Assert.That((await store.GetAsync(AuthStore.MembershipCollection, "terrascale", "org/user"))!.Document.GetProperty("role").GetString()).IsEqualTo("member");
+        await Assert.That(await store.GetAsync(AuthStore.MembershipCollection, "terrascale", "org/other")).IsNull();
+
         static JsonElement Json(string text) => JsonSerializer.Deserialize<JsonElement>(text);
     }
 
@@ -153,7 +166,7 @@ public sealed class AuthStoreTests(TerraBaseFixture fixture)
         await store.ProvisionAsync();
         await store.ProvisionAsync();
         await Assert.That((await database.ListCollectionsAsync()).Items.Select(collection => collection.Name))
-            .IsEquivalentTo(["email_config_versions", "email_configs", "memberships", "oidc_applications", "oidc_authorizations", "oidc_tokens", "organizations", "passcodes", "project_members", "projects", "rate_limits", "sessions", "signing_key_rings", "storage_health", "uniques", "users", "verification_tokens"]);
+            .IsEquivalentTo(["api_keys", "audit_events", "email_config_versions", "email_configs", "invitations", "memberships", "oidc_applications", "oidc_authorizations", "oidc_tokens", "organizations", "passcodes", "project_members", "projects", "rate_limits", "sessions", "signing_key_rings", "storage_health", "uniques", "users", "verification_tokens"]);
 
         var missing = fixture.Server.Documents(tenant.ApiKey).Database(tenant.Project.Id, "missing");
         await Assert.ThrowsAsync<TerraBaseNotFoundException>(() => new AuthStore(missing, TimeProvider.System).ProvisionAsync());

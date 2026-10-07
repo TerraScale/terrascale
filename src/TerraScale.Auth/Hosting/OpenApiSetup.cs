@@ -91,6 +91,10 @@ public static partial class OpenApiSetup
         ["Members"] = "Organization members and their organization roles (viewer, member, admin, owner).",
         ["Projects"] = "Projects of an organization. Each project is also the tenant of its end users.",
         ["Project members"] = "Explicit project roles (viewer, member, admin), for organization members and collaborators.",
+        ["API keys"] = "Client credentials owned by an organization or project, exchanged at the token endpoint for short-lived tokens.",
+        ["Invitations"] = "Email invitations to an organization role or to one project's role.",
+        ["Ownership transfer"] = "Handing an organization's ownership to another member, confirmed by the nominee.",
+        ["Audit"] = "Audit events of an organization's identity changes.",
     };
 
     private static readonly Dictionary<string, Func<OpenApiSecurityScheme>> SchemeDefinitions = new(StringComparer.Ordinal)

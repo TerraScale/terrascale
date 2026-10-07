@@ -54,6 +54,12 @@ public sealed class HeadlessTests(TerraBaseFixture fixture)
             await Assert.That(await OidcHarness.ErrorAsync(refused)).IsEqualTo("invalid_grant");
         }
 
+        // A scope a sign-in never grants is refused before the code is spent, so the corrected request below succeeds.
+        using (var scoped = await oidc.GrantAsync(HeadlessGrants.EmailCode, "dana@example.test", code, Ip, scope: "openid documents:read", pendingToken: pending))
+        {
+            await Assert.That(await OidcHarness.ErrorAsync(scoped)).IsEqualTo("invalid_scope");
+        }
+
         using var redeemed = await oidc.GrantAsync(HeadlessGrants.EmailCode, "dana@example.test", code, Ip, pendingToken: pending);
         await Assert.That(redeemed.StatusCode).IsEqualTo(HttpStatusCode.OK);
         var tokens = await OidcHarness.JsonAsync(redeemed);

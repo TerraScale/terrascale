@@ -9,6 +9,7 @@ using TerraScale.Auth.Configuration;
 using TerraScale.Auth.Contracts;
 using TerraScale.Auth.Features.Headless;
 using TerraScale.Auth.Features.Identity;
+using TerraScale.Auth.Features.Platform;
 using TerraScale.Auth.Features.SigningKeys;
 using TerraScale.Auth.Security;
 using TerraScale.DotNet.TerraBase;
@@ -72,6 +73,7 @@ public static class OidcIssuer
                 core.SetDefaultApplicationEntity<OidcApplication>()
                     .SetDefaultAuthorizationEntity<OidcAuthorization>()
                     .SetDefaultTokenEntity<OidcToken>()
+                    .ReplaceApplicationManager<OidcApplication, ApiKeyApplicationManager>()
                     .ReplaceApplicationStore<OidcApplication, OidcApplicationStore>(ServiceLifetime.Singleton)
                     .ReplaceAuthorizationStore<OidcAuthorization, OidcAuthorizationStore>(ServiceLifetime.Singleton)
                     .ReplaceTokenStore<OidcToken, OidcTokenStore>(ServiceLifetime.Singleton);
@@ -89,6 +91,8 @@ public static class OidcIssuer
                     .AllowAuthorizationCodeFlow()
                     .AllowRefreshTokenFlow()
                     .AllowClientCredentialsFlow()
+                    // Organization and project tokens for signed-in users (TS-598).
+                    .AllowTokenExchangeFlow()
                     // The headless grants (TS-582) are permitted only to ts-dashboard; see ClientRegistration.
                     .AllowCustomFlow(HeadlessGrants.Password)
                     .AllowCustomFlow(HeadlessGrants.EmailCode)
@@ -113,6 +117,9 @@ public static class OidcIssuer
                     .RemoveEventHandler(OpenIddictServerHandlers.Discovery.AttachSigningKeys.Descriptor)
                     .AddEventHandler<ProcessRequestContext>(handler => handler.UseSingletonHandler<TrustPublicOrigin>()
                         .SetOrder(OpenIddictServerAspNetCoreHandlers.ResolveRequestUri.Descriptor.Order + 1)
+                        .SetType(OpenIddictServerHandlerType.Custom))
+                    .AddEventHandler<GenerateTokenContext>(handler => handler.UseSingletonHandler<SkipShortLivedTokenEntries>()
+                        .SetOrder(OpenIddictServerHandlers.Protection.CreateTokenEntry.Descriptor.Order - 1)
                         .SetType(OpenIddictServerHandlerType.Custom))
                     .AddEventHandler<GenerateTokenContext>(handler => handler.UseSingletonHandler<SignWithKeyRing>()
                         .SetOrder(OpenIddictServerHandlers.Protection.AttachSecurityCredentials.Descriptor.Order + 1)
@@ -332,10 +339,13 @@ public sealed class ClientRegistration(IServiceScopeFactory scopes, AuthOptions 
                 Permissions.GrantTypes.AuthorizationCode, Permissions.GrantTypes.RefreshToken, Permissions.ResponseTypes.Code,
                 // The first-party headless API (TS-582); the email-code grant also gates its JSON endpoints.
                 Permissions.Prefixes.GrantType + HeadlessGrants.Password, Permissions.Prefixes.GrantType + HeadlessGrants.EmailCode,
+                // Organization and project tokens for its signed-in users (TS-598).
+                Permissions.GrantTypes.TokenExchange,
                 Permissions.Scopes.Email, Permissions.Scopes.Profile,
             },
             Requirements = { Requirements.Features.ProofKeyForCodeExchange },
         };
+        descriptor.Permissions.UnionWith(TerraBaseScopes.All.Select(scope => Permissions.Prefixes.Scope + scope));
         descriptor.RedirectUris.UnionWith(dashboard.RedirectUris);
         descriptor.PostLogoutRedirectUris.UnionWith(dashboard.PostLogoutRedirectUris);
         return descriptor;

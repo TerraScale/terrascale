@@ -1,7 +1,10 @@
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.IdentityModel.JsonWebTokens;
+using Microsoft.IdentityModel.Tokens;
 using TerraScale.Auth.Contracts;
 using TerraScale.Auth.Features.Platform;
 
@@ -62,6 +65,54 @@ public static class PlatformCalls
     /// <summary>Creates a project in the organization and returns its id.</summary>
     public static async Task<string> CreateProjectAsync(this OidcHarness oidc, string token, string organizationId, string name) =>
         (await oidc.OkAsync(HttpMethod.Post, $"{Organizations}/{organizationId}/projects", token, new { name }, System.Net.HttpStatusCode.Created)).GetProperty("id").GetString()!;
+
+    /// <summary>POSTs a form to the token endpoint, with HTTP Basic credentials when <paramref name="clientId"/> is set.</summary>
+    public static Task<HttpResponseMessage> PostTokenAsync(this OidcHarness oidc, Dictionary<string, string> form, string? clientId, string? secret, HttpClient? client = null)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Post, "/terrascale/oauth/token") { Content = new FormUrlEncodedContent(form) };
+        if (clientId is not null)
+        {
+            request.Headers.Authorization = new AuthenticationHeaderValue("Basic", Convert.ToBase64String(Encoding.UTF8.GetBytes($"{clientId}:{secret}")));
+        }
+
+        return (client ?? oidc.Client).SendAsync(request);
+    }
+
+    /// <summary>Exchanges an API key string for a token (client credentials, HTTP Basic).</summary>
+    public static Task<HttpResponseMessage> ApiKeyTokenAsync(this OidcHarness oidc, string key, Dictionary<string, string>? parameters = null)
+    {
+        var form = new Dictionary<string, string>(parameters ?? []) { ["grant_type"] = "client_credentials" };
+        return oidc.PostTokenAsync(form, key[..24], key);
+    }
+
+    /// <summary>Exchanges a user's sign-in access token as the dashboard (RFC 8693).</summary>
+    public static Task<HttpResponseMessage> ExchangeAsync(this OidcHarness oidc, string subjectToken, Dictionary<string, string> parameters, HttpClient? client = null)
+    {
+        var form = new Dictionary<string, string>(parameters)
+        {
+            ["grant_type"] = "urn:ietf:params:oauth:grant-type:token-exchange",
+            ["subject_token"] = subjectToken,
+            ["subject_token_type"] = "urn:ietf:params:oauth:token-type:access_token",
+        };
+        return oidc.PostTokenAsync(form, "ts-dashboard", OidcHarness.ClientSecret, client);
+    }
+
+    /// <summary>Validates a token as TerraBase does (ES256, the issuer's JWKS, exact issuer and audience, at+jwt).</summary>
+    public static async Task<JsonWebToken> ValidateAsync(this OidcHarness oidc, string token, string audience)
+    {
+        var keys = new JsonWebKeySet(await oidc.Client.GetStringAsync("/terrascale/.well-known/jwks.json"));
+        var result = await new JsonWebTokenHandler().ValidateTokenAsync(token, new TokenValidationParameters
+        {
+            ValidIssuer = OidcHarness.Issuer,
+            ValidAudience = audience,
+            ValidTypes = ["at+jwt"],
+            IgnoreTrailingSlashWhenValidatingAudience = false,
+            ValidAlgorithms = [SecurityAlgorithms.EcdsaSha256],
+            IssuerSigningKeys = keys.GetSigningKeys(),
+            ClockSkew = TimeSpan.Zero,
+        });
+        return result.IsValid ? (JsonWebToken)result.SecurityToken : throw new InvalidOperationException($"Token rejected: {result.Exception?.GetType().Name}");
+    }
 
     /// <summary>Adds a member directly, as an accepted invitation does.</summary>
     public static Task<bool> AddMemberAsync(this OidcHarness oidc, string organizationId, string userId, string role) =>

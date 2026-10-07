@@ -46,6 +46,7 @@ public sealed partial record AuthOptions
         "dashboard-post-logout-redirect-uris",
         "access-token-audiences",
         "service-clients",
+        "invitation-url",
         "environment");
 
     /// <summary>Plain-HTTP listen address; TLS terminates in front of the service.</summary>
@@ -133,6 +134,12 @@ public sealed partial record AuthOptions
 
     /// <summary>Confidential service clients allowed the client-credentials grant, registered at startup.</summary>
     public IReadOnlyList<ServiceClientOptions> ServiceClients { get; init; } = [];
+
+    /// <summary>
+    /// The dashboard page that accepts an invitation (TS-598); invitation emails link to it with <c>?token=</c>. Without
+    /// it no invitation email is sent and callers deliver the token they are answered.
+    /// </summary>
+    public Uri? InvitationUrl { get; init; }
 
     /// <summary>Whether <c>TS_AUTH_ENVIRONMENT=Development</c> disables the production guards.</summary>
     public bool Development { get; init; }
@@ -300,6 +307,7 @@ public sealed partial record AuthOptions
             DashboardClient = ParseDashboardClient(Optional("dashboard-client-secret"), Optional("dashboard-redirect-uris"), Optional("dashboard-post-logout-redirect-uris")),
             AccessTokenAudiences = ParseAudiences(Optional("access-token-audiences")),
             ServiceClients = ParseServiceClients(Optional("service-clients")),
+            InvitationUrl = Optional("invitation-url") is { } invitationUrl ? ParseInvitationUrl(invitationUrl, development) : null,
             Development = development,
         };
         options.EnforceProductionGuards();
@@ -330,6 +338,14 @@ public sealed partial record AuthOptions
             && !this.TerraScaleApiUrl.Host.EndsWith(".api.terrascale.tech", StringComparison.Ordinal))
         {
             throw Invalid("Global auth storage requires a TerraScale HTTPS API origin");
+        }
+
+        // The management API accepts tokens whose audience is the platform issuer (TS-598); organization and project tokens
+        // carry only these audiences, so none may be that issuer. Other paths of this origin grant nothing there.
+        var issuer = new Uri(this.PublicOrigin, Features.Oidc.OidcIssuer.Slug);
+        if (this.AccessTokenAudiences.Any(audience => new Uri(audience) == issuer))
+        {
+            throw Invalid("TS_AUTH_ACCESS_TOKEN_AUDIENCES must not name this service's platform issuer");
         }
     }
 
@@ -389,6 +405,13 @@ public sealed partial record AuthOptions
         secret.Length is >= 32 and <= 512 && !secret.Any(character => char.IsWhiteSpace(character) || char.IsControl(character) || character == ';');
 
     // Exact strings, compared byte for byte by resource servers: never normalized (Uri would add a trailing slash).
+    // An exact HTTPS page (HTTP only for loopback in Development) without credentials, query or fragment: ?token= follows.
+    private static Uri ParseInvitationUrl(string raw, bool development) =>
+        Uri.TryCreate(raw, UriKind.Absolute, out var url) && string.IsNullOrEmpty(url.UserInfo) && string.IsNullOrEmpty(url.Query) && string.IsNullOrEmpty(url.Fragment)
+            && (url.Scheme == Uri.UriSchemeHttps || development && url.Scheme == Uri.UriSchemeHttp && url.IsLoopback)
+            ? url
+            : throw Invalid("TS_AUTH_INVITATION_URL must be an absolute HTTPS URL without credentials, query or fragment");
+
     private static string[] ParseAudiences(string? raw)
     {
         var values = (raw ?? string.Empty).Split(';', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);

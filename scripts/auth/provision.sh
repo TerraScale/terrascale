@@ -11,7 +11,7 @@ Provisioning plan (no changes executed):
    signing_key_rings (TS-488), oidc_applications, oidc_authorizations and
    oidc_tokens (TS-491), rate_limits (TS-488, required since TS-582) and
    email_configs and email_config_versions (TS-583), and organizations,
-   memberships, projects and project_members (TS-598); /readyz requires all of them.
+   memberships, projects, project_members, api_keys, invitations and audit_events (TS-598); /readyz requires all of them.
 4. Set TS_AUTH_DATABASE=<ts-auth-project-id>/auth and TS_AUTH_TERRASCALE_API_URL to the resolved HTTPS authority.
 See docs/parity.md for collection setup, configuration and conditional-write guarantees.
 Live execution requires the TS-470 approval flow.

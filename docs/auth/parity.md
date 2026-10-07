@@ -27,8 +27,8 @@ Nothing here implies acceptance against a live TerraBase deployment.
 | Passkeys | TS-435 | Not yet ported |
 | OIDC, GitHub and SAML federation | TS-436 | Not yet ported |
 | Platform organizations, projects, organization and project roles | TS-598 | Served under `/v1/terrascale/…` with the caller's sign-in access token (see below); contract in [`platform-contract.md`](platform-contract.md) |
-| Invitations, ownership transfer, audit of the platform | TS-598 | Contract published; not served |
-| API keys exchanged for organization and project tokens (client credentials, token exchange) | TS-598 | Contract published; not served |
+| Invitations, ownership transfer, audit of the platform | TS-598 | Served: email invitations to an organization or project role, ownership transfer, and audit events written with every change (see the [port guide](csharp-port.md#invitations-ownership-transfer-and-audit)) |
+| API keys exchanged for organization and project tokens (client credentials, token exchange) | TS-598 | Served: organization and project keys, rotation with a grace, the client-credentials and token-exchange grants (see the [port guide](csharp-port.md#api-keys-and-organization-and-project-tokens)) |
 | Per-project tenants (one issuer per customer project) | TS-598 | Contract published; not served |
 | `usage:read` and `billing:*` scopes, project suspension, platform administrators, ts-cli device flow, ts-auth's own storage token | TS-598 | Contract v1.1 published; not served |
 | End-user organizations of a project tenant, enrollment domains, authorization checks | TS-437 | Not yet ported |

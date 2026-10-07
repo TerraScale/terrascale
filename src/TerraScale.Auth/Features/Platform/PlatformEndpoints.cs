@@ -2,9 +2,7 @@ using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.Json.Serialization.Metadata;
-using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Http.Metadata;
-using TerraScale.Auth.Configuration;
 using TerraScale.Auth.Contracts;
 using TerraScale.Auth.Hosting;
 using TerraScale.Endpoints;
@@ -61,7 +59,7 @@ public sealed record MemberPageBody(
 /// <param name="Id">Its id, also its tenant.</param>
 /// <param name="OrganizationId">Its organization.</param>
 /// <param name="Name">Its name.</param>
-/// <param name="Issuer">Its end users' issuer.</param>
+/// <param name="Issuer">Its end users' issuer, <c>{public origin}/{id}</c>; null until project tenants are served.</param>
 /// <param name="CreatedBy">The creating user.</param>
 /// <param name="CreatedAt">Creation time.</param>
 /// <param name="Role">The caller's effective project role.</param>
@@ -69,7 +67,7 @@ public sealed record ProjectBody(
     [property: JsonPropertyName("id")] string Id,
     [property: JsonPropertyName("organization_id")] string OrganizationId,
     [property: JsonPropertyName("name")] string Name,
-    [property: JsonPropertyName("issuer")] string Issuer,
+    [property: JsonPropertyName("issuer")] string? Issuer,
     [property: JsonPropertyName("created_by")] string CreatedBy,
     [property: JsonPropertyName("created_at")] DateTimeOffset CreatedAt,
     [property: JsonPropertyName("role")] string Role);
@@ -274,7 +272,7 @@ public sealed class LeaveOrganizationEndpoint(PlatformDirectory platform, Platfo
 }
 
 /// <summary><c>POST /v1/terrascale/organizations/{organization}/projects</c>.</summary>
-public sealed class CreateProjectEndpoint(PlatformDirectory platform, PlatformAuthentication authentication, AuthOptions options) : PlatformEndpoint(authentication)
+public sealed class CreateProjectEndpoint(PlatformDirectory platform, PlatformAuthentication authentication) : PlatformEndpoint(authentication)
 {
     /// <inheritdoc />
     public override void Configure()
@@ -288,13 +286,13 @@ public sealed class CreateProjectEndpoint(PlatformDirectory platform, PlatformAu
     {
         var name = PlatformDirectory.Name((await this.BodyAsync(PlatformApiJson.Default.NameRequest, cancellationToken)).Name) ?? throw Invalid("name must be 1 to 128 characters with a letter or digit.");
         var project = await platform.CreateProjectAsync(caller.Id, this.RouteId("organization"), name, cancellationToken);
-        return Results.Json(Map(project, Roles.Admin, options), PlatformApiJson.Default.ProjectBody, statusCode: StatusCodes.Status201Created)
+        return Results.Json(Map(project, Roles.Admin), PlatformApiJson.Default.ProjectBody, statusCode: StatusCodes.Status201Created)
             .WithLocation($"{Organizations}/{project.OrganizationId}/projects/{project.Id}");
     }
 }
 
 /// <summary><c>GET /v1/terrascale/organizations/{organization}/projects</c>.</summary>
-public sealed class ListProjectsEndpoint(PlatformDirectory platform, PlatformAuthentication authentication, AuthOptions options) : PlatformEndpoint(authentication)
+public sealed class ListProjectsEndpoint(PlatformDirectory platform, PlatformAuthentication authentication) : PlatformEndpoint(authentication)
 {
     /// <inheritdoc />
     public override void Configure()
@@ -308,12 +306,12 @@ public sealed class ListProjectsEndpoint(PlatformDirectory platform, PlatformAut
     {
         var (limit, after) = this.Paging();
         var page = await platform.ProjectsAsync(caller.Id, this.RouteId("organization"), limit, after, cancellationToken);
-        return Results.Json(new ProjectPageBody([.. page.Items.Select(item => Map(item.Project, item.Role, options))], page.Next), PlatformApiJson.Default.ProjectPageBody);
+        return Results.Json(new ProjectPageBody([.. page.Items.Select(item => Map(item.Project, item.Role))], page.Next), PlatformApiJson.Default.ProjectPageBody);
     }
 }
 
 /// <summary><c>GET /v1/terrascale/organizations/{organization}/projects/{project}</c>.</summary>
-public sealed class GetProjectEndpoint(PlatformDirectory platform, PlatformAuthentication authentication, AuthOptions options) : PlatformEndpoint(authentication)
+public sealed class GetProjectEndpoint(PlatformDirectory platform, PlatformAuthentication authentication) : PlatformEndpoint(authentication)
 {
     /// <inheritdoc />
     public override void Configure()
@@ -326,12 +324,12 @@ public sealed class GetProjectEndpoint(PlatformDirectory platform, PlatformAuthe
     protected override async Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken)
     {
         var access = await platform.ProjectAccessAsync(caller.Id, this.RouteId("organization"), this.RouteId("project"), cancellationToken);
-        return Results.Json(Map(access.Project.Value, access.Role, options), PlatformApiJson.Default.ProjectBody);
+        return Results.Json(Map(access.Project.Value, access.Role), PlatformApiJson.Default.ProjectBody);
     }
 }
 
 /// <summary><c>PATCH /v1/terrascale/organizations/{organization}/projects/{project}</c>.</summary>
-public sealed class RenameProjectEndpoint(PlatformDirectory platform, PlatformAuthentication authentication, AuthOptions options) : PlatformEndpoint(authentication)
+public sealed class RenameProjectEndpoint(PlatformDirectory platform, PlatformAuthentication authentication) : PlatformEndpoint(authentication)
 {
     /// <inheritdoc />
     public override void Configure()
@@ -345,7 +343,7 @@ public sealed class RenameProjectEndpoint(PlatformDirectory platform, PlatformAu
     {
         var name = PlatformDirectory.Name((await this.BodyAsync(PlatformApiJson.Default.NameRequest, cancellationToken)).Name) ?? throw Invalid("name must be 1 to 128 characters with a letter or digit.");
         var access = await platform.RenameProjectAsync(caller.Id, this.RouteId("organization"), this.RouteId("project"), name, cancellationToken);
-        return Results.Json(Map(access.Project.Value, access.Role, options), PlatformApiJson.Default.ProjectBody);
+        return Results.Json(Map(access.Project.Value, access.Role), PlatformApiJson.Default.ProjectBody);
     }
 }
 
@@ -356,7 +354,7 @@ public sealed class DeleteProjectEndpoint(PlatformDirectory platform, PlatformAu
     public override void Configure()
     {
         Delete(Project);
-        this.Document("delete_project", "Delete a project", "Needs the project's admin role. Deletes its project roles. TerraBase databases are not deleted: the platform deletes them first.", "Projects", null, StatusCodes.Status204NoContent, null);
+        this.Document("delete_project", "Delete a project", "Needs the project's admin role. Deletes its project roles, API keys and pending invitations. TerraBase databases are not deleted: the platform deletes them first.", "Projects", null, StatusCodes.Status204NoContent, null);
     }
 
     /// <inheritdoc />
@@ -494,16 +492,23 @@ public abstract class PlatformEndpoint(PlatformAuthentication authentication) : 
     protected async Task<T> BodyAsync<T>(JsonTypeInfo<T> type, CancellationToken cancellationToken)
         where T : class
     {
-        if (this.HttpContext.Features.Get<IHttpMaxRequestBodySizeFeature>() is { IsReadOnly: false } limit)
-        {
-            limit.MaxRequestBodySize = MaxBody;
-        }
-
         try
         {
-            if (IsUtf8Json(this.HttpContext.Request) && await this.HttpContext.Request.ReadFromJsonAsync(type, cancellationToken) is { } body)
+            // Read here up to the bound, whatever the server's own limit, chunked or not.
+            if (IsUtf8Json(this.HttpContext.Request))
             {
-                return body;
+                using var buffer = new MemoryStream();
+                var chunk = new byte[4096];
+                int read;
+                while ((read = await this.HttpContext.Request.Body.ReadAsync(chunk, cancellationToken)) > 0 && buffer.Length + read <= MaxBody)
+                {
+                    buffer.Write(chunk, 0, read);
+                }
+
+                if (read == 0 && JsonSerializer.Deserialize(buffer.GetBuffer().AsSpan(0, (int)buffer.Length), type) is { } body)
+                {
+                    return body;
+                }
             }
         }
         catch (Exception error) when (error is JsonException or BadHttpRequestException)
@@ -566,11 +571,20 @@ public abstract class PlatformEndpoint(PlatformAuthentication authentication) : 
         new(organization.Id, organization.Name, organization.CreatedBy, organization.CreatedAt, role);
 
     /// <summary>The project as the caller sees it.</summary>
-    protected static ProjectBody Map(ProjectRecord project, string role, AuthOptions options) =>
-        new(project.Id, project.OrganizationId, project.Name, new Uri(options.PublicOrigin, project.Id).AbsoluteUri, project.CreatedBy, project.CreatedAt, role);
+    protected static ProjectBody Map(ProjectRecord project, string role) =>
+        // A project's tenant, and so its issuer, is served from the project tenants slice on (contract "Slices", 5).
+        new(project.Id, project.OrganizationId, project.Name, null, project.CreatedBy, project.CreatedAt, role);
 
     /// <summary>A member (never a collaborator, whose record has no role).</summary>
     protected static MemberBody Map(MembershipRecord member, string email) => new(member.UserId, email, member.Role!, member.JoinedAt);
+
+    /// <summary>An invitation, with the status a caller sees.</summary>
+    protected InvitationBody Map(Invitations invitations, InvitationRecord invitation)
+    {
+        ArgumentNullException.ThrowIfNull(invitations);
+        ArgumentNullException.ThrowIfNull(invitation);
+        return new(invitation.Id, invitation.Email, invitation.Role, invitation.ProjectId, invitation.InvitedBy, invitation.CreatedAt, invitation.ExpiresAt, invitations.Status(invitation));
+    }
 
     /// <summary>A project member.</summary>
     protected static ProjectMemberBody Map(ProjectMemberRecord member, string email) => new(member.UserId, email, member.Role, member.GrantedAt);
@@ -603,4 +617,19 @@ internal static class LocationResults
 [JsonSerializable(typeof(ProjectMemberBody))]
 [JsonSerializable(typeof(ProjectMemberPageBody))]
 [JsonSerializable(typeof(ErrorBody))]
+[JsonSerializable(typeof(CreateApiKeyRequest))]
+[JsonSerializable(typeof(RotateApiKeyRequest))]
+[JsonSerializable(typeof(ApiKeyBody))]
+[JsonSerializable(typeof(ApiKeySecretBody))]
+[JsonSerializable(typeof(ApiKeyPageBody))]
+[JsonSerializable(typeof(CreateInvitationRequest))]
+[JsonSerializable(typeof(InvitationTokenRequest))]
+[JsonSerializable(typeof(StartTransferRequest))]
+[JsonSerializable(typeof(InvitationBody))]
+[JsonSerializable(typeof(InvitationCreatedBody))]
+[JsonSerializable(typeof(InvitationPageBody))]
+[JsonSerializable(typeof(InvitationLookupBody))]
+[JsonSerializable(typeof(AcceptedInvitationBody))]
+[JsonSerializable(typeof(OwnershipTransferBody))]
+[JsonSerializable(typeof(AuditEventPageBody))]
 internal sealed partial class PlatformApiJson : JsonSerializerContext;

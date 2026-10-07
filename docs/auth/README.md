@@ -149,6 +149,7 @@ nice -n 19 dotnet run --project src/TerraScale.Auth
 | `TS_AUTH_DASHBOARD_POST_LOGOUT_REDIRECT_URIS` | Optional semicolon-separated exact post-logout URIs for `ts-dashboard`, with the same rules |
 | `TS_AUTH_ACCESS_TOKEN_AUDIENCES` | Optional semicolon-separated `aud` values put in every access token, kept exactly as written (e.g. `https://gru.api.terrascale.tech`, TerraBase's `auth-audience`); at most 10 absolute HTTPS URIs without credentials, query or fragment |
 | `TS_AUTH_SERVICE_CLIENTS` | Optional semicolon-separated `id:secret` service clients allowed only the client-credentials grant; ids are 3 to 64 lowercase letters, digits or `-`, start with a letter, are not UUIDs or `ts-dashboard`; secrets 32 to 512 characters. Registered at startup like `ts-dashboard` |
+| `TS_AUTH_INVITATION_URL` | Optional ts-dashboard page that accepts platform invitations (TS-598), e.g. `https://dash.terrascale.tech/invitations/accept`; invitation emails link to it with `?token=`. HTTPS (HTTP only for loopback in Development), no credentials, query or fragment. Unset, no invitation email is sent and the caller delivers the token |
 | `TS_AUTH_SENTRY_DSN` | GlitchTip/Sentry DSN for error reporting; a deployment secret, never committed. Off when unset |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` (or the per-signal `OTEL_EXPORTER_OTLP_*_ENDPOINT`), `OTEL_SERVICE_NAME`, `OTEL_EXPORTER_OTLP_HEADERS` | Standard OpenTelemetry settings; traces, metrics and logs are pushed over OTLP only when an endpoint is set |
 
@@ -367,8 +368,8 @@ SDK-pinned binary. `/readyz` checks the existing `uniques`,
 `verification_tokens`, `storage_health`, `users`, `sessions`, `passcodes`,
 `signing_key_rings`, `oidc_applications`, `oidc_authorizations`,
 `oidc_tokens`, `rate_limits`, `email_configs`, `email_config_versions`,
-`organizations`, `memberships`, `projects` and `project_members` collections,
-then creates, reads
+`organizations`, `memberships`, `projects`, `project_members`, `api_keys`,
+`invitations` and `audit_events` collections, then creates, reads
 and conditionally deletes a synthetic document in `storage_health`. It returns
 200 only on success, otherwise 503, without provisioning, repair or in-memory
 fallback. Observations coalesce and are cached for one second after
@@ -395,12 +396,13 @@ the provisioning plan; live production execution belongs to TS-470:
    TS-488 `signing_key_rings` and `rate_limits`, the TS-491 `oidc_applications`,
    `oidc_authorizations` and `oidc_tokens`, the TS-583 `email_configs` and
    `email_config_versions`, and the TS-598 `organizations`, `memberships`,
-   `projects` and `project_members` collections; later feature streams own
-   their other collections. `/readyz` requires all seventeen, so a database
-   provisioned before a release that adds one (TS-583, TS-598) reports 503
-   until this step is repeated. Run it before rolling out a release that adds
-   collections; a configured dashboard or service client also stops startup
-   while its collection is missing.
+   `projects`, `project_members`, `api_keys`, `invitations` and `audit_events`
+   collections; later feature streams own their other collections. `/readyz`
+   requires all twenty, so a
+   database provisioned before a release that adds one (TS-583, TS-598)
+   reports 503 until this step is repeated. Run it before rolling out a release
+   that adds collections; a configured dashboard or service client also stops
+   startup while its collection is missing.
 4. Configure every replica with `<ts-auth-project-uuid>/auth` and the same
    explicitly resolved HTTPS storage authority and shared auth settings.
 

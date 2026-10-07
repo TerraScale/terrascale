@@ -192,6 +192,16 @@ public sealed partial class OrganizationTests(TerraBaseFixture fixture)
             await Assert.That(await OidcHarness.EnvelopeCodeAsync(response)).IsEqualTo("invalid_request");
         }
 
+        // A valid body past 16 KiB (here, padded with whitespace) is refused, chunked or not.
+        foreach (var chunked in new[] { false, true })
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Patch, $"{Organizations}/{id}") { Content = new StringContent($"{{\"name\":\"Big\"{new string(' ', 17 * 1024)}}}", Encoding.UTF8, "application/json") };
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", aliceToken);
+            request.Headers.TransferEncodingChunked = chunked;
+            using var response = await oidc.Client.SendAsync(request);
+            await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+        }
+
         var renamed = await oidc.OkAsync(HttpMethod.Patch, $"{Organizations}/{id}", aliceToken, new { name = "Acme Cloud" });
         await Assert.That(renamed.GetProperty("name").GetString()).IsEqualTo("Acme Cloud");
 
@@ -268,7 +278,8 @@ public sealed partial class OrganizationTests(TerraBaseFixture fixture)
         await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created);
         var production = await OidcHarness.JsonAsync(created);
         var first = production.GetProperty("id").GetString()!;
-        await Assert.That(production.GetProperty("issuer").GetString()).IsEqualTo($"{OidcHarness.PublicOrigin}/{first}");
+        // Its tenant is not served yet, so it advertises no issuer.
+        await Assert.That(production.GetProperty("issuer").ValueKind).IsEqualTo(JsonValueKind.Null);
         await Assert.That(production.GetProperty("organization_id").GetString()).IsEqualTo(id);
         await Assert.That(production.GetProperty("role").GetString()).IsEqualTo("admin");
         var second = await oidc.CreateProjectAsync(aliceToken, id, "Staging");
@@ -484,44 +495,6 @@ public sealed partial class OrganizationTests(TerraBaseFixture fixture)
     {
         using var response = await oidc.CallAsync(method, path, token, body, client: replica.Client);
         return ((int)response.StatusCode, await response.Content.ReadAsStringAsync());
-    }
-
-    /// <summary>Holds the next TerraBase transaction (a change's commit, after all its reads) until the test releases it.</summary>
-    private sealed class PausingTransactions : DelegatingHandler
-    {
-        private TaskCompletionSource? reached;
-        private TaskCompletionSource? release;
-
-        /// <summary>Starts <paramref name="call"/> and returns it once its first transaction is held.</summary>
-        public async Task<Task<(int Status, string? Code)>> HoldNextAsync(Func<Task<(int Status, string? Code)>> call)
-        {
-            // Kept locally: the transaction can arrive and take the field before this method waits on it.
-            TaskCompletionSource reached = new(TaskCreationOptions.RunContinuationsAsynchronously);
-            this.release = new(TaskCreationOptions.RunContinuationsAsynchronously);
-            this.reached = reached;
-            var running = Task.Run(call);
-            await reached.Task.WaitAsync(TimeSpan.FromSeconds(10));
-            return running;
-        }
-
-        /// <summary>Lets the held transaction (and every later one) through and returns the call's answer.</summary>
-        public async Task<(int Status, string? Code)> ReleaseAsync(Task<(int Status, string? Code)> held)
-        {
-            this.release!.TrySetResult();
-            return await held.WaitAsync(TimeSpan.FromSeconds(10));
-        }
-
-        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
-        {
-            if (request.Method == HttpMethod.Post && request.RequestUri!.AbsolutePath.EndsWith("/transactions", StringComparison.Ordinal)
-                && Interlocked.Exchange(ref this.reached, null) is { } holding)
-            {
-                holding.TrySetResult();
-                await this.release!.Task.WaitAsync(cancellationToken);
-            }
-
-            return await base.SendAsync(request, cancellationToken);
-        }
     }
 
     [GeneratedRegex("^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")]

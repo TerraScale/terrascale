@@ -90,6 +90,9 @@ public sealed partial class PlatformDirectory(AuthStore store, Users users, Time
     /// <summary>The platform tenant; organizations exist only there.</summary>
     public const string Instance = OidcIssuer.InstanceId;
 
+    /// <summary>How long an ownership transfer waits for its nominee.</summary>
+    public static readonly TimeSpan TransferLifetime = TimeSpan.FromDays(7);
+
     private const string ProjectNameKind = "project-name";
     private const int Attempts = 4;
 
@@ -116,6 +119,7 @@ public sealed partial class PlatformDirectory(AuthStore store, Users users, Time
         [
             AuthStore.Create(AuthStore.OrganizationCollection, Instance, organization.Id, Serialize(organization, PlatformJson.Default.OrganizationRecord)),
             AuthStore.Create(AuthStore.MembershipCollection, Instance, MembershipKey(organization.Id, user.Id), Serialize(membership, PlatformJson.Default.MembershipRecord)),
+            this.Audit(organization.Id, user.Id, "organization.created", null, name),
         ], cancellationToken).ConfigureAwait(false) is null ? organization : throw ApiException.Unavailable();
     }
 
@@ -160,6 +164,7 @@ public sealed partial class PlatformDirectory(AuthStore store, Users users, Time
             [
                 Authority(access, Roles.Admin),
                 AuthStore.Replace(AuthStore.OrganizationCollection, Instance, organizationId, Serialize(renamed, PlatformJson.Default.OrganizationRecord), access.Organization.Version),
+                this.Audit(organizationId, userId, "organization.renamed", null, name),
             ], renamed);
         }, cancellationToken);
 
@@ -182,9 +187,12 @@ public sealed partial class PlatformDirectory(AuthStore store, Users users, Time
             ], true);
         }, cancellationToken).ConfigureAwait(false);
 
-        // Every check reads the organization first, so a membership left behind grants nothing.
+        // Every check, and every token request of a key, reads the organization first, so what is left behind grants nothing.
         await this.CleanUpAsync(AuthStore.MembershipCollection, [("/organizationId", organizationId)], PlatformJson.Default.MembershipRecord,
             membership => MembershipKey(membership.OrganizationId, membership.UserId), cancellationToken).ConfigureAwait(false);
+        await this.CleanUpAsync(AuthStore.ApiKeyCollection, [("/organizationId", organizationId)], PlatformJson.Default.ApiKeyRecord, key => key.Id, cancellationToken).ConfigureAwait(false);
+        await this.RetireInvitationsAsync([("/organizationId", organizationId)], cancellationToken).ConfigureAwait(false);
+        await this.CleanUpAsync(AuthStore.AuditEventCollection, [("/organizationId", organizationId)], PlatformJson.Default.AuditEventRecord, item => item.Id, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>A page of the organization's members with their emails, in user id order; needs any organization role.</summary>
@@ -239,11 +247,12 @@ public sealed partial class PlatformDirectory(AuthStore store, Users users, Time
                 Authority(access, owners ? Roles.Owner : Roles.Admin),
                 AuthStore.Replace(AuthStore.MembershipCollection, Instance, MembershipKey(organizationId, memberId), Serialize(updated, PlatformJson.Default.MembershipRecord), member.Version),
             ];
-            operations.Add(count != organization.Owners
-                ? AuthStore.Replace(AuthStore.OrganizationCollection, Instance, organizationId,
-                    Serialize(organization with { Owners = count }, PlatformJson.Default.OrganizationRecord), access.Organization.Version)
+            var reshaped = Unoffered(organization with { Owners = count }, memberId, role);
+            operations.Add(reshaped != organization
+                ? AuthStore.Replace(AuthStore.OrganizationCollection, Instance, organizationId, Serialize(reshaped, PlatformJson.Default.OrganizationRecord), access.Organization.Version)
                 // Orders the change against a deletion of the organization, whose memberships are deleted after it.
                 : AuthStore.Require(AuthStore.OrganizationCollection, Instance, organizationId, Filter("exists", "/id")));
+            operations.Add(this.Audit(organizationId, userId, "member.role_changed", memberId, role));
             return new Plan<MembershipRecord>(operations, updated);
         }, cancellationToken).ConfigureAwait(false);
         return (await this.WithEmailsAsync([changed], member => member.UserId, cancellationToken).ConfigureAwait(false)).Single();
@@ -284,10 +293,10 @@ public sealed partial class PlatformDirectory(AuthStore store, Users users, Time
 
             // Every grant rewrites the membership, so a grant made after this read fails the delete and is seen on retry.
             operations.Add(AuthStore.Delete(AuthStore.MembershipCollection, Instance, MembershipKey(organizationId, memberId), member.Version));
-            if (owner)
+            var reshaped = Unoffered(access.Organization.Value with { Owners = access.Organization.Value.Owners - (owner ? 1 : 0) }, memberId, null);
+            if (reshaped != access.Organization.Value)
             {
-                operations.Add(AuthStore.Replace(AuthStore.OrganizationCollection, Instance, organizationId,
-                    Serialize(access.Organization.Value with { Owners = access.Organization.Value.Owners - 1 }, PlatformJson.Default.OrganizationRecord), access.Organization.Version));
+                operations.Add(AuthStore.Replace(AuthStore.OrganizationCollection, Instance, organizationId, Serialize(reshaped, PlatformJson.Default.OrganizationRecord), access.Organization.Version));
             }
 
             await foreach (var grant in this.GrantsAsync(memberId, organizationId, cancellationToken).ConfigureAwait(false))
@@ -295,6 +304,7 @@ public sealed partial class PlatformDirectory(AuthStore store, Users users, Time
                 operations.Add(AuthStore.Delete(AuthStore.ProjectMemberCollection, Instance, ProjectMemberKey(grant.Value.ProjectId, memberId), grant.Version));
             }
 
+            operations.Add(this.Audit(organizationId, userId, leaving ? "member.left" : "member.removed", memberId));
             return new Plan<bool>(operations, true);
         }, cancellationToken);
 
@@ -316,6 +326,7 @@ public sealed partial class PlatformDirectory(AuthStore store, Users users, Time
                 AuthStore.Claim(Instance, ProjectNameKind, ProjectNameKey(organizationId, name), project.Id),
                 AuthStore.Create(AuthStore.ProjectCollection, Instance, project.Id, Serialize(project, PlatformJson.Default.ProjectRecord)),
                 AuthStore.Create(AuthStore.ProjectMemberCollection, Instance, ProjectMemberKey(project.Id, userId), Serialize(grant, PlatformJson.Default.ProjectMemberRecord)),
+                this.Audit(organizationId, userId, "project.created", project.Id, name),
             ], project, Claim: 2);
         }, cancellationToken);
 
@@ -386,10 +397,11 @@ public sealed partial class PlatformDirectory(AuthStore store, Users users, Time
                 }
             }
 
+            operations.Add(this.Audit(organizationId, userId, "project.renamed", projectId, name));
             return new Plan<ProjectAccess>(operations, access with { Project = access.Project with { Value = renamed } }, claim);
         }, cancellationToken);
 
-    /// <summary>Deletes a project and then its project roles; needs the project's admin role.</summary>
+    /// <summary>Deletes a project and then its project roles, API keys and pending invitations; needs the project's admin role.</summary>
     public async Task DeleteProjectAsync(string userId, string organizationId, string projectId, CancellationToken cancellationToken)
     {
         await this.CommitAsync(async () =>
@@ -410,11 +422,13 @@ public sealed partial class PlatformDirectory(AuthStore store, Users users, Time
                 operations.Add(AuthStore.Release(Instance, ProjectNameKind, name, held.Version));
             }
 
+            operations.Add(this.Audit(organizationId, userId, "project.deleted", projectId, access.Project.Value.Name));
             return new Plan<bool>(operations, true);
         }, cancellationToken).ConfigureAwait(false);
 
-        // Every check reads the project first, and a collaborator needs a project that exists, so a role left behind
-        // grants nothing; retiring them also removes collaborators the project was the last one of.
+        // Every check and every token request of a key reads the project first, and a collaborator needs a project that
+        // exists, so what is left behind grants nothing; retiring the roles also removes collaborators the project was the
+        // last one of.
         try
         {
             await foreach (var grant in this.QueryAsync(AuthStore.ProjectMemberCollection, [("/projectId", projectId)], PlatformJson.Default.ProjectMemberRecord, cancellationToken).ConfigureAwait(false))
@@ -426,6 +440,9 @@ public sealed partial class PlatformDirectory(AuthStore store, Users users, Time
         {
             LogCleanUpFailed(logger, AuthStore.ProjectMemberCollection, error.GetType().Name);
         }
+
+        await this.CleanUpAsync(AuthStore.ApiKeyCollection, [("/projectId", projectId)], PlatformJson.Default.ApiKeyRecord, key => key.Id, cancellationToken).ConfigureAwait(false);
+        await this.RetireInvitationsAsync([("/projectId", projectId), ("/status", "pending")], cancellationToken).ConfigureAwait(false);
     }
 
     // Deletes a deleted project's role and, as RemoveProjectRoleAsync does, the membership of a collaborator left with
@@ -488,6 +505,7 @@ public sealed partial class PlatformDirectory(AuthStore store, Users users, Time
                 existing is null
                     ? AuthStore.Create(AuthStore.ProjectMemberCollection, Instance, ProjectMemberKey(projectId, memberId), record)
                     : AuthStore.Replace(AuthStore.ProjectMemberCollection, Instance, ProjectMemberKey(projectId, memberId), record, existing.Version),
+                this.Audit(organizationId, userId, "project_member.role_set", memberId, $"{projectId}/{role}"),
             ], grant);
         }, cancellationToken).ConfigureAwait(false);
         return (await this.WithEmailsAsync([granted], grant => grant.UserId, cancellationToken).ConfigureAwait(false)).Single();
@@ -517,40 +535,23 @@ public sealed partial class PlatformDirectory(AuthStore store, Users users, Time
                     : Touch(member));
             }
 
+            operations.Add(this.Audit(organizationId, userId, "project_member.removed", memberId, projectId));
             return new Plan<bool>(operations, true);
         }, cancellationToken);
 
     /// <summary>
-    /// Makes <paramref name="userId"/> a member of an organization with <paramref name="role"/>, for an accepted
-    /// invitation; a collaborator keeps its project roles. False when it already is a member or the organization is gone.
+    /// Makes <paramref name="userId"/> a member of an organization with <paramref name="role"/>; a collaborator keeps its
+    /// project roles. False when it already is a member or the organization is gone.
     /// </summary>
     public async Task<bool> AddMemberAsync(string organizationId, string userId, string role, CancellationToken cancellationToken)
     {
         for (var attempt = 0; attempt < Attempts; attempt++)
         {
-            if (await this.OrganizationAsync(organizationId, cancellationToken).ConfigureAwait(false) is not { } organization)
+            if (await this.JoinAsync(organizationId, userId, role, cancellationToken).ConfigureAwait(false) is not { } operations)
             {
                 return false;
             }
 
-            var existing = await this.MembershipAsync(organizationId, userId, cancellationToken).ConfigureAwait(false);
-            if (existing?.Value.Role is not null)
-            {
-                return false;
-            }
-
-            var membership = new MembershipRecord(Instance, organizationId, userId, role, existing?.Value.JoinedAt ?? clock.GetUtcNow());
-            var record = Serialize(membership, PlatformJson.Default.MembershipRecord);
-            List<StoreOperation> operations =
-            [
-                existing is null
-                    ? AuthStore.Create(AuthStore.MembershipCollection, Instance, MembershipKey(organizationId, userId), record)
-                    : AuthStore.Replace(AuthStore.MembershipCollection, Instance, MembershipKey(organizationId, userId), record, existing.Version),
-                role == Roles.Owner
-                    ? AuthStore.Replace(AuthStore.OrganizationCollection, Instance, organizationId, Serialize(organization.Value with { Owners = organization.Value.Owners + 1 }, PlatformJson.Default.OrganizationRecord), organization.Version)
-                    // Orders the join against a deletion of the organization.
-                    : AuthStore.Require(AuthStore.OrganizationCollection, Instance, organizationId, Filter("exists", "/id")),
-            ];
             if (await store.TransactAsync(operations, cancellationToken).ConfigureAwait(false) is null)
             {
                 return true;
@@ -561,35 +562,18 @@ public sealed partial class PlatformDirectory(AuthStore store, Users users, Time
     }
 
     /// <summary>
-    /// Gives <paramref name="userId"/> an explicit role on a project, for an accepted project invitation: an organization
+    /// Gives <paramref name="userId"/> an explicit role on a project (keeping a higher one it holds): an organization
     /// member keeps its organization role, anyone else becomes a collaborator. False when the project is gone.
     /// </summary>
     public async Task<bool> GrantAsync(string projectId, string userId, string role, CancellationToken cancellationToken)
     {
         for (var attempt = 0; attempt < Attempts; attempt++)
         {
-            if (await this.ProjectAsync(projectId, cancellationToken).ConfigureAwait(false) is not { } project)
+            if (await this.GrantOperationsAsync(projectId, userId, role, refuseHeld: false, cancellationToken).ConfigureAwait(false) is not { } operations)
             {
                 return false;
             }
 
-            var organizationId = project.Value.OrganizationId;
-            var member = await this.MembershipAsync(organizationId, userId, cancellationToken).ConfigureAwait(false);
-            var existing = await this.ProjectMemberAsync(projectId, userId, cancellationToken).ConfigureAwait(false);
-            var now = clock.GetUtcNow();
-            var grant = existing is null ? new ProjectMemberRecord(Instance, organizationId, projectId, userId, role, now) : existing.Value with { Role = role };
-            var record = Serialize(grant, PlatformJson.Default.ProjectMemberRecord);
-            List<StoreOperation> operations =
-            [
-                // A collaborator's membership has no role; every grant rewrites it (see RemoveAsync).
-                member is null
-                    ? AuthStore.Create(AuthStore.MembershipCollection, Instance, MembershipKey(organizationId, userId), Serialize(new MembershipRecord(Instance, organizationId, userId, null, now), PlatformJson.Default.MembershipRecord))
-                    : Touch(member),
-                AuthStore.Require(AuthStore.ProjectCollection, Instance, projectId, Filter("exists", "/id")),
-                existing is null
-                    ? AuthStore.Create(AuthStore.ProjectMemberCollection, Instance, ProjectMemberKey(projectId, userId), record)
-                    : AuthStore.Replace(AuthStore.ProjectMemberCollection, Instance, ProjectMemberKey(projectId, userId), record, existing.Version),
-            ];
             if (await store.TransactAsync(operations, cancellationToken).ConfigureAwait(false) is null)
             {
                 return true;
@@ -597,6 +581,168 @@ public sealed partial class PlatformDirectory(AuthStore store, Users users, Time
         }
 
         throw ApiException.Unavailable();
+    }
+
+    /// <summary>The writes of <see cref="AddMemberAsync"/>, or null when there is nothing to write.</summary>
+    internal async Task<List<StoreOperation>?> JoinAsync(string organizationId, string userId, string role, CancellationToken cancellationToken)
+    {
+        if (await this.OrganizationAsync(organizationId, cancellationToken).ConfigureAwait(false) is not { } organization
+            || await this.MembershipAsync(organizationId, userId, cancellationToken).ConfigureAwait(false) is var existing && existing?.Value.Role is not null)
+        {
+            return null;
+        }
+
+        var membership = new MembershipRecord(Instance, organizationId, userId, role, existing?.Value.JoinedAt ?? clock.GetUtcNow());
+        var record = Serialize(membership, PlatformJson.Default.MembershipRecord);
+        return
+        [
+            existing is null
+                ? AuthStore.Create(AuthStore.MembershipCollection, Instance, MembershipKey(organizationId, userId), record)
+                : AuthStore.Replace(AuthStore.MembershipCollection, Instance, MembershipKey(organizationId, userId), record, existing.Version),
+            role == Roles.Owner
+                ? AuthStore.Replace(AuthStore.OrganizationCollection, Instance, organizationId, Serialize(organization.Value with { Owners = organization.Value.Owners + 1 }, PlatformJson.Default.OrganizationRecord), organization.Version)
+                // Orders the join against a deletion of the organization.
+                : AuthStore.Require(AuthStore.OrganizationCollection, Instance, organizationId, Filter("exists", "/id")),
+        ];
+    }
+
+    /// <summary>
+    /// The writes of <see cref="GrantAsync"/>, or null when the project is gone. With <paramref name="refuseHeld"/>, 409
+    /// already_member when the user's effective role is already at least <paramref name="role"/>; the writes name the
+    /// membership and role it read, so a change to either since fails them and the check runs again.
+    /// </summary>
+    internal async Task<List<StoreOperation>?> GrantOperationsAsync(string projectId, string userId, string role, bool refuseHeld, CancellationToken cancellationToken)
+    {
+        if (await this.ProjectAsync(projectId, cancellationToken).ConfigureAwait(false) is not { } project)
+        {
+            return null;
+        }
+
+        var organizationId = project.Value.OrganizationId;
+        var member = await this.MembershipAsync(organizationId, userId, cancellationToken).ConfigureAwait(false);
+        var existing = await this.ProjectMemberAsync(projectId, userId, cancellationToken).ConfigureAwait(false);
+        if (refuseHeld && Roles.Rank(Roles.Higher(Roles.Implied(member?.Value.Role), existing?.Value.Role)) >= Roles.Rank(role))
+        {
+            throw Conflict("already_member", "You already have this access to the project.");
+        }
+
+        var now = clock.GetUtcNow();
+        var grant = existing is null ? new ProjectMemberRecord(Instance, organizationId, projectId, userId, role, now) : existing.Value with { Role = Roles.Higher(existing.Value.Role, role)! };
+        var record = Serialize(grant, PlatformJson.Default.ProjectMemberRecord);
+        return
+        [
+            // A collaborator's membership has no role; every grant rewrites it (see RemoveAsync).
+            member is null
+                ? AuthStore.Create(AuthStore.MembershipCollection, Instance, MembershipKey(organizationId, userId), Serialize(new MembershipRecord(Instance, organizationId, userId, null, now), PlatformJson.Default.MembershipRecord))
+                : Touch(member),
+            AuthStore.Require(AuthStore.ProjectCollection, Instance, projectId, Filter("exists", "/id")),
+            existing is null
+                ? AuthStore.Create(AuthStore.ProjectMemberCollection, Instance, ProjectMemberKey(projectId, userId), record)
+                : AuthStore.Replace(AuthStore.ProjectMemberCollection, Instance, ProjectMemberKey(projectId, userId), record, existing.Version),
+        ];
+    }
+
+    /// <summary>The live ownership transfer of an organization, or 404; needs any organization role.</summary>
+    public async Task<OwnershipTransferRecord> TransferAsync(string userId, string organizationId, CancellationToken cancellationToken)
+    {
+        var access = await this.OrganizationAccessAsync(userId, organizationId, cancellationToken).ConfigureAwait(false);
+        RequireRole(access, Roles.Viewer);
+        return (await this.LiveTransferAsync(access.Organization, cancellationToken).ConfigureAwait(false) ?? throw NotFound()).Transfer;
+    }
+
+    /// <summary>
+    /// Offers the organization's ownership to <paramref name="nomineeId"/>, a member who is not an owner, for seven days;
+    /// it replaces a pending offer. Needs owner.
+    /// </summary>
+    public Task<OwnershipTransferRecord> StartTransferAsync(string userId, string organizationId, string nomineeId, CancellationToken cancellationToken) =>
+        this.CommitAsync(async () =>
+        {
+            var access = await this.OrganizationAccessAsync(userId, organizationId, cancellationToken).ConfigureAwait(false);
+            RequireRole(access, Roles.Owner);
+            var nominee = await this.MembershipAsync(organizationId, nomineeId, cancellationToken).ConfigureAwait(false);
+            if (nominee?.Value.Role is not { } role)
+            {
+                throw NotFound();
+            }
+
+            if (role == Roles.Owner)
+            {
+                throw new ApiException(StatusCodes.Status400BadRequest, "invalid_request", "The nominee is already an owner.");
+            }
+
+            var now = clock.GetUtcNow();
+            var transfer = new OwnershipTransferRecord(userId, nomineeId, now, now + TransferLifetime);
+            return new Plan<OwnershipTransferRecord>(
+            [
+                Authority(access, Roles.Owner),
+                AuthStore.Require(AuthStore.MembershipCollection, Instance, MembershipKey(organizationId, nomineeId), Filter("in", RoleList([Roles.Viewer, Roles.Member, Roles.Admin])), nominee.Version),
+                AuthStore.Replace(AuthStore.OrganizationCollection, Instance, organizationId, Serialize(access.Organization.Value with { Transfer = transfer }, PlatformJson.Default.OrganizationRecord), access.Organization.Version),
+                this.Audit(organizationId, userId, "ownership.transfer_started", nomineeId),
+            ], transfer);
+        }, cancellationToken);
+
+    /// <summary>Withdraws the pending transfer; an owner or the nominee.</summary>
+    public Task CancelTransferAsync(string userId, string organizationId, CancellationToken cancellationToken) =>
+        this.CommitAsync(async () =>
+        {
+            var access = await this.OrganizationAccessAsync(userId, organizationId, cancellationToken).ConfigureAwait(false);
+            RequireRole(access, Roles.Viewer);
+            var live = await this.LiveTransferAsync(access.Organization, cancellationToken).ConfigureAwait(false) ?? throw NotFound();
+            var nominee = live.Transfer.ToUserId == userId;
+            if (!nominee)
+            {
+                RequireRole(access, Roles.Owner);
+            }
+
+            return new Plan<bool>(
+            [
+                Authority(access, nominee ? Roles.Viewer : Roles.Owner),
+                AuthStore.Replace(AuthStore.OrganizationCollection, Instance, organizationId, Serialize(access.Organization.Value with { Transfer = null }, PlatformJson.Default.OrganizationRecord), access.Organization.Version),
+                this.Audit(organizationId, userId, "ownership.transfer_cancelled", live.Transfer.ToUserId),
+            ], true);
+        }, cancellationToken);
+
+    /// <summary>The nominee accepts: it becomes an owner and the owner who offered it an admin.</summary>
+    public async Task<(MembershipRecord Member, string Email)> ConfirmTransferAsync(string userId, string organizationId, CancellationToken cancellationToken)
+    {
+        var confirmed = await this.CommitAsync(async () =>
+        {
+            var access = await this.OrganizationAccessAsync(userId, organizationId, cancellationToken).ConfigureAwait(false);
+            var live = await this.LiveTransferAsync(access.Organization, cancellationToken).ConfigureAwait(false) ?? throw NotFound();
+            if (live.Transfer.ToUserId != userId)
+            {
+                throw Forbidden();
+            }
+
+            var owner = access.Membership.Value with { Role = Roles.Owner };
+            return new Plan<MembershipRecord>(
+            [
+                // The owner count is unchanged: one owner in, one out.
+                AuthStore.Replace(AuthStore.OrganizationCollection, Instance, organizationId, Serialize(access.Organization.Value with { Transfer = null }, PlatformJson.Default.OrganizationRecord), access.Organization.Version),
+                AuthStore.Replace(AuthStore.MembershipCollection, Instance, MembershipKey(organizationId, userId), Serialize(owner, PlatformJson.Default.MembershipRecord), access.Membership.Version),
+                AuthStore.Replace(AuthStore.MembershipCollection, Instance, MembershipKey(organizationId, live.Starter.Value.UserId),
+                    Serialize(live.Starter.Value with { Role = Roles.Admin }, PlatformJson.Default.MembershipRecord), live.Starter.Version),
+                this.Audit(organizationId, userId, "ownership.transfer_confirmed", userId),
+            ], owner);
+        }, cancellationToken).ConfigureAwait(false);
+        return (await this.WithEmailsAsync([confirmed], member => member.UserId, cancellationToken).ConfigureAwait(false)).Single();
+    }
+
+    /// <summary>A page of the organization's audit events, newest first; needs admin.</summary>
+    public async Task<Page<AuditEventRecord>> AuditEventsAsync(string userId, string organizationId, int limit, string? after, CancellationToken cancellationToken)
+    {
+        var access = await this.OrganizationAccessAsync(userId, organizationId, cancellationToken).ConfigureAwait(false);
+        RequireRole(access, Roles.Admin);
+        var page = await this.PageAsync(AuthStore.AuditEventCollection, [Equal("/organizationId", organizationId)], PlatformJson.Default.AuditEventRecord, "/id", limit, after, descending: true, cancellationToken).ConfigureAwait(false);
+        return new([.. page.Items.Select(item => item.Value).Where(item => item.OrganizationId == organizationId)], page.Next);
+    }
+
+    /// <summary>An audit event, written in the same transaction as the change it records.</summary>
+    internal StoreOperation Audit(string organizationId, string actor, string action, string? target = null, string? detail = null)
+    {
+        var id = this.NewId();
+        return AuthStore.Create(AuthStore.AuditEventCollection, Instance, id,
+            Serialize(new AuditEventRecord(id, Instance, organizationId, actor, action, target, detail, clock.GetUtcNow()), PlatformJson.Default.AuditEventRecord));
     }
 
     /// <summary>403 unless the caller's organization role is at least <paramref name="minimum"/>; collaborators have none.</summary>
@@ -662,7 +808,7 @@ public sealed partial class PlatformDirectory(AuthStore store, Users users, Time
 
             if (failed == next.Claim)
             {
-                throw Conflict("name_taken", "The organization already has a project with this name.");
+                throw next.ClaimTaken ?? Conflict("name_taken", "The organization already has a project with this name.");
             }
         }
 
@@ -673,13 +819,17 @@ public sealed partial class PlatformDirectory(AuthStore store, Users users, Time
     /// One page of records matching <paramref name="conditions"/>, sorted inside TerraBase by <paramref name="sort"/>
     /// then id; <paramref name="after"/> is the cursor TerraBase answered, valid only for the same list.
     /// </summary>
-    internal async Task<Page<Versioned<T>>> PageAsync<T>(string collection, IReadOnlyList<JsonObject> conditions, JsonTypeInfo<T> type, string sort, int limit, string? after, CancellationToken cancellationToken)
+    internal Task<Page<Versioned<T>>> PageAsync<T>(string collection, IReadOnlyList<JsonObject> conditions, JsonTypeInfo<T> type, string sort, int limit, string? after, CancellationToken cancellationToken)
+        where T : class => this.PageAsync(collection, conditions, type, sort, limit, after, descending: false, cancellationToken);
+
+    /// <summary>As the other overload, newest first when <paramref name="descending"/>.</summary>
+    internal async Task<Page<Versioned<T>>> PageAsync<T>(string collection, IReadOnlyList<JsonObject> conditions, JsonTypeInfo<T> type, string sort, int limit, string? after, bool descending, CancellationToken cancellationToken)
         where T : class
     {
         TerraBaseDocumentPage page;
         try
         {
-            page = await store.PageAsync(collection, Instance, conditions, [sort], limit, after, cancellationToken).ConfigureAwait(false);
+            page = await store.PageAsync(collection, Instance, conditions, [sort], limit, after, descending, cancellationToken).ConfigureAwait(false);
         }
         catch (TerraBaseException error) when (error.ErrorCode == "invalid_cursor")
         {
@@ -719,10 +869,32 @@ public sealed partial class PlatformDirectory(AuthStore store, Users users, Time
 
     private static JsonObject RoleIn(IEnumerable<string> roles) => new() { ["in"] = RoleList(roles) };
 
+    // The organization without its pending transfer when giving userId the organization role (null: removed) takes the
+    // starter out of the owners or the nominee out of the members who may confirm, so the offer does not come back with
+    // the role.
+    private static OrganizationRecord Unoffered(OrganizationRecord organization, string userId, string? role) =>
+        organization.Transfer is { } transfer
+            && (transfer.FromUserId == userId && role != Roles.Owner || transfer.ToUserId == userId && role is null or Roles.Owner)
+                ? organization with { Transfer = null }
+                : organization;
+
     // Rewrites a membership unchanged at the version read: it conflicts with any other change to it.
     private static StoreOperation Touch(Versioned<MembershipRecord> membership) =>
         AuthStore.Replace(AuthStore.MembershipCollection, Instance, MembershipKey(membership.Value.OrganizationId, membership.Value.UserId),
             Serialize(membership.Value, PlatformJson.Default.MembershipRecord), membership.Version);
+
+    // The pending transfer while it still holds: unexpired, its starter still an owner and its nominee a non-owner member.
+    private async Task<(OwnershipTransferRecord Transfer, Versioned<MembershipRecord> Starter)?> LiveTransferAsync(Versioned<OrganizationRecord> organization, CancellationToken cancellationToken)
+    {
+        if (organization.Value.Transfer is not { } transfer || transfer.ExpiresAt <= clock.GetUtcNow()
+            || await this.MembershipAsync(organization.Value.Id, transfer.FromUserId, cancellationToken).ConfigureAwait(false) is not { Value.Role: Roles.Owner } starter
+            || await this.MembershipAsync(organization.Value.Id, transfer.ToUserId, cancellationToken).ConfigureAwait(false) is not { Value.Role: Roles.Viewer or Roles.Member or Roles.Admin })
+        {
+            return null;
+        }
+
+        return (transfer, starter);
+    }
 
     // Whether the user has a role on a live project of the organization other than except; a role left on a deleted
     // project (its clean-up failed) does not count.
@@ -755,6 +927,41 @@ public sealed partial class PlatformDirectory(AuthStore store, Users users, Time
         await Parallel.ForAsync(0, items.Count, new ParallelOptions { MaxDegreeOfParallelism = 8, CancellationToken = cancellationToken },
             async (index, token) => results[index] = await read(items[index], token).ConfigureAwait(false)).ConfigureAwait(false);
         return [.. results.Where(result => result.HasValue).Select(result => result!.Value)];
+    }
+
+    // Deletes the matching invitations, each in one transaction with the token and address claims it still holds, so no
+    // claim outlives its invitation.
+    private async Task RetireInvitationsAsync(IReadOnlyList<(string, string)> equals, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await foreach (var found in this.QueryAsync(AuthStore.InvitationCollection, equals, PlatformJson.Default.InvitationRecord, cancellationToken).ConfigureAwait(false))
+            {
+                await this.CommitAsync(async () =>
+                {
+                    if (await this.GetAsync(AuthStore.InvitationCollection, found.Value.Id, PlatformJson.Default.InvitationRecord,
+                        invitation => invitation.InstanceId == Instance && invitation.Id == found.Value.Id, cancellationToken).ConfigureAwait(false) is not { } invitation)
+                    {
+                        return new Plan<bool>([], true);
+                    }
+
+                    List<StoreOperation> operations = [AuthStore.Delete(AuthStore.InvitationCollection, Instance, invitation.Value.Id, invitation.Version)];
+                    foreach (var (kind, key) in Invitations.Claims(invitation.Value))
+                    {
+                        if (await store.FindUniqueAsync(Instance, kind, key, cancellationToken).ConfigureAwait(false) is { } held && held.OwnerId == invitation.Value.Id)
+                        {
+                            operations.Add(AuthStore.Release(Instance, kind, key, held.Version));
+                        }
+                    }
+
+                    return new Plan<bool>(operations, true);
+                }, cancellationToken).ConfigureAwait(false);
+            }
+        }
+        catch (Exception error) when (error is HttpRequestException or TimeoutException or ApiException)
+        {
+            LogCleanUpFailed(logger, AuthStore.InvitationCollection, error.GetType().Name);
+        }
     }
 
     private async Task CleanUpAsync<T>(string collection, IReadOnlyList<(string, string)> equals, JsonTypeInfo<T> type, Func<T, string> key, CancellationToken cancellationToken)
@@ -808,8 +1015,11 @@ public sealed partial class PlatformDirectory(AuthStore store, Users users, Time
     [LoggerMessage(Level = LogLevel.Warning, Message = "Cleaning up {Collection} after a deletion failed ({Error}); what is left grants nothing")]
     private static partial void LogCleanUpFailed(ILogger logger, string collection, string error);
 
-    /// <summary>The operations of one change and what it answers; a failed <paramref name="Claim"/> is a taken name.</summary>
-    internal sealed record Plan<T>(IReadOnlyList<StoreOperation> Operations, T Result, int? Claim = null);
+    /// <summary>
+    /// The operations of one change and what it answers. A failed <paramref name="Claim"/> answers
+    /// <paramref name="ClaimTaken"/>, by default a taken project name.
+    /// </summary>
+    internal sealed record Plan<T>(IReadOnlyList<StoreOperation> Operations, T Result, int? Claim = null, ApiException? ClaimTaken = null);
 }
 
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
@@ -817,4 +1027,7 @@ public sealed partial class PlatformDirectory(AuthStore store, Users users, Time
 [JsonSerializable(typeof(MembershipRecord))]
 [JsonSerializable(typeof(ProjectRecord))]
 [JsonSerializable(typeof(ProjectMemberRecord))]
+[JsonSerializable(typeof(ApiKeyRecord))]
+[JsonSerializable(typeof(InvitationRecord))]
+[JsonSerializable(typeof(AuditEventRecord))]
 internal sealed partial class PlatformJson : JsonSerializerContext;

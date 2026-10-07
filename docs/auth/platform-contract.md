@@ -79,7 +79,7 @@ organization ─┬─ members            (org roles)
 | --- | --- |
 | Organization | `{id, name, created_by, created_at, role}`; `role` is the caller's organization role, `null` for a project-only collaborator |
 | Member | `{user_id, email, role, joined_at}` |
-| Project | `{id, organization_id, name, issuer, created_by, created_at, role}`; `issuer` is the project tenant; `role` is the caller's effective project role |
+| Project | `{id, organization_id, name, issuer, created_by, created_at, role}`; `issuer` is the project tenant's, `{origin}/{id}`, and `null` until project tenants are served (slice 5); `role` is the caller's effective project role |
 | Project member | `{user_id, email, role, granted_at}` |
 | Invitation | `{id, email, role, project_id, invited_by, created_at, expires_at, status}` |
 | Ownership transfer | `{from_user_id, to_user_id, created_at, expires_at}` |
@@ -346,7 +346,7 @@ tokens expire:
 | API key revoked, expired or rotated past its grace | at once | within 15 minutes |
 | Member removed, role lowered, project or organization deleted | at once (the management API and every exchange read it) | within 15 minutes |
 | Sign-in revoked (RFC 7009, refresh-token reuse), user deleted | at once | within 15 minutes of the last exchange |
-| Signed out everywhere, password reset | at once (refresh and the management API) | within 1 hour (the sign-in token can still be exchanged until it expires) |
+| Signed out everywhere, password reset | at once (refresh, the management API and the exchange) | within 15 minutes of the last exchange |
 
 ### 6.7 Limits
 
@@ -366,7 +366,9 @@ tokens expire:
   equals the invitation's, ignoring case; the body never supplies the email.
   Accepting an organization invitation makes the user a member with its role
   (`409 already_member` if it is one). Accepting a project invitation grants the
-  project role; the user joins the organization only as a collaborator.
+  project role (`409 already_member` if the user's effective project role is
+  already at least that); the user joins the organization only as a
+  collaborator.
   `lookup` answers a pending invitation's organization, project, role and expiry
   to any signed-in user holding the token.
 - One pending invitation per email and target (`409 invitation_pending`). An
@@ -374,7 +376,8 @@ tokens expire:
 - **Ownership transfer**: one pending transfer per organization, valid 7 days,
   to an organization member who is not an owner. Only the nominee confirms; the
   nominee becomes an owner and the owner who started it an `admin`. The offer
-  lapses when its starter stops being an owner or either side leaves.
+  lapses when its starter stops being an owner, its nominee becomes one, or
+  either side leaves, and stays lapsed if that is undone.
 - **Audit events** record every change of this API, newest first, for at
   least 90 days. `actor` is a user id (or, for a suspension, the service
   client's id), `target` a user id, email, project id or key id, `detail` the

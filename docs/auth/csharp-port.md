@@ -626,6 +626,95 @@ nothing; the failure is logged.
 - `/readyz` requires the four collections: create them in the live `auth`
   database (`AuthStore.ProvisionAsync`) before rolling out.
 
+## API keys and organization and project tokens
+
+The token grants of the [platform contract](platform-contract.md#6-tokens):
+an API key's `client_credentials`, and a signed-in user's sign-in access token
+exchanged (RFC 8693, `AllowTokenExchangeFlow`), each for a token that acts in
+one organization or project. Both are in
+`src/TerraScale.Auth/Features/Platform/` (`ApiKeys`, `PlatformGrants`).
+
+- **Keys** live in `api_keys`, addressed by id (`tsk_` and 20 base32
+  characters). The key string adds `_` and 52 base32 characters (260 random
+  bits); only SHA-256 digests are stored. Creating, listing, rotating and
+  revoking use the management API's authentication and its role assertions;
+  revoking deletes the record, and deleting a project or organization deletes
+  its keys after it (every exchange reads the organization and project first,
+  so a key left behind issues nothing).
+- **Client authentication.** `OidcApplicationStore` answers a `tsk_` client id
+  with a client built from the key: confidential, only the token endpoint and
+  the client-credentials grant, every TerraBase scope permission, and a stored
+  secret of `tsk-sha256:` and the digests the key string may match (the current
+  one, and the previous one during a rotation's grace).
+  `ApiKeyApplicationManager` compares those in constant time; every other
+  client keeps OpenIddict's PBKDF2. OpenIddict then checks the grant
+  permission as for any client.
+- **Grant.** `PlatformGrants.ApiKeyAsync` reads the key again, charges
+  `api-key-token` (1,000 per key per minute, 429 `rate_limited` beyond),
+  checks `project` (a project of the key's organization; a project key's own)
+  and `scope` (within the key's), and signs a 15-minute token with `org_id`,
+  `project_id`, `database` and the scopes. `invalid_target` and `invalid_scope`
+  answer anything else.
+- **Token exchange.** OpenIddict validates the subject token (signature,
+  expiry, sign-in revocation); `ExchangeAsync` then requires a sign-in token
+  (its audiences include the issuer) issued to the exchanging client whose
+  `ts_auth_epoch` is still the user's (so not after sign-out everywhere or a
+  password reset), reads the user's role in the organization or project, and
+  issues its scopes for at most 15 minutes and never beyond the subject token's
+  expiry. Unknown, unreachable and role-less targets all answer
+  `invalid_target`. Only `ts-dashboard` holds the token-exchange permission
+  and the TerraBase scope permissions so far; `OidcResults.SignIn` refuses
+  (`invalid_scope`) any scope beyond `openid email profile offline_access`, so
+  no sign-in, refresh or headless grant can carry them.
+- **Fresh key check.** `ApiKeyAsync` re-reads the key and compares the
+  presented key string with its current digests itself, whatever OpenIddict
+  authenticated, so a key revoked or rotated on another replica issues nothing.
+- **No token entries.** `SkipShortLivedTokenEntries` stores no OpenIddict token
+  entry for organization and project tokens and for service clients' tokens:
+  they are validated offline and never revoked one by one, so an entry would
+  only grow `oidc_tokens`.
+- `TS_AUTH_ACCESS_TOKEN_AUDIENCES` may not name the platform issuer
+  (`{public origin}/terrascale`, compared as a URI), so an organization or
+  project token can never carry the audience the management API requires; it
+  compares audiences exactly, so other paths of the origin grant nothing there.
+
+`api_keys` joins `AuthStore.RequiredCollections`; create it in the live `auth`
+database before rolling out.
+
+## Invitations, ownership transfer and audit
+
+The rest of the platform management API (contract section 7), in
+`Features/Platform/Invitations.cs` and `PlatformDirectory`.
+
+- **Invitations** (`invitations`, addressed by UUIDv7 id) go to an email
+  address for an organization role or, with `project_id`, a project role. The
+  token is `tsi_` and 52 base32 characters; only its SHA-256 is stored, and
+  `uniques` maps it to the invitation (kind `invitation-token`) and holds one
+  pending invitation per email and target (kind `invitation-pending`). An
+  expired invitation stays in the history, and a new one takes its claim over
+  with a conditional write. Accepting, declining and revoking write the
+  decision at the version read, release the pending claim and, for accepting,
+  create the membership or project role in the same transaction, so an
+  invitation works once even on two replicas at once. Accepting needs a
+  sign-in token whose email is the invitation's; a project invitation makes a
+  collaborator of a user who is not a member.
+- **Email.** With `TS_AUTH_INVITATION_URL` set, the invitation is mailed after
+  the response through the existing delivery queue (`SignInMail`, now also
+  carrying invitations), rendered with the `invitation` email kind and the
+  instance's branding (TS-583), linking to `TS_AUTH_INVITATION_URL?token=…`.
+  The create call also answers the token once.
+- **Ownership transfer** is a field of the organization record, written with
+  a conditional write. It lapses when it expires (7 days), its starter is no
+  longer an owner or its nominee no longer a non-owner member. Confirming
+  makes the nominee an owner and the starter an admin in one transaction.
+- **Audit events** (`audit_events`, UUIDv7 ids) are written in the same
+  transaction as every change they record, including API key changes, and
+  listed newest first (a descending TerraBase sort on the id). Deleting an
+  organization deletes its events and invitations afterwards. Events are not
+  pruned yet.
+
+`invitations` and `audit_events` join `AuthStore.RequiredCollections`.
+
 ## Production activation gate
 
 [`scripts/provision.sh`](../scripts/provision.sh) prints only a provisioning

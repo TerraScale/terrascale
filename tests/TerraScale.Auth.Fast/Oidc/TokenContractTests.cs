@@ -98,6 +98,8 @@ public sealed class TokenContractTests(TerraBaseFixture fixture)
     [Arguments("access-token-audiences", "http://gru.api.terrascale.tech")]
     [Arguments("access-token-audiences", "https://gru.api.terrascale.tech/?x=1")]
     [Arguments("access-token-audiences", "https://gru.api.terrascale.tech/#f")]
+    // TS-598: the platform issuer as an audience would let organization and project tokens open the management API.
+    [Arguments("access-token-audiences", "https://AUTH.test.invalid:443/terrascale")]
     [Arguments("service-clients", "ts-dashboard:service-test-secret-0123456789abcdefghij")]
     [Arguments("service-clients", "abcdef01-2345-6789-abcd-ef0123456789:service-test-secret-0123456789abcdefghij")]
     [Arguments("service-clients", "Orchestrator:service-test-secret-0123456789abcdefghij")]
@@ -118,6 +120,14 @@ public sealed class TokenContractTests(TerraBaseFixture fixture)
         await Assert.That(error.Message).Contains($"TS_AUTH_{key.Replace('-', '_').ToUpperInvariant()}");
         await Assert.That(error.Message).DoesNotContain("service-test-secret");
         await Assert.That(error.Message).DoesNotContain("gru.api");
+    }
+
+    [Test]
+    public async Task An_audience_on_this_origin_other_than_its_platform_issuer_is_allowed()
+    {
+        var settings = AuthTestServer.DefaultSettings();
+        settings["access-token-audiences"] = "https://auth.test.invalid/api";
+        await Assert.That(AuthOptions.Load(settings).AccessTokenAudiences).IsEquivalentTo(["https://auth.test.invalid/api"]);
     }
 
     [Test]

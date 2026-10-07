@@ -16,7 +16,7 @@ namespace TerraScale.Auth.Features.Oidc;
 /// OpenIddict clients on TerraBase, addressed by instance and client id. Every write is create-only or names the
 /// version it read. LINQ queries, counting and paging are not supported: no OpenIddict server flow uses them.
 /// </summary>
-public sealed class OidcApplicationStore(AuthStore store) : IOpenIddictApplicationStore<OidcApplication>
+public sealed class OidcApplicationStore(AuthStore store, IServiceProvider services) : IOpenIddictApplicationStore<OidcApplication>
 {
     private const string Collection = AuthStore.OidcApplicationCollection;
 
@@ -50,6 +50,13 @@ public sealed class OidcApplicationStore(AuthStore store) : IOpenIddictApplicati
     /// <inheritdoc />
     public async ValueTask<OidcApplication?> FindByClientIdAsync(string identifier, CancellationToken cancellationToken)
     {
+        if (Platform.ApiKeys.IsKeyId(identifier))
+        {
+            // An API key (TS-598) is a client of its own collection; resolved lazily, since ApiKeys reads the store.
+            var keys = services.GetRequiredService<Platform.ApiKeys>();
+            return await keys.FindAsync(identifier, cancellationToken).ConfigureAwait(false) is { } key ? Platform.ApiKeyClients.Describe(key, keys.Digests(key)) : null;
+        }
+
         var document = await store.GetAsync(Collection, OidcIssuer.InstanceId, identifier, cancellationToken).ConfigureAwait(false);
         var application = document?.Document.Deserialize(OidcJson.Default.OidcApplication);
         if (application is null || application.InstanceId != OidcIssuer.InstanceId || application.ClientId != identifier || application.Id != identifier)
