@@ -23,8 +23,8 @@ func TestOrganizationAuditTabsAndLegacyRedirect(t *testing.T) {
 		}
 	}
 	tabs := pageByRole(page, *playwright.AriaRoleNavigation, "Organization sections")
-	must(t, expect.Locator(tabs.Locator("a")).ToHaveText([]string{"Organization", "Members", "Invitations", "Projects", "Billing", "Audit"}))
-	must(t, expect.Locator(byRole(tabs, *playwright.AriaRoleLink, "Audit", true)).ToHaveAttribute("aria-current", "page"))
+	must(t, expect.Locator(tabs.Locator("a")).ToHaveText([]string{"Organization", "Members", "Projects"}))
+	must(t, expect.Locator(byRole(pageByRole(page, *playwright.AriaRoleNavigation, "Organization tools"), *playwright.AriaRoleLink, "Audit", true)).ToHaveAttribute("aria-current", "page"))
 	must(t, expect.Locator(page.Locator("main")).ToHaveCount(1))
 	navigation := pageByRole(page, *playwright.AriaRoleNavigation, "Dashboard sections")
 	must(t, expect.Locator(navigation.Locator("a[href='/audit']")).ToHaveCount(0))
@@ -32,7 +32,7 @@ func TestOrganizationAuditTabsAndLegacyRedirect(t *testing.T) {
 	visible(t, pageByRole(page, *playwright.AriaRoleSearch, "Filter audit events"))
 	viewportScreenshot(t, page, "organization-audit-desktop")
 
-	for _, label := range []string{"Organization", "Members", "Invitations", "Projects", "Billing"} {
+	for _, label := range []string{"Organization", "Members", "Projects"} {
 		click(t, byRole(tabs, *playwright.AriaRoleLink, label, true))
 		must(t, expect.Locator(byRole(tabs, *playwright.AriaRoleLink, label, true)).ToHaveAttribute("aria-current", "page"))
 		if currentPath(t, page) != "/organization" {
@@ -40,15 +40,16 @@ func TestOrganizationAuditTabsAndLegacyRedirect(t *testing.T) {
 		}
 		must(t, expect.Locator(page.Locator("#recent-activity, #audit-breakdown, .ts-audit-filters")).ToHaveCount(0))
 	}
-	click(t, byRole(tabs, *playwright.AriaRoleLink, "Audit", true))
+	click(t, byRole(tabs, *playwright.AriaRoleLink, "Organization", true))
+	click(t, byRole(pageByRole(page, *playwright.AriaRoleNavigation, "Organization tools"), *playwright.AriaRoleLink, "Audit", true))
 	visible(t, pageByRole(page, *playwright.AriaRoleHeading, "Recent activity", true))
 	_, err = page.Reload()
 	must(t, err)
-	must(t, expect.Locator(byRole(tabs, *playwright.AriaRoleLink, "Audit", true)).ToHaveAttribute("aria-current", "page"))
+	must(t, expect.Locator(byRole(pageByRole(page, *playwright.AriaRoleNavigation, "Organization tools"), *playwright.AriaRoleLink, "Audit", true)).ToHaveAttribute("aria-current", "page"))
 	must(t, page.SetViewportSize(390, 844))
-	visible(t, byRole(tabs, *playwright.AriaRoleLink, "Audit", true))
-	must(t, byRole(tabs, *playwright.AriaRoleLink, "Audit", true).Focus())
-	must(t, expect.Locator(byRole(tabs, *playwright.AriaRoleLink, "Audit", true)).ToBeFocused())
+	visible(t, byRole(pageByRole(page, *playwright.AriaRoleNavigation, "Organization tools"), *playwright.AriaRoleLink, "Audit", true))
+	must(t, byRole(pageByRole(page, *playwright.AriaRoleNavigation, "Organization tools"), *playwright.AriaRoleLink, "Audit", true).Focus())
+	must(t, expect.Locator(byRole(pageByRole(page, *playwright.AriaRoleNavigation, "Organization tools"), *playwright.AriaRoleLink, "Audit", true)).ToBeFocused())
 	viewportScreenshot(t, page, "organization-audit-mobile")
 
 	goToOK(t, page, "/organization?tab=audit&action=unknown-action")

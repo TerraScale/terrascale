@@ -547,10 +547,10 @@ func updateMemberRole(deps core.Deps, service Service) http.HandlerFunc {
 			return
 		}
 		if err := service.UpdateMemberRole(r.Context(), p, r.PathValue("userID"), form.Get("role")); err != nil {
-			redirectWithError(w, r, "/organization", err)
+			redirectWithError(w, r, "/organization?tab=members", err)
 			return
 		}
-		http.Redirect(w, r, "/organization", http.StatusSeeOther)
+		http.Redirect(w, r, "/organization?tab=members", http.StatusSeeOther)
 	}
 }
 
@@ -561,10 +561,10 @@ func removeMember(deps core.Deps, service Service) http.HandlerFunc {
 			return
 		}
 		if err := service.RemoveMember(r.Context(), p, r.PathValue("userID")); err != nil {
-			redirectWithError(w, r, "/organization", err)
+			redirectWithError(w, r, "/organization?tab=members", err)
 			return
 		}
-		http.Redirect(w, r, "/organization", http.StatusSeeOther)
+		http.Redirect(w, r, "/organization?tab=members", http.StatusSeeOther)
 	}
 }
 
