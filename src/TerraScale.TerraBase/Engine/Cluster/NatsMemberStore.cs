@@ -5,6 +5,7 @@ using System.Text;
 using System.Text.Json;
 using NATS.Client.Core;
 using NATS.Client.JetStream;
+using NATS.Client.JetStream.Models;
 using NATS.Client.KeyValueStore;
 using TerraBase.Configuration;
 
@@ -54,10 +55,18 @@ internal sealed class NatsMemberStore(NatsSettings settings, ILoggerFactory logg
         var store = await StoreAsync(cancellationToken).ConfigureAwait(false);
         var members = new List<ClusterMember>();
         ulong revision = 0;
-        await foreach (var key in store.GetKeysAsync([Prefix + ">"], cancellationToken: cancellationToken).ConfigureAwait(false))
+
+        // The keys come from the stream's subjects, not a key watcher: ts-orchestrator lets the terrabase role read the
+        // bucket's stream info and messages but not create consumers (internal/roleidentity).
+        var subjects = $"$KV.{Bucket}.";
+        var stream = await new NatsJSContext(_connection).GetStreamAsync($"KV_{Bucket}", new StreamInfoRequest { SubjectsFilter = subjects + Prefix + ">" }, cancellationToken)
+            .ConfigureAwait(false);
+        foreach (var key in stream.Info.State.Subjects?.Keys.Select(subject => subject[subjects.Length..]) ?? [])
         {
+            // A deleted key and an expired one (a subject delete marker, no value) are not members.
             var entry = await store.TryGetEntryAsync<byte[]>(key, cancellationToken: cancellationToken).ConfigureAwait(false);
-            if (entry.Success && entry.Value.Value is { } value && JsonSerializer.Deserialize(value, ClusterJsonContext.Default.ClusterMember) is { } member)
+            if (entry.Success && entry.Value is { Operation: NatsKVOperation.Put, Value: { Length: > 0 } value }
+                && JsonSerializer.Deserialize(value, ClusterJsonContext.Default.ClusterMember) is { } member)
             {
                 members.Add(member);
                 revision = Math.Max(revision, entry.Value.Revision);
