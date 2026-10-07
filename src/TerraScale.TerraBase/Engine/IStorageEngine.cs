@@ -115,7 +115,11 @@ public interface IStorageEngine : IAsyncDisposable
     /// <param name="database">The target database.</param>
     /// <param name="cancellationToken">Cancels cleanup.</param>
     /// <param name="retainIntentOwnership">For an existing durable cleanup intent, reserve the target until catalog finalization.</param>
-    ValueTask<bool> DeleteDatabaseAsync(TenantContext database, CancellationToken cancellationToken, bool retainIntentOwnership = false);
+    /// <param name="incarnation">
+    /// When set, deletes only that incarnation, checked under the lifecycle lock: nothing when no open store of it holds the
+    /// database (another incarnation replaced it, or it is gone).
+    /// </param>
+    ValueTask<bool> DeleteDatabaseAsync(TenantContext database, CancellationToken cancellationToken, bool retainIntentOwnership = false, Guid? incarnation = null);
 
     /// <summary>
     /// Streams files and directory-shaped database artifacts, excluding exact root system and ownership files and without

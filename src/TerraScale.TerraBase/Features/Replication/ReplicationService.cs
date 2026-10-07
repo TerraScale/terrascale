@@ -95,8 +95,8 @@ internal sealed partial class ReplicationService(
 
         // A member receives only databases its catalog registers: a deleted one is not recreated, and a catalog follower takes a
         // new one once its catalog has it. The sender retries. A deletion committed between the check and the open is caught by
-        // checking again: an incarnation other than the one before the check is the open's own, which goes too once the catalog
-        // confirms the database is unregistered.
+        // checking again: an incarnation other than the one before the check was made after it, and goes too once the catalog
+        // confirms the database is unregistered; the engine deletes only that incarnation, never one that replaced it.
         var before = (await engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false))?.Incarnation;
         if (await tenants.RegisteredAsync(database, cancellationToken).ConfigureAwait(false) is not true)
         {
@@ -111,7 +111,7 @@ internal sealed partial class ReplicationService(
         {
             if (registered is false && before != store.Incarnation)
             {
-                _ = await engine.DeleteDatabaseAsync(database, cancellationToken).ConfigureAwait(false);
+                _ = await engine.DeleteDatabaseAsync(database, cancellationToken, incarnation: store.Incarnation).ConfigureAwait(false);
             }
 
             await stream.SendAsync(Error(StreamErrorCode.StreamErrorUnauthorized, retryable: true)).ConfigureAwait(false);

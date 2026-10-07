@@ -553,7 +553,7 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine
     /// ponytail: a transaction already running on the deleted database finishes on the unlinked file (Linux)
     /// and new ones fail; add per-database reference counting if deletes must wait for in-flight work.
     /// </remarks>
-    public async ValueTask<bool> DeleteDatabaseAsync(TenantContext database, CancellationToken cancellationToken, bool retainIntentOwnership = false)
+    public async ValueTask<bool> DeleteDatabaseAsync(TenantContext database, CancellationToken cancellationToken, bool retainIntentOwnership = false, Guid? incarnation = null)
     {
         var (key, path) = Locate(database);
         while (true)
@@ -565,6 +565,11 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine
             {
                 ObjectDisposedException.ThrowIf(_disposed, this);
                 RejectDatabaseLinks(path);
+                if (incarnation is { } expected && (!_stores.TryGetValue(key, out var open) || open.Incarnation != expected))
+                {
+                    return false;
+                }
+
                 if (retainIntentOwnership)
                 {
                     ReserveIntent(key);

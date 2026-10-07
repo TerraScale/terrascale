@@ -21,7 +21,11 @@ internal sealed partial class EngineManagementService
             && await engine.CreateDatabaseAsync(tenant, cancellationToken).ConfigureAwait(false)
             && await RegisteredAsync(tenant, cancellationToken).ConfigureAwait(false) is false)
         {
-            _ = await engine.DeleteDatabaseAsync(tenant, cancellationToken).ConfigureAwait(false);
+            if (await engine.OpenDatabaseAsync(tenant, cancellationToken).ConfigureAwait(false) is { } created)
+            {
+                _ = await engine.DeleteDatabaseAsync(tenant, cancellationToken, incarnation: created.Incarnation).ConfigureAwait(false);
+            }
+
             return null;
         }
 

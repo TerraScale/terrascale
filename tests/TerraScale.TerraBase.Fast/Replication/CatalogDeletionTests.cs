@@ -180,6 +180,8 @@ public sealed class CatalogDeletionTests
         DocumentChange[] group =
         [
             Intent(Guid.NewGuid().ToString(), tampered),
+            Intent(deleted.DatabaseId!, deleted with { OrganizationId = "" }),
+            Intent(deleted.DatabaseId!.ToUpperInvariant(), deleted with { DatabaseId = deleted.DatabaseId!.ToUpperInvariant() }),
             Intent(deleted.DatabaseId!, deleted),
             Intent(registered.DatabaseId!, registered),
             new($"projects/{project}/databases", registered.DatabaseId!, 11, JsonSerializer.SerializeToUtf8Bytes(
@@ -222,6 +224,9 @@ public sealed class CatalogDeletionTests
         await Assert.That(File.Exists(FileOf(deleted))).IsFalse();
         await Assert.That(File.Exists(FileOf(tampered))).IsTrue();
         await Assert.That(File.Exists(FileOf(registered))).IsTrue();
+
+        // Invalid intents (another database's id, no organization, ids the engine does not take) are skipped, never retried.
+        await Assert.That(await ApplyFailuresAsync(follower)).IsEqualTo(0);
     }
 
     [Test]
@@ -346,6 +351,40 @@ public sealed class CatalogDeletionTests
         await using var transaction = await store.BeginTransactionAsync(write: true, cancellationToken);
         await transaction.PutAsync("catalog", "version", version, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
+    }
+
+    [Test]
+    public async Task Deleting_an_expected_incarnation_never_deletes_one_that_replaced_it()
+    {
+        await using var server = await TerraBaseTestServer.StartAsync();
+        var engine = server.Services.GetRequiredService<IStorageEngine>();
+        var database = new TenantContext(Guid.NewGuid().ToString(), PlanTier.Hobby, Guid.NewGuid().ToString(), Guid.NewGuid().ToString());
+        var file = Path.Combine(server.DataDirectory, database.OrganizationId, database.ProjectId!, database.DatabaseId + ".db");
+        await Assert.That(await engine.CreateDatabaseAsync(database, CancellationToken.None)).IsTrue();
+        var stale = (await engine.OpenDatabaseAsync(database, CancellationToken.None))!.Incarnation;
+        await Assert.That(await engine.DeleteDatabaseAsync(database, CancellationToken.None)).IsTrue();
+        await Assert.That(await engine.CreateDatabaseAsync(database, CancellationToken.None)).IsTrue();
+        var replacement = (await engine.OpenDatabaseAsync(database, CancellationToken.None))!.Incarnation;
+        await Assert.That(replacement).IsNotEqualTo(stale);
+
+        await Assert.That(await engine.DeleteDatabaseAsync(database, CancellationToken.None, incarnation: stale)).IsFalse();
+        await Assert.That(File.Exists(file)).IsTrue();
+        await Assert.That(await engine.DeleteDatabaseAsync(database, CancellationToken.None, incarnation: replacement)).IsTrue();
+        await Assert.That(File.Exists(file)).IsFalse();
+    }
+
+    // Catalog streams that ended because acting on what they applied failed.
+    private static async Task<double> ApplyFailuresAsync(TerraBaseTestServer server)
+    {
+        try
+        {
+            return await server.MetricAsync("terrabase_catalog_follower_failures_total", "reason=\"apply\"");
+        }
+        catch (InvalidOperationException)
+        {
+            // No such stream yet: the counter has no samples.
+            return 0;
+        }
     }
 
     // The catalog version document of this build's catalog.

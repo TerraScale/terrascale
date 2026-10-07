@@ -110,14 +110,14 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
             return await inner.CreateDatabaseWithIntentAsync(database, source, recordIntent, cancellationToken);
         }
 
-        public async ValueTask<bool> DeleteDatabaseAsync(TenantContext database, CancellationToken cancellationToken, bool retainIntentOwnership = false)
+        public async ValueTask<bool> DeleteDatabaseAsync(TenantContext database, CancellationToken cancellationToken, bool retainIntentOwnership = false, Guid? incarnation = null)
         {
             if (hook.BeforeDelete is { } beforeDelete)
             {
                 await beforeDelete(database, cancellationToken);
             }
 
-            return await inner.DeleteDatabaseAsync(database, cancellationToken, retainIntentOwnership);
+            return await inner.DeleteDatabaseAsync(database, cancellationToken, retainIntentOwnership, incarnation);
         }
 
         public bool SystemDatabaseExists => inner.SystemDatabaseExists;

@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Diagnostics.Metrics;
 using System.Runtime.ExceptionServices;
 using System.Text.Json;
@@ -91,9 +92,9 @@ internal sealed partial class EngineManagementService
                 storage = null;
             }
 
-            if (storage is null || document.Id != storage.DatabaseId || storage.ProjectId is null)
+            if (storage is null || document.Id != storage.DatabaseId || !IsId(storage.OrganizationId) || !IsId(storage.ProjectId) || !IsId(storage.DatabaseId))
             {
-                // Inconsistent metadata cannot authorize deletion of registered data.
+                // Inconsistent metadata cannot authorize deletion of registered data, and no retry would make it valid.
                 LogInvalidReplicatedIntent(logger, null);
             }
             else
@@ -134,17 +135,31 @@ internal sealed partial class EngineManagementService
             return;
         }
 
+        // Every page is acted on, so one failing cleanup holds back none of the others; the first failure is reported after.
         string? after = null;
         DocumentPage page;
+        Exception? failed = null;
         do
         {
             page = await ReadCatalogAsync(transaction => transaction.ListAsync(PendingDatabaseCleanup, after, MemberPage, MaxPageBytes, cancellationToken),
                 cancellationToken).ConfigureAwait(false);
-            await AppliedAsync([.. page.Documents.Select(document => new DocumentChange(PendingDatabaseCleanup, document.Id, 1, document.Json))],
-                cancellationToken).ConfigureAwait(false);
+            try
+            {
+                await AppliedAsync([.. page.Documents.Select(document => new DocumentChange(PendingDatabaseCleanup, document.Id, 1, document.Json))],
+                    cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception error) when (!cancellationToken.IsCancellationRequested)
+            {
+                failed ??= error;
+            }
+
             after = page.Documents.Count > 0 ? page.Documents[^1].Id : after;
         }
         while (page.HasMore);
+        if (failed is not null)
+        {
+            ExceptionDispatchInfo.Throw(failed);
+        }
     }
 
     /// <summary>On a catalog follower that caught up with its primary: the startup file audit a primary runs.</summary>
@@ -256,6 +271,10 @@ internal sealed partial class EngineManagementService
             await engine.CompleteDatabaseIntentAsync(storage, CancellationToken.None).ConfigureAwait(false);
         }
     }
+
+    // The engine's tenant ids: lowercase hyphenated UUIDs.
+    private static bool IsId([NotNullWhen(true)] string? id) =>
+        Guid.TryParseExact(id, "D", out var guid) && string.Equals(guid.ToString(), id, StringComparison.Ordinal);
 
     [LoggerMessage(Level = LogLevel.Error, Message = "A replicated database cleanup intent is invalid; nothing was deleted for it")]
     private static partial void LogInvalidReplicatedIntent(ILogger logger, Exception? error);
