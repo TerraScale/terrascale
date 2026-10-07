@@ -1,4 +1,6 @@
 using System.Collections.Concurrent;
+using System.Net.Security;
+using System.Security.Cryptography.X509Certificates;
 using NATS.Client.Core;
 using NATS.Client.JetStream;
 using NATS.Client.KeyValueStore;
@@ -35,14 +37,19 @@ internal sealed class NatsLeaseStore(NatsSettings settings, ILoggerFactory logge
 {
     public const string Bucket = "terrabase_backup_leases";
 
+    // ts-orchestrator renews the credentials and certificate files before they expire (48 h, renewed at 24 h, TS-651): every
+    // connect and reconnect reads them again, and a reconnect refused with an expired JWT keeps retrying until it can.
+    // With a client certificate the connection is TLS first: ts-orchestrator's broker bridge terminates mutual TLS before
+    // any NATS byte, and its server's INFO then says no TLS. A plain nats-server needs `handshake_first: true` for this.
     private readonly NatsConnection _connection = new(new NatsOpts
     {
         Url = settings.Url,
         Name = "terrabase",
-        AuthOpts = new NatsAuthOpts { CredsFile = settings.CredentialsFile },
+        AuthOpts = new NatsAuthOpts { AuthCredCallback = (_, _) => ValueTask.FromResult(NatsAuthCred.FromCreds(File.ReadAllText(settings.CredentialsFile))) },
         TlsOpts = settings.CertificateFile is null
             ? new NatsTlsOpts()
-            : new NatsTlsOpts { Mode = TlsMode.Require, CertFile = settings.CertificateFile, KeyFile = settings.PrivateKeyFile, CaFile = settings.CaFile },
+            : new NatsTlsOpts { Mode = TlsMode.Implicit, ConfigureClientAuthentication = options => ConfigureTls(settings, options) },
+        IgnoreAuthErrorAbort = true,
         LoggerFactory = loggers,
     });
 
@@ -71,6 +78,18 @@ internal sealed class NatsLeaseStore(NatsSettings settings, ILoggerFactory logge
     {
         _opening.Dispose();
         await _connection.DisposeAsync().ConfigureAwait(false);
+    }
+
+    // The client certificate and the CA the servers chain to, as the files hold them now.
+    private static ValueTask ConfigureTls(NatsSettings settings, SslClientAuthenticationOptions options)
+    {
+        var certificate = X509Certificate2.CreateFromPemFile(settings.CertificateFile!, settings.PrivateKeyFile);
+        var authorities = new X509Certificate2Collection();
+        authorities.ImportFromPemFile(settings.CaFile!);
+        options.ClientCertificates = [certificate];
+        options.CertificateChainPolicy = new X509ChainPolicy { TrustMode = X509ChainTrustMode.CustomRootTrust, RevocationMode = X509RevocationMode.NoCheck };
+        options.CertificateChainPolicy.CustomTrustStore.AddRange(authorities);
+        return ValueTask.CompletedTask;
     }
 
     private async Task<INatsKVStore> StoreAsync(CancellationToken cancellationToken)

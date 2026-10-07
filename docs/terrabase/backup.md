@@ -54,7 +54,7 @@ to the catalog primary:
 | --- | --- |
 | `nats-url` | Comma-separated `tls://host:port` (or `nats://host:port`) servers of the cell's NATS |
 | `nats-credentials-file` | NATS user credentials (`.creds`: user JWT and nkey seed), required with `nats-url` |
-| `nats-certificate`, `nats-private-key`, `nats-ca` | PEM client certificate, its key and the servers' CA, for mutual TLS; all or none |
+| `nats-certificate`, `nats-private-key`, `nats-ca` | PEM client certificate, its key and the servers' CA, for mutual TLS; all or none. With them the connection is TLS first, as ts-orchestrator's broker bridge expects; a plain nats-server needs `handshake_first: true` in its `tls` block |
 
 - Each file's lease is the key `<file directory with dots for slashes>` of the KV bucket `terrabase_backup_leases`
   (`max_age` 15 s, created on first use with three replicas, one on a single server). The value names the member and its
@@ -67,6 +67,9 @@ to the catalog primary:
 - Whatever the implementation, a new epoch starts a new generation with a snapshot: the member taking the file over
   ships a different physical file than the previous holder. At shutdown a holder ships what is left and deletes its keys, so another member takes over at once.
   Otherwise takeover waits for the key to expire: about 15 to 20 s.
+- ts-orchestrator delivers the NATS files and renews them every 24 h (TS-651). Every connect and reconnect reads them
+  again, and a reconnect refused with an expired JWT keeps retrying, so no restart is needed. The backup secret files
+  (`backup-secret-key-file`, `backup-kms-private-key-file`) are read at start: rotating them needs a restart.
 - Every member taps every file and checkpoints it (`wal_autocheckpoint = 0` wherever backup is configured), whether or
   not it ships it.
 
