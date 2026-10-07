@@ -16,7 +16,15 @@ var (
 	sqlWherePattern     = regexp.MustCompile(`(?i)\bWHERE\s+([A-Za-z_][A-Za-z0-9_]*)\b`)
 	sqlOrderPattern     = regexp.MustCompile(`(?i)\bORDER\s+BY\s+([A-Za-z_][A-Za-z0-9_]*)\b`)
 	sqlWordPattern      = regexp.MustCompile(`[A-Za-z_][A-Za-z0-9_]*`)
+	sqlMemberPattern    = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,63}$`)
 )
+
+// sqlForbiddenWords write, change the schema, or control transactions.
+var sqlForbiddenWords = map[string]bool{
+	"INSERT": true, "UPDATE": true, "DELETE": true, "REPLACE": true, "CREATE": true, "DROP": true, "ALTER": true, "ATTACH": true,
+	"DETACH": true, "GRANT": true, "REVOKE": true, "BEGIN": true, "COMMIT": true, "ROLLBACK": true, "VACUUM": true, "PRAGMA": true,
+	"UPSERT": true, "TRUNCATE": true, "SAVEPOINT": true, "TRANSACTION": true, "REINDEX": true, "ANALYZE": true, "INTO": true, "END": true,
+}
 
 type sqlSuggestion struct {
 	Field  string `json:"field"`
@@ -52,8 +60,7 @@ func analyzeSQL(statement string) sqlAnalysis {
 		return sqlAnalysis{Error: "Only SELECT, WITH, and EXPLAIN statements are allowed."}
 	}
 	for _, word := range words {
-		switch word {
-		case "INSERT", "UPDATE", "DELETE", "REPLACE", "CREATE", "DROP", "ALTER", "ATTACH", "DETACH", "GRANT", "REVOKE", "BEGIN", "COMMIT", "ROLLBACK", "VACUUM", "PRAGMA", "UPSERT", "TRUNCATE", "SAVEPOINT", "TRANSACTION", "REINDEX", "ANALYZE", "INTO", "END":
+		if sqlForbiddenWords[word] {
 			return sqlAnalysis{Error: "Only SELECT, WITH, and EXPLAIN statements are allowed."}
 		}
 	}

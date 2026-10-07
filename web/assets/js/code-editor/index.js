@@ -129,9 +129,16 @@ class CodeEditor extends HTMLElement {
       run: () => textarea.form?.requestSubmit(),
     });
 
+    // SQL editors in the SQL console complete and check against its catalog.
+    const sqlHost = language === 'sql' ? this.closest('[data-sql-catalog]') : null;
+    const sql = sqlHost && import('./sql.js')
+      .then(module => module.attach(api, editor, textarea, sqlHost))
+      .catch(error => console.warn('SQL completion unavailable:', error));
+
     this.editor = editor;
     this.dataset.ready = '';
     this.cleanup = () => {
+      sql?.then(dispose => dispose?.());
       toTextarea.dispose();
       submit?.dispose();
       editor.dispose();

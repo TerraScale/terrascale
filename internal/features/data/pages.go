@@ -71,7 +71,17 @@ type pageData struct {
 	// CheckRequested is set when the statement was sent to the server check.
 	CheckRequested bool
 	SQLChecked     bool
-	History        []historyVersion
+	// SQLCatalog and SQLDiagnostics feed the SQL editor's completions and
+	// inline problems.
+	SQLCatalog sqlCatalog
+	// SQLHistory is the console's run history, newest first.
+	SQLHistory []string
+	// SQLDiagnostics apply while the editor still holds the checked SQL.
+	SQLDiagnostics struct {
+		SQL         string          `json:"sql"`
+		Diagnostics []sqlDiagnostic `json:"diagnostics"`
+	}
+	History []historyVersion
 	// Error reports that the section could not load from the data plane.
 	Error string
 	// FormError explains why a form post failed; Dialog names the dialog
@@ -268,12 +278,18 @@ func renderSection(w http.ResponseWriter, r *http.Request, deps core.Deps, datab
 	if section == "documents" {
 		paginate(&data)
 	}
+	if section == "sql" {
+		data.SQLHistory = sqlHistory(r.PostFormValue("history"))
+	}
 	if edit != nil {
 		edit(&data)
 	}
 	if section == "sql" {
 		data.SQLAnalysis = analyzeSQL(data.SQL)
 		data.SQLChecked = data.CheckRequested && data.SQLAnalysis.OK
+		data.SQLDiagnostics.SQL, data.SQLDiagnostics.Diagnostics = data.SQL, sqlDiagnostics(data.SQL)
+		// The editor still completes keywords when collections cannot load.
+		data.SQLCatalog, _ = service.SQLCatalog(ctx, p, db.ID)
 	}
 	if section == "schema" && data.Schema == "" {
 		data.Schema = starterSchema(data.Collection)

@@ -487,3 +487,10 @@ th[aria-sort] > .ts-data-sort {
   background: var(--tone);
   box-shadow: 0 0 0 3px var(--ts-surface);
 }
+
+/* The SQL console's run history sits at the start of its actions. */
+.ts-data-sql-history {
+  width: auto;
+  max-width: 18rem;
+  margin-right: auto;
+}

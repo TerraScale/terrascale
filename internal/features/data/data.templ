@@ -509,8 +509,13 @@ templ historyView(d pageData) {
 	}
 }
 
+// sqlView's SQL editors complete and check against the catalog and
+// diagnostics in the JSON scripts; the history and format controls show once
+// the editor is ready. The run history posts back with the form.
 templ sqlView(page core.Page, d pageData) {
-	<div class="ts-data-sql">
+	<div class="ts-data-sql" data-sql-catalog="sql-catalog" data-sql-diagnostics="sql-diagnostics" data-sql-check="/api/v1/dashboard/data/sql/check">
+		@templ.JSONScript("sql-catalog", d.SQLCatalog)
+		@templ.JSONScript("sql-diagnostics", d.SQLDiagnostics)
 		<div class="ts-stack-lg">
 			@ui.Card(ui.CardProps{ID: "sql-editor", Title: "Query", Description: runDescription(d.Demo)}) {
 				<form method="post" action="/api/v1/dashboard/data/sql" class="ts-form">
@@ -518,6 +523,16 @@ templ sqlView(page core.Page, d pageData) {
 					<label class="ts-sr-only" for="sql">SQL</label>
 					@ui.CodeEditor(ui.CodeEditorProps{ID: "sql", Language: ui.CodeSQL, Value: d.SQL, Rows: 8})
 					<div class="ts-form-actions">
+						@historyField(d)
+						if len(d.SQLHistory) > 0 {
+							<select class="ts-select ts-data-sql-history" data-sql-history aria-label="Recent queries" hidden>
+								<option value="">Recent queries</option>
+								for _, statement := range d.SQLHistory {
+									<option value={ statement }>{ historyLabel(statement) }</option>
+								}
+							</select>
+						}
+						<button class="ts-btn ts-btn-ghost" type="button" data-sql-format hidden>@icons.Wand2(16)<span>Format</span></button>
 						<button class="ts-btn ts-btn-secondary" type="submit" formaction="/api/v1/dashboard/data/sql/check">@icons.CircleCheck(16)<span>Check SQL</span></button>
 						<button class="ts-btn ts-btn-primary" type="submit">@icons.Play(16)<span>Run query</span></button>
 					</div>
@@ -555,6 +570,7 @@ templ savedQueries(page core.Page, d pageData) {
 							@ui.Dialog(ui.DialogProps{ID: "delete-query-" + query.ID, Title: "Delete " + query.Name + "?", Description: "Everyone in this project loses this saved query."}) {
 								<form method="post" action="/api/v1/dashboard/data/saved-queries/delete" class="ts-form">
 									@documentScope(page, d)
+									@historyField(d)
 									<input type="hidden" name="id" value={ query.ID }/>
 									@ui.DialogActions("delete-query-" + query.ID) {
 										<button class="ts-btn ts-btn-danger" type="submit">Delete query</button>
@@ -573,6 +589,7 @@ templ savedQueries(page core.Page, d pageData) {
 		@ui.Dialog(ui.DialogProps{ID: "save-query", Title: "Save query", Description: "Saved queries are available to everyone with access to this project.", Open: d.Dialog == "save-query"}) {
 			<form method="post" action="/api/v1/dashboard/data/saved-queries" class="ts-form">
 				@documentScope(page, d)
+				@historyField(d)
 				@dialogError(d, "save-query")
 				@ui.Field(ui.FieldProps{ID: "query-name", Label: "Name"}) {
 					<input class="ts-input" id="query-name" name="name" maxlength="128" value={ d.QueryName } required/>
@@ -585,6 +602,14 @@ templ savedQueries(page core.Page, d pageData) {
 				}
 			</form>
 		}
+	}
+}
+
+// historyField posts the console's run history back with a form that
+// renders the console again.
+templ historyField(d pageData) {
+	if len(d.SQLHistory) > 0 {
+		<input type="hidden" name="history" value={ historyJSON(d.SQLHistory) }/>
 	}
 }
 
@@ -790,6 +815,15 @@ func runDescription(demo bool) string {
 		return "Demo execution supports SELECT * FROM collection [LIMIT n]. Checking validates a read-only statement without running it."
 	}
 	return "Run a read-only statement against this database, or check it without running it."
+}
+
+// historyLabel shows a statement of the run history on one line.
+func historyLabel(statement string) string {
+	label := strings.Join(strings.Fields(statement), " ")
+	if runes := []rune(label); len(runes) > 80 {
+		return string(runes[:79]) + "…"
+	}
+	return label
 }
 
 // newDocument is the add-document editor's content: the submitted JSON after
