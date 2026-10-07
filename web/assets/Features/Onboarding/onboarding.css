@@ -238,6 +238,13 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* Keep displayed prices tied to the interval submitted by the native radios,
+   including when JavaScript is unavailable. */
+.ts-onboarding form:has(input[name="interval"][value="monthly"]:checked) .ts-onboarding-plan-price[data-interval="annual"],
+.ts-onboarding form:has(input[name="interval"][value="annual"]:checked) .ts-onboarding-plan-price[data-interval="monthly"] {
+  display: none;
+}
+
 @media (max-width: 30rem) {
   .ts-onboarding-progress {
     margin-inline: calc(var(--ts-s5) + 1px);
