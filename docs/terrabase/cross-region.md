@@ -68,7 +68,11 @@ How the regions learn it:
   no longer pulled, so the writes it accepted keep reaching the others; added back, it resumes from that copy.
 - **Deletion.** A database is deleted in its home region once it has no replica regions. Every other region deletes its
   record and any copy when a complete round finds the database in none of the home region's heads; a region never brings
-  back a database it deleted (its id stays taken).
+  back a database it deleted (its id stays taken). Each round reads at most 100 deletion candidates from a snapshot of
+  the local catalog before asking for the home region's heads, resuming the scan after the previous page. This also
+  removes deletions missed during a restart, including records without a local file. No member answering, or any listed
+  member missing, postpones cleanup and keeps the cursor. The storage reader is released before network calls and cleanup,
+  so reconciliation works with `storage-queue=1` too.
 
 Register an organization and project in another region with a [management commit](management-commits.md) that chooses the
 ids they have in the first. Leave out the organization if that region already has it:
@@ -147,8 +151,6 @@ Alert on `terrabase_wan_staleness_seconds` above a minute, and on any `ahead` fa
   offer yet; it comes with TS-647 step 4's snapshots for refilled replicas.
 - The home region cannot change. A removed region keeps its copy until the database is deleted; full Anna drops it once
   every other replica holds its writes. Plans do not limit placements yet.
-- A region learns that a database's home deleted it only from rounds in this process: a deletion that happened while it
-  was restarting leaves its record and copy until an operator removes them.
 - Catalogs and API keys are per region.
 - A member reads every database's head for each heads request, and pulls one origin at a time.
 - Interval and tombstone GC (TS-647 step 7) must keep a group until every region applied it: remote regions read origin
@@ -165,6 +167,9 @@ Alert on `terrabase_wan_staleness_seconds` above a minute, and on any `ahead` fa
   - replica regions removed, added back and the database deleted, which the other region follows; name clashes counted;
   - placement checks on create and through commits; databases of a project only one region registers;
   - a two-member region reached through single replies, and staleness when one of its members goes silent.
+- **Fast** (`CrossRegion/CrossRegionDeletionTests.cs`) covers deletions at home while the other region is stopped, for both
+  replicas and records without a file; a partition postpones cleanup until the link heals, with `storage-queue=1` after
+  restart.
 - **Slow** (`CrossRegion/CrossRegionPartitionTests.cs`) is the partition suite:
   - two regions of two members each (a catalog primary and its follower);
   - a link that drops, delays, duplicates and corrupts replies, with a partition and a heal;

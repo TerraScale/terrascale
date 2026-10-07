@@ -44,6 +44,13 @@ public interface ITenantDirectory
     ValueTask<(string Name, DatabasePlacement Placement)?> DatabaseRecordAsync(TenantContext database, CancellationToken cancellationToken);
 
     /// <summary>
+    /// One bounded page of registrations whose home is <paramref name="homeRegion"/>, including records without a local
+    /// file, after the previous page's cursor. Read it before asking the home region for heads, so a newer registration
+    /// cannot be mistaken for a deletion there. The storage reader is released before this method returns.
+    /// </summary>
+    ValueTask<TenantDatabasePage> ReadDatabaseRecordsAsync(string homeRegion, TenantContext? after, CancellationToken cancellationToken);
+
+    /// <summary>
     /// Records <paramref name="database"/> under its organization, project and database ids, <paramref name="name"/> and
     /// <paramref name="placement"/>, as another region holds it, when this region registers its organization and project under
     /// the same ids (docs/cross-region.md). A database placed here also gets its file; one placed elsewhere only its record,

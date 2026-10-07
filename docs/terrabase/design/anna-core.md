@@ -413,6 +413,11 @@ every push to `main`.
 
 Merged under TS-634: the design (#50), the lattice library (#51), and slice 2 (#53), whose surface step 1 deletes.
 
+Independent follow-up under TS-634: restart-safe database deletion in the existing TS-643 WAN path. Reconcile records
+from bounded pages of the local catalog against a complete home-region heads round; remove missed deletions after restart,
+including records without a local file. This needs no TS-647 format flip, per-core actors or memory tier. See
+[cross-region deletion](../cross-region.md#placement) and its Fast integration coverage.
+
 ## 16. Decisions and open questions
 
 Decided by the user:
