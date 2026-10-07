@@ -21,6 +21,7 @@ public sealed class CrossRegionPartitionTests
 {
     private const string Credentials = "-----BEGIN NATS USER JWT-----\neyJ0.e30.x\n------END NATS USER JWT------\n-----BEGIN USER NKEY SEED-----\nSUAEXAMPLE\n------END USER NKEY SEED------\n";
     private static readonly string[] Scopes = ["documents:read", "documents:write"];
+    private static readonly string[] InSfo = ["sfo-1"];
 
     [Test]
     public async Task Regions_converge_without_losing_or_corrupting_writes_through_a_lossy_partitioned_link_and_restarts()
@@ -54,12 +55,14 @@ public sealed class CrossRegionPartitionTests
                 await member.StartAsync(peerTls, network, stores[member.Cell], credentials, members);
             }
 
-            // The canary in both regions under the same ids, a key per region (issued on its primary, served by its follower).
+            // The project in both regions; the canary at home in gru with a replica in sfo. A key per region (issued on its
+            // primary, served by its follower).
             var (organization, project, database) = (Guid.NewGuid().ToString("D"), Guid.NewGuid().ToString("D"), Guid.NewGuid().ToString("D"));
             foreach (var primary in members.Where(member => member.Name.EndsWith("-a", StringComparison.Ordinal)))
             {
                 using var registered = await primary.Api!.Client.PostAsync(
-                    new Uri("/v1/management/commits", UriKind.Relative), new StringContent(Registration(organization, project, database), Encoding.UTF8, "application/json"));
+                    new Uri("/v1/management/commits", UriKind.Relative),
+                    new StringContent(Registration(organization, project, primary.Cell == "gru" ? database : null), Encoding.UTF8, "application/json"));
                 registered.EnsureSuccessStatusCode();
                 var key = await primary.Api.Server.IssueAsync(organization, Scopes);
                 foreach (var member in members.Where(member => member.Cell == primary.Cell))
@@ -213,15 +216,15 @@ public sealed class CrossRegionPartitionTests
         }
     }
 
-    private static string Registration(string organization, string project, string database) => JsonSerializer.Serialize(new
+    private static string Registration(string organization, string project, string? database) => JsonSerializer.Serialize(new
     {
         id = Guid.NewGuid().ToString("D"),
-        ops = new object[]
+        ops = new object?[]
         {
             new { op = "create_organization", id = organization, name = $"partition-{organization[..8]}" },
             new { op = "create_project", organization, id = project, name = "partition" },
-            new { op = "create_database", organization, project, name = "canary", id = database },
-        },
+            database is null ? null : new { op = "create_database", organization, project, name = "canary", id = database, replica_regions = InSfo },
+        }.OfType<object>(),
     });
 
     // Every document's status, version and body on one member, in id order.

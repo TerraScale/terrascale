@@ -99,6 +99,7 @@ This is the only way to create a database.
 | POST | `P/databases` | `createDatabase` | `databases:write` | `MP/databases`, and the data-plane `PUT D` (removed) |
 | GET | `P/databases` | `listDatabases` | `databases:read` | `MP/databases` |
 | GET | `D` | `getDatabase` | `databases:read` | `MD` |
+| PATCH | `D` | `updateDatabase` | `databases:write` | `MD` (replica regions, TS-643) |
 | DELETE | `D` | `deleteDatabase` | `databases:write` | `MD` |
 | POST | `D/branches` | `branchDatabase` | `databases:write` | `MD/branches` |
 

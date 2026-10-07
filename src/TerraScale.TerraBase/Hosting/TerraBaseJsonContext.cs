@@ -88,6 +88,7 @@ namespace TerraBase.Hosting;
 [JsonSerializable(typeof(ManagementOpRequest))]
 [JsonSerializable(typeof(Membership))]
 [JsonSerializable(typeof(NameRequest))]
+[JsonSerializable(typeof(DatabaseRegionsRequest))]
 [JsonSerializable(typeof(OciDecryptRequest))]
 [JsonSerializable(typeof(OciGenerateDataKeyRequest))]
 [JsonSerializable(typeof(OciKeyResponse))]

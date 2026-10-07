@@ -39,6 +39,11 @@ message Head {
   // The database's name in the answering member's catalog, empty when it registers none. A region that registers the
   // database's organization and project under the same ids registers the database under this name.
   string database_name = 6;
+  // The database's placement in the answering member's catalog (docs/cross-region.md): its home region, its replica
+  // regions and the version the home region gave it; an empty home when it records none.
+  string home_region = 7;
+  repeated string replica_regions = 8;
+  uint64 placement_version = 9;
 }
 
 message HeadsReply {
@@ -55,6 +60,8 @@ message HeadsReply {
 }
 
 message PullRequest {
+  // The asking member's region: a member serves a database's groups only to regions its placement names.
+  string region = 7;
   bytes tenant_id = 1;
   bytes project_id = 2;
   bytes database_id = 3;
@@ -74,6 +81,8 @@ message PullReply {
     STATUS_AHEAD = 2;
     // The request is invalid or of another version.
     STATUS_INVALID = 3;
+    // The database's placement does not name the asking region, so its data does not go there.
+    STATUS_NOT_PLACED = 4;
   }
 
   Status status = 1;

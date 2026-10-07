@@ -226,6 +226,7 @@ logged and counted as unknown while management requests keep returning `503`.
   `{"error":{"code","message"}}` with a stable code (`invalid_request`, `invalid_query`, `forbidden_role`, `not_found`,
   `name_taken`, `not_empty`, `last_owner`, `already_member`, `invitation_pending`, `already_owner`,
   `invitation_expired`) and a message that never echoes input ([error handling](error-handling.md)).
+- A database carries `region` (the region that answered), `homeRegion` and `replicaRegions` (its [placement](#region-placement)).
 - The data API addresses a database as `/v1/projects/{projectId}/databases/{name}/collections/…`,
   with the database name from this API. The API key's organization selects the tenant.
 - Every organization has a `plan`: `hobby` (default), `pro` or `enterprise`. It is stored only;
@@ -250,11 +251,12 @@ Base path: `/v1/management`.
 | `GET` | `/organizations/{organization}/projects/{project}` | project |
 | `PATCH` | `/organizations/{organization}/projects/{project}` | `{name}` → renamed project |
 | `DELETE` | `/organizations/{organization}/projects/{project}` | `204`; `409` while it has databases |
-| `POST` | `…/projects/{project}/databases` | `{name}` → `201` empty database |
+| `POST` | `…/projects/{project}/databases` | `{name, homeRegion?, replicaRegions?}` → `201` empty database; `421 wrong_region` when `homeRegion` is not the called region ([placement](#region-placement)) |
 | `GET` | `…/projects/{project}/databases` | page of databases |
 | `GET` | `…/projects/{project}/databases/{database}` | database |
-| `DELETE` | `…/projects/{project}/databases/{database}` | `204`; deletes the data. Branches are independent and stay. |
-| `POST` | `…/databases/{database}/branches` | `{name}` → `201` database in the same project holding a consistent snapshot copy |
+| `PATCH` | `…/projects/{project}/databases/{database}` | `{replicaRegions}` → database with its new replica regions; home region only (`421 wrong_region` elsewhere) |
+| `DELETE` | `…/projects/{project}/databases/{database}` | `204`; deletes the data. Branches are independent and stay. Home region only (`421 wrong_region` elsewhere), once it has no replica regions (`409 database_replicated`) |
+| `POST` | `…/databases/{database}/branches` | `{name}` → `201` database in the same project holding a consistent snapshot copy; home region only, and the branch has no replicas |
 | `POST` | `/commits` | atomic commit of Management operations and dashboard documents ([management-commits.md](management-commits.md)) |
 | `GET` | `/commits/{id}` | recorded outcome of the acting user's commit; `404` if it never committed |
 | `GET` | `/versions?organization=…` | account and organization versions for fencing commits |
@@ -272,6 +274,27 @@ Shapes:
 Database create, branch, get and list responses report the serving node's `region`,
 also returned in `X-TerraBase-Region`. It is response metadata, not persisted
 placement. See [region identity](region-identity.md) for Atlas session pins and `421` responses.
+
+
+### Region placement
+
+A database's placement names its home region and its replica regions (TS-643, [cross-region replication](cross-region.md#placement)).
+Region ids are Atlas region ids (`gru-1`, `sfo-1`), the values of `X-TerraBase-Region`.
+
+- `homeRegion` is where the database is created and managed: create, change regions, delete and branch go to it.
+  `replicaRegions` are the other regions that hold a full copy; every listed region serves reads and writes, and
+  writes replicate between them.
+- On create, `homeRegion` defaults to the called region and `replicaRegions` to none. A replica region must be one this
+  deployment replicates with, listed once, and not the home (`400 invalid_request`). Each replica region must register
+  the organization and project under the same ids to take the database.
+- `PATCH` sets the complete new `replicaRegions`; `homeRegion` may be repeated but cannot change. An added region takes
+  the database and fills its copy. A removed region stops serving it at once and keeps its copy unserved, so the writes it
+  accepted keep reaching the others; added back, it resumes from that copy.
+- A region outside the placement answers the database's data requests, and its database-scoped Management requests other
+  than reading, updating and deleting the database, with `421 wrong_region` and the headers
+  `X-TerraBase-Database-Home` and `X-TerraBase-Database-Regions` (comma-separated, home first). Clients resolve one of
+  those regions through Atlas and retry there.
+- A database recorded before placement existed has `homeRegion` = the region holding it and no replicas.
 
 ## Members and roles
 

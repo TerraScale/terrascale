@@ -160,7 +160,9 @@ client (otherwise a UUIDv7 is generated), which lets later operations and dashbo
 commit refer to the new resource. A client id already used by any organization, project or database is `409 id_taken`, even one of
 another tenant; a database's id stays taken after the database is deleted. Ids are random UUIDs, so this reveals only that
 a UUID the client already holds is in use. A database id is chosen to register, in another region, a database that region replicates
-under the same ids ([cross-region replication](cross-region.md#which-databases-replicate)).
+under the same ids ([cross-region replication](cross-region.md#which-databases-replicate)). `home_region` and
+`replica_regions` follow the [region placement](management-api.md#region-placement) rules; inside a commit a
+`wrong_region` failure answers `409` with `error.op`, like the other failures of an operation.
 
 | `op` | Members | Needs | `value` |
 | --- | --- | --- | --- |
@@ -172,7 +174,8 @@ under the same ids ([cross-region replication](cross-region.md#which-databases-r
 | `create_project` | `organization`, `name`, `id`? | member | project |
 | `rename_project` | `organization`, `project`, `name` | member | project |
 | `delete_project` | `organization`, `project` | member | none |
-| `create_database` | `organization`, `project`, `name`, `id`? | member | database (with `region`) |
+| `create_database` | `organization`, `project`, `name`, `id`?, `home_region`?, `replica_regions`? | member | database (with `region` and its placement) |
+| `set_database_regions` | `organization`, `project`, `database`, `replica_regions` | member | database with its new replica regions |
 | `branch_database` | `organization`, `project`, `database`, `name` | member | database (with `region`) |
 | `delete_database` | `organization`, `project`, `database` | member | none |
 | `change_role` | `organization`, `user`, `role` | admin; owner for owners | member |

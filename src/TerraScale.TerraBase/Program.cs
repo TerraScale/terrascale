@@ -109,6 +109,7 @@ app.UseTerraBaseListeners();
 app.UseAuthentication();
 app.UseAuthorization();
 app.UseTerraBaseCatalogForwarding();
+app.UseTerraBaseDatabasePlacement();
 app.MapTerraScaleEndpoints();
 app.MapTerraBaseApiReference();
 app.MapTerraBaseMetrics();

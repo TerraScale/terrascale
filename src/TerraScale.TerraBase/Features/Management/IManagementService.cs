@@ -26,7 +26,31 @@ public sealed record Project(string Id, string OrganizationId, string Name, Date
 /// </param>
 /// <param name="BranchedFrom">Id of the database this one was branched from, if any.</param>
 /// <param name="CreatedAt">Creation time.</param>
-public sealed record ManagedDatabase(string Id, string ProjectId, string Name, string? BranchedFrom, DateTimeOffset CreatedAt);
+/// <param name="HomeRegion">
+/// The region the database is created and managed in (docs/cross-region.md); <see langword="null"/> for a database
+/// registered before placement existed, whose home is the region that holds it.
+/// </param>
+/// <param name="ReplicaRegions">The other regions that hold a full copy; <see langword="null"/> for none.</param>
+/// <param name="PlacementVersion">Raised by the home region on every placement change; the highest one wins elsewhere.</param>
+public sealed record ManagedDatabase(
+    string Id, string ProjectId, string Name, string? BranchedFrom, DateTimeOffset CreatedAt,
+    string? HomeRegion = null, IReadOnlyList<string>? ReplicaRegions = null, long PlacementVersion = 0)
+{
+    /// <summary>The home region, as a member of <paramref name="region"/> reads it.</summary>
+    public string Home(string region) => HomeRegion ?? region;
+
+    /// <summary>The replica regions.</summary>
+    public IReadOnlyList<string> Replicas => ReplicaRegions ?? [];
+
+    /// <summary>The home region and the replica regions, as a member of <paramref name="region"/> reads them.</summary>
+    public IReadOnlyList<string> Regions(string region) => [Home(region), .. Replicas];
+
+    /// <summary>Whether <paramref name="region"/> serves the database.</summary>
+    public bool PlacedIn(string region) => Home(region) == region || Replicas.Contains(region);
+
+    /// <summary>The placement, as a member of <paramref name="region"/> reads it.</summary>
+    public DatabasePlacement Placement(string region) => new(Home(region), Replicas, PlacementVersion);
+}
 
 /// <summary>Why a management operation did not succeed.</summary>
 public enum ManagementError
@@ -66,6 +90,12 @@ public enum ManagementError
 
     /// <summary>The invitation is no longer pending: it was accepted, declined or revoked.</summary>
     InvitationClosed,
+
+    /// <summary>The operation belongs to the database's home region (docs/cross-region.md).</summary>
+    WrongRegion,
+
+    /// <summary>The database still has replica regions.</summary>
+    Replicated,
 
     /// <summary>Another invitation already has the token hash.</summary>
     TokenTaken,
@@ -153,7 +183,20 @@ public interface IManagementService
 
     /// <summary>Creates an empty database in a project.</summary>
     ValueTask<ManagementResult<ManagedDatabase>> CreateDatabaseAsync(
-        string userId, string organizationId, string projectId, string name, CancellationToken cancellationToken);
+        string userId, string organizationId, string projectId, string name, CancellationToken cancellationToken, IReadOnlyList<string>? replicaRegions = null);
+
+    /// <summary>
+    /// Sets the replica regions of a database whose home is this region (docs/cross-region.md): <c>WrongRegion</c> in any
+    /// other region. The caller validated <paramref name="replicaRegions"/>.
+    /// </summary>
+    ValueTask<ManagementResult<ManagedDatabase>> SetDatabaseRegionsAsync(
+        string userId, string organizationId, string projectId, string databaseId, IReadOnlyList<string> replicaRegions, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// The database named <paramref name="name"/> in a project of an organization, as this region records it, placed here or
+    /// not, without a membership check: what a region outside its placement answers with.
+    /// </summary>
+    ValueTask<ManagedDatabase?> FindDatabaseRecordAsync(string organizationId, string projectId, string name, CancellationToken cancellationToken);
 
     /// <summary>Lists the databases of a project; <see langword="null"/> when it does not exist.</summary>
     ValueTask<ManagementPage<ManagedDatabase>?> ListDatabasesAsync(

@@ -57,6 +57,7 @@ public sealed class ApiReferenceTests
         GET /v1/projects/{project}/databases/{database}/collections/{collection}/shape ApiKey(shapes:read)
         PATCH /v1/management/organizations/{organization} TsAuth
         PATCH /v1/management/organizations/{organization}/projects/{project} TsAuth
+        PATCH /v1/management/organizations/{organization}/projects/{project}/databases/{database} TsAuth
         PATCH /v1/projects/{project}/databases/{database}/collections/{collection}/documents/{id} ApiKey(documents:write)
         POST /v1/management/commits TsAuth
         POST /v1/management/documents/{collection}/query TsAuth

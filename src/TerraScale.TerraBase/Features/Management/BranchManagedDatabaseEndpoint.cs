@@ -1,3 +1,4 @@
+using TerraBase.Configuration;
 using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
@@ -5,7 +6,7 @@ using TerraScale.Endpoints;
 namespace TerraBase.Features.Management;
 
 /// <summary><c>POST …/databases/{database}/branches</c>: creates a database as a snapshot copy of another.</summary>
-public sealed class BranchManagedDatabaseEndpoint(IManagementService management) : Endpoint<NameRequest, IResult>
+public sealed class BranchManagedDatabaseEndpoint(IManagementService management, TerraBaseOptions options) : Endpoint<NameRequest, IResult>
 {
     /// <inheritdoc />
     public override void Configure()
@@ -27,6 +28,11 @@ public sealed class BranchManagedDatabaseEndpoint(IManagementService management)
     public override async ValueTask<IResult> HandleAsync(NameRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
+        if (await DatabaseRegions.ElsewhereAsync(HttpContext, management, options.Region) is { } elsewhere)
+        {
+            return elsewhere;
+        }
+
         var result = await management.BranchDatabaseAsync(ManagementRoute.UserId(HttpContext), ManagementRoute.OrganizationId(HttpContext), ManagementRoute.Value(HttpContext, "project"), ManagementRoute.Value(HttpContext, "database"), ManagementRoute.DatabaseName(request), cancellationToken);
         return result.Value is { } value
             ? TypedResults.Created($"{ManagementRoute.Organizations}/{ManagementRoute.OrganizationId(HttpContext)}/projects/{value.ProjectId}/databases/{value.Id}", ManagedDatabaseBody.From(value, Listeners.RegionOf(HttpContext)))

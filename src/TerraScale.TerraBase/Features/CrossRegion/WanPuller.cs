@@ -42,6 +42,7 @@ internal sealed partial class WanPuller(
     private readonly Dictionary<(IDatabaseStore Store, string Origin), long> _applied = [];
     private readonly Dictionary<string, (long At, DatabaseAdoption Why)> _refused = [with(StringComparer.Ordinal)];
     private readonly HashSet<string> _clashes = [with(StringComparer.Ordinal)];
+    private readonly Dictionary<string, Dictionary<string, TenantContext>> _seen = [with(StringComparer.Ordinal)];
 
     public override Task StartAsync(CancellationToken cancellationToken)
     {
@@ -127,6 +128,7 @@ internal sealed partial class WanPuller(
             return (false, 1);
         }
 
+        await ForgetDeletedAsync(region, members == listed, heads, cancellationToken).ConfigureAwait(false);
         long lag = 0;
         var progressed = false;
         var failures = 0;
@@ -140,7 +142,9 @@ internal sealed partial class WanPuller(
             }
 
             var origin = head.Origin.Memory;
-            var (store, refused) = await TargetAsync(region, database, head.DatabaseName, origin, cancellationToken).ConfigureAwait(false);
+            // A head without a recorded home comes from a member that records none: the database is placed there only.
+            var placement = new DatabasePlacement(head.HomeRegion.Length > 0 ? head.HomeRegion : region, [.. head.ReplicaRegions], (long)head.PlacementVersion);
+            var (store, refused) = await TargetAsync(region, database, head.DatabaseName, placement, origin, cancellationToken).ConfigureAwait(false);
             if (store is null)
             {
                 _ = (refused == DatabaseAdoption.NameTaken ? clashes : unregistered).Add(Name(database));
@@ -177,6 +181,51 @@ internal sealed partial class WanPuller(
         // A listed member that did not answer holds origins this round could not measure: not caught up.
         metrics.Rounded(region, lag, members, unregistered.Count, clashes.Count, caughtUp: lag == 0 && members >= listed, time.GetTimestamp());
         return (progressed && lag > 0, failures);
+    }
+
+    // A database at home in the region, seen in an earlier round, that no member of a complete round lists any more was
+    // deleted there: its record and any copy here go too. Only the catalog primary deletes; its followers follow its catalog.
+    // anna-full (TS-643): a member that restarts does not remember what it saw before, so a deletion it missed meanwhile
+    // leaves the record and copy here.
+    private async Task ForgetDeletedAsync(string region, bool complete, List<(string Member, Head Head)> heads, CancellationToken cancellationToken)
+    {
+        if (options.CatalogPrimary is not null)
+        {
+            return;
+        }
+
+        var listed = new Dictionary<string, TenantContext>(StringComparer.Ordinal);
+        foreach (var (_, head) in heads)
+        {
+            if (head.HomeRegion == region && WanProtocol.Database(head.TenantId, head.ProjectId, head.DatabaseId) is { } database)
+            {
+                listed[Name(database)] = database;
+            }
+        }
+
+        List<TenantContext> gone;
+        lock (_gate)
+        {
+            var seen = _seen.TryGetValue(region, out var known) ? known : _seen[region] = [];
+            gone = complete ? [.. seen.Where(entry => !listed.ContainsKey(entry.Key)).Select(entry => entry.Value)] : [];
+            foreach (var (key, database) in listed)
+            {
+                seen[key] = database;
+            }
+
+            foreach (var database in gone)
+            {
+                _ = seen.Remove(Name(database));
+            }
+        }
+
+        foreach (var database in gone)
+        {
+            if (await tenants.ForgetDatabaseAsync(database, cancellationToken).ConfigureAwait(false))
+            {
+                LogForgot(logger, region);
+            }
+        }
     }
 
     // Every member's heads, all pages: the members that answer the scattered request, and every other member they list,
@@ -267,6 +316,7 @@ internal sealed partial class WanPuller(
                 Version = WanProtocol.Version,
                 Pull = new PullRequest
                 {
+                    Region = options.Region,
                     TenantId = WanProtocol.Id(database.OrganizationId),
                     ProjectId = WanProtocol.Id(database.ProjectId!),
                     DatabaseId = WanProtocol.Id(database.DatabaseId!),
@@ -281,7 +331,7 @@ internal sealed partial class WanPuller(
             {
                 case PullReply.Types.Status.Ok when reply.Groups.Count > 0:
                     break;
-                case PullReply.Types.Status.UnknownOrigin:
+                case PullReply.Types.Status.UnknownOrigin or PullReply.Types.Status.NotPlaced:
                     // The member no longer holds the origin; the next round's heads tell where it is, if anywhere.
                     return applied;
                 case PullReply.Types.Status.Ahead:
@@ -338,46 +388,62 @@ internal sealed partial class WanPuller(
         return applied;
     }
 
-    // The store of a database this region's catalog registers, opened (and created on a member that has no file yet) the
-    // way the in-region receiver does: a database deleted meanwhile is not brought back. A catalog primary first registers
-    // a database of a project this region registers under the same ids (AdoptDatabaseAsync); a follower waits until its
-    // catalog has it. Otherwise why this region does not take it, asked again after RefusalTtl.
+    // The store of a database this region serves, opened (and created on a member that has no file yet) the way the in-region
+    // receiver does: a database deleted meanwhile is not brought back. The catalog primary first records a database of a
+    // project this region registers under the same ids (AdoptDatabaseAsync), and takes a newer placement its home region
+    // decided; a follower waits until its catalog has them. A database this region does not serve has its local copy
+    // dropped. Otherwise why this region does not take it, asked again after RefusalTtl.
     private async Task<(IDatabaseStore? Store, DatabaseAdoption? Refused)> TargetAsync(
-        string region, TenantContext database, string name, ReadOnlyMemory<byte> origin, CancellationToken cancellationToken)
+        string region, TenantContext database, string name, DatabasePlacement remote, ReadOnlyMemory<byte> origin, CancellationToken cancellationToken)
     {
         var key = Name(database);
         lock (_gate)
         {
-            if (_stores.TryGetValue(key, out var cached) && !cached.IsClosed)
-            {
-                return (cached, null);
-            }
-
             if (_refused.TryGetValue(key, out var refusal) && time.GetElapsedTime(refusal.At) < RefusalTtl)
             {
                 return (null, refusal.Why);
             }
         }
 
-        var before = (await engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false))?.Incarnation;
-        if (await tenants.RegisteredAsync(database, cancellationToken).ConfigureAwait(false) is not true)
+        var primary = options.CatalogPrimary is null;
+        var recorded = (await tenants.DatabaseRecordAsync(database, cancellationToken).ConfigureAwait(false))?.Placement;
+        if (recorded is null)
         {
-            var why = options.CatalogPrimary is null && name.Length > 0
-                ? await tenants.AdoptDatabaseAsync(database, name, cancellationToken).ConfigureAwait(false)
+            var why = primary && name.Length > 0
+                ? await tenants.AdoptDatabaseAsync(database, name, remote, cancellationToken).ConfigureAwait(false)
                 : DatabaseAdoption.NotReplicated;
             if (why != DatabaseAdoption.Registered)
             {
-                lock (_gate)
-                {
-                    _refused[key] = (time.GetTimestamp(), why);
-                    if (why == DatabaseAdoption.NameTaken && _clashes.Add(key))
-                    {
-                        LogNameTaken(logger, region);
-                    }
-                }
-
-                return (null, why);
+                return Refuse(why);
             }
+
+            recorded = remote;
+        }
+        else if (primary && remote.Version > recorded.Version && await tenants.UpdatePlacementAsync(database, remote, cancellationToken).ConfigureAwait(false))
+        {
+            recorded = remote;
+        }
+
+        if (!recorded.Includes(options.Region))
+        {
+            // Not served here (any more): this region's API answers 421 for it. A copy it had stays, unserved and no longer
+            // pulled, so the writes this region accepted keep reaching the other regions; it is deleted with the database.
+            // anna-full (TS-643): drop the copy once every other replica holds its writes and they are re-originated.
+            return Refuse(DatabaseAdoption.NotReplicated);
+        }
+
+        lock (_gate)
+        {
+            if (_stores.TryGetValue(key, out var cached) && !cached.IsClosed)
+            {
+                return (cached, null);
+            }
+        }
+
+        var before = (await engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false))?.Incarnation;
+        if (await tenants.RegisteredAsync(database, cancellationToken).ConfigureAwait(false) is not true)
+        {
+            return Refuse(DatabaseAdoption.NotReplicated);
         }
 
         var (store, _, _, _) = await journal.OpenAsync(database, origin, cancellationToken).ConfigureAwait(false);
@@ -394,10 +460,23 @@ internal sealed partial class WanPuller(
         lock (_gate)
         {
             _stores[key] = store;
-            _ = _refused.Remove(key);
         }
 
         return (store, null);
+
+        (IDatabaseStore?, DatabaseAdoption?) Refuse(DatabaseAdoption why)
+        {
+            lock (_gate)
+            {
+                _refused[key] = (time.GetTimestamp(), why);
+                if (why == DatabaseAdoption.NameTaken && _clashes.Add(key))
+                {
+                    LogNameTaken(logger, region);
+                }
+            }
+
+            return (null, why);
+        }
     }
 
     private async Task<long> AppliedAsync(IDatabaseStore store, ReadOnlyMemory<byte> origin, CancellationToken cancellationToken)
@@ -438,6 +517,9 @@ internal sealed partial class WanPuller(
 
     [LoggerMessage(LogLevel.Warning, "A database of region {Region} has the name of another database of its project here, so it does not replicate; rename or delete one of them")]
     private static partial void LogNameTaken(ILogger logger, string region);
+
+    [LoggerMessage(LogLevel.Information, "A database its home region {Region} deleted was deleted here too")]
+    private static partial void LogForgot(ILogger logger, string region);
 
     [LoggerMessage(LogLevel.Warning, "No member of region {Region} answered; retrying every round")]
     private static partial void LogUnanswered(ILogger logger, string region);

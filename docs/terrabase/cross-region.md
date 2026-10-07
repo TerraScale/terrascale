@@ -45,15 +45,33 @@ A document's version (its `ETag`) hashes its state under the database's organiza
 state has the same version everywhere: a version read in one region satisfies `If-Match` in another once that region
 holds the state. The `tbv2` causal tokens of TS-647 step 4 replace these and stay valid across regions the same way.
 
-## Which databases replicate
+## Placement
 
-A project replicates to every region that registers it under the same organization and project ids. Every database of
-such a project replicates between those regions: one created in either region is registered in the other
-automatically, once it has a write. That region's catalog primary registers it with the same id and name, and its
-followers serve it once their catalog has it.
+Every database has a placement: its **home region**, where it is created and managed, and its **replica regions**, the
+other regions that hold a full copy. Every region of the placement serves reads and writes, and writes replicate
+between them. The Management API sets it on create and changes it with `PATCH`
+([region placement](management-api.md#region-placement)); a database created through the data API, or recorded before
+placement existed, lives in its home region only.
 
-Register an organization and project in a second region with a [management commit](management-commits.md) that
-chooses the ids they have in the first. Leave out the organization if that region already has it:
+How the regions learn it:
+
+- **Heads.** Every member's heads list every database it holds a file of, written to or not, with its name and
+  placement. The home region numbers its placement changes; another region takes a placement with a higher number.
+- **Recording.** A region that registers the database's organization and project under the same ids records the
+  database. Its catalog primary does this from the heads, with the same id and name; its followers follow their catalog.
+  - A region in the placement also creates the file and pulls the database's origins.
+  - Any other region keeps only the record, so its API can answer `421 wrong_region` with the regions that serve the
+    database.
+  - Data goes only where the placement says: a member serves a database's groups only to regions its placement names
+    (`PullRequest.region`).
+- **Removal.** A region removed from the placement stops serving the database at once. It keeps its copy, unserved and
+  no longer pulled, so the writes it accepted keep reaching the others; added back, it resumes from that copy.
+- **Deletion.** A database is deleted in its home region once it has no replica regions. Every other region deletes its
+  record and any copy when a complete round finds the database in none of the home region's heads; a region never brings
+  back a database it deleted (its id stays taken).
+
+Register an organization and project in another region with a [management commit](management-commits.md) that chooses the
+ids they have in the first. Leave out the organization if that region already has it:
 
 ```json
 {"id":"<new uuid>","ops":[
@@ -61,15 +79,14 @@ chooses the ids they have in the first. Leave out the organization if that regio
   {"op":"create_project","organization":"<organization id>","id":"<project id>","name":"<name>"}]}
 ```
 
-A `create_database` operation with the database's `id` registers a database ahead of its first write.
-
-A database another region holds does not replicate here when:
+A database another region holds is not recorded here when:
 
 | Reason | Metric |
 | --- | --- |
-| this region does not register its project under the same ids | `terrabase_wan_unregistered` |
-| it was deleted here: a deleted database's id stays taken, so a region never brings back what it deleted | `terrabase_wan_unregistered` |
+| this region does not register its project under the same ids, or it was deleted here | `terrabase_wan_unregistered` |
 | another database of its project has its name here | `terrabase_wan_conflicts`, plus a warning: rename or delete one of them |
+
+`terrabase_wan_unregistered` also counts databases recorded here whose placement does not name this region.
 
 API keys stay per region: issue one in each region (`POST /admin/api-keys` on the region's catalog primary).
 
@@ -128,9 +145,10 @@ Alert on `terrabase_wan_staleness_seconds` above a minute, and on any `ahead` fa
   write of the same document: other members of its own region hold the state, not the group. A repair pulls the state
   from a surviving member. It needs a read of every document's state, tombstones included, which the engine does not
   offer yet; it comes with TS-647 step 4's snapshots for refilled replicas.
-- A project chooses its replica regions by being registered there (a management commit). A policy per database, with a
-  home region, replica regions and plan limits, set through the API and dashboard, comes later. Deleting a database in
-  one region does not delete it in the other.
+- The home region cannot change. A removed region keeps its copy until the database is deleted; full Anna drops it once
+  every other replica holds its writes. Plans do not limit placements yet.
+- A region learns that a database's home deleted it only from rounds in this process: a deletion that happened while it
+  was restarting leaves its record and copy until an operator removes them.
 - Catalogs and API keys are per region.
 - A member reads every database's head for each heads request, and pulls one origin at a time.
 - Interval and tombstone GC (TS-647 step 7) must keep a group until every region applied it: remote regions read origin
@@ -143,8 +161,9 @@ Alert on `terrabase_wan_staleness_seconds` above a minute, and on any `ahead` fa
   - a partition and its heal;
   - concurrent writes;
   - a group larger than one reply;
-  - databases of shared projects registered automatically, deleted ones not brought back, name clashes counted;
-  - databases of a project only one region registers;
+  - each placement (gru only, sfo only, both), the `421 wrong_region` answers and their headers;
+  - replica regions removed, added back and the database deleted, which the other region follows; name clashes counted;
+  - placement checks on create and through commits; databases of a project only one region registers;
   - a two-member region reached through single replies, and staleness when one of its members goes silent.
 - **Slow** (`CrossRegion/CrossRegionPartitionTests.cs`) is the partition suite:
   - two regions of two members each (a catalog primary and its follower);

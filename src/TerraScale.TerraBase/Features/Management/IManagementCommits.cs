@@ -25,6 +25,8 @@ namespace TerraBase.Features.Management;
 /// <param name="Databases">Database bound of a <c>limit</c>.</param>
 /// <param name="Members">Bound of a <c>limit</c> on members plus pending, unexpired invitations.</param>
 /// <param name="ActiveMembers">Bound of a <c>limit</c> on members only.</param>
+/// <param name="HomeRegion">The home region of a <c>create_database</c>: the region the commit is sent to.</param>
+/// <param name="ReplicaRegions">The replica regions of a <c>create_database</c> or <c>set_database_regions</c> (docs/cross-region.md).</param>
 public sealed record ManagementOpRequest(
     string? Op,
     string? Organization,
@@ -43,7 +45,9 @@ public sealed record ManagementOpRequest(
     int? Days,
     long? Databases,
     long? Members,
-    [property: JsonPropertyName("active_members")] long? ActiveMembers);
+    [property: JsonPropertyName("active_members")] long? ActiveMembers,
+    [property: JsonPropertyName("home_region")] string? HomeRegion = null,
+    [property: JsonPropertyName("replica_regions")] IReadOnlyList<string>? ReplicaRegions = null);
 
 /// <summary>A validated operation of a commit.</summary>
 public abstract record CommitOperation;

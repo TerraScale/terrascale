@@ -34,10 +34,8 @@ are missing: check step 1.
 
 ## 3. The canary database
 
-The check needs a database of its own (TS-660's in-region check owns its canary). Register it in **both** regions
-under the **same** ids. Registering the project in both regions is what makes it replicate: any database created later
-in that project shows up in the other region by itself ([which databases replicate](../cross-region.md#which-databases-replicate)).
-Registering the database too, as below, makes it serve in both regions before its first write.
+The check needs a database of its own (TS-660's in-region check owns its canary), at home in gru-1 with a replica in
+sfo-1 ([placement](../cross-region.md#placement)).
 
 1. Choose the ids once:
 
@@ -45,25 +43,32 @@ Registering the database too, as below, makes it serve in both regions before it
    ORG=$(uuidgen | tr A-Z a-z) PROJECT=$(uuidgen | tr A-Z a-z) DB=$(uuidgen | tr A-Z a-z)
    ```
 
-2. On each region's catalog primary (gru-1-ctl-1, ts-sfo-1), send the same commit to the loopback administrative
-   listener. It uses the management service credential; `X-TerraBase-User-Id` becomes the organization's owner.
+2. Register the organization and project in **both** regions under the **same** ids. On each region's catalog primary
+   (gru-1-ctl-1, ts-sfo-1), send to the loopback administrative listener; `X-TerraBase-User-Id` becomes the owner:
 
    ```sh
-   cat > commit.json <<JSON
+   cat > project.json <<JSON
    {"id":"$(uuidgen | tr A-Z a-z)","ops":[
      {"op":"create_organization","id":"$ORG","name":"cross-region-canary"},
-     {"op":"create_project","organization":"$ORG","id":"$PROJECT","name":"cross-region-canary"},
-     {"op":"create_database","organization":"$ORG","project":"$PROJECT","name":"cross-region-canary","id":"$DB"}]}
+     {"op":"create_project","organization":"$ORG","id":"$PROJECT","name":"cross-region-canary"}]}
    JSON
    curl -s http://127.0.0.1:9464/v1/management/commits -H 'Content-Type: application/json' \
-     -H "Authorization: Bearer $(cat "$TERRABASE_MANAGEMENT_CREDENTIAL_FILE")" -H 'X-TerraBase-User-Id: terrabase-canary' -d @commit.json
+     -H "Authorization: Bearer $(cat "$TERRABASE_MANAGEMENT_CREDENTIAL_FILE")" -H 'X-TerraBase-User-Id: terrabase-canary' -d @project.json
    ```
 
-   - The answer is `200` with the three resources.
-   - sfo-1's profile has no management credential yet. Either add `TERRABASE_MANAGEMENT_CREDENTIAL_FILE` as gru-1 has, or
-     send the commit to `https://sfo.api.terrascale.tech/v1/management/commits` with a ts-auth access token of the
-     owner.
-3. On the same two members, issue one API key per region. Keys are per region, and the answer holds `secret`:
+   sfo-1's profile has no management credential yet: add `TERRABASE_MANAGEMENT_CREDENTIAL_FILE` as gru-1 has, or send the
+   commit to `https://sfo.api.terrascale.tech/v1/management/commits` with a ts-auth access token of the owner.
+
+3. Create the canary on gru-1-ctl-1 only, with sfo-1 as its replica; sfo-1 records it from gru's heads within seconds:
+
+   ```sh
+   curl -s http://127.0.0.1:9464/v1/management/commits -H 'Content-Type: application/json' \
+     -H "Authorization: Bearer $(cat "$TERRABASE_MANAGEMENT_CREDENTIAL_FILE")" -H 'X-TerraBase-User-Id: terrabase-canary' \
+     -d "{\"id\":\"$(uuidgen | tr A-Z a-z)\",\"ops\":[{\"op\":\"create_database\",\"organization\":\"$ORG\",\"project\":\"$PROJECT\",
+          \"name\":\"cross-region-canary\",\"id\":\"$DB\",\"replica_regions\":[\"sfo-1\"]}]}"
+   ```
+
+4. On the same two members, issue one API key per region. Keys are per region, and the answer holds `secret`:
 
    ```sh
    curl -s http://127.0.0.1:9464/admin/api-keys -H 'Content-Type: application/json' -d "{\"name\":\"cross-region-canary\",
