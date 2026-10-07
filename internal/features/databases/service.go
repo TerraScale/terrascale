@@ -8,14 +8,44 @@ import (
 	"time"
 
 	"terrascale.tech/dashboard/internal/core"
-	sdk "terrascale.tech/sdk"
 )
 
 var (
 	errInvalidName = core.Invalid("database names use 1-63 lowercase letters, digits, and inner hyphens")
 	errNotReady    = fmt.Errorf("%w: only a ready database can be branched", core.ErrConflict)
 	errConfirmName = core.Invalid("type the database name to confirm deletion")
+	// errRegionsUnavailable is a placement that could not be checked because
+	// ts-atlas region discovery did not answer.
+	errRegionsUnavailable = fmt.Errorf("%w: region discovery is unavailable", core.ErrDataPlane)
 )
+
+// placement checks regions against ts-atlas discovery and returns their
+// codes in the order given; the first is the primary region. One region
+// keeps the database there; more replicate it between them.
+func (s Service) placement(ctx context.Context, regions []string) ([]string, error) {
+	if s.deps.Regions == nil {
+		return nil, errRegionsUnavailable
+	}
+	catalog, err := s.deps.Regions(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", errRegionsUnavailable, err)
+	}
+	codes := make([]string, 0, len(regions))
+	for _, region := range regions {
+		code := strings.ToUpper(strings.TrimSpace(region))
+		if !slices.ContainsFunc(catalog, func(r core.Region) bool { return r.Code == code }) {
+			return nil, core.Invalid(fmt.Sprintf("unknown region %q", region))
+		}
+		if slices.Contains(codes, code) {
+			return nil, core.Invalid(fmt.Sprintf("duplicate region %q", region))
+		}
+		codes = append(codes, code)
+	}
+	if len(codes) == 0 {
+		return nil, core.Invalid("choose at least one region")
+	}
+	return codes, nil
+}
 
 // Service owns the database lifecycle in a principal's selected project.
 // HTTP handlers and MCP tools both call it.
@@ -86,18 +116,9 @@ func (s Service) Create(ctx context.Context, p core.Principal, name string, regi
 	if len(regions) == 0 || len(regions) == 1 && regions[0] == "" {
 		regions = []string{project.Region}
 	}
-	placement := make([]sdk.RegionCode, 0, len(regions))
-	codes := make([]string, 0, len(regions))
-	for _, region := range regions {
-		code, err := sdk.ParseRegionCode(region)
-		if err != nil {
-			return databaseView{}, core.Invalid(fmt.Sprintf("unknown region %q", region))
-		}
-		if slices.Contains(codes, string(code)) {
-			return databaseView{}, core.Invalid(fmt.Sprintf("duplicate region %q", region))
-		}
-		placement = append(placement, code)
-		codes = append(codes, string(code))
+	codes, err := s.placement(ctx, regions)
+	if err != nil {
+		return databaseView{}, err
 	}
 	db := core.Database{
 		ID: core.NewID("db"), ProjectID: p.ProjectID, Name: name, Region: codes[0], Regions: codes, Status: "ready",
@@ -125,6 +146,55 @@ func (s Service) Create(ctx context.Context, p core.Principal, name string, regi
 		project.Databases[db.ID] = db
 		org.Projects[p.ProjectID] = project
 		a.Organizations[p.OrganizationID] = org
+		return nil
+	})
+	if err != nil {
+		return databaseView{}, err
+	}
+	return view(db), nil
+}
+
+// SetRegions changes where a database lives: one region, or several that
+// replicate it between them.
+// TODO(TS-643): ask TerraBase to place the database once its database
+// regions API is published; until then the dashboard records the placement.
+func (s Service) SetRegions(ctx context.Context, p core.Principal, databaseID string, regions ...string) (databaseView, error) {
+	_, project, err := s.selected(ctx, p)
+	if err != nil {
+		return databaseView{}, err
+	}
+	if err := core.Can(ctx, s.deps.Store, p, core.Organization.CanManage); err != nil {
+		return databaseView{}, err
+	}
+	db, ok := project.Databases[databaseID]
+	if !ok {
+		return databaseView{}, fmt.Errorf("%w: database %q", core.ErrNotFound, databaseID)
+	}
+	if core.SystemDatabase(db) {
+		return databaseView{}, core.ErrSystemReadOnly
+	}
+	codes, err := s.placement(ctx, regions)
+	if err != nil {
+		return databaseView{}, err
+	}
+	err = s.deps.Store.UpdateAs(ctx, p, func(a *core.Account) error {
+		project, err := a.ProjectFor(p, p.OrganizationID, p.ProjectID)
+		if err != nil {
+			return err
+		}
+		org := a.Organizations[p.OrganizationID]
+		if !org.CanManage(p.UserID) {
+			return core.ErrForbidden
+		}
+		current, ok := project.Databases[databaseID]
+		if !ok {
+			return fmt.Errorf("%w: database %q", core.ErrNotFound, databaseID)
+		}
+		current.Region, current.Regions = codes[0], codes
+		project.Databases[databaseID] = current
+		org.Projects[p.ProjectID] = project
+		a.Organizations[p.OrganizationID] = org
+		db = current
 		return nil
 	})
 	if err != nil {

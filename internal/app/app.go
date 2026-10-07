@@ -36,6 +36,7 @@ import (
 	"terrascale.tech/dashboard/internal/features/subscriptions"
 	"terrascale.tech/dashboard/internal/features/usage"
 	"terrascale.tech/dashboard/internal/platform/assets"
+	"terrascale.tech/dashboard/internal/platform/atlas"
 	"terrascale.tech/dashboard/internal/platform/config"
 	"terrascale.tech/dashboard/internal/platform/csrf"
 	"terrascale.tech/dashboard/internal/platform/datastar"
@@ -162,6 +163,9 @@ func New(cfg config.Config) (*Application, error) {
 		Events: datastar.Events{}, Demo: cfg.Demo, Tools: core.NewTools(store),
 		SDK: sdkFactory, Management: management, Usage: meter, DocumentsOnly: db != nil,
 		Throttle: throttle.New(throttle.Options{ClientHeader: cfg.ClientIPHeader, Store: throttleStore}),
+	}
+	if cfg.AtlasURL != "" {
+		deps.Regions = (&atlas.Catalog{BaseURL: cfg.AtlasURL}).Regions
 	}
 	mux := http.NewServeMux()
 	if err := assets.Mount(mux, cfg.Dev); err != nil {

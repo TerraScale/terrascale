@@ -41,7 +41,7 @@ templ detailContent(page core.Page, d detailData) {
 					@ui.ToneStat("teal", "Restore points", strconv.Itoa(len(d.Info.Backups)), backupStatusDescription(d.Info))
 					@ui.ToneStat("slate", "Created", d.Database.CreatedAt.UTC().Format("Jan 2"), d.Database.CreatedAt.UTC().Format("2006 · 15:04 UTC"))
 				}
-				@detailPlacement(d)
+				@detailPlacement(page, d)
 				if d.CanManage {
 					@detailDelete(page, d)
 				}
@@ -60,15 +60,29 @@ templ facts(items []fact) {
 	</dl>
 }
 
-templ detailPlacement(d detailData) {
+templ detailPlacement(page core.Page, d detailData) {
 	@ui.Card(ui.CardProps{ID: "placement", Title: "Placement and latency", Description: "Configured regions for this database"}) {
 		@facts([]fact{
 			{Label: "Placement lock", Value: regionListDisplay(databaseRegions(d.Database))},
 			{Label: "Placement status", Value: "Not reported"},
 			{Label: "Generation", Value: "Not reported"},
-			{Label: "Replication", Value: "Not reported"},
+			{Label: "Replication", Value: replicationDisplay(databaseRegions(d.Database))},
 		})
-		@ui.Alert("info", "Configured regions", "The dashboard records the database regions. Provider placement status, generation, and replication are not available in this dashboard.")
+		@ui.Alert("info", "Configured regions", "The dashboard records the database regions. Provider placement status, generation, and replication lag are not available in this dashboard.")
+		if d.CanManage {
+			<form method="post" action="/api/v1/dashboard/databases/regions" class="ts-form" aria-label="Change regions">
+				<input type="hidden" name="_csrf" value={ page.CSRFToken }/>
+				<input type="hidden" name="databaseId" value={ d.Database.ID }/>
+				<div class="ts-field">
+					<span class="ts-label">Regions</span>
+					@regionCheckboxes("database-placement", d.Choices, databaseRegions(d.Database))
+					@regionHint(d.RegionsError)
+				</div>
+				<div class="ts-row">
+					<button class="ts-btn ts-btn-secondary" type="submit">Save regions</button>
+				</div>
+			</form>
+		}
 		if len(d.Info.Regions) > 0 {
 			<div class="ts-table-wrap">
 				<table class="ts-table">

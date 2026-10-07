@@ -3,10 +3,10 @@
 .ts-onboarding {
   display: grid;
   align-content: start;
-  gap: var(--ts-s6);
+  gap: var(--ts-s4);
   width: min(32rem, 100%);
   margin-inline: auto;
-  padding: var(--ts-s10) var(--ts-s4) var(--ts-s12);
+  padding: var(--ts-s6) var(--ts-s4) var(--ts-s8);
 }
 
 .ts-onboarding-wide {
@@ -15,12 +15,19 @@
 
 .ts-onboarding-header {
   display: flex;
+  align-items: center;
   justify-content: center;
+}
+
+.ts-onboarding-header .ts-brand-logo {
+  height: 40px;
 }
 
 .ts-onboarding-progress {
   display: grid;
-  gap: var(--ts-s3);
+  gap: var(--ts-s2);
+  /* Match the card's padding and border so progress aligns with the fields. */
+  margin-inline: calc(var(--ts-s6) + 1px);
 }
 
 .ts-onboarding-progress .ts-eyebrow {
@@ -41,6 +48,14 @@
   color: var(--ts-ink-3);
   font-size: var(--ts-fs-sm);
   font-weight: 600;
+}
+
+.ts-onboarding-step:nth-child(2) {
+  justify-content: center;
+}
+
+.ts-onboarding-step:last-child {
+  justify-content: flex-end;
 }
 
 .ts-onboarding-step-icon {
@@ -77,7 +92,7 @@
 .ts-onboarding-card {
   display: grid;
   gap: var(--ts-s5);
-  padding: var(--ts-s8);
+  padding: var(--ts-s6);
   border: 1px solid var(--ts-line);
   border-radius: var(--ts-radius-lg);
   background: var(--ts-surface);
@@ -223,7 +238,18 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* Keep displayed prices tied to the interval submitted by the native radios,
+   including when JavaScript is unavailable. */
+.ts-onboarding form:has(input[name="interval"][value="monthly"]:checked) .ts-onboarding-plan-price[data-interval="annual"],
+.ts-onboarding form:has(input[name="interval"][value="annual"]:checked) .ts-onboarding-plan-price[data-interval="monthly"] {
+  display: none;
+}
+
 @media (max-width: 30rem) {
+  .ts-onboarding-progress {
+    margin-inline: calc(var(--ts-s5) + 1px);
+  }
+
   .ts-onboarding-card {
     padding: var(--ts-s6) var(--ts-s5);
   }
@@ -235,5 +261,12 @@
 
   .ts-onboarding-footer > p {
     flex: none;
+  }
+}
+
+@media (max-width: 22rem) {
+  .ts-onboarding-step {
+    flex-direction: column;
+    gap: var(--ts-s1);
   }
 }

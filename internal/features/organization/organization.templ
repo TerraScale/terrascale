@@ -12,10 +12,8 @@ import (
 
 templ organizationPageView(page core.Page, data organizationPageData) {
 	<main class="ts-page">
-		@ui.PageHeader(data.Organization.Name) {
-			<a class="ts-btn ts-btn-secondary" href="/organization?tab=members">@icons.Users(16)<span>Manage members</span></a>
-			<a class="ts-btn ts-btn-primary" href="/organization?newOrganization=organization">@icons.Plus(16)<span>Create organization</span></a>
-		}
+		@ui.PageHeader(data.Organization.Name)
+
 		if data.InvitationNotice != "" {
 			@ui.Alert("success", data.InvitationNotice, "")
 		}
@@ -24,6 +22,7 @@ templ organizationPageView(page core.Page, data organizationPageData) {
 		}
 		@Tabs(data.Tab)
 		if data.Tab == "organization" {
+			@organizationTools(data.Tab)
 			@ui.Stats("Organization summary") {
 				@ui.Stat("Projects", fmt.Sprint(len(data.Projects)), "Projects in this workspace")
 				@ui.Stat("Members", fmt.Sprint(len(data.Members)), "People with organization access")
@@ -69,7 +68,7 @@ templ organizationPageView(page core.Page, data organizationPageData) {
 		}
 		if data.Tab == "organization" {
 			<div class="ts-split">
-				@ui.Card(ui.CardProps{ID: "organization-details", Title: "Organization details", Description: "Current tenant context"}) {
+				@ui.Card(ui.CardProps{ID: "organization-details", Title: "Organization details", Description: "Current tenant context", Actions: createOrganizationAction()}) {
 					<dl class="ts-kv">
 						<dt>Name</dt>
 						<dd>{ data.Organization.Name }</dd>
@@ -103,19 +102,6 @@ templ organizationPageView(page core.Page, data organizationPageData) {
 					}
 				}
 				<div class="ts-stack">
-					@ui.Card(ui.CardProps{ID: "organization-switch", Title: "Active organization", Description: "Switch the organization used by the dashboard."}) {
-						<form method="post" action="/api/v1/dashboard/switch-organization" class="ts-form">
-							<input type="hidden" name="_csrf" value={ page.CSRFToken }/>
-							@ui.Field(ui.FieldProps{ID: "activeOrganization", Label: "Active organization"}) {
-								<select class="ts-select" id="activeOrganization" name="organizationId">
-									for _, organization := range data.Organizations {
-										<option value={ organization.ID } selected?={ organization.ID == data.Organization.ID }>{ organization.Name } ({ organizationKindShortLabel(organization.Kind) })</option>
-									}
-								</select>
-							}
-							<div class="ts-form-actions"><button class="ts-btn ts-btn-secondary" type="submit">Switch organization</button></div>
-						</form>
-					}
 					if data.CanLeave || data.CanManage || data.CanConfirmOwnership {
 						@ui.Card(ui.CardProps{ID: "organization-ownership", Title: "Ownership", Description: "Leave, transfer, or delete this organization."}) {
 							@organizationOwnership(page, data)
@@ -233,7 +219,7 @@ templ organizationProjectRow(page core.Page, data organizationPageData, project 
 					<form method="post" action="/api/v1/dashboard/switch-project">
 						<input type="hidden" name="_csrf" value={ page.CSRFToken }/>
 						<input type="hidden" name="projectId" value={ project.ID }/>
-						<input type="hidden" name="returnUrl" value="/organization"/>
+						<input type="hidden" name="returnUrl" value="/organization?tab=projects"/>
 						<button class="ts-btn ts-btn-secondary ts-btn-sm" type="submit">Select</button>
 					</form>
 				}
@@ -406,19 +392,34 @@ func deletionActionLabel(requested bool) string {
 
 templ Tabs(active string) {
 	@ui.Tabs("Organization sections", []ui.Tab{
-		{Label: "Organization", URL: "/organization", Active: active == "organization"},
-		{Label: "Members", URL: "/organization?tab=members", Active: active == "members"},
-		{Label: "Invitations", URL: "/organization?tab=invitations", Active: active == "invitations"},
+		{Label: "Organization", URL: "/organization", Active: active == "organization" || active == "billing" || active == "audit"},
+		{Label: "Members", URL: "/organization?tab=members", Active: active == "members" || active == "invitations"},
 		{Label: "Projects", URL: "/organization?tab=projects", Active: active == "projects"},
-		{Label: "Billing", URL: "/organization?tab=billing", Active: active == "billing"},
-		{Label: "Audit", URL: "/organization?tab=audit", Active: active == "audit"},
 	})
+}
+
+templ createOrganizationAction() {
+	<a class="ts-btn ts-btn-primary" href="/organization?newOrganization=organization">@icons.Plus(16)<span>Create organization</span></a>
+}
+
+templ organizationTools(active string) {
+	<nav class="ts-row" aria-label="Organization tools">
+		for _, tool := range []ui.Tab{
+			{Label: "Billing", URL: "/organization?tab=billing", Active: active == "billing"},
+			{Label: "Audit", URL: "/organization?tab=audit", Active: active == "audit"},
+		} {
+			<a class="ts-btn ts-btn-secondary ts-btn-sm" href={ templ.SafeURL(tool.URL) } if tool.Active {
+				aria-current="page"
+			}>{ tool.Label }</a>
+		}
+	</nav>
 }
 
 templ organizationBillingView(data organizationPageData, content templ.Component) {
 	<main class="ts-page">
 		@ui.PageHeader(data.Organization.Name)
 		@Tabs("billing")
+		@organizationTools("billing")
 		@content
 	</main>
 }
@@ -427,6 +428,7 @@ templ organizationAuditView(data organizationPageData, content templ.Component) 
 	<main class="ts-page ts-audit-page">
 		@ui.PageHeader(data.Organization.Name)
 		@Tabs("audit")
+		@organizationTools("audit")
 		@content
 	</main>
 }

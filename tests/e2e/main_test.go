@@ -12,6 +12,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
@@ -30,9 +31,12 @@ import (
 
 var (
 	baseURL string
-	admin   credentials
-	browser playwright.Browser
-	expect  = playwright.NewPlaywrightAssertions(10_000)
+	// atlasURL is a stand-in ts-atlas whose discovery lists gru-1 and sfo-1,
+	// production's regions; in-process dashboards read their regions there.
+	atlasURL string
+	admin    credentials
+	browser  playwright.Browser
+	expect   = playwright.NewPlaywrightAssertions(10_000)
 )
 
 func TestMain(m *testing.M) {
@@ -51,6 +55,13 @@ func run(m *testing.M) int {
 		Email:    cmp.Or(os.Getenv("DASHBOARD_E2E_ADMIN_EMAIL"), "e2e-admin-seed@example.test"),
 		Password: cmp.Or(os.Getenv("DASHBOARD_E2E_ADMIN_PASSWORD"), "E2e-admin-seed-123!"),
 	}
+	atlas := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"v":1,"closest":"gru-1","regions":[` +
+			`{"id":"gru-1","name":"São Paulo","country":"BR","api":"https://gru.api.terrascale.tech","health":"ok"},` +
+			`{"id":"sfo-1","name":"San Francisco","country":"US","api":"https://sfo.api.terrascale.tech","health":"ok"}]}`))
+	}))
+	defer atlas.Close()
+	atlasURL = atlas.URL
 	baseURL = os.Getenv("DASHBOARD_E2E_BASE_URL")
 	if baseURL == "" {
 		server, err := startDashboard()
@@ -79,7 +90,7 @@ func run(m *testing.M) int {
 
 func startDashboard() (*httptest.Server, error) {
 	application, err := app.New(config.Config{
-		Demo: true, AdminEmail: admin.Email, AdminPassword: admin.Password, TSAuthOrigin: "https://gru.auth.terrascale.tech",
+		Demo: true, AdminEmail: admin.Email, AdminPassword: admin.Password, TSAuthOrigin: "https://gru.auth.terrascale.tech", AtlasURL: atlasURL,
 	})
 	if err != nil {
 		return nil, err

@@ -581,10 +581,20 @@ type Deps struct {
 	Usage    UsageMeter
 	Throttle Throttle
 	Tools    *Tools
-	Demo     bool
+	// Regions lists the regions a database can be placed in, from ts-atlas
+	// discovery; nil when discovery is not configured.
+	Regions func(context.Context) ([]Region, error)
+	Demo    bool
 	// TODO(TS-463, TS-521): resource provisioning and unsupported data features
 	// retain their local Store behavior until the Management mapping lands.
 	DocumentsOnly bool
+}
+
+// Region is a region ts-atlas discovery lists. Code is the dashboard's
+// region code, such as GRU for Atlas's gru-1.
+type Region struct {
+	Code, Name, Country string
+	Healthy             bool
 }
 
 func (d Deps) LocalResources() bool { return d.Demo || d.DocumentsOnly }

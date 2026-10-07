@@ -82,6 +82,11 @@ func SystemUnavailable(err error) string {
 		return strings.TrimPrefix(err.Error(), ErrDataPlane.Error()+": ")
 	}
 	slog.Warn("read system database", "error", err)
+	// TerraBase answers every Management read of an organization the user
+	// is not a member of with 404, the same as for an unknown database.
+	if errors.Is(err, v1.ErrNotFound) || errors.Is(err, v1.ErrUnknownRoute) {
+		return "TerraBase does not show this database to your ts-auth user. An owner of its TerraBase organization has to add you as a member."
+	}
 	return "TerraBase did not answer in time. Reload the page to try again."
 }
 

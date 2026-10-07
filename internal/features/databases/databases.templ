@@ -92,20 +92,12 @@ templ createDatabase(page core.Page, d pageData) {
 					<span class="ts-label">Regions</span>
 					<details class="ts-db-region-picker" data-init={ databaseRegionSummary } data-on:change={ databaseRegionSummary }>
 						<summary class="ts-select"><span data-region-summary>{ regionChoiceSummary(d.Regions) }</span></summary>
-						<fieldset class="ts-db-region-panel" id="database-region" aria-label="Database regions">
-							for _, region := range databaseRegionChoices {
-								<label class="ts-db-region-choice">
-									<input type="checkbox" name="region" value={ region.Code } checked?={ slices.Contains(d.Regions, region.Code) }/>
-									<img src={ static.URL("flags/" + region.Country + ".svg") } alt="" aria-hidden="true"/>
-									<span class="ts-db-region-name">{ region.Name } ({ region.Code })</span>
-								</label>
-							}
-						</fieldset>
+						@regionCheckboxes("database-region", d.Choices, d.Regions)
 					</details>
-					<p class="ts-hint">Select one or more regions. The first region in the list is primary.</p>
+					@regionHint(d.RegionsError)
 				</div>
 			</div>
-			@ui.RegionMap("database-region", d.Regions...)
+			@ui.RegionMapOf("database-region", regionCodes(d.Choices), d.Regions...)
 			@ui.DialogActions("create-database") {
 				<button class="ts-btn ts-btn-primary" type="submit">Create database</button>
 			}
@@ -115,12 +107,26 @@ templ createDatabase(page core.Page, d pageData) {
 
 const databaseRegionSummary = "el.querySelector('[data-region-summary]').textContent = [...el.querySelectorAll('input[name=region]:checked')].map(i => i.closest('label').querySelector('.ts-db-region-name').textContent.trim()).join(', ') || 'Choose regions'"
 
-type databaseRegionChoice struct { Code, Name, Country string }
+// regionCheckboxes are the canonical placement control: the regions ts-atlas
+// discovery lists, checked when selected.
+templ regionCheckboxes(id string, choices []core.Region, selected []string) {
+	<fieldset class="ts-db-region-panel" id={ id } aria-label="Database regions">
+		for _, region := range choices {
+			<label class="ts-db-region-choice">
+				<input type="checkbox" name="region" value={ region.Code } checked?={ slices.Contains(selected, region.Code) }/>
+				<img src={ static.URL("flags/" + region.Country + ".svg") } alt="" aria-hidden="true"/>
+				<span class="ts-db-region-name">{ region.Name } ({ region.Code })</span>
+			</label>
+		}
+	</fieldset>
+}
 
-var databaseRegionChoices = []databaseRegionChoice{
-	{"GRU", "São Paulo", "br"},
-	{"SFO", "San Francisco", "us"},
-	{"FRA", "Frankfurt", "de"},
+templ regionHint(unavailable string) {
+	if unavailable != "" {
+		<p class="ts-field-error" role="alert">{ unavailable }</p>
+	} else {
+		<p class="ts-hint">One region keeps the data only there. Two or more replicate it between them. The first region is primary.</p>
+	}
 }
 
 templ databaseActions(d pageData) {

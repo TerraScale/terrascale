@@ -32,8 +32,14 @@ type databaseInput struct {
 type createDatabaseInput struct {
 	core.Scope
 	Name    string   `json:"name" jsonschema:"Database name: 1-63 lowercase letters, digits, and inner hyphens."`
-	Region  string   `json:"region,omitempty" jsonschema:"Region code such as GRU, SFO, or FRA. Defaults to the project's primary region."`
-	Regions []string `json:"regions,omitempty" jsonschema:"Placement regions for one database, such as GRU and FRA. Takes precedence over region."`
+	Region  string   `json:"region,omitempty" jsonschema:"Region code such as GRU or SFO. Defaults to the project's primary region."`
+	Regions []string `json:"regions,omitempty" jsonschema:"Placement regions for one database, such as GRU and SFO, which replicate between them. Takes precedence over region."`
+}
+
+type setDatabaseRegionsInput struct {
+	core.Scope
+	DatabaseID string   `json:"databaseId" jsonschema:"Database ID from list_databases."`
+	Regions    []string `json:"regions" jsonschema:"Region codes such as GRU or SFO. One keeps the database there; two or more replicate it between them. The first is primary."`
 }
 
 type branchDatabaseInput struct {
@@ -74,6 +80,12 @@ func mountTools(tools *core.Tools, service Service) {
 			return service.Create(ctx, p, in.Name, in.Regions...)
 		}
 		return service.Create(ctx, p, in.Name, in.Region)
+	})
+	core.AddTool(tools, core.ToolSpec{
+		Name: "set_database_regions", Title: "Set database regions",
+		Description: "Choose where a database lives: one region, or several that replicate it. Requires an owner or admin role.",
+	}, func(ctx context.Context, p core.Principal, in setDatabaseRegionsInput) (databaseView, error) {
+		return service.SetRegions(ctx, p, in.DatabaseID, in.Regions...)
 	})
 	core.AddTool(tools, core.ToolSpec{
 		Name: "branch_database", Title: "Branch database",

@@ -14,7 +14,6 @@ import (
 	"github.com/a-h/templ"
 	"golang.org/x/sync/errgroup"
 	"terrascale.tech/dashboard/internal/core"
-	sdk "terrascale.tech/sdk"
 )
 
 type databaseView struct {
@@ -86,6 +85,24 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 		}
 		core.WriteJSON(w, http.StatusCreated, db)
 	})
+	mux.HandleFunc("POST /api/v1/dashboard/databases/regions", func(w http.ResponseWriter, r *http.Request) {
+		p, ok := deps.FormPrincipal(w, r)
+		if !ok {
+			return
+		}
+		databaseID := r.FormValue("databaseId")
+		db, err := service.SetRegions(r.Context(), p, databaseID, r.Form["region"]...)
+		if err != nil {
+			status, code := failure(err, ErrInvalidRegions)
+			FormFailed(w, r, status, TabPath(databaseID, "overview", nil), code, nil)
+			return
+		}
+		if core.WantsHTML(r) {
+			http.Redirect(w, r, TabPath(db.ID, "overview", nil)+"#placement", http.StatusSeeOther)
+			return
+		}
+		core.WriteJSON(w, http.StatusOK, db)
+	})
 	mux.HandleFunc("POST /api/v1/dashboard/databases/branch", func(w http.ResponseWriter, r *http.Request) {
 		p, ok := deps.FormPrincipal(w, r)
 		if !ok {
@@ -139,10 +156,14 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 }
 
 type pageData struct {
-	ProjectID    string
-	Summary      databaseSummary
-	Databases    []databaseView
-	Regions      []string
+	ProjectID string
+	Summary   databaseSummary
+	Databases []databaseView
+	Regions   []string
+	// Choices are the regions ts-atlas discovery lists; RegionsError
+	// explains an empty list.
+	Choices      []core.Region
+	RegionsError string
 	Error        string
 	Search       string
 	OpenCreate   bool
@@ -281,11 +302,12 @@ func renderList(w http.ResponseWriter, r *http.Request, deps core.Deps) {
 		OpenCreate: query.Get("create") == "1",
 		Name:       query.Get("name"),
 	}
+	data.Choices, data.RegionsError = regionChoices(r.Context(), deps)
 	if query.Get("regionSelection") == "1" {
 		data.Regions = nil
 		for _, value := range query["region"] {
-			if region, err := sdk.ParseRegionCode(value); err == nil && !slices.Contains(data.Regions, string(region)) {
-				data.Regions = append(data.Regions, string(region))
+			if slices.ContainsFunc(data.Choices, func(c core.Region) bool { return c.Code == value }) && !slices.Contains(data.Regions, value) {
+				data.Regions = append(data.Regions, value)
 			}
 		}
 	}
@@ -318,6 +340,27 @@ func renderList(w http.ResponseWriter, r *http.Request, deps core.Deps) {
 	}
 }
 
+// regionChoices lists the regions a database can be placed in, or what to
+// say when ts-atlas discovery is unavailable.
+func regionChoices(ctx context.Context, deps core.Deps) ([]core.Region, string) {
+	if deps.Regions == nil {
+		return nil, formErrors[ErrNoRegions]
+	}
+	regions, err := deps.Regions(ctx)
+	if err != nil {
+		return nil, formErrors[ErrNoRegions]
+	}
+	return regions, ""
+}
+
+func regionCodes(regions []core.Region) []string {
+	codes := make([]string, len(regions))
+	for i, region := range regions {
+		codes[i] = region.Code
+	}
+	return codes
+}
+
 func selected(deps core.Deps, r *http.Request) (core.Principal, core.Account, core.Project, error) {
 	p, ok := deps.Sessions.Principal(r)
 	if !ok || p.ProjectID == "" {
@@ -338,6 +381,8 @@ func failure(err error, invalid string) (int, string) {
 	switch {
 	case errors.Is(err, core.ErrInvalid):
 		return http.StatusBadRequest, invalid
+	case errors.Is(err, errRegionsUnavailable):
+		return http.StatusServiceUnavailable, ErrNoRegions
 	case errors.Is(err, errNotReady):
 		return http.StatusConflict, ErrNotReady
 	case errors.Is(err, core.ErrDatabaseLimit):
