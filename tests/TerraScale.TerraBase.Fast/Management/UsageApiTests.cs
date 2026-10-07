@@ -883,6 +883,8 @@ public sealed class UsageApiTests
     [Arguments(true)]
     public async Task Overlapping_flushes_count_interleaved_operations_once_and_retry_failed_commits(bool failFirstCommit)
     {
+        // These handshakes assert ordering, not a ten-second performance contract; the suite timeout bounds them.
+        var cancellationToken = TestContext.Current!.Execution.CancellationToken;
         var hook = new UsageCommitHook();
         await using var api = await ManagementApi.StartAsync(time: new FakeTimeProvider(), services: hook.Install);
         var database = await api.CreateManagedDatabaseAsync();
@@ -893,7 +895,7 @@ public sealed class UsageApiTests
 
         using var firstGate = hook.PauseCommit(failFirstCommit);
         var firstFlush = meter.FlushAsync(CancellationToken.None).AsTask();
-        await firstGate.Entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await firstGate.Entered.Task.WaitAsync(cancellationToken);
         await WriteAsync(data, database, "people", 2);
         for (var i = 0; i < 2; i++)
         {
@@ -912,10 +914,10 @@ public sealed class UsageApiTests
         }
         else
         {
-            await firstFlush.WaitAsync(TimeSpan.FromSeconds(10));
+            await firstFlush.WaitAsync(cancellationToken);
         }
 
-        await secondGate.Entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await secondGate.Entered.Task.WaitAsync(cancellationToken);
         if (failFirstCommit)
         {
             await Assert.That(await ReadSavedOpsAsync(api.Server.DataDirectory, database.Id)).IsNull();
@@ -930,7 +932,7 @@ public sealed class UsageApiTests
         (await data.GetAsync(Uri(Document(database, "people", "d1")))).EnsureSuccessStatusCode();
         var usageRead = api.Client.GetFromJsonAsync<JsonElement>(Uri(database.Path + "/usage"));
         secondGate.Dispose();
-        await secondFlush.WaitAsync(TimeSpan.FromSeconds(10));
+        await secondFlush.WaitAsync(cancellationToken);
         var usage = await usageRead;
         await Assert.That(usage.GetProperty("reads").GetInt64()).IsEqualTo(4);
         await Assert.That(usage.GetProperty("writes").GetInt64()).IsEqualTo(6);
