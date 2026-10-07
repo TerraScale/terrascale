@@ -76,7 +76,7 @@ func formErrorPage(t *testing.T) playwright.Page {
 			return false
 		}
 		parsed, err := url.Parse(location.URL)
-		return err == nil && strings.HasPrefix(parsed.Path, "/api/v1/dashboard/")
+		return err == nil && (strings.HasPrefix(parsed.Path, "/api/v1/dashboard/") || strings.HasPrefix(parsed.Path, "/api/v1/auth-management/"))
 	})
 }
 

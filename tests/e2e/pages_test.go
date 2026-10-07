@@ -42,6 +42,7 @@ var parityRouteStates = []routeState{
 	{key: "auth-connections", path: "/auth/connections", heading: "SSO connections"},
 	{key: "auth-directories", path: "/auth/directories", heading: "Directory sync"},
 	{key: "auth-domains", path: "/auth/domains", heading: "Enrollment domains"},
+	{key: "auth-emails", path: "/auth/emails", heading: "Branding and sender"},
 	{key: "auth-invitations", path: "/auth/invitations", heading: "Invitations"},
 	{key: "auth-keys", path: "/auth/keys", heading: "Management keys"},
 	{key: "auth-memberships", path: "/auth/memberships", heading: "Memberships"},

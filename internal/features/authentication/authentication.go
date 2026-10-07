@@ -17,11 +17,14 @@ import (
 // Mount registers the authentication console pages, their mutations, and
 // the matching MCP tools. origin is ts-auth's public origin; every
 // instance's issuer, hosted pages, and Management API live under it.
-func Mount(mux *http.ServeMux, deps core.Deps, origin string) {
-	service := Service{deps: deps, origin: origin}
+func Mount(mux *http.ServeMux, deps core.Deps, origin string, emails EmailBackend) {
+	service := Service{deps: deps, origin: origin, emails: emails}
 	mountTools(deps.Tools, service)
-	mux.HandleFunc("GET /auth", func(w http.ResponseWriter, r *http.Request) { renderPage(w, r, deps, origin, "overview") })
-	mux.HandleFunc("GET /auth/{section}", func(w http.ResponseWriter, r *http.Request) { renderPage(w, r, deps, origin, r.PathValue("section")) })
+	mux.HandleFunc("GET /auth", func(w http.ResponseWriter, r *http.Request) { renderPage(w, r, service, "overview") })
+	mux.HandleFunc("GET /auth/{section}", func(w http.ResponseWriter, r *http.Request) { renderPage(w, r, service, r.PathValue("section")) })
+	mux.HandleFunc("GET /auth/emails/preview", func(w http.ResponseWriter, r *http.Request) { previewEmail(w, r, service) })
+	mux.HandleFunc("POST /api/v1/auth-management/emails", func(w http.ResponseWriter, r *http.Request) { saveEmails(w, r, service) })
+	mux.HandleFunc("POST /api/v1/auth-management/emails/test", func(w http.ResponseWriter, r *http.Request) { sendTestEmail(w, r, service) })
 	mux.HandleFunc("POST /api/v1/auth-management/instance", func(w http.ResponseWriter, r *http.Request) {
 		p, ok := authorize(deps, w, r)
 		if !ok {
@@ -85,7 +88,14 @@ func Mount(mux *http.ServeMux, deps core.Deps, origin string) {
 	})
 }
 
-func renderPage(w http.ResponseWriter, r *http.Request, deps core.Deps, origin, key string) {
+func renderPage(w http.ResponseWriter, r *http.Request, service Service, key string) {
+	renderSection(w, r, service, key, r.URL.Query(), nil, 0)
+}
+
+// renderSection renders a section for query. The Emails section shows
+// drafts, when given, in place of the saved values, with status.
+func renderSection(w http.ResponseWriter, r *http.Request, service Service, key string, query, drafts url.Values, status int) {
+	deps, origin := service.deps, service.origin
 	current, exists := findSection(key)
 	if !exists {
 		http.NotFound(w, r)
@@ -106,15 +116,22 @@ func renderPage(w http.ResponseWriter, r *http.Request, deps core.Deps, origin, 
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 		return
 	}
-	query := r.URL.Query()
 	data := buildPage(current, project, origin, org.CanManage(p.UserID), strings.TrimSpace(query.Get("q")), query.Get("page"))
 	data.Saved, data.Error = query.Get("saved") == "1", query.Get("error")
+	if key == "emails" {
+		emails, err := service.emailsPage(r.Context(), p, account, query, drafts)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		data.Emails = emails
+	}
 	title := "Authentication"
 	if key != "overview" {
 		title += " · " + current.Title
 	}
 	page := core.Page{
-		Layout: "shell", Title: title, Principal: p,
+		Layout: "shell", Title: title, Principal: p, Status: status,
 		View: func(view core.Page) templ.Component { return authenticationView(data, view.CSRFToken) },
 	}
 	if err := deps.Render.Page(w, r, page); err != nil {

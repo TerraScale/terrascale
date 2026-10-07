@@ -143,3 +143,97 @@ func TestMCPAuthenticationConsoleManagesInstance(t *testing.T) {
 		t.Errorf("audit events = %+v, want auth.users.blocked", audit.Events)
 	}
 }
+
+// TestMCPAuthenticationEmails brands and rewords a project's emails through
+// the MCP email tools, then resets the wording.
+func TestMCPAuthenticationEmails(t *testing.T) {
+	t.Parallel()
+	page := newPage(t)
+	account := newAccount("mcp-emails")
+	registerAndOnboard(t, page, account)
+	session := connectMCP(t, createAccessToken(t, page, journeyPassword, "email assistant"))
+
+	type emails struct {
+		Version  int
+		Branding struct {
+			BrandName    string `json:"brand_name"`
+			PrimaryColor string `json:"primary_color"`
+			LogoWidth    int    `json:"logo_width"`
+		}
+		Templates []struct {
+			Kind       string
+			Locale     string
+			Overridden bool
+		}
+		Template struct {
+			Overridden bool
+			Variables  []string
+			Fields     struct{ Subject, Body string }
+			Defaults   struct{ Subject, Body string }
+		}
+	}
+	var initial emails
+	callTool(t, session, "auth_get_emails", map[string]any{"template": "magic_link", "locale": "pt-BR"}, &initial)
+	if len(initial.Templates) != 14 || initial.Template.Overridden || !slices.Contains(initial.Template.Variables, "link") {
+		t.Fatalf("auth_get_emails = %+v, want 7 emails in 2 languages with defaults", initial)
+	}
+
+	if message := callToolError(t, session, "auth_update_email_branding", map[string]any{"branding": map[string]any{"primary_color": "blue"}}); !strings.Contains(message, "hex") {
+		t.Errorf("invalid color error = %q, want the hex rule", message)
+	}
+	var saved struct{ Version int }
+	callTool(t, session, "auth_update_email_branding", map[string]any{"branding": map[string]any{"brand_name": "Acme", "primary_color": "#FF5500"}}, &saved)
+	if saved.Version != initial.Version+1 {
+		t.Errorf("version after branding = %d, want %d", saved.Version, initial.Version+1)
+	}
+	if message := callToolError(t, session, "auth_update_email_branding", map[string]any{"branding": map[string]any{"logo_url": "https://acme.example/logo.png"}}); !strings.Contains(message, "width") {
+		t.Errorf("logo without size error = %q, want the size rule", message)
+	}
+	callTool(t, session, "auth_update_email_branding", map[string]any{"branding": map[string]any{"logo_url": "https://acme.example/logo.png", "logo_width": 120, "logo_height": 32}}, &saved)
+
+	var reworded emails
+	callTool(t, session, "auth_update_email_template", map[string]any{"template": "magic_link", "locale": "pt-BR", "fields": map[string]any{"subject": "Entre na {{ app_name }}"}}, &reworded)
+	if !reworded.Template.Overridden || reworded.Template.Fields.Subject != "Entre na {{ app_name }}" || reworded.Template.Fields.Body != "" ||
+		reworded.Branding.BrandName != "Acme" || reworded.Branding.PrimaryColor != "#ff5500" || reworded.Branding.LogoWidth != 120 {
+		t.Errorf("after rewording = %+v, want only the subject overridden and the branding kept", reworded)
+	}
+	if message := callToolError(t, session, "auth_update_email_template", map[string]any{"template": "magic_link", "fields": map[string]any{"body": "{{ password }}"}}); !strings.Contains(message, "password") {
+		t.Errorf("unknown variable error = %q, want it named", message)
+	}
+
+	var rendered struct{ Subject, HTML string }
+	callTool(t, session, "auth_preview_email", map[string]any{"template": "magic_link", "locale": "pt-BR", "colorScheme": "dark"}, &rendered)
+	if rendered.Subject != "Entre na Acme" || !strings.Contains(rendered.HTML, "Acme") {
+		t.Errorf("auth_preview_email = %q, want the new subject and brand", rendered.Subject)
+	}
+	var sent struct{ To string }
+	callTool(t, session, "auth_send_test_email", map[string]any{"template": "magic_link", "locale": "pt-BR"}, &sent)
+	if sent.To != account.Email {
+		t.Errorf("test email went to %q, want the caller %q", sent.To, account.Email)
+	}
+
+	var cleared emails
+	callTool(t, session, "auth_update_email_branding", map[string]any{"branding": map[string]any{}, "clear": []string{"logo_url", "brand_name"}}, nil)
+	callTool(t, session, "auth_update_email_template", map[string]any{"template": "magic_link", "locale": "pt-BR", "fields": map[string]any{"heading": "Olá"}, "clear": []string{"subject"}}, &cleared)
+	if cleared.Branding.LogoWidth != 0 || cleared.Branding.BrandName != "" || cleared.Branding.PrimaryColor != "#ff5500" ||
+		cleared.Template.Fields.Subject != "" || !cleared.Template.Overridden {
+		t.Errorf("after clearing = %+v, want the logo, brand name, and subject back to their defaults and the rest kept", cleared)
+	}
+	if message := callToolError(t, session, "auth_update_email_template", map[string]any{"template": "magic_link", "clear": []string{"color"}}); !strings.Contains(message, "color") {
+		t.Errorf("clearing an unknown field error = %q, want it named", message)
+	}
+
+	var reset emails
+	callTool(t, session, "auth_reset_email_template", map[string]any{"template": "magic_link", "locale": "pt-BR"}, &reset)
+	if reset.Template.Overridden || reset.Template.Fields.Subject != "" {
+		t.Errorf("after reset = %+v, want the defaults", reset.Template)
+	}
+
+	var audit struct{ Events []struct{ Action string } }
+	callTool(t, session, "auth_list_audit_events", nil, &audit)
+	for _, want := range []string{"auth.emails.branding_saved", "auth.emails.template_saved", "auth.emails.test_sent", "auth.emails.template_reset"} {
+		if !slices.ContainsFunc(audit.Events, func(e struct{ Action string }) bool { return e.Action == want }) {
+			t.Errorf("audit events lack %s", want)
+		}
+	}
+}

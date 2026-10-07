@@ -473,6 +473,7 @@ func AuthNavigation() []NavItem {
 		{Label: "Webhooks", URL: "/auth/webhooks", Group: "Developers"},
 		{Label: "Audit log", URL: "/auth/audit", Group: "Developers"},
 		{Label: "Branding", URL: "/auth/branding", Group: "Customization"},
+		{Label: "Emails", URL: "/auth/emails", Group: "Customization"},
 	}
 }
 

@@ -30,6 +30,8 @@ templ authenticationView(data pageData, csrfToken string) {
 				@sessionsSection(data)
 			case "branding":
 				@brandingSection(data, csrfToken)
+			case "emails":
+				@emailsSection(data.Emails, csrfToken)
 			case "audit":
 				@auditSection(data)
 			case "connections":

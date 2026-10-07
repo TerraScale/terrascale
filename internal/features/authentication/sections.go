@@ -206,6 +206,7 @@ var sections = []section{
 	},
 	{Key: "audit", Title: "Audit log", Group: "Developers", Description: "Authentication changes made in this project.", Icon: icons.ScrollText, Tone: "slate"},
 	{Key: "branding", Title: "Branding", Group: "Customization", Description: "Name, logo, and color of the hosted sign-in pages.", Icon: icons.Wand2, Tone: "pink"},
+	{Key: "emails", Title: "Emails", Group: "Customization", Description: "Branding, sender, and wording of the emails ts-auth sends.", Icon: icons.Mail, Tone: "sky"},
 }
 
 func findSection(key string) (section, bool) {

@@ -47,6 +47,7 @@ type pageData struct {
 	Templates   []resourceRow
 	Events      []eventRow
 	Checklist   []checkStep
+	Emails      emailsPage
 }
 
 type resourceRow struct {

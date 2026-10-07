@@ -40,7 +40,7 @@ var authAccessibilityPaths = []string{
 	"/auth", "/auth/quickstart", "/auth/users", "/auth/organizations", "/auth/memberships",
 	"/auth/invitations", "/auth/domains", "/auth/sign-in", "/auth/connections", "/auth/mfa",
 	"/auth/sessions", "/auth/directories", "/auth/clients", "/auth/templates", "/auth/keys",
-	"/auth/webhooks", "/auth/audit", "/auth/branding",
+	"/auth/webhooks", "/auth/audit", "/auth/branding", "/auth/emails",
 }
 
 var adminAccessibilityPaths = []string{
