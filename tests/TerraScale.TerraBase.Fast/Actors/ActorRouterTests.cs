@@ -1,0 +1,284 @@
+using System.Globalization;
+using System.Net;
+using System.Text.Json;
+using Bogus;
+using TerraBase.Engine.Actors;
+using TerraBase.Tenancy;
+using static TerraBase.Fast.Actors.ActorRequests;
+
+namespace TerraBase.Fast.Actors;
+
+public sealed class ActorRouterTests
+{
+    [Test]
+    public async Task Document_identity_routes_deterministically_across_requests_plans_and_router_instances()
+    {
+        await using var first = new ActorRequests(actorCount: 4);
+        await using var second = new ActorRequests(actorCount: 4);
+        await first.StartAsync();
+        await second.StartAsync();
+        var actors = new HashSet<int>();
+        var fake = new Faker { Random = new Randomizer(648) };
+        for (var index = 0; index < 16; index++)
+        {
+            var key = NewKey(fake);
+            using var original = await first.SendAsync(new Work(key, actor: null));
+            using var repeated = await first.SendAsync(new Work(key with { Database = key.Database with { Plan = PlanTier.Pro } }, actor: null));
+            using var independent = await second.SendAsync(new Work(key, actor: null));
+            await AssertHealthyAsync(original);
+            await AssertHealthyAsync(repeated);
+            await AssertHealthyAsync(independent);
+            var actor = int.Parse(Header(original, "X-Test-Actor"), CultureInfo.InvariantCulture);
+            await Assert.That(actor is >= 0 and < 4).IsTrue();
+            await Assert.That(Header(original, "X-Test-Actor-Count")).IsEqualTo("4");
+            await Assert.That(Header(repeated, "X-Test-Actor")).IsEqualTo(Header(original, "X-Test-Actor"));
+            await Assert.That(Header(independent, "X-Test-Actor")).IsEqualTo(Header(original, "X-Test-Actor"));
+            actors.Add(actor);
+        }
+
+        await Assert.That(actors.Count > 1).IsTrue();
+
+        // Independent SHA-256 vectors pin encoding and field boundaries, rather than a process-local hash seed.
+        var database = new TenantContext("org", PlanTier.Hobby, "project", "database");
+        foreach (var (collection, id, expected) in new[] { ("a", "bc", "2"), ("ab", "c", "1"), ("é", "鍵", "1") })
+        {
+            using var response = await first.SendAsync(new Work(new ActorKey(database, collection, id), actor: null));
+            await AssertHealthyAsync(response);
+            await Assert.That(Header(response, "X-Test-Actor")).IsEqualTo(expected);
+        }
+    }
+
+    [Test]
+    public async Task An_awaiting_actor_serializes_its_mailbox_while_another_actor_serves_health()
+    {
+        await using var requests = new ActorRequests();
+        await requests.StartAsync();
+        var held = new Work(held: true);
+        var first = requests.SendAsync(held);
+        await SignalAsync(held.Entered.Task);
+        var queued = new Work();
+        var second = requests.SendAsync(queued);
+        await SignalAsync(queued.Submitted.Task);
+        using var other = await requests.SendAsync(new Work(actor: 1));
+        await AssertHealthyAsync(other);
+        await Assert.That(queued.Entered.Task.IsCompleted).IsFalse();
+        held.Release.TrySetResult();
+        using var firstResponse = await first;
+        using var secondResponse = await second;
+        await AssertHealthyAsync(firstResponse);
+        await AssertHealthyAsync(secondResponse);
+        await Assert.That(Header(firstResponse, "X-Test-Active")).IsEqualTo("1");
+        await Assert.That(Header(secondResponse, "X-Test-Active")).IsEqualTo("1");
+        await Assert.That(Header(firstResponse, "X-Test-Sequence")).IsEqualTo("1");
+        await Assert.That(Header(secondResponse, "X-Test-Sequence")).IsEqualTo("2");
+        await Assert.That(Header(other, "X-Test-Actor")).IsEqualTo("1");
+    }
+
+    [Test]
+    [Arguments(4, 128)]
+    [Arguments(16, 16)]
+    public async Task Concurrent_admission_fits_item_and_byte_budgets_and_recovers_after_drain(int items, int bytes)
+    {
+        // Each case admits four 4-byte inputs: one reaches only its item bound, the other only its byte bound.
+        await using var requests = new ActorRequests(maxItems: items, maxBytes: bytes);
+        await requests.StartAsync();
+        for (var round = 0; round < 2; round++)
+        {
+            var held = new Work(retainedBytes: 4, held: true);
+            var running = requests.SendAsync(held);
+            await SignalAsync(held.Entered.Task);
+            var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var work = Enumerable.Range(0, 12).Select(_ => new Work(retainedBytes: 4, admissionGate: gate)).ToArray();
+            var pending = work.Select(requests.SendAsync).ToArray();
+            await SignalAsync(Task.WhenAll(work.Select(input => input.Ready.Task)));
+            gate.SetResult();
+            var admitted = await SignalAsync(Task.WhenAll(work.Select(input => input.Submitted.Task)));
+            await Assert.That(admitted.Count(accepted => accepted)).IsEqualTo(3);
+            await Assert.That(work.All(input => !input.Entered.Task.IsCompleted)).IsTrue();
+            for (var index = 0; index < pending.Length; index++)
+            {
+                if (!admitted[index])
+                {
+                    using var rejected = await pending[index];
+                    await AssertRejectedAsync(rejected, HttpStatusCode.ServiceUnavailable, "busy");
+                }
+            }
+
+            using var stillFull = await requests.SendAsync(new Work());
+            await AssertRejectedAsync(stillFull, HttpStatusCode.ServiceUnavailable, "busy");
+            using var other = await requests.SendAsync(new Work(actor: 1, retainedBytes: 4));
+            await AssertHealthyAsync(other);
+            held.Release.TrySetResult();
+            using var runningResponse = await running;
+            await AssertHealthyAsync(runningResponse);
+            for (var index = 0; index < pending.Length; index++)
+            {
+                if (admitted[index])
+                {
+                    using var completed = await pending[index];
+                    await AssertHealthyAsync(completed);
+                    await Assert.That(Header(completed, "X-Test-Active")).IsEqualTo("1");
+                }
+            }
+        }
+
+        using var oversized = await requests.SendAsync(new Work(retainedBytes: bytes + 1));
+        await AssertRejectedAsync(oversized, HttpStatusCode.ServiceUnavailable, "busy");
+        using var recovered = await requests.SendAsync(new Work(retainedBytes: bytes));
+        await AssertHealthyAsync(recovered);
+    }
+
+    [Test]
+    public async Task Queued_and_executing_cancellation_recovers_capacity_and_callback_failure_is_isolated()
+    {
+        await using var requests = new ActorRequests(maxItems: 2, maxBytes: 8);
+        await requests.StartAsync();
+        var held = new Work(retainedBytes: 4, held: true);
+        var running = requests.SendAsync(held);
+        await SignalAsync(held.Entered.Task);
+        using var cancellation = new CancellationTokenSource();
+        var cancelled = new Work(retainedBytes: 4, cancellationToken: cancellation.Token);
+        var waiting = requests.SendAsync(cancelled);
+        await SignalAsync(cancelled.Submitted.Task);
+        await cancellation.CancelAsync();
+        using var stillFull = await requests.SendAsync(new Work());
+        await AssertRejectedAsync(stillFull, HttpStatusCode.ServiceUnavailable, "busy");
+        held.Release.TrySetResult();
+        using var runningResponse = await running;
+        using var cancelledResponse = await waiting;
+        await AssertHealthyAsync(runningResponse);
+        await AssertRejectedAsync(cancelledResponse, HttpStatusCode.RequestTimeout, "cancelled");
+        using var alreadyCancelled = await requests.SendAsync(new Work(cancellationToken: cancellation.Token));
+        await AssertRejectedAsync(alreadyCancelled, HttpStatusCode.RequestTimeout, "cancelled");
+        using var executingCancellation = new CancellationTokenSource();
+        var executing = new Work(retainedBytes: 8, held: true, cancellationToken: executingCancellation.Token);
+        var executingRequest = requests.SendAsync(executing);
+        await SignalAsync(executing.Entered.Task);
+        await executingCancellation.CancelAsync();
+        using var executingResponse = await executingRequest;
+        await Assert.That(executingResponse.StatusCode).IsEqualTo(HttpStatusCode.RequestTimeout);
+        await Assert.That(Header(executingResponse, "X-Test-Failure")).IsEqualTo("cancelled");
+        await Assert.That(Header(executingResponse, "X-Test-Executed")).IsEqualTo("true");
+        await Assert.That(executing.Release.Task.IsCompleted).IsFalse();
+        using var failed = await requests.SendAsync(new Work(fail: true, retainedBytes: 8));
+        await Assert.That(failed.StatusCode).IsEqualTo(HttpStatusCode.InternalServerError);
+        await Assert.That(Header(failed, "X-Test-Failure")).IsEqualTo("callback");
+        await Assert.That(Header(failed, "X-Test-Executed")).IsEqualTo("true");
+        using var recovered = await requests.SendAsync(new Work(retainedBytes: 8));
+        await AssertHealthyAsync(recovered);
+    }
+
+    [Test]
+    public async Task Router_shutdown_races_concurrent_submission_and_drains_every_admitted_health_request()
+    {
+        await using var requests = new ActorRequests(maxItems: 4, maxBytes: 16);
+        await requests.StartAsync();
+        var held = new Work(retainedBytes: 4, held: true);
+        var running = requests.SendAsync(held);
+        await SignalAsync(held.Entered.Task);
+        var queued = new Work(retainedBytes: 4);
+        var waiting = requests.SendAsync(queued);
+        await Assert.That(await SignalAsync(queued.Submitted.Task)).IsTrue();
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var shutdownStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var work = Enumerable.Range(0, 12).Select(_ => new Work(retainedBytes: 4, admissionGate: gate)).ToArray();
+        var pending = work.Select(requests.SendAsync).ToArray();
+        var draining = DrainAsync();
+        await SignalAsync(Task.WhenAll(work.Select(input => input.Ready.Task)));
+        gate.SetResult();
+        var admitted = await SignalAsync(Task.WhenAll(work.Select(input => input.Submitted.Task)));
+        await SignalAsync(shutdownStarted.Task);
+        await Assert.That(admitted.Count(accepted => accepted) <= 2).IsTrue();
+        await Assert.That(work.All(input => !input.Entered.Task.IsCompleted)).IsTrue();
+        for (var index = 0; index < pending.Length; index++)
+        {
+            if (!admitted[index])
+            {
+                using var rejection = await pending[index];
+                var failure = Header(rejection, "X-Test-Failure");
+                await Assert.That(failure is "busy" or "disposed").IsTrue();
+                await AssertRejectedAsync(rejection, HttpStatusCode.ServiceUnavailable, failure);
+            }
+        }
+
+        using var rejected = await requests.SendAsync(new Work(actor: 1));
+        await AssertRejectedAsync(rejected, HttpStatusCode.ServiceUnavailable, "disposed");
+        await Assert.That(draining.IsCompleted).IsFalse();
+        held.Release.TrySetResult();
+        using var runningResponse = await running;
+        using var queuedResponse = await waiting;
+        await AssertHealthyAsync(runningResponse);
+        await AssertHealthyAsync(queuedResponse);
+        for (var index = 0; index < pending.Length; index++)
+        {
+            if (admitted[index])
+            {
+                using var completed = await pending[index];
+                await AssertHealthyAsync(completed);
+                await Assert.That(Header(completed, "X-Test-Active")).IsEqualTo("1");
+            }
+        }
+
+        await SignalAsync(draining);
+        using var after = await requests.SendAsync(new Work());
+        await AssertRejectedAsync(after, HttpStatusCode.ServiceUnavailable, "disposed");
+
+        async Task DrainAsync()
+        {
+            await SignalAsync(gate.Task);
+            var completion = requests.Router.DisposeAsync();
+            shutdownStarted.SetResult();
+            await completion;
+        }
+    }
+
+    [Test]
+    public async Task Routing_rejects_missing_scope_invalid_unicode_and_oversized_encoded_keys_over_http()
+    {
+        await using var requests = new ActorRequests();
+        await requests.StartAsync();
+        var database = new TenantContext("o", PlanTier.Hobby, "p", "d");
+        var key = new ActorKey(database, "c", "id");
+        foreach (var invalid in new[]
+        {
+            key with { Database = database with { ProjectId = null } },
+            key with { Database = database with { DatabaseId = null } },
+            key with { Id = "\uD800" },
+            key with { Collection = "\uDC00" },
+            key with { Id = new string('é', 2036) + "a" },
+        })
+        {
+            using var rejected = await requests.SendAsync(new Work(invalid, actor: null));
+            await AssertRejectedAsync(rejected, HttpStatusCode.BadRequest, "key");
+        }
+
+        // Five 4-byte prefixes and four ASCII fields leave 4072 bytes for the id.
+        foreach (var id in new[] { new string('é', 2035) + "a", new string('é', 2036) })
+        {
+            using var accepted = await requests.SendAsync(new Work(key with { Id = id }, actor: null));
+            await AssertHealthyAsync(accepted);
+        }
+    }
+
+    private static Task SignalAsync(Task signal) => signal.WaitAsync(TestContext.Current!.Execution.CancellationToken);
+
+    private static Task<T> SignalAsync<T>(Task<T> signal) => signal.WaitAsync(TestContext.Current!.Execution.CancellationToken);
+
+    private static string Header(HttpResponseMessage response, string name) => response.Headers.GetValues(name).Single();
+
+    private static async Task AssertHealthyAsync(HttpResponseMessage response)
+    {
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(Header(response, "X-Test-Executed")).IsEqualTo("true");
+        await Assert.That(Header(response, "X-Test-Ambient")).IsEqualTo("none");
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        await Assert.That(body.RootElement.GetProperty("status").GetString()).IsEqualTo("ok");
+    }
+
+    private static async Task AssertRejectedAsync(HttpResponseMessage response, HttpStatusCode status, string failure)
+    {
+        await Assert.That(response.StatusCode).IsEqualTo(status);
+        await Assert.That(Header(response, "X-Test-Failure")).IsEqualTo(failure);
+        await Assert.That(Header(response, "X-Test-Executed")).IsEqualTo("false");
+    }
+}
