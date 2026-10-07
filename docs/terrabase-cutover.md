@@ -32,8 +32,9 @@ fly secrets set --stage \
 ```
 
 `ts-orch ouroboros fly-secrets` stages the `TERRABASE_*` values the same way.
-`TS_DASHBOARD_PRODUCTION_DEMO=1` in `fly.toml` may stay: the TerraBase
-variables take precedence over it. Billing stays disabled until the Stripe
+The TerraBase variables take precedence over `TS_DASHBOARD_PRODUCTION_DEMO`;
+production's `fly.toml` no longer sets it (TS-581), and the deploy check
+refuses a production Machine that does. Billing stays disabled until the Stripe
 variables are set; Stripe bindings live in the same `dashboard` database.
 
 ## 3. Import the organization

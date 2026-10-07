@@ -132,8 +132,8 @@ templ onboardingView(data pageData, csrfToken string) {
 								</span>
 								<span class="ts-onboarding-plan-price">{ fmt.Sprintf("$%.2f", float64(plan.PriceCents)/100) }<span class="ts-meta"> / month</span></span>
 								<span class="ts-meta">{ fmt.Sprintf("$%.2f", float64(plan.AnnualPriceCents)/100) } / year</span>
-								<span class="ts-meta">{ plan.DatabaseAllowance() } · { plan.OperationsAllowance() }</span>
-								<span class="ts-meta">{ plan.StorageAllowance() } · { plan.MemberAllowance() }</span>
+								<span class="ts-meta">{ plan.DatabaseAllowance() } · { plan.StorageAllowance() } · { plan.MemberAllowance() }</span>
+								<span class="ts-meta">{ plan.ReadsAllowance() } · { plan.WritesAllowance() }</span>
 								@ui.Badge("tone", fmt.Sprintf("%d-day trial", plan.TrialDays))
 							</label>
 						}

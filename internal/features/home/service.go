@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"time"
 
 	"terrascale.tech/dashboard/internal/core"
 	"terrascale.tech/dashboard/internal/features/demovisuals"
@@ -36,13 +37,18 @@ type overview struct {
 	GettingStarted      []task   `json:"gettingStarted"`
 }
 
+// activity is the project's reads and writes per interval. Each read is one
+// read and each write one write; they are never added together.
 type activity struct {
-	Range      string  `json:"range" jsonschema:"Plotted range: 24h, 7d, or 30d."`
-	Sample     bool    `json:"sample" jsonschema:"True when the series is illustrative demo data rather than measured traffic."`
-	Note       string  `json:"note"`
-	TotalLabel string  `json:"totalLabel"`
-	Total      int64   `json:"total"`
-	Points     []int64 `json:"points" jsonschema:"Operations per interval, oldest first."`
+	Range       string   `json:"range" jsonschema:"Plotted range: 24h, 7d, or 30d."`
+	Sample      bool     `json:"sample" jsonschema:"True when the series is illustrative demo data rather than measured traffic."`
+	Metered     bool     `json:"metered" jsonschema:"True when TerraBase measured the series."`
+	Note        string   `json:"note"`
+	Reads       []int64  `json:"reads" jsonschema:"Reads per UTC hour (24h, 7d) or day (30d), oldest first; empty when nothing is measured."`
+	Writes      []int64  `json:"writes" jsonschema:"Writes per interval, aligned with reads."`
+	Labels      []string `json:"labels" jsonschema:"Each interval's start, aligned with reads."`
+	TotalReads  int64    `json:"totalReads"`
+	TotalWrites int64    `json:"totalWrites"`
 }
 
 type task struct {
@@ -52,7 +58,9 @@ type task struct {
 }
 
 // Overview summarizes the principal's selected project for activityRange.
-func (s Service) Overview(ctx context.Context, p core.Principal, activityRange string) (overview, error) {
+// token is the user's ts-auth access token, with which TerraBase's metered
+// reads and writes are read; without one the activity is not measured.
+func (s Service) Overview(ctx context.Context, p core.Principal, token, activityRange string) (overview, error) {
 	account, err := s.deps.Store.SnapshotAs(ctx, p)
 	if err != nil {
 		return overview{}, err
@@ -73,7 +81,7 @@ func (s Service) Overview(ctx context.Context, p core.Principal, activityRange s
 	}
 	result := overview{
 		OrganizationID: org.ID, ProjectID: project.ID, ProjectName: project.Name,
-		DatabaseCount: len(project.Databases), Activity: projectActivity(s.deps.Demo, account, org, activityRange),
+		DatabaseCount: len(project.Databases), Activity: s.projectActivity(ctx, token, account, org, project, activityRange),
 	}
 	for _, key := range project.APIKeys {
 		if key.RevokedAt.IsZero() {
@@ -107,28 +115,37 @@ func (s Service) Overview(ctx context.Context, p core.Principal, activityRange s
 	return result, nil
 }
 
-// projectActivity is the seeded sample workload for the demo account and a
-// zero baseline everywhere else, since workload telemetry is unavailable.
-func projectActivity(demo bool, account core.Account, org core.Organization, activityRange string) activity {
-	result := activity{
-		Range:      demovisuals.NormalizeRange(activityRange),
-		Note:       "Illustrative zero baseline; timestamped workload telemetry is unavailable. Audit events are listed separately.",
-		TotalLabel: "Plotted operations",
-	}
-	if demovisuals.IsSeededMarioAccount(demo, account, org) {
+// projectActivity is TerraBase's metered reads and writes of the project,
+// the seeded sample workload for the demo account, or nothing with the
+// reason it is not measured.
+func (s Service) projectActivity(ctx context.Context, token string, account core.Account, org core.Organization, project core.Project, activityRange string) activity {
+	result := activity{Range: demovisuals.NormalizeRange(activityRange)}
+	if demovisuals.IsSeededMarioAccount(s.deps.Demo, account, org) {
 		result.Sample = true
-		result.Points = demovisuals.Workload(result.Range)
-		result.Note, result.TotalLabel = "Sample organization activity for this demo; not measured provider traffic.", "Sample operations"
+		result.Reads, result.Writes, _ = demovisuals.Operations(demovisuals.Workload(result.Range))
+		result.Labels = demovisuals.PointLabels(result.Range, len(result.Reads))
+		result.Note = "Sample organization activity for this demo; not measured provider traffic."
+	} else if s.deps.Usage == nil || token == "" {
+		result.Note = "Reads and writes are metered by TerraBase for browser sessions signed in through TerraScale."
 	} else {
-		count := 7
-		switch result.Range {
-		case "24h":
-			count = 24
-		case "30d":
-			count = 30
+		granularity, from := core.UsageBuckets(result.Range, time.Now())
+		usage, err := s.deps.Usage.Usage(ctx, token, core.UsageScope{OrganizationID: org.ID, ProjectID: project.ID, Granularity: granularity, From: from})
+		switch {
+		case errors.Is(err, core.ErrNotMetered):
+			result.Note = "TerraBase doesn't report this project: it isn't stored there yet, or this account isn't a member of it there."
+		case err != nil:
+			result.Note = "Metered reads and writes could not be loaded. Try again shortly."
+		default:
+			result.Metered, result.Note = true, "Reads and writes metered by TerraBase."
+			for _, point := range usage.Series {
+				label := point.Start.UTC().Format("Jan 2, 15:04 UTC")
+				if granularity == "day" {
+					label = point.Start.UTC().Format("Jan 2")
+				}
+				result.Reads, result.Writes, result.Labels = append(result.Reads, point.Reads), append(result.Writes, point.Writes), append(result.Labels, label)
+			}
 		}
-		result.Points = make([]int64, count)
 	}
-	result.Total = demovisuals.Sum(result.Points)
+	result.TotalReads, result.TotalWrites = demovisuals.Sum(result.Reads), demovisuals.Sum(result.Writes)
 	return result
 }

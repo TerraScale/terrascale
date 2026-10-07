@@ -18,8 +18,9 @@ type pageData struct {
 	ProjectName               string
 	ActivityRange             string
 	ActivityNote              string
-	ActivityTotalLabel        string
 	ActivityChart             charts.LineData
+	ActivityReads             int64
+	ActivityWrites            int64
 	DatabaseDetail            string
 	OrganizationMembersDetail string
 	NotificationsDetail       string
@@ -28,7 +29,6 @@ type pageData struct {
 	UnreadNotifications       int
 	TotalNotifications        int
 	ActiveCredentials         int
-	ActivityEvents            int64
 	MCPEndpoint               string
 }
 
@@ -45,7 +45,7 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 		if !ok {
 			return
 		}
-		summary, err := service.Overview(r.Context(), p, r.URL.Query().Get("range"))
+		summary, err := service.Overview(r.Context(), p, core.UserToken(r.Context()), r.URL.Query().Get("range"))
 		switch {
 		case errors.Is(err, errFirstProjectNeeded):
 			http.Redirect(w, r, "/organization?newOrganization=project", http.StatusSeeOther)
@@ -64,14 +64,14 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 		activity := summary.Activity
 		data := pageData{
 			Tab: tab, ProjectName: summary.ProjectName, ActivityRange: activity.Range,
-			ActivityNote: activity.Note, ActivityTotalLabel: activity.TotalLabel,
-			ActivityChart: charts.NewLine("Activity, "+demovisuals.RangeLabel(activity.Range)+": "+activity.Note,
-				demovisuals.TickLabels(activity.Range), demovisuals.PointLabels(activity.Range, len(activity.Points)), 180,
-				charts.Series{Name: "Operations", Values: activity.Points}),
+			ActivityNote: activity.Note, ActivityReads: activity.TotalReads, ActivityWrites: activity.TotalWrites,
+			ActivityChart: charts.NewLine("Reads and writes, "+demovisuals.RangeLabel(activity.Range)+": "+activity.Note,
+				activityTicks(activity), activity.Labels, 180,
+				charts.Series{Name: "Reads", Values: activity.Reads}, charts.Series{Name: "Writes", Values: activity.Writes}),
 			DatabaseCount: summary.DatabaseCount, OrganizationMembers: summary.OrganizationMembers,
 			UnreadNotifications: summary.UnreadNotifications, TotalNotifications: summary.TotalNotifications,
-			ActiveCredentials: summary.ActiveCredentials, ActivityEvents: activity.Total,
-			DatabaseDetail: "saved project databases", OrganizationMembersDetail: "active organization members",
+			ActiveCredentials: summary.ActiveCredentials,
+			DatabaseDetail:    "saved project databases", OrganizationMembersDetail: "active organization members",
 			NotificationsDetail: "notifications loaded", MCPEndpoint: core.MCPEndpoint(r),
 		}
 		if data.DatabaseCount == 0 {
@@ -107,4 +107,13 @@ func writeError(w http.ResponseWriter, err error) {
 	if !core.WriteAccessError(w, err) {
 		http.Error(w, "invalid request", http.StatusBadRequest)
 	}
+}
+
+// activityTicks labels a sample chart's axis by distance from now; measured
+// buckets keep their own timestamps.
+func activityTicks(activity activity) []string {
+	if activity.Metered {
+		return nil
+	}
+	return demovisuals.TickLabels(activity.Range)
 }

@@ -40,8 +40,7 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
 
 FROM gcr.io/distroless/static-debian12:nonroot
 WORKDIR /
-ENV DASHBOARD_ADDR=:8080 \
-    TS_DASHBOARD_PRODUCTION_DEMO=1
+ENV DASHBOARD_ADDR=:8080
 COPY --from=build --chown=nonroot:nonroot /out/dashboard /dashboard
 EXPOSE 8080
 ENTRYPOINT ["/dashboard"]

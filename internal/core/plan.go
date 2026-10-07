@@ -1,7 +1,9 @@
 package core
 
 import (
+	"cmp"
 	"fmt"
+	"math"
 	"strconv"
 )
 
@@ -21,14 +23,48 @@ func (plan Plan) StorageAllowance() string {
 	return AllowanceUnpublished
 }
 
-func (plan Plan) OperationsAllowance() string {
-	switch {
-	case plan.OperationsPerMonth > 0:
-		return compactCount(plan.OperationsPerMonth) + " operations/month"
-	case plan.MonthlyRequests > 0:
-		return compactCount(plan.MonthlyRequests) + " requests/month"
+// MonthlyOperations is how many reads, and separately how many writes, the
+// plan includes each month; 0 means no published limit. Reads and writes
+// count apart: each read is one read and each write one write.
+func (plan Plan) MonthlyOperations() int64 {
+	return cmp.Or(plan.OperationsPerMonth, plan.MonthlyRequests)
+}
+
+func (plan Plan) ReadsAllowance() string  { return plan.monthlyAllowance("reads") }
+func (plan Plan) WritesAllowance() string { return plan.monthlyAllowance("writes") }
+
+func (plan Plan) monthlyAllowance(unit string) string {
+	if n := plan.MonthlyOperations(); n > 0 {
+		return compactCount(n) + " " + unit + "/month"
 	}
 	return AllowanceUnpublished
+}
+
+// UpgradeSeededPlan returns today's default for a plan still exactly as an
+// earlier store seeded it, before plans carried a numeric storage limit and
+// Free its reads, writes and storage (TS-581). A plan an administrator
+// changed is returned as it is. Stores apply it to the plans they return;
+// an administrator's next save of the plan persists it.
+func UpgradeSeededPlan(plan Plan) Plan {
+	for _, current := range DefaultPlans() {
+		seeded := current
+		seeded.StorageMiB = 0
+		if seeded.ID == "plan_free" {
+			seeded.OperationsPerMonth, seeded.StorageLabel = 0, ""
+		}
+		if plan == seeded {
+			return current
+		}
+	}
+	return plan
+}
+
+// MaxStorageMiB is the largest storage limit whose bytes fit an int64.
+const MaxStorageMiB = math.MaxInt64 >> 20
+
+// StorageBytes is the plan's included storage; 0 means no published limit.
+func (plan Plan) StorageBytes() int64 {
+	return min(plan.StorageMiB, MaxStorageMiB) << 20
 }
 
 func (plan Plan) DatabaseAllowance() string {

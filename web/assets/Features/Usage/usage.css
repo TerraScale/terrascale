@@ -1,9 +1,15 @@
-/* Usage: sample capacity gauges, history totals, and storage share list. */
+/* Usage: allowance and sample capacity gauges, history totals, and storage
+   share list. */
 
+.ts-usage-gauges,
 .ts-usage-sample-gauges {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
   gap: var(--ts-s4);
+}
+
+.ts-usage-gauges {
+  margin-block-end: var(--ts-s3);
 }
 
 .ts-usage-gauge {

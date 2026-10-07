@@ -335,8 +335,8 @@ func makePlanView(plan core.Plan, index int, current planCardContext) planView {
 // planFeatures lists a plan's published allowances as a plan card shows
 // them. Whether a trial applies depends on the organization, so callers add it.
 func planFeatures(plan core.Plan) []string {
-	features := make([]string, 0, 4)
-	for _, allowance := range []string{plan.StorageAllowance(), plan.OperationsAllowance(), plan.DatabaseAllowance(), plan.MemberAllowance()} {
+	features := make([]string, 0, 5)
+	for _, allowance := range []string{plan.StorageAllowance(), plan.ReadsAllowance(), plan.WritesAllowance(), plan.DatabaseAllowance(), plan.MemberAllowance()} {
 		if allowance != core.AllowanceUnpublished {
 			features = append(features, allowance)
 		}

@@ -37,7 +37,9 @@ for (const machine of machines) {
   if (guest.cpu_kind !== 'shared' || guest.cpus !== (preview ? 1 : 2) || guest.memory_mb !== (preview ? 256 : 512)) {
     fail(`${mode} Machine ${machine.id} has the wrong CPU or RAM`);
   }
-  if (config.env?.TS_DASHBOARD_PRODUCTION_DEMO !== '1') fail(`${mode} Machine ${machine.id} is not in mandatory demo mode`);
+  // Previews run the in-memory demo; production keeps its state in TerraBase.
+  if (preview && config.env?.TS_DASHBOARD_PRODUCTION_DEMO !== '1') fail(`preview Machine ${machine.id} is not in demo mode`);
+  if (!preview && 'TS_DASHBOARD_PRODUCTION_DEMO' in (config.env ?? {})) fail(`production Machine ${machine.id} sets TS_DASHBOARD_PRODUCTION_DEMO`);
   if (!service || service.autostart !== true) fail(`${mode} Machine ${machine.id} does not auto-start`);
   if ((config.mounts ?? []).length !== 0) fail(`${mode} Machine ${machine.id} has a volume mount`);
   if (preview) {

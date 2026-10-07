@@ -23,11 +23,11 @@ func TestSystemDatabaseUsageComesFromTerraBase(t *testing.T) {
 		t.Fatal(err)
 	}
 	service := Service{deps: core.Deps{Store: store, Management: system.Management, DocumentsOnly: true}}
-	report, err := service.Usage(system.WithToken(ctx), system.Principal, "")
+	report, err := service.Usage(system.WithToken(ctx), system.Principal, core.UserToken(system.WithToken(ctx)), "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(report.Databases) != 1 || report.Databases[0].Documents != 1 || report.Databases[0].StoredBytes <= 0 {
+	if len(report.Databases) != 1 || report.Databases[0].Documents != 1 || report.Databases[0].LogicalBytes <= 0 {
 		t.Fatalf("databases = %+v; want TerraBase's document and storage counts", report.Databases)
 	}
 	if !report.Totals.Available || report.Totals.Writes < 1 || report.Totals.Error != "" {
@@ -47,13 +47,13 @@ func TestSystemDatabaseUsageComesFromTerraBase(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	report, err = service.Usage(system.WithToken(ctx), p, "")
+	report, err = service.Usage(system.WithToken(ctx), p, core.UserToken(system.WithToken(ctx)), "", "")
 	if err != nil || !report.Totals.Available || report.Totals.Writes != writes {
 		t.Fatalf("mixed project totals = %+v, %v; want TerraBase's %d writes only", report.Totals, err, writes)
 	}
 
 	// Without a ts-auth token nothing reads as a measured zero.
-	report, err = service.Usage(ctx, p, "")
+	report, err = service.Usage(ctx, p, core.UserToken(ctx), "", "")
 	if err != nil || report.Totals.Available || report.Totals.Error == "" {
 		t.Fatalf("totals without a ts-auth token = %+v, %v; want them unavailable", report.Totals, err)
 	}

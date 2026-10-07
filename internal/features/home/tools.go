@@ -14,8 +14,9 @@ type overviewInput struct {
 func mountTools(tools *core.Tools, service Service) {
 	core.AddTool(tools, core.ToolSpec{
 		Name: "get_overview", Title: "Get overview", ReadOnly: true,
-		Description: "Summarize a project like the dashboard home page: database, member, notification, and credential counts, recent activity, and getting-started progress.",
+		Description: "Summarize a project like the dashboard home page: database, member, notification, and credential counts, reads and writes over the range, and getting-started progress. TerraBase meters reads and writes for browser sessions signed in through TerraScale, so tool calls report them as not measured.",
 	}, func(ctx context.Context, p core.Principal, in overviewInput) (overview, error) {
-		return service.Overview(ctx, p, in.Range)
+		// MCP access tokens carry no ts-auth token to read TerraBase with.
+		return service.Overview(ctx, p, "", in.Range)
 	})
 }

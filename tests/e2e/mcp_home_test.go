@@ -21,9 +21,11 @@ func TestMCPOverviewMatchesHomeAndConnectTabDescribesTheServer(t *testing.T) {
 		DatabaseCount       int
 		OrganizationMembers int
 		Activity            struct {
-			Range  string
-			Sample bool
-			Points []int64
+			Range   string
+			Sample  bool
+			Metered bool
+			Reads   []int64
+			Writes  []int64
 		}
 		GettingStarted []struct {
 			Title string
@@ -34,8 +36,9 @@ func TestMCPOverviewMatchesHomeAndConnectTabDescribesTheServer(t *testing.T) {
 	if overview.ProjectName != "Personal" || overview.DatabaseCount != 1 || overview.OrganizationMembers != 1 {
 		t.Errorf("get_overview = %+v, want the Personal project with one database and member", overview)
 	}
-	if overview.Activity.Range != "24h" || len(overview.Activity.Points) != 24 || overview.Activity.Sample {
-		t.Errorf("get_overview activity = %+v, want a 24-point zero baseline", overview.Activity)
+	// Tool calls carry no ts-auth token, so nothing is measured or invented.
+	if a := overview.Activity; a.Range != "24h" || a.Sample || a.Metered || len(a.Reads) != 0 || len(a.Writes) != 0 {
+		t.Errorf("get_overview activity = %+v, want an unmeasured 24h range", overview.Activity)
 	}
 	if len(overview.GettingStarted) != 2 || !overview.GettingStarted[0].Done || overview.GettingStarted[1].Done {
 		t.Errorf("get_overview getting started = %+v, want only the database task done", overview.GettingStarted)

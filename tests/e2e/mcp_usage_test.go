@@ -32,12 +32,12 @@ func TestMCPUsageReportsAndSetsSpendingControls(t *testing.T) {
 			ID                string
 			EffectiveCapCents int64
 		}
-		Totals struct{ Available bool }
+		Allowances []struct{ Name string }
 	}
 	var usage report
 	callTool(t, session, "get_usage", map[string]any{"databaseId": database.ID}, &usage)
-	if usage.PlanName == "" || !usage.CanManage || !usage.Totals.Available || len(usage.Databases) != 1 || usage.Databases[0].ID != database.ID {
-		t.Fatalf("get_usage = %+v, want the plan, manage access, available totals, and only the filtered database", usage)
+	if usage.PlanName == "" || !usage.CanManage || len(usage.Allowances) != 3 || len(usage.Databases) != 1 || usage.Databases[0].ID != database.ID {
+		t.Fatalf("get_usage = %+v, want the plan, manage access, reads, writes and storage allowances, and only the filtered database", usage)
 	}
 
 	var capped report

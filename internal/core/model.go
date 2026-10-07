@@ -577,9 +577,11 @@ type Deps struct {
 	// Management reads TerraBase's system databases for platform admins;
 	// see System. Nil in the demo.
 	Management *v1.Management
-	Throttle   Throttle
-	Tools      *Tools
-	Demo       bool
+	// Usage reads TerraBase's metered usage; nil without TerraBase.
+	Usage    UsageMeter
+	Throttle Throttle
+	Tools    *Tools
+	Demo     bool
 	// TODO(TS-463, TS-521): resource provisioning and unsupported data features
 	// retain their local Store behavior until the Management mapping lands.
 	DocumentsOnly bool

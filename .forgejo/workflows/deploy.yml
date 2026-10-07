@@ -20,7 +20,7 @@ jobs:
       # Pull requests only merge after the e2e workflow lints and tests them,
       # and Fly's remote builder compiles the image, so the runner needs no
       # Go or Node.js toolchain of its own.
-      - name: Build on Fly and deploy production (one warm demo machine)
+      - name: Build on Fly and deploy production (one warm machine)
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
           FLY_APP: ts-dashboard
@@ -31,7 +31,7 @@ jobs:
           fly image show -a "$FLY_APP" --json > "${RUNNER_TEMP:-/tmp}/previous-image.json"
           fly deploy -c fly.toml --remote-only --strategy immediate --ha=false \
             --build-arg VERSION="$GITHUB_SHA"
-          # The in-memory demo has process-local account and session state.
+          # One Machine serves production; its state lives in TerraBase.
           fly scale count 1 -a "$FLY_APP" -c fly.toml --yes
           machine_id=$(fly machine list -a "$FLY_APP" -q | xargs)
           fly machine wait "$machine_id" -a "$FLY_APP" --state started --wait-timeout 2m

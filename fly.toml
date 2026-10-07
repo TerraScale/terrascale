@@ -4,7 +4,8 @@ swap_size_mb = 900
 
 [env]
   DASHBOARD_ADDR = ":8080"
-  TS_DASHBOARD_PRODUCTION_DEMO = "1"
+  # Production keeps its state in TerraBase (the TERRABASE_* secrets), so it
+  # never runs the in-memory demo.
   # GlitchTip project; the DSN key only permits sending events.
   SENTRY_DSN = "https://116f3420d22b471e905488aecd859878@glitchtip.mariogk.com/1"
   DASHBOARD_CSP_REPORT_URL = "https://glitchtip.mariogk.com/api/1/security/?glitchtip_key=116f3420d22b471e905488aecd859878"
@@ -15,7 +16,7 @@ swap_size_mb = 900
 [http_service]
   internal_port = 8080
   force_https = true
-  # Keep the in-memory demo warm. Auto-start can wake stopped Machines if
+  # Keep one Machine warm. Auto-start can wake stopped Machines if
   # operators provision them; Fly Proxy does not create Machines on requests.
   auto_stop_machines = "off"
   auto_start_machines = true

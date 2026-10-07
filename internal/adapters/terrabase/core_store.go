@@ -205,14 +205,19 @@ func (s *Store) UpdateOrganization(ctx context.Context, organizationID string, m
 	return s.writeCore(ctx, coreLoad{organizations: []string{organizationID}, allOrganizations: true}, coreWrite{}, func(m *memstore.Store) error { return m.UpdateOrganization(ctx, organizationID, mutate) })
 }
 
+// Plans and Plan return seeded plans upgraded (core.UpgradeSeededPlan)
+// without writing them, so no other commit rewrites the catalog.
 func (s *Store) Plans(ctx context.Context) (out []core.Plan, err error) {
 	err = s.readCore(ctx, coreLoad{}, func(m *memstore.Store) error { out, err = m.Plans(ctx); return err })
+	for i := range out {
+		out[i] = core.UpgradeSeededPlan(out[i])
+	}
 	return
 }
 
 func (s *Store) Plan(ctx context.Context, idOrKey string) (out core.Plan, err error) {
 	err = s.readCore(ctx, coreLoad{}, func(m *memstore.Store) error { out, err = m.Plan(ctx, idOrKey); return err })
-	return
+	return core.UpgradeSeededPlan(out), err
 }
 
 func (s *Store) UpsertPlanAs(ctx context.Context, p core.Principal, plan core.Plan) error {

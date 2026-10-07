@@ -36,10 +36,17 @@ templ overviewView(data pageData) {
 	}
 	<div class="ts-split">
 		@ui.Card(ui.CardProps{ID: "home-activity", Title: "Activity", Description: data.ActivityNote, Actions: activityRange(data)}) {
-			<p class="ts-home-activity-total"><span class="ts-dot" aria-hidden="true"></span> { data.ActivityTotalLabel } <strong>{ fmt.Sprint(data.ActivityEvents) }</strong></p>
-			<div class="ts-chart-shell" role="region" aria-label="Activity chart. Scroll horizontally for the full plot." tabindex="0">
-				@charts.Line(data.ActivityChart)
-			</div>
+			if len(data.ActivityChart.Paths) > 0 {
+				<p class="ts-home-activity-total">
+					<span class="ts-chart-swatch ts-cat-1" aria-hidden="true"></span> Reads <strong>{ fmt.Sprint(data.ActivityReads) }</strong>
+					<span class="ts-chart-swatch ts-cat-2" aria-hidden="true"></span> Writes <strong>{ fmt.Sprint(data.ActivityWrites) }</strong>
+				</p>
+				<div class="ts-chart-shell" role="region" aria-label="Reads and writes chart. Scroll horizontally for the full plot." tabindex="0">
+					@charts.Line(data.ActivityChart)
+				</div>
+			} else {
+				@ui.Empty("No measured reads or writes to plot.", "")
+			}
 			<a class="ts-link ts-meta" href="/organization?tab=audit">View persisted audit events →</a>
 		}
 		@ui.Card(ui.CardProps{ID: "getting-started", Title: "Getting started", Description: "Get a database online and wire it into your stack."}) {

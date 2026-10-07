@@ -22,7 +22,7 @@ func TestDemoBillingUpgradesThroughLocalSimulator(t *testing.T) {
 	must(t, expect.Locator(page.GetByText("Demo billing")).ToHaveCount(0))
 
 	proPlan := planCard(page, "Pro")
-	for _, allowance := range []string{"25 GB-region storage", "100M operations/month", "25 databases", "25 team members", "30-day free trial"} {
+	for _, allowance := range []string{"25 GB-region storage", "100M reads/month", "100M writes/month", "25 databases", "25 team members", "30-day free trial"} {
 		must(t, expect.Locator(proPlan).ToContainText(allowance))
 	}
 	click(t, byRole(proPlan, *playwright.AriaRoleButton, "Upgrade to Pro"))
