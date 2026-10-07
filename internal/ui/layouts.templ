@@ -135,7 +135,7 @@ templ StatusBanner(notices []core.StatusNotice, scope string, nonce string) {
 							<span class="ts-status-notice-message">{ notice.Message }</span>
 						}
 					</p>
-					<a class="ts-link ts-status-notice-link" href={ notice.URL }>View status<span class="ts-sr-only"> of { notice.Title }</span></a>
+					<a class="ts-link ts-status-notice-link" href={ notice.URL } target="_blank" rel="noopener noreferrer">View status<span class="ts-sr-only"> of { notice.Title }</span></a>
 					if notice.ID != "" && scope != "" {
 						<button type="button" class="ts-icon-btn ts-status-notice-dismiss" aria-label={ "Dismiss alert: " + notice.Title }>
 							@icons.X(16)
