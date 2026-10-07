@@ -1,6 +1,7 @@
 using System.Net;
 using TerraBase.Configuration;
 using TerraBase.Engine;
+using TerraBase.Engine.Cluster;
 using TerraBase.Features.ApiKeys;
 using TerraBase.Features.ApiReference;
 using TerraBase.Features.Backup;
@@ -81,6 +82,7 @@ builder.Services.AddTerraBaseApiKeys();
 builder.Services.AddTerraBaseDocuments();
 builder.Services.AddTerraBaseUserAuth();
 builder.Services.AddTerraBaseManagement();
+builder.Services.AddTerraBaseCluster(options);
 builder.Services.AddTerraBaseBackup(options);
 builder.Services.AddTerraBasePressure();
 builder.AddTerraBaseReplication(options);

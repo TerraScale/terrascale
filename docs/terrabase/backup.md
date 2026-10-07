@@ -42,14 +42,16 @@ master key.
 ### Leases
 
 One member ships each file. `Engine/IShipperLeases` chooses it: `ShipperEpochAsync(database)` returns the epoch of this
-member's lease on that file while it ships it, or null. TS-647 implements it in `Engine/Cluster` with the database's
-primary member lease, so the shipper follows the primary. Until then there are two interim implementations, neither tied
-to the catalog primary:
+member's lease on that file while it ships it, or null. `Engine/Cluster` implements it with the cell's membership
+(`docs/design/anna-core.md` §5): each file is shipped by its database's **primary** on the ring of live members, while
+that member holds its member lease.
 
-- **Without `nats-url`**, the member ships every file (`SingleShipper`). This is for one member and tests: backup with
-  `peers`, `peer-addresses` or `catalog-primary` but no `nats-url` stops the process with exit code 2.
-- **With `nats-url`**, the members share ts-orchestrator's NATS (JetStream KV), the store TerraBase uses for external
-  persistence, and each file has a lease (`LeasedShippers`), described below.
+- **Without `nats-url`** the members are the static `peers` list (one member when unset), whose leases never end. This
+  is for one member and tests: backup with `peers`, `peer-addresses` or `catalog-primary` but no `nats-url` stops the
+  process with exit code 2.
+- **With `nats-url`** the members share ts-orchestrator's NATS (JetStream KV), the store TerraBase uses for external
+  persistence. Each member keeps its key `member.<base64url node-name>` in the bucket
+  `terrabase_backup_leases`.
 
 | Setting | Meaning |
 | --- | --- |
@@ -57,17 +59,18 @@ to the catalog primary:
 | `nats-credentials-file` | NATS user credentials (`.creds`: user JWT and nkey seed), required with `nats-url` |
 | `nats-certificate`, `nats-private-key`, `nats-ca` | PEM client certificate, its key and the servers' CA, for mutual TLS; all or none. With them the connection is TLS first, as ts-orchestrator's broker bridge expects; a plain nats-server needs `handshake_first: true` in its `tls` block |
 
-- Each file's lease is the key `<file directory with dots for slashes>` of the KV bucket `terrabase_backup_leases`
-  (`max_age` 15 s, created on first use with three replicas, one on a single server). The value names the member and its
-  process, so a restarted member never mistakes its previous lease for its own.
-- Every second each member tries, at most every 5 s, to create the keys of the files it does not ship. The holder
-  rewrites its keys every 5 s at the revision it holds. A lost revision means another member holds the file: it stops.
-- A holder that could not renew for 10 s stops shipping by its own monotonic clock, 5 s before the key can expire for
-  the others, so two members ship the same file only under clock drift beyond that margin. Even then nothing breaks:
-  each ships its own generation, and a restore uses one generation.
-- Whatever the implementation, a new epoch starts a new generation with a snapshot: the member taking the file over
-  ships a different physical file than the previous holder. At shutdown a holder ships what is left and deletes its keys, so another member takes over at once.
-  Otherwise takeover waits for the key to expire: about 15 to 20 s.
+- Each member rewrites its key every 5 s and reads the others in the same refresh. The bucket's `max_age` of 15 s (with
+  subject delete markers) expires a member nobody rewrites; the bucket is created on first use with three replicas, one
+  on a single server.
+- A member holds its lease while its last successful renewal began less than 10 s ago by its own monotonic clock, so
+  it stops shipping 5 s before its key can expire for the others. Two members ship the same file only under clock
+  drift or a process pause beyond that margin. Even then nothing breaks: each ships its own generation, and a restore
+  uses one generation.
+- A member that becomes a file's shipper starts at once when the previous one left the membership; otherwise it waits
+  10 s, so the previous shipper has either seen the new ring or lost its lease. A new epoch starts a new generation
+  with a snapshot: the member taking the file over ships a different physical file than the previous holder.
+- At shutdown a member ships what is left, then deletes its key, so the others take its files over at their next
+  refresh (within 5 s). After a crash, takeover waits for the key to expire: about 15 to 20 s.
 - ts-orchestrator delivers the NATS files and renews them every 24 h (TS-651). Every connect and reconnect reads them
   again, and a reconnect refused with an expired JWT keeps retrying, so no restart is needed. The backup secret files
   (`backup-secret-key-file`, `backup-kms-private-key-file`) are read at start: rotating them needs a restart.

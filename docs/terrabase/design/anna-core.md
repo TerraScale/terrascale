@@ -193,10 +193,15 @@ applied vector. One file per database stays, so TS-633's WAL tap keeps working u
 
 ### 5.1 Membership
 
-- Production: ts-orchestrator's embedded NATS (v2.15.0) JetStream KV. One key per member with the member's region,
-  zone, peer address and state. Members rewrite their key every 2 s; the bucket uses **per-key TTL with subject
-  delete markers**, so an expired member produces a delete event that every watcher sees.
-- Tests and single-node runs: the static `peers` setting, a fixed member list without leases.
+- Production: ts-orchestrator's embedded NATS (v2.15.0) JetStream KV, in the bucket ts-orchestrator already grants
+  TerraBase (`terrabase_backup_leases`, memory storage); a dedicated bucket needs a grant there first. One key per
+  member (`member.<base64url node-name>`) with the member's region, zone and peer address. Members
+  rewrite their key every **5 s** (the heartbeat) and read the others in the same refresh; the bucket's `max_age` of
+  **15 s** with **subject delete markers** (`LimitMarkerTTL`) expires a member nobody rewrites. Reads are pulls, not
+  watches, so every member decides from a view it read itself (`Engine/Cluster/StoreMembership.cs`).
+- A member that shuts down cleanly deletes its key after continuous backup stopped, so the others take its databases
+  over at once.
+- Tests and single-node runs: the static `peers` setting, a fixed member list whose leases never end.
 - `peers` and NATS membership replace `peer-addresses`.
 - The member number is the KV revision of the member's first registration, kept in its data directory; a member that
   lost its data directory registers again under a new number.
@@ -212,8 +217,14 @@ applied vector. One file per database stays, so TS-633's WAL tap keeps working u
 
 ### 5.3 Leases
 
-- A member's KV key is its lease. A member serves owner operations only while its last renewal is less than the lease
-  margin old by its own monotonic clock; a new primary serves them only after the old member's key expired.
+- A member's KV key is its lease. A member holds it while its last successful renewal (its write, then its read of the
+  others) began less than the **fence** ago by its own monotonic clock: fence = TTL − heartbeat = **10 s**, so it
+  stops a heartbeat before its key can expire for the others, and never acts on a view older than the fence.
+- A member that becomes a database's primary starts at once when the previous primary left its view (that primary's
+  key expired or was deleted, so it had already stopped); otherwise it waits out the fence, by which time the previous
+  primary has either read the new ring or lost its lease. The term's epoch is the membership revision it began at.
+- Step 3 uses this for the backup shipper (`IShipperLeases`, TS-633): each database is shipped by its primary.
+  Owner operations use the same rule in step 6.
 - **A member whose lease expired drops its replicas and refills them from peers** before it serves again, so a
   member that missed deletions while it was away cannot bring deleted documents back.
 - **GC pauses and the claim.** A paused process can outlive its lease. The owner therefore checks its lease before
@@ -392,9 +403,9 @@ every push to `main`.
 | --- | --- |
 | 1 | Delete the slice-2 surface (`core`/`actors` settings, `StorageCore`, `AnnaDocumentService`, `AnnaShapeService`, `DocumentActors`, the Development guard). Fix dot minting: epoch in `ReplicaId`, floor-seeded keys, burned dots, the same-dot refusal, no allocations in `CausalContext.Max`/`Compact` on the common path. This document rewritten |
 | 2 | Group commit: per-database writer thread apart from the read pool, one `SAVEPOINT` per client write, collections in memory. Measured with TS-606 |
-| 3 | NATS membership, ring and leases (KV TTL with delete markers) replace `peer-addresses`; static `peers` for tests; refill after an expired lease; lease checks around owner commits; clock-skew capping |
+| 3 | NATS membership, ring and leases (KV TTL with delete markers); static `peers` for tests; backup shipper by lease (with TS-633), deleting TS-633's interim leases. Then: membership replaces `peer-addresses`; refill after an expired lease; lease checks around owner commits; clock-skew capping |
 | 4 | Format flip at the TS-602 wipe: `MvRegister` state, HLC stamps, epoch replica ids, joins, per-origin streams with dependency vectors, `tbv2` tokens; delete `VersionClock`, `StampingStorageEngine`/`IWriteStamps`, `JournalDigest`, merge v1, baselines and legacy upgrades. Gate: the partition suite. Merges only after TS-650 and a deploy freeze |
-| 5 | `_system` as a lattice database on every member; delete the catalog primary; backup shipper by lease (with TS-633); usage `GCounter`s |
+| 5 | `_system` as a lattice database on every member; delete the catalog primary; usage `GCounter`s |
 | 6 | Owner CAS and conditional transactions on the primary owner, reservations released by the flush callback; end-to-end tests of commit fences and dashboard sign-in |
 | 7 | Causal consistency per request; interval and tombstone GC on applied vectors |
 

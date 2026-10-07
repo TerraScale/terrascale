@@ -277,6 +277,9 @@ public sealed record TerraBaseOptions : IDisposable
     /// </summary>
     public IReadOnlyList<Uri> PeerAddresses { get; init; } = [];
 
+    /// <summary>Every member of <c>peers</c> by name, this node included, or <see langword="null"/> when <c>peers</c> is not set.</summary>
+    public IReadOnlyDictionary<string, Uri>? Peers { get; init; }
+
     /// <summary>
     /// The peer listener (<c>https://host:port</c>) of the catalog primary this node follows: it replicates the system
     /// database from there and writes none of it (docs/decisions/0009). <see langword="null"/> makes this node a catalog
@@ -496,6 +499,7 @@ public sealed record TerraBaseOptions : IDisposable
                 ReadinessCacheTtl = readinessCacheTtl,
                 Backup = backup,
                 Nats = nats,
+                Peers = peers,
             };
         }
         catch

@@ -3,8 +3,8 @@ using TerraBase.Tenancy;
 namespace TerraBase.Engine;
 
 /// <summary>
-/// Chooses the one member that ships each storage file's continuous backup (TS-633). TS-647 implements it in
-/// <c>Engine/Cluster</c> with the database's primary member lease; until then <c>Features/Backup</c> has an interim one.
+/// Chooses the one member that ships each storage file's continuous backup (TS-633): <c>Engine/Cluster</c> picks the
+/// database's primary member while it holds its member lease (TS-647).
 /// </summary>
 public interface IShipperLeases
 {

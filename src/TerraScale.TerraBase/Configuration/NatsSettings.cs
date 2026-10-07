@@ -4,8 +4,8 @@ using System.Security.Cryptography.X509Certificates;
 namespace TerraBase.Configuration;
 
 /// <summary>
-/// The connection to ts-orchestrator's NATS, the external persistence TerraBase uses for leases (TS-633 backup shippers)
-/// and, later, Anna membership (<c>docs/design/anna-core.md</c> §6). <c>nats-url</c> and <c>nats-credentials-file</c>
+/// The connection to ts-orchestrator's NATS, the external persistence TerraBase uses for the cell's membership and
+/// leases (<c>docs/design/anna-core.md</c> §5). <c>nats-url</c> and <c>nats-credentials-file</c>
 /// enable it; <c>nats-certificate</c>, <c>nats-private-key</c> and <c>nats-ca</c> add mutual TLS, all or none.
 /// </summary>
 public sealed class NatsSettings

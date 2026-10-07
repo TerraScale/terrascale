@@ -7,6 +7,7 @@ using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
+using TerraBase.Engine.Cluster;
 using TerraBase.Features.Backup;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
@@ -179,7 +180,7 @@ public sealed class ContinuousBackupTests
     {
         using var oci = new FakeOci();
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 7, 12, 0, 0, TimeSpan.Zero));
-        var leases = new FakeLeases(time);
+        var store = new FakeMemberStore(time);
         var database = new TenantContext(Guid.NewGuid().ToString(), PlanTier.Hobby, Guid.NewGuid().ToString(), Guid.NewGuid().ToString());
         var file = $"v1/{database.OrganizationId}/{database.ProjectId}/{database.DatabaseId}";
         await using var a = await MemberAsync("member-a");
@@ -190,15 +191,18 @@ public sealed class ContinuousBackupTests
             await member.Services.GetRequiredService<IStorageEngine>().CreateDatabaseAsync(database, CancellationToken.None);
         }
 
+        // The database's primary on the ring ships it once its first term began: a lease fence after it saw the members.
         time.Advance(TimeSpan.FromSeconds(10));
         await PassAsync();
-        var holder = leases.Holders()[file.Replace('/', '.')];
+        time.Advance(TimeSpan.FromSeconds(10));
+        await PassAsync();
+        var holder = members.Single(member => Status(member.Value, file).Shipping).Key;
         var other = holder == "member-a" ? "member-b" : "member-a";
         var first = Status(members[holder], file);
         var otherFirst = Status(members[other], file);
 
-        // Cut the holder off: it stops shipping once its lease could be stale, before the lease expires for the others.
-        leases.Partition(holder);
+        // Cut the holder off: it stops shipping once its lease could be stale, before its key expires for the others.
+        store.Partition(holder);
         time.Advance(TimeSpan.FromSeconds(11));
         await PassAsync();
         var stopped = Status(members[holder], file);
@@ -214,7 +218,6 @@ public sealed class ContinuousBackupTests
         await Assert.That(waiting.Shipping).IsFalse();
         await Assert.That(taken.Shipping).IsTrue();
         await Assert.That(taken.Generation).IsNotNull().And.IsNotEqualTo(first.Generation);
-        await Assert.That(leases.Holders()[file.Replace('/', '.')]).IsEqualTo(other);
         // Both generations start with their own snapshot of the file.
         var generations = oci.Objects.Keys.Where(key => key.StartsWith(file + "/snapshots/", StringComparison.Ordinal))
             .Select(key => key.Split('/')[^1].Split('-')[1]).ToHashSet(StringComparer.Ordinal);
@@ -230,8 +233,7 @@ public sealed class ContinuousBackupTests
             {
                 oci.Route(services);
                 services.AddSingleton<TimeProvider>(time);
-                services.AddSingleton<ILeaseStore>(leases);
-                services.AddSingleton<IShipperLeases, LeasedShippers>();
+                services.AddSingleton<IMemberStore>(store);
             });
         }
 
