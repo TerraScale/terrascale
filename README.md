@@ -79,7 +79,9 @@ The C# producer owns these routes:
 Collection methods are `get`, `put`, `create`, `patch`, `delete`, `query`,
 `pages` and `items`. New document IDs are canonical UUIDs; `documentIdFor`
 generates a stable UUIDv5 from a natural key. Documents return
-`{ id, version, state: "value", document }`. Writes return the version and a
+`{ id, version, state: "value", document }`; a causal read can answer
+`state: "conflict"` with `siblings`, and unknown states pass through. Versions
+(`tbv1-…`, `tbv2-…`) are opaque tokens. Writes return the version and a
 decimal-string commit `offset`; preserve those opaque positions and use
 `ifMatch` or `ifNoneMatchAny` for conditional writes.
 

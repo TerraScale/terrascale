@@ -1,7 +1,8 @@
 // Identifiers for the TerraBase v1 Documents API (api-v1.md).
 
 const namePattern = /^[a-z][a-z0-9_-]{0,62}$/u;
-const versionPattern = /^tbv1-[0-9a-f]{32}$/u;
+// Version tokens are opaque (tbv1-<32 hex>, tbv2-...): only RFC 9110 opaque-tag characters, safe to quote in If-Match.
+const versionPattern = /^[\x21\x23-\x7e]{1,256}$/u;
 const offsetPattern = /^(?:0|[1-9]\d{0,19})$/u;
 const maximumU64 = (1n << 64n) - 1n;
 
@@ -49,7 +50,7 @@ export function requireDocumentId(id) {
  */
 export function requireVersion(version) {
   if (typeof version !== "string" || !versionPattern.test(version))
-    throw new TypeError("TerraBase versions are tbv1- followed by 32 lowercase hex characters.");
+    throw new TypeError("TerraBase versions are opaque tokens of 1-256 visible ASCII characters without quotes.");
   return version;
 }
 

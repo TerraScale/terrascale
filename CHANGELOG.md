@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.0.2 — TS-650
+
+TerraBase version tokens are opaque: `tbv1-<32 hex>` and the coming `tbv2-…`
+format are both accepted (any 1-256 visible ASCII characters without quotes, so
+they stay safe in `If-Match`). Responses with new members no longer throw:
+`durability` passes through any label, and documents pass through any `state`,
+including a causal read's `"conflict"` with its `siblings` (the LWW winner stays
+in `document`). Conditional writes and error handling are unchanged.
+
 ## 0.0.1 — TS-498
 
 The package moves from the unscoped `terrascale` npm name, which the owner has

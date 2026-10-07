@@ -15,6 +15,7 @@ const project = "019a0000-0000-7000-8000-000000000001";
 const token = `tb_${"A".repeat(43)}`;
 const id = "019a0000-0000-7000-8000-000000000002";
 const version = `tbv1-${"0".repeat(32)}`;
+const tbv2 = "tbv2-AYCBgoOEhYaHiImKi4yNjo-QkZKTlJWWl5iZmpucnZ6f";
 const handle = `h1-${"1".repeat(16)}`;
 const config = { project, token, baseUrl: "https://database.example/prefix/" };
 const db = createTerraBaseV1Client(config).database("app");
@@ -167,16 +168,29 @@ describe("C# v1 pure contract validation", () => {
     expect(requireDocumentId("legacy/id ?#%+é")).toBe("legacy/id ?#%+é");
     expect(requireDocumentId(id)).toBe(id);
     for (const bad of ["", ".", "..", "a\nb", "\ud800", "a".repeat(257)]) expect(() => requireDocumentId(bad)).toThrow(TypeError);
-    expect(requireVersion(version)).toBe(version);
-    expect(() => requireVersion("rust-version")).toThrow(TypeError);
   });
 
-  it("decodes only single-writer C# values and local durability", () => {
+  it("treats tbv1 and tbv2 version tokens as opaque If-Match-safe strings", () => {
+    for (const token of [version, tbv2]) expect(requireVersion(token)).toBe(token);
+    for (const bad of [undefined, 1, "", "tbv2-a b", 'tbv2-"x"', "tbv2-\n", "tbv2-é", "t".repeat(257)]) expect(() => requireVersion(bad)).toThrow(TypeError);
+    expect(decodeWrite({ status: 200, headers: new Headers(), value: { id, version: tbv2, offset: "7", durability: "local_durable" } }).version).toBe(tbv2);
+    const shape = decodeShapePage({ shape_id: "0".repeat(32), handle, offset: "-1", next_offset: "1", up_to_date: true,
+      changes: [{ offset: "1", ops: [{ op: "upsert", id, version: tbv2, document: {} }] }] }, new Headers());
+    expect(shape.changes[0]?.ops[0]).toMatchObject({ version: tbv2 });
+  });
+
+  it("decodes values, causal conflicts with siblings, and unknown states or durability without throwing", () => {
     expect(decodeDocument({ id, version, state: "value", document: { seats: 1 } })).toEqual({ id, version, state: "value", document: { seats: 1 } });
+    const siblings = [{ version, document: { seats: 1 } }, { version: tbv2, document: { seats: 2 } }];
+    expect(decodeDocument({ id, version: tbv2, state: "conflict", document: { seats: 2 }, siblings, future: true }))
+      .toEqual({ id, version: tbv2, state: "conflict", document: { seats: 2 }, siblings });
+    expect(decodeDocument({ id, version: tbv2, state: "merged", document: {} }).state).toBe("merged");
     expect(() => decodeDocument({ id, version, state: "conflict", siblings: [] })).toThrow(TypeError);
-    expect(() => decodeDocument({ id, version: "invalid", state: "value", document: {} })).toThrow(TypeError);
+    expect(() => decodeDocument({ id, version, state: "conflict", document: {}, siblings: {} })).toThrow(TypeError);
+    expect(() => decodeDocument({ id, version: "in valid", state: "value", document: {} })).toThrow(TypeError);
     expect(decodeWrite({ status: 201, headers: new Headers({ location: "/created" }), value: { id, version, offset: "42", durability: "local_durable" } })).toMatchObject({ created: true, location: "/created", offset: "42" });
-    expect(() => decodeWrite({ status: 200, headers: new Headers(), value: { id, version, offset: "42", durability: "object_durable" } })).toThrow(TypeError);
+    expect(decodeWrite({ status: 200, headers: new Headers(), value: { id, version, offset: "42", durability: "synced_durable" } }).durability).toBe("synced_durable");
+    expect(() => decodeWrite({ status: 200, headers: new Headers(), value: { id, version, offset: "42" } })).toThrow(TypeError);
   });
 
   it("preserves exact decimals and enforces producer decimal bounds", () => {

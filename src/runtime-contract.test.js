@@ -20,7 +20,7 @@ test("public package keeps Node persistence/SQL and Better Auth server condition
   expect(manifest.peerDependenciesMeta["@tanstack/db"].optional).toBe(true);
   expect(manifest.peerDependencies["@better-auth/core"]).toBe("1.7.2");
   expect(manifest.devDependencies["@better-auth/test-utils"]).toBe("1.7.2");
-  expect(manifest.version).toBe("0.0.1");
+  expect(manifest.version).toBe("0.0.2");
   const lockfile = JSON.parse(
     await readFile(new URL("../package-lock.json", import.meta.url), "utf8"),
   );

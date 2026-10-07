@@ -3,10 +3,16 @@ import { parseU64, requireVersion } from "./ids.js";
 import { isJsonObject } from "./json.js";
 /** @import { JsonObject, JsonValue } from "./json.js" */
 
-/** @typedef {"local_durable"} V1Durability */
+/** Unknown future labels pass through. @typedef {"local_durable" | (string & {})} V1Durability */
 /**
- * C# single-writer documents always carry a value, never conflict siblings.
- * @typedef {{ readonly id: string; readonly version: string; readonly state: "value"; readonly document: JsonObject }} V1Document
+ * `document` is the value, or the LWW winner when a causal read answers `"conflict"` with `siblings`.
+ * Unknown future states pass through.
+ * @typedef {object} V1Document
+ * @property {string} id
+ * @property {string} version
+ * @property {"value" | "conflict" | (string & {})} state
+ * @property {JsonObject} document
+ * @property {readonly JsonValue[]} [siblings] Every live version, on a causal read with several.
  */
 
 /**
@@ -78,7 +84,7 @@ export function array(value, what) {
  * @returns {V1Durability}
  */
 export function durability(value) {
-  return value === "local_durable" ? value : malformed("durability");
+  return string(value, "durability");
 }
 
 /**
@@ -89,8 +95,10 @@ export function decodeDocument(value) {
   const raw = object(value, "document");
   const id = string(raw.id, "document id");
   const version = requireVersion(raw.version);
-  if (raw.state !== "value") return malformed("document state");
-  return Object.freeze({ id, version, state: "value", document: object(raw.document, "document body") });
+  const state = string(raw.state, "document state");
+  const document = object(raw.document, "document body");
+  if (raw.siblings === undefined) return Object.freeze({ id, version, state, document });
+  return Object.freeze({ id, version, state, document, siblings: Object.freeze(array(raw.siblings, "document siblings")) });
 }
 
 /**
