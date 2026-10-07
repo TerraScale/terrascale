@@ -40,6 +40,74 @@ values.
 Give the backup identity only what it needs: object read, write and list in the backup bucket, and `use` of the one
 master key.
 
+### Customer buckets (TS-635)
+
+A project can attach one S3-compatible customer bucket through the authenticated Management API:
+
+```http
+PUT /v1/management/organizations/{organization}/projects/{project}/backup-destination
+Content-Type: application/json
+Authorization: Bearer <ts-auth user access token>
+
+{"endpoint":"https://s3.example.com","region":"us-east-1","bucket":"customer-backups","accessKeyId":"…","secretKey":"…","mode":"both"}
+```
+
+`mode=both` ships the project's encrypted snapshots, WAL segments and wrapped data keys to both buckets.
+`mode=customer` ships that project's data only to the customer bucket. `_system.db` and other projects stay in the
+platform bucket. Continuous backup must already be enabled, including its platform bucket and OCI master key; customer
+backup uses that same master key. This is customer-only **project shipping**, not a standalone backup service.
+
+`GET` at the same path returns `endpoint`, `region`, `bucket`, `mode`, and `updatedAt`; it never returns credentials or
+Vault references. `DELETE` detaches the customer destination and resumes platform shipping. It preserves customer
+objects. Reattaching the same bucket and credentials makes its older backups accessible again. Every save replaces the
+credentials and starts a new generation with a snapshot, so a newly attached bucket never receives WAL without a base.
+A viewer cannot save or detach destinations; other existing writable-project roles can. Outsiders receive 404.
+
+The bucket must allow read, write, list and delete under `v1/<organization>/<project>/` and read/write/list under
+`v1/keys/<organization>/<project>/`. Saving checks the object permissions using a small non-secret probe, which may
+remain if a bucket retention rule protects it. Customer endpoints must use HTTPS and public IP addresses. Redirects,
+proxies and connections to private, loopback or metadata addresses are blocked; private-network S3 endpoints are not
+supported.
+
+Customer credentials live encrypted in OCI Vault Secrets as a versioned JSON secret. TerraBase's versioned catalog
+record under `projects/<project>/backup_destination` holds public settings and the secret OCID only. Credentials are
+write-only, and errors never include provider response bodies. The runtime identity needs secret creation/retrieval and
+secret encryption-key permissions in addition to the original backup permissions. Configure all four settings together:
+
+| Setting | Meaning |
+| --- | --- |
+| `backup-vault-id` | Vault OCID for customer credential secrets |
+| `backup-vault-compartment-id` | Compartment OCID for those secrets |
+| `backup-vault-endpoint` | HTTPS Vault secrets management endpoint |
+| `backup-secrets-endpoint` | HTTPS Secret Retrieval endpoint |
+
+The existing `backup-kms-api-key`, `backup-kms-private-key-file` and `backup-kms-key-id` sign and encrypt the secret
+operations. Changing a destination creates a new secret, leaving prior secrets for operator retirement after any
+in-flight work and required recovery access end. Detached/replaced buckets and unreferenced secrets are not automatically
+purged. An unsuccessfully saved secret is scheduled for deletion after OCI's minimum seven-day window when possible;
+a transport failure before receiving its OCID can leave an orphan named `terrabase-backup-<random id>`.
+
+Restore selection is explicit and never falls back between buckets:
+
+- `GET …/databases/{database}/point-in-time?destination=platform|customer`
+- `POST …/databases/{database}/point-in-time/restore` adds `"destination":"platform"` or `"destination":"customer"`
+  to the existing `pointInTime`/`name` body. Omission keeps the original platform behavior.
+
+Each source's window comes from its own stored objects, so old platform backups stay restorable after switching to
+customer-only. Encryption and the object layout are unchanged; restoring either source still requires OCI KMS access.
+In `both` mode, shipping succeeds only when both uploads succeed; a failed destination delays this project's progress
+and starts a fresh generation after backoff to avoid overlapping WAL segments after a partial upload. Other projects
+continue shipping. Retention scans and deletes each bucket independently in `both` mode; drills exercise the customer
+copy. Snapshot inventories are capped at 10,000 per file and bucket; expired segments are deleted in batches of sixteen.
+Customer object operations have a fifteen-minute deadline covering response headers, streamed body decoding and all
+pages of a listing.
+
+The SDK/dashboard integration must consume these endpoints through `ts-go` and forward the signed-in user's ts-auth
+access token. The dashboard's currently pinned SDK uses the older management API and needs compatible typed methods
+before a bucket configuration UI can ship. This TerraBase change supplies the server contract; it does not change
+`ts-go` or `ts-dashboard`, and TS-635's dashboard outcome remains a dependent integration task. Native dashboard sign-in
+is unchanged. No live Vault, IAM or dashboard rollout is performed by this repository change.
+
 ### Leases
 
 One member ships each file. `Engine/IShipperLeases` chooses it: `ShipperEpochAsync(database)` returns the epoch of this

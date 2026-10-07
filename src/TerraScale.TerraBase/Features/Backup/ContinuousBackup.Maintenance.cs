@@ -51,67 +51,107 @@ internal sealed partial class ContinuousBackup
             ? _settings.RetentionDays.Values.Max()
             : _settings.RetentionDays[await _tenants.PlanAsync(file.Database.OrganizationId, cancellationToken).ConfigureAwait(false)];
         var cutoff = now - TimeSpan.FromDays(file.RetentionDays) - RetentionGrace;
-        var snapshots = new List<SnapshotKey>();
-        await foreach (var snapshot in _reader.SnapshotsAsync(file.Prefix, cancellationToken).ConfigureAwait(false))
+        long size = 0;
+        var measure = now - file.SizedAt >= SizeInterval;
+        foreach (var store in file.Target.RetentionStores)
         {
-            snapshots.Add(snapshot);
-        }
-
-        var floor = snapshots.FindLastIndex(snapshot => snapshot.At < cutoff);
-        if (floor > 0)
-        {
-            var kept = snapshots[floor..].Select(snapshot => snapshot.Generation).ToHashSet();
-            var expired = new List<string>();
-            foreach (var generation in snapshots[..floor].Select(snapshot => snapshot.Generation).Distinct().Where(generation => !kept.Contains(generation)))
+            await RetainStoreAsync(file, store, cutoff, cancellationToken).ConfigureAwait(false);
+            if (measure)
             {
-                await foreach (var item in _store.ListAsync(BackupLayout.Segments(file.Prefix, generation), null, cancellationToken).ConfigureAwait(false))
+                await foreach (var item in store.ListAsync(file.Prefix + "/", null, cancellationToken).ConfigureAwait(false))
                 {
-                    expired.Add(item.Key);
+                    size = checked(size + item.Size);
                 }
-            }
-
-            var oldest = snapshots[floor];
-            await foreach (var item in _store.ListAsync(BackupLayout.Segments(file.Prefix, oldest.Generation), null, cancellationToken).ConfigureAwait(false))
-            {
-                if (BackupLayout.ParseSegment(item.Key) is not { } segment || segment.Start >= oldest.Position)
-                {
-                    break;
-                }
-
-                expired.Add(item.Key);
-            }
-
-            // Segments first, oldest first: an interrupted pass leaves old snapshots whose segments are gone, outside the
-            // window, and the next pass deletes them; never segments that no snapshot reaches. A bucket retention rule (OCI
-            // object lock) refuses deleting younger objects: the pass stops at the first, and later passes go on once it expires.
-            expired.Sort((left, right) => (BackupLayout.ParseSegment(left)?.At ?? default).CompareTo(BackupLayout.ParseSegment(right)?.At ?? default));
-            if (await DeleteAsync(expired, cancellationToken).ConfigureAwait(false)
-                && await DeleteAsync([.. snapshots[..floor].Select(snapshot => snapshot.Key)], cancellationToken).ConfigureAwait(false))
-            {
-                LogRetained(_logger, file.Prefix, floor, expired.Count);
             }
         }
 
-        if (now - file.SizedAt >= SizeInterval)
+        if (measure)
         {
-            long size = 0;
-            await foreach (var item in _store.ListAsync(file.Prefix + "/", null, cancellationToken).ConfigureAwait(false))
-            {
-                size += item.Size;
-            }
-
             (file.SizeBytes, file.SizedAt) = (size, now);
         }
 
         await RecordAsync(file, cancellationToken).ConfigureAwait(false);
     }
 
+    // Inventories and deletions belong to one destination: partial uploads or a failed delete in the other destination
+    // must remain discoverable on later passes. Bound snapshots, and stream expired segments in batches of sixteen.
+    private static async Task RetainStoreAsync(ShippedFile file, IObjectStore store, DateTimeOffset cutoff, CancellationToken cancellationToken)
+    {
+        const int maxSnapshots = 10_000;
+        var snapshots = new List<SnapshotKey>();
+        await foreach (var item in store.ListAsync(BackupLayout.Snapshots(file.Prefix), null, cancellationToken).ConfigureAwait(false))
+        {
+            if (BackupLayout.ParseSnapshot(item.Key) is not { } snapshot)
+            {
+                continue;
+            }
+
+            if (snapshots.Count == maxSnapshots)
+            {
+                throw new InvalidDataException("backup snapshot inventory exceeds its item limit");
+            }
+
+            snapshots.Add(snapshot);
+        }
+
+        var floor = snapshots.FindLastIndex(snapshot => snapshot.At < cutoff);
+        if (floor <= 0)
+        {
+            return;
+        }
+
+        var kept = snapshots[floor..].Select(snapshot => snapshot.Generation).ToHashSet();
+        foreach (var generation in snapshots[..floor].Select(snapshot => snapshot.Generation).Distinct().Where(generation => !kept.Contains(generation)))
+        {
+            if (!await DeleteSegmentsAsync(store, file.Prefix, generation, before: null, cancellationToken).ConfigureAwait(false))
+            {
+                return;
+            }
+        }
+
+        var oldest = snapshots[floor];
+        if (await DeleteSegmentsAsync(store, file.Prefix, oldest.Generation, oldest.Position, cancellationToken).ConfigureAwait(false))
+        {
+            _ = await DeleteAsync(store, [.. snapshots[..floor].Select(snapshot => snapshot.Key)], cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private static async Task<bool> DeleteSegmentsAsync(IObjectStore store, string file, Ulid generation, long? before, CancellationToken cancellationToken)
+    {
+        var batch = new List<string>(16);
+        await foreach (var item in store.ListAsync(BackupLayout.Segments(file, generation), null, cancellationToken).ConfigureAwait(false))
+        {
+            if (BackupLayout.ParseSegment(item.Key) is not { } segment)
+            {
+                continue;
+            }
+
+            if (segment.Start >= before)
+            {
+                break;
+            }
+
+            batch.Add(item.Key);
+            if (batch.Count == 16)
+            {
+                if (!await DeleteAsync(store, batch, cancellationToken).ConfigureAwait(false))
+                {
+                    return false;
+                }
+
+                batch.Clear();
+            }
+        }
+
+        return await DeleteAsync(store, batch, cancellationToken).ConfigureAwait(false);
+    }
+
     // Deletes keys sixteen at a time in order; false once the bucket's retention rule still protects one of them.
-    private async Task<bool> DeleteAsync(List<string> keys, CancellationToken cancellationToken)
+    private static async Task<bool> DeleteAsync(IObjectStore store, List<string> keys, CancellationToken cancellationToken)
     {
         foreach (var chunk in keys.Chunk(16))
         {
-            var deleted = await Task.WhenAll(chunk.Select(key => _store.DeleteAsync(key, cancellationToken))).ConfigureAwait(false);
+            var deleted = await Task.WhenAll(chunk.Select(key => store.DeleteAsync(key, cancellationToken))).ConfigureAwait(false);
             if (!deleted.All(done => done))
             {
                 return false;
@@ -132,7 +172,7 @@ internal sealed partial class ContinuousBackup
         try
         {
             var source = stored;
-            await foreach (var snapshot in _reader.SnapshotsAsync(file.Prefix, cancellationToken).ConfigureAwait(false))
+            await foreach (var snapshot in file.Target.Reader.SnapshotsAsync(file.Prefix, cancellationToken).ConfigureAwait(false))
             {
                 if (snapshot.Generation == stored.Generation && snapshot.Position < stored.Position)
                 {
@@ -140,7 +180,7 @@ internal sealed partial class ContinuousBackup
                 }
             }
 
-            var (restored, reached) = await _reader.BuildAsync(file.Prefix, file.Scope, source, DateTimeOffset.MaxValue, stored.Position, cancellationToken)
+            var (restored, reached) = await file.Target.Reader.BuildAsync(file.Prefix, file.Scope, source, DateTimeOffset.MaxValue, stored.Position, cancellationToken)
                 .ConfigureAwait(false);
             try
             {
@@ -205,9 +245,6 @@ internal sealed partial class ContinuousBackup
             LogRecordFailed(_logger, file.Prefix, error);
         }
     }
-
-    [LoggerMessage(Level = LogLevel.Information, Message = "Retention removed {Snapshots} snapshots and {Segments} segments of {File}")]
-    private static partial void LogRetained(ILogger logger, string file, int snapshots, int segments);
 
     [LoggerMessage(Level = LogLevel.Error, Message = "The restore drill of {File} failed: {Reason}")]
     private static partial void LogDrillFailed(ILogger logger, string file, string reason);

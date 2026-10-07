@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using System.Text;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Internal;
@@ -16,11 +17,15 @@ namespace TerraBase.Features.Backup;
 /// restores (at most 4 MiB of key material in both caches), including concurrent downloads using the same key.
 /// Entries expire after a day without access; a cache miss retrieves the retained wrapped key.
 /// </remarks>
-internal sealed class DataKeys(IObjectStore store, IMasterKey master, TimeProvider time, BackupSettings settings) : IDisposable
+internal sealed class DataKeys(IObjectStore store, IMasterKey master, TimeProvider time, BackupSettings settings, bool freshKey = false, SemaphoreSlim? reads = null) : IDisposable
 {
     private static readonly TimeSpan RefreshInterval = TimeSpan.FromMinutes(1);
     private static readonly TimeSpan CacheLifetime = TimeSpan.FromDays(1);
     private const int CacheCapacity = 65536;
+    private const int MaxWrappedKeyBytes = 16 * 1024;
+    private const int MaxReads = 8;
+    // Share admission with the platform key manager of this host; independent integration hosts own their slots.
+    internal SemaphoreSlim ReadSlots { get; } = reads ?? new(MaxReads, MaxReads);
     private readonly TimeSpan _rotation = TimeSpan.FromDays(settings.KeyRotationDays);
     private readonly MemoryCache _current = new(new MemoryCacheOptions { Clock = new CacheClock(time) });
     private readonly MemoryCache _keys = new(new MemoryCacheOptions { Clock = new CacheClock(time) });
@@ -50,14 +55,18 @@ internal sealed class DataKeys(IObjectStore store, IMasterKey master, TimeProvid
 
             _current.TryGetValue(scope, out CurrentKey? previous);
             var id = previous?.Id;
-            var after = id is null ? null : BackupLayout.Key(scope, id);
-            var prefix = BackupLayout.Keys(scope);
-            await foreach (var item in store.ListAsync(prefix, after, cancellationToken).ConfigureAwait(false))
+            // Customer shipping starts with its own durable key, including when it mirrors both buckets.
+            if (!freshKey)
             {
-                var candidate = item.Key[prefix.Length..];
-                if (TryParseKey(candidate, out var candidateKey) && NotFuture(candidateKey))
+                var after = id is null ? null : BackupLayout.Key(scope, id);
+                var prefix = BackupLayout.Keys(scope);
+                await foreach (var item in store.ListAsync(prefix, after, cancellationToken).ConfigureAwait(false))
                 {
-                    id = candidate;
+                    var candidate = item.Key[prefix.Length..];
+                    if (TryParseKey(candidate, out var candidateKey) && NotFuture(candidateKey))
+                    {
+                        id = candidate;
+                    }
                 }
             }
 
@@ -107,19 +116,51 @@ internal sealed class DataKeys(IObjectStore store, IMasterKey master, TimeProvid
                 return selected;
             }
 
-            string? wrapped = null;
-            if (!await store.ReadAsync(BackupLayout.Key(scope, id), async content =>
-                {
-                    using var reader = new StreamReader(content, Encoding.ASCII);
-                    wrapped = await reader.ReadToEndAsync(cancellationToken).ConfigureAwait(false);
-                }, cancellationToken).ConfigureAwait(false) || string.IsNullOrEmpty(wrapped))
+            if (!await ReadSlots.WaitAsync(0, cancellationToken).ConfigureAwait(false))
             {
-                throw new InvalidDataException("a backup object names a data key the bucket does not hold");
+                throw new IOException("backup data key read limit reached");
             }
 
-            var key = await master.UnwrapAsync(wrapped, cancellationToken).ConfigureAwait(false);
-            Cache(_keys, (scope, id), key);
-            return key;
+            try
+            {
+                var buffer = new byte[MaxWrappedKeyBytes + 1];
+                try
+                {
+                    string? wrapped = null;
+                    if (!await store.ReadAsync(BackupLayout.Key(scope, id), async (content, readToken) =>
+                        {
+                            var length = await content.ReadAtLeastAsync(buffer, buffer.Length, throwOnEndOfStream: false, readToken).ConfigureAwait(false);
+                            if (length > MaxWrappedKeyBytes)
+                            {
+                                throw new InvalidDataException("backup wrapped data key exceeds its byte limit");
+                            }
+                            wrapped = Encoding.ASCII.GetString(buffer, 0, length);
+                        }, cancellationToken).ConfigureAwait(false) || string.IsNullOrEmpty(wrapped))
+                    {
+                        throw new InvalidDataException("a backup object names a data key the bucket does not hold");
+                    }
+
+                    var key = await master.UnwrapAsync(wrapped, cancellationToken).ConfigureAwait(false);
+                    try
+                    {
+                        Cache(_keys, (scope, id), key);
+                        return key;
+                    }
+                    catch
+                    {
+                        CryptographicOperations.ZeroMemory(key);
+                        throw;
+                    }
+                }
+                finally
+                {
+                    CryptographicOperations.ZeroMemory(buffer);
+                }
+            }
+            finally
+            {
+                ReadSlots.Release();
+            }
         }
         finally
         {
@@ -129,6 +170,22 @@ internal sealed class DataKeys(IObjectStore store, IMasterKey master, TimeProvid
 
     public void Dispose()
     {
+        foreach (var id in _current.Keys)
+        {
+            if (_current.TryGetValue(id, out CurrentKey? current) && current is not null)
+            {
+                CryptographicOperations.ZeroMemory(current.Key);
+            }
+        }
+
+        foreach (var id in _keys.Keys)
+        {
+            if (_keys.TryGetValue(id, out byte[]? key) && key is not null)
+            {
+                CryptographicOperations.ZeroMemory(key);
+            }
+        }
+
         _current.Dispose();
         _keys.Dispose();
         // Async-only gates never expose a wait handle. Let GC reclaim them after holders and waiters finish;

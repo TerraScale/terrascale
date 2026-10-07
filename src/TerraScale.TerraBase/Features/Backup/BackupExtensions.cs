@@ -23,12 +23,23 @@ public static class BackupExtensions
 
         // Engine/Cluster registers IShipperLeases: a database's primary member ships it while it holds its lease.
         services.AddHttpClient(S3ObjectStore.HttpClientName);
+        services.AddHttpClient(S3ObjectStore.CustomerHttpClientName)
+            .ConfigurePrimaryHttpMessageHandler(CustomerBackupNetwork.Handler)
+            .AddHttpMessageHandler<CustomerBackupResponseLimits>();
+        services.AddTransient<CustomerBackupResponseLimits>();
+        if (settings.VaultId is not null)
+        {
+            services.AddHttpClient(OciVaultSecrets.HttpClientName, client => client.Timeout = TimeSpan.FromSeconds(30))
+                .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false });
+            services.AddSingleton<IOciVaultSecrets, OciVaultSecrets>();
+        }
         services.AddHttpClient(OciVaultMasterKey.HttpClientName, client => client.Timeout = TimeSpan.FromSeconds(30));
         return services
             .AddSingleton(settings)
             .AddSingleton<IObjectStore, S3ObjectStore>()
             .AddSingleton<IMasterKey, OciVaultMasterKey>()
             .AddSingleton<DataKeys>()
+            .AddSingleton<BackupTargets>()
             .AddSingleton<ContinuousBackup>()
             .AddSingleton<IContinuousBackup>(provider => provider.GetRequiredService<ContinuousBackup>())
             .AddHostedService(provider => provider.GetRequiredService<ContinuousBackup>())
@@ -41,16 +52,16 @@ public static class BackupExtensions
     {
         public BackupStatus Status { get; } = new(false, []);
 
-        public DateTimeOffset? LastShipped(TenantContext database) => null;
+        public DateTimeOffset? LastShipped(TenantContext database, Ulid? generation = null) => null;
 
         public Task RunOnceAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 
-        public Task<RestoreWindow?> GetWindowAsync(TenantContext database, CancellationToken cancellationToken) => Task.FromResult<RestoreWindow?>(null);
+        public Task<RestoreWindow?> GetWindowAsync(TenantContext database, CancellationToken cancellationToken, string destination = "platform") => Task.FromResult<RestoreWindow?>(null);
 
-        public Task<PointInTimePlanResult> PlanAsync(TenantContext database, DateTimeOffset at, CancellationToken cancellationToken) =>
+        public Task<PointInTimePlanResult> PlanAsync(TenantContext database, DateTimeOffset at, CancellationToken cancellationToken, string destination = "platform") =>
             Task.FromResult<PointInTimePlanResult>(new NotFound("continuous backup holds nothing of this database"));
 
-        public Task<PointInTimeRestoreResult> RestoreAsync(TenantContext source, DateTimeOffset at, TenantContext target, CancellationToken cancellationToken) =>
+        public Task<PointInTimeRestoreResult> RestoreAsync(TenantContext source, DateTimeOffset at, TenantContext target, CancellationToken cancellationToken, string destination = "platform") =>
             Task.FromResult<PointInTimeRestoreResult>(new NotFound("continuous backup holds nothing of this database"));
     }
 }

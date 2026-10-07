@@ -35,7 +35,7 @@ public interface IContinuousBackup
     BackupStatus Status { get; }
 
     /// <summary>When the newest data of <paramref name="database"/> in the bucket was read, if this node ships it.</summary>
-    DateTimeOffset? LastShipped(TenantContext database);
+    DateTimeOffset? LastShipped(TenantContext database, Ulid? generation = null);
 
     /// <summary>One pass: finds new and deleted files when due, then ships each file once. Passes never overlap.</summary>
     Task RunOnceAsync(CancellationToken cancellationToken);
@@ -62,12 +62,10 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
 
     private readonly IWalBackup _engine;
     private readonly IStorageEngine _storage;
-    private readonly IObjectStore _store;
-    private readonly DataKeys _keys;
+    private readonly BackupTargets _targets;
     private readonly TimeProvider _time;
     private readonly ILogger<ContinuousBackup> _logger;
     private readonly IShipperLeases _shippers;
-    private readonly BackupReader _reader;
     private readonly ITenantDirectory _tenants;
     private readonly BackupSettings _settings;
     private readonly string _node;
@@ -84,13 +82,13 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
     private DateTimeOffset _nextDiscovery = DateTimeOffset.MinValue;
 
     public ContinuousBackup(
-        IWalBackup engine, IStorageEngine storage, IObjectStore store, DataKeys keys, TerraBaseOptions options, TimeProvider time,
-        IMeterFactory meters, ILogger<ContinuousBackup> logger, IShipperLeases shippers, BackupReader reader, ITenantDirectory tenants, BackupSettings settings)
+        IWalBackup engine, IStorageEngine storage, BackupTargets targets, TerraBaseOptions options, TimeProvider time,
+        IMeterFactory meters, ILogger<ContinuousBackup> logger, IShipperLeases shippers, ITenantDirectory tenants, BackupSettings settings)
     {
         ArgumentNullException.ThrowIfNull(options);
         ArgumentNullException.ThrowIfNull(meters);
-        (_engine, _storage, _store, _keys, _time, _logger, _shippers) = (engine, storage, store, keys, time, logger, shippers);
-        (_reader, _tenants, _settings, _node) = (reader, tenants, settings, options.NodeName);
+        (_engine, _storage, _targets, _time, _logger, _shippers) = (engine, storage, targets, time, logger, shippers);
+        (_tenants, _settings, _node) = (tenants, settings, options.NodeName);
         _scratch = Scratch(options);
         var meter = meters.Create(Telemetry.MeterName);
         _uploaded = meter.CreateCounter<long>("terrabase.backup.uploaded", "By", "Sealed backup bytes stored in the bucket, by kind (snapshot, segment).");
@@ -121,8 +119,9 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
         }
     }
 
-    public DateTimeOffset? LastShipped(TenantContext database) =>
-        _files.TryGetValue(BackupLayout.File(database), out var file) && file.Shipping ? file.LastShipped : null;
+    public DateTimeOffset? LastShipped(TenantContext database, Ulid? generation = null) =>
+        _files.TryGetValue(BackupLayout.File(database), out var file) && file.Shipping && file.Target.Revision == "platform"
+        && (generation is null || file.Generation == generation) ? file.LastShipped : null;
 
     public async Task RunOnceAsync(CancellationToken cancellationToken)
     {
@@ -273,7 +272,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
                     throw;
                 }
 
-                _files[prefix] = new ShippedFile(database, prefix, BackupLayout.KeyScope(database), tap, pending, _time.GetUtcNow());
+                _files[prefix] = new ShippedFile(database, prefix, BackupLayout.KeyScope(database), tap, pending, _time.GetUtcNow(), _targets.Platform);
             }
         }
         catch (Exception error) when (!cancellationToken.IsCancellationRequested)
@@ -295,8 +294,21 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
                 return;
             }
 
-            // After a failure, uploads and snapshots wait out a backoff; reads go on, so the log is still checkpointed.
+            // Refresh before each pass, but keep a generation's stores fixed until it starts over. A failed Vault
+            // refresh fails closed: customer-only data never falls back into the platform bucket.
             var due = _time.GetUtcNow() >= file.RetryAt;
+            if (due)
+            {
+                var configuration = await _targets.ConfigurationAsync(file.Database, cancellationToken).ConfigureAwait(false);
+                if (file.Target.Revision != (configuration?.Revision ?? "platform"))
+                {
+                    var target = await _targets.ShippingAsync(file.Database, configuration, cancellationToken).ConfigureAwait(false);
+                    file.Target.Dispose();
+                    file.Target = target;
+                    Abandon(file);
+                    (file.LastShipped, file.LastSnapshot, file.RetainedAt, file.DrilledAt, file.SizeBytes) = (null, default, default, default, null);
+                }
+            }
             if (file.Generation is null)
             {
                 if (due)
@@ -379,6 +391,13 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
         }
         catch (Exception error) when (!cancellationToken.IsCancellationRequested)
         {
+            // A mirror may have accepted an object in only one bucket. End this generation instead of retrying
+            // an expanding segment under a different timestamp, which would leave overlapping segments there.
+            if (file.Target.Revision != "platform")
+            {
+                Abandon(file);
+            }
+
             _failures.Add(1);
             file.LastError = error.GetType().Name;
             file.Failures++;
@@ -387,6 +406,12 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
         }
         finally
         {
+            if (cancellationToken.IsCancellationRequested && file.Target.Revision != "platform")
+            {
+                // Cancellation can follow an acknowledgement in only one bucket, regardless of the thrown type.
+                Abandon(file);
+            }
+
             file.PendingBytes = file.Pending.Length;
         }
     }
@@ -518,12 +543,12 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
 
     private async Task StoreAsync(ShippedFile file, string key, Stream content, string kind, CancellationToken cancellationToken)
     {
-        var (keyId, dataKey) = await _keys.CurrentAsync(file.Scope, cancellationToken).ConfigureAwait(false);
+        var (keyId, dataKey) = await file.Target.Keys.CurrentAsync(file.Scope, cancellationToken).ConfigureAwait(false);
         await using var sealedObject = new FileStream(ScratchFile(".sealed"), FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None, 1 << 16,
             FileOptions.Asynchronous | FileOptions.DeleteOnClose);
         await BackupObject.WriteAsync(content, sealedObject, key, keyId, dataKey, cancellationToken).ConfigureAwait(false);
         sealedObject.Position = 0;
-        await _store.PutAsync(key, sealedObject, cancellationToken).ConfigureAwait(false);
+        await file.Target.Store.PutAsync(key, sealedObject, cancellationToken).ConfigureAwait(false);
         _uploaded.Add(sealedObject.Length, new KeyValuePair<string, object?>("kind", kind));
     }
 
@@ -583,9 +608,10 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
     private static partial void LogShipping(ILogger logger, string file);
 
     /// <summary>One shipped file. Only the pass that ships it touches it, so it needs no lock.</summary>
-    private sealed class ShippedFile(TenantContext? database, string prefix, string scope, IWalTap tap, FileStream pending, DateTimeOffset opened)
+    private sealed class ShippedFile(TenantContext? database, string prefix, string scope, IWalTap tap, FileStream pending, DateTimeOffset opened, BackupTarget target)
         : IAsyncDisposable
     {
+        public BackupTarget Target { get; set; } = target;
         public TenantContext? Database { get; } = database;
         public string Prefix { get; } = prefix;
 
@@ -642,6 +668,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
             finally
             {
                 await Pending.DisposeAsync().ConfigureAwait(false);
+                Target.Dispose();
             }
         }
     }
