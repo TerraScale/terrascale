@@ -32,6 +32,12 @@ try
                 : throw new TerraBaseConfigurationException("region is required outside Development (TERRABASE_REGION or --region=value)"),
         };
     }
+
+    // The Anna core keeps documents only in memory until its disk tier ships (TS-634 slice 3).
+    if (options.Core is StorageCore.Anna && !string.Equals(environmentName, Environments.Development, StringComparison.OrdinalIgnoreCase))
+    {
+        throw new TerraBaseConfigurationException("core=anna runs only in Development until its disk tier ships");
+    }
 }
 catch (TerraBaseConfigurationException error)
 {
@@ -78,7 +84,7 @@ builder.Services.AddTerraBaseTelemetry();
 builder.Services.AddTerraBaseMemory(options);
 builder.Services.AddTerraBaseEngine(options);
 builder.Services.AddTerraBaseApiKeys();
-builder.Services.AddTerraBaseDocuments();
+builder.Services.AddTerraBaseDocuments(options);
 builder.Services.AddTerraBaseUserAuth();
 builder.Services.AddTerraBaseManagement();
 builder.Services.AddTerraBaseBackup(options);

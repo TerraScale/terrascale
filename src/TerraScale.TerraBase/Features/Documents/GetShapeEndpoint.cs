@@ -102,6 +102,7 @@ public sealed class GetShapeEndpoint(IShapeService shapes, ITenantDirectory tena
                 NotFound error => ErrorResponse.From(error),
                 Validation error => ErrorResponse.From(error),
                 QuotaExceeded error => ErrorResponse.From(error),
+                Unavailable error => ErrorResponse.From(error),
             },
         };
     }

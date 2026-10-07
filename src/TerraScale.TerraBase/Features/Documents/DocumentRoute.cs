@@ -174,7 +174,7 @@ internal static class DocumentRoute
         var result = written.Results[0];
         var version = result.ETag!;
         ETags.Set(context, version);
-        return answer(new WriteBody(key.Id, version, Decimal(written.Offset), Durability), result.Created);
+        return answer(new WriteBody(key.Id, version, Decimal(written.Offset), written.Durability), result.Created);
     }
 
     public static string Decimal(long value) => value.ToString(CultureInfo.InvariantCulture);

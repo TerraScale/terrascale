@@ -79,6 +79,8 @@ never its value. Port `0` picks a free port.
 | `memory-budget` | ¼ of available memory | Bytes for caches; see `docs/memory.md` |
 | `storage-threads` | processor count | Dedicated threads that run SQLite calls |
 | `storage-queue` | `1024` | Storage transactions admitted at once; more get `503` with `Retry-After` |
+| `core` | `sqlite` | Storage and replication core: `sqlite`, or `anna` ([design](docs/design/anna-core.md)). `anna` runs only in Development and refuses `peer-port`: documents live in memory (`"durability":"memory"`), and lists, queries, transactions and shapes answer `503` until its disk tier ships |
+| `actors` | processor count | Per-core document actors under `core=anna`, 1 to 1024 |
 
 ### Health probes
 

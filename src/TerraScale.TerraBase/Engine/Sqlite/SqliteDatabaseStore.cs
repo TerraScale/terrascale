@@ -1,6 +1,4 @@
 using System.Runtime.CompilerServices;
-using System.Security.Cryptography;
-using System.Text;
 using Microsoft.Data.Sqlite;
 using TerraBase.Tenancy;
 
@@ -226,8 +224,7 @@ internal sealed class SqliteDatabaseStore(
 
     // Client databases scope ETags by their ids, which every member shares, so a version read on one member matches on
     // another (TS-574); _system uses its incarnation, which catalog followers adopt from their primary.
-    private readonly Guid? _scope = tenant is null ? null
-        : new Guid(SHA256.HashData(Encoding.UTF8.GetBytes($"{tenant.OrganizationId}\0{tenant.ProjectId}\0{tenant.DatabaseId}")).AsSpan(0, 16));
+    private readonly Guid? _scope = tenant?.VersionScope();
 
     /// <summary>The <see cref="IStorageTransaction.Scope"/> of this database's transactions.</summary>
     internal Guid Scope => _scope ?? Incarnation;

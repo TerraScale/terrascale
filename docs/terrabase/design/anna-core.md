@@ -704,7 +704,7 @@ Production stays on `core=sqlite` until slice 12.
 | --- | --- | --- | --- |
 | 0 | Design | this document | docs only |
 | 1 | Lattice library | `Engine/Lattices`: `ILattice`, `MaxLattice`, `Hlc`, `LwwRegister`, `SetLattice`, `MapLattice`, `Dot`, `CausalContext`, `MvRegister`, `AwSet`, `GCounter`; lattice-law property tests | no caller yet |
-| 2 | Switch and actors | `core` setting; actors, inboxes, router, local ring; point reads and writes in memory on one node; Fast suite runs both modes for point operations | `core=anna` refuses to start without slice 3's disk tier unless a test-only flag is set |
+| 2 | Switch and actors | `core` setting; actors, inboxes, router, local ring; point reads and writes in memory on one node; Fast suite runs both modes for point operations | `core=anna` starts only in Development and without `peer-port`; writes answer `"durability":"memory"`; lists, queries, transactions and shapes answer `503` |
 | 3 | Disk tier | `IDiskTier` on SQLite: new schema (`user_version`), encoding, flushers with group commit, pending/committed, cold loads, materialized rows; lists, queries, SQL, indexes | `core=anna` becomes usable on a single node |
 | 4 | Consistency per request | HLC, LWW and causal reads and writes, `tbv2-` tokens, `siblings`, `X-TerraBase-After` | additive headers and members |
 | 5 | Membership and ring | `IMembership`: static `peers` and NATS KV (region and zone labels, heartbeats, member numbers, leases); placement per database; forwarding | NATS used only when `core=anna` and `nats-url` are set |
