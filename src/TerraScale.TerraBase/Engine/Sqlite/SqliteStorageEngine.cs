@@ -727,7 +727,7 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
                 var openingToken = created ? CancellationToken.None : cancellationToken;
                 await InitializeHeapAsync(openingToken).ConfigureAwait(false);
                 // Every write is captured into its journal for catalog followers (docs/decisions/0009); no engine event.
-                system = new SqliteDatabaseStore(SystemName, path, Pool, Io, _pragmas, null, Time, static _ => { }, RecordCommittedWrite)
+                system = new SqliteDatabaseStore(SystemName, path, Pool, Io, _pragmas, null, Time, static _ => { }, RecordCommittedWrite, _logger)
                 {
                     Replica = _systemReplica,
                 };
@@ -1339,7 +1339,7 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
         var tenant = new TenantContext(key.Organization, PlanTier.Hobby, key.Project, key.Database);
         SqliteDatabaseStore? store = null;
         store = new SqliteDatabaseStore(key.Database, path, Pool, Io, _pragmas, tenant, Time,
-            sequence => Notify(ChangesCommitted, new ChangeGroupCommitted(store!, sequence), key.Database), RecordCommittedWrite);
+            sequence => Notify(ChangesCommitted, new ChangeGroupCommitted(store!, sequence), key.Database), RecordCommittedWrite, _logger);
         var published = false;
         var admitted = false;
         try

@@ -23,6 +23,7 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
 {
     private readonly WebApplicationFactory<Program> _factory;
     private readonly IStorageEngine _engine;
+    private readonly SqliteStorageEngine? _sqlite;
 
     // The temporary directory this harness created, deleted on dispose even when a test chose another data directory.
     private readonly string _temporaryDirectory;
@@ -32,6 +33,7 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
     {
         _factory = factory;
         _engine = factory.Services.GetRequiredService<IStorageEngine>();
+        _sqlite = factory.Services.GetService<SqliteStorageEngine>();
         _temporaryDirectory = temporaryDirectory;
         DataDirectory = Path.GetFullPath(settings["data-directory"]);
         BaseAddress = listeners.Single(address => address.Scheme == Uri.UriSchemeHttp);
@@ -339,6 +341,14 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
         // Program's host may still be draining its files when the factory returns. Rejoin that drain
         // within the configured shutdown grace before cleaning up this harness's directory.
         await _engine.DisposeAsync();
+        // Past the grace the engine still owns its data directory until its last connection closed (a closing checkpoint
+        // on a slow disk). A process exit releases it; a test that restarts on the directory waits for it instead. The
+        // engine's DisposeAsync above already reported any cleanup failure.
+        if (_sqlite is not null)
+        {
+            await _sqlite.CleanupCompletion.WaitAsync(TUnit.Core.TestContext.Current?.Execution.CancellationToken ?? CancellationToken.None)
+                .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+        }
         Directory.Delete(_temporaryDirectory, recursive: true);
     }
 

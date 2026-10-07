@@ -1,5 +1,8 @@
+using System.Collections.Concurrent;
 using System.Net;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
 using TerraBase.Engine.Sqlite;
 using TerraBase.Fast.Documents;
@@ -19,13 +22,18 @@ public sealed class GroupCommitTests
         var original = await api.PutAsync(existing, new { n = 0 });
         var store = await StoreAsync(api);
 
-        // Hold the database's writer so the writes below queue up, then release them into as few batches as possible.
+        // Hold the database's writer so the writes below queue up, then release them into one batch.
         var held = await store.BeginTransactionAsync(write: true, CancellationToken.None);
         var ids = Enumerable.Range(0, 8).Select(_ => DocumentApi.NewId()).ToArray();
         var rolledBack = DocumentApi.NewId();
+        Task<ApiResponse> primer;
         Task<ApiResponse>[] sending;
         try
         {
+            // A primer takes the batch that waits for the writer, so every write below queues for the next one. Without
+            // it, how many writes the first batch takes depends on when its loop starts (TS-624).
+            primer = api.PutAsync(DocumentApi.NewId(), new { n = 0 });
+            await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(store.BatchedWrites == 1));
             sending =
             [
                 .. ids.Select(id => api.PutAsync(id, new { n = 1 })),
@@ -35,20 +43,19 @@ public sealed class GroupCommitTests
                     new { op = "assert", collection = DocumentApi.Collection, id = existing, filter = new { eq = new object[] { "/n", 99 } } }),
             ];
 
-            // The first write to arrive may already wait for the writer outside the queue; every other one queues.
-            await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(store.QueuedWrites == sending.Length - 1));
+            await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(store.QueuedWrites == sending.Length));
         }
         finally
         {
             await held.DisposeAsync();
         }
 
+        await Assert.That((await primer).Status).IsEqualTo(HttpStatusCode.Created);
         var answers = await Task.WhenAll(sending);
         var created = answers[..ids.Length];
         await Assert.That(created.All(answer => answer.Status == HttpStatusCode.Created)).IsTrue();
-        var offsets = created.GroupBy(answer => answer.Json.GetProperty("offset").GetString()).Select(group => group.Count()).ToArray();
-        await Assert.That(offsets.Length).IsLessThanOrEqualTo(2);
-        await Assert.That(offsets.Max()).IsGreaterThanOrEqualTo(ids.Length - 1);
+        // One commit, one offset, for every write of the batch.
+        await Assert.That(created.Select(answer => answer.Json.GetProperty("offset").GetString()).Distinct().Count()).IsEqualTo(1);
 
         // The refused write and the failed transaction rolled back only their own savepoints.
         await Assert.That(answers[ids.Length].Status).IsEqualTo(HttpStatusCode.PreconditionFailed);
@@ -62,6 +69,37 @@ public sealed class GroupCommitTests
     }
 
     [Test]
+    public async Task A_long_wait_for_the_writer_logs_what_held_it_and_for_how_long()
+    {
+        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        var logs = new CapturedLogs();
+        await using var api = await DocumentApi.StartAsync(services: services =>
+        {
+            services.AddKeyedSingleton<TimeProvider>(EngineExtensions.QueryDeadlineClock, clock);
+            services.AddSingleton<ILoggerProvider>(logs);
+        });
+        var store = await StoreAsync(api);
+
+        // A write transaction holds the writer, idle between its calls, while a batch waits past the warning threshold.
+        var held = await store.BeginTransactionAsync(write: true, CancellationToken.None);
+        Task<ApiResponse> waiting;
+        try
+        {
+            waiting = api.PutAsync(DocumentApi.NewId(), new { n = 1 });
+            await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(store.BatchedWrites == 1));
+            clock.Advance(SqliteDatabaseStore.SlowWriterWait + TimeSpan.FromSeconds(1));
+        }
+        finally
+        {
+            await held.DisposeAsync();
+        }
+
+        await Assert.That((await waiting).Status).IsEqualTo(HttpStatusCode.Created);
+        await Assert.That(logs.Messages).Contains(
+            "Waited 6 s for a database's writer and took it: a group commit batch queued behind a write transaction, which had held it for 6 s and was between storage calls");
+    }
+
+    [Test]
     public async Task A_rolled_back_write_restores_what_an_earlier_write_of_its_batch_captured()
     {
         await using var api = await DocumentApi.StartAsync();
@@ -71,7 +109,6 @@ public sealed class GroupCommitTests
         var shared = DocumentApi.NewId();
         var other = DocumentApi.NewId();
 
-        var engine = api.Server.Services.GetRequiredService<SqliteStorageEngine>();
         var held = await store.BeginTransactionAsync(write: true, CancellationToken.None);
         Task<ApiResponse> primer;
         Task<ApiResponse> first;
@@ -81,7 +118,7 @@ public sealed class GroupCommitTests
         {
             // A primer takes the batch that waits for the writer; the next three then queue, in this order, for one batch.
             primer = api.PutAsync(DocumentApi.NewId(), new { n = 0 });
-            await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(engine.Io.Admitted == 2 && store.QueuedWrites == 0));
+            await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(store.BatchedWrites == 1));
             first = api.PutAsync(shared, new { n = 1 });
             await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(store.QueuedWrites >= 1));
             // Its first put replaces what `first` captured in the same batch; its second put then fails, after it.
@@ -146,5 +183,28 @@ public sealed class GroupCommitTests
     {
         var engine = api.Server.Services.GetRequiredService<SqliteStorageEngine>();
         return (SqliteDatabaseStore)(await engine.OpenDatabaseAsync(await api.TenantOfAsync(), CancellationToken.None))!;
+    }
+
+    // The application's log lines, as an operator would read them.
+    private sealed class CapturedLogs : ILoggerProvider
+    {
+        public ConcurrentQueue<string> Messages { get; } = new();
+
+        public ILogger CreateLogger(string categoryName) => new Logger(Messages);
+
+        public void Dispose()
+        {
+        }
+
+        private sealed class Logger(ConcurrentQueue<string> messages) : ILogger
+        {
+            public IDisposable? BeginScope<TState>(TState state)
+                where TState : notnull => null;
+
+            public bool IsEnabled(LogLevel logLevel) => true;
+
+            public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) =>
+                messages.Enqueue(formatter(state, exception));
+        }
     }
 }

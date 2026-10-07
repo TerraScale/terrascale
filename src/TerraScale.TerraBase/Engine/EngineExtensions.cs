@@ -9,8 +9,9 @@ namespace TerraBase.Engine;
 /// <summary>Registers the storage engine.</summary>
 public static class EngineExtensions
 {
-    /// <summary>The key of an optional <see cref="TimeProvider"/> that clocks query deadlines in place of the system clock. Only
-    /// integration tests register one: the host's clock, which tests also fake, must not move a running query's deadline.
+    /// <summary>The key of an optional <see cref="TimeProvider"/> that clocks query deadlines, and how long a write waited for its
+    /// database's writer, in place of the system clock. Only integration tests register one: the host's clock, which tests
+    /// also fake, must not move a running query's deadline.
     /// </summary>
     internal const string QueryDeadlineClock = "query-deadline";
 

@@ -14,9 +14,10 @@ namespace TerraBase.Engine.Sqlite;
 /// <param name="time">The clock of the query deadline.</param>
 /// <param name="changesCommitted">Receives the last captured sequence after a write commits.</param>
 /// <param name="committed">Optional engine notification after a successful commit that changed this database.</param>
-internal sealed class SqliteDatabaseStore(
+/// <param name="logger">Receives the warning about a long wait for this database's writer.</param>
+internal sealed partial class SqliteDatabaseStore(
     string name, string path, SqliteSessionPool pool, SqliteIoPool io, string pragmas, TenantContext? tenant, TimeProvider? time,
-    Action<long>? changesCommitted, Action? committed) : IDatabaseStore, IDisposable
+    Action<long>? changesCommitted, Action? committed, ILogger? logger = null) : IDatabaseStore, IDisposable
 {
     internal SqliteDatabaseStore(string name, string path, SqliteSessionPool pool, SqliteIoPool io, string pragmas, TimeProvider? time = null, Action? committed = null)
         : this(name, path, pool, io, pragmas, null, time, null, committed) { }
@@ -213,6 +214,14 @@ internal sealed class SqliteDatabaseStore(
     // busy handler would hold every I/O thread while the writer that holds the lock waits for one.
     private readonly SemaphoreSlim _writer = new(1, 1);
 
+    /// <summary>A wait for the writer this long or longer logs who held it (<see cref="AcquireWriterAsync"/>).</summary>
+    internal static readonly TimeSpan SlowWriterWait = TimeSpan.FromSeconds(5);
+
+    // What holds _writer and since when (a TimeProvider timestamp), set by each holder once it took it. Read without the
+    // gate, for the warning only.
+    private string? _writerHolder;
+    private long _writerTaken;
+
     /// <summary>The thread this database's write transactions run on, apart from the read pool.</summary>
     internal SqliteWriteLane WriteLane { get; } = new(name);
 
@@ -257,13 +266,17 @@ internal sealed class SqliteDatabaseStore(
         write && Replica ? throw new CatalogFollowerException() : await BeginAsync(write, capture: true, durable: false, cancellationToken).ConfigureAwait(false);
 
     public async ValueTask<IStorageTransaction> BeginDurableTransactionAsync(CancellationToken cancellationToken) =>
-        Replica ? throw new CatalogFollowerException() : await BeginAsync(write: true, capture: true, durable: true, cancellationToken).ConfigureAwait(false);
+        Replica
+            ? throw new CatalogFollowerException()
+            : await BeginAsync(write: true, capture: true, durable: true, cancellationToken, "a durable write transaction").ConfigureAwait(false);
 
     /// <summary>The write transaction of a follower's replication applier; it captures nothing.</summary>
     internal ValueTask<SqliteStorageTransaction> BeginReplicaAsync(CancellationToken cancellationToken) =>
-        BeginAsync(write: true, capture: false, durable: false, cancellationToken);
+        BeginAsync(write: true, capture: false, durable: false, cancellationToken, "a catalog replica transaction");
 
-    private async ValueTask<SqliteStorageTransaction> BeginAsync(bool write, bool capture, bool durable, CancellationToken cancellationToken)
+    // writer names a write transaction in the warning about a long wait for the writer.
+    private async ValueTask<SqliteStorageTransaction> BeginAsync(
+        bool write, bool capture, bool durable, CancellationToken cancellationToken, string writer = "a write transaction")
     {
         var ownsAdmission = !io.HasAdmission;
         if (ownsAdmission)
@@ -278,12 +291,7 @@ internal sealed class SqliteDatabaseStore(
         {
             if (write)
             {
-                // The same 30 s bound as busy_timeout, which this wait replaces in-process.
-                if (!await _writer.WaitAsync(TimeSpan.FromSeconds(30), cancellationToken).ConfigureAwait(false))
-                {
-                    throw io.Busy();
-                }
-
+                await AcquireWriterAsync(writer, cancellationToken).ConfigureAwait(false);
                 writing = true;
             }
 
@@ -349,6 +357,48 @@ internal sealed class SqliteDatabaseStore(
         signal.SetResult();
     }
 
+    // Takes the writer, waiting at most 30 s as busy_timeout did before this wait replaced it in-process. A wait of
+    // SlowWriterWait or more, whatever its outcome, logs what held the writer, for how long, and whether it was running a
+    // storage call or between calls (its caller busy elsewhere): the evidence a busy or cancelled writer needs.
+    private async ValueTask AcquireWriterAsync(string writer, CancellationToken cancellationToken)
+    {
+        var started = Time.GetTimestamp();
+        var outcome = "and took it";
+        try
+        {
+            if (!await _writer.WaitAsync(TimeSpan.FromSeconds(30), cancellationToken).ConfigureAwait(false))
+            {
+                outcome = "and gave up";
+                throw io.Busy();
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            outcome = "until it was cancelled";
+            throw;
+        }
+        finally
+        {
+            if (logger is not null && Time.GetElapsedTime(started) is var waited && waited >= SlowWriterWait)
+            {
+                var holder = Volatile.Read(ref _writerHolder) ?? "nothing recorded";
+                var held = Time.GetElapsedTime(Volatile.Read(ref _writerTaken));
+                LogSlowWriterWait(
+                    logger, Math.Round(waited.TotalSeconds, 1), outcome, writer, holder, Math.Round(held.TotalSeconds, 1),
+                    WriteLane.Running ? "running a storage call" : "between storage calls");
+            }
+        }
+
+        // Only this holder writes these until it releases the writer.
+        Volatile.Write(ref _writerTaken, Time.GetTimestamp());
+        Volatile.Write(ref _writerHolder, writer);
+    }
+
+    // Counts and kinds only: no database or tenant names in the log.
+    [LoggerMessage(Level = LogLevel.Warning, Message =
+        "Waited {Waited} s for a database's writer {Outcome}: {Writer} queued behind {Holder}, which had held it for {Held} s and was {State}")]
+    private static partial void LogSlowWriterWait(ILogger logger, double waited, string outcome, string writer, string holder, double held, string state);
+
     /// <summary>Releases what <see cref="BeginTransactionAsync"/> took; called once per transaction.</summary>
     internal void End(bool write, bool ownsAdmission)
     {
@@ -405,11 +455,7 @@ internal sealed class SqliteDatabaseStore(
     /// </summary>
     internal async Task<T> WithWritersHeldAsync<T>(Func<Task<T>> call, CancellationToken cancellationToken)
     {
-        if (!await _writer.WaitAsync(TimeSpan.FromSeconds(30), cancellationToken).ConfigureAwait(false))
-        {
-            throw io.Busy();
-        }
-
+        await AcquireWriterAsync("the continuous backup's checkpoint", cancellationToken).ConfigureAwait(false);
         try
         {
             return await call().ConfigureAwait(false);
@@ -429,6 +475,12 @@ internal sealed class SqliteDatabaseStore(
     private readonly Queue<IBatchedWrite> _queued = [];
     private readonly Lock _queueGate = new();
     private bool _batching;
+
+    // Writes of the batch that is running, for tests.
+    private int _batched;
+
+    /// <summary>Writes of the batch that is running (waiting for the writer or committing), for tests.</summary>
+    internal int BatchedWrites => Volatile.Read(ref _batched);
 
     /// <summary>Writes waiting for the next batch, for tests.</summary>
     internal int QueuedWrites
@@ -497,10 +549,13 @@ internal sealed class SqliteDatabaseStore(
                     _batching = false;
                     return;
                 }
+
+                _batched = batch.Count;
             }
 
             // The queued writes' admissions cover the batch's transaction.
             deferred = await io.WithAdmissionAsync(() => CommitBatchAsync(batch)).ConfigureAwait(false);
+            Volatile.Write(ref _batched, 0);
         }
     }
 
@@ -514,7 +569,7 @@ internal sealed class SqliteDatabaseStore(
         long offset = 0;
         try
         {
-            var transaction = await BeginAsync(write: true, capture: true, durable: false, CancellationToken.None).ConfigureAwait(false);
+            var transaction = await BeginAsync(write: true, capture: true, durable: false, CancellationToken.None, "a group commit batch").ConfigureAwait(false);
             await using (transaction.ConfigureAwait(false))
             {
                 foreach (var write in batch)
@@ -782,6 +837,12 @@ internal sealed class SqliteDatabaseStore(
     /// Creates (or adopts a copied) and migrates a new database file at <paramref name="path"/> on an unpooled
     /// connection, so no handle stays open once this returns and the file can be moved. The caller holds an admission.
     /// </summary>
+    /// <remarks>
+    /// The file is private until the caller moves it into place, and a failed creation deletes it, so nothing is synced
+    /// while it is built: one fsync of the finished file replaces the eight or so of SQLite's journal switch, commits and
+    /// closing checkpoint. Creation holds the engine's creation lock, so on a slow disk those syncs queued every other
+    /// creation behind them (TS-647).
+    /// </remarks>
     internal static Task InitializeAsync(
         string name, string path, SqliteIoPool io, string pragmas, string? afterMigration, CancellationToken cancellationToken) =>
         io.RunAsync(() =>
@@ -792,22 +853,29 @@ internal sealed class SqliteDatabaseStore(
                 Mode = SqliteOpenMode.ReadWriteCreate,
                 Pooling = false,
             }.ToString();
-            using var connection = new SqliteConnection(connectionString);
-            connection.Open();
-            // A copy made by VACUUM INTO may already be current, so set WAL here and not only in a migration.
-            // The creating connection uses the same settings as every pooled one.
-            Scalar(connection, null, "PRAGMA journal_mode = WAL;" + pragmas);
-            Migrate(name, connection, cancellationToken);
-            // Publish a fresh identity and prepare the copied baseline atomically, on this file only.
-            using var transaction = connection.BeginTransaction(deferred: false);
-            RenewIncarnation(connection, transaction);
-            if (afterMigration is not null)
+            using (var connection = new SqliteConnection(connectionString))
             {
-                Scalar(connection, transaction, afterMigration);
+                connection.Open();
+                // A copy made by VACUUM INTO may already be current, so set WAL here and not only in a migration.
+                // The creating connection uses the same settings as every pooled one, except that it does not sync.
+                Scalar(connection, null, pragmas + "PRAGMA synchronous = OFF; PRAGMA journal_mode = WAL;");
+                Migrate(name, connection, cancellationToken);
+                // Publish a fresh identity and prepare the copied baseline atomically, on this file only.
+                using var transaction = connection.BeginTransaction(deferred: false);
+                RenewIncarnation(connection, transaction);
+                if (afterMigration is not null)
+                {
+                    Scalar(connection, transaction, afterMigration);
+                }
+
+                cancellationToken.ThrowIfCancellationRequested();
+                transaction.Commit();
             }
 
-            cancellationToken.ThrowIfCancellationRequested();
-            transaction.Commit();
+            // Closing the only connection checkpointed the log into the file and removed it: sync the file once, before
+            // it can be published.
+            using var file = File.OpenHandle(path, FileMode.Open, FileAccess.ReadWrite);
+            RandomAccess.FlushToDisk(file);
             return true;
         }, cancellationToken);
 
