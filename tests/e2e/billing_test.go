@@ -91,6 +91,55 @@ func TestBillingPageShowsScheduledDowngradeUntilUndone(t *testing.T) {
 	must(t, expect.Locator(byRole(planCard(page, "Business"), *playwright.AriaRoleButton, "Upgrade to Business")).ToBeEnabled())
 }
 
+func TestBillingPlanDialogUpdatesPricesAndReviewsSelectedInterval(t *testing.T) {
+	t.Parallel()
+	page := newPage(t)
+	registerAndOnboard(t, page, newAccount("billing-interval"))
+	goToOK(t, page, "/organization?tab=billing")
+	click(t, pageByRole(page, *playwright.AriaRoleButton, "Choose plan", true))
+	picker := page.Locator("#change-billing-plan")
+	monthly := picker.Locator(`input[name="interval"][value="monthly"]`)
+	annual := picker.Locator(`input[name="interval"][value="annual"]`)
+	prices := []struct{ monthly, annual string }{
+		{"US$ 5.00 / month", "US$ 50.00 / year"},
+		{"US$ 50.00 / month", "US$ 500.00 / year"},
+		{"US$ 99.00 / month", "US$ 990.00 / year"},
+	}
+	assertPrices := func(annually bool) {
+		t.Helper()
+		for _, price := range prices {
+			shown, hidden := price.monthly, price.annual
+			if annually {
+				shown, hidden = hidden, shown
+			}
+			visible(t, picker.GetByText(shown, playwright.LocatorGetByTextOptions{Exact: new(true)}))
+			must(t, expect.Locator(picker.GetByText(hidden, playwright.LocatorGetByTextOptions{Exact: new(true)})).ToBeHidden())
+		}
+	}
+	must(t, expect.Locator(monthly).ToBeChecked())
+	assertPrices(false)
+	screenshot(t, page, "ts655-billing-monthly")
+	click(t, picker.Locator(`label:has(input[name="interval"][value="annual"])`))
+	must(t, expect.Locator(annual).ToBeChecked())
+	assertPrices(true)
+	screenshot(t, page, "ts655-billing-annual")
+	click(t, picker.Locator(`label:has(input[name="interval"][value="monthly"])`))
+	must(t, expect.Locator(monthly).ToBeChecked())
+	assertPrices(false)
+	// Native radio keyboard navigation must update the same prices as a click.
+	must(t, monthly.Focus())
+	must(t, monthly.Press("ArrowRight"))
+	must(t, expect.Locator(annual).ToBeChecked())
+	assertPrices(true)
+	must(t, picker.Locator(`input[name="plan"][value="pro"]`).Check())
+	click(t, byRole(picker, *playwright.AriaRoleButton, "Review change"))
+	waitForPath(t, page, func(u *url.URL) bool {
+		return u.Path == "/organization" && u.Query().Get("plan") == "pro" && u.Query().Get("interval") == "annual" && u.Query().Get("review") == "1"
+	})
+	visible(t, page.Locator("#review-billing-plan"))
+	must(t, expect.Locator(page.Locator("#review-billing-plan")).ToContainText("US$ 500.00 / year"))
+}
+
 // planCard is the plan's card on the Plans and billing page.
 func planCard(page playwright.Page, name string) playwright.Locator {
 	return page.Locator("article").Filter(playwright.LocatorFilterOptions{
