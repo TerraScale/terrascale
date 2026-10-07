@@ -80,6 +80,10 @@ follows it. Design, limits and failover: [0009](decisions/0009-catalog-replicati
   replication only for databases its catalog registers (`STREAM_ERROR_UNAUTHORIZED`, retryable, otherwise), so no
   peer brings a deleted one back. A follower never deletes a file only because it is unregistered; once caught up it
   counts such files in `terrabase_storage_unknown_files`, as a primary does at startup.
+- A member sends client replication only for databases its catalog registers or is creating (a branch's baseline is
+  written before its registration commits), as receivers accept only registered ones: backup snapshots, restore staging
+  and files the catalog no longer names stay where they are and do not count in
+  `terrabase_replication_sender_durable_lag`.
 - `/readyz` of a follower answers 503 until it has applied the primary's head once in its process, and while its
   primary reports a head it has not applied yet; a primary that cannot be reached leaves the last head, so a
   caught-up follower stays ready while the primary restarts. Before stopping a member, a drain waits for its

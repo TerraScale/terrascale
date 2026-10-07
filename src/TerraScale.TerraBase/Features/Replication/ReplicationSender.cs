@@ -21,7 +21,8 @@ namespace TerraBase.Features.Replication;
 /// ponytail: one database at a time per peer; run several streams per peer if many databases lag at once.
 /// </remarks>
 internal sealed partial class ReplicationSender(
-    IStorageEngine engine, PeerCredentials credentials, TerraBaseOptions options, ReplicationMetrics metrics, ILogger<ReplicationSender> logger, TimeProvider time)
+    IStorageEngine engine, ITenantDirectory tenants, PeerCredentials credentials, TerraBaseOptions options, ReplicationMetrics metrics, ILogger<ReplicationSender> logger,
+    TimeProvider time)
     : BackgroundService, IReplicationWait
 {
     // Groups one stream sends before the database goes to the back of the queue, so a database that is
@@ -112,9 +113,11 @@ internal sealed partial class ReplicationSender(
         }
     }
 
-    private void OnDeleted(object? sender, IDatabaseStore store)
+    private void OnDeleted(object? sender, IDatabaseStore store) => Drop(Identity(store));
+
+    // Discards an incarnation's head, pending work and acknowledgments for every peer.
+    private void Drop(DatabaseIncarnation identity)
     {
-        var identity = Identity(store);
         lock (_state)
         {
             _heads.Remove(identity);
@@ -212,7 +215,9 @@ internal sealed partial class ReplicationSender(
                 discovery.CancelAfter(ReplicationProtocol.ProgressTimeout);
                 try
                 {
-                    if (await engine.OpenDatabaseAsync(database, discovery.Token).ConfigureAwait(false) is not { } store)
+                    // ponytail: one catalog read per database per pass; list the replicated databases once if catalogs grow large.
+                    if (await tenants.ReplicatesAsync(database, discovery.Token).ConfigureAwait(false) is false
+                        || await engine.OpenDatabaseAsync(database, discovery.Token).ConfigureAwait(false) is not { } store)
                     {
                         continue;
                     }
@@ -316,6 +321,15 @@ internal sealed partial class ReplicationSender(
         var database = identity.Tenant;
         if (await engine.OpenDatabaseAsync(database, progress.Token).ConfigureAwait(false) is not { } store || store.Incarnation != identity.Origin)
         {
+            return false;
+        }
+
+        // Peers refuse a database their catalog does not register, so send none of a database that is neither registered nor being
+        // created (backup snapshots and restore staging are primary-local storage): its groups would count as lag forever.
+        if (await tenants.ReplicatesAsync(database, progress.Token).ConfigureAwait(false) is false)
+        {
+            Drop(identity);
+            Progressed();
             return false;
         }
 

@@ -29,6 +29,14 @@ public interface ITenantDirectory
     ValueTask<bool?> RegisteredAsync(TenantContext database, CancellationToken cancellationToken);
 
     /// <summary>
+    /// Whether this member sends client replication for <paramref name="database"/>: registered, or being created (its files
+    /// exist under a pending cleanup intent until its registration commits). Peers refuse every other engine database:
+    /// backup snapshots, restore staging and files the catalog no longer names. <see langword="null"/> as for
+    /// <see cref="RegisteredAsync"/>.
+    /// </summary>
+    ValueTask<bool?> ReplicatesAsync(TenantContext database, CancellationToken cancellationToken);
+
+    /// <summary>
     /// The plan of organization <paramref name="organizationId"/>: <see cref="PlanTier.Hobby"/> when it does not exist (or no
     /// longer does), or when this member's catalog is at a version this build does not read.
     /// </summary>

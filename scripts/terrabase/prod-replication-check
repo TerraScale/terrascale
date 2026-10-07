@@ -1,0 +1,341 @@
+#!/usr/bin/env python3
+"""Live replication check of a TerraBase cell (TS-660). Exits 0 when every member agrees, 1 on any failure, 2 on usage.
+
+usage: prod-replication-check [--canary FILE] [--docs N] [--max-lag-seconds S] [--log-minutes M] [--host-exec CMD]
+
+Writes only to the canary database named in FILE: creates, replaces, patches and deletes N fixed documents
+(UUIDv5 ids) of collection "canary" through the API, with If-None-Match and If-Match, and checks that stale
+conditional writes answer 412. Then it reads every document directly from every member and compares status,
+JSON and version (ETag, tombstones included) with what the API answered, until they agree or S seconds pass.
+With host access it also reads each member's admin /metrics (replication durable lag, catalog follower lag,
+rejected groups, prefix mismatches) and its last M minutes of logs (replication warnings, corruption).
+
+FILE (mode 0600) is JSON: {"api": "https://gru.api.terrascale.tech", "project": "<project id>",
+"database": "<database name>", "secret": "tb_...", "members": ["10.251.0.11:9465", ...],
+"member_ca": "<PEM of the member CA>"}. CMD runs a shell script from stdin on a member; {ip} is replaced
+by the member's address, and an empty CMD skips the host checks.
+"""
+import argparse
+import concurrent.futures
+import json
+import os
+import re
+import ssl
+import stat
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
+import uuid
+
+COLLECTION = "canary"
+DEFAULT_CANARY = os.path.expanduser("~/.config/terrabase/gru-1-canary.json")
+DEFAULT_HOST_EXEC = (
+    "ssh -o BatchMode=yes -o ConnectTimeout=10 mariogk-dev ssh -o BatchMode=yes -o ConnectTimeout=8"
+    " -o UserKnownHostsFile=.local/state/ts574-release/known_hosts_gru1 -J ts-ops ubuntu@{ip} bash -s"
+)
+# Peer connectivity blips (a member restarting or a deploy) retry by design; anything else a replication or catalog
+# component warns about is a failure.
+TRANSIENT = re.compile(r"Unavailable|Connection refused|No route to host|timed out|DeadlineExceeded|Cancelled|reset by peer|Error starting gRPC call")
+CORRUPT = re.compile(r"corrupt|malformed|checksum mismatch|digest mismatch", re.IGNORECASE)
+
+# Prints one record per line: start, metric, log (category, message, first exception line) and bad (corruption).
+HOST_SCRIPT = r"""
+pid=$(pgrep -f /install/terrabase/ | head -1)
+echo "start ${pid:+$(stat -c %Y /proc/$pid)}"
+curl -s -m 5 http://127.0.0.1:9464/metrics | grep -E '^terrabase_(replication_(sender_durable_lag|sender_initialized|received_groups_total|sender_prefix_mismatches_total)|catalog_follower_(connected|lag))[ {]' | sed 's/^/metric /'
+sudo journalctl -u terrascale-orchestrator-host --since "-MINUTES min" -o cat --no-pager > /tmp/tb-check.$$
+awk '/^(warn|fail|crit): TerraBase\.(Features\.(Replication|Catalog)|Engine)/ { c = $0; getline m; getline e; print "log " c "\t" m "\t" e }' /tmp/tb-check.$$
+grep -iE 'corrupt|malformed|checksum mismatch|digest mismatch' /tmp/tb-check.$$ | head -5 | sed 's/^/bad /'
+rm -f /tmp/tb-check.$$
+"""
+
+failures = []
+
+
+def fail(message):
+    failures.append(message)
+    print("FAIL " + message, flush=True)
+
+
+def load_canary(path):
+    mode = os.stat(path).st_mode
+    if mode & (stat.S_IRWXG | stat.S_IRWXO):
+        sys.exit(f"{path} holds an API key: chmod 600 it")
+    with open(path, encoding="utf-8") as file:
+        canary = json.load(file)
+    missing = {"api", "project", "database", "secret", "members", "member_ca"} - canary.keys()
+    if missing:
+        sys.exit(f"{path} lacks {', '.join(sorted(missing))}")
+    return canary
+
+
+class Api:
+    def __init__(self, base, secret, context, project, database):
+        self.base = base.rstrip("/")
+        self.secret = secret
+        self.context = context
+        self.prefix = f"/v1/projects/{project}/databases/{database}/collections"
+
+    def call(self, method, path, body=None, headers=None, content_type="application/json"):
+        data = None if body is None else json.dumps(body).encode()
+        request = urllib.request.Request(self.base + self.prefix + path, data=data, method=method)
+        request.add_header("Authorization", "Bearer " + self.secret)
+        # The edge refuses Python's default User-Agent (Cloudflare error 1010).
+        request.add_header("User-Agent", "terrabase-prod-replication-check/1")
+        if data is not None:
+            request.add_header("Content-Type", content_type)
+        for name, value in (headers or {}).items():
+            request.add_header(name, value)
+        try:
+            with urllib.request.urlopen(request, context=self.context, timeout=20) as response:
+                return response.status, (response.headers.get("ETag") or "").strip('"'), json.loads(response.read() or b"null")
+        except urllib.error.HTTPError as error:
+            raw = error.read()
+            try:
+                payload = json.loads(raw)
+            except ValueError:
+                payload = raw[:200].decode(errors="replace")
+            return error.code, (error.headers.get("ETag") or "").strip('"'), payload
+
+    def document(self, id_, method="GET", body=None, headers=None, content_type="application/json"):
+        return self.call(method, f"/{COLLECTION}/documents/{id_}", body, headers, content_type)
+
+
+def expect(what, got, *codes):
+    if got[0] not in codes:
+        fail(f"{what}: HTTP {got[0]} {json.dumps(got[2])[:200]}, expected {'/'.join(map(str, codes))}")
+        return False
+    return True
+
+
+def write(api, ids, run):
+    """Runs the canary's writes through the API; returns id -> (status, version, document) as the API answered it."""
+    status = api.call("POST", "", {"name": COLLECTION})
+    expect("create collection", status, 201, 409)
+    expected = {}
+    for index, id_ in enumerate(ids):
+        current = api.document(id_)
+        if not expect(f"read {id_}", current, 200, 404):
+            continue
+        document = {"run": run, "index": index}
+        if current[0] == 404:
+            # Absent or a tombstone: a conditional create.
+            written = api.document(id_, "PUT", document, {"If-None-Match": "*"})
+            if not expect(f"create {id_} with If-None-Match: *", written, 201):
+                continue
+            expect(f"second create {id_} with If-None-Match: *", api.document(id_, "PUT", {"stale": run}, {"If-None-Match": "*"}), 412)
+        else:
+            written = api.document(id_, "PUT", document, {"If-Match": f'"{current[1]}"'})
+            if not expect(f"replace {id_} with If-Match", written, 200):
+                continue
+            expect(f"replace {id_} with a stale If-Match", api.document(id_, "PUT", {"stale": run}, {"If-Match": f'"{current[1]}"'}), 412)
+        version = written[2]["version"]
+        if index % 3 == 1:
+            patched = api.document(id_, "PATCH", {"patched": run}, {"If-Match": f'"{version}"'}, "application/merge-patch+json")
+            if expect(f"patch {id_} with If-Match", patched, 200):
+                document["patched"] = run
+                version = patched[2]["version"]
+        if index % 4 == 3:
+            deleted = api.document(id_, "DELETE", headers={"If-Match": f'"{version}"'})
+            if expect(f"delete {id_} with If-Match", deleted, 200, 204):
+                expected[id_] = (404, deleted[2]["version"] if isinstance(deleted[2], dict) else None, None)
+                continue
+        expected[id_] = (200, version, document)
+    return expected
+
+
+def compare(member, api, expected, deadline):
+    """Polls one member until it answers every expected state; returns (matched, seconds, differences)."""
+    started = time.monotonic()
+    pending = dict(expected)
+    differences = {}
+    while True:
+        for id_, (status, version, document) in list(pending.items()):
+            got = api.document(id_)
+            body = got[2] if isinstance(got[2], dict) else {}
+            same = got[0] == status and (version is None or got[1] == version) and (
+                status != 200 or (body.get("version") == version and body.get("document") == document))
+            if same:
+                del pending[id_]
+                differences.pop(id_, None)
+            else:
+                differences[id_] = f"HTTP {got[0]} version {got[1] or '-'}, expected HTTP {status} version {version}"
+        if not pending or time.monotonic() > deadline:
+            return len(expected) - len(pending), time.monotonic() - started, differences
+        time.sleep(0.5)
+
+
+def listing(api):
+    """The member's live documents of the canary collection: id -> version."""
+    found, cursor = {}, None
+    while True:
+        status, _, page = api.call("GET", f"/{COLLECTION}/documents?limit=100" + (f"&cursor={cursor}" if cursor else ""))
+        if status != 200:
+            raise RuntimeError(f"list answered HTTP {status}")
+        found.update({item["id"]: item["version"] for item in page["items"]})
+        cursor = page.get("next_cursor")
+        if not cursor:
+            return found
+
+
+def host(command, ip, minutes):
+    result = subprocess.run(
+        command.replace("{ip}", ip), shell=True, input=HOST_SCRIPT.replace("MINUTES", str(minutes)),
+        capture_output=True, text=True, timeout=120, check=False)
+    if result.returncode != 0:
+        raise RuntimeError(f"host command exited {result.returncode}: {result.stderr.strip()[:200]}")
+    report = {"start": None, "metrics": {}, "logs": [], "bad": []}
+    for line in result.stdout.splitlines():
+        kind, _, rest = line.partition(" ")
+        if kind == "start":
+            report["start"] = int(rest) if rest.strip() else None
+        elif kind == "metric":
+            # name{labels} value [timestamp]; the scope label is the same on every series.
+            name, value = rest.split()[:2]
+            name = re.sub(r'otel_scope_name="[^"]*"', "", name).replace("{,", "{").replace(",}", "}").replace("{}", "")
+            report["metrics"][name] = float(value)
+        elif kind == "log":
+            report["logs"].append(rest)
+        elif kind == "bad":
+            report["bad"].append(rest)
+    return report
+
+
+def sample(command, ip, minutes):
+    try:
+        return host(command, ip, minutes)
+    except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as error:
+        return {"error": str(error)}
+
+
+def check_hosts(command, members, minutes, deadline):
+    """Samples every member until replication lag is 0 everywhere or the deadline passes; returns ip -> report."""
+    ips = [member.split(":")[0] for member in members]
+    with concurrent.futures.ThreadPoolExecutor(len(ips)) as pool:
+        while True:
+            reports = dict(zip(ips, pool.map(lambda ip: sample(command, ip, minutes), ips)))
+            lagging = [ip for ip, report in reports.items() if "error" not in report and lag(report)]
+            if not lagging or time.monotonic() > deadline:
+                break
+            time.sleep(2)
+    for ip, report in reports.items():
+        if "error" in report:
+            fail(f"{ip}: host checks failed: {report['error']}")
+            continue
+        metrics = report["metrics"]
+        if report["start"] is None:
+            fail(f"{ip}: no TerraBase process")
+        if metrics.get("terrabase_replication_sender_initialized") != 1:
+            fail(f"{ip}: replication sender not initialized (journal heads still being measured)")
+        if lag(report):
+            fail(f"{ip}: replication lag over the threshold: {lag(report)}")
+        for name in ('terrabase_replication_received_groups_total{result="rejected"}', "terrabase_replication_sender_prefix_mismatches_total"):
+            if metrics.get(name, 0) > 0:
+                fail(f"{ip}: {name} = {metrics[name]:g} since the process started")
+        # Retry delays and counts differ on every line: group by the text without its numbers.
+        persistent = [re.sub(r"\d+(\.\d+)?", "N", re.sub(r"\s+", " ", entry)) for entry in report["logs"] if not TRANSIENT.search(entry)]
+        report["transient"] = len(report["logs"]) - len(persistent)
+        report["errors"] = len(persistent)
+        for entry in sorted(set(persistent), key=persistent.count, reverse=True)[:3]:
+            fail(f"{ip}: log ({persistent.count(entry)}x in {minutes} min): {entry[:300]}")
+        for entry in report["bad"]:
+            fail(f"{ip}: corruption sign in the log: {entry[:300]}")
+    return reports
+
+
+def lag(report):
+    """Non-zero replication lag of one member: the sender's durable lag, and a follower's catalog lag or disconnection."""
+    metrics = report["metrics"]
+    found = {}
+    if metrics.get("terrabase_replication_sender_durable_lag", 0) != 0:
+        found["durable_lag"] = metrics["terrabase_replication_sender_durable_lag"]
+    if "terrabase_catalog_follower_connected" in metrics:
+        if metrics["terrabase_catalog_follower_connected"] != 1:
+            found["catalog_connected"] = metrics["terrabase_catalog_follower_connected"]
+        if metrics.get("terrabase_catalog_follower_lag", 0) != 0:
+            found["catalog_lag"] = metrics["terrabase_catalog_follower_lag"]
+    return found
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--canary", default=DEFAULT_CANARY)
+    parser.add_argument("--docs", type=int, default=20)
+    parser.add_argument("--max-lag-seconds", type=float, default=15)
+    parser.add_argument("--log-minutes", type=int, default=20)
+    parser.add_argument("--host-exec", default=DEFAULT_HOST_EXEC)
+    options = parser.parse_args()
+    if not 1 <= options.docs <= 100:
+        parser.error("--docs must be 1 to 100")
+    canary = load_canary(options.canary)
+    members = {
+        member: Api(f"https://{member}", canary["secret"], ssl.create_default_context(cadata=canary["member_ca"]), canary["project"], canary["database"])
+        for member in canary["members"]}
+    api = Api(canary["api"], canary["secret"], ssl.create_default_context(), canary["project"], canary["database"])
+    # Stable ids, so every run cycles the same documents and the canary does not grow.
+    ids = [str(uuid.uuid5(uuid.NAMESPACE_URL, f"terrabase-prod-replication-check/{index}")) for index in range(options.docs)]
+    run = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime()) + "-" + uuid.uuid4().hex[:8]
+    print(f"run {run}: {options.docs} documents in {canary['api']} database {canary['database']}, {len(members)} members", flush=True)
+
+    rows = {member: {} for member in members}
+    listings = {}
+    try:
+        expected = write(api, ids, run)
+        deadline = time.monotonic() + options.max_lag_seconds
+        print(f"wrote: {sum(1 for state in expected.values() if state[0] == 200)} live, {sum(1 for state in expected.values() if state[0] == 404)} deleted", flush=True)
+        for member, client in members.items():
+            try:
+                matched, seconds, differences = compare(member, client, expected, deadline)
+                live = listing(client)
+            except (OSError, RuntimeError, ValueError) as error:
+                fail(f"{member}: {error}")
+                continue
+            rows[member].update(matched=f"{matched}/{len(expected)}", seconds=f"{seconds:.1f}")
+            for id_, difference in sorted(differences.items()):
+                fail(f"{member}: {id_} {difference}")
+            listings[member] = live
+            for id_, (status, version, _) in sorted(expected.items()):
+                want = version if status == 200 else None
+                if live.get(id_) != want:
+                    fail(f"{member}: listing has {id_} at {live.get(id_, 'absent')}, expected {want or 'absent'}")
+        # Every member must list the same live documents, those of earlier runs and other --docs values included.
+        reference = next(iter(listings.values()), {})
+        for member, live in listings.items():
+            if live != reference:
+                differing = sorted(set(live.items()) ^ set(reference.items()))[:3]
+                fail(f"{member}: lists {len(live)} live documents, {next(iter(listings))} lists {len(reference)}; differing: {differing}")
+    except (OSError, ValueError, KeyError) as error:
+        fail(f"API {canary['api']}: {error!r}")
+
+    if options.host_exec:
+        try:
+            reports = check_hosts(options.host_exec, list(members), options.log_minutes, time.monotonic() + options.max_lag_seconds)
+            for member in members:
+                report = reports[member.split(":")[0]]
+                if "error" in report:
+                    continue
+                rows[member].update(
+                    durable_lag=f"{report['metrics'].get('terrabase_replication_sender_durable_lag', float('nan')):g}",
+                    catalog_lag=f"{report['metrics'].get('terrabase_catalog_follower_lag', 0):g}",
+                    log_errors=report["errors"], log_transient=report["transient"],
+                    started=time.strftime("%H:%M:%SZ", time.gmtime(report["start"])) if report["start"] else "-")
+        except (OSError, RuntimeError, ValueError) as error:
+            fail(f"host checks: {error!r}")
+    else:
+        print("host checks skipped (--host-exec '')", flush=True)
+
+    columns = ["matched", "seconds", "durable_lag", "catalog_lag", "log_errors", "log_transient", "started"]
+    print("member".ljust(18) + "".join(column.ljust(15) for column in columns))
+    for member, row in rows.items():
+        print(member.ljust(18) + "".join(str(row.get(column, "-")).ljust(15) for column in columns))
+    if failures:
+        print(f"FAILED: {len(failures)} problems in run {run}", flush=True)
+        return 1
+    print(f"OK: every member agrees on run {run}", flush=True)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

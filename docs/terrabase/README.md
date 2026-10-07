@@ -130,6 +130,11 @@ administrative listener. Measurements are cached; I/O-pool and replication
 signals stay unknown, keeping autoscaling gated until #13 and #11 are integrated.
 See [signal definitions and follow-ups](docs/node-pressure.md).
 
+## Production replication check
+
+`scripts/prod-replication-check` writes to the gru-1 canary database through the API, then exits non-zero when any
+member's documents, versions, replication lag or logs disagree; COS runs it on beta every 20 minutes (usage in its header).
+
 ## Layout
 
 Feature-sliced: `src/TerraBase/Features/<Feature>/` holds everything
