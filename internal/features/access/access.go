@@ -142,11 +142,7 @@ func renderAccessPage(w http.ResponseWriter, r *http.Request, deps core.Deps, se
 		writeProblem(w, err)
 		return
 	}
-	query := r.URL.Query()
-	if query.Get("tab") != "members" && query.Get("tab") != "invitations" {
-		query.Set("tab", "members")
-	}
-	data := buildPageData(account, org, p, query, message, inviteURL, time.Now())
+	data, invitations := buildMembersPageData(account, org, p, r.URL.Query(), message, inviteURL, time.Now())
 	csrfToken := deps.CSRF.Token(w, r)
 	if r.Method == http.MethodGet && strings.EqualFold(r.Header.Get("Datastar-Request"), "true") && r.URL.Query().Get("tab") == "members" {
 		if deps.Events == nil {
@@ -154,7 +150,7 @@ func renderAccessPage(w http.ResponseWriter, r *http.Request, deps core.Deps, se
 			return
 		}
 		var fragment strings.Builder
-		if err := accessPageView(core.Page{CSRFToken: csrfToken}, data).Render(r.Context(), &fragment); err != nil {
+		if err := accessPageView(core.Page{CSRFToken: csrfToken}, data, invitations).Render(r.Context(), &fragment); err != nil {
 			http.Error(w, "could not render organization members", http.StatusInternalServerError)
 			return
 		}
@@ -164,12 +160,28 @@ func renderAccessPage(w http.ResponseWriter, r *http.Request, deps core.Deps, se
 	page := core.Page{
 		Layout: "shell", Title: "Organization · TerraScale", Principal: p, CSRFToken: csrfToken,
 		View: func(page core.Page) templ.Component {
-			return accessPageView(page, data)
+			return accessPageView(page, data, invitations)
 		},
 	}
 	if err := deps.Render.Page(w, r, page); err != nil {
 		http.Error(w, "could not render organization members", http.StatusInternalServerError)
 	}
+}
+
+// Legacy invitation URLs select the invitation pager within the Members page.
+func buildMembersPageData(account core.Account, org core.Organization, p core.Principal, query url.Values, message, inviteURL string, now time.Time) (pageData, pageData) {
+	membersQuery := url.Values{"tab": {"members"}, "q": query["q"], "role": query["role"], "invitation": query["invitation"]}
+	invitationsQuery := url.Values{"tab": {"invitations"}}
+	if query.Get("tab") == "invitations" {
+		invitationsQuery.Set("page", query.Get("page"))
+	} else {
+		membersQuery.Set("page", query.Get("page"))
+	}
+	members := buildPageData(account, org, p, membersQuery, message, inviteURL, now)
+	if query.Get("tab") == "invitations" {
+		members.Tab = "invitations"
+	}
+	return members, buildPageData(account, org, p, invitationsQuery, "", "", now)
 }
 
 func buildPageData(account core.Account, org core.Organization, p core.Principal, query url.Values, message, inviteURL string, now time.Time) pageData {
