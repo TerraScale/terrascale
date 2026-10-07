@@ -191,8 +191,36 @@ public sealed class CrossRegionDeletionTests
 
     private static async Task<HttpStatusCode> StatusAsync(HttpClient client, string path, CancellationToken token)
     {
-        using var response = await client.GetAsync(ManagementApi.Uri(path), token);
+        using var response = await GetAdmittedAsync(client, path, token);
         return response.StatusCode;
+    }
+
+    private static async Task<HttpResponseMessage> GetAdmittedAsync(HttpClient client, string path, CancellationToken token)
+    {
+        HttpResponseMessage? admitted = null;
+        try
+        {
+            // With one storage slot, WAN and usage work can legitimately refuse a foreground read.
+            // Retry only backpressure; every other status and the returned data still reach the assertions.
+            await TerraBaseTestServer.EventuallyAsync(async _ =>
+            {
+                var response = await client.GetAsync(ManagementApi.Uri(path), token);
+                if (response.StatusCode == HttpStatusCode.ServiceUnavailable)
+                {
+                    response.Dispose();
+                    return false;
+                }
+
+                admitted = response;
+                return true;
+            });
+            return admitted!;
+        }
+        catch
+        {
+            admitted?.Dispose();
+            throw;
+        }
     }
 
     private static Task EventuallyReadAsync(HttpClient client, ManagedDatabaseRef database, string value) =>
@@ -205,7 +233,7 @@ public sealed class CrossRegionDeletionTests
 
     private static async Task AssertReadAsync(HttpClient client, ManagedDatabaseRef database, string value, CancellationToken token)
     {
-        using var response = await client.GetAsync(ManagementApi.Uri(Document(database)), token);
+        using var response = await GetAdmittedAsync(client, Document(database), token);
         await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
         var body = await response.Content.ReadFromJsonAsync<JsonElement>(token);
         await Assert.That(body.GetProperty("document").GetProperty("value").GetString()).IsEqualTo(value);

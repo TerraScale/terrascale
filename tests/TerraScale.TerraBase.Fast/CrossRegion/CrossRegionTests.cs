@@ -265,10 +265,24 @@ public sealed class CrossRegionTests
         await using var regions = await Regions.StartAsync();
 
         // sfo has a database "clash" that was never written; gru then creates and writes its own "clash", local to gru.
-        (await regions.Sfo.PutAsync(new Uri($"/v1/projects/{regions.Project}/databases/clash", UriKind.Relative), null)).EnsureSuccessStatusCode();
+        await TerraBaseTestServer.EventuallyAsync(async token =>
+            await regions.GruApi.Server.MetricAsync("terrabase_wan_members", "region=\"sfo-1\"", token) == 1
+            && await regions.SfoApi.Server.MetricAsync("terrabase_wan_members", "region=\"gru-1\"", token) == 1);
+        regions.Network.Partition("gru", "sfo");
+        // Both sequential pullers have completed any heads request selected before the partition.
+        await TerraBaseTestServer.EventuallyAsync(async token =>
+            await regions.GruApi.Server.MetricAsync("terrabase_wan_members", "region=\"sfo-1\"", token) == 0
+            && await regions.SfoApi.Server.MetricAsync("terrabase_wan_members", "region=\"gru-1\"", token) == 0);
         var clash = $"/v1/projects/{regions.Project}/databases/clash";
-        (await regions.Gru.PutAsync(new Uri(clash, UriKind.Relative), null)).EnsureSuccessStatusCode();
+        using var sfoClash = await regions.Sfo.PutAsync(new Uri(clash, UriKind.Relative), null);
+        sfoClash.EnsureSuccessStatusCode();
+        using var gruClash = await regions.Gru.PutAsync(new Uri(clash, UriKind.Relative), null);
+        gruClash.EnsureSuccessStatusCode();
+        var sfoId = (await sfoClash.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString();
+        var gruId = (await gruClash.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString();
+        await Assert.That(gruId).IsNotEqualTo(sfoId);
         (await regions.Gru.PostAsJsonAsync(new Uri($"{clash}/collections", UriKind.Relative), new { name = "items" })).EnsureSuccessStatusCode();
+        regions.Network.Heal();
         await TerraBaseTestServer.EventuallyAsync(async token =>
             await regions.SfoApi.Server.MetricAsync("terrabase_wan_conflicts", "region=\"gru-1\"", token) == 1);
         using var own = await regions.Sfo.GetAsync(new Uri($"{clash}/collections/items", UriKind.Relative));
@@ -290,8 +304,11 @@ public sealed class CrossRegionTests
             (await regions.GruApi.Client.GetAsync(regions.Management($"databases/{id}"), token)).StatusCode == HttpStatusCode.NotFound);
         using var gone = await regions.Gru.GetAsync(new Uri($"{brief}/collections/items", UriKind.Relative));
         await Assert.That(gone.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+        // The catalog tombstone becomes visible before its committed cleanup intent removes the file.
+        var file = Path.Combine(regions.GruApi.Server.DataDirectory, regions.Organization, regions.Project, id + ".db");
+        await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(!File.Exists(file)));
         // Deleted for good: gru never takes it again, whatever an older head still says.
-        await Assert.That(File.Exists(Path.Combine(regions.GruApi.Server.DataDirectory, regions.Organization, regions.Project, id + ".db"))).IsFalse();
+        await Assert.That(File.Exists(file)).IsFalse();
     }
 
     [Test]
