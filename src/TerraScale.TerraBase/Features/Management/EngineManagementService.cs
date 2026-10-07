@@ -465,7 +465,9 @@ internal sealed partial class EngineManagementService(
         // The database's backups expire through the storage sweep from this commit on, and its tooling state
         // (backup schedule, usage and query field counts) goes with it.
         await StorageSweep.AddAsync(transaction, new SweepEntry(StorageSweep.DatabaseBackups, organizationId, database.Id), cancellationToken).ConfigureAwait(false);
-        await transaction.DeleteAsync(EngineManagedBackupService.BackedUpDatabases, database.Id, cancellationToken).ConfigureAwait(false);
+        // A tombstone, not a removal: the id stays taken, so another region replicating this database does not bring it
+        // back here and a commit cannot reuse it (docs/cross-region.md). Backup passes list live entries only.
+        _ = await transaction.TombstoneAsync(EngineManagedBackupService.BackedUpDatabases, database.Id, cancellationToken).ConfigureAwait(false);
         await transaction.DeleteCollectionsAsync(SystemCatalog.DatabaseState(database.Id), cancellationToken).ConfigureAwait(false);
         await TouchOrganizationAsync(transaction, organizationId, cancellationToken).ConfigureAwait(false);
         return storage;
@@ -499,7 +501,8 @@ internal sealed partial class EngineManagementService(
     // none) inside each transaction. A copy reads the engine database sourceId of that project (a database or a
     // backup snapshot).
     private async ValueTask<ManagementResult<AddedDatabase>> AddDatabaseAsync(
-        Func<IStorageTransaction, ValueTask<ManagementResult<TenantContext>>> project, string name, string? sourceId, string? branchedFrom, CancellationToken cancellationToken)
+        Func<IStorageTransaction, ValueTask<ManagementResult<TenantContext>>> project, string name, string? sourceId, string? branchedFrom, CancellationToken cancellationToken,
+        string? id = null)
     {
         // Checked again when registering; this avoids creating storage for a request that cannot succeed.
         var precheck = await ReadAsync(transaction => CanAddDatabaseAsync(transaction, project, name, cancellationToken), cancellationToken)
@@ -509,7 +512,7 @@ internal sealed partial class EngineManagementService(
             return precheck.Error;
         }
 
-        var database = new ManagedDatabase(NewId(), tenant.ProjectId!, name, branchedFrom, time.GetUtcNow());
+        var database = new ManagedDatabase(id ?? NewId(), tenant.ProjectId!, name, branchedFrom, time.GetUtcNow());
         var storage = tenant with { DatabaseId = database.Id };
         if (!await PrepareDatabaseAsync(storage, sourceId is null ? null : tenant with { DatabaseId = sourceId }, cancellationToken).ConfigureAwait(false))
         {

@@ -36,9 +36,35 @@ public interface ITenantDirectory
     /// </summary>
     ValueTask<bool?> ReplicatesAsync(TenantContext database, CancellationToken cancellationToken);
 
+    /// <summary>The name of <paramref name="database"/>, or <see langword="null"/> when the catalog does not register it.</summary>
+    ValueTask<string?> DatabaseNameAsync(TenantContext database, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Registers <paramref name="database"/> under its organization, project and database ids and <paramref name="name"/>, as
+    /// another region holds it, when this region registers its organization and project under the same ids
+    /// (docs/cross-region.md). Only a catalog primary registers.
+    /// </summary>
+    ValueTask<DatabaseAdoption> AdoptDatabaseAsync(TenantContext database, string name, CancellationToken cancellationToken);
+
     /// <summary>
     /// The plan of organization <paramref name="organizationId"/>: <see cref="PlanTier.Hobby"/> when it does not exist (or no
     /// longer does), or when this member's catalog is at a version this build does not read.
     /// </summary>
     ValueTask<PlanTier> PlanAsync(string organizationId, CancellationToken cancellationToken);
+}
+
+/// <summary>The outcome of <see cref="ITenantDirectory.AdoptDatabaseAsync"/>.</summary>
+public enum DatabaseAdoption
+{
+    /// <summary>The database is registered now.</summary>
+    Registered,
+
+    /// <summary>This region does not register its organization and project under the same ids: the project does not replicate here.</summary>
+    NotReplicated,
+
+    /// <summary>This region used the database id before: a database deleted here is not brought back.</summary>
+    Deleted,
+
+    /// <summary>Another database of the project has the name here.</summary>
+    NameTaken,
 }

@@ -30,7 +30,9 @@ internal sealed class WanMetrics
         meter.CreateObservableGauge("terrabase.wan.members", () => Measure(round => round.Members), "{member}",
             "Members of another region that answered this member's last round, by region.");
         meter.CreateObservableGauge("terrabase.wan.unregistered", () => Measure(round => round.Unregistered), "{database}",
-            "Databases another region holds that this region's catalog does not register, so they do not replicate here, by region.");
+            "Databases another region holds that do not replicate here, by region: their project is not registered here, or they were deleted here.");
+        meter.CreateObservableGauge("terrabase.wan.conflicts", () => Measure(round => round.Conflicts), "{database}",
+            "Databases another region holds that do not replicate here because another database of their project has their name here, by region.");
 
         IEnumerable<Measurement<T>> Measure<T>(Func<Round, T> value) where T : struct
         {
@@ -42,15 +44,15 @@ internal sealed class WanMetrics
     /// A region's round ended: <paramref name="lag"/> groups behind the members that answered; a round that held every group
     /// of every member the region lists (<paramref name="caughtUp"/>) records the time.
     /// </summary>
-    public void Rounded(string region, long lag, int members, int unregistered, bool caughtUp, long now) =>
+    public void Rounded(string region, long lag, int members, int unregistered, int conflicts, bool caughtUp, long now) =>
         _rounds.AddOrUpdate(
             region,
-            _ => new Round(lag, members, unregistered, caughtUp ? now : null),
-            (_, last) => new Round(lag, members, unregistered, caughtUp ? now : last.CaughtUp));
+            _ => new Round(lag, members, unregistered, conflicts, caughtUp ? now : null),
+            (_, last) => new Round(lag, members, unregistered, conflicts, caughtUp ? now : last.CaughtUp));
 
     /// <summary>No member of the region answered the heads: its lag is unknown, and staleness keeps growing.</summary>
     public void Unanswered(string region) =>
-        _rounds.AddOrUpdate(region, _ => new Round(0, 0, 0, null), (_, last) => last with { Members = 0 });
+        _rounds.AddOrUpdate(region, _ => new Round(0, 0, 0, 0, null), (_, last) => last with { Members = 0 });
 
     public void Pulled(string region, uint encodedBytes)
     {
@@ -64,5 +66,5 @@ internal sealed class WanMetrics
     public void Failed(string region, string reason) =>
         _failures.Add(1, new KeyValuePair<string, object?>("region", region), new KeyValuePair<string, object?>("reason", reason));
 
-    private sealed record Round(long Lag, int Members, int Unregistered, long? CaughtUp);
+    private sealed record Round(long Lag, int Members, int Unregistered, int Conflicts, long? CaughtUp);
 }

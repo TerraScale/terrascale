@@ -35,7 +35,9 @@ are missing: check step 1.
 ## 3. The canary database
 
 The check needs a database of its own (TS-660's in-region check owns its canary). Register it in **both** regions
-under the **same** ids.
+under the **same** ids. Registering the project in both regions is what makes it replicate: any database created later
+in that project shows up in the other region by itself ([which databases replicate](../cross-region.md#which-databases-replicate)).
+Registering the database too, as below, makes it serve in both regions before its first write.
 
 1. Choose the ids once:
 

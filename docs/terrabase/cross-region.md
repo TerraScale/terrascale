@@ -45,24 +45,33 @@ A document's version (its `ETag`) hashes its state under the database's organiza
 state has the same version everywhere: a version read in one region satisfies `If-Match` in another once that region
 holds the state. The `tbv2` causal tokens of TS-647 step 4 replace these and stay valid across regions the same way.
 
-## Registering a database in both regions
+## Which databases replicate
 
-Only databases that **both** regions' catalogs register under the same organization, project and database ids
-replicate. Register one in a second region with a [management commit](management-commits.md) that chooses the ids it
-has in the first:
+A project replicates to every region that registers it under the same organization and project ids. Every database of
+such a project replicates between those regions: one created in either region is registered in the other
+automatically, once it has a write. That region's catalog primary registers it with the same id and name, and its
+followers serve it once their catalog has it.
+
+Register an organization and project in a second region with a [management commit](management-commits.md) that
+chooses the ids they have in the first. Leave out the organization if that region already has it:
 
 ```json
 {"id":"<new uuid>","ops":[
   {"op":"create_organization","id":"<organization id>","name":"<name>"},
-  {"op":"create_project","organization":"<organization id>","id":"<project id>","name":"<name>"},
-  {"op":"create_database","organization":"<organization id>","project":"<project id>","name":"<database name>","id":"<database id>"}]}
+  {"op":"create_project","organization":"<organization id>","id":"<project id>","name":"<name>"}]}
 ```
 
-Leave out the operations for an organization or project that region already has. API keys stay per region: issue
-one in each region (`POST /admin/api-keys` on the region's catalog primary).
+A `create_database` operation with the database's `id` registers a database ahead of its first write.
 
-A database another region holds that this region does not register is counted in `terrabase_wan_unregistered` and
-never created here.
+A database another region holds does not replicate here when:
+
+| Reason | Metric |
+| --- | --- |
+| this region does not register its project under the same ids | `terrabase_wan_unregistered` |
+| it was deleted here: a deleted database's id stays taken, so a region never brings back what it deleted | `terrabase_wan_unregistered` |
+| another database of its project has its name here | `terrabase_wan_conflicts`, plus a warning: rename or delete one of them |
+
+API keys stay per region: issue one in each region (`POST /admin/api-keys` on the region's catalog primary).
 
 ## Configuration
 
@@ -92,7 +101,8 @@ On the `TerraScale.TerraBase` meter, scraped at `/metrics`. `region` is a config
 | `terrabase_wan_lag{region}` | Change groups that the members of that region that answered this member's last round committed and this member has not applied |
 | `terrabase_wan_staleness_seconds{region}` | Seconds since a round of this member reached every member that region lists and held all their groups; near 0 when caught up. A member of that region that stops answering makes it grow even while `lag` reads 0 |
 | `terrabase_wan_members{region}` | Members of that region that answered this member's last round |
-| `terrabase_wan_unregistered{region}` | Databases that region holds and this region's catalog does not register |
+| `terrabase_wan_unregistered{region}` | Databases that region holds that do not replicate here: their project is not registered here, or they were deleted here |
+| `terrabase_wan_conflicts{region}` | Databases that region holds that do not replicate here because another database of their project has their name here |
 | `terrabase_wan_pulled_groups_total{region}` | Groups pulled from that region and applied |
 | `terrabase_wan_pulled_encoded_bytes_total{region}` | Envelope bytes pulled from that region, after LZ4 |
 | `terrabase_wan_served_groups_total` | Groups this member served to other regions |
@@ -118,8 +128,9 @@ Alert on `terrabase_wan_staleness_seconds` above a minute, and on any `ahead` fa
   write of the same document: other members of its own region hold the state, not the group. A repair pulls the state
   from a surviving member. It needs a read of every document's state, tombstones included, which the engine does not
   offer yet; it comes with TS-647 step 4's snapshots for refilled replicas.
-- Registration in a replica region is a manual commit; a database's home region and replica regions, chosen through the
-  API and dashboard, come later. Deleting a database in one region does not delete it in the other.
+- A project chooses its replica regions by being registered there (a management commit). A policy per database, with a
+  home region, replica regions and plan limits, set through the API and dashboard, comes later. Deleting a database in
+  one region does not delete it in the other.
 - Catalogs and API keys are per region.
 - A member reads every database's head for each heads request, and pulls one origin at a time.
 - Interval and tombstone GC (TS-647 step 7) must keep a group until every region applied it: remote regions read origin
@@ -132,7 +143,8 @@ Alert on `terrabase_wan_staleness_seconds` above a minute, and on any `ahead` fa
   - a partition and its heal;
   - concurrent writes;
   - a group larger than one reply;
-  - unregistered databases;
+  - databases of shared projects registered automatically, deleted ones not brought back, name clashes counted;
+  - databases of a project only one region registers;
   - a two-member region reached through single replies, and staleness when one of its members goes silent.
 - **Slow** (`CrossRegion/CrossRegionPartitionTests.cs`) is the partition suite:
   - two regions of two members each (a catalog primary and its follower);

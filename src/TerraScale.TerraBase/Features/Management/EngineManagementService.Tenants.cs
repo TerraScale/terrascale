@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using TerraBase.Engine;
+using TerraBase.Features.Management.Backups;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
 
@@ -83,6 +84,43 @@ internal sealed partial class EngineManagementService
             && await FindDatabaseAsync(organizationId, projectId, database, cancellationToken).ConfigureAwait(false) is { } existing
             ? (existing, false)
             : null;
+    }
+
+    public ValueTask<string?> DatabaseNameAsync(TenantContext database, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(database);
+        return database.ProjectId is null || database.DatabaseId is null
+            ? ValueTask.FromResult<string?>(null)
+            : ReadCatalogAsync(async transaction =>
+                (await GetAsync(transaction, Databases(database.ProjectId), database.DatabaseId, TerraBaseJsonContext.Default.ManagedDatabase, cancellationToken)
+                    .ConfigureAwait(false))?.Name,
+                cancellationToken);
+    }
+
+    public async ValueTask<DatabaseAdoption> AdoptDatabaseAsync(TenantContext database, string name, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(database);
+        if (database.ProjectId is null || database.DatabaseId is null || !DatabaseName.TryParse(name, out _))
+        {
+            return DatabaseAdoption.NotReplicated;
+        }
+
+        // Every database id this catalog ever registered keeps its entry, deleted ones as tombstones.
+        if (await ReadAsync(async transaction => await transaction.GetVersionAsync(EngineManagedBackupService.BackedUpDatabases, database.DatabaseId, cancellationToken)
+            .ConfigureAwait(false), cancellationToken).ConfigureAwait(false) is not null)
+        {
+            return DatabaseAdoption.Deleted;
+        }
+
+        var added = await AddDatabaseAsync(
+            async transaction => await OrganizationProjectAsync(transaction, database.OrganizationId, database.ProjectId, cancellationToken).ConfigureAwait(false) is { } tenant
+                ? tenant
+                : ManagementError.NotFound,
+            name, sourceId: null, branchedFrom: null, cancellationToken, id: database.DatabaseId)
+            .ConfigureAwait(false);
+        return added.Value is not null ? DatabaseAdoption.Registered
+            : added.Error == ManagementError.NameTaken ? DatabaseAdoption.NameTaken
+            : DatabaseAdoption.NotReplicated;
     }
 
     public ValueTask<PlanTier> PlanAsync(string organizationId, CancellationToken cancellationToken) =>

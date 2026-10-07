@@ -14,7 +14,8 @@ namespace TerraBase.Features.CrossRegion;
 /// read; a request this member cannot answer gets an empty reply, which the asking member counts as a failure.
 /// </summary>
 internal sealed partial class WanResponder(
-    IRegionBus bus, IStorageEngine engine, IMembership membership, TerraBaseOptions options, WanMetrics metrics, ILogger<WanResponder> logger)
+    IRegionBus bus, IStorageEngine engine, IMembership membership, ITenantDirectory tenants, TerraBaseOptions options, WanMetrics metrics,
+    ILogger<WanResponder> logger)
     : BackgroundService
 {
     private const int MaxGroupsPerReply = 1024;
@@ -114,6 +115,7 @@ internal sealed partial class WanResponder(
                     DatabaseId = WanProtocol.Id(database.DatabaseId!),
                     Origin = ByteString.CopyFrom(origin.Span),
                     Sequence = (ulong)head,
+                    DatabaseName = await tenants.DatabaseNameAsync(database, cancellationToken).ConfigureAwait(false) ?? "",
                 });
             }
         }

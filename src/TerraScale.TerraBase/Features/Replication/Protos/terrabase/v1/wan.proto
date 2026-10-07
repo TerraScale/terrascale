@@ -36,6 +36,9 @@ message Head {
   // The 16-byte origin (the database's incarnation on the answering member).
   bytes origin = 4;
   uint64 sequence = 5;
+  // The database's name in the answering member's catalog, empty when it registers none. A region that registers the
+  // database's organization and project under the same ids registers the database under this name.
+  string database_name = 6;
 }
 
 message HeadsReply {

@@ -127,12 +127,19 @@ public sealed class CrossRegionTests
     }
 
     [Test]
-    public async Task A_database_only_one_region_registers_stays_there()
+    public async Task A_database_of_a_project_only_one_region_registers_stays_there()
     {
         await using var regions = await Regions.StartAsync();
+        var project = Guid.NewGuid().ToString("D");
+        using var registered = await regions.GruApi.Client.PostAsync(new Uri("/v1/management/commits", UriKind.Relative), new StringContent(JsonSerializer.Serialize(new
+        {
+            id = Guid.NewGuid().ToString("D"),
+            ops = new object[] { new { op = "create_project", organization = regions.Organization, id = project, name = "gru-only" } },
+        }), Encoding.UTF8, "application/json"));
+        registered.EnsureSuccessStatusCode();
         var created = await regions.GruApi.Server.Services.GetRequiredService<ITenantDirectory>()
-            .CreateDatabaseAsync(regions.Organization, regions.Project, "private", CancellationToken.None);
-        var path = $"/v1/projects/{regions.Project}/databases/private";
+            .CreateDatabaseAsync(regions.Organization, project, "private", CancellationToken.None);
+        var path = $"/v1/projects/{project}/databases/private";
         (await regions.Gru.PostAsJsonAsync(new Uri($"{path}/collections", UriKind.Relative), new { name = "items" })).EnsureSuccessStatusCode();
         (await regions.Gru.PutAsJsonAsync(new Uri($"{path}/collections/items/documents/{ReplicationDocuments.Id("secret")}", UriKind.Relative), new { value = "here" }))
             .EnsureSuccessStatusCode();
@@ -141,6 +148,54 @@ public sealed class CrossRegionTests
             await regions.SfoApi.Server.MetricAsync("terrabase_wan_unregistered", "region=\"gru-1\"", token) == 1);
         var database = created!.Value.Database;
         await Assert.That(File.Exists(Path.Combine(regions.SfoApi.Server.DataDirectory, database.OrganizationId, database.ProjectId!, database.DatabaseId + ".db"))).IsFalse();
+    }
+
+    [Test]
+    public async Task A_database_created_in_either_region_of_a_shared_project_appears_in_the_other()
+    {
+        await using var regions = await Regions.StartAsync();
+        foreach (var (writer, reader, name) in new[] { (regions.Gru, regions.Sfo, "orders"), (regions.Sfo, regions.Gru, "events") })
+        {
+            var path = $"/v1/projects/{regions.Project}/databases/{name}";
+            using var created = await writer.PutAsync(new Uri(path, UriKind.Relative), null);
+            await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created);
+            var id = (await created.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString();
+            (await writer.PostAsJsonAsync(new Uri($"{path}/collections", UriKind.Relative), new { name = "items" })).EnsureSuccessStatusCode();
+            var document = new Uri($"{path}/collections/items/documents/{ReplicationDocuments.Id(name)}", UriKind.Relative);
+            (await writer.PutAsJsonAsync(document, new { value = name })).EnsureSuccessStatusCode();
+
+            // Registered in the other region under the same id and name, with its documents.
+            _ = await Regions.EventuallyReadAsync(reader, document, name);
+            using var listed = await reader.PutAsync(new Uri(path, UriKind.Relative), null);
+            await Assert.That(listed.StatusCode).IsEqualTo(HttpStatusCode.OK);
+            await Assert.That((await listed.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString()).IsEqualTo(id);
+        }
+    }
+
+    [Test]
+    public async Task A_database_deleted_in_one_region_is_not_brought_back_and_a_name_clash_is_counted()
+    {
+        await using var regions = await Regions.StartAsync();
+
+        // sfo deletes the canary; gru keeps writing to it.
+        using var deleted = await regions.SfoApi.Client.DeleteAsync(
+            new Uri($"/v1/management/organizations/{regions.Organization}/projects/{regions.Project}/databases/{regions.Database}", UriKind.Relative));
+        await Assert.That(deleted.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
+        (await regions.Gru.PutAsJsonAsync(regions.Document(ReplicationDocuments.Id("after-delete")), new { value = "gru" })).EnsureSuccessStatusCode();
+
+        // sfo has a database "clash" that was never written; gru then creates and writes its own "clash".
+        (await regions.Sfo.PutAsync(new Uri($"/v1/projects/{regions.Project}/databases/clash", UriKind.Relative), null)).EnsureSuccessStatusCode();
+        var clash = $"/v1/projects/{regions.Project}/databases/clash";
+        (await regions.Gru.PutAsync(new Uri(clash, UriKind.Relative), null)).EnsureSuccessStatusCode();
+        (await regions.Gru.PostAsJsonAsync(new Uri($"{clash}/collections", UriKind.Relative), new { name = "items" })).EnsureSuccessStatusCode();
+
+        await TerraBaseTestServer.EventuallyAsync(async token =>
+            await regions.SfoApi.Server.MetricAsync("terrabase_wan_unregistered", "region=\"gru-1\"", token) == 1
+            && await regions.SfoApi.Server.MetricAsync("terrabase_wan_conflicts", "region=\"gru-1\"", token) == 1);
+        using var gone = await regions.Sfo.GetAsync(regions.Document(ReplicationDocuments.Id("after-delete")));
+        await Assert.That(gone.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+        using var own = await regions.Sfo.GetAsync(new Uri($"{clash}/collections/items", UriKind.Relative));
+        await Assert.That(own.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
     }
 
     [Test]

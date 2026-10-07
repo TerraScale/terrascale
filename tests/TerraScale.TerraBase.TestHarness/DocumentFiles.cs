@@ -14,14 +14,14 @@ public static class DocumentFiles
         await WriteDocumentsAsync(connection, documents);
     }
 
-    /// <summary>Every document of the file at <paramref name="path"/>, as "collection|id|body" lines in key order.</summary>
+    /// <summary>Every live document of the file at <paramref name="path"/>, as "collection|id|body" lines in key order; tombstones are left out.</summary>
     public static async Task<List<string>> ReadAsync(string path)
     {
         await using var connection = new SqliteConnection(
             new SqliteConnectionStringBuilder { DataSource = path, Mode = SqliteOpenMode.ReadOnly, Pooling = false }.ToString());
         await connection.OpenAsync();
         await using var command = connection.CreateCommand();
-        command.CommandText = "SELECT collection, id, body FROM documents ORDER BY collection, id;";
+        command.CommandText = "SELECT collection, id, body FROM documents WHERE body IS NOT NULL ORDER BY collection, id;";
         await using var reader = await command.ExecuteReaderAsync();
         var documents = new List<string>();
         while (await reader.ReadAsync())
