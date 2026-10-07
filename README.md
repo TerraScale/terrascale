@@ -1,6 +1,21 @@
 # TerraScale Rust SDK
 
-`terrascale::v1` is the name-based TerraBase v1 client: documents, transactions, queries and the `/v1/dashboard` control plane. See [docs/v1-api.md](docs/v1-api.md). The native UUID/shard API described below is deprecated and will be removed with those routes.
+`terrascale::v1` supports the C# TerraBase project-scoped document API with verified Atlas routing. Start with [docs/csharp-api.md](docs/csharp-api.md). The older name-based `/v1/databases` and `/v1/dashboard` client remains available for its original producer ([docs/v1-api.md](docs/v1-api.md)). The native UUID/shard API described below is deprecated and will be removed with those routes.
+
+```rust,no_run
+use terrascale::v1::Client;
+# async fn example(project: uuid::Uuid, access_token: &str) -> terrascale::v1::Result<()> {
+let client = Client::for_project(project, access_token).build()?;
+let items = client.database("main").collection("items");
+let document = items.get::<serde_json::Value>(uuid::Uuid::new_v4()).await?;
+# let _ = document;
+# Ok(())
+# }
+```
+
+Project requests use an already exchanged ts-auth bearer token and resolve through Atlas `/v1/resolve` without sending that token to Atlas. The client verifies the ES256 session pin, sends its raw region id to TerraBase, and refreshes routing on expiry, `421`, or redirect. Reads can retry once after a routing correction; mutations are never replayed for routing failures. An explicit `.endpoint(url)` bypasses Atlas. C# TerraBase currently rejects `Idempotency-Key`, which project clients reject locally.
+
+`nice -n 19 python3 scripts/terrabase/run.py` runs the required integration journey against a SHA-256-pinned C# release binary in an isolated temporary database. CI runs this journey without `nice`. Its legacy bootstrap credentials qualify that pinned producer; they do not establish the successor JWT-only server contract.
 
 The SDK speaks TerraBase's native JSON document protocol. Native paths carry UUID tenant, database, collection and document identities and a canonical full-range decimal shard. Numeric field IDs and tagged values preserve missing/null, signed 64-bit integers, bytes, maps and arrays. Point reads retain observed context, tombstones and all concurrent siblings. Native values have at most 16 levels, arrays cannot occur under an ancestor array, and the entire encoded document is capped at 1 MiB.
 

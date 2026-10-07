@@ -4,6 +4,11 @@ The name-based TerraBase v1 client. Contract: terrabase `feat/v1-contracts`
 at `7bc74f9d` (`docs/api-v1.md`, `query-v1.md`, `control-plane-v1.md`).
 Reference implementation: ts-go `feat/v1-client` (`v1/`).
 
+This page describes the original producer. For the C# producer's project
+paths, bearer credentials, collection API and Atlas session routing, see
+[csharp-api.md](csharp-api.md). Its real-binary suite is independent of the
+legacy fake-compatible live test below.
+
 The public API skeleton was introduced in commit
 `d26086340ea1c0a296e618e7898d8a1e4a2ea4ff` on branch `feat/v1-client`. Pin
 that commit (or a later one on the branch) to build against it.

@@ -1,4 +1,4 @@
-//! Lossless Rust SDK for TerraBase's scoped native document protocol and ts-auth.
+//! Rust SDK for C# TerraBase's project-scoped REST API, native documents and ts-auth.
 //!
 //! Native reads retain conflicts, tombstones, numeric fields, signed integers,
 //! bytes and observed context. Transactions preserve immutable retry identity.

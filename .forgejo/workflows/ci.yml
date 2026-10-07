@@ -38,5 +38,9 @@ jobs:
         run: cargo clippy --locked --all-targets --all-features -- -D warnings
       - name: Run locked tests
         run: cargo test --locked --all-features
+      - name: Run SDK against pinned real C# TerraBase release
+        env:
+          TERRABASE_RELEASE_TOKEN: ${{ secrets.ORG_READ_TOKEN }}
+        run: python3 scripts/terrabase/run.py
       - name: Verify distributable package
         run: cargo package --locked

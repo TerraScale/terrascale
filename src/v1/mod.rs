@@ -1,6 +1,10 @@
 //! The name-based TerraBase v1 client.
 //!
-//! Implements the frozen v1 contracts (terrabase `docs/api-v1.md`,
+//! Project clients implement C# TerraBase's `/v1/projects/{project}` document
+//! contract with bearer credentials and verified Atlas session routing.
+//! `Client::for_project` selects it; an explicit endpoint bypasses Atlas.
+//!
+//! Legacy clients implement the frozen v1 contracts (terrabase `docs/api-v1.md`,
 //! `query-v1.md` and `control-plane-v1.md`): documents, transactions, queries
 //! and the `/v1/dashboard` control plane, over HTTPS with a `tbk1` key.
 //!
@@ -24,6 +28,7 @@
 //! # let _ = (w, doc); Ok(()) }
 //! ```
 
+mod atlas;
 mod client;
 mod control;
 mod documents;
@@ -43,8 +48,9 @@ pub use control::{
     TenantLimits, UniqueConstraint, UpdateCollection, UpdateTenant,
 };
 pub use documents::{
-    Collection, Database, Document, DocumentState, Event, Patch, PatchOp, Precondition, Sibling,
-    WriteOptions, WriteResult,
+    Collection, Database, Document, DocumentState, Event, Patch, PatchOp, Precondition,
+    ProjectCollectionInfo, ProjectCollectionPage, ProjectDatabaseInfo, Sibling, WriteOptions,
+    WriteResult,
 };
 pub use errors::{Error, Result};
 pub use ids::{is_valid_name, uuidv5_for, DocumentId, IdempotencyKey, Version};

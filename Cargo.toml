@@ -2,7 +2,7 @@
 name = "terrascale"
 version = "0.1.0"
 edition = "2021"
-description = "Typed Rust client for TerraBase's native document protocol and TerraScale authentication"
+description = "Typed Rust client for TerraBase documents, Atlas routing and TerraScale authentication"
 license = "Apache-2.0"
 repository = "https://git.terrascale.tech/TerraScale/ts-rust"
 exclude = ["AGENTS.md", "CLAUDE.md"]
@@ -23,6 +23,7 @@ futures-util = "0.3"
 base64 = "0.22"
 bytes = "1"
 sha2 = "0.10"
+ring = "0.17"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "sync"] }
 

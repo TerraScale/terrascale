@@ -1418,6 +1418,7 @@ dependencies = [
  "hyper-util",
  "rcgen",
  "reqwest",
+ "ring",
  "rustls",
  "serde",
  "serde_json",

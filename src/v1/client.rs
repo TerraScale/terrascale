@@ -11,6 +11,7 @@ use reqwest::{Method, StatusCode, Url};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 
+use super::atlas::AtlasResolver;
 use super::control::ControlClient;
 use super::documents::Database;
 use super::errors::{self, Error, Result};
@@ -76,6 +77,9 @@ pub struct ClientBuilder {
     retry: RetryPolicy,
     max_response_bytes: usize,
     user_agent: Option<String>,
+    project: Option<uuid::Uuid>,
+    atlas: Option<String>,
+    region_pin: Option<String>,
 }
 
 impl fmt::Debug for ClientBuilder {
@@ -94,7 +98,8 @@ impl fmt::Debug for ClientBuilder {
 impl ClientBuilder {
     /// `base_url` is the TerraBase origin (HTTPS; plain HTTP only for loopback
     /// hosts; a path prefix is kept). `token` is a `tbk1.<id>.<secret>` key: a
-    /// data key for documents, a control key for [`ControlClient`].
+    /// data key for documents, a control key for [`ControlClient`]. Calling
+    /// [`Self::project`] selects project paths and accepts a bearer access token.
     pub fn new(base_url: impl Into<String>, token: impl Into<String>) -> Self {
         Self {
             base_url: base_url.into(),
@@ -105,7 +110,41 @@ impl ClientBuilder {
             retry: RetryPolicy::default(),
             max_response_bytes: DEFAULT_MAX_RESPONSE_BYTES,
             user_agent: None,
+            project: None,
+            atlas: None,
+            region_pin: None,
         }
+    }
+
+    /// Selects the C# TerraBase project-scoped contract. `token` is an
+    /// already exchanged ts-auth access token; legacy producer credentials
+    /// are accepted for explicitly configured producer qualification.
+    #[must_use]
+    pub fn project(mut self, project: uuid::Uuid) -> Self {
+        self.project = Some(project);
+        self
+    }
+
+    /// Overrides Atlas for local integration. Production discovery uses
+    /// only the canonical Atlas origin; no bearer credential is sent to it.
+    #[must_use]
+    pub fn atlas_base_url(mut self, url: impl Into<String>) -> Self {
+        self.atlas = Some(url.into());
+        self
+    }
+
+    /// Sets an explicit static endpoint, bypassing Atlas discovery.
+    #[must_use]
+    pub fn endpoint(mut self, url: impl Into<String>) -> Self {
+        self.base_url = url.into();
+        self
+    }
+
+    /// Pins an explicitly configured endpoint to its TerraBase region id.
+    #[must_use]
+    pub fn region_pin(mut self, region: impl Into<String>) -> Self {
+        self.region_pin = Some(region.into());
+        self
     }
 
     /// Trusts an extra root CA (PEM; one or more certificates), for example a
@@ -153,8 +192,39 @@ impl ClientBuilder {
 
     /// Validates the configuration and builds the client.
     pub fn build(self) -> Result<Client> {
-        let base = parse_base_url(&self.base_url)?;
-        if !valid_token(&self.token) {
+        let discovery = self.base_url.is_empty();
+        let base = parse_base_url(if discovery {
+            "https://atlas.terrascale.tech"
+        } else {
+            &self.base_url
+        })?;
+        if discovery && self.project.is_none() {
+            return Err(Error::InvalidInput(
+                "Atlas routing requires a project".into(),
+            ));
+        }
+        if self.region_pin.as_ref().is_some_and(|r| !valid_region(r)) {
+            return Err(Error::InvalidInput(
+                "region pin must be a TerraBase region id".into(),
+            ));
+        }
+        if (discovery || self.atlas.is_some()) && self.region_pin.is_some() {
+            return Err(Error::InvalidInput(
+                "a region pin requires a static endpoint".into(),
+            ));
+        }
+        if self.atlas.is_some() && !discovery {
+            return Err(Error::InvalidInput(
+                "Atlas override requires Atlas routing".into(),
+            ));
+        }
+        if self.project.is_some() {
+            if self.token.is_empty() || !self.token.bytes().all(|b| b.is_ascii_graphic()) {
+                return Err(Error::InvalidInput(
+                    "bearer token must be nonempty without whitespace or control characters".into(),
+                ));
+            }
+        } else if !valid_token(&self.token) {
             return Err(Error::InvalidInput(
                 "token must be a tbk1.<22-char id>.<43-char secret> key".into(),
             ));
@@ -165,7 +235,7 @@ impl ClientBuilder {
         // Never send a bearer key over plain HTTP through a proxy taken from
         // the environment (HTTP_PROXY/ALL_PROXY): loopback HTTP and loopback
         // hosts always connect directly.
-        let direct = base.scheme() == "http" || is_loopback(&base);
+        let direct = self.project.is_some() || base.scheme() == "http" || is_loopback(&base);
         let mut http = reqwest::Client::builder()
             .use_rustls_tls()
             .min_tls_version(reqwest::tls::Version::TLS_1_3)
@@ -198,6 +268,23 @@ impl ClientBuilder {
         let http = http
             .build()
             .map_err(|e| Error::InvalidInput(format!("HTTP client: {e}")))?;
+        let atlas = if discovery {
+            let atlas = parse_base_url(
+                self.atlas
+                    .as_deref()
+                    .unwrap_or("https://atlas.terrascale.tech"),
+            )?;
+            if atlas.path() != "/" && !atlas.path().is_empty()
+                || !(is_loopback(&atlas) || atlas.as_str() == "https://atlas.terrascale.tech/")
+            {
+                return Err(Error::InvalidInput(
+                    "Atlas must be canonical or an explicit loopback origin".into(),
+                ));
+            }
+            Some(AtlasResolver::new(http.clone(), atlas))
+        } else {
+            None
+        };
         Ok(Client {
             inner: Arc::new(Inner {
                 http,
@@ -205,6 +292,9 @@ impl ClientBuilder {
                 auth,
                 retry: self.retry,
                 max_response: self.max_response_bytes,
+                project: self.project.map(|p| p.to_string()),
+                atlas,
+                region_pin: self.region_pin,
             }),
         })
     }
@@ -213,6 +303,16 @@ impl ClientBuilder {
     pub fn build_control(self) -> Result<ControlClient> {
         Ok(ControlClient::new(self.build()?))
     }
+}
+
+pub(crate) fn valid_region(region: &str) -> bool {
+    !region.is_empty()
+        && region.len() <= 63
+        && region.as_bytes()[0].is_ascii_lowercase()
+        && !region.ends_with('-')
+        && region
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
 }
 
 pub(crate) fn valid_token(token: &str) -> bool {
@@ -278,6 +378,9 @@ struct Inner {
     auth: HeaderValue,
     retry: RetryPolicy,
     max_response: usize,
+    project: Option<String>,
+    atlas: Option<AtlasResolver>,
+    region_pin: Option<String>,
 }
 
 /// A v1 client for one key. Cheap to clone; safe for concurrent use.
@@ -296,6 +399,12 @@ impl fmt::Debug for Client {
 }
 
 impl Client {
+    /// Builds a project-scoped C# TerraBase client using Atlas by default.
+    /// Supply a ts-auth access token obtained through the authentication SDK.
+    /// Use [`ClientBuilder::endpoint`] for an explicit static override.
+    pub fn for_project(project: uuid::Uuid, token: impl Into<String>) -> ClientBuilder {
+        ClientBuilder::new("", token).project(project)
+    }
     /// Starts a [`ClientBuilder`].
     pub fn builder(base_url: impl Into<String>, token: impl Into<String>) -> ClientBuilder {
         ClientBuilder::new(base_url, token)
@@ -392,7 +501,16 @@ enum Attempt {
 }
 
 impl Client {
-    fn url(&self, segments: &[&str], query: &[(&str, String)]) -> Result<Url> {
+    pub(crate) async fn send_project(&self, req: Req<'_>) -> Result<Resp> {
+        if self.inner.project.is_none() {
+            return Err(Error::InvalidInput(
+                "this operation requires a C# TerraBase project client".into(),
+            ));
+        }
+        self.send(req).await
+    }
+
+    fn url(&self, base: &Url, segments: &[&str], query: &[(&str, String)]) -> Result<Url> {
         for seg in segments {
             if seg.is_empty() || *seg == "." || *seg == ".." {
                 return Err(Error::InvalidInput(format!(
@@ -400,11 +518,15 @@ impl Client {
                 )));
             }
         }
-        let mut url = self.inner.base.clone();
+        let mut url = base.clone();
+        let mut scoped = segments.to_vec();
+        if let Some(project) = &self.inner.project {
+            scoped.splice(1..1, ["projects", project.as_str()]);
+        }
         url.path_segments_mut()
             .map_err(|()| Error::InvalidInput("base URL cannot carry a path".into()))?
             .pop_if_empty()
-            .extend(segments);
+            .extend(scoped);
         if !query.is_empty() {
             url.query_pairs_mut()
                 .extend_pairs(query.iter().map(|(k, v)| (*k, v.as_str())));
@@ -414,6 +536,16 @@ impl Client {
 
     /// Sends `req` under the retry policy. Returns 2xx and 304 responses.
     pub(crate) async fn send(&self, mut req: Req<'_>) -> Result<Resp> {
+        if self.inner.project.is_some() {
+            if req.segments.get(..2) != Some(&["v1", "databases"][..]) {
+                return Err(Error::InvalidInput(
+                    "the legacy dashboard control plane is unavailable for a project client".into(),
+                ));
+            }
+            if req.idempotency_key.is_some() {
+                return Err(Error::InvalidInput("C# TerraBase does not support Idempotency-Key; an uncertain mutation must be reconciled by reading its state".into()));
+            }
+        }
         if req
             .body
             .as_ref()
@@ -423,17 +555,63 @@ impl Client {
                 "request body exceeds the {MAX_REQUEST_BYTES} byte limit"
             )));
         }
-        let url = self.url(&req.segments, &req.query)?;
+        let project = self
+            .inner
+            .project
+            .as_deref()
+            .map(|p| uuid::Uuid::parse_str(p).expect("validated project"));
+        let database = req.segments.get(2).copied();
+        let mut origin = self.inner.base.clone();
+        let mut region = self.inner.region_pin.clone();
+        if let Some(atlas) = &self.inner.atlas {
+            let endpoint = atlas
+                .resolve(project.expect("Atlas project"), database, false)
+                .await?;
+            origin = endpoint.api;
+            region = Some(endpoint.region);
+        }
+        let mut url = self.url(&origin, &req.segments, &req.query)?;
         // Serialized once; each attempt shares it without copying.
         let body = req.body.take().map(bytes::Bytes::from);
         let keyed = req.idempotency_key.is_some();
         let replay_safe = req.replay_safe || keyed;
         let policy = &self.inner.retry;
         let mut attempt: u32 = 0;
+        let mut refreshed = false;
         loop {
-            match self.attempt(&req, &url, body.clone()).await {
+            if attempt > 0 {
+                if let Some(atlas) = &self.inner.atlas {
+                    let endpoint = atlas
+                        .resolve(project.expect("Atlas project"), database, false)
+                        .await?;
+                    url = self.url(&endpoint.api, &req.segments, &req.query)?;
+                    region = Some(endpoint.region);
+                }
+            }
+            match self
+                .attempt(&req, &url, region.as_deref(), body.clone())
+                .await
+            {
                 Attempt::Done(resp) => return Ok(resp),
                 Attempt::Failed(err, retry_after) => {
+                    let wrong_route = err
+                        .status()
+                        .is_some_and(|s| s == 421 || (300..400).contains(&s));
+                    if wrong_route && !refreshed {
+                        if let Some(atlas) = &self.inner.atlas {
+                            let endpoint = atlas
+                                .resolve(project.expect("Atlas project"), database, true)
+                                .await;
+                            if req.replay_safe {
+                                let endpoint = endpoint?;
+                                url = self.url(&endpoint.api, &req.segments, &req.query)?;
+                                region = Some(endpoint.region);
+                                refreshed = true;
+                                continue;
+                            }
+                            // Refresh for the next call, but a mutation goes once.
+                        }
+                    }
                     let retry = attempt < policy.max_retries
                         && match &err {
                             Error::RateLimited { .. } => true,
@@ -466,13 +644,22 @@ impl Client {
         }
     }
 
-    async fn attempt(&self, req: &Req<'_>, url: &Url, body: Option<bytes::Bytes>) -> Attempt {
+    async fn attempt(
+        &self,
+        req: &Req<'_>,
+        url: &Url,
+        region: Option<&str>,
+        body: Option<bytes::Bytes>,
+    ) -> Attempt {
         let mut rb = self
             .inner
             .http
             .request(req.method.clone(), url.clone())
             .header(AUTHORIZATION, self.inner.auth.clone())
             .header("Accept", "application/json");
+        if let Some(region) = region {
+            rb = rb.header("X-TerraScale-Region-Pin", region);
+        }
         for (name, value) in &req.headers {
             rb = rb.header(*name, value);
         }
@@ -490,6 +677,27 @@ impl Client {
         };
         let status = resp.status();
         let headers = resp.headers().clone();
+        if self.inner.project.is_some()
+            && status != StatusCode::MISDIRECTED_REQUEST
+            && !(status.is_redirection() && status != StatusCode::NOT_MODIFIED)
+            && region.is_some_and(|r| {
+                let mut values = headers.get_all("X-TerraBase-Region").iter();
+                values.next().and_then(|h| h.to_str().ok()) != Some(r) || values.next().is_some()
+            })
+        {
+            let message = "TerraBase response region does not match the session pin".into();
+            return Attempt::Failed(
+                if req.replay_safe || status.is_client_error() {
+                    Error::Decode(message)
+                } else {
+                    Error::UndecodableAck {
+                        status: status.as_u16(),
+                        message,
+                    }
+                },
+                None,
+            );
+        }
         let mut body = Vec::new();
         let mut stream = resp.bytes_stream();
         while let Some(chunk) = stream.next().await {
@@ -584,6 +792,85 @@ fn backoff_with(policy: &RetryPolicy, attempt: u32, random: u128) -> Duration {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn project_routes_and_credentials_are_separate_from_legacy_v1() {
+        let project = uuid::Uuid::new_v4();
+        let client = Client::builder("https://example.com/prefix", "already-exchanged.jwt")
+            .project(project)
+            .build()
+            .unwrap();
+        assert_eq!(client.url(&client.inner.base, &["v1", "databases", "orders", "collections", "items"], &[]).unwrap().as_str(),
+            format!("https://example.com/prefix/v1/projects/{project}/databases/orders/collections/items"));
+        assert!(
+            Client::builder("https://example.com", "already-exchanged.jwt")
+                .build()
+                .is_err()
+        );
+        for token in ["", "Bearer jwt", "jwt\nheader", "é"] {
+            assert!(Client::builder("https://example.com", token)
+                .project(project)
+                .build()
+                .is_err());
+        }
+        assert!(!format!("{client:?}").contains("already-exchanged"));
+        assert!(Client::for_project(project, "jwt")
+            .atlas_base_url("https://evil.example")
+            .build()
+            .is_err());
+        assert!(Client::for_project(project, "jwt")
+            .region_pin("gru-1")
+            .build()
+            .is_err());
+        assert!(Client::for_project(project, "jwt")
+            .endpoint("http://127.0.0.1:1")
+            .region_pin("gru-1")
+            .build()
+            .is_ok());
+        assert!(Client::builder("http://127.0.0.1:1", "jwt")
+            .project(project)
+            .region_pin("GRU")
+            .build()
+            .is_err());
+    }
+
+    #[tokio::test]
+    async fn project_rejects_legacy_control_and_keyed_writes_before_dispatch() {
+        let client = Client::builder("http://127.0.0.1:1", "jwt")
+            .project(uuid::Uuid::new_v4())
+            .build()
+            .unwrap();
+        let err = client
+            .control()
+            .list_regions(&super::super::ListOptions::default())
+            .await
+            .unwrap_err();
+        assert!(matches!(err, Error::InvalidInput(_)), "{err:?}");
+        let key = IdempotencyKey::random();
+        let err = client
+            .database("orders")
+            .collection("items")
+            .put(
+                uuid::Uuid::new_v4(),
+                &serde_json::json!({"a":1}),
+                super::super::WriteOptions::new().idempotency_key(key.clone()),
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(err, Error::InvalidInput(_)), "{err:?}");
+        let mut tx = super::super::Tx::new();
+        tx.put(
+            "items",
+            uuid::Uuid::new_v4(),
+            &serde_json::json!({"a":1}),
+            None,
+        )
+        .idempotency_key(key);
+        assert!(matches!(
+            client.database("orders").commit(&tx).await,
+            Err(Error::InvalidInput(_))
+        ));
+    }
 
     #[test]
     fn retry_after_accepts_seconds_and_http_dates() {

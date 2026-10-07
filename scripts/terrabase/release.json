@@ -1,0 +1,10 @@
+{
+  "forgejo": "https://git.terrascale.tech",
+  "repository": "TerraScale/terrabase",
+  "commit": "263598b47ffc79398db394550e3c074acf4fc57d",
+  "tag": "ci-263598b47ffc79398db394550e3c074acf4fc57d-run-15005",
+  "assets": {
+    "amd64": "ec076b9d53db71cb1c6e499a7d0380e9ab3de56ae86e1cbf338dd4cc4ea5b301",
+    "arm64": "bc0bc0680f464f783110b8bc6ced9282f0fed00dd35ed24f9a93f295a6a0e569"
+  }
+}

@@ -35,6 +35,16 @@ impl Database {
         &self.client
     }
 
+    /// Creates this database using the pinned C# producer's idempotent PUT.
+    /// This is the pre-TS-589 route, not the successor management POST.
+    pub async fn create(&self) -> Result<ProjectDatabaseInfo> {
+        check_name("database", &self.name)?;
+        self.client
+            .send_project(Req::new(Method::PUT, vec!["v1", "databases", &self.name]))
+            .await?
+            .decode()
+    }
+
     /// A handle to the named collection. Performs no I/O.
     #[must_use]
     pub fn collection(&self, name: impl Into<String>) -> Collection {
@@ -42,6 +52,43 @@ impl Database {
             db: self.clone(),
             name: name.into(),
         }
+    }
+
+    /// Creates a schemaless collection on C# TerraBase.
+    pub async fn create_collection(&self, name: &str) -> Result<ProjectCollectionInfo> {
+        check_name("database", &self.name)?;
+        check_name("collection", name)?;
+        let req = Req::new(
+            Method::POST,
+            vec!["v1", "databases", &self.name, "collections"],
+        )
+        .json(&serde_json::json!({"name": name}))?;
+        self.client.send_project(req).await?.decode()
+    }
+
+    /// Lists C# TerraBase collections with the producer's opaque cursor.
+    pub async fn list_collections(
+        &self,
+        limit: Option<u32>,
+        cursor: Option<&str>,
+    ) -> Result<ProjectCollectionPage> {
+        check_name("database", &self.name)?;
+        if limit.is_some_and(|n| !(1..=200).contains(&n)) {
+            return Err(Error::InvalidInput(
+                "collection limit must be 1 to 200".into(),
+            ));
+        }
+        let mut req = Req::new(
+            Method::GET,
+            vec!["v1", "databases", &self.name, "collections"],
+        );
+        if let Some(limit) = limit {
+            req.query.push(("limit", limit.to_string()));
+        }
+        if let Some(cursor) = cursor {
+            req.query.push(("cursor", cursor.to_owned()));
+        }
+        self.client.send_project(req).await?.decode()
     }
 
     /// Atomically commits `tx` (`POST /v1/databases/{db}/transactions`).
@@ -67,6 +114,29 @@ impl Database {
             })?;
         Ok(out)
     }
+}
+
+/// Database metadata from the pinned C# producer.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectDatabaseInfo {
+    pub id: uuid::Uuid,
+    pub project_id: uuid::Uuid,
+    pub name: String,
+}
+
+/// A C# TerraBase collection; timestamps are exact decimal milliseconds.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct ProjectCollectionInfo {
+    pub name: String,
+    #[serde(with = "u64_string")]
+    pub created_at: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct ProjectCollectionPage {
+    pub items: Vec<ProjectCollectionInfo>,
+    pub next_cursor: Option<String>,
 }
 
 /// A handle to one collection by name. Performs no I/O.
@@ -410,6 +480,46 @@ fn precondition_headers(p: Option<&Precondition>) -> Vec<(&'static str, String)>
 }
 
 impl Collection {
+    /// Reads C# TerraBase collection metadata.
+    pub async fn get_collection(&self) -> Result<ProjectCollectionInfo> {
+        self.check()?;
+        self.client()
+            .send_project(Req::new(Method::GET, self.segments(&[])))
+            .await?
+            .decode()
+    }
+
+    /// Synchronously drops a C# TerraBase collection and its documents.
+    pub async fn drop_collection(&self) -> Result<ProjectCollectionInfo> {
+        self.check()?;
+        self.client()
+            .send_project(Req::new(Method::DELETE, self.segments(&[])))
+            .await?
+            .decode()
+    }
+
+    /// Lists C# TerraBase documents in id order using its opaque cursor.
+    pub async fn list<T: DeserializeOwned>(
+        &self,
+        limit: Option<u32>,
+        cursor: Option<&str>,
+    ) -> Result<super::QueryPage<T>> {
+        self.check()?;
+        if limit.is_some_and(|n| !(1..=1000).contains(&n)) {
+            return Err(Error::InvalidInput(
+                "document limit must be 1 to 1000".into(),
+            ));
+        }
+        let mut req = Req::new(Method::GET, self.segments(&["documents"]));
+        if let Some(limit) = limit {
+            req.query.push(("limit", limit.to_string()));
+        }
+        if let Some(cursor) = cursor {
+            req.query.push(("cursor", cursor.to_owned()));
+        }
+        self.client().send_project(req).await?.decode()
+    }
+
     /// The collection name.
     #[must_use]
     pub fn name(&self) -> &str {
