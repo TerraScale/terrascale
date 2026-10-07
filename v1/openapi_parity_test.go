@@ -76,7 +76,6 @@ var notInClient = []string{
 	"GET /v1/management/organizations/{organization}/projects/{project}/usage",
 	"GET /v1/management/versions",
 	"GET /v1/projects/{project}/databases/{database}/collections/{collection}/shape",
-	"POST /v1/management/commits",
 	"POST /v1/management/documents/{collection}/query",
 	"POST /v1/management/invitations/lookup",
 	"POST /v1/management/organizations/{organization}/projects/{project}/api-keys",

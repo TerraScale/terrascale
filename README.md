@@ -136,11 +136,14 @@ never changes), and deleting a replicated database fails with
 `ErrDatabaseReplicated`. A region outside the placement answers 421
 `ErrWrongRegion`, on Management and Documents routes alike, and the
 `*tb.APIError` carries `HomeRegion` and `Regions`. The client never retries
-it elsewhere: resolve the region through Atlas.
+it elsewhere: resolve the region through Atlas. Before placing a database in
+a replica region, `RegisterProject(ctx, org, project)` on that region's client
+registers the organization and project there under the ids they have in the
+home region (one Management commit; what exists is left as it is).
 
 Served by TerraBase but not in the client yet (TS-590 adds them): shapes,
 database tooling (backups, indexes, schema, project usage, SQL check) and saved queries,
-project API keys, invitation lookup and Management commits. Not served:
+project API keys, invitation lookup and general Management commits. Not served:
 query `explain`, `Idempotency-Key` and the `/v1/dashboard` control plane.
 
 ### Tests

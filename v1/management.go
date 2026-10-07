@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -361,6 +362,43 @@ func (u *ManagementUser) RenameProject(ctx context.Context, org, project, name s
 // DeleteProject deletes a project without databases.
 func (u *ManagementUser) DeleteProject(ctx context.Context, org, project string) error {
 	return u.call(ctx, http.MethodDelete, projectPath(org, project), nil, nil, nil)
+}
+
+// RegisterProject registers an organization and project in the called region
+// under the ids and names they have in another region, through one
+// Management commit, so a database placed in this region can replicate there
+// (TS-643). What the region already has is left as it is. The commit id is
+// derived from the ids, so retrying a registration is safe.
+func (u *ManagementUser) RegisterProject(ctx context.Context, org Organization, project Project) error {
+	type op struct {
+		Op           string `json:"op"`
+		Organization string `json:"organization,omitempty"`
+		ID           string `json:"id"`
+		Name         string `json:"name"`
+	}
+	var ops []op
+	for _, check := range []struct {
+		get func() error
+		op  op
+	}{
+		{func() error { _, err := u.Organization(ctx, org.ID); return err }, op{Op: "create_organization", ID: org.ID, Name: org.Name}},
+		{func() error { _, err := u.Project(ctx, org.ID, project.ID); return err }, op{Op: "create_project", Organization: org.ID, ID: project.ID, Name: project.Name}},
+	} {
+		switch err := check.get(); {
+		case errors.Is(err, ErrUnknownRoute):
+			ops = append(ops, check.op)
+		case err != nil:
+			return err
+		}
+	}
+	if len(ops) == 0 {
+		return nil
+	}
+	commit := struct {
+		ID  string `json:"id"`
+		Ops []op   `json:"ops"`
+	}{formatUUID(uuidV5(namespaceURL, fmt.Sprintf("terrabase:register-project:%+v", ops))), ops}
+	return u.call(ctx, http.MethodPost, []string{"commits"}, nil, commit, nil)
 }
 
 // CreateDatabase creates an empty database in a project, homed in the
