@@ -136,7 +136,9 @@ func TestLocalRejection(t *testing.T) {
 		"long Unicode id":  func() error { _, err := users.Get(ctx, strings.Repeat("界", 257)); return err },
 		"long astral id":   func() error { _, err := users.Get(ctx, strings.Repeat("😀", 129)); return err },
 		"invalid UTF-8 id": func() error { _, err := users.Get(ctx, "\xff"); return err },
-		"bad version":      func() error { _, err := users.Delete(ctx, testProject, v1.IfMatch("v1")); return err },
+		"quoted version":   func() error { _, err := users.Delete(ctx, testProject, v1.IfMatch(`a"b`)); return err },
+		"spaced version":   func() error { _, err := users.Get(ctx, testProject, v1.IfNoneMatch("a b")); return err },
+		"control version":  func() error { _, err := users.Delete(ctx, testProject, v1.IfMatch("\x00")); return err },
 		"create precondition": func() error {
 			_, err := users.Create(ctx, map[string]any{}, v1.IfNoneMatchAny())
 			return err

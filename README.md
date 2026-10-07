@@ -44,7 +44,9 @@ The same configuration applies to `NewManagement`. Atlas resolution follows
 in TS-507; no production endpoint is built into the SDK.
 
 Every write returns `WriteResult{ID, Version, Offset, Durability}` and the
-version is the `ETag`. Errors are `*tb.APIError{Status, Code, Message, Op,
+version is the `ETag`. Versions are opaque tokens (`tbv1-…`, `tbv2-…`):
+compare and pass them back, never parse them. Unknown `state` and
+`durability` values and new response members decode without error. Errors are `*tb.APIError{Status, Code, Message, Op,
 RetryAfter, ETag}`, and every error code is also an error value for
 `errors.Is`, for example `tb.ErrNotFound`, `tb.ErrPreconditionFailed`,
 `tb.ErrUnknownDatabase` or `tb.ErrNameTaken`. A 404 for a deleted document
