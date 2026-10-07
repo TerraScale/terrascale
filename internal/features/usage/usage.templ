@@ -401,26 +401,39 @@ templ billingActions(data pageData) {
 }
 
 templ billingPlanDialog(data pageData) {
+	{{ interval := "monthly"
+if data.BillingInterval == "annual" {
+	interval = "annual"
+} }}
 	<dialog id="change-billing-plan" class="ts-dialog" aria-labelledby="change-billing-plan-title">
 		<div class="ts-dialog-content ts-stack">
 			<div class="ts-billing-dialog-head">
 				<div class="ts-dialog-header"><h2 class="ts-dialog-title" id="change-billing-plan-title">Choose a plan</h2><p class="ts-dialog-description">Select a plan and billing interval, then review the change.</p></div>
 				<button class="ts-icon-btn" type="button" aria-label="Close plan selection" command="close" commandfor="change-billing-plan">@icons.X(18)</button>
 			</div>
-			<form method="get" action="/organization" class="ts-form">
+			<form method="get" action="/organization" class="ts-form" data-signals={ fmt.Sprintf("{_billingPlanInterval: %q}", interval) }>
 				<input type="hidden" name="tab" value="billing"/>
 				<input type="hidden" name="review" value="1"/>
-				<fieldset class="ts-stack-sm"><legend class="ts-section-title">Plan</legend>
+				<fieldset class="ts-stack-sm">
+					<legend class="ts-section-title">Plan</legend>
 					for _, plan := range data.BillingPlans {
-						<label class="ts-check"><input type="radio" name="plan" value={ plan.Key } required checked?={ plan.Key == data.BillingPlanKey }/><span><strong>{ plan.Name }</strong> · { plan.MonthlyPrice } / month or { plan.AnnualPrice } / year<br/><small>{ plan.Databases } · { plan.Storage } · { plan.Reads } · { plan.Writes } · { plan.Members }</small></span></label>
+						<label class="ts-check">
+							<input type="radio" name="plan" value={ plan.Key } required checked?={ plan.Key == data.BillingPlanKey }/>
+							<span>
+								<strong>{ plan.Name }</strong> · <span hidden?={ interval == "annual" } data-attr:hidden="$_billingPlanInterval === 'annual'">{ plan.MonthlyPrice } / month</span><span hidden?={ interval != "annual" } data-attr:hidden="$_billingPlanInterval !== 'annual'">{ plan.AnnualPrice } / year</span>
+								<br/>
+								<small>{ plan.Databases } · { plan.Storage } · { plan.Reads } · { plan.Writes } · { plan.Members }</small>
+							</span>
+						</label>
 					}
 					if data.Personal && data.BillingSubscription {
 						<label class="ts-check"><input type="radio" name="plan" value="free"/><span><strong>Free</strong> · at renewal</span></label>
 					}
 				</fieldset>
-				<fieldset class="ts-segmented"><legend class="ts-sr-only">Billing interval</legend>
-					<label><input type="radio" name="interval" value="monthly" checked?={ data.BillingInterval != "annual" }/><span>Monthly</span></label>
-					<label><input type="radio" name="interval" value="annual" checked?={ data.BillingInterval == "annual" }/><span>Annual</span></label>
+				<fieldset class="ts-segmented">
+					<legend class="ts-sr-only">Billing interval</legend>
+					<label><input type="radio" name="interval" value="monthly" checked?={ interval == "monthly" } data-bind="_billingPlanInterval"/><span>Monthly</span></label>
+					<label><input type="radio" name="interval" value="annual" checked?={ interval == "annual" } data-bind="_billingPlanInterval"/><span>Annual</span></label>
 				</fieldset>
 				<div class="ts-form-actions"><button class="ts-btn ts-btn-primary" type="submit">Review change</button></div>
 			</form>
