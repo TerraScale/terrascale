@@ -2,7 +2,7 @@ using TerraScale.DotNet.TerraBase;
 
 namespace TerraScale.DotNet.Tests.TerraBase;
 
-/// <summary>Construction-time validation; these need no server.</summary>
+/// <summary>Construction and token-provider validation; these need no server.</summary>
 public sealed class TerraBaseClientOptionsTests
 {
     private static readonly Uri Origin = new("https://terrabase.example.test:8443/");
@@ -89,6 +89,124 @@ public sealed class TerraBaseClientOptionsTests
         await Assert.That(async () => { await management.GetOrganizationAsync("user", organizationId); }).Throws<ArgumentException>();
         await Assert.That(() => management.DeleteOrganizationAsync("user", organizationId)).Throws<ArgumentException>();
         await Assert.That(resolver.Calls).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task AccessTokenOptionsAreExclusiveForBothClients()
+    {
+        using var http = new HttpClient();
+        Func<CancellationToken, ValueTask<string>> provider = _ => ValueTask.FromResult("tb_key");
+        foreach (var secret in new[] { "", "tb_key" })
+        {
+            await Assert.That(() => new TerraBaseDocumentsClient(http, new TerraBaseDocumentsClientOptions
+            {
+                BaseAddress = Origin, ApiKey = secret, AccessTokenProvider = provider,
+            })).Throws<ArgumentException>();
+            await Assert.That(() => new TerraBaseManagementClient(http, new TerraBaseManagementClientOptions
+            {
+                BaseAddress = Origin, ServiceCredential = secret, AccessTokenProvider = provider,
+            })).Throws<ArgumentException>();
+        }
+
+        await Assert.That(() => new TerraBaseDocumentsClient(http, new TerraBaseDocumentsClientOptions { BaseAddress = Origin }))
+            .Throws<ArgumentException>();
+        await Assert.That(() => new TerraBaseManagementClient(http, new TerraBaseManagementClientOptions { BaseAddress = Origin }))
+            .Throws<ArgumentException>();
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task InvalidProviderTokenStopsBeforeDispatch(bool managementClient)
+    {
+        using var http = new HttpClient();
+        foreach (var secret in new string?[] { null, "", " ", "invalid token", "tb_key\n", "tb_key\0", "tb_key\u00a0", new string('x', 4097) })
+        {
+            var calls = 0;
+            var request = ProviderRequest(http, managementClient, _ => { calls++; return ValueTask.FromResult(secret!); });
+            await Assert.That(calls).IsEqualTo(0);
+            await Assert.That(async () => { await request(default); }).Throws<ArgumentException>();
+            await Assert.That(calls).IsEqualTo(1);
+        }
+    }
+
+    [Test]
+    [Arguments(false, false)]
+    [Arguments(false, true)]
+    [Arguments(true, false)]
+    [Arguments(true, true)]
+    public async Task TokenAcquisitionSharesDeadlineAndCallerCancellation(bool managementClient, bool callerCancels)
+    {
+        using var http = new HttpClient();
+        using var caller = new CancellationTokenSource();
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var send = ProviderRequest(http, managementClient, async token =>
+        {
+            started.TrySetResult();
+            await Task.Delay(Timeout.InfiniteTimeSpan, token);
+            return "tb_key";
+        }, callerCancels ? TimeSpan.FromSeconds(30) : TimeSpan.FromMilliseconds(100));
+        var request = send(caller.Token);
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        if (callerCancels)
+        {
+            await caller.CancelAsync();
+            await Assert.That(async () => { await request.WaitAsync(TimeSpan.FromSeconds(5)); }).Throws<OperationCanceledException>();
+        }
+        else
+        {
+            var error = await Assert.ThrowsAsync<TimeoutException>(() => request.WaitAsync(TimeSpan.FromSeconds(5)));
+            await Assert.That(error!.InnerException is OperationCanceledException).IsTrue();
+        }
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task IndependentRequestsAcquireTokensConcurrently(bool managementClient)
+    {
+        using var http = new HttpClient();
+        using var caller = new CancellationTokenSource();
+        var bothStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var calls = 0;
+        var send = ProviderRequest(http, managementClient, async token =>
+        {
+            if (Interlocked.Increment(ref calls) == 2) bothStarted.TrySetResult();
+            await Task.Delay(Timeout.InfiniteTimeSpan, token);
+            return "tb_key";
+        });
+        var first = send(caller.Token);
+        var second = send(caller.Token);
+        try
+        {
+            await bothStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        finally
+        {
+            await caller.CancelAsync();
+            await Assert.That(async () => { await first.WaitAsync(TimeSpan.FromSeconds(5)); }).Throws<OperationCanceledException>();
+            await Assert.That(async () => { await second.WaitAsync(TimeSpan.FromSeconds(5)); }).Throws<OperationCanceledException>();
+        }
+        await Assert.That(calls).IsEqualTo(2);
+    }
+
+    private static Func<CancellationToken, Task> ProviderRequest(HttpClient http, bool managementClient,
+        Func<CancellationToken, ValueTask<string>> provider, TimeSpan? timeout = null)
+    {
+        if (managementClient)
+        {
+            var management = new TerraBaseManagementClient(http, new TerraBaseManagementClientOptions
+            {
+                BaseAddress = Origin, AccessTokenProvider = provider, RequestTimeout = timeout ?? TimeSpan.FromSeconds(30),
+            });
+            return token => management.ListOrganizationsAsync("user", cancellationToken: token);
+        }
+
+        var database = new TerraBaseDocumentsClient(http, new TerraBaseDocumentsClientOptions
+        {
+            BaseAddress = Origin, AccessTokenProvider = provider, RequestTimeout = timeout ?? TimeSpan.FromSeconds(30),
+        }).Database("project", "app");
+        return token => database.ListCollectionsAsync(cancellationToken: token);
     }
 
     [Test]

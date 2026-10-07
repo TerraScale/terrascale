@@ -18,6 +18,12 @@ public sealed record TerraBaseManagementClientOptions
     /// </summary>
     public string? ServiceCredential { get; init; }
 
+    /// <summary>
+    /// Supplies the current bearer credential per request. Set this or ServiceCredential, exclusively.
+    /// The provider must be thread-safe and honor cancellation; acquisition shares the request deadline.
+    /// </summary>
+    public Func<CancellationToken, ValueTask<string>>? AccessTokenProvider { get; init; }
+
     /// <summary>Deadline of each request, including reading its response. Default 30 seconds, at most 10 minutes.</summary>
     public TimeSpan RequestTimeout { get; init; } = TimeSpan.FromSeconds(30);
 
@@ -53,7 +59,8 @@ public sealed class TerraBaseManagementClient
     public TerraBaseManagementClient(HttpClient httpClient, TerraBaseManagementClientOptions options)
     {
         ArgumentNullException.ThrowIfNull(options);
-        connection = new TerraBaseConnection(httpClient, options.BaseAddress, options.EndpointResolver, options.ServiceCredential, nameof(options.ServiceCredential), options.RequestTimeout, options.MaxResponseBytes);
+        connection = new TerraBaseConnection(httpClient, options.BaseAddress, options.EndpointResolver, options.ServiceCredential, nameof(options.ServiceCredential), options.RequestTimeout, options.MaxResponseBytes,
+            options.AccessTokenProvider);
     }
 
     // Organizations

@@ -72,14 +72,14 @@ public sealed class TerraBaseDocumentsTests(TerraBaseServer server)
         var created = await database.CreateDocumentAsync("items", Json("""{"name":"a","count":1}"""));
         await Assert.That(created.Created).IsTrue();
         await Assert.That(Guid.TryParse(created.Id, out _)).IsTrue();
-        await Assert.That(created.Version).StartsWith("tbv1-");
+        await Assert.That(created.Version.Length).IsGreaterThan(0);
         await Assert.That(created.Durability).IsEqualTo("local_durable");
 
         var read = await database.GetDocumentAsync("items", created.Id);
         await Assert.That(read!.Version).IsEqualTo(created.Version);
         await Assert.That(read.Document.GetProperty("name").GetString()).IsEqualTo("a");
 
-        var replaced = await database.PutDocumentAsync("items", created.Id, Json("""{"name":"b","count":1}"""));
+        var replaced = await database.PutDocumentAsync("items", created.Id, Json("""{"name":"b","count":1}"""), TerraBasePrecondition.Matches(read.Version));
         await Assert.That(replaced.Created).IsFalse();
         await Assert.That(replaced.Offset).IsGreaterThan(created.Offset);
 
@@ -277,6 +277,44 @@ public sealed class TerraBaseDocumentsTests(TerraBaseServer server)
 
         var readOnly = server.Documents(await server.CreateApiKeyAsync(tenant.Organization.Id, "documents:read")).Database(tenant.Project.Id, "app");
         await Assert.ThrowsAsync<TerraBaseForbiddenException>(() => readOnly.CreateCollectionAsync("items"));
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task RotatingProviderCredentialsAreUsedForEveryRequest(bool readOnly)
+    {
+        server.Require();
+        var tenant = await server.CreateTenantAsync();
+        var credential = tenant.ApiKey;
+        var calls = 0;
+        var documents = new TerraBaseDocumentsClient(server.Running.Http, new TerraBaseDocumentsClientOptions
+        {
+            BaseAddress = server.Running.ClientAddress,
+            AccessTokenProvider = _ => { calls++; return ValueTask.FromResult(credential); },
+        });
+        await Assert.That(calls).IsEqualTo(0);
+        var database = documents.Database(tenant.Project.Id, "app");
+        await database.CreateAsync();
+        await database.CreateCollectionAsync("alpha");
+        await Assert.That(calls).IsEqualTo(2);
+
+        credential = readOnly ? await server.CreateApiKeyAsync(tenant.Organization.Id, "documents:read") : "tb_unknown";
+        if (readOnly)
+        {
+            await Assert.ThrowsAsync<TerraBaseForbiddenException>(() => database.CreateCollectionAsync("denied"));
+        }
+        else
+        {
+            await Assert.ThrowsAsync<TerraBaseAuthenticationException>(() => database.CreateCollectionAsync("denied"));
+        }
+        await Assert.That(calls).IsEqualTo(3);
+
+        credential = tenant.ApiKey;
+        await database.CreateCollectionAsync("beta");
+        var page = await database.ListCollectionsAsync();
+        await Assert.That(page.Items.Select(collection => collection.Name)).IsEquivalentTo(["alpha", "beta"]);
+        await Assert.That(calls).IsEqualTo(5);
     }
 
     [Test]

@@ -141,6 +141,33 @@ public sealed class TerraBaseManagementTests(TerraBaseServer server)
     }
 
     [Test]
+    public async Task ProviderServiceCredentialsAuthenticateEveryRequest()
+    {
+        server.Require();
+        var credential = server.Running.ServiceCredential;
+        var calls = 0;
+        var management = new TerraBaseManagementClient(server.Running.Http, new TerraBaseManagementClientOptions
+        {
+            BaseAddress = server.Running.ClientAddress,
+            AccessTokenProvider = _ => { calls++; return ValueTask.FromResult(credential); },
+        });
+        await Assert.That(calls).IsEqualTo(0);
+        var owner = NewUser();
+        var organization = await management.CreateOrganizationAsync(owner, "Provider");
+        await Assert.That(organization.CreatedBy).IsEqualTo(owner);
+        await Assert.That((await management.ListOrganizationsAsync(owner)).Items.Single().Id).IsEqualTo(organization.Id);
+        await Assert.That(calls).IsEqualTo(2);
+
+        credential = new string('x', 40);
+        await Assert.ThrowsAsync<TerraBaseAuthenticationException>(() => management.GetOrganizationAsync(owner, organization.Id));
+        await Assert.That(calls).IsEqualTo(3);
+
+        credential = server.Running.ServiceCredential;
+        await Assert.That((await management.GetOrganizationAsync(owner, organization.Id)).Id).IsEqualTo(organization.Id);
+        await Assert.That(calls).IsEqualTo(4);
+    }
+
+    [Test]
     public async Task IdentityAndCredentialErrorsMapToTypedExceptions()
     {
         server.Require();

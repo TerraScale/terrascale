@@ -34,6 +34,8 @@ public sealed class NativeRecoveryTests
     }
 
     [Test]
+    // Keep the four-poll correctness check independent of unrelated worker stress tests.
+    [NotInParallel]
     public async Task RecoveryPollsOnlyTheOriginalStatusAndReturnsItsReceipt()
     {
         var calls = 0;

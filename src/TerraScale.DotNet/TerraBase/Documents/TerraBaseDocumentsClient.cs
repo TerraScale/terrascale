@@ -18,6 +18,12 @@ public sealed record TerraBaseDocumentsClientOptions
     /// </summary>
     public string? ApiKey { get; init; }
 
+    /// <summary>
+    /// Supplies the current bearer credential per request. Set this or ApiKey, exclusively.
+    /// The provider must be thread-safe and honor cancellation; acquisition shares the request deadline.
+    /// </summary>
+    public Func<CancellationToken, ValueTask<string>>? AccessTokenProvider { get; init; }
+
     /// <summary>Deadline of each request, including reading its response. Default 30 seconds, at most 10 minutes.</summary>
     public TimeSpan RequestTimeout { get; init; } = TimeSpan.FromSeconds(30);
 
@@ -44,7 +50,8 @@ public sealed class TerraBaseDocumentsClient
     public TerraBaseDocumentsClient(HttpClient httpClient, TerraBaseDocumentsClientOptions options)
     {
         ArgumentNullException.ThrowIfNull(options);
-        connection = new TerraBaseConnection(httpClient, options.BaseAddress, options.EndpointResolver, options.ApiKey, nameof(options.ApiKey), options.RequestTimeout, options.MaxResponseBytes);
+        connection = new TerraBaseConnection(httpClient, options.BaseAddress, options.EndpointResolver, options.ApiKey, nameof(options.ApiKey), options.RequestTimeout, options.MaxResponseBytes,
+            options.AccessTokenProvider);
     }
 
     /// <summary>Addresses one database: <paramref name="databaseName"/> in project <paramref name="projectId"/> of the key's organization.</summary>

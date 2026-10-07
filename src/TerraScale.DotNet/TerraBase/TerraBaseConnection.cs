@@ -26,11 +26,13 @@ internal sealed class TerraBaseConnection
 
     private readonly HttpClient http;
     private readonly ITerraBaseEndpointResolver endpointResolver;
-    private readonly AuthenticationHeaderValue authorization;
+    private readonly AuthenticationHeaderValue? authorization;
+    private readonly Func<CancellationToken, ValueTask<string>>? accessTokenProvider;
     private readonly TimeSpan timeout;
     private readonly int maxResponseBytes;
 
-    public TerraBaseConnection(HttpClient http, Uri? baseAddress, ITerraBaseEndpointResolver? endpointResolver, string? secret, string secretName, TimeSpan timeout, int maxResponseBytes)
+    public TerraBaseConnection(HttpClient http, Uri? baseAddress, ITerraBaseEndpointResolver? endpointResolver, string? secret, string secretName, TimeSpan timeout, int maxResponseBytes,
+        Func<CancellationToken, ValueTask<string>>? accessTokenProvider = null)
     {
         ArgumentNullException.ThrowIfNull(http);
         this.http = http;
@@ -40,10 +42,12 @@ internal sealed class TerraBaseConnection
         }
 
         this.endpointResolver = endpointResolver ?? new TerraBaseStaticEndpointResolver(Origin(baseAddress));
-        if (string.IsNullOrWhiteSpace(secret) || secret.Length > MaxSecretLength || secret.Any(c => char.IsControl(c) || char.IsWhiteSpace(c)))
+        if (secret is not null && accessTokenProvider is not null)
         {
-            throw new ArgumentException($"{secretName} must be 1 to {MaxSecretLength} characters without whitespace or control characters.", secretName);
+            throw new ArgumentException($"Set either {secretName} or AccessTokenProvider, not both.", nameof(accessTokenProvider));
         }
+
+        if (accessTokenProvider is null) ValidateSecret(secret, secretName);
 
         if (timeout <= TimeSpan.Zero || timeout > MaxRequestTimeout)
         {
@@ -55,7 +59,8 @@ internal sealed class TerraBaseConnection
             throw new ArgumentOutOfRangeException(nameof(maxResponseBytes), "MaxResponseBytes must be between 64 KiB and 1 GiB.");
         }
 
-        authorization = new AuthenticationHeaderValue("Bearer", secret);
+        authorization = secret is null ? null : new AuthenticationHeaderValue("Bearer", secret);
+        this.accessTokenProvider = accessTokenProvider;
         this.timeout = timeout;
         this.maxResponseBytes = maxResponseBytes;
     }
@@ -136,6 +141,14 @@ internal sealed class TerraBaseConnection
         {
             var origin = Origin(await endpointResolver.ResolveAsync(deadline.Token).ConfigureAwait(false));
             deadline.Token.ThrowIfCancellationRequested();
+            if (accessTokenProvider is not null)
+            {
+                var token = await accessTokenProvider(deadline.Token).ConfigureAwait(false);
+                deadline.Token.ThrowIfCancellationRequested();
+                ValidateSecret(token, nameof(TerraBaseDocumentsClientOptions.AccessTokenProvider));
+                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+            }
+
             request.RequestUri = new Uri(origin, path);
             using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, deadline.Token).ConfigureAwait(false);
             try
@@ -162,6 +175,14 @@ internal sealed class TerraBaseConnection
         catch (OperationCanceledException error) when (!cancellationToken.IsCancellationRequested && error.InnerException is TimeoutException)
         {
             throw new TimeoutException("TerraBase did not answer within the caller's HttpClient.Timeout.", error);
+        }
+    }
+
+    private static void ValidateSecret(string? secret, string secretName)
+    {
+        if (string.IsNullOrWhiteSpace(secret) || secret.Length > MaxSecretLength || secret.Any(c => char.IsControl(c) || char.IsWhiteSpace(c)))
+        {
+            throw new ArgumentException($"{secretName} must be 1 to {MaxSecretLength} characters without whitespace or control characters.", secretName);
         }
     }
 

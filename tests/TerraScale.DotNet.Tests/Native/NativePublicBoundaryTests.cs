@@ -12,6 +12,8 @@ public sealed class NativePublicBoundaryTests
     public Task CallerAndOwnedTransportLifetimesRemainDistinct() => NativeChecks.TransportOwnershipAsync();
 
     [Test]
+    // The public journey has short deadlines; unrelated worker stress tests must not consume its budget.
+    [NotInParallel]
     public Task PublicNativeClientAndDiscoveryComposeWithoutPrivateCliTypes() => NativeChecks.PublicNativeJourneyAsync();
 
     [Test]
