@@ -301,6 +301,29 @@ func testManagement(t *testing.T, tb *terrabasetest.Server, hc *http.Client) {
 	_, err = ana.Database(ctx, org.ID, project.ID, branch.ID)
 	wantCode(t, err, v1.ErrUnknownRoute)
 
+	// Project data API keys: issue one, use it, list it, revoke it.
+	key := must(ana.CreateProjectAPIKey(ctx, org.ID, project.ID, v1.ProjectAPIKeyRequest{Name: "app", Scopes: []string{"documents:read", "documents:write"}}))(t)
+	if !strings.HasPrefix(key.Secret, "tb_") || !strings.HasSuffix(key.Secret, key.Key.LastFour) || key.Key.ProjectID != project.ID || key.Key.DatabaseID != "" || len(key.Key.Scopes) != 2 {
+		t.Fatalf("project key: %+v", key)
+	}
+	keyed, err := v1.New(v1.Config{BaseURL: tb.URL, Token: key.Secret, HTTPClient: hc})
+	if err != nil {
+		t.Fatal(err)
+	}
+	must(keyed.Database(project.ID, "main").CreateCollection(ctx, "notes"))(t)
+	notes := keyed.Database(project.ID, "main").Collection("notes")
+	noteID := v1.DocumentIDFor("notes", "a")
+	must(notes.Put(ctx, noteID, map[string]any{"n": 1}))(t)
+	must(notes.Get(ctx, noteID))(t)
+	if got := must(ana.ProjectAPIKeys(ctx, org.ID, project.ID, v1.PageOptions{}))(t); len(got.Items) != 1 || got.Items[0].ID != key.Key.ID || got.Items[0].Name != "app" {
+		t.Fatalf("project keys: %+v", got)
+	}
+	if err := ana.RevokeProjectAPIKey(ctx, org.ID, project.ID, key.Key.ID); err != nil {
+		t.Fatal(err)
+	}
+	_, err = notes.Get(ctx, noteID)
+	wantCode(t, err, v1.ErrInvalidKey)
+
 	// Invitations, members and roles.
 	inv := must(ana.CreateInvitation(ctx, org.ID, "bia@example.com", v1.RoleAdmin))(t)
 	if inv.Token == "" || inv.Invitation.Role != v1.RoleAdmin || inv.Invitation.InvitedBy != "user-ana" {
@@ -510,6 +533,21 @@ func testDocuments(t *testing.T, tb *terrabasetest.Server, hc *http.Client) {
 	usage := must(u.DatabaseUsage(ctx, org.ID, project.ID, info.ID))(t)
 	if usage.DatabaseID != info.ID || usage.Collections != 2 || usage.Documents != 1 || usage.StorageBytes <= 0 {
 		t.Fatalf("usage: %+v", usage)
+	}
+	idx := must(u.CreateIndex(ctx, org.ID, project.ID, info.ID, v1.IndexRequest{Collection: "users", Fields: []string{"email"}}))(t)
+	if idx.Name != "users_email" || idx.Collection != "users" || !slices.Equal(idx.Fields, []string{"email"}) || idx.State != "active" {
+		t.Fatalf("index: %+v", idx)
+	}
+	_, err = u.CreateIndex(ctx, org.ID, project.ID, info.ID, v1.IndexRequest{Collection: "users", Fields: []string{"email"}, Name: "again"})
+	wantCode(t, err, v1.ErrIndexExists)
+	if got := must(u.Indexes(ctx, org.ID, project.ID, info.ID))(t); len(got) != 1 || got[0].Name != idx.Name {
+		t.Fatalf("indexes: %+v", got)
+	}
+	if err := u.DropIndex(ctx, org.ID, project.ID, info.ID, idx.Name); err != nil {
+		t.Fatal(err)
+	}
+	if got := must(u.Indexes(ctx, org.ID, project.ID, info.ID))(t); len(got) != 0 {
+		t.Fatalf("indexes after drop: %+v", got)
 	}
 
 	id := v1.DocumentIDFor("users", "bia@example.com")
