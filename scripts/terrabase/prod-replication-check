@@ -184,6 +184,27 @@ def listing(api):
             return found
 
 
+def agree(members, deadline):
+    """Lists every member until they all list the same live documents or the deadline passes; returns the last listings.
+
+    Members are listed one after another, so a write another client makes meanwhile (another host's run) can reach one
+    member's listing and not the next: only a difference that outlasts the deadline is divergence.
+    """
+    members = dict(members)
+    while True:
+        listings = {}
+        for member, client in list(members.items()):
+            try:
+                listings[member] = listing(client)
+            except (OSError, RuntimeError, ValueError) as error:
+                fail(f"{member}: {error}")
+                del members[member]
+        values = list(listings.values())
+        if all(live == values[0] for live in values) or time.monotonic() > deadline:
+            return listings
+        time.sleep(0.5)
+
+
 def host(command, ip, minutes):
     result = subprocess.run(
         command.replace("{ip}", ip), shell=True, input=HOST_SCRIPT.replace("MINUTES", str(minutes)),
@@ -294,27 +315,28 @@ def main():
     print(f"run {run}: {options.docs} documents in {canary['api']} database {canary['database']}, {len(members)} members", flush=True)
 
     rows = {member: {} for member in members}
-    listings = {}
     try:
         expected = write(api, ids, run)
         deadline = time.monotonic() + options.max_lag_seconds
         print(f"wrote: {sum(1 for state in expected.values() if state[0] == 200)} live, {sum(1 for state in expected.values() if state[0] == 404)} deleted", flush=True)
+        reachable = {}
         for member, client in members.items():
             try:
                 matched, seconds, differences = compare(member, client, expected, deadline, run)
-                live = listing(client)
             except (OSError, RuntimeError, ValueError) as error:
                 fail(f"{member}: {error}")
                 continue
+            reachable[member] = client
             rows[member].update(matched=f"{matched}/{len(expected)}", seconds=f"{seconds:.1f}")
             for id_, difference in sorted(differences.items()):
                 fail(f"{member}: {id_} {difference}")
-            listings[member] = live
+        listings = agree(reachable, time.monotonic() + options.max_lag_seconds)
+        for member, live in listings.items():
             for id_, (status, version, _) in sorted(expected.items()):
                 want = version if status == 200 else None
                 if live.get(id_) != want:
                     fail(f"{member}: listing has {id_} at {live.get(id_, 'absent')}, expected {want or 'absent'}")
-        # Every member must list the same live documents, those of earlier runs and other --docs values included.
+        # Every member must list the same live documents, those of earlier runs and other hosts' runs included.
         reference = next(iter(listings.values()), {})
         for member, live in listings.items():
             if live != reference:
