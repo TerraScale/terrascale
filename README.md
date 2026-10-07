@@ -293,12 +293,22 @@ against the pinned contract, `tsauth/testdata/platform-api.openapi.json`.
 headless API (TS-582) for a first-party confidential client that signs users
 in on its own pages, as ts-dashboard does: `SignInWithPassword`,
 `SignInWithEmailCode` (with the `pendingToken` of `SignUp` for a sign-up
-code), `StartEmailCode`, `SignUp`, `StartPasswordReset`,
+code), `StartEmailCode`, `ResendEmailCode`, `SignUp`, `StartPasswordReset`,
 `CompletePasswordReset`, `Refresh` and `Revoke`. Every sign-in and step
 takes the end user's IP address, which ts-auth's rate limits key on. Grants
 answer `*tsauth.Tokens` or a `*tsauth.Error` (`invalid_grant` for any wrong
 credential); the JSON steps fail with `*tsauth.APIError` (`ErrInvalidCode`,
 `ErrInvalidPassword`, `ErrRateLimited` with `RetryAfter`, `ErrInvalidClient`).
+`ResendEmailCode(ctx, email, clientIP, pendingToken)` uses the same email-code
+endpoint; pass the `SignUp` token to preserve the pending sign-up, or `""`
+for a sign-in code. Invalid pending tokens succeed without sending an email
+to prevent account enumeration. Respect `APIError.RetryAfter` before retrying.
+
+Issuers require HTTPS, except for loopback HTTP. For development only, set
+`HeadlessConfig.AllowInsecureHTTP: true` to use an issuer such as
+`http://ts-auth:8080/terrascale`. The option defaults to false; keep it false
+in production because HTTP exposes credentials and tokens. Other issuer URL
+validation still applies, and other SDK clients retain their HTTPS requirement.
 
 ```go
 h, err := tsauth.NewHeadless(tsauth.HeadlessConfig{ClientID: "ts-dashboard", ClientSecret: secret})
