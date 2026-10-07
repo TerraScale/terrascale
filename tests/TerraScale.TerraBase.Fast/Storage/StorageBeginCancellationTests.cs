@@ -22,7 +22,7 @@ public sealed class StorageBeginCancellationTests
         var server = management.Server;
         using var tenant = await management.CreateTenantAsync("documents:read", "documents:write");
         var client = tenant.Data;
-        foreach (var database in new[] { "blocked", "idle" })
+        foreach (var database in new[] { "idle" })
         {
             using var created = await client.PutAsync(new Uri($"/v1/projects/{tenant.ProjectId}/databases/{database}", UriKind.Relative), null, deadline.Token);
             created.EnsureSuccessStatusCode();
@@ -40,24 +40,26 @@ public sealed class StorageBeginCancellationTests
         var name = await tenant.ContextAsync(management.Server, "idle", deadline.Token);
         var store = (SqliteDatabaseStore)(await engine.OpenDatabaseAsync(name, deadline.Token))!;
         await Assert.That(store.IdleCount).IsEqualTo(1);
-        var blockedName = await tenant.ContextAsync(management.Server, "blocked", deadline.Token);
-        var blockedStore = (await engine.OpenDatabaseAsync(blockedName, deadline.Token))!;
-        var blockedFile = await tenant.FileAsync(server, "blocked", deadline.Token);
         var begins = new List<Task<IStorageTransaction>>();
         var requests = new List<Task<HttpResponseMessage>>();
         Exception? primaryFailure = null;
+
+        // Occupy the only read thread, as a long read would, and for write begins also the database's write thread,
+        // which runs every call of its write transactions.
+        using var release = new ManualResetEventSlim();
+        var blockedRead = engine.Io.RunAsync(release.Wait, CancellationToken.None);
+        var blockedWrite = write ? store.WriteLane.RunAsync(release.Wait, CancellationToken.None) : Task.CompletedTask;
+        int Queued()
+        {
+            return write ? store.WriteLane.Queued : engine.Io.Queued;
+        }
+
         try
         {
-            Task<IStorageTransaction> blocked;
             Task<HttpResponseMessage> healthy;
-            // Assertion failures release the external lock before joining any work or disposing the host.
-            await using (await StorageFixture.LockAsync(blockedFile))
+            try
             {
-                // A tenant HTTP write first reads the catalog. Start the known native BEGIN directly,
-                // so Running == 1 cannot accidentally identify that earlier catalog lookup.
-                blocked = blockedStore.BeginTransactionAsync(write: true, deadline.Token).AsTask();
-                begins.Add(blocked);
-                await WaitUntilAsync(() => engine.Io.Admitted == 1 && engine.Io.Running == 1, deadline.Token);
+                await WaitUntilAsync(() => engine.Io.Running == 1 && (!write || store.WriteLane.Running), deadline.Token);
                 for (var i = 0; i < 4; i++)
                 {
                     using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token);
@@ -65,12 +67,12 @@ public sealed class StorageBeginCancellationTests
                     begins.Add(begin);
                     try
                     {
-                        await WaitUntilAsync(() => engine.Io.Admitted == 2 && engine.Io.Queued == 1, deadline.Token);
+                        await WaitUntilAsync(() => engine.Io.Admitted == 1 && Queued() == 1, deadline.Token);
                         await Assert.That(store.IdleCount).IsEqualTo(0);
                         await cancellation.CancelAsync();
                         await Assert.ThrowsAsync<OperationCanceledException>(() => begin.WaitAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken));
-                        await Assert.That(engine.Io.Admitted).IsEqualTo(1);
-                        await Assert.That(engine.Io.Queued).IsEqualTo(0);
+                        await Assert.That(engine.Io.Admitted).IsEqualTo(0);
+                        await Assert.That(Queued()).IsEqualTo(0);
                         await Assert.That(engine.Io.Running).IsEqualTo(1);
                         await Assert.That(store.IdleCount).IsEqualTo(1);
                     }
@@ -80,17 +82,20 @@ public sealed class StorageBeginCancellationTests
                     }
                 }
 
-                // A real HTTPS request takes the admission just released while the other database stays locked.
+                // A real HTTPS request takes the admission just released while the read thread stays busy.
                 healthy = client.GetAsync(
                     new Uri($"/v1/projects/{tenant.ProjectId}/databases/idle/collections/items/documents/{StorageFixture.Id("missing")}", UriKind.Relative), deadline.Token);
                 requests.Add(healthy);
-                await WaitUntilAsync(() => engine.Io.Admitted == 2 && engine.Io.Queued == 1, deadline.Token);
+                await WaitUntilAsync(() => engine.Io.Admitted == 1 && engine.Io.Queued == 1, deadline.Token);
                 await Assert.That(healthy.IsCompleted).IsFalse();
             }
-
-            await using (await blocked.WaitAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken))
+            finally
             {
+                release.Set();
             }
+
+            await blockedRead.WaitAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
+            await blockedWrite.WaitAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
             using var read = await healthy.WaitAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
             await Assert.That(read.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
             await WaitUntilAsync(() => engine.Io.Admitted == 0 && engine.Io.Queued == 0, deadline.Token);
@@ -103,7 +108,7 @@ public sealed class StorageBeginCancellationTests
         }
         finally
         {
-            // The external lock is already released; a started BEGIN can still return a transaction.
+            // The threads are released; a started BEGIN can still return a transaction.
             await StoragePoolTests.JoinCleanupAsync(begins.Select(StorageTransactionTests.DisposeBeginAsync)
                 .Concat(requests.Select(StoragePoolTests.DisposeResponseAsync))
                 .Append(deadline.CancelAsync()), primaryFailure);

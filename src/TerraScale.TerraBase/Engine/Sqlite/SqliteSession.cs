@@ -68,7 +68,7 @@ internal sealed class SqliteSession(SqliteConnection connection) : IDisposable
     /// Opens a connection on the <see cref="SqliteIoPool"/> and applies <paramref name="pragmas"/>, its
     /// per-connection settings, under the cancellable busy handling of <see cref="ExecuteAsync"/>.
     /// </summary>
-    public static async Task<SqliteSession> OpenAsync(SqliteIoPool io, string connectionString, string pragmas, CancellationToken cancellationToken)
+    public static async Task<SqliteSession> OpenAsync(SqliteRunner io, string connectionString, string pragmas, CancellationToken cancellationToken)
     {
         var connection = new SqliteConnection(connectionString);
         var opening = false;
@@ -109,7 +109,7 @@ internal sealed class SqliteSession(SqliteConnection connection) : IDisposable
     // worker is free and cancellation is checked, within the original overall timeout. Cancellation interrupts
     // only the attempt it owns, and never abandons it while SQLite still uses the connection. Retried
     // operations must be reads or atomic work that rolls back before propagating a busy error.
-    public async Task<T> ExecuteAsync<T>(SqliteIoPool io, Func<T> execute, CancellationToken cancellationToken)
+    public async Task<T> ExecuteAsync<T>(SqliteRunner io, Func<T> execute, CancellationToken cancellationToken)
     {
         var timeout = connection.DefaultTimeout;
         var started = Stopwatch.GetTimestamp();

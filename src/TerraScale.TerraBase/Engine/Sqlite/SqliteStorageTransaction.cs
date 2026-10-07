@@ -8,18 +8,21 @@ using TerraBase.Primitives;
 
 namespace TerraBase.Engine.Sqlite;
 
-/// <summary>One transaction; every SQLite call that reads or writes runs on the <see cref="SqliteIoPool"/>.</summary>
+/// <summary>
+/// One transaction; every SQLite call runs on its runner: the <see cref="SqliteIoPool"/> for reads, the database's
+/// <see cref="SqliteWriteLane"/> for writes.
+/// </summary>
 /// <param name="store">The database this transaction belongs to.</param>
 /// <param name="session">The rented session; returned to <paramref name="store"/> on dispose.</param>
 /// <param name="transaction">The SQLite transaction.</param>
-/// <param name="io">Runs every SQLite call of this transaction.</param>
+/// <param name="runner">Runs every SQLite call of this transaction.</param>
 /// <param name="write">Whether mutations are allowed.</param>
 /// <param name="durable">Whether the session runs with <c>synchronous = FULL</c> until disposal resets it to <c>NORMAL</c>.</param>
 /// <param name="committed">Runs after a commit advances the local shape history or its head.</param>
 /// <param name="changesCommitted">When set, local mutations are captured and it receives the group's sequence after commit.</param>
 /// <param name="ownsAdmission">Whether disposal releases this transaction's I/O admission.</param>
 internal sealed partial class SqliteStorageTransaction(
-    SqliteDatabaseStore store, SqliteSession session, SqliteTransaction transaction, SqliteIoPool io, bool write, bool durable, Action? committed,
+    SqliteDatabaseStore store, SqliteSession session, SqliteTransaction transaction, SqliteRunner runner, bool write, bool durable, Action? committed,
     Action<long>? changesCommitted, bool ownsAdmission)
     : IStorageTransaction
 {
@@ -58,6 +61,17 @@ internal sealed partial class SqliteStorageTransaction(
 
     // This transaction's local commit offset, separate from incoming document merge versions.
     private long? _offset;
+
+    // Whether this transaction created or dropped a collection: the store forgets its collection names on commit.
+    private bool _collectionsChanged;
+
+    // Group commit (SqliteDatabaseStore.WriteAsync): each queued write runs inside a savepoint, and this snapshot of the
+    // in-memory capture and limits rolls back with it.
+    private (DocumentChange[]? Changes, long ChangeBytes, int Writes, long WrittenBytes, long? Offset, bool? ReplicatedMutation, bool CollectionsChanged)?
+        _savepoint;
+
+    /// <summary>Whether a per-commit limit refused a write since the last savepoint: alone in a transaction, it could fit.</summary>
+    internal bool LimitsReached { get; private set; }
 
     // Taken when the transaction begins: a catalog follower adopting its primary's incarnation never mixes it into a
     // snapshot read before.
@@ -212,6 +226,7 @@ internal sealed partial class SqliteStorageTransaction(
         create.Parameters.AddWithValue("$created", DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
         cancellationToken.ThrowIfCancellationRequested();
         create.ExecuteNonQuery();
+        _collectionsChanged = true;
         if (Append() != 1)
         {
             throw new InvalidOperationException("a document write needs its collection's metadata for shape history");
@@ -247,6 +262,7 @@ internal sealed partial class SqliteStorageTransaction(
         if (id.Length == 0 || documentBytes > MaxDocumentBytes || Encoding.UTF8.GetByteCount(id) > MaxIdBytes || _writes == MaxWrites
             || _writtenBytes + bytes > MaxWrittenBytes)
         {
+            LimitsReached = _writes > 0;
             throw new StorageWriteLimitException(
                 "a transaction writes at most 1024 documents of at most 1 MiB, 7 MiB in total with framing, with ids of 1 to 1024 bytes");
         }
@@ -589,7 +605,7 @@ internal sealed partial class SqliteStorageTransaction(
         QueryBudget? budget = null;
         try
         {
-            await io.RunAsync(() =>
+            await runner.RunAsync(() =>
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 budget = StartQueryBudget(cancellationToken);
@@ -619,7 +635,7 @@ internal sealed partial class SqliteStorageTransaction(
             while (true)
             {
                 // One row per worker call: neither a background producer nor an unbounded materialized stream.
-                var row = await io.RunAsync<StoredDocument?>(() =>
+                var row = await runner.RunAsync<StoredDocument?>(() =>
                 {
                     cancellationToken.ThrowIfCancellationRequested();
                     queryBudget.Resume();
@@ -671,7 +687,7 @@ internal sealed partial class SqliteStorageTransaction(
             try
             {
                 // Cancellation must not abandon native cleanup or release the gate before it finishes.
-                await io.RunAsync(() =>
+                await runner.RunAsync(() =>
                 {
                     try
                     {
@@ -751,6 +767,7 @@ internal sealed partial class SqliteStorageTransaction(
         }
 
         _metadataChanged = true;
+        _collectionsChanged = true;
         // Local metadata allocates immediately, so a failed allocation faults this mutation too.
         // Apply has already pinned its starting head and will allocate its shared history at commit.
         if (_importedFromOffset is null)
@@ -857,6 +874,8 @@ internal sealed partial class SqliteStorageTransaction(
                 return false;
             }
 
+            _collectionsChanged = true;
+
             Write(_ => { }, cancellationToken);
             WriteMetadata(DocumentChange.Collections, name, null);
             return true;
@@ -898,6 +917,11 @@ internal sealed partial class SqliteStorageTransaction(
 
                 cancellationToken.ThrowIfCancellationRequested();
                 transaction.Commit();
+                if (_collectionsChanged)
+                {
+                    store.ForgetCollections();
+                }
+
                 if (_adoptedIncarnation is { } adopted)
                 {
                     // Before the commit wakes waiters: readers see the adopted documents with their incarnation.
@@ -926,6 +950,48 @@ internal sealed partial class SqliteStorageTransaction(
 
         return offset;
     }
+
+    /// <summary>Starts the savepoint one queued write of a group commit runs in.</summary>
+    internal ValueTask SavepointAsync() => RunVoidAsync(() =>
+    {
+        ThrowIfReadOnly();
+        transaction.Save(GroupSavepoint);
+        _savepoint = (_changes?.ToArray(), _changeBytes, _writes, _writtenBytes, _offset, _replicatedMutation, _collectionsChanged);
+        LimitsReached = false;
+    });
+
+    /// <summary>Keeps what the write since <see cref="SavepointAsync"/> did.</summary>
+    internal ValueTask ReleaseSavepointAsync() => RunVoidAsync(() =>
+    {
+        transaction.Release(GroupSavepoint);
+        _savepoint = null;
+    });
+
+    /// <summary>Undoes what the write since <see cref="SavepointAsync"/> did, including a failure that faulted the transaction.</summary>
+    internal ValueTask RollbackToSavepointAsync() => RunVoidAsync(() =>
+    {
+        var saved = _savepoint ?? throw new InvalidOperationException("no savepoint is open");
+        transaction.Rollback(GroupSavepoint);
+        transaction.Release(GroupSavepoint);
+        if (_changes is not null)
+        {
+            _changes.Clear();
+            _changes.AddRange(saved.Changes!);
+        }
+
+        (_changeBytes, _writes, _writtenBytes, _offset, _replicatedMutation, _collectionsChanged) =
+            (saved.ChangeBytes, saved.Writes, saved.WrittenBytes, saved.Offset, saved.ReplicatedMutation, saved.CollectionsChanged);
+        _savepoint = null;
+        _faulted = false;
+    });
+
+    private const string GroupSavepoint = "batched";
+
+    private async ValueTask RunVoidAsync(Action call) => await RunAsync(() =>
+    {
+        call();
+        return true;
+    }, CancellationToken.None).ConfigureAwait(false);
 
     public ValueTask<ReadOnlyMemory<byte>> GetOriginAsync(CancellationToken cancellationToken) =>
         RunAsync<ReadOnlyMemory<byte>>(() => GetOrigin(), cancellationToken, retry: true);
@@ -1153,7 +1219,11 @@ internal sealed partial class SqliteStorageTransaction(
         if (Command(SqliteStatements.LiveDocument, name).ExecuteScalar() is null)
         {
             Command(SqliteStatements.DropHistory, name).ExecuteNonQuery();
-            _metadataChanged |= Command(SqliteStatements.DropCollection, name).ExecuteNonQuery() > 0;
+            if (Command(SqliteStatements.DropCollection, name).ExecuteNonQuery() > 0)
+            {
+                _metadataChanged = true;
+                _collectionsChanged = true;
+            }
             _appliedChanges.RemoveAll(applied => applied.Collection == name);
         }
     }
@@ -1328,7 +1398,7 @@ internal sealed partial class SqliteStorageTransaction(
         await _gate.WaitAsync().ConfigureAwait(false);
         try
         {
-            await io.RunAsync(() =>
+            await runner.RunAsync(() =>
             {
                 try
                 {
@@ -1473,10 +1543,10 @@ internal sealed partial class SqliteStorageTransaction(
         {
             if (retry)
             {
-                return await session.ExecuteAsync(io, call, cancellationToken).ConfigureAwait(false);
+                return await session.ExecuteAsync(runner, call, cancellationToken).ConfigureAwait(false);
             }
 
-            return await io.RunAsync(() =>
+            return await runner.RunAsync(() =>
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 return call();
@@ -1565,6 +1635,7 @@ internal sealed partial class SqliteStorageTransaction(
         if ((!replacing && _changes!.Count >= IStorageTransaction.MaxChangeGroupChanges)
             || bytes > IStorageTransaction.MaxChangeGroupBytes - _changeBytes)
         {
+            LimitsReached = _changes!.Count > 0;
             throw new ChangeGroupCapacityException(
                 $"a replicated transaction holds at most {IStorageTransaction.MaxChangeGroupChanges} changes and {IStorageTransaction.MaxChangeGroupBytes} bytes");
         }

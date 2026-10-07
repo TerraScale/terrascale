@@ -151,6 +151,24 @@ internal sealed class StampingStorageEngine(IStorageEngine inner, ISystemReplica
 
         public async ValueTask<IStorageTransaction> BeginDurableTransactionAsync(CancellationToken cancellationToken) =>
             new Transaction(engine, database, await inner.BeginDurableTransactionAsync(cancellationToken).ConfigureAwait(false));
+
+        public async ValueTask<(T Result, long Offset)> WriteAsync<T>(
+            Func<IStorageTransaction, CancellationToken, ValueTask<T>> work, Func<T, bool> keep, CancellationToken cancellationToken)
+        {
+            Transaction? stamped = null;
+            try
+            {
+                return await inner.WriteAsync((transaction, token) => work(stamped = new Transaction(engine, database, transaction), token), keep, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            finally
+            {
+                // The shared transaction commits outside the wrapper: move its stamps again as CommitAsync would.
+                stamped?.Committed();
+            }
+        }
+
+        public ValueTask<bool> HasCollectionAsync(string name, CancellationToken cancellationToken) => inner.HasCollectionAsync(name, cancellationToken);
     }
 
     // Replicated system writes move stamps like local ones: a revoked API key is not served from the cache.
@@ -335,21 +353,27 @@ internal sealed class StampingStorageEngine(IStorageEngine inner, ISystemReplica
             }
             finally
             {
-                if (_collectionsWritten)
-                {
-                    Interlocked.Increment(ref engine._epoch);
-                }
-
                 // Also on failure: whether a failed commit reached the file is unknown.
-                for (var word = 0; _written is not null && word < _written.Length; word++)
-                {
-                    for (var bits = _written[word]; bits != 0; bits &= bits - 1)
-                    {
-                        engine.Touch((word * 64) + System.Numerics.BitOperations.TrailingZeroCount(bits));
-                    }
-                }
+                Committed();
             }
         }, cancellationToken);
+
+        // Moves the stamps of everything this transaction wrote, once its commit returned or failed.
+        public void Committed()
+        {
+            if (_collectionsWritten)
+            {
+                Interlocked.Increment(ref engine._epoch);
+            }
+
+            for (var word = 0; _written is not null && word < _written.Length; word++)
+            {
+                for (var bits = _written[word]; bits != 0; bits &= bits - 1)
+                {
+                    engine.Touch((word * 64) + System.Numerics.BitOperations.TrailingZeroCount(bits));
+                }
+            }
+        }
 
         public ValueTask<ReadOnlyMemory<byte>> GetOriginAsync(CancellationToken cancellationToken) =>
             RunAsync(() => inner.GetOriginAsync(cancellationToken), cancellationToken);

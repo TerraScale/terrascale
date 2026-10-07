@@ -36,9 +36,9 @@ public sealed class StorageMutationTests
         var store = (await engine.OpenDatabaseAsync(database, deadline.Token))!;
         var sequence = store.CommitSequence;
         var history = await HistoryRowsAsync(api);
-        var other = database with { DatabaseId = Guid.NewGuid().ToString() };
-        await native.CreateDatabaseAsync(other, deadline.Token);
-        var blockedStore = (await native.OpenDatabaseAsync(other, deadline.Token))!;
+        // Write transactions run their calls on the database's write thread: blocking it queues the calls below.
+        var lane = ((SqliteDatabaseStore)(await native.OpenDatabaseAsync(database, deadline.Token))!).WriteLane;
+        using var release = new ManualResetEventSlim();
         var firstId = DocumentApi.NewId();
         var secondId = DocumentApi.NewId();
         Task? blocked = null;
@@ -51,15 +51,14 @@ public sealed class StorageMutationTests
             await writer.PutAsync(DocumentApi.Collection, firstId, Encoding.UTF8.GetBytes("{\"n\":2}"), deadline.Token);
             try
             {
-                await using (await StorageFixture.LockAsync(Path.Combine(api.Server.DataDirectory,
-                    other.OrganizationId, other.ProjectId!, other.DatabaseId + ".db")))
+                try
                 {
-                    blocked = BlockAsync();
-                    await UntilAsync(() => native.Io.Running == 1);
+                    blocked = lane.RunAsync(release.Wait, CancellationToken.None);
+                    await UntilAsync(() => lane.Running);
                     if (phase == "gate")
                     {
                         earlier = writer.GetAsync(DocumentApi.Collection, id, deadline.Token).AsTask();
-                        await UntilAsync(() => native.Io.Queued == 1);
+                        await UntilAsync(() => lane.Queued == 1);
                     }
                     if (phase == "cancelled")
                     {
@@ -77,7 +76,7 @@ public sealed class StorageMutationTests
                     };
                     if (phase == "queued")
                     {
-                        await UntilAsync(() => native.Io.Queued == 1);
+                        await UntilAsync(() => lane.Queued == 1);
                     }
                     cancellation.Cancel();
                     if (phase != "gate")
@@ -86,6 +85,10 @@ public sealed class StorageMutationTests
                     }
                     // Accepted before the worker resumes: failure marking must precede this commit.
                     commit = writer.CommitAsync(deadline.Token).AsTask();
+                }
+                finally
+                {
+                    release.Set();
                 }
 
                 await blocked.WaitAsync(deadline.Token);
@@ -114,11 +117,6 @@ public sealed class StorageMutationTests
         await Assert.That((await api.GetAsync(secondId, cancellationToken: deadline.Token)).Status).IsEqualTo(HttpStatusCode.NotFound);
         await Assert.That(store.CommitSequence).IsEqualTo(sequence + (mutation == "read" ? 1 : 0));
         await Assert.That(await HistoryRowsAsync(api)).IsEqualTo(history + (mutation == "read" ? 1 : 0));
-
-        async Task BlockAsync()
-        {
-            await using var transaction = await blockedStore.BeginTransactionAsync(write: true, deadline.Token);
-        }
 
         async Task UntilAsync(Func<bool> condition)
         {

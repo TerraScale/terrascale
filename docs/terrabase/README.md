@@ -78,7 +78,7 @@ never its value. Port `0` picks a free port.
 | `--backup-*` / `TERRABASE_BACKUP_*` | unset (backup off) | Continuous backup to an S3-compatible bucket (OCI Object Storage) with point-in-time restore: `backup-endpoint`, `backup-region`, `backup-bucket`, `backup-access-key-id`, `backup-secret-key-file`, `backup-kms-endpoint`, `backup-kms-key-id`, `backup-kms-api-key` and `backup-kms-private-key-file`, all or none; optional `backup-retention-days` (`hobby=1,pro=7,enterprise=30`). See [`docs/backup.md`](docs/backup.md) |
 | `--nats-*` / `TERRABASE_NATS_*` | unset | ts-orchestrator's NATS, which holds the backup leases (one shipper per file, with automatic takeover): `nats-url`, `nats-credentials-file` and, for mutual TLS, `nats-certificate`, `nats-private-key` and `nats-ca`. See [`docs/backup.md`](docs/backup.md#leases) |
 | `memory-budget` | ¼ of available memory | Bytes for caches; see `docs/memory.md` |
-| `storage-threads` | processor count | Dedicated threads that run SQLite calls |
+| `storage-threads` | processor count | Dedicated threads that run SQLite reads. Each database's writes run on its own write thread, started on demand and stopped after 10 idle seconds, and commit in batches (group commit) |
 | `storage-queue` | `1024` | Storage transactions admitted at once; more get `503` with `Retry-After` |
 
 ### Health probes

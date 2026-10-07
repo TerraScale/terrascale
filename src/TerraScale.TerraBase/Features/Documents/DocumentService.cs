@@ -163,18 +163,19 @@ internal sealed class DocumentService(IStorageEngine engine, TimeProvider time, 
 
     private async ValueTask<DocumentRead> ReadAsync(DocumentKey key, CancellationToken cancellationToken)
     {
-        if (await BeginAsync(key.Database, write: false, cancellationToken).ConfigureAwait(false) is not { } transaction)
+        if (await engine.OpenDatabaseAsync(key.Database, cancellationToken).ConfigureAwait(false) is not { } store)
         {
             return DocumentRoute.UnknownDatabase;
         }
 
+        if (!await store.HasCollectionAsync(key.Collection, cancellationToken).ConfigureAwait(false))
+        {
+            return UnknownCollection;
+        }
+
+        var transaction = await store.BeginTransactionAsync(write: false, cancellationToken).ConfigureAwait(false);
         await using (transaction.ConfigureAwait(false))
         {
-            if (await transaction.GetCollectionAsync(key.Collection, cancellationToken).ConfigureAwait(false) is null)
-            {
-                return UnknownCollection;
-            }
-
             if (await AddressAsync(transaction, key.Collection, key.Id, cancellationToken).ConfigureAwait(false) is { } invalid)
             {
                 return invalid;
@@ -222,16 +223,20 @@ internal sealed class DocumentService(IStorageEngine engine, TimeProvider time, 
     private async ValueTask<QueryResult> ReadQueryAsync(
         TenantContext database, DocumentQuery query, long? countLimit, CancellationToken cancellationToken)
     {
-        if (await BeginAsync(database, write: false, cancellationToken).ConfigureAwait(false) is not { } transaction)
+        if (await engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is not { } store)
         {
             return DocumentRoute.UnknownDatabase;
         }
 
+        if (!await store.HasCollectionAsync(query.Collection, cancellationToken).ConfigureAwait(false))
+        {
+            return UnknownCollection;
+        }
+
+        var transaction = await store.BeginTransactionAsync(write: false, cancellationToken).ConfigureAwait(false);
         await using (transaction.ConfigureAwait(false))
         {
-            return await transaction.GetCollectionAsync(query.Collection, cancellationToken).ConfigureAwait(false) is null
-                ? UnknownCollection
-                : await QueryAsync(transaction, query, countLimit, cancellationToken).ConfigureAwait(false);
+            return await QueryAsync(transaction, query, countLimit, cancellationToken).ConfigureAwait(false);
         }
     }
 
@@ -291,57 +296,69 @@ internal sealed class DocumentService(IStorageEngine engine, TimeProvider time, 
         return written;
     }
 
+    // Group commit: the write shares a transaction with other writes queued at the same time, in its own savepoint.
     private async ValueTask<WriteOutcome> CommitAsync(
         TenantContext database, IReadOnlyList<DocumentOperation> operations, bool indexErrors, CancellationToken cancellationToken)
     {
-        if (await BeginAsync(database, write: true, cancellationToken).ConfigureAwait(false) is not { } transaction)
+        if (await engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is not { } store)
         {
             return new DocumentRejected(DocumentRoute.UnknownDatabase);
         }
 
-        await using (transaction.ConfigureAwait(false))
+        var (outcome, offset) = await store.WriteAsync(
+            (transaction, token) => ApplyAllAsync(store, transaction, operations, indexErrors, token), outcome => outcome is WriteResult, cancellationToken)
+            .ConfigureAwait(false);
+        if (outcome is not WriteResult written)
         {
-            var collections = new HashSet<string>(StringComparer.Ordinal);
-            var results = new OperationResult[operations.Count];
-            // Assertions see the state before this transaction's writes.
-            foreach (var assertions in new[] { true, false })
-            {
-                for (var i = 0; i < operations.Count; i++)
-                {
-                    var operation = operations[i];
-                    if ((operation is AssertOperation or AssertCountOperation) != assertions)
-                    {
-                        continue;
-                    }
+            return outcome;
+        }
 
-                    switch (await ApplyCheckedAsync(transaction, operation, collections, cancellationToken).ConfigureAwait(false))
-                    {
-                        case OperationResult result:
-                            results[i] = result;
-                            break;
-                        case DocumentRejected rejected:
-                            return rejected with { Op = indexErrors ? i : null };
-                    }
+        var writes = operations.Count(operation => operation is PutOperation or PatchOperation or DeleteOperation);
+        if (writes > 0)
+        {
+            usage.RecordWrites(database, writes);
+        }
+
+        return written with { Offset = offset };
+    }
+
+    // Every operation of one client write; the commit offset is filled in once its batch committed.
+    private async ValueTask<WriteOutcome> ApplyAllAsync(
+        IDatabaseStore store, IStorageTransaction transaction, IReadOnlyList<DocumentOperation> operations, bool indexErrors,
+        CancellationToken cancellationToken)
+    {
+        var collections = new HashSet<string>(StringComparer.Ordinal);
+        var results = new OperationResult[operations.Count];
+        // Assertions see the state before this transaction's writes.
+        foreach (var assertions in new[] { true, false })
+        {
+            for (var i = 0; i < operations.Count; i++)
+            {
+                var operation = operations[i];
+                if ((operation is AssertOperation or AssertCountOperation) != assertions)
+                {
+                    continue;
+                }
+
+                switch (await ApplyCheckedAsync(store, transaction, operation, collections, cancellationToken).ConfigureAwait(false))
+                {
+                    case OperationResult result:
+                        results[i] = result;
+                        break;
+                    case DocumentRejected rejected:
+                        return rejected with { Op = indexErrors ? i : null };
                 }
             }
-
-            var offset = await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
-            var writes = operations.Count(operation => operation is PutOperation or PatchOperation or DeleteOperation);
-            if (writes > 0)
-            {
-                usage.RecordWrites(database, writes);
-            }
-
-            return new WriteResult(offset, results, transaction.Scope);
         }
+
+        return new WriteResult(0, results, transaction.Scope);
     }
 
     // One operation of a client transaction: its collection must exist.
     private async ValueTask<ApplyOutcome> ApplyCheckedAsync(
-        IStorageTransaction transaction, DocumentOperation operation, HashSet<string> collections, CancellationToken cancellationToken)
+        IDatabaseStore store, IStorageTransaction transaction, DocumentOperation operation, HashSet<string> collections, CancellationToken cancellationToken)
     {
-        if (collections.Add(operation.Collection)
-            && await transaction.GetCollectionAsync(operation.Collection, cancellationToken).ConfigureAwait(false) is null)
+        if (collections.Add(operation.Collection) && !await store.HasCollectionAsync(operation.Collection, cancellationToken).ConfigureAwait(false))
         {
             return new DocumentRejected(UnknownCollection);
         }

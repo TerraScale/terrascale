@@ -27,6 +27,34 @@ public interface IDatabaseStore
     /// </summary>
     ValueTask<IStorageTransaction> BeginDurableTransactionAsync(CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Runs <paramref name="work"/> in a write transaction it may share with other writes queued at the same time (group
+    /// commit), and answers once that transaction committed, with its commit offset. When <paramref name="keep"/>
+    /// refuses the work's result, or the work throws, only the work's own changes roll back and the offset is 0.
+    /// </summary>
+    async ValueTask<(T Result, long Offset)> WriteAsync<T>(
+        Func<IStorageTransaction, CancellationToken, ValueTask<T>> work, Func<T, bool> keep, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(work);
+        ArgumentNullException.ThrowIfNull(keep);
+        var transaction = await BeginTransactionAsync(write: true, cancellationToken).ConfigureAwait(false);
+        await using (transaction.ConfigureAwait(false))
+        {
+            var result = await work(transaction, cancellationToken).ConfigureAwait(false);
+            return keep(result) ? (result, await transaction.CommitAsync(cancellationToken).ConfigureAwait(false)) : (result, 0);
+        }
+    }
+
+    /// <summary>Whether the database has collection <paramref name="name"/>, without a storage read when the engine keeps them in memory.</summary>
+    async ValueTask<bool> HasCollectionAsync(string name, CancellationToken cancellationToken)
+    {
+        var transaction = await BeginTransactionAsync(write: false, cancellationToken).ConfigureAwait(false);
+        await using (transaction.ConfigureAwait(false))
+        {
+            return await transaction.GetCollectionAsync(name, cancellationToken).ConfigureAwait(false) is not null;
+        }
+    }
+
     /// <summary>Counts this process's write commits to this database; read it before a read to wait for later commits.</summary>
     long CommitSequence { get; }
 

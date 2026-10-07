@@ -109,9 +109,9 @@ public sealed class StampingTransactionTests
         Exception? primaryFailure = null;
         try
         {
-            // A separately admitted maintenance call occupies the actual engine's only worker.
-            // Its event makes submission order deterministic without relying on scheduler timing.
-            var blocker = native.Io.RunAsync(() =>
+            // A separately admitted call occupies the thread that runs this write transaction's calls (its database's
+            // write lane). Its event makes submission order deterministic without relying on scheduler timing.
+            var blocker = nativeStore.WriteLane.RunAsync(() =>
             {
                 entered.TrySetResult();
                 if (!release.Wait(TimeSpan.FromSeconds(20), deadline.Token))

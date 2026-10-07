@@ -696,14 +696,19 @@ public sealed class DocumentApiTests
     }
 
     [Test]
-    public async Task Concurrent_writes_get_distinct_offsets()
+    public async Task Concurrent_writes_all_commit_and_read_back_at_their_versions()
     {
         await using var api = await DocumentApi.StartAsync();
+        var ids = Enumerable.Range(0, 16).Select(_ => DocumentApi.NewId()).ToArray();
 
-        var writes = await Task.WhenAll(Enumerable.Range(0, 16).Select(_ => api.PutAsync(DocumentApi.NewId(), new { n = 1 })));
+        // Group commit may put several of them in one transaction, which then share its offset.
+        var writes = await Task.WhenAll(ids.Select(id => api.PutAsync(id, new { n = 1 })));
 
         await Assert.That(writes.All(write => write.Status == HttpStatusCode.Created)).IsTrue();
-        await Assert.That(writes.Select(Offset).Distinct().Count()).IsEqualTo(16);
+        for (var i = 0; i < ids.Length; i++)
+        {
+            await Assert.That((await api.GetAsync(ids[i])).ETag).IsEqualTo(writes[i].ETag);
+        }
     }
 
     [Test]

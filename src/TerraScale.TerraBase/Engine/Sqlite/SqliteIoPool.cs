@@ -20,7 +20,7 @@ namespace TerraBase.Engine.Sqlite;
 /// duration. Add per-database fairness, priority lanes or a separate maintenance thread when one hot
 /// database or a large copy must not starve the others.
 /// </remarks>
-internal sealed class SqliteIoPool : IAsyncDisposable
+internal sealed class SqliteIoPool : SqliteRunner, IAsyncDisposable
 {
     // Lifecycle intent callbacks finish their sequential catalog transactions before returning.
     // They reuse the maintenance admission, so even storage-queue=1 can record an intent.
@@ -183,7 +183,7 @@ internal sealed class SqliteIoPool : IAsyncDisposable
     }
 
     /// <summary>Runs <paramref name="call"/> on a pool thread; the caller must hold an admission.</summary>
-    public async Task<T> RunAsync<T>(Func<T> call, CancellationToken cancellationToken)
+    public override async Task<T> RunAsync<T>(Func<T> call, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         // Continuations must not run on (and so block) a pool thread.
@@ -242,12 +242,6 @@ internal sealed class SqliteIoPool : IAsyncDisposable
             }
         }
     }
-
-    public Task RunAsync(Action call, CancellationToken cancellationToken) => RunAsync(() =>
-    {
-        call();
-        return true;
-    }, cancellationToken);
 
     /// <summary>
     /// Admits nothing more, lets admitted transactions finish (their calls still run), then stops the threads.

@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using TerraBase.Engine;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
@@ -9,7 +10,38 @@ namespace TerraBase.Features.Management;
 /// </summary>
 internal sealed partial class EngineManagementService
 {
+    // Bounded by count; each entry holds three ids of at most a few hundred bytes.
+    private const int MaxCachedTenants = 4096;
+
+    // Every data request resolves its database here. A lookup stays valid while the catalog has not committed since it
+    // was read, so a point operation reads no catalog row and a long read on the storage threads cannot hold it up.
+    // TS-647 step 5 replaces this: _system becomes a lattice database on every member, read from memory.
+    private readonly ConcurrentDictionary<(string Organization, string Project, string Database), (long Sequence, TenantContext Tenant)> _tenants = new();
+
     public async ValueTask<TenantContext?> FindDatabaseAsync(string organizationId, string projectId, string database, CancellationToken cancellationToken)
+    {
+        var sequence = (await engine.OpenSystemDatabaseAsync(cancellationToken).ConfigureAwait(false)).CommitSequence;
+        var key = (organizationId, projectId, database);
+        if (_tenants.TryGetValue(key, out var cached) && cached.Sequence == sequence)
+        {
+            return cached.Tenant;
+        }
+
+        var found = await FindUncachedAsync(organizationId, projectId, database, cancellationToken).ConfigureAwait(false);
+        if (found is not null)
+        {
+            if (_tenants.Count >= MaxCachedTenants)
+            {
+                _tenants.Clear();
+            }
+
+            _tenants[key] = (sequence, found);
+        }
+
+        return found;
+    }
+
+    private async ValueTask<TenantContext?> FindUncachedAsync(string organizationId, string projectId, string database, CancellationToken cancellationToken)
     {
         var tenant = await ReadAsync(transaction => FindDatabaseAsync(transaction, organizationId, projectId, database, cancellationToken), cancellationToken)
             .ConfigureAwait(false);

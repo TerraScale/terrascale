@@ -1,3 +1,4 @@
+using System.Collections.Frozen;
 using System.Runtime.CompilerServices;
 using Microsoft.Data.Sqlite;
 using TerraBase.Tenancy;
@@ -212,6 +213,9 @@ internal sealed class SqliteDatabaseStore(
     // busy handler would hold every I/O thread while the writer that holds the lock waits for one.
     private readonly SemaphoreSlim _writer = new(1, 1);
 
+    /// <summary>The thread this database's write transactions run on, apart from the read pool.</summary>
+    internal SqliteWriteLane WriteLane { get; } = new(name);
+
     // Boxed so a catalog follower can adopt its primary's incarnation without torn reads.
     private volatile StrongBox<Guid> _incarnation = new(Guid.Empty);
 
@@ -269,6 +273,7 @@ internal sealed class SqliteDatabaseStore(
         var writing = false;
         SqliteSession? session = null;
         var beginStarted = false;
+        SqliteRunner runner = write ? WriteLane : io;
         try
         {
             if (write)
@@ -282,9 +287,9 @@ internal sealed class SqliteDatabaseStore(
                 writing = true;
             }
 
-            session = await RentAsync(cancellationToken).ConfigureAwait(false);
+            session = await RentAsync(runner, cancellationToken).ConfigureAwait(false);
             var connection = session.Connection;
-            var transaction = await session.ExecuteAsync(io, () =>
+            var transaction = await session.ExecuteAsync(runner, () =>
             {
                 beginStarted = true;
                 // BEGIN DEFERRED alone still permits a write upgrade. SQLite enforces read-only
@@ -308,7 +313,7 @@ internal sealed class SqliteDatabaseStore(
                 return connection.BeginTransaction(deferred: !write);
             }, cancellationToken).ConfigureAwait(false);
             return new SqliteStorageTransaction(
-                this, session, transaction, io, write, durable, write ? Committed : null, write && capture ? changesCommitted : null, ownsAdmission);
+                this, session, transaction, runner, write, durable, write ? Committed : null, write && capture ? changesCommitted : null, ownsAdmission);
         }
         catch
         {
@@ -318,7 +323,7 @@ internal sealed class SqliteDatabaseStore(
                 {
                     // A never-started BEGIN leaves the session untouched. If it cannot fit back in
                     // the idle pool, retain admission until its worker-owned close has finished.
-                    await io.RunAsync(() => pool.Discard(session), CancellationToken.None).ConfigureAwait(false);
+                    await runner.RunAsync(() => pool.Discard(session), CancellationToken.None).ConfigureAwait(false);
                 }
             }
             finally
@@ -416,6 +421,256 @@ internal sealed class SqliteDatabaseStore(
     }
 
     /// <summary>Rents a session for work outside a transaction (continuous backup); the caller holds an admission.</summary>
+    // Group commit (docs/design/anna-core.md section 4.1): client writes queue here, and one loop at a time runs a batch
+    // of them in one write transaction, each inside its own savepoint, so the database's single SQLite writer commits
+    // once per batch instead of once per write.
+    // anna-full (TS-648): per-core actors plan writes in parallel and hand this writer ready batches.
+    private const int MaxBatch = 256;
+    private readonly Queue<IBatchedWrite> _queued = [];
+    private readonly Lock _queueGate = new();
+    private bool _batching;
+
+    /// <summary>Writes waiting for the next batch, for tests.</summary>
+    internal int QueuedWrites
+    {
+        get
+        {
+            lock (_queueGate)
+            {
+                return _queued.Count;
+            }
+        }
+    }
+
+    public async ValueTask<(T Result, long Offset)> WriteAsync<T>(
+        Func<IStorageTransaction, CancellationToken, ValueTask<T>> work, Func<T, bool> keep, CancellationToken cancellationToken)
+    {
+        // A queued write holds an admission like a transaction does, so storage-queue still bounds waiting writes.
+        var ownsAdmission = !io.HasAdmission;
+        if (ownsAdmission)
+        {
+            io.Admit();
+        }
+
+        try
+        {
+            var write = new BatchedWrite<T>(work, keep, cancellationToken);
+            bool start;
+            lock (_queueGate)
+            {
+                _queued.Enqueue(write);
+                start = !_batching;
+                _batching = true;
+            }
+
+            if (start)
+            {
+                _ = Task.Run(RunBatchesAsync, CancellationToken.None);
+            }
+
+            return await write.Task.ConfigureAwait(false);
+        }
+        finally
+        {
+            if (ownsAdmission)
+            {
+                io.Release();
+            }
+        }
+    }
+
+    private async Task RunBatchesAsync()
+    {
+        List<IBatchedWrite> deferred = [];
+        while (true)
+        {
+            var batch = deferred;
+            lock (_queueGate)
+            {
+                while (batch.Count < MaxBatch && _queued.TryDequeue(out var write))
+                {
+                    batch.Add(write);
+                }
+
+                if (batch.Count == 0)
+                {
+                    _batching = false;
+                    return;
+                }
+            }
+
+            // The queued writes' admissions cover the batch's transaction.
+            deferred = await io.WithAdmissionAsync(() => CommitBatchAsync(batch)).ConfigureAwait(false);
+        }
+    }
+
+    // Runs one batch and answers its writes once it committed. Returns the writes that a per-commit limit refused only
+    // because others shared the transaction: they lead the next batch.
+    private async ValueTask<List<IBatchedWrite>> CommitBatchAsync(List<IBatchedWrite> batch)
+    {
+        List<IBatchedWrite> kept = [];
+        List<IBatchedWrite> refused = [];
+        List<IBatchedWrite> deferred = [];
+        long offset = 0;
+        try
+        {
+            var transaction = await BeginAsync(write: true, capture: true, durable: false, CancellationToken.None).ConfigureAwait(false);
+            await using (transaction.ConfigureAwait(false))
+            {
+                foreach (var write in batch)
+                {
+                    if (write.Cancelled)
+                    {
+                        write.Cancel();
+                        continue;
+                    }
+
+                    await transaction.SavepointAsync().ConfigureAwait(false);
+                    bool keeps;
+                    try
+                    {
+                        keeps = await write.RunAsync(transaction).ConfigureAwait(false);
+                    }
+                    catch (Exception error)
+                    {
+                        await transaction.RollbackToSavepointAsync().ConfigureAwait(false);
+                        if (transaction.LimitsReached && kept.Count > 0)
+                        {
+                            deferred.Add(write);
+                        }
+                        else
+                        {
+                            write.Fail(error);
+                        }
+
+                        continue;
+                    }
+
+                    if (keeps)
+                    {
+                        await transaction.ReleaseSavepointAsync().ConfigureAwait(false);
+                        kept.Add(write);
+                        continue;
+                    }
+
+                    await transaction.RollbackToSavepointAsync().ConfigureAwait(false);
+                    (transaction.LimitsReached && kept.Count > 0 ? deferred : refused).Add(write);
+                }
+
+                if (kept.Count > 0)
+                {
+                    offset = await transaction.CommitAsync(CancellationToken.None).ConfigureAwait(false);
+                }
+            }
+        }
+        catch (Exception error)
+        {
+            // Nothing of this batch committed: every write not answered yet fails with it.
+            batch.ForEach(write => write.Fail(error));
+            return [];
+        }
+
+        // After the transaction released its session, as an admission's resource must be (SqliteIoPool).
+        refused.ForEach(write => write.Answer(0));
+        kept.ForEach(write => write.Answer(offset));
+        return deferred;
+    }
+
+    private interface IBatchedWrite
+    {
+        bool Cancelled { get; }
+
+        ValueTask<bool> RunAsync(IStorageTransaction transaction);
+
+        void Answer(long offset);
+
+        void Fail(Exception error);
+
+        void Cancel();
+    }
+
+    private sealed class BatchedWrite<T>(
+        Func<IStorageTransaction, CancellationToken, ValueTask<T>> work, Func<T, bool> keep, CancellationToken cancellationToken) : IBatchedWrite
+    {
+        private readonly TaskCompletionSource<(T, long)> _done = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private T _result = default!;
+
+        public Task<(T Result, long Offset)> Task => _done.Task;
+
+        public bool Cancelled => cancellationToken.IsCancellationRequested;
+
+        public async ValueTask<bool> RunAsync(IStorageTransaction transaction)
+        {
+            _result = await work(transaction, cancellationToken).ConfigureAwait(false);
+            return keep(_result);
+        }
+
+        public void Answer(long offset) => _done.TrySetResult((_result, offset));
+
+        public void Fail(Exception error) => _done.TrySetException(error);
+
+        public void Cancel() => _done.TrySetCanceled(cancellationToken);
+    }
+
+    // The collection names of this database, loaded on first use and forgotten by every commit that changes them, so
+    // point operations do not open an SQLite read transaction to find their collection.
+    private volatile FrozenSet<string>? _collections;
+    private long _collectionsVersion;
+
+    public async ValueTask<bool> HasCollectionAsync(string name, CancellationToken cancellationToken)
+    {
+        if (_collections is { } known)
+        {
+            return known.Contains(name);
+        }
+
+        var version = Interlocked.Read(ref _collectionsVersion);
+        var names = new HashSet<string>(StringComparer.Ordinal);
+        var transaction = await BeginAsync(write: false, capture: false, durable: false, cancellationToken).ConfigureAwait(false);
+        await using (transaction.ConfigureAwait(false))
+        {
+            string? after = null;
+            while (true)
+            {
+                var (page, hasMore) = await transaction.ListCollectionsAsync(after, 1000, cancellationToken).ConfigureAwait(false);
+                foreach (var collection in page)
+                {
+                    names.Add(collection.Name);
+                }
+
+                if (!hasMore || page.Count == 0)
+                {
+                    break;
+                }
+
+                after = page[^1].Name;
+            }
+        }
+
+        var loaded = names.ToFrozenSet(StringComparer.Ordinal);
+
+        // A commit that changed the collections while this load ran leaves the set unknown instead of stale.
+        lock (_queueGate)
+        {
+            if (Interlocked.Read(ref _collectionsVersion) == version)
+            {
+                _collections = loaded;
+            }
+        }
+
+        return loaded.Contains(name);
+    }
+
+    /// <summary>Called by a commit that created or dropped a collection.</summary>
+    internal void ForgetCollections()
+    {
+        lock (_queueGate)
+        {
+            Interlocked.Increment(ref _collectionsVersion);
+            _collections = null;
+        }
+    }
+
     internal Task<SqliteSession> RentSessionAsync(CancellationToken cancellationToken) => RentAsync(cancellationToken);
 
     /// <summary>Gives back a session from <see cref="RentSessionAsync"/>; a closed store closes it.</summary>
@@ -489,7 +744,10 @@ internal sealed class SqliteDatabaseStore(
     public void Dispose() => pool.Close(this);
 
     // The caller holds an admission.
-    private async Task<SqliteSession> RentAsync(CancellationToken cancellationToken)
+    private Task<SqliteSession> RentAsync(CancellationToken cancellationToken) => RentAsync(io, cancellationToken);
+
+    // Opens a session on runner when none is idle: write transactions open theirs on the write lane.
+    private async Task<SqliteSession> RentAsync(SqliteRunner runner, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         // A deleted or shut-down database hands out no session.
@@ -501,7 +759,7 @@ internal sealed class SqliteDatabaseStore(
         SqliteSession session;
         try
         {
-            session = await SqliteSession.OpenAsync(io, _connectionString, pragmas, cancellationToken).ConfigureAwait(false);
+            session = await SqliteSession.OpenAsync(runner, _connectionString, pragmas, cancellationToken).ConfigureAwait(false);
         }
         catch (Exception error)
         {
@@ -517,7 +775,7 @@ internal sealed class SqliteDatabaseStore(
         }
 
         // Adoption can close a session when shutdown or deletion won; keep it on the worker too.
-        return await io.RunAsync(() => pool.Adopt(this, session), CancellationToken.None).ConfigureAwait(false);
+        return await runner.RunAsync(() => pool.Adopt(this, session), CancellationToken.None).ConfigureAwait(false);
     }
 
     /// <summary>

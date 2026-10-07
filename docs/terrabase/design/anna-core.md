@@ -171,7 +171,10 @@ equal bytes. It ships with the format flip (step 4).
   then after write-wait ([§6.3](#63-acks-and-write-wait)).
 - Batches are bounded by writes and bytes (a storage transaction captures at most 1024 changes and 2 MiB).
 - Point operations look collections up in an in-memory set per database, kept by the writer, instead of opening an
-  SQLite read transaction.
+  SQLite read transaction. Data requests resolve their database from the catalog through a cache that stays valid
+  while the catalog has not committed since the lookup, so a busy read pool holds up no write (step 5 replaces the
+  catalog).
+- Writes of one batch share its commit offset, as the operations of one transaction always did.
 - Join-on-apply: a replicated group is applied by the same writer, joining each incoming register into the stored
   one.
 - `// anna-full (TS-648)`: per-core actors take writes in parallel and hand batches to the writer.
