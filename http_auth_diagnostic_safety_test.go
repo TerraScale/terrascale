@@ -20,7 +20,6 @@ func newHTTPAuthSafetyInstance(t *testing.T, transport httpAuthSafetyTransport) 
 	t.Helper()
 	client, err := NewClient(Config{
 		TSAuthBaseURL:    "https://auth.example.test",
-		AccessToken:      "sk_test_key",
 		HTTPClient:       &http.Client{Transport: transport},
 		MaxRetryAttempts: 3,
 		RetryDelay:       time.Millisecond,
@@ -50,7 +49,7 @@ func TestHTTPAuthDiagnosticSafetyMalformedBodies(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			headers := make(http.Header)
 			headers.Set("X-Request-ID", "header-request")
-			apiErr := tsAuthErrorFromResponse("tsauth.api_keys.create", http.MethodPost, "/v1/acme/api-keys", http.StatusUnauthorized, headers, []byte(test.body))
+			apiErr := tsAuthErrorFromResponse("tsauth.oidc.userinfo", http.MethodGet, "/acme/oauth/userinfo", http.StatusUnauthorized, headers, []byte(test.body))
 			if apiErr.Status != http.StatusUnauthorized || apiErr.Code != "unauthenticated" || apiErr.RequestID != test.requestID {
 				t.Fatalf("diagnostic classification = %v, request ID = %q", apiErr, apiErr.RequestID)
 			}
@@ -205,13 +204,13 @@ func TestHTTPAuthDiagnosticSafetyResponseMetadata(t *testing.T) {
 					Request:       request,
 				}, nil
 			})
-			_, err := instance.Users.Get(t.Context(), "user-1")
+			_, err := instance.OIDC.GetUserInfo(t.Context(), "access-token")
 			var apiErr *APIError
 			if !errors.As(err, &apiErr) {
 				t.Fatalf("response error = %T, want APIError", err)
 			}
 			if apiErr.Status != test.status || apiErr.Code != test.code || apiErr.RequestID != "request-123" ||
-				apiErr.Method != http.MethodGet || apiErr.Path != "/v1/acme/users/user-1" || apiErr.Route != "tsauth.users.get" {
+				apiErr.Method != http.MethodGet || apiErr.Path != "/acme/oauth/userinfo" || apiErr.Route != "tsauth.oidc.userinfo" {
 				t.Fatalf("response metadata = %#v", apiErr)
 			}
 			if apiErr.RetryAfter == nil || *apiErr.RetryAfter != 0 {
@@ -245,7 +244,7 @@ func TestHTTPAuthDiagnosticSafetyMutationRead(t *testing.T) {
 	instance := newHTTPAuthSafetyInstance(t, func(request *http.Request) (*http.Response, error) {
 		if request.Method == http.MethodGet && request.URL.Path == "/acme/.well-known/openid-configuration" {
 			discoveries++
-			const discovery = `{"issuer":"https://auth.example.test/acme","authorization_endpoint":"https://auth.example.test/acme/oauth/authorize","token_endpoint":"https://auth.example.test/acme/oauth/token","userinfo_endpoint":"https://auth.example.test/acme/oauth/userinfo","jwks_uri":"https://auth.example.test/acme/.well-known/jwks.json","revocation_endpoint":"https://auth.example.test/acme/oauth/revoke","introspection_endpoint":"https://auth.example.test/acme/oauth/introspect","end_session_endpoint":"https://auth.example.test/acme/oauth/logout","response_types_supported":["code"],"code_challenge_methods_supported":["S256"],"id_token_signing_alg_values_supported":["ES256"],"token_endpoint_auth_methods_supported":["none"]}`
+			const discovery = `{"issuer":"https://auth.example.test/acme","authorization_endpoint":"https://auth.example.test/acme/oauth/authorize","token_endpoint":"https://auth.example.test/acme/oauth/token","userinfo_endpoint":"https://auth.example.test/acme/oauth/userinfo","jwks_uri":"https://auth.example.test/acme/.well-known/jwks.json","revocation_endpoint":"https://auth.example.test/acme/oauth/revoke","end_session_endpoint":"https://auth.example.test/acme/oauth/logout","response_types_supported":["code"],"code_challenge_methods_supported":["S256"],"id_token_signing_alg_values_supported":["ES256"],"token_endpoint_auth_methods_supported":["none"]}`
 			return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(strings.NewReader(discovery)), Request: request}, nil
 		}
 		if request.Method != http.MethodPost || request.URL.Path != "/acme/oauth/token" {
@@ -307,7 +306,7 @@ func TestHTTPAuthDiagnosticSafetyCompleteResponses(t *testing.T) {
 				call func(*testing.T) error
 			}{
 				{"auth", func(t *testing.T) error {
-					_, err := instance.Users.Get(t.Context(), "user-1")
+					_, err := instance.OIDC.GetUserInfo(t.Context(), "access-token")
 					return err
 				}},
 				{"oauth", func(t *testing.T) error {
@@ -333,16 +332,6 @@ func TestHTTPAuthDiagnosticSafetySecretFormatting(t *testing.T) {
 	instance := newHTTPAuthSafetyInstance(t, func(request *http.Request) (*http.Response, error) {
 		var body string
 		switch request.URL.Path {
-		case "/v1/acme/api-keys":
-			body = `{"id":"key-1","api_key":"` + secret + `"}`
-		case "/v1/acme/directories":
-			body = `{"id":"directory-1","token":"` + secret + `"}`
-		case "/v1/acme/webhooks":
-			body = `{"id":"webhook-1","signing_secret":"` + secret + `"}`
-		case "/v1/acme/jwt-templates/template/tokens":
-			body = `{"jwt":"` + secret + `"}`
-		case "/v1/acme/oauth-clients":
-			body = `{"client":{"id":"client-1"},"client_secret":"` + secret + `"}`
 		case "/acme/oauth/token":
 			body = `{"access_token":"` + secret + `","token_type":"Bearer","expires_in":3600,"refresh_token":"` + secret + `","id_token":"` + secret + `"}`
 		default:
@@ -350,44 +339,18 @@ func TestHTTPAuthDiagnosticSafetySecretFormatting(t *testing.T) {
 		}
 		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(strings.NewReader(body)), Request: request}, nil
 	})
-	key, err := instance.APIKeys.Create(t.Context(), CreateTSAuthAPIKeyRequest{Name: "key"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	directory, err := instance.Directories.Create(t.Context(), "org-1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	webhook, err := instance.Webhooks.Create(t.Context(), CreateTSAuthWebhookRequest{URL: "https://app.example/hook", Events: []string{"user.created"}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	minted, err := instance.JWTTemplates.MintToken(t.Context(), "template", "user-1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	client, err := instance.OAuthClients.Create(t.Context(), CreateTSAuthOAuthClientRequest{Name: "client", RedirectURIs: []string{"https://app.example/callback"}})
-	if err != nil {
-		t.Fatal(err)
-	}
 	authentication := TSAuthOAuthClientAuthentication{ClientID: "client-1", ClientSecret: secret, Method: TSAuthClientSecretBasic}
 	tokens, err := instance.OIDC.RequestClientCredentialsToken(t.Context(), authentication, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if key.APIKey != secret || directory.Token != secret || webhook.SigningSecret != secret || minted.JWT != secret ||
-		client.ClientSecret == nil || *client.ClientSecret != secret || tokens.AccessToken != secret {
+	if tokens.AccessToken != secret {
 		t.Fatal("secret-producing callers did not retain the returned credential")
 	}
 	for _, test := range []struct {
 		name  string
 		value any
 	}{
-		{"api-key-pointer", key}, {"api-key-value", *key},
-		{"directory-pointer", directory}, {"directory-value", *directory},
-		{"webhook-pointer", webhook}, {"webhook-value", *webhook},
-		{"minted-pointer", minted}, {"minted-value", *minted},
-		{"client-pointer", client}, {"client-value", *client},
 		{"tokens-pointer", tokens}, {"tokens-value", *tokens},
 		{"authentication", authentication},
 		{"configuration", TSAuthOIDCApplicationConfig{Authentication: authentication}},

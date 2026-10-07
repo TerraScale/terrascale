@@ -180,19 +180,18 @@ SHA-256 remain pinned by the helper, independently of the SDK module version.
 
 ## TSAuth and builders
 
-TSAuth calls require an explicit `TSAuthBaseURL`, or a suitable explicit
-`APIBaseURL`. Use `client.TSAuth.Instance("slug")` for the scoped families.
-Management methods use the instance credential. The OIDC application API uses
-explicit issuer and OAuth client authentication, verifies authorization-code
-responses and ID tokens, and exposes introspection, revocation, and logout
-flows. ts-auth issues from its regional host, for example
-`https://gru.auth.terrascale.tech/<slug>`. A regional issuer
-(`https://<region>.auth.terrascale.tech`) is accepted only when
-`TSAuthBaseURL` is the Atlas proxy `https://auth.terrascale.tech`: the OIDC
-and resource clients then call the issuer's region directly, or the proxy with
+`client.TSAuth.Instance("slug").OIDC` is ts-auth's OpenID Connect provider
+for applications that sign users in with the redirect flow, as the dashboard
+does for single sign-on: the authorization code with PKCE, verified ID tokens,
+refresh, userinfo, RFC 7009 revocation and RP-initiated logout. It needs an
+explicit `TSAuthBaseURL`, or a suitable explicit `APIBaseURL`. ts-auth issues
+from its regional host, for example `https://gru.auth.terrascale.tech/<slug>`.
+A regional issuer (`https://<region>.auth.terrascale.tech`) is accepted only
+when `TSAuthBaseURL` is the Atlas proxy `https://auth.terrascale.tech`: the
+client then calls the issuer's region directly, or the proxy with
 `TSAuthUseReverseProxy`. Any other issuer must be the base origin itself.
-Accepted OIDC source
-checks do not qualify an actual hosted-provider journey.
+The platform management API, API key tokens and headless sign-in are in
+`terrascale.tech/sdk/tsauth`.
 
 Schema and SQL builders construct and validate statements locally and do not
 execute SQL over HTTP. The explicit pgx-backed PostgreSQL client uses separate
@@ -302,63 +301,3 @@ go test -race ./...
 The module requires Go 1.25 and has no CGO dependency. CI runs the pinned
 vulnerability scanner alongside formatting, vet, build and race tests,
 including the v1 integration tests against the pinned TerraBase.
-
-## Resource OAuth
-
-A registered resource uses its own introspection credentials. Originating OAuth
-clients obtain opaque access tokens for one exact HTTPS resource URI. The URI's
-raw path and query remain part of its identity. Management keys register policy;
-they do not substitute for either OAuth credential role.
-
-```go
-origin, err := instance.NewResourceClient(sdk.TSAuthResourceClientConfig{
-    Issuer: "https://gru.auth.terrascale.tech/example",
-    ResourceAudience: "https://api.example.test/management",
-    Authentication: sdk.TSAuthOAuthClientAuthentication{
-        ClientID: originClientID, ClientSecret: originSecret,
-        Method: sdk.TSAuthClientSecretBasic,
-    },
-})
-if err != nil { return err }
-grant, err := origin.RequestClientCredentials(ctx, []string{"management:read"})
-if err != nil { return err }
-resource, err := instance.NewResourceIntrospector(sdk.TSAuthResourceIntrospectorConfig{
-    Issuer: "https://gru.auth.terrascale.tech/example",
-    ResourceAudience: "https://api.example.test/management",
-    Authentication: sdk.TSAuthResourceAuthentication{
-        ClientID: introspectionClientID, Secret: introspectionSecret,
-    },
-})
-if err != nil { return err }
-principal, err := resource.Introspect(ctx, grant.Tokens.AccessToken)
-if err != nil { return err }
-// Authorize principal against current durable grants in the application.
-```
-
-`OAuthClientPolicies()` and `OAuthResourcePolicies()` expose explicit allowlists,
-checked numeric `uint64` epochs, secret rotation and disable operations. Secrets
-are returned once. Nonrotating client PATCH returns a client record; a rotating
-PATCH returns the client plus its new secret. Resource PATCH always returns a
-resource record and a nullable secret.
-
-`NewResourceApplication` adds resource selection to verified browser OIDC while
-retaining server-held state, nonce and PKCE. The application atomically consumes
-an attempt before exchanging its callback. ID-token audience remains the
-originating client. Device authorization exposes one explicit poll at a time and
-honors the provider interval. Code, device and refresh redemption can inherit
-or repeat their bound URI; they cannot select another resource. Refresh scope
-`nil` inherits the current grant; a nonnil empty slice narrows it to no scopes.
-
-Serving-resource introspection requires Basic authentication and validates the
-configured issuer, exact audience, Bearer type, integer times and principal shape.
-Users require a nonempty session ID. Services require null session ID and subject
-matching originating client ID. Inactive results grant no access. Subject,
-scopes and activity do not establish project or provisioner ownership; current
-durable grants remain application authorization. Introspection uses a fresh
-request with no browser cookie jar or management/native token provider.
-
-Unknown exchanges and refresh rotations return `TSAuthOIDCError.Uncertain` and
-are never automatically replayed. Resource contracts pin the independently
-reviewed protocol source and actual loopback HTTP response captures. Those
-fixtures verify source interoperability; native persistence, two-process
-revocation and hosted caller qualification have separate evidence.

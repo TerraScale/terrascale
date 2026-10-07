@@ -59,7 +59,7 @@ func TestTSAuthOIDCAuthenticationMethods(t *testing.T) {
 				io.WriteString(w, `{"access_token":"access","token_type":"Bearer","expires_in":60}`)
 			}))
 			defer server.Close()
-			oidc := newTSAuthTestInstance(t, Config{APIBaseURL: server.URL, AccessToken: "sk_must_not_escape"}).OIDC
+			oidc := newTSAuthTestInstance(t, Config{APIBaseURL: server.URL}).OIDC
 			if _, err := oidc.RequestClientCredentialsToken(t.Context(), auth, "scope"); err != nil {
 				t.Fatal(err)
 			}
@@ -109,7 +109,7 @@ func newOIDCFixture(t *testing.T) *oidcFixture {
 				t.Error("JWKS leaked credentials")
 			}
 			json.NewEncoder(w).Encode(f.jwks)
-		case "/acme/oauth/token", "/acme/oauth/introspect", "/acme/oauth/revoke":
+		case "/acme/oauth/token", "/acme/oauth/revoke":
 			f.requests++
 			if f.formHandler != nil {
 				f.formHandler(w, r)
@@ -122,13 +122,13 @@ func newOIDCFixture(t *testing.T) *oidcFixture {
 	}))
 	t.Cleanup(f.server.Close)
 	f.issuer = f.server.URL + "/acme"
-	f.document = TSAuthDiscoveryDocument{Issuer: f.issuer, AuthorizationEndpoint: f.issuer + "/oauth/authorize", TokenEndpoint: f.issuer + "/oauth/token", UserinfoEndpoint: f.issuer + "/oauth/userinfo", JwksURI: f.issuer + "/.well-known/jwks.json", RevocationEndpoint: f.issuer + "/oauth/revoke", IntrospectionEndpoint: f.issuer + "/oauth/introspect", EndSessionEndpoint: f.issuer + "/oauth/logout", ResponseTypesSupported: []string{"code"}, CodeChallengeMethodsSupported: []string{"S256"}, IdTokenSigningAlgValuesSupported: []string{"ES256"}, TokenEndpointAuthMethodsSupported: []string{"client_secret_basic", "client_secret_post", "none"}}
+	f.document = TSAuthDiscoveryDocument{Issuer: f.issuer, AuthorizationEndpoint: f.issuer + "/oauth/authorize", TokenEndpoint: f.issuer + "/oauth/token", UserinfoEndpoint: f.issuer + "/oauth/userinfo", JwksURI: f.issuer + "/.well-known/jwks.json", RevocationEndpoint: f.issuer + "/oauth/revoke", EndSessionEndpoint: f.issuer + "/oauth/logout", ResponseTypesSupported: []string{"code"}, CodeChallengeMethodsSupported: []string{"S256"}, IdTokenSigningAlgValuesSupported: []string{"ES256"}, TokenEndpointAuthMethodsSupported: []string{"client_secret_basic", "client_secret_post", "none"}}
 	f.jwks = TSAuthJWKS{Keys: []TSAuthJWK{{Kid: "key1", Kty: "EC", Crv: "P-256", Use: "sig", Alg: "ES256", X: base64.RawURLEncoding.EncodeToString(key.X.FillBytes(make([]byte, 32))), Y: base64.RawURLEncoding.EncodeToString(key.Y.FillBytes(make([]byte, 32)))}}}
 	return f
 }
 func (f *oidcFixture) application(t *testing.T) *TSAuthOIDCApplication {
 	t.Helper()
-	oidc := newTSAuthTestInstance(t, Config{APIBaseURL: f.server.URL, AccessToken: "sk_not_oidc", MaxRetryAttempts: 2}).OIDC
+	oidc := newTSAuthTestInstance(t, Config{APIBaseURL: f.server.URL, MaxRetryAttempts: 2}).OIDC
 	app, err := oidc.NewApplication(TSAuthOIDCApplicationConfig{Issuer: f.issuer, Authentication: TSAuthOAuthClientAuthentication{ClientID: "client", ClientSecret: "secret", Method: TSAuthClientSecretBasic}, RedirectURI: "https://app.example/callback?intent=login", PostLogoutRedirectURIs: []string{"https://app.example/logout"}, RequireSession: true})
 	if err != nil {
 		t.Fatal(err)
@@ -335,35 +335,6 @@ func TestTSAuthOIDCUncertainMutationNotRetried(t *testing.T) {
 	}
 }
 
-func TestTSAuthOIDCRegistrationExactPatch(t *testing.T) {
-	calls := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls++
-		if r.Method != "PATCH" || r.URL.Path != "/v1/acme/oauth-clients/client-record" {
-			t.Fatal("wrong update route")
-		}
-		var body map[string]json.RawMessage
-		json.NewDecoder(r.Body).Decode(&body)
-		if string(body["post_logout_redirect_uris"]) != "[]" || body["redirect_uris"] != nil {
-			t.Error("patch did not preserve absent versus empty")
-		}
-		w.Header().Set("Content-Type", "application/json")
-		io.WriteString(w, `{"id":"client-record","client_id":"client","post_logout_redirect_uris":[]}`)
-	}))
-	defer server.Close()
-	client := newTSAuthTestInstance(t, Config{APIBaseURL: server.URL}).OAuthClients
-	empty := []string{}
-	result, err := client.Update(t.Context(), "client-record", UpdateTSAuthOAuthClientRequest{PostLogoutRedirectURIs: &empty})
-	if err != nil || result.ClientID != "client" || calls != 1 {
-		t.Fatalf("result=%+v error=%v", result, err)
-	}
-	invalid := []string{"https://app.example/logout#fragment"}
-	_, err = client.Update(t.Context(), "client-record", UpdateTSAuthOAuthClientRequest{PostLogoutRedirectURIs: &invalid})
-	if err == nil || calls != 1 {
-		t.Fatal("invalid registry reached provider")
-	}
-}
-
 func TestTSAuthOIDCPrecancelledRequest(t *testing.T) {
 	f := newOIDCFixture(t)
 	app := f.application(t)
@@ -384,7 +355,6 @@ func TestTSAuthOIDCAtlasTransportPreservesCanonicalIssuer(t *testing.T) {
 	f.document.UserinfoEndpoint = f.issuer + "/oauth/userinfo"
 	f.document.JwksURI = f.issuer + "/.well-known/jwks.json"
 	f.document.RevocationEndpoint = f.issuer + "/oauth/revoke"
-	f.document.IntrospectionEndpoint = f.issuer + "/oauth/introspect"
 	f.document.EndSessionEndpoint = f.issuer + "/oauth/logout"
 	local, _ := url.Parse(f.server.URL)
 	var destinations []string
@@ -482,11 +452,9 @@ func TestTSAuthOIDCRegionalIssuer(t *testing.T) {
 			if identity, err := app.VerifyIDToken(t.Context(), f.token, TSAuthIDTokenVerificationOptions{Nonce: attempt.Nonce, AccessToken: "access"}); err != nil || identity.Issuer != f.issuer {
 				t.Fatalf("identity=%+v error=%v", identity, err)
 			}
-			introspector, err := instance.NewResourceIntrospector(TSAuthResourceIntrospectorConfig{Issuer: f.issuer, ResourceAudience: "https://api.example.test/a", Authentication: TSAuthResourceAuthentication{ClientID: "resource", Secret: "secret"}})
-			if err != nil {
+			if err := app.Revoke(t.Context(), "opaque"); err != nil {
 				t.Fatal(err)
 			}
-			introspector.Introspect(t.Context(), "opaque")
 			if f.requests != 1 || !reflect.DeepEqual(slices.Sorted(maps.Keys(hosts)), tc.hosts) {
 				t.Fatalf("requests=%d hosts=%v", f.requests, hosts)
 			}
@@ -508,32 +476,13 @@ func TestTSAuthOIDCRegionalIssuerRejections(t *testing.T) {
 		instance := newTSAuthTestInstance(t, Config{TSAuthBaseURL: tc.base})
 		_, err := instance.OIDC.NewApplication(TSAuthOIDCApplicationConfig{Issuer: tc.issuer, Authentication: TSAuthOAuthClientAuthentication{ClientID: "client", Method: TSAuthClientAuthenticationNone}, RedirectURI: "https://app.example/callback"})
 		assertOIDCCode(t, err, "issuer_transport_mismatch")
-		_, err = instance.NewResourceIntrospector(TSAuthResourceIntrospectorConfig{Issuer: tc.issuer, ResourceAudience: "https://api.example.test/a", Authentication: TSAuthResourceAuthentication{ClientID: "resource", Secret: "secret"}})
-		assertOIDCCode(t, err, "issuer_transport_mismatch")
 	}
-}
-
-func TestTSAuthOIDCIntrospectionSessionBinding(t *testing.T) {
-	f := newOIDCFixture(t)
-	app := f.application(t)
-	f.formHandler = func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(map[string]any{"active": true, "token_type": "Bearer", "iss": f.issuer, "aud": "client", "client_id": "client", "sub": "user", "exp": time.Now().Unix() + 60, "sid": "session"})
-	}
-	result, err := app.Introspect(t.Context(), "access")
-	if err != nil || result.SessionID == nil || *result.SessionID != "session" {
-		t.Fatalf("result=%+v err=%v", result, err)
-	}
-	f.formHandler = func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(map[string]any{"active": true, "token_type": "Bearer", "iss": f.issuer, "aud": "client", "client_id": "client", "sub": "user", "exp": time.Now().Unix() + 60})
-	}
-	_, err = app.Introspect(t.Context(), "access")
-	assertOIDCCode(t, err, "invalid_session_binding")
 }
 
 func TestTSAuthOIDCExactSecurityJSON(t *testing.T) {
-	var introspection TSAuthIntrospection
-	if err := introspection.decodeHTTPResponse(200, []byte(`{"active":false,"active":true}`)); err == nil {
-		t.Fatal("duplicate introspection state admitted")
+	var tokens TSAuthTokenResponse
+	if err := tokens.decodeHTTPResponse(200, []byte(`{"access_token":"a","access_token":"b","token_type":"Bearer","expires_in":60}`)); err == nil {
+		t.Fatal("duplicate access_token admitted")
 	}
 	var document TSAuthDiscoveryDocument
 	if err := document.decodeHTTPResponse(200, []byte("{\"issuer\":\"\xff\"}")); err == nil {
@@ -633,53 +582,5 @@ func TestTSAuthOIDCAtlasSecurityJSONAndLease(t *testing.T) {
 	}
 	if discovery.expires.After(before.Add(2 * time.Second)) {
 		t.Fatal("short Atlas admission lease widened")
-	}
-}
-
-// ts-auth answers refresh-token introspection with token_type, sub,
-// client_id, scope, exp and iat only (no iss, aud, sid or family_id).
-func TestTSAuthOIDCRefreshTokenIntrospection(t *testing.T) {
-	f := newOIDCFixture(t)
-	oidc := newTSAuthTestInstance(t, Config{APIBaseURL: f.server.URL, AccessToken: "sk_not_oidc"}).OIDC
-	app, err := oidc.NewApplication(TSAuthOIDCApplicationConfig{Issuer: f.issuer, Authentication: TSAuthOAuthClientAuthentication{ClientID: "client", ClientSecret: "secret", Method: TSAuthClientSecretBasic}, RedirectURI: "https://app.example/callback"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	answer := func(members map[string]any) {
-		f.formHandler = func(w http.ResponseWriter, r *http.Request) { json.NewEncoder(w).Encode(members) }
-	}
-	refresh := func() map[string]any {
-		return map[string]any{"active": true, "token_type": "refresh_token", "sub": "user", "client_id": "client", "scope": "openid", "exp": time.Now().Unix() + 60, "iat": time.Now().Unix()}
-	}
-	answer(refresh())
-	result, err := app.Introspect(t.Context(), "refresh")
-	if err != nil || !result.Active || result.Iss != nil || result.SessionID != nil {
-		t.Fatalf("server-shaped refresh introspection: %+v %v", result, err)
-	}
-	// An access token answer without sid is fine unless RequireSession.
-	answer(map[string]any{"active": true, "token_type": "Bearer", "iss": f.issuer, "aud": "client", "client_id": "client", "sub": "user", "exp": time.Now().Unix() + 60})
-	if _, err := app.Introspect(t.Context(), "access"); err != nil {
-		t.Fatalf("sessionless access token without RequireSession: %v", err)
-	}
-
-	cases := []struct {
-		name, code string
-		members    map[string]any
-	}{
-		{"access token without iss", "invalid_introspection", map[string]any{"active": true, "token_type": "Bearer", "aud": "client", "client_id": "client", "sub": "user", "exp": time.Now().Unix() + 60}},
-		{"refresh token for another client", "invalid_introspection", func() map[string]any { m := refresh(); m["client_id"] = "other"; return m }()},
-		{"refresh token with a foreign iss", "invalid_introspection", func() map[string]any { m := refresh(); m["iss"] = "https://evil.example/acme"; return m }()},
-		{"refresh token with a foreign aud", "invalid_introspection", func() map[string]any { m := refresh(); m["aud"] = "other"; return m }()},
-		{"expired refresh token", "invalid_introspection", func() map[string]any { m := refresh(); m["exp"] = time.Now().Unix() - 1; return m }()},
-		{"empty family", "invalid_session_binding", func() map[string]any { m := refresh(); m["family_id"] = ""; return m }()},
-		{"empty sid", "invalid_session_binding", func() map[string]any { m := refresh(); m["sid"] = ""; return m }()},
-	}
-	for _, tc := range cases {
-		answer(tc.members)
-		_, err := app.Introspect(t.Context(), "token")
-		if err == nil {
-			t.Fatalf("%s: accepted", tc.name)
-		}
-		assertOIDCCode(t, err, tc.code)
 	}
 }

@@ -44,12 +44,12 @@ func TestTSAuthOIDCRealProvider(t *testing.T) {
 	if err != nil {
 		t.Fatalf("provider token verification failed: %v", err)
 	}
-	active, err := app.Introspect(t.Context(), os.Getenv("TERRASCALE_OIDC_ACCESS_TOKEN"))
+	info, err := instance.OIDC.GetUserInfo(t.Context(), os.Getenv("TERRASCALE_OIDC_ACCESS_TOKEN"))
 	if err != nil {
-		t.Fatalf("provider introspection failed: %v", err)
+		t.Fatalf("provider userinfo failed: %v", err)
 	}
-	if !active.Active || active.Sub == nil || *active.Sub != identity.Subject || active.SessionID == nil || identity.SessionID == nil || *active.SessionID != *identity.SessionID {
-		t.Fatal("provider session identity mismatch")
+	if info.Sub != identity.Subject {
+		t.Fatal("provider userinfo subject mismatch")
 	}
 	// The provider revokes refresh families, not issued access JWTs.
 	if os.Getenv("TERRASCALE_OIDC_TEST_REVOKE") == "1" {
@@ -57,16 +57,11 @@ func TestTSAuthOIDCRealProvider(t *testing.T) {
 		if refresh == "" {
 			t.Fatal("refresh family revocation requires allocated refresh token")
 		}
-		before, err := app.Introspect(t.Context(), refresh)
-		if err != nil || !before.Active || before.FamilyID == nil || before.Sub == nil || *before.Sub != identity.Subject {
-			t.Fatal("refresh allocation binding failed")
-		}
 		if err := app.Revoke(t.Context(), refresh); err != nil {
 			t.Fatalf("provider revoke failed: %v", err)
 		}
-		result, err := app.Introspect(t.Context(), refresh)
-		if err != nil || result.Active {
-			t.Fatal("provider failed refresh-family revocation denial")
+		if _, err := app.Refresh(t.Context(), refresh); err == nil {
+			t.Fatal("provider accepted a revoked refresh token")
 		}
 	}
 }
