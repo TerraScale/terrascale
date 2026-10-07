@@ -162,18 +162,24 @@ func (service BillingService) Invoices(ctx context.Context, principal core.Princ
 func mountTools(tools *core.Tools, service BillingService) {
 	core.AddTool(tools, core.ToolSpec{
 		Name: "list_plans", Title: "List plans", ReadOnly: true,
+		Route:       "GET /v1/organizations/{organizationId}/plans",
+		RouteScope:  "billing:read",
 		Description: "List the paid plans an organization can subscribe to, with prices in cents, limits, and which plan is current.",
 	}, func(ctx context.Context, p core.Principal, _ core.Scope) (planList, error) {
 		return service.PlanList(ctx, p)
 	})
 	core.AddTool(tools, core.ToolSpec{
 		Name: "get_billing", Title: "Get billing", ReadOnly: true,
+		Route:       "GET /v1/organizations/{organizationId}/billing",
+		RouteScope:  "billing:read",
 		Description: "Show an organization's plan, billing interval and status, renewal date, scheduled or pending plan changes, checkout state, and (for the owner) payment method summary.",
 	}, func(ctx context.Context, p core.Principal, _ core.Scope) (billingSummary, error) {
 		return service.Summary(ctx, p)
 	})
 	core.AddTool(tools, core.ToolSpec{
 		Name: "list_invoices", Title: "List invoices", ReadOnly: true,
+		Route:       "GET /v1/organizations/{organizationId}/invoices",
+		RouteScope:  "billing:read",
 		Description: fmt.Sprintf("List an organization's invoices newest first, %d per page, optionally filtered by status and issue date.", InvoicePageSize),
 	}, func(ctx context.Context, p core.Principal, in invoiceInput) (invoiceList, error) {
 		return service.Invoices(ctx, p, in.Status, in.Issued, in.Page)

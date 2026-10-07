@@ -1,6 +1,7 @@
 package terrabase
 
 import (
+	"cmp"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -108,14 +109,17 @@ func (s *Store) ViewAs(ctx context.Context, p core.Principal, read func(core.Acc
 }
 
 func (s *Store) ScopedPrincipal(ctx context.Context, p core.Principal, scope core.Scope) (out core.Principal, err error) {
+	var scopeErr error
 	err = s.readCore(ctx, coreLoad{accounts: []string{p.AccountID}}, func(m *memstore.Store) error {
-		out, err = m.ScopedPrincipal(ctx, p, scope)
-		return err
+		out, scopeErr = m.ScopedPrincipal(ctx, p, scope)
+		return nil
 	})
+	// A missing account is a principal that no longer authenticates; a
+	// scope outside the account stays ErrNotFound, as in memstore.
 	if errors.Is(err, core.ErrNotFound) && !errors.Is(err, core.ErrUnavailable) {
 		err = core.ErrUnauthorized
 	}
-	return
+	return out, cmp.Or(err, scopeErr)
 }
 
 func (s *Store) CurrentPrincipal(ctx context.Context, accountID, userID string) (out core.Principal, err error) {

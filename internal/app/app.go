@@ -39,6 +39,7 @@ import (
 	"terrascale.tech/dashboard/internal/platform/datastar"
 	"terrascale.tech/dashboard/internal/platform/errortracking"
 	"terrascale.tech/dashboard/internal/platform/mcpserver"
+	"terrascale.tech/dashboard/internal/platform/platformapi"
 	"terrascale.tech/dashboard/internal/platform/render"
 	"terrascale.tech/dashboard/internal/platform/session"
 	"terrascale.tech/dashboard/internal/platform/statuspage"
@@ -171,10 +172,19 @@ func New(cfg config.Config) (*Application, error) {
 	if err != nil {
 		return nil, err
 	}
-	// The MCP endpoint authenticates every request with a bearer access
-	// token instead of cookies, so it sits outside the CSRF guard.
+	// The MCP server and the platform API authenticate every request with a
+	// bearer token instead of cookies, so they sit outside the CSRF guard.
+	mcp := mcpserver.New(store, deps.Tools)
+	platform := platformapi.New(deps.Tools.Routes(), func(ctx context.Context, token string) (platformapi.Grant, error) {
+		if tsAuth == nil {
+			return platformapi.Grant{}, core.ErrUnauthorized
+		}
+		return tsAuth.ResourceToken(ctx, store, platformapi.Audience, token)
+	})
 	root := http.NewServeMux()
-	root.Handle(core.MCPPath, mcpserver.New(store, deps.Tools))
+	root.Handle(core.MCPPath, mcp)
+	root.Handle(mcpserver.Host+"/", mcp)
+	root.Handle(platformapi.Host+"/", platform)
 	root.Handle("/api/v1/dashboard/cli/", deviceAuthorization.PublicHandler())
 	root.Handle("/", invalidatePrefetch(dropForeignMessages(guard.Protect(mux))))
 	var handler http.Handler = securityHeaders(cfg.SecureCookies, root)

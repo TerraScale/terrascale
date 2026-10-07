@@ -31,6 +31,8 @@ type portalOpened struct {
 func mountTools(tools *core.Tools, service Service) {
 	core.AddTool(tools, core.ToolSpec{
 		Name: "create_checkout", Title: "Start plan checkout", OpenWorld: true,
+		Route:       "POST /v1/organizations/{organizationId}/checkout",
+		RouteScope:  "billing:write",
 		Description: "Start a checkout that subscribes an organization without a subscription to a paid plan. Returns the URL the owner must open in a browser to pay; this tool never completes a payment. Owner only.",
 	}, func(ctx context.Context, p core.Principal, in planInput) (checkoutStarted, error) {
 		location, err := service.StartCheckout(ctx, p, in.Plan, in.Interval, "")
@@ -38,6 +40,8 @@ func mountTools(tools *core.Tools, service Service) {
 	})
 	core.AddTool(tools, core.ToolSpec{
 		Name: "cancel_checkout", Title: "Cancel plan checkout", OpenWorld: true,
+		Route:       "DELETE /v1/organizations/{organizationId}/checkout",
+		RouteScope:  "billing:write",
 		Description: "Cancel the organization's checkout in progress without changing its plan. Owner only.",
 	}, func(ctx context.Context, p core.Principal, _ core.Scope) (checkoutCanceled, error) {
 		err := service.CancelCheckout(ctx, p)
@@ -45,12 +49,16 @@ func mountTools(tools *core.Tools, service Service) {
 	})
 	core.AddTool(tools, core.ToolSpec{
 		Name: "preview_plan_change", Title: "Preview plan change", ReadOnly: true, OpenWorld: true,
+		Route:       "GET /v1/organizations/{organizationId}/plan/preview",
+		RouteScope:  "billing:read",
 		Description: "Estimate the charge and effective date of changing a subscribed organization's plan, without changing it. Owner only.",
 	}, func(ctx context.Context, p core.Principal, in planInput) (PlanChangePreview, error) {
 		return service.PreviewPlanChange(ctx, p, in.Plan, in.Interval)
 	})
 	core.AddTool(tools, core.ToolSpec{
 		Name: "change_plan", Title: "Change plan", OpenWorld: true, Idempotent: true,
+		Route:       "PUT /v1/organizations/{organizationId}/plan",
+		RouteScope:  "billing:write",
 		Description: "Change a subscribed organization's plan. Upgrades apply now (charging a prorated amount); downgrades and switching a Personal workspace to free are scheduled for renewal and can be undone with undo_plan_change. Owner only.",
 	}, func(ctx context.Context, p core.Principal, in planInput) (planChanged, error) {
 		outcome, err := service.ChangePlan(ctx, p, in.Plan, in.Interval)
@@ -58,6 +66,8 @@ func mountTools(tools *core.Tools, service Service) {
 	})
 	core.AddTool(tools, core.ToolSpec{
 		Name: "undo_plan_change", Title: "Undo scheduled plan change", OpenWorld: true, Idempotent: true,
+		Route:       "DELETE /v1/organizations/{organizationId}/plan/scheduled-change",
+		RouteScope:  "billing:write",
 		Description: "Cancel a plan change scheduled for renewal so the current plan continues. Owner only.",
 	}, func(ctx context.Context, p core.Principal, _ core.Scope) (planChanged, error) {
 		outcome, err := service.UndoPlanChange(ctx, p)
@@ -65,6 +75,8 @@ func mountTools(tools *core.Tools, service Service) {
 	})
 	core.AddTool(tools, core.ToolSpec{
 		Name: "get_billing_portal_url", Title: "Open billing portal", OpenWorld: true,
+		Route:       "POST /v1/organizations/{organizationId}/billing-portal",
+		RouteScope:  "billing:write",
 		Description: "Create a billing portal session where the owner updates payment methods and downloads invoices. Returns the URL to open in a browser. Owner only.",
 	}, func(ctx context.Context, p core.Principal, _ core.Scope) (portalOpened, error) {
 		location, err := service.PortalURL(ctx, p)

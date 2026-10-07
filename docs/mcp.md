@@ -1,6 +1,7 @@
 # MCP server
 
-The dashboard is an MCP server at `POST /mcp`. It speaks the stateless
+The dashboard is an MCP server at `https://mcp.terrascale.tech/`, and at
+`POST /mcp` on every other host. It speaks the stateless
 Streamable HTTP transport of MCP `2026-07-28` through the official
 [Go SDK](https://github.com/modelcontextprotocol/go-sdk) with
 `StreamableHTTPOptions{Stateless: true, JSONResponse: true}`:
@@ -21,6 +22,10 @@ Only the token's SHA-256 digest is stored, and the secret is shown once.
 Tokens expire after 7, 30, 90, or 365 days, and each account can hold at most
 25. A missing, unknown, expired, or revoked token returns `401` with a
 `WWW-Authenticate: Bearer` challenge.
+
+ts-auth tokens are not accepted until MCP OAuth (resource indicators and
+client registration on ts-auth) ships; ts-auth's contract v1.1 leaves it as a
+follow-up.
 
 A token acts as its user with that user's roles. Platform administrators also
 see the `admin_*` tools, and the services recheck every permission on each
@@ -51,7 +56,7 @@ and projects the caller can use.
   "mcpServers": {
     "terrascale": {
       "type": "http",
-      "url": "https://<dashboard-host>/mcp",
+      "url": "https://mcp.terrascale.tech/",
       "headers": { "Authorization": "Bearer tspat_..." }
     }
   }
@@ -84,5 +89,7 @@ core.AddTool(deps.Tools, core.ToolSpec{
 - Set `ReadOnly`, `Destructive`, `Idempotent`, and `OpenWorld` accurately. They
   become the tool annotations clients use to decide what needs confirmation.
 - Set `Admin` to list a tool only for platform administrators.
+- Set `Route` and `RouteScope` to serve the tool on the platform REST API as
+  well ([platform-api.md](platform-api.md)).
 
 `tests/e2e/mcp_*_test.go` cover the tools end to end with the SDK client.

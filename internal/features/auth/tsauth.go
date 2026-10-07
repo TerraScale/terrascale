@@ -55,8 +55,11 @@ type TSAuth struct {
 }
 
 type tsAuthProvider struct {
-	oauth      oauth2.Config
-	verifier   *oidc.IDTokenVerifier
+	oauth    oauth2.Config
+	verifier *oidc.IDTokenVerifier
+	// keys are the issuer's signing keys, for resource tokens
+	// (resource_token.go).
+	keys       oidc.KeySet
 	endSession string
 	revocation string
 	// headless is whether discovery lists the headless grants, which the
@@ -165,6 +168,7 @@ func (t *TSAuth) fetchDiscovery(ctx context.Context) (*tsAuthProvider, error) {
 		Revocation string   `json:"revocation_endpoint"`
 		PKCE       []string `json:"code_challenge_methods_supported"`
 		Grants     []string `json:"grant_types_supported"`
+		JWKS       string   `json:"jwks_uri"`
 	}
 	if err := provider.Claims(&metadata); err != nil {
 		return nil, fmt.Errorf("discover ts-auth: %w", err)
@@ -179,6 +183,7 @@ func (t *TSAuth) fetchDiscovery(ctx context.Context) (*tsAuthProvider, error) {
 			Scopes:   []string{oidc.ScopeOpenID, "email", "profile", oidc.ScopeOfflineAccess},
 		},
 		verifier:   provider.Verifier(&oidc.Config{ClientID: t.cfg.ClientID}),
+		keys:       oidc.NewRemoteKeySet(oidc.ClientContext(context.Background(), t.client), metadata.JWKS),
 		endSession: metadata.EndSession,
 		revocation: metadata.Revocation,
 		headless:   slices.Contains(metadata.Grants, passwordGrant) && slices.Contains(metadata.Grants, emailCodeGrant),
