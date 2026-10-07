@@ -34,6 +34,10 @@ type detailData struct {
 	OpenDelete bool
 	// Refill holds the input of a refused backup form.
 	Refill backupRefill
+	// Choices are the regions the placement form offers; RegionsError
+	// explains an empty list.
+	Choices      []core.Region
+	RegionsError string
 }
 
 // backupRefill is what a refused restore or policy form submitted.
@@ -73,9 +77,12 @@ func renderDetail(w http.ResponseWriter, r *http.Request, deps core.Deps, tab st
 		CanManage:  canManage,
 		OpenDelete: tab == "overview" && query.Get("delete") == "1",
 	}
-	// Only the overview shows the counts.
+	// Only the overview shows the counts and the placement form.
 	if tab == "overview" {
 		data.Info = data.Info.withContents(r.Context(), deps, p, db)
+		if canManage {
+			data.Choices, data.RegionsError = regionChoices(r.Context(), deps)
+		}
 	}
 	if data.Error != "" && tab == "backups" {
 		refill := func(key string) string { return truncate(query.Get(key), 128) }
@@ -199,6 +206,18 @@ func regionListDisplay(codes []string) string {
 		labels[i] = regionDisplay(code)
 	}
 	return strings.Join(labels, ", ")
+}
+
+// replicationDisplay says whether a placement replicates between regions.
+func replicationDisplay(codes []string) string {
+	switch len(codes) {
+	case 0:
+		return "Not reported"
+	case 1:
+		return "Single region · " + strings.ToUpper(codes[0]) + " only"
+	default:
+		return "Replicated across " + strings.ToUpper(strings.Join(codes, ", ")) + " · lag not reported"
+	}
 }
 
 func regionChoiceSummary(codes []string) string {

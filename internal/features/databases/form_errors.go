@@ -13,6 +13,7 @@ import (
 const (
 	ErrInvalidName    = "invalid-name"
 	ErrInvalidRegions = "invalid-regions"
+	ErrNoRegions      = "regions-unavailable"
 	ErrNameTaken      = "name-taken"
 	ErrPlanLimit      = "plan-limit"
 	ErrConfirmName    = "confirm-name"
@@ -31,6 +32,7 @@ const (
 var formErrors = map[string]string{
 	ErrInvalidName:    "Use 1 to 63 lowercase letters, digits, and hyphens, starting and ending with a letter or digit.",
 	ErrInvalidRegions: "Select one or more valid regions for this database.",
+	ErrNoRegions:      "The region list is unavailable right now, so placement cannot be checked. Try again shortly.",
 	ErrNameTaken:      "Another database in this project already uses that name. Choose a different one.",
 	ErrPlanLimit:      "Your plan's database limit is reached. Upgrade the plan or delete a database to create another.",
 	ErrConfirmName:    "The name you typed does not match. Type the database name exactly to delete it.",
