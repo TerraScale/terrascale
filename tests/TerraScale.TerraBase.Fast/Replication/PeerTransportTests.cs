@@ -31,7 +31,7 @@ public sealed class PeerTransportTests
         using var channel = tls.CreateChannel(server.PeerAddress!);
         var client = new Features.Replication.V1.Replication.ReplicationClient(channel);
 
-        using var call = client.Sync(deadline: DateTime.UtcNow.AddSeconds(30));
+        using var call = client.Sync(cancellationToken: TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         await call.RequestStream.WriteAsync(new SyncRequest { KeepAlive = new KeepAlive { Nonce = 7 } });
         await call.RequestStream.CompleteAsync();
         var error = await Assert.That(async () => await call.ResponseStream.MoveNext(CancellationToken.None))
@@ -51,7 +51,7 @@ public sealed class PeerTransportTests
         hello.Codecs.Clear();
         hello.Codecs.Add(PayloadCodec.Identity);
 
-        using var call = client.Sync(deadline: DateTime.UtcNow.AddSeconds(30));
+        using var call = client.Sync(cancellationToken: TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         await call.RequestStream.WriteAsync(new SyncRequest { Hello = hello });
         await call.ResponseStream.MoveNext(CancellationToken.None);
 
@@ -72,7 +72,7 @@ public sealed class PeerTransportTests
             for (var i = 0; i <= ReplicationProtocol.MaxOpenStreams; i++)
             {
                 var hello = new SyncRequest { Hello = ReplicationProtocol.CreateHello(await server.RegisterAsync(), RandomNumberGenerator.GetBytes(16)) };
-                var call = client.Sync(deadline: DateTime.UtcNow.AddSeconds(30));
+                var call = client.Sync(cancellationToken: TUnit.Core.TestContext.Current!.Execution.CancellationToken);
                 calls.Add(call);
                 await call.RequestStream.WriteAsync(hello);
                 await call.ResponseStream.MoveNext(CancellationToken.None);
@@ -473,7 +473,7 @@ public sealed class PeerTransportTests
         using var tls = new PeerTls();
         await using var server = await TerraBaseTestServer.StartAsync(tls.Apply);
         using var channel = tls.CreateChannel(server.PeerAddress!);
-        using var call = new Features.Replication.V1.Replication.ReplicationClient(channel).Sync(deadline: DateTime.UtcNow.AddSeconds(30));
+        using var call = new Features.Replication.V1.Replication.ReplicationClient(channel).Sync(cancellationToken: TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         await call.RequestStream.WriteAsync(new SyncRequest { Hello = ReplicationProtocol.CreateHello(await server.RegisterAsync(), RandomNumberGenerator.GetBytes(16)) });
         await Assert.That(await call.ResponseStream.MoveNext(CancellationToken.None)).IsTrue();
         await Assert.That(call.ResponseStream.Current.Welcome).IsNotNull();
@@ -581,7 +581,7 @@ public sealed class PeerTransportTests
         using var leaf = request.Create(authority, authority.NotBefore, authority.NotAfter, RandomNumberGenerator.GetBytes(16));
         using var client = leaf.CopyWithPrivateKey(clientKey);
         var downloads = 0;
-        using var stop = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        using var stop = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         var serving = ServeIssuerAsync();
         try
         {
@@ -712,7 +712,7 @@ public sealed class PeerTransportTests
             hello.LocalIdentity.ProjectId = invalid;
         }
 
-        using var call = new Features.Replication.V1.Replication.ReplicationClient(channel).Sync(deadline: DateTime.UtcNow.AddSeconds(30));
+        using var call = new Features.Replication.V1.Replication.ReplicationClient(channel).Sync(cancellationToken: TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         await call.RequestStream.WriteAsync(new SyncRequest { Hello = hello });
         await Assert.That(await call.ResponseStream.MoveNext(CancellationToken.None)).IsTrue();
         await Assert.That(call.ResponseStream.Current.Error.Code).IsEqualTo(StreamErrorCode.StreamErrorUnsupportedFormat);
@@ -886,7 +886,7 @@ public sealed class PeerTransportTests
         var hello = ReplicationProtocol.CreateHello(await server.RegisterAsync(), RandomNumberGenerator.GetBytes(16));
         edit(hello);
         using var channel = tls.CreateChannel(server.PeerAddress!);
-        using var call = new Features.Replication.V1.Replication.ReplicationClient(channel).Sync(deadline: DateTime.UtcNow.AddSeconds(30));
+        using var call = new Features.Replication.V1.Replication.ReplicationClient(channel).Sync(cancellationToken: TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         await call.RequestStream.WriteAsync(new SyncRequest { Hello = hello });
         await call.ResponseStream.MoveNext(CancellationToken.None);
         return call.ResponseStream.Current;
@@ -906,7 +906,7 @@ public sealed class PeerTransportTests
         var client = new Features.Replication.V1.Replication.ReplicationClient(channel);
         try
         {
-            using var call = client.Sync(deadline: DateTime.UtcNow.AddSeconds(30));
+            using var call = client.Sync(cancellationToken: TUnit.Core.TestContext.Current!.Execution.CancellationToken);
             await call.RequestStream.WriteAsync(hello);
             if (!await call.ResponseStream.MoveNext(CancellationToken.None) || call.ResponseStream.Current.Welcome is null)
             {

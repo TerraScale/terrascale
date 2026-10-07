@@ -80,10 +80,10 @@ public sealed class ReplicationShapeTests
             }
         });
         listener.Start();
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         var token = deadline.Token;
         using var channel = peerTls.CreateChannel(server.PeerAddress!);
-        using var call = new Features.Replication.V1.Replication.ReplicationClient(channel).Sync(deadline: DateTime.UtcNow.AddSeconds(30), cancellationToken: token);
+        using var call = new Features.Replication.V1.Replication.ReplicationClient(channel).Sync(cancellationToken: token);
         var origin = Guid.NewGuid().ToByteArray(bigEndian: true);
         ReadOnlyMemory<byte> proof = JournalDigest.Initial(origin);
         await call.RequestStream.WriteAsync(new SyncRequest { Hello = ReplicationProtocol.CreateHello(tenant.Database("db"), origin) }, token);

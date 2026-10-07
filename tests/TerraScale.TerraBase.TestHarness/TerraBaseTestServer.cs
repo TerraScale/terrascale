@@ -38,7 +38,8 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
         Client = new HttpClient(new SocketsHttpHandler { AllowAutoRedirect = false, UseCookies = false })
         {
             BaseAddress = BaseAddress,
-            Timeout = TimeSpan.FromSeconds(30),
+            // As in ClientTls: the test timeout bounds a request.
+            Timeout = Timeout.InfiniteTimeSpan,
         };
         // HTTPS listeners bind every interface; certificates in tests are issued for localhost.
         var https = listeners.Where(address => address.Scheme == Uri.UriSchemeHttps)
@@ -268,7 +269,7 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
     }
 
     /// <summary>
-    /// Polls <paramref name="condition"/> until it holds, failing after <paramref name="timeout"/> (default 30 s).
+    /// Polls <paramref name="condition"/> until it holds, failing after <paramref name="timeout"/> (default: the test's own timeout).
     /// The condition gets the deadline's token and must pass it to its I/O, so a check still running at the
     /// deadline is cancelled instead of outliving the test.
     /// </summary>
@@ -276,7 +277,9 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
     {
         ArgumentNullException.ThrowIfNull(condition);
         time ??= TimeProvider.System;
-        using var deadline = new CancellationTokenSource(timeout ?? TimeSpan.FromSeconds(30), time);
+        using var deadline = timeout is { } limit
+            ? new CancellationTokenSource(limit, time)
+            : CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         while (!await condition(deadline.Token))
         {
             await Task.Delay(TimeSpan.FromMilliseconds(50), time, deadline.Token);

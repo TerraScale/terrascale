@@ -74,7 +74,7 @@ public sealed class ReplicationCapacityTests
 
     private static async Task AssertStateAsync(DocumentApi api, long count, long sequence)
     {
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         var database = await api.TenantOfAsync();
         var store = (await api.Server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(database, deadline.Token))!;
         await using var read = await store.BeginTransactionAsync(write: false, deadline.Token);

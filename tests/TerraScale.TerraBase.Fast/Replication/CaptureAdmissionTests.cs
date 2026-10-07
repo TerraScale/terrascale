@@ -35,7 +35,7 @@ public sealed class CaptureAdmissionTests
         await tenant.BindAsync(receiver);
         using var client = clientTls.CreateClient(sender.ClientAddress!, await tenant.KeyAsync(sender, "documents:write"));
         using var reader = clientTls.CreateClient(receiver.ClientAddress!, await tenant.KeyAsync(receiver, "documents:read"));
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         var token = deadline.Token;
         using var created = await client.PostAsJsonAsync(new Uri($"{tenant.Path("db")}/collections", UriKind.Relative), new { name = "items" }, token);
         created.EnsureSuccessStatusCode();
@@ -134,7 +134,7 @@ public sealed class CaptureAdmissionTests
         var tenant = await ReplicationTenant.CreateAsync(sender, "db");
         await tenant.BindAsync(receiver);
         using var client = clientTls.CreateClient(sender.ClientAddress!, await tenant.KeyAsync(sender, "documents:write"));
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         var token = deadline.Token;
         string[] names = ["items", "other"];
         foreach (var name in names)
@@ -199,7 +199,7 @@ public sealed class CaptureAdmissionTests
         var tenant = await ReplicationTenant.CreateAsync(sender, "db");
         await tenant.BindAsync(receiver);
         using var client = clientTls.CreateClient(sender.ClientAddress!, await tenant.KeyAsync(sender, "documents:write"));
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         var token = deadline.Token;
         using var created = await client.PostAsJsonAsync(new Uri($"{tenant.Path("db")}/collections", UriKind.Relative), new { name = "items" }, token);
         created.EnsureSuccessStatusCode();

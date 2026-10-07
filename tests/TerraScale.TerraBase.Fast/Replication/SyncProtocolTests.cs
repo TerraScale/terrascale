@@ -54,7 +54,7 @@ public sealed class SyncProtocolTests
         var error = (await NextAsync(call)).Error;
         await Assert.That(error.Code).IsEqualTo(StreamErrorCode.StreamErrorInvalidBatch);
         await Assert.That(error.Retryable).IsFalse();
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         var store = (await node.Server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(database, deadline.Token))!;
         await using var read = await store.BeginTransactionAsync(write: false, deadline.Token);
         var (sequence, digest) = await read.GetAppliedFrontierAsync(origin, deadline.Token);
@@ -78,11 +78,11 @@ public sealed class SyncProtocolTests
         TenantContext[] databases = [await server.RegisterAsync(first), await server.RegisterAsync(second)];
         var origin = RandomNumberGenerator.GetBytes(16);
         var engine = server.Services.GetRequiredService<IStorageEngine>();
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         var stores = new List<IDatabaseStore>();
         foreach (var database in databases)
         {
-            using var call = client.Sync(deadline: DateTime.UtcNow.AddSeconds(30));
+            using var call = client.Sync(cancellationToken: TUnit.Core.TestContext.Current!.Execution.CancellationToken);
             var welcome = await HelloAsync(call, database, origin);
             await Assert.That(welcome.Frontiers.Single().HasDurableSequence).IsFalse();
             await Assert.That(welcome.LocalIdentity.TenantId.Span.SequenceEqual(Guid.Parse(database.OrganizationId).ToByteArray(bigEndian: true))).IsTrue();
@@ -122,7 +122,7 @@ public sealed class SyncProtocolTests
     {
         await using var node = await Node.StartAsync("json");
         using var writer = await node.ClientAsync("documents:write");
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         var id = Guid.CreateVersion7().ToString("D");
         var json = scenario switch
         {
@@ -194,7 +194,7 @@ public sealed class SyncProtocolTests
     public async Task Recreating_the_receiver_ends_the_old_stream_without_acknowledging_its_duplicate(bool applyOnStream)
     {
         await using var node = await Node.StartAsync("retired");
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         var origin = RandomNumberGenerator.GetBytes(16);
         var change = Put("items", "a", 1);
         if (!applyOnStream)
@@ -372,7 +372,7 @@ public sealed class SyncProtocolTests
             await Assert.That(error!.StatusCode).IsEqualTo(StatusCode.ResourceExhausted);
         }
 
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         var store = (await node.Server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(node.Tenant.Database("vault"), deadline.Token))!;
         await using var read = await store.BeginTransactionAsync(write: false, deadline.Token);
         await Assert.That(await read.GetAppliedSequenceAsync(origin, deadline.Token)).IsEqualTo(0);
@@ -525,7 +525,7 @@ public sealed class SyncProtocolTests
 
     private static async Task<SyncResponse> NextAsync(AsyncDuplexStreamingCall<SyncRequest, SyncResponse> call)
     {
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         return await call.ResponseStream.MoveNext(timeout.Token)
             ? call.ResponseStream.Current
             : throw new InvalidOperationException("the Sync stream ended");
@@ -581,7 +581,7 @@ public sealed class SyncProtocolTests
         }
 
         public AsyncDuplexStreamingCall<SyncRequest, SyncResponse> Sync() =>
-            new Features.Replication.V1.Replication.ReplicationClient(_channel).Sync(deadline: DateTime.UtcNow.AddSeconds(30));
+            new Features.Replication.V1.Replication.ReplicationClient(_channel).Sync(cancellationToken: TUnit.Core.TestContext.Current!.Execution.CancellationToken);
 
         public async Task<HttpClient> ClientAsync(params string[] scopes) =>
             _clientTls.CreateClient(Server.ClientAddress!, await Tenant.KeyAsync(Server, scopes));
@@ -598,7 +598,7 @@ public sealed class SyncProtocolTests
             using var page = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
             // Public versions are ETags bound to each receiving incarnation. Verify numeric state through
             // this running node's engine while still reading every document over its real HTTPS listener.
-            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
             var store = await Server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(Tenant.Database(database), deadline.Token);
             await using var read = await store!.BeginTransactionAsync(write: false, deadline.Token);
             var result = new List<(string Id, long Version, JsonElement Data)>();

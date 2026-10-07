@@ -77,7 +77,7 @@ public sealed class PeerChainTests
     private static async Task WelcomeAsync(Node node, Uri address, ReplicationTenant tenant)
     {
         using var channel = node.CreateChannel(address);
-        using var call = new Features.Replication.V1.Replication.ReplicationClient(channel).Sync(deadline: DateTime.UtcNow.AddSeconds(30));
+        using var call = new Features.Replication.V1.Replication.ReplicationClient(channel).Sync(cancellationToken: TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         await call.RequestStream.WriteAsync(new SyncRequest { Hello = ReplicationProtocol.CreateHello(tenant.Database("db"), RandomNumberGenerator.GetBytes(16)) });
         await Assert.That(await call.ResponseStream.MoveNext(CancellationToken.None)).IsTrue();
         await Assert.That(call.ResponseStream.Current.Welcome).IsNotNull();

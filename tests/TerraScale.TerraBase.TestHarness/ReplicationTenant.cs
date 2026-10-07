@@ -44,7 +44,7 @@ internal sealed class ReplicationTenant
         ArgumentNullException.ThrowIfNull(seed);
         ArgumentNullException.ThrowIfNull(databaseNames);
         ArgumentOutOfRangeException.ThrowIfGreaterThan(databaseNames.Length, MaxDatabases);
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         var token = deadline.Token;
         var user = Guid.NewGuid().ToString("D");
         var management = seed.Services.GetRequiredService<IManagementService>();
@@ -102,7 +102,7 @@ internal sealed class ReplicationTenant
     {
         ArgumentNullException.ThrowIfNull(seed);
         ArgumentOutOfRangeException.ThrowIfGreaterThan(_databases.Count + 1, MaxDatabases);
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         var database = await seed.Services.GetRequiredService<ITenantDirectory>()
             .FindDatabaseAsync(OrganizationId, ProjectId, name, deadline.Token)
             ?? throw new InvalidOperationException("the replication fixture database does not exist");
@@ -127,7 +127,7 @@ internal sealed class ReplicationTenant
     public async Task BindAsync(TerraBaseTestServer other)
     {
         ArgumentNullException.ThrowIfNull(other);
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         var engine = other.Services.GetRequiredService<IStorageEngine>();
         var store = await engine.OpenSystemDatabaseAsync(deadline.Token);
         await using (var write = await store.BeginTransactionAsync(write: true, deadline.Token))

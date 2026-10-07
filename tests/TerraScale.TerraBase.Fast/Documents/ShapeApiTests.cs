@@ -1089,6 +1089,22 @@ public sealed class ShapeApiTests
     }
 
     [Test]
+    public async Task A_snapshot_of_a_document_with_a_long_history_reads_only_its_last_write()
+    {
+        await using var api = await DocumentApi.StartAsync();
+        using var shapes = await api.ClientWithScopesAsync(ApiKeyScopes.ShapesRead);
+        // 50000 retained writes of one document: a lookup that walks its history would exhaust the query budget.
+        await WriteHistoryAsync(api, DocumentApi.NewId());
+
+        using var start = await GetAsync(shapes, $"{api.Shape}?offset=-1");
+        using var snapshot = await GetAsync(shapes, start.Headers.Location!.OriginalString);
+        var page = await JsonAsync(snapshot);
+
+        await Assert.That(snapshot.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(page.GetProperty("changes")[0].GetProperty("ops")[0].GetProperty("document").GetProperty("n").GetInt32()).IsEqualTo(49_999);
+    }
+
+    [Test]
     public async Task A_filter_with_a_lone_surrogate_escape_is_an_invalid_query()
     {
         await using var api = await DocumentApi.StartAsync();
@@ -1162,6 +1178,26 @@ public sealed class ShapeApiTests
     }
 
     [Test]
+    public async Task A_snapshot_replay_skips_a_later_document_with_deep_history_in_one_seek()
+    {
+        await using var api = await DocumentApi.StartAsync();
+        using var shapes = await api.ClientWithScopesAsync(ApiKeyScopes.ShapesRead);
+        await PutAsync(api, DocumentApi.NewId(), "open");
+        using var start = await GetAsync(shapes, $"{api.Shape}?offset=-1");
+        using var first = await GetAsync(shapes, start.Headers.Location!.OriginalString);
+        var firstBody = await first.Content.ReadAsStringAsync();
+
+        // A document first written after S, ordering before the kept one, with 50000 revisions: walking them
+        // would exhaust the query budget; the step skips the id by its first entry.
+        await WriteHistoryAsync(api, "00000000-0000-7000-8000-000000000000");
+
+        using var replay = await GetAsync(shapes, start.Headers.Location!.OriginalString);
+
+        await Assert.That(replay.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(await replay.Content.ReadAsStringAsync()).IsEqualTo(firstBody);
+    }
+
+    [Test]
     public async Task Snapshot_pages_read_the_state_at_their_offset_whatever_happens_between_pages()
     {
         await using var api = await DocumentApi.StartAsync();
@@ -1231,6 +1267,32 @@ public sealed class ShapeApiTests
     {
         var engine = api.Server.Services.GetRequiredService<IStorageEngine>();
         return (await engine.OpenDatabaseAsync(await api.TenantOfAsync(), CancellationToken.None))!;
+    }
+
+    // Commits 50 write transactions of 1000 writes each of document id, {"n":0} to {"n":49999}, as the engine stores
+    // them: each transaction takes the next offset, and every write keeps its own history row. Straight in the file
+    // (which the engine reads per transaction), because 50000 sequential engine calls run past the test timeout on a
+    // busy runner. Shape reads never read the replication journal, so it is not written.
+    private static async Task WriteHistoryAsync(DocumentApi api, string id)
+    {
+        await using var connection = new SqliteConnection(DocumentApi.ConnectionString(await api.DatabaseFileAsync()));
+        await connection.OpenAsync();
+        await using var transaction = await connection.BeginTransactionAsync();
+        await using var write = connection.CreateCommand();
+        write.CommandText = """
+            WITH RECURSIVE n(i) AS (SELECT 0 UNION ALL SELECT i + 1 FROM n WHERE i < 49999)
+            INSERT INTO change_log (collection, generation, id, version, document_version, body)
+                SELECT c.name, c.generation, $id, o.value + 1 + i / 1000, o.value + 1 + i / 1000, json_object('n', i)
+                FROM n, collections c, commit_offset o WHERE c.name = $collection AND o.id = 1 ORDER BY i;
+            INSERT INTO documents (collection, id, version, body)
+                SELECT $collection, $id, value + 50, json_object('n', 49999) FROM commit_offset WHERE id = 1
+                ON CONFLICT (collection, id) DO UPDATE SET version = excluded.version, body = excluded.body;
+            UPDATE commit_offset SET value = value + 50 WHERE id = 1;
+            """;
+        write.Parameters.AddWithValue("$collection", DocumentApi.Collection);
+        write.Parameters.AddWithValue("$id", id);
+        await write.ExecuteNonQueryAsync();
+        await transaction.CommitAsync();
     }
 
     private static string Base64Url(string id) => System.Buffers.Text.Base64Url.EncodeToString(Encoding.UTF8.GetBytes(id));

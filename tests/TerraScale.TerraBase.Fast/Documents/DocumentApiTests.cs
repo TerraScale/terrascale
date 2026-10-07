@@ -634,8 +634,11 @@ public sealed class DocumentApiTests
         var underflows = await Task.WhenAll(OutOfRangeNumbers.Select(number => api.SendRawAsync(HttpMethod.Put, api.Document(id), $$"""{"n":{{number}}}""", "application/json")));
         var duplicateDecoded = await api.SendRawAsync(HttpMethod.Put, api.Document(id), """{"a":1,"\u0061":2}""", "application/json");
         var surrogatePair = await api.SendRawAsync(HttpMethod.Put, api.Document(DocumentApi.NewId()), """{"s":"\ud83d\ude00"}""", "application/json");
+        // The server refuses this body by its length and closes the connection; waiting for 100-continue keeps a slow
+        // client from still uploading then, which would turn the 413 into a connection reset.
         var hugeTransaction = await api.SendRawAsync(
-            HttpMethod.Post, api.Transactions, $$"""{"ops":[],"pad":"{{new string('x', 4 * 1024 * 1024)}}"}""", "application/json");
+            HttpMethod.Post, api.Transactions, $$"""{"ops":[],"pad":"{{new string('x', 4 * 1024 * 1024)}}"}""", "application/json",
+            request => request.Headers.ExpectContinue = true);
         var tooLarge = await api.SendAsync(HttpMethod.Put, api.Document(id), new { blob = new string('x', 1024 * 1024) });
         var text = await api.SendRawAsync(HttpMethod.Put, api.Document(id), """{"a":1}""", "text/plain");
         var encoded = await api.SendRawAsync(

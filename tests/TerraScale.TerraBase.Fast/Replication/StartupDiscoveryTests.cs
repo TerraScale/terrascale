@@ -30,7 +30,7 @@ public sealed class StartupDiscoveryTests
             {
                 tenant = await ReplicationTenant.CreateAsync(seed, "healthy", "broken");
                 using var writer = clientTls.CreateClient(seed.ClientAddress!, await tenant.KeyAsync(seed, "documents:write"));
-                using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+                using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
                 foreach (var name in new[] { "healthy", "broken" })
                 {
                     using var collection = await writer.PostAsJsonAsync(
@@ -88,7 +88,7 @@ public sealed class StartupDiscoveryTests
                 await command.ExecuteNonQueryAsync();
             }
             await TerraBaseTestServer.ReplicatedAsync(sender);
-            using var assertionDeadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            using var assertionDeadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
             using var recovered = await reader.GetAsync(Document(tenant, "broken"), assertionDeadline.Token);
             recovered.EnsureSuccessStatusCode();
             using var recoveredBody = JsonDocument.Parse(await recovered.Content.ReadAsStringAsync(assertionDeadline.Token));

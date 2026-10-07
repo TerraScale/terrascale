@@ -931,7 +931,7 @@ public sealed class CatalogForwardingTests
     // The head and the whole body of a Forward call.
     private static async Task<(ForwardHead Head, byte[] Body)> ForwardAsync(CatalogForwarding.CatalogForwardingClient client, ForwardRequest request)
     {
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         using var call = client.Forward(request, cancellationToken: deadline.Token);
         ForwardHead? head = null;
         using var body = new MemoryStream();

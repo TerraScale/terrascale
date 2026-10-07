@@ -27,7 +27,7 @@ public sealed class PeerRegionTests
         });
         var database = await receiver.RegisterAsync(new TenantContext(Guid.NewGuid().ToString(), PlanTier.Hobby, Guid.NewGuid().ToString(), Guid.NewGuid().ToString()));
         using var channel = tls.CreateChannel(receiver.PeerAddress!);
-        using var call = new Features.Replication.V1.Replication.ReplicationClient(channel).Sync(deadline: DateTime.UtcNow.AddSeconds(30));
+        using var call = new Features.Replication.V1.Replication.ReplicationClient(channel).Sync(cancellationToken: TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         await call.RequestStream.WriteAsync(new SyncRequest
         {
             Hello = ReplicationProtocol.CreateHello(database, Guid.NewGuid().ToByteArray(bigEndian: true), region == "too-long" ? new string('a', 64) : region),

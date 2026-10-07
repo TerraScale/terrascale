@@ -29,7 +29,7 @@ public sealed class StoredJsonAdmissionTests
         original.Status.ShouldBe(HttpStatusCode.Created);
         var origin = Guid.NewGuid().ToByteArray(bigEndian: true);
         using var channel = tls.CreateChannel(api.Server.PeerAddress!);
-        using var call = new Features.Replication.V1.Replication.ReplicationClient(channel).Sync(deadline: DateTime.UtcNow.AddSeconds(30));
+        using var call = new Features.Replication.V1.Replication.ReplicationClient(channel).Sync(cancellationToken: TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         await call.RequestStream.WriteAsync(new SyncRequest { Hello = ReplicationProtocol.CreateHello(tenant, origin) });
         await Assert.That(await call.ResponseStream.MoveNext(CancellationToken.None)).IsTrue();
         await Assert.That(call.ResponseStream.Current.Welcome).IsNotNull();

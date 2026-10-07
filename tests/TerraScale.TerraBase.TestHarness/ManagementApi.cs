@@ -117,7 +117,7 @@ public sealed class ManagementApi : IAsyncDisposable
             throw new InvalidOperationException("start the server with managementCredential: true");
         }
 
-        var client = new HttpClient { BaseAddress = Server.BaseAddress, Timeout = TimeSpan.FromSeconds(30) };
+        var client = new HttpClient { BaseAddress = Server.BaseAddress, Timeout = Timeout.InfiniteTimeSpan };
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", ServiceCredential);
         client.DefaultRequestHeaders.Add("X-TerraBase-User-Id", user);
         return client;
@@ -320,7 +320,7 @@ public sealed class ManagementApi : IAsyncDisposable
         new(new BearerToken(token) { InnerHandler = Tls.CreateHandler() })
         {
             BaseAddress = Server.ClientAddress,
-            Timeout = TimeSpan.FromSeconds(30),
+            Timeout = Timeout.InfiniteTimeSpan,
         };
 
     private sealed class BearerToken(Func<string> token) : DelegatingHandler

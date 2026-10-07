@@ -19,7 +19,7 @@ public sealed class ResponseLimitTests
         using var tls = new PeerTls();
         await using var server = await TerraBaseTestServer.StartAsync(tls.Apply);
         var tenant = await ReplicationTenant.CreateAsync(server, "db");
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         using var channel = tls.CreateChannel(server.PeerAddress!);
         using var call = new Features.Replication.V1.Replication.ReplicationClient(channel).Sync(cancellationToken: deadline.Token);
         var hello = ReplicationProtocol.CreateHello(tenant.Database("db"), RandomNumberGenerator.GetBytes(16));
@@ -49,7 +49,7 @@ public sealed class ResponseLimitTests
             settings["region"] = new string('a', 63);
         });
         var tenant = await ReplicationTenant.CreateAsync(server, "db");
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         var token = deadline.Token;
         var origin = RandomNumberGenerator.GetBytes(16);
         var batch = ReplicationProtocol.CreateBatch(tenant.Database("db"), origin, 1, [new DocumentChange("c", "a", 1, null)]);
@@ -211,7 +211,7 @@ public sealed class ResponseLimitTests
         using var tls = new PeerTls();
         await using var server = await TerraBaseTestServer.StartAsync(tls.Apply);
         var tenant = await ReplicationTenant.CreateAsync(server, "db");
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         using var channel = tls.CreateChannel(server.PeerAddress!);
         using var call = new Features.Replication.V1.Replication.ReplicationClient(channel).Sync(cancellationToken: deadline.Token);
         var hello = ReplicationProtocol.CreateHello(tenant.Database("db"), RandomNumberGenerator.GetBytes(16));
@@ -229,7 +229,7 @@ public sealed class ResponseLimitTests
         using var tls = new PeerTls();
         await using var server = await TerraBaseTestServer.StartAsync(tls.Apply);
         var tenant = await ReplicationTenant.CreateAsync(server, "db");
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         var token = deadline.Token;
         using var channel = tls.CreateChannel(server.PeerAddress!);
         using var call = new Features.Replication.V1.Replication.ReplicationClient(channel).Sync(cancellationToken: token);

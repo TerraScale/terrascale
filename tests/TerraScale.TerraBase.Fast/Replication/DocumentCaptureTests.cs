@@ -34,7 +34,7 @@ public sealed class DocumentCaptureTests
         await tenant.BindAsync(receiver);
         using var writer = clientTls.CreateClient(sender.ClientAddress!, await tenant.KeyAsync(sender, "documents:read", "documents:write"));
         using var reader = clientTls.CreateClient(receiver.ClientAddress!, await tenant.KeyAsync(receiver, "documents:read"));
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         var token = deadline.Token;
         using (var response = await writer.PutAsync(new Uri(tenant.Path("captured"), UriKind.Relative), null, token))
         {
@@ -210,7 +210,7 @@ public sealed class DocumentCaptureTests
         var c = Guid.CreateVersion7().ToString("D");
         await PutAsync(tenant, writer, a);
         await TerraBaseTestServer.ReplicatedAsync(sender);
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         var database = tenant.Database("captured");
         var source = (await sender.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(database, deadline.Token))!;
         var target = (await receiver.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(database, deadline.Token))!;
@@ -370,7 +370,7 @@ public sealed class DocumentCaptureTests
             response.EnsureSuccessStatusCode();
         }
 
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         var engine = server.Services.GetRequiredService<IStorageEngine>();
         var database = tenant.Database("captured");
         foreach (var store in new[]
@@ -536,7 +536,7 @@ public sealed class DocumentCaptureTests
         Features.Replication.V1.Replication.ReplicationClient client, TenantContext database, ReadOnlyMemory<byte> origin,
         long sequence, IReadOnlyList<DocumentChange> changes, CancellationToken cancellationToken)
     {
-        using var call = client.Sync(deadline: DateTime.UtcNow.AddSeconds(30), cancellationToken: cancellationToken);
+        using var call = client.Sync(cancellationToken: cancellationToken);
         await call.RequestStream.WriteAsync(new SyncRequest { Hello = ReplicationProtocol.CreateHello(database, origin) }, cancellationToken);
         await Assert.That(await call.ResponseStream.MoveNext(cancellationToken)).IsTrue();
         var frontier = call.ResponseStream.Current.Welcome.Frontiers.Single();

@@ -23,7 +23,7 @@ public sealed class PressureTests
     {
         var clock = new SamplingClock();
         await using var server = await TerraBaseTestServer.StartAsync(services: services => services.AddSingleton<TimeProvider>(clock));
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(25));
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         while ((await ReadAsync(server, deadline.Token)).GetProperty("storage_sampled_at").ValueKind == JsonValueKind.Null)
         {
             await Task.Yield();
@@ -73,7 +73,7 @@ public sealed class PressureTests
     public async Task Engine_closure_reports_unknown_storage_without_stopping_admin_telemetry()
     {
         await using var server = await TerraBaseTestServer.StartAsync();
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(25));
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         while ((await ReadAsync(server, deadline.Token)).GetProperty("storage_sampled_at").ValueKind == JsonValueKind.Null)
         {
             await Task.Yield();
@@ -98,7 +98,7 @@ public sealed class PressureTests
     {
         using var tls = new ClientTls();
         await using var server = await TerraBaseTestServer.StartAsync(tls.Apply);
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         using var connection = new TcpClient();
         await connection.ConnectAsync(IPAddress.Loopback, server.ClientAddress!.Port, deadline.Token);
         while ((await ReadAsync(server, deadline.Token)).GetProperty("load").GetProperty("connections").GetInt64() == 0)
@@ -138,7 +138,7 @@ public sealed class PressureTests
             DefaultRequestVersion = HttpVersion.Version20,
             DefaultVersionPolicy = HttpVersionPolicy.RequestVersionExact,
         };
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         foreach (var path in new[] { Pressure, Metrics })
         {
             using var response = await peer.GetAsync(path, deadline.Token);
@@ -150,7 +150,7 @@ public sealed class PressureTests
     public async Task Admin_pressure_reports_the_schema_and_explicit_unknowns_and_is_hidden_from_authenticated_clients()
     {
         await using var api = await DocumentApi.StartAsync(settings => settings["memory-budget"] = "1048576");
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         var snapshot = await ReadAsync(api.Server, deadline.Token);
         await AssertSnapshotAsync(snapshot);
         await Assert.That(snapshot.GetProperty("memory_budget_bytes").GetInt64()).IsEqualTo(1048576);
@@ -183,7 +183,7 @@ public sealed class PressureTests
             settings["region"] = "iad-1";
             settings["node-name"] = "pressure-test-node";
         });
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         var original = await ReadAsync(first, deadline.Token);
         var other = await ReadAsync(second, deadline.Token);
         var repeated = await ReadAsync(first, deadline.Token);
@@ -255,7 +255,7 @@ public sealed class PressureTests
     {
         var clock = new SamplingClock(pauseProcess: true);
         await using var server = await TerraBaseTestServer.StartAsync(services: services => services.AddSingleton<TimeProvider>(clock));
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         await clock.ProcessReady.Task.WaitAsync(deadline.Token);
         var original = await ReadAsync(server, deadline.Token);
         var beforeRefresh = DateTimeOffset.UtcNow;
@@ -290,7 +290,7 @@ public sealed class PressureTests
     public async Task Real_https_writes_and_reads_update_rates_listener_totals_storage_and_pressure_metrics()
     {
         await using var api = await DocumentApi.StartAsync();
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(25));
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         var before = await ReadAsync(api.Server, deadline.Token);
         var clientBefore = Listener(before, "client").GetProperty("requests_total").GetInt64();
         var storageBefore = before.GetProperty("storage_sampled_at");

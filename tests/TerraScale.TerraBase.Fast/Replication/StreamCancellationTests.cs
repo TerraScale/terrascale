@@ -30,7 +30,7 @@ public sealed class StreamCancellationTests
         var database = await server.RegisterAsync(new TenantContext(fake.Random.Guid().ToString("D"), PlanTier.Hobby,
             fake.Random.Guid().ToString("D"), fake.Random.Guid().ToString("D")));
         var hello = ReplicationProtocol.CreateHello(database, RandomNumberGenerator.GetBytes(16));
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token);
         using (var call = client.Sync(cancellationToken: cancellation.Token))
         {

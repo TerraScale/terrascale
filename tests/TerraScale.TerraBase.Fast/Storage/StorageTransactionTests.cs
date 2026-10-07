@@ -38,7 +38,7 @@ public sealed class StorageTransactionTests
         await using var server = await TerraBaseTestServer.StartAsync(tls.Apply);
         var tenant = await ReplicationTenant.CreateAsync(server, "pool");
         using var client = tls.CreateClient(server.ClientAddress!, await tenant.KeyAsync(server, "documents:read", "documents:write"));
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         var token = deadline.Token;
         using (var response = await client.PutAsync(new Uri(tenant.Path("pool"), UriKind.Relative), null, token))
         {
@@ -193,7 +193,7 @@ public sealed class StorageTransactionTests
     public async Task A_read_transaction_refuses_local_and_replicated_mutations(string operation)
     {
         await using var server = await TerraBaseTestServer.StartAsync();
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         var token = deadline.Token;
         var (engine, store) = await OpenAsync(server);
         var json = "{\"n\":1}"u8.ToArray();
@@ -617,7 +617,7 @@ public sealed class StorageTransactionTests
         var id = DocumentApi.NewId();
         await api.ReplaceWithOlderFileAsync("db", path => DocumentFiles.WriteAsync(path, ("items", id, "{}")));
         var engine = api.Server.Services.GetRequiredService<IStorageEngine>();
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         var operations = new List<Task<bool>>(2);
         var entries = new List<Task>(2);
         var enteredImmediately = true;

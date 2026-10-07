@@ -24,7 +24,7 @@ public sealed class CatalogDeletionTests
     {
         using var peers = new PeerTls();
         using var tls = new ClientTls();
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         var token = deadline.Token;
         var primaryDirectory = Directory.CreateTempSubdirectory("terrabase-delete-primary-").FullName;
         var followerDirectory = Directory.CreateTempSubdirectory("terrabase-delete-follower-").FullName;

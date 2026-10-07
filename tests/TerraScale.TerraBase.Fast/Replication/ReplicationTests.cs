@@ -267,7 +267,7 @@ public sealed class ReplicationTests
     {
         using var peerTls = new PeerTls();
         using var clientTls = new ClientTls();
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         var token = deadline.Token;
         var (a, b) = await TerraBaseTestServer.StartPairAsync((settings, port, peerPort) => Configure(settings, peerTls, clientTls, port, peerPort));
         await using var disposeA = a;
@@ -694,7 +694,7 @@ public sealed class ReplicationTests
 
         await PutAsync(tenant, writer, "only");
 
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         await firstAttemptEnded.Task.WaitAsync(deadline.Token);
         try
         {
@@ -952,7 +952,7 @@ public sealed class ReplicationTests
                 }
             });
             observer.Start();
-            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
             allowWelcome.SetResult();
             // Positive evidence: group 3 is prepared, but the actual sender has reached its byte-credit wait.
             await Assert.That(await blocked.Task.WaitAsync(deadline.Token)).IsEqualTo(2);
@@ -1150,7 +1150,7 @@ public sealed class ReplicationTests
 
             await TerraBaseTestServer.ReplicatedAsync(upgraded);
             await Assert.That(skipped.Skipped).IsEqualTo(6);
-            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
             var database = tenant.Database("legacy");
             var source = (await upgraded.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(database, deadline.Token))!;
             var target = (await receiver.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(database, deadline.Token))!;
@@ -1303,7 +1303,7 @@ public sealed class ReplicationTests
 
     private static async Task<DocumentVersion> VersionAsync(ReplicationTenant tenant, TerraBaseTestServer node, string database, string collection, string id)
     {
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         var name = tenant.Database(database);
         var store = await node.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(name, deadline.Token);
         await using var transaction = await store!.BeginTransactionAsync(write: false, deadline.Token);

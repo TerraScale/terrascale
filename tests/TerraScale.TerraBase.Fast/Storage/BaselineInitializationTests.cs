@@ -21,7 +21,7 @@ public sealed class BaselineInitializationTests
         var fake = new Faker();
         var target = new TenantContext(fake.Random.Guid().ToString("D"), PlanTier.Hobby,
             fake.Random.Guid().ToString("D"), fake.Random.Guid().ToString("D"));
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         SqliteStorageEngine? engine = null;
         SqliteDatabaseStore? initialized = null;
         Task<bool>? deletion = null;
@@ -140,7 +140,7 @@ public sealed class BaselineInitializationTests
         }));
         var value = fake.Lorem.Word();
         var body = System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(new { value });
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         using var request = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token);
         var withIntent = action is "intent-copy" or "cancel-intent-copy";
         var copy = action is "copy" or "cancel-copy" || withIntent;

@@ -259,7 +259,7 @@ public sealed class SenderLifecycleTests
         await TerraBaseTestServer.ReplicatedAsync(sender);
         var sent = await sender.MetricAsync("terrabase_replication_sent_groups_total");
 
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         var database = tenant.Database("backlog");
         var engine = receiver.Services.GetRequiredService<IStorageEngine>();
         var source = await sender.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(database, deadline.Token);

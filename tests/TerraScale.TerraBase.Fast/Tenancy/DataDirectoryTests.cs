@@ -376,7 +376,7 @@ public sealed class DataDirectoryTests
             start.ArgumentList.Add($"--{name}={value}");
         }
 
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         using var process = Process.Start(start) ?? throw new InvalidOperationException("the second TerraBase process did not start");
         try
         {

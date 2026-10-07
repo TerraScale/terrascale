@@ -582,7 +582,7 @@ public sealed class CatalogReplicationTests
 
     private static async Task WriteSystemAsync(IStorageEngine engine, Func<IStorageTransaction, CancellationToken, Task> write)
     {
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         var store = await engine.OpenSystemDatabaseAsync(deadline.Token);
         await using var transaction = await store.BeginTransactionAsync(write: true, deadline.Token);
         await write(transaction, deadline.Token);
@@ -613,7 +613,7 @@ public sealed class CatalogReplicationTests
     private static async Task<List<FollowResponse>> FramesAsync(
         CatalogReplication.CatalogReplicationClient client, FollowRequest request, int count = int.MaxValue, Func<FollowResponse, bool>? stop = null)
     {
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         using var call = client.Follow(request, cancellationToken: deadline.Token);
         var frames = new List<FollowResponse>();
         while (frames.Count < count && await call.ResponseStream.MoveNext(deadline.Token))
@@ -637,7 +637,7 @@ public sealed class CatalogReplicationTests
         // An organization with one project and database on a catalog primary, and an API key of the organization.
         public static async Task<CatalogTenant> CreateAsync(TerraBaseTestServer primary, string database)
         {
-            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
             var user = Guid.NewGuid().ToString();
             var management = primary.Services.GetRequiredService<IManagementService>();
             var organization = (await management.CreateOrganizationAsync(user, $"Org {Guid.NewGuid():N}", deadline.Token)).Value

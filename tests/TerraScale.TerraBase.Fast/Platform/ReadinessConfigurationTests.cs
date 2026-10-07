@@ -63,7 +63,7 @@ public sealed class ReadinessConfigurationTests
                 start.ArgumentList.Add($"--{name}={value}");
             }
 
-            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
             using var process = Process.Start(start) ?? throw new InvalidOperationException("the TerraBase process did not start");
             try
             {

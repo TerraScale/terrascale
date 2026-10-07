@@ -34,7 +34,7 @@ public sealed class ClockAdmissionTests
         });
         var tenant = await ReplicationTenant.CreateAsync(server, "db");
         using var client = clientTls.CreateClient(server.ClientAddress!, await tenant.KeyAsync(server, "documents:write"));
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         var token = deadline.Token;
         using var collection = await client.PostAsJsonAsync(new Uri($"{tenant.Path("db")}/collections", UriKind.Relative), new { name = "items" }, token);
         collection.EnsureSuccessStatusCode();
@@ -132,7 +132,7 @@ public sealed class ClockAdmissionTests
         await using var server = await TerraBaseTestServer.StartAsync(clientTls.Apply);
         var tenant = await ReplicationTenant.CreateAsync(server, "db");
         using var client = clientTls.CreateClient(server.ClientAddress!, await tenant.KeyAsync(server, "documents:write"));
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         var token = deadline.Token;
         using var collection = await client.PostAsJsonAsync(new Uri($"{tenant.Path("db")}/collections", UriKind.Relative), new { name = "items" }, token);
         collection.EnsureSuccessStatusCode();
@@ -190,7 +190,7 @@ public sealed class ClockAdmissionTests
         var tenant = await ReplicationTenant.CreateAsync(sender, "db");
         await tenant.BindAsync(receiver);
         using var client = clientTls.CreateClient(sender.ClientAddress!, await tenant.KeyAsync(sender, "documents:write"));
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         var token = deadline.Token;
         using var collection = await client.PostAsJsonAsync(new Uri($"{tenant.Path("db")}/collections", UriKind.Relative), new { name = "items" }, token);
         collection.EnsureSuccessStatusCode();
@@ -230,7 +230,7 @@ public sealed class ClockAdmissionTests
         await using var server = await TerraBaseTestServer.StartAsync(settings => { tls.Apply(settings); clientTls.Apply(settings); });
         var tenant = await ReplicationTenant.CreateAsync(server, "db");
         using var client = clientTls.CreateClient(server.ClientAddress!, await tenant.KeyAsync(server, "documents:read", "documents:write"));
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         var token = deadline.Token;
         var id = Guid.CreateVersion7().ToString("D");
         using var collection = await client.PostAsJsonAsync(new Uri($"{tenant.Path("db")}/collections", UriKind.Relative), new { name = "items" }, token);
@@ -310,7 +310,7 @@ public sealed class ClockAdmissionTests
         await using var server = await TerraBaseTestServer.StartAsync(clientTls.Apply);
         var tenant = await ReplicationTenant.CreateAsync(server, "db");
         using var client = clientTls.CreateClient(server.ClientAddress!, await tenant.KeyAsync(server, "documents:read", "documents:write"));
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         var token = deadline.Token;
         using var collection = await client.PostAsJsonAsync(new Uri($"{tenant.Path("db")}/collections", UriKind.Relative), new { name = "items" }, token);
         collection.EnsureSuccessStatusCode();

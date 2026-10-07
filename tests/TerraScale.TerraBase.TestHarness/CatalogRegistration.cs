@@ -29,7 +29,7 @@ public static class CatalogRegistration
             ($"projects/{project}/databases", id, JsonSerializer.SerializeToUtf8Bytes(
                 new ManagedDatabase(id, project, id, null, created), TerraBaseJsonContext.Default.ManagedDatabase)),
         ];
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         var store = await server.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(deadline.Token);
         await using var write = await store.BeginTransactionAsync(write: true, deadline.Token);
         foreach (var (collection, key, json) in rows)

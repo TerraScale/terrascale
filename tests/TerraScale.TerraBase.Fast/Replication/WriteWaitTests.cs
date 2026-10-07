@@ -16,7 +16,7 @@ public sealed class WriteWaitTests
     {
         using var peerTls = new PeerTls();
         using var clientTls = new ClientTls();
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         var token = deadline.Token;
         // A generous bound: the test fails on a read that misses a write, not on a slow machine.
         var (a, b) = await TerraBaseTestServer.StartPairAsync((settings, port, peerPort) =>
@@ -71,7 +71,7 @@ public sealed class WriteWaitTests
     {
         using var peerTls = new PeerTls();
         using var clientTls = new ClientTls();
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         var token = deadline.Token;
         await using var peer = await FakePeer.StartAsync(peerTls, async (requests, responses, context) =>
         {

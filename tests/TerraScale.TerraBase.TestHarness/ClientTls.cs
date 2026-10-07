@@ -41,7 +41,8 @@ public sealed class ClientTls : IDisposable
     /// </summary>
     public HttpClient CreateClient(Uri clientAddress, string? apiKey = null)
     {
-        var client = new HttpClient(CreateHandler()) { BaseAddress = clientAddress, Timeout = TimeSpan.FromSeconds(30) };
+        // The test timeout bounds a request: serialized durable commits can take longer than any fixed limit on a busy runner.
+        var client = new HttpClient(CreateHandler()) { BaseAddress = clientAddress, Timeout = Timeout.InfiniteTimeSpan };
         if (apiKey is not null)
         {
             client.DefaultRequestHeaders.Authorization = new("Bearer", apiKey);
