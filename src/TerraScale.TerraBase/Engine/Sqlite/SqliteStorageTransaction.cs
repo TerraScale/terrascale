@@ -42,6 +42,12 @@ internal sealed partial class SqliteStorageTransaction(
 
     private readonly List<DocumentChange>? _changes = changesCommitted is null ? null : [];
 
+    // Where each captured document's latest state sits in _changes, so a capture finds its predecessor in O(1).
+    private readonly Dictionary<(string Collection, string Id), int> _changeIndex = [];
+
+    // Captured states a batched write replaced since its savepoint, to put back if it rolls back.
+    private readonly List<(int Index, DocumentChange Previous)> _replacedSinceSavepoint = [];
+
     // Body statements live only for this transaction: idle sessions must not retain bound JSON.
     private readonly Dictionary<string, SqliteCommand> _bodyCommands = [with(StringComparer.Ordinal)];
 
@@ -67,7 +73,7 @@ internal sealed partial class SqliteStorageTransaction(
 
     // Group commit (SqliteDatabaseStore.WriteAsync): each queued write runs inside a savepoint, and this snapshot of the
     // in-memory capture and limits rolls back with it.
-    private (DocumentChange[]? Changes, long ChangeBytes, int Writes, long WrittenBytes, long? Offset, bool? ReplicatedMutation, bool CollectionsChanged)?
+    private (int Changes, long ChangeBytes, int Writes, long WrittenBytes, long? Offset, bool? ReplicatedMutation, bool CollectionsChanged)?
         _savepoint;
 
     /// <summary>Whether a per-commit limit refused a write since the last savepoint: alone in a transaction, it could fit.</summary>
@@ -842,7 +848,7 @@ internal sealed partial class SqliteStorageTransaction(
                     if (pending.Collection == name)
                     {
                         _changeBytes -= pending.Json?.Length ?? 0;
-                        _changes[index] = pending with { Version = Offset(), Json = null };
+                        Replace(index, pending with { Version = Offset(), Json = null });
                     }
                 }
 
@@ -951,39 +957,101 @@ internal sealed partial class SqliteStorageTransaction(
         return offset;
     }
 
-    /// <summary>Starts the savepoint one queued write of a group commit runs in.</summary>
-    internal ValueTask SavepointAsync() => RunVoidAsync(() =>
+    // Savepoints are lazy: SAVEPOINT runs with the write's first statement and RELEASE with the next write's, so a
+    // batched write pays no extra thread hop for them.
+    private bool _savepointPending;
+    private bool _releasePending;
+
+    /// <summary>Starts the savepoint one queued write of a group commit runs in. Runs no statement yet.</summary>
+    internal void Savepoint()
     {
         ThrowIfReadOnly();
-        transaction.Save(GroupSavepoint);
-        _savepoint = (_changes?.ToArray(), _changeBytes, _writes, _writtenBytes, _offset, _replicatedMutation, _collectionsChanged);
+        _savepoint = (_changes?.Count ?? 0, _changeBytes, _writes, _writtenBytes, _offset, _replicatedMutation, _collectionsChanged);
+        _replacedSinceSavepoint.Clear();
+        _savepointPending = true;
         LimitsReached = false;
-    });
+    }
 
-    /// <summary>Keeps what the write since <see cref="SavepointAsync"/> did.</summary>
-    internal ValueTask ReleaseSavepointAsync() => RunVoidAsync(() =>
+    /// <summary>Keeps what the write since <see cref="Savepoint"/> did. Runs no statement yet.</summary>
+    internal void ReleaseSavepoint()
     {
-        transaction.Release(GroupSavepoint);
-        _savepoint = null;
-    });
+        _ = _savepoint ?? throw new InvalidOperationException("no savepoint is open");
+        if (_savepointPending)
+        {
+            // The write ran no statement: there is nothing to release.
+            _savepointPending = false;
+        }
+        else
+        {
+            _releasePending = true;
+        }
 
-    /// <summary>Undoes what the write since <see cref="SavepointAsync"/> did, including a failure that faulted the transaction.</summary>
-    internal ValueTask RollbackToSavepointAsync() => RunVoidAsync(() =>
+        _savepoint = null;
+        _replacedSinceSavepoint.Clear();
+    }
+
+    /// <summary>Undoes what the write since <see cref="Savepoint"/> did, including a failure that faulted the transaction.</summary>
+    internal ValueTask RollbackToSavepointAsync()
     {
         var saved = _savepoint ?? throw new InvalidOperationException("no savepoint is open");
-        transaction.Rollback(GroupSavepoint);
-        transaction.Release(GroupSavepoint);
+        if (_savepointPending)
+        {
+            // The write ran no statement: only its in-memory state rolls back.
+            _savepointPending = false;
+            Restore(saved);
+            return ValueTask.CompletedTask;
+        }
+
+        return RunVoidAsync(() =>
+        {
+            transaction.Rollback(GroupSavepoint);
+            transaction.Release(GroupSavepoint);
+            Restore(saved);
+        });
+    }
+
+    private void Restore(
+        (int Changes, long ChangeBytes, int Writes, long WrittenBytes, long? Offset, bool? ReplicatedMutation, bool CollectionsChanged) saved)
+    {
         if (_changes is not null)
         {
-            _changes.Clear();
-            _changes.AddRange(saved.Changes!);
+            for (var i = _replacedSinceSavepoint.Count - 1; i >= 0; i--)
+            {
+                var (index, previous) = _replacedSinceSavepoint[i];
+                _changes[index] = previous;
+            }
+
+            for (var index = saved.Changes; index < _changes.Count; index++)
+            {
+                _changeIndex.Remove((_changes[index].Collection, _changes[index].Id));
+            }
+
+            _changes.RemoveRange(saved.Changes, _changes.Count - saved.Changes);
         }
+
+        _replacedSinceSavepoint.Clear();
 
         (_changeBytes, _writes, _writtenBytes, _offset, _replicatedMutation, _collectionsChanged) =
             (saved.ChangeBytes, saved.Writes, saved.WrittenBytes, saved.Offset, saved.ReplicatedMutation, saved.CollectionsChanged);
         _savepoint = null;
         _faulted = false;
-    });
+    }
+
+    // Worker-only: runs the savepoint statements a batched write deferred, before its next statement.
+    private void RunPendingSavepoint()
+    {
+        if (_releasePending)
+        {
+            transaction.Release(GroupSavepoint);
+            _releasePending = false;
+        }
+
+        if (_savepointPending)
+        {
+            transaction.Save(GroupSavepoint);
+            _savepointPending = false;
+        }
+    }
 
     private const string GroupSavepoint = "batched";
 
@@ -1412,6 +1480,8 @@ internal sealed partial class SqliteStorageTransaction(
 
                         _bodyCommands.Clear();
                         _changes?.Clear();
+                        _changeIndex.Clear();
+                        _replacedSinceSavepoint.Clear();
                         _appliedChanges.Clear();
                     }
                     finally
@@ -1543,12 +1613,17 @@ internal sealed partial class SqliteStorageTransaction(
         {
             if (retry)
             {
-                return await session.ExecuteAsync(runner, call, cancellationToken).ConfigureAwait(false);
+                return await session.ExecuteAsync(runner, () =>
+                {
+                    RunPendingSavepoint();
+                    return call();
+                }, cancellationToken).ConfigureAwait(false);
             }
 
             return await runner.RunAsync(() =>
             {
                 cancellationToken.ThrowIfCancellationRequested();
+                RunPendingSavepoint();
                 return call();
             }, cancellationToken).ConfigureAwait(false);
         }
@@ -1641,6 +1716,17 @@ internal sealed partial class SqliteStorageTransaction(
         }
     }
 
+    // Replaces a captured state, remembering the old one while a batched write's savepoint may still roll it back.
+    private void Replace(int index, DocumentChange state)
+    {
+        if (_savepoint is { } saved && index < saved.Changes)
+        {
+            _replacedSinceSavepoint.Add((index, _changes![index]));
+        }
+
+        _changes![index] = state;
+    }
+
     private void Capture(DocumentChange change)
     {
         if (store.IsSystem)
@@ -1654,18 +1740,18 @@ internal sealed partial class SqliteStorageTransaction(
             throw new InvalidDataException("a captured change has an invalid collection or id");
         }
 
-        // ponytail: scan at most 1024 states; use a keyed cache if capture profiling warrants it.
-        var index = _changes!.FindIndex(previous => previous.Collection == change.Collection && previous.Id == change.Id);
-        var bytes = ContentBytes(change) - (index >= 0 ? ContentBytes(_changes[index]) : 0);
+        var index = _changeIndex.GetValueOrDefault((change.Collection, change.Id), -1);
+        var bytes = ContentBytes(change) - (index >= 0 ? ContentBytes(_changes![index]) : 0);
         CheckCaptureCapacity(bytes, replacing: index >= 0);
         // Reserve only the final state, before copying it; shape history still counts every mutation.
         var owned = change with { Json = change.Json is { } json ? json.ToArray() : (ReadOnlyMemory<byte>?)null };
         if (index >= 0)
         {
-            _changes[index] = owned;
+            Replace(index, owned);
         }
         else
         {
+            _changeIndex[(change.Collection, change.Id)] = _changes!.Count;
             _changes.Add(owned);
         }
 

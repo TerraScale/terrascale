@@ -1,5 +1,6 @@
 using System.Net;
 using Microsoft.Extensions.DependencyInjection;
+using TerraBase.Engine;
 using TerraBase.Engine.Sqlite;
 using TerraBase.Fast.Documents;
 using TerraBase.Testing;
@@ -58,6 +59,63 @@ public sealed class GroupCommitTests
         {
             await Assert.That((await api.GetAsync(id)).Status).IsEqualTo(HttpStatusCode.OK);
         }
+    }
+
+    [Test]
+    public async Task A_rolled_back_write_restores_what_an_earlier_write_of_its_batch_captured()
+    {
+        await using var api = await DocumentApi.StartAsync();
+        var existing = DocumentApi.NewId();
+        await api.PutAsync(existing, new { n = 0 });
+        var store = await StoreAsync(api);
+        var shared = DocumentApi.NewId();
+        var other = DocumentApi.NewId();
+
+        var engine = api.Server.Services.GetRequiredService<SqliteStorageEngine>();
+        var held = await store.BeginTransactionAsync(write: true, CancellationToken.None);
+        Task<ApiResponse> primer;
+        Task<ApiResponse> first;
+        Task<ApiResponse> failing;
+        Task<ApiResponse> last;
+        try
+        {
+            // A primer takes the batch that waits for the writer; the next three then queue, in this order, for one batch.
+            primer = api.PutAsync(DocumentApi.NewId(), new { n = 0 });
+            await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(engine.Io.Admitted == 2 && store.QueuedWrites == 0));
+            first = api.PutAsync(shared, new { n = 1 });
+            await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(store.QueuedWrites >= 1));
+            // Its first put replaces what `first` captured in the same batch; its second put then fails, after it.
+            failing = api.TransactAsync(
+                new { op = "put", collection = DocumentApi.Collection, id = shared, document = new { n = 2 } },
+                new { op = "put", collection = DocumentApi.Collection, id = existing, document = new { n = 5 }, if_match = "tbv1-00000000000000000000000000000000" });
+            await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(store.QueuedWrites >= 2));
+            last = api.PutAsync(other, new { n = 3 });
+            await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(store.QueuedWrites >= 3));
+        }
+        finally
+        {
+            await held.DisposeAsync();
+        }
+
+        await Assert.That((await primer).Status).IsEqualTo(HttpStatusCode.Created);
+        await Assert.That((await first).Status).IsEqualTo(HttpStatusCode.Created);
+        await Assert.That((await last).Json.GetProperty("offset").GetString()).IsEqualTo((await first).Json.GetProperty("offset").GetString());
+        await Assert.That((await failing).Status).IsEqualTo(HttpStatusCode.PreconditionFailed);
+        await Assert.That((await last).Status).IsEqualTo(HttpStatusCode.Created);
+        await Assert.That((await api.GetAsync(shared)).Json.GetProperty("document").GetProperty("n").GetInt32()).IsEqualTo(1);
+
+        // The change groups replicated to peers carry the first write's state, never the rolled-back one.
+        await using var reader = await store.BeginTransactionAsync(write: false, CancellationToken.None);
+        var captured = new List<DocumentChange>();
+        for (var sequence = await reader.GetLastChangeSequenceAsync(CancellationToken.None); sequence > 0 && captured.Count < 3; sequence--)
+        {
+            captured.AddRange(await reader.ReadChangesAsync(sequence, CancellationToken.None) ?? []);
+        }
+
+        var states = captured.Where(change => change.Id == shared).Select(change => System.Text.Encoding.UTF8.GetString(change.Json!.Value.Span)).ToList();
+        await Assert.That(states).IsNotEmpty();
+        await Assert.That(states.All(json => json.Contains("\"n\":1", StringComparison.Ordinal))).IsTrue();
+        await Assert.That(captured.Any(change => change.Id == other)).IsTrue();
     }
 
     [Test]

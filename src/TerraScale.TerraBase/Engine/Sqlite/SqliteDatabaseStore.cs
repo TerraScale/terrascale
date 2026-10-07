@@ -525,7 +525,7 @@ internal sealed class SqliteDatabaseStore(
                         continue;
                     }
 
-                    await transaction.SavepointAsync().ConfigureAwait(false);
+                    transaction.Savepoint();
                     bool keeps;
                     try
                     {
@@ -548,7 +548,7 @@ internal sealed class SqliteDatabaseStore(
 
                     if (keeps)
                     {
-                        await transaction.ReleaseSavepointAsync().ConfigureAwait(false);
+                        transaction.ReleaseSavepoint();
                         kept.Add(write);
                         continue;
                     }

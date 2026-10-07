@@ -40,6 +40,17 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
     // Coordinates file lifecycle and publication. Migration and baseline batches run independently per database.
     private readonly SemaphoreSlim _creation = new(1, 1);
     private readonly Dictionary<(string Organization, string Project, string Database), Task<SqliteDatabaseStore>> _initializing = [];
+
+    // Initializations registered while their caller still holds its creation admission; ExitCreation starts them once it
+    // released that admission. Started earlier, an initialization's own admission could overlap the caller's, and
+    // storage-queue=1 would refuse it (TS-624). Guarded by _creation.
+    private readonly List<TaskCompletionSource> _awaitingRelease = [];
+
+    /// <summary>Initializations waiting for their caller's creation admission to be released, for tests.</summary>
+    internal int InitializationsAwaitingRelease => _awaitingRelease.Count;
+
+    /// <summary>Whether a caller holds the creation lock, for tests.</summary>
+    internal bool CreationHeld => _creation.CurrentCount == 0;
     private readonly CancellationTokenSource _stopping = new();
 
     // Fixed-size UUID triples bound both items and bytes; failed intents retain their reservation until recovery.
@@ -1239,8 +1250,14 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
 
     private void ExitCreation()
     {
+        TaskCompletionSource[] released = _awaitingRelease.Count == 0 ? [] : [.. _awaitingRelease];
+        _awaitingRelease.Clear();
         _creation.Release();
         Io.Release();
+        foreach (var initialization in released)
+        {
+            initialization.TrySetResult();
+        }
     }
 
     // Returns the open store, or null when the file is gone (a delete won the lock).
@@ -1300,10 +1317,19 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
         }
 
         // Migration and seeding run on the I/O pool; keep them off the lifecycle lock. Nested transactions
-        // reuse the initialization's own admission.
-        initialization = Task.Run(() => Io.WithAdmissionAsync(() => InitializeStoreAsync(key, path, cancellationToken)).AsTask(), CancellationToken.None);
+        // reuse the initialization's own admission, taken only once the caller released its creation admission.
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _awaitingRelease.Add(release);
+        initialization = Task.Run(
+            async () =>
+            {
+                await release.Task.ConfigureAwait(false);
+                return await Io.WithAdmissionAsync(() => InitializeStoreAsync(key, path, cancellationToken)).ConfigureAwait(false);
+            },
+            CancellationToken.None);
         _initializing.Add(key, initialization);
         started = true;
+        _checkpoint("open.registered", new TenantContext(key.Organization, PlanTier.Hobby, key.Project, key.Database));
         return initialization;
     }
 
