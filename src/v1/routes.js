@@ -1,4 +1,4 @@
-// Routes owned by the C# Documents API at 0248ad3 (decision 0004 and shape-reads.md).
+// Routes owned by the C# Documents API at 263598b (decision 0004 and shape-reads.md).
 /** @typedef {"getDocument" | "putDocument" | "createDocument" | "patchDocument" | "deleteDocument" | "commitTransaction" | "queryDocuments" | "createCollection" | "getCollection" | "listCollections" | "dropCollection" | "readShape"} V1Operation */
 /**
  * @typedef {object} V1Route

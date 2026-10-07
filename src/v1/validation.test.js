@@ -12,7 +12,7 @@ import { v1Route, v1RoutePath, v1Routes } from "./routes.js";
 
 // Pure validators, encoders and decoders only: no HTTP fixture, fetch substitute, or producer emulation.
 const project = "019a0000-0000-7000-8000-000000000001";
-const token = `tb_${"A".repeat(43)}`;
+const token = "eyJ0eXAiOiJhdCtqd3QifQ.eyJwcm9qZWN0X2lkIjoiMDE5YTAwMDAtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwMDAxIn0.c2lnbmF0dXJl";
 const id = "019a0000-0000-7000-8000-000000000002";
 const version = `tbv1-${"0".repeat(32)}`;
 const tbv2 = "tbv2-AYCBgoOEhYaHiImKi4yNjo-QkZKTlJWWl5iZmpucnZ6f";
@@ -33,7 +33,11 @@ describe("C# v1 pure contract validation", () => {
     expect("createShape" in db).toBe(false);
   });
 
-  it("requires exactly one explicit endpoint source and a C# tb_ key", () => {
+  it("requires exactly one explicit endpoint source and a header-safe access credential", () => {
+    expect(() => createTerraBaseV1Client(config)).not.toThrow();
+    expect(() => createTerraBaseV1Client({ ...config, token: `tb_${"A".repeat(43)}` })).not.toThrow();
+    for (const token of ["", " ", "Bearer a.b.c", "a.b", "a.b.c.d", "a.b.c\r\nx-secret: value", "a.b.c ", "a..c"])
+      expect(() => createTerraBaseV1Client({ ...config, token })).toThrow(/token must/u);
     expect(() => createTerraBaseV1Client({ project, token })).toThrow(/exactly one/u);
     expect(() => createTerraBaseV1Client({ ...config, endpointResolver: staticBaseUrlResolver(config.baseUrl) })).toThrow(/exactly one/u);
     expect(() => createTerraBaseV1Client({ ...config, token: `tbk1.${"a".repeat(22)}.${"b".repeat(43)}` })).toThrow(/tb_/u);

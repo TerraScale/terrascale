@@ -1,8 +1,8 @@
 # Shape reads (TS-474)
 
 - Status: implemented for TS-474; divergences requested by the ticket are recorded below
-- Scope: `src/TerraScale.TerraBase/Features/Documents` (`GetShapeEndpoint`, `IShapeService`, `ShapeService`),
-  `src/TerraScale.TerraBase/Engine` (`IStorageTransaction.SnapshotAsync`, `IStorageTransaction.ChangesAsync`, `IDatabaseStore.WaitForCommitAsync`, schema v5)
+- Scope: `src/TerraBase/Features/Documents` (`GetShapeEndpoint`, `IShapeService`, `ShapeService`),
+  `src/TerraBase/Engine` (`IStorageTransaction.SnapshotAsync`, `IStorageTransaction.ChangesAsync`, `IDatabaseStore.WaitForCommitAsync`, schema v8)
 - Contracts: `terrabase-rust/docs/shapes-v1.md`, `query-v1.md`
 
 ## Summary
@@ -47,9 +47,14 @@ Validation, all `400 invalid_request` unless noted:
 ## Offsets on the change log
 
 The shape history is an append-only `change_log`, separate from the current `documents` table.
-`IReplicationJournal` currently has no implementation; shape offsets use the existing per-database
-SQLite commit sequence, not peer journal positions. A future replication apply path must append
-its document changes and advance that local sequence in the same storage transaction.
+Shape offsets use the per-database SQLite commit clock, independently of peer journal positions.
+Replication applies winning document changes and advances shape history in the same transaction
+as its applied frontier. Imported changes retain their document merge versions; public ETags also
+identify the raw body and deletion state, so equal-version winners invalidate stale validators. Each
+receiving transaction gets one local history offset above its previous head and at least as high
+as the versions it observes. Equal-version winning changes therefore appear after the old shape
+head. Imports are not captured again into the sending journal. Commits that advance the clock
+also wake live shape readers.
 
 The current mapping is:
 
@@ -58,6 +63,10 @@ The current mapping is:
   Multiple writes of the same document in one transaction remain separate operations, in their
   original order (`version`, then append sequence). Current-generation history is never compacted
   or reaped. A write whose collection has no metadata is refused, and its transaction cannot commit.
+- The replication journal admits at most 1024 final document states and 2 MiB of content in a
+  local commit (`503 capacity`, with the operation index). This can reject distinct writes before
+  the shape framing limit; repeated mutations of one key still count toward shape admission,
+  while the journal retains only that key's final state. Both bounds fail atomically.
 - `_system` (API keys, Management) keeps no shape history and has no per-commit shape limits:
   clients cannot name it, and Management cleanup may delete more than 1024 entries at once.
 - Dropping a collection removes every body of its generation from `change_log` in the same
@@ -68,23 +77,40 @@ The current mapping is:
   databases seed their current documents and tombstones as a baseline (`_system` seeds none), repair missing collection metadata, and set
   the floor to the head at migration: earlier states cannot be reconstructed and answer `409`. A new
   database has floor `0`. `IStorageTransaction.GetHistoryFloorAsync` reports the oldest valid offset.
+- Schema v6 adds `change_log_births (collection, generation, id, version)`, a `WITHOUT ROWID` key
+  holding each document's first write per generation, and `change_log_high (collection, generation,
+  version, id)`, a row each time a new id sorts above every earlier id of the generation. The trigger
+  `change_log_birth` adds both on the document's first `change_log` insert. Upgrading from v5
+  backfills them from each id's earliest retained version. Offsets grow in commit order, so the
+  generation's highest id at `S` is that of its latest `change_log_high` row at or before `S`.
+- Schema v7 preserves v5 history and adds `change_log.document_version`: the document version
+  used by ETags and shape upserts. `change_log.version` remains the local history offset used
+  for snapshots, log windows and commit grouping. Existing entries seed `document_version`
+  from their original offset; imports can carry an older merge version at a newer history offset.
 - Handles bind TS-459's persisted database incarnation (`IDatabaseStore.Incarnation`, drawn
   again on every create and copy) and the collection generation, so a recreated collection or
   database under the same name starts a new lineage.
 - Creating or dropping a collection is a commit of its own offset, like a document write. If the
   offset cannot be allocated, the transaction cannot commit: the change and its offset are one unit.
   Read transactions refuse mutations, and a refused or failed write refuses the commit.
-- `IStorageTransaction.SnapshotAsync` reads only the append-only change log, never live tables. It
-  walks document ids in order one step at a time: each step seeks the next id after the previous one
-  and the version it was first written at, then that id's last write at or before `S`, and skips it
-  when it is a tombstone or the filter rejects it. A step costs two index seeks however long the
-  document's history is. An id first written after `S` is skipped with one seek, its revisions never
-  read, and never counts as a step, so later writes cannot change a page, its boundaries or its ETag.
-  A page that would step over more than 50000 such ids answers `409 must_refetch` instead: the
-  snapshot is too old to read within bounded work, and a restart at `-1` snapshots the head, with
-  nothing later to skip. `S` is checked against the head in the same read transaction before the
-  history query: a future `S` also answers `409 must_refetch`. `ChangesAsync` replays
+- `IStorageTransaction.SnapshotAsync` reads only the append-only change log, never live tables, in
+  one streamed statement per page: it walks `change_log_births` in id order after `P`. Each id first
+  written at or before `S` is a step: one seek for its last write at or before `S`, skipped when that
+  is a tombstone or the filter rejects it, so a step costs two index seeks however long the document's
+  history is. An id first written after `S` costs its births entry only (its last-write lookup has a
+  false `version <= S` term): its revisions are never read, the filter never runs, and it is not a
+  step, so later writes cannot change a page, its boundaries or its ETag. The walk stops at the
+  highest id at `S` (one `change_log_high` seek per page), so ids appended after `S` in id order,
+  such as server-generated UUIDv7s, are never visited. Later ids that sort between `S`'s ids
+  (client-chosen ones) are passed over: a page passes over at most 50000 of them; beyond, it
+  answers `409 must_refetch`: the snapshot is too old to read within bounded work, and a restart at
+  `-1` snapshots the head. `S` is checked
+  against the head in the same read transaction before the history query: a future `S` also answers
+  `409 must_refetch`. `ChangesAsync` replays
   operations after `O`; a written document the filter rejects comes back as a delete.
+  Its active enumerator exclusively owns the transaction: other operations, another stream, and
+  transaction disposal fail promptly with `InvalidOperationException`. Complete or dispose the
+  enumerator before using the transaction again; a refused write still prohibits commit.
 
 | Offset | Meaning |
 | --- | --- |
@@ -143,9 +169,11 @@ them. Replication before-images could remove those redundant deletes later.
 - `offset` echoes the request. `up_to_date` is `true` only on an open tail or live response whose
   `next_offset` is the head. Immutable snapshot pages and closed chunks never say it: a client is
   up to date only after a fresh read of the log.
-- `version` is `tbv1-` plus the first 16 bytes of SHA-256 over the persisted database incarnation,
-  collection, document id and commit offset, separated by NUL bytes. Recreating or copying a
-  database changes the incarnation, so an old ETag cannot authorize a write or produce a false 304
+- `version` is `tbv1-` plus the first 16 bytes of SHA-256 over the database scope (derived from its ids, the same on every member),
+  collection, document id, merge version and deletion bit, separated by NUL bytes, followed by a NUL
+  and the raw UTF-8 document bytes (empty for a tombstone). An equal-version body winner or deletion
+  changes this validator. Existing cached tokens must be refreshed after this change. Recreating or copying a
+  database changes its ids, so an old ETag cannot authorize a write or produce a false 304
   even when the new database reuses the same offset and id.
 - `shape_id`: 32 lowercase hex characters, the first 16 bytes of
   SHA-256(`"TB-SHAPE-V1\0" database \0 collection \0 canonical filter \0 database incarnation \0 collection generation`).
@@ -219,6 +247,7 @@ Metrics on the `TerraScale.TerraBase` meter, without tenant labels:
 | `terrabase.shape.reads` | counter | storage reads after collapsing |
 | `terrabase.shape.requests.waiting` | up-down counter | requests waiting on a shared read |
 | `terrabase.shape.flights.active` | up-down counter | admitted running flights, including cancellation cleanup |
+| `terrabase.shape.live.waits` | up-down counter | live flights waiting at the head for a commit (after their read) |
 
 ## Must-refetch
 

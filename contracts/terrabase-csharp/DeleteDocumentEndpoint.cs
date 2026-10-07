@@ -1,9 +1,10 @@
+using TerraBase.Errors;
+using TerraBase.Features.ApiKeys;
+using TerraBase.Hosting;
+using TerraBase.Tenancy;
 using TerraScale.Endpoints;
-using TerraScale.TerraBase.Features.ApiKeys;
-using TerraScale.TerraBase.Hosting;
-using TerraScale.TerraBase.Tenancy;
 
-namespace TerraScale.TerraBase.Features.Documents;
+namespace TerraBase.Features.Documents;
 
 /// <summary><c>DELETE …/documents/{id}</c>: deletes one JSON document.</summary>
 public sealed class DeleteDocumentEndpoint(IDocumentService documents, ITenantDirectory tenants) : EndpointWithoutRequest<IResult>
@@ -24,13 +25,18 @@ public sealed class DeleteDocumentEndpoint(IDocumentService documents, ITenantDi
     }
 
     /// <inheritdoc />
-    public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
-    {
-        var key = await DocumentRoute.KeyAsync(HttpContext, tenants, cancellationToken);
-        DocumentRoute.Parameters(HttpContext);
-        DocumentRoute.RejectIdempotencyKey(HttpContext);
-        var (body, _) = await DocumentRoute.WriteAsync(
-            HttpContext, documents, key, new DeleteOperation(key.Collection, key.Id, ETags.Precondition(HttpContext)), cancellationToken);
-        return TypedResults.Ok(body);
-    }
+    public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
+        await DocumentRoute.CheckKeyAsync(HttpContext, tenants, cancellationToken) switch
+        {
+            Validation error => ErrorResponse.From(error),
+            NotFound error => ErrorResponse.From(error),
+            DocumentKey key => (DocumentRoute.CheckParameters(HttpContext), DocumentRoute.CheckIdempotencyKey(HttpContext), ETags.CheckPrecondition(HttpContext)) switch
+            {
+                (Validation error, _, _) => ErrorResponse.From(error),
+                (_, Validation error, _) => ErrorResponse.From(error),
+                (_, _, Validation error) => ErrorResponse.From(error),
+                (_, _, Precondition precondition) => await DocumentRoute.WriteAsync(
+                    HttpContext, documents, key, new DeleteOperation(key.Collection, key.Id, precondition), (body, _) => TypedResults.Ok(body), cancellationToken),
+            },
+        };
 }

@@ -4,18 +4,20 @@ using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
 using Microsoft.Net.Http.Headers;
+using TerraBase.Errors;
+using TerraBase.Features.ApiKeys;
+using TerraBase.Features.Management.Usage;
+using TerraBase.Hosting;
+using TerraBase.Tenancy;
 using TerraScale.Endpoints;
-using TerraScale.TerraBase.Features.ApiKeys;
-using TerraScale.TerraBase.Hosting;
-using TerraScale.TerraBase.Tenancy;
 
-namespace TerraScale.TerraBase.Features.Documents;
+namespace TerraBase.Features.Documents;
 
 /// <summary>
 /// <c>GET …/collections/{collection}/shape?where=&amp;handle=&amp;offset=&amp;live=&amp;cursor=</c>: syncs a
 /// collection and filter as an immutable snapshot plus change log (docs/shape-reads.md).
 /// </summary>
-public sealed class GetShapeEndpoint(IShapeService shapes, ITenantDirectory tenants, TimeProvider time) : EndpointWithoutRequest<IResult>
+public sealed class GetShapeEndpoint(IShapeService shapes, ITenantDirectory tenants, IUsageMeter usage, TimeProvider time) : EndpointWithoutRequest<IResult>
 {
     private const string Revalidate = "private, max-age=0, must-revalidate";
     private const long LiveBucketSeconds = 20;
@@ -46,34 +48,74 @@ public sealed class GetShapeEndpoint(IShapeService shapes, ITenantDirectory tena
         var headers = HttpContext.Response.Headers;
         // Errors are never cached; successful responses replace this.
         headers.CacheControl = "no-store";
-        var collection = DocumentRoute.CollectionName(HttpContext);
         // Malformed route values first (400), then the tenant: another tenant's database is 404 whatever the query.
-        var database = await DocumentRoute.TenantAsync(HttpContext, tenants, cancellationToken);
-        var query = DocumentRoute.Parameters(HttpContext, "where", "handle", "offset", "live", "cursor");
-        var offset = (query.TryGetValue("offset", out var rawOffset) ? ShapeOffset.Parse(rawOffset.ToString()) : null)
-            ?? throw new ApiException("offset is required: -1, snap.<S>.<P> or a decimal log position");
+        return DocumentRoute.CheckCollectionName(HttpContext) switch
+        {
+            Validation error => ErrorResponse.From(error),
+            string collection => await DocumentRoute.CheckTenantAsync(HttpContext, tenants, cancellationToken) switch
+            {
+                Validation error => ErrorResponse.From(error),
+                NotFound error => ErrorResponse.From(error),
+                TenantContext database => DocumentRoute.CheckParameters(HttpContext, "where", "handle", "offset", "live", "cursor") switch
+                {
+                    Validation error => ErrorResponse.From(error),
+                    IQueryCollection query => await ReadAsync(collection, database, query, cancellationToken),
+                },
+            },
+        };
+    }
+
+    private async ValueTask<IResult> ReadAsync(string collection, TenantContext database, IQueryCollection query, CancellationToken cancellationToken)
+    {
+        if ((query.TryGetValue("offset", out var rawOffset) ? ShapeOffset.Parse(rawOffset.ToString()) : null) is not { } offset)
+        {
+            return ErrorResponse.From(new Validation("offset is required: -1, snap.<S>.<P> or a decimal log position"));
+        }
+
         var handle = query.TryGetValue("handle", out var rawHandle) ? rawHandle.ToString() : null;
         if (handle is null && offset.Kind != ShapeOffsetKind.Initial)
         {
-            throw new ApiException("handle is required unless offset is -1");
+            return ErrorResponse.From(new Validation("handle is required unless offset is -1"));
         }
 
         var live = query.TryGetValue("live", out var rawLive);
         if (live && (rawLive != "true" || offset.Kind != ShapeOffsetKind.Log))
         {
-            throw new ApiException("live must be true and needs a log position");
+            return ErrorResponse.From(new Validation("live must be true and needs a log position"));
         }
 
         long inputCursor = -1;
         if (query.TryGetValue("cursor", out var cursor)
             && (!live || !long.TryParse(cursor, NumberStyles.None, CultureInfo.InvariantCulture, out inputCursor) || inputCursor == long.MaxValue))
         {
-            throw new ApiException("cursor is a decimal live bucket and needs live=true");
+            return ErrorResponse.From(new Validation("cursor is a decimal live bucket and needs live=true"));
         }
 
-        var (filter, canonical) = Where(query);
-        var result = await shapes.ReadAsync(
-            new ShapeRequest(database, collection, filter, canonical, offset, handle, live), cancellationToken);
+        return Where(query) switch
+        {
+            Validation error => ErrorResponse.From(error),
+            UriTooLong error => ErrorResponse.From(error),
+            ShapeFilter where => await shapes.ReadAsync(
+                new ShapeRequest(database, collection, where.Filter, where.Canonical, offset, handle, live), cancellationToken) switch
+            {
+                ShapeResult result => Answer(Counted(database, result), where.Canonical, offset, live, inputCursor),
+                NotFound error => ErrorResponse.From(error),
+                Validation error => ErrorResponse.From(error),
+                QuotaExceeded error => ErrorResponse.From(error),
+            },
+        };
+    }
+
+    // One read per shape response the engine answered, a live wait included, as a data API query page.
+    private ShapeResult Counted(TenantContext database, ShapeResult result)
+    {
+        usage.RecordRead(database);
+        return result;
+    }
+
+    private IResult Answer(ShapeResult result, string canonical, ShapeOffset offset, bool live, long inputCursor)
+    {
+        var headers = HttpContext.Response.Headers;
         headers[ShapeHeaders.Handle] = result.Handle;
         if (result.Status == ShapeStatus.MustRefetch)
         {
@@ -104,50 +146,70 @@ public sealed class GetShapeEndpoint(IShapeService shapes, ITenantDirectory tena
         // Historical snapshots and closed log chunks keep the same bytes and validator after writes.
         var version = $"{result.ShapeId}:{result.Handle}:{offset}:{result.NextOffset}:{result.Digest}";
         headers.ETag = $"\"{version}\"";
-        return ETags.NotModified(HttpContext, live: true, version)
-            ? TypedResults.StatusCode(StatusCodes.Status304NotModified)
-            : TypedResults.Bytes(result.Body, DocumentRoute.JsonMediaType);
+        return ETags.CheckNotModified(HttpContext, live: true, version) switch
+        {
+            Validation error => Refuse(error),
+            PreconditionFailed error => Refuse(error),
+            true => TypedResults.StatusCode(StatusCodes.Status304NotModified),
+            false => TypedResults.Bytes(result.Body, DocumentRoute.JsonMediaType),
+        };
+    }
+
+    // The response was prepared for a page (validators, cache policy, shape headers): an error must not carry them.
+    private IResult Refuse(Failure error)
+    {
+        HttpContext.Response.Clear();
+        return ErrorResponse.From(error);
     }
 
     // Unpadded base64url of the longest id storage admits (1024 UTF-8 bytes): ceil(1024 * 4 / 3) characters.
     private static readonly string LongestEncodedId = new('A', ((1024 * 4) + 2) / 3);
 
-    private (Engine.DocumentFilter? Filter, string Canonical) Where(IQueryCollection query)
+    private ShapeWhere Where(IQueryCollection query)
     {
         if (!query.TryGetValue("where", out var where))
         {
-            return (null, "");
+            return new ShapeFilter(null, "");
         }
 
         // JsonDocument accepts lone surrogate escapes such as "\uD800"; reject them as a 400, like query bodies.
-        RequestJson.RequireText(Encoding.UTF8.GetBytes(where.ToString()), "invalid_query");
+        if (!RequestJson.IsText(Encoding.UTF8.GetBytes(where.ToString())))
+        {
+            return new Validation(RequestJson.TextRule, "invalid_query");
+        }
+
         try
         {
             using var json = JsonDocument.Parse(where.ToString());
-            var filter = QueryParser.Filter(json.RootElement);
-            var buffer = new ArrayBufferWriter<byte>();
-            using (var writer = new Utf8JsonWriter(buffer, new JsonWriterOptions { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping }))
+            return QueryParser.CheckFilter(json.RootElement) switch
             {
-                json.RootElement.WriteTo(writer);
-            }
-
-            var canonical = Encoding.UTF8.GetString(buffer.WrittenSpan);
-            // The relaxed encoder still escapes some Unicode. Check the encoded target, reserving
-            // the longest snapshot continuation and 64 bytes for the request line: the longest head
-            // and the base64url of the longest stored id (1024 UTF-8 bytes, legacy ids included).
-            // A live log position with cursor is shorter than this snapshot offset.
-            var resume = Location(canonical, "h1-0000000000000000", $"snap.{long.MaxValue}.{LongestEncodedId}");
-            if (resume.Length > (8 * 1024) - 64)
-            {
-                throw new ApiException(StatusCodes.Status414UriTooLong, "uri_too_long", "the shape filter exceeds the supported continuation URL size");
-            }
-
-            return (filter, canonical);
+                Validation error => error,
+                Engine.DocumentFilter filter => Canonical(json.RootElement, filter),
+            };
         }
         catch (JsonException)
         {
-            throw new ApiException(StatusCodes.Status400BadRequest, "invalid_query", "where must be a JSON filter");
+            return new Validation("where must be a JSON filter", "invalid_query");
         }
+    }
+
+    private ShapeWhere Canonical(JsonElement where, Engine.DocumentFilter filter)
+    {
+        var buffer = new ArrayBufferWriter<byte>();
+        using (var writer = new Utf8JsonWriter(buffer, new JsonWriterOptions { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping }))
+        {
+            where.WriteTo(writer);
+        }
+
+        var canonical = Encoding.UTF8.GetString(buffer.WrittenSpan);
+        // The relaxed encoder still escapes some Unicode. Check the encoded target, reserving
+        // the longest snapshot continuation and 64 bytes for the request line: the longest head
+        // and the base64url of the longest stored id (1024 UTF-8 bytes, legacy ids included).
+        // A live log position with cursor is shorter than this snapshot offset.
+        var resume = Location(canonical, "h1-0000000000000000", $"snap.{long.MaxValue}.{LongestEncodedId}");
+        return resume.Length > (8 * 1024) - 64
+            ? new UriTooLong("the shape filter exceeds the supported continuation URL size")
+            : new ShapeFilter(filter, canonical);
     }
 
     // The canonical filter makes every client of a shape converge on the same URLs, and so on the same cache entries.
@@ -157,6 +219,14 @@ public sealed class GetShapeEndpoint(IShapeService shapes, ITenantDirectory tena
         return $"{HttpContext.Request.PathBase}{HttpContext.Request.Path}?{parameters}handle={handle}&offset={offset}";
     }
 }
+
+/// <summary>A shape's parsed filter and its canonical JSON text.</summary>
+/// <param name="Filter">The filter; <see langword="null"/> for every document.</param>
+/// <param name="Canonical">Canonical JSON of the filter, empty without one.</param>
+internal sealed record ShapeFilter(Engine.DocumentFilter? Filter, string Canonical);
+
+/// <summary>A shape's filter, or why the <c>where</c> parameter is refused.</summary>
+internal readonly union ShapeWhere(ShapeFilter, Validation, UriTooLong);
 
 /// <summary>Response headers of shape reads.</summary>
 public static class ShapeHeaders

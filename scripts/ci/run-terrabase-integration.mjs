@@ -36,7 +36,7 @@ try {
   await writeFile(credentialFile, credential, { mode: 0o600, signal });
   const environment = Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith("TERRABASE_") && !name.startsWith("Kestrel__")));
   signal.throwIfAborted();
-  server = spawn(binary, ["--admin-port=0", "--client-port=0", `--data-directory=${directory}/data`, `--client-certificate=${certificate}`, `--client-private-key=${privateKey}`, `--dashboard-credential-file=${credentialFile}`], { env: environment, detached: true, stdio: ["ignore", "pipe", "pipe"] });
+  server = spawn(binary, ["--admin-port=0", "--client-port=0", "--region=sdk-qualification", "--storage-threads=2", `--data-directory=${directory}/data`, `--client-certificate=${certificate}`, `--client-private-key=${privateKey}`, `--management-credential-file=${credentialFile}`], { env: environment, detached: true, stdio: ["ignore", "pipe", "pipe"] });
   server.stdout.on("data", chunk => captureProducerOutput(output, chunk, "stdout"));
   server.stderr.on("data", chunk => captureProducerOutput(output, chunk, "stderr"));
   let startupError;
@@ -50,9 +50,12 @@ try {
   const { admin, clientPort } = output;
   assert.ok(admin && clientPort, "TerraBase did not report both real listeners.");
   const client = `https://localhost:${clientPort}`;
-  const openapiResponse = await fetch(`${admin}${producerBootstrapEndpoints.openapi}`, { signal: AbortSignal.any([signal, AbortSignal.timeout(5000)]) });
-  assert.equal(openapiResponse.status, 200);
-  const openapi = Buffer.from(await openapiResponse.arrayBuffer());
+  // OpenAPI is client-listener-only. A child loads this allocation's trusted
+  // certificate at startup; Node fetch must never disable TLS verification.
+  const openapi = execFileSync(process.execPath, ["--input-type=module", "-e",
+    "const response = await fetch(process.argv[1], { signal: AbortSignal.timeout(30000) }); if (response.status !== 200) throw new Error('Runtime OpenAPI HTTP ' + response.status); process.stdout.write(Buffer.from(await response.arrayBuffer()));",
+    `${client}${producerBootstrapEndpoints.openapi}`,
+  ], { env: { ...process.env, NODE_EXTRA_CA_CERTS: certificate }, maxBuffer: 4 * 1024 * 1024, timeout: 35_000 });
   assert.equal(openapiDigest(openapi), pin.openapiSha256, "Runtime OpenAPI drifted from the pinned producer.");
   const healthRoute = provisioningRoute(JSON.parse(openapi.toString("utf8")), "healthz");
   const health = await fetch(`${admin}${healthRoute.path}`, { method: healthRoute.method, signal: AbortSignal.any([signal, AbortSignal.timeout(5000)]) }).then(response => response.json());

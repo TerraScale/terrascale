@@ -44,10 +44,11 @@ test("packed SDK independently installs its project-scoped JavaScript and declar
 });
 
 const installedCaller = `import { createTerraBaseClient, createTerraBaseV1Client, TerraBaseV1Client, ExactDecimal } from "@terrascale/sdk";
-const client = createTerraBaseClient({ project: "project", baseUrl: "http://127.0.0.1:18447", token: "tb_" + "a".repeat(43) });
+const token = "eyJ0eXAiOiJhdCtqd3QifQ.eyJwcm9qZWN0X2lkIjoicHJvamVjdCJ9.c2lnbmF0dXJl";
+const client = createTerraBaseClient({ project: "project", baseUrl: "http://127.0.0.1:18447", token });
 if (!(client instanceof TerraBaseV1Client) || createTerraBaseClient !== createTerraBaseV1Client) throw new Error("Multiple client implementations.");
 const collection = client.database("main").collection("users");
 for (const name of ["get", "put", "create", "patch", "delete", "query"] as const) if (typeof collection[name] !== "function") throw new Error(name);
 if (new ExactDecimal("9007199254740993").toString() !== "9007199254740993") throw new Error("Lost exact integer.");
-if (JSON.stringify(client).includes("tb_")) throw new Error("Exposed credential.");
+if (JSON.stringify(client).includes(token)) throw new Error("Exposed credential.");
 `;

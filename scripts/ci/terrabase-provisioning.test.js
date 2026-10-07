@@ -35,12 +35,10 @@ test("provisioning derives named setup paths and methods from the pinned produce
   expect(() => provisioningRoute(contract, "createDatabase", { database: "app" })).toThrow("missing path parameter project");
   expect(() => provisioningRoute(contract, "unknownOperation")).toThrow("no provisioning operation unknownOperation");
 
-  const revised = structuredClone(contract);
-  const original = revised.paths["/admin/api-keys"]?.post;
-  expect(original).toBeDefined();
-  delete revised.paths["/admin/api-keys"];
-  revised.paths["/revised/api-keys"] = { put: /** @type {NonNullable<typeof original>} */ (original) };
-  expect(provisioningRoute(revised, "createApiKey")).toEqual({ method: "PUT", path: "/revised/api-keys" });
+  // The operator bootstrap is hidden from public OpenAPI, but still verified
+  // against the SHA-bound producer endpoint source.
+  expect(contract.paths["/admin/api-keys"]).toBeUndefined();
+  expect(provisioningRoute(contract, "createApiKey")).toEqual({ method: "POST", path: "/admin/api-keys" });
 });
 
 test("release metadata is validated before reading draft, notes or assets", () => {

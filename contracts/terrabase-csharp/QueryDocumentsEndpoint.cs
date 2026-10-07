@@ -1,11 +1,12 @@
 using System.Globalization;
+using TerraBase.Engine;
+using TerraBase.Errors;
+using TerraBase.Features.ApiKeys;
+using TerraBase.Hosting;
+using TerraBase.Tenancy;
 using TerraScale.Endpoints;
-using TerraScale.TerraBase.Engine;
-using TerraScale.TerraBase.Features.ApiKeys;
-using TerraScale.TerraBase.Hosting;
-using TerraScale.TerraBase.Tenancy;
 
-namespace TerraScale.TerraBase.Features.Documents;
+namespace TerraBase.Features.Documents;
 
 /// <summary><c>POST …/collections/{collection}/query</c>: filters, sorts and projects documents (query v1).</summary>
 public sealed class QueryDocumentsEndpoint(IDocumentService documents, ITenantDirectory tenants) : EndpointWithoutRequest<IResult>
@@ -33,23 +34,75 @@ public sealed class QueryDocumentsEndpoint(IDocumentService documents, ITenantDi
     }
 
     /// <inheritdoc />
-    public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
-    {
-        var database = await DocumentRoute.TenantAsync(HttpContext, tenants, cancellationToken);
-        var collection = DocumentRoute.CollectionName(HttpContext);
-        DocumentRoute.Parameters(HttpContext);
-        var body = await DocumentRoute.ReadBodyAsync(HttpContext, DocumentRoute.MaxRequestBytes, "invalid_query", cancellationToken, DocumentRoute.JsonMediaType);
-        var request = RequestJson.Deserialize<QueryRequest>(body, "invalid_query");
-        var query = QueryParser.Parse(database, collection, request);
-        var after = request.Cursor is { } cursor ? QueryParser.Position(cursor, query.Digest, query.Sort.Count) : null;
-        var (page, count) = await documents.QueryAsync(
+    public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
+        await DocumentRoute.CheckTenantAsync(HttpContext, tenants, cancellationToken) switch
+        {
+            Validation error => ErrorResponse.From(error),
+            NotFound error => ErrorResponse.From(error),
+            TenantContext database => (DocumentRoute.CheckCollectionName(HttpContext), DocumentRoute.CheckParameters(HttpContext)) switch
+            {
+                (Validation error, _) => ErrorResponse.From(error),
+                (_, Validation error) => ErrorResponse.From(error),
+                (string collection, _) => await DocumentRoute.CheckBodyAsync(
+                    HttpContext, DocumentRoute.MaxRequestBytes, "invalid_query", cancellationToken, DocumentRoute.JsonMediaType) switch
+                {
+                    Validation error => ErrorResponse.From(error),
+                    PayloadTooLarge error => ErrorResponse.From(error),
+                    UnsupportedMediaType error => ErrorResponse.From(error),
+                    byte[] body => RequestJson.Read<QueryRequest>(body, "invalid_query") switch
+                    {
+                        Validation error => ErrorResponse.From(error),
+                        QueryRequest request => await QueryAsync(database, collection, body, request, cancellationToken),
+                    },
+                },
+            },
+        };
+
+    private async ValueTask<IResult> QueryAsync(TenantContext database, string collection, byte[] body, QueryRequest request, CancellationToken cancellationToken) =>
+        QueryParser.CheckParse(database, collection, request) switch
+        {
+            Validation error => ErrorResponse.From(error),
+            ParsedQuery query => request.Cursor is not { } cursor
+                ? await PageAsync(database, collection, body, request, query, after: null, cancellationToken)
+                : QueryParser.CheckPosition(cursor, query.Digest, query.Sort.Count) switch
+                {
+                    Validation error => ErrorResponse.From(error),
+                    QueryPosition after => await PageAsync(database, collection, body, request, query, after, cancellationToken),
+                },
+        };
+
+    private async ValueTask<IResult> PageAsync(
+        TenantContext database, string collection, byte[] body, QueryRequest request, ParsedQuery query, QueryPosition? after, CancellationToken cancellationToken) =>
+        await documents.QueryAsync(
             database,
             new DocumentQuery(collection, query.Filter, query.Sort, after, query.Limit, DocumentRoute.MaxPageBytes),
             request.Count == true && after is null ? MaxCount : null,
-            cancellationToken);
-        return TypedResults.Ok(new DocumentPageBody(
-            [.. page.Rows.Select(row => GetDocumentEndpoint.Body(collection, row.Document, query.Project, cancellationToken))],
-            page.HasMore ? QueryParser.Cursor(query.Digest, page.Rows[^1], body) : null,
-            count is var (n, complete) ? new CountBody(n.ToString(CultureInfo.InvariantCulture), complete) : null));
+            cancellationToken) switch
+        {
+            NotFound error => ErrorResponse.From(error),
+            Validation error => ErrorResponse.From(error),
+            QueryOutcome outcome => Page(collection, body, query, outcome.Page, outcome.Count, cancellationToken),
+        };
+
+    private static IResult Page(
+        string collection, byte[] body, ParsedQuery query, QueryPage page, (long Count, bool Complete)? count, CancellationToken cancellationToken)
+    {
+        if (!page.HasMore)
+        {
+            return TypedResults.Ok(Body(collection, query, page, count, next: null, cancellationToken));
+        }
+
+        return QueryParser.CheckCursor(query.Digest, page.Rows[^1], body) switch
+        {
+            Validation error => ErrorResponse.From(error),
+            string next => TypedResults.Ok(Body(collection, query, page, count, next, cancellationToken)),
+        };
     }
+
+    private static DocumentPageBody Body(
+        string collection, ParsedQuery query, QueryPage page, (long Count, bool Complete)? count, string? next, CancellationToken cancellationToken) =>
+        new(
+            [.. page.Rows.Select(row => GetDocumentEndpoint.Body(collection, row.Document, query.Project, cancellationToken))],
+            next,
+            count is var (n, complete) ? new CountBody(n.ToString(CultureInfo.InvariantCulture), complete) : null);
 }

@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased — TS-592
+
+The project-scoped data client accepts a ts-auth access JWT as `token`, while
+retaining legacy C# `tb_` keys for the existing producer release. Header injection
+and malformed credentials fail before I/O. TS-589 keeps data paths unchanged;
+Management and Admin remain closed and make no retired route calls.
+JWT producer qualification awaits the server implementation of `docs/api.md`.
+
 ## 0.0.2 — TS-650
 
 TerraBase version tokens are opaque: `tbv1-<32 hex>` and the coming `tbv2-…`

@@ -1,11 +1,12 @@
 using System.Text.Json;
 using Microsoft.Net.Http.Headers;
+using TerraBase.Errors;
+using TerraBase.Features.ApiKeys;
+using TerraBase.Hosting;
+using TerraBase.Tenancy;
 using TerraScale.Endpoints;
-using TerraScale.TerraBase.Features.ApiKeys;
-using TerraScale.TerraBase.Hosting;
-using TerraScale.TerraBase.Tenancy;
 
-namespace TerraScale.TerraBase.Features.Documents;
+namespace TerraBase.Features.Documents;
 
 /// <summary><c>PATCH …/documents/{id}</c>: patches an existing JSON document.</summary>
 public sealed class PatchDocumentEndpoint(IDocumentService documents, ITenantDirectory tenants) : EndpointWithoutRequest<IResult>
@@ -29,22 +30,46 @@ public sealed class PatchDocumentEndpoint(IDocumentService documents, ITenantDir
     }
 
     /// <inheritdoc />
-    public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
-    {
-        var key = await DocumentRoute.KeyAsync(HttpContext, tenants, cancellationToken);
-        DocumentRoute.Parameters(HttpContext);
-        DocumentRoute.RejectIdempotencyKey(HttpContext);
-        var precondition = ETags.Precondition(HttpContext);
-        var body = await DocumentRoute.ReadBodyAsync(
-            HttpContext, DocumentRoute.MaxRequestBytes, "invalid_patch", cancellationToken, DocumentPatch.MergeMediaType, DocumentPatch.OpsMediaType);
-        // ReadBodyAsync accepted one of the two media types; compare the parsed type, not a prefix of the header.
-        var mediaType = MediaTypeHeaderValue.Parse(HttpContext.Request.ContentType!).MediaType.Value;
-        var patch = string.Equals(mediaType, DocumentPatch.OpsMediaType, StringComparison.OrdinalIgnoreCase)
-            ? DocumentPatch.Ops(RequestJson.Deserialize<PatchOpsRequest>(body, "invalid_patch").Ops)
-            : DocumentPatch.Merge(RequestJson.Deserialize<JsonElement>(body, "invalid_patch"));
+    public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
+        await DocumentRoute.CheckKeyAsync(HttpContext, tenants, cancellationToken) switch
+        {
+            Validation error => ErrorResponse.From(error),
+            NotFound error => ErrorResponse.From(error),
+            DocumentKey key => (DocumentRoute.CheckParameters(HttpContext), DocumentRoute.CheckIdempotencyKey(HttpContext), ETags.CheckPrecondition(HttpContext)) switch
+            {
+                (Validation error, _, _) => ErrorResponse.From(error),
+                (_, Validation error, _) => ErrorResponse.From(error),
+                (_, _, Validation error) => ErrorResponse.From(error),
+                (_, _, Precondition precondition) => await DocumentRoute.CheckBodyAsync(
+                    HttpContext, DocumentRoute.MaxRequestBytes, "invalid_patch", cancellationToken, DocumentPatch.MergeMediaType, DocumentPatch.OpsMediaType) switch
+                {
+                    Validation error => ErrorResponse.From(error),
+                    PayloadTooLarge error => ErrorResponse.From(error),
+                    UnsupportedMediaType error => ErrorResponse.From(error),
+                    byte[] body => Patch(body) switch
+                    {
+                        Validation error => ErrorResponse.From(error),
+                        DocumentPatch patch => await DocumentRoute.WriteAsync(
+                            HttpContext, documents, key, new PatchOperation(key.Collection, key.Id, patch, precondition), (written, _) => TypedResults.Ok(written), cancellationToken),
+                    },
+                },
+            },
+        };
 
-        var (written, _) = await DocumentRoute.WriteAsync(
-            HttpContext, documents, key, new PatchOperation(key.Collection, key.Id, patch, precondition), cancellationToken);
-        return TypedResults.Ok(written);
+    private Valid<DocumentPatch> Patch(byte[] body)
+    {
+        // CheckBodyAsync accepted one of the two media types; compare the parsed type, not a prefix of the header.
+        var mediaType = MediaTypeHeaderValue.Parse(HttpContext.Request.ContentType!).MediaType.Value;
+        return string.Equals(mediaType, DocumentPatch.OpsMediaType, StringComparison.OrdinalIgnoreCase)
+            ? RequestJson.Read<PatchOpsRequest>(body, "invalid_patch") switch
+            {
+                PatchOpsRequest request => DocumentPatch.CheckOps(request.Ops),
+                Validation error => error,
+            }
+            : RequestJson.Read<JsonElement>(body, "invalid_patch") switch
+            {
+                JsonElement merge => DocumentPatch.CheckMerge(merge),
+                Validation error => error,
+            };
     }
 }

@@ -1,11 +1,12 @@
 using System.Buffers.Text;
 using System.Text;
+using TerraBase.Errors;
+using TerraBase.Features.ApiKeys;
+using TerraBase.Hosting;
+using TerraBase.Tenancy;
 using TerraScale.Endpoints;
-using TerraScale.TerraBase.Features.ApiKeys;
-using TerraScale.TerraBase.Hosting;
-using TerraScale.TerraBase.Tenancy;
 
-namespace TerraScale.TerraBase.Features.Documents;
+namespace TerraBase.Features.Documents;
 
 /// <summary><c>GET /v1/projects/{project}/databases/{database}/collections?limit=&amp;cursor=</c>: lists collections in name order.</summary>
 public sealed class ListCollectionsEndpoint(IDocumentService documents, ITenantDirectory tenants) : EndpointWithoutRequest<IResult>
@@ -28,27 +29,55 @@ public sealed class ListCollectionsEndpoint(IDocumentService documents, ITenantD
     }
 
     /// <inheritdoc />
-    public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
-    {
-        var database = await DocumentRoute.TenantAsync(HttpContext, tenants, cancellationToken);
-        var query = DocumentRoute.Parameters(HttpContext, "limit", "cursor");
-        var after = query.TryGetValue("cursor", out var cursor) ? AfterName(cursor!) : null;
-        var (collections, hasMore) = await documents.ListCollectionsAsync(
-            database, after, DocumentRoute.Limit(query, DefaultLimit, MaxLimit), cancellationToken);
-        return TypedResults.Ok(new CollectionPageBody(
-            [.. collections.Select(CreateCollectionEndpoint.Body)],
-            hasMore ? Base64Url.EncodeToString(Encoding.UTF8.GetBytes(collections[^1].Name)) : null));
-    }
+    public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
+        await DocumentRoute.CheckTenantAsync(HttpContext, tenants, cancellationToken) switch
+        {
+            Validation error => ErrorResponse.From(error),
+            NotFound error => ErrorResponse.From(error),
+            TenantContext database => DocumentRoute.CheckParameters(HttpContext, "limit", "cursor") switch
+            {
+                Validation error => ErrorResponse.From(error),
+                IQueryCollection query => (Cursor(query), DocumentRoute.CheckLimit(query, DefaultLimit, MaxLimit)) switch
+                {
+                    (Validation error, _) => ErrorResponse.From(error),
+                    (_, Validation error) => ErrorResponse.From(error),
+                    (CollectionCursor cursor, int limit) => await ListAsync(database, cursor.After, limit, cancellationToken),
+                },
+            },
+        };
 
-    private static string AfterName(string cursor)
+    private async ValueTask<IResult> ListAsync(TenantContext database, string? after, int limit, CancellationToken cancellationToken) =>
+        await documents.ListCollectionsAsync(database, after, limit, cancellationToken) switch
+        {
+            NotFound error => ErrorResponse.From(error),
+            CollectionPage page => TypedResults.Ok(new CollectionPageBody(
+                [.. page.Collections.Select(CreateCollectionEndpoint.Body)],
+                page.HasMore ? Base64Url.EncodeToString(Encoding.UTF8.GetBytes(page.Collections[^1].Name)) : null)),
+        };
+
+    private static Valid<CollectionCursor> Cursor(IQueryCollection query)
     {
+        if (!query.TryGetValue("cursor", out var cursor))
+        {
+            return new CollectionCursor(null);
+        }
+
         try
         {
-            return DocumentRoute.CollectionName(Encoding.UTF8.GetString(Base64Url.DecodeFromChars(cursor)));
+            if (DocumentRoute.CheckCollectionName(Encoding.UTF8.GetString(Base64Url.DecodeFromChars(cursor.ToString()))) is string name)
+            {
+                return new CollectionCursor(name);
+            }
         }
-        catch (Exception error) when (error is FormatException or ApiException)
+        catch (FormatException)
         {
-            throw new ApiException(StatusCodes.Status400BadRequest, "invalid_cursor", "the cursor is not a collection cursor");
+            // Not base64url, or not UTF-8: the same answer as a cursor that names no collection.
         }
+
+        return new Validation("the cursor is not a collection cursor", "invalid_cursor");
     }
 }
+
+/// <summary>Where a collection page starts.</summary>
+/// <param name="After">The last collection of the previous page; <see langword="null"/> for the first page.</param>
+internal sealed record CollectionCursor(string? After);

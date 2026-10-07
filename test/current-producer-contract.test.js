@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { expect, test } from "vitest";
 import { digest, producerContract, releasePin } from "../scripts/terrabase-contract.mjs";
+import { v1Routes } from "../src/v1/routes.js";
 
 test("contract inputs come from one SHA-bound C# release on main", async () => {
   const spec = await producerContract();
@@ -16,6 +17,22 @@ test("contract inputs come from one SHA-bound C# release on main", async () => {
     DocumentPageBody: { properties: { next_cursor: { type: ["null", "string"] } } },
     ShapeBody: { required: ["shape_id", "handle", "offset", "next_offset", "up_to_date", "changes"] },
   });
+});
+
+test("released data routes use tb_ keys while the published JWT-only route table remains a target", async () => {
+  const spec = await producerContract();
+  expect(spec).toMatchObject({ info: { version: releasePin.version } });
+  expect(spec.components).toMatchObject({ securitySchemes: { ApiKey: { type: "http", scheme: "bearer", bearerFormat: "tb_ API key" } } });
+  for (const route of v1Routes)
+    expect(spec.paths[route.pathTemplate]?.[route.method.toLowerCase()]).toHaveProperty("security", [{ ApiKey: [route.permission] }]);
+  expect(spec.paths["/v1/management/organizations/{organization}/projects/{project}/databases/{database}"]).toBeDefined();
+  expect(spec.paths["/v1/projects/{project}/databases"]).toBeUndefined();
+  expect(spec.paths["/admin/api-keys"]).toBeUndefined(); // The public OpenAPI excludes admin-only routes.
+  /** @param {string} name */
+  const source = name => readFile(new URL(`../contracts/terrabase-csharp/${name}`, import.meta.url), "utf8");
+  expect(await source("EngineApiKeyStore.cs")).toContain('SecretPrefix = "tb_"');
+  expect(await source("ApiKeyAuthenticationHandler.cs")).toContain("secret.StartsWith(EngineApiKeyStore.SecretPrefix");
+  expect(await source("api.md")).toContain("this is the target");
 });
 
 test("vendored contracts and security evidence stay bound to the repository-backed release pin", async () => {

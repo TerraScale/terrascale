@@ -15,7 +15,9 @@ import { v1Route, v1RoutePath } from "./routes.js";
 export const maximumRequestBytes = 4 * 1024 * 1024;
 // Query budgets count stored JSON before wrappers and serializer escaping.
 const defaultMaximumResponseBytes = 64 * 1024 * 1024;
-const tokenPattern = /^tb_[A-Za-z0-9_-]{43}$/u;
+// Validate header-safe credential syntax only; the producer validates JWT claims/signatures.
+// Retain C# keys while the published TS-589 JWT contract awaits a producer release.
+const tokenPattern = /^(?!tbk1\.)(?:[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+|tb_[A-Za-z0-9_-]{43})$/u;
 /**
  * Resolver input contains no credential. A successful URL is cached for this client/database.
  * @typedef {{ readonly project: string; readonly database: string; readonly signal?: AbortSignal | undefined }} V1EndpointContext
@@ -26,7 +28,7 @@ const tokenPattern = /^tb_[A-Za-z0-9_-]{43}$/u;
  * URLs must use HTTPS or loopback HTTP. Mutations are never automatically replayed.
  * @typedef {object} TerraBaseV1ClientConfig
  * @property {string} project
- * @property {string} token A tb_ API key; held privately.
+ * @property {string} token A ts-auth project access JWT (or a legacy C# tb_ key); held privately.
  * @property {string | undefined} [baseUrl]
  * @property {V1EndpointResolver | undefined} [endpointResolver]
  * @property {FetchLike | undefined} [fetch]
@@ -123,7 +125,7 @@ export class BodyTransportError extends Error {
   }
 }
 
-/** Internal transport bound to one data key. */
+/** Internal transport bound to one project credential. */
 export class V1Transport {
   /** @type {string} */
   #project;
@@ -148,7 +150,7 @@ export class V1Transport {
       throw new TypeError("endpointResolver must be a function.");
     this.#resolver = config.endpointResolver ?? staticBaseUrlResolver(/** @type {string} */ (config.baseUrl));
     if (typeof config.token !== "string" || !tokenPattern.test(config.token))
-      throw new TypeError("token must be a tb_ API key with 43 base64url characters.");
+      throw new TypeError("token must be a compact access JWT or a legacy C# tb_ API key.");
     if ("autoIdempotencyKey" in config || "maxRetries" in config || "resolver" in config)
       throw new TypeError("Unsupported client configuration member.");
     const fetchHandler = config.fetch ?? globalThis.fetch?.bind(globalThis);

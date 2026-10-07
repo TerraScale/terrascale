@@ -690,7 +690,7 @@ export class V1Database {
 }
 
 /**
- * A TerraBase v1 data-plane client for one project and `tb_` API key. The key is held
+ * A TerraBase v1 data-plane client for one project and access token. The token is held
  * privately; it is never serialized, logged or forwarded to redirects.
  */
 export class TerraBaseV1Client {

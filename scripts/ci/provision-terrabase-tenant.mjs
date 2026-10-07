@@ -37,10 +37,10 @@ export async function provisionTerraBaseTenant() {
   /** @type {Record<string, string>} */
   const managementHeaders = { Authorization: `Bearer ${credential}`, "X-TerraBase-User-Id": "ts498-test-user" };
   const organizations = provisioningRoute(contract, "createOrganization");
-  const organizationId = provisioningField(await request(client, organizations.path, { name: "SDK integration" }, managementHeaders, organizations.method), "id", organizations.path);
+  const organizationId = provisioningField(await request(admin, organizations.path, { name: "SDK integration" }, managementHeaders, organizations.method), "id", organizations.path);
   managementHeaders["X-TerraBase-Organization-Id"] = organizationId;
   const projects = provisioningRoute(contract, "createProject", { organization: organizationId });
-  const projectId = provisioningField(await request(client, projects.path, { name: "SDK integration" }, managementHeaders, projects.method), "id", projects.path);
+  const projectId = provisioningField(await request(admin, projects.path, { name: "SDK integration" }, managementHeaders, projects.method), "id", projects.path);
   const apiKeys = provisioningRoute(contract, "createApiKey");
   /** @param {readonly string[]} scopes */
   const key = async scopes => {

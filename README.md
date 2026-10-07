@@ -15,7 +15,7 @@ import { createTerraBaseV1Client, documentIdFor, v1Filter } from "@terrascale/sd
 
 const client = createTerraBaseV1Client({
   project: process.env.TERRABASE_PROJECT,
-  token: process.env.TERRABASE_API_KEY,
+  token: process.env.TERRABASE_ACCESS_TOKEN,
   baseUrl: process.env.TERRABASE_BASE_URL,
 });
 const db = client.database("app");
@@ -32,10 +32,14 @@ for await (const page of todos.pages({ filter: v1Filter.eq("/done", true), limit
 ```
 
 Provision the project, database and collection before using their handles.
-API keys begin with `tb_` and travel as `Authorization: Bearer <key>`.
+The pinned producer still requires a C# `tb_` key as `token`. The example also
+accepts a ts-auth project access JWT for the published TS-589 target, whose
+server implementation remains pending. Credentials travel as
+`Authorization: Bearer <token>` and are held privately. The SDK validates
+header-safe syntax; authentication and authorization belong to the producer.
 Reads and queries require `documents:read`; writes and transactions require
 `documents:write`. Transaction assertions additionally require `documents:read`.
-Keep keys private and out of logs and browser bundles. `createTerraBaseClient`
+Keep service credentials private and out of logs and browser bundles. `createTerraBaseClient`
 is an alias of `createTerraBaseV1Client`; it no longer accepts tenant/shard options.
 
 ## Atlas and endpoint selection
@@ -54,7 +58,7 @@ import { createTerraBaseV1Client, staticBaseUrlResolver } from "@terrascale/sdk"
 
 const client = createTerraBaseV1Client({
   project: process.env.TERRABASE_PROJECT,
-  token: process.env.TERRABASE_API_KEY,
+  token: process.env.TERRABASE_ACCESS_TOKEN,
   endpointResolver: staticBaseUrlResolver(process.env.TERRABASE_BASE_URL),
 });
 const db = client.database("app");
@@ -66,6 +70,19 @@ choice to stay pinned for the session. Atlas discovery integration is deferred
 to TS-507; this release requires an explicit URL or caller-supplied resolver.
 
 ## Documents, queries, transactions and shapes
+
+The published TS-589 route table (`terrabase/docs/api.md`) keeps these data
+paths unchanged. Management moves to project-scoped paths using database names;
+this SDK's Management and Admin entrypoints still make no HTTP calls.
+Database creation belongs to Management (`POST /v1/projects/{project}/databases`)
+in that target contract.
+
+The current immutable producer release implements the renamed `TerraBase`
+assembly, but still authenticates data calls with `tb_` keys and exposes the old
+Management routes. Its real-release integration harness uses those existing
+bootstrap operations. JWT server compatibility and the new Management routes
+remain unqualified until the producer publishes their implementation; accepting
+a JWT in SDK configuration does not establish server compatibility.
 
 The C# producer owns these routes:
 
@@ -140,14 +157,13 @@ Never commit keys, cookies, environment files or real tenant data.
 
 The immutable release pin is
 [`scripts/ci/terrabase-release.json`](scripts/ci/terrabase-release.json): C#
-TerraBase 0.1.0, release `ci-0248ad3ac6fb82ac900e38005840a619e5d0beac-run-13267`,
+TerraBase 0.1.0, release `ci-263598b47ffc79398db394550e3c074acf4fc57d-run-15005`,
 with binary SHA-256
-`8abcedaa6b8487f08ecafe4485862f1f9309154e58ac1a74eda2278b78500968`.
-This official release is currently a draft: the producer's fast checks failed
-and publication was skipped (terrabase #110). The SDK integration harness may
-consume its official asset read-only when the version, source revision, size and
-SHA-256 are verified; publication is not required. Draft status does not establish
-that the producer's source qualification passed.
+`ec076b9d53db71cb1c6e499a7d0380e9ab3de56ae86e1cbf338dd4cc4ea5b301`.
+This official prerelease contains the renamed `TerraBase` assembly and
+`src/TerraBase` sources. Its asset name remains `terrabase-linux-amd64`.
+The SDK integration harness consumes its official asset read-only when the
+version, source revision, size and SHA-256 are verified.
 The acquisition script verifies the official release, revision, asset size and
 digest. Private downloads require `FORGEJO_TOKEN`. Missing or mismatched official
 assets block qualification rather than selecting older bytes.

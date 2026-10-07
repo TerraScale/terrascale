@@ -1,7 +1,7 @@
 # 0004: Document API v1 on SQLite
 
 - Status: proposed (needs human confirmation of the divergences below)
-- Scope: `src/TerraScale.TerraBase/Features/Documents`, `src/TerraScale.TerraBase/Engine`
+- Scope: `src/TerraBase/Features/Documents`, `src/TerraBase/Engine`
 - Contracts: `terrabase-rust/docs/api-v1.md`, `query-v1.md`, `control-plane-v1.md`
 
 ## Decision
@@ -18,14 +18,20 @@ with `{"error":{"code",…}}` bodies.
   remain readable and writable (including recreation by tombstone version); new ids must be UUIDs.
   Migration 3 → 4 adds a random UUIDv4 database incarnation to the one-row `commit_offset`.
   It persists across reopen; each newly created or copied database gets a fresh incarnation.
-  `IDatabaseStore.Incarnation` exposes this single persisted value to versions and database-scoped
-  handle consumers; transactions forward the same store identity.
-- **Versions** are `tbv1-` and the first 16 bytes of SHA-256 over database incarnation, collection, id and the commit
-  offset of the document's last write. A single writer per database never has siblings, so
-  every document is `state:"value"`. The version hashes local metadata rather than the contract’s
+  `IDatabaseStore.Incarnation` exposes this single persisted value to database-scoped handle consumers and
+  replication; transactions forward the version scope below instead.
+- **Versions** are `tbv1-` and the first 16 bytes of SHA-256 over the database scope, collection, id,
+  merge version, deletion state and raw UTF-8 document bytes. The scope of a client database derives from its
+  organization, project and database ids, so every replica answers the same version for the same state (TS-574);
+  recreating or copying a database creates new ids. `_system` keeps its incarnation, which catalog followers adopt.
+  Including the state prevents equal-version replication winners from reusing a strong validator. A single writer
+  per database never has siblings, so every document is `state:"value"`. The version hashes local metadata rather than the contract’s
   canonical causal-context encoding. This prevents token reuse when a database is deleted and
   recreated at the same name/offset. Migration to v4 changes existing public version tokens once;
-  clients must re-read them before conditional writes. Older binaries refuse schema v4.
+  clients must re-read them before conditional writes. The state-sensitive validator introduced with
+  replication also invalidates previous tokens once, and so does the member-independent scope; the opaque token
+  format remains unchanged.
+  Older binaries refuse schema v4.
 - **Queries** compile to one SQLite statement (`json_type`, `json_extract`, `json_each`), with
   keyset cursors bound to a digest of database, collection, filter, sort and projection. Cursor
   rank/value pairs are validated before they become query parameters. Projection paths are

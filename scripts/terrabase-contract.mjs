@@ -91,6 +91,6 @@ export async function generateV1Manifest() {
     // Keep the producer's complete schema bytes, including its current nullability/requiredness limitations.
     schemas: spec.components.schemas,
     securityEvidence: Object.keys(releasePin.inputs).filter(name => name.endsWith(".cs")),
-    openapiLimitations: "Producer OpenAPI omits security schemes, route/query parameters and some conditional statuses; pinned source and real integration tests supplement it.",
+    openapiLimitations: "Producer OpenAPI omits some conditional statuses and the 307 shape redirect; pinned source and real integration tests supplement it. Administrative bootstrap routes are source-bound and excluded from the public document.",
   };
 }
