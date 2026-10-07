@@ -1,5 +1,9 @@
 using System.Net;
+using System.Text;
 using System.Text.Json;
+using Microsoft.Extensions.DependencyInjection;
+using TerraBase.Engine;
+using TerraBase.Tenancy;
 using TerraBase.Testing;
 
 namespace TerraBase.Slow.Documents;
@@ -245,7 +249,74 @@ public sealed class ShapeBudgetTests
         await Assert.That(page.GetProperty("next_offset").GetString()!).EndsWith("." + Base64Url(Id(9999, 0)));
     }
 
+    [Test]
+    public async Task A_snapshot_of_a_document_with_a_long_history_reads_only_its_last_write()
+    {
+        await using var api = await ManagementApi.StartAsync();
+        using var tenant = await api.CreateTenantAsync("documents:write", "shapes:read");
+        var client = tenant.Data;
+        var store = await HistoryStoreAsync(api, tenant);
+        // 50000 retained writes of one document: a lookup that walks its history would exhaust the query budget.
+        await WriteHistoryAsync(store, Guid.CreateVersion7().ToString());
+
+        using var start = await client.GetAsync(tenant.Database("db", "/collections/items/shape?offset=-1"));
+        using var snapshot = await client.GetAsync(start.Headers.Location!);
+        var page = JsonElement.Parse(await snapshot.Content.ReadAsStringAsync());
+
+        await Assert.That(snapshot.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(page.GetProperty("changes")[0].GetProperty("ops")[0].GetProperty("document").GetProperty("n").GetInt32()).IsEqualTo(49_999);
+    }
+
+    [Test]
+    public async Task A_snapshot_replay_skips_a_later_document_with_deep_history_in_one_seek()
+    {
+        await using var api = await ManagementApi.StartAsync();
+        using var tenant = await api.CreateTenantAsync("documents:write", "shapes:read");
+        var client = tenant.Data;
+        var store = await HistoryStoreAsync(api, tenant);
+        (await client.PutAsJsonAsync(tenant.Database("db", $"/collections/items/documents/{Guid.CreateVersion7()}"), new { status = "open" }))
+            .EnsureSuccessStatusCode();
+        using var start = await client.GetAsync(tenant.Database("db", "/collections/items/shape?offset=-1"));
+        using var first = await client.GetAsync(start.Headers.Location!);
+        var firstBody = await first.Content.ReadAsStringAsync();
+
+        // A document first written after S, ordering before the kept one, with 50000 revisions: walking them
+        // would exhaust the query budget; the step skips the id by its first entry.
+        await WriteHistoryAsync(store, "00000000-0000-7000-8000-000000000000");
+
+        using var replay = await client.GetAsync(start.Headers.Location!);
+
+        await Assert.That(replay.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(await replay.Content.ReadAsStringAsync()).IsEqualTo(firstBody);
+    }
+
     private static string Id(int order, int later) => $"{order:x8}-{later:x4}-7000-8000-000000000000";
 
-    private static string Base64Url(string id) => System.Buffers.Text.Base64Url.EncodeToString(System.Text.Encoding.UTF8.GetBytes(id));
+    private static string Base64Url(string id) => System.Buffers.Text.Base64Url.EncodeToString(Encoding.UTF8.GetBytes(id));
+
+    // Creates db and its items collection in the tenant's project and opens the database's store.
+    private static async Task<IDatabaseStore> HistoryStoreAsync(ManagementApi api, Tenant tenant)
+    {
+        using var registered = await tenant.Data.PutAsync(tenant.Database("db"), null);
+        registered.EnsureSuccessStatusCode();
+        var id = (await registered.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString()!;
+        (await tenant.Data.PostAsJsonAsync(tenant.Database("db", "/collections"), new { name = "items" })).EnsureSuccessStatusCode();
+        var database = new TenantContext(tenant.OrganizationId, PlanTier.Hobby, tenant.ProjectId, id);
+        return (await api.Server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(database, CancellationToken.None))!;
+    }
+
+    // 50 transactions of 1000 writes of one document, {"n":0} to {"n":49999}.
+    private static async Task WriteHistoryAsync(IDatabaseStore store, string id)
+    {
+        for (var batch = 0; batch < 50; batch++)
+        {
+            await using var writer = await store.BeginTransactionAsync(write: true, CancellationToken.None);
+            for (var n = 0; n < 1000; n++)
+            {
+                await writer.PutAsync("items", id, Encoding.UTF8.GetBytes($$"""{"n":{{(batch * 1000) + n}}}"""), CancellationToken.None);
+            }
+
+            await writer.CommitAsync(CancellationToken.None);
+        }
+    }
 }

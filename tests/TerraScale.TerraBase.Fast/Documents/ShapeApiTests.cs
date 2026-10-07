@@ -1089,33 +1089,6 @@ public sealed class ShapeApiTests
     }
 
     [Test]
-    public async Task A_snapshot_of_a_document_with_a_long_history_reads_only_its_last_write()
-    {
-        await using var api = await DocumentApi.StartAsync();
-        using var shapes = await api.ClientWithScopesAsync(ApiKeyScopes.ShapesRead);
-        var id = DocumentApi.NewId();
-        var store = await StoreAsync(api);
-        // 50000 retained writes of one document: a lookup that walks its history would exhaust the query budget.
-        for (var batch = 0; batch < 50; batch++)
-        {
-            await using var writer = await store.BeginTransactionAsync(write: true, CancellationToken.None);
-            for (var n = 0; n < 1000; n++)
-            {
-                await writer.PutAsync(DocumentApi.Collection, id, Encoding.UTF8.GetBytes($$"""{"n":{{(batch * 1000) + n}}}"""), CancellationToken.None);
-            }
-
-            await writer.CommitAsync(CancellationToken.None);
-        }
-
-        using var start = await GetAsync(shapes, $"{api.Shape}?offset=-1");
-        using var snapshot = await GetAsync(shapes, start.Headers.Location!.OriginalString);
-        var page = await JsonAsync(snapshot);
-
-        await Assert.That(snapshot.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(page.GetProperty("changes")[0].GetProperty("ops")[0].GetProperty("document").GetProperty("n").GetInt32()).IsEqualTo(49_999);
-    }
-
-    [Test]
     public async Task A_filter_with_a_lone_surrogate_escape_is_an_invalid_query()
     {
         await using var api = await DocumentApi.StartAsync();
@@ -1186,37 +1159,6 @@ public sealed class ShapeApiTests
         await Assert.That(next).EndsWith(Base64Url(ids[0]));
         await Assert.That(second.StatusCode).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(Ops(await JsonAsync(second))).IsEquivalentTo([$"upsert {ids[1]}"]);
-    }
-
-    [Test]
-    public async Task A_snapshot_replay_skips_a_later_document_with_deep_history_in_one_seek()
-    {
-        await using var api = await DocumentApi.StartAsync();
-        using var shapes = await api.ClientWithScopesAsync(ApiKeyScopes.ShapesRead);
-        await PutAsync(api, DocumentApi.NewId(), "open");
-        using var start = await GetAsync(shapes, $"{api.Shape}?offset=-1");
-        using var first = await GetAsync(shapes, start.Headers.Location!.OriginalString);
-        var firstBody = await first.Content.ReadAsStringAsync();
-
-        // A document first written after S, ordering before the kept one, with 50000 revisions: walking them
-        // would exhaust the query budget; the step skips the id by its first entry.
-        var later = "00000000-0000-7000-8000-000000000000";
-        var store = await StoreAsync(api);
-        for (var batch = 0; batch < 50; batch++)
-        {
-            await using var writer = await store.BeginTransactionAsync(write: true, CancellationToken.None);
-            for (var n = 0; n < 1000; n++)
-            {
-                await writer.PutAsync(DocumentApi.Collection, later, Encoding.UTF8.GetBytes($$"""{"n":{{(batch * 1000) + n}}}"""), CancellationToken.None);
-            }
-
-            await writer.CommitAsync(CancellationToken.None);
-        }
-
-        using var replay = await GetAsync(shapes, start.Headers.Location!.OriginalString);
-
-        await Assert.That(replay.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(await replay.Content.ReadAsStringAsync()).IsEqualTo(firstBody);
     }
 
     [Test]

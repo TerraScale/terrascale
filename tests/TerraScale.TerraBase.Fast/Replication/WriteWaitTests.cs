@@ -101,7 +101,9 @@ public sealed class WriteWaitTests
             new Uri($"{tenant.Path("shop")}/collections/people/documents/{Guid.NewGuid():D}", UriKind.Relative), new { name = Faker.Name.FullName() }, token);
         await Assert.That(written.StatusCode).IsEqualTo(HttpStatusCode.Created);
         await Assert.That(await server.MetricAsync("terrabase_replication_write_wait_seconds_count", "result=\"timeout\"", token)).IsEqualTo(2);
-        await Assert.That(await server.MetricAsync("terrabase_replication_write_wait_seconds_sum", "result=\"timeout\"", token)).IsGreaterThanOrEqualTo(0.4);
+        // Each 200 ms bound expires on the kernel's coarse tick (at most 10 ms, at CONFIG_HZ=100) while the metric
+        // measures with Stopwatch, so a wait can read up to one tick short of its bound.
+        await Assert.That(await server.MetricAsync("terrabase_replication_write_wait_seconds_sum", "result=\"timeout\"", token)).IsGreaterThanOrEqualTo(0.4 - (2 * 0.010));
     }
 
     [Test]

@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Net;
 using System.Net.Sockets;
 using Microsoft.AspNetCore.Hosting;
@@ -168,59 +169,102 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
 
     /// <summary>
     /// Starts two servers that name each other in their settings, for example in <c>peer-addresses</c>:
-    /// <paramref name="settings"/> gets each server's settings, its own peer port and the other's. Both
-    /// ports are chosen before either server starts; if one was taken meanwhile, both start again on new ports.
+    /// <paramref name="settings"/> gets each server's settings, its own peer port and the other's, both from
+    /// <see cref="FreePort"/>.
     /// </summary>
     public static async Task<(TerraBaseTestServer A, TerraBaseTestServer B)> StartPairAsync(Action<Dictionary<string, string>, int, int> settings)
     {
         ArgumentNullException.ThrowIfNull(settings);
-        for (var attempt = 1; ; attempt++)
+        var (portA, portB) = (FreePort(), FreePort());
+        var a = await StartAsync(values => settings(values, portA, portB));
+        try
         {
-            var (portA, portB) = FreePorts();
-            TerraBaseTestServer? a = null;
-            try
-            {
-                a = await StartAsync(values => settings(values, portA, portB));
-                return (a, await StartAsync(values => settings(values, portB, portA)));
-            }
-            catch (Exception error)
-            {
-                if (a is not null)
-                {
-                    await a.DisposeAsync();
-                }
-
-                if (error is not IOException || attempt == 3)
-                {
-                    throw;
-                }
-            }
+            return (a, await StartAsync(values => settings(values, portB, portA)));
+        }
+        catch
+        {
+            await a.DisposeAsync();
+            throw;
         }
     }
 
-    /// <summary>
-    /// A port free right now, for a server that must listen on the same port again after a restart. Another process may
-    /// still take it meanwhile.
-    /// </summary>
-    public static int FreePort() => FreePorts().A;
+    // Ports below the kernel's ephemeral range, which port-0 listeners and outgoing connections draw from: no other
+    // socket takes one of these between FreePort and the server's bind. Each process starts at its own offset.
+    private const int FirstPort = 10_000;
+    private static readonly int PortCount = EphemeralPortStart() - FirstPort;
+    private static readonly Lock PortGate = new();
+    private static readonly List<FileStream> PortClaims = [];
+    private static int _nextPort = Environment.ProcessId;
 
-    // Keep both probes bound until distinct ports are selected. Another process may still take them later.
-    private static (int A, int B) FreePorts()
+    /// <summary>
+    /// A port for a server that must be named before it starts, such as a peer list or a restart on the same port.
+    /// No other caller in this or another test process gets it while this process runs, and no port-0 listener
+    /// or outgoing connection takes it.
+    /// </summary>
+    /// <remarks>
+    /// ponytail: ports are never handed back, so a process gets at most the ports below the ephemeral range
+    /// (about 22000 on Linux); a suite needs a few dozen.
+    /// </remarks>
+    public static int FreePort()
     {
-        var ipv6 = Socket.OSSupportsIPv6;
-        var family = ipv6 ? AddressFamily.InterNetworkV6 : AddressFamily.InterNetwork;
-        var address = ipv6 ? IPAddress.IPv6Any : IPAddress.Any;
-        using var a = new Socket(family, SocketType.Stream, ProtocolType.Tcp);
-        using var b = new Socket(family, SocketType.Stream, ProtocolType.Tcp);
-        if (ipv6)
+        lock (PortGate)
         {
-            a.DualMode = true;
-            b.DualMode = true;
+            for (var tried = 0; tried < PortCount; tried++)
+            {
+                var port = FirstPort + (_nextPort++ % PortCount);
+                if (TryClaim(port))
+                {
+                    return port;
+                }
+            }
         }
 
-        a.Bind(new IPEndPoint(address, 0));
-        b.Bind(new IPEndPoint(address, 0));
-        return (((IPEndPoint)a.LocalEndPoint!).Port, ((IPEndPoint)b.LocalEndPoint!).Port);
+        throw new InvalidOperationException("no free port below the ephemeral port range");
+    }
+
+    // A lock file keeps other test processes off the port for this process's lifetime; a probe bind skips a port
+    // something else already listens on.
+    private static bool TryClaim(int port)
+    {
+        var directory = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), "terrabase-test-ports")).FullName;
+        FileStream claim;
+        try
+        {
+            claim = new FileStream(Path.Combine(directory, port.ToString(CultureInfo.InvariantCulture)), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+        }
+        catch (IOException error) when (SqliteStorageEngine.IsLockConflict(error))
+        {
+            return false;
+        }
+
+        try
+        {
+            var ipv6 = Socket.OSSupportsIPv6;
+            using var probe = new Socket(ipv6 ? AddressFamily.InterNetworkV6 : AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+            if (ipv6)
+            {
+                probe.DualMode = true;
+            }
+
+            probe.Bind(new IPEndPoint(ipv6 ? IPAddress.IPv6Any : IPAddress.Any, port));
+        }
+        catch (SocketException)
+        {
+            claim.Dispose();
+            return false;
+        }
+
+        PortClaims.Add(claim);
+        return true;
+    }
+
+    // Linux reads its range from procfs; elsewhere the IANA dynamic range, which Windows and macOS use by default.
+    private static int EphemeralPortStart()
+    {
+        const string range = "/proc/sys/net/ipv4/ip_local_port_range";
+        return File.Exists(range)
+            ? int.Parse(File.ReadAllText(range).Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)[0], CultureInfo.InvariantCulture)
+            : 49_152;
     }
 
     /// <summary>
@@ -279,7 +323,8 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
                 return double.Parse(line[start..].Trim().Split(' ')[0], System.Globalization.CultureInfo.InvariantCulture);
             }).ToArray();
         return samples.Length == 0
-            ? throw new InvalidOperationException($"metric '{name}' with labels containing '{label}' has no samples")
+            ? throw new InvalidOperationException(
+                $"metric '{name}' with labels containing '{label}' has no samples; the scrape {(text.Contains($"# TYPE {name} ", StringComparison.Ordinal) ? "declares" : "does not declare")} it")
             : samples.Sum();
     }
 

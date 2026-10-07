@@ -27,7 +27,8 @@ public sealed class ReplicationTests
         using var clientTls = new ClientTls();
         var data = Directory.CreateTempSubdirectory("terrabase-baseline-keys-").FullName;
         var skipped = new BaselineAdmissionLogs();
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        // Three server starts and two replication rounds of 2 MiB keys: bound by the test's own timeout, not a shorter one.
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         try
         {
             ReplicationTenant tenant;
