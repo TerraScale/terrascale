@@ -19,6 +19,25 @@ env:
   CI: "true"
 
 jobs:
+  load-engine:
+    name: Bounded load engine
+    runs-on: terrascale-builder
+    timeout-minutes: 5
+    container:
+      image: git.terrascale.tech/terrascale/ts-builder:latest
+      options: --memory=2g
+    steps:
+      - name: Check out the event revision
+        uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          github-server-url: "https://git.terrascale.tech"
+          ref: ${{ forgejo.sha }}
+          path: ts-benchmark
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Check load scheduling and measurement
+        run: make -C ts-benchmark load-check
+
   csharp-smoke:
     name: C# HTTPS acceptance smoke
     runs-on: terrascale-builder

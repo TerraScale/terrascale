@@ -11,6 +11,7 @@ fake server or production data is used.
 | `bench/csharp-baseline/` | Committed baseline JSON, raw samples, environment and Markdown table |
 | `https-document/deployed.py`, `bench/deployed/` | Production gru-1 benchmark from a homelab client through Cloudflare, with member metrics (TS-606) |
 | `local-engine/` | Retained pinned SQLite/Turso comparison subject |
+| `load-test/` | Bounded open-loop mixed-load scheduling and measurement (TS-721 foundation) |
 | `terra-rust/`, `firecracker-harness/` | Historical Rust qualification and optional microVM tooling |
 
 ## C# acceptance

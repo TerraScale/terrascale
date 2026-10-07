@@ -1,5 +1,9 @@
 # Benchmark evidence
 
+The [TS-721 client scheduler calibration](load-test/2026-10-07-scheduler.md)
+compares the initial and bounded-batch schedulers on beta. It uses synthetic
+callbacks and does not measure TerraBase throughput.
+
 The active [TS-500 C# baseline](csharp-baseline/ts500-20261004-inserts/summary.md) lives under `csharp-baseline/`, with
 JSON receipts, raw samples, environment metadata and Markdown tables. Run
 `nice -n 19 python3 https-document/acceptance.py --output bench/csharp-baseline/NEW_RUN_ID`
@@ -47,5 +51,6 @@ The `terra-rust` driver has SQLite and an initial embedded TerraBase caller.
 Do not mark a comparison row `MEETS_FLOOR` until their semantics and paired trials
 meet the matrix's registered resource and environment rules. The active [C# HTTPS driver](../https-document/README.md) supersedes the old
 process point-read diagnostic. Historical point-read receipts remain unchanged.
-Current CI runs only the real C# release smoke, without KVM, and never fills a
+Current acceptance CI runs the real C# release smoke, alongside the stdlib
+load-engine checks, without KVM, and never fills a
 historical Rust matrix row.
