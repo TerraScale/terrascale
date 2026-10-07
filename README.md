@@ -64,7 +64,7 @@ routes also send `X-TerraBase-Organization-Id`. Take the user id from an
 authenticated session, never from browser input. Pages are
 `TerraBasePage<T>(Items, Next)`; pass `Next` as `after` with an optional `limit`.
 
-Concurrency uses document versions (`tbv1-…` ETags).
+Concurrency uses opaque document versions (`tbv1-…` or `tbv2-…` ETags).
 `TerraBasePrecondition.Matches(version)` sends `If-Match` with that version,
 `TerraBasePrecondition.Exists` sends `If-Match: *`, and
 `TerraBasePrecondition.Absent` sends `If-None-Match: *` for create-only writes;

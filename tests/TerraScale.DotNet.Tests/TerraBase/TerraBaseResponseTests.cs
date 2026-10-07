@@ -154,6 +154,56 @@ public sealed class TerraBaseResponseTests
         await Assert.That(result.Results.Single().Id).IsNull();
     }
 
+    [Test]
+    [Arguments("tbv1-0123456789abcdef0123456789abcdef")]
+    [Arguments("tbv2-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")]
+    [Arguments("tbv2-AZx3_k-9QmLrT0aVb7c2e1f0.Hq")]
+    public async Task VersionTokensAreOpaqueInResponsesAndIfMatch(string version)
+    {
+        var context = TerraBaseJsonContext.Wire;
+        var document = TerraBaseConnection.ReadResponse(
+            Encoding.UTF8.GetBytes($$$"""{"id":"a","version":"{{{version}}}","state":"value","document":{}}"""), context.TerraBaseDocument, HttpStatusCode.OK);
+        var write = TerraBaseConnection.ReadResponse(
+            Encoding.UTF8.GetBytes($$"""{"id":"a","version":"{{version}}","offset":"1","durability":"local_durable"}"""), context.TerraBaseWriteResult, HttpStatusCode.OK);
+        await Assert.That(document.Version).IsEqualTo(version);
+        await Assert.That(write.Version).IsEqualTo(version);
+
+        using var request = new HttpRequestMessage();
+        TerraBasePrecondition.Matches(document.Version).Apply(request.Headers);
+        await Assert.That(request.Headers.IfMatch.ToString()).IsEqualTo($"\"{version}\"");
+        var operation = JsonSerializer.Serialize(new TerraBaseTransaction([TerraBaseTransactionOperation.Delete("items", "a", version)]), context.TerraBaseTransaction);
+        await Assert.That(operation).Contains($"\"if_match\":\"{version}\"");
+    }
+
+    [Test]
+    public async Task CausalConflictReadsKeepTheWinnerAndIgnoreSiblings()
+    {
+        var page = TerraBaseConnection.ReadResponse("""
+            {"items":[{"id":"a","version":"tbv2-c0ffee","state":"conflict","document":{"v":2},
+              "siblings":[{"version":"tbv2-1","document":{"v":1}},{"version":"tbv2-2","document":{"v":2},"future":[1]}]}],
+             "next_cursor":null}
+            """u8, TerraBaseJsonContext.Wire.TerraBaseDocumentPage, HttpStatusCode.OK);
+        var document = page.Items.Single();
+        await Assert.That(document.State).IsEqualTo("conflict");
+        await Assert.That(document.Document.GetProperty("v").GetInt32()).IsEqualTo(2);
+    }
+
+    [Test]
+    [Arguments("local_durable")]
+    [Arguments("synced_durable")]
+    [Arguments("object_durable")]
+    [Arguments("some_future_label")]
+    public async Task AnyDurabilityLabelIsAccepted(string durability)
+    {
+        var context = TerraBaseJsonContext.Wire;
+        var write = TerraBaseConnection.ReadResponse(
+            Encoding.UTF8.GetBytes($$"""{"id":"a","version":"tbv2-1","offset":"1","durability":"{{durability}}","hlc":"x"}"""), context.TerraBaseWriteResult, HttpStatusCode.OK);
+        var transaction = TerraBaseConnection.ReadResponse(
+            Encoding.UTF8.GetBytes($$"""{"offset":"1","durability":"{{durability}}","results":[{"id":"a","version":"tbv2-1"}]}"""), context.TerraBaseTransactionResult, HttpStatusCode.OK);
+        await Assert.That(write.Durability).IsEqualTo(durability);
+        await Assert.That(transaction.Durability).IsEqualTo(durability);
+    }
+
     private static async Task InvalidResponseAsync<T>(string json, JsonTypeInfo<T> typeInfo)
     {
         var error = await Assert.ThrowsAsync<TerraBaseException>(() =>

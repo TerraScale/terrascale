@@ -30,10 +30,10 @@ public sealed record TerraBaseCollectionPage(
 /// <summary>A stored JSON document.</summary>
 /// <param name="Id">Document id.</param>
 /// <param name="Version">
-/// Opaque version (<c>tbv1-…</c>), also the document's <c>ETag</c>. Pass it to <see cref="TerraBasePrecondition.Matches"/>
+/// Opaque version (<c>tbv1-…</c> or <c>tbv2-…</c>; never parse it), also the document's <c>ETag</c>. Pass it to <see cref="TerraBasePrecondition.Matches"/>
 /// for optimistic concurrency.
 /// </param>
-/// <param name="State">Always <c>value</c> on a single-writer TerraBase.</param>
+/// <param name="State"><c>value</c>, or <c>conflict</c> on causal reads; <see cref="Document"/> then holds the last-writer-wins value. Other states may be added.</param>
 /// <param name="Document">The JSON object, or its projection for queries that project.</param>
 public sealed record TerraBaseDocument(string Id, string Version, string State, JsonElement Document);
 
@@ -58,7 +58,7 @@ public sealed record TerraBaseDocumentPage(
 /// <param name="Id">Document id.</param>
 /// <param name="Version">The new version; for a delete, the tombstone's.</param>
 /// <param name="Offset">The database commit offset of the write.</param>
-/// <param name="Durability">Durability label, <c>local_durable</c>.</param>
+/// <param name="Durability">Durability label, for example <c>local_durable</c>; new labels may be added.</param>
 public sealed record TerraBaseWriteResult(string Id, string Version, long Offset, string Durability)
 {
     /// <summary>Whether the write created the document (it was absent or deleted). Set for creates and puts.</summary>
@@ -290,7 +290,7 @@ public sealed record TerraBaseOperationResult(string? Id = null, string? Version
 
 /// <summary>The result of a committed transaction.</summary>
 /// <param name="Offset">The database commit offset.</param>
-/// <param name="Durability">Durability label, <c>local_durable</c>.</param>
+/// <param name="Durability">Durability label, for example <c>local_durable</c>; new labels may be added.</param>
 /// <param name="Results">One result per operation, in order.</param>
 public sealed record TerraBaseTransactionResult(long Offset, string Durability, IReadOnlyList<TerraBaseOperationResult> Results) : IJsonOnDeserialized
 {
