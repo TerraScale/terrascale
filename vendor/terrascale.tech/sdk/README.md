@@ -44,7 +44,9 @@ The same configuration applies to `NewManagement`. Atlas resolution follows
 in TS-507; no production endpoint is built into the SDK.
 
 Every write returns `WriteResult{ID, Version, Offset, Durability}` and the
-version is the `ETag`. Errors are `*tb.APIError{Status, Code, Message, Op,
+version is the `ETag`. Versions are opaque tokens (`tbv1-…`, `tbv2-…`):
+compare and pass them back, never parse them. Unknown `state` and
+`durability` values and new response members decode without error. Errors are `*tb.APIError{Status, Code, Message, Op,
 RetryAfter, ETag}`, and every error code is also an error value for
 `errors.Is`, for example `tb.ErrNotFound`, `tb.ErrPreconditionFailed`,
 `tb.ErrUnknownDatabase` or `tb.ErrNameTaken`. A 404 for a deleted document
@@ -125,9 +127,23 @@ means an unknown id or an organization the user is not a member of; bare
 message errors map to `ErrInvalidRequest` (400), `ErrForbidden` (403, role too
 low) and `ErrConflict` (409). A rejected token or credential is `ErrInvalidKey`.
 
+Databases are placed in Atlas region ids such as `gru-1` (not `RegionCode`):
+`ManagedDatabase` reports `Region` (the answering node), `HomeRegion` and
+`ReplicaRegions`. `CreateDatabaseIn(ctx, org, project, name, tb.Placement{HomeRegion: "gru-1",
+ReplicaRegions: []string{"sfo-1"}})` places a new database (an empty home is
+the called region), `SetDatabaseRegions` replaces the replica list (the home
+never changes), and deleting a replicated database fails with
+`ErrDatabaseReplicated`. A region outside the placement answers 421
+`ErrWrongRegion`, on Management and Documents routes alike, and the
+`*tb.APIError` carries `HomeRegion` and `Regions`. The client never retries
+it elsewhere: resolve the region through Atlas. Before placing a database in
+a replica region, `RegisterProject(ctx, org, project)` on that region's client
+registers the organization and project there under the ids they have in the
+home region (one Management commit; what exists is left as it is).
+
 Served by TerraBase but not in the client yet (TS-590 adds them): shapes,
 database tooling (backups, indexes, schema, project usage, SQL check) and saved queries,
-project API keys, invitation lookup and Management commits. Not served:
+project API keys, invitation lookup and general Management commits. Not served:
 query `explain`, `Idempotency-Key` and the `/v1/dashboard` control plane.
 
 ### Tests
@@ -180,19 +196,18 @@ SHA-256 remain pinned by the helper, independently of the SDK module version.
 
 ## TSAuth and builders
 
-TSAuth calls require an explicit `TSAuthBaseURL`, or a suitable explicit
-`APIBaseURL`. Use `client.TSAuth.Instance("slug")` for the scoped families.
-Management methods use the instance credential. The OIDC application API uses
-explicit issuer and OAuth client authentication, verifies authorization-code
-responses and ID tokens, and exposes introspection, revocation, and logout
-flows. ts-auth issues from its regional host, for example
-`https://gru.auth.terrascale.tech/<slug>`. A regional issuer
-(`https://<region>.auth.terrascale.tech`) is accepted only when
-`TSAuthBaseURL` is the Atlas proxy `https://auth.terrascale.tech`: the OIDC
-and resource clients then call the issuer's region directly, or the proxy with
+`client.TSAuth.Instance("slug").OIDC` is ts-auth's OpenID Connect provider
+for applications that sign users in with the redirect flow, as the dashboard
+does for single sign-on: the authorization code with PKCE, verified ID tokens,
+refresh, userinfo, RFC 7009 revocation and RP-initiated logout. It needs an
+explicit `TSAuthBaseURL`, or a suitable explicit `APIBaseURL`. ts-auth issues
+from its regional host, for example `https://gru.auth.terrascale.tech/<slug>`.
+A regional issuer (`https://<region>.auth.terrascale.tech`) is accepted only
+when `TSAuthBaseURL` is the Atlas proxy `https://auth.terrascale.tech`: the
+client then calls the issuer's region directly, or the proxy with
 `TSAuthUseReverseProxy`. Any other issuer must be the base origin itself.
-Accepted OIDC source
-checks do not qualify an actual hosted-provider journey.
+The platform management API, API key tokens and headless sign-in are in
+`terrascale.tech/sdk/tsauth`.
 
 Schema and SQL builders construct and validate statements locally and do not
 execute SQL over HTTP. The explicit pgx-backed PostgreSQL client uses separate
@@ -268,6 +283,26 @@ tokens, err := tsauth.NewAPIKeySource(tsauth.APIKeyConfig{Key: key.Key}) // key.
 ts-auth does not serve this contract yet. Its tests check every operation
 against the pinned contract, `tsauth/testdata/platform-api.openapi.json`.
 
+### ts-auth headless sign-in
+
+`tsauth.NewHeadless(HeadlessConfig{ClientID, ClientSecret})` is ts-auth's
+headless API (TS-582) for a first-party confidential client that signs users
+in on its own pages, as ts-dashboard does: `SignInWithPassword`,
+`SignInWithEmailCode` (with the `pendingToken` of `SignUp` for a sign-up
+code), `StartEmailCode`, `SignUp`, `StartPasswordReset`,
+`CompletePasswordReset`, `Refresh` and `Revoke`. Every sign-in and step
+takes the end user's IP address, which ts-auth's rate limits key on. Grants
+answer `*tsauth.Tokens` or a `*tsauth.Error` (`invalid_grant` for any wrong
+credential); the JSON steps fail with `*tsauth.APIError` (`ErrInvalidCode`,
+`ErrInvalidPassword`, `ErrRateLimited` with `RetryAfter`, `ErrInvalidClient`).
+
+```go
+h, err := tsauth.NewHeadless(tsauth.HeadlessConfig{ClientID: "ts-dashboard", ClientSecret: secret})
+tokens, err := h.SignInWithPassword(ctx, email, password, clientIP, []string{"openid", "email", "offline_access"})
+project, err := tsauth.NewExchangeSource(tsauth.ExchangeConfig{ClientID: "ts-dashboard", ClientSecret: secret,
+	SubjectToken: func(context.Context) (string, error) { return tokens.AccessToken, nil }, Organization: orgID, Project: projectID})
+```
+
 ## Checks
 
 The edge artifacts and pins are in `contracts/edge/v1`.
@@ -282,63 +317,3 @@ go test -race ./...
 The module requires Go 1.25 and has no CGO dependency. CI runs the pinned
 vulnerability scanner alongside formatting, vet, build and race tests,
 including the v1 integration tests against the pinned TerraBase.
-
-## Resource OAuth
-
-A registered resource uses its own introspection credentials. Originating OAuth
-clients obtain opaque access tokens for one exact HTTPS resource URI. The URI's
-raw path and query remain part of its identity. Management keys register policy;
-they do not substitute for either OAuth credential role.
-
-```go
-origin, err := instance.NewResourceClient(sdk.TSAuthResourceClientConfig{
-    Issuer: "https://gru.auth.terrascale.tech/example",
-    ResourceAudience: "https://api.example.test/management",
-    Authentication: sdk.TSAuthOAuthClientAuthentication{
-        ClientID: originClientID, ClientSecret: originSecret,
-        Method: sdk.TSAuthClientSecretBasic,
-    },
-})
-if err != nil { return err }
-grant, err := origin.RequestClientCredentials(ctx, []string{"management:read"})
-if err != nil { return err }
-resource, err := instance.NewResourceIntrospector(sdk.TSAuthResourceIntrospectorConfig{
-    Issuer: "https://gru.auth.terrascale.tech/example",
-    ResourceAudience: "https://api.example.test/management",
-    Authentication: sdk.TSAuthResourceAuthentication{
-        ClientID: introspectionClientID, Secret: introspectionSecret,
-    },
-})
-if err != nil { return err }
-principal, err := resource.Introspect(ctx, grant.Tokens.AccessToken)
-if err != nil { return err }
-// Authorize principal against current durable grants in the application.
-```
-
-`OAuthClientPolicies()` and `OAuthResourcePolicies()` expose explicit allowlists,
-checked numeric `uint64` epochs, secret rotation and disable operations. Secrets
-are returned once. Nonrotating client PATCH returns a client record; a rotating
-PATCH returns the client plus its new secret. Resource PATCH always returns a
-resource record and a nullable secret.
-
-`NewResourceApplication` adds resource selection to verified browser OIDC while
-retaining server-held state, nonce and PKCE. The application atomically consumes
-an attempt before exchanging its callback. ID-token audience remains the
-originating client. Device authorization exposes one explicit poll at a time and
-honors the provider interval. Code, device and refresh redemption can inherit
-or repeat their bound URI; they cannot select another resource. Refresh scope
-`nil` inherits the current grant; a nonnil empty slice narrows it to no scopes.
-
-Serving-resource introspection requires Basic authentication and validates the
-configured issuer, exact audience, Bearer type, integer times and principal shape.
-Users require a nonempty session ID. Services require null session ID and subject
-matching originating client ID. Inactive results grant no access. Subject,
-scopes and activity do not establish project or provisioner ownership; current
-durable grants remain application authorization. Introspection uses a fresh
-request with no browser cookie jar or management/native token provider.
-
-Unknown exchanges and refresh rotations return `TSAuthOIDCError.Uncertain` and
-are never automatically replayed. Resource contracts pin the independently
-reviewed protocol source and actual loopback HTTP response captures. Those
-fixtures verify source interoperability; native persistence, two-process
-revocation and hosted caller qualification have separate evidence.

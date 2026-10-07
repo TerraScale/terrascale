@@ -39,7 +39,7 @@ type createDatabaseInput struct {
 type setDatabaseRegionsInput struct {
 	core.Scope
 	DatabaseID string   `json:"databaseId" jsonschema:"Database ID from list_databases."`
-	Regions    []string `json:"regions" jsonschema:"Region codes such as GRU or SFO. One keeps the database there; two or more replicate it between them. The first is primary."`
+	Regions    []string `json:"regions" jsonschema:"Region codes such as GRU or SFO, the complete new list. It must include the database's home region (the one it was created in), which never changes; the others replicate it."`
 }
 
 type branchDatabaseInput struct {
@@ -83,7 +83,7 @@ func mountTools(tools *core.Tools, service Service) {
 	})
 	core.AddTool(tools, core.ToolSpec{
 		Name: "set_database_regions", Title: "Set database regions",
-		Description: "Choose where a database lives: one region, or several that replicate it. Requires an owner or admin role.",
+		Description: "Choose where a database lives: its home region alone, or with replica regions that replicate it. The home region never changes. Requires an owner or admin role.",
 	}, func(ctx context.Context, p core.Principal, in setDatabaseRegionsInput) (databaseView, error) {
 		return service.SetRegions(ctx, p, in.DatabaseID, in.Regions...)
 	})

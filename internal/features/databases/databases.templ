@@ -92,7 +92,7 @@ templ createDatabase(page core.Page, d pageData) {
 					<span class="ts-label">Regions</span>
 					<details class="ts-db-region-picker" data-init={ databaseRegionSummary } data-on:change={ databaseRegionSummary }>
 						<summary class="ts-select"><span data-region-summary>{ regionChoiceSummary(d.Regions) }</span></summary>
-						@regionCheckboxes("database-region", d.Choices, d.Regions)
+						@regionCheckboxes("database-region", d.Choices, d.Regions, "")
 					</details>
 					@regionHint(d.RegionsError)
 				</div>
@@ -108,12 +108,13 @@ templ createDatabase(page core.Page, d pageData) {
 const databaseRegionSummary = "el.querySelector('[data-region-summary]').textContent = [...el.querySelectorAll('input[name=region]:checked')].map(i => i.closest('label').querySelector('.ts-db-region-name').textContent.trim()).join(', ') || 'Choose regions'"
 
 // regionCheckboxes are the canonical placement control: the regions ts-atlas
-// discovery lists, checked when selected.
-templ regionCheckboxes(id string, choices []core.Region, selected []string) {
+// discovery lists, checked when selected. A database's home region must stay
+// checked.
+templ regionCheckboxes(id string, choices []core.Region, selected []string, home string) {
 	<fieldset class="ts-db-region-panel" id={ id } aria-label="Database regions">
 		for _, region := range choices {
 			<label class="ts-db-region-choice">
-				<input type="checkbox" name="region" value={ region.Code } checked?={ slices.Contains(selected, region.Code) }/>
+				<input type="checkbox" name="region" value={ region.Code } checked?={ slices.Contains(selected, region.Code) } required?={ region.Code == home }/>
 				<img src={ static.URL("flags/" + region.Country + ".svg") } alt="" aria-hidden="true"/>
 				<span class="ts-db-region-name">{ region.Name } ({ region.Code })</span>
 			</label>

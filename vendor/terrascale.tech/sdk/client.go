@@ -78,10 +78,6 @@ type Config struct {
 	TSAuthUseReverseProxy bool
 	// DiscoveryBaseURL overrides Atlas metadata for public Auth discovery.
 	DiscoveryBaseURL string
-	// AccessToken is a static credential. TokenProvider takes precedence.
-	AccessToken string
-	// TokenProvider returns the credential dynamically, if set.
-	TokenProvider func() string
 	// HTTPClient defaults to one with a 30s timeout. The SDK copies it and
 	// disables redirects; explicit 421 placement repair remains supported.
 	HTTPClient *http.Client
@@ -194,8 +190,6 @@ func NewClient(cfg Config) (*Client, error) {
 		TSAuthBaseURL:         strings.TrimSpace(cfg.TSAuthBaseURL),
 		TSAuthUseReverseProxy: cfg.TSAuthUseReverseProxy,
 		DiscoveryBaseURL:      discoveryBase,
-		AccessToken:           cfg.AccessToken,
-		TokenProvider:         cfg.TokenProvider,
 		HTTPClient:            httpClient,
 		MaxRetryAttempts:      cfg.MaxRetryAttempts,
 		RetryDelay:            retryDelay,

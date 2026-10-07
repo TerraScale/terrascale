@@ -154,16 +154,12 @@ func (a *TSAuthOIDCApplication) Discover(ctx context.Context) (*TSAuthDiscoveryD
 	endpoints := map[string]string{
 		"oauth/authorize": doc.AuthorizationEndpoint, "oauth/token": doc.TokenEndpoint,
 		"oauth/userinfo": doc.UserinfoEndpoint, ".well-known/jwks.json": doc.JwksURI,
-		"oauth/revoke": doc.RevocationEndpoint, "oauth/introspect": doc.IntrospectionEndpoint,
-		"oauth/logout": doc.EndSessionEndpoint,
+		"oauth/revoke": doc.RevocationEndpoint, "oauth/logout": doc.EndSessionEndpoint,
 	}
 	for suffix, endpoint := range endpoints {
 		if endpoint != a.config.Issuer+"/"+suffix {
 			return nil, oidcError("endpoint_mismatch", "discovery", false, nil)
 		}
-	}
-	if doc.DeviceAuthorizationEndpoint != "" && doc.DeviceAuthorizationEndpoint != a.config.Issuer+"/oauth/device_authorization" {
-		return nil, oidcError("endpoint_mismatch", "discovery", false, nil)
 	}
 	if !slices.Contains(doc.IdTokenSigningAlgValuesSupported, "ES256") || !slices.Contains(doc.ResponseTypesSupported, "code") || !slices.Contains(doc.CodeChallengeMethodsSupported, "S256") || !slices.Contains(doc.TokenEndpointAuthMethodsSupported, string(a.config.Authentication.Method)) {
 		return nil, oidcError("unsupported_provider", "discovery", false, nil)
@@ -406,44 +402,6 @@ func (a *TSAuthOIDCApplication) Refresh(ctx context.Context, refreshToken string
 	return result, nil
 }
 
-func (a *TSAuthOIDCApplication) Introspect(ctx context.Context, token string) (*TSAuthIntrospection, error) {
-	if _, err := a.Discover(ctx); err != nil {
-		return nil, err
-	}
-	result, err := a.oidc.IntrospectToken(ctx, a.config.Authentication, token)
-	if err != nil {
-		return nil, oidcOperationError("introspect", false, err)
-	}
-	if result.Active && !a.validActiveIntrospection(result) {
-		return nil, oidcError("invalid_introspection", "introspect", false, nil)
-	}
-	// sid is optional unless RequireSession; ts-auth sends no family_id for
-	// refresh tokens, so it is checked only when present.
-	if result.Active && ((a.config.RequireSession && result.SessionID == nil) || (result.SessionID != nil && *result.SessionID == "") || (*result.TokenType == "refresh_token" && result.FamilyID != nil && *result.FamilyID == "")) {
-		return nil, oidcError("invalid_session_binding", "introspect", false, nil)
-	}
-	return result, nil
-}
-
-// validActiveIntrospection checks an active answer. Access tokens must name
-// this issuer and client as iss and aud; ts-auth omits iss and aud for refresh
-// tokens, so they are checked only when present.
-func (a *TSAuthOIDCApplication) validActiveIntrospection(r *TSAuthIntrospection) bool {
-	clientID := a.config.Authentication.ClientID
-	if r.ClientID == nil || *r.ClientID != clientID || r.Sub == nil || *r.Sub == "" || r.Exp == nil || *r.Exp <= time.Now().Unix() || r.TokenType == nil {
-		return false
-	}
-	issOK := r.Iss != nil && *r.Iss == a.config.Issuer
-	audOK := r.Aud != nil && *r.Aud == clientID
-	switch *r.TokenType {
-	case "Bearer":
-		return issOK && audOK
-	case "refresh_token":
-		return (r.Iss == nil || issOK) && (r.Aud == nil || audOK)
-	}
-	return false
-}
-
 func (a *TSAuthOIDCApplication) Revoke(ctx context.Context, token string) error {
 	if _, err := a.Discover(ctx); err != nil {
 		return err
@@ -529,50 +487,6 @@ func validateTSAuthOAuthRegistration(redirects, logout, origins []string) error 
 		}
 	}
 	return nil
-}
-
-// UpdateTSAuthOAuthClientRequest uses pointers so an explicit empty vector
-// clears a registration while an absent field preserves it. A nil member is
-// never sent. Leave PostLogoutRedirectURIs nil against ts-auth deployments
-// whose client PATCH does not accept post_logout_redirect_uris yet: they
-// reject unknown members.
-type UpdateTSAuthOAuthClientRequest struct {
-	Name                   *string   `json:"name,omitempty"`
-	RedirectURIs           *[]string `json:"redirect_uris,omitempty"`
-	PostLogoutRedirectURIs *[]string `json:"post_logout_redirect_uris,omitempty"`
-	AllowedOrigins         *[]string `json:"allowed_origins,omitempty"`
-	AllowAnonymous         *bool     `json:"allow_anonymous,omitempty"`
-}
-
-func (o *TSAuthOAuthClientsClient) Update(ctx context.Context, recordID string, request UpdateTSAuthOAuthClientRequest) (*TSAuthOAuthClient, error) {
-	if err := requireID("id", recordID); err != nil {
-		return nil, err
-	}
-	if request.Name == nil && request.RedirectURIs == nil && request.PostLogoutRedirectURIs == nil && request.AllowedOrigins == nil && request.AllowAnonymous == nil {
-		return nil, oidcError("empty_patch", "registration", false, nil)
-	}
-	if request.Name != nil && (strings.TrimSpace(*request.Name) == "" || len(*request.Name) > 128) {
-		return nil, oidcError("invalid_name", "registration", false, nil)
-	}
-	var redirects []string
-	if request.RedirectURIs != nil {
-		redirects = *request.RedirectURIs
-	}
-	var logout, origins []string
-	if request.PostLogoutRedirectURIs != nil {
-		logout = *request.PostLogoutRedirectURIs
-	}
-	if request.AllowedOrigins != nil {
-		origins = *request.AllowedOrigins
-	}
-	if err := validateTSAuthOAuthPatch(redirects, logout, origins, request.RedirectURIs != nil); err != nil {
-		return nil, err
-	}
-	var result TSAuthOAuthClient
-	if err := o.i.tsAuthDo(ctx, http.MethodPatch, o.i.v1("oauth-clients", recordID), nil, request, &result, "tsauth.oauth_clients.update"); err != nil {
-		return nil, err
-	}
-	return &result, nil
 }
 
 func (a *TSAuthOIDCApplication) VerifyIDToken(ctx context.Context, token string, options TSAuthIDTokenVerificationOptions) (*TSAuthVerifiedIDToken, error) {
@@ -798,27 +712,6 @@ func oidcJSONValue(decoder *json.Decoder, depth int) error {
 	return err
 }
 
-func validateTSAuthOAuthPatch(redirects, logout, origins []string, hasRedirects bool) error {
-	if hasRedirects && len(redirects) == 0 {
-		return oidcError("invalid_redirect_uri", "registration", false, nil)
-	}
-	if len(redirects) > 100 || len(logout) > 100 || len(origins) > 20 {
-		return oidcError("invalid_registration", "registration", false, nil)
-	}
-	for _, uri := range append(slices.Clone(redirects), logout...) {
-		if _, err := trustedOIDCRedirect(uri); err != nil {
-			return oidcError("invalid_redirect_uri", "registration", false, err)
-		}
-	}
-	for _, origin := range origins {
-		u, err := trustedOIDCURL(origin)
-		if err != nil || (u.Path != "" && u.Path != "/") {
-			return oidcError("invalid_allowed_origin", "registration", false, err)
-		}
-	}
-	return nil
-}
-
 func (r TSAuthTokenResponse) String() string { return "TSAuthTokenResponse{credentials:[REDACTED]}" }
 
 func (r TSAuthTokenResponse) GoString() string { return r.String() }
@@ -845,19 +738,13 @@ func (d *TSAuthDiscoveryDocument) decodeHTTPResponse(status int, body []byte) er
 	if status != http.StatusOK {
 		return oidcError("unexpected_status", "response", false, nil)
 	}
-	return oidcDecodeExactJSON(body, d, []string{"issuer", "authorization_endpoint", "token_endpoint", "userinfo_endpoint", "jwks_uri", "revocation_endpoint", "introspection_endpoint", "end_session_endpoint", "device_authorization_endpoint", "response_types_supported", "grant_types_supported", "code_challenge_methods_supported", "subject_types_supported", "id_token_signing_alg_values_supported", "token_endpoint_auth_methods_supported", "scopes_supported"})
+	return oidcDecodeExactJSON(body, d, []string{"issuer", "authorization_endpoint", "token_endpoint", "userinfo_endpoint", "jwks_uri", "revocation_endpoint", "end_session_endpoint", "response_types_supported", "grant_types_supported", "code_challenge_methods_supported", "subject_types_supported", "id_token_signing_alg_values_supported", "token_endpoint_auth_methods_supported", "scopes_supported"})
 }
 func (r *TSAuthTokenResponse) decodeHTTPResponse(status int, body []byte) error {
 	if status != http.StatusOK {
 		return oidcError("unexpected_status", "response", false, nil)
 	}
 	return oidcDecodeExactJSON(body, r, []string{"access_token", "token_type", "expires_in", "scope", "refresh_token", "id_token"})
-}
-func (r *TSAuthIntrospection) decodeHTTPResponse(status int, body []byte) error {
-	if status != http.StatusOK {
-		return oidcError("unexpected_status", "response", false, nil)
-	}
-	return oidcDecodeExactJSON(body, r, []string{"active", "token_type", "iss", "sub", "aud", "client_id", "scope", "exp", "iat", "sid", "family_id"})
 }
 func (r *TSAuthJWKS) decodeHTTPResponse(status int, body []byte) error {
 	if status != http.StatusOK {

@@ -140,16 +140,15 @@ func TestDatabasePlacementIsGRUOnlySFOOnlyOrBoth(t *testing.T) {
 	}
 	screenshot(t, page, "database-placement-replicated")
 
-	// Move the replicated database to SFO only, then refuse an empty placement.
+	// The replicated database keeps GRU, its home region, and drops SFO.
 	card := page.Locator("#placement")
 	form := card.Locator(`form[action="/api/v1/dashboard/databases/regions"]`)
-	must(t, form.Locator(`input[value="GRU"]`).Uncheck())
-	submitAndExpect(t, page, "/api/v1/dashboard/databases/regions", 303, byRole(form, *playwright.AriaRoleButton, "Save regions").Click)
-	must(t, expect.Locator(card).ToContainText("Single region · SFO only"))
+	must(t, expect.Locator(form.Locator(`input[value="GRU"]`)).ToHaveAttribute("required", ""))
+	must(t, expect.Locator(form.Locator(`input[value="SFO"]`)).Not().ToHaveAttribute("required", ""))
+	must(t, expect.Locator(card).ToContainText("GRU · São Paulo is the home region"))
 	must(t, form.Locator(`input[value="SFO"]`).Uncheck())
 	submitAndExpect(t, page, "/api/v1/dashboard/databases/regions", 303, byRole(form, *playwright.AriaRoleButton, "Save regions").Click)
-	must(t, expect.Locator(page.Locator("main").GetByRole(*playwright.AriaRoleAlert).First()).ToContainText("Select one or more valid regions"))
-	must(t, expect.Locator(card).ToContainText("Single region · SFO only"))
+	must(t, expect.Locator(card).ToContainText("Single region · GRU only"))
 }
 
 func TestCreateDatabaseRegionsWorkWithoutScripts(t *testing.T) {

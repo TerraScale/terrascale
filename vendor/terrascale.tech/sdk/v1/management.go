@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -118,6 +119,20 @@ type ManagedDatabase struct {
 	// BranchedFrom is the id of the database this one was branched from.
 	BranchedFrom *string   `json:"branchedFrom"`
 	CreatedAt    time.Time `json:"createdAt"`
+	// Region is the Atlas region id, such as gru-1, of the node that answered.
+	Region string `json:"region"`
+	// HomeRegion is the Atlas region id the database was created in; it
+	// never changes.
+	HomeRegion string `json:"homeRegion"`
+	// ReplicaRegions are the Atlas region ids that replicate the database.
+	ReplicaRegions []string `json:"replicaRegions"`
+}
+
+// Placement places a new database. Regions are Atlas region ids such as
+// gru-1, not RegionCode values. An empty HomeRegion is the called region.
+type Placement struct {
+	HomeRegion     string   `json:"homeRegion,omitempty"`
+	ReplicaRegions []string `json:"replicaRegions,omitempty"`
 }
 
 // CollectionStats is a collection with its live documents (tombstones are
@@ -349,9 +364,66 @@ func (u *ManagementUser) DeleteProject(ctx context.Context, org, project string)
 	return u.call(ctx, http.MethodDelete, projectPath(org, project), nil, nil, nil)
 }
 
-// CreateDatabase creates an empty database in a project.
+// RegisterProject registers an organization and project in the called region
+// under the ids and names they have in another region, through one
+// Management commit, so a database placed in this region can replicate there
+// (TS-643). What the region already has is left as it is. The commit id is
+// derived from the ids, so retrying a registration is safe.
+func (u *ManagementUser) RegisterProject(ctx context.Context, org Organization, project Project) error {
+	type op struct {
+		Op           string `json:"op"`
+		Organization string `json:"organization,omitempty"`
+		ID           string `json:"id"`
+		Name         string `json:"name"`
+	}
+	var ops []op
+	for _, check := range []struct {
+		get func() error
+		op  op
+	}{
+		{func() error { _, err := u.Organization(ctx, org.ID); return err }, op{Op: "create_organization", ID: org.ID, Name: org.Name}},
+		{func() error { _, err := u.Project(ctx, org.ID, project.ID); return err }, op{Op: "create_project", Organization: org.ID, ID: project.ID, Name: project.Name}},
+	} {
+		switch err := check.get(); {
+		case errors.Is(err, ErrUnknownRoute):
+			ops = append(ops, check.op)
+		case err != nil:
+			return err
+		}
+	}
+	if len(ops) == 0 {
+		return nil
+	}
+	commit := struct {
+		ID  string `json:"id"`
+		Ops []op   `json:"ops"`
+	}{formatUUID(uuidV5(namespaceURL, fmt.Sprintf("terrabase:register-project:%+v", ops))), ops}
+	return u.call(ctx, http.MethodPost, []string{"commits"}, nil, commit, nil)
+}
+
+// CreateDatabase creates an empty database in a project, homed in the
+// called region.
 func (u *ManagementUser) CreateDatabase(ctx context.Context, org, project, name string) (*ManagedDatabase, error) {
-	return send[ManagedDatabase](ctx, u, http.MethodPost, projectPath(org, project, "databases"), nameBody{name})
+	return u.CreateDatabaseIn(ctx, org, project, name, Placement{})
+}
+
+// CreateDatabaseIn creates an empty database in a project with a placement.
+func (u *ManagementUser) CreateDatabaseIn(ctx context.Context, org, project, name string, placement Placement) (*ManagedDatabase, error) {
+	body := struct {
+		nameBody
+		Placement
+	}{nameBody{name}, placement}
+	return send[ManagedDatabase](ctx, u, http.MethodPost, projectPath(org, project, "databases"), body)
+}
+
+// SetDatabaseRegions replaces a database's replica regions with
+// replicaRegions, the complete new list of Atlas region ids; its home region
+// never changes.
+func (u *ManagementUser) SetDatabaseRegions(ctx context.Context, org, project, databaseID string, replicaRegions []string) (*ManagedDatabase, error) {
+	body := struct {
+		ReplicaRegions []string `json:"replicaRegions"`
+	}{append([]string{}, replicaRegions...)} // [] rather than null
+	return send[ManagedDatabase](ctx, u, http.MethodPatch, databasePath(org, project, databaseID), body)
 }
 
 // Databases lists a project's databases.
@@ -365,6 +437,7 @@ func (u *ManagementUser) Database(ctx context.Context, org, project, databaseID 
 }
 
 // DeleteDatabase deletes a database, by id, and its data; its branches stay.
+// It fails with ErrDatabaseReplicated while the database has replica regions.
 func (u *ManagementUser) DeleteDatabase(ctx context.Context, org, project, databaseID string) error {
 	return u.call(ctx, http.MethodDelete, databasePath(org, project, databaseID), nil, nil, nil)
 }

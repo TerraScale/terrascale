@@ -50,4 +50,4 @@ tool github.com/a-h/templ/cmd/templ
 
 // The SDK declares this vanity module path, which does not yet serve go-import
 // metadata. Resolve the pinned source through its public Forgejo repository.
-replace terrascale.tech/sdk => git.terrascale.tech/TerraScale/ts-go v0.0.0-20261006232458-fed35ea95369
+replace terrascale.tech/sdk => git.terrascale.tech/TerraScale/ts-go v0.0.0-20261007183620-f070c91a4513

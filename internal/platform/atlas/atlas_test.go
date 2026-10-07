@@ -12,7 +12,7 @@ import (
 )
 
 const discovery = `{"v":1,"closest":"sfo-1","regions":[
-{"id":"sfo-1","name":"San Francisco","country":"US","health":"ok"},
+{"id":"sfo-1","name":"San Francisco","country":"US","api":"https://sfo.api.terrascale.tech","health":"ok"},
 {"id":"gru-1","name":"São Paulo","country":"BR","health":"down"},
 {"id":"gru-2","name":"São Paulo 2","country":"BR","health":"ok"},
 {"id":"Bad","name":"Bad","country":"XX","health":"ok"}]}`
@@ -28,7 +28,7 @@ func TestCatalogReadsDiscoveryAndServesTheLastCatalogWhenAtlasFails(t *testing.T
 	}))
 	defer server.Close()
 	catalog := &Catalog{BaseURL: server.URL + "/"}
-	want := []core.Region{{Code: "GRU", Name: "São Paulo", Country: "br"}, {Code: "SFO", Name: "San Francisco", Country: "us", Healthy: true}}
+	want := []core.Region{{Code: "GRU", ID: "gru-1", Name: "São Paulo", Country: "br"}, {Code: "SFO", ID: "sfo-1", Name: "San Francisco", Country: "us", API: "https://sfo.api.terrascale.tech", Healthy: true}}
 	got, err := catalog.Regions(t.Context())
 	if err != nil || len(got) != 2 || got[0] != want[0] || got[1] != want[1] {
 		t.Fatalf("regions = %+v, %v", got, err)

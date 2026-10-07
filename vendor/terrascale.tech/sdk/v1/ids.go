@@ -47,9 +47,10 @@ func formatUUID(u [16]byte) string {
 }
 
 var (
-	namePattern    = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,62}$`)
-	uuidPattern    = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
-	versionPattern = regexp.MustCompile(`^tbv1-[0-9a-f]{32}$`)
+	namePattern = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,62}$`)
+	uuidPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+	// versionPattern is any non-empty RFC 9110 entity-tag value without obs-text.
+	versionPattern = regexp.MustCompile(`^[\x21\x23-\x7e]+$`)
 )
 
 func checkName(kind, name string) error {
@@ -69,9 +70,11 @@ func checkID(id string) error {
 	return nil
 }
 
+// checkVersion treats versions as opaque (tbv1-…, tbv2-…, later formats) and
+// only rejects what cannot be sent as a quoted ETag.
 func checkVersion(v string) error {
 	if !versionPattern.MatchString(v) {
-		return fmt.Errorf("terrabase: version %q must be tbv1- followed by 32 lowercase hex characters", v)
+		return fmt.Errorf("terrabase: version %q must be visible ASCII without spaces or quotes", v)
 	}
 	return nil
 }

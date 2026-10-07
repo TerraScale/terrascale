@@ -18,8 +18,9 @@ var terraBaseID = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a
 // SystemDatabase reports whether a database record mirrors a TerraBase
 // database by its TerraBase ID: a database of a TerraScale service, which a
 // platform admin's sign-in (or import-org) mirrored. Its contents live in
-// TerraBase, never in the record.
-func SystemDatabase(db Database) bool { return terraBaseID.MatchString(db.ID) }
+// TerraBase, never in the record. A database the dashboard provisioned in
+// TerraBase also has a TerraBase ID but is the user's own.
+func SystemDatabase(db Database) bool { return terraBaseID.MatchString(db.ID) && !db.Provisioned }
 
 // ErrSystemReadOnly refuses changes to a system database: TerraBase lets the
 // dashboard read them with a ts-auth token, and their services own them.
