@@ -60,7 +60,9 @@ test.describe('header layout (TER-86)', () => {
     await page.goto('/')
     await page.getByRole('button', { name: /toggle navigation menu/i }).click()
 
-    const homeIcon = page.locator('#mobile-navigation a[href="/"] .ts-icon')
+    const homeLink = page.getByRole('navigation', { name: 'Mobile primary' }).getByRole('link', { name: 'Home', exact: true })
+    await expect.poll(() => homeLink.evaluate((element) => new URL((element as HTMLAnchorElement).href).pathname)).toBe('/')
+    const homeIcon = homeLink.locator('.ts-icon')
     await expect(homeIcon).toBeVisible()
     await expect.poll(() => homeIcon.evaluate((element) => getComputedStyle(element).maskImage)).toContain('/icons/lucide/home.svg')
     await expect(homeIcon.locator('svg')).toHaveCount(0)
