@@ -81,11 +81,6 @@ internal static class SqliteStatements
     // never the body: documents_live would not cover the body test and would add a lookup per row.
     public const string CountDocuments = "SELECT count(*) FROM documents WHERE collection = $collection AND body IS NOT NULL;";
 
-    public const string CountCollections = """
-        SELECT name, (SELECT count(*) FROM documents WHERE collection = collections.name AND body IS NOT NULL)
-        FROM collections ORDER BY name;
-        """;
-
     // octet_length reads each live body's size from its record header, not the body.
     public const string ListCollectionStats = """
         SELECT collections.name, count(documents.id), coalesce(sum(octet_length(documents.body)), 0)
@@ -272,7 +267,6 @@ internal static class SqliteStatements
         [nameof(HistoryFloor)] = HistoryFloor,
         [nameof(DropHistory)] = DropHistory,
         [nameof(CountDocuments)] = CountDocuments,
-        [nameof(CountCollections)] = CountCollections,
         [nameof(ListCollectionStats)] = ListCollectionStats,
         [nameof(DeleteCollectionDocuments)] = DeleteCollectionDocuments,
         [nameof(DeleteCollectionNames)] = DeleteCollectionNames,

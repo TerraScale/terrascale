@@ -3,6 +3,7 @@ using System.Text.Json;
 using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.Documents;
+using TerraBase.Features.Management.Usage;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
 using static TerraBase.Features.Management.SystemCatalog;
@@ -13,7 +14,7 @@ namespace TerraBase.Features.Management.Queries;
 /// Statements run on the managed database's storage; usage records and saved queries live in <see cref="SystemCatalog"/>
 /// under the database and project state, so deleting the database or project deletes them.
 /// </remarks>
-internal sealed class QueryService(IStorageEngine engine, SystemCatalog catalog, QueryFieldRecorder recorder, TimeProvider time) : IQueryService
+internal sealed class QueryService(IStorageEngine engine, SystemCatalog catalog, QueryFieldRecorder recorder, IUsageMeter usage, TimeProvider time) : IQueryService
 {
     // Bounds the complete serialized response, including rows and the result envelope.
     private const long MaxResultBytes = 8 * 1024 * 1024;
@@ -31,7 +32,7 @@ internal sealed class QueryService(IStorageEngine engine, SystemCatalog catalog,
         List<IndexSuggestion> suggestions = [];
         try
         {
-            return await ReadAsync(
+            var rows = await ReadAsync(
                 database,
                 async transaction =>
                 {
@@ -40,6 +41,9 @@ internal sealed class QueryService(IStorageEngine engine, SystemCatalog catalog,
                 },
                 new SqlResultBody(0, false, []),
                 cancellationToken).ConfigureAwait(false);
+            // One read per run the engine answered, as a data API query page.
+            usage.RecordRead(database);
+            return rows;
         }
         catch (QueryCapacityException)
         {

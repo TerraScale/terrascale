@@ -410,8 +410,8 @@ organization, project or database does not exist.
 | `POST` | `D/index-recommendations/{recommendation}/apply` | `201` applied or `200` already applied |
 | `POST` | `D/sql` | `{sql}` → rows; `400` invalid SQL |
 | `POST` | `D/sql/check` | `{sql}` → validity, plan, used indexes, suggestions |
-| `GET` | `D/usage` | storage, documents, reads and writes of the database |
-| `GET` | `P/usage` | the same summed over the project, with one item per database; 400 `query too expensive` past 100 databases (before counting) or when counts are still running after 5 s |
+| `GET` | `D/usage[?granularity=&from=&to=]` | storage, documents, reads and writes of the database, with a series over the period |
+| `GET` | `P/usage[?granularity=&from=&to=]` | the same summed over the project, with one item per database; 400 `query too expensive` past 100 databases (before counting) or when counts are still running after 5 s |
 | `GET` | `P/saved-queries` | page of saved queries |
 | `POST` | `P/saved-queries` | `{name, sql}` → `201` saved query |
 | `GET` | `P/saved-queries/{query}` | saved query |
@@ -547,25 +547,70 @@ The schema is inferred and read-only: TerraBase has no declared schemas yet.
 
 | Route | Body |
 | --- | --- |
-| `GET …/databases/{database}/usage` | `{databaseId, storageBytes, collections, documents, reads, writes}` |
-| `GET …/projects/{project}/usage` | `{projectId, databases, storageBytes, documents, reads, writes, items}` |
+| `GET …/databases/{database}/usage` | `{databaseId, storageBytes, logicalBytes, collections, documents, reads, writes, period, series}` |
+| `GET …/projects/{project}/usage` | `{projectId, databases, storageBytes, logicalBytes, documents, reads, writes, period, series, items}` |
 
-- `storageBytes` is the size on disk.
-- `reads` counts data API document gets, and list and query pages (a query's optional count is part of its page).
-  `writes` counts puts, patches and deletes once their transaction commits, each operation of a transaction included;
-  transaction assertions are not counted. A read counts once the engine answered it, even if the document does not exist;
-  a request rejected before that (unknown collection, invalid id) and a rolled-back transaction count nothing.
+- Query, the same on every route: `granularity` (`hour`, the default, or `day`: UTC buckets), `from` (inclusive,
+  rounded down to its bucket) and `to` (exclusive, rounded up; default now), as RFC 3339 date-times
+  (`2026-10-06T10:00:00Z`, optional fraction, `Z` or a numeric offset; no date-only, time-only or offset-less forms). Without `from`, the
+  period is the 24 hours or 30 days that end with the bucket holding `to`. `from` must be before `to` (checked before
+  rounding), both from 1970 to 9998, and the period 1 to 840 hourly or 400 daily buckets; anything else, or an unknown
+  granularity, is `400 invalid_request`.
+- `period` is `{from, to, granularity, reads, writes}` over the requested buckets. `series` has one
+  `{start, reads, writes}` point per bucket, oldest first, zeros included. A project's `items` (its databases) carry
+  their `period` but an empty `series`.
+- `storageBytes` is the size on disk. `logicalBytes` is the metered logical storage: the JSON bytes of the live
+  documents, read from SQLite's record headers.
+- Counting rule: each request the engine answers is **one read**, however many documents it returns: a document get,
+  a list page, a query page (its optional count included), a shape response (a live wait included) and a Management
+  SQL run. Each committed put, patch or delete is **one write**, each operation of a transaction included; transaction
+  assertions are not counted. A read counts once the engine answered it, even if the document does not exist; a
+  request rejected before that (unknown collection, invalid id, too expensive) and a rolled-back transaction count
+  nothing. Collection and index changes and metadata reads count nothing.
+- `reads` and `writes` at the top level are totals since each database was created. They are best-effort dashboard
+  usage, not billing data. A branch or restored database starts at zero.
 - `documents` counts live documents; `collections` counts every collection, empty ones included.
-- Counters are totals since the database was created. They are best-effort dashboard usage, not billing data. There is no
-  billing period. A branch or restored database starts at zero.
-- Project usage sums every database of the project. `items` lists each database in creation order.
-- Counts are kept in memory and saved to the catalog every 10 seconds. Reads always include the counts not yet saved.
+- Project usage sums every database of the project; `items` are in creation order. There is no organization usage:
+  TerraBase stores no organizations (`docs/api.md`), so ts-dashboard sums its projects. Every database is listed before
+  any is counted, so past 100 nothing is counted; a request that has run 5 seconds starts no further catalog read or count, and one whose last listing or
+  count ends past them answers `400` too.
+- Counts are kept in memory per database and UTC hour and saved to the catalog every 10 seconds: the lifetime totals
+  (`databases/{id}/usage`, document `ops`), and one document per hour and per day (`usage-hours`, id
+  `yyyy-MM-ddTHH`; `usage-days`, id `yyyy-MM-dd`). The kept buckets are the 840 hours and 400 days that end with the
+  current one. A flush deletes every older bucket of each database it saves, and saves counts of an hour or day already
+  past them (held through an outage) only in the kept day or the lifetime totals. So a database holds at most the kept
+  buckets plus those that expired since its last flush. Reads always include the counts not yet saved.
+- Unsaved counts are kept per database and hour. Before each flush or send, those past the kept hours fold into a
+  day-only entry, and those past the kept days into a lifetime-only one (except the entries of a batch not yet settled
+  or acknowledged), so a backlog holds at most about 1,250 entries per database. A follower sends folded entries with
+  their scope, so the primary never saves them in an hour, whatever the two clocks say. A series has counts only in kept
+  buckets: a bucket past them reads as zero, saved or not, even before a flush prunes it.
+- A catalog follower writes no catalog: every 10 seconds it sends one batch of its counts (at most 4,096 database
+  hours, each count at most 10^12) to the primary over the peer listener (`CatalogUsage.Add`). Batches take the pending
+  database hours in turn, so each gets sent while others keep counting. A batch the primary refuses as invalid (for
+  example hours ahead of its clock) is dropped with a warning, so it cannot hold back later counts. A batch carries the
+  follower's node name, a random epoch per process and a sequence: 1, then one more per batch. A batch that is not
+  acknowledged stays pending and is sent again with the same sequence before any other. The primary adds a batch only
+  past the highest sequence it added for that node and epoch, so a retry, or an attempt that arrives after a later
+  batch, counts once; the primary remembers the last 16 epochs per node, so a delayed attempt of a restarted process
+  counts once too. The primary saves these sequences (catalog collection `usage-senders`, one document per node) in the
+  flush that saves their counts, so a batch sent again after the primary restarted counts once when its counts were
+  saved, and once more only when the primary lost them unsaved. It keeps at most 1,024 nodes; one that sent no batch,
+  retries included, for 7 days retires (its record is deleted by the next flush), so replaced nodes free their places
+  while a follower still retrying keeps its record. A follower gives up a batch unacknowledged for a day and drops its
+  counts, so no retry arrives after its record is gone, even after a longer outage: those counts may be lost, never
+  counted twice. The primary refuses an hour more than a day ahead of
+  its clock, and keeps counts only of databases its catalog names (one point read per level and database of a batch),
+  so what followers send never holds memory for databases that do not exist. So the counts of every member reach the usage routes, which a follower forwards to the primary. A usage
+  read a follower serves itself (its administrative listener) shows the totals replicated from the primary, without
+  its own counts not yet saved there: adding those could count a batch twice.
 - A failed flush keeps its counts pending and the next flush retries them. Each flush saves its id with the counts it
   adds, so a flush that fails after its commit is recognized by the next flush or usage read and not counted twice.
-- A clean shutdown flushes once more, within the host's shutdown timeout. If that flush fails, its counts are lost and a
-  warning is logged.
+- A clean shutdown flushes once more (a follower sends batch after batch until none is pending), within the host's
+  shutdown timeout. If that fails, its counts are lost and a warning is logged.
 - A crash loses the counts since the last successful flush: about 10 seconds of operations while the catalog accepts
-  writes, longer while flushes fail. The documents those operations wrote stay committed.
+  writes (20 on a follower, whose counts wait for the primary's next flush), longer while flushes fail. The documents
+  those operations wrote stay committed.
 - Counts are kept per database of a tenant (organization, project and database). Databases created through the data API
   (`PUT /v1/projects/{project}/databases/{name}`) are in the catalog too, so they are counted like any other.
 - A flush checks inside its catalog write that the database is still in its project of its organization (one point read
@@ -796,7 +841,7 @@ not cover branches.
 | Schema | inferred from sampled documents, read-only | dashboard and SDK read and write declared schemas with generations |
 | SQL result | `{matched, truncated, rows:[{id, value}]}` | SDK `SQLResult{matched, rows[{id, value}]}`; no explain variant |
 | API keys | `tb_` secret, SHA-256 stored, scopes `documents:read\|write`, optional `databaseId` | control-plane-v1 `tbk1.<id>.<secret>` tokens with grants, row filters, rate limits, expiry and rotation |
-| Usage | best-effort lifetime reads and writes; documents and bytes | control-plane-v1 reports the current calendar month as decimal strings |
+| Usage | best-effort reads and writes, lifetime and per UTC hour or day; documents, file and logical bytes | control-plane-v1 reports the current calendar month as decimal strings |
 | Roles | `owner`, `admin`, `member`, `viewer`; several owners; admins manage members and invitations | dashboard: exactly one owner, who alone manages members (it keeps one by granting `owner` only through a transfer) |
 | Members | user id, role and join time | dashboard members also carry email and name; ts-auth owns profiles |
 

@@ -272,9 +272,6 @@ internal sealed class StampingStorageEngine(IStorageEngine inner, ISystemReplica
         public ValueTask<long> CountDocumentsAsync(string collection, CancellationToken cancellationToken) =>
             RunAsync(() => inner.CountDocumentsAsync(collection, cancellationToken), cancellationToken);
 
-        public ValueTask<IReadOnlyList<CollectionCount>> CountCollectionsAsync(CancellationToken cancellationToken) =>
-            RunAsync(() => inner.CountCollectionsAsync(cancellationToken), cancellationToken);
-
         public ValueTask<IReadOnlyList<CollectionStats>> ListCollectionStatsAsync(CancellationToken cancellationToken) =>
             RunAsync(() => inner.ListCollectionStatsAsync(cancellationToken), cancellationToken);
 

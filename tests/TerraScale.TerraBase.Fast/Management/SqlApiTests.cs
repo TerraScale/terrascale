@@ -343,7 +343,7 @@ public sealed class SqlApiTests
         // The count starts at timestamp 0 and its next reading is 6 seconds later, past the 5-second deadline.
         clock.Armed = true;
 
-        await Assert.ThrowsAsync<QueryCapacityException>(() => transaction.CountCollectionsAsync(CancellationToken.None).AsTask());
+        await Assert.ThrowsAsync<QueryCapacityException>(() => transaction.ListCollectionStatsAsync(CancellationToken.None).AsTask());
     }
 
     [Test]

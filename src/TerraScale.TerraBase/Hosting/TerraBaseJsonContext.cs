@@ -85,6 +85,7 @@ namespace TerraBase.Hosting;
 [JsonSerializable(typeof(Membership))]
 [JsonSerializable(typeof(NameRequest))]
 [JsonSerializable(typeof(OpCounts))]
+[JsonSerializable(typeof(UsageSender))]
 [JsonSerializable(typeof(Organization))]
 [JsonSerializable(typeof(OrganizationMember))]
 [JsonSerializable(typeof(OwnershipTransfer))]

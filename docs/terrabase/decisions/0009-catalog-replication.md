@@ -30,8 +30,9 @@ election. Failover is a configuration change ([Failover](#failover)).
 replication applier's: a catalog write that reaches it answers `503 not_primary` with `Retry-After: 1`, and nothing
 is written. The requests that write the catalog are forwarded instead (Forwarding, below). Its hosted
 catalog writers do not run: startup intent recovery and the file audit, catalog migration and backfills (the
-primary's are replicated), the backup scheduler, and the usage and query-field flushes (their counts stay in
-memory, bounded by the databases served, and are lost on restart: they are best-effort dashboard statistics, not
+primary's are replicated), the backup scheduler, and the usage and query-field flushes. Every 10 seconds it sends its
+usage counts to the primary over `CatalogUsage.Add` instead (TS-581), which adds them to its own; its query-field counts
+stay in memory, bounded by the databases served, and are lost on restart (best-effort dashboard statistics, not
 billing). Data-plane reads (authenticating API keys, resolving tenants) use the local replica.
 
 **Forwarding.** A follower forwards a client-listener request the primary serves to the primary over
@@ -172,13 +173,13 @@ primary without `catalog-primary` while another one serves.
   changes the catalog version must read the previous one too; none has yet.
 - Every system transaction, not only Management commits, is bounded by 262,144 changes and 64 MiB. Known writers
   that can reach it: deleting an organization with more than about 130,000 retained audit events, a usage flush of
-  more than about 130,000 databases active within 10 seconds, and the one-time migration of a version 1 to 4 catalog
+  more than about 50,000 databases active within 10 seconds (it writes each one's totals, flush id, hour and day), and the one-time migration of a version 1 to 4 catalog
   of that size. Each needs paging into bounded transactions before a catalog that large exists (follow-up).
 - The retained tail counts groups, not bytes: 1,024 groups of usage flushes of many databases can hold gigabytes.
 - A follower that starts while its primary is unreachable stays not ready until the primary is back: roll one
   member at a time.
-- Followers do not flush usage or query-field counts, so dashboards count only the primary's traffic (follow-up:
-  forward them).
+- Followers do not flush query-field counts, so index recommendations see only the primary's traffic. Their usage
+  counts reach the primary (TS-581).
 - A follower serves a registered database from an empty local file until client replication delivers its
   documents; for a branch or restore of a populated database that is a short window of missing documents.
 - A follower that catches up with a snapshot (behind the 1,024 retained groups) misses the intents the primary already

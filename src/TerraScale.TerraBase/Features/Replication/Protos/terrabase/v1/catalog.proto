@@ -143,3 +143,51 @@ message ForwardHead {
   bytes origin = 4;
   uint64 sequence = 5;
 }
+
+// Internal: a catalog follower writes no catalog, so it sends the document reads and writes it counted to its
+// catalog primary, which saves them with its own (docs/management-api.md#usage). TerraBase C# only.
+service CatalogUsage {
+  // A member that is not a catalog primary answers FAILED_PRECONDITION; an invalid batch INVALID_ARGUMENT.
+  rpc Add(UsageBatch) returns (UsageAck);
+}
+
+message UsageBatch {
+  // Usage protocol version: 1.
+  uint32 protocol = 1;
+  // 16 bytes, random for each follower process.
+  bytes epoch = 2;
+  // At most 4096.
+  repeated UsageCount counts = 3;
+  // The follower's node name, 1 to 128 characters.
+  string sender = 4;
+  // 1 for the process's first batch, one more for each next one, the same on every retry: a follower sends its
+  // next batch only once this one was acknowledged. The primary adds a batch of the sender's epoch only past the
+  // highest sequence it added for it, so a retry, or an attempt that arrives late, is added once.
+  uint64 sequence = 5;
+}
+
+message UsageCount {
+  string organization_id = 1;
+  string project_id = 2;
+  string database_id = 3;
+  // The UTC hour the operations happened in, in hours since the Unix epoch; at most a day ahead of the
+  // primary's clock.
+  int64 hour = 4;
+  // At most 10^12 each.
+  uint64 reads = 5;
+  uint64 writes = 6;
+  // Which buckets the counts belong in: counts the follower held past the kept hours or days were folded.
+  UsageScope scope = 7;
+}
+
+enum UsageScope {
+  // The hour `hour`, and its day.
+  USAGE_SCOPE_HOUR = 0;
+  // Only the day that starts at `hour`.
+  USAGE_SCOPE_DAY = 1;
+  // Only the lifetime totals; `hour` is 0.
+  USAGE_SCOPE_LIFETIME = 2;
+}
+
+message UsageAck {
+}

@@ -87,8 +87,8 @@ malformed JSON body, with `400 invalid_request`.
 
 ## Checklist
 
-`throw new` counts in `src/TerraBase`, excluding generated `obj/` code: 295 (TS-538 recounted them
-after TS-463, TS-464, TS-521, TS-473, TS-561, TS-574 and the Documents conversion; TS-518's figure of 127 predates them). "Expected" counts the
+`throw new` counts in `src/TerraBase`, excluding generated `obj/` code: 298 (TS-538 recounted them
+after TS-463, TS-464, TS-521, TS-473, TS-561, TS-574 and the Documents conversion, plus TS-581's three; TS-518's figure of 127 predates them). "Expected" counts the
 `ApiException`/`BadHttpRequestException` constructions that `BanExpectedFailureExceptions` matches. The other throws
 in each row are invariants or configuration errors to review during the conversion.
 
@@ -102,7 +102,7 @@ in each row are invariants or configuration errors to review during the conversi
 | `Features/Management/Indexes` | 0 | 0 | **Converted** (TS-538): `IndexErrors.Exists` (`409 index_exists`) and `IndexErrors.DefaultNameTaken` (`409 name_taken`) |
 | `Features/Management/Queries` | 32 | 0 | **Converted** (TS-538): `SqlSubset.Parse` returns `Valid<SqlStatement>`; run and check return `invalid_query` past the engine read budget. Kept: 31 `FormatException` aborts inside the SQL subset translator, which `Parse` catches with the parser's own `ParserException`, so none leaves `SqlSubset`; one invariant |
 | `Features/Management` root (access, databases, catalog, recovery, commit invariants) | 24 | 7 | `ManagementError`/`ManagementResult` and throwing validators remain. The catalog version guard in `EnsureCatalogAsync` still throws `503 unavailable` under every operation, orgs and projects included; it becomes an `Unavailable` case when access and databases convert. |
-| `Features/Management/Usage` | 2 | 0 | Review: `QueryCapacityException` thrown and caught inside the folder |
+| `Features/Management/Usage` | 5 | 0 | Review: `QueryCapacityException` thrown and caught inside the folder; `RpcException` answers of the peer `CatalogUsage` service |
 | `Features/Documents` shapes (`GetShapeEndpoint`, `ShapeService`) | 1 | 0 | **Converted** (TS-538): `ShapeReadResult(ShapeResult, NotFound, Validation, QuotaExceeded)`; a collapsed read shares its union result, and only unexpected failures travel as exceptions. `must_refetch` stays a 409 result with the current handle. One invariant |
 | `Features/Documents` request edge (`DocumentRoute`, `RequestJson`, `ETags`, `DocumentPatch` parsing, the document, collection and database endpoints) | 2 | 0 | **Converted** (TS-538): `Check…` helpers return `TenantResult`, `KeyResult`, `BodyResult`, `Valid<T>`, `NotModifiedResult` and `VersionCheck`, and `DocumentPatch.CheckMerge`/`CheckOps` return `Valid<DocumentPatch>`; endpoints switch over them. The `DocumentRoute.Throwable` bridge and its throwing wrappers are gone. Kept: `RequestJson`'s internal `JsonException` for a null list element, which its own reader catches, and one invariant |
 | `Features/Documents/QueryParser` | 3 | 0 | **Converted** (TS-538): `CheckParse`, `CheckFilter`, `CheckCursor` and `CheckPosition` return `Valid<T>`. As in `SqlSubset`, the recursive filter translation rejects a node with a `FormatException` that only those entry points catch, each answering with its own code, so none leaves the class; `Position` keeps its own `FormatException` to fall through to `invalid_cursor` |

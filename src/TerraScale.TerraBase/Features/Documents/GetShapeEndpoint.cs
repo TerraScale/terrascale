@@ -6,6 +6,7 @@ using System.Text.Json;
 using Microsoft.Net.Http.Headers;
 using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
+using TerraBase.Features.Management.Usage;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
 using TerraScale.Endpoints;
@@ -16,7 +17,7 @@ namespace TerraBase.Features.Documents;
 /// <c>GET …/collections/{collection}/shape?where=&amp;handle=&amp;offset=&amp;live=&amp;cursor=</c>: syncs a
 /// collection and filter as an immutable snapshot plus change log (docs/shape-reads.md).
 /// </summary>
-public sealed class GetShapeEndpoint(IShapeService shapes, ITenantDirectory tenants, TimeProvider time) : EndpointWithoutRequest<IResult>
+public sealed class GetShapeEndpoint(IShapeService shapes, ITenantDirectory tenants, IUsageMeter usage, TimeProvider time) : EndpointWithoutRequest<IResult>
 {
     private const string Revalidate = "private, max-age=0, must-revalidate";
     private const long LiveBucketSeconds = 20;
@@ -97,12 +98,19 @@ public sealed class GetShapeEndpoint(IShapeService shapes, ITenantDirectory tena
             ShapeFilter where => await shapes.ReadAsync(
                 new ShapeRequest(database, collection, where.Filter, where.Canonical, offset, handle, live), cancellationToken) switch
             {
-                ShapeResult result => Answer(result, where.Canonical, offset, live, inputCursor),
+                ShapeResult result => Answer(Counted(database, result), where.Canonical, offset, live, inputCursor),
                 NotFound error => ErrorResponse.From(error),
                 Validation error => ErrorResponse.From(error),
                 QuotaExceeded error => ErrorResponse.From(error),
             },
         };
+    }
+
+    // One read per shape response the engine answered, a live wait included, as a data API query page.
+    private ShapeResult Counted(TenantContext database, ShapeResult result)
+    {
+        usage.RecordRead(database);
+        return result;
     }
 
     private IResult Answer(ShapeResult result, string canonical, ShapeOffset offset, bool live, long inputCursor)
