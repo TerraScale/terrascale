@@ -177,7 +177,7 @@ public sealed class CrossRegionTests
                 settings["peers"] = $"gru-a=localhost:{portA},gru-b=localhost:{portB}";
                 settings["catalog-primary"] = "gru-a";
                 Regions.Configure(settings, credentials, "gru-1", name);
-            }, services => Regions.Join(services, network, "gru", gruMembers));
+            }, services => Regions.Join(services, network, "gru", gruMembers, name));
         }
 
         try
@@ -217,6 +217,16 @@ public sealed class CrossRegionTests
             _ = await Regions.EventuallyReadAsync(clientA, Document("from-sfo"), "sfo");
             _ = await Regions.EventuallyReadAsync(clientB, Document("from-sfo"), "sfo");
             await Assert.That(await sfo.Server.MetricAsync("terrabase_wan_members", "region=\"gru-1\"")).IsEqualTo(2);
+
+            // gru-b stops answering: sfo is no longer known to be caught up, although nothing it can measure is behind.
+            network.Mute("gru-b");
+            await TerraBaseTestServer.EventuallyAsync(async token =>
+                await sfo.Server.MetricAsync("terrabase_wan_members", "region=\"gru-1\"", token) == 1
+                && await sfo.Server.MetricAsync("terrabase_wan_staleness_seconds", "region=\"gru-1\"", token) > 3);
+            await Assert.That(await sfo.Server.MetricAsync("terrabase_wan_lag", "region=\"gru-1\"")).IsEqualTo(0);
+            network.Heal();
+            await TerraBaseTestServer.EventuallyAsync(async token =>
+                await sfo.Server.MetricAsync("terrabase_wan_staleness_seconds", "region=\"gru-1\"", token) < 3);
         }
         finally
         {
@@ -391,9 +401,9 @@ public sealed class CrossRegionTests
             settings["nats-credentials-file"] = credentials;
         }
 
-        public static void Join(IServiceCollection services, FakeRegionNetwork network, string cell, FakeMemberStore members)
+        public static void Join(IServiceCollection services, FakeRegionNetwork network, string cell, FakeMemberStore members, string? node = null)
         {
-            services.AddSingleton(network.Join(cell));
+            services.AddSingleton(network.Join(cell, node));
             services.AddSingleton<IMemberStore>(members);
         }
 

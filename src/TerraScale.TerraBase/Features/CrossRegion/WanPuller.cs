@@ -109,7 +109,7 @@ internal sealed partial class WanPuller(
     // Returns whether the round pulled groups and is still behind, and how many origins failed.
     private async Task<(bool Again, int Failures)> RoundAsync(string region, string cell, bool quiet, CancellationToken cancellationToken)
     {
-        var (members, heads) = await HeadsAsync(cell, cancellationToken).ConfigureAwait(false);
+        var (members, listed, heads) = await HeadsAsync(cell, cancellationToken).ConfigureAwait(false);
         if (members == 0)
         {
             metrics.Unanswered(region);
@@ -167,13 +167,14 @@ internal sealed partial class WanPuller(
             lag += Math.Max(0, (long)head.Sequence - applied);
         }
 
-        metrics.Rounded(region, lag, members, unregistered.Count, time.GetTimestamp());
+        // A listed member that did not answer holds origins this round could not measure: not caught up.
+        metrics.Rounded(region, lag, members, unregistered.Count, caughtUp: lag == 0 && members >= listed, time.GetTimestamp());
         return (progressed && lag > 0, failures);
     }
 
     // Every member's heads, all pages: the members that answer the scattered request, and every other member they list,
     // asked on its own subject.
-    private async Task<(int Members, List<(string Member, Head Head)> Heads)> HeadsAsync(string cell, CancellationToken cancellationToken)
+    private async Task<(int Members, int Listed, List<(string Member, Head Head)> Heads)> HeadsAsync(string cell, CancellationToken cancellationToken)
     {
         var answered = new Dictionary<string, List<Head>>(StringComparer.Ordinal);
         var listed = new HashSet<string>(StringComparer.Ordinal);
@@ -208,7 +209,8 @@ internal sealed partial class WanPuller(
             answered[member] = heads!;
         }
 
-        return (answered.Count, [.. answered.SelectMany(member => member.Value.Select(head => (member.Key, head)))]);
+        listed.UnionWith(answered.Keys);
+        return (answered.Count, listed.Count(WanProtocol.IsMember), [.. answered.SelectMany(member => member.Value.Select(head => (member.Key, head)))]);
 
         // The heads of the member that sent reply, with the pages after it.
         async Task<List<Head>> PagesAsync(HeadsReply reply)

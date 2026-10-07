@@ -89,8 +89,8 @@ On the `TerraScale.TerraBase` meter, scraped at `/metrics`. `region` is a config
 
 | Prometheus name | Meaning |
 | --- | --- |
-| `terrabase_wan_lag{region}` | Change groups that region's members committed and this member has not applied, as of its last round |
-| `terrabase_wan_staleness_seconds{region}` | Seconds since this member last held every group that region reported; near 0 when caught up |
+| `terrabase_wan_lag{region}` | Change groups that the members of that region that answered this member's last round committed and this member has not applied |
+| `terrabase_wan_staleness_seconds{region}` | Seconds since a round of this member reached every member that region lists and held all their groups; near 0 when caught up. A member of that region that stops answering makes it grow even while `lag` reads 0 |
 | `terrabase_wan_members{region}` | Members of that region that answered this member's last round |
 | `terrabase_wan_unregistered{region}` | Databases that region holds and this region's catalog does not register |
 | `terrabase_wan_pulled_groups_total{region}` | Groups pulled from that region and applied |
@@ -115,13 +115,32 @@ Alert on `terrabase_wan_staleness_seconds` above a minute, and on any `ahead` fa
 - Every member pulls every remote origin itself, so a group crosses the WAN once per receiving member. Full Anna pulls
   once per region and joins the deltas into the cell.
 - A group whose origin member loses its disk before the other region pulled it reaches that region only through a later
-  write of the same document: other members of its own region hold the state, not the group.
+  write of the same document: other members of its own region hold the state, not the group. A repair pulls the state
+  from a surviving member. It needs a read of every document's state, tombstones included, which the engine does not
+  offer yet; it comes with TS-647 step 4's snapshots for refilled replicas.
 - Registration in a replica region is a manual commit; a database's home region and replica regions, chosen through the
   API and dashboard, come later. Deleting a database in one region does not delete it in the other.
 - Catalogs and API keys are per region.
 - A member reads every database's head for each heads request, and pulls one origin at a time.
 - Interval and tombstone GC (TS-647 step 7) must keep a group until every region applied it: remote regions read origin
   journals, which nothing truncates today.
+
+## Tests
+
+- **Fast** (`CrossRegion/CrossRegionTests.cs`) covers:
+  - both directions, and versions valid across regions;
+  - a partition and its heal;
+  - concurrent writes;
+  - a group larger than one reply;
+  - unregistered databases;
+  - a two-member region reached through single replies, and staleness when one of its members goes silent.
+- **Slow** (`CrossRegion/CrossRegionPartitionTests.cs`) is the partition suite:
+  - two regions of two members each (a catalog primary and its follower);
+  - a link that drops, delays, duplicates and corrupts replies, with a partition and a heal;
+  - member restarts on both sides, while writers on every member put and delete;
+  - checks that every member converges on the same state, that every acknowledged write nobody else wrote is
+    there, and that every document holds a value some writer sent.
+  - The seed it prints repeats a run.
 
 ## Live check
 

@@ -8,16 +8,36 @@ namespace TerraBase.Testing;
 /// link serves it: a request to another cell gets one reply (the link imports each cell's <c>query</c> subjects as a
 /// Singleton service), and a request to a subject nobody serves fails as NATS's no-responders does. Within a cell every
 /// responder answers a scattered request. <see cref="Partition"/> cuts two cells apart, as a dropped link would, until
-/// <see cref="Heal"/>.
+/// <see cref="Heal"/>. <see cref="Faults"/> makes the link lossy.
 /// </summary>
 internal sealed class FakeRegionNetwork
 {
     private readonly Lock _gate = new();
-    private readonly List<(string Cell, string Subject, Func<ReadOnlyMemory<byte>, CancellationToken, ValueTask<byte[]>> Answer)> _responders = [];
-    private readonly HashSet<(string, string)> _cut = [];
+    private Random _random = new(0);
+    private RegionFaults? _faults;
+    private int _dropped;
+    private int _corrupted;
 
-    /// <summary>The bus of a server in <paramref name="cell"/>.</summary>
-    public IRegionBus Join(string cell) => new Bus(this, cell);
+    /// <summary>Requests or replies <see cref="Faults"/> lost so far.</summary>
+    public int Dropped => Volatile.Read(ref _dropped);
+
+    /// <summary>Replies <see cref="Faults"/> corrupted so far.</summary>
+    public int Corrupted => Volatile.Read(ref _corrupted);
+    private readonly List<(string Cell, string? Node, string Subject, Func<ReadOnlyMemory<byte>, CancellationToken, ValueTask<byte[]>> Answer)> _responders = [];
+    private readonly HashSet<(string, string)> _cut = [];
+    private readonly HashSet<string> _muted = [with(StringComparer.Ordinal)];
+
+    /// <summary>The bus of a server in <paramref name="cell"/>, named <paramref name="node"/> for <see cref="Mute"/>.</summary>
+    public IRegionBus Join(string cell, string? node = null) => new Bus(this, cell, node);
+
+    /// <summary>The server joined as <paramref name="node"/> answers no request until <see cref="Heal"/>, as a member cut off from the link.</summary>
+    public void Mute(string node)
+    {
+        lock (_gate)
+        {
+            _ = _muted.Add(node);
+        }
+    }
 
     /// <summary>Requests between <paramref name="a"/> and <paramref name="b"/> find no responder from now on.</summary>
     public void Partition(string a, string b)
@@ -29,12 +49,27 @@ internal sealed class FakeRegionNetwork
         }
     }
 
+    /// <summary>Faults on every request between cells from now on, or none; the seed makes a run repeatable.</summary>
+    public RegionFaults? Faults
+    {
+        get => Volatile.Read(ref _faults);
+        set
+        {
+            lock (_gate)
+            {
+                _random = new Random(value?.Seed ?? 0);
+                _faults = value;
+            }
+        }
+    }
+
     /// <summary>Every cell reaches every other again.</summary>
     public void Heal()
     {
         lock (_gate)
         {
             _cut.Clear();
+            _muted.Clear();
         }
     }
 
@@ -42,29 +77,80 @@ internal sealed class FakeRegionNetwork
     {
         lock (_gate)
         {
-            var responders = _responders.Where(responder => responder.Subject == subject && !_cut.Contains((from, responder.Cell))).ToList();
+            var responders = _responders.Where(responder => responder.Subject == subject && !_cut.Contains((from, responder.Cell))
+                && (responder.Node is null || !_muted.Contains(responder.Node))).ToList();
             return [.. responders.Take(responders.Any(responder => responder.Cell != from) ? 1 : responders.Count).Select(responder => responder.Answer)];
         }
     }
 
-    private sealed class Bus(FakeRegionNetwork network, string cell) : IRegionBus
+    // The reply of answer, through the faults: null when the request or its reply is lost.
+    private async ValueTask<byte[]?> CallAsync(
+        Func<ReadOnlyMemory<byte>, CancellationToken, ValueTask<byte[]>> answer, ReadOnlyMemory<byte> request, CancellationToken cancellationToken)
+    {
+        double drop, duplicate, corrupt, delay, position;
+        RegionFaults? faults;
+        lock (_gate)
+        {
+            faults = _faults;
+            (drop, duplicate, corrupt, delay, position) = (_random.NextDouble(), _random.NextDouble(), _random.NextDouble(), _random.NextDouble(), _random.NextDouble());
+        }
+
+        if (faults is null)
+        {
+            return await answer(request.ToArray(), cancellationToken);
+        }
+
+        await Task.Delay(faults.MaxDelay * delay, cancellationToken);
+        if (drop < faults.Drop)
+        {
+            _ = Interlocked.Increment(ref _dropped);
+            return null;
+        }
+
+        var reply = await answer(request.ToArray(), cancellationToken);
+        if (duplicate < faults.Duplicate)
+        {
+            // The responder got the request twice; the asking member takes the second answer.
+            reply = await answer(request.ToArray(), cancellationToken);
+        }
+
+        if (corrupt < faults.Corrupt && reply.Length > 0)
+        {
+            reply = [.. reply];
+            reply[(int)(position * reply.Length)] ^= 0x5a;
+            _ = Interlocked.Increment(ref _corrupted);
+        }
+
+        return reply;
+    }
+
+    private sealed class Bus(FakeRegionNetwork network, string cell, string? node) : IRegionBus
     {
         public async IAsyncEnumerable<ReadOnlyMemory<byte>> RequestManyAsync(string subject, ReadOnlyMemory<byte> request, [EnumeratorCancellation] CancellationToken cancellationToken)
         {
             foreach (var answer in network.Responders(cell, subject))
             {
-                yield return await answer(request.ToArray(), cancellationToken);
+                if (await network.CallAsync(answer, request, cancellationToken) is { } reply)
+                {
+                    yield return reply;
+                }
             }
         }
 
         public async ValueTask<ReadOnlyMemory<byte>> RequestAsync(string subject, ReadOnlyMemory<byte> request, CancellationToken cancellationToken) =>
             network.Responders(cell, subject) is [var answer, ..]
-                ? await answer(request.ToArray(), cancellationToken)
+                ? await network.CallAsync(answer, request, cancellationToken) ?? throw new IOException("the request timed out")
                 : throw new IOException("no responders");
 
         public async Task ServeAsync(string subject, Func<ReadOnlyMemory<byte>, CancellationToken, ValueTask<byte[]>> answer, CancellationToken cancellationToken)
         {
-            var responder = (cell, subject, answer);
+            // As on NATS, a responder answers within its own lifetime, not the asking member's: it stops with its server.
+            async ValueTask<byte[]> ServedAsync(ReadOnlyMemory<byte> request, CancellationToken asking)
+            {
+                return await answer(request, cancellationToken).AsTask().WaitAsync(asking);
+            }
+
+            var responder = (cell, node, subject, (Func<ReadOnlyMemory<byte>, CancellationToken, ValueTask<byte[]>>)ServedAsync);
             lock (network._gate)
             {
                 network._responders.Add(responder);
@@ -84,3 +170,9 @@ internal sealed class FakeRegionNetwork
         }
     }
 }
+
+/// <summary>
+/// Faults of a <see cref="FakeRegionNetwork"/>: the probability that a request or its reply is lost, that the responder
+/// gets the request twice, and that one byte of the reply is corrupted, and the longest delay before an answer.
+/// </summary>
+internal sealed record RegionFaults(double Drop, double Duplicate, double Corrupt, TimeSpan MaxDelay, int Seed);

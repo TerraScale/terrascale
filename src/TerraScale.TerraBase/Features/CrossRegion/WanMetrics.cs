@@ -24,9 +24,9 @@ internal sealed class WanMetrics
             "terrabase.wan.failures", "{failure}",
             "Cross-region failures, by region and reason: heads (no member answered), pull (a request failed), apply (a group was refused), ahead (an origin went back in time).");
         meter.CreateObservableGauge("terrabase.wan.lag", () => Measure(round => round.Lag), "{group}",
-            "Change groups other regions' members committed that this member has not applied, as of its last round, by region.");
+            "Change groups the members of another region that answered this member's last round committed and this member has not applied, by region.");
         meter.CreateObservableGauge("terrabase.wan.staleness", () => Measure(round => time.GetElapsedTime(round.CaughtUp ?? started).TotalSeconds), "s",
-            "Seconds since this member last held every change group another region reported, by region; 0 right after a caught-up round.");
+            "Seconds since a round of this member reached every member another region lists and held all their change groups, by region.");
         meter.CreateObservableGauge("terrabase.wan.members", () => Measure(round => round.Members), "{member}",
             "Members of another region that answered this member's last round, by region.");
         meter.CreateObservableGauge("terrabase.wan.unregistered", () => Measure(round => round.Unregistered), "{database}",
@@ -38,12 +38,15 @@ internal sealed class WanMetrics
         }
     }
 
-    /// <summary>A region's round ended: <paramref name="lag"/> groups behind; a round with no lag records the time.</summary>
-    public void Rounded(string region, long lag, int members, int unregistered, long now) =>
+    /// <summary>
+    /// A region's round ended: <paramref name="lag"/> groups behind the members that answered; a round that held every group
+    /// of every member the region lists (<paramref name="caughtUp"/>) records the time.
+    /// </summary>
+    public void Rounded(string region, long lag, int members, int unregistered, bool caughtUp, long now) =>
         _rounds.AddOrUpdate(
             region,
-            _ => new Round(lag, members, unregistered, lag == 0 ? now : null),
-            (_, last) => new Round(lag, members, unregistered, lag == 0 ? now : last.CaughtUp));
+            _ => new Round(lag, members, unregistered, caughtUp ? now : null),
+            (_, last) => new Round(lag, members, unregistered, caughtUp ? now : last.CaughtUp));
 
     /// <summary>No member of the region answered the heads: its lag is unknown, and staleness keeps growing.</summary>
     public void Unanswered(string region) =>
