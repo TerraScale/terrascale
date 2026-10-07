@@ -304,8 +304,11 @@ public sealed class CrossRegionTests
             (await regions.GruApi.Client.GetAsync(regions.Management($"databases/{id}"), token)).StatusCode == HttpStatusCode.NotFound);
         using var gone = await regions.Gru.GetAsync(new Uri($"{brief}/collections/items", UriKind.Relative));
         await Assert.That(gone.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+        // The catalog tombstone becomes visible before its committed cleanup intent removes the file.
+        var file = Path.Combine(regions.GruApi.Server.DataDirectory, regions.Organization, regions.Project, id + ".db");
+        await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(!File.Exists(file)));
         // Deleted for good: gru never takes it again, whatever an older head still says.
-        await Assert.That(File.Exists(Path.Combine(regions.GruApi.Server.DataDirectory, regions.Organization, regions.Project, id + ".db"))).IsFalse();
+        await Assert.That(File.Exists(file)).IsFalse();
     }
 
     [Test]
