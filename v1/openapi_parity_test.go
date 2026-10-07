@@ -129,7 +129,7 @@ func TestOpenAPIParityEnums(t *testing.T) {
 		v1.ErrUnknownDatabase, v1.ErrUnknownCollection, v1.ErrUnknownRoute, v1.ErrMethodNotAllowed, v1.ErrNameTaken,
 		v1.ErrPatchConflict, v1.ErrPreconditionFailed, v1.ErrPayloadTooLarge, v1.ErrUnsupportedMediaType,
 		v1.ErrRateLimited, v1.ErrInternalError, v1.ErrCapacity, v1.ErrStorageUnavailable, v1.ErrStoredCorruption,
-		v1.ErrCommitUncertain, v1.ErrDependenciesUnavail,
+		v1.ErrCommitUncertain, v1.ErrDependenciesUnavail, v1.ErrDatabaseReplicated, v1.ErrWrongRegion,
 	} {
 		known[string(c)] = true
 	}

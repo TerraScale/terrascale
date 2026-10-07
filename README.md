@@ -127,6 +127,17 @@ means an unknown id or an organization the user is not a member of; bare
 message errors map to `ErrInvalidRequest` (400), `ErrForbidden` (403, role too
 low) and `ErrConflict` (409). A rejected token or credential is `ErrInvalidKey`.
 
+Databases are placed in Atlas region ids such as `gru-1` (not `RegionCode`):
+`ManagedDatabase` reports `Region` (the answering node), `HomeRegion` and
+`ReplicaRegions`. `CreateDatabaseIn(ctx, org, project, name, tb.Placement{HomeRegion: "gru-1",
+ReplicaRegions: []string{"sfo-1"}})` places a new database (an empty home is
+the called region), `SetDatabaseRegions` replaces the replica list (the home
+never changes), and deleting a replicated database fails with
+`ErrDatabaseReplicated`. A region outside the placement answers 421
+`ErrWrongRegion`, on Management and Documents routes alike, and the
+`*tb.APIError` carries `HomeRegion` and `Regions`. The client never retries
+it elsewhere: resolve the region through Atlas.
+
 Served by TerraBase but not in the client yet (TS-590 adds them): shapes,
 database tooling (backups, indexes, schema, project usage, SQL check) and saved queries,
 project API keys, invitation lookup and Management commits. Not served:

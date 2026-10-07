@@ -43,6 +43,11 @@ const (
 	ErrStoredCorruption     ErrorCode = "stored_corruption"
 	ErrCommitUncertain      ErrorCode = "commit_uncertain" // also matches mutation transport failures; the write may have committed
 	ErrDependenciesUnavail  ErrorCode = "dependencies_unavailable"
+	ErrDatabaseReplicated   ErrorCode = "database_replicated" // 409: delete of a database with replica regions
+	// ErrWrongRegion is a 421: the database is not placed in the called
+	// region. APIError.HomeRegion and Regions name where it is. The client
+	// never retries it elsewhere: resolve the region through Atlas.
+	ErrWrongRegion ErrorCode = "wrong_region"
 )
 
 // Codes synthesized for Management responses whose body is a plain JSON
@@ -72,6 +77,11 @@ type APIError struct {
 	ETag string
 	// Body is the raw error object or message.
 	Body json.RawMessage
+	// HomeRegion and Regions are the database's home and every region that
+	// holds it, as Atlas region ids (X-TerraBase-Database-Home and
+	// X-TerraBase-Database-Regions), on a 421 ErrWrongRegion.
+	HomeRegion string
+	Regions    []string
 
 	retryAfterSet bool
 }
@@ -103,7 +113,12 @@ func (e *APIError) OpIndex() (int, bool) {
 }
 
 func parseAPIError(status int, h http.Header, body []byte) *APIError {
-	e := &APIError{Status: status, ETag: unquoteETag(h.Get("ETag"))}
+	e := &APIError{
+		Status:     status,
+		ETag:       unquoteETag(h.Get("ETag")),
+		HomeRegion: h.Get("X-TerraBase-Database-Home"),
+		Regions:    strings.FieldsFunc(h.Get("X-TerraBase-Database-Regions"), func(r rune) bool { return r == ',' || r == ' ' }),
+	}
 	e.RetryAfter, e.retryAfterSet = parseRetryAfter(h)
 	var env struct {
 		Error json.RawMessage `json:"error"`

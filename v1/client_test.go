@@ -1,13 +1,16 @@
 package v1_test
 
 // Checks that need no server: configuration and inputs the client rejects
-// before sending anything. Everything that talks to TerraBase is in
+// before sending anything, and the requests of routes the pinned release does
+// not serve yet. Everything that talks to TerraBase is in
 // integration_test.go, against the real executable.
 
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 
@@ -161,5 +164,41 @@ func TestLocalRejection(t *testing.T) {
 	}
 	if resolver.calls != 0 {
 		t.Fatalf("invalid input triggered %d resolutions", resolver.calls)
+	}
+}
+
+// captureTransport records each request as "METHOD /path body" and fails it
+// without answering: it checks what the client sends, never fakes TerraBase.
+type captureTransport struct{ got []string }
+
+func (c *captureTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	body, _ := io.ReadAll(r.Body)
+	c.got = append(c.got, r.Method+" "+r.URL.EscapedPath()+" "+string(body))
+	return nil, errors.New("captured")
+}
+
+// TestDatabasePlacementRequests checks the region placement requests
+// (TS-643), which the pinned release does not serve yet.
+func TestDatabasePlacementRequests(t *testing.T) {
+	capture := &captureTransport{}
+	m, err := v1.NewManagement(v1.Config{BaseURL: "https://tb.example", HTTPClient: &http.Client{Transport: capture}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	u, ctx := m.WithToken("access-token"), t.Context()
+	// Every call fails at the transport; only the requests matter.
+	u.CreateDatabase(ctx, testOrg, testProject, "orders")
+	u.CreateDatabaseIn(ctx, testOrg, testProject, "orders", v1.Placement{HomeRegion: "gru-1", ReplicaRegions: []string{"sfo-1"}})
+	u.SetDatabaseRegions(ctx, testOrg, testProject, "db-1", []string{"sfo-1"})
+	u.SetDatabaseRegions(ctx, testOrg, testProject, "db-1", nil)
+	const databases = "/v1/management/organizations/" + testOrg + "/projects/" + testProject + "/databases"
+	want := []string{
+		"POST " + databases + ` {"name":"orders"}`,
+		"POST " + databases + ` {"name":"orders","homeRegion":"gru-1","replicaRegions":["sfo-1"]}`,
+		"PATCH " + databases + `/db-1 {"replicaRegions":["sfo-1"]}`,
+		"PATCH " + databases + `/db-1 {"replicaRegions":[]}`, // nil clears the replicas
+	}
+	if !slices.Equal(capture.got, want) {
+		t.Fatalf("sent\n%s\nwant\n%s", strings.Join(capture.got, "\n"), strings.Join(want, "\n"))
 	}
 }

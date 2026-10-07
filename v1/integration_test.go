@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"os"
 	"slices"
@@ -72,12 +73,13 @@ type recorder struct {
 	f    *fault
 }
 
-// fault answers the first armed-method request with status and body. With
-// after, the request first reaches the server (a lost response).
+// fault answers the first armed-method request with status, body and extra
+// header. With after, the request first reaches the server (a lost response).
 type fault struct {
 	method string
 	status int
 	body   string
+	header http.Header
 	err    error
 	after  bool
 	hits   int
@@ -112,9 +114,11 @@ func (r *recorder) RoundTrip(req *http.Request) (*http.Response, error) {
 		if f.err != nil {
 			return nil, f.err
 		}
+		header := http.Header{"Content-Type": {"application/json"}, "Retry-After": {"0"}}
+		maps.Copy(header, f.header)
 		return &http.Response{
 			StatusCode: f.status, Status: http.StatusText(f.status), Proto: "HTTP/2.0", ProtoMajor: 2,
-			Header:  http.Header{"Content-Type": {"application/json"}, "Retry-After": {"0"}},
+			Header:  header,
 			Body:    io.NopCloser(strings.NewReader(f.body)),
 			Request: req,
 		}, nil
@@ -253,7 +257,7 @@ func testManagement(t *testing.T, tb *terrabasetest.Server, hc *http.Client) {
 	}
 
 	db := must(ana.CreateDatabase(ctx, org.ID, project.ID, "main"))(t)
-	if db.ProjectID != project.ID || db.BranchedFrom != nil {
+	if db.ProjectID != project.ID || db.BranchedFrom != nil || db.Region == "" {
 		t.Fatalf("database: %+v", db)
 	}
 	branch := must(ana.BranchDatabase(ctx, org.ID, project.ID, db.ID, "main-copy"))(t)
@@ -638,7 +642,7 @@ func testRetries(t *testing.T, tb *terrabasetest.Server, hc *http.Client, rec *r
 		t.Fatal(err)
 	}
 	db := c.Database(project.ID, "main")
-	must(db.Create(ctx))(t)
+	info := must(db.Create(ctx))(t)
 	must(db.CreateCollection(ctx, "items"))(t)
 	items := db.Collection("items")
 	id := v1.DocumentIDFor("items", "a")
@@ -697,6 +701,29 @@ func testRetries(t *testing.T, tb *terrabasetest.Server, hc *http.Client, rec *r
 			err := tc.call()
 			if n := hits(); n != tc.tries || (err == nil) != tc.wantOK {
 				t.Fatalf("%d requests (want %d), err %v", n, tc.tries, err)
+			}
+		})
+	}
+	// A region outside the database's placement answers 421 with where it
+	// is; the client returns it, never retrying elsewhere.
+	wrongRegion := fault{method: "GET", status: http.StatusMisdirectedRequest,
+		body: `{"error":{"code":"wrong_region","message":"database is not placed in iad-1"}}`,
+		header: http.Header{
+			"X-Terrabase-Database-Home":    {"gru-1"},
+			"X-Terrabase-Database-Regions": {"gru-1,sfo-1"},
+			"X-Terrabase-Region":           {"iad-1"},
+		}}
+	for name, call := range map[string]func() error{
+		"documents":  func() error { _, err := items.Get(ctx, id); return err },
+		"management": func() error { _, err := u.Database(ctx, org.ID, project.ID, info.ID); return err },
+	} {
+		t.Run("wrong region "+name, func(t *testing.T) {
+			hits := rec.arm(wrongRegion)
+			err := call()
+			var apiErr *v1.APIError
+			if n := hits(); n != 1 || !errors.Is(err, v1.ErrWrongRegion) || !errors.As(err, &apiErr) ||
+				apiErr.Status != 421 || apiErr.HomeRegion != "gru-1" || !slices.Equal(apiErr.Regions, []string{"gru-1", "sfo-1"}) {
+				t.Fatalf("%d requests, err %v (%+v)", n, err, apiErr)
 			}
 		})
 	}
