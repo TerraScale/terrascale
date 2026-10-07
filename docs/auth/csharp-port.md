@@ -242,7 +242,9 @@ validates the request first and answers protocol errors itself.
   `aud` = every `TS_AUTH_ACCESS_TOKEN_AUDIENCES` value (set as OpenIddict
   resources, kept as written), and a user's `email` and `email_verified`
   whatever the scopes. Identity tokens keep `typ` `JWT` and `aud` = the client
-  id. The private `ts_auth_epoch` claim stays inside codes and refresh tokens.
+  id. The private `ts_auth_epoch` claim rides in codes and refresh tokens and,
+  since TS-598, in access tokens, where the platform management API compares it
+  with the user's current epoch.
 - Client credentials: service clients from `TS_AUTH_SERVICE_CLIENTS` have only
   the token endpoint and client-credentials permissions. Their access token has
   `sub` = the client id (ids can never be UUIDs, so they cannot collide with a
@@ -540,6 +542,89 @@ failure.
 - Rolling out: replicas of an older release ignore `purpose` and would accept
   a reset code on the hosted sign-in page (which needs the inbox anyway); they
   never write users, so they cannot drop a password hash.
+
+## Platform management API (TS-598)
+
+ts-auth owns the platform's organizations and projects (epic TS-597). The
+contract is [`platform-contract.md`](platform-contract.md) with
+[`platform-api.openapi.yaml`](platform-api.openapi.yaml); a fast test checks
+that every served `/v1/terrascale/…` operation appears there with the same
+path, method and operationId. The code is in
+`src/TerraScale.Auth/Features/Platform/`. This slice serves organizations,
+organization members, projects and explicit project roles; invitations,
+ownership transfer, audit and API keys follow.
+
+### Authentication
+
+`PlatformAuthentication` accepts only the caller's own sign-in access token
+of the platform tenant: an ES256 `at+jwt` validated against the tenant's key
+ring with `Jwt.ValidateAsync` (issuer, `aud` including the issuer, expiry, no
+clock skew). Sign-in tokens now carry the issuer as an extra audience
+(`OidcIssuer.SignInAudiences`); service-client tokens do not, so they are
+refused, as are identity tokens (`typ` `JWT`). Every request reads the user
+and, from the TerraBase stores rather than OpenIddict's managers and their
+entity cache, the authorization and token entries the token names, so a revoked
+sign-in (RFC 7009, refresh-token reuse) is refused at once on every replica.
+Sign-in access tokens carry the user's authentication epoch (`ts_auth_epoch`),
+so after sign-out everywhere or a password reset the API refuses every token
+issued before. A refused call is `401 unauthorized` with
+`WWW-Authenticate: Bearer`.
+
+### Storage and consistency
+
+| Collection | Address | Holds |
+| --- | --- | --- |
+| `organizations` | id | name, creator, and the owner and project counts |
+| `memberships` | `{organization}/{user}` | the organization role; none for a collaborator |
+| `projects` | id | organization, name, creator |
+| `project_members` | `{project}/{user}` | an explicit project role |
+
+Project names are reserved in `uniques` (kind `project-name`, key
+`{organization}/{name in invariant uppercase}`, which matches an ordinal
+ignore-case comparison, so `ς` and `σ` are one name). Ids are UUIDv7.
+
+Each change is one TerraBase transaction (`AuthStore.TransactAsync`), and
+every write in it is create-only or conditional on the version read:
+
+- The transaction asserts the role that authorized the caller (its membership
+  or project role document, filtered on `role`) at the version its check
+  read, so a caller demoted or removed meanwhile cannot finish. TerraBase
+  refuses two operations on one document, so when the transaction also writes
+  that document, `AuthStore.TransactAsync` leaves the assertion out only if
+  the write names the same version, and otherwise fails the attempt. A
+  caller changing its own records writes the versions its check read.
+- Owner changes and project creation or deletion rewrite the organization
+  with its counts, so the last owner is never lost and an organization with
+  projects is never deleted, whatever runs concurrently.
+- Every user with any access to an organization has a membership; a
+  collaborator's has no role. Every grant rewrites (or creates) it, removing
+  a collaborator's last project role deletes it, and removing a member or
+  collaborator deletes it at the version it read with every project role it
+  found. So a grant and a removal racing each other never leave the removed
+  user a project role.
+- A transaction that lost a race is read and checked again, at most four
+  times, then answers 503.
+
+Deleting an organization or project first deletes it in a transaction, then
+deletes its memberships or project roles one by one. Every check reads the
+organization and project first, so what a failed clean-up leaves grants
+nothing; the failure is logged.
+
+### Limits
+
+- Lists page inside TerraBase: a filtered query sorted by the list's key,
+  `limit` items at a time, and `next` is TerraBase's own cursor, bound to that
+  list (any other answers 400). TerraBase has no field indexes yet, so the
+  filter still scans the collection inside SQLite, and a field sort admits at
+  most 10,000 matching documents (one organization's members or projects,
+  one user's organizations). A user's grants in one organization are read
+  whole, since there is at most one per project.
+- Accounts are never deleted today; a member whose account is missing is left
+  out of member lists.
+- The management API has no per-caller rate limit yet: every call needs a
+  signed-in user, and the edge limits volume.
+- `/readyz` requires the four collections: create them in the live `auth`
+  database (`AuthStore.ProvisionAsync`) before rolling out.
 
 ## Production activation gate
 

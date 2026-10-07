@@ -366,8 +366,9 @@ does not start or embed TerraBase; the integration-test fixture starts the
 SDK-pinned binary. `/readyz` checks the existing `uniques`,
 `verification_tokens`, `storage_health`, `users`, `sessions`, `passcodes`,
 `signing_key_rings`, `oidc_applications`, `oidc_authorizations`,
-`oidc_tokens`, `rate_limits`, `email_configs` and `email_config_versions`
-collections, then creates, reads
+`oidc_tokens`, `rate_limits`, `email_configs`, `email_config_versions`,
+`organizations`, `memberships`, `projects` and `project_members` collections,
+then creates, reads
 and conditionally deletes a synthetic document in `storage_health`. It returns
 200 only on success, otherwise 503, without provisioning, repair or in-memory
 fallback. Observations coalesce and are cached for one second after
@@ -392,12 +393,14 @@ the provisioning plan; live production execution belongs to TS-470:
    existing database. It creates `uniques`, `verification_tokens` and
    `storage_health`, the TS-490 `users`, `sessions` and `passcodes`, the
    TS-488 `signing_key_rings` and `rate_limits`, the TS-491 `oidc_applications`,
-   `oidc_authorizations` and `oidc_tokens`, and the TS-583 `email_configs` and
-   `email_config_versions` collections; later feature streams own their other
-   collections. `/readyz` requires all thirteen, so a database provisioned
-   before TS-583 reports 503 until this step is repeated. Run it before rolling
-   out a release that adds collections; a configured dashboard or service
-   client also stops startup while its collection is missing.
+   `oidc_authorizations` and `oidc_tokens`, the TS-583 `email_configs` and
+   `email_config_versions`, and the TS-598 `organizations`, `memberships`,
+   `projects` and `project_members` collections; later feature streams own
+   their other collections. `/readyz` requires all seventeen, so a database
+   provisioned before a release that adds one (TS-583, TS-598) reports 503
+   until this step is repeated. Run it before rolling out a release that adds
+   collections; a configured dashboard or service client also stops startup
+   while its collection is missing.
 4. Configure every replica with `<ts-auth-project-uuid>/auth` and the same
    explicitly resolved HTTPS storage authority and shared auth settings.
 

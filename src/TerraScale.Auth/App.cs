@@ -4,6 +4,7 @@ using TerraScale.Auth.Features.Headless;
 using TerraScale.Auth.Features.Identity;
 using TerraScale.Auth.Features.Observability;
 using TerraScale.Auth.Features.Oidc;
+using TerraScale.Auth.Features.Platform;
 using TerraScale.Auth.Features.RateLimiting;
 using TerraScale.Auth.Features.SignIn;
 using TerraScale.Auth.Features.SigningKeys;
@@ -58,6 +59,8 @@ public static partial class App
         builder.Services.AddSingleton<Passcodes>();
         builder.Services.AddSingleton<PasswordHasher>();
         builder.Services.AddSingleton<HeadlessAuth>();
+        builder.Services.AddSingleton<PlatformDirectory>();
+        builder.Services.AddSingleton<PlatformAuthentication>();
         builder.Services.AddHostedService<SessionPruner>();
         builder.Services.AddSingleton<IStorageHealth, TerraBaseStorageHealth>();
         builder.Services.AddSingleton<ReadinessProbe>();

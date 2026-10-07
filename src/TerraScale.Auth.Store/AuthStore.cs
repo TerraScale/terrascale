@@ -48,6 +48,18 @@ public sealed class AuthStore(TerraBaseDatabase database, TimeProvider clock)
     /// <summary>OpenID Connect token entries, addressed by instance and id.</summary>
     public const string OidcTokenCollection = "oidc_tokens";
 
+    /// <summary>Platform organizations, addressed by instance and id (TS-598).</summary>
+    public const string OrganizationCollection = "organizations";
+
+    /// <summary>Organization roles, addressed by instance and <c>{organization}/{user}</c>.</summary>
+    public const string MembershipCollection = "memberships";
+
+    /// <summary>Projects, addressed by instance and id.</summary>
+    public const string ProjectCollection = "projects";
+
+    /// <summary>Explicit project roles, addressed by instance and <c>{project}/{user}</c>.</summary>
+    public const string ProjectMemberCollection = "project_members";
+
     /// <summary>
     /// Every collection the service needs; provisioning creates them and readiness requires them. <c>signing_key_rings</c>
     /// belongs to the TS-488 key ring, which signs OpenID Connect tokens; <c>rate_limits</c> to the TS-488 attempt limiter,
@@ -59,6 +71,7 @@ public sealed class AuthStore(TerraBaseDatabase database, TimeProvider clock)
         UniqueCollection, ChallengeCollection, HealthCollection, UserCollection, SessionCollection, PasscodeCollection,
         "signing_key_rings", OidcApplicationCollection, OidcAuthorizationCollection, OidcTokenCollection,
         "rate_limits", "email_configs", "email_config_versions",
+        OrganizationCollection, MembershipCollection, ProjectCollection, ProjectMemberCollection,
     ];
 
     private static readonly UTF8Encoding StrictUtf8 = new(false, true);
@@ -193,13 +206,23 @@ public sealed class AuthStore(TerraBaseDatabase database, TimeProvider clock)
     /// Every document of the instance in <paramref name="collection"/> whose string field at the JSON Pointer
     /// <paramref name="field"/> equals <paramref name="value"/>. Callers recheck what they read.
     /// </summary>
-    public async IAsyncEnumerable<TerraBaseDocument> QueryAsync(string collection, string instanceId, string field, string value, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    public IAsyncEnumerable<TerraBaseDocument> QueryAsync(string collection, string instanceId, string field, string value, CancellationToken cancellationToken = default) =>
+        this.QueryAsync(collection, instanceId, [(field, value)], cancellationToken);
+
+    /// <summary>
+    /// Every document of the instance in <paramref name="collection"/> whose string fields at the JSON Pointers in
+    /// <paramref name="equals"/> equal their values. Callers recheck what they read.
+    /// </summary>
+    public async IAsyncEnumerable<TerraBaseDocument> QueryAsync(string collection, string instanceId, IReadOnlyList<(string Field, string Value)> equals, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        var condition = new JsonObject
+        ArgumentNullException.ThrowIfNull(equals);
+        var conditions = new JsonArray(new JsonObject { ["eq"] = new JsonArray("/instanceId", instanceId) });
+        foreach (var (field, value) in equals)
         {
-            ["and"] = new JsonArray(new JsonObject { ["eq"] = new JsonArray("/instanceId", instanceId) }, new JsonObject { ["eq"] = new JsonArray(field, value) }),
-        };
-        using var parsed = JsonDocument.Parse(condition.ToJsonString());
+            conditions.Add(new JsonObject { ["eq"] = new JsonArray(field, value) });
+        }
+
+        using var parsed = JsonDocument.Parse(new JsonObject { ["and"] = conditions }.ToJsonString());
         var filter = parsed.RootElement.Clone();
         string? cursor = null;
         do
@@ -308,6 +331,134 @@ public sealed class AuthStore(TerraBaseDatabase database, TimeProvider clock)
         }
     }
 
+    /// <summary>
+    /// Commits <paramref name="operations"/> in one TerraBase transaction: all of them or none. Returns null on success,
+    /// or the index of the operation whose precondition or assertion failed (another writer won, or a claim is taken).
+    /// Assertions see the state before the transaction's writes. TerraBase refuses two operations on one document, so an
+    /// assertion made at a version (<see cref="Require"/>) on a document another operation writes at a version is left
+    /// out when the two versions are the same (that write requires exactly what the caller checked), and otherwise fails
+    /// the transaction at the assertion's index without sending it: the document changed between the caller's reads.
+    /// </summary>
+    public async Task<int?> TransactAsync(IReadOnlyList<StoreOperation> operations, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(operations);
+        var pinned = operations.Where(operation => operation.Operation.IfMatch is not null)
+            .ToDictionary(operation => (operation.Operation.Collection, operation.Operation.Id), operation => operation.Operation.IfMatch);
+        var sent = new List<(StoreOperation Operation, int Index)>();
+        for (var index = 0; index < operations.Count; index++)
+        {
+            var operation = operations[index];
+            if (operation.Operation.Op == "assert" && pinned.TryGetValue((operation.Operation.Collection, operation.Operation.Id), out var version))
+            {
+                if (operation.CheckedVersion is null)
+                {
+                    throw new ArgumentException("An assertion on a document the transaction writes needs the version it was checked at.", nameof(operations));
+                }
+
+                if (operation.CheckedVersion != version)
+                {
+                    return index;
+                }
+
+                continue;
+            }
+
+            sent.Add((operation, index));
+        }
+
+        try
+        {
+            await database.TransactAsync([.. sent.Select(item => item.Operation.Operation)], cancellationToken).ConfigureAwait(false);
+            return null;
+        }
+        catch (TerraBasePreconditionFailedException error) when (error.ErrorCode == "precondition_failed" && error.OperationIndex is { } index && index < sent.Count)
+        {
+            return sent[index].Index;
+        }
+    }
+
+    /// <summary>Create-only write of an entity record.</summary>
+    public static StoreOperation Create(string collection, string instanceId, string key, JsonElement record)
+    {
+        RequireEntityCollection(collection);
+        return new(TerraBaseTransactionOperation.Create(collection, record, NaturalKeyId(instanceId, collection, key)));
+    }
+
+    /// <summary>Replaces an entity record only at <paramref name="version"/>.</summary>
+    public static StoreOperation Replace(string collection, string instanceId, string key, JsonElement record, string version)
+    {
+        RequireEntityCollection(collection);
+        ArgumentException.ThrowIfNullOrEmpty(version);
+        return new(TerraBaseTransactionOperation.Put(collection, NaturalKeyId(instanceId, collection, key), record, version));
+    }
+
+    /// <summary>Deletes an entity record only at <paramref name="version"/>.</summary>
+    public static StoreOperation Delete(string collection, string instanceId, string key, string version)
+    {
+        RequireEntityCollection(collection);
+        ArgumentException.ThrowIfNullOrEmpty(version);
+        return new(TerraBaseTransactionOperation.Delete(collection, NaturalKeyId(instanceId, collection, key), version));
+    }
+
+    /// <summary>
+    /// Asserts that an entity record exists and matches a TerraBase query <paramref name="filter"/>. Pass the
+    /// <paramref name="checkedVersion"/> the caller read when it checked the same condition itself (see
+    /// <see cref="TransactAsync"/>).
+    /// </summary>
+    public static StoreOperation Require(string collection, string instanceId, string key, JsonElement filter, string? checkedVersion = null)
+    {
+        RequireEntityCollection(collection);
+        return new(TerraBaseTransactionOperation.Assert(collection, NaturalKeyId(instanceId, collection, key), filter)) { CheckedVersion = checkedVersion };
+    }
+
+    /// <summary>
+    /// One page of the instance's documents in <paramref name="collection"/> matching every condition (TerraBase query
+    /// filters), sorted by <paramref name="sort"/> then id. <paramref name="cursor"/> is a previous page's
+    /// <c>NextCursor</c> for the same conditions and sort; TerraBase refuses any other (<c>invalid_cursor</c>).
+    /// </summary>
+    public Task<TerraBaseDocumentPage> PageAsync(string collection, string instanceId, IReadOnlyList<JsonObject> conditions, IReadOnlyList<string> sort, int limit, string? cursor, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(conditions);
+        ArgumentNullException.ThrowIfNull(sort);
+        var all = new JsonArray(new JsonObject { ["eq"] = new JsonArray("/instanceId", instanceId) });
+        foreach (var condition in conditions)
+        {
+            all.Add(condition.DeepClone());
+        }
+
+        using var parsed = JsonDocument.Parse(new JsonObject { ["and"] = all }.ToJsonString());
+        return database.QueryAsync(collection, new TerraBaseQuery
+        {
+            Filter = parsed.RootElement.Clone(),
+            Sort = [.. sort.Select(path => new TerraBaseSort(path))],
+            Cursor = cursor,
+            Limit = limit,
+        }, cancellationToken);
+    }
+
+    /// <summary>Reserves a scoped natural key for <paramref name="ownerId"/>; fails when it is taken.</summary>
+    public static StoreOperation Claim(string instanceId, string kind, string normalizedKey, string ownerId)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(ownerId);
+        var claim = JsonSerializer.SerializeToElement(new UniqueClaim(instanceId, kind, ownerId), StoreJsonContext.Default.UniqueClaim);
+        return new(TerraBaseTransactionOperation.Create(UniqueCollection, claim, NaturalKeyId(instanceId, kind, normalizedKey)));
+    }
+
+    /// <summary>Releases a scoped natural key at the <paramref name="version"/> its owner read (<see cref="FindUniqueAsync"/>).</summary>
+    public static StoreOperation Release(string instanceId, string kind, string normalizedKey, string version)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(version);
+        return new(TerraBaseTransactionOperation.Delete(UniqueCollection, NaturalKeyId(instanceId, kind, normalizedKey), version));
+    }
+
+    /// <summary>The owner and version of a scoped natural key, or <see langword="null"/> when it is unclaimed.</summary>
+    public async Task<(string OwnerId, string Version)?> FindUniqueAsync(string instanceId, string kind, string normalizedKey, CancellationToken cancellationToken = default)
+    {
+        var document = await database.GetDocumentAsync(UniqueCollection, NaturalKeyId(instanceId, kind, normalizedKey), cancellationToken).ConfigureAwait(false);
+        var claim = document?.Document.Deserialize(StoreJsonContext.Default.UniqueClaim);
+        return claim is not null && claim.InstanceId == instanceId && claim.Kind == kind ? (claim.OwnerId, document!.Version) : null;
+    }
+
     /// <summary>Creates a bound challenge with a lowercase SHA-256 digest, never the bearer secret.</summary>
     public async Task CreateChallengeAsync(string instanceId, string purpose, string tokenHash, string subjectId, DateTimeOffset expiresAt, CancellationToken cancellationToken = default)
     {
@@ -367,6 +518,17 @@ public sealed class AuthStore(TerraBaseDatabase database, TimeProvider clock)
             throw new ArgumentException("A challenge requires a lowercase SHA-256 digest.", nameof(tokenHash));
         }
     }
+}
+
+/// <summary>One operation of <see cref="AuthStore.TransactAsync"/>, built only by <see cref="AuthStore"/> so it addresses natural keys.</summary>
+public sealed class StoreOperation
+{
+    internal StoreOperation(TerraBaseTransactionOperation operation) => this.Operation = operation;
+
+    internal TerraBaseTransactionOperation Operation { get; }
+
+    /// <summary>For an assertion, the version at which the caller checked the same condition.</summary>
+    internal string? CheckedVersion { get; init; }
 }
 
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]

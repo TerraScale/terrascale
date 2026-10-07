@@ -137,7 +137,7 @@ public sealed class AuthorizeEndpoint(Sessions sessions, TimeProvider clock, Aut
             return Results.Redirect($"/ui/{OidcIssuer.Slug}/sign-in?next={Uri.EscapeDataString(resume)}");
         }
 
-        return OidcResults.SignIn(signedIn.User, authenticatedAt!.Value, request.GetScopes(), options.AccessTokenAudiences);
+        return OidcResults.SignIn(signedIn.User, authenticatedAt!.Value, request.GetScopes(), OidcIssuer.SignInAudiences(options));
     }
 }
 
@@ -198,7 +198,7 @@ public sealed class TokenEndpoint(Users users, HeadlessAuth headless, AuthOption
             return OidcResults.Forbid(Errors.InvalidGrant, "The user is no longer signed in.");
         }
 
-        return OidcResults.SignIn(user, DateTimeOffset.FromUnixTimeSeconds(authenticatedAt), principal.GetScopes(), options.AccessTokenAudiences);
+        return OidcResults.SignIn(user, DateTimeOffset.FromUnixTimeSeconds(authenticatedAt), principal.GetScopes(), OidcIssuer.SignInAudiences(options));
     }
 }
 
@@ -308,7 +308,8 @@ internal static class OidcResults
     /// <summary>
     /// Signs <paramref name="user"/> in with fresh claims. The access token always carries the email claims (TerraBase
     /// decision 0007 reads them) and every configured audience; the identity token carries them only with the
-    /// <c>email</c> scope. The authentication epoch stays inside codes and refresh tokens so later grants can check it.
+    /// <c>email</c> scope. The authentication epoch rides in codes and refresh tokens, so later grants can check it, and
+    /// in the access token, so the platform management API (TS-598) refuses it once the user signed out everywhere.
     /// </summary>
     public static IResult SignIn(UserRecord user, DateTimeOffset authenticatedAt, IEnumerable<string> scopes, IReadOnlyList<string> audiences)
     {
@@ -326,6 +327,7 @@ internal static class OidcResults
             Claims.Subject => [Destinations.AccessToken, Destinations.IdentityToken],
             Claims.Email or Claims.EmailVerified => email ? [Destinations.AccessToken, Destinations.IdentityToken] : [Destinations.AccessToken],
             Claims.AuthenticationTime => [Destinations.IdentityToken],
+            OidcIssuer.EpochClaim => [Destinations.AccessToken],
             _ => [],
         });
         return Results.SignIn(new ClaimsPrincipal(identity), null, OpenIddictServerAspNetCoreDefaults.AuthenticationScheme);

@@ -10,6 +10,41 @@ namespace TerraScale.Auth.Fast.Store;
 public sealed class AuthStoreTests(TerraBaseFixture fixture)
 {
     [Test]
+    public async Task An_assertion_holds_only_at_the_version_its_check_read_when_the_transaction_writes_the_same_document()
+    {
+        // TS-598: a role checked at one version must not be re-asserted through a write at a later version.
+        var (_, database) = await fixture.CreateDatabaseAsync();
+        var store = new AuthStore(database, TimeProvider.System);
+        await store.CreateAsync(AuthStore.MembershipCollection, "terrascale", "org/user", Json("""{"role":"admin"}"""));
+        var checkedAt = (await store.GetAsync(AuthStore.MembershipCollection, "terrascale", "org/user"))!.Version;
+        var demoted = (await store.ReplaceAsync(AuthStore.MembershipCollection, "terrascale", "org/user", Json("""{"role":"viewer"}"""), checkedAt))!;
+        var admin = Json("""{"in":["/role",["admin","owner"]]}""");
+
+        // The caller checked "admin" at the first version, then reread the record after the demotion.
+        await Assert.That(await store.TransactAsync(
+        [
+            AuthStore.Require(AuthStore.MembershipCollection, "terrascale", "org/user", admin, checkedAt),
+            AuthStore.Replace(AuthStore.MembershipCollection, "terrascale", "org/user", Json("""{"role":"admin"}"""), demoted),
+        ])).IsEqualTo(0);
+        await Assert.That((await store.GetAsync(AuthStore.MembershipCollection, "terrascale", "org/user"))!.Document.GetProperty("role").GetString()).IsEqualTo("viewer");
+
+        // Checked and written at the same version, the write alone says it; an assertion there needs its version.
+        await Assert.That(await store.TransactAsync(
+        [
+            AuthStore.Require(AuthStore.MembershipCollection, "terrascale", "org/user", Json("""{"in":["/role",["viewer"]]}"""), demoted),
+            AuthStore.Replace(AuthStore.MembershipCollection, "terrascale", "org/user", Json("""{"role":"member"}"""), demoted),
+        ])).IsNull();
+        var current = (await store.GetAsync(AuthStore.MembershipCollection, "terrascale", "org/user"))!.Version;
+        await Assert.That(async () => await store.TransactAsync(
+        [
+            AuthStore.Require(AuthStore.MembershipCollection, "terrascale", "org/user", admin),
+            AuthStore.Replace(AuthStore.MembershipCollection, "terrascale", "org/user", Json("""{"role":"member"}"""), current),
+        ])).Throws<ArgumentException>();
+
+        static JsonElement Json(string text) => JsonSerializer.Deserialize<JsonElement>(text);
+    }
+
+    [Test]
     public async Task Canonical_email_has_one_durable_owner_across_independent_stores()
     {
         var (tenant, database) = await fixture.CreateDatabaseAsync();
@@ -118,7 +153,7 @@ public sealed class AuthStoreTests(TerraBaseFixture fixture)
         await store.ProvisionAsync();
         await store.ProvisionAsync();
         await Assert.That((await database.ListCollectionsAsync()).Items.Select(collection => collection.Name))
-            .IsEquivalentTo(["email_config_versions", "email_configs", "oidc_applications", "oidc_authorizations", "oidc_tokens", "passcodes", "rate_limits", "sessions", "signing_key_rings", "storage_health", "uniques", "users", "verification_tokens"]);
+            .IsEquivalentTo(["email_config_versions", "email_configs", "memberships", "oidc_applications", "oidc_authorizations", "oidc_tokens", "organizations", "passcodes", "project_members", "projects", "rate_limits", "sessions", "signing_key_rings", "storage_health", "uniques", "users", "verification_tokens"]);
 
         var missing = fixture.Server.Documents(tenant.ApiKey).Database(tenant.Project.Id, "missing");
         await Assert.ThrowsAsync<TerraBaseNotFoundException>(() => new AuthStore(missing, TimeProvider.System).ProvisionAsync());

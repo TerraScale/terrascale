@@ -32,7 +32,10 @@ public static class OidcIssuer
     /// <summary>The client id of the ts-dashboard client registered from <c>TS_AUTH_DASHBOARD_*</c>.</summary>
     public const string DashboardClientId = "ts-dashboard";
 
-    /// <summary>Private claim carrying the user's authentication epoch inside codes and refresh tokens only.</summary>
+    /// <summary>
+    /// The user's authentication epoch, in codes, refresh tokens and sign-in access tokens: a grant or a management call
+    /// whose epoch is not the user's current one (after sign-out everywhere or a password reset) is refused.
+    /// </summary>
     public const string EpochClaim = "ts_auth_epoch";
 
     /// <summary>Lifetime of access and identity tokens; within the key ring's <c>Jwt.MaxLifetime</c>.</summary>
@@ -44,6 +47,12 @@ public static class OidcIssuer
         ArgumentNullException.ThrowIfNull(options);
         return new Uri(options.PublicOrigin, Slug);
     }
+
+    /// <summary>
+    /// The audiences of a user's sign-in access token: the issuer, so the platform management API (TS-598) accepts it,
+    /// and every <c>TS_AUTH_ACCESS_TOKEN_AUDIENCES</c> value.
+    /// </summary>
+    public static IReadOnlyList<string> SignInAudiences(AuthOptions options) => [Issuer(options).AbsoluteUri, .. options.AccessTokenAudiences];
 
     /// <summary>
     /// Registers OpenIddict on the TerraBase stores: authorization code with S256 PKCE and rotating refresh tokens,

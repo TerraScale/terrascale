@@ -10,7 +10,7 @@ namespace TerraScale.Auth.Fast.Platform;
 
 public sealed partial class OpenApiTests
 {
-    private static readonly string[] ExpectedSchemes = ["ManagementBearer", "OAuthAccessBearer", "OperatorBearer", "SessionCookie", "bearerAuth", "clientBasic"];
+    private static readonly string[] ExpectedSchemes = ["ManagementBearer", "OAuthAccessBearer", "OperatorBearer", "SessionCookie", "bearerAuth", "clientBasic", "platformUser"];
     private static readonly string[] Methods = ["get", "put", "post", "delete", "patch", "head", "options", "trace"];
 
     [Test]
@@ -119,6 +119,70 @@ public sealed partial class OpenApiTests
     }
 
     [Test]
+    public async Task Served_platform_operations_match_the_published_contract()
+    {
+        // docs/platform-api.openapi.yaml is the contract TerraBase, the SDKs and the dashboard build on (TS-598); every
+        // platform operation the service maps must appear there with the same path, method, operationId and response codes.
+        var root = new DirectoryInfo(AppContext.BaseDirectory);
+        while (root is not null && !File.Exists(Path.Combine(root.FullName, "TerraScale.Auth.slnx")))
+        {
+            root = root.Parent;
+        }
+
+        var contract = new Dictionary<(string Path, string Method, string Id), SortedSet<string>>();
+        string? path = null, method = null;
+        SortedSet<string>? statuses = null;
+        foreach (var line in await File.ReadAllLinesAsync(Path.Combine(root!.FullName, "docs", "platform-api.openapi.yaml")))
+        {
+            if (ContractPath().Match(line) is { Success: true } pathMatch)
+            {
+                path = pathMatch.Groups["path"].Value;
+                statuses = null;
+            }
+            else if (ContractMethod().Match(line) is { Success: true } methodMatch)
+            {
+                method = methodMatch.Groups["method"].Value;
+                statuses = null;
+            }
+            else if (ContractOperation().Match(line) is { Success: true } operation && path is not null && method is not null)
+            {
+                statuses = [];
+                contract.Add((path, method, operation.Groups["id"].Value), statuses);
+            }
+            else if (ContractResponse().Match(line) is { Success: true } documentedStatus)
+            {
+                statuses?.Add(documentedStatus.Groups["status"].Value);
+            }
+        }
+
+        await using var server = await AuthTestServer.StartAsync();
+        using var response = await server.Client.GetAsync("/openapi/v1.json");
+        var paths = JsonSerializer.Deserialize<JsonElement>(await response.Content.ReadAsStringAsync()).GetProperty("paths");
+        var served = 0;
+        List<string> mismatches = [];
+        foreach (var item in paths.EnumerateObject().Where(item => item.Name.StartsWith("/v1/terrascale/", StringComparison.Ordinal)))
+        {
+            foreach (var verb in Methods.Where(verb => item.Value.TryGetProperty(verb, out _)))
+            {
+                var operation = item.Value.GetProperty(verb);
+                var id = operation.GetProperty("operationId").GetString()!;
+                await Assert.That(contract.TryGetValue((item.Name, verb, id), out var documented)).IsTrue();
+                var answered = string.Join(',', operation.GetProperty("responses").EnumerateObject().Select(status => status.Name).Order(StringComparer.Ordinal));
+                if (answered != string.Join(',', documented!))
+                {
+                    mismatches.Add($"{id}: served {answered}, contract {string.Join(',', documented!)}");
+                }
+
+                await Assert.That(operation.GetProperty("security").EnumerateArray().Single().EnumerateObject().Single().Name).IsEqualTo("platformUser");
+                served++;
+            }
+        }
+
+        await Assert.That(served).IsGreaterThan(0);
+        await Assert.That(mismatches).IsEmpty();
+    }
+
+    [Test]
     public async Task Scalar_is_served_from_this_origin()
     {
         await using var server = await AuthTestServer.StartAsync();
@@ -188,4 +252,16 @@ public sealed partial class OpenApiTests
 
     [GeneratedRegex("<script[^>]*\\ssrc=\"(?<src>[^\"]+)\"")]
     private static partial Regex ScriptSource();
+
+    [GeneratedRegex("^  (?<path>/[^:]*):$")]
+    private static partial Regex ContractPath();
+
+    [GeneratedRegex("^    (?<method>get|put|post|delete|patch):$")]
+    private static partial Regex ContractMethod();
+
+    [GeneratedRegex("^      operationId: (?<id>[a-z_]+)$")]
+    private static partial Regex ContractOperation();
+
+    [GeneratedRegex("^        '(?<status>[1-5][0-9]{2})':")]
+    private static partial Regex ContractResponse();
 }

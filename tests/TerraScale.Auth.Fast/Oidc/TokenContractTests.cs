@@ -35,11 +35,13 @@ public sealed class TokenContractTests(TerraBaseFixture fixture)
         var access = await ValidateAsync(body.GetProperty("access_token").GetString()!, keys, Audience);
         await Assert.That(access.Typ).IsEqualTo("at+jwt");
         await Assert.That(access.Alg).IsEqualTo("ES256");
-        await Assert.That(access.Audiences.ToArray()).IsEquivalentTo([Audience]);
+        // The issuer too, so the platform management API (TS-598) accepts a sign-in token.
+        await Assert.That(access.Audiences.ToArray()).IsEquivalentTo([OidcHarness.Issuer, Audience]);
         await Assert.That(access.Subject).IsEqualTo(user.Id);
         await Assert.That(access.GetClaim("email").Value).IsEqualTo("alice@example.test");
         await Assert.That(access.GetClaim("email_verified").Value).IsEqualTo("true");
-        await Assert.That(access.TryGetClaim(OidcIssuer.EpochClaim, out _)).IsFalse();
+        // The epoch lets the management API (TS-598) refuse a token from before a sign-out everywhere.
+        await Assert.That(access.GetClaim(OidcIssuer.EpochClaim).Value).IsEqualTo(user.AuthEpoch.ToString(System.Globalization.CultureInfo.InvariantCulture));
 
         var identity = await ValidateAsync(body.GetProperty("id_token").GetString()!, keys, OidcIssuer.DashboardClientId);
         await Assert.That(identity.Typ).IsEqualTo("JWT");

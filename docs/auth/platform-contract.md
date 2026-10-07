@@ -108,7 +108,8 @@ Organization roles, from least to most privileged: `viewer`, `member`,
   can be granted a higher role on one project, and people outside the
   organization can be invited to one project only (a *collaborator*, as GitHub's
   outside collaborators). A collaborator reads the organization (its `role` is
-  `null`) and only the projects it was granted.
+  `null`) and only the projects it was granted. Once its last project role is
+  removed, or its last project deleted, it is no longer in the organization.
 - The **effective project role** is the higher of the implied and the explicit
   role. Explicit roles only add access; nothing subtracts.
 - An organization can have several owners. The last owner cannot be demoted,
@@ -172,9 +173,9 @@ tenant: `typ` `at+jwt`, ES256 from the tenant's key ring, `iss` equal to the
 issuer, `aud` including the issuer, unexpired. Organization, project and
 service tokens are refused there (`401`). Every request re-reads the user and
 its sign-in, so a deleted user or a revoked sign-in (RFC 7009 revocation or
-refresh-token reuse) is refused at once. After sign-out everywhere or a password
-reset, refresh is refused at once and access tokens already issued live out
-their hour, as today (TS-491).
+refresh-token reuse) is refused at once. Sign-in access tokens carry the user's
+authentication epoch (`ts_auth_epoch`), so after sign-out everywhere or a
+password reset the management API refuses every token issued before.
 
 Authorization fails closed. A caller who is neither member nor collaborator of
 an organization gets `404` for it and everything under it, exactly as for an id
@@ -287,6 +288,7 @@ to the next exchange.
 | `exp`, `iat`, `jti` | 1 hour | at most 15 minutes | 15 minutes |
 | `scope` | OpenID scopes (`openid email profile offline_access`) | section 3 scopes | section 3 scopes |
 | `email`, `email_verified` | yes | yes | no |
+| `ts_auth_epoch` | the user's authentication epoch | no | no |
 | `org_id` | no | the organization | the key's organization |
 | `project_id` | no | the project, for a project token | the project, for a project token |
 | `database` | no | no | the key's database, when it has one |
@@ -344,7 +346,7 @@ tokens expire:
 | API key revoked, expired or rotated past its grace | at once | within 15 minutes |
 | Member removed, role lowered, project or organization deleted | at once (the management API and every exchange read it) | within 15 minutes |
 | Sign-in revoked (RFC 7009, refresh-token reuse), user deleted | at once | within 15 minutes of the last exchange |
-| Signed out everywhere, password reset | refresh at once; access tokens within 1 hour | within 1 hour (the sign-in token can still be exchanged until it expires) |
+| Signed out everywhere, password reset | at once (refresh and the management API) | within 1 hour (the sign-in token can still be exchanged until it expires) |
 
 ### 6.7 Limits
 

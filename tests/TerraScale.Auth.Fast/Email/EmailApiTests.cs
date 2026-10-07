@@ -495,6 +495,8 @@ public sealed partial class EmailApiTests(TerraBaseFixture fixture)
     }
 
     [Test]
+    // Its bound is wall-clock time, so it runs alone rather than beside the suite's TerraBase-heavy tests.
+    [NotInParallel]
     public async Task A_stalled_configuration_read_delays_a_backlog_of_codes_once_and_they_go_out_with_the_defaults()
     {
         var stalled = new StallingHandler("/email_configs/") { InnerHandler = fixture.NewHandler() };

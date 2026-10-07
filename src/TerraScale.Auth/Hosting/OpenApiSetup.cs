@@ -26,6 +26,9 @@ public static class SecuritySchemes
     /// <summary>Directory or organization bearer token (SCIM, organizations).</summary>
     public const string BearerAuth = "bearerAuth";
 
+    /// <summary>A platform user's own sign-in access token, for the platform management API (TS-598).</summary>
+    public const string PlatformUser = "platformUser";
+
     /// <summary>Session cookie name used by every hosted UI route.</summary>
     public const string SessionCookieName = "tsauth_session";
 }
@@ -84,6 +87,10 @@ public static partial class OpenApiSetup
         ["Sign-in"] = "Hosted email passcode sign-in pages.",
         ["Headless"] = "Headless authentication for first-party confidential clients (ts-dashboard): sign-up, emailed codes and password reset; tokens come from the token endpoint's headless grants.",
         ["Email"] = "Email branding, copy, previews, test sends and version history, for the ts-dashboard client (HTTP Basic).",
+        ["Organizations"] = "Organizations of the terrascale tenant (TS-598). The caller is a signed-in platform user.",
+        ["Members"] = "Organization members and their organization roles (viewer, member, admin, owner).",
+        ["Projects"] = "Projects of an organization. Each project is also the tenant of its end users.",
+        ["Project members"] = "Explicit project roles (viewer, member, admin), for organization members and collaborators.",
     };
 
     private static readonly Dictionary<string, Func<OpenApiSecurityScheme>> SchemeDefinitions = new(StringComparer.Ordinal)
@@ -94,6 +101,13 @@ public static partial class OpenApiSetup
         [SecuritySchemes.OperatorBearer] = () => new() { Type = SecuritySchemeType.Http, Scheme = "bearer", Description = "Operator bootstrap key." },
         [SecuritySchemes.ClientBasic] = () => new() { Type = SecuritySchemeType.Http, Scheme = "basic" },
         [SecuritySchemes.BearerAuth] = () => new() { Type = SecuritySchemeType.Http, Scheme = "bearer" },
+        [SecuritySchemes.PlatformUser] = () => new()
+        {
+            Type = SecuritySchemeType.Http,
+            Scheme = "bearer",
+            BearerFormat = "JWT",
+            Description = "A sign-in access token of the terrascale tenant (typ at+jwt, aud including the issuer). Organization, project, API key and service tokens are refused.",
+        },
     };
 
     private static void Complete(OpenApiDocument document, Uri publicOrigin)

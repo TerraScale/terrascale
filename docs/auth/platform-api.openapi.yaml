@@ -136,7 +136,7 @@ paths:
       operationId: list_members
       tags: [Members]
       summary: List organization members
-      description: Needs any organization role. In user id order.
+      description: Needs any organization role (collaborators get 403). In user id order.
       parameters:
         - $ref: '#/components/parameters/Limit'
         - $ref: '#/components/parameters/After'
@@ -148,6 +148,7 @@ paths:
               schema: { $ref: '#/components/schemas/MemberPage' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '503': { $ref: '#/components/responses/Unavailable' }
   /v1/terrascale/organizations/{organization}/members/{user}/role:

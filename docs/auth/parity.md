@@ -26,7 +26,8 @@ Nothing here implies acceptance against a live TerraBase deployment.
 | MFA (TOTP, recovery codes, step-up) | TS-434 | Not yet ported; email passcodes moved to TS-490 |
 | Passkeys | TS-435 | Not yet ported |
 | OIDC, GitHub and SAML federation | TS-436 | Not yet ported |
-| Platform organizations, projects, organization and project roles, invitations, ownership transfer, audit | TS-598 | Contract published ([`platform-contract.md`](platform-contract.md)); not served |
+| Platform organizations, projects, organization and project roles | TS-598 | Served under `/v1/terrascale/…` with the caller's sign-in access token (see below); contract in [`platform-contract.md`](platform-contract.md) |
+| Invitations, ownership transfer, audit of the platform | TS-598 | Contract published; not served |
 | API keys exchanged for organization and project tokens (client credentials, token exchange) | TS-598 | Contract published; not served |
 | Per-project tenants (one issuer per customer project) | TS-598 | Contract published; not served |
 | `usage:read` and `billing:*` scopes, project suspension, platform administrators, ts-cli device flow, ts-auth's own storage token | TS-598 | Contract v1.1 published; not served |
@@ -214,3 +215,20 @@ TerraBase, including enumeration, brute-force and rate-limit cases, a third
 party attaching a password to someone else's sign-up, log redaction, code
 pruning and a cross-replica sign-up race. The [port guide](csharp-port.md#headless-api-ts-582)
 has the contract, limits and security decisions.
+
+## TS-598 platform organizations and projects
+
+The management API's first slice serves organizations, organization members,
+projects and explicit project roles for the `terrascale` tenant, as
+[`platform-contract.md`](platform-contract.md) specifies (17 of its
+operations). The caller presents its own sign-in access token; the
+[port guide](csharp-port.md#platform-management-api-ts-598) has the design.
+Fast tests drive every route over real HTTP on the real TerraBase as several
+signed-in users: token refusal (none, identity, service, tampered, revoked
+sign-in), outsiders seeing 404, every role gate, the last owner, project
+names, collaborators, removal, paging, and two replicas racing owner
+demotions and a grant against a removal. A fast test also checks that every
+served platform operation matches the contract file. Invitations, ownership
+transfer, audit and API keys are later slices; until invitations land,
+members join only through the internal `AddMemberAsync` and `GrantAsync`.
+

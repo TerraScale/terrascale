@@ -120,7 +120,7 @@ public sealed partial class HeadlessAuth(Users users, Passcodes passcodes, Passw
         }
 
         LogSignedIn(logger, method, user.Id);
-        return OidcResults.SignIn(user, clock.GetUtcNow(), request.GetScopes(), options.AccessTokenAudiences);
+        return OidcResults.SignIn(user, clock.GetUtcNow(), request.GetScopes(), OidcIssuer.SignInAudiences(options));
     }
 
     /// <summary>Emails a sign-in code when <paramref name="email"/> has an account. Null, or how long to wait.</summary>
