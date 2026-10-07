@@ -436,6 +436,12 @@ OpenID Connect routes for the slug `terrascale` (other slugs answer 404):
   `/password-reset/start` and `/password-reset/complete`, plus the token
   endpoint's headless grants (see [the port guide](docs/csharp-port.md#headless-api-ts-582))
 
+TS-631: send the original sign-up `pending_token` to `email-code/start` to
+resend its verification code without choosing another password or token. All
+headless mail-start routes share a persisted 60-second cooldown per normalized
+email, including unknown addresses; earlier repeats answer 429 with
+`Retry-After: 60`. The existing five-code hourly budget still applies.
+
 All of them appear in `/openapi/v1.json` under the `OAuth`, `Sign-in` and
 `Headless` tags. Introspection and device authorization are not served. The
 target surface below is the contract the

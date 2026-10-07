@@ -106,6 +106,64 @@ public sealed class Passcodes(AuthStore store, Users users, Sessions sessions, T
     }
 
     /// <summary>
+    /// Resends a pending sign-up's verification code, preserving its password hash and token binding. A single CAS
+    /// against the record read prevents reviving a consumed sign-up or overwriting a replacement. Existing accounts
+    /// receive sign-in codes instead; missing records and wrong tokens issue nothing, with the same caller response.
+    /// </summary>
+    public async Task<IssuedPasscode?> ResendSignUpAsync(string instanceId, string email, string pendingToken, CancellationToken cancellationToken = default)
+    {
+        if (Users.NormalizeEmail(email) is not { } normalized)
+        {
+            return null;
+        }
+
+        if (await users.FindByEmailAsync(instanceId, normalized, cancellationToken).ConfigureAwait(false) is { } user)
+        {
+            return await this.IssueAsync(instanceId, user.Id, user.Id, user.Email, user.AuthEpoch, PasscodePurpose.SignIn, null, null, cancellationToken).ConfigureAwait(false);
+        }
+
+        var key = SignUpKey + normalized;
+        var document = await store.GetAsync(AuthStore.PasscodeCollection, instanceId, key, cancellationToken).ConfigureAwait(false);
+        var previous = document?.Document.Deserialize(IdentityJson.Default.PasscodeRecord);
+        if (pendingToken is not { Length: > 0 and <= 256 } || previous is null || previous.Consumed || previous.PasswordHash is null
+            || previous.InstanceId != instanceId || previous.Email != normalized || previous.AuthEpoch != 0
+            || previous.Purpose != StoredPurpose(PasscodePurpose.SignUp) || previous.PendingTokenHash is not { } token
+            || !Tokens.FixedTimeEquals(token, Tokens.Sha256Hex(pendingToken)))
+        {
+            return null;
+        }
+
+        var now = clock.GetUtcNow();
+        var window = previous.WindowStartedAt + IssueWindow > now ? previous : null;
+        if (window?.IssuedInWindow >= MaxIssuesPerWindow)
+        {
+            return null;
+        }
+
+        string code;
+        string digest;
+        do
+        {
+            code = Tokens.RandomDigits(6)!;
+            digest = this.Digest(instanceId, previous.UserId, code);
+        }
+        while (Tokens.FixedTimeEquals(digest, previous.CodeHash));
+
+        var replacement = previous with
+        {
+            CodeHash = digest,
+            ExpiresAt = now + Lifetime,
+            FailedAttempts = 0,
+            WindowStartedAt = window?.WindowStartedAt ?? now,
+            IssuedInWindow = (window?.IssuedInWindow ?? 0) + 1,
+        };
+        return await store.CompareAndPutAsync(AuthStore.PasscodeCollection, instanceId, key,
+            JsonSerializer.SerializeToElement(replacement, IdentityJson.Default.PasscodeRecord), document!.Version, cancellationToken).ConfigureAwait(false)
+            ? new IssuedPasscode(normalized, code, replacement.ExpiresAt, PasscodePurpose.SignUp)
+            : null;
+    }
+
+    /// <summary>
     /// Redeems a sign-in code and opens a session. Returns <see langword="null"/> for an unknown email and for a wrong,
     /// expired, used, exhausted or superseded code alike. The code is consumed before the session is written, so a
     /// failed session write costs the user a new code and never grants a second session.

@@ -22,6 +22,15 @@ public sealed record HeadlessEmailRequest(
     [property: JsonPropertyName("email")] string? Email,
     [property: JsonPropertyName("ip_address")] string? IpAddress);
 
+/// <summary>Starts an email-code sign-in, or resends a pending sign-up's verification code.</summary>
+/// <param name="Email">The account's email address.</param>
+/// <param name="IpAddress">The end user's IP address.</param>
+/// <param name="PendingToken">Optional original sign-up token; preserves that sign-up's password and token binding.</param>
+public sealed record HeadlessEmailCodeRequest(
+    [property: JsonPropertyName("email")] string? Email,
+    [property: JsonPropertyName("ip_address")] string? IpAddress,
+    [property: JsonPropertyName("pending_token")] string? PendingToken = null);
+
 /// <summary>Starts a sign-up.</summary>
 /// <param name="Email">The new account's email address.</param>
 /// <param name="Password">Its password, 8 to 1024 UTF-8 bytes.</param>
@@ -50,22 +59,22 @@ public sealed record HeadlessPasswordResetRequest(
     [property: JsonPropertyName("ip_address")] string? IpAddress);
 
 /// <summary><c>POST /{slug}/headless/v1/email-code/start</c>: emails a sign-in code when the address has an account.</summary>
-public sealed class HeadlessEmailCodeStartEndpoint(HeadlessAuth headless, IOpenIddictApplicationManager applications) : HeadlessEndpoint<HeadlessEmailRequest>(applications)
+public sealed class HeadlessEmailCodeStartEndpoint(HeadlessAuth headless, IOpenIddictApplicationManager applications) : HeadlessEndpoint<HeadlessEmailCodeRequest>(applications)
 {
     /// <inheritdoc />
     public override void Configure()
     {
         Post("/{slug}/headless/v1/email-code/start");
         Name("headless_email_code_start");
-        Summary("Email a sign-in code");
-        Description("Always 202, whether or not the address has an account. If it has one, mails a six-digit code that works once, for 10 minutes, and dies after 5 wrong guesses; at most 5 codes per account per hour, and a new code replaces the previous one. Redeem it at the token endpoint with grant_type=urn:terrascale:params:oauth:grant-type:email-code.");
+        Summary("Email a sign-in or pending sign-up code");
+        Description("202 whether or not the address has an account or the optional pending_token matches. With the original pending_token, resends a pending sign-up verification code while preserving its password hash and token binding; never revives a consumed sign-up or replaces another sign-up. Without it, only an existing account is mailed a sign-in code. Existing accounts receive sign-in codes regardless of pending_token. Codes work once, for 10 minutes, and die after 5 wrong guesses; at most 5 codes per account or pending sign-up per hour, and a new code replaces the previous one. Redeem at the token endpoint with grant_type=urn:terrascale:params:oauth:grant-type:email-code and the original pending_token for sign-up. Mail-start requests share a persisted 60-second cooldown per normalized email across this route, sign-up and password-reset/start, including unknown addresses and all clients; earlier repeats answer 429 rate_limited with Retry-After: 60.");
         this.Document(StatusCodes.Status202Accepted);
     }
 
     /// <inheritdoc />
-    protected override async Task<IResult> HandleAsync(HeadlessEmailRequest body, CancellationToken cancellationToken) =>
+    protected override async Task<IResult> HandleAsync(HeadlessEmailCodeRequest body, CancellationToken cancellationToken) =>
         Valid(body.Email, body.IpAddress) is { } invalid ? invalid
-            : await headless.StartEmailCodeAsync(body.Email!, HeadlessAuth.Subject(body.IpAddress)!, cancellationToken) is { } wait ? TooMany(wait)
+            : await headless.StartEmailCodeAsync(body.Email!, HeadlessAuth.Subject(body.IpAddress)!, cancellationToken, body.PendingToken) is { } wait ? TooMany(wait)
             : Results.StatusCode(StatusCodes.Status202Accepted);
 }
 
@@ -78,7 +87,7 @@ public sealed class HeadlessSignUpEndpoint(HeadlessAuth headless, IOpenIddictApp
         Post("/{slug}/headless/v1/sign-up");
         Name("headless_sign_up");
         Summary("Sign up");
-        Description("Always 202 with a pending_token for a valid request, whether or not the address has an account. A new address is mailed a verification code; the account exists only once the code is redeemed at the token endpoint with grant_type=urn:terrascale:params:oauth:grant-type:email-code together with this pending_token, and then has this password. Only the requester holding the token can redeem the code, so nobody can attach a password to someone else's address. A later sign-up of the same address replaces the code and token. An address that already has an account is mailed a sign-in code instead (redeemed the same way; the token is then ignored) and the password is discarded.");
+        Description("202 with a pending_token for a valid request within the rate limits, whether or not the address has an account. A new address is mailed a verification code; the account exists only once the code is redeemed at the token endpoint with grant_type=urn:terrascale:params:oauth:grant-type:email-code together with this pending_token, and then has this password. Only the requester holding the token can redeem the code, so nobody can attach a password to someone else's address. A later sign-up of the same address replaces the code and token. An address that already has an account is mailed a sign-in code instead (redeemed the same way; the token is then ignored) and the password is discarded. Mail-start requests share a persisted 60-second cooldown per normalized email across sign-up, email-code/start and password-reset/start, including unknown addresses and all clients; earlier repeats answer 429 rate_limited with Retry-After: 60.");
         this.Document(StatusCodes.Status202Accepted, typeof(HeadlessSignUpResponse));
     }
 
@@ -115,7 +124,7 @@ public sealed class HeadlessPasswordResetStartEndpoint(HeadlessAuth headless, IO
         Post("/{slug}/headless/v1/password-reset/start");
         Name("headless_password_reset_start");
         Summary("Email a password reset code");
-        Description("Always 202, whether or not the address has an account. If it has one, mails a six-digit reset code (10 minutes, 5 wrong guesses); it shares the account's limit of 5 codes per hour and replaces any earlier code.");
+        Description("202 within the rate limits, whether or not the address has an account. If it has one, mails a six-digit reset code (10 minutes, 5 wrong guesses); it shares the account's limit of 5 codes per hour and replaces any earlier code. Mail-start requests share a persisted 60-second cooldown per normalized email across password-reset/start, email-code/start and sign-up, including unknown addresses and all clients; earlier repeats answer 429 rate_limited with Retry-After: 60.");
         this.Document(StatusCodes.Status202Accepted);
     }
 
@@ -281,6 +290,7 @@ public abstract class HeadlessEndpoint<TBody>(IOpenIddictApplicationManager appl
 }
 
 [JsonSerializable(typeof(HeadlessEmailRequest))]
+[JsonSerializable(typeof(HeadlessEmailCodeRequest))]
 [JsonSerializable(typeof(HeadlessSignUpRequest))]
 [JsonSerializable(typeof(HeadlessPasswordResetRequest))]
 [JsonSerializable(typeof(HeadlessSignUpResponse))]

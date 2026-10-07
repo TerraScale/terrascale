@@ -7,6 +7,7 @@ using TerraScale.Auth.Contracts;
 using TerraScale.Auth.Features.Headless;
 using TerraScale.Auth.Features.Identity;
 using TerraScale.Auth.Features.Oidc;
+using TerraScale.Auth.Features.SignIn;
 using TerraScale.Auth.Security;
 using TerraScale.Auth.Store;
 using TerraScale.Auth.Tests;
@@ -118,11 +119,13 @@ public sealed class HeadlessTests(TerraBaseFixture fixture)
     [Test]
     public async Task A_third_party_cannot_attach_a_password_to_someone_elses_sign_up()
     {
-        await using var oidc = await StartAsync();
+        var clock = new ManualClock(DateTimeOffset.UtcNow);
+        await using var oidc = await StartAsync(clock: clock);
         var owner = await SignUpAsync(oidc, "frank@example.test", "the owner's password");
         var ownerCode = await oidc.Email.NextCodeAsync("frank@example.test");
 
         // A stranger signs the same address up with their own password: the owner's inbox receives the new code.
+        clock.Advance(HeadlessAuth.MailCooldown);
         var stranger = await SignUpAsync(oidc, "frank@example.test", "the stranger's password", "198.51.100.66");
         var strangerCode = await oidc.Email.NextCodeAsync("frank@example.test");
 
@@ -141,6 +144,7 @@ public sealed class HeadlessTests(TerraBaseFixture fixture)
         }
 
         // Signing up again gives the owner a fresh code and token, and the account gets the owner's password only.
+        clock.Advance(HeadlessAuth.MailCooldown);
         var again = await SignUpAsync(oidc, "frank@example.test", "the owner's password");
         using (var created = await oidc.GrantAsync(HeadlessGrants.EmailCode, "frank@example.test", await oidc.Email.NextCodeAsync("frank@example.test"), Ip, pendingToken: again))
         {
@@ -159,7 +163,8 @@ public sealed class HeadlessTests(TerraBaseFixture fixture)
     [Test]
     public async Task Answers_never_tell_an_account_from_a_stranger()
     {
-        await using var oidc = await StartAsync();
+        var clock = new ManualClock(DateTimeOffset.UtcNow);
+        await using var oidc = await StartAsync(clock: clock);
         var alice = await CreateUserAsync(oidc, "alice@example.test", Password);
         await oidc.CreateUserAsync("nopassword@example.test");
 
@@ -186,6 +191,7 @@ public sealed class HeadlessTests(TerraBaseFixture fixture)
             using var accepted = await oidc.HeadlessAsync(path, body);
             await Assert.That(accepted.StatusCode).IsEqualTo(HttpStatusCode.Accepted);
             await Assert.That(await accepted.Content.ReadAsStringAsync()).IsEmpty();
+            clock.Advance(HeadlessAuth.MailCooldown);
         }
 
         await Assert.That((await oidc.Email.NextAsync()).Recipient).IsEqualTo("alice@example.test");
@@ -223,7 +229,8 @@ public sealed class HeadlessTests(TerraBaseFixture fixture)
     [Test]
     public async Task A_password_reset_code_works_once_for_its_purpose_and_signs_the_user_out_everywhere()
     {
-        await using var oidc = await StartAsync();
+        var clock = new ManualClock(DateTimeOffset.UtcNow);
+        await using var oidc = await StartAsync(clock: clock);
         await CreateUserAsync(oidc, "alice@example.test", Password);
         using var before = await oidc.GrantAsync(HeadlessGrants.Password, "alice@example.test", Password, Ip);
         var earlier = (await OidcHarness.JsonAsync(before)).GetProperty("refresh_token").GetString()!;
@@ -274,6 +281,7 @@ public sealed class HeadlessTests(TerraBaseFixture fixture)
         await Assert.That(await OidcHarness.ErrorAsync(stale)).IsEqualTo("invalid_grant");
 
         // A sign-in code cannot reset the password either.
+        clock.Advance(HeadlessAuth.MailCooldown);
         using (var signInStart = await oidc.HeadlessAsync("email-code/start", new { email = "alice@example.test", ip_address = Ip }))
         {
             await Assert.That(signInStart.StatusCode).IsEqualTo(HttpStatusCode.Accepted);
@@ -490,6 +498,218 @@ public sealed class HeadlessTests(TerraBaseFixture fixture)
         await Assert.That(accounts[0].Document.GetRawText()).DoesNotContain(Password);
         var consumed = (await oidc.Database.ListDocumentsAsync(AuthStore.PasscodeCollection)).Items.Single().Document;
         await Assert.That(consumed.TryGetProperty("passwordHash", out var hash) && hash.ValueKind != JsonValueKind.Null).IsFalse();
+    }
+
+    [Test]
+    public async Task Resending_a_pending_sign_up_preserves_its_password_and_token_and_invalidates_the_old_code()
+    {
+        var clock = new ManualClock(DateTimeOffset.UtcNow);
+        await using var oidc = await StartAsync(clock: clock);
+        const string email = "resend@example.test";
+        var pending = await SignUpAsync(oidc, email, Password);
+        var oldCode = await oidc.Email.NextCodeAsync(email);
+        var original = (await oidc.Database.ListDocumentsAsync(AuthStore.PasscodeCollection)).Items.Single().Document;
+        clock.Advance(HeadlessAuth.MailCooldown);
+
+        using (var resend = await oidc.HeadlessAsync("email-code/start", new { email = " RESEND@Example.TEST ", ip_address = Ip, pending_token = pending }))
+        {
+            await Assert.That(resend.StatusCode).IsEqualTo(HttpStatusCode.Accepted);
+            await Assert.That(await resend.Content.ReadAsStringAsync()).IsEmpty();
+        }
+
+        var code = await oidc.Email.NextCodeAsync(email);
+        await Assert.That(code).IsNotEqualTo(oldCode);
+        var current = (await oidc.Database.ListDocumentsAsync(AuthStore.PasscodeCollection)).Items.Single().Document;
+        foreach (var field in new[] { "passwordHash", "pendingTokenHash", "userId", "windowStartedAt" })
+        {
+            await Assert.That(current.GetProperty(field).GetRawText()).IsEqualTo(original.GetProperty(field).GetRawText());
+        }
+
+        await Assert.That(current.GetProperty("issuedInWindow").GetInt32()).IsEqualTo(2);
+        using (var old = await oidc.GrantAsync(HeadlessGrants.EmailCode, email, oldCode, Ip, pendingToken: pending))
+        {
+            await Assert.That(await OidcHarness.ErrorAsync(old)).IsEqualTo("invalid_grant");
+        }
+
+        using (var wrongToken = await oidc.GrantAsync(HeadlessGrants.EmailCode, email, code, Ip, pendingToken: "another-requester's-token"))
+        {
+            await Assert.That(await OidcHarness.ErrorAsync(wrongToken)).IsEqualTo("invalid_grant");
+        }
+
+        using (var created = await oidc.GrantAsync(HeadlessGrants.EmailCode, email, code, Ip, pendingToken: pending))
+        {
+            await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        }
+
+        using var password = await oidc.GrantAsync(HeadlessGrants.Password, email, Password, Ip);
+        await Assert.That(password.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        var consumed = (await oidc.Database.ListDocumentsAsync(AuthStore.PasscodeCollection)).Items.Single();
+        clock.Advance(HeadlessAuth.MailCooldown);
+        using var existing = await oidc.HeadlessAsync("email-code/start", new { email, ip_address = Ip, pending_token = "wrong-token" });
+        await Assert.That(existing.StatusCode).IsEqualTo(HttpStatusCode.Accepted);
+        using var signedIn = await oidc.GrantAsync(HeadlessGrants.EmailCode, email, await oidc.Email.NextCodeAsync(email), Ip);
+        await Assert.That(signedIn.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        var signup = (await oidc.Database.ListDocumentsAsync(AuthStore.PasscodeCollection)).Items.Single(item => item.Id == consumed.Id);
+        await Assert.That(signup.Version).IsEqualTo(consumed.Version);
+    }
+
+    [Test]
+    public async Task A_missing_or_wrong_resend_token_changes_nothing_and_resends_keep_the_hourly_budget()
+    {
+        var clock = new ManualClock(DateTimeOffset.UtcNow);
+        await using var oidc = await StartAsync(clock: clock);
+        const string email = "budget@example.test";
+        var pending = await SignUpAsync(oidc, email, Password);
+        await oidc.Email.NextCodeAsync(email);
+        var passcodes = oidc.Server.App.Services.GetRequiredService<Passcodes>();
+        var before = (await oidc.Database.ListDocumentsAsync(AuthStore.PasscodeCollection)).Items.Single();
+        foreach (var token in new string?[] { null, "wrong-token" })
+        {
+            clock.Advance(HeadlessAuth.MailCooldown);
+            using var response = await oidc.HeadlessAsync("email-code/start", new { email, ip_address = Ip, pending_token = token });
+            await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Accepted);
+            await Assert.That(await response.Content.ReadAsStringAsync()).IsEmpty();
+            // A marker behind the request on the same worker proves it issued and delivered no code.
+            var drained = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            oidc.Server.App.Services.GetRequiredService<SignInMail>().EnqueueIssue(() =>
+            {
+                drained.SetResult();
+                return Task.FromResult<IssuedPasscode?>(null);
+            });
+            await drained.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            await Assert.That(oidc.Email.HasPending).IsFalse();
+        }
+
+        foreach (var token in new[] { "wrong-token", string.Empty })
+        {
+            await Assert.That(await passcodes.ResendSignUpAsync(OidcIssuer.InstanceId, email, token)).IsNull();
+        }
+
+        await Assert.That(await passcodes.RequestAsync(OidcIssuer.InstanceId, email)).IsNull();
+        await Assert.That(await passcodes.ResendSignUpAsync(OidcIssuer.InstanceId, "unknown@example.test", pending)).IsNull();
+        await Assert.That((await oidc.Database.ListDocumentsAsync(AuthStore.PasscodeCollection)).Items.Single().Version).IsEqualTo(before.Version);
+
+        for (var issued = 1; issued < Passcodes.MaxIssuesPerWindow; issued++)
+        {
+            clock.Advance(HeadlessAuth.MailCooldown);
+            using var resend = await oidc.HeadlessAsync("email-code/start", new { email, ip_address = Ip, pending_token = pending });
+            await Assert.That(resend.StatusCode).IsEqualTo(HttpStatusCode.Accepted);
+            await oidc.Email.NextCodeAsync(email);
+        }
+
+        var last = (await oidc.Database.ListDocumentsAsync(AuthStore.PasscodeCollection)).Items.Single();
+        await Assert.That(await passcodes.ResendSignUpAsync(OidcIssuer.InstanceId, email, pending)).IsNull();
+        await Assert.That((await oidc.Database.ListDocumentsAsync(AuthStore.PasscodeCollection)).Items.Single().Version).IsEqualTo(last.Version);
+        clock.Advance(Passcodes.IssueWindow);
+        await Assert.That(await passcodes.ResendSignUpAsync(OidcIssuer.InstanceId, email, pending)).IsNotNull();
+        var renewed = (await oidc.Database.ListDocumentsAsync(AuthStore.PasscodeCollection)).Items.Single().Document;
+        await Assert.That(renewed.GetProperty("issuedInWindow").GetInt32()).IsEqualTo(1);
+        await Assert.That(renewed.GetProperty("passwordHash").GetString()).IsEqualTo(before.Document.GetProperty("passwordHash").GetString());
+    }
+
+    [Test]
+    public async Task Mail_cooldown_is_shared_across_routes_clients_and_unknown_addresses_for_sixty_elapsed_seconds()
+    {
+        // Start one millisecond before a fixed minute boundary: crossing it must not reset the cooldown.
+        var clock = new ManualClock(DateTimeOffset.FromUnixTimeMilliseconds(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 60000 * 60000 + 59999));
+        await using var oidc = await StartAsync(clock: clock);
+        await using var replica = await oidc.StartReplicaAsync();
+        await oidc.CreateUserAsync("known@example.test");
+        foreach (var email in new[] { "known@example.test", "unknown@example.test" })
+        {
+            using (var first = await oidc.HeadlessAsync("email-code/start", new { email, ip_address = Ip }))
+            {
+                await Assert.That(first.StatusCode).IsEqualTo(HttpStatusCode.Accepted);
+            }
+
+            foreach (var path in new[] { "email-code/start", "sign-up", "password-reset/start" })
+            {
+                using var request = new HttpRequestMessage(HttpMethod.Post, $"/{OidcIssuer.Slug}/headless/v1/{path}")
+                {
+                    Content = System.Net.Http.Json.JsonContent.Create(new { email = $" {email.ToUpperInvariant()} ", password = Password, ip_address = "198.51.100.22" }),
+                };
+                request.Headers.Authorization = new("Basic", Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes($"{OidcIssuer.DashboardClientId}:{OidcHarness.ClientSecret}")));
+                using var repeated = await replica.Client.SendAsync(request);
+                await Assert.That(repeated.StatusCode).IsEqualTo(HttpStatusCode.TooManyRequests);
+                await Assert.That(repeated.Headers.RetryAfter!.Delta).IsEqualTo(HeadlessAuth.MailCooldown);
+                await Assert.That(await OidcHarness.EnvelopeCodeAsync(repeated)).IsEqualTo("rate_limited");
+            }
+
+            clock.Advance(HeadlessAuth.MailCooldown - TimeSpan.FromMilliseconds(1));
+            using (var tooSoon = await oidc.HeadlessAsync("password-reset/start", new { email, ip_address = "192.0.2.21" }))
+            {
+                await Assert.That(tooSoon.StatusCode).IsEqualTo(HttpStatusCode.TooManyRequests);
+            }
+
+            clock.Advance(TimeSpan.FromMilliseconds(1));
+            using var allowed = await oidc.HeadlessAsync("sign-up", new { email, password = Password, ip_address = "192.0.2.22" });
+            await Assert.That(allowed.StatusCode).IsEqualTo(HttpStatusCode.Accepted);
+        }
+    }
+
+    [Test]
+    public async Task Concurrent_mail_starts_on_two_replicas_admit_one_request_across_routes()
+    {
+        await using var oidc = await StartAsync();
+        await using var replica = await oidc.StartReplicaAsync();
+        string[] routes = ["email-code/start", "sign-up", "password-reset/start"];
+        var statuses = await Task.WhenAll(Enumerable.Range(0, 6).Select(async index =>
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, $"/{OidcIssuer.Slug}/headless/v1/{routes[index % routes.Length]}")
+            {
+                Content = System.Net.Http.Json.JsonContent.Create(new { email = "concurrent@example.test", password = Password, ip_address = $"198.51.100.{index}" }),
+            };
+            request.Headers.Authorization = new("Basic", Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes($"{OidcIssuer.DashboardClientId}:{OidcHarness.ClientSecret}")));
+            using var response = await (index % 2 == 0 ? oidc.Client : replica.Client).SendAsync(request);
+            return response.StatusCode;
+        }));
+        await Assert.That(statuses.Count(status => status == HttpStatusCode.Accepted)).IsEqualTo(1);
+        await Assert.That(statuses.Count(status => status == HttpStatusCode.TooManyRequests)).IsEqualTo(5);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task A_resend_paused_before_its_CAS_cannot_revive_a_consumed_signup_or_overwrite_a_new_signup(bool replace)
+    {
+        var pause = new PausingTransactions(request => request.Method == HttpMethod.Put
+            && request.RequestUri!.AbsolutePath.Contains("/collections/passcodes/documents/", StringComparison.Ordinal))
+        { InnerHandler = fixture.NewHandler() };
+        await using var oidc = await OidcHarness.StartAsync(fixture, services: services => services.AddSingleton(new HttpClient(pause)));
+        await using var replica = await oidc.StartReplicaAsync();
+        const string email = "race@example.test";
+        var pending = await SignUpAsync(oidc, email, Password);
+        var code = await oidc.Email.NextCodeAsync(email);
+        var held = await pause.HoldNextAsync(() => oidc.Server.App.Services.GetRequiredService<Passcodes>().ResendSignUpAsync(OidcIssuer.InstanceId, email, pending));
+        try
+        {
+            var other = replica.App.Services.GetRequiredService<Passcodes>();
+            if (replace)
+            {
+                await Assert.That(await other.RequestSignUpAsync(OidcIssuer.InstanceId, email, Passwords.Hash("replacement password"), "replacement-token")).IsNotNull();
+            }
+            else
+            {
+                await Assert.That(await other.RedeemSignUpAsync(OidcIssuer.InstanceId, email, code, pending)).IsNotNull();
+            }
+
+            var winner = (await oidc.Database.ListDocumentsAsync(AuthStore.PasscodeCollection)).Items.Single();
+            await Assert.That(await pause.ReleaseAsync(held)).IsNull();
+            await Assert.That((await oidc.Database.ListDocumentsAsync(AuthStore.PasscodeCollection)).Items.Single().Version).IsEqualTo(winner.Version);
+            if (replace)
+            {
+                await Assert.That(await other.ResendSignUpAsync(OidcIssuer.InstanceId, email, pending)).IsNull();
+            }
+            else
+            {
+                await Assert.That(winner.Document.GetProperty("consumed").GetBoolean()).IsTrue();
+                await Assert.That(winner.Document.GetProperty("passwordHash").ValueKind).IsEqualTo(JsonValueKind.Null);
+            }
+        }
+        finally
+        {
+            await pause.ReleaseAsync(held);
+        }
     }
 
     private Task<OidcHarness> StartAsync(CapturingLogs? logs = null, TimeProvider? clock = null) => OidcHarness.StartAsync(fixture, values =>

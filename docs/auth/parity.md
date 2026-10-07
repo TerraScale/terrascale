@@ -214,7 +214,13 @@ redirect flow. Fast tests drive every flow over real HTTP on the real
 TerraBase, including enumeration, brute-force and rate-limit cases, a third
 party attaching a password to someone else's sign-up, log redaction, code
 pruning and a cross-replica sign-up race. The [port guide](csharp-port.md#headless-api-ts-582)
-has the contract, limits and security decisions.
+has the contract, limits and security decisions. TS-631 adds token-bound pending
+sign-up resends at `email-code/start`, preserving the original password hash
+and token binding with a single version-checked write, and a persisted
+60-second mail cooldown shared by all headless mail-start routes, clients and
+replicas, including unknown addresses. Fast integration tests cover resend,
+token rejection, hourly budgets, cooldown boundaries and races against
+consumption and replacement.
 
 ## TS-598 platform organizations and projects
 

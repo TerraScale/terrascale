@@ -1,10 +1,10 @@
 namespace TerraScale.Auth.Tests;
 
 /// <summary>
-/// A TerraBase client handler that holds the next transaction (a change's commit, after all its reads) until the test
+/// A TerraBase client handler that holds the next transaction (or a write selected by the caller) until the test
 /// releases it, so a competing change can commit in between, deterministically.
 /// </summary>
-public sealed class PausingTransactions : DelegatingHandler
+public sealed class PausingTransactions(Func<HttpRequestMessage, bool>? shouldPause = null) : DelegatingHandler
 {
     private TaskCompletionSource? reached;
     private TaskCompletionSource? release;
@@ -49,7 +49,7 @@ public sealed class PausingTransactions : DelegatingHandler
     /// <inheritdoc />
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
-        if (request.Method == HttpMethod.Post && request.RequestUri!.AbsolutePath.EndsWith("/transactions", StringComparison.Ordinal)
+        if ((shouldPause?.Invoke(request) ?? (request.Method == HttpMethod.Post && request.RequestUri!.AbsolutePath.EndsWith("/transactions", StringComparison.Ordinal)))
             && Interlocked.Exchange(ref this.reached, null) is { } holding)
         {
             holding.TrySetResult();

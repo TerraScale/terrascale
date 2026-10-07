@@ -54,6 +54,9 @@ public sealed partial class HeadlessAuth(Users users, Passcodes passcodes, Passw
     /// <summary>The password budget's window.</summary>
     public static readonly TimeSpan PasswordWindow = TimeSpan.FromMinutes(15);
 
+    /// <summary>Minimum interval between mail-start requests for one normalized email, shared across routes and replicas.</summary>
+    public static readonly TimeSpan MailCooldown = TimeSpan.FromSeconds(60);
+
     private static readonly TimeSpan IpWindow = TimeSpan.FromMinutes(1);
 
     /// <summary>
@@ -123,16 +126,18 @@ public sealed partial class HeadlessAuth(Users users, Passcodes passcodes, Passw
         return OidcResults.SignIn(user, clock.GetUtcNow(), request.GetScopes(), OidcIssuer.SignInAudiences(options));
     }
 
-    /// <summary>Emails a sign-in code when <paramref name="email"/> has an account. Null, or how long to wait.</summary>
-    public async Task<TimeSpan?> StartEmailCodeAsync(string email, string ip, CancellationToken cancellationToken)
+    /// <summary>Emails a sign-in code, or resends a sign-up bound to <paramref name="pendingToken"/>. Null, or how long to wait.</summary>
+    public async Task<TimeSpan?> StartEmailCodeAsync(string email, string ip, CancellationToken cancellationToken, string? pendingToken = null)
     {
-        if (await this.LimitAsync(ip, mails: true, cancellationToken) is { } wait)
+        if (await this.LimitMailAsync(email, ip, cancellationToken) is { } wait)
         {
             return wait;
         }
 
         // Issued on the mail worker, so the response takes the same work whether or not the address has an account.
-        mail.EnqueueIssue(() => passcodes.RequestAsync(OidcIssuer.InstanceId, email, PasscodePurpose.SignIn, CancellationToken.None));
+        mail.EnqueueIssue(() => pendingToken is null
+            ? passcodes.RequestAsync(OidcIssuer.InstanceId, email, PasscodePurpose.SignIn, CancellationToken.None)
+            : passcodes.ResendSignUpAsync(OidcIssuer.InstanceId, email, pendingToken, CancellationToken.None));
         return null;
     }
 
@@ -143,7 +148,7 @@ public sealed partial class HeadlessAuth(Users users, Passcodes passcodes, Passw
     /// </summary>
     public async Task<(string? PendingToken, TimeSpan? Wait)> SignUpAsync(string email, string password, string ip, CancellationToken cancellationToken)
     {
-        if (await this.LimitAsync(ip, mails: true, cancellationToken) is { } wait)
+        if (await this.LimitMailAsync(email, ip, cancellationToken) is { } wait)
         {
             return (null, wait);
         }
@@ -158,7 +163,7 @@ public sealed partial class HeadlessAuth(Users users, Passcodes passcodes, Passw
     /// <summary>Emails a password-reset code when <paramref name="email"/> has an account. Null, or how long to wait.</summary>
     public async Task<TimeSpan?> StartPasswordResetAsync(string email, string ip, CancellationToken cancellationToken)
     {
-        if (await this.LimitAsync(ip, mails: true, cancellationToken) is { } wait)
+        if (await this.LimitMailAsync(email, ip, cancellationToken) is { } wait)
         {
             return wait;
         }
@@ -237,6 +242,23 @@ public sealed partial class HeadlessAuth(Users users, Passcodes passcodes, Passw
         var raw = address.GetAddressBytes();
         Array.Clear(raw, bytes, raw.Length - bytes);
         return new IPAddress(raw).ToString();
+    }
+
+    private async Task<TimeSpan?> LimitMailAsync(string email, string ip, CancellationToken cancellationToken)
+    {
+        if (await this.LimitAsync(ip, mails: true, cancellationToken) is { } wait)
+        {
+            return wait;
+        }
+
+        if (Users.NormalizeEmail(email) is { } normalized
+            && !await limiter.TryAcquireCooldownAsync(OidcIssuer.InstanceId, "headless-mail-email", limiter.Fold(normalized), MailCooldown, cancellationToken))
+        {
+            LogLimited(logger, "headless-mail-email");
+            return MailCooldown;
+        }
+
+        return null;
     }
 
     // Charges the IP's call budget and, for calls that send mail, its mail budget; an IPv6 /64 also charges its /48.

@@ -37,6 +37,14 @@ public sealed partial class OpenApiTests
         }
 
         // /metrics was replaced by OTLP push; it must not come back unannounced.
+        var emailStart = paths.GetProperty("/{slug}/headless/v1/email-code/start").GetProperty("post");
+        await Assert.That(emailStart.GetProperty("description").GetString()).Contains("60-second cooldown");
+        await Assert.That(emailStart.GetProperty("requestBody").GetProperty("content").GetProperty("application/json")
+            .GetProperty("schema").GetProperty("$ref").GetString()).IsEqualTo("#/components/schemas/HeadlessEmailCodeRequest");
+        var emailSchema = document.GetProperty("components").GetProperty("schemas").GetProperty("HeadlessEmailCodeRequest");
+        await Assert.That(emailSchema.GetProperty("properties").TryGetProperty("pending_token", out _)).IsTrue();
+        await Assert.That(!emailSchema.TryGetProperty("required", out var required) || !required.EnumerateArray().Any(field => field.GetString() == "pending_token")).IsTrue();
+
         await Assert.That(paths.TryGetProperty("/metrics", out _)).IsFalse();
 
         // Probes and bundled assets are public and say so explicitly.

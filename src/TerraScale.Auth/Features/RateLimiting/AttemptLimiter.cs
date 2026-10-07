@@ -7,7 +7,7 @@ using TerraScale.Auth.Store;
 namespace TerraScale.Auth.Features.RateLimiting;
 
 /// <summary>
-/// Fixed attempt windows (one minute unless a caller chooses another) shared by every replica through conditional writes to
+/// Fixed attempt windows (one minute unless a caller chooses another) and elapsed cooldowns shared by every replica through conditional writes to
 /// TerraBase, for authentication, recovery, verification and token endpoints. A replica with a
 /// slower clock never resets a window another replica has already advanced. Storage failure or
 /// persistent contention fails closed with 503; an attempt is never admitted unrecorded.
@@ -54,7 +54,17 @@ public sealed class AttemptLimiter(IDocumentStore storage, TimeProvider clock, A
     /// limits by attacker-chosen text must first <see cref="Fold"/> it. Windows are fixed
     /// multiples of <paramref name="window"/> (whole seconds); one purpose must always use the same window.
     /// </summary>
-    public async Task<bool> TryAcquireAsync(string instanceId, string purpose, string subject, int maximum, TimeSpan window, CancellationToken cancellationToken)
+    public Task<bool> TryAcquireAsync(string instanceId, string purpose, string subject, int maximum, TimeSpan window, CancellationToken cancellationToken) =>
+        this.AcquireAsync(instanceId, purpose, subject, maximum, window, cooldown: false, cancellationToken);
+
+    /// <summary>
+    /// Admits one attempt per elapsed <paramref name="interval"/>, measured from the last admission rather than fixed
+    /// clock boundaries. Uses a separate purpose from fixed windows; attacker-chosen subjects must be folded.
+    /// </summary>
+    public Task<bool> TryAcquireCooldownAsync(string instanceId, string purpose, string subject, TimeSpan interval, CancellationToken cancellationToken) =>
+        this.AcquireAsync(instanceId, purpose, subject, 1, interval, cooldown: true, cancellationToken);
+
+    private async Task<bool> AcquireAsync(string instanceId, string purpose, string subject, int maximum, TimeSpan window, bool cooldown, CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrEmpty(instanceId);
         ArgumentException.ThrowIfNullOrEmpty(purpose);
@@ -72,7 +82,8 @@ public sealed class AttemptLimiter(IDocumentStore storage, TimeProvider clock, A
         // storage itself keeps failing. MaxRounds bounds the work a large maximum would allow.
         for (var attempt = 0; attempt < Math.Min(maximum + 2L, MaxRounds); attempt++)
         {
-            var number = clock.GetUtcNow().ToUnixTimeSeconds() / windowSeconds;
+            var now = clock.GetUtcNow();
+            var number = cooldown ? now.ToUnixTimeMilliseconds() : now.ToUnixTimeSeconds() / windowSeconds;
             var current = await this.store.GetAsync<AttemptBucket>(Collection, instanceId, key, cancellationToken);
             if (current is null)
             {
@@ -89,7 +100,8 @@ public sealed class AttemptLimiter(IDocumentStore storage, TimeProvider clock, A
                 throw ApiException.Unavailable(new InvalidDataException("A stored attempt bucket holds a negative window or count."));
             }
 
-            var bucket = current.Document.Window < number ? new AttemptBucket(number, 0) : current.Document;
+            var expired = cooldown ? number - current.Document.Window >= window.TotalMilliseconds : current.Document.Window < number;
+            var bucket = expired ? new AttemptBucket(number, 0) : current.Document;
             if (bucket.Used >= maximum)
             {
                 return false;

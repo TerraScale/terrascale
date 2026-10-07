@@ -423,7 +423,7 @@ steps are JSON (`{"error":{"code","message"}}` on failure):
 
 | Route (`POST /terrascale/headless/v1/…`) | Body | Success |
 | --- | --- | --- |
-| `email-code/start` | `email`, `ip_address` | 202; mails a sign-in code if the account exists |
+| `email-code/start` | `email`, `ip_address`, optional `pending_token` | 202; resends the token-bound pending sign-up verification code, or mails a sign-in code if the account exists |
 | `sign-up` | `email`, `password`, `ip_address` | 202 `{"pending_token"}`; mails a verification code, or a sign-in code if the address has an account |
 | `password-reset/start` | `email`, `ip_address` | 202; mails a reset code if the account exists |
 | `password-reset/complete` | `email`, `code`, `new_password`, `ip_address` | 204; password set, user signed out everywhere |
@@ -457,6 +457,14 @@ live out their hour.
   sign-up) per hour. A user has one current code whatever its purpose; the
   record's `purpose` binds it, so a reset code never signs in and a sign-in
   code never resets. Records written before TS-582 read as sign-in codes.
+- TS-631 resends use the original `pending_token` at `email-code/start` and
+  preserve the pending sign-up's password hash and token hash. For addresses
+  without an account, a wrong token or missing pending record still answers
+  202 and sends nothing; existing accounts receive sign-in codes. The resend
+  replaces only the version read, so it cannot revive a consumed signup or
+  overwrite a concurrent replacement. It invalidates the previous code and
+  charges the existing hourly issue budget. Expired or exhausted codes can be
+  renewed while their unconsumed pending record remains stored.
 - Users gain an optional `passwordHash` (Argon2id PHC, the TS-488 parameters).
   Accounts created before TS-582 have none: they sign in with codes, or set a
   password through the reset. A password reset sets the hash and advances
@@ -484,6 +492,7 @@ mailboxes), so storage stays bounded and nobody can target a victim's bucket.
 | Every headless call per IPv6 /48 | 120 per minute | `headless-ip-site` |
 | Mail-sending calls per IP (IPv6 per /64) | 10 per 15 minutes | `headless-ip-mail` |
 | Mail-sending calls per IPv6 /48 | 40 per 15 minutes | `headless-ip-site-mail` |
+| Mail-start calls per normalized email, with or without an account | One per 60 elapsed seconds, shared by email-code/start, sign-up and password-reset/start across all clients and replicas | `headless-mail-email` |
 | Password attempts per email, with or without an account | 10 per 15 minutes | `headless-password-email` |
 
 Every attempt counts, successful ones included. An email whose password budget
