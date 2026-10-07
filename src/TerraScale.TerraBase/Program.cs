@@ -3,6 +3,7 @@ using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Features.ApiKeys;
 using TerraBase.Features.ApiReference;
+using TerraBase.Features.Backup;
 using TerraBase.Features.Documents;
 using TerraBase.Features.Management;
 using TerraBase.Features.Management.Usage;
@@ -80,6 +81,7 @@ builder.Services.AddTerraBaseApiKeys();
 builder.Services.AddTerraBaseDocuments();
 builder.Services.AddTerraBaseUserAuth();
 builder.Services.AddTerraBaseManagement();
+builder.Services.AddTerraBaseBackup(options);
 builder.Services.AddTerraBasePressure();
 builder.AddTerraBaseReplication(options);
 

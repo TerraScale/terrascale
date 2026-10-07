@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using TerraBase.Features.ApiKeys;
+using TerraBase.Features.Backup;
 using TerraBase.Features.Documents;
 using TerraBase.Features.Health;
 using TerraBase.Features.Management;
@@ -25,6 +26,7 @@ namespace TerraBase.Hosting;
 [JsonSerializable(typeof(AuditEvent))]
 [JsonSerializable(typeof(AuditRetention))]
 [JsonSerializable(typeof(BackupPolicy))]
+[JsonSerializable(typeof(BackupStatus))]
 [JsonSerializable(typeof(BackupPolicyRequest))]
 [JsonSerializable(typeof(BackupRecord))]
 [JsonSerializable(typeof(BackupSchedule))]
@@ -63,6 +65,7 @@ namespace TerraBase.Hosting;
 [JsonSerializable(typeof(IReadOnlyList<QuerySortRequest>))]
 [JsonSerializable(typeof(IReadOnlyList<JsonElement>))]
 [JsonSerializable(typeof(PatchOpsRequest))]
+[JsonSerializable(typeof(PointInTimeRestoreRequest))]
 [JsonSerializable(typeof(TransactionRequest))]
 [JsonSerializable(typeof(TransactionOpRequest))]
 [JsonSerializable(typeof(TransactionBody))]
@@ -84,6 +87,9 @@ namespace TerraBase.Hosting;
 [JsonSerializable(typeof(ManagementOpRequest))]
 [JsonSerializable(typeof(Membership))]
 [JsonSerializable(typeof(NameRequest))]
+[JsonSerializable(typeof(OciDecryptRequest))]
+[JsonSerializable(typeof(OciGenerateDataKeyRequest))]
+[JsonSerializable(typeof(OciKeyResponse))]
 [JsonSerializable(typeof(OpCounts))]
 [JsonSerializable(typeof(UsageSender))]
 [JsonSerializable(typeof(Organization))]
@@ -96,6 +102,7 @@ namespace TerraBase.Hosting;
 [JsonSerializable(typeof(ProjectKeyEntry))]
 [JsonSerializable(typeof(ProjectUsage))]
 [JsonSerializable(typeof(QueryFieldUsage))]
+[JsonSerializable(typeof(RestoreWindow))]
 [JsonSerializable(typeof(RoleRequest))]
 [JsonSerializable(typeof(SavedQuery))]
 [JsonSerializable(typeof(SavedQueryEntry))]

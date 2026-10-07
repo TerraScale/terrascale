@@ -66,6 +66,10 @@
   <ItemGroup Label="Storage engine">
     <PackageVersion Include="Microsoft.Data.Sqlite" Version="11.0.0-rc.1.26425.128" />
   </ItemGroup>
+  <!-- S3-compatible object storage (OCI Object Storage) for continuous backups (Features/Backup). -->
+  <ItemGroup Label="Object storage">
+    <PackageVersion Include="AWSSDK.S3" Version="4.0.104.1" />
+  </ItemGroup>
   <!-- Cron expressions for scheduled backups (Features/Management/Backups). -->
   <ItemGroup Label="Scheduling">
     <PackageVersion Include="Cronos" Version="0.13.0" />

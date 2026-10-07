@@ -18,7 +18,7 @@ namespace TerraBase.Engine.Sqlite;
 /// groups, whether or not peers are configured, so a database's change log never has a hole a peer would miss.
 /// </summary>
 /// <remarks>Every SQLite call runs on one <see cref="SqliteIoPool"/> shared by all databases.</remarks>
-internal sealed partial class SqliteStorageEngine : IStorageEngine
+internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
 {
     private const string FileExtension = ".db";
 
@@ -300,11 +300,12 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine
     /// <param name="time">The clock of the query deadline; the system clock by default.</param>
     /// <param name="afterMigration">Optional integration-test hook before a tenant database's baseline is seeded.</param>
     /// <param name="systemReplica">Whether this node follows a catalog primary: its system database accepts only replicated writes.</param>
+    /// <param name="walTaps">Whether continuous backup ships from this node: its <see cref="IWalTap"/>s checkpoint every database, not SQLite.</param>
     public SqliteStorageEngine(
         string dataDirectory, int threads, int queue, long memoryBudget, Meter meter, ILogger<SqliteStorageEngine> logger,
         TimeSpan shutdownGrace, int? maxIdle = null, int? maxIdlePerDatabase = null, Func<ThreadStart, Thread>? createWorker = null,
         TimeSpan? readinessCacheTtl = null, DatabaseLifecycleCheckpoint? checkpoint = null, TimeProvider? time = null,
-        Action<SqliteDatabaseStore>? afterMigration = null, bool systemReplica = false)
+        Action<SqliteDatabaseStore>? afterMigration = null, bool systemReplica = false, bool walTaps = false)
     {
         _systemReplica = systemReplica;
         _dataDirectory = dataDirectory;
@@ -316,7 +317,7 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine
         _readinessCacheTtl = readinessCacheTtl ?? TimeSpan.FromSeconds(1);
         Time = time ?? TimeProvider.System;
         // Prepare managed state before taking ownership or starting workers.
-        _pragmas = SqliteSession.Pragmas(memoryBudget, threads);
+        _pragmas = SqliteSession.Pragmas(memoryBudget, threads, walTaps);
         Pool = new(maxIdle: maxIdle ?? 4 * Environment.ProcessorCount, maxIdlePerDatabase: maxIdlePerDatabase ?? Environment.ProcessorCount);
         _ownership = Own(dataDirectory);
         try

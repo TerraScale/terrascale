@@ -36,8 +36,10 @@ public static class EngineExtensions
                 provider.GetRequiredService<ILogger<SqliteStorageEngine>>(), configured.ShutdownGrace, readinessCacheTtl: configured.ReadinessCacheTtl,
                 checkpoint: provider.GetRequiredService<DatabaseLifecycleCheckpoint>(),
                 time: provider.GetKeyedService<TimeProvider>(QueryDeadlineClock),
-                systemReplica: configured.CatalogPrimary is not null);
+                systemReplica: configured.CatalogPrimary is not null,
+                walTaps: configured.ShipsBackup);
         });
+        services.AddSingleton<IWalBackup>(provider => provider.GetRequiredService<SqliteStorageEngine>());
         services.AddSingleton(provider =>
         {
             var sqlite = provider.GetRequiredService<SqliteStorageEngine>();

@@ -383,13 +383,46 @@ internal sealed class SqliteDatabaseStore(
 
         await ReturnAsync(session).ConfigureAwait(false);
         // InitializeAsync switches the copy to WAL and refuses an unsupported schema version.
-        await InitializeAsync(name, path, io, pragmas, SqliteStatements.MaterializeRetainedDeletions + """
-            UPDATE replication_state SET complete = 0 WHERE id = 1;
-            DELETE FROM changes;
-            DELETE FROM journal_prefixes;
-            DELETE FROM applied;
-            """, cancellationToken).ConfigureAwait(false);
+        await InitializeAsync(name, path, io, pragmas, CopyReset, cancellationToken).ConfigureAwait(false);
     }
+
+    /// <summary>Makes a copy of a database a new one: its replication starts over from a baseline.</summary>
+    internal const string CopyReset = SqliteStatements.MaterializeRetainedDeletions + """
+        UPDATE replication_state SET complete = 0 WHERE id = 1;
+        DELETE FROM changes;
+        DELETE FROM journal_prefixes;
+        DELETE FROM applied;
+        """;
+
+    /// <summary>The database file.</summary>
+    internal string FilePath => path;
+
+    /// <summary>
+    /// Runs <paramref name="call"/> while no write transaction of this process is open on this database; writers queue
+    /// meanwhile. Continuous backup reads the log and checkpoints it under this (TS-633).
+    /// </summary>
+    internal async Task<T> WithWritersHeldAsync<T>(Func<Task<T>> call, CancellationToken cancellationToken)
+    {
+        if (!await _writer.WaitAsync(TimeSpan.FromSeconds(30), cancellationToken).ConfigureAwait(false))
+        {
+            throw io.Busy();
+        }
+
+        try
+        {
+            return await call().ConfigureAwait(false);
+        }
+        finally
+        {
+            _writer.Release();
+        }
+    }
+
+    /// <summary>Rents a session for work outside a transaction (continuous backup); the caller holds an admission.</summary>
+    internal Task<SqliteSession> RentSessionAsync(CancellationToken cancellationToken) => RentAsync(cancellationToken);
+
+    /// <summary>Gives back a session from <see cref="RentSessionAsync"/>; a closed store closes it.</summary>
+    internal Task ReturnSessionAsync(SqliteSession session) => ReturnAsync(session);
 
     /// <summary>
     /// When the change log does not cover this database's state (a copy, or an upgrade from version 1 with

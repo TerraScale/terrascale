@@ -21,8 +21,9 @@ internal sealed class SqliteSession(SqliteConnection connection) : IDisposable
     /// Per-connection settings, applied once when a connection opens (pooled sessions and the connection that
     /// creates a database). The reasons, and how the page cache and the memory map are sized from
     /// <c>memory-budget</c>, are in <c>docs/sqlite-query-plans.md</c>; <c>synchronous = NORMAL</c> is decision 0003.
+    /// With <paramref name="walTaps"/> continuous backup checkpoints the log instead of SQLite (<see cref="SqliteWalTap"/>).
     /// </summary>
-    public static string Pragmas(long memoryBudget, int threads)
+    public static string Pragmas(long memoryBudget, int threads, bool walTaps = false)
     {
         // A quarter of the budget for page caches, split across the connections that run at once. Idle
         // connections keep theirs, so LimitHeap holds SQLite's whole heap to that quarter.
@@ -34,6 +35,7 @@ internal sealed class SqliteSession(SqliteConnection connection) : IDisposable
             PRAGMA synchronous = NORMAL;
             PRAGMA mmap_size = {mmapBytes};
             PRAGMA cache_size = -{cacheKib};
+            {(walTaps ? "PRAGMA wal_autocheckpoint = 0;" : "")}
             """);
     }
 

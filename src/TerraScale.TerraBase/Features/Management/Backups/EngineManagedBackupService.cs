@@ -5,6 +5,7 @@ using System.Text.Json.Serialization.Metadata;
 using Cronos;
 using TerraBase.Engine;
 using TerraBase.Errors;
+using TerraBase.Features.Backup;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
 using static TerraBase.Features.Management.SystemCatalog;
@@ -24,7 +25,8 @@ namespace TerraBase.Features.Management.Backups;
 /// <see cref="MaxScheduledBackupsPerPass"/> scheduled backups in turn order.
 /// </remarks>
 internal sealed partial class EngineManagedBackupService(
-    IStorageEngine engine, SystemCatalog catalog, IManagementService management, TimeProvider time, ILogger<EngineManagedBackupService> logger)
+    IStorageEngine engine, SystemCatalog catalog, IManagementService management, IPointInTimeRestore pointInTime, TimeProvider time,
+    ILogger<EngineManagedBackupService> logger)
     : IManagedBackupService
 {
     /// <summary>Catalog collection: database id → <see cref="DatabaseOwner"/>, deleted with the database.</summary>
@@ -152,17 +154,53 @@ internal sealed partial class EngineManagedBackupService(
         }
 
         // The snapshot is an engine database of the backed-up database's project, which the restore copies within.
+        return await CopyRestoredAsync(userId, organizationId, owner, source.Name, record.Id, name, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <remarks>
+    /// ponytail: the restored state is staged as an engine database of the project and copied like a backup snapshot; a
+    /// process that stops between the two leaves the staging file, which startup reports as unknown and keeps.
+    /// </remarks>
+    public async ValueTask<RestoreBackupResult> RestorePointInTimeAsync(
+        string userId, string organizationId, TenantContext database, DateTimeOffset at, string? name, CancellationToken cancellationToken)
+    {
+        var owner = DatabaseOwner.Of(database);
+        var source = await catalog.ReadAsync(
+            transaction => EngineManagementService.GetDatabaseAsync(transaction, userId, organizationId, owner.ProjectId, owner.DatabaseId, cancellationToken),
+            cancellationToken).ConfigureAwait(false);
+        if (source is null)
+        {
+            return new NotFound();
+        }
+
+        var staging = database with { DatabaseId = Guid.NewGuid().ToString() };
+        try
+        {
+            return await pointInTime.RestoreAsync(database, at, staging, cancellationToken).ConfigureAwait(false)
+                ? await CopyRestoredAsync(userId, organizationId, owner, source.Name, staging.DatabaseId!, name, cancellationToken).ConfigureAwait(false)
+                : new NotFound("no backup of this database reaches back to pointInTime");
+        }
+        finally
+        {
+            await engine.DeleteDatabaseAsync(staging, CancellationToken.None).ConfigureAwait(false);
+        }
+    }
+
+    // Copies the engine database storageId of the project into a new database named name, or <source>-restore, -restore-2, ….
+    private async ValueTask<RestoreBackupResult> CopyRestoredAsync(
+        string userId, string organizationId, DatabaseOwner owner, string sourceName, string storageId, string? name, CancellationToken cancellationToken)
+    {
         if (name is not null)
         {
-            return Restored(await management.CopyDatabaseAsync(userId, organizationId, owner.ProjectId, record.Id, name, owner.DatabaseId, cancellationToken).ConfigureAwait(false));
+            return Restored(await management.CopyDatabaseAsync(userId, organizationId, owner.ProjectId, storageId, name, owner.DatabaseId, cancellationToken).ConfigureAwait(false));
         }
 
         // A taken name fails on the registration precheck, before any copy is made.
         for (var attempt = 1; attempt <= MaxRestoreNameAttempts; attempt++)
         {
             var suffix = attempt == 1 ? "-restore" : "-restore-" + attempt.ToString(CultureInfo.InvariantCulture);
-            var candidate = source.Name[..Math.Min(source.Name.Length, MaxDatabaseNameLength - suffix.Length)] + suffix;
-            var result = await management.CopyDatabaseAsync(userId, organizationId, owner.ProjectId, record.Id, candidate, owner.DatabaseId, cancellationToken).ConfigureAwait(false);
+            var candidate = sourceName[..Math.Min(sourceName.Length, MaxDatabaseNameLength - suffix.Length)] + suffix;
+            var result = await management.CopyDatabaseAsync(userId, organizationId, owner.ProjectId, storageId, candidate, owner.DatabaseId, cancellationToken).ConfigureAwait(false);
             if (result.Error != ManagementError.NameTaken)
             {
                 return Restored(result);

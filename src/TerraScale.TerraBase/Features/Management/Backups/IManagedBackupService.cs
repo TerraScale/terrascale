@@ -25,6 +25,11 @@ public sealed record BackupPolicy(string? FullBackupCron, int RetentionDays, boo
 /// <param name="Disabled">Whether scheduled backups are paused; defaults to false.</param>
 public sealed record BackupPolicyRequest(string? FullBackupCron, int? RetentionDays, bool? Disabled);
 
+/// <summary>The body of <c>POST …/point-in-time/restore</c>.</summary>
+/// <param name="PointInTime">The time to restore the database as of, inside its restore window.</param>
+/// <param name="Name">The new database's name; the first free of <c>&lt;source&gt;-restore</c>, <c>-restore-2</c>, … without it.</param>
+public sealed record PointInTimeRestoreRequest(DateTimeOffset? PointInTime, string? Name);
+
 /// <summary>A completed backup, or that its database is gone or out of the user's reach.</summary>
 public readonly union CreateBackupResult(DatabaseBackup, NotFound);
 
@@ -56,6 +61,13 @@ public interface IManagedBackupService
     /// </summary>
     ValueTask<RestoreBackupResult> RestoreAsync(
         string userId, string organizationId, TenantContext database, string backupId, string? name, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Restores <paramref name="database"/> as of <paramref name="at"/> from continuous backup into a new database in the same
+    /// project, named like <see cref="RestoreAsync"/>; not found when no backup reaches back to <paramref name="at"/>.
+    /// </summary>
+    ValueTask<RestoreBackupResult> RestorePointInTimeAsync(
+        string userId, string organizationId, TenantContext database, DateTimeOffset at, string? name, CancellationToken cancellationToken);
 
     /// <summary>One scheduler pass: a page of the storage sweep, retention, then the scheduled backups that are due.</summary>
     ValueTask RunScheduleAsync(CancellationToken cancellationToken);

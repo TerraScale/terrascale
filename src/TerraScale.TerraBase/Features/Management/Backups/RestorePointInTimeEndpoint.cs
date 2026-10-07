@@ -1,0 +1,83 @@
+using TerraBase.Errors;
+using TerraBase.Features.Backup;
+using TerraBase.Features.UserAuth;
+using TerraBase.Hosting;
+using TerraBase.Tenancy;
+using TerraScale.Endpoints;
+
+namespace TerraBase.Features.Management.Backups;
+
+/// <summary><c>POST …/databases/{database}/point-in-time/restore</c>: restores a database as of a time into a new database.</summary>
+public sealed class RestorePointInTimeEndpoint(IManagementService management, IManagedBackupService backups, IPointInTimeRestore restore, TimeProvider time)
+    : Endpoint<PointInTimeRestoreRequest, IResult>
+{
+    /// <inheritdoc />
+    public override void Configure()
+    {
+        Post(ManagementRoute.Database + "/point-in-time/restore");
+        Name("restorePointInTime");
+        Summary("Restores a database as of a time into a new database");
+        Description("Restores every transaction continuous backup read by pointInTime (backup reads each second) into a new database in the same project, with branchedFrom set to the restored database; the database itself is unchanged. pointInTime must lie between the window's earliest time (GET …/point-in-time) and now; after the window's latest time it restores the latest data. name follows the database name rules; without it the first free of <source>-restore, <source>-restore-2, … is used." + " " + ManagementRoute.IdentityDescription);
+        Tags(ManagementRoute.Tag);
+        Produces<ManagedDatabase>(StatusCodes.Status201Created);
+        Produces<ErrorBody>(StatusCodes.Status400BadRequest);
+        Produces<ErrorBody>(StatusCodes.Status404NotFound);
+        Produces<ErrorBody>(StatusCodes.Status409Conflict);
+        Produces<ErrorBody>(StatusCodes.Status403Forbidden);
+        RequireAuthorization(UserAuthExtensions.PolicyName);
+        Metadata(ListenerMetadata.Management);
+    }
+
+    /// <inheritdoc />
+    public override async ValueTask<IResult> HandleAsync(PointInTimeRestoreRequest request, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        // Access first: another tenant's database answers 404 whatever the body holds.
+        return await ManagementRoute.CheckWritableDatabaseAsync(HttpContext, management, cancellationToken) switch
+        {
+            NotFound error => ErrorResponse.From(error),
+            Forbidden error => ErrorResponse.From(error),
+            TenantContext database => await RestoreAsync(database, request, cancellationToken),
+        };
+    }
+
+    private async ValueTask<IResult> RestoreAsync(TenantContext database, PointInTimeRestoreRequest request, CancellationToken cancellationToken)
+    {
+        if (request.PointInTime is not { } at)
+        {
+            return ErrorResponse.From(new Validation("pointInTime is required"));
+        }
+
+        string? name = null;
+        if (request.Name is not null)
+        {
+            switch (ManagementRoute.CheckDatabaseName(new NameRequest(request.Name)))
+            {
+                case Validation error:
+                    return ErrorResponse.From(error);
+                case string valid:
+                    name = valid;
+                    break;
+            }
+        }
+
+        if (await restore.GetWindowAsync(database, cancellationToken) is not { } window)
+        {
+            return ErrorResponse.From(new NotFound("continuous backup holds nothing of this database"));
+        }
+
+        if (at < window.Earliest || at > time.GetUtcNow())
+        {
+            return ErrorResponse.From(new Validation("pointInTime must lie between the restore window's earliest time and now"));
+        }
+
+        var organization = ManagementRoute.OrganizationId(HttpContext);
+        return await backups.RestorePointInTimeAsync(ManagementRoute.UserId(HttpContext), organization, database, at, name, cancellationToken) switch
+        {
+            ManagedDatabase restored => TypedResults.Created($"{ManagementRoute.Organizations}/{organization}/projects/{restored.ProjectId}/databases/{restored.Id}", restored),
+            NotFound error => ErrorResponse.From(error),
+            Conflict error => ErrorResponse.From(error),
+            Forbidden error => ErrorResponse.From(error),
+        };
+    }
+}

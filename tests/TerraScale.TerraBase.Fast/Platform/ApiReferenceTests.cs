@@ -44,6 +44,7 @@ public sealed class ApiReferenceTests
         GET /v1/management/organizations/{organization}/projects/{project}/databases/{database}/collections/{collection}/schema TsAuth
         GET /v1/management/organizations/{organization}/projects/{project}/databases/{database}/index-recommendations TsAuth
         GET /v1/management/organizations/{organization}/projects/{project}/databases/{database}/indexes TsAuth
+        GET /v1/management/organizations/{organization}/projects/{project}/databases/{database}/point-in-time TsAuth
         GET /v1/management/organizations/{organization}/projects/{project}/databases/{database}/usage TsAuth
         GET /v1/management/organizations/{organization}/projects/{project}/saved-queries TsAuth
         GET /v1/management/organizations/{organization}/projects/{project}/saved-queries/{query} TsAuth
@@ -74,6 +75,7 @@ public sealed class ApiReferenceTests
         POST /v1/management/organizations/{organization}/projects/{project}/databases/{database}/branches TsAuth
         POST /v1/management/organizations/{organization}/projects/{project}/databases/{database}/index-recommendations/{recommendation}/apply TsAuth
         POST /v1/management/organizations/{organization}/projects/{project}/databases/{database}/indexes TsAuth
+        POST /v1/management/organizations/{organization}/projects/{project}/databases/{database}/point-in-time/restore TsAuth
         POST /v1/management/organizations/{organization}/projects/{project}/databases/{database}/sql TsAuth
         POST /v1/management/organizations/{organization}/projects/{project}/databases/{database}/sql/check TsAuth
         POST /v1/management/organizations/{organization}/projects/{project}/saved-queries TsAuth

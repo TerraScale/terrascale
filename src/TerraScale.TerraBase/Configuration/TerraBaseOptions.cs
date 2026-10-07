@@ -182,7 +182,7 @@ public sealed record TerraBaseOptions : IDisposable
 
     private static readonly FrozenSet<string> Keys = FrozenSet.Create(
         StringComparer.Ordinal,
-        ["admin-port", "data-directory", "region", "node-name", "memory-budget", "client-port", .. ClientTlsKeys, "auth-issuer", "auth-audience", "management-credential-file", "management-legacy-owner", "peer-port", .. PeerTlsKeys, "peer-addresses", "peers", "catalog-primary", "write-wait-ms", "shutdown-grace-seconds", "readiness-cache-seconds", "storage-threads", "storage-queue"]);
+        ["admin-port", "data-directory", "region", "node-name", "memory-budget", "client-port", .. ClientTlsKeys, "auth-issuer", "auth-audience", "management-credential-file", "management-legacy-owner", "peer-port", .. PeerTlsKeys, "peer-addresses", "peers", "catalog-primary", "write-wait-ms", "shutdown-grace-seconds", "readiness-cache-seconds", "storage-threads", "storage-queue", .. BackupSettings.Keys]);
 
     /// <summary>Every setting name, in <c>--name=value</c> form without the dashes.</summary>
     public static IReadOnlySet<string> SettingNames => Keys;
@@ -315,6 +315,15 @@ public sealed record TerraBaseOptions : IDisposable
         init => field = (int)ValidateInteger(value, "storage-queue", 1, 1_000_000);
     }
 
+    /// <summary>Continuous backup to object storage (TS-633); <see langword="null"/> turns it off.</summary>
+    public BackupSettings? Backup { get; init; }
+
+    /// <summary>
+    /// Whether this node ships continuous backups: only the catalog primary does, so one member ships each file.
+    /// ponytail: a static choice that stops shipping while the primary is down; TS-633's NATS lease moves it to any member.
+    /// </summary>
+    internal bool ShipsBackup => Backup is not null && CatalogPrimary is null;
+
     /// <summary>Reads and validates the configuration of this process.</summary>
     public static TerraBaseOptions FromProcess(IReadOnlyList<string> args)
     {
@@ -443,6 +452,7 @@ public sealed record TerraBaseOptions : IDisposable
         var shutdownGrace = TimeSpan.FromSeconds(ParseShutdownGraceSeconds(values));
         var readinessCacheTtl = TimeSpan.FromSeconds(ParseReadinessCacheSeconds(values));
         var writeWait = TimeSpan.FromMilliseconds(ParseInteger(values, "write-wait-ms", 0, 60_000) ?? DefaultWriteWaitMilliseconds);
+        var backup = BackupSettings.Parse(values);
         X509Certificate2? clientCertificate = null;
         PeerCredentials.Snapshot? peerCredentialSnapshot = null;
         try
@@ -481,6 +491,7 @@ public sealed record TerraBaseOptions : IDisposable
                 WriteWait = writeWait,
                 ShutdownGrace = shutdownGrace,
                 ReadinessCacheTtl = readinessCacheTtl,
+                Backup = backup,
             };
         }
         catch
