@@ -1,23 +1,71 @@
 package e2e
 
 import (
+	"net/url"
 	"slices"
 	"testing"
 
 	"github.com/mxschmitt/playwright-go"
 )
 
+func TestOrganizationSectionsKeepTheirActions(t *testing.T) {
+	page := newPage(t)
+	login(t, page, sampleAccount.Email, sampleAccount.Password)
+	goToOK(t, page, "/organization")
+	tabs := pageByRole(page, *playwright.AriaRoleNavigation, "Organization sections")
+	must(t, expect.Locator(tabs.Locator("a")).ToHaveText([]string{"Organization", "Members", "Projects"}))
+	must(t, expect.Locator(tabs.Locator("[aria-current=page]")).ToHaveText("Organization"))
+	visible(t, page.Locator("#organization-details"))
+	visible(t, page.Locator("#organization-ownership"))
+	visible(t, pageByRole(page, *playwright.AriaRoleButton, "Edit name", true))
+	visible(t, pageByRole(page, *playwright.AriaRoleLink, "Create organization", true))
+	must(t, expect.Locator(page.Locator("main #organization-switch, main [name=organizationId], main #team-members, main #projects")).ToHaveCount(0))
+	must(t, expect.Locator(page.Locator("[data-organization-option]")).Not().ToHaveCount(0))
+
+	for _, width := range []int{1440, 390} {
+		must(t, page.SetViewportSize(width, 900))
+		click(t, byRole(tabs, *playwright.AriaRoleLink, "Members", true))
+		must(t, expect.Locator(tabs.Locator("[aria-current=page]")).ToHaveText("Members"))
+		visible(t, page.Locator("#team-members"))
+		visible(t, page.Locator("#team-invitations"))
+		visible(t, page.Locator("#member-search"))
+		visible(t, page.Locator("#invite-email"))
+		must(t, expect.Locator(page.Locator("#organization-details, #organization-ownership, #projects, a[href='/organization?newOrganization=organization']")).ToHaveCount(0))
+		fill(t, page.Locator("#member-search"), "no-such-member")
+		must(t, page.Locator("#member-search").Press("Enter"))
+		visible(t, page.GetByText("No members returned", playwright.PageGetByTextOptions{Exact: new(true)}))
+		visible(t, page.Locator("#team-invitations"))
+		click(t, byRole(tabs, *playwright.AriaRoleLink, "Projects", true))
+		must(t, expect.Locator(tabs.Locator("[aria-current=page]")).ToHaveText("Projects"))
+		visible(t, page.Locator("#projects"))
+		visible(t, page.Locator(`button[command="show-modal"][commandfor="create-project"]`))
+		must(t, expect.Locator(page.Locator("#organization-details, #organization-ownership, #team-members, #team-invitations, #member-search")).ToHaveCount(0))
+		if currentPath(t, page) != "/organization" {
+			t.Fatalf("tab navigation left Organization: %s", page.URL())
+		}
+		_, err := page.Reload()
+		must(t, err)
+		must(t, expect.Locator(tabs.Locator("[aria-current=page]")).ToHaveText("Projects"))
+	}
+	must(t, page.SetViewportSize(1440, 900))
+	selectButton := page.Locator("#projects").GetByRole(*playwright.AriaRoleButton, playwright.LocatorGetByRoleOptions{Name: "Select", Exact: new(true)}).First()
+	submitAndExpect(t, page, "/api/v1/dashboard/switch-project", 303, selectButton.Click)
+	waitForPath(t, page, func(u *url.URL) bool { return u.Path == "/organization" && u.Query().Get("tab") == "projects" })
+	must(t, expect.Locator(tabs.Locator("[aria-current=page]")).ToHaveText("Projects"))
+	// Restore the fixture's selected project for the remaining serial tests.
+	coreProject := page.Locator("#projects tbody tr").Filter(playwright.LocatorFilterOptions{HasText: "core-platform"})
+	submitAndExpect(t, page, "/api/v1/dashboard/switch-project", 303, byRole(coreProject, *playwright.AriaRoleButton, "Select", true).Click)
+}
+
 // TestOwnershipTransferIsConfirmedAndCanBeCanceled requests a transfer in the
 // sample organization and cancels it again. It stays serial so no parallel
 // test sees the sample organization mid-transfer.
 func TestOwnershipTransferIsConfirmedAndCanBeCanceled(t *testing.T) {
-	const labs, ravi = "org_01JC9Q5V2N4P6T8R0X2Z4B6D8", "usr_01JC9S9V6Q1X4Z6B8D0F3H6JN"
+	const ravi = "usr_01JC9S9V6Q1X4Z6B8D0F3H6JN"
 	page := newPage(t)
 	login(t, page, sampleAccount.Email, sampleAccount.Password)
 	goToOK(t, page, "/organization")
-	switchForm := page.Locator("#organization-switch form")
-	selectOption(t, switchForm.Locator(`[name="organizationId"]`), labs)
-	submitAndExpect(t, page, "/api/v1/dashboard/switch-organization", 303, byRole(switchForm, *playwright.AriaRoleButton, "Switch organization").Click)
+	switchContext(t, page, "data-organization-option", "TerraScale Labs")
 
 	ownership := page.Locator("#organization-ownership")
 	visible(t, ownership.GetByText("As the owner you can't leave this organization."))

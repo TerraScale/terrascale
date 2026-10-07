@@ -106,6 +106,41 @@ func TestInvitationsTabIsPaged(t *testing.T) {
 	}
 }
 
+func TestMembersPageKeepsBothListsAndTheirPagination(t *testing.T) {
+	org := teamOrganization()
+	org.Members = make(map[string]core.Member)
+	for i := range 12 {
+		id := fmt.Sprintf("usr_%02d", i)
+		email := fmt.Sprintf("user%02d@example.test", i)
+		org.Members[id] = core.Member{UserID: id, Email: email, Name: id, Role: "member", Status: "active"}
+		org.Invitations[id] = core.Invitation{ID: id, Email: email, Role: "viewer", Status: "pending"}
+	}
+	p := core.Principal{UserID: "usr_owner", OrganizationID: org.ID}
+	for _, tc := range []struct {
+		tab                  string
+		members, invitations int
+	}{
+		{"members", 2, 10},
+		{"invitations", 10, 2},
+	} {
+		t.Run(tc.tab, func(t *testing.T) {
+			query := url.Values{"tab": {tc.tab}, "page": {"2"}}
+			members, invitations := buildMembersPageData(core.Account{}, org, p, query, "", "", testNow)
+			if len(members.Members) != tc.members || len(invitations.Invitations) != tc.invitations {
+				t.Fatalf("page 2 of %s has %d members and %d invitations, want %d and %d", tc.tab, len(members.Members), len(invitations.Invitations), tc.members, tc.invitations)
+			}
+			if members.PageCount != 2 || invitations.PageCount != 2 {
+				t.Fatalf("both lists must retain their own pager: members=%+v invitations=%+v", members, invitations)
+			}
+		})
+	}
+	query := url.Values{"tab": {"members"}, "q": {"user11"}, "role": {"all", "member"}}
+	members, invitations := buildMembersPageData(core.Account{}, org, p, query, "", "", testNow)
+	if len(members.Members) != 1 || members.Members[0].Email != "user11@example.test" || len(invitations.Invitations) != 10 {
+		t.Fatalf("member filters must leave invitations visible: members=%+v invitations=%+v", members.Members, invitations.Invitations)
+	}
+}
+
 func TestRoleSharesCountAdmins(t *testing.T) {
 	data := teamPage(teamOrganization(), "")
 	total := 0
