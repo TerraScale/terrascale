@@ -8,6 +8,7 @@ import "github.com/a-h/templ"
 import templruntime "github.com/a-h/templ/runtime"
 
 import (
+	"cmp"
 	"fmt"
 	"slices"
 	"strings"
@@ -46,7 +47,7 @@ func databasesContent(page core.Page, d pageData) templ.Component {
 		var templ_7745c5c3_Var2 string
 		templ_7745c5c3_Var2, templ_7745c5c3_Err = templ.ResolveAttributeValue(d.ProjectID)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/databases/databases.templ`, Line: 15, Col: 52}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/databases/databases.templ`, Line: 16, Col: 52}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var2)
 		if templ_7745c5c3_Err != nil {
@@ -59,7 +60,7 @@ func databasesContent(page core.Page, d pageData) templ.Component {
 		var templ_7745c5c3_Var3 string
 		templ_7745c5c3_Var3, templ_7745c5c3_Err = templ.ResolveAttributeValue(page.Principal.OrganizationID)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/databases/databases.templ`, Line: 15, Col: 107}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/databases/databases.templ`, Line: 16, Col: 107}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var3)
 		if templ_7745c5c3_Err != nil {
@@ -110,7 +111,7 @@ func databasesContent(page core.Page, d pageData) templ.Component {
 					var templ_7745c5c3_Var5 templ.SafeURL
 					templ_7745c5c3_Var5, templ_7745c5c3_Err = templ.JoinURLErrs(templ.SafeURL(TabPath(db.ID, "overview", nil)))
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/databases/databases.templ`, Line: 32, Col: 85}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/databases/databases.templ`, Line: 33, Col: 85}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var5))
 					if templ_7745c5c3_Err != nil {
@@ -131,7 +132,7 @@ func databasesContent(page core.Page, d pageData) templ.Component {
 					var templ_7745c5c3_Var6 string
 					templ_7745c5c3_Var6, templ_7745c5c3_Err = templ.JoinStringErrs(db.Name)
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/databases/databases.templ`, Line: 34, Col: 44}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/databases/databases.templ`, Line: 35, Col: 44}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var6))
 					if templ_7745c5c3_Err != nil {
@@ -152,7 +153,7 @@ func databasesContent(page core.Page, d pageData) templ.Component {
 					var templ_7745c5c3_Var7 string
 					templ_7745c5c3_Var7, templ_7745c5c3_Err = templ.JoinStringErrs(regionListDisplay(db.Placement))
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/databases/databases.templ`, Line: 38, Col: 63}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/databases/databases.templ`, Line: 39, Col: 63}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var7))
 					if templ_7745c5c3_Err != nil {
@@ -311,7 +312,7 @@ func databaseStats(s databaseSummary) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = ui.ToneStat("violet", "Documents", fmt.Sprint(s.Documents), fmt.Sprintf("Across %d %s", s.Collections, plural(s.Collections, "collection", "collections"))).Render(ctx, templ_7745c5c3_Buffer)
+			templ_7745c5c3_Err = ui.ToneStat("violet", "Documents", fmt.Sprint(s.Documents), cmp.Or(s.Unavailable, fmt.Sprintf("Across %d %s, %s", s.Collections, plural(s.Collections, "collection", "collections"), ui.FormatBytes(s.Bytes)))).Render(ctx, templ_7745c5c3_Buffer)
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -365,7 +366,7 @@ func createDatabase(page core.Page, d pageData) templ.Component {
 			var templ_7745c5c3_Var14 string
 			templ_7745c5c3_Var14, templ_7745c5c3_Err = templ.ResolveAttributeValue(page.CSRFToken)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/databases/databases.templ`, Line: 78, Col: 59}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/databases/databases.templ`, Line: 79, Col: 59}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var14)
 			if templ_7745c5c3_Err != nil {
@@ -427,7 +428,7 @@ func createDatabase(page core.Page, d pageData) templ.Component {
 				var templ_7745c5c3_Var17 string
 				templ_7745c5c3_Var17, templ_7745c5c3_Err = templ.ResolveAttributeValue(d.Name)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/databases/databases.templ`, Line: 88, Col: 74}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/databases/databases.templ`, Line: 89, Col: 74}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var17)
 				if templ_7745c5c3_Err != nil {
@@ -440,7 +441,7 @@ func createDatabase(page core.Page, d pageData) templ.Component {
 				var templ_7745c5c3_Var18 string
 				templ_7745c5c3_Var18, templ_7745c5c3_Err = templ.ResolveAttributeValue(namePatternHTML)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/databases/databases.templ`, Line: 88, Col: 102}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/databases/databases.templ`, Line: 89, Col: 102}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var18)
 				if templ_7745c5c3_Err != nil {
@@ -463,7 +464,7 @@ func createDatabase(page core.Page, d pageData) templ.Component {
 			var templ_7745c5c3_Var19 string
 			templ_7745c5c3_Var19, templ_7745c5c3_Err = templ.ResolveAttributeValue(databaseRegionSummary)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/databases/databases.templ`, Line: 92, Col: 75}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/databases/databases.templ`, Line: 93, Col: 75}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var19)
 			if templ_7745c5c3_Err != nil {
@@ -476,7 +477,7 @@ func createDatabase(page core.Page, d pageData) templ.Component {
 			var templ_7745c5c3_Var20 string
 			templ_7745c5c3_Var20, templ_7745c5c3_Err = templ.ResolveAttributeValue(databaseRegionSummary)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/databases/databases.templ`, Line: 92, Col: 116}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/databases/databases.templ`, Line: 93, Col: 116}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var20)
 			if templ_7745c5c3_Err != nil {
@@ -489,7 +490,7 @@ func createDatabase(page core.Page, d pageData) templ.Component {
 			var templ_7745c5c3_Var21 string
 			templ_7745c5c3_Var21, templ_7745c5c3_Err = templ.JoinStringErrs(regionChoiceSummary(d.Regions))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/databases/databases.templ`, Line: 93, Col: 91}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/databases/databases.templ`, Line: 94, Col: 91}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var21))
 			if templ_7745c5c3_Err != nil {
@@ -507,7 +508,7 @@ func createDatabase(page core.Page, d pageData) templ.Component {
 				var templ_7745c5c3_Var22 string
 				templ_7745c5c3_Var22, templ_7745c5c3_Err = templ.ResolveAttributeValue(region.Code)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/databases/databases.templ`, Line: 97, Col: 65}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/databases/databases.templ`, Line: 98, Col: 65}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var22)
 				if templ_7745c5c3_Err != nil {
@@ -530,7 +531,7 @@ func createDatabase(page core.Page, d pageData) templ.Component {
 				var templ_7745c5c3_Var23 string
 				templ_7745c5c3_Var23, templ_7745c5c3_Err = templ.ResolveAttributeValue(static.URL("flags/" + region.Country + ".svg"))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/databases/databases.templ`, Line: 98, Col: 66}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/databases/databases.templ`, Line: 99, Col: 66}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var23)
 				if templ_7745c5c3_Err != nil {
@@ -543,7 +544,7 @@ func createDatabase(page core.Page, d pageData) templ.Component {
 				var templ_7745c5c3_Var24 string
 				templ_7745c5c3_Var24, templ_7745c5c3_Err = templ.JoinStringErrs(region.Name)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/databases/databases.templ`, Line: 99, Col: 54}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/databases/databases.templ`, Line: 100, Col: 54}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var24))
 				if templ_7745c5c3_Err != nil {
@@ -556,7 +557,7 @@ func createDatabase(page core.Page, d pageData) templ.Component {
 				var templ_7745c5c3_Var25 string
 				templ_7745c5c3_Var25, templ_7745c5c3_Err = templ.JoinStringErrs(region.Code)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/databases/databases.templ`, Line: 99, Col: 71}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/databases/databases.templ`, Line: 100, Col: 71}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var25))
 				if templ_7745c5c3_Err != nil {
@@ -684,7 +685,7 @@ func databaseSearch(d pageData) templ.Component {
 		var templ_7745c5c3_Var29 string
 		templ_7745c5c3_Var29, templ_7745c5c3_Err = templ.ResolveAttributeValue(d.Search)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/databases/databases.templ`, Line: 134, Col: 77}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/databases/databases.templ`, Line: 135, Col: 77}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var29)
 		if templ_7745c5c3_Err != nil {

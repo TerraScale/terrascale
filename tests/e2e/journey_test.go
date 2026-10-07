@@ -10,7 +10,7 @@ import (
 
 	"github.com/mxschmitt/playwright-go"
 
-	sdk "terrascale.tech/sdk"
+	"terrascale.tech/dashboard/internal/features/apikeys"
 )
 
 type listedDatabase struct {
@@ -100,7 +100,7 @@ func TestDatabaseAndProjectKeyStayInsideOwningAccount(t *testing.T) {
 	}
 
 	var listed struct {
-		APIKeys []sdk.ProjectAPIKey `json:"apiKeys"`
+		APIKeys []apikeys.ProjectAPIKey `json:"apiKeys"`
 	}
 	responseJSON(t, apiGet(t, ownerPage.Request(), keyPath, session), 200, &listed)
 	if len(listed.APIKeys) != 1 || listed.APIKeys[0].Name != "journey key" {
@@ -149,14 +149,14 @@ func listedDatabaseNamed(t *testing.T, page playwright.Page, name string) listed
 
 // issueAPIKey creates a database-scoped project API key with the dashboard
 // session as bearer credential.
-func issueAPIKey(t *testing.T, page playwright.Page, session, keyPath, name, databaseID string, scopes ...string) sdk.ProjectAPIKeySecret {
+func issueAPIKey(t *testing.T, page playwright.Page, session, keyPath, name, databaseID string, scopes ...string) apikeys.ProjectAPIKeySecret {
 	t.Helper()
 	response, err := page.Request().Post(keyPath, playwright.APIRequestContextPostOptions{
 		Headers: map[string]string{"Authorization": "Bearer " + session},
 		Data:    map[string]any{"name": name, "scopes": scopes, "databaseId": databaseID},
 	})
 	must(t, err)
-	var secret sdk.ProjectAPIKeySecret
+	var secret apikeys.ProjectAPIKeySecret
 	responseJSON(t, response, 201, &secret)
 	return secret
 }

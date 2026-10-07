@@ -1990,3 +1990,20 @@ func (o *TSAuthOIDCClient) postAuthenticatedForm(ctx context.Context, endpoint s
 	}
 	return o.i.c.tsAuthSendAuthorized(ctx, o.i.base, http.MethodPost, o.i.oidc(endpoint), nil, []byte(form.Encode()), "application/x-www-form-urlencoded", authorization, out, route)
 }
+
+// ValidationError identifies an invalid argument. Methods return it before
+// making an HTTP request, so callers can use errors.As instead of matching
+// error strings.
+type ValidationError struct {
+	Field   string
+	Message string
+}
+
+func (e *ValidationError) Error() string { return "sdk: " + e.Field + ": " + e.Message }
+
+func requireID(name, value string) error {
+	if strings.TrimSpace(value) == "" {
+		return &ValidationError{Field: name, Message: "cannot be empty"}
+	}
+	return nil
+}

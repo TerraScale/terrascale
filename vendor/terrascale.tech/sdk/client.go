@@ -1,6 +1,7 @@
 // Package sdk is the TerraScale Go SDK (terrascale.tech/sdk).
 //
-// Product and hosted authentication clients use separately configured origins.
+// It holds the hosted ts-auth clients (Client.TSAuth) and the schema and SQL
+// builders; the TerraBase client is package v1.
 package sdk
 
 import (
@@ -10,14 +11,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"math"
 	"net"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 	"unicode"
 )
@@ -28,7 +27,6 @@ import (
 const (
 	MaxRequestBodyBytes  int64 = 16 << 20
 	MaxResponseBodyBytes int64 = 16 << 20
-	MaxSessionTokenBytes int   = 16 << 10
 	MaxRequestTimeout          = 30 * time.Second
 	MaxRetryAfter              = 30 * time.Second
 )
@@ -62,38 +60,13 @@ func ParseRegionCode(s string) (RegionCode, error) {
 	return code, nil
 }
 
-// RegionAffinity controls placement hints and repair at the explicit API origin.
-type RegionAffinity string
-
-const (
-	// AffinityFailover sends a preferred-region hint and permits one safe
-	// 421 placement repair at the explicitly configured API origin.
-	AffinityFailover RegionAffinity = "failover"
-	// AffinityStrict requires a preferred region and refuses 421 placement repair.
-	AffinityStrict RegionAffinity = "strict"
-)
-
-// Consistency selects per-request read consistency (GOAL D-37).
-type Consistency string
-
-const (
-	// ConsistencyDefault is read-your-writes + monotonic reads.
-	ConsistencyDefault Consistency = ""
-	// ConsistencyEventual allows stale replica reads.
-	ConsistencyEventual Consistency = "eventual"
-	// ConsistencyWritesFollowReads requires the serving replica to have
-	// applied the client's session frontier.
-	ConsistencyWritesFollowReads Consistency = "writes-follow-reads"
-)
-
 // DefaultAPIBaseURL identifies the historical test API origin. It is retained
 // as an explicit auth rejection boundary and is never selected automatically.
 const DefaultAPIBaseURL = "https://" + publicAPIHostname
 
 // Config configures a Client.
 type Config struct {
-	// APIBaseURL explicitly configures the product API origin (tests or custom
-	// deployments). Empty product routing fails closed.
+	// APIBaseURL is the ts-auth origin when TSAuthBaseURL is empty.
 	APIBaseURL string
 	// TSAuthBaseURL is the ts-auth deployment origin used by the TSAuth
 	// family. When empty, TSAuth uses APIBaseURL and requires it to not be
@@ -104,23 +77,11 @@ type Config struct {
 	// By default, that public origin discovers and calls a regional ts-auth directly.
 	TSAuthUseReverseProxy bool
 	// DiscoveryBaseURL overrides Atlas metadata for public Auth discovery.
-	// It does not select a product or management origin; those operations
-	// require an explicit APIBaseURL and their own management credential.
 	DiscoveryBaseURL string
 	// AccessToken is a static credential. TokenProvider takes precedence.
 	AccessToken string
 	// TokenProvider returns the credential dynamically, if set.
 	TokenProvider func() string
-	// TenantID and ProjectID select an authorized scope; they do not grant access.
-	TenantID string
-	// ProjectID is sent as X-TerraScale-Project-ID when non-empty.
-	ProjectID string
-	// PreferredRegion is the placement hint sent to the explicit API origin.
-	PreferredRegion RegionCode
-	// Affinity defaults to failover.
-	Affinity RegionAffinity
-	// SessionToken is the client's causal frontier (GOAL D-37).
-	SessionToken string
 	// HTTPClient defaults to one with a 30s timeout. The SDK copies it and
 	// disables redirects; explicit 421 placement repair remains supported.
 	HTTPClient *http.Client
@@ -141,20 +102,7 @@ type Client struct {
 	// authDiscovery caches ranked regional ts-auth origins for public auth calls.
 	authDiscovery tsAuthEndpointDiscovery
 
-	mu     sync.RWMutex
-	pinned RegionCode
-	// sessionToken is the canonical frontier shared by REST and subscriptions.
-	sessionToken string
-
-	ProjectAPIKeys   *ProjectAPIKeysClient
-	TSAuth           *TSAuthClient
-	Operations       *OperationsClient
-	Regions          *RegionsClient
-	Databases        *DatabasesClient
-	DatabaseBranches *DatabaseBranchesClient
-	Backups          *BackupsClient
-	Files            *FilesClient
-	Usage            *UsageClient
+	TSAuth *TSAuthClient
 }
 
 // NewClient validates local configuration and constructs a Client;
@@ -214,20 +162,6 @@ func NewClient(cfg Config) (*Client, error) {
 		}
 	}
 
-	affinity := cfg.Affinity
-	if affinity == "" {
-		affinity = AffinityFailover
-	}
-	if affinity != AffinityFailover && affinity != AffinityStrict {
-		return nil, fmt.Errorf("sdk: affinity must be %q or %q", AffinityFailover, AffinityStrict)
-	}
-	preferred := RegionCode(strings.ToUpper(strings.TrimSpace(string(cfg.PreferredRegion))))
-	if preferred != "" && !IsRegionCode(string(preferred)) {
-		return nil, fmt.Errorf("sdk: preferred region must be exactly one of GRU, SFO, FRA")
-	}
-	if affinity == AffinityStrict && preferred == "" {
-		return nil, fmt.Errorf("sdk: strict affinity requires a preferred region")
-	}
 	if cfg.MaxRetryAttempts < 0 || cfg.MaxRetryAttempts > 8 {
 		return nil, fmt.Errorf("sdk: max retry attempts must be between 0 and 8")
 	}
@@ -245,26 +179,12 @@ func NewClient(cfg Config) (*Client, error) {
 	if requestTimeout < 0 || requestTimeout > MaxRequestTimeout {
 		return nil, fmt.Errorf("sdk: request timeout must be between 0 and 30s")
 	}
-	if cfg.SessionToken != "" {
-		if err := validateSessionToken(cfg.SessionToken); err != nil {
-			return nil, err
-		}
-	}
-
-	for name, selector := range map[string]string{"tenant ID": cfg.TenantID, "project ID": cfg.ProjectID} {
-		for _, char := range selector {
-			if char < 0x20 || char == 0x7f {
-				return nil, fmt.Errorf("sdk: %s must contain no control characters", name)
-			}
-		}
-	}
 
 	httpClient := cfg.HTTPClient
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: 30 * time.Second}
 	}
-	// Placement repair uses explicit 421 responses. Ordinary redirects must
-	// never forward credentials or replay writes outside that contract.
+	// Redirects must never forward credentials or replay writes.
 	ownedHTTPClient := *httpClient
 	ownedHTTPClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	httpClient = &ownedHTTPClient
@@ -276,255 +196,13 @@ func NewClient(cfg Config) (*Client, error) {
 		DiscoveryBaseURL:      discoveryBase,
 		AccessToken:           cfg.AccessToken,
 		TokenProvider:         cfg.TokenProvider,
-		ProjectID:             cfg.ProjectID,
-		TenantID:              cfg.TenantID,
-		PreferredRegion:       preferred,
-		Affinity:              affinity,
 		HTTPClient:            httpClient,
 		MaxRetryAttempts:      cfg.MaxRetryAttempts,
 		RetryDelay:            retryDelay,
 		RequestTimeout:        requestTimeout,
-	}, http: httpClient, sessionToken: strings.TrimSpace(cfg.SessionToken)}
-	c.ProjectAPIKeys = &ProjectAPIKeysClient{c: c}
+	}, http: httpClient}
 	c.TSAuth = &TSAuthClient{c: c}
-	c.Operations = &OperationsClient{c: c}
-	c.Regions = &RegionsClient{c: c}
-	c.Databases = &DatabasesClient{c: c}
-	c.DatabaseBranches = &DatabaseBranchesClient{c: c}
-	c.Backups = &BackupsClient{c: c}
-	c.Files = &FilesClient{c: c}
-	c.Usage = &UsageClient{c: c}
 	return c, nil
-}
-
-// PinRegion sets the placement hint sent to the explicit API origin.
-func (c *Client) PinRegion(region RegionCode) error {
-	code, err := ParseRegionCode(string(region))
-	if err != nil {
-		return err
-	}
-	c.mu.Lock()
-	c.pinned = code
-	c.mu.Unlock()
-	return nil
-}
-
-// ResetPin clears any learned or explicit placement hint.
-func (c *Client) ResetPin() {
-	c.mu.Lock()
-	c.pinned = ""
-	c.mu.Unlock()
-}
-
-// PinnedRegion returns the current placement hint, or "" when none is set.
-func (c *Client) PinnedRegion() RegionCode {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.pinned
-}
-
-// EffectiveRegion returns the pin, else the preferred region, else "".
-func (c *Client) EffectiveRegion() RegionCode {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	if c.pinned != "" {
-		return c.pinned
-	}
-	return c.cfg.PreferredRegion
-}
-
-// APIBaseURL returns the explicit product and management origin.
-func (c *Client) APIBaseURL() string { return c.cfg.APIBaseURL }
-
-// SessionToken returns the latest causal frontier observed by this client.
-// The returned token is opaque and safe to pass to another client as its
-// initial SessionToken configuration.
-func (c *Client) SessionToken() string {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.sessionToken
-}
-
-// SetSessionToken installs an opaque causal frontier for subsequent requests.
-func (c *Client) SetSessionToken(token string) error {
-	if token != "" {
-		if err := validateSessionToken(token); err != nil {
-			return err
-		}
-	}
-	c.mu.Lock()
-	c.sessionToken = strings.TrimSpace(token)
-	c.mu.Unlock()
-	return nil
-}
-
-func (c *Client) setPinned(region RegionCode) {
-	c.mu.Lock()
-	c.pinned = region
-	c.mu.Unlock()
-}
-
-func (c *Client) token() string {
-	if c.cfg.TokenProvider != nil {
-		if t := c.cfg.TokenProvider(); t != "" {
-			return t
-		}
-	}
-	return c.cfg.AccessToken
-}
-
-func validateSessionToken(token string) error {
-	token = strings.TrimSpace(token)
-	if token == "" {
-		return nil
-	}
-	if len(token) > MaxSessionTokenBytes || strings.ContainsAny(token, "\r\n") {
-		return fmt.Errorf("sdk: session token must be at most %d bytes and contain no control characters", MaxSessionTokenBytes)
-	}
-	return nil
-}
-
-// observeSession records a server frontier. Session tokens are intentionally
-// opaque: the server contract guarantees that a response token dominates the
-// token carried by that request. Empty and malformed headers never clear an
-// already observed frontier, which keeps concurrent requests monotonic from
-// the client's perspective.
-func (c *Client) observeSession(headers http.Header) {
-	token := strings.TrimSpace(headers.Get("X-TerraScale-Session"))
-	if token == "" || validateSessionToken(token) != nil {
-		return
-	}
-	c.mu.Lock()
-	if c.sessionToken == "" {
-		c.sessionToken = token
-	} else if c.sessionToken != token && sessionTokenAdvances(c.sessionToken, token) {
-		// Tokens are opaque and cannot be safely compared or merged by an SDK.
-		// A successful response is therefore the authoritative next frontier;
-		// importantly, empty responses above cannot regress it.
-		c.sessionToken = token
-	}
-	c.mu.Unlock()
-}
-
-// sessionTokenAdvances compares only TerraBase's current numeric token form.
-// Other token forms are opaque by contract and are accepted as the server's
-// next frontier without attempting lexical or structural ordering.
-func sessionTokenAdvances(current, candidate string) bool {
-	if currentSeq, currentOK := numericToken(current); currentOK {
-		if candidateSeq, candidateOK := numericToken(candidate); candidateOK {
-			return candidateSeq >= currentSeq
-		}
-	}
-	return true
-}
-
-func numericToken(token string) (uint64, bool) {
-	if !isDecimal(token) {
-		return 0, false
-	}
-	sequence, err := strconv.ParseUint(token, 10, 64)
-	return sequence, err == nil
-}
-
-// resolveProductBase requires the explicit origin configured for product and
-// management calls. Public metadata cannot authorize it.
-func (c *Client) resolveProductBase(method, path, route string) (string, error) {
-	if c.cfg.APIBaseURL == "" {
-		return "", &RoutingError{Route: route, Method: method, Path: path, Err: ErrManagementDiscoveryUnavailable}
-	}
-	return c.cfg.APIBaseURL, nil
-}
-
-// requestConfig carries per-request options.
-type requestConfig struct {
-	idempotencyKey     string
-	noIdempotency      bool
-	regionHint         RegionCode
-	sessionToken       string
-	consistency        Consistency
-	deleteConfirmation string
-	ifMatch            string
-	documentIfMatch    string
-	hasDocumentIfMatch bool
-	readAt             int64
-	hasReadAt          bool
-	responseMediaType  string
-	requestMediaType   string
-	responseHeaders    *http.Header
-	createOnly         bool
-	authTransaction    string
-	noRetry            bool
-	// capturedBase receives the origin each attempt used.
-	capturedBase *string
-}
-
-// RequestOption customizes one request.
-type RequestOption func(*requestConfig)
-
-// WithIdempotencyKey sets the idempotency key for a mutation (1-128 chars).
-// Only mutations carrying a key are retried.
-func WithIdempotencyKey(key string) RequestOption {
-	return func(r *requestConfig) { r.idempotencyKey = key }
-}
-
-// WithoutIdempotency disables sending any idempotency key (and thus retries).
-func WithoutIdempotency() RequestOption {
-	return func(r *requestConfig) { r.noIdempotency = true }
-}
-
-// WithRegionHint sends a per-request region hint (failover).
-func WithRegionHint(region RegionCode) RequestOption {
-	return func(r *requestConfig) { r.regionHint = region }
-}
-
-// WithSessionToken overrides the client session token for one request.
-func WithSessionToken(token string) RequestOption {
-	return func(r *requestConfig) { r.sessionToken = token }
-}
-
-// WithConsistency overrides read consistency for one request.
-func WithConsistency(cs Consistency) RequestOption {
-	return func(r *requestConfig) { r.consistency = cs }
-}
-
-// WithReadAt reads one document as of a point in time. at is epoch
-// milliseconds and travels as the at query parameter of the point read.
-// Negative values, and use outside document point reads, are rejected before
-// any request is sent.
-func WithReadAt(millis int64) RequestOption {
-	return func(r *requestConfig) { r.readAt = millis; r.hasReadAt = true }
-}
-
-// WithCreateOnly requires a document PUT to create a new identity atomically.
-// It is rejected for PATCH, DELETE and other operations.
-func WithCreateOnly() RequestOption { return func(r *requestConfig) { r.createOnly = true } }
-
-// WithIfMatch requires a document PUT, PATCH, or DELETE to match the strong
-// ETag returned by Documents.Get. Use "*" to require an existing document.
-// Keep the same condition and idempotency key when retrying an uncertain write.
-func WithIfMatch(etag string) RequestOption {
-	return func(r *requestConfig) { r.documentIfMatch = etag; r.hasDocumentIfMatch = true }
-}
-
-// WithSchemaGeneration applies a schema only if its strong generation matches.
-// Pass the Generation returned by GetCollectionSchema.
-func WithSchemaGeneration(generation uint64) RequestOption {
-	return func(r *requestConfig) { r.ifMatch = "\"" + strconv.FormatUint(generation, 10) + "\"" }
-}
-
-// WithDeleteConfirmation carries the database delete confirmation identity.
-func WithDeleteConfirmation(id string) RequestOption {
-	return func(r *requestConfig) { r.deleteConfirmation = id }
-}
-
-func resolveRequestOptions(opts []RequestOption) requestConfig {
-	rc := requestConfig{}
-	for _, opt := range opts {
-		if opt != nil {
-			opt(&rc)
-		}
-	}
-	return rc
 }
 
 // APIError is a typed API failure.
@@ -536,7 +214,6 @@ type APIError struct {
 	Code      string
 	Message   string
 	Fix       string
-	Placement string
 	RequestID string
 	// Body contains decoded diagnostic fields only. Malformed responses and
 	// unknown fields are discarded so credentials cannot survive as raw bodies.
@@ -551,15 +228,6 @@ func (e *APIError) Error() string {
 		e.Method, e.Path, e.Route, e.Status, e.Code, e.Message)
 }
 
-func isMutation(method string) bool {
-	switch method {
-	case http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
-		return true
-	default:
-		return false
-	}
-}
-
 var retryableStatuses = map[int]bool{
 	http.StatusRequestTimeout:      true,
 	429:                            true,
@@ -572,279 +240,6 @@ var retryableStatuses = map[int]bool{
 	522:                            true,
 	523:                            true,
 	524:                            true,
-}
-
-// do performs one API call: path must stay under /api/v1.
-func (c *Client) do(ctx context.Context, method, path string, query url.Values, body any, out any, route string, opts ...RequestOption) error {
-	if ctx == nil {
-		return fmt.Errorf("sdk: request context cannot be nil")
-	}
-	if path != "/api/v1" && !strings.HasPrefix(path, "/api/v1/") {
-		return fmt.Errorf("sdk: path %q is outside the public /api/v1 contract", path)
-	}
-	rc := resolveRequestOptions(opts)
-	if rc.hasDocumentIfMatch {
-		if rc.ifMatch != "" || (route != "documents.put" && route != "documents.patch" && route != "documents.delete") {
-			return &ValidationError{Field: "if-match", Message: "supported only for document PUT, PATCH, or DELETE without a schema generation"}
-		}
-		etag := rc.documentIfMatch
-		valid := etag == "*"
-		if len(etag) >= 2 && etag[0] == '"' && etag[len(etag)-1] == '"' {
-			valid = true
-			for i := 1; i < len(etag)-1; i++ {
-				if etag[i] < 0x21 || etag[i] == '"' || etag[i] == 0x7f {
-					valid = false
-				}
-			}
-		}
-		if !valid || len(etag) > MaxSessionTokenBytes {
-			return &ValidationError{Field: "if-match", Message: "must be one strong quoted ETag or *"}
-		}
-		rc.ifMatch = etag
-	}
-	if rc.createOnly && (method != http.MethodPut || route != "documents.put" || rc.ifMatch != "") {
-		return &ValidationError{Field: "create-only", Message: "supported only for document PUT without If-Match"}
-	}
-	if rc.hasReadAt {
-		if rc.readAt < 0 {
-			return &ValidationError{Field: "at", Message: "must be non-negative epoch milliseconds"}
-		}
-		if route != "documents.get" {
-			return &ValidationError{Field: "at", Message: "supported only for document point reads"}
-		}
-		if query == nil {
-			query = url.Values{}
-		}
-		query.Set("at", strconv.FormatInt(rc.readAt, 10))
-	}
-	if rc.regionHint != "" {
-		region, err := ParseRegionCode(string(rc.regionHint))
-		if err != nil {
-			return fmt.Errorf("sdk: invalid region hint: %w", err)
-		}
-		rc.regionHint = region
-	}
-	if rc.sessionToken != "" {
-		if err := validateSessionToken(rc.sessionToken); err != nil {
-			return err
-		}
-		rc.sessionToken = strings.TrimSpace(rc.sessionToken)
-	}
-	var idem string
-	if isMutation(method) && !rc.noIdempotency && rc.idempotencyKey != "" {
-		key := strings.TrimSpace(rc.idempotencyKey)
-		if key == "" || len(key) > 128 || strings.ContainsAny(key, "\r\n") {
-			return fmt.Errorf("sdk: idempotency keys must be nonblank, at most 128 bytes, and contain no control characters")
-		}
-		idem = key
-	}
-	var payload []byte
-	if body != nil {
-		var err error
-		switch raw := body.(type) {
-		case importPayload:
-			payload = bytes.Clone(raw)
-			if payload == nil {
-				payload = []byte{}
-			}
-			if rc.requestMediaType == "" {
-				rc.requestMediaType = "application/octet-stream"
-			}
-		case json.RawMessage:
-			// Pre-encoded JSON from the SDK's own validators. Passing it
-			// through avoids a second marshal of every write; an empty
-			// message still falls back so invalid JSON is rejected here.
-			if len(raw) > 0 {
-				payload = raw
-			} else {
-				payload, err = json.Marshal(raw)
-				if err != nil {
-					return fmt.Errorf("sdk: marshal %s request body: %w", route, err)
-				}
-			}
-		default:
-			payload, err = json.Marshal(body)
-			if err != nil {
-				return fmt.Errorf("sdk: marshal %s request body: %w", route, err)
-			}
-		}
-		if int64(len(payload)) > MaxRequestBodyBytes {
-			return fmt.Errorf("sdk: %s request body exceeds %d bytes", route, MaxRequestBodyBytes)
-		}
-	}
-
-	requestCtx := ctx
-	cancel := func() {}
-	if timeout := c.cfg.RequestTimeout; timeout > 0 {
-		requestCtx, cancel = context.WithTimeout(ctx, timeout)
-	}
-	defer cancel()
-	attempt := 0
-	followed421 := false
-	for {
-		base, routingErr := c.resolveProductBase(method, path, route)
-		if routingErr != nil {
-			return routingErr
-		}
-		if rc.capturedBase != nil {
-			*rc.capturedBase = base
-		}
-		status, headers, respBody, transportErr := c.roundTrip(requestCtx, method, base, path, query, payload, rc, idem, route)
-		if rc.responseHeaders != nil {
-			*rc.responseHeaders = headers.Clone()
-		}
-		var responseErr *APIError
-		if errors.As(transportErr, &responseErr) && responseErr.Code == "response_too_large" {
-			return responseErr
-		}
-		if transportErr != nil && responseErr == nil {
-			if !rc.noRetry && idem != "" && attempt < c.cfg.MaxRetryAttempts {
-				if sleepErr := sleepContext(requestCtx, c.backoff(nil, attempt)); sleepErr != nil {
-					return sleepErr
-				}
-				attempt++
-				continue
-			}
-			return fmt.Errorf("sdk: %s %s (%s): %w", method, path, route, transportErr)
-		}
-		if status == http.StatusMisdirectedRequest && !followed421 && c.cfg.Affinity != AffinityStrict {
-			if code, ok := placementRegionExcluding(headers, c.PinnedRegion()); ok {
-				c.setPinned(code)
-				if canRepairPlacement(method, idem) {
-					// The placement in a 421 is authoritative for this retry,
-					// including when the original request supplied a hint.
-					rc.regionHint = code
-					followed421 = true
-					continue
-				}
-				// A 421 may arrive after an unkeyed mutation reached the
-				// server. Learn the advertised placement, but never replay
-				// an operation whose effect cannot be deduplicated.
-			}
-		}
-		if responseErr == nil && status >= 200 && status < 300 {
-			// A successful response advances the causal frontier even when the
-			// caller requested no response body (for example DELETE/204).
-			c.observeSession(headers)
-			if decoder, ok := out.(httpResponseDecoder); ok {
-				return decodeSpecialResponse(decoder, status, respBody)
-			}
-			return decodeSuccess(out, respBody, headers.Get("Content-Type"))
-		}
-		// Health is a liveness response, so an unhealthy member still returns
-		// the typed HealthResponse body with HTTP 503. Preserve that body for
-		// callers; the `healthy` field carries the verdict.
-		if responseErr == nil && route == "health" && status == http.StatusServiceUnavailable {
-			return decodeSuccess(out, respBody, headers.Get("Content-Type"))
-		}
-		apiErr := responseErr
-		if apiErr == nil {
-			apiErr = errorFromResponse(route, method, path, status, headers, respBody)
-		}
-		incompleteSuccess := responseErr != nil && status >= 200 && status < 300
-		if !rc.noRetry && idem != "" && attempt < c.cfg.MaxRetryAttempts && (retryableStatuses[status] || incompleteSuccess) {
-			if sleepErr := sleepContext(requestCtx, c.retryDelayFor(headers, attempt)); sleepErr != nil {
-				return sleepErr
-			}
-			attempt++
-			continue
-		}
-		return apiErr
-	}
-}
-
-func canRepairPlacement(method, idempotencyKey string) bool {
-	return method == http.MethodGet || (isMutation(method) && idempotencyKey != "")
-}
-
-func (c *Client) roundTrip(ctx context.Context, method, base, path string, query url.Values, payload []byte, rc requestConfig, idem, route string) (int, http.Header, []byte, error) {
-	full := strings.TrimSuffix(base, "/") + path
-	if len(query) > 0 {
-		full += "?" + query.Encode()
-	}
-	var reader io.Reader
-	if payload != nil {
-		reader = bytes.NewReader(payload)
-	}
-	req, err := http.NewRequestWithContext(ctx, method, full, reader)
-	if err != nil {
-		return 0, nil, nil, err
-	}
-	h := req.Header
-	h.Set("Accept", "application/json")
-	if rc.responseMediaType != "" {
-		h.Set("Accept", rc.responseMediaType)
-	}
-	if payload != nil {
-		contentType := rc.requestMediaType
-		if contentType == "" {
-			contentType = "application/json"
-		}
-		h.Set("Content-Type", contentType)
-	}
-	c.decorateScopeHeaders(h)
-	c.mu.RLock()
-	pinned, session := c.pinned, rc.sessionToken
-	if session == "" {
-		session = c.sessionToken
-	}
-	c.mu.RUnlock()
-	hint := rc.regionHint
-	if hint == "" && (c.cfg.Affinity == AffinityFailover || c.cfg.Affinity == AffinityStrict) {
-		// Region preferences remain hints to the explicitly configured origin.
-		// A learned placement never supplies a different endpoint authority.
-		if pinned != "" {
-			hint = pinned
-		} else if c.cfg.PreferredRegion != "" {
-			hint = c.cfg.PreferredRegion
-		}
-	}
-	if hint != "" {
-		h.Set("X-TerraScale-Preferred-Region", string(hint))
-	}
-	if token := c.token(); token != "" {
-		if err := setBearerAuthorization(h, token); err != nil {
-			return 0, nil, nil, err
-		}
-	}
-	if session != "" {
-		h.Set("X-TerraScale-Session", session)
-	}
-	if rc.consistency != "" && rc.consistency != ConsistencyDefault {
-		h.Set("X-TerraScale-Consistency", string(rc.consistency))
-	}
-	if rc.deleteConfirmation != "" {
-		h.Set("X-TerraScale-Delete-Confirmation", rc.deleteConfirmation)
-	}
-	if rc.authTransaction != "" {
-		h.Set("X-TerraScale-Auth-Transaction", rc.authTransaction)
-	}
-	if rc.createOnly {
-		h.Set("If-None-Match", "*")
-	}
-	if rc.ifMatch != "" {
-		h.Set("If-Match", rc.ifMatch)
-	}
-	if idem != "" {
-		h.Set("Idempotency-Key", idem)
-	}
-
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return 0, nil, nil, err
-	}
-	defer resp.Body.Close()
-	if resp.ContentLength > MaxResponseBodyBytes {
-		return resp.StatusCode, resp.Header, nil, responseTooLargeError(route, method, path, resp.StatusCode, resp.Header)
-	}
-	respBody, err := io.ReadAll(io.LimitReader(resp.Body, MaxResponseBodyBytes+1))
-	if err != nil {
-		return resp.StatusCode, resp.Header, nil, responseReadError(route, method, path, resp.StatusCode, resp.Header)
-	}
-	if int64(len(respBody)) > MaxResponseBodyBytes {
-		return resp.StatusCode, resp.Header, nil, responseTooLargeError(route, method, path, resp.StatusCode, resp.Header)
-	}
-	return resp.StatusCode, resp.Header, respBody, nil
 }
 
 func bearerAuthorization(value string) (string, error) {
@@ -890,8 +285,6 @@ func setBearerAuthorization(header http.Header, token string) error {
 	return nil
 }
 
-type binaryResponse []byte
-
 type httpResponseDecoder interface {
 	decodeHTTPResponse(int, []byte) error
 }
@@ -911,10 +304,6 @@ func decodeSpecialResponse(decoder httpResponseDecoder, status int, body []byte)
 }
 
 func decodeSuccess(out any, body []byte, contentType string) error {
-	if raw, ok := out.(*binaryResponse); ok {
-		*raw = bytes.Clone(body)
-		return nil
-	}
 	if out == nil {
 		return nil
 	}
@@ -994,9 +383,6 @@ func errorFromResponse(route, method, path string, status int, headers http.Head
 	if v := headers.Get("X-Request-ID"); v != "" && apiErr.RequestID == "" {
 		apiErr.RequestID = v
 	}
-	if placement, ok := placementRegion(headers); ok {
-		apiErr.Placement = string(placement)
-	}
 	apiErr.RetryAfter = retryAfterFromHeader(headers)
 	return apiErr
 }
@@ -1062,55 +448,6 @@ func defaultErrorCode(status int) string {
 	default:
 		return "request_failed"
 	}
-}
-
-func headerValuesFold(h http.Header, name string) []string {
-	if h == nil {
-		return nil
-	}
-	// Wire and Header.Set keys are canonical, so the common case is a direct
-	// map hit. The fold scan remains only for directly constructed maps that
-	// bypass canonicalization; a canonical key is authoritative when both
-	// spellings are present.
-	if values, ok := h[http.CanonicalHeaderKey(name)]; ok {
-		return values
-	}
-	var values []string
-	for key, entries := range h {
-		if strings.EqualFold(key, name) {
-			values = append(values, entries...)
-		}
-	}
-	return values
-}
-
-// placementRegion accepts only a single known region from the authoritative
-// placement header. It never reflects arbitrary header text into a hostname
-// or a follow-up request.
-func placementRegion(h http.Header) (RegionCode, bool) {
-	return placementRegionExcluding(h, "")
-}
-
-func placementRegionExcluding(h http.Header, excluded RegionCode) (RegionCode, bool) {
-	for _, key := range []string{"X-TerraScale-Placement", "X-TerraScale-Region"} {
-		for _, value := range headerValuesFold(h, key) {
-			value = strings.TrimSpace(value)
-			if value == "" {
-				continue
-			}
-			for _, candidate := range strings.Split(value, ",") {
-				region, err := ParseRegionCode(candidate)
-				if err == nil && region != excluded {
-					return region, true
-				}
-			}
-		}
-	}
-	return "", false
-}
-
-func (c *Client) backoff(headers http.Header, attempt int) time.Duration {
-	return c.retryDelayFor(headers, attempt)
 }
 
 func (c *Client) retryDelayFor(headers http.Header, attempt int) time.Duration {
@@ -1207,14 +544,5 @@ func sleepContext(ctx context.Context, d time.Duration) error {
 		return ctx.Err()
 	case <-timer.C:
 		return nil
-	}
-}
-
-func (c *Client) decorateScopeHeaders(headers http.Header) {
-	if c.cfg.TenantID != "" {
-		headers.Set("X-TerraScale-Tenant-ID", c.cfg.TenantID)
-	}
-	if c.cfg.ProjectID != "" {
-		headers.Set("X-TerraScale-Project-ID", c.cfg.ProjectID)
 	}
 }

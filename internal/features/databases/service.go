@@ -2,7 +2,6 @@ package databases
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -13,10 +12,9 @@ import (
 )
 
 var (
-	errInvalidName  = core.Invalid("database names use 1-63 lowercase letters, digits, and inner hyphens")
-	errNotReady     = fmt.Errorf("%w: only a ready database can be branched", core.ErrConflict)
-	errProvisioning = fmt.Errorf("%w: database provisioning is in progress", core.ErrConflict)
-	errConfirmName  = core.Invalid("type the database name to confirm deletion")
+	errInvalidName = core.Invalid("database names use 1-63 lowercase letters, digits, and inner hyphens")
+	errNotReady    = fmt.Errorf("%w: only a ready database can be branched", core.ErrConflict)
+	errConfirmName = core.Invalid("type the database name to confirm deletion")
 )
 
 // Service owns the database lifecycle in a principal's selected project.
@@ -62,10 +60,10 @@ func (s Service) Detail(ctx context.Context, p core.Principal, databaseID string
 		return databaseDetail{}, fmt.Errorf("%w: database %q", core.ErrNotFound, databaseID)
 	}
 	org := a.Organizations[p.OrganizationID]
-	canManage := org.CanManage(p.UserID)
-	info := makeDetailInfo(s.deps.LocalResources(), p, a, project, db, canManage, canManage && org.CanProvisionResources(p.UserID))
+	canManage := org.CanManage(p.UserID) && !core.SystemDatabase(db)
+	info := makeDetailInfo(s.deps.LocalResources(), p, a, project, db, canManage, canManage && org.CanProvisionResources(p.UserID)).withContents(ctx, s.deps, p, db)
 	detail := databaseDetail{
-		databaseView: view(db), Endpoint: db.Endpoint, Collections: info.Collections, Documents: info.Documents,
+		databaseView: view(db), Endpoint: db.Endpoint, Collections: info.Collections, Documents: info.Documents, Bytes: info.Bytes, Unavailable: info.Unavailable,
 		BackupsEnabled: info.BackupsEnabled, BackupRetentionDays: db.BackupRetentionDays, CanManage: canManage, CanBranch: info.CanBranch,
 	}
 	for _, region := range info.Regions {
@@ -102,11 +100,8 @@ func (s Service) Create(ctx context.Context, p core.Principal, name string, regi
 		codes = append(codes, string(code))
 	}
 	db := core.Database{
-		ID: core.NewID("db"), ProjectID: p.ProjectID, Name: name, Region: codes[0], Regions: codes, Status: "provisioning",
+		ID: core.NewID("db"), ProjectID: p.ProjectID, Name: name, Region: codes[0], Regions: codes, Status: "ready",
 		CreatedAt: time.Now().UTC(), Documents: make(map[string]map[string][]byte),
-	}
-	if s.deps.LocalResources() {
-		db.Status = "ready"
 	}
 	// The store refuses the commit with core.ErrDatabaseLimit when the plan's
 	// database allowance is used up.
@@ -135,31 +130,7 @@ func (s Service) Create(ctx context.Context, p core.Principal, name string, regi
 	if err != nil {
 		return databaseView{}, err
 	}
-	if s.deps.LocalResources() {
-		return view(db), nil
-	}
-	// The record is committed, so its outcome is saved even when the request
-	// is canceled meanwhile; otherwise it would stay provisioning.
-	statusCtx := context.WithoutCancel(ctx)
-	client, err := s.deps.DataPlane(p)
-	if err != nil {
-		_ = s.setStatus(statusCtx, p, db.ID, "failed")
-		return databaseView{}, err
-	}
-	result, err := client.Databases.CreateDatabase(ctx, sdk.CreateDatabaseRequest{Name: name, Placement: placement, OperationID: db.ID}, sdk.WithIdempotencyKey(db.ID))
-	switch {
-	case err != nil:
-		_ = s.setStatus(statusCtx, p, db.ID, "failed")
-		return databaseView{}, core.ProviderError{Action: "database provisioning", Err: err}
-	case result.Operation != nil:
-		db.Status = result.Operation.State
-	case result.Database != nil:
-		db.Status = "ready"
-	default:
-		_ = s.setStatus(statusCtx, p, db.ID, "failed")
-		return databaseView{}, core.ProviderError{Action: "database provisioning", Err: errors.New("no identity returned")}
-	}
-	return view(db), s.setStatus(statusCtx, p, db.ID, db.Status)
+	return view(db), nil
 }
 
 // Branch copies a ready database into a new database in the same project.
@@ -176,6 +147,9 @@ func (s Service) Branch(ctx context.Context, p core.Principal, sourceID, name st
 	if !ok {
 		return databaseView{}, fmt.Errorf("%w: database %q", core.ErrNotFound, sourceID)
 	}
+	if core.SystemDatabase(source) {
+		return databaseView{}, core.ErrSystemReadOnly
+	}
 	name = strings.TrimSpace(name)
 	if name == "" {
 		name = previewBranchName(source.Name)
@@ -186,10 +160,7 @@ func (s Service) Branch(ctx context.Context, p core.Principal, sourceID, name st
 	if source.Status != "ready" {
 		return databaseView{}, errNotReady
 	}
-	branch := core.Database{ID: core.NewID("db"), ProjectID: project.ID, Name: name, Region: source.Region, Regions: slices.Clone(databaseRegions(source)), Status: "provisioning", CreatedAt: time.Now().UTC()}
-	if s.deps.LocalResources() {
-		branch.Status = "ready"
-	}
+	branch := core.Database{ID: core.NewID("db"), ProjectID: project.ID, Name: name, Region: source.Region, Regions: slices.Clone(databaseRegions(source)), Status: "ready", CreatedAt: time.Now().UTC()}
 	err = s.deps.Store.UpdateAs(ctx, p, func(a *core.Account) error {
 		project, err := a.ProjectFor(p, p.OrganizationID, p.ProjectID)
 		if err != nil {
@@ -225,24 +196,7 @@ func (s Service) Branch(ctx context.Context, p core.Principal, sourceID, name st
 	if err != nil {
 		return databaseView{}, err
 	}
-	if s.deps.LocalResources() {
-		return view(branch), nil
-	}
-	// The record is committed, so its outcome is saved even when the request
-	// is canceled meanwhile; otherwise it would stay provisioning.
-	statusCtx := context.WithoutCancel(ctx)
-	client, err := s.deps.DataPlane(p)
-	if err != nil {
-		_ = s.setStatus(statusCtx, p, branch.ID, "failed")
-		return databaseView{}, err
-	}
-	result, err := client.DatabaseBranches.CreateBranch(ctx, source.Name, sdk.CreateBranchRequest{Name: name, OperationID: branch.ID}, sdk.WithIdempotencyKey(branch.ID))
-	if err != nil {
-		_ = s.setStatus(statusCtx, p, branch.ID, "failed")
-		return databaseView{}, core.ProviderError{Action: "branch request", Err: err}
-	}
-	branch.Status = result.State
-	return view(branch), s.setStatus(statusCtx, p, branch.ID, branch.Status)
+	return view(branch), nil
 }
 
 // Delete removes a database once confirmName repeats its name.
@@ -258,23 +212,11 @@ func (s Service) Delete(ctx context.Context, p core.Principal, databaseID, confi
 	if !ok {
 		return fmt.Errorf("%w: database %q", core.ErrNotFound, databaseID)
 	}
+	if core.SystemDatabase(db) {
+		return core.ErrSystemReadOnly
+	}
 	if confirmName != db.Name {
 		return errConfirmName
-	}
-	if provisioning(db.Status) {
-		return errProvisioning
-	}
-	if !s.deps.LocalResources() {
-		client, err := s.deps.DataPlane(p)
-		if err != nil {
-			return err
-		}
-		if _, err := client.Databases.DeleteDatabase(ctx, db.Name, sdk.WithIdempotencyKey(core.NewID("del")), sdk.WithDeleteConfirmation(db.Name)); err != nil {
-			return core.ProviderError{Action: "database deletion", Err: err}
-		}
-		// The provider has deleted the database, so its record goes too even
-		// when the request is canceled meanwhile.
-		ctx = context.WithoutCancel(ctx)
 	}
 	return s.deps.Store.UpdateAs(ctx, p, func(a *core.Account) error {
 		project, err := a.ProjectFor(p, p.OrganizationID, p.ProjectID)
@@ -288,25 +230,6 @@ func (s Service) Delete(ctx context.Context, p core.Principal, databaseID, confi
 			return core.ErrNotFound
 		}
 		project.RemoveDatabase(db.ID, time.Now().UTC())
-		org := a.Organizations[p.OrganizationID]
-		org.Projects[p.ProjectID] = project
-		a.Organizations[p.OrganizationID] = org
-		return nil
-	})
-}
-
-func (s Service) setStatus(ctx context.Context, p core.Principal, databaseID, status string) error {
-	return s.deps.Store.UpdateAs(ctx, p, func(a *core.Account) error {
-		project, err := a.ProjectFor(p, p.OrganizationID, p.ProjectID)
-		if err != nil {
-			return err
-		}
-		db, ok := project.Databases[databaseID]
-		if !ok {
-			return core.ErrNotFound
-		}
-		db.Status = status
-		project.Databases[databaseID] = db
 		org := a.Organizations[p.OrganizationID]
 		org.Projects[p.ProjectID] = project
 		a.Organizations[p.OrganizationID] = org

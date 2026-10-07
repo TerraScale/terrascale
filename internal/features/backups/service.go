@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"terrascale.tech/dashboard/internal/core"
-	sdk "terrascale.tech/sdk"
 )
 
 // ErrUnavailable marks a backup action the live provider contract cannot
@@ -42,21 +41,17 @@ type policyView struct {
 	UpdatedAt             time.Time `json:"updatedAt,omitzero"`
 }
 
-// backupListing is a database's backup state. The demo reports its policy
-// and snapshots; the live data plane reports backup readiness.
+// backupListing is a database's backup policy and snapshots.
 type backupListing struct {
-	Policy    core.BackupPolicy
-	Backups   []backupView
-	Readiness *sdk.BackupReadiness
+	Policy  core.BackupPolicy
+	Backups []backupView
 }
 
-// restoreResult is the database a restore created. Live restores also carry
-// the provisioning operation.
+// restoreResult is the database a restore created.
 type restoreResult struct {
-	DatabaseID string                     `json:"databaseId"`
-	Name       string                     `json:"name"`
-	Status     string                     `json:"status" jsonschema:"ready, or the live provisioning state."`
-	Operation  *sdk.ProvisioningOperation `json:"-"`
+	DatabaseID string `json:"databaseId"`
+	Name       string `json:"name"`
+	Status     string `json:"status" jsonschema:"Always ready: the restored database is usable at once."`
 }
 
 // PolicyInput is a backup schedule a manager saves for one database.
@@ -67,13 +62,11 @@ type PolicyInput struct {
 	Disabled              bool
 }
 
-// RestoreInput names the database a restore creates; an empty Name derives
-// one from the source. The demo restores BackupID; the live data plane
-// restores the point in time AtMillis, or the latest state when it is nil.
+// RestoreInput names the backup to restore and the database the restore
+// creates; an empty Name derives one from the source.
 type RestoreInput struct {
 	Name     string
 	BackupID string
-	AtMillis *int64
 }
 
 func view(backup core.Backup) backupView {
@@ -123,6 +116,9 @@ func (s Service) managedDatabase(ctx context.Context, p core.Principal, database
 	if err := core.Can(ctx, s.deps.Store, p, core.Organization.CanManage); err != nil {
 		return core.Database{}, err
 	}
+	if core.SystemDatabase(db) {
+		return core.Database{}, core.ErrSystemReadOnly
+	}
 	return db, nil
 }
 
@@ -152,17 +148,6 @@ func (s Service) List(ctx context.Context, p core.Principal, databaseID string) 
 	project, db, err := s.database(ctx, p, databaseID)
 	if err != nil {
 		return backupListing{}, err
-	}
-	if !s.deps.LocalResources() {
-		client, err := s.deps.DataPlane(p)
-		if err != nil {
-			return backupListing{}, err
-		}
-		readiness, err := client.Backups.ListDatabaseBackups(ctx, db.Name)
-		if err != nil {
-			return backupListing{}, core.ProviderError{Action: "backup readiness", Err: err}
-		}
-		return backupListing{Readiness: readiness}, nil
 	}
 	listing := backupListing{Policy: project.BackupPolicies[db.ID], Backups: make([]backupView, 0, len(db.Backups))}
 	for _, backup := range db.Backups {
@@ -253,13 +238,7 @@ func (s Service) Restore(ctx context.Context, p core.Principal, databaseID strin
 	if name != "" && !core.ValidDatabaseName(name) {
 		return restoreResult{}, errRestoreName
 	}
-	if in.AtMillis != nil && *in.AtMillis < 0 {
-		return restoreResult{}, core.Invalid("restore timestamp must not be negative")
-	}
-	target := core.Database{ID: core.NewID("db"), ProjectID: p.ProjectID, Region: db.Region, Regions: slices.Clone(db.Regions), Status: "provisioning", CreatedAt: time.Now().UTC()}
-	if s.deps.LocalResources() {
-		target.Status = "ready"
-	}
+	target := core.Database{ID: core.NewID("db"), ProjectID: p.ProjectID, Region: db.Region, Regions: slices.Clone(db.Regions), Status: "ready", CreatedAt: time.Now().UTC()}
 	err = s.update(ctx, p, core.Organization.CanProvisionResources, func(a *core.Account, project *core.Project) error {
 		current, ok := project.Databases[db.ID]
 		if !ok {
@@ -274,16 +253,14 @@ func (s Service) Restore(ctx context.Context, p core.Principal, databaseID strin
 				return fmt.Errorf("%w: database %q already exists", core.ErrConflict, target.Name)
 			}
 		}
-		if s.deps.LocalResources() {
-			index := slices.IndexFunc(current.Backups, func(b core.Backup) bool { return b.ID == in.BackupID && b.Status == "ready" })
-			if index < 0 {
-				return errBackupMissing
-			}
-			backup := current.Backups[index]
-			target.Documents = core.CloneDocuments(backup.Documents)
-			target.Schemas = core.CloneSchemas(backup.Schemas)
-			target.Indexes = core.CloneIndexes(backup.Indexes)
+		index := slices.IndexFunc(current.Backups, func(b core.Backup) bool { return b.ID == in.BackupID && b.Status == "ready" })
+		if index < 0 {
+			return errBackupMissing
 		}
+		backup := current.Backups[index]
+		target.Documents = core.CloneDocuments(backup.Documents)
+		target.Schemas = core.CloneSchemas(backup.Schemas)
+		target.Indexes = core.CloneIndexes(backup.Indexes)
 		project.Databases[target.ID] = target
 		a.RecordAudit(p, "backup.restored", current.Name+" → "+target.Name, "database", target.CreatedAt)
 		return nil
@@ -291,25 +268,7 @@ func (s Service) Restore(ctx context.Context, p core.Principal, databaseID strin
 	if err != nil {
 		return restoreResult{}, err
 	}
-	result := restoreResult{DatabaseID: target.ID, Name: target.Name, Status: target.Status}
-	if s.deps.LocalResources() {
-		return result, nil
-	}
-	// The restore record is committed, so its outcome is saved even when the
-	// request is canceled meanwhile; otherwise it would stay provisioning.
-	statusCtx := context.WithoutCancel(ctx)
-	client, err := s.deps.DataPlane(p)
-	if err != nil {
-		_ = s.setStatus(statusCtx, p, target.ID, "failed")
-		return restoreResult{}, err
-	}
-	operation, err := client.Backups.RestoreBackup(ctx, db.Name, sdk.RestoreBackupRequest{Name: target.Name, At: in.AtMillis, OperationID: target.ID}, sdk.WithIdempotencyKey(target.ID))
-	if err != nil {
-		_ = s.setStatus(statusCtx, p, target.ID, "failed")
-		return restoreResult{}, core.ProviderError{Action: "restore", Err: err}
-	}
-	result.Operation, result.Status = operation, operation.State
-	return result, s.setStatus(statusCtx, p, target.ID, operation.State)
+	return restoreResult{DatabaseID: target.ID, Name: target.Name, Status: target.Status}, nil
 }
 
 // Overwrite replaces databaseID's documents, schemas, and indexes with those
@@ -365,18 +324,6 @@ func validCron(schedule string) bool {
 // normalizeCron collapses the whitespace between a schedule's fields.
 func normalizeCron(schedule string) string {
 	return strings.Join(strings.Fields(schedule), " ")
-}
-
-func (s Service) setStatus(ctx context.Context, p core.Principal, databaseID, status string) error {
-	return s.update(ctx, p, func(core.Organization, string) bool { return true }, func(_ *core.Account, project *core.Project) error {
-		db, ok := project.Databases[databaseID]
-		if !ok {
-			return core.ErrNotFound
-		}
-		db.Status = status
-		project.Databases[databaseID] = db
-		return nil
-	})
 }
 
 // restoredName derives an unused database name of at most 63 characters for

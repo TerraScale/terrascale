@@ -153,7 +153,7 @@ templ overviewTab(data pageData) {
 						<li>
 							<div class="ts-row-between"><span class="ts-strong">{ database.Name }</span><span class="ts-mono">{ database.StoredSize }</span></div>
 							@charts.Bar(charts.NewBar(database.Name, database.SharePercent, "stored document bytes in this scope"))
-							<span class="ts-meta">{ fmt.Sprint(database.Documents) } saved documents</span>
+							<span class="ts-meta">{ database.Documents } saved documents</span>
 						</li>
 					}
 				</ul>
@@ -188,9 +188,6 @@ templ overviewTab(data pageData) {
 				@ui.Stat("Read operations", fmt.Sprint(data.Reads), "")
 				@ui.Stat("Write units", fmt.Sprint(data.Writes), "")
 				@ui.Stat("Read and write operations", fmt.Sprint(data.Requests), "")
-				if data.StorageByteSeconds > 0 {
-					@ui.Stat("Storage activity", fmt.Sprint(data.StorageByteSeconds), "byte-seconds")
-				}
 			}
 		} else {
 			@ui.Empty("Usage totals are unavailable.", data.UsageError)
@@ -210,7 +207,7 @@ templ overviewTab(data pageData) {
 								<td>
 									@ui.Badge(statusTone(database.Status), database.Status)
 								</td>
-								<td class="ts-num">{ fmt.Sprint(database.Documents) }</td>
+								<td class="ts-num">{ database.Documents }</td>
 								<td>
 									if database.SpendCap != "" {
 										${ database.SpendCap }

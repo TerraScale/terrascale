@@ -12,7 +12,6 @@ import (
 	"github.com/a-h/templ"
 	"terrascale.tech/dashboard/internal/core"
 	"terrascale.tech/dashboard/internal/ui/icons"
-	sdk "terrascale.tech/sdk"
 )
 
 type pageData struct {
@@ -93,7 +92,7 @@ type revealed struct {
 }
 
 type keyView struct {
-	sdk.ProjectAPIKey
+	ProjectAPIKey
 	Type         credentialType
 	DatabaseName string
 }
@@ -136,7 +135,7 @@ func mountPages(mux *http.ServeMux, deps core.Deps, service Service) {
 			if !ok {
 				return
 			}
-			input := sdk.CreateProjectAPIKeyRequest{Name: r.PostFormValue("name"), DatabaseID: r.PostFormValue("databaseId"), Scopes: formScopes(r.PostFormValue("scopes"))}
+			input := CreateProjectAPIKeyRequest{Name: r.PostFormValue("name"), DatabaseID: r.PostFormValue("databaseId"), Scopes: formScopes(r.PostFormValue("scopes"))}
 			created, err := service.Create(r.Context(), p, kind, input)
 			if err != nil {
 				redirectPageError(w, r, err, dialog)

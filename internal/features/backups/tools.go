@@ -22,14 +22,12 @@ type setPolicyInput struct {
 type restoreBackupInput struct {
 	databaseInput
 	Name     string `json:"name,omitempty" jsonschema:"Name of the new database the restore creates. Defaults to <source>-restore."`
-	BackupID string `json:"backupId,omitempty" jsonschema:"Backup ID from list_backups to restore. Required in the in-memory demo."`
-	AtMillis *int64 `json:"atMillis,omitempty" jsonschema:"Live point-in-time restore target in Unix milliseconds. Defaults to the latest state."`
+	BackupID string `json:"backupId,omitempty" jsonschema:"Backup ID from list_backups to restore."`
 }
 
 type backupList struct {
-	Policy    *policyView  `json:"policy,omitempty" jsonschema:"The saved backup schedule; absent on the live data plane."`
-	Backups   []backupView `json:"backups" jsonschema:"Backups, newest first."`
-	Readiness any          `json:"readiness,omitempty" jsonschema:"Live data plane backup readiness."`
+	Policy  *policyView  `json:"policy,omitempty" jsonschema:"The saved backup schedule."`
+	Backups []backupView `json:"backups" jsonschema:"Backups, newest first."`
 }
 
 func mountTools(tools *core.Tools, service Service) {
@@ -40,9 +38,6 @@ func mountTools(tools *core.Tools, service Service) {
 		listing, err := service.List(ctx, p, in.DatabaseID)
 		if err != nil {
 			return backupList{}, err
-		}
-		if listing.Readiness != nil {
-			return backupList{Backups: []backupView{}, Readiness: listing.Readiness}, nil
 		}
 		saved := policy(listing.Policy)
 		return backupList{Policy: &saved, Backups: listing.Backups}, nil
@@ -67,6 +62,6 @@ func mountTools(tools *core.Tools, service Service) {
 		Name: "restore_backup", Title: "Restore backup",
 		Description: "Restore a database backup into a new database; the source database is unchanged. Requires an owner or admin role and provisioning rights.",
 	}, func(ctx context.Context, p core.Principal, in restoreBackupInput) (restoreResult, error) {
-		return service.Restore(ctx, p, in.DatabaseID, RestoreInput{Name: in.Name, BackupID: in.BackupID, AtMillis: in.AtMillis})
+		return service.Restore(ctx, p, in.DatabaseID, RestoreInput{Name: in.Name, BackupID: in.BackupID})
 	})
 }

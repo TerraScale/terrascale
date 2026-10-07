@@ -20,6 +20,7 @@ import (
 	"terrascale.tech/dashboard/internal/features/demovisuals"
 	"terrascale.tech/dashboard/internal/features/payments"
 	"terrascale.tech/dashboard/internal/features/subscriptions"
+	"terrascale.tech/dashboard/internal/ui"
 	"terrascale.tech/dashboard/internal/ui/charts"
 )
 
@@ -32,7 +33,7 @@ type databaseRow struct {
 	SpendCap     string
 	Effective    string
 	Status       string
-	Documents    int
+	Documents    string
 	StoredBytes  int64
 	StoredSize   string
 	SharePercent int
@@ -150,7 +151,6 @@ type pageData struct {
 	Requests              int64
 	Reads                 int64
 	Writes                int64
-	StorageByteSeconds    int64
 	UsageSource           string
 	UsageError            string
 	UsageAvailable        bool
@@ -575,6 +575,14 @@ func writeLoadError(w http.ResponseWriter, err error) {
 	http.Error(w, "could not load usage", http.StatusInternalServerError)
 }
 
+// measured is value, or "Unavailable" when TerraBase did not report it.
+func measured(unavailable bool, value string) string {
+	if unavailable {
+		return "Unavailable"
+	}
+	return value
+}
+
 func buildPage(ctx context.Context, service Service, p core.Principal, org core.Organization, project core.Project, tab, databaseFilter string) (pageData, error) {
 	report, err := service.report(ctx, p, org, project, databaseFilter)
 	if err != nil {
@@ -585,14 +593,15 @@ func buildPage(ctx context.Context, service Service, p core.Principal, org core.
 		projects = append(projects, projectRow{
 			ID: item.ID, Name: item.Name, Region: item.Region, DatabaseCount: item.DatabaseCount,
 			SpendCap: dollars(item.SpendCapCents), Effective: capLabel(item.EffectiveCapCents), Selected: item.Selected,
-			StoredBytes: item.StoredBytes, StoredSize: formatStoredBytes(item.StoredBytes), SharePercent: item.SharePercent,
+			StoredBytes: item.StoredBytes, StoredSize: measured(item.Unavailable, ui.FormatBytes(item.StoredBytes)), SharePercent: item.SharePercent,
 		})
 	}
 	databases := make([]databaseRow, 0, len(report.Databases))
 	for _, item := range report.Databases {
 		databases = append(databases, databaseRow{
 			ID: item.ID, Name: item.Name, Region: item.Region, SpendCap: dollars(item.SpendCapCents), Effective: capLabel(item.EffectiveCapCents),
-			Status: item.Status, Documents: item.Documents, StoredBytes: item.StoredBytes, StoredSize: formatStoredBytes(item.StoredBytes), SharePercent: item.SharePercent,
+			Status: item.Status, Documents: measured(item.Unavailable, strconv.Itoa(item.Documents)), StoredBytes: item.StoredBytes,
+			StoredSize: measured(item.Unavailable, ui.FormatBytes(item.StoredBytes)), SharePercent: item.SharePercent,
 		})
 	}
 	databaseOptions := make([]databaseOption, 0, len(project.Databases))
@@ -610,8 +619,8 @@ func buildPage(ctx context.Context, service Service, p core.Principal, org core.
 		InvoiceCount:    len(org.Billing.Invoices),
 		ActiveDatabases: report.ActiveDatabases, RegionCount: report.RegionCount, CanManage: report.CanManage,
 		Requests: report.Totals.Requests, Reads: report.Totals.Reads, Writes: report.Totals.Writes,
-		StorageByteSeconds: report.Totals.StorageByteSeconds, UsageSource: report.Totals.Source,
-		UsageError: report.Totals.Error, UsageAvailable: report.Totals.Available,
+		UsageSource: report.Totals.Source,
+		UsageError:  report.Totals.Error, UsageAvailable: report.Totals.Available,
 	}, nil
 }
 
@@ -710,16 +719,6 @@ func signedIn(deps core.Deps, w http.ResponseWriter, r *http.Request) (core.Prin
 		return core.Principal{}, core.Account{}, false
 	}
 	return p, account, true
-}
-
-func formatStoredBytes(value int64) string {
-	if value < 1024 {
-		return fmt.Sprintf("%d B", value)
-	}
-	if value < 1024*1024 {
-		return fmt.Sprintf("%.1f KiB", float64(value)/1024)
-	}
-	return fmt.Sprintf("%.1f MiB", float64(value)/(1024*1024))
 }
 
 func addMarioSampleVisuals(data *pageData) {

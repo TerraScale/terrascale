@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"crypto"
 	"crypto/rand"
 	"crypto/rsa"
@@ -607,8 +608,13 @@ func TestTSAuthRefreshKeepsTokenTSAuthDoesNotRotate(t *testing.T) {
 			t.Fatal("session refreshed without a new refresh token was signed out")
 		}
 	}
-	if after, _ := dashboard.record(t); after.Refresh != before.Refresh || issuer.refreshCount() != 2 {
-		t.Fatalf("refreshes=%d kept=%v; want two refreshes with the same token", issuer.refreshCount(), after.Refresh == before.Refresh)
+	after, _ := dashboard.record(t)
+	kept := refreshToken(t, after.Refresh) == refreshToken(t, before.Refresh)
+	if !kept || issuer.refreshCount() != 2 {
+		t.Fatalf("refreshes=%d kept=%v; want two refreshes with the same token", issuer.refreshCount(), kept)
+	}
+	if _, ok := AccessToken(after.Refresh); !ok {
+		t.Error("the refreshed session lost its access token")
 	}
 	issuer.set(func(i *testIssuer) { clear(i.refreshes) })
 	dashboard.expire(t)
@@ -728,5 +734,49 @@ func TestTSAuthLiveIssuer(t *testing.T) {
 	authorize.Body.Close()
 	if authorize.StatusCode >= http.StatusBadRequest {
 		t.Fatalf("ts-auth authorization endpoint = %d for the dashboard's request", authorize.StatusCode)
+	}
+}
+
+// refreshToken is the ts-auth refresh token a session's Refresh holds.
+func refreshToken(t *testing.T, refresh string) string {
+	t.Helper()
+	var state refreshState
+	if err := json.Unmarshal([]byte(refresh), &state); err != nil || state.Token == "" {
+		t.Fatalf("refresh state %q: %v", refresh, err)
+	}
+	return state.Token
+}
+
+// TestAdminSignInHookGetsTheAccessToken covers how a platform admin's
+// sign-in mirrors every service's TerraBase database: only admins run the
+// hook, with their ts-auth access token, and its failure never blocks the
+// sign-in.
+func TestAdminSignInHookGetsTheAccessToken(t *testing.T) {
+	t.Parallel()
+	issuer := newTestIssuer(t)
+	dashboard := newTSAuthDashboard(t, issuer)
+	var tokens []string
+	dashboard.tsAuth.cfg.AdminSignIn = func(_ context.Context, account core.Account, accessToken string) error {
+		tokens = append(tokens, accessToken)
+		return errors.New("TerraBase is down")
+	}
+	dashboard.signIn(t, issuer, "/login/sso")
+	if len(tokens) != 0 {
+		t.Fatalf("hook ran %d times for a member, want none", len(tokens))
+	}
+	account, err := dashboard.store.FindBySubject(t.Context(), testSubject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dashboard.store.SetPlatformAdmin(t.Context(), account.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	dashboard.signIn(t, issuer, "/login/sso")
+	if !dashboard.signedIn(t) {
+		t.Fatal("a failing hook blocked the admin's sign-in")
+	}
+	record, _ := dashboard.record(t)
+	if access, ok := AccessToken(record.Refresh); len(tokens) != 1 || !ok || tokens[0] != access {
+		t.Fatalf("hook got %v, want the session's access token %q", tokens, access)
 	}
 }

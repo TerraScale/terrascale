@@ -244,12 +244,33 @@ func (m *Manager) CLIGrantPrincipal(ctx context.Context, binding string) (core.P
 	return m.principalForHash(ctx, key)
 }
 
-// principalForHash distinguishes invalid credentials from a failed lookup.
-func (m *Manager) principalForHash(ctx context.Context, key [32]byte) (core.Principal, bool, error) {
+// RefreshState returns the Refresh of the request's session, rechecked
+// first when it is due, or "" without a live session. For ts-auth it holds
+// the sign-in's current access token.
+func (m *Manager) RefreshState(r *http.Request) string {
+	token, ok := m.Token(r)
+	if !ok {
+		return ""
+	}
+	item, err := m.record(r.Context(), sha256.Sum256([]byte(token)))
+	if err != nil {
+		return ""
+	}
+	return item.Refresh
+}
+
+// record reads the session under key, rechecking it first when it is due.
+func (m *Manager) record(ctx context.Context, key [32]byte) (Record, error) {
 	item, err := m.sessions.Get(ctx, key, time.Now())
 	if err == nil && item.Refresh != "" && m.opts.Refresh != nil && !time.Now().Before(item.RefreshAt) {
 		item, err = m.refresh(ctx, key)
 	}
+	return item, err
+}
+
+// principalForHash distinguishes invalid credentials from a failed lookup.
+func (m *Manager) principalForHash(ctx context.Context, key [32]byte) (core.Principal, bool, error) {
+	item, err := m.record(ctx, key)
 	if errors.Is(err, ErrNotFound) {
 		return core.Principal{}, false, nil
 	}

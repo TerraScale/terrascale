@@ -18,6 +18,7 @@ import (
 	"terrascale.tech/dashboard/internal/features/databases"
 	"terrascale.tech/dashboard/internal/features/notfound"
 	sdk "terrascale.tech/sdk"
+	"terrascale.tech/sdk/v1"
 )
 
 // Sections are the database detail tabs this slice renders. History is part
@@ -39,8 +40,11 @@ var indexViews = []struct{ Key, Label string }{
 }
 
 type pageData struct {
-	Section         string
-	Database        core.Database
+	Section  string
+	Database core.Database
+	// System marks a system database: read live from TerraBase, secrets
+	// masked, never changed here.
+	System          bool
 	CanWrite        bool
 	CanManage       bool
 	Demo            bool
@@ -181,13 +185,23 @@ func renderSection(w http.ResponseWriter, r *http.Request, deps core.Deps, datab
 		notfound.Render(w, r)
 		return
 	}
+	// A system database has no history, schema or indexes here: TerraBase
+	// reports none of them to the dashboard.
+	if section == "history" || !databases.Shows(db, sections[section].Tab) {
+		if core.SystemDatabase(db) {
+			http.Redirect(w, r, databases.TabPath(db.ID, "documents", nil), http.StatusSeeOther)
+			return
+		}
+	}
 	query := r.URL.Query()
 	org := a.Organizations[p.OrganizationID]
+	system := core.SystemDatabase(db)
 	data := pageData{
 		Section:   section,
 		Database:  db,
-		CanWrite:  org.CanWrite(p.UserID),
-		CanManage: org.CanManage(p.UserID),
+		System:    system,
+		CanWrite:  org.CanWrite(p.UserID) && !system,
+		CanManage: org.CanManage(p.UserID) && !system,
 		Demo:      deps.Demo,
 		// Document forms post the browsing state back with their change.
 		Search:    strings.TrimSpace(r.FormValue("q")),
@@ -221,9 +235,14 @@ func renderSection(w http.ResponseWriter, r *http.Request, deps core.Deps, datab
 		}
 		data.Page, _ = strconv.Atoi(r.FormValue("page"))
 	}
-	if deps.LocalResources() {
+	switch {
+	case system:
+		if section == "documents" {
+			loadLive(ctx, service, p, &data)
+		}
+	case deps.LocalResources():
 		loadDemo(&data, a, p, db)
-	} else {
+	default:
 		loadLive(ctx, service, p, &data)
 	}
 	data.Queries = slices.SortedFunc(maps.Values(project.SavedQueries), func(a, b core.SavedQuery) int { return strings.Compare(a.Name, b.Name) })
@@ -317,12 +336,29 @@ func paginate(data *pageData) {
 
 // loadCollections lists the database's collections for the sub-navigation
 // and settles which one is open: without a choice, users or else the first
-// one; a chosen collection that holds nothing yet is listed too. Demo
-// collections are in memory, so they carry their document counts.
+// one; a chosen collection that holds nothing yet is listed too. Demo and
+// system collections carry their document counts.
 func loadCollections(ctx context.Context, service Service, p core.Principal, data *pageData) {
-	names, err := service.Collections(ctx, p, data.Database.ID)
+	counts := make(map[string]int64)
+	var names []string
+	var err error
+	if data.System {
+		var stats []v1.CollectionStats
+		stats, err = service.deps.SystemCollections(ctx, p, data.Database)
+		for _, collection := range stats {
+			names = append(names, collection.Name)
+			counts[collection.Name] = collection.Documents
+		}
+	} else {
+		names, err = service.Collections(ctx, p, data.Database.ID)
+		if service.deps.LocalResources() {
+			for _, name := range names {
+				counts[name] = int64(len(data.Database.Documents[name]))
+			}
+		}
+	}
 	if err != nil {
-		data.Error = err.Error()
+		data.Error = loadError(data, err)
 		return
 	}
 	switch {
@@ -334,8 +370,8 @@ func loadCollections(ctx context.Context, service Service, p core.Principal, dat
 	}
 	for _, name := range names {
 		entry := collectionEntry{Name: name}
-		if service.deps.LocalResources() {
-			entry.Count = strconv.Itoa(len(data.Database.Documents[name]))
+		if count, ok := counts[name]; ok {
+			entry.Count = strconv.FormatInt(count, 10)
 		}
 		data.Collections = append(data.Collections, entry)
 	}
@@ -398,6 +434,15 @@ func loadLive(ctx context.Context, service Service, p core.Principal, data *page
 		data.Schema = indented(schema)
 	}
 	if err != nil {
-		data.Error = err.Error()
+		data.Error = loadError(data, err)
 	}
+}
+
+// loadError is what the page says about a failed read; a system database's
+// provider details go to the log only.
+func loadError(data *pageData, err error) string {
+	if data.System {
+		return core.SystemUnavailable(err)
+	}
+	return err.Error()
 }

@@ -1,6 +1,7 @@
 package databases
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"slices"
@@ -57,8 +58,12 @@ func renderDetail(w http.ResponseWriter, r *http.Request, deps core.Deps, tab st
 		notfound.Render(w, r)
 		return
 	}
+	if !Shows(db, tab) {
+		http.Redirect(w, r, TabPath(db.ID, "overview", nil), http.StatusSeeOther)
+		return
+	}
 	org := a.Organizations[p.OrganizationID]
-	canManage := org.CanManage(p.UserID)
+	canManage := org.CanManage(p.UserID) && !core.SystemDatabase(db)
 	query := r.URL.Query()
 	data := detailData{
 		Database:   db,
@@ -67,6 +72,10 @@ func renderDetail(w http.ResponseWriter, r *http.Request, deps core.Deps, tab st
 		Error:      formError(query.Get("error")),
 		CanManage:  canManage,
 		OpenDelete: tab == "overview" && query.Get("delete") == "1",
+	}
+	// Only the overview shows the counts.
+	if tab == "overview" {
+		data.Info = data.Info.withContents(r.Context(), deps, p, db)
 	}
 	if data.Error != "" && tab == "backups" {
 		refill := func(key string) string { return truncate(query.Get(key), 128) }
@@ -98,7 +107,26 @@ type detailInfo struct {
 	Demo                bool
 	Collections         int
 	Documents           int
+	Bytes               int64
+	// Unavailable explains a system database TerraBase did not report.
+	Unavailable string
 }
+
+// withContents adds the database's collection, document and byte counts.
+func (info detailInfo) withContents(ctx context.Context, deps core.Deps, p core.Principal, db core.Database) detailInfo {
+	ctx, cancel := context.WithTimeout(ctx, countBudget)
+	defer cancel()
+	var err error
+	info.Collections, info.Documents, info.Bytes, err = contents(ctx, deps, p, db)
+	if err != nil {
+		info.Unavailable = unavailable(err)
+	}
+	return info
+}
+
+// unavailable is what the page says when TerraBase did not report a system
+// database's contents.
+func unavailable(err error) string { return core.SystemUnavailable(err) }
 
 type detailRegion struct {
 	Name     string
@@ -121,10 +149,6 @@ func makeDetailInfo(demo bool, principal core.Principal, account core.Account, p
 		CanOverwriteBackups: demo && canManage,
 		CanBranch:           canMutate && db.Status == "ready",
 		Demo:                demo,
-		Collections:         len(db.Documents),
-	}
-	for _, documents := range db.Documents {
-		info.Documents += len(documents)
 	}
 
 	// The source dashboard's nearest-region 0 ms is illustrative fixture data,
@@ -261,20 +285,6 @@ func truncate(value string, n int) string {
 		return value[:n]
 	}
 	return value
-}
-
-// byteSize formats a size in bytes with binary units.
-func byteSize(n int64) string {
-	const unit = 1024
-	if n < unit {
-		return strconv.FormatInt(n, 10) + " B"
-	}
-	value, exponent := float64(n)/unit, 0
-	for value >= unit && exponent < 4 {
-		value /= unit
-		exponent++
-	}
-	return strconv.FormatFloat(value, 'f', 1, 64) + " " + [...]string{"KiB", "MiB", "GiB", "TiB", "PiB"}[exponent]
 }
 
 func backupTone(status string) string {

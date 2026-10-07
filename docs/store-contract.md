@@ -432,3 +432,49 @@ Transactions are limited to 1024 operations and document bodies to 1 MiB,
 Native `AssertCount` scans at most 10,000 entries; exceeding the producer's
 limit fails safely. No native index, TTL, Management or Rust API endpoint is
 called for phase-1 persistence.
+
+## System databases (TS-611)
+
+Every TerraScale service keeps all its data in TerraBase (umbrella
+`AGENTS.md`, "All data lives in TerraBase"). TerraBase's bootstrap (TS-529,
+terrabase decision 0007) places each service's database in organization
+`terrascale`, one project per service: `ts-auth` → `auth`, `ts-dashboard` →
+`dashboard`, and the services TS-612 adds (ts-router, ts-status, …) the same
+way. The dashboard keeps no list of them:
+
+- Each time a platform admin signs in through ts-auth, the dashboard mirrors
+  every TerraBase organization the admin belongs to, with all its projects
+  and databases, into the admin's account under their TerraBase IDs
+  (`terrabase.MirrorOrganizations`, the same mirror as `import-org`). A new
+  service's database appears at the admin's next sign-in. A failed mirror is
+  logged and never blocks the sign-in; nothing is ever removed.
+- A database record with a TerraBase UUID ID is a **system database**
+  (`core.SystemDatabase`); dashboard records use prefixed IDs (`db_…`).
+- Its contents are never the record's: the Databases page, the database
+  overview, the Documents sub-navigation, the grid, list and editor, the SQL
+  console and the Usage page read TerraBase Management through ts-go
+  (`Collections`, `SQL`, `DatabaseUsage`) with the signed-in user's ts-auth
+  access token. The session keeps that token next to its refresh token and
+  renews it at each recheck; `core.Deps.System` hands it to features.
+- Only platform admins read them, and TerraBase checks that the admin is a
+  member of the database's organization. Values of members whose names
+  mention a password, secret, hash, token, refresh, payload, OTP, seed, key,
+  credential, cookie, nonce, JWT, salt, signature or reference id are masked
+  (`core.MaskSecrets`), erring toward masking; a document that cannot be
+  masked is not shown. Only whole documents leave a system
+  database: its SQL console runs `SELECT * FROM collection [LIMIT n]` only,
+  and the grid never sorts by a secret member, so no projection, filter or
+  order can reveal a masked value.
+- A system database shows only its overview, documents and SQL; its
+  schema, indexes, history, backups and branches are not the dashboard's.
+- Lookups run a few at a time under one deadline (15 s per call, 5 s for a
+  page's counts or usage). A database TerraBase does not report shows
+  "Unavailable", never a zero, and provider details go to the log only.
+  MCP and API callers present a dashboard access token, which TerraBase does
+  not accept, so system data is shown on the pages only.
+- They are read-only in the dashboard (`core.ErrSystemReadOnly`): document,
+  collection, schema, index, backup, branch and delete changes are refused.
+  Management has no document writes for a ts-auth token, and the owning
+  services change their data. Editing them needs TerraBase to accept ts-auth
+  project tokens on the data plane (TS-589), plus a confirmation and an audit
+  entry here.

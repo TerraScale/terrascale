@@ -14,7 +14,7 @@ import (
 	sdk "terrascale.tech/sdk"
 )
 
-var selectPattern = regexp.MustCompile(`(?i)^select\s+\*\s+from\s+([a-z][a-z0-9_-]*)(?:\s+limit\s+([0-9]{1,3}))?\s*;?$`)
+var selectPattern = regexp.MustCompile(`(?i)^select\s+\*\s+from\s+([a-z][a-z0-9_-]*)(?:\s+limit\s+([0-9]{1,4}))?\s*;?$`)
 
 // Mount owns the database data routes and tools: documents, schemas,
 // indexes, SQL, and saved queries.
@@ -328,6 +328,8 @@ func writeError(w http.ResponseWriter, err error) {
 // after action.
 func failure(err error, action string) (int, string) {
 	switch {
+	case errors.Is(err, core.ErrSystemReadOnly):
+		return http.StatusForbidden, "System databases are read-only in the dashboard."
 	case errors.Is(err, core.ErrForbidden):
 		return http.StatusForbidden, "Your role cannot make this change. Ask a project manager."
 	case errors.Is(err, core.ErrNotFound):

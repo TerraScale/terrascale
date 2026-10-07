@@ -46,7 +46,8 @@ type TSAuthResourceClient struct {
 }
 
 func (i *TSAuthInstanceClient) NewResourceClient(config TSAuthResourceClientConfig) (*TSAuthResourceClient, error) {
-	if err := tsAuthResourceConfig(i, config.Issuer, config.ResourceAudience); err != nil {
+	base, err := tsAuthResourceConfig(i, config.Issuer, config.ResourceAudience)
+	if err != nil {
 		return nil, err
 	}
 	if err := config.Authentication.validate(); err != nil {
@@ -55,7 +56,7 @@ func (i *TSAuthInstanceClient) NewResourceClient(config TSAuthResourceClientConf
 	if !utf8.ValidString(config.Authentication.ClientID) || !utf8.ValidString(config.Authentication.ClientSecret) {
 		return nil, oidcError("invalid_client_configuration", "configuration", false, nil)
 	}
-	oidc, err := tsAuthCredentialTransport(i)
+	oidc, err := tsAuthCredentialTransport(i, base)
 	if err != nil {
 		return nil, err
 	}
@@ -65,11 +66,11 @@ func (i *TSAuthInstanceClient) NewResourceClient(config TSAuthResourceClientConf
 // Credential operations use an owned HTTP client without browser cookies or
 // management/native token providers. The existing no-redirect form transport
 // still formats each Basic component independently before joining them.
-func tsAuthCredentialTransport(i *TSAuthInstanceClient) (*TSAuthOIDCClient, error) {
+func tsAuthCredentialTransport(i *TSAuthInstanceClient, base string) (*TSAuthOIDCClient, error) {
 	httpClient := *i.c.http
 	httpClient.Jar = nil
 	c, err := NewClient(Config{
-		TSAuthBaseURL: i.base, HTTPClient: &httpClient,
+		TSAuthBaseURL: base, HTTPClient: &httpClient,
 		DiscoveryBaseURL:      i.c.cfg.DiscoveryBaseURL,
 		TSAuthUseReverseProxy: i.c.cfg.TSAuthUseReverseProxy,
 		RequestTimeout:        i.c.cfg.RequestTimeout,
@@ -84,15 +85,19 @@ func tsAuthCredentialTransport(i *TSAuthInstanceClient) (*TSAuthOIDCClient, erro
 	return instance.OIDC, nil
 }
 
-func tsAuthResourceConfig(i *TSAuthInstanceClient, issuer, audience string) error {
+func tsAuthResourceConfig(i *TSAuthInstanceClient, issuer, audience string) (string, error) {
 	if err := tsAuthResourceAudience(audience); err != nil {
-		return err
+		return "", err
 	}
 	u, err := trustedOIDCURL(issuer)
-	if err != nil || u.EscapedPath() != "/"+url.PathEscape(i.slug) || issuer != i.base+"/"+url.PathEscape(i.slug) || (u.Hostname() == "auth.terrascale.tech" && i.c.cfg.TSAuthUseReverseProxy) {
-		return oidcError("issuer_transport_mismatch", "configuration", false, nil)
+	if err != nil {
+		return "", oidcError("issuer_transport_mismatch", "configuration", false, nil)
 	}
-	return nil
+	base, ok := i.issuerBase(u)
+	if !ok || issuer != u.Scheme+"://"+u.Host+"/"+url.PathEscape(i.slug) {
+		return "", oidcError("issuer_transport_mismatch", "configuration", false, nil)
+	}
+	return base, nil
 }
 
 func tsAuthResourceAudience(value string) error {
@@ -403,14 +408,15 @@ type TSAuthResourceIntrospector struct {
 }
 
 func (i *TSAuthInstanceClient) NewResourceIntrospector(config TSAuthResourceIntrospectorConfig) (*TSAuthResourceIntrospector, error) {
-	if err := tsAuthResourceConfig(i, config.Issuer, config.ResourceAudience); err != nil {
+	base, err := tsAuthResourceConfig(i, config.Issuer, config.ResourceAudience)
+	if err != nil {
 		return nil, err
 	}
 	auth := TSAuthOAuthClientAuthentication{ClientID: config.Authentication.ClientID, ClientSecret: config.Authentication.Secret, Method: TSAuthClientSecretBasic}
 	if err := auth.validate(); err != nil || !utf8.ValidString(auth.ClientID) || !utf8.ValidString(auth.ClientSecret) {
 		return nil, oidcError("invalid_resource_credentials", "configuration", false, nil)
 	}
-	oidc, err := tsAuthCredentialTransport(i)
+	oidc, err := tsAuthCredentialTransport(i, base)
 	if err != nil {
 		return nil, err
 	}

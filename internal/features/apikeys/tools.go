@@ -4,7 +4,6 @@ import (
 	"context"
 
 	"terrascale.tech/dashboard/internal/core"
-	sdk "terrascale.tech/sdk"
 )
 
 type listCredentialsInput struct {
@@ -48,25 +47,25 @@ func mountTools(tools *core.Tools, service Service) {
 	core.AddTool(tools, core.ToolSpec{
 		Name: "create_api_key", Title: "Create API key",
 		Description: "Issue a project API key for the TerraScale SDKs. Returns the secret once; store it securely. Requires an owner or admin role.",
-	}, func(ctx context.Context, p core.Principal, in createCredentialInput) (sdk.ProjectAPIKeySecret, error) {
-		return service.Create(ctx, p, kindAPIKey, sdk.CreateProjectAPIKeyRequest{Name: in.Name, Scopes: in.Scopes, DatabaseID: in.DatabaseID})
+	}, func(ctx context.Context, p core.Principal, in createCredentialInput) (ProjectAPIKeySecret, error) {
+		return service.Create(ctx, p, kindAPIKey, CreateProjectAPIKeyRequest{Name: in.Name, Scopes: in.Scopes, DatabaseID: in.DatabaseID})
 	})
 	core.AddTool(tools, core.ToolSpec{
 		Name: "create_m2m_client", Title: "Create M2M client",
 		Description: "Issue a machine-to-machine client credential for a project. Returns the secret once; store it securely. Requires an owner or admin role.",
-	}, func(ctx context.Context, p core.Principal, in createCredentialInput) (sdk.ProjectAPIKeySecret, error) {
-		return service.Create(ctx, p, kindM2M, sdk.CreateProjectAPIKeyRequest{Name: in.Name, Scopes: in.Scopes, DatabaseID: in.DatabaseID})
+	}, func(ctx context.Context, p core.Principal, in createCredentialInput) (ProjectAPIKeySecret, error) {
+		return service.Create(ctx, p, kindM2M, CreateProjectAPIKeyRequest{Name: in.Name, Scopes: in.Scopes, DatabaseID: in.DatabaseID})
 	})
 	core.AddTool(tools, core.ToolSpec{
 		Name: "rotate_api_key", Title: "Rotate API key", Destructive: true,
 		Description: "Replace an active API key's or M2M client's secret. The old secret stops working immediately; the new one is returned once.",
-	}, func(ctx context.Context, p core.Principal, in credentialInput) (sdk.ProjectAPIKeySecret, error) {
+	}, func(ctx context.Context, p core.Principal, in credentialInput) (ProjectAPIKeySecret, error) {
 		return service.Rotate(ctx, p, in.KeyID, "")
 	})
 	core.AddTool(tools, core.ToolSpec{
 		Name: "revoke_api_key", Title: "Revoke API key", Destructive: true, Idempotent: true,
 		Description: "Permanently revoke an API key or M2M client so its secret no longer authenticates.",
-	}, func(ctx context.Context, p core.Principal, in credentialInput) (sdk.ProjectAPIKeyRevocation, error) {
+	}, func(ctx context.Context, p core.Principal, in credentialInput) (ProjectAPIKeyRevocation, error) {
 		return service.Revoke(ctx, p, in.KeyID, "")
 	})
 }

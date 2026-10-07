@@ -2,6 +2,10 @@
 // tests. Every test of a TerraBase client runs against this real server, never
 // a fake.
 //
+// Each server trusts a local ts-auth issuer started with it: Server.Token
+// mints a user's access token for the Management API on the client listener.
+// The management service credential works only on the admin listener.
+//
 // The executable is the release Release of terrabase commit Commit, verified
 // against SHA256. It is cached in $TERRABASE_CACHE (default: the user cache
 // directory) and downloaded on first use with TERRABASE_TOKEN, a token that
@@ -24,6 +28,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
@@ -33,6 +38,7 @@ import (
 	"math/big"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"os/exec"
@@ -46,23 +52,33 @@ import (
 
 // The pinned TerraBase release.
 const (
-	Commit  = "ff256067015433c8c40b59879f1282d2a40480ce"
-	Release = "ci-" + Commit + "-run-13258"
-	SHA256  = "e07d173fc2bbab19dcb1fde8b121b0207b07d55452a5b19a406871d220e05e13"
+	Commit  = "103334e86d5956e0e7086c1aa3e96e291511d906"
+	Release = "ci-" + Commit + "-run-14116"
+	SHA256  = "f0b4d0676c70845ef6db74cdc2f2e69ec5495835c933cd2bf0c38218d6f9cd13"
 )
+
+// Audience is the ts-auth audience TerraBase accepts in Server.Token's tokens.
+const Audience = "terrabase"
 
 const downloadURL = "https://git.terrascale.tech/TerraScale/terrabase/releases/download/" + Release + "/terrabase-linux-amd64"
 
 // Server is a running TerraBase with a fresh data directory.
 type Server struct {
-	// URL is the HTTPS client listener (documents and Management API).
+	// URL is the HTTPS client listener: the Documents API with API keys and
+	// the Management API with access tokens from Token.
 	URL string
-	// AdminURL is the loopback administrative listener (API keys, OpenAPI).
+	// AdminURL is the loopback administrative listener: API keys, and the
+	// Management API with Credential.
 	AdminURL string
-	// Credential is the dashboard service credential for the Management API.
+	// Credential is the management service credential. TerraBase accepts it
+	// only on AdminURL, acting as the user named in X-TerraBase-User-Id.
 	Credential string
+	// Issuer is the local ts-auth issuer TerraBase trusts.
+	Issuer string
 	// Client trusts the server's certificate. Copy it to wrap its Transport.
 	Client *http.Client
+
+	key *ecdsa.PrivateKey
 }
 
 var (
@@ -153,8 +169,8 @@ func digest(data []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// Start runs the pinned TerraBase until the test ends, with a TLS certificate
-// and a dashboard credential file generated for it.
+// Start runs the pinned TerraBase until the test ends, with a TLS certificate,
+// a management credential file and a ts-auth issuer generated for it.
 func Start(t testing.TB) *Server {
 	t.Helper()
 	bin, err := Binary()
@@ -167,15 +183,24 @@ func Start(t testing.TB) *Server {
 	dir := t.TempDir()
 	certFile, keyFile, pool := writeCertificate(t, dir)
 	credential := rand.Text() + rand.Text()
-	credFile := filepath.Join(dir, "dashboard-credential")
+	credFile := filepath.Join(dir, "management-credential")
 	if err := os.WriteFile(credFile, []byte(credential+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	issuer := startIssuer(t, certFile, keyFile, &key.PublicKey)
 	var log syncBuffer
 	cmd := exec.Command(bin,
-		"--admin-port=0", "--client-port=0",
+		"--region=test", "--admin-port=0", "--client-port=0",
 		"--client-certificate="+certFile, "--client-private-key="+keyFile,
-		"--dashboard-credential-file="+credFile, "--data-directory="+filepath.Join(dir, "data"))
+		"--management-credential-file="+credFile,
+		"--auth-issuer="+issuer, "--auth-audience="+Audience,
+		"--data-directory="+filepath.Join(dir, "data"))
+	// TerraBase fetches the issuer's keys over TLS with the system trust store.
+	cmd.Env = append(os.Environ(), "SSL_CERT_FILE="+certFile)
 	cmd.Dir, cmd.Stdout, cmd.Stderr = dir, &log, &log
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
@@ -196,6 +221,8 @@ func Start(t testing.TB) *Server {
 	})
 	s := &Server{
 		Credential: credential,
+		Issuer:     issuer,
+		key:        key,
 		Client: &http.Client{Transport: &http.Transport{
 			TLSClientConfig:   &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS13},
 			ForceAttemptHTTP2: true,
@@ -254,6 +281,59 @@ func (s *Server) APIKey(t testing.TB, org, project string, scopes ...string) str
 		t.Fatal(err)
 	}
 	return key.Secret
+}
+
+// Token mints a ts-auth access token for user, valid for an hour. TerraBase
+// accepts it on URL for the Management API, acting as user. A non-empty email
+// is the token's verified email, which accepting an invitation needs.
+func (s *Server) Token(t testing.TB, user, email string) string {
+	t.Helper()
+	now := time.Now().Unix()
+	c := map[string]any{"iss": s.Issuer, "aud": Audience, "sub": user, "iat": now, "exp": now + 3600}
+	if email != "" {
+		c["email"], c["email_verified"] = email, true
+	}
+	claims, err := json.Marshal(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signed := b64([]byte(`{"alg":"ES256","typ":"at+jwt","kid":"test"}`)) + "." + b64(claims)
+	sum := sha256.Sum256([]byte(signed))
+	r, sig, err := ecdsa.Sign(rand.Reader, s.key, sum[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	return signed + "." + b64(append(r.FillBytes(make([]byte, 32)), sig.FillBytes(make([]byte, 32))...))
+}
+
+func b64(data []byte) string { return base64.RawURLEncoding.EncodeToString(data) }
+
+// startIssuer serves the OIDC discovery document and the JWKS of pub with
+// the server's certificate until the test ends, and returns the issuer.
+func startIssuer(t testing.TB, certFile, keyFile string, pub *ecdsa.PublicKey) string {
+	t.Helper()
+	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	point, err := pub.Bytes() // 0x04 || X || Y
+	if err != nil {
+		t.Fatal(err)
+	}
+	jwk := map[string]string{"kty": "EC", "crv": "P-256", "kid": "test", "alg": "ES256", "use": "sig", "x": b64(point[1:33]), "y": b64(point[33:])}
+	mux := http.NewServeMux()
+	srv := httptest.NewUnstartedServer(mux)
+	issuer := "https://" + srv.Listener.Addr().String()
+	mux.HandleFunc("GET /.well-known/openid-configuration", func(w http.ResponseWriter, _ *http.Request) {
+		json.NewEncoder(w).Encode(map[string]string{"issuer": issuer, "jwks_uri": issuer + "/jwks"})
+	})
+	mux.HandleFunc("GET /jwks", func(w http.ResponseWriter, _ *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{"keys": []any{jwk}})
+	})
+	srv.TLS = &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12}
+	srv.StartTLS()
+	t.Cleanup(srv.Close)
+	return issuer
 }
 
 // adminCall bounds both response headers and body reads, including during startup.

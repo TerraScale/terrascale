@@ -468,3 +468,22 @@ func TestSignOutRevokesTheNewestRefresh(t *testing.T) {
 		t.Fatalf("signed-out session lookup = %v, want ErrNotFound", err)
 	}
 }
+
+// TestRefreshStateIsTheRecheckedSessions covers what the system data pages
+// read the ts-auth access token from: a due session is rechecked first, and
+// a request without a session has none.
+func TestRefreshStateIsTheRecheckedSessions(t *testing.T) {
+	hook := &refreshHook{fn: func(context.Context, string) (string, time.Time, error) {
+		return "r2", time.Now().Add(time.Hour), nil
+	}}
+	m, _, r, _ := refreshFixture(t, NewMemoryStore(), time.Now().Add(-time.Second), hook)
+	if got := m.RefreshState(r); got != "r2" || hook.calls.Load() != 1 {
+		t.Fatalf("refresh state = %q after %d rechecks, want r2 after one", got, hook.calls.Load())
+	}
+	if got := m.RefreshState(r); got != "r2" || hook.calls.Load() != 1 {
+		t.Fatalf("refresh state = %q after %d rechecks, want r2 without another", got, hook.calls.Load())
+	}
+	if got := m.RefreshState(httptest.NewRequest(http.MethodGet, "/", nil)); got != "" {
+		t.Fatalf("refresh state without a session = %q", got)
+	}
+}

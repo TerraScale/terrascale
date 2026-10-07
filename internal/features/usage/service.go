@@ -4,14 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math"
 	"slices"
-	"strconv"
 	"strings"
+	"sync"
 	"time"
 
+	"golang.org/x/sync/errgroup"
 	"terrascale.tech/dashboard/internal/core"
-	sdk "terrascale.tech/sdk"
+	"terrascale.tech/sdk/v1"
 )
 
 type projectUsage struct {
@@ -22,6 +22,7 @@ type projectUsage struct {
 	SpendCapCents     int64  `json:"spendCapCents" jsonschema:"The project's own monthly spend cap in US cents; 0 means none."`
 	EffectiveCapCents int64  `json:"effectiveCapCents" jsonschema:"The smallest of the organization and project caps in US cents; 0 means no limit."`
 	StoredBytes       int64  `json:"storedBytes"`
+	Unavailable       bool   `json:"unavailable,omitempty" jsonschema:"TerraBase did not report one of its system databases, so StoredBytes is incomplete."`
 	SharePercent      int    `json:"sharePercent" jsonschema:"The project's share of the organization's stored bytes."`
 	Selected          bool   `json:"selected"`
 }
@@ -33,19 +34,19 @@ type databaseUsage struct {
 	Status            string `json:"status"`
 	Documents         int    `json:"documents"`
 	StoredBytes       int64  `json:"storedBytes"`
+	Unavailable       bool   `json:"unavailable,omitempty" jsonschema:"TerraBase did not report this system database, so its counts are unknown."`
 	SharePercent      int    `json:"sharePercent" jsonschema:"The database's share of the listed databases' stored bytes."`
 	SpendCapCents     int64  `json:"spendCapCents" jsonschema:"The database's own monthly spend cap in US cents; 0 means none."`
 	EffectiveCapCents int64  `json:"effectiveCapCents" jsonschema:"The smallest of the organization, project, and database caps in US cents; 0 means no limit."`
 }
 
 type usageTotals struct {
-	Available          bool   `json:"available" jsonschema:"Whether usage totals could be loaded."`
-	Source             string `json:"source"`
-	Error              string `json:"error,omitempty"`
-	Requests           int64  `json:"requests"`
-	Reads              int64  `json:"reads"`
-	Writes             int64  `json:"writes"`
-	StorageByteSeconds int64  `json:"storageByteSeconds"`
+	Available bool   `json:"available" jsonschema:"Whether usage totals could be loaded."`
+	Source    string `json:"source"`
+	Error     string `json:"error,omitempty"`
+	Requests  int64  `json:"requests"`
+	Reads     int64  `json:"reads"`
+	Writes    int64  `json:"writes"`
 }
 
 // usageReport is an organization's plan allowances, spending controls, and
@@ -131,6 +132,19 @@ func (s Service) report(ctx context.Context, p core.Principal, org core.Organiza
 	case !errors.Is(err, core.ErrNotFound):
 		return usageReport{}, err
 	}
+	live, failed := s.systemUsage(ctx, p, org)
+	documents := func(database core.Database) int {
+		if core.SystemDatabase(database) {
+			return int(live[database.ID].Documents)
+		}
+		return documentCount(database)
+	}
+	stored := func(database core.Database) int64 {
+		if core.SystemDatabase(database) {
+			return live[database.ID].StorageBytes
+		}
+		return storedDocumentBytes(database)
+	}
 	var projectStoredBytes, databaseStoredBytes int64
 	for _, item := range org.Projects {
 		row := projectUsage{
@@ -141,7 +155,10 @@ func (s Service) report(ctx context.Context, p core.Principal, org core.Organiza
 			row.Region = "Not configured"
 		}
 		for _, database := range item.Databases {
-			row.StoredBytes += storedDocumentBytes(database)
+			row.StoredBytes += stored(database)
+			if failed[database.ID] != nil {
+				row.Unavailable = true
+			}
 		}
 		projectStoredBytes += row.StoredBytes
 		report.Projects = append(report.Projects, row)
@@ -156,92 +173,123 @@ func (s Service) report(ctx context.Context, p core.Principal, org core.Organiza
 		}
 		row := databaseUsage{
 			ID: database.ID, Name: database.Name, Region: database.Region, Status: database.Status,
-			Documents: documentCount(database), StoredBytes: storedDocumentBytes(database), SpendCapCents: max(database.SpendCapCents, 0),
+			Documents: documents(database), StoredBytes: stored(database), Unavailable: failed[database.ID] != nil, SpendCapCents: max(database.SpendCapCents, 0),
 			EffectiveCapCents: effectiveCapCents(org.Billing.SpendCapCents, project.SpendCapCents, database.SpendCapCents),
 		}
 		databaseStoredBytes += row.StoredBytes
 		report.Databases = append(report.Databases, row)
 	}
 	report.RegionCount = len(regions)
-	for i := range report.Projects {
-		report.Projects[i].SharePercent = sharePercent(report.Projects[i].StoredBytes, projectStoredBytes)
+	// A share of a total with an unknown part would be wrong: leave every
+	// share at 0 once one part is unavailable.
+	if !slices.ContainsFunc(report.Projects, func(row projectUsage) bool { return row.Unavailable }) {
+		for i := range report.Projects {
+			report.Projects[i].SharePercent = sharePercent(report.Projects[i].StoredBytes, projectStoredBytes)
+		}
 	}
-	for i := range report.Databases {
-		report.Databases[i].SharePercent = sharePercent(report.Databases[i].StoredBytes, databaseStoredBytes)
+	if !slices.ContainsFunc(report.Databases, func(row databaseUsage) bool { return row.Unavailable }) {
+		for i := range report.Databases {
+			report.Databases[i].SharePercent = sharePercent(report.Databases[i].StoredBytes, databaseStoredBytes)
+		}
 	}
 	slices.SortFunc(report.Projects, func(a, b projectUsage) int { return strings.Compare(a.Name, b.Name) })
 	slices.SortFunc(report.Databases, func(a, b databaseUsage) int { return strings.Compare(a.Name, b.Name) })
-	s.totals(ctx, p, project, databaseFilter, &report)
+	totals(project, databaseFilter, live, failed, &report)
 	return report, nil
 }
 
-// totals fills the usage totals from sample data in demo mode or from the
-// provider's database usage facts.
-func (s Service) totals(ctx context.Context, p core.Principal, project core.Project, databaseFilter string, report *usageReport) {
-	totals := &report.Totals
-	if s.deps.LocalResources() {
-		totals.Source = "Sample dashboard data; these values are not provider-metered usage."
-		report.PlanUsageNote = "Demo mode has no measured usage feed, so allowance utilization is unavailable."
-		totals.Writes = int64(localDocuments(project, databaseFilter))
-		totals.Available = true
-		return
+// systemUsageBudget bounds every TerraBase lookup behind one usage report,
+// so a slow TerraBase marks databases unavailable instead of holding it.
+var systemUsageBudget = 5 * time.Second
+
+// systemUsage reads the usage of the organization's system databases from
+// TerraBase, keyed by database ID, a few at a time under one deadline. Each
+// database is read on its own, so one failure marks only that database
+// unavailable.
+func (s Service) systemUsage(ctx context.Context, p core.Principal, org core.Organization) (live map[string]v1.DatabaseUsage, failed map[string]error) {
+	live, failed = make(map[string]v1.DatabaseUsage), make(map[string]error)
+	var system []core.Database
+	for _, project := range org.Projects {
+		for _, database := range project.Databases {
+			if core.SystemDatabase(database) {
+				system = append(system, database)
+			}
+		}
 	}
-	if project.ID == "" {
-		return
+	if len(system) == 0 {
+		return live, failed
 	}
-	if s.deps.SDK == nil {
-		totals.Source = "Live usage provider is not configured."
-		totals.Error = "Usage totals are unavailable until the ts-go provider is connected."
-		report.PlanUsageNote = "The usage provider is not configured, so allowance utilization is unavailable."
-		return
-	}
-	client, err := s.deps.SDK.ForScope(p.OrganizationID, project.ID)
+	management, err := s.deps.System(ctx, p)
 	if err != nil {
-		totals.Source = "Live usage provider could not be reached."
-		totals.Error = "Usage totals are unavailable for this project."
-		report.PlanUsageNote = "The usage provider could not be reached, so allowance utilization is unavailable."
-		return
+		for _, database := range system {
+			failed[database.ID] = err
+		}
+		return live, failed
 	}
-	totals.Source = "Live usage facts from TerraScale."
-	fetched := len(project.Databases) == 0
+	ctx, cancel := context.WithTimeout(ctx, systemUsageBudget)
+	defer cancel()
+	var mu sync.Mutex
+	var group errgroup.Group
+	group.SetLimit(4)
+	for _, database := range system {
+		group.Go(func() error {
+			usage, err := management.DatabaseUsage(ctx, org.ID, database.ProjectID, database.ID)
+			mu.Lock()
+			defer mu.Unlock()
+			if err != nil {
+				failed[database.ID] = core.ProviderError{Action: "system database usage", Err: err}
+			} else {
+				live[database.ID] = *usage
+			}
+			return nil
+		})
+	}
+	_ = group.Wait()
+	return live, failed
+}
+
+// totals fills the usage totals for the project, or its one database. With a
+// system database in scope they are TerraBase's metered reads and writes of
+// the system databases only; otherwise sample data from the dashboard's own
+// records.
+func totals(project core.Project, databaseFilter string, live map[string]v1.DatabaseUsage, failed map[string]error, report *usageReport) {
+	totals := &report.Totals
+	var system, local bool
+	var sample int64
 	for _, database := range project.Databases {
 		if databaseFilter != "" && database.ID != databaseFilter {
 			continue
 		}
-		usage, err := client.Usage.GetDatabaseUsage(ctx, database.Name)
-		if err != nil {
-			totals.Error = "Some database usage could not be loaded."
+		if !core.SystemDatabase(database) {
+			local = true
+			sample += int64(documentCount(database))
 			continue
 		}
-		fetched = true
-		for _, meter := range usage.Meters {
-			value, err := strconv.ParseInt(meter.Units, 10, 64)
-			if err != nil || value < 0 {
-				totals.Error = "The provider returned an invalid usage meter."
-				continue
-			}
-			switch meter.Meter {
-			case sdk.MeterDocumentWriteUnits:
-				if !addUsage(&totals.Writes, value) {
-					totals.Error = "The provider reported more writes than this page can display."
-				}
-			case sdk.MeterStorageByteSeconds:
-				if !addUsage(&totals.StorageByteSeconds, value) {
-					totals.Error = "The provider reported more storage activity than this page can display."
-				}
-			}
+		system = true
+		if err := failed[database.ID]; err != nil && totals.Error == "" {
+			totals.Error = "System database usage could not be loaded. " + core.SystemUnavailable(err)
 		}
-		if usage.Reads.TotalReads > uint64(math.MaxInt64-totals.Reads) {
-			totals.Error = "The provider reported more reads than this page can display."
-		} else {
-			totals.Reads += int64(usage.Reads.TotalReads)
-		}
+		totals.Reads += live[database.ID].Reads
+		totals.Writes += live[database.ID].Writes
 	}
-	if !addUsage(&totals.Requests, totals.Reads) || !addUsage(&totals.Requests, totals.Writes) {
-		totals.Requests = math.MaxInt64
-		totals.Error = "The provider reported more operations than this page can display."
+	if !system {
+		totals.Source = "Sample dashboard data; these values are not provider-metered usage."
+		report.PlanUsageNote = "Dashboard-managed databases have no measured usage feed, so allowance utilization is unavailable."
+		totals.Writes = sample
+		totals.Available = true
+		return
 	}
-	totals.Available = fetched
+	totals.Source = "Live usage of the system databases from TerraBase."
+	if local {
+		totals.Source += " Databases the dashboard manages in this project are not metered and are left out."
+	}
+	report.PlanUsageNote = "System databases have no billing plan, so allowance utilization is unavailable."
+	if totals.Error != "" {
+		totals.Reads, totals.Writes = 0, 0
+		return
+	}
+	totals.Requests = totals.Reads + totals.Writes
+	totals.Available = true
 }
 
 // SetSpendingControls updates the organization's, its projects', and its
@@ -331,30 +379,11 @@ func storedDocumentBytes(database core.Database) int64 {
 	return total
 }
 
-func localDocuments(project core.Project, databaseFilter string) int {
-	count := 0
-	for _, database := range project.Databases {
-		if databaseFilter != "" && database.ID != databaseFilter {
-			continue
-		}
-		count += documentCount(database)
-	}
-	return count
-}
-
 func sharePercent(part, total int64) int {
 	if part <= 0 || total <= 0 {
 		return 0
 	}
 	return max(1, int(float64(part)/float64(total)*100+0.5))
-}
-
-func addUsage(total *int64, value int64) bool {
-	if value < 0 || *total > math.MaxInt64-value {
-		return false
-	}
-	*total += value
-	return true
 }
 
 // effectiveCapCents returns the smallest positive cap, or 0 for no limit.
