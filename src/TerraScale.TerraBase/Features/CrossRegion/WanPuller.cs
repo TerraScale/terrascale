@@ -42,7 +42,6 @@ internal sealed partial class WanPuller(
     private readonly Dictionary<(IDatabaseStore Store, string Origin), long> _applied = [];
     private readonly Dictionary<string, (long At, DatabaseAdoption Why)> _refused = [with(StringComparer.Ordinal)];
     private readonly HashSet<string> _clashes = [with(StringComparer.Ordinal)];
-    private readonly Dictionary<string, Dictionary<string, TenantContext>> _seen = [with(StringComparer.Ordinal)];
 
     public override Task StartAsync(CancellationToken cancellationToken)
     {
@@ -79,12 +78,13 @@ internal sealed partial class WanPuller(
     {
         // Failures are logged when they start, not every round; the metric counts every one.
         var failing = false;
+        TenantContext? after = null;
         while (!stoppingToken.IsCancellationRequested)
         {
             var again = false;
             try
             {
-                (again, var failures) = await RoundAsync(region, cell, quiet: failing, stoppingToken).ConfigureAwait(false);
+                (again, var failures, after) = await RoundAsync(region, cell, after, quiet: failing, stoppingToken).ConfigureAwait(false);
                 failing = failures > 0;
             }
             catch (Exception error) when (!stoppingToken.IsCancellationRequested)
@@ -113,8 +113,14 @@ internal sealed partial class WanPuller(
     }
 
     // Returns whether the round pulled groups and is still behind, and how many origins failed.
-    private async Task<(bool Again, int Failures)> RoundAsync(string region, string cell, bool quiet, CancellationToken cancellationToken)
+    private async Task<(bool Again, int Failures, TenantContext? Next)> RoundAsync(
+        string region, string cell, TenantContext? after, bool quiet, CancellationToken cancellationToken)
     {
+        // Candidates predate the remote heads; a newer registration waits for the next scan. No storage admission
+        // remains held while the WAN answers or while cleanup takes its own writer.
+        var records = options.CatalogPrimary is null
+            ? await tenants.ReadDatabaseRecordsAsync(region, after, cancellationToken).ConfigureAwait(false)
+            : null;
         var (members, listed, heads) = await HeadsAsync(cell, cancellationToken).ConfigureAwait(false);
         if (members == 0)
         {
@@ -125,10 +131,15 @@ internal sealed partial class WanPuller(
                 LogUnanswered(logger, region);
             }
 
-            return (false, 1);
+            return (false, 1, after);
         }
 
-        await ForgetDeletedAsync(region, members == listed, heads, cancellationToken).ConfigureAwait(false);
+        var complete = members == listed;
+        if (records is not null && complete)
+        {
+            await ForgetDeletedAsync(region, records, heads, cancellationToken).ConfigureAwait(false);
+        }
+
         long lag = 0;
         var progressed = false;
         var failures = 0;
@@ -180,48 +191,26 @@ internal sealed partial class WanPuller(
 
         // A listed member that did not answer holds origins this round could not measure: not caught up.
         metrics.Rounded(region, lag, members, unregistered.Count, clashes.Count, caughtUp: lag == 0 && members >= listed, time.GetTimestamp());
-        return (progressed && lag > 0, failures);
+        return (progressed && lag > 0, failures, complete ? records?.Next : after);
     }
 
-    // A database at home in the region, seen in an earlier round, that no member of a complete round lists any more was
-    // deleted there: its record and any copy here go too. Only the catalog primary deletes; its followers follow its catalog.
-    // anna-full (TS-643): a member that restarts does not remember what it saw before, so a deletion it missed meanwhile
-    // leaves the record and copy here.
-    private async Task ForgetDeletedAsync(string region, bool complete, List<(string Member, Head Head)> heads, CancellationToken cancellationToken)
+    // A recorded database at home in the region that no member of a complete round lists was deleted there. The catalog
+    // page predates the heads request: registrations added afterwards wait for a later scan. Only the primary deletes;
+    // its followers follow its catalog. Durable records keep this working across restarts, without a seen cache.
+    private async Task ForgetDeletedAsync(string region, TenantDatabasePage records, List<(string Member, Head Head)> heads, CancellationToken cancellationToken)
     {
-        if (options.CatalogPrimary is not null)
-        {
-            return;
-        }
-
-        var listed = new Dictionary<string, TenantContext>(StringComparer.Ordinal);
+        var listed = new HashSet<string>(StringComparer.Ordinal);
         foreach (var (_, head) in heads)
         {
-            if (head.HomeRegion == region && WanProtocol.Database(head.TenantId, head.ProjectId, head.DatabaseId) is { } database)
+            if (WanProtocol.Database(head.TenantId, head.ProjectId, head.DatabaseId) is { } database)
             {
-                listed[Name(database)] = database;
+                _ = listed.Add(Name(database));
             }
         }
 
-        List<TenantContext> gone;
-        lock (_gate)
+        foreach (var database in records.Databases)
         {
-            var seen = _seen.TryGetValue(region, out var known) ? known : _seen[region] = [];
-            gone = complete ? [.. seen.Where(entry => !listed.ContainsKey(entry.Key)).Select(entry => entry.Value)] : [];
-            foreach (var (key, database) in listed)
-            {
-                seen[key] = database;
-            }
-
-            foreach (var database in gone)
-            {
-                _ = seen.Remove(Name(database));
-            }
-        }
-
-        foreach (var database in gone)
-        {
-            if (await tenants.ForgetDatabaseAsync(database, cancellationToken).ConfigureAwait(false))
+            if (!listed.Contains(Name(database)) && await tenants.ForgetDatabaseAsync(database, cancellationToken).ConfigureAwait(false))
             {
                 LogForgot(logger, region);
             }

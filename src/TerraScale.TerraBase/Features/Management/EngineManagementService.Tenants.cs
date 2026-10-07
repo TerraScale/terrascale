@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Text.Json;
 using TerraBase.Engine;
 using TerraBase.Features.Management.Backups;
 using TerraBase.Hosting;
@@ -101,6 +102,66 @@ internal sealed partial class EngineManagementService
                     : null,
                 cancellationToken);
     }
+
+    public ValueTask<TenantDatabasePage> ReadDatabaseRecordsAsync(string homeRegion, TenantContext? after, CancellationToken cancellationToken) =>
+        ReadAsync(async transaction =>
+        {
+            // At most 100 identities, each with three UUIDs: under 22 KiB of character data. Storage scan pages are
+            // separately bounded to 100 documents and 1 MiB. Release the reader before WAN requests or cleanup writes.
+            var records = new List<TenantContext>(MemberPage);
+            string? afterProject = after?.ProjectId;
+            if (afterProject is not null
+                && await GetAsync(transaction, ProjectOrganizations, afterProject, Id, cancellationToken).ConfigureAwait(false) is { } organization
+                && await ReadProjectAsync(afterProject, organization, after!.DatabaseId).ConfigureAwait(false))
+            {
+                return new TenantDatabasePage(records, records[^1]);
+            }
+
+            // ponytail: scan the paged catalog; index by home region once catalogs hold thousands of databases.
+            DocumentPage projects;
+            do
+            {
+                projects = await transaction.ListAsync(ProjectOrganizations, afterProject, MemberPage, MaxPageBytes, cancellationToken).ConfigureAwait(false);
+                foreach (var project in projects.Documents)
+                {
+                    if (await ReadProjectAsync(project.Id, JsonSerializer.Deserialize(project.Json.Span, Id)!, afterDatabase: null).ConfigureAwait(false))
+                    {
+                        return new TenantDatabasePage(records, records[^1]);
+                    }
+                }
+
+                afterProject = projects.Documents.Count > 0 ? projects.Documents[^1].Id : afterProject;
+            }
+            while (projects.HasMore);
+
+            return new TenantDatabasePage(records, Next: null);
+
+            async ValueTask<bool> ReadProjectAsync(string project, string organizationId, string? afterDatabase)
+            {
+                DocumentPage databases;
+                do
+                {
+                    databases = await transaction.ListAsync(Databases(project), afterDatabase, MemberPage, MaxPageBytes, cancellationToken).ConfigureAwait(false);
+                    foreach (var document in databases.Documents)
+                    {
+                        var database = JsonSerializer.Deserialize(document.Json.Span, TerraBaseJsonContext.Default.ManagedDatabase)!;
+                        if (database.Home(options.Region) == homeRegion)
+                        {
+                            records.Add(new TenantContext(organizationId, PlanTier.Hobby, project, database.Id));
+                            if (records.Count == MemberPage)
+                            {
+                                return true;
+                            }
+                        }
+                    }
+
+                    afterDatabase = databases.Documents.Count > 0 ? databases.Documents[^1].Id : afterDatabase;
+                }
+                while (databases.HasMore);
+
+                return false;
+            }
+        }, cancellationToken);
 
     public async ValueTask<DatabaseAdoption> AdoptDatabaseAsync(TenantContext database, string name, DatabasePlacement placement, CancellationToken cancellationToken)
     {
