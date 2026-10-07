@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"terrascale.tech/dashboard/internal/adapters/tsgo"
 	"terrascale.tech/dashboard/internal/core"
 	"terrascale.tech/dashboard/internal/core/memstore"
 	v1 "terrascale.tech/sdk/v1"
@@ -128,15 +129,29 @@ func TestTerraBasePlacementFollowsTheContract(t *testing.T) {
 		}
 		regions := func(context.Context) ([]core.Region, error) { return catalog, nil }
 		// Neither demo nor DocumentsOnly: resources live in TerraBase.
-		return Service{deps: core.Deps{Store: store, Regions: regions}}, account.Principal()
+		return Service{deps: core.Deps{Store: store, Regions: regions, SDK: tsgo.Factory{}}}, account.Principal()
 	}
 	ctx := core.WithUserToken(t.Context(), func() (string, bool) { return "user-token", true })
+	// paths are the TerraBase paths of p's organization and project, whose
+	// IDs derive from the dashboard's.
+	paths := func(p core.Principal) (string, string) {
+		org, proj := core.Project{ID: p.ProjectID}.TerraBaseIDs(p.OrganizationID)
+		return "organizations/" + org, "organizations/" + org + "/projects/" + proj
+	}
+	// terraBaseID is the TerraBase ID the dashboard recorded for a database.
+	terraBaseID := func(service Service, p core.Principal, id string) string {
+		a, err := service.deps.Store.SnapshotAs(t.Context(), p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return a.Organizations[p.OrganizationID].Projects[p.ProjectID].Databases[id].TerraBaseID
+	}
 
 	// GRU only: registered and created in gru alone.
 	service, p := newService()
-	org, project := "organizations/"+p.OrganizationID, "organizations/"+p.OrganizationID+"/projects/"+p.ProjectID
+	org, project := paths(p)
 	db, err := service.Create(ctx, p, "orders", "GRU")
-	if err != nil || !slices.Equal(db.Placement, []string{"GRU"}) || !strings.HasPrefix(db.ID, "0199d000") {
+	if err != nil || !slices.Equal(db.Placement, []string{"GRU"}) || !strings.HasPrefix(db.ID, "db_") || !strings.HasPrefix(terraBaseID(service, p, db.ID), "0199d000") {
 		t.Fatalf("create in GRU = %+v, %v", db, err)
 	}
 	if got, want := gru.take(), []string{"GET " + org, "GET " + project, "POST commits", "POST " + project + "/databases"}; !slices.Equal(got, want) {
@@ -148,12 +163,13 @@ func TestTerraBasePlacementFollowsTheContract(t *testing.T) {
 
 	// Both: registered in each region, created in the home with sfo-1 as replica.
 	service, p = newService()
-	project = "organizations/" + p.OrganizationID + "/projects/" + p.ProjectID
+	_, project = paths(p)
 	db, err = service.Create(ctx, p, "orders", "GRU", "SFO")
 	if err != nil || !slices.Equal(db.Placement, []string{"GRU", "SFO"}) {
 		t.Fatalf("create in both = %+v, %v", db, err)
 	}
-	if held := gru.held[db.ID]; !slices.Equal(held.ReplicaRegions, []string{"sfo-1"}) {
+	held := terraBaseID(service, p, db.ID)
+	if held := gru.held[held]; !slices.Equal(held.ReplicaRegions, []string{"sfo-1"}) {
 		t.Fatalf("gru holds %+v, want sfo-1 as its replica", held)
 	}
 	if got := sfo.take(); !slices.Contains(got, "POST commits") || slices.Contains(got, "POST "+project+"/databases") {
@@ -163,10 +179,10 @@ func TestTerraBasePlacementFollowsTheContract(t *testing.T) {
 
 	// Back to GRU only through the home region; GRU cannot be dropped.
 	moved, err := service.SetRegions(ctx, p, db.ID, "GRU")
-	if err != nil || !slices.Equal(moved.Placement, []string{"GRU"}) || len(gru.held[db.ID].ReplicaRegions) != 0 {
-		t.Fatalf("set GRU only = %+v, %v (held %+v)", moved, err, gru.held[db.ID])
+	if err != nil || !slices.Equal(moved.Placement, []string{"GRU"}) || len(gru.held[held].ReplicaRegions) != 0 {
+		t.Fatalf("set GRU only = %+v, %v (held %+v)", moved, err, gru.held[held])
 	}
-	if got := gru.take(); !slices.Equal(got, []string{"PATCH " + project + "/databases/" + db.ID}) {
+	if got := gru.take(); !slices.Equal(got, []string{"PATCH " + project + "/databases/" + held}) {
 		t.Fatalf("gru requests %v, want one PATCH", got)
 	}
 	if _, err := service.SetRegions(ctx, p, db.ID, "SFO"); !errors.Is(err, errHomeRegion) {
@@ -174,7 +190,7 @@ func TestTerraBasePlacementFollowsTheContract(t *testing.T) {
 	}
 
 	// A region that does not hold the database answers 421 with where it is.
-	delete(gru.held, db.ID)
+	delete(gru.held, held)
 	if _, err := service.SetRegions(ctx, p, db.ID, "GRU", "SFO"); !errors.Is(err, errWrongRegion) || !strings.Contains(err.Error(), "it lives in GRU, SFO") {
 		t.Fatalf("set regions where the database is not held = %v, want wrong region", err)
 	}
@@ -183,7 +199,7 @@ func TestTerraBasePlacementFollowsTheContract(t *testing.T) {
 	}
 
 	// SFO only, then the plan's one database is used up: the second create
-	// is dropped from TerraBase again, replicas first.
+	// never reaches TerraBase.
 	service, p = newService()
 	if db, err = service.Create(ctx, p, "orders", "SFO"); err != nil || db.Region != "SFO" || len(sfo.held) != 1 {
 		t.Fatalf("create in SFO = %+v, %v", db, err)
@@ -194,7 +210,8 @@ func TestTerraBasePlacementFollowsTheContract(t *testing.T) {
 	}
 
 	// MCP callers have no ts-auth token to act with.
-	if _, err := service.Create(t.Context(), p, "other", "GRU"); !errors.Is(err, errNoUserToken) {
+	service, p = newService()
+	if _, err := service.Create(t.Context(), p, "other", "GRU"); !errors.Is(err, core.ErrNoUserToken) {
 		t.Fatalf("create without a user token = %v", err)
 	}
 }

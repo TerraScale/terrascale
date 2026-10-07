@@ -4,10 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/http"
 	"slices"
 	"strings"
-	"time"
 
 	"terrascale.tech/dashboard/internal/core"
 	"terrascale.tech/dashboard/internal/platform/atlas"
@@ -17,7 +15,7 @@ import (
 // TerraBase owns where a database lives (TS-643 placement contract v1, Ku
 // TS-669). The first region of a placement is the database's home: it is
 // created there and never moves. The others are replicas, which serve reads
-// and writes and replicate with the home. The dashboard calls each region's
+// and writes and replicate with the home. core.Deps calls each region's
 // TerraBase through ts-go with the signed-in user's ts-auth token.
 
 var (
@@ -27,8 +25,6 @@ var (
 	errWrongRegion = fmt.Errorf("%w: a region outside the database's placement refused the request", core.ErrConflict)
 	// errReplicated refuses deleting a database that still has replicas.
 	errReplicated = fmt.Errorf("%w: remove the database's other regions before deleting it", core.ErrConflict)
-	// errNoUserToken is a caller without a ts-auth token, such as MCP.
-	errNoUserToken = fmt.Errorf("%w: database placement needs a dashboard sign-in", core.ErrDataPlane)
 )
 
 // placement checks regions against ts-atlas discovery and returns them in
@@ -81,92 +77,13 @@ func codesOf(regions []core.Region) []string {
 	return codes
 }
 
-// replicaIDs are the Atlas ids of every region but the home.
-func replicaIDs(placed []core.Region) []string {
-	ids := make([]string, 0, len(placed)-1)
-	for _, region := range placed[1:] {
-		ids = append(ids, region.ID)
-	}
-	return ids
-}
-
-// regionClient is the signed-in user's TerraBase Management client in one
-// region.
-func regionClient(ctx context.Context, region core.Region) (*v1.ManagementUser, error) {
-	token := core.UserToken(ctx)
-	if token == "" {
-		return nil, errNoUserToken
-	}
-	m, err := v1.NewManagement(v1.Config{BaseURL: region.API, HTTPClient: &http.Client{Timeout: 15 * time.Second}})
-	if err != nil {
-		return nil, core.ProviderError{Action: "database placement", Err: err}
-	}
-	return m.WithToken(token), nil
-}
-
-// register makes sure every region of a placement has the organization and
-// project under their ids, which a region needs before it takes a database.
-func register(ctx context.Context, placed []core.Region, org core.Organization, project core.Project) error {
-	for _, region := range placed {
-		client, err := regionClient(ctx, region)
-		if err != nil {
-			return err
-		}
-		if err := client.RegisterProject(ctx, v1.Organization{ID: org.ID, Name: org.Name}, v1.Project{ID: project.ID, Name: project.Name}); err != nil {
-			return placementError(err)
-		}
-	}
-	return nil
-}
-
-// createPlaced creates a database in its home region's TerraBase with its
-// replica regions.
-func createPlaced(ctx context.Context, org core.Organization, project core.Project, name string, placed []core.Region) (*v1.ManagedDatabase, error) {
-	if err := register(ctx, placed, org, project); err != nil {
-		return nil, err
-	}
-	home, err := regionClient(ctx, placed[0])
-	if err != nil {
-		return nil, err
-	}
-	managed, err := home.CreateDatabaseIn(ctx, org.ID, project.ID, name, v1.Placement{HomeRegion: placed[0].ID, ReplicaRegions: replicaIDs(placed)})
-	return managed, placementError(err)
-}
-
-// dropPlaced removes a database createPlaced made when the dashboard could
-// not record it: replicas first, as TerraBase requires.
-func dropPlaced(ctx context.Context, org core.Organization, project core.Project, databaseID string, placed []core.Region) error {
-	home, err := regionClient(ctx, placed[0])
-	if err != nil {
-		return err
-	}
-	if len(placed) > 1 {
-		if _, err := home.SetDatabaseRegions(ctx, org.ID, project.ID, databaseID, nil); err != nil {
-			return placementError(err)
-		}
-	}
-	return placementError(home.DeleteDatabase(ctx, org.ID, project.ID, databaseID))
-}
-
-// setPlaced replaces a database's replica regions through its home region.
-func setPlaced(ctx context.Context, org core.Organization, project core.Project, databaseID string, placed []core.Region) error {
-	if err := register(ctx, placed[1:], org, project); err != nil {
-		return err
-	}
-	home, err := regionClient(ctx, placed[0])
-	if err != nil {
-		return err
-	}
-	_, err = home.SetDatabaseRegions(ctx, org.ID, project.ID, databaseID, replicaIDs(placed))
-	return placementError(err)
-}
-
 // placementError explains TerraBase's placement refusals in dashboard terms.
+// The dashboard's own refusals and transport failures pass through.
 func placementError(err error) error {
 	var apiErr *v1.APIError
 	switch {
-	case err == nil:
-		return nil
+	case err == nil || !errors.As(err, &apiErr):
+		return err
 	case errors.Is(err, v1.ErrWrongRegion) && errors.As(err, &apiErr):
 		codes := make([]string, len(apiErr.Regions))
 		for i, id := range apiErr.Regions {
@@ -184,6 +101,6 @@ func placementError(err error) error {
 	case errors.Is(err, v1.ErrInvalidRequest) && errors.As(err, &apiErr):
 		return core.Invalid(apiErr.Message)
 	default:
-		return core.ProviderError{Action: "database placement", Err: err}
+		return err
 	}
 }

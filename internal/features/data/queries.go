@@ -21,7 +21,7 @@ func mountQueryRoutes(mux *http.ServeMux, deps core.Deps, service Service) {
 			return
 		}
 		ctx := r.Context()
-		db, err := service.database(ctx, p, r.FormValue("databaseId"))
+		_, db, err := service.database(ctx, p, r.FormValue("databaseId"))
 		if err != nil {
 			writeError(w, err)
 			return
@@ -51,7 +51,7 @@ func mountQueryRoutes(mux *http.ServeMux, deps core.Deps, service Service) {
 			return
 		}
 		ctx := r.Context()
-		db, err := service.database(ctx, p, r.FormValue("databaseId"))
+		_, db, err := service.database(ctx, p, r.FormValue("databaseId"))
 		if err != nil {
 			writeError(w, err)
 			return

@@ -99,9 +99,11 @@ func TestUsageShowsMeteredReadsAndWritesSeparately(t *testing.T) {
 		writes.Used != 10 || writes.Percent != 0 || !writes.Measured {
 		t.Fatalf("allowances = %+v", report.Allowances)
 	}
+	// TerraBase knows the project under the IDs derived from the dashboard's.
 	org, project := meter.scopes[0], meter.scopes[1]
-	if org.ProjectID != "" || org.Granularity != "day" || org.From.Day() != 1 ||
-		project.ProjectID != principal.ProjectID || project.Granularity != "hour" || time.Since(project.From) > 24*time.Hour {
+	terraBaseOrg, terraBaseProject := core.Project{ID: principal.ProjectID}.TerraBaseIDs(principal.OrganizationID)
+	if org.OrganizationID != terraBaseOrg || org.ProjectID != "" || org.Granularity != "day" || org.From.Day() != 1 ||
+		project.ProjectID != terraBaseProject || project.Granularity != "hour" || time.Since(project.From) > 24*time.Hour {
 		t.Fatalf("scopes = %+v", meter.scopes)
 	}
 
@@ -131,10 +133,10 @@ func TestUsageExplainsUnmeteredScopes(t *testing.T) {
 		t.Fatal(err)
 	}
 	if report.Totals.Available || report.Totals.StorageMeasured || report.Allowances[0].Measured || report.Allowances[2].Measured ||
-		!strings.Contains(report.Totals.Source, "doesn't report this organization") || len(meter.scopes) != 1 {
+		!strings.Contains(report.Totals.Source, "doesn't report this project") || len(meter.scopes) != 2 {
 		t.Fatalf("report = %+v", report)
 	}
-	if report, _ := service.Usage(t.Context(), principal, "", "", ""); report.Totals.Available || len(meter.scopes) != 1 {
+	if report, _ := service.Usage(t.Context(), principal, "", "", ""); report.Totals.Available || len(meter.scopes) != 2 {
 		t.Fatalf("usage without a token = %+v after %d meter calls", report.Totals, len(meter.scopes))
 	}
 	response := httptest.NewRecorder()

@@ -1,6 +1,7 @@
 package usage
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -354,9 +355,13 @@ func (s Service) meter(ctx context.Context, token string, org core.Organization,
 		totals.Source = "Metered reads and writes load in a browser session signed in through TerraScale."
 		return result
 	}
+	orgID, projectID := project.TerraBaseIDs(org.ID)
+	terraBaseID := func(databaseID string) string {
+		return cmp.Or(project.Databases[databaseID].TerraBaseID, databaseID)
+	}
 	now := time.Now().UTC()
 	monthStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
-	organization, err := s.deps.Usage.Usage(ctx, token, core.UsageScope{OrganizationID: org.ID, Granularity: "day", From: monthStart})
+	organization, err := s.deps.Usage.Usage(ctx, token, core.UsageScope{OrganizationID: orgID, Granularity: "day", From: monthStart})
 	switch {
 	case err == nil:
 		result.month, result.monthMeasured, result.organizationStorage = organization.Period, true, true
@@ -367,9 +372,8 @@ func (s Service) meter(ctx context.Context, token string, org core.Organization,
 			}
 		}
 	case errors.Is(err, core.ErrNotMetered):
-		// TerraBase reports none of the organization's projects either.
-		meterError(totals, err, "organization")
-		return result
+		// TerraBase meters projects and databases, not organizations: the
+		// selected scope's answer below still applies.
 	case errors.Is(err, core.ErrUnauthorized):
 		result.monthError = "TerraBase didn't accept this sign-in, so this month's reads and writes didn't load. Sign out and in again."
 	default:
@@ -386,7 +390,7 @@ func (s Service) meter(ctx context.Context, token string, org core.Organization,
 	}
 	granularity, from := core.UsageBuckets(totals.Range, now)
 	scoped, err := s.deps.Usage.Usage(ctx, token, core.UsageScope{
-		OrganizationID: org.ID, ProjectID: project.ID, DatabaseID: databaseFilter, Granularity: granularity, From: from,
+		OrganizationID: orgID, ProjectID: projectID, DatabaseID: terraBaseID(databaseFilter), Granularity: granularity, From: from,
 	})
 	if err != nil {
 		meterError(totals, err, scope)
@@ -394,11 +398,11 @@ func (s Service) meter(ctx context.Context, token string, org core.Organization,
 	}
 	items := scoped.Items
 	if databaseFilter != "" {
-		scoped.DatabaseID = databaseFilter
+		scoped.DatabaseID = terraBaseID(databaseFilter)
 		items = []core.Usage{scoped}
 	}
 	for i, row := range report.Databases {
-		if item, ok := findUsage(items, func(u core.Usage) string { return u.DatabaseID }, row.ID); ok {
+		if item, ok := findUsage(items, func(u core.Usage) string { return u.DatabaseID }, terraBaseID(row.ID)); ok {
 			report.Databases[i].Metered = true
 			report.Databases[i].Documents, report.Databases[i].LogicalBytes = item.Documents, item.LogicalBytes
 			report.Databases[i].Reads, report.Databases[i].Writes = item.Period.Reads, item.Period.Writes

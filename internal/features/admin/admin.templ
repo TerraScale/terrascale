@@ -135,7 +135,7 @@ templ usersSection(data pageData, csrfToken string) {
 		@ui.Stat("Matching accounts", strconv.Itoa(len(data.Users)), "Accounts shown for this filter")
 		@ui.Stat("Platform administrators", strconv.Itoa(adminPlatformAdminCount(data.Users)), "Among the matching accounts")
 	}
-	@ui.Card(ui.CardProps{ID: "admin-users", Title: "Registered accounts", Description: "Account details and platform access in the in-memory demo.", Flush: true}) {
+	@ui.Card(ui.CardProps{ID: "admin-users", Title: "Registered accounts", Description: demoText(data.Demo, "Account details and platform access in the in-memory demo.", "Account details and platform access."), Flush: true}) {
 		if len(data.Users) > 0 {
 			<div class="ts-table-wrap">
 				<table class="ts-table">
@@ -281,7 +281,7 @@ templ databasesSection(data pageData) {
 		@ui.Stat("Matching databases", strconv.Itoa(len(data.Databases)), "Database records shown")
 		@ui.Stat("With recorded region", strconv.Itoa(adminDatabaseRegionCount(data.Databases)), "Region value is present in the store")
 	}
-	@ui.Card(ui.CardProps{ID: "admin-databases", Title: "Database inventory", Description: "Region and status are recorded values. Version details are not represented by this demo.", Flush: true}) {
+	@ui.Card(ui.CardProps{ID: "admin-databases", Title: "Database inventory", Description: demoText(data.Demo, "Region and status are recorded values. Version details are not represented by this demo.", "Region and status are recorded values. Version details are not shown."), Flush: true}) {
 		if len(data.Databases) > 0 {
 			<div class="ts-table-wrap">
 				<table class="ts-table">
@@ -313,18 +313,18 @@ templ databasesSection(data pageData) {
 
 templ estateSection(data pageData, csrfToken string) {
 	@ui.Stats("Estate inventory summary") {
-		@ui.Stat("Demo region codes", strconv.Itoa(data.EstateRegionCount), "Supported local codes; availability is not reported")
+		@ui.Stat(demoText(data.Demo, "Demo region codes", "Region codes"), strconv.Itoa(data.EstateRegionCount), demoText(data.Demo, "Supported local codes; availability is not reported", "Supported region codes; availability is not reported"))
 		@ui.Stat("Database records", strconv.Itoa(data.EstateDatabaseCount), "Unique databases in the dashboard store")
-		@ui.Stat("Recorded requests", strconv.Itoa(data.EstateActionCount), "Product-action audit entries in this process")
+		@ui.Stat("Recorded requests", strconv.Itoa(data.EstateActionCount), demoText(data.Demo, "Product-action audit entries in this process", "Product-action audit entries stored in TerraBase"))
 	}
 	@ui.Tabs("Estate sections", estateTabs(data.EstateTab))
 	switch data.EstateTab {
 		case "regions":
-			@ui.Card(ui.CardProps{ID: "admin-estate-regions", Title: "Regions", Description: "Recorded database and project placements across the three supported demo region codes. Provider availability is not reported by this local store.", Flush: true}) {
+			@ui.Card(ui.CardProps{ID: "admin-estate-regions", Title: "Regions", Description: demoText(data.Demo, "Recorded database and project placements across the three supported demo region codes. Provider availability is not reported by this local store.", "Recorded database and project placements across the three supported region codes. Provider availability is not reported here."), Flush: true}) {
 				if len(data.Regions) > 0 {
 					<div class="ts-table-wrap">
 						<table class="ts-table">
-							<caption class="ts-sr-only">Database and project placements recorded for demo region codes</caption>
+							<caption class="ts-sr-only">{ demoText(data.Demo, "Database and project placements recorded for demo region codes", "Database and project placements recorded for supported region codes") }</caption>
 							<thead><tr><th scope="col">Region</th><th scope="col" class="ts-num">Project placements</th><th scope="col" class="ts-num">Database records</th><th scope="col">Provider availability</th></tr></thead>
 							<tbody>
 								for _, row := range data.Regions {
@@ -343,11 +343,11 @@ templ estateSection(data pageData, csrfToken string) {
 						</table>
 					</div>
 				} else {
-					@ui.Empty("No recorded region matches this filter", "Clear the filter to see all supported demo codes.")
+					@ui.Empty("No recorded region matches this filter", demoText(data.Demo, "Clear the filter to see all supported demo codes.", "Clear the filter to see all supported region codes."))
 				}
 			}
 		case "hosts":
-			@ui.Card(ui.CardProps{ID: "admin-estate-hosts", Title: "Hosts", Description: "Provider host inventory and host health are unavailable from this local dashboard store.", Actions: filterForm("/admin/estate", "admin-estate-host-query", "Filter recorded database records", "Filter database records", data.Query, "hosts"), Flush: true}) {
+			@ui.Card(ui.CardProps{ID: "admin-estate-hosts", Title: "Hosts", Description: demoText(data.Demo, "Provider host inventory and host health are unavailable from this local dashboard store.", "Provider host inventory and host health are not available here."), Actions: filterForm("/admin/estate", "admin-estate-host-query", "Filter recorded database records", "Filter database records", data.Query, "hosts"), Flush: true}) {
 				<div class="ts-admin-card-note">
 					@ui.Alert("warning", "", "The rows below are recorded database records and placement values. They are not provider hosts or host telemetry.")
 				</div>
@@ -379,10 +379,10 @@ templ estateSection(data pageData, csrfToken string) {
 		default:
 			<div class="ts-stack-sm">
 				<h2 class="ts-section-title" id="estate-operations-title">Operations</h2>
-				<p class="ts-meta">Demo product-action requests are recorded for review. This page has no provider operation or live estate telemetry contract.</p>
+				<p class="ts-meta">{ demoText(data.Demo, "Demo product-action requests are recorded for review. This page has no provider operation or live estate telemetry contract.", "Product-action requests are recorded for review. This page has no provider operation or live estate telemetry contract.") }</p>
 			</div>
 			<div class="ts-split">
-				@ui.Card(ui.CardProps{ID: "admin-estate-action-log", Title: "Recorded actions", Description: "Platform-wide entries for this in-memory demo.", Flush: true}) {
+				@ui.Card(ui.CardProps{ID: "admin-estate-action-log", Title: "Recorded actions", Description: demoText(data.Demo, "Platform-wide entries for this in-memory demo.", "Platform-wide entries stored in TerraBase."), Flush: true}) {
 					if len(data.EstateActions) > 0 {
 						// Nothing in the rows takes focus, so the scroll area itself does.
 						<div class="ts-table-wrap" role="region" aria-labelledby="admin-estate-action-log-title" tabindex="0">
@@ -407,7 +407,7 @@ templ estateSection(data pageData, csrfToken string) {
 					}
 				}
 				@ui.Card(ui.CardProps{ID: "admin-estate-actions", Title: "Product actions", Description: "Each request records the administrator, action, target, reason, and time."}) {
-					@ui.Alert("warning", "", "Record only: this demo does not change infrastructure, billing, tenant state, or access.")
+					@ui.Alert("warning", "", demoText(data.Demo, "Record only: this demo does not change infrastructure, billing, tenant state, or access.", "Record only: requests do not change infrastructure, billing, tenant state, or access."))
 					<form class="ts-form" method="post" action="/api/v1/admin/estate/action">
 						<input type="hidden" name="_csrf" value={ csrfToken }/>
 						@ui.Field(ui.FieldProps{ID: "admin-estate-action", Label: "Action"}) {
@@ -426,7 +426,7 @@ templ estateSection(data pageData, csrfToken string) {
 						@ui.Field(ui.FieldProps{ID: "admin-estate-target", Label: "Target"}) {
 							<input class="ts-input" id="admin-estate-target" name="targetId" placeholder="Tenant, database, or organization ID" required/>
 						}
-						@ui.Field(ui.FieldProps{ID: "admin-estate-reason", Label: "Reason", Hint: "Accepted requests appear in this demo's in-memory audit log."}) {
+						@ui.Field(ui.FieldProps{ID: "admin-estate-reason", Label: "Reason", Hint: demoText(data.Demo, "Accepted requests appear in this demo's in-memory audit log.", "Accepted requests appear in the audit log.")}) {
 							<textarea class="ts-input" id="admin-estate-reason" name="reason" rows="3" minlength="3" maxlength="1000" required></textarea>
 						}
 						<div class="ts-form-actions">
@@ -439,14 +439,14 @@ templ estateSection(data pageData, csrfToken string) {
 }
 
 templ usageSection(data pageData) {
-	@ui.Stats("In-memory inventory totals") {
-		@ui.Stat("Accounts", strconv.Itoa(data.Inventory.Accounts), "Registered demo accounts")
+	@ui.Stats(demoText(data.Demo, "In-memory inventory totals", "Inventory totals")) {
+		@ui.Stat("Accounts", strconv.Itoa(data.Inventory.Accounts), demoText(data.Demo, "Registered demo accounts", "Registered accounts"))
 		@ui.Stat("Organizations", strconv.Itoa(data.Inventory.Organizations), "Unique organization records")
 		@ui.Stat("Projects", strconv.Itoa(data.Inventory.Projects), "Unique project records")
 		@ui.Stat("Databases", strconv.Itoa(data.Inventory.Databases), "Unique database records")
 	}
-	@ui.Card(ui.CardProps{ID: "admin-usage", Title: "Demo inventory", Description: "These totals describe records in the dashboard's in-memory store."}) {
-		@ui.Alert("warning", "", "Live request, storage, and provider usage metrics are not available in this demo.")
+	@ui.Card(ui.CardProps{ID: "admin-usage", Title: demoText(data.Demo, "Demo inventory", "Inventory"), Description: demoText(data.Demo, "These totals describe records in the dashboard's in-memory store.", "These totals describe records stored in TerraBase.")}) {
+		@ui.Alert("warning", "", demoText(data.Demo, "Live request, storage, and provider usage metrics are not available in this demo.", "Live request, storage, and provider usage metrics are not shown on this page."))
 	}
 }
 
@@ -455,7 +455,7 @@ templ plansSection(data pageData, csrfToken string) {
 		@ui.Stat("Matching plans", strconv.Itoa(len(data.Plans)), "Plan records shown")
 		@ui.Stat("Visible plans shown", strconv.Itoa(adminVisiblePlanCount(data.Plans)), "Among the matching plans")
 	}
-	@ui.Card(ui.CardProps{ID: "admin-plans", Title: "Plan catalog", Description: "Current pricing plan values from the demo store. Amounts are displayed in cents.", Flush: true}) {
+	@ui.Card(ui.CardProps{ID: "admin-plans", Title: "Plan catalog", Description: demoText(data.Demo, "Current pricing plan values from the demo store. Amounts are displayed in cents.", "Current pricing plan values. Amounts are displayed in cents."), Flush: true}) {
 		if len(data.Plans) > 0 {
 			<div class="ts-table-wrap">
 				<table class="ts-table">
@@ -504,7 +504,7 @@ templ plansSection(data pageData, csrfToken string) {
 			@ui.Empty("No matching plans", "Try another plan name, key, or ID.")
 		}
 	}
-	@ui.Card(ui.CardProps{ID: "admin-plan-create", Title: "Create a plan", Description: "Add a plan to the in-memory demo catalog."}) {
+	@ui.Card(ui.CardProps{ID: "admin-plan-create", Title: "Create a plan", Description: demoText(data.Demo, "Add a plan to the in-memory demo catalog.", "Add a plan to the catalog.")}) {
 		@planForm(csrfToken, core.Plan{Visible: true}, true)
 	}
 	if len(data.Plans) > 0 {
@@ -592,4 +592,12 @@ func planFieldID(plan core.Plan, isNew bool, field string) string {
 		return "admin-plan-create-" + field
 	}
 	return "admin-plan-" + plan.ID + "-" + field
+}
+
+// demoText names the in-memory demo only where it runs.
+func demoText(isDemo bool, demo, production string) string {
+	if isDemo {
+		return demo
+	}
+	return production
 }

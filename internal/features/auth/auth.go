@@ -126,16 +126,16 @@ func Mount(mux *http.ServeMux, deps core.Deps, tsAuth *TSAuth) {
 		mux.HandleFunc("GET /reset-password", func(w http.ResponseWriter, r *http.Request) {
 			renderAuthStatus(w, r, deps, authStatusPageData{
 				Title:         "Reset password",
-				Description:   "Password recovery is unavailable in the in-memory demo.",
-				Message:       "This demo does not send recovery emails or accept password reset tokens. Submitting this form will not send an email.",
+				Description:   demoText(deps, "Password recovery is unavailable in the in-memory demo.", "Password recovery is unavailable."),
+				Message:       demoText(deps, "This demo does not send recovery emails or accept password reset tokens. Submitting this form will not send an email.", "The dashboard does not send recovery emails or accept password reset tokens. Submitting this form will not send an email."),
 				ShowEmailForm: true,
 			})
 		})
 		mux.HandleFunc("POST /reset-password", func(w http.ResponseWriter, r *http.Request) {
 			renderAuthStatus(w, r, deps, authStatusPageData{
 				Title:         "Reset password",
-				Description:   "Password recovery is unavailable in the in-memory demo.",
-				Message:       "No recovery request was processed. This demo does not send recovery emails or accept password reset tokens; no password was changed.",
+				Description:   demoText(deps, "Password recovery is unavailable in the in-memory demo.", "Password recovery is unavailable."),
+				Message:       demoText(deps, "No recovery request was processed. This demo does not send recovery emails or accept password reset tokens; no password was changed.", "No recovery request was processed. The dashboard does not send recovery emails or accept password reset tokens; no password was changed."),
 				ShowEmailForm: true,
 			})
 		})
@@ -143,7 +143,7 @@ func Mount(mux *http.ServeMux, deps core.Deps, tsAuth *TSAuth) {
 	mux.HandleFunc("GET /agent/approve", func(w http.ResponseWriter, r *http.Request) {
 		renderAuthStatus(w, r, deps, authStatusPageData{
 			Title:       "Approve agent access",
-			Description: "This in-memory demo cannot verify agent approval requests.",
+			Description: demoText(deps, "This in-memory demo cannot verify agent approval requests.", "The dashboard cannot verify agent approval requests yet."),
 			Message:     "No verifiable agent request is available, and no access was granted.",
 			Flow:        true,
 		})
@@ -151,7 +151,7 @@ func Mount(mux *http.ServeMux, deps core.Deps, tsAuth *TSAuth) {
 	mux.HandleFunc("POST /agent/approve/submit", func(w http.ResponseWriter, r *http.Request) {
 		renderAuthStatus(w, r, deps, authStatusPageData{
 			Title:       "Approve agent access",
-			Description: "This in-memory demo cannot verify agent approval requests.",
+			Description: demoText(deps, "This in-memory demo cannot verify agent approval requests.", "The dashboard cannot verify agent approval requests yet."),
 			Message:     "The approval was rejected because no verifiable agent request is available. No access was granted.",
 			Flow:        true,
 		})
@@ -160,7 +160,7 @@ func Mount(mux *http.ServeMux, deps core.Deps, tsAuth *TSAuth) {
 	mux.HandleFunc("POST /oauth/consent/submit", func(w http.ResponseWriter, r *http.Request) {
 		renderAuthStatus(w, r, deps, authStatusPageData{
 			Title:       "Authorize application",
-			Description: "This in-memory demo cannot verify OAuth authorization requests.",
+			Description: demoText(deps, "This in-memory demo cannot verify OAuth authorization requests.", "The dashboard cannot verify OAuth authorization requests yet."),
 			Message:     "The authorization request was rejected. No access was granted.",
 			Flow:        true,
 		})
@@ -296,11 +296,19 @@ func oauthConsent(deps core.Deps) http.HandlerFunc {
 		}
 		renderAuthStatus(w, r, deps, authStatusPageData{
 			Title:       "Authorize application",
-			Description: "This in-memory demo cannot verify OAuth authorization requests.",
+			Description: demoText(deps, "This in-memory demo cannot verify OAuth authorization requests.", "The dashboard cannot verify OAuth authorization requests yet."),
 			Message:     "The authorization request is missing or cannot be verified. No access was granted.",
 			Flow:        true,
 		})
 	}
+}
+
+// demoText names the in-memory demo only where it runs.
+func demoText(deps core.Deps, demo, production string) string {
+	if deps.Demo {
+		return demo
+	}
+	return production
 }
 
 func redirectToLogin(w http.ResponseWriter, r *http.Request) {

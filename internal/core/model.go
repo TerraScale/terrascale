@@ -166,19 +166,38 @@ type Project struct {
 	BackupPolicies            map[string]BackupPolicy
 	SpendCapCents             int64
 	CreatedAt                 time.Time
+	// DataKeys are the data API keys TerraBase issued the dashboard for the
+	// project's TerraBase project, by Atlas region ID (TerraBase issues one
+	// per region); see Deps.Data. Its members never see them.
+	// TODO(TS-589, TS-599): ts-auth project tokens replace them.
+	DataKeys map[string]DataKey
+}
+
+// DataKey is a TerraBase data API key (tb_…) with its ID.
+type DataKey struct{ ID, Secret string }
+
+// TerraBaseIDs returns the IDs under which TerraBase knows the project of
+// organization orgID. A project mirrored from TerraBase has its own. For any
+// other they are derived from the dashboard IDs (name-based UUIDs), so every
+// region and every retry agrees on them without recording them.
+// TODO(TS-599): ts-auth's organization and project IDs replace them.
+func (p Project) TerraBaseIDs(orgID string) (organization, project string) {
+	if terraBaseID.MatchString(p.ID) {
+		return orgID, p.ID
+	}
+	return v1.DocumentIDFor("terrabase-organizations", orgID), v1.DocumentIDFor("terrabase-projects", p.ID)
 }
 
 type Database struct {
 	ID        string
 	ProjectID string
-	Name      string
-	Status    string
-	Region    string
-	Regions   []string
-	Endpoint  string
-	// Provisioned marks a database the dashboard created in TerraBase, whose
-	// ID is TerraBase's; see SystemDatabase.
-	Provisioned          bool
+	// TerraBaseID is the database's ID in its project's TerraBase project.
+	TerraBaseID          string
+	Name                 string
+	Status               string
+	Region               string
+	Regions              []string
+	Endpoint             string
 	CreatedAt            time.Time
 	Documents            map[string]map[string][]byte   // collection -> document ID -> JSON bytes
 	DocumentHistory      map[string]map[string][][]byte // collection -> document ID -> revisions
@@ -562,10 +581,12 @@ type Events interface {
 	PatchElements(http.ResponseWriter, *http.Request, string) error
 }
 
-// SDKFactory returns a new official SDK client after the handler has checked
-// the principal against the requested organization and project in Store.
+// SDKFactory returns ts-go clients of a region's TerraBase (Region.API).
+// Features check the principal against the project in Store first.
 type SDKFactory interface {
-	ForDocuments(tenantID, projectID string) (*v1.Client, error)
+	// Documents is the Documents API with a data API key.
+	Documents(api, key string) (*v1.Client, error)
+	Management(api string) (*v1.Management, error)
 }
 
 // Deps is shared across independent feature packages. The implementation of
@@ -576,9 +597,11 @@ type Deps struct {
 	CSRF     CSRF
 	Render   Renderer
 	Events   Events
-	SDK      SDKFactory
-	// Management reads TerraBase's system databases for platform admins;
-	// see System. Nil in the demo.
+	// SDK and Management reach TerraBase, where every database outside the
+	// demo lives (Data); both are nil in the demo. Management acts as the
+	// signed-in user, and also reads the system databases for platform
+	// admins (System).
+	SDK        SDKFactory
 	Management *v1.Management
 	// Usage reads TerraBase's metered usage; nil without TerraBase.
 	Usage    UsageMeter
@@ -588,8 +611,10 @@ type Deps struct {
 	// discovery; nil when discovery is not configured.
 	Regions func(context.Context) ([]Region, error)
 	Demo    bool
-	// TODO(TS-463, TS-521): resource provisioning and unsupported data features
-	// retain their local Store behavior until the Management mapping lands.
+	// DocumentsOnly is TerraBase without ts-auth, a test setup: with no
+	// user to act as in TerraBase, databases keep their contents in the
+	// dashboard's records, as in phase 1 (TS-472). Production signs in
+	// through ts-auth (config.Load).
 	DocumentsOnly bool
 }
 
@@ -601,6 +626,8 @@ type Region struct {
 	Healthy                      bool
 }
 
+// LocalResources reports that databases keep their contents in the
+// dashboard's own records: in the in-memory demo, and in DocumentsOnly.
 func (d Deps) LocalResources() bool { return d.Demo || d.DocumentsOnly }
 
 func NormalizeEmail(email string) string {

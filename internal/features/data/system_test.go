@@ -33,7 +33,7 @@ func TestSystemDatabaseReadsLiveTerraBaseWithSecretsMasked(t *testing.T) {
 	if _, err := users.Create(ctx, map[string]any{"email": "bia@example.com"}); err != nil {
 		t.Fatal(err)
 	}
-	service := Service{deps: core.Deps{Store: store, Management: system.Management, DocumentsOnly: true}}
+	service := Service{deps: core.Deps{Store: store, Management: system.Management}}
 	p, db := system.Principal, system.Database.ID
 	live := system.WithToken(ctx)
 

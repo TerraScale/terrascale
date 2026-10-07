@@ -1,9 +1,12 @@
 # TerraBase state cutover
 
 COS-run checklist for moving dashboard state from the in-memory demo to
-TerraBase (TS-472). At runtime the dashboard uses only the ts-go Documents v1
-client against one dedicated database. It never calls the TerraBase
-Management API; only the operator `import-org` command below reads it.
+TerraBase (TS-472). The dashboard keeps its own state with the ts-go
+Documents v1 client in one dedicated database. Users' databases live in
+TerraBase projects the dashboard makes as the signed-in user, through
+Management with their ts-auth access token
+([store-contract.md](store-contract.md#user-databases-ts-671)), so
+`TS_AUTH_ISSUER` must be set as well.
 
 ## 1. Inputs from TS-529
 

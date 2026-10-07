@@ -36,6 +36,10 @@ const (
 
 var errDemoOnly = errors.New("index recommendations are only available in the in-memory demo")
 
+// errNoSchemas refuses collection schemas outside the demo: TerraBase does
+// not enforce them, so the dashboard keeps none.
+var errNoSchemas = errors.New("TerraBase does not take collection schemas yet")
+
 // systemCollection is a TerraBase collection name, quoted in SQL;
 // systemField is a top-level field TerraBase SQL can sort by.
 var (
@@ -60,6 +64,30 @@ func (s Service) systemRows(ctx context.Context, p core.Principal, db core.Datab
 	}
 	docs, err = systemDocuments(result.Rows)
 	return docs, result.Truncated, err
+}
+
+// managed returns the database's home region's TerraBase Management acting
+// as the signed-in user, and the TerraBase IDs of its project and itself.
+func (s Service) managed(ctx context.Context, p core.Principal, project core.Project, db core.Database) (m *v1.ManagementUser, org, proj, id string, err error) {
+	m, org, proj, db, err = s.deps.ManageDatabase(ctx, p, project, db)
+	return m, org, proj, db.TerraBaseID, err
+}
+
+// terraBaseSQL runs a read-only statement on a database through TerraBase
+// Management, as the signed-in user.
+func (s Service) terraBaseSQL(ctx context.Context, p core.Principal, project core.Project, db core.Database, statement string) (rows []documentView, matched int, more bool, err error) {
+	management, org, proj, id, err := s.managed(ctx, p, project, db)
+	if err != nil {
+		return nil, 0, false, err
+	}
+	result, err := management.SQL(ctx, org, proj, id, statement)
+	if err != nil {
+		return nil, 0, false, systemSQLError(err)
+	}
+	for _, row := range result.Rows {
+		rows = append(rows, documentView{ID: row.ID, Value: jsontext.Value(row.Value)})
+	}
+	return rows, result.Matched, result.Truncated, nil
 }
 
 func systemSQLError(err error) error {
@@ -168,28 +196,28 @@ func (s Service) project(ctx context.Context, p core.Principal) (core.Account, c
 	return a, project, err
 }
 
-func (s Service) database(ctx context.Context, p core.Principal, databaseID string) (core.Database, error) {
+func (s Service) database(ctx context.Context, p core.Principal, databaseID string) (core.Project, core.Database, error) {
 	_, project, err := s.project(ctx, p)
 	if err != nil {
-		return core.Database{}, err
+		return core.Project{}, core.Database{}, err
 	}
 	db, ok := project.Databases[databaseID]
 	if !ok || db.ProjectID != project.ID {
-		return core.Database{}, fmt.Errorf("%w: database %q", core.ErrNotFound, databaseID)
+		return core.Project{}, core.Database{}, fmt.Errorf("%w: database %q", core.ErrNotFound, databaseID)
 	}
-	return db, nil
+	return project, db, nil
 }
 
 // collectionDatabase resolves the database and validates the collection name.
-func (s Service) collectionDatabase(ctx context.Context, p core.Principal, databaseID, collection string) (core.Database, error) {
-	db, err := s.database(ctx, p, databaseID)
+func (s Service) collectionDatabase(ctx context.Context, p core.Principal, databaseID, collection string) (core.Project, core.Database, error) {
+	project, db, err := s.database(ctx, p, databaseID)
 	if err != nil {
-		return core.Database{}, err
+		return core.Project{}, core.Database{}, err
 	}
 	if !validCollection(collection) {
-		return core.Database{}, core.Invalid("collection names use 1-128 characters without slashes or line breaks")
+		return core.Project{}, core.Database{}, core.Invalid("collection names use 1-128 characters without slashes or line breaks")
 	}
-	return db, nil
+	return project, db, nil
 }
 
 // updateDatabase commits mutate to one demo database once allow grants the
@@ -244,7 +272,7 @@ func (s Service) updateProject(ctx context.Context, p core.Principal, allow func
 
 // Collections lists the database's collection names.
 func (s Service) Collections(ctx context.Context, p core.Principal, databaseID string) ([]string, error) {
-	db, err := s.database(ctx, p, databaseID)
+	project, db, err := s.database(ctx, p, databaseID)
 	if err != nil {
 		return nil, err
 	}
@@ -261,7 +289,7 @@ func (s Service) Collections(ctx context.Context, p core.Principal, databaseID s
 		slices.Sort(names)
 		return slices.Compact(names), nil
 	}
-	client, err := s.deps.Documents(p, db.Name)
+	client, err := s.deps.Data(ctx, p, project, db)
 	if err != nil {
 		return nil, err
 	}
@@ -285,7 +313,7 @@ func (s Service) CreateCollection(ctx context.Context, p core.Principal, databas
 	if !collectionName.MatchString(name) {
 		return core.Invalid("collection names start with a lowercase letter and use up to 63 lowercase letters, digits, hyphens, and underscores")
 	}
-	db, err := s.database(ctx, p, databaseID)
+	project, db, err := s.database(ctx, p, databaseID)
 	if err != nil {
 		return err
 	}
@@ -307,7 +335,7 @@ func (s Service) CreateCollection(ctx context.Context, p core.Principal, databas
 			return nil
 		})
 	}
-	client, err := s.deps.Documents(p, db.Name)
+	client, err := s.deps.Data(ctx, p, project, db)
 	if err != nil {
 		return err
 	}
@@ -330,7 +358,7 @@ type documentSort struct {
 // Browse reads the first maxBrowseDocuments of a collection in sort order;
 // more reports that the collection holds others.
 func (s Service) Browse(ctx context.Context, p core.Principal, databaseID, collection string, order documentSort) ([]documentView, bool, error) {
-	db, err := s.collectionDatabase(ctx, p, databaseID, collection)
+	project, db, err := s.collectionDatabase(ctx, p, databaseID, collection)
 	if err != nil {
 		return nil, false, err
 	}
@@ -353,7 +381,7 @@ func (s Service) Browse(ctx context.Context, p core.Principal, databaseID, colle
 		sortDocuments(docs, order)
 		return docs, false, nil
 	}
-	client, err := s.deps.Documents(p, db.Name)
+	client, err := s.deps.Data(ctx, p, project, db)
 	if err != nil {
 		return nil, false, err
 	}
@@ -550,7 +578,7 @@ func kindRank(v jsontext.Value) int {
 // Documents lists one page of a collection, ordered by ID and filtered by a
 // case-insensitive search over IDs and bodies.
 func (s Service) Documents(ctx context.Context, p core.Principal, databaseID string, query documentQuery) ([]documentView, error) {
-	db, err := s.collectionDatabase(ctx, p, databaseID, query.Collection)
+	project, db, err := s.collectionDatabase(ctx, p, databaseID, query.Collection)
 	if err != nil {
 		return nil, err
 	}
@@ -574,7 +602,7 @@ func (s Service) Documents(ctx context.Context, p core.Principal, databaseID str
 		}
 		slices.SortFunc(docs, func(a, b documentView) int { return strings.Compare(a.ID, b.ID) })
 	} else {
-		client, err := s.deps.Documents(p, db.Name)
+		client, err := s.deps.Data(ctx, p, project, db)
 		if err != nil {
 			return nil, err
 		}
@@ -599,7 +627,7 @@ func (s Service) Documents(ctx context.Context, p core.Principal, databaseID str
 
 // Document reads one document.
 func (s Service) Document(ctx context.Context, p core.Principal, databaseID, collection, id string) (documentView, error) {
-	db, err := s.collectionDatabase(ctx, p, databaseID, collection)
+	project, db, err := s.collectionDatabase(ctx, p, databaseID, collection)
 	if err != nil {
 		return documentView{}, err
 	}
@@ -620,7 +648,7 @@ func (s Service) Document(ctx context.Context, p core.Principal, databaseID, col
 		}
 		return documentView{ID: id, Value: jsontext.Value(body).Clone()}, nil
 	}
-	client, err := s.deps.Documents(p, db.Name)
+	client, err := s.deps.Data(ctx, p, project, db)
 	if err != nil {
 		return documentView{}, err
 	}
@@ -635,7 +663,7 @@ func (s Service) Document(ctx context.Context, p core.Principal, databaseID, col
 // records the new version in its history. Creating without an ID generates
 // one.
 func (s Service) WriteDocument(ctx context.Context, p core.Principal, databaseID, collection, operation, id string, body []byte) (documentWrite, error) {
-	db, err := s.collectionDatabase(ctx, p, databaseID, collection)
+	project, db, err := s.collectionDatabase(ctx, p, databaseID, collection)
 	if err != nil {
 		return documentWrite{}, err
 	}
@@ -646,10 +674,11 @@ func (s Service) WriteDocument(ctx context.Context, p core.Principal, databaseID
 		return documentWrite{}, core.Invalid("operation must be create, replace, patch, or delete")
 	}
 	id = strings.TrimSpace(id)
-	if operation == "create" && id == "" {
+	// TerraBase names a new document itself.
+	if operation == "create" && id == "" && s.deps.LocalResources() {
 		id = core.NewID("doc")
 	}
-	if id == "" || len(id) > 256 {
+	if id == "" && operation != "create" || len(id) > 256 {
 		return documentWrite{}, core.Invalid("document IDs use 1-256 characters")
 	}
 	if operation != "delete" && (len(body) == 0 || len(body) > maxDocumentBytes || !jsontext.Value(body).IsValid()) {
@@ -661,7 +690,7 @@ func (s Service) WriteDocument(ctx context.Context, p core.Principal, databaseID
 			return writeDemoDocument(current, collection, operation, id, body)
 		})
 	}
-	client, err := s.deps.Documents(p, db.Name)
+	client, err := s.deps.Data(ctx, p, project, db)
 	if err != nil {
 		return documentWrite{}, err
 	}
@@ -675,13 +704,24 @@ func (s Service) WriteDocument(ctx context.Context, p core.Principal, databaseID
 	}
 	switch operation {
 	case "create":
-		_, err = client.Collection(collection).Put(ctx, id, stdjson.RawMessage(body), v1.IfNoneMatchAny())
+		var created *v1.WriteResult
+		if id == "" {
+			if created, err = client.Collection(collection).Create(ctx, stdjson.RawMessage(body)); err == nil {
+				result.ID = created.ID
+			}
+		} else {
+			_, err = client.Collection(collection).Put(ctx, id, stdjson.RawMessage(body), v1.IfNoneMatchAny())
+		}
 	case "replace":
 		_, err = client.Collection(collection).Put(ctx, id, stdjson.RawMessage(body), opts...)
 	case "patch":
 		_, err = client.Collection(collection).Patch(ctx, id, v1.MergePatch(stdjson.RawMessage(body)), opts...)
 	case "delete":
 		_, err = client.Collection(collection).Delete(ctx, id, opts...)
+	}
+	if apiErr, ok := errors.AsType[*v1.APIError](err); ok && apiErr.Code == v1.ErrInvalidRequest {
+		// Such as an ID TerraBase does not take.
+		return documentWrite{}, core.Invalid(apiErr.Message)
 	}
 	if err != nil {
 		return documentWrite{}, core.ProviderError{Action: "document " + operation, Err: err}
@@ -734,7 +774,7 @@ func writeDemoDocument(db *core.Database, collection, operation, id string, body
 // History lists a document's recorded versions, oldest first. Demo versions
 // carry their bodies; the live data plane reports revisions only.
 func (s Service) History(ctx context.Context, p core.Principal, databaseID, collection, id string) ([]historyEntry, error) {
-	db, err := s.collectionDatabase(ctx, p, databaseID, collection)
+	_, db, err := s.collectionDatabase(ctx, p, databaseID, collection)
 	if err != nil {
 		return nil, err
 	}
@@ -758,9 +798,12 @@ func (s Service) History(ctx context.Context, p core.Principal, databaseID, coll
 // Schema returns a collection's schema as JSON, in the shape SetSchema
 // accepts.
 func (s Service) Schema(ctx context.Context, p core.Principal, databaseID, collection string) (jsontext.Value, error) {
-	db, err := s.collectionDatabase(ctx, p, databaseID, collection)
+	_, db, err := s.collectionDatabase(ctx, p, databaseID, collection)
 	if err != nil {
 		return nil, err
+	}
+	if !s.deps.LocalResources() {
+		return nil, errNoSchemas
 	}
 	body, ok := db.Schemas[collection]
 	if !ok {
@@ -771,12 +814,15 @@ func (s Service) Schema(ctx context.Context, p core.Principal, databaseID, colle
 
 // SetSchema applies a collection schema whose name matches the collection.
 func (s Service) SetSchema(ctx context.Context, p core.Principal, databaseID, collection string, body []byte) error {
-	db, err := s.collectionDatabase(ctx, p, databaseID, collection)
+	_, db, err := s.collectionDatabase(ctx, p, databaseID, collection)
 	if err != nil {
 		return err
 	}
 	if err := core.Can(ctx, s.deps.Store, p, core.Organization.CanManage); err != nil {
 		return err
+	}
+	if !s.deps.LocalResources() {
+		return errNoSchemas
 	}
 	var schema sdk.CollectionSchema
 	if len(body) == 0 || len(body) > maxSchemaBytes || json.Unmarshal(body, &schema) != nil || schema.Name != collection || schema.Validate() != nil {
@@ -793,9 +839,26 @@ func (s Service) SetSchema(ctx context.Context, p core.Principal, databaseID, co
 
 // Indexes lists a collection's indexed fields and their build state.
 func (s Service) Indexes(ctx context.Context, p core.Principal, databaseID, collection string) ([]indexView, error) {
-	db, err := s.collectionDatabase(ctx, p, databaseID, collection)
+	project, db, err := s.collectionDatabase(ctx, p, databaseID, collection)
 	if err != nil {
 		return nil, err
+	}
+	if !s.deps.LocalResources() {
+		management, org, proj, id, err := s.managed(ctx, p, project, db)
+		if err != nil {
+			return nil, err
+		}
+		list, err := management.Indexes(ctx, org, proj, id)
+		if err != nil {
+			return nil, core.ProviderError{Action: "index list", Err: err}
+		}
+		var indexes []indexView
+		for _, index := range list {
+			if index.Collection == collection {
+				indexes = append(indexes, indexView{Field: strings.Join(index.Fields, ", "), State: index.State})
+			}
+		}
+		return indexes, nil
 	}
 	indexes := make([]indexView, 0, len(db.Indexes[collection]))
 	for _, field := range db.Indexes[collection] {
@@ -812,7 +875,7 @@ func (s Service) Indexes(ctx context.Context, p core.Principal, databaseID, coll
 
 // CreateIndex adds a single-field index to a collection.
 func (s Service) CreateIndex(ctx context.Context, p core.Principal, databaseID, collection, field string) error {
-	db, err := s.collectionDatabase(ctx, p, databaseID, collection)
+	project, db, err := s.collectionDatabase(ctx, p, databaseID, collection)
 	if err != nil {
 		return err
 	}
@@ -822,6 +885,20 @@ func (s Service) CreateIndex(ctx context.Context, p core.Principal, databaseID, 
 	field = strings.TrimSpace(field)
 	if field == "" || len(field) > 128 {
 		return core.Invalid("index fields use 1-128 characters")
+	}
+	if !s.deps.LocalResources() {
+		management, org, proj, id, err := s.managed(ctx, p, project, db)
+		if err != nil {
+			return err
+		}
+		_, err = management.CreateIndex(ctx, org, proj, id, v1.IndexRequest{Collection: collection, Fields: []string{field}})
+		if apiErr, ok := errors.AsType[*v1.APIError](err); ok && apiErr.Code == v1.ErrInvalidRequest {
+			return core.Invalid(apiErr.Message)
+		}
+		if err != nil && !errors.Is(err, v1.ErrIndexExists) {
+			return core.ProviderError{Action: "index create", Err: err}
+		}
+		return nil
 	}
 	return s.updateDatabase(ctx, p, db.ID, core.Organization.CanManage, func(current *core.Database) error {
 		if current.Indexes == nil {
@@ -837,7 +914,7 @@ func (s Service) CreateIndex(ctx context.Context, p core.Principal, databaseID, 
 // Recommendations lists a database's index recommendations, optionally for
 // one collection.
 func (s Service) Recommendations(ctx context.Context, p core.Principal, databaseID, collection string) ([]recommendationView, error) {
-	db, err := s.database(ctx, p, databaseID)
+	_, db, err := s.database(ctx, p, databaseID)
 	if err != nil {
 		return nil, err
 	}
@@ -951,7 +1028,7 @@ func (s Service) Migration(ctx context.Context, p core.Principal, databaseID, co
 
 // CheckSQL analyzes one read-only statement without running it.
 func (s Service) CheckSQL(ctx context.Context, p core.Principal, databaseID, statement string) (sqlAnalysis, error) {
-	if _, err := s.database(ctx, p, databaseID); err != nil {
+	if _, _, err := s.database(ctx, p, databaseID); err != nil {
 		return sqlAnalysis{}, err
 	}
 	if len(statement) > maxSQLCheckBytes {
@@ -970,7 +1047,7 @@ type sqlRun struct {
 // RunSQL runs one read-only statement. The demo supports SELECT * FROM
 // collection [LIMIT n].
 func (s Service) RunSQL(ctx context.Context, p core.Principal, databaseID, statement string) (sqlRun, error) {
-	db, err := s.database(ctx, p, databaseID)
+	project, db, err := s.database(ctx, p, databaseID)
 	if err != nil {
 		return sqlRun{}, err
 	}
@@ -1012,8 +1089,15 @@ func (s Service) RunSQL(ctx context.Context, p core.Principal, databaseID, state
 		}{Rows: rows}
 		table = newSQLResult(rows, matched)
 	} else {
-		// TODO(TS-463): Documents v1 has no SQL execution endpoint.
-		return sqlRun{}, core.ErrUnavailable
+		rows, matched, more, err := s.terraBaseSQL(ctx, p, project, db, statement)
+		if err != nil {
+			return sqlRun{}, err
+		}
+		result = struct {
+			Rows []documentView `json:"rows"`
+		}{Rows: rows}
+		table = newSQLResult(rows, matched)
+		table.More = more
 	}
 	encoded, err := json.Marshal(result)
 	return sqlRun{JSON: jsontext.Value(encoded), Table: table}, err

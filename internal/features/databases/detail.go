@@ -79,7 +79,7 @@ func renderDetail(w http.ResponseWriter, r *http.Request, deps core.Deps, tab st
 	}
 	// Only the overview shows the counts and the placement form.
 	if tab == "overview" {
-		data.Info = data.Info.withContents(r.Context(), deps, p, db)
+		data.Info = data.Info.withContents(r.Context(), deps, p, project, db)
 		if canManage {
 			data.Choices, data.RegionsError = regionChoices(r.Context(), deps)
 		}
@@ -115,16 +115,16 @@ type detailInfo struct {
 	Collections         int
 	Documents           int
 	Bytes               int64
-	// Unavailable explains a system database TerraBase did not report.
+	// Unavailable explains a database TerraBase did not report.
 	Unavailable string
 }
 
 // withContents adds the database's collection, document and byte counts.
-func (info detailInfo) withContents(ctx context.Context, deps core.Deps, p core.Principal, db core.Database) detailInfo {
+func (info detailInfo) withContents(ctx context.Context, deps core.Deps, p core.Principal, project core.Project, db core.Database) detailInfo {
 	ctx, cancel := context.WithTimeout(ctx, countBudget)
 	defer cancel()
 	var err error
-	info.Collections, info.Documents, info.Bytes, err = contents(ctx, deps, p, db)
+	info.Collections, info.Documents, info.Bytes, err = contents(ctx, deps, p, project, db)
 	if err != nil {
 		info.Unavailable = unavailable(err)
 	}

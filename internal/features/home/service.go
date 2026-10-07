@@ -129,7 +129,8 @@ func (s Service) projectActivity(ctx context.Context, token string, account core
 		result.Note = "Reads and writes are metered by TerraBase for browser sessions signed in through TerraScale."
 	} else {
 		granularity, from := core.UsageBuckets(result.Range, time.Now())
-		usage, err := s.deps.Usage.Usage(ctx, token, core.UsageScope{OrganizationID: org.ID, ProjectID: project.ID, Granularity: granularity, From: from})
+		orgID, projectID := project.TerraBaseIDs(org.ID)
+		usage, err := s.deps.Usage.Usage(ctx, token, core.UsageScope{OrganizationID: orgID, ProjectID: projectID, Granularity: granularity, From: from})
 		switch {
 		case errors.Is(err, core.ErrNotMetered):
 			result.Note = "TerraBase doesn't report this project: it isn't stored there yet, or this account isn't a member of it there."

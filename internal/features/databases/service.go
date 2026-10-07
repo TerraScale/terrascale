@@ -2,7 +2,6 @@ package databases
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -64,7 +63,7 @@ func (s Service) Detail(ctx context.Context, p core.Principal, databaseID string
 	}
 	org := a.Organizations[p.OrganizationID]
 	canManage := org.CanManage(p.UserID) && !core.SystemDatabase(db)
-	info := makeDetailInfo(s.deps.LocalResources(), p, a, project, db, canManage, canManage && org.CanProvisionResources(p.UserID)).withContents(ctx, s.deps, p, db)
+	info := makeDetailInfo(s.deps.LocalResources(), p, a, project, db, canManage, canManage && org.CanProvisionResources(p.UserID)).withContents(ctx, s.deps, p, project, db)
 	detail := databaseDetail{
 		databaseView: view(db), Endpoint: db.Endpoint, Collections: info.Collections, Documents: info.Documents, Bytes: info.Bytes, Unavailable: info.Unavailable,
 		BackupsEnabled: info.BackupsEnabled, BackupRetentionDays: db.BackupRetentionDays, CanManage: canManage, CanBranch: info.CanBranch,
@@ -98,16 +97,16 @@ func (s Service) Create(ctx context.Context, p core.Principal, name string, regi
 		ID: core.NewID("db"), ProjectID: p.ProjectID, Name: name, Region: codes[0], Regions: codes, Status: "ready",
 		CreatedAt: time.Now().UTC(), Documents: make(map[string]map[string][]byte),
 	}
-	org := a.Organizations[p.OrganizationID]
 	if !s.deps.LocalResources() {
-		if !org.CanProvisionResources(p.UserID) {
-			return databaseView{}, core.ErrForbidden
-		}
-		managed, err := createPlaced(ctx, org, project, name, placed)
-		if err != nil {
+		// Refused before TerraBase is asked, so it never holds a database
+		// the commit below would not record.
+		if err := s.roomForDatabase(ctx, p, a, name); err != nil {
 			return databaseView{}, err
 		}
-		db.ID, db.CreatedAt, db.Documents, db.Provisioned = managed.ID, managed.CreatedAt, nil, true
+		if db.TerraBaseID, err = s.deps.CreateDatabase(ctx, p, project, name, placed); err != nil {
+			return databaseView{}, placementError(err)
+		}
+		db.Documents = nil
 	}
 	// The store refuses the commit with core.ErrDatabaseLimit when the plan's
 	// database allowance is used up.
@@ -134,14 +133,8 @@ func (s Service) Create(ctx context.Context, p core.Principal, name string, regi
 		return nil
 	})
 	if err != nil {
-		if !s.deps.LocalResources() {
-			// ponytail: best-effort cleanup; a failed drop leaves the database
-			// in TerraBase, unrecorded, until a Management commit creates both
-			// together (TS-671).
-			if dropErr := dropPlaced(ctx, org, project, db.ID, placed); dropErr != nil {
-				err = errors.Join(err, dropErr)
-			}
-		}
+		// A database a refused commit leaves in TerraBase is found again by
+		// the next create of its name (core.Deps.CreateDatabase).
 		return databaseView{}, err
 	}
 	return view(db), nil
@@ -150,7 +143,7 @@ func (s Service) Create(ctx context.Context, p core.Principal, name string, regi
 // SetRegions changes where a database lives: its home region alone, or with
 // replicas. The home region never changes.
 func (s Service) SetRegions(ctx context.Context, p core.Principal, databaseID string, regions ...string) (databaseView, error) {
-	a, project, err := s.selected(ctx, p)
+	_, project, err := s.selected(ctx, p)
 	if err != nil {
 		return databaseView{}, err
 	}
@@ -172,8 +165,8 @@ func (s Service) SetRegions(ctx context.Context, p core.Principal, databaseID st
 		return databaseView{}, err
 	}
 	if !s.deps.LocalResources() {
-		if err := setPlaced(ctx, a.Organizations[p.OrganizationID], project, db.ID, placed); err != nil {
-			return databaseView{}, err
+		if err := s.deps.SetDatabaseRegions(ctx, p, project, db, placed); err != nil {
+			return databaseView{}, placementError(err)
 		}
 	}
 	codes := codesOf(placed)
@@ -206,7 +199,7 @@ func (s Service) SetRegions(ctx context.Context, p core.Principal, databaseID st
 // Branch copies a ready database into a new database in the same project.
 // An empty name derives a preview branch name from the source.
 func (s Service) Branch(ctx context.Context, p core.Principal, sourceID, name string) (databaseView, error) {
-	_, project, err := s.selected(ctx, p)
+	a, project, err := s.selected(ctx, p)
 	if err != nil {
 		return databaseView{}, err
 	}
@@ -231,6 +224,16 @@ func (s Service) Branch(ctx context.Context, p core.Principal, sourceID, name st
 		return databaseView{}, errNotReady
 	}
 	branch := core.Database{ID: core.NewID("db"), ProjectID: project.ID, Name: name, Region: source.Region, Regions: slices.Clone(databaseRegions(source)), Status: "ready", CreatedAt: time.Now().UTC()}
+	if !s.deps.LocalResources() {
+		if err := s.roomForDatabase(ctx, p, a, name); err != nil {
+			return databaseView{}, err
+		}
+		// TerraBase branches in the source's home region only.
+		branch.Regions = branch.Regions[:1]
+		if branch.TerraBaseID, err = s.deps.BranchDatabase(ctx, p, project, source, name); err != nil {
+			return databaseView{}, placementError(err)
+		}
+	}
 	err = s.deps.Store.UpdateAs(ctx, p, func(a *core.Account) error {
 		project, err := a.ProjectFor(p, p.OrganizationID, p.ProjectID)
 		if err != nil {
@@ -288,6 +291,11 @@ func (s Service) Delete(ctx context.Context, p core.Principal, databaseID, confi
 	if confirmName != db.Name {
 		return errConfirmName
 	}
+	if !s.deps.LocalResources() {
+		if err := s.deps.DeleteDatabase(ctx, p, project, db); err != nil {
+			return placementError(err)
+		}
+	}
 	return s.deps.Store.UpdateAs(ctx, p, func(a *core.Account) error {
 		project, err := a.ProjectFor(p, p.OrganizationID, p.ProjectID)
 		if err != nil {
@@ -305,6 +313,30 @@ func (s Service) Delete(ctx context.Context, p core.Principal, databaseID, confi
 		a.Organizations[p.OrganizationID] = org
 		return nil
 	})
+}
+
+// roomForDatabase refuses the database name before TerraBase is asked for
+// it when the principal may not provision one, the project already has one
+// of that name, or the plan's allowance is used up; the store's commit
+// checks them again.
+func (s Service) roomForDatabase(ctx context.Context, p core.Principal, a core.Account, name string) error {
+	org := a.Organizations[p.OrganizationID]
+	if !org.CanProvisionResources(p.UserID) {
+		return core.ErrForbidden
+	}
+	for _, db := range org.Projects[p.ProjectID].Databases {
+		if db.Name == name {
+			return fmt.Errorf("%w: database %q already exists", core.ErrConflict, name)
+		}
+	}
+	plan, err := s.deps.Store.Plan(ctx, org.PlanID)
+	if err != nil {
+		return err
+	}
+	if plan.MaxDatabases > 0 && org.DatabaseCount() >= plan.MaxDatabases {
+		return core.ErrDatabaseLimit
+	}
+	return nil
 }
 
 func previewBranchName(sourceName string) string {

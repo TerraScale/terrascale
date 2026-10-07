@@ -11,6 +11,12 @@ import (
 
 func renderContent(t *testing.T, d pageData) string {
 	t.Helper()
+	d.Demo = true
+	return renderPage(t, d)
+}
+
+func renderPage(t *testing.T, d pageData) string {
+	t.Helper()
 	d.Databases = []databaseChoice{{ID: "db_1", Name: "primary"}}
 	d.Configs = []core.SharedResultConfig{{ID: "cfg_1", DatabaseID: "db_1", Name: "orders_view", Query: "SELECT * FROM orders", Transport: "http", Status: "paused"}}
 	var out bytes.Buffer
@@ -48,5 +54,14 @@ func TestRefusedConfigurationKeepsTheForm(t *testing.T) {
 		if !strings.Contains(page, want) {
 			t.Errorf("the refused form lacks %q", want)
 		}
+	}
+}
+
+// Outside the demo TerraBase does not deliver subscriptions: the page says so
+// and offers no form the server would refuse.
+func TestProductionPageOffersNoDemoConfiguration(t *testing.T) {
+	page := renderPage(t, pageData{CanWrite: true})
+	if !strings.Contains(page, "Query subscriptions are not available yet") || strings.Contains(page, "/api/v1/dashboard/subscriptions/attach") || strings.Contains(page, "Demo") {
+		t.Errorf("production page = %s", page)
 	}
 }

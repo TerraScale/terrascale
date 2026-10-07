@@ -86,7 +86,7 @@ type sqlCatalogField struct {
 // documents when the collection has no schema.
 func (s Service) SQLCatalog(ctx context.Context, p core.Principal, databaseID string) (sqlCatalog, error) {
 	catalog := sqlCatalog{Keywords: sqlKeywords, Collections: []sqlCatalogCollection{}}
-	db, err := s.database(ctx, p, databaseID)
+	project, db, err := s.database(ctx, p, databaseID)
 	if err != nil {
 		return catalog, err
 	}
@@ -113,7 +113,7 @@ func (s Service) SQLCatalog(ctx context.Context, p core.Principal, databaseID st
 		}
 		return catalog, nil
 	}
-	client, err := s.deps.Documents(p, db.Name)
+	client, err := s.deps.Data(ctx, p, project, db)
 	if err != nil {
 		return catalog, err
 	}

@@ -110,12 +110,13 @@ same helper with the named key.
   `subscription_id`, `slug`) must be omitted, not stored as `""`. TerraBase
   only skips missing or `null` paths, and every empty value would collide.
 
-**Resource payloads.** Phase 1 retains `Database.Documents`, history, schema,
-indexes, recommendations, builds and backups as Store-backed local behavior.
-They persist with the database record. TODO(TS-463, TS-521): connect actual
-resource operations after the producer and Management contracts land. Local
-API-key secrets are dashboard records, not TerraBase data-plane credentials.
-The embedded payloads remain subject to TerraBase's document-size limits.
+**Resource payloads.** Only the in-memory demo keeps `Database.Documents`,
+history, schema, indexes, recommendations, builds, backups and API keys in its
+records. Outside it, every database lives in TerraBase (TS-671, see
+[User databases](#user-databases-ts-671)); its record keeps only the name,
+placement, status and `TerraBaseID`. Records written by phase 1 (TS-472) may
+still carry embedded payloads; nothing reads them, and the TS-602 wipe removes
+them.
 
 **Current v1 capabilities.** There is no native unique-constraint, case-folding,
 index or TTL configuration endpoint. The following table states the logical
@@ -432,6 +433,49 @@ Transactions are limited to 1024 operations and document bodies to 1 MiB,
 Native `AssertCount` scans at most 10,000 entries; exceeding the producer's
 limit fails safely. No native index, TTL, Management or Rust API endpoint is
 called for phase-1 persistence.
+
+## User databases (TS-671)
+
+Production runs without the demo: every database a user creates lives in
+TerraBase, placed in the regions the user chose (TS-669), reached through
+ts-go only (`internal/core/dataplane.go`).
+
+- **IDs.** A dashboard project's TerraBase organization and project IDs are
+  name-based UUIDs derived from the dashboard's IDs
+  (`Project.TerraBaseIDs`), so every region and every retry agrees on them
+  and nothing records them. A project mirrored from TerraBase (TS-611) keeps
+  its own. A database keeps its dashboard ID and records TerraBase's in
+  `Database.TerraBaseID`.
+- **Regions.** Each region's TerraBase comes from ts-atlas discovery
+  (`Region.API`). Before a region holds a database or a key of the project,
+  the dashboard registers the organization and project there as the signed-in
+  user (ts-go `RegisterProject`). Only a project admin may, since whoever
+  registers them owns them in TerraBase.
+- **Databases.** Create (`CreateDatabaseIn`, home region plus replicas),
+  regions, branch and delete go through the home region's Management API with
+  the user's ts-auth access token. The plan limit, the name and the role are
+  checked before TerraBase is asked; a database a refused commit left behind
+  is found again by name. A record without `TerraBaseID` (phase 1, TS-472) is
+  created in TerraBase, in its recorded regions, on first use
+  (`Deps.Ensure`).
+- **Contents.** Collections, documents and queries go through the Documents
+  API of the database's home region with the project's data key there
+  (`Project.DataKeys`, one per region, issued on first use and hidden from
+  members), so every member the dashboard authorizes (and MCP) reaches them.
+  SQL, indexes and counts use Management as the user, so they need a
+  dashboard page session and TerraBase membership (today the project admin who
+  registered the project). Collection schemas, history and backups have no
+  TerraBase route yet and are refused.
+- **API keys** on the API keys page are TerraBase data keys (`tb_…`), issued
+  in the project's region (or a narrowed database's home region) and listed
+  from every region the project is registered in, without the dashboard's
+  own.
+- Without ts-auth there is no user to act as in TerraBase, so databases keep
+  their contents in the records as in phase 1 (`Deps.DocumentsOnly`). Only
+  tests run that way: on Fly.io, TerraBase without `TS_AUTH_ISSUER` refuses
+  to start.
+- TODO(TS-589, TS-598, TS-599): when TerraBase accepts ts-auth project tokens,
+  organizations, projects and API keys move to ts-auth and the data keys go.
 
 ## System databases (TS-611)
 

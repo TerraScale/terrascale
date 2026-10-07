@@ -33,7 +33,11 @@ templ onboardingView(data pageData, csrfToken string) {
 		</div>
 		<div class="ts-onboarding-card">
 			if data.Step == "payment-method" && data.PaymentCanceled {
-				@ui.Alert("warning", "Payment setup canceled", "Your earlier account progress is still saved. No payment method was changed; you can continue on the Free plan or try the demo checkout again.")
+				if data.Demo {
+					@ui.Alert("warning", "Payment setup canceled", "Your earlier account progress is still saved. No payment method was changed; you can continue on the Free plan or try the demo checkout again.")
+				} else {
+					@ui.Alert("warning", "Payment setup canceled", "Your earlier account progress is still saved. No payment method was changed; you can continue on the Free plan or try checkout again.")
+				}
 			}
 			if data.Error != "" && data.ErrorField == "" {
 				@ui.Alert("danger", "", data.Error)

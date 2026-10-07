@@ -1,28 +1,25 @@
 // Package tsgo constructs TerraScale SDK clients for the dashboard's live
-// Documents calls. Authorization of the dashboard principal happens in each
+// TerraBase calls. Authorization of the dashboard principal happens in each
 // feature before a client is requested.
 package tsgo
 
 import (
-	"errors"
 	"net/http"
-	"strings"
 
 	"terrascale.tech/sdk/v1"
 )
 
-// Factory holds the public API origin and a server credential. Callers
-// address the project in every Documents path (Client.Database), and
-// TerraBase authorizes it against the credential.
+// Factory holds the HTTP client every TerraBase client shares. Callers
+// address the project in every path, and TerraBase authorizes it against
+// the key or the user's token.
 type Factory struct {
-	APIBaseURL  string
-	AccessToken string
-	HTTPClient  *http.Client
+	HTTPClient *http.Client
 }
 
-func (f Factory) ForDocuments(tenantID, projectID string) (*v1.Client, error) {
-	if strings.TrimSpace(tenantID) == "" || strings.TrimSpace(projectID) == "" {
-		return nil, errors.New("tsgo: organization and project scope are required")
-	}
-	return v1.New(v1.Config{BaseURL: f.APIBaseURL, Token: f.AccessToken, HTTPClient: f.HTTPClient})
+func (f Factory) Documents(api, key string) (*v1.Client, error) {
+	return v1.New(v1.Config{BaseURL: api, Token: key, HTTPClient: f.HTTPClient})
+}
+
+func (f Factory) Management(api string) (*v1.Management, error) {
+	return v1.NewManagement(v1.Config{BaseURL: api, HTTPClient: f.HTTPClient})
 }

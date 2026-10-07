@@ -95,6 +95,7 @@ type pageData struct {
 	EstateActionCount   int
 	Plans               []core.Plan
 	Inventory           inventoryCounts
+	Demo                bool
 }
 
 var adminEstateTabs = [...]string{"regions", "hosts", "operations"}
@@ -158,6 +159,7 @@ func adminPage(deps core.Deps, service Service, section string) http.HandlerFunc
 		}
 		data.Notice = r.URL.Query().Get("notice")
 		data.Error = r.URL.Query().Get("error")
+		data.Demo = deps.Demo
 		page := core.Page{
 			Layout: "admin", Title: data.Title,
 			Principal: principal,

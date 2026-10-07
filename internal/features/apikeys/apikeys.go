@@ -1,7 +1,6 @@
 package apikeys
 
 import (
-	"context"
 	json "encoding/json/v2"
 	"errors"
 	"net/http"
@@ -9,22 +8,11 @@ import (
 	"terrascale.tech/dashboard/internal/core"
 )
 
-// CredentialIssuer is the unpublished live producer key boundary. The current
-// application does not inject one because the producer has no pinned public
-// issuance contract; live requests fail explicitly until that exists.
-type CredentialIssuer interface {
-	Create(context.Context, core.Principal, CreateProjectAPIKeyRequest) (*ProjectAPIKeySecret, error)
-	Rotate(context.Context, core.Principal, string) (*ProjectAPIKeySecret, error)
-	Revoke(context.Context, core.Principal, string) (*ProjectAPIKeyRevocation, error)
-}
-
-func Mount(mux *http.ServeMux, deps core.Deps) { MountWithIssuer(mux, deps, nil) }
-
-// MountWithIssuer owns the project credential routes and tools. The
+// Mount owns the project credential routes and tools. The
 // /api/v1/projects routes are the SDK's project API key contract, so they
 // only address API keys, never M2M clients.
-func MountWithIssuer(mux *http.ServeMux, deps core.Deps, issuer CredentialIssuer) {
-	service := Service{deps: deps, issuer: issuer}
+func Mount(mux *http.ServeMux, deps core.Deps) {
+	service := Service{deps: deps}
 	mountTools(deps.Tools, service)
 	mountPages(mux, deps, service)
 	root := "/api/v1/projects/{projectID}/auth/api-keys"

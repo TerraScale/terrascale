@@ -197,7 +197,7 @@ func redirectPageError(w http.ResponseWriter, r *http.Request, err error, create
 	case errors.Is(err, core.ErrForbidden):
 		message = "Only organization owners and admins can manage credentials."
 	case errors.Is(err, errLiveCredentials):
-		message = "Credentials cannot be issued, rotated, or revoked here yet."
+		message = "TerraBase keys cannot be rotated, and machine clients are not issued yet. Create a new key and revoke the old one instead."
 	case errors.Is(err, core.ErrUnavailable):
 		message = "The credential service is unavailable right now. Try again in a moment."
 	default:
@@ -245,7 +245,11 @@ func renderPage(w http.ResponseWriter, r *http.Request, deps core.Deps, service 
 	}
 	filter := credentialFilter{Kind: controlsFor(data.Kind).CredentialKind, Status: data.Status, DatabaseID: data.DatabaseID, Search: data.Search}
 	credentials, err := service.List(ctx, p, filter)
-	if err != nil {
+	var issuer issuerError
+	if errors.As(err, &issuer) {
+		// TerraBase did not list the keys: say so, and keep the page.
+		data.Error = "TerraBase did not list this project's keys. " + core.SystemUnavailable(issuer.err)
+	} else if err != nil {
 		writeError(w, err)
 		return
 	}
