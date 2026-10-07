@@ -34,8 +34,16 @@ public sealed class GetDashboardDocumentEndpoint(IManagementCommits commits) : E
             return ErrorResponse.From(new Forbidden("the dashboard document space needs the management service credential"));
         }
 
-        var collection = DocumentRoute.CollectionName(HttpContext);
-        var id = DocumentRoute.DocumentId(ManagementRoute.Value(HttpContext, "id"));
+        return (DocumentRoute.CheckCollectionName(HttpContext), DocumentRoute.CheckDocumentId(ManagementRoute.Value(HttpContext, "id"))) switch
+        {
+            (Validation error, _) => ErrorResponse.From(error),
+            (_, Validation error) => ErrorResponse.From(error),
+            (string collection, string id) => await ReadAsync(collection, id, cancellationToken),
+        };
+    }
+
+    private async ValueTask<IResult> ReadAsync(string collection, string id, CancellationToken cancellationToken)
+    {
         if (await commits.GetDocumentAsync(collection, id, cancellationToken) is not StoredDocument document)
         {
             return ErrorResponse.From(new NotFound("the document does not exist"));

@@ -46,13 +46,14 @@ public sealed class ListCollectionsEndpoint(IDocumentService documents, ITenantD
             },
         };
 
-    private async ValueTask<IResult> ListAsync(TenantContext database, string? after, int limit, CancellationToken cancellationToken)
-    {
-        var (collections, hasMore) = await documents.ListCollectionsAsync(database, after, limit, cancellationToken);
-        return TypedResults.Ok(new CollectionPageBody(
-            [.. collections.Select(CreateCollectionEndpoint.Body)],
-            hasMore ? Base64Url.EncodeToString(Encoding.UTF8.GetBytes(collections[^1].Name)) : null));
-    }
+    private async ValueTask<IResult> ListAsync(TenantContext database, string? after, int limit, CancellationToken cancellationToken) =>
+        await documents.ListCollectionsAsync(database, after, limit, cancellationToken) switch
+        {
+            NotFound error => ErrorResponse.From(error),
+            CollectionPage page => TypedResults.Ok(new CollectionPageBody(
+                [.. page.Collections.Select(CreateCollectionEndpoint.Body)],
+                page.HasMore ? Base64Url.EncodeToString(Encoding.UTF8.GetBytes(page.Collections[^1].Name)) : null)),
+        };
 
     private static Valid<CollectionCursor> Cursor(IQueryCollection query)
     {

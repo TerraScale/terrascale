@@ -271,6 +271,58 @@ public sealed class TransactionApiTests
         await Assert.That((await api.GetAsync(ids[0])).Version).IsEqualTo(bounded.Json.GetProperty("results")[0].GetProperty("version").GetString());
     }
 
+    [Test]
+    public async Task Every_transaction_failure_names_its_status_code_message_and_operation()
+    {
+        await using var api = await DocumentApi.StartAsync();
+        var existing = DocumentApi.NewId();
+        (await api.SendRawAsync(HttpMethod.Put, api.Document(existing), """{"n":1,"a":[1]}""", "application/json")).Status.ShouldBe(HttpStatusCode.Created);
+        var create = """{"op":"create","collection":"items","document":{}}""";
+        (string Body, HttpStatusCode Status, string Code, string Message, int? Op)[] cases =
+        [
+            ("{", HttpStatusCode.BadRequest, "invalid_request", "the body must be valid JSON", null),
+            ("[]", HttpStatusCode.BadRequest, "invalid_request", "the body must be a JSON object", null),
+            ("""{"ops":[],"extra":1}""", HttpStatusCode.BadRequest, "invalid_request", "the body is {\"ops\":[…]} with no other or repeated member", null),
+            ("""{"ops":[]}""", HttpStatusCode.BadRequest, "invalid_request", "ops must hold 1 to 1024 operations", null),
+            (Ops(create, "1"), HttpStatusCode.BadRequest, "invalid_request", "each operation is a JSON object", 1),
+            (Ops(create, """{"op":"create","collection":"items","document":{},"if_match":null}"""), HttpStatusCode.BadRequest, "invalid_request", "operation members cannot be null", 1),
+            (Ops("""{"op":"upsert","collection":"items","document":{}}"""), HttpStatusCode.BadRequest, "invalid_request", "the operation's kind or members are invalid", 0),
+            (Ops($$$$"""{"op":"put","collection":"items","id":"{{{existing}}}","document":{},"if_match":"*","if_none_match":"*"}"""),
+                HttpStatusCode.BadRequest, "invalid_request", "if_none_match is \"*\" and excludes if_match", 0),
+            (Ops([.. Enumerable.Repeat("""{"op":"assert_count","collection":"items","lte":1}""", 17)]), HttpStatusCode.BadRequest, "invalid_request", "a transaction has at most 16 assert_count operations", 16),
+            (Ops(Patch(existing, """{"op":"unset","path":"/n"}"""), Patch(existing, """{"op":"unset","path":"/a"}""")), HttpStatusCode.BadRequest, "invalid_request", "two operations target the same document", 1),
+            (Ops(create, """{"op":"create","collection":"nope","document":{}}"""), HttpStatusCode.NotFound, "unknown_collection", "the collection does not exist", 1),
+            (Ops(create, Patch(DocumentApi.NewId(), """{"op":"unset","path":"/n"}""")), HttpStatusCode.NotFound, "not_found", "the document does not exist", 1),
+            (Ops(create, """{"op":"create","collection":"items","id":"NOT-A-UUID","document":{}}"""), HttpStatusCode.BadRequest, "invalid_request", "a new id must be a lowercase hyphenated UUID", 1),
+            (Ops(create, $$$"""{"op":"create","collection":"items","id":"{{{existing}}}","document":{}}"""), HttpStatusCode.PreconditionFailed, "precondition_failed", "the document exists", 1),
+            (Ops(create, $$$"""{"op":"put","collection":"items","id":"{{{existing}}}","document":{},"if_match":"tbv1-00000000000000000000000000000000"}"""), HttpStatusCode.PreconditionFailed, "precondition_failed", "the document version does not match", 1),
+            (Ops(create, $$$"""{"op":"assert","collection":"items","id":"{{{existing}}}","filter":{"exists":"/missing"}}"""), HttpStatusCode.PreconditionFailed, "precondition_failed", "the document does not match", 1),
+            (Ops(create, """{"op":"assert_count","collection":"items","filter":{"exists":"/n"},"lte":0}"""), HttpStatusCode.PreconditionFailed, "precondition_failed", "the count is out of bounds", 1),
+            (Ops(create, Patch(existing, """{"op":"inc","path":"/a","by":1}""")), HttpStatusCode.Conflict, "patch_conflict", "inc needs a number", 1),
+            (Ops(create, Patch(existing, """{"op":"append","path":"/n","value":1}""")), HttpStatusCode.Conflict, "patch_conflict", "append needs an array", 1),
+            (Ops(create, Patch(existing, """{"op":"set","path":"/n/x","value":1}""")), HttpStatusCode.Conflict, "patch_conflict", "a patch path crosses a value that is not an object", 1),
+        ];
+
+        var mismatches = new List<string>();
+        foreach (var (body, status, code, message, op) in cases)
+        {
+            var result = await api.SendRawAsync(HttpMethod.Post, api.Transactions, body, "application/json");
+            if ((result.Status, result.Code, result.Message, result.Op) != (status, code, message, op))
+            {
+                mismatches.Add($"{body} -> {(int)result.Status} {result.Code} '{result.Message}' op {result.Op}");
+            }
+        }
+
+        var unchanged = await api.GetAsync(existing);
+
+        await Assert.That(mismatches).IsEmpty();
+        await Assert.That(unchanged.Json.GetProperty("document").GetRawText()).IsEqualTo("""{"n":1,"a":[1]}""");
+    }
+
+    private static string Ops(params string[] ops) => $$"""{"ops":[{{string.Join(",", ops)}}]}""";
+
+    private static string Patch(string id, string ops) => $$"""{"op":"patch","collection":"items","id":"{{id}}","ops":[{{ops}}]}""";
+
     private static long Offset(ApiResponse response) =>
         long.Parse(response.Json.GetProperty("offset").GetString()!, System.Globalization.CultureInfo.InvariantCulture);
 }

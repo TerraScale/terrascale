@@ -10,8 +10,8 @@ using TerraScale.TerraBase.Primitives;
 namespace TerraScale.TerraBase.Features.Documents;
 
 /// <summary>
-/// The boundary validator for client JSON. Request bodies deserialize strictly through <see cref="Deserialize{T}"/>;
-/// every client value (documents, patch values and operands, query values) passes <see cref="ValidateValue"/> before anything uses it; document admission lives in the storage write path, so the rest of the slice only sees bounded, finite JSON.
+/// The boundary validator for client JSON. Request bodies deserialize strictly through <see cref="Read{T}"/>;
+/// every client value (documents, patch values and operands, query values) passes <see cref="CheckValue"/> before anything uses it; document admission lives in the storage write path, so the rest of the slice only sees bounded, finite JSON.
 /// </summary>
 public static class RequestJson
 {
@@ -44,10 +44,6 @@ public static class RequestJson
 
     /// <summary>The rule <see cref="IsText"/> checks, as its failure message.</summary>
     public const string TextRule = "strings must be valid UTF-8 without lone UTF-16 surrogate escapes";
-
-    /// <summary>As <see cref="Read{T}"/>, for the callers not converted to unions yet.</summary>
-    public static T Deserialize<T>(ReadOnlySpan<byte> json, string code) =>
-        TryRead<T>(json, out var value, out var rule) ? value : throw DocumentRoute.Throwable(new Validation(rule, code));
 
     /// <summary>
     /// Deserializes a request body: exact member names, no unknown or duplicate members, numbers as numbers and no
@@ -100,15 +96,6 @@ public static class RequestJson
         }
 
         return true;
-    }
-
-    /// <summary>As <see cref="CheckValue"/>, for the callers not converted to unions yet.</summary>
-    public static void ValidateValue(JsonElement value, string code)
-    {
-        if (CheckValue(value, code) is Validation error)
-        {
-            throw DocumentRoute.Throwable(error);
-        }
     }
 
     /// <summary>

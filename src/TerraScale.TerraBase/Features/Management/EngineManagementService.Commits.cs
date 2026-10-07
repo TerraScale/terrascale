@@ -159,8 +159,7 @@ internal sealed partial class EngineManagementService
                 : new NotFound("the document does not exist"),
             cancellationToken);
 
-    public ValueTask<(QueryPage Page, (long Count, bool Complete)? Count)> QueryDocumentsAsync(
-        DocumentQuery query, long? countLimit, CancellationToken cancellationToken)
+    public ValueTask<QueryResult> QueryDocumentsAsync(DocumentQuery query, long? countLimit, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(query);
         return ReadAsync(transaction => documents.Value.QueryAsync(transaction, query with { Collection = DashboardSpace + query.Collection }, countLimit, cancellationToken), cancellationToken);
@@ -272,42 +271,16 @@ internal sealed partial class EngineManagementService
         return new CommitOutcome(body, Replayed: false);
     }
 
-    // Document operations keep the Documents API's errors, which that slice still throws (docs/error-handling.md);
-    // they become failures of the commit here, at the boundary.
+    // Document operations keep the Documents API's failures, with their codes, as failures of the commit.
     private async ValueTask<CommitStep> ApplyDocumentAsync(IStorageTransaction transaction, DocumentOperation operation, CancellationToken cancellationToken)
     {
         var stored = operation with { Collection = DashboardSpace + operation.Collection };
-        OperationResult result;
-        try
+        return await documents.Value.ApplyAsync(transaction, stored, cancellationToken).ConfigureAwait(false) switch
         {
-            result = await documents.Value.ApplyAsync(transaction, stored, cancellationToken).ConfigureAwait(false);
-        }
-        catch (ApiException error)
-        {
-            return new OperationFailed(FromDocuments(error));
-        }
-
-        return result switch
-        {
-            { Version: not null, ETag: { } etag } => new CommitResultBody(result.Id, etag),
-            { Count: { } count } => Counted(count),
-            _ => new CommitResultBody(Asserted: true),
-        };
-    }
-
-    /// <summary>A Documents API error as the failure it stands for.</summary>
-    internal static Failure FromDocuments(ApiException error)
-    {
-        ArgumentNullException.ThrowIfNull(error);
-        var message = error.Detail ?? error.Code;
-        return error.StatusCode switch
-        {
-            StatusCodes.Status404NotFound => new NotFound(message, error.Code),
-            StatusCodes.Status409Conflict => new Conflict(message, error.Code),
-            StatusCodes.Status412PreconditionFailed => new PreconditionFailed(message, error.Code),
-            StatusCodes.Status403Forbidden => new Forbidden(message, error.Code),
-            StatusCodes.Status503ServiceUnavailable => new Unavailable(message, error.Code),
-            _ => new Validation(message, error.Code),
+            DocumentRejected rejected => new OperationFailed(rejected.Error),
+            OperationResult { Version: not null, ETag: { } etag } result => new CommitResultBody(result.Id, etag),
+            OperationResult { Count: { } count } => Counted(count),
+            OperationResult => new CommitResultBody(Asserted: true),
         };
     }
 

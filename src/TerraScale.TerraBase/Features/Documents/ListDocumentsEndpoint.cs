@@ -62,10 +62,17 @@ public sealed class ListDocumentsEndpoint(IDocumentService documents, ITenantDir
         };
 
     private async ValueTask<IResult> PageAsync(
-        TenantContext database, string collection, string digest, QueryPosition? after, int limit, CancellationToken cancellationToken)
+        TenantContext database, string collection, string digest, QueryPosition? after, int limit, CancellationToken cancellationToken) =>
+        await documents.QueryAsync(
+            database, new DocumentQuery(collection, null, [], after, limit, DocumentRoute.MaxPageBytes), countLimit: null, cancellationToken) switch
+        {
+            NotFound error => ErrorResponse.From(error),
+            Validation error => ErrorResponse.From(error),
+            QueryOutcome outcome => Page(collection, digest, outcome.Page, cancellationToken),
+        };
+
+    private static IResult Page(string collection, string digest, QueryPage page, CancellationToken cancellationToken)
     {
-        var (page, _) = await documents.QueryAsync(
-            database, new DocumentQuery(collection, null, [], after, limit, DocumentRoute.MaxPageBytes), countLimit: null, cancellationToken);
         if (!page.HasMore)
         {
             return TypedResults.Ok(new DocumentPageBody(Bodies(collection, page, cancellationToken), null));

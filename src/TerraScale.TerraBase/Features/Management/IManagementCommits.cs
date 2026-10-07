@@ -118,5 +118,5 @@ public interface IManagementCommits
     ValueTask<Found<StoredDocument>> GetDocumentAsync(string collection, string id, CancellationToken cancellationToken);
 
     /// <summary>Queries the dashboard document space, as the Documents API query does.</summary>
-    ValueTask<(QueryPage Page, (long Count, bool Complete)? Count)> QueryDocumentsAsync(DocumentQuery query, long? countLimit, CancellationToken cancellationToken);
+    ValueTask<QueryResult> QueryDocumentsAsync(DocumentQuery query, long? countLimit, CancellationToken cancellationToken);
 }

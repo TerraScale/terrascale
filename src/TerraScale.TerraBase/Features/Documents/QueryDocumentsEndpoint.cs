@@ -72,13 +72,21 @@ public sealed class QueryDocumentsEndpoint(IDocumentService documents, ITenantDi
         };
 
     private async ValueTask<IResult> PageAsync(
-        TenantContext database, string collection, byte[] body, QueryRequest request, ParsedQuery query, QueryPosition? after, CancellationToken cancellationToken)
-    {
-        var (page, count) = await documents.QueryAsync(
+        TenantContext database, string collection, byte[] body, QueryRequest request, ParsedQuery query, QueryPosition? after, CancellationToken cancellationToken) =>
+        await documents.QueryAsync(
             database,
             new DocumentQuery(collection, query.Filter, query.Sort, after, query.Limit, DocumentRoute.MaxPageBytes),
             request.Count == true && after is null ? MaxCount : null,
-            cancellationToken);
+            cancellationToken) switch
+        {
+            NotFound error => ErrorResponse.From(error),
+            Validation error => ErrorResponse.From(error),
+            QueryOutcome outcome => Page(collection, body, query, outcome.Page, outcome.Count, cancellationToken),
+        };
+
+    private static IResult Page(
+        string collection, byte[] body, ParsedQuery query, QueryPage page, (long Count, bool Complete)? count, CancellationToken cancellationToken)
+    {
         if (!page.HasMore)
         {
             return TypedResults.Ok(Body(collection, query, page, count, next: null, cancellationToken));

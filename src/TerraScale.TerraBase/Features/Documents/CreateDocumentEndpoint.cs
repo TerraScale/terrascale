@@ -56,8 +56,8 @@ public sealed class CreateDocumentEndpoint(IDocumentService documents, ITenantDi
 
     private async ValueTask<IResult> CreateAsync(DocumentKey key, byte[] json, Precondition precondition, CancellationToken cancellationToken)
     {
-        var (body, _) = await DocumentRoute.WriteAsync(
-            HttpContext, documents, key, new PutOperation(key.Collection, key.Id, json, precondition), cancellationToken);
-        return TypedResults.Created(DocumentRoute.Location(HttpContext, key), body);
+        return await DocumentRoute.WriteAsync(
+            HttpContext, documents, key, new PutOperation(key.Collection, key.Id, json, precondition),
+            (body, _) => TypedResults.Created(DocumentRoute.Location(HttpContext, key), body), cancellationToken);
     }
 }

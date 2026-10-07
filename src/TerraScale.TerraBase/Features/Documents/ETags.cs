@@ -69,13 +69,6 @@ internal static class ETags
                 live && ifNoneMatch.Count > 0 && (ifNoneMatch[0].Equals(EntityTagHeaderValue.Any) || ifNoneMatch.Any(tag => Opaque(tag) == version)),
         };
 
-    /// <summary>As <see cref="CheckIfMatch"/>, for the callers not converted to unions yet.</summary>
-    public static Precondition IfMatch(string value) => CheckIfMatch(value) switch
-    {
-        Precondition precondition => precondition,
-        Validation error => throw DocumentRoute.Throwable(error),
-    };
-
     /// <summary>
     /// A transaction operation's <c>if_match</c>: the contract's bare version (<c>"tbv1-…"</c>), or anything
     /// <c>If-Match</c> accepts, read by the same parser, so <c>"\"*\""</c> is a literal tag and never the wildcard.
@@ -91,15 +84,6 @@ internal static class ETags
 
     private static bool IsVersion(string value) =>
         value.Length == 37 && value.StartsWith("tbv1-", StringComparison.Ordinal) && !value.AsSpan(5).ContainsAnyExcept(LowerHex);
-
-    /// <summary>As <see cref="CheckVersion"/>, for the callers not converted to unions yet.</summary>
-    public static void Check(Precondition precondition, bool live, string? version)
-    {
-        if (CheckVersion(precondition, live, version) is PreconditionFailed failed)
-        {
-            throw DocumentRoute.Throwable(failed);
-        }
-    }
 
     /// <summary>
     /// Fails with <c>412 precondition_failed</c> unless <paramref name="precondition"/> holds for the current state:

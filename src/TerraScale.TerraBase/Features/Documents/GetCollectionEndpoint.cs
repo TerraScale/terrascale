@@ -32,7 +32,8 @@ public sealed class GetCollectionEndpoint(IDocumentService documents, ITenantDir
             {
                 (Validation error, _) => ErrorResponse.From(error),
                 (_, Validation error) => ErrorResponse.From(error),
-                (string name, _) => TypedResults.Ok(CreateCollectionEndpoint.Body(await documents.GetCollectionAsync(database, name, cancellationToken))),
+                (string name, _) => CreateCollectionEndpoint.Answer(
+                    await documents.GetCollectionAsync(database, name, cancellationToken), collection => TypedResults.Ok(CreateCollectionEndpoint.Body(collection))),
             },
         };
 }

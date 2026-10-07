@@ -35,8 +35,8 @@ public sealed class DeleteDocumentEndpoint(IDocumentService documents, ITenantDi
                 (Validation error, _, _) => ErrorResponse.From(error),
                 (_, Validation error, _) => ErrorResponse.From(error),
                 (_, _, Validation error) => ErrorResponse.From(error),
-                (_, _, Precondition precondition) => TypedResults.Ok((await DocumentRoute.WriteAsync(
-                    HttpContext, documents, key, new DeleteOperation(key.Collection, key.Id, precondition), cancellationToken)).Body),
+                (_, _, Precondition precondition) => await DocumentRoute.WriteAsync(
+                    HttpContext, documents, key, new DeleteOperation(key.Collection, key.Id, precondition), (body, _) => TypedResults.Ok(body), cancellationToken),
             },
         };
 }

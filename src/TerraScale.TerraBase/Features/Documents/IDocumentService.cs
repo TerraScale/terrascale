@@ -1,4 +1,5 @@
 using TerraScale.TerraBase.Engine;
+using TerraScale.TerraBase.Errors;
 using TerraScale.TerraBase.Tenancy;
 
 namespace TerraScale.TerraBase.Features.Documents;
@@ -70,49 +71,79 @@ public sealed record OperationResult(string? Id, long? Version, bool Created, lo
 /// <param name="Scope">ETag scope of the database that committed this write.</param>
 public sealed record WriteResult(long Offset, IReadOnlyList<OperationResult> Results, Guid Scope);
 
+/// <summary>A refused document request: the failure, and the failing operation's index when the caller asked for it.</summary>
+/// <param name="Error">The failure, with its Documents API v1 code.</param>
+/// <param name="Op">Index of the failing operation of a transaction, or <see langword="null"/>.</param>
+public sealed record DocumentRejected(Failure Error, int? Op = null);
+
+/// <summary>A collection, or why the request about it failed: unknown database or collection, a taken name, capacity.</summary>
+public readonly union CollectionResult(CollectionInfo, NotFound, Conflict, Unavailable);
+
+/// <summary>A page of collections in name order.</summary>
+/// <param name="Collections">The collections.</param>
+/// <param name="HasMore">Whether more follow.</param>
+public sealed record CollectionPage(IReadOnlyList<CollectionInfo> Collections, bool HasMore);
+
+/// <summary>A document that was never written: no live document and no tombstone.</summary>
+public sealed record NeverWritten;
+
 /// <summary>
-/// JSON document operations for the client API, over <see cref="IStorageEngine"/>. Failures are
-/// <see cref="Hosting.ApiException"/>s with Documents API v1 codes.
+/// A document or its tombstone; that it was never written; an unknown database or collection; or an address that is
+/// neither a UUID nor an existing legacy id.
 /// </summary>
+public readonly union DocumentRead(StoredDocument, NeverWritten, NotFound, Validation);
+
+/// <summary>A query page and its count, when one was asked for.</summary>
+/// <param name="Page">The page.</param>
+/// <param name="Count">Matches among at most the count limit, and whether that count is exact.</param>
+public sealed record QueryOutcome(QueryPage Page, (long Count, bool Complete)? Count);
+
+/// <summary>A query's page, or why there is none: an unknown database or collection, or a query over the engine budget.</summary>
+public readonly union QueryResult(QueryOutcome, NotFound, Validation);
+
+/// <summary>An atomic write's result, or the operation that refused it.</summary>
+public readonly union WriteOutcome(WriteResult, DocumentRejected);
+
+/// <summary>One applied operation, or why it was refused.</summary>
+public readonly union ApplyOutcome(OperationResult, DocumentRejected);
+
+/// <summary>JSON document operations for the client API, over <see cref="IStorageEngine"/>, with Documents API v1 failures.</summary>
 public interface IDocumentService
 {
-    /// <summary>Creates a collection; fails with <c>name_taken</c> when it exists.</summary>
-    ValueTask<CollectionInfo> CreateCollectionAsync(TenantContext database, string name, CancellationToken cancellationToken);
+    /// <summary>Creates a collection; <c>name_taken</c> when it exists.</summary>
+    ValueTask<CollectionResult> CreateCollectionAsync(TenantContext database, string name, CancellationToken cancellationToken);
 
     /// <summary>Reads a collection.</summary>
-    ValueTask<CollectionInfo> GetCollectionAsync(TenantContext database, string name, CancellationToken cancellationToken);
+    ValueTask<CollectionResult> GetCollectionAsync(TenantContext database, string name, CancellationToken cancellationToken);
 
     /// <summary>Lists collections in name order after <paramref name="afterName"/>.</summary>
-    ValueTask<(IReadOnlyList<CollectionInfo> Collections, bool HasMore)> ListCollectionsAsync(
-        TenantContext database, string? afterName, int limit, CancellationToken cancellationToken);
+    ValueTask<Found<CollectionPage>> ListCollectionsAsync(TenantContext database, string? afterName, int limit, CancellationToken cancellationToken);
 
     /// <summary>Drops a collection and every document in it.</summary>
-    ValueTask<CollectionInfo> DropCollectionAsync(TenantContext database, string name, CancellationToken cancellationToken);
+    ValueTask<CollectionResult> DropCollectionAsync(TenantContext database, string name, CancellationToken cancellationToken);
 
-    /// <summary>Reads a document or its tombstone; <see langword="null"/> when it was never written.</summary>
-    ValueTask<StoredDocument?> GetAsync(DocumentKey key, CancellationToken cancellationToken);
+    /// <summary>Reads a document or its tombstone.</summary>
+    ValueTask<DocumentRead> GetAsync(DocumentKey key, CancellationToken cancellationToken);
 
     /// <summary>
     /// Runs a query and, when <paramref name="countLimit"/> is set, counts matches among at most that many
     /// documents (<c>Complete</c> is <see langword="false"/> when more exist).
     /// </summary>
-    ValueTask<(QueryPage Page, (long Count, bool Complete)? Count)> QueryAsync(
-        TenantContext database, DocumentQuery query, long? countLimit, CancellationToken cancellationToken);
+    ValueTask<QueryResult> QueryAsync(TenantContext database, DocumentQuery query, long? countLimit, CancellationToken cancellationToken);
 
     /// <summary>
     /// Applies <paramref name="operations"/> atomically: assertions first, against the state before
-    /// any write, then writes in order. With <paramref name="indexErrors"/>, a failure names its operation.
+    /// any write, then writes in order. With <paramref name="indexErrors"/>, a refusal names its operation.
     /// </summary>
-    ValueTask<WriteResult> WriteAsync(
+    ValueTask<WriteOutcome> WriteAsync(
         TenantContext database, IReadOnlyList<DocumentOperation> operations, bool indexErrors, CancellationToken cancellationToken);
 
     /// <summary>
-    /// Applies one operation in a write transaction the caller owns and commits, with the failures of
+    /// Applies one operation in a write transaction the caller owns and commits, with the refusals of
     /// <see cref="WriteAsync"/>. Collections are not checked: the caller's store decides which exist.
     /// </summary>
-    ValueTask<OperationResult> ApplyAsync(IStorageTransaction transaction, DocumentOperation operation, CancellationToken cancellationToken);
+    ValueTask<ApplyOutcome> ApplyAsync(IStorageTransaction transaction, DocumentOperation operation, CancellationToken cancellationToken);
 
     /// <summary>Runs a query, and a count as in <see cref="QueryAsync(TenantContext, DocumentQuery, long?, CancellationToken)"/>, in a transaction the caller owns.</summary>
-    ValueTask<(QueryPage Page, (long Count, bool Complete)? Count)> QueryAsync(
-        IStorageTransaction transaction, DocumentQuery query, long? countLimit, CancellationToken cancellationToken);
+    ValueTask<QueryResult> QueryAsync(IStorageTransaction transaction, DocumentQuery query, long? countLimit, CancellationToken cancellationToken);
 }

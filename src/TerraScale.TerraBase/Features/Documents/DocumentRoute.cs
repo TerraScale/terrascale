@@ -1,10 +1,10 @@
+using System.Diagnostics;
 using System.Globalization;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.Net.Http.Headers;
 using TerraScale.TerraBase.Engine;
 using TerraScale.TerraBase.Errors;
 using TerraScale.TerraBase.Features.ApiKeys;
-using TerraScale.TerraBase.Hosting;
 using TerraScale.TerraBase.Tenancy;
 
 namespace TerraScale.TerraBase.Features.Documents;
@@ -49,10 +49,11 @@ internal static class DocumentRoute
 
     public static string Project(HttpContext context) => (string)context.Request.RouteValues["project"]!;
 
+    /// <summary>The route's database name, which the tenant check already validated.</summary>
     public static DatabaseName Database(HttpContext context) => CheckDatabase(context) switch
     {
         DatabaseName name => name,
-        Validation error => throw Throwable(error),
+        Validation => throw new UnreachableException("the tenant check validates the database name first"),
     };
 
     /// <summary>The route's database name, or the rule it breaks.</summary>
@@ -60,15 +61,6 @@ internal static class DocumentRoute
         DatabaseName.TryParse(context.Request.RouteValues["database"] as string, out var name)
             ? name
             : new Validation("database must be a lowercase name of at most 63 characters");
-
-    /// <summary>As <see cref="CheckTenantAsync"/>, for the callers not converted to unions yet.</summary>
-    public static async ValueTask<TenantContext> TenantAsync(HttpContext context, ITenantDirectory tenants, CancellationToken cancellationToken) =>
-        await CheckTenantAsync(context, tenants, cancellationToken).ConfigureAwait(false) switch
-        {
-            TenantContext tenant => tenant,
-            Validation error => throw Throwable(error),
-            NotFound error => throw Throwable(error),
-        };
 
     /// <summary>
     /// Resolves the request's tenant: the route's database, in the route's project of the API key's organization.
@@ -95,14 +87,6 @@ internal static class DocumentRoute
         return tenant;
     }
 
-    public static string CollectionName(HttpContext context) => CollectionName(context.Request.RouteValues["collection"] as string);
-
-    public static string CollectionName(string? name) => CheckCollectionName(name) switch
-    {
-        string collection => collection,
-        Validation error => throw Throwable(error),
-    };
-
     /// <summary>The route's collection name, or the rule it breaks.</summary>
     public static Valid<string> CheckCollectionName(HttpContext context) => CheckCollectionName(context.Request.RouteValues["collection"] as string);
 
@@ -126,14 +110,9 @@ internal static class DocumentRoute
             },
         };
 
-    /// <summary>Bounds an address; the service permits a non-UUID only when that legacy id already exists.</summary>
-    public static string DocumentId(string? id) => CheckDocumentId(id) switch
-    {
-        string valid => valid,
-        Validation error => throw Throwable(error),
-    };
-
-    /// <summary>A document id, or the rule it breaks.</summary>
+    /// <summary>
+    /// A document id, or the rule it breaks; the service permits a non-UUID only when that legacy id already exists.
+    /// </summary>
     public static Valid<string> CheckDocumentId(string? id) =>
         id is { Length: > 0 and <= 256 } && !id.Any(char.IsControl)
             ? id
@@ -145,13 +124,6 @@ internal static class DocumentRoute
 
     public static bool IsUuid(string id) =>
         Guid.TryParseExact(id, "D", out var guid) && string.Equals(guid.ToString("D"), id, StringComparison.Ordinal);
-
-    /// <summary>As <see cref="CheckParameters"/>, for the callers not converted to unions yet.</summary>
-    public static IQueryCollection Parameters(HttpContext context, params string[] allowed) => CheckParameters(context, allowed) switch
-    {
-        IQueryCollection query => query,
-        Validation error => throw Throwable(error),
-    };
 
     /// <summary>Accepts only the listed query parameters, each at most once and non-empty.</summary>
     public static Valid<IQueryCollection> CheckParameters(HttpContext context, params string[] allowed)
@@ -178,44 +150,34 @@ internal static class DocumentRoute
                 ? limit
                 : new Validation($"limit must be an integer between 1 and {max}");
 
-    /// <summary>As <see cref="CheckIdempotencyKey"/>, for the callers not converted to unions yet.</summary>
-    public static void RejectIdempotencyKey(HttpContext context)
-    {
-        if (CheckIdempotencyKey(context) is Validation error)
-        {
-            throw Throwable(error);
-        }
-    }
-
     /// <summary>Mutating routes do not deduplicate retries yet, so they refuse to pretend they do.</summary>
     public static Valid<Done> CheckIdempotencyKey(HttpContext context) =>
         context.Request.Headers.ContainsKey("Idempotency-Key")
             ? new Validation("Idempotency-Key is not supported yet")
             : new Done();
 
-    /// <summary>Applies one write and returns its response body, with the new version as the ETag.</summary>
-    public static async ValueTask<(WriteBody Body, bool Created)> WriteAsync(
-        HttpContext context, IDocumentService documents, DocumentKey key, DocumentOperation operation, CancellationToken cancellationToken)
+    /// <summary>
+    /// Applies one write and answers it: <paramref name="answer"/> gets the response body and whether the write created
+    /// the document, with the new version as the ETag; a refused write is its error response.
+    /// </summary>
+    public static async ValueTask<IResult> WriteAsync(
+        HttpContext context, IDocumentService documents, DocumentKey key, DocumentOperation operation, Func<WriteBody, bool, IResult> answer,
+        CancellationToken cancellationToken) =>
+        await documents.WriteAsync(key.Database, [operation], indexErrors: false, cancellationToken).ConfigureAwait(false) switch
+        {
+            DocumentRejected rejected => ErrorResponse.From(rejected.Error),
+            WriteResult written => Written(context, key, written, answer),
+        };
+
+    private static IResult Written(HttpContext context, DocumentKey key, WriteResult written, Func<WriteBody, bool, IResult> answer)
     {
-        var written = await documents.WriteAsync(key.Database, [operation], indexErrors: false, cancellationToken).ConfigureAwait(false);
         var result = written.Results[0];
         var version = result.ETag!;
         ETags.Set(context, version);
-        return (new WriteBody(key.Id, version, Decimal(written.Offset), Durability), result.Created);
+        return answer(new WriteBody(key.Id, version, Decimal(written.Offset), Durability), result.Created);
     }
 
     public static string Decimal(long value) => value.ToString(CultureInfo.InvariantCulture);
-
-    /// <summary>As <see cref="CheckBodyAsync"/>, for the callers not converted to unions yet.</summary>
-    public static async ValueTask<byte[]> ReadBodyAsync(
-        HttpContext context, int maxBytes, string code, CancellationToken cancellationToken, params string[] mediaTypes) =>
-        await CheckBodyAsync(context, maxBytes, code, cancellationToken, mediaTypes).ConfigureAwait(false) switch
-        {
-            byte[] body => body,
-            Validation error => throw Throwable(error),
-            PayloadTooLarge error => throw Throwable(error),
-            UnsupportedMediaType error => throw Throwable(error),
-        };
 
     /// <summary>
     /// Reads a bounded JSON body of one of <paramref name="mediaTypes"/> whose strings are valid text; a body that
@@ -268,23 +230,4 @@ internal static class DocumentRoute
     /// <summary>Reads a document body: one JSON object within the document limits.</summary>
     public static ValueTask<BodyResult> CheckDocumentAsync(HttpContext context, CancellationToken cancellationToken) =>
         CheckBodyAsync(context, RequestJson.MaxDocumentBytes, "invalid_request", cancellationToken, JsonMediaType);
-
-    /// <summary>
-    /// A failure as the exception that the callers not converted to unions yet still throw (docs/error-handling.md);
-    /// <see cref="BadRequests"/> answers it with the same status, code and message.
-    /// </summary>
-    internal static ApiException Throwable(Failure failure) => failure switch
-    {
-        NotFound e => new ApiException(StatusCodes.Status404NotFound, e.Code, e.Message),
-        Conflict e => new ApiException(StatusCodes.Status409Conflict, e.Code, e.Message),
-        Validation e => new ApiException(StatusCodes.Status400BadRequest, e.Code, e.Message),
-        PreconditionFailed e => new ApiException(StatusCodes.Status412PreconditionFailed, e.Code, e.Message),
-        Unauthorized e => new ApiException(StatusCodes.Status401Unauthorized, e.Code, e.Message),
-        Forbidden e => new ApiException(StatusCodes.Status403Forbidden, e.Code, e.Message),
-        QuotaExceeded e => new ApiException(StatusCodes.Status429TooManyRequests, e.Code, e.Message),
-        Unavailable e => new ApiException(StatusCodes.Status503ServiceUnavailable, e.Code, e.Message),
-        UriTooLong e => new ApiException(StatusCodes.Status414UriTooLong, e.Code, e.Message),
-        PayloadTooLarge e => new ApiException(StatusCodes.Status413PayloadTooLarge, e.Code, e.Message),
-        UnsupportedMediaType e => new ApiException(StatusCodes.Status415UnsupportedMediaType, e.Code, e.Message),
-    };
 }

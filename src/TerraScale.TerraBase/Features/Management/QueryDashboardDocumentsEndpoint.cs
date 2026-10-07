@@ -42,21 +42,67 @@ public sealed class QueryDashboardDocumentsEndpoint(IManagementCommits commits) 
             return ErrorResponse.From(new Forbidden("the dashboard document space needs the management service credential"));
         }
 
-        var collection = DocumentRoute.CollectionName(HttpContext);
-        var body = await DocumentRoute.ReadBodyAsync(HttpContext, DocumentRoute.MaxRequestBytes, "invalid_query", cancellationToken, DocumentRoute.JsonMediaType);
-        var request = RequestJson.Deserialize<QueryRequest>(body, "invalid_query");
-        var query = QueryParser.Parse(Space, collection, request);
-        var after = request.Cursor is { } cursor ? QueryParser.Position(cursor, query.Digest, query.Sort.Count) : null;
-        var (page, count) = await commits.QueryDocumentsAsync(
+        return DocumentRoute.CheckCollectionName(HttpContext) switch
+        {
+            Validation error => ErrorResponse.From(error),
+            string collection => await DocumentRoute.CheckBodyAsync(
+                HttpContext, DocumentRoute.MaxRequestBytes, "invalid_query", cancellationToken, DocumentRoute.JsonMediaType) switch
+            {
+                Validation error => ErrorResponse.From(error),
+                PayloadTooLarge error => ErrorResponse.From(error),
+                UnsupportedMediaType error => ErrorResponse.From(error),
+                byte[] body => RequestJson.Read<QueryRequest>(body, "invalid_query") switch
+                {
+                    Validation error => ErrorResponse.From(error),
+                    QueryRequest request => QueryParser.CheckParse(Space, collection, request) switch
+                    {
+                        Validation error => ErrorResponse.From(error),
+                        ParsedQuery query => request.Cursor is not { } cursor
+                            ? await QueryAsync(collection, body, request, query, after: null, cancellationToken)
+                            : QueryParser.CheckPosition(cursor, query.Digest, query.Sort.Count) switch
+                            {
+                                Validation error => ErrorResponse.From(error),
+                                QueryPosition after => await QueryAsync(collection, body, request, query, after, cancellationToken),
+                            },
+                    },
+                },
+            },
+        };
+    }
+
+    private async ValueTask<IResult> QueryAsync(
+        string collection, byte[] body, QueryRequest request, ParsedQuery query, QueryPosition? after, CancellationToken cancellationToken) =>
+        await commits.QueryDocumentsAsync(
             new DocumentQuery(collection, query.Filter, query.Sort, after, query.Limit, DocumentRoute.MaxPageBytes),
             request.Count == true && after is null ? MaxCount : null,
-            cancellationToken);
-        return TypedResults.Ok(new DocumentPageBody(
-            [.. page.Rows.Select(row => GetDocumentEndpoint.Body(collection, row.Document, query.Project, cancellationToken) with
+            cancellationToken) switch
+        {
+            NotFound error => ErrorResponse.From(error),
+            Validation error => ErrorResponse.From(error),
+            QueryOutcome outcome => Page(collection, body, query, outcome, cancellationToken),
+        };
+
+    private static IResult Page(string collection, byte[] body, ParsedQuery query, QueryOutcome outcome, CancellationToken cancellationToken)
+    {
+        var page = outcome.Page;
+        if (!page.HasMore)
+        {
+            return TypedResults.Ok(Body(collection, query, outcome, next: null, cancellationToken));
+        }
+
+        return QueryParser.CheckCursor(query.Digest, page.Rows[^1], body) switch
+        {
+            Validation error => ErrorResponse.From(error),
+            string next => TypedResults.Ok(Body(collection, query, outcome, next, cancellationToken)),
+        };
+    }
+
+    private static DocumentPageBody Body(string collection, ParsedQuery query, QueryOutcome outcome, string? next, CancellationToken cancellationToken) =>
+        new(
+            [.. outcome.Page.Rows.Select(row => GetDocumentEndpoint.Body(collection, row.Document, query.Project, cancellationToken) with
             {
                 Version = EngineManagementService.DocumentVersion(row.Document, collection),
             })],
-            page.HasMore ? QueryParser.Cursor(query.Digest, page.Rows[^1], body) : null,
-            count is var (n, complete) ? new CountBody(n.ToString(CultureInfo.InvariantCulture), complete) : null));
-    }
+            next,
+            outcome.Count is var (n, complete) ? new CountBody(n.ToString(CultureInfo.InvariantCulture), complete) : null);
 }

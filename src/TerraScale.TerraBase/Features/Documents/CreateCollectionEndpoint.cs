@@ -54,12 +54,18 @@ public sealed class CreateCollectionEndpoint(IDocumentService documents, ITenant
             },
         };
 
-    private async ValueTask<IResult> CreateAsync(TenantContext database, string name, CancellationToken cancellationToken)
+    private async ValueTask<IResult> CreateAsync(TenantContext database, string name, CancellationToken cancellationToken) =>
+        Answer(await documents.CreateCollectionAsync(database, name, cancellationToken), collection => TypedResults.Created(
+            $"/v1/projects/{Uri.EscapeDataString(DocumentRoute.Project(HttpContext))}/databases/{DocumentRoute.Database(HttpContext)}/collections/{name}", Body(collection)));
+
+    /// <summary>The response to a collection request: <paramref name="found"/>'s, or the refusal's.</summary>
+    internal static IResult Answer(CollectionResult result, Func<CollectionInfo, IResult> found) => result switch
     {
-        var collection = await documents.CreateCollectionAsync(database, name, cancellationToken);
-        return TypedResults.Created(
-            $"/v1/projects/{Uri.EscapeDataString(DocumentRoute.Project(HttpContext))}/databases/{DocumentRoute.Database(HttpContext)}/collections/{name}", Body(collection));
-    }
+        CollectionInfo collection => found(collection),
+        NotFound error => ErrorResponse.From(error),
+        Conflict error => ErrorResponse.From(error),
+        Unavailable error => ErrorResponse.From(error),
+    };
 
     internal static CollectionBody Body(CollectionInfo collection) => new(collection.Name, DocumentRoute.Decimal(collection.CreatedAt));
 }

@@ -123,6 +123,29 @@ public sealed class CommitApiTests
     }
 
     [Test]
+    public async Task A_document_operation_that_outgrows_the_document_limit_names_its_operation_and_writes_nothing()
+    {
+        await using var api = await ManagementApi.StartAsync(managementCredential: true);
+        using var service = api.Service(api.User);
+        var (existing, added) = (NewId(), NewId());
+        var half = new string('x', 600 * 1024);
+        var seeded = await CommitAsync(service, new { op = "create", collection = "notes", id = existing, document = new { a = half } });
+
+        // Each request fits; the patched document does not.
+        var grown = await CommitAsync(service,
+            new { op = "create", collection = "notes", id = added, document = new { n = 1 } },
+            new { op = "patch", collection = "notes", id = existing, merge = new { b = half } });
+        var addedAfter = await GetAsync(service, $"{Documents}/notes/{added}");
+        var existingAfter = await GetAsync(service, $"{Documents}/notes/{existing}");
+
+        await Assert.That(seeded.Status).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That((grown.Status, grown.Code, grown.Message, grown.Op))
+            .IsEqualTo((HttpStatusCode.RequestEntityTooLarge, "payload_too_large", "a document is at most 1 MiB", (int?)1));
+        await Assert.That(addedAfter.Status).IsEqualTo(HttpStatusCode.NotFound);
+        await Assert.That(existingAfter.ETag).IsEqualTo(Version(seeded, 0));
+    }
+
+    [Test]
     public async Task A_rest_change_after_the_version_was_read_fails_the_fence_even_with_a_matching_document_version()
     {
         await using var api = await ManagementApi.StartAsync(managementCredential: true);
@@ -686,6 +709,8 @@ public sealed class CommitApiTests
     private sealed record Reply(HttpStatusCode Status, string Body, JsonElement Json, string? ETag, bool Replayed, string? Id)
     {
         public string? Code => Error is { } error ? error.GetProperty("code").GetString() : null;
+
+        public string? Message => Error is { } error ? error.GetProperty("message").GetString() : null;
 
         public int? Op => Error is { } error && error.TryGetProperty("op", out var op) && op.ValueKind == JsonValueKind.Number ? op.GetInt32() : null;
 
