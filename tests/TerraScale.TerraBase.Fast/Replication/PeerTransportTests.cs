@@ -71,9 +71,10 @@ public sealed class PeerTransportTests
         {
             for (var i = 0; i <= ReplicationProtocol.MaxOpenStreams; i++)
             {
+                var hello = new SyncRequest { Hello = ReplicationProtocol.CreateHello(await server.RegisterAsync(), RandomNumberGenerator.GetBytes(16)) };
                 var call = client.Sync(deadline: DateTime.UtcNow.AddSeconds(30));
                 calls.Add(call);
-                await call.RequestStream.WriteAsync(new SyncRequest { Hello = ReplicationProtocol.CreateHello(Database(), RandomNumberGenerator.GetBytes(16)) });
+                await call.RequestStream.WriteAsync(hello);
                 await call.ResponseStream.MoveNext(CancellationToken.None);
             }
 
@@ -152,7 +153,7 @@ public sealed class PeerTransportTests
         using var rotated = new PeerTls();
         using var evidence = new TlsEvidence();
         await using var server = await TerraBaseTestServer.StartAsync(original.Apply, services => { evidence.Register(services); services.AddSingleton<TimeProvider>(clock); });
-        var hello = new SyncRequest { Hello = ReplicationProtocol.CreateHello(Database(), RandomNumberGenerator.GetBytes(16)) };
+        var hello = new SyncRequest { Hello = ReplicationProtocol.CreateHello(await server.RegisterAsync(), RandomNumberGenerator.GetBytes(16)) };
         var files = server.Services.GetRequiredService<TerraBaseOptions>().PeerTls!;
         var paths = new[] { files.Certificate, files.PrivateKey, files.Authority };
         var timestamps = paths.Select(File.GetLastWriteTimeUtc).ToArray();
@@ -202,7 +203,7 @@ public sealed class PeerTransportTests
             replaced = true;
             return original.ClientCertificate;
         };
-        var hello = new SyncRequest { Hello = ReplicationProtocol.CreateHello(Database(), RandomNumberGenerator.GetBytes(16)) };
+        var hello = new SyncRequest { Hello = ReplicationProtocol.CreateHello(await server.RegisterAsync(), RandomNumberGenerator.GetBytes(16)) };
 
         await Assert.That(await HandshakeAsync(original, server.PeerAddress!, hello, evidence: evidence, handler: handler)).IsTrue();
         await Assert.That(replaced).IsTrue();
@@ -362,7 +363,7 @@ public sealed class PeerTransportTests
                 return files.Load();
             });
         }));
-        var hello = new SyncRequest { Hello = ReplicationProtocol.CreateHello(Database(), RandomNumberGenerator.GetBytes(16)) };
+        var hello = new SyncRequest { Hello = ReplicationProtocol.CreateHello(await server.RegisterAsync(), RandomNumberGenerator.GetBytes(16)) };
         await Assert.That(loads).IsEqualTo(2);
         await Assert.That(await HandshakeAsync(rotated, server.PeerAddress!, hello)).IsTrue();
         await Assert.That(await HandshakeAsync(original, server.PeerAddress!, hello)).IsFalse();
@@ -398,7 +399,7 @@ public sealed class PeerTransportTests
                 });
             });
         });
-        var hello = new SyncRequest { Hello = ReplicationProtocol.CreateHello(Database(), RandomNumberGenerator.GetBytes(16)) };
+        var hello = new SyncRequest { Hello = ReplicationProtocol.CreateHello(await server.RegisterAsync(), RandomNumberGenerator.GetBytes(16)) };
 
         await Assert.That(await HandshakeAsync(rotated, server.PeerAddress!, hello, evidence: evidence)).IsTrue();
         await Assert.That(await HandshakeAsync(original, server.PeerAddress!, hello, evidence: evidence)).IsFalse();
@@ -445,7 +446,7 @@ public sealed class PeerTransportTests
                 return (Fingerprint(files.Certificate), Fingerprint(files.PrivateKey), Fingerprint(files.Authority));
             }, time: clock);
         }));
-        var hello = new SyncRequest { Hello = ReplicationProtocol.CreateHello(Database(), RandomNumberGenerator.GetBytes(16)) };
+        var hello = new SyncRequest { Hello = ReplicationProtocol.CreateHello(await server.RegisterAsync(), RandomNumberGenerator.GetBytes(16)) };
 
         original.OverwriteWith(rotated, preserveTimestamps: true);
         failFinalRead = true;
@@ -473,7 +474,7 @@ public sealed class PeerTransportTests
         await using var server = await TerraBaseTestServer.StartAsync(tls.Apply);
         using var channel = tls.CreateChannel(server.PeerAddress!);
         using var call = new Features.Replication.V1.Replication.ReplicationClient(channel).Sync(deadline: DateTime.UtcNow.AddSeconds(30));
-        await call.RequestStream.WriteAsync(new SyncRequest { Hello = ReplicationProtocol.CreateHello(Database(), RandomNumberGenerator.GetBytes(16)) });
+        await call.RequestStream.WriteAsync(new SyncRequest { Hello = ReplicationProtocol.CreateHello(await server.RegisterAsync(), RandomNumberGenerator.GetBytes(16)) });
         await Assert.That(await call.ResponseStream.MoveNext(CancellationToken.None)).IsTrue();
         await Assert.That(call.ResponseStream.Current.Welcome).IsNotNull();
         var ioCancelled = false;
@@ -627,7 +628,7 @@ public sealed class PeerTransportTests
         using var original = new PeerTls();
         using var rotated = new PeerTls();
         await using var server = await TerraBaseTestServer.StartAsync(original.Apply, services => services.AddSingleton<TimeProvider>(clock));
-        var hello = new SyncRequest { Hello = ReplicationProtocol.CreateHello(Database(), RandomNumberGenerator.GetBytes(16)) };
+        var hello = new SyncRequest { Hello = ReplicationProtocol.CreateHello(await server.RegisterAsync(), RandomNumberGenerator.GetBytes(16)) };
 
         original.OverwriteAuthorityWith(rotated);
         clock.Advance();
@@ -651,7 +652,7 @@ public sealed class PeerTransportTests
         var clock = new PeerCredentialClock();
         using var tls = new PeerTls();
         await using var server = await TerraBaseTestServer.StartAsync(tls.Apply, services => services.AddSingleton<TimeProvider>(clock));
-        var hello = new SyncRequest { Hello = ReplicationProtocol.CreateHello(Database(), RandomNumberGenerator.GetBytes(16)) };
+        var hello = new SyncRequest { Hello = ReplicationProtocol.CreateHello(await server.RegisterAsync(), RandomNumberGenerator.GetBytes(16)) };
 
         var loaded = await HandshakeAsync(tls, server.PeerAddress!, hello);
         tls.DeleteNodeFiles();
@@ -668,13 +669,13 @@ public sealed class PeerTransportTests
         using var tls = new PeerTls();
         await using var server = await TerraBaseTestServer.StartAsync(tls.Apply);
 
-        var newerOnly = await FirstResponseAsync(tls, server.PeerAddress!, hello =>
+        var newerOnly = await FirstResponseAsync(tls, server, hello =>
             hello.ProtocolVersions = new VersionRange { Minimum = new ProtocolVersion { Major = 1, Minor = 1 }, Maximum = new ProtocolVersion { Major = 1, Minor = 2 } });
-        var otherMember = await FirstResponseAsync(tls, server.PeerAddress!, hello =>
+        var otherMember = await FirstResponseAsync(tls, server, hello =>
             hello.LocalIdentity.MemberId = Google.Protobuf.ByteString.CopyFrom(RandomNumberGenerator.GetBytes(16)));
-        var noCredit = await FirstResponseAsync(tls, server.PeerAddress!, hello => hello.Limits.ByteCredit = 0);
-        var otherEpoch = await FirstResponseAsync(tls, server.PeerAddress!, hello => hello.LocalIdentity.MembershipEpoch = 7);
-        var smaller = await FirstResponseAsync(tls, server.PeerAddress!, hello =>
+        var noCredit = await FirstResponseAsync(tls, server, hello => hello.Limits.ByteCredit = 0);
+        var otherEpoch = await FirstResponseAsync(tls, server, hello => hello.LocalIdentity.MembershipEpoch = 7);
+        var smaller = await FirstResponseAsync(tls, server, hello =>
         {
             hello.Limits.ByteCredit = 1024 * 1024;
             hello.Limits.MaxInFlightBatches = 2;
@@ -880,11 +881,11 @@ public sealed class PeerTransportTests
     }
 
     // The first response to a Hello edited by `edit`.
-    private static async Task<SyncResponse> FirstResponseAsync(PeerTls tls, Uri address, Action<Hello> edit)
+    private static async Task<SyncResponse> FirstResponseAsync(PeerTls tls, TerraBaseTestServer server, Action<Hello> edit)
     {
-        var hello = ReplicationProtocol.CreateHello(Database(), RandomNumberGenerator.GetBytes(16));
+        var hello = ReplicationProtocol.CreateHello(await server.RegisterAsync(), RandomNumberGenerator.GetBytes(16));
         edit(hello);
-        using var channel = tls.CreateChannel(address);
+        using var channel = tls.CreateChannel(server.PeerAddress!);
         using var call = new Features.Replication.V1.Replication.ReplicationClient(channel).Sync(deadline: DateTime.UtcNow.AddSeconds(30));
         await call.RequestStream.WriteAsync(new SyncRequest { Hello = hello });
         await call.ResponseStream.MoveNext(CancellationToken.None);

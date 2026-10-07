@@ -75,7 +75,7 @@ public sealed class SyncProtocolTests
         var first = new TenantContext(Guid.NewGuid().ToString("D"), PlanTier.Hobby,
             Guid.NewGuid().ToString("D"), Guid.NewGuid().ToString("D"));
         var second = first with { OrganizationId = Guid.NewGuid().ToString("D") };
-        TenantContext[] databases = [first, second];
+        TenantContext[] databases = [await server.RegisterAsync(first), await server.RegisterAsync(second)];
         var origin = RandomNumberGenerator.GetBytes(16);
         var engine = server.Services.GetRequiredService<IStorageEngine>();
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));

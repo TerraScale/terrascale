@@ -3,7 +3,9 @@ using Grpc.Core;
 using TerraScale.TerraBase.Configuration;
 using TerraScale.TerraBase.Engine;
 using TerraScale.TerraBase.Features.Replication.V1;
+using TerraScale.TerraBase.Hosting;
 using TerraScale.TerraBase.Primitives;
+using TerraScale.TerraBase.Tenancy;
 
 namespace TerraScale.TerraBase.Features.Replication;
 
@@ -14,7 +16,9 @@ namespace TerraScale.TerraBase.Features.Replication;
 /// An invalid, unsupported or out-of-order group ends the stream with a <c>StreamError</c> and applies nothing.
 /// </summary>
 internal sealed partial class ReplicationService(
-    IStorageEngine engine, IReplicationJournal journal, ReplicationMetrics metrics, TerraBaseOptions options, ILogger<ReplicationService> logger) : V1.Replication.ReplicationBase
+    IStorageEngine engine, IReplicationJournal journal, ITenantDirectory tenants, ReplicationMetrics metrics, TerraBaseOptions options, ILogger<ReplicationService> logger,
+    DatabaseLifecycleCheckpoint checkpoint)
+    : V1.Replication.ReplicationBase
 {
     // One instance per node (registered as a singleton), so this bounds the node's open streams.
     private int _streams;
@@ -89,8 +93,31 @@ internal sealed partial class ReplicationService(
             throw new RpcException(new Status(StatusCode.ResourceExhausted, "the negotiated gRPC cap cannot carry required control responses"));
         }
 
+        // A member receives only databases its catalog registers: a deleted one is not recreated, and a catalog follower takes a
+        // new one once its catalog has it. The sender retries. A deletion committed between the check and the open is caught by
+        // checking again: an incarnation other than the one before the check was made after it, and goes too once the catalog
+        // confirms the database is unregistered; the engine deletes only that incarnation, never one that replaced it.
+        var before = (await engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false))?.Incarnation;
+        if (await tenants.RegisteredAsync(database, cancellationToken).ConfigureAwait(false) is not true)
+        {
+            await stream.SendAsync(Error(StreamErrorCode.StreamErrorUnauthorized, retryable: true)).ConfigureAwait(false);
+            return;
+        }
+
+        checkpoint("replication.registered", database);
         // The receiving database's own origin identifies this node on the stream, in Welcome and in every acknowledgment.
         var (store, receiver, applied, digest) = await journal.OpenAsync(database, origin, cancellationToken).ConfigureAwait(false);
+        if (await tenants.RegisteredAsync(database, cancellationToken).ConfigureAwait(false) is var registered && registered is not true)
+        {
+            if (registered is false && before != store.Incarnation)
+            {
+                _ = await engine.DeleteDatabaseAsync(database, cancellationToken, incarnation: store.Incarnation).ConfigureAwait(false);
+            }
+
+            await stream.SendAsync(Error(StreamErrorCode.StreamErrorUnauthorized, retryable: true)).ConfigureAwait(false);
+            return;
+        }
+
         void OnDeleted(object? sender, IDatabaseStore deleted)
         {
             if (ReferenceEquals(store, deleted))

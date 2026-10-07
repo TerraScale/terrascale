@@ -15,9 +15,18 @@ internal sealed partial class EngineManagementService
             .ConfigureAwait(false);
         // A follower serves a database the replicated catalog registers before any of its documents arrived: an empty
         // local file, which replication then fills like any other (docs/decisions/0009).
-        if (tenant is not null && options.CatalogPrimary is not null && await engine.OpenDatabaseAsync(tenant, cancellationToken).ConfigureAwait(false) is null)
+        // A deletion it applies meanwhile could miss the new file: one this call created is checked again, and deleted with it
+        // once the catalog, at a version this build reads, no longer registers the database.
+        if (tenant is not null && options.CatalogPrimary is not null && await engine.OpenDatabaseAsync(tenant, cancellationToken).ConfigureAwait(false) is null
+            && await engine.CreateDatabaseAsync(tenant, cancellationToken).ConfigureAwait(false)
+            && await RegisteredAsync(tenant, cancellationToken).ConfigureAwait(false) is false)
         {
-            _ = await engine.CreateDatabaseAsync(tenant, cancellationToken).ConfigureAwait(false);
+            if (await engine.OpenDatabaseAsync(tenant, cancellationToken).ConfigureAwait(false) is { } created)
+            {
+                _ = await engine.DeleteDatabaseAsync(tenant, cancellationToken, incarnation: created.Incarnation).ConfigureAwait(false);
+            }
+
+            return null;
         }
 
         return tenant;
@@ -42,6 +51,27 @@ internal sealed partial class EngineManagementService
             && await FindDatabaseAsync(organizationId, projectId, database, cancellationToken).ConfigureAwait(false) is { } existing
             ? (existing, false)
             : null;
+    }
+
+    public ValueTask<bool?> RegisteredAsync(TenantContext database, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(database);
+        return database.ProjectId is null || database.DatabaseId is null
+            ? ValueTask.FromResult<bool?>(false)
+            : ReadCatalogAsync<bool?>(async transaction =>
+                !Interprets(await GetAsync(transaction, Catalog, CatalogVersionId, Id, cancellationToken).ConfigureAwait(false))
+                    ? null
+                    : await ScopeExistsUncheckedAsync(transaction, database.OrganizationId, database.ProjectId, database.DatabaseId, cancellationToken).ConfigureAwait(false),
+                cancellationToken);
+    }
+
+    // Whether this member reads registrations of a catalog at version: a primary every version it migrates from, which keep
+    // the registration rows, as its startup audit does; a follower, which migrates nothing, only its own.
+    private bool Interprets(string? version)
+    {
+        return options.CatalogPrimary is null
+            ? version is null or MembershipCatalogVersion or "3" or IntentCatalogVersion or CatalogVersion
+            : version == CatalogVersion;
     }
 
     /// <summary>
