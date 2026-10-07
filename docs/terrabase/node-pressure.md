@@ -7,13 +7,42 @@ scans documents/files, or changes `sampled_at`. Concurrent readers share an
 immutable sample. Access from another machine requires an operator-managed local
 forward; this change adds no public listener or network access.
 
+## Instance-bound SDK evidence (TS-514)
+
+`GET /admin/node/pressure` serves schema 2 on the same loopback-only listener,
+with `Cache-Control: no-store` and the cached sample's original timestamp. It
+uses the same measured node counters as the diagnostic schema-1 endpoint and
+omits organization rankings: those are not project CPU attribution.
+`instance_id` comes only from `--instance-id` / `TERRABASE_INSTANCE_ID`; absent
+configuration is explicit null, never a machine-name substitute. Accepted IDs
+are 1..128 ASCII letters, digits, dots, underscores, colons, pluses and hyphens.
+
+`local_ready` is sampled using exactly `/readyz`'s storage, issuer-key, catalog
+and shutdown checks; it is null before the first readiness sample. It does not
+prove certified member state or receipt of every peer's data. Consequently
+`state` stays `unknown`, even when local readiness is true.
+`io_admitted_count` is actual currently admitted storage transactions and
+maintenance operations, including waiting work; it is null after admission
+closes and is neither device IOPS nor mean in-flight device queue depth.
+`sender_durable_lag_seq` is the sum of outgoing local-origin change groups not
+durably acknowledged by configured peers, saturating at signed 64-bit maximum.
+It is null until journal discovery succeeds, and zero with no destinations.
+It does not measure incoming catch-up or authorize node retirement. These
+three diagnostics are also additive fields on schema 1 and Prometheus.
+
+Certified member lifecycle, incoming replica catch-up, logical storage, device
+IOPS and mean device queue depth remain unavailable. Their existing unknown
+values stay explicit; neither the SDK nor orchestrator may substitute the
+local readiness flag or outgoing lag for that safety evidence. SDK consumers
+read schema 2 and must hold on incomplete evidence. This
+integration does not qualify autonomous live scaling.
+
 ## Autoscaling remains gated
 
-The consumer contract is ts-orchestrator PR #150, branch
-`cos-hold/ts-476-autoscaler`, `internal/cellscale/pressure.go` at
-`5e819df257a20facd0ec557bb65c29b4228e9bd6`: schema 1,
-`/v1/node/pressure`, at most 64 KiB, UTC RFC3339 timestamps, rates per second,
-utilizations in `[0,1]`, and p95 latency in milliseconds. Its freshness bounds
+The current ts-orchestrator consumer accepts schema 2 at
+`/admin/node/pressure`, at most 64 KiB, UTC RFC3339 timestamps, rates per second,
+utilizations in `[0,1]`, and p95 latency in milliseconds. It requires explicit
+cloud instance/process identities and all safety counters. Its freshness bounds
 are two minutes old and five seconds ahead of the consumer clock. A producer
 sample's timestamp is its measurement time, never fetch time.
 
@@ -24,15 +53,11 @@ no mutations. Preserving those failures keeps autoscaling gated. Substituting
 zero, HTTP liveness, request share, or connection-pool occupancy would invent
 information used to authorize destructive autoscaler actions.
 
-Follow up after [terrabase#13](https://git.terrascale.tech/TerraScale/terrabase/pulls/13)
-(I/O admission pool and memory budgeting) and
-[terrabase#11](https://git.terrascale.tech/TerraScale/terrabase/pulls/11)
-(replication) merge: connect their real counters, membership identity/readiness
-and authenticated peer frontiers; verify the producer against the autoscaler
-consumer before removing the gate. These merges alone do not qualify live
-execution. Tenant CPU attribution, logical storage accounting and device IOPS
-still require real measurement sources or an agreed consumer availability
-contract. Tenant movement remains TS-513 and is not implemented here.
+The storage admission pool and outgoing authenticated durable ACK counters
+are now connected. Their availability does not supply certified membership or
+incoming catch-up. Tenant CPU attribution, logical storage accounting and
+device IOPS still require real measurement sources. Tenant movement remains
+TS-513 and is not implemented here.
 
 ## Measurements
 
@@ -48,7 +73,7 @@ contract. Tenant movement remains TS-513 and is not implemented here.
 | `untracked_tenant_requests` | Count omitted from tenant ranking when more than 4,096 distinct organizations occur in one interval. The fixed tracking table clears each interval; node/listener rates always include all requests. A nonzero value makes the ranking incomplete. |
 | `data_bytes`, `top_tenants_by_storage`, `storage_sampled_at` | Separate cached file-metadata sample every ten seconds, including unopened databases. Physical lengths of tenant `.db`, `.db-wal` and `.db-shm` files, excluding `_system`; top ten by physical bytes with UUID tie-breaks. Samples are non-atomic during writes/deletes/checkpoints and can decrease. Null total/timestamp with an empty ranking before the first complete scan or after failure. No document data is read. |
 | `load.connections`, `load.write_qps` | Current open client transport connections, including TLS handshakes; successful changed client-database write commits per interval. Reads, empty transactions, rollbacks, system writes and migrations are excluded from write rate. |
-| `state`, `io_queue_depth`, `io_admitted_count`, `disk_iops` | Membership state is `"unknown"`; pool queue/admitted counts and device IOPS are explicit null. The existing SQLite idle-session pool is not an I/O admission queue. |
+| `state`, `io_queue_depth`, `disk_iops` | Membership state is `"unknown"`; mean in-flight device I/O and device IOPS are explicit null. The existing SQLite idle-session pool is not an I/O admission queue. |
 | `load.storage_bytes`, `load.replication_lag_seq` | Explicit null. Physical file bytes are not logical document size; local commit offsets are not authenticated peer applied-frontier lag. |
 
 P95 uses 256 fixed geometric histogram bins rather than retaining requests.

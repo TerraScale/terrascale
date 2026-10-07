@@ -108,6 +108,7 @@ namespace TerraBase.Hosting;
 [JsonSerializable(typeof(ReplicationStatus))]
 [JsonSerializable(typeof(ReplicationPeerStatus))]
 [JsonSerializable(typeof(ReplicationDatabaseStatus))]
+[JsonSerializable(typeof(AutoscalerPressureBody))]
 [JsonSerializable(typeof(Project))]
 [JsonSerializable(typeof(ProjectCatalogBinding))]
 [JsonSerializable(typeof(ProjectBindingRequest))]

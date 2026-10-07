@@ -108,6 +108,8 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
 
     public long CommittedWrites => Interlocked.Read(ref _committedWrites);
 
+    public long? IoAdmittedCount => Io.Closed ? null : Io.Admitted;
+
     public ValueTask RefreshStoragePressureAsync(CancellationToken cancellationToken)
     {
         if (cancellationToken.IsCancellationRequested)

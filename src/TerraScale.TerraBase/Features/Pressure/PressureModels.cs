@@ -9,6 +9,12 @@ public sealed record PressureBody
     [JsonPropertyName("schema")] public int Schema => 1;
     /// <summary>Operator node identity.</summary>
     [JsonPropertyName("node")] public required string Node { get; init; }
+    /// <summary>Cloud instance identity supplied by the operator; null when unconfigured.</summary>
+    [JsonPropertyName("instance_id")] public string? InstanceId { get; init; }
+    /// <summary>Local serving readiness using the same checks as /readyz, not member catch-up.</summary>
+    [JsonPropertyName("local_ready")] public bool? LocalReady { get; init; }
+    /// <summary>Outgoing local-origin groups not durably acknowledged by configured peers; not incoming lag.</summary>
+    [JsonPropertyName("sender_durable_lag_seq")] public long? SenderDurableLagSeq { get; init; }
     /// <summary>Membership readiness is not implemented.</summary>
     [JsonPropertyName("state")] public string State => "unknown";
     /// <summary>Unique identifier for this host incarnation.</summary>
@@ -41,8 +47,8 @@ public sealed record PressureBody
     [JsonPropertyName("request_rate")] public double RequestRate { get; init; }
     /// <summary>I/O admission queue measurement is unavailable until #13.</summary>
     [JsonPropertyName("io_queue_depth")] public double? IoQueueDepth => null;
-    /// <summary>I/O admitted operation count is unavailable until #13.</summary>
-    [JsonPropertyName("io_admitted_count")] public long? IoAdmittedCount => null;
+    /// <summary>Current admitted storage operations; null when storage admission is closed.</summary>
+    [JsonPropertyName("io_admitted_count")] public long? IoAdmittedCount { get; init; }
     /// <summary>Approximate interval p95 HTTP latency in milliseconds.</summary>
     [JsonPropertyName("p95_latency_ms")] public double P95LatencyMs { get; init; }
     /// <summary>Member load counters; unavailable fields remain explicit null.</summary>

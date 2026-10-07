@@ -4,6 +4,8 @@ using System.Diagnostics.Metrics;
 using System.Reflection;
 using TerraBase.Configuration;
 using TerraBase.Engine;
+using TerraBase.Features.Health;
+using TerraBase.Features.Replication;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
 
@@ -23,6 +25,8 @@ internal sealed partial class PressureSignals : BackgroundService, IPressureSign
     private readonly Dictionary<string, (long Count, PlanTier? Plan)> _tenants = [];
     private readonly TerraBaseOptions _options;
     private readonly IStorageEngine _engine;
+    private readonly INodeReadiness _readiness;
+    private readonly IReplicationPressure _replication;
     private readonly TimeProvider _time;
     private readonly ILogger<PressureSignals> _logger;
     private readonly string _processId = Guid.NewGuid().ToString("N");
@@ -35,10 +39,12 @@ internal sealed partial class PressureSignals : BackgroundService, IPressureSign
     private TimeSpan? _lastCpu;
     private long _clientConnections;
 
-    public PressureSignals(TerraBaseOptions options, IStorageEngine engine, TimeProvider time, IMeterFactory meters, ILogger<PressureSignals> logger)
+    public PressureSignals(TerraBaseOptions options, IStorageEngine engine, TimeProvider time, IMeterFactory meters, ILogger<PressureSignals> logger, INodeReadiness readiness, IReplicationPressure replication)
     {
         _options = options;
         _engine = engine;
+        _readiness = readiness;
+        _replication = replication;
         _time = time;
         _logger = logger;
         _snapshot = new PressureBody
@@ -101,7 +107,7 @@ internal sealed partial class PressureSignals : BackgroundService, IPressureSign
                 // The tick resumes this loop on the clock's callback thread. Leave it, so ticks that fire while this
                 // samples coalesce: a test clock advanced by days would otherwise sample once per second inline.
                 await Task.Yield();
-                Sample();
+                Sample(await _readiness.IsReadyAsync(stoppingToken).ConfigureAwait(false));
             }
         }, stoppingToken),
         Task.Run(async () =>
@@ -128,7 +134,7 @@ internal sealed partial class PressureSignals : BackgroundService, IPressureSign
             while (await timer.WaitForNextTickAsync(stoppingToken).ConfigureAwait(false));
         }, stoppingToken));
 
-    private void Sample()
+    private void Sample(bool? localReady = null)
     {
         var timestamp = Stopwatch.GetTimestamp();
         var seconds = Math.Max(0.000001, Stopwatch.GetElapsedTime(_lastTimestamp, timestamp).TotalSeconds);
@@ -204,6 +210,10 @@ internal sealed partial class PressureSignals : BackgroundService, IPressureSign
         Volatile.Write(ref _snapshot, new PressureBody
         {
             Node = _options.NodeName,
+            InstanceId = _options.InstanceId,
+            LocalReady = localReady,
+            IoAdmittedCount = _engine.IoAdmittedCount,
+            SenderDurableLagSeq = _replication.SenderDurableLagSeq,
             Region = _options.Region,
             ProcessId = _processId,
             Release = _release,

@@ -15,7 +15,8 @@ namespace TerraBase.Fast.Platform;
 
 public sealed class PressureTests
 {
-    private static readonly Uri Pressure = new("/admin/node/pressure", UriKind.Relative);
+    private static readonly Uri Pressure = new("/v1/node/pressure", UriKind.Relative);
+    private static readonly Uri Evidence = new("/admin/node/pressure", UriKind.Relative);
     private static readonly Uri Metrics = new("/metrics", UriKind.Relative);
 
     [Test]
@@ -36,6 +37,59 @@ public sealed class PressureTests
         await AssertSnapshotAsync(snapshot.RootElement);
         using var hidden = await client.GetAsync(uri, deadline.Token);
         await Assert.That(hidden.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+    }
+
+    [Test]
+    public async Task Instance_bound_pressure_keeps_local_readiness_separate_from_member_readiness()
+    {
+        await using var server = await TerraBaseTestServer.StartAsync(settings =>
+        {
+            settings["node-name"] = "gru-1-db-2";
+            settings["instance-id"] = "ocid1.instance.test";
+        });
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
+        JsonElement snapshot = default;
+        await TerraBaseTestServer.EventuallyAsync(async token =>
+        {
+            snapshot = await ReadAsync(server, token, Evidence);
+            return snapshot.GetProperty("local_ready").ValueKind == JsonValueKind.True;
+        }, TimeSpan.FromSeconds(25));
+        using var readiness = await server.Client.GetAsync(new Uri("/readyz", UriKind.Relative), deadline.Token);
+        await Assert.That(readiness.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(snapshot.GetProperty("schema").GetInt32()).IsEqualTo(2);
+        await Assert.That(snapshot.GetProperty("node").GetString()).IsEqualTo("gru-1-db-2");
+        await Assert.That(snapshot.GetProperty("instance_id").GetString()).IsEqualTo("ocid1.instance.test");
+        await Assert.That(snapshot.GetProperty("state").GetString()).IsEqualTo("unknown");
+        await Assert.That(snapshot.GetProperty("sender_durable_lag_seq").GetInt64()).IsEqualTo(0);
+        await Assert.That(snapshot.GetProperty("load").GetProperty("replication_lag_seq").ValueKind).IsEqualTo(JsonValueKind.Null);
+        await Assert.That(snapshot.GetProperty("load").GetProperty("storage_bytes").ValueKind).IsEqualTo(JsonValueKind.Null);
+        await Assert.That(snapshot.GetProperty("disk_iops").ValueKind).IsEqualTo(JsonValueKind.Null);
+        await Assert.That(snapshot.GetProperty("io_queue_depth").ValueKind).IsEqualTo(JsonValueKind.Null);
+        await Assert.That(snapshot.TryGetProperty("top_tenants", out _)).IsFalse();
+        using var evidence = await server.Client.GetAsync(Evidence, deadline.Token);
+        await Assert.That(evidence.Headers.CacheControl!.NoStore).IsTrue();
+        var diagnostic = await ReadAsync(server, deadline.Token);
+        await Assert.That(diagnostic.GetProperty("schema").GetInt32()).IsEqualTo(1);
+        await Assert.That(Incarnation(diagnostic)).IsEqualTo(Incarnation(snapshot));
+    }
+
+    [Test]
+    public async Task Unconfigured_instance_identity_is_unknown_and_closed_storage_is_not_locally_ready()
+    {
+        await using var server = await TerraBaseTestServer.StartAsync();
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
+        var original = await ReadAsync(server, deadline.Token, Evidence);
+        await Assert.That(original.GetProperty("instance_id").ValueKind).IsEqualTo(JsonValueKind.Null);
+        await server.Services.GetRequiredService<IStorageEngine>().DisposeAsync();
+        await TerraBaseTestServer.EventuallyAsync(async token =>
+        {
+            var snapshot = await ReadAsync(server, token, Evidence);
+            return snapshot.GetProperty("sampled_at").GetDateTimeOffset() > original.GetProperty("sampled_at").GetDateTimeOffset()
+                && snapshot.GetProperty("local_ready").ValueKind == JsonValueKind.False
+                && snapshot.GetProperty("io_admitted_count").ValueKind == JsonValueKind.Null;
+        }, TimeSpan.FromSeconds(25));
+        using var readiness = await server.Client.GetAsync(new Uri("/readyz", UriKind.Relative), deadline.Token);
+        await Assert.That(readiness.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
     }
 
     [Test]
@@ -139,6 +193,8 @@ public sealed class PressureTests
     [Arguments("memory-budget", "9223372036854775808")]
     [Arguments("node-name", "bad/name")]
     [Arguments("node-name", "node name")]
+    [Arguments("instance-id", "bad/id")]
+    [Arguments("instance-id", "instance name")]
     public async Task Invalid_pressure_settings_refuse_real_host_startup(string setting, string value)
     {
         await Assert.That(async () =>
@@ -159,7 +215,7 @@ public sealed class PressureTests
             DefaultVersionPolicy = HttpVersionPolicy.RequestVersionExact,
         };
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
-        foreach (var path in new[] { Pressure, Metrics })
+        foreach (var path in new[] { Pressure, Evidence, Metrics })
         {
             using var response = await peer.GetAsync(path, deadline.Token);
             await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
@@ -178,7 +234,7 @@ public sealed class PressureTests
 
         foreach (var client in new[] { api.Client, api.Management.Client })
         {
-            foreach (var path in new[] { Pressure, Metrics })
+            foreach (var path in new[] { Pressure, Evidence, Metrics })
             {
                 using var response = await client.GetAsync(path, deadline.Token);
                 await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
@@ -186,7 +242,7 @@ public sealed class PressureTests
         }
 
         var metrics = await api.Server.Client.GetStringAsync(Metrics, deadline.Token);
-        foreach (var signal in new[] { "disk_iops", "io_queue_depth", "io_admitted_count", "storage_bytes", "replication_lag_seq" })
+        foreach (var signal in new[] { "disk_iops", "io_queue_depth", "storage_bytes", "replication_lag_seq" })
         {
             await Assert.That(MetricValues(metrics, "terrabase_pressure_" + signal)).IsEmpty();
             await Assert.That(MetricValues(metrics, "terrabase_pressure_available", $"signal=\"{signal}\""))
@@ -405,9 +461,9 @@ public sealed class PressureTests
             .Any(line => line.Contains(api.Tenant.OrganizationId, StringComparison.Ordinal))).IsFalse();
     }
 
-    private static async Task<JsonElement> ReadAsync(TerraBaseTestServer server, CancellationToken cancellationToken)
+    private static async Task<JsonElement> ReadAsync(TerraBaseTestServer server, CancellationToken cancellationToken, Uri? path = null)
     {
-        using var response = await server.Client.GetAsync(Pressure, cancellationToken);
+        using var response = await server.Client.GetAsync(path ?? Pressure, cancellationToken);
         response.StatusCode.ShouldBe(HttpStatusCode.OK);
         return await response.Content.ReadFromJsonAsync<JsonElement>(cancellationToken);
     }
@@ -598,7 +654,7 @@ public sealed class PressureTests
             }
         }
 
-        foreach (var name in new[] { "disk_iops", "io_queue_depth", "io_admitted_count" })
+        foreach (var name in new[] { "disk_iops", "io_queue_depth" })
         {
             await Assert.That(snapshot.GetProperty(name).ValueKind).IsEqualTo(JsonValueKind.Null);
         }
@@ -608,6 +664,7 @@ public sealed class PressureTests
             await Assert.That(snapshot.GetProperty("load").GetProperty(name).ValueKind).IsEqualTo(JsonValueKind.Null);
         }
 
+        await Assert.That(snapshot.GetProperty("io_admitted_count").GetInt64()).IsGreaterThanOrEqualTo(0);
         await Assert.That(snapshot.GetProperty("load").GetProperty("write_qps").GetDouble()).IsGreaterThanOrEqualTo(0);
         await Assert.That(snapshot.GetProperty("load").GetProperty("connections").GetInt64()).IsGreaterThanOrEqualTo(0);
         await Assert.That(snapshot.GetProperty("request_rate").GetDouble()).IsGreaterThanOrEqualTo(0);

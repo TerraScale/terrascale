@@ -18,6 +18,9 @@ internal sealed partial class PressureSignals
         Gauge("data_bytes", snapshot => snapshot.DataBytes);
         Gauge("write_qps", snapshot => snapshot.Load.WriteQps);
         Gauge("connections", snapshot => snapshot.Load.Connections);
+        Gauge("io_admitted_count", snapshot => snapshot.IoAdmittedCount);
+        Gauge("sender_durable_lag_seq", snapshot => snapshot.SenderDurableLagSeq);
+        Gauge("local_ready", snapshot => snapshot.LocalReady is { } ready ? (ready ? 1 : 0) : null);
         Gauge("sampled_at_seconds", snapshot => snapshot.SampledAt.ToUnixTimeMilliseconds() / 1000.0);
         Gauge("storage_sampled_at_seconds", snapshot => snapshot.StorageSampledAt?.ToUnixTimeMilliseconds() / 1000.0);
         Gauge("sample_window_seconds", snapshot => snapshot.SampleWindowSeconds);
@@ -51,11 +54,13 @@ internal sealed partial class PressureSignals
                 Available("data_bytes", snapshot.DataBytes.HasValue),
                 Available("disk_iops", false),
                 Available("io_queue_depth", false),
-                Available("io_admitted_count", false),
+                Available("io_admitted_count", snapshot.IoAdmittedCount.HasValue),
                 Available("connections", true),
                 Available("storage_bytes", false),
                 Available("replication_lag_seq", false),
                 Available("tenant_cpu_share", false),
+                Available("sender_durable_lag_seq", snapshot.SenderDurableLagSeq.HasValue),
+                Available("local_ready", snapshot.LocalReady.HasValue),
             };
         });
 

@@ -79,8 +79,10 @@ public sealed class SenderLifecycleTests
         await TerraBaseTestServer.EventuallyAsync(async token =>
             await sender.MetricAsync("terrabase_replication_sender_durable_lag", "", token) == 2
             && await sender.MetricAsync("terrabase_replication_database_catchup_seconds", "", token) > 0);
+        await TerraBaseTestServer.EventuallyAsync(async token => await ReplicationPressure.ReadAsync(sender, token) == 2);
         Volatile.Write(ref reject, 0);
         await TerraBaseTestServer.ReplicatedAsync(sender);
+        await TerraBaseTestServer.EventuallyAsync(async token => await ReplicationPressure.ReadAsync(sender, token) == 0);
         await Assert.That(applied).IsEqualTo(2UL);
         await Assert.That(await sender.MetricAsync("terrabase_replication_database_catchup_seconds")).IsEqualTo(0);
         await Assert.That(await sender.MetricAsync("terrabase_replication_convergence_seconds_count")).IsGreaterThan(convergences);
@@ -383,6 +385,7 @@ public sealed class SenderLifecycleTests
             await TerraBaseTestServer.EventuallyAsync(async token =>
                 await sender.MetricAsync("terrabase_replication_sender_initialized", "", token) == 1);
             await Assert.That(await sender.MetricAsync("terrabase_replication_sender_durable_lag")).IsEqualTo(300);
+            await TerraBaseTestServer.EventuallyAsync(async token => await ReplicationPressure.ReadAsync(sender, token) == 300);
             allowFirst.SetResult();
             await secondHello.Task.WaitAsync(TimeSpan.FromSeconds(30));
             await Assert.That(groups).IsEqualTo(256);
@@ -393,9 +396,11 @@ public sealed class SenderLifecycleTests
             await secondWelcome.Task.WaitAsync(TimeSpan.FromSeconds(30));
             await TerraBaseTestServer.EventuallyAsync(async token =>
                 await sender.MetricAsync("terrabase_replication_sender_durable_lag", "", token) == 44);
+            await TerraBaseTestServer.EventuallyAsync(async token => await ReplicationPressure.ReadAsync(sender, token) == 44);
             allowSecondTransfer.SetResult();
             await TerraBaseTestServer.ReplicatedAsync(sender);
             await Assert.That(groups).IsEqualTo(300);
+            await TerraBaseTestServer.EventuallyAsync(async token => await ReplicationPressure.ReadAsync(sender, token) == 0);
         }
         finally
         {
