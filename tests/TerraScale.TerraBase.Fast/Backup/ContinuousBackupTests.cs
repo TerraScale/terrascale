@@ -2,9 +2,12 @@ using System.Net;
 using System.Text;
 using System.Text.Json;
 using Bogus;
+using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
+using TerraBase.Engine;
 using TerraBase.Features.Backup;
+using TerraBase.Tenancy;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Backup;
@@ -133,6 +136,114 @@ public sealed class ContinuousBackupTests
     }
 
     [Test]
+    public async Task A_log_checkpointed_by_another_process_ends_the_generation_and_loses_nothing()
+    {
+        using var oci = new FakeOci();
+        var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 7, 12, 0, 0, TimeSpan.Zero));
+        await using var api = await ManagementApi.StartAsync(oci.Configure, oci.Route, time);
+        var backup = api.Server.Services.GetRequiredService<IContinuousBackup>();
+        var database = await api.CreateManagedDatabaseAsync("main");
+        using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
+        await ManagementApi.CreateCollectionAsync(data, database, "people");
+        time.Advance(TimeSpan.FromSeconds(10));
+        await backup.RunOnceAsync(CancellationToken.None);
+        var generation = Generation(backup, database);
+        var text = Faker.Lorem.Sentence(12);
+        (await data.PutAsJsonAsync(Uri(ManagementApi.DocumentPath(database, "people", "outside")), new { text })).EnsureSuccessStatusCode();
+
+        // Another process copies the log back and truncates it before the shipper read the write.
+        var file = Path.Combine(api.Server.DataDirectory, database.Organization, database.Project, database.Id + ".db");
+        await using (var outside = new SqliteConnection($"Data Source={file};Pooling=False"))
+        {
+            await outside.OpenAsync();
+            await using var checkpoint = outside.CreateCommand();
+            checkpoint.CommandText = "PRAGMA wal_checkpoint(TRUNCATE);";
+            await checkpoint.ExecuteNonQueryAsync();
+        }
+
+        time.Advance(TimeSpan.FromSeconds(1));
+        await backup.RunOnceAsync(CancellationToken.None);
+        using var restored = await api.Client.PostAsJsonAsync(Uri($"{database.Path}/point-in-time/restore"), new { pointInTime = time.GetUtcNow(), name = "main-latest" });
+        using var read = await data.GetAsync(Uri(DocumentPath(database, "main-latest", "outside")));
+        var metrics = await api.Server.Client.GetStringAsync(Uri("/metrics"));
+
+        await Assert.That(Generation(backup, database)).IsNotNull().And.IsNotEqualTo(generation);
+        await Assert.That(metrics).Contains("terrabase_backup_holes_total");
+        await Assert.That(restored.StatusCode).IsEqualTo(HttpStatusCode.Created);
+        await Assert.That((await read.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("document").GetProperty("text").GetString()).IsEqualTo(text);
+    }
+
+    [Test]
+    public async Task A_shipper_cut_off_from_nats_stops_before_its_lease_expires_and_another_member_takes_over()
+    {
+        using var oci = new FakeOci();
+        var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 7, 12, 0, 0, TimeSpan.Zero));
+        var leases = new FakeLeases(time);
+        var database = new TenantContext(Guid.NewGuid().ToString(), PlanTier.Hobby, Guid.NewGuid().ToString(), Guid.NewGuid().ToString());
+        var file = $"v1/{database.OrganizationId}/{database.ProjectId}/{database.DatabaseId}";
+        await using var a = await MemberAsync("member-a");
+        await using var b = await MemberAsync("member-b");
+        var members = new Dictionary<string, TerraBaseTestServer>(StringComparer.Ordinal) { ["member-a"] = a, ["member-b"] = b };
+        foreach (var member in members.Values)
+        {
+            await member.Services.GetRequiredService<IStorageEngine>().CreateDatabaseAsync(database, CancellationToken.None);
+        }
+
+        time.Advance(TimeSpan.FromSeconds(10));
+        await PassAsync();
+        var holder = leases.Holders()[file.Replace('/', '.')];
+        var other = holder == "member-a" ? "member-b" : "member-a";
+        var first = Status(members[holder], file);
+        var otherFirst = Status(members[other], file);
+
+        // Cut the holder off: it stops shipping once its lease could be stale, before the lease expires for the others.
+        leases.Partition(holder);
+        time.Advance(TimeSpan.FromSeconds(11));
+        await PassAsync();
+        var stopped = Status(members[holder], file);
+        var waiting = Status(members[other], file);
+        time.Advance(TimeSpan.FromSeconds(5));
+        await PassAsync();
+        var taken = Status(members[other], file);
+
+        await Assert.That(first.Shipping).IsTrue();
+        await Assert.That(first.Generation).IsNotNull();
+        await Assert.That(otherFirst.Shipping).IsFalse();
+        await Assert.That(stopped.Shipping).IsFalse();
+        await Assert.That(waiting.Shipping).IsFalse();
+        await Assert.That(taken.Shipping).IsTrue();
+        await Assert.That(taken.Generation).IsNotNull().And.IsNotEqualTo(first.Generation);
+        await Assert.That(leases.Holders()[file.Replace('/', '.')]).IsEqualTo(other);
+        // Both generations start with their own snapshot of the file.
+        var generations = oci.Objects.Keys.Where(key => key.StartsWith(file + "/snapshots/", StringComparison.Ordinal))
+            .Select(key => key.Split('/')[^1].Split('-')[1]).ToHashSet(StringComparer.Ordinal);
+        await Assert.That(generations).IsEquivalentTo([first.Generation!, taken.Generation!]);
+
+        async Task<TerraBaseTestServer> MemberAsync(string node)
+        {
+            return await TerraBaseTestServer.StartAsync(settings =>
+            {
+                oci.Configure(settings);
+                settings["node-name"] = node;
+            }, services =>
+            {
+                oci.Route(services);
+                services.AddSingleton<TimeProvider>(time);
+                services.AddSingleton<ILeaseStore>(leases);
+                services.AddSingleton<IShipperLeases, LeasedShippers>();
+            });
+        }
+
+        async Task PassAsync()
+        {
+            foreach (var member in members.Values)
+            {
+                await member.Services.GetRequiredService<IContinuousBackup>().RunOnceAsync(CancellationToken.None);
+            }
+        }
+    }
+
+    [Test]
     public async Task Without_backup_settings_nothing_ships_and_no_database_has_a_restore_window()
     {
         await using var api = await ManagementApi.StartAsync();
@@ -150,6 +261,9 @@ public sealed class ContinuousBackupTests
 
     private static string? Generation(IContinuousBackup backup, ManagedDatabaseRef database) =>
         backup.Status.Files.Single(file => file.File == $"v1/{database.Organization}/{database.Project}/{database.Id}").Generation;
+
+    private static BackupFileStatus Status(TerraBaseTestServer member, string file) =>
+        member.Services.GetRequiredService<IContinuousBackup>().Status.Files.Single(status => status.File == file);
 
     private static string DocumentPath(ManagedDatabaseRef database, string name, string document) =>
         $"/v1/projects/{database.Project}/databases/{name}/collections/people/documents/{ManagementApi.DocumentId(document)}";

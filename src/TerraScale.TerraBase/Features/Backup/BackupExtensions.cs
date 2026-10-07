@@ -1,4 +1,5 @@
 using TerraBase.Configuration;
+using TerraBase.Engine;
 using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Backup;
@@ -18,6 +19,16 @@ public static class BackupExtensions
             return services.AddSingleton<NoBackup>()
                 .AddSingleton<IContinuousBackup>(provider => provider.GetRequiredService<NoBackup>())
                 .AddSingleton<IPointInTimeRestore>(provider => provider.GetRequiredService<NoBackup>());
+        }
+
+        // anna-full (TS-647): the database primary member lease of Engine/Cluster replaces both interim choices.
+        if (options.Nats is { } nats)
+        {
+            services.AddSingleton(nats).AddSingleton<ILeaseStore, NatsLeaseStore>().AddSingleton<IShipperLeases, LeasedShippers>();
+        }
+        else
+        {
+            services.AddSingleton<IShipperLeases, SingleShipper>();
         }
 
         services.AddHttpClient(S3ObjectStore.HttpClientName);

@@ -13,10 +13,12 @@ namespace TerraBase.Engine.Sqlite;
 /// <para>
 /// While backup ships from this node, sessions run with <c>wal_autocheckpoint = 0</c> and only a tap checkpoints: it
 /// holds the store's writer gate, reads every committed frame, then runs a passive checkpoint. The log restarts (new
-/// salts, checkpoint sequence + 1) only after a checkpoint copied every frame back, so each restart a tap sees follows
-/// one of its own checkpoints and loses nothing. A sequence that moved by more than one means something else
-/// checkpointed: the read reports a hole. <see cref="_keepAlive"/> keeps a connection open, so the last connection
-/// never closes and SQLite never checkpoints and deletes the log on its own.
+/// salts, checkpoint sequence + 1) only after a checkpoint copied every frame back, so a restart that follows the tap's
+/// own complete checkpoint, with no frame appended since, loses nothing. Anything else means another connection or
+/// process checkpointed or rewrote the log, as Litestream checks ("wal overwritten/truncated by another process"): a
+/// restart without that checkpoint or by more than one sequence, a log that vanished or shrank below what was read, or a
+/// last read frame whose checksum changed. The read then reports a hole. <see cref="_keepAlive"/> keeps a connection
+/// open, so the last connection never closes and SQLite never checkpoints and deletes the log on its own.
 /// </para>
 /// <para>
 /// Frames are validated as SQLite recovers them: salts equal to the header's and a cumulative checksum, and only up to the
@@ -43,6 +45,9 @@ internal sealed class SqliteWalTap(SqliteDatabaseStore store, SqliteIoPool io, S
     private uint _sum1;
     private uint _sum2;
 
+    // Whether the tap's last checkpoint copied every frame back and no frame was read since: only then may the log restart.
+    private bool _checkpointed;
+
     public async ValueTask<WalRead> ReadAsync(Stream destination, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(destination);
@@ -56,11 +61,13 @@ internal sealed class SqliteWalTap(SqliteDatabaseStore store, SqliteIoPool io, S
         var rest = await AdmittedAsync(() => store.WithWritersHeldAsync(async () =>
         {
             var tail = await ReadCoreAsync(destination, cancellationToken).ConfigureAwait(false);
-            await _keepAlive.ExecuteAsync(io, () =>
+            _checkpointed = await _keepAlive.ExecuteAsync(io, () =>
             {
                 using var command = _keepAlive.Connection.CreateCommand();
                 command.CommandText = "PRAGMA wal_checkpoint(PASSIVE);";
-                return command.ExecuteNonQuery();
+                using var result = command.ExecuteReader();
+                // busy, frames in the log, frames copied back.
+                return result.Read() && result.GetInt64(0) == 0 && result.GetInt64(1) >= 0 && result.GetInt64(1) == result.GetInt64(2);
             }, cancellationToken).ConfigureAwait(false);
             return tail;
         }, cancellationToken)).ConfigureAwait(false);
@@ -154,13 +161,20 @@ internal sealed class SqliteWalTap(SqliteDatabaseStore store, SqliteIoPool io, S
         }
         catch (FileNotFoundException)
         {
-            // No log yet: nothing was written since the file was created or last checkpointed on close.
-            return new(0, true);
+            // No log yet: nothing was written since the file was created or last checkpointed on close. A log that vanished
+            // after frames were read was checkpointed and deleted by someone else.
+            return Hole(_header is null);
         }
 
         using (log)
         {
             var length = RandomAccess.GetLength(log);
+            if (_header is not null && length < _offset)
+            {
+                // Truncated below what was read (a TRUNCATE checkpoint): the frames after the last read may be gone.
+                return Hole(false);
+            }
+
             var headerBytes = new byte[HeaderBytes];
             if (length < HeaderBytes
                 || await RandomAccess.ReadAsync(log, headerBytes, 0, cancellationToken).ConfigureAwait(false) < HeaderBytes
@@ -170,18 +184,23 @@ internal sealed class SqliteWalTap(SqliteDatabaseStore store, SqliteIoPool io, S
             }
 
             var continuous = true;
+            var frameBytes = FrameHeaderBytes + header.PageSize;
             if (_header is not { } current)
             {
                 Start(header);
             }
             else if (header.Salt1 != current.Salt1 || header.Salt2 != current.Salt2 || header.Sequence != current.Sequence)
             {
-                // A restart after this tap's checkpoint moves the sequence by exactly one; more means someone else checkpointed.
-                continuous = header.Sequence == unchecked(current.Sequence + 1);
+                continuous = _checkpointed && header.Sequence == unchecked(current.Sequence + 1);
+                Start(header);
+            }
+            else if (_offset > HeaderBytes && !await LastFrameMatchesAsync(log, frameBytes, cancellationToken).ConfigureAwait(false))
+            {
+                // Same salts, but what was read is gone or different: start over on this log.
+                continuous = false;
                 Start(header);
             }
 
-            var frameBytes = FrameHeaderBytes + header.PageSize;
             var buffer = ArrayPool<byte>.Shared.Rent(frameBytes);
             try
             {
@@ -225,6 +244,7 @@ internal sealed class SqliteWalTap(SqliteDatabaseStore store, SqliteIoPool io, S
 
                 var frames = (end - _offset) / frameBytes;
                 (_offset, _sum1, _sum2) = (end, sum1, sum2);
+                _checkpointed &= frames == 0;
                 return new(frames, continuous);
             }
             finally
@@ -238,6 +258,23 @@ internal sealed class SqliteWalTap(SqliteDatabaseStore store, SqliteIoPool io, S
     {
         _header = header;
         (_offset, _sum1, _sum2) = (HeaderBytes, header.Sum1, header.Sum2);
+        _checkpointed = false;
+    }
+
+    // Forgets the log read so far; the next read starts from whatever log it finds.
+    private WalRead Hole(bool continuous)
+    {
+        _header = null;
+        _checkpointed = false;
+        return new(0, continuous);
+    }
+
+    // The last frame read still carries the cumulative checksum it had: nothing rewrote the log under the same salts.
+    private async Task<bool> LastFrameMatchesAsync(SafeFileHandle log, int frameBytes, CancellationToken cancellationToken)
+    {
+        var checksum = new byte[8];
+        return await RandomAccess.ReadAsync(log, checksum, _offset - frameBytes + 16, cancellationToken).ConfigureAwait(false) == checksum.Length
+            && BinaryPrimitives.ReadUInt32BigEndian(checksum) == _sum1 && BinaryPrimitives.ReadUInt32BigEndian(checksum.AsSpan(4)) == _sum2;
     }
 
     // SQLite's log checksum: pairs of 32-bit words, big-endian when the magic's low bit is set.
@@ -279,6 +316,8 @@ internal sealed class SqliteWalTap(SqliteDatabaseStore store, SqliteIoPool io, S
         {
             var frame = buffer.AsMemory(0, frameBytes);
             uint? pages = null;
+            // Pages the file holds now; a commit that shrinks the database cuts it there, as a checkpoint at that commit would.
+            var held = RandomAccess.GetLength(database) / pageSize;
             await foreach (var segment in segments.WithCancellation(cancellationToken).ConfigureAwait(false))
             {
                 await using (segment.ConfigureAwait(false))
@@ -293,9 +332,15 @@ internal sealed class SqliteWalTap(SqliteDatabaseStore store, SqliteIoPool io, S
                         }
 
                         await RandomAccess.WriteAsync(database, frame[FrameHeaderBytes..], (page - 1L) * pageSize, cancellationToken).ConfigureAwait(false);
+                        held = Math.Max(held, page);
                         if (BinaryPrimitives.ReadUInt32BigEndian(frame.Span[4..]) is var commit and not 0)
                         {
                             pages = commit;
+                            if (commit < held)
+                            {
+                                RandomAccess.SetLength(database, commit * (long)pageSize);
+                                held = commit;
+                            }
                         }
                     }
 

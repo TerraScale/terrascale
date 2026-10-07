@@ -31,6 +31,9 @@ internal sealed class PointInTimeRestore(IWalBackup engine, IObjectStore store, 
     : IPointInTimeRestore
 {
     private const int FrameHeaderBytes = 24;
+
+    // Segments downloading at once during a restore.
+    private const int Prefetch = 8;
     private readonly string _scratch = ContinuousBackup.Scratch(options);
 
     public async Task<RestoreWindow?> GetWindowAsync(TenantContext database, CancellationToken cancellationToken)
@@ -119,57 +122,123 @@ internal sealed class PointInTimeRestore(IWalBackup engine, IObjectStore store, 
         }
     }
 
-    // The segments of the snapshot's generation from its position, up to the time, each as a scratch file the caller disposes.
+    // The segments of the snapshot's generation from its position, up to the time, in order, each as a scratch file the
+    // caller disposes. Up to Prefetch download at once; contiguity is checked in order as they are handed out.
     private async IAsyncEnumerable<Stream> SegmentsAsync(
         string file, string scope, SnapshotKey snapshot, DateTimeOffset at, int frameBytes, [EnumeratorCancellation] CancellationToken cancellationToken)
     {
+        using var stop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var inFlight = new Queue<(SegmentKey Segment, Task<FileStream> Frames)>();
         var expected = snapshot.Position;
-        await foreach (var key in store.ListAsync(BackupLayout.Segments(file, snapshot.Generation),
-            BackupLayout.SegmentsBefore(file, snapshot.Generation, snapshot.Position), cancellationToken).ConfigureAwait(false))
+        try
         {
-            if (BackupLayout.ParseSegment(key) is not { } segment)
+            await foreach (var key in store.ListAsync(BackupLayout.Segments(file, snapshot.Generation),
+                BackupLayout.SegmentsBefore(file, snapshot.Generation, snapshot.Position), cancellationToken).ConfigureAwait(false))
             {
-                continue;
-            }
-
-            if (segment.At > at)
-            {
-                yield break;
-            }
-
-            if (segment.Start != expected)
-            {
-                throw new InvalidDataException("the backup of this database is missing a log segment");
-            }
-
-            var frames = new FileStream(Path.Combine(_scratch, Guid.NewGuid().ToString("N") + ".frames"), FileMode.CreateNew, FileAccess.ReadWrite,
-                FileShare.None, 1 << 16, FileOptions.Asynchronous | FileOptions.DeleteOnClose);
-            try
-            {
-                await DownloadAsync(key, scope, frames, cancellationToken).ConfigureAwait(false);
-                if (frames.Length % frameBytes != 0)
+                if (BackupLayout.ParseSegment(key) is not { } segment)
                 {
-                    throw new InvalidDataException("a log segment of this database holds a partial frame");
+                    continue;
+                }
+
+                if (segment.At > at)
+                {
+                    break;
+                }
+
+                inFlight.Enqueue((segment, DownloadSegmentAsync(key, scope, frameBytes, stop.Token)));
+                if (inFlight.Count == Prefetch)
+                {
+                    var (frames, after) = await TakeAsync(inFlight, expected, frameBytes).ConfigureAwait(false);
+                    expected = after;
+                    yield return frames;
                 }
             }
-            catch
-            {
-                await frames.DisposeAsync().ConfigureAwait(false);
-                throw;
-            }
 
-            expected += frames.Length / frameBytes;
-            frames.Position = 0;
-            yield return frames;
+            while (inFlight.Count > 0)
+            {
+                var (frames, after) = await TakeAsync(inFlight, expected, frameBytes).ConfigureAwait(false);
+                expected = after;
+                yield return frames;
+            }
+        }
+        finally
+        {
+            // Stopped early (a failure or a hole): close what is still downloading.
+            await stop.CancelAsync().ConfigureAwait(false);
+            foreach (var (_, download) in inFlight)
+            {
+                await Task.WhenAny(download).ConfigureAwait(false);
+                if (download.IsCompletedSuccessfully)
+                {
+                    await download.Result.DisposeAsync().ConfigureAwait(false);
+                }
+                else
+                {
+                    _ = download.Exception;
+                }
+            }
         }
     }
 
+    private static async Task<(Stream Frames, long Expected)> TakeAsync(Queue<(SegmentKey Segment, Task<FileStream> Frames)> inFlight, long expected, int frameBytes)
+    {
+        var (segment, download) = inFlight.Dequeue();
+        var frames = await download.ConfigureAwait(false);
+        if (segment.Start != expected)
+        {
+            await frames.DisposeAsync().ConfigureAwait(false);
+            throw new InvalidDataException("the backup of this database is missing a log segment");
+        }
+
+        return (frames, expected + frames.Length / frameBytes);
+    }
+
+    private async Task<FileStream> DownloadSegmentAsync(string key, string scope, int frameBytes, CancellationToken cancellationToken)
+    {
+        var frames = new FileStream(Path.Combine(_scratch, Guid.NewGuid().ToString("N") + ".frames"), FileMode.CreateNew, FileAccess.ReadWrite,
+            FileShare.None, 1 << 16, FileOptions.Asynchronous | FileOptions.DeleteOnClose);
+        try
+        {
+            await DownloadAsync(key, scope, frames, cancellationToken).ConfigureAwait(false);
+            if (frames.Length % frameBytes != 0)
+            {
+                throw new InvalidDataException("a log segment of this database holds a partial frame");
+            }
+
+            frames.Position = 0;
+            return frames;
+        }
+        catch
+        {
+            await frames.DisposeAsync().ConfigureAwait(false);
+            throw;
+        }
+    }
+
+    // A stream the store drops mid-object is read again from the start, up to three attempts.
     private async Task DownloadAsync(string key, string scope, Stream output, CancellationToken cancellationToken)
     {
-        if (!await store.ReadAsync(key, content => BackupObject.ReadAsync(content, output, key, id => keys.GetAsync(scope, id, cancellationToken), cancellationToken),
-            cancellationToken).ConfigureAwait(false))
+        for (var attempt = 1; ; attempt++)
         {
-            throw new InvalidDataException("a backup object of this database disappeared during the restore");
+            output.SetLength(0);
+            bool found;
+            try
+            {
+                found = await store.ReadAsync(key, content => BackupObject.ReadAsync(content, output, key, id => keys.GetAsync(scope, id, cancellationToken), cancellationToken),
+                    cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception error) when (attempt < 3 && error is not OperationCanceledException)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(attempt), cancellationToken).ConfigureAwait(false);
+                continue;
+            }
+
+            if (!found)
+            {
+                throw new InvalidDataException("a backup object of this database disappeared during the restore");
+            }
+
+            return;
         }
     }
 

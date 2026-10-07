@@ -6,6 +6,59 @@ namespace TerraBase.Fast.Platform;
 public sealed class ConfigurationTests
 {
     [Test]
+    public async Task Nats_needs_tls_or_nats_servers_and_user_credentials_and_never_echoes_them()
+    {
+        var directory = Directory.CreateTempSubdirectory("terrabase-nats-").FullName;
+        try
+        {
+            var credentials = Path.Combine(directory, "user.creds");
+            var other = Path.Combine(directory, "other");
+            await File.WriteAllTextAsync(credentials, "-----BEGIN NATS USER JWT-----\neyJ0.e30.x\n------END NATS USER JWT------\n-----BEGIN USER NKEY SEED-----\nSUAEXAMPLE\n------END USER NKEY SEED------\n");
+            await File.WriteAllTextAsync(other, "secret-value");
+            var settings = TerraBaseOptions.FromValues(new Dictionary<string, string> { ["nats-url"] = "tls://10.0.0.1:4222, tls://10.0.0.2:4222", ["nats-credentials-file"] = credentials });
+
+            var noCredentials = await Assert.That(() => TerraBaseOptions.FromValues(new Dictionary<string, string> { ["nats-url"] = "tls://10.0.0.1:4222" }))
+                .Throws<TerraBaseConfigurationException>();
+            var notCredentials = await Assert.That(() => TerraBaseOptions.FromValues(new Dictionary<string, string> { ["nats-url"] = "tls://10.0.0.1:4222", ["nats-credentials-file"] = other }))
+                .Throws<TerraBaseConfigurationException>();
+            var badUrl = await Assert.That(() => TerraBaseOptions.FromValues(new Dictionary<string, string> { ["nats-url"] = "https://user:secret-value@host", ["nats-credentials-file"] = credentials }))
+                .Throws<TerraBaseConfigurationException>();
+            var partialTls = await Assert.That(() => TerraBaseOptions.FromValues(new Dictionary<string, string> { ["nats-url"] = "tls://10.0.0.1:4222", ["nats-credentials-file"] = credentials, ["nats-ca"] = other }))
+                .Throws<TerraBaseConfigurationException>();
+            var urlMissing = await Assert.That(() => TerraBaseOptions.FromValues(new Dictionary<string, string> { ["nats-credentials-file"] = credentials }))
+                .Throws<TerraBaseConfigurationException>();
+            var partialBackup = await Assert.That(() => TerraBaseOptions.FromValues(new Dictionary<string, string> { ["backup-bucket"] = "gru-1-backup" }))
+                .Throws<TerraBaseConfigurationException>();
+            using var oci = new FakeOci();
+            var cluster = new Dictionary<string, string>
+            {
+                ["peer-port"] = "0",
+                ["peer-certificate"] = other,
+                ["peer-private-key"] = other,
+                ["peer-client-ca"] = other,
+                ["peer-addresses"] = "https://peer.test:9443",
+            };
+            oci.Configure(cluster);
+            var clusterWithoutNats = await Assert.That(() => TerraBaseOptions.FromValues(cluster)).Throws<TerraBaseConfigurationException>();
+
+            await Assert.That(settings.Nats!.Url).IsEqualTo("tls://10.0.0.1:4222,tls://10.0.0.2:4222");
+            await Assert.That(settings.Nats.ToString()).DoesNotContain("creds");
+            await Assert.That(noCredentials!.Message).Contains("nats-credentials-file");
+            await Assert.That(notCredentials!.Message).Contains("nats-credentials-file");
+            await Assert.That(badUrl!.Message).Contains("nats-url");
+            await Assert.That(badUrl.Message).DoesNotContain("secret-value");
+            await Assert.That(partialTls!.Message).Contains("nats-certificate");
+            await Assert.That(urlMissing!.Message).Contains("nats-url");
+            await Assert.That(partialBackup!.Message).Contains("backup-secret-key-file");
+            await Assert.That(clusterWithoutNats!.Message).Contains("nats-url");
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Test]
     public async Task Unknown_settings_are_rejected_without_echoing_values()
     {
         var error = await Assert.That(() => TerraBaseOptions.FromProcess(["--admin-token=secret-value"]))

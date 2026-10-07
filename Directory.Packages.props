@@ -70,6 +70,10 @@
   <ItemGroup Label="Object storage">
     <PackageVersion Include="AWSSDK.S3" Version="4.0.104.1" />
   </ItemGroup>
+  <!-- ts-orchestrator's NATS (JetStream KV): backup leases (Features/Backup), later Anna membership. -->
+  <ItemGroup Label="NATS">
+    <PackageVersion Include="NATS.Client.KeyValueStore" Version="3.3.0" />
+  </ItemGroup>
   <!-- Cron expressions for scheduled backups (Features/Management/Backups). -->
   <ItemGroup Label="Scheduling">
     <PackageVersion Include="Cronos" Version="0.13.0" />

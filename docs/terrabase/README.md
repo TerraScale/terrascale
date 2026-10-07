@@ -76,6 +76,7 @@ never its value. Port `0` picks a free port.
 | `--shutdown-grace-seconds` / `TERRABASE_SHUTDOWN_GRACE_SECONDS` | `10` | Seconds shutdown waits for transactions to return their database connections (0 to 3600). It never closes them; the data directory stays owned until they do or the process exits |
 | `--readiness-cache-seconds` / `TERRABASE_READINESS_CACHE_SECONDS` | `1` | Seconds completed readiness filesystem results are cached (positive integer, 1 to 60). Zero is prohibited to bound disk work from anonymous traffic. Shutdown bypasses the cache |
 | `--backup-*` / `TERRABASE_BACKUP_*` | unset (backup off) | Continuous backup to an S3-compatible bucket (OCI Object Storage) with point-in-time restore: `backup-endpoint`, `backup-region`, `backup-bucket`, `backup-access-key-id`, `backup-secret-key-file`, `backup-kms-endpoint`, `backup-kms-key-id`, `backup-kms-api-key` and `backup-kms-private-key-file`, all or none. See [`docs/backup.md`](docs/backup.md) |
+| `--nats-*` / `TERRABASE_NATS_*` | unset | ts-orchestrator's NATS, which holds the backup leases (one shipper per file, with automatic takeover): `nats-url`, `nats-credentials-file` and, for mutual TLS, `nats-certificate`, `nats-private-key` and `nats-ca`. See [`docs/backup.md`](docs/backup.md#leases) |
 | `memory-budget` | ¼ of available memory | Bytes for caches; see `docs/memory.md` |
 | `storage-threads` | processor count | Dedicated threads that run SQLite calls |
 | `storage-queue` | `1024` | Storage transactions admitted at once; more get `503` with `Retry-After` |
