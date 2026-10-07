@@ -151,7 +151,7 @@ internal sealed class ActorRequests(int actorCount = 2, int maxItems = 256, int 
         return new ActorKey(tenant, fake.Random.AlphaNumeric(12), fake.Random.AlphaNumeric(24));
     }
 
-    internal sealed class Work(ActorKey? key = null, int? actor = 0, int retainedBytes = 1, bool held = false, bool fail = false, CancellationToken cancellationToken = default, TaskCompletionSource? admissionGate = null)
+    internal sealed class Work(ActorKey? key = null, int? actor = 0, int retainedBytes = 1, bool held = false, bool fail = false, TaskCompletionSource? admissionGate = null, CancellationToken cancellationToken = default)
     {
         public ActorKey Key { get; } = key ?? NewKey();
 
