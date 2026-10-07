@@ -157,7 +157,7 @@ templ onboardingView(data pageData, csrfToken string) {
 						<input class="ts-input" id="projectName" name="name" maxlength="100" value="Personal" autocomplete="organization" required/>
 					}
 					@ui.Field(ui.FieldProps{ID: "region", Label: "Primary region", Hint: "You can add regions to your project later."}) {
-						@ui.RegionMap("region", "GRU")
+						@ui.RegionMapWithPings("region", projectRegionPings(data.Demo), "GRU")
 						<select class="ts-select" id="region" name="region" required>
 							<option value="GRU" selected>GRU · São Paulo</option>
 							<option value="SFO">SFO · San Francisco</option>

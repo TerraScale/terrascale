@@ -472,6 +472,14 @@ dialog.ts-dialog::backdrop {
 
 .ts-region-map[data-select-id] .ts-region-node-label strong { display: block; }
 
+.ts-region-node-ping {
+  display: block;
+  margin-top: 2px;
+  color: var(--ts-ink-2);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
 .ts-region-map[data-select-id] button.ts-region-node:hover .ts-region-node-label,
 .ts-region-map[data-select-id] button.ts-region-node:focus-visible .ts-region-node-label,
 .ts-region-map[data-select-id] button.ts-region-node[aria-pressed="true"] .ts-region-node-label {
