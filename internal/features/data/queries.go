@@ -2,9 +2,11 @@ package data
 
 import (
 	"cmp"
+	json "encoding/json/v2"
 	"errors"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 
 	"terrascale.tech/dashboard/internal/core"
@@ -13,7 +15,7 @@ import (
 
 func mountQueryRoutes(mux *http.ServeMux, deps core.Deps, service Service) {
 	mux.HandleFunc("POST /api/v1/dashboard/data/sql/check", func(w http.ResponseWriter, r *http.Request) {
-		r.Body = http.MaxBytesReader(w, r.Body, maxSQLCheckBytes+4096)
+		r.Body = http.MaxBytesReader(w, r.Body, maxSQLCheckBytes+3*maxSQLHistoryBytes+4096)
 		p, ok := deps.FormPrincipal(w, r)
 		if !ok {
 			return
@@ -33,12 +35,17 @@ func mountQueryRoutes(mux *http.ServeMux, deps core.Deps, service Service) {
 			http.Error(w, "invalid collection", http.StatusBadRequest)
 			return
 		}
+		// The SQL editor asks for the problems to underline as it changes.
+		if !core.WantsHTML(r) {
+			core.WriteJSON(w, http.StatusOK, sqlDiagnostics(statement))
+			return
+		}
 		renderSection(w, r, deps, db.ID, "sql", http.StatusOK, func(d *pageData) {
 			d.SQL, d.CheckRequested = statement, true
 		})
 	})
 	mux.HandleFunc("POST /api/v1/dashboard/data/sql", func(w http.ResponseWriter, r *http.Request) {
-		r.Body = http.MaxBytesReader(w, r.Body, 32<<10)
+		r.Body = http.MaxBytesReader(w, r.Body, 32<<10+3*maxSQLHistoryBytes)
 		p, ok := deps.FormPrincipal(w, r)
 		if !ok {
 			return
@@ -51,10 +58,12 @@ func mountQueryRoutes(mux *http.ServeMux, deps core.Deps, service Service) {
 		}
 		statement := strings.TrimSpace(r.FormValue("sql"))
 		failed := func(status int, message string) {
-			formFailed(w, r, deps, db.ID, "sql", status, message, func(d *pageData) { d.SQL = statement })
+			formFailed(w, r, deps, db.ID, "sql", status, message, func(d *pageData) {
+				d.SQL, d.SQLHistory = statement, ranSQL(d.SQLHistory, statement)
+			})
 		}
 		if analysis := analyzeSQL(statement); !analysis.OK || sdk.ValidateSQL(statement, nil) != nil {
-			failed(http.StatusBadRequest, cmp.Or(analysis.Error, "The console cannot bind parameters such as $1; replace them with values."))
+			failed(http.StatusBadRequest, cmp.Or(analysis.Error, sqlParameterError))
 			return
 		}
 		run, err := service.RunSQL(ctx, p, db.ID, statement)
@@ -76,7 +85,7 @@ func mountQueryRoutes(mux *http.ServeMux, deps core.Deps, service Service) {
 			return
 		}
 		renderSection(w, r, deps, db.ID, "sql", http.StatusOK, func(d *pageData) {
-			d.SQL, d.SQLResult = statement, &run.Table
+			d.SQL, d.SQLResult, d.SQLHistory = statement, &run.Table, ranSQL(d.SQLHistory, statement)
 		})
 	})
 	mux.HandleFunc("GET /api/v1/dashboard/data/saved-queries", func(w http.ResponseWriter, r *http.Request) {
@@ -151,6 +160,48 @@ func mountQueryRoutes(mux *http.ServeMux, deps core.Deps, service Service) {
 		}
 		w.WriteHeader(http.StatusNoContent)
 	})
+}
+
+// maxSQLHistoryBytes bounds the JSON of the run history a console form
+// carries; 20 statements at most.
+const (
+	maxSQLHistoryBytes = 4 << 10
+	maxSQLHistory      = 20
+)
+
+// sqlHistory reads the run history a console form posts: the statements it
+// ran, newest first. The history travels only in the form and the page it
+// renders, so it ends with the page and is never stored in the browser.
+func sqlHistory(raw string) []string {
+	var history []string
+	if raw == "" || len(raw) > maxSQLHistoryBytes || json.Unmarshal([]byte(raw), &history) != nil {
+		return nil
+	}
+	return history[:min(len(history), maxSQLHistory)]
+}
+
+// ranSQL puts statement first in history, dropping its earlier runs and the
+// oldest statements beyond the history's bounds.
+func ranSQL(history []string, statement string) []string {
+	// A statement too large for the history leaves it as it was.
+	if statement == "" || len(historyJSON([]string{statement})) > maxSQLHistoryBytes {
+		return history
+	}
+	history = slices.Insert(slices.DeleteFunc(slices.Clone(history), func(s string) bool { return s == statement }), 0, statement)
+	history = history[:min(len(history), maxSQLHistory)]
+	for len(history) > 0 && len(historyJSON(history)) > maxSQLHistoryBytes {
+		history = history[:len(history)-1]
+	}
+	return history
+}
+
+// historyJSON is the history as the console form posts it back.
+func historyJSON(history []string) string {
+	encoded, err := json.Marshal(history)
+	if err != nil || len(history) == 0 {
+		return ""
+	}
+	return string(encoded)
 }
 
 // savedQueriesReturn sends a saved-query form back to the SQL console of the
