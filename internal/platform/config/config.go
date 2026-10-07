@@ -13,6 +13,10 @@ import (
 // incident and maintenance banner.
 const defaultStatusURL = "https://status.terrascale.tech/api/v2/summary.json"
 
+// defaultAtlasURL is ts-atlas, whose discovery lists the regions a database
+// can be placed in.
+const defaultAtlasURL = "https://atlas.terrascale.tech"
+
 // defaultTSAuthOrigin is production ts-auth's regional public origin.
 const defaultTSAuthOrigin = "https://gru.auth.terrascale.tech"
 
@@ -32,6 +36,9 @@ type Config struct {
 	TerraBaseDatabase  string
 	// TerraBaseHTTPClient supplies the trusted local release certificate in tests.
 	TerraBaseHTTPClient *http.Client
+	// AtlasURL is the ts-atlas origin the database region picker reads;
+	// empty leaves region discovery unconfigured.
+	AtlasURL string
 	// StatusURL is the Statuspage-compatible summary.json the shell banner
 	// reads; empty disables the banner.
 	StatusURL string
@@ -110,6 +117,10 @@ func Load() (Config, error) {
 		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" || u.User != nil || u.Path != "" || strings.ContainsAny(c.PublicURL, "?#") {
 			return Config{}, errors.New("DASHBOARD_PUBLIC_URL must be an HTTP(S) origin")
 		}
+	}
+	c.AtlasURL = defaultAtlasURL
+	if atlasURL, set := os.LookupEnv("TS_ATLAS_URL"); set {
+		c.AtlasURL = strings.TrimSpace(atlasURL)
 	}
 	// Set DASHBOARD_STATUS_SUMMARY_URL to another summary, or to an empty
 	// value to disable the status banner.

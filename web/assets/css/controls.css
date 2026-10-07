@@ -235,6 +235,12 @@ select.ts-input,
   cursor: pointer;
 }
 
+/* Native popup menus need an opaque surface as well as readable text. */
+select.ts-input option,
+select.ts-select option {
+  background-color: var(--ts-surface);
+}
+
 select[multiple].ts-input,
 select[multiple].ts-select {
   height: auto;
@@ -456,7 +462,7 @@ legend {
   height: 100%;
   padding-left: 0;
   border: 0;
-  background-color: transparent;
+  background-color: var(--ts-surface);
   font-size: var(--ts-fs-sm);
   font-weight: 400;
   letter-spacing: 0;

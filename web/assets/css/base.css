@@ -158,22 +158,23 @@ hr {
 
 /* Navigation activity: Datastar sets body.ts-nav-pending while the next
    document loads (see internal/ui/layouts.templ). Wait before revealing the
-   full-width bar so quick navigations never flash it. A gentle shimmer shows
+   full-width bar so quick navigations never flash it. A bright shimmer shows
    an ongoing wait without implying a measured completion percentage. */
 body.ts-nav-pending::before {
   content: "";
   position: fixed;
   inset: 0 0 auto;
   z-index: var(--ts-z-progress);
-  height: 3px;
+  height: 5px;
   background:
-    linear-gradient(90deg, transparent, rgb(255 255 255 / 0.3), transparent) 0 0 / 30% 100% no-repeat,
+    linear-gradient(90deg, transparent, rgb(255 255 255 / 0.55), transparent) 0 0 / 35% 100% no-repeat,
     var(--ts-accent);
+  box-shadow: 0 1px 8px rgb(59 130 246 / 0.35);
   opacity: 0;
   pointer-events: none;
   animation:
-    ts-progress-reveal 120ms ease-out 150ms forwards,
-    ts-progress-shine 1.6s linear 150ms infinite;
+    ts-progress-reveal 100ms ease-out 80ms forwards,
+    ts-progress-shine 1.2s linear 80ms infinite;
 }
 
 @keyframes ts-progress-reveal {

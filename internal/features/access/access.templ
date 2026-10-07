@@ -11,7 +11,7 @@ import (
 	"terrascale.tech/dashboard/internal/ui/icons"
 )
 
-templ accessPageView(page core.Page, data pageData) {
+templ accessPageView(page core.Page, data pageData, invitations pageData) {
 	<main id="access-page" class="ts-page ts-access-page">
 		@ui.PageHeader("Organization") {}
 		if data.Error != "" {
@@ -39,23 +39,13 @@ templ accessPageView(page core.Page, data pageData) {
 		}
 		<div class="ts-toolbar ts-access-toolbar">
 			@organization.Tabs(data.Tab)
-			if data.Tab == "members" {
-				@memberFilters(data)
-			}
+			@memberFilters(data)
 			if data.CanManage {
-				<a class="ts-btn ts-btn-primary" href="/organization?tab=invitations&amp;create=1">@icons.UserPlus(16)<span>Invite member</span></a>
+				<a class="ts-btn ts-btn-primary" href="#team-invite">@icons.UserPlus(16)<span>Invite member</span></a>
 			}
 		</div>
-		switch data.Tab {
-			case "overview":
-				@accessOverview(page, data)
-			case "members":
-				@accessMembers(page, data)
-			case "projects":
-				@accessProjects(data)
-			case "invitations":
-				@accessInvitations(page, data)
-		}
+		@accessMembers(page, data)
+		@accessInvitations(page, invitations)
 	</main>
 }
 

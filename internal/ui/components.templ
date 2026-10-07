@@ -292,12 +292,22 @@ var regionPins = []regionPin{{"SFO", "San Francisco", "us", 21, 28.58}, {"GRU", 
 // RegionMap mirrors a native select or checkbox group and lets pointer users
 // choose a hub on the map. The form controls remain canonical without scripts.
 templ RegionMap(selectID string, selected ...string) {
-	@RegionMapWithPings(selectID, nil, selected...)
+	@RegionMapOf(selectID, nil, selected...)
+}
+
+// RegionMapOf is RegionMap showing only the hubs of the available region
+// codes; nil shows every hub.
+templ RegionMapOf(selectID string, available []string, selected ...string) {
+	@regionMap(selectID, available, nil, selected...)
 }
 
 // RegionMapWithPings adds caller-supplied latency descriptions to hub tooltips.
 // The caller owns the measurements and labels simulated or unavailable values.
 templ RegionMapWithPings(selectID string, pings map[string]string, selected ...string) {
+	@regionMap(selectID, nil, pings, selected...)
+}
+
+templ regionMap(selectID string, available []string, pings map[string]string, selected ...string) {
 	<div
 		class="ts-region-map"
 		if selectID == "" {
@@ -323,27 +333,29 @@ templ RegionMapWithPings(selectID string, pings map[string]string, selected ...s
 			</svg>
 		}
 		for _, pin := range regionPins {
-			if selectID != "" {
-				<button type="button" class="ts-region-node" data-region={ pin.code } aria-label={ pin.name + " (" + pin.code + ")" } aria-pressed={ fmt.Sprint(slices.Contains(selected, pin.code)) } data-on:click={ regionPick(selectID) }
-					if pings[pin.code] != "" {
-						aria-description={ pings[pin.code] }
-					}
-				>
-					<img class="ts-region-node-flag" src={ static.URL("flags/" + pin.country + ".svg") } alt="" aria-hidden="true"/>
-					<span class="ts-region-node-ring" aria-hidden="true"></span>
-					<span class="ts-region-node-core" aria-hidden="true"></span>
-					<span class="ts-region-node-label" aria-hidden="true">
-						<strong>{ pin.name }</strong>
+			if available == nil || slices.Contains(available, pin.code) {
+				if selectID != "" {
+					<button type="button" class="ts-region-node" data-region={ pin.code } aria-label={ pin.name + " (" + pin.code + ")" } aria-pressed={ fmt.Sprint(slices.Contains(selected, pin.code)) } data-on:click={ regionPick(selectID) }
 						if pings[pin.code] != "" {
-							<span class="ts-region-node-ping">{ pings[pin.code] }</span>
+							aria-description={ pings[pin.code] }
 						}
+					>
+						<img class="ts-region-node-flag" src={ static.URL("flags/" + pin.country + ".svg") } alt="" aria-hidden="true"/>
+						<span class="ts-region-node-ring" aria-hidden="true"></span>
+						<span class="ts-region-node-core" aria-hidden="true"></span>
+						<span class="ts-region-node-label" aria-hidden="true">
+							<strong>{ pin.name }</strong>
+							if pings[pin.code] != "" {
+								<span class="ts-region-node-ping">{ pings[pin.code] }</span>
+							}
+						</span>
+					</button>
+				} else {
+					<span class="ts-region-node" data-region={ pin.code }>
+						<span class="ts-region-node-ring"></span>
+						<span class="ts-region-node-core"></span>
 					</span>
-				</button>
-			} else {
-				<span class="ts-region-node" data-region={ pin.code }>
-					<span class="ts-region-node-ring"></span>
-					<span class="ts-region-node-core"></span>
-				</span>
+				}
 			}
 		}
 	</div>

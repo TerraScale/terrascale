@@ -1,11 +1,15 @@
 package usage
 
 import (
+	"crypto/rand"
+	"errors"
+	"strings"
 	"testing"
 
 	"terrascale.tech/dashboard/internal/core"
 	"terrascale.tech/dashboard/internal/core/memstore"
 	"terrascale.tech/dashboard/internal/platform/terrabasetest"
+	v1 "terrascale.tech/sdk/v1"
 )
 
 // TestSystemDatabaseUsageComesFromTerraBase covers the Usage page for a
@@ -66,5 +70,33 @@ func TestSystemDatabaseUsageComesFromTerraBase(t *testing.T) {
 		if !project.Unavailable {
 			t.Errorf("project %s stored bytes look measured without TerraBase", project.Name)
 		}
+	}
+}
+
+// TestSystemDatabaseOfAnotherMember covers a platform admin whose ts-auth
+// user is not a member of the system database's TerraBase organization
+// (TS-659): TerraBase answers 404, and the pages name the membership instead
+// of a timeout.
+func TestSystemDatabaseOfAnotherMember(t *testing.T) {
+	tb := terrabasetest.Start(t)
+	store := memstore.New()
+	system := terrabasetest.SystemDatabase(t, tb, store)
+	outsider := tb.Token(t, "user-"+rand.Text(), "outsider@example.test")
+	ctx := core.WithUserToken(t.Context(), func() (string, bool) { return outsider, true })
+	deps := core.Deps{Store: store, Management: system.Management, DocumentsOnly: true}
+
+	_, err := deps.SystemCollections(ctx, system.Principal, system.Database)
+	if !errors.Is(err, v1.ErrNotFound) && !errors.Is(err, v1.ErrUnknownRoute) {
+		t.Fatalf("collections error = %v; want TerraBase's 404", err)
+	}
+	if got := core.SystemUnavailable(err); !strings.Contains(got, "add you as a member") {
+		t.Fatalf("collections message = %q; want the membership named", got)
+	}
+	report, err := Service{deps: deps}.Usage(ctx, system.Principal, core.UserToken(ctx), "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Totals.Available || !strings.Contains(report.Totals.Error, "add you as a member") {
+		t.Fatalf("totals = %+v; want the membership named", report.Totals)
 	}
 }

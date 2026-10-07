@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	json "encoding/json/v2"
 	"net/http"
 	"net/http/httptest"
@@ -35,7 +36,9 @@ func newDatabaseRoutes(t *testing.T) databaseRoutes {
 	}
 	sessions := session.New(store, session.Options{})
 	guard := csrf.New(sessions, csrf.Options{})
-	deps := core.Deps{Store: store, Sessions: sessions, CSRF: guard, Tools: core.NewTools(store), Demo: true}
+	deps := core.Deps{Store: store, Sessions: sessions, CSRF: guard, Tools: core.NewTools(store), Demo: true, Regions: func(context.Context) ([]core.Region, error) {
+		return []core.Region{{Code: "GRU"}, {Code: "SFO"}}, nil
+	}}
 	mux := http.NewServeMux()
 	databases.Mount(mux, deps)
 	backups.Mount(mux, deps)

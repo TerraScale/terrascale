@@ -37,7 +37,7 @@ func TestMCPDatabaseLifecycleThroughAccessToken(t *testing.T) {
 		t.Fatal("tools/list did not include save_onboarding_step")
 	}
 	names := toolNames(t, session)
-	for _, want := range []string{"list_databases", "get_database", "create_database", "branch_database", "delete_database"} {
+	for _, want := range []string{"list_databases", "get_database", "create_database", "set_database_regions", "branch_database", "delete_database"} {
 		if !slices.Contains(names, want) {
 			t.Errorf("tools/list is missing %s; got %v", want, names)
 		}
@@ -65,6 +65,15 @@ func TestMCPDatabaseLifecycleThroughAccessToken(t *testing.T) {
 	callTool(t, session, "get_database", map[string]any{"databaseId": created.ID}, &detail)
 	if detail.ID != created.ID || !detail.CanManage || len(detail.Regions) == 0 {
 		t.Errorf("get_database = %+v, want a manageable database with regions", detail)
+	}
+
+	var placed struct{ Placement []string }
+	callTool(t, session, "set_database_regions", map[string]any{"databaseId": created.ID, "regions": []string{"GRU", "SFO"}}, &placed)
+	if !slices.Equal(placed.Placement, []string{"GRU", "SFO"}) {
+		t.Errorf("set_database_regions = %+v, want GRU and SFO", placed)
+	}
+	if message := callToolError(t, session, "set_database_regions", map[string]any{"databaseId": created.ID, "regions": []string{"FRA"}}); !strings.Contains(message, "unknown region") {
+		t.Errorf("set_database_regions outside discovery error = %q, want unknown region", message)
 	}
 
 	if message := callToolError(t, session, "create_database", map[string]any{"name": "Not Valid"}); !strings.Contains(message, "lowercase") {
