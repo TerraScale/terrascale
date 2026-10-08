@@ -7,6 +7,8 @@ import (
 	"net/url"
 	"os"
 	"strings"
+
+	"terrascale.tech/sdk/tsauth"
 )
 
 // defaultStatusURL is the public status page summary behind the shell's
@@ -207,6 +209,13 @@ func (c *Config) loadTSAuth() error {
 	u, err := url.Parse(c.TSAuth.Issuer)
 	if err != nil || !c.allowedScheme(u.Scheme) || u.Hostname() == "" || u.User != nil || strings.ContainsAny(c.TSAuth.Issuer, "?#") {
 		return errors.New("TS_AUTH_ISSUER must be an HTTPS URL")
+	}
+	// Validate the SDK contract before app.New constructs its auth client.
+	// This does not contact the issuer.
+	if _, err := tsauth.NewHeadless(tsauth.HeadlessConfig{
+		Issuer: c.TSAuth.Issuer, ClientID: c.TSAuth.ClientID, ClientSecret: c.TSAuth.ClientSecret,
+	}); err != nil {
+		return fmt.Errorf("TS_AUTH_ISSUER: %w; development HTTP requires localhost or a loopback IP; use HTTPS for other hosts", err)
 	}
 	c.TSAuthOrigin = u.Scheme + "://" + u.Host
 	if c.TSAuth.RedirectURL == "" && c.PublicURL != "" {

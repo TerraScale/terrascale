@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"terrascale.tech/dashboard/internal/adapters/terrabase"
@@ -27,14 +28,14 @@ func refusingTSAuth(t *testing.T) *httptest.Server {
 	mux.HandleFunc("GET /.well-known/openid-configuration", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.MarshalWrite(w, map[string]any{
-			"issuer": server.URL, "authorization_endpoint": server.URL + "/authorize", "token_endpoint": server.URL + "/token",
+			"issuer": server.URL, "authorization_endpoint": server.URL + "/authorize", "token_endpoint": server.URL + "/oauth/token",
 			"jwks_uri": server.URL + "/jwks", "response_types_supported": []string{"code"}, "subject_types_supported": []string{"public"},
 			"id_token_signing_alg_values_supported": []string{"ES256"}, "code_challenge_methods_supported": []string{"S256"},
 			"grant_types_supported": []string{"authorization_code", "refresh_token",
 				"urn:terrascale:params:oauth:grant-type:password", "urn:terrascale:params:oauth:grant-type:email-code"},
 		})
 	})
-	mux.HandleFunc("POST /token", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("POST /oauth/token", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
 		_, _ = io.WriteString(w, `{"error":"invalid_grant"}`)
@@ -48,6 +49,44 @@ func refusingTSAuth(t *testing.T) *httptest.Server {
 }
 
 var csrfField = regexp.MustCompile(`name="_csrf" value="([^"]+)"`)
+
+func TestNativeAuthPagesWithTerraBaseDuringIssuerOutage(t *testing.T) {
+	if testing.Short() {
+		t.Skip("starts pinned TerraBase release")
+	}
+	tb := terrabasetest.Start(t)
+	db, key := terrabasetest.Database(t, tb, "dashboard")
+	if err := terrabase.EnsureCollections(t.Context(), db); err != nil {
+		t.Fatal(err)
+	}
+	if err := terrabase.New(db).SeedPlans(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	var issuerCalls atomic.Int64
+	issuer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		issuerCalls.Add(1)
+		http.Error(w, "unavailable", http.StatusServiceUnavailable)
+	}))
+	t.Cleanup(issuer.Close)
+	application, err := New(config.Config{
+		TerraBaseURL: tb.URL, TerraBaseAPIKey: key, TerraBaseProjectID: db.Project(), TerraBaseDatabase: db.Name(),
+		TerraBaseHTTPClient: tb.Client, CSRFSecret: []byte(strings.Repeat("r", 32)),
+		TSAuth: config.TSAuth{Issuer: issuer.URL, ClientID: "ts-dashboard", ClientSecret: "secret", RedirectURL: "http://dashboard.test/login/callback"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"/login", "/login/code", "/onboarding", "/reset-password"} {
+		response := httptest.NewRecorder()
+		application.Handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "http://dashboard.test"+path, nil))
+		if response.Code != http.StatusOK || response.Header().Get("Location") != "" || !strings.Contains(response.Body.String(), "<form") {
+			t.Fatalf("GET %s during issuer outage = %d Location %q: %s", path, response.Code, response.Header().Get("Location"), response.Body)
+		}
+	}
+	if got := issuerCalls.Load(); got != 0 {
+		t.Fatalf("rendering native forms called the unavailable issuer %d times", got)
+	}
+}
 
 // TestNativeSignInThrottlesWithTerraBase guards the sign-in design with the
 // dashboard wired as production: TerraBase state, ts-auth's headless API,

@@ -171,6 +171,7 @@ func TestTSAuthConfiguration(t *testing.T) {
 		want                                                     TSAuth
 		origin                                                   string
 		invalid                                                  bool
+		wantError                                                string
 	}{
 		{name: "unset", origin: "https://gru.auth.terrascale.tech"},
 		{name: "partial", issuer: "https://auth.example", clientID: "dashboard", invalid: true},
@@ -187,6 +188,15 @@ func TestTSAuthConfiguration(t *testing.T) {
 		{name: "http issuer", issuer: "http://localhost:9000", clientID: "dashboard", secret: "s3cret", redirect: callback, invalid: true},
 		{name: "http issuer in dev", dev: "1", publicURL: "http://localhost:5481", issuer: "http://localhost:9000", clientID: "dashboard", secret: "s3cret",
 			want: TSAuth{Issuer: "http://localhost:9000", ClientID: "dashboard", ClientSecret: "s3cret", RedirectURL: "http://localhost:5481/login/callback"}, origin: "http://localhost:9000"},
+		{name: "IPv4 loopback issuer in dev", dev: "1", publicURL: "http://dashboard.test:5481", issuer: "http://127.0.0.2:9000/instance", clientID: "dashboard", secret: "s3cret",
+			want: TSAuth{Issuer: "http://127.0.0.2:9000/instance", ClientID: "dashboard", ClientSecret: "s3cret", RedirectURL: "http://dashboard.test:5481/login/callback"}, origin: "http://127.0.0.2:9000"},
+		{name: "IPv6 loopback issuer in dev", dev: "1", publicURL: "http://localhost:5481", issuer: "http://[::1]:9000/instance", clientID: "dashboard", secret: "s3cret",
+			want: TSAuth{Issuer: "http://[::1]:9000/instance", ClientID: "dashboard", ClientSecret: "s3cret", RedirectURL: "http://localhost:5481/login/callback"}, origin: "http://[::1]:9000"},
+		{name: "container HTTP issuer in dev", dev: "1", publicURL: "http://localhost:5481", issuer: "http://ts-auth:8080/instance", clientID: "dashboard", secret: "s3cret", invalid: true, wantError: "development HTTP requires localhost or a loopback IP; use HTTPS for other hosts"},
+		{name: "private HTTP issuer in dev", dev: "1", publicURL: "http://localhost:5481", issuer: "http://192.168.1.5:8080/instance", clientID: "dashboard", secret: "s3cret", invalid: true, wantError: "development HTTP requires localhost or a loopback IP; use HTTPS for other hosts"},
+		{name: "container HTTPS issuer in dev", dev: "1", publicURL: "http://localhost:5481", issuer: "https://ts-auth:8080/instance", clientID: "dashboard", secret: "s3cret",
+			want: TSAuth{Issuer: "https://ts-auth:8080/instance", ClientID: "dashboard", ClientSecret: "s3cret", RedirectURL: "http://localhost:5481/login/callback"}, origin: "https://ts-auth:8080"},
+		{name: "issuer escaped path", dev: "1", publicURL: "http://localhost:5481", issuer: "https://auth.example/a%2Fb", clientID: "dashboard", secret: "s3cret", invalid: true, wantError: "TS_AUTH_ISSUER"},
 		{name: "issuer with query", issuer: "https://auth.example?x=1", clientID: "dashboard", secret: "s3cret", redirect: callback, invalid: true},
 		{name: "redirect path", issuer: "https://auth.example", clientID: "dashboard", secret: "s3cret", redirect: "https://dashboard.example/callback", invalid: true},
 		{name: "redirect query", issuer: "https://auth.example", clientID: "dashboard", secret: "s3cret", redirect: callback + "?next=/", invalid: true},
@@ -206,6 +216,9 @@ func TestTSAuthConfiguration(t *testing.T) {
 			cfg, err := Load()
 			if (err != nil) != tc.invalid || cfg.TSAuth != tc.want || cfg.TSAuthOrigin != tc.origin {
 				t.Fatalf("ts-auth=%+v origin=%q error=%v", cfg.TSAuth, cfg.TSAuthOrigin, err)
+			}
+			if tc.wantError != "" && (err == nil || !strings.Contains(err.Error(), tc.wantError)) {
+				t.Fatalf("error=%v, want %q", err, tc.wantError)
 			}
 		})
 	}

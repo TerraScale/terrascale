@@ -1,12 +1,10 @@
 package auth
 
 import (
-	"bytes"
 	"context"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -15,6 +13,7 @@ import (
 
 	"golang.org/x/oauth2"
 	"terrascale.tech/dashboard/internal/core"
+	"terrascale.tech/sdk/tsauth"
 )
 
 // ts-auth's headless API (TS-582). The dashboard calls it from its backend
@@ -32,9 +31,6 @@ const (
 	headlessResetStart    = "/headless/v1/password-reset/start"
 	headlessResetComplete = "/headless/v1/password-reset/complete"
 )
-
-// maxHeadlessAnswer bounds what the dashboard reads of one ts-auth answer.
-const maxHeadlessAnswer = 1 << 20
 
 // errInvalidCode is an emailed code ts-auth refused: wrong, expired or used
 // up, or one for an address without an account, which reads the same.
@@ -57,99 +53,93 @@ func (t *TSAuth) grant(r *http.Request, client, grantType string, fields url.Val
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", core.ErrUnavailable, err)
 	}
-	fields.Set("grant_type", grantType)
-	fields.Set("ip_address", client)
-	fields.Set("scope", strings.Join(provider.oauth.Scopes, " "))
-	answer, err := t.post(r.Context(), provider.oauth.Endpoint.TokenURL, "application/x-www-form-urlencoded", []byte(fields.Encode()))
-	if err != nil {
-		return nil, err
+	var tokens *tsauth.Tokens
+	switch grantType {
+	case passwordGrant:
+		tokens, err = t.headlessClient.SignInWithPassword(r.Context(), fields.Get("email"), fields.Get("password"), client, provider.oauth.Scopes)
+	case emailCodeGrant:
+		tokens, err = t.headlessClient.SignInWithEmailCode(r.Context(), fields.Get("email"), fields.Get("code"), client, fields.Get("pending_token"), provider.oauth.Scopes)
+	default:
+		return nil, errors.New("unsupported headless grant")
 	}
-	return decodeTokens(answer)
+	if err != nil {
+		return nil, headlessError(err)
+	}
+	if tokens.IDToken == "" {
+		return nil, fmt.Errorf("%w: ts-auth answered without an ID token", errSignInRejected)
+	}
+	return oauthTokens(tokens), nil
 }
 
-// headless posts fields as JSON to ts-auth's headless endpoint path, from
-// the end user's address client, and returns the answer's body.
+// headless calls the SDK's JSON steps, retaining the pending-token answer
+// the native sign-up form consumes.
 func (t *TSAuth) headless(r *http.Request, client, path string, fields map[string]string) ([]byte, error) {
-	fields["ip_address"] = client
-	body, err := json.Marshal(fields)
-	if err != nil {
-		return nil, err
+	var err error
+	switch path {
+	case headlessCodeStart:
+		err = t.headlessClient.StartEmailCode(r.Context(), fields["email"], client)
+	case headlessSignUp:
+		var pending string
+		pending, err = t.headlessClient.SignUp(r.Context(), fields["email"], fields["password"], client)
+		if err == nil {
+			return json.Marshal(map[string]string{"pending_token": pending})
+		}
+	case headlessResetStart:
+		err = t.headlessClient.StartPasswordReset(r.Context(), fields["email"], client)
+	case headlessResetComplete:
+		err = t.headlessClient.CompletePasswordReset(r.Context(), fields["email"], fields["code"], fields["new_password"], client)
+	default:
+		return nil, errors.New("unsupported headless step")
 	}
-	return t.post(r.Context(), strings.TrimSuffix(t.cfg.Issuer, "/")+path, "application/json", body)
+	return nil, headlessError(err)
 }
 
-// revoke ends the ts-auth sign-in a session's refresh token belongs to, at
-// the revocation endpoint ts-auth advertises (RFC 7009).
+// revoke ends the ts-auth sign-in a session's refresh token belongs to.
+// A legacy issuer advertising no revocation endpoint stays a no-op.
 func (t *TSAuth) revoke(ctx context.Context, refreshToken string) error {
 	provider, err := t.discover(ctx)
 	if err != nil || provider.revocation == "" {
 		return err
 	}
-	form := url.Values{"token": {refreshToken}, "token_type_hint": {"refresh_token"}}
-	_, err = t.post(ctx, provider.revocation, "application/x-www-form-urlencoded", []byte(form.Encode()))
-	return err
+	return headlessError(t.headlessClient.Revoke(ctx, refreshToken))
 }
 
-// post sends body to ts-auth as the dashboard's confidential client and
-// returns a successful answer's body. A rate limit is tooManyAttempts, any
-// other 4xx a tsAuthRefusal, and the rest wraps core.ErrUnavailable.
-func (t *TSAuth) post(ctx context.Context, target, contentType string, body []byte) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, target, bytes.NewReader(body))
-	if err != nil {
-		return nil, err
+// headlessError maps SDK errors to the native forms' existing contract.
+func headlessError(err error) error {
+	if err == nil {
+		return nil
 	}
-	request.Header.Set("Content-Type", contentType)
-	request.Header.Set("Accept", "application/json")
-	// client_secret_basic, as at the token endpoint (RFC 6749 §2.3.1).
-	request.SetBasicAuth(url.QueryEscape(t.cfg.ClientID), url.QueryEscape(t.cfg.ClientSecret))
-	response, err := t.client.Do(request)
-	if err != nil {
-		return nil, fmt.Errorf("ts-auth: %w: %w", core.ErrUnavailable, err)
+	var status int
+	var code, message string
+	var wait time.Duration
+	if refusal, ok := errors.AsType[*tsauth.Error](err); ok {
+		status, code, message, wait = refusal.Status, refusal.Code, refusal.Description, refusal.RetryAfter
+	} else if refusal, ok := errors.AsType[*tsauth.APIError](err); ok {
+		status, code, message, wait = refusal.Status, string(refusal.Code), refusal.Message, refusal.RetryAfter
 	}
-	defer response.Body.Close()
-	answer, err := io.ReadAll(io.LimitReader(response.Body, maxHeadlessAnswer))
-	if err != nil {
-		return nil, fmt.Errorf("ts-auth: %w: %w", core.ErrUnavailable, err)
+	if status == http.StatusTooManyRequests {
+		return tooManyAttempts{wait: min(max(wait, time.Second), time.Hour)}
 	}
-	switch status := response.StatusCode; {
-	case status >= 200 && status < 300:
-		return answer, nil
-	case status == http.StatusTooManyRequests:
-		// Bounded before it becomes a Duration, which would overflow.
-		seconds, _ := strconv.Atoi(response.Header.Get("Retry-After"))
-		return nil, tooManyAttempts{wait: time.Duration(min(max(seconds, 1), 3600)) * time.Second}
-	case status >= 400 && status < 500 && status != http.StatusUnauthorized:
-		return nil, decodeRefusal(status, answer)
+	if status >= 400 && status < 500 && status != http.StatusUnauthorized {
+		return tsAuthRefusal{Status: status, Code: code, Message: message}
 	}
 	// 401 is invalid_client: the dashboard's registration, not the visitor.
-	return nil, fmt.Errorf("ts-auth answered %d: %w", response.StatusCode, core.ErrUnavailable)
+	return fmt.Errorf("ts-auth: %w: %w", core.ErrUnavailable, err)
 }
 
-// decodeRefusal reads ts-auth's two error shapes: the token endpoint's
-// {"error", "error_description"} and the JSON API's {"error": {"code",
-// "message"}}.
-func decodeRefusal(status int, answer []byte) tsAuthRefusal {
-	refusal := tsAuthRefusal{Status: status}
-	var oauthError struct {
-		Code    string `json:"error"`
-		Message string `json:"error_description"`
+// headlessTransport caps numeric Retry-After before the pinned SDK's 32-bit
+// parser, preserving the dashboard's one-hour cap even for larger values.
+type headlessTransport struct{ http.RoundTripper }
+
+func (t headlessTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	response, err := t.RoundTripper.RoundTrip(r)
+	if err == nil && response.StatusCode == http.StatusTooManyRequests {
+		// ParseUint returns the maximum value on positive overflow too.
+		if seconds, _ := strconv.ParseUint(strings.TrimSpace(response.Header.Get("Retry-After")), 10, 64); seconds > 3600 {
+			response.Header.Set("Retry-After", "3600")
+		}
 	}
-	if json.Unmarshal(answer, &oauthError) == nil {
-		refusal.Code, refusal.Message = oauthError.Code, oauthError.Message
-		return refusal
-	}
-	var apiError struct {
-		Error struct {
-			Code    string `json:"code"`
-			Message string `json:"message"`
-		} `json:"error"`
-	}
-	if json.Unmarshal(answer, &apiError) == nil {
-		refusal.Code, refusal.Message = apiError.Error.Code, apiError.Error.Message
-	}
-	return refusal
+	return response, err
 }
 
 // refusedAs maps ts-auth's refusal code to err, so callers can tell a wrong
@@ -175,21 +165,10 @@ func passwordRefused(err error, field string) error {
 	return InputError{field, message}
 }
 
-// decodeTokens reads a token endpoint answer.
-func decodeTokens(answer []byte) (*oauth2.Token, error) {
-	var tokens struct {
-		AccessToken  string `json:"access_token"`
-		TokenType    string `json:"token_type"`
-		RefreshToken string `json:"refresh_token"`
-		IDToken      string `json:"id_token"`
-		ExpiresIn    int64  `json:"expires_in"`
-	}
-	if err := json.Unmarshal(answer, &tokens); err != nil || tokens.IDToken == "" {
-		return nil, fmt.Errorf("%w: ts-auth answered without an ID token", errSignInRejected)
-	}
-	token := &oauth2.Token{AccessToken: tokens.AccessToken, TokenType: tokens.TokenType, RefreshToken: tokens.RefreshToken}
-	if tokens.ExpiresIn > 0 {
-		token.Expiry = time.Now().Add(time.Duration(tokens.ExpiresIn) * time.Second)
-	}
-	return token.WithExtra(map[string]any{"id_token": tokens.IDToken}), nil
+// oauthTokens adapts the SDK answer for the dashboard's strict ID-token
+// verification and session state. The SDK already enforces Bearer tokens.
+func oauthTokens(tokens *tsauth.Tokens) *oauth2.Token {
+	return (&oauth2.Token{
+		AccessToken: tokens.AccessToken, TokenType: "Bearer", RefreshToken: tokens.RefreshToken, Expiry: tokens.Expiry,
+	}).WithExtra(map[string]any{"id_token": tokens.IDToken})
 }

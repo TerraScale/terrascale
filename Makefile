@@ -66,7 +66,7 @@ lint: js check-generated
 # keep internal unit tests parallel and fail fast if they fail. -p 1 prevents
 # future browser test packages from running alongside each other as well.
 test-fast: js
-	$(GO) test $(GO_TEST_FLAGS) -short -parallel 8 ./internal/...
+	$(GO) test $(GO_TEST_FLAGS) -short -parallel 8 ./cmd/... ./internal/...
 	$(GO) test $(GO_TEST_FLAGS) -short -p 1 -parallel 1 ./tests/...
 
 test-slow: test-unit test-browser
@@ -82,7 +82,7 @@ check-e2e-shards: js
 	@GO="$(GO)" scripts/check-e2e-shards.sh "$(E2E_SHARDS)" $(GO_TEST_FLAGS)
 
 test-unit: js
-	$(GO) test $(GO_TEST_FLAGS) -parallel 8 ./internal/...
+	$(GO) test $(GO_TEST_FLAGS) -parallel 8 ./cmd/... ./internal/...
 
 test-browser: js
 	@run=$$(GO="$(GO)" scripts/e2e-shard.sh "$(E2E_SHARD)" $(GO_TEST_FLAGS)) && \

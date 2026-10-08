@@ -251,5 +251,6 @@ golang.org/x/tools/internal/versions
 ## explicit; go 1.25.0
 terrascale.tech/sdk
 terrascale.tech/sdk/terrabasetest
+terrascale.tech/sdk/tsauth
 terrascale.tech/sdk/v1
 # terrascale.tech/sdk => git.terrascale.tech/TerraScale/ts-go v0.0.0-20261007193824-3dfbe22c80df

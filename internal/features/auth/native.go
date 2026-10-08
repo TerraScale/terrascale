@@ -48,8 +48,7 @@ const unavailable = "Sign-in is unavailable right now. Try again in a moment."
 
 // mountNative registers the dashboard's own sign-in, code and recovery pages,
 // which check credentials through ts-auth's headless API. Only external
-// identity providers leave the dashboard, through the redirect flow, and
-// everyone does while ts-auth does not offer the headless API.
+// identity providers leave the dashboard, through explicit single sign-on.
 func (t *TSAuth) mountNative(mux *http.ServeMux, deps core.Deps) {
 	mux.HandleFunc("GET /login/sso", func(w http.ResponseWriter, r *http.Request) {
 		returnTo := SafeRedirectTarget(r.URL.Query().Get("returnTo"))
@@ -58,32 +57,19 @@ func (t *TSAuth) mountNative(mux *http.ServeMux, deps core.Deps) {
 		}
 	})
 	mux.HandleFunc("GET /login/callback", t.callback(deps))
-	mux.HandleFunc("POST /login", t.native(t.passwordSignIn(deps)))
-	mux.HandleFunc("GET /login/code", t.native(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /login", t.passwordSignIn(deps))
+	mux.HandleFunc("GET /login/code", func(w http.ResponseWriter, r *http.Request) {
 		renderCode(w, r, deps, http.StatusOK, codePageData{
 			Email: r.URL.Query().Get("email"), RedirectTo: SafeRedirectTarget(r.URL.Query().Get("returnTo")),
 		})
-	}))
-	mux.HandleFunc("POST /login/code", t.native(t.sendCode(deps)))
-	mux.HandleFunc("POST /login/code/verify", t.native(t.verifyCode(deps)))
-	mux.HandleFunc("GET /reset-password", t.native(func(w http.ResponseWriter, r *http.Request) {
+	})
+	mux.HandleFunc("POST /login/code", t.sendCode(deps))
+	mux.HandleFunc("POST /login/code/verify", t.verifyCode(deps))
+	mux.HandleFunc("GET /reset-password", func(w http.ResponseWriter, r *http.Request) {
 		renderReset(w, r, deps, http.StatusOK, resetPageData{})
-	}))
-	mux.HandleFunc("POST /reset-password", t.native(t.startReset(deps)))
-	mux.HandleFunc("POST /reset-password/complete", t.native(t.completeReset(deps)))
-}
-
-// native serves h while ts-auth offers its headless API. Until then the
-// visitor signs in on ts-auth's own page, as before TS-582, which asks for
-// credentials rather than returning a signed-in browser at once.
-func (t *TSAuth) native(h http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if t.Headless(r.Context()) {
-			h(w, r)
-			return
-		}
-		http.Redirect(w, r, ssoURL(SafeRedirectTarget(r.URL.Query().Get("returnTo")), true), http.StatusSeeOther)
-	}
+	})
+	mux.HandleFunc("POST /reset-password", t.startReset(deps))
+	mux.HandleFunc("POST /reset-password/complete", t.completeReset(deps))
 }
 
 // passwordSignIn checks an email and password with ts-auth. Every refusal

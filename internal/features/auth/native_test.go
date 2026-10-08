@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -35,8 +36,10 @@ type fakeHeadless struct {
 	calls         []fakeCall
 	revoked       []string
 	// status, when set, answers every call with it.
-	status     int
-	retryAfter string
+	status      int
+	retryAfter  string
+	location    string
+	omitIDToken bool
 }
 
 // fakeSignUp is a sign-up waiting for its code, which only its requester's
@@ -57,7 +60,7 @@ func (i *testIssuer) mountHeadless(mux *http.ServeMux) {
 	for _, path := range []string{headlessCodeStart, headlessSignUp, headlessResetStart, headlessResetComplete} {
 		mux.HandleFunc("POST "+path, i.serveHeadless)
 	}
-	mux.HandleFunc("POST /revoke", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /oauth/revoke", func(w http.ResponseWriter, r *http.Request) {
 		if clientID, secret, ok := r.BasicAuth(); !ok || clientID != testClientID || secret != testClientSecret {
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid_client"})
 			return
@@ -82,6 +85,9 @@ func (h *fakeHeadless) limited(w http.ResponseWriter, path string, fields map[st
 	}
 	if h.retryAfter != "" {
 		w.Header().Set("Retry-After", h.retryAfter)
+	}
+	if h.location != "" {
+		w.Header().Set("Location", h.location)
 	}
 	writeJSON(w, h.status, map[string]string{"error": "rate_limited"})
 	return true
@@ -201,10 +207,14 @@ func (i *testIssuer) headlessGrant(w http.ResponseWriter, r *http.Request) {
 	i.claims(claims)
 	refresh := rand.Text()
 	i.refreshes[refresh] = user.subject
-	writeJSON(w, http.StatusOK, map[string]any{
+	answer := map[string]any{
 		"access_token": rand.Text(), "token_type": "Bearer", "expires_in": 3600,
 		"refresh_token": refresh, "id_token": i.sign(claims),
-	})
+	}
+	if h.omitIDToken {
+		delete(answer, "id_token")
+	}
+	writeJSON(w, http.StatusOK, answer)
 }
 
 func (i *testIssuer) addUser(email, password string) {
@@ -313,18 +323,21 @@ func TestNativePasswordSignInIsThrottled(t *testing.T) {
 		t.Fatalf("ts-auth checked %d guesses, want the dashboard to stop at its budget of 10", calls)
 	}
 
-	// ts-auth's own refusal reaches the visitor too.
+	// Both SDK error shapes retain the issuer's rate limit and bounded wait.
 	limited := newTestIssuer(t)
-	limited.set(func(i *testIssuer) { i.headless.status, i.headless.retryAfter = http.StatusTooManyRequests, "42" })
-	response = newTSAuthDashboard(t, limited).post("/login", url.Values{"email": {"grace@example.test"}, "password": {"guess guess guess"}})
-	if response.Code != http.StatusTooManyRequests || response.Header().Get("Retry-After") != "42" {
-		t.Fatalf("ts-auth refusal = %d Retry-After %q, want 429 and ts-auth's wait", response.Code, response.Header().Get("Retry-After"))
-	}
-	// A wait too long to be one is bounded, not overflowed into nonsense.
-	limited.set(func(i *testIssuer) { i.headless.retryAfter = "99999999999" })
-	response = newTSAuthDashboard(t, limited).post("/login", url.Values{"email": {"grace@example.test"}, "password": {"guess guess guess"}})
-	if response.Code != http.StatusTooManyRequests || response.Header().Get("Retry-After") != "3600" {
-		t.Fatalf("ts-auth refusal with a huge wait = %d Retry-After %q, want 429 and an hour", response.Code, response.Header().Get("Retry-After"))
+	for _, path := range []string{"/login", "/login/code"} {
+		for _, retry := range []struct{ header, want string }{
+			{"42", "42"}, {"99999999999", "3600"}, {"9223372036854775808", "3600"}, {"18446744073709551616", "3600"},
+			{"", "1"}, {"0", "1"}, {"-5", "1"}, {"invalid", "1"},
+		} {
+			limited.set(func(i *testIssuer) {
+				i.headless.status, i.headless.retryAfter = http.StatusTooManyRequests, retry.header
+			})
+			response = newTSAuthDashboard(t, limited).post(path, url.Values{"email": {"grace@example.test"}, "password": {"guess guess guess"}})
+			if response.Code != http.StatusTooManyRequests || response.Header().Get("Retry-After") != retry.want {
+				t.Fatalf("POST %s with issuer Retry-After %q = %d Retry-After %q, want 429 and %s", path, retry.header, response.Code, response.Header().Get("Retry-After"), retry.want)
+			}
+		}
 	}
 }
 
@@ -339,6 +352,11 @@ func TestNativeSignInRejectsUnprovenTokens(t *testing.T) {
 		"other audience":   func(i *testIssuer) { i.claims = func(c map[string]any) { c["aud"] = "other-client" } },
 		"unverified email": func(i *testIssuer) { i.claims = func(c map[string]any) { c["email_verified"] = false } },
 		"other issuer":     func(i *testIssuer) { i.claims = func(c map[string]any) { c["iss"] = "https://evil.example" } },
+		"empty subject":    func(i *testIssuer) { i.claims = func(c map[string]any) { c["sub"] = "" } },
+		"expired token": func(i *testIssuer) {
+			i.claims = func(c map[string]any) { c["exp"] = time.Now().Add(-time.Hour).Unix() }
+		},
+		"missing ID token": func(i *testIssuer) { i.headless.omitIDToken = true },
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -351,6 +369,28 @@ func TestNativeSignInRejectsUnprovenTokens(t *testing.T) {
 				t.Fatalf("sign-in = %d, want a refusal and no session", response.Code)
 			}
 		})
+	}
+}
+
+func TestNativeHeadlessDoesNotFollowRedirects(t *testing.T) {
+	t.Parallel()
+	var redirected atomic.Int32
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		redirected.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(target.Close)
+	issuer := newTestIssuer(t)
+	issuer.set(func(i *testIssuer) { i.headless.status, i.headless.location = http.StatusTemporaryRedirect, target.URL })
+	for _, path := range []string{"/login", "/login/code", "/reset-password"} {
+		dashboard := newTSAuthDashboard(t, issuer)
+		response := dashboard.post(path, url.Values{"email": {"grace@example.test"}, "password": {"correct horse battery"}})
+		if response.Code != http.StatusServiceUnavailable || response.Header().Get("Location") != "" || dashboard.signedIn(t) {
+			t.Fatalf("POST %s with redirected issuer = %d %q, want 503 and no session", path, response.Code, response.Header().Get("Location"))
+		}
+	}
+	if redirected.Load() != 0 {
+		t.Fatalf("forwarded %d credential-bearing requests to a redirect target", redirected.Load())
 	}
 }
 
@@ -590,32 +630,92 @@ func TestNativeBearerLogoutRevokesTSAuthSignIn(t *testing.T) {
 	}
 }
 
-func TestNativeFallsBackToRedirectUntilTSAuthOffersHeadless(t *testing.T) {
+func TestNativePagesStayNativeWithoutHeadlessDiscovery(t *testing.T) {
 	t.Parallel()
 	issuer := newTestIssuer(t)
 	issuer.set(func(i *testIssuer) { i.legacy = true })
+	issuer.addUser("grace@example.test", "correct horse battery")
 	dashboard := newTSAuthDashboard(t, issuer)
-	dashboard.tsAuth.recheck = 0
-	// Without the headless grants every way in is ts-auth's own page.
-	if location := dashboard.do(http.MethodGet, "/login?returnTo=%2Fdatabases").Header().Get("Location"); !strings.HasPrefix(location, issuer.url()+"/authorize?") {
-		t.Fatalf("GET /login = %q, want the redirect to ts-auth", location)
-	}
-	for _, step := range []struct{ method, target string }{
-		{http.MethodGet, "/login/code?returnTo=%2Fdatabases"}, {http.MethodPost, "/login"}, {http.MethodGet, "/reset-password"},
-		{http.MethodPost, "/login/code"}, {http.MethodPost, "/reset-password/complete"},
-	} {
-		response := dashboard.do(step.method, step.target)
-		if location := response.Header().Get("Location"); response.Code != http.StatusSeeOther || !strings.HasPrefix(location, "/login/sso?") || !strings.Contains(location, "prompt=login") {
-			t.Fatalf("%s %s = %d %q, want single sign-on asking for credentials", step.method, step.target, response.Code, location)
+	for _, path := range []string{"/login?returnTo=%2Fdatabases", "/login/code?returnTo=%2Fdatabases", "/reset-password"} {
+		response := dashboard.do(http.MethodGet, path)
+		if response.Code != http.StatusOK || response.Header().Get("Location") != "" {
+			t.Fatalf("GET %s = %d %q, want a native page", path, response.Code, response.Header().Get("Location"))
 		}
 	}
-	if issuer.headlessCalls(passwordGrant)+issuer.headlessCalls(headlessCodeStart) != 0 {
-		t.Fatal("the dashboard called a headless API ts-auth does not offer")
+	if response := dashboard.post("/login/code", url.Values{"email": {"grace@example.test"}}); response.Code != http.StatusOK {
+		t.Fatalf("code request without advertised grants = %d, want the native code step", response.Code)
 	}
-	// ts-auth gaining them switches the pages on without a restart.
-	issuer.set(func(i *testIssuer) { i.legacy = false })
-	if response := dashboard.do(http.MethodGet, "/login"); response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `action="/login"`) {
-		t.Fatalf("GET /login after ts-auth shipped the headless API = %d, want the dashboard's page", response.Code)
+	if response := dashboard.post("/login", url.Values{"email": {"grace@example.test"}, "password": {"correct horse battery"}, "redirectTo": {"/databases"}}); response.Code != http.StatusSeeOther || response.Header().Get("Location") != "/databases" || !dashboard.signedIn(t) {
+		t.Fatalf("sign-in without advertised grants = %d %q, want a dashboard session", response.Code, response.Header().Get("Location"))
+	}
+	if location := dashboard.do(http.MethodGet, "/login/sso?returnTo=%2Fdatabases").Header().Get("Location"); !strings.HasPrefix(location, issuer.url()+"/authorize?") {
+		t.Fatalf("explicit single sign-on = %q, want the issuer's authorization endpoint", location)
+	}
+}
+
+func TestNativePagesAndSubmissionsDuringTSAuthOutage(t *testing.T) {
+	t.Parallel()
+	issuer := newTestIssuer(t)
+	issuer.server.Close()
+	dashboard := newTSAuthDashboard(t, issuer)
+	for _, path := range []string{"/login", "/login/code", "/reset-password"} {
+		response := dashboard.do(http.MethodGet, path)
+		if response.Code != http.StatusOK || response.Header().Get("Location") != "" {
+			t.Fatalf("GET %s during an outage = %d %q, want a native page", path, response.Code, response.Header().Get("Location"))
+		}
+	}
+	for _, step := range []struct {
+		path string
+		form url.Values
+	}{
+		{"/login", url.Values{"email": {"grace@example.test"}, "password": {"correct horse battery"}}},
+		{"/login/code", url.Values{"email": {"grace@example.test"}}},
+		{"/login/code/verify", url.Values{"email": {"grace@example.test"}, "code": {"123456"}}},
+		{"/reset-password", url.Values{"email": {"grace@example.test"}}},
+		{"/reset-password/complete", url.Values{"email": {"grace@example.test"}, "code": {"777777"}, "password": {"a fresh secret 1"}, "confirmPassword": {"a fresh secret 1"}}},
+	} {
+		response := dashboard.post(step.path, step.form)
+		if response.Code != http.StatusServiceUnavailable || response.Header().Get("Location") != "" || dashboard.signedIn(t) {
+			t.Fatalf("POST %s during an outage = %d %q, want 503 without a redirect or session", step.path, response.Code, response.Header().Get("Location"))
+		}
+	}
+	response := httptest.NewRecorder()
+	err := dashboard.tsAuth.SignUp(response, httptest.NewRequest(http.MethodPost, "/sign-up", nil), dashboard.deps, RegistrationInput{
+		DisplayName: "Grace", Email: "grace@example.test", Password: "correct horse battery", ConfirmPassword: "correct horse battery", AcceptedTerms: true,
+	}, "/onboarding")
+	if !errors.Is(err, core.ErrUnavailable) || response.Header().Get("Location") != "" {
+		t.Fatalf("sign-up during an outage = %v %q, want ErrUnavailable without a redirect", err, response.Header().Get("Location"))
+	}
+	if _, err := dashboard.store.FindByEmail(t.Context(), "grace@example.test"); !errors.Is(err, core.ErrNotFound) {
+		t.Fatalf("outage created a local account: %v", err)
+	}
+}
+
+func TestNativeRefreshWithoutRotationCanBeRevoked(t *testing.T) {
+	t.Parallel()
+	issuer := newTestIssuer(t)
+	issuer.addUser("grace@example.test", "correct horse battery")
+	dashboard := newTSAuthDashboard(t, issuer)
+	dashboard.post("/login", url.Values{"email": {"grace@example.test"}, "password": {"correct horse battery"}})
+	before, _ := dashboard.record(t)
+	kept := refreshToken(t, before.Refresh)
+	issuer.set(func(i *testIssuer) { i.keepRefresh = true })
+	for range 2 {
+		dashboard.expire(t)
+		if !dashboard.signedIn(t) {
+			t.Fatal("refresh without a replacement token ended the native session")
+		}
+	}
+	after, _ := dashboard.record(t)
+	if refreshToken(t, after.Refresh) != kept || issuer.refreshCount() != 2 {
+		t.Fatal("the native session lost its unrotated refresh token")
+	}
+	dashboard.do(http.MethodPost, "/api/v1/auth/logout")
+	if len(issuer.headless.revoked) != 1 || issuer.headless.revoked[0] != kept || dashboard.signedIn(t) {
+		t.Fatalf("logout revoked %v, want the retained refresh token %q", issuer.headless.revoked, kept)
+	}
+	if _, _, err := dashboard.tsAuth.RefreshSession(t.Context(), after.Refresh); !errors.Is(err, core.ErrUnauthorized) {
+		t.Fatalf("refresh after revocation = %v, want ErrUnauthorized", err)
 	}
 }
 
@@ -660,36 +760,51 @@ func TestNativePasswordResetEndsDashboardSessionsOrSaysSo(t *testing.T) {
 	}
 }
 
-func TestDiscoveryRecheckDoesNotHoldUpOtherRequests(t *testing.T) {
+func TestDiscoveryRecheckDoesNotHoldUpNativePages(t *testing.T) {
 	t.Parallel()
 	issuer := newTestIssuer(t)
 	issuer.set(func(i *testIssuer) { i.legacy = true })
 	dashboard := newTSAuthDashboard(t, issuer)
-	if response := dashboard.do(http.MethodGet, "/login"); response.Code != http.StatusSeeOther {
-		t.Fatalf("GET /login = %d, want the redirect", response.Code)
+	if _, err := dashboard.tsAuth.discover(t.Context()); err != nil {
+		t.Fatal(err)
 	}
-	// The recheck is due, and ts-auth is slow to answer it.
-	entered, gate := make(chan struct{}), make(chan struct{})
+	// Verification can refresh discovery while the native pages stay usable.
+	entered, gate := make(chan struct{}, 1), make(chan struct{})
 	issuer.set(func(i *testIssuer) { i.discoveryEntered, i.discoveryGate = entered, gate })
+	t.Cleanup(func() {
+		select {
+		case <-gate:
+		default:
+			close(gate)
+		}
+	})
 	dashboard.tsAuth.mu.Lock()
 	dashboard.tsAuth.discovered = time.Now().Add(-time.Hour)
 	dashboard.tsAuth.mu.Unlock()
-	rechecking := make(chan int)
-	go func() { rechecking <- dashboard.do(http.MethodGet, "/login").Code }()
-	<-entered
-	// Another request meanwhile uses what was discovered before.
-	done := make(chan int)
-	go func() { done <- dashboard.do(http.MethodGet, "/login").Code }()
+	rechecking := make(chan error, 1)
+	go func() {
+		_, err := dashboard.tsAuth.discover(t.Context())
+		rechecking <- err
+	}()
 	select {
-	case code := <-done:
-		if code != http.StatusSeeOther {
-			t.Fatalf("GET /login during the recheck = %d, want the redirect", code)
-		}
+	case <-entered:
 	case <-time.After(5 * time.Second):
-		t.Fatal("a request waited for another's discovery recheck")
+		t.Fatal("discovery did not start its recheck")
+	}
+	for _, path := range []string{"/login", "/login/code", "/reset-password"} {
+		done := make(chan int, 1)
+		go func() { done <- dashboard.do(http.MethodGet, path).Code }()
+		select {
+		case code := <-done:
+			if code != http.StatusOK {
+				t.Fatalf("GET %s during the recheck = %d, want a native page", path, code)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("GET %s waited for discovery", path)
+		}
 	}
 	close(gate)
-	if code := <-rechecking; code != http.StatusSeeOther {
-		t.Fatalf("rechecking GET /login = %d", code)
+	if err := <-rechecking; err != nil {
+		t.Fatalf("discovery recheck: %v", err)
 	}
 }

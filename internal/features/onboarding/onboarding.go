@@ -61,23 +61,17 @@ func Mount(mux *http.ServeMux, deps core.Deps, billing *payments.Stripe, tsAuth 
 		}
 		http.Redirect(w, r, target, http.StatusSeeOther)
 	})
-	mux.HandleFunc("GET /onboarding", getOnboarding(deps, service, tsAuth))
+	mux.HandleFunc("GET /onboarding", getOnboarding(deps, service))
 	mux.HandleFunc("POST /onboarding", register(deps, tsAuth))
 	mux.HandleFunc("POST /onboarding/step", saveStep(deps, service))
 }
 
-// renderRegistration shows the sign-up form, or with ts-auth that does not
-// offer its headless API yet, sends the visitor to sign in there, which signs
-// them up too.
-func renderRegistration(w http.ResponseWriter, r *http.Request, deps core.Deps, tsAuth *auth.TSAuth, data pageData) {
-	if tsAuth != nil && !tsAuth.Headless(r.Context()) {
-		core.RedirectToLogin(w, r)
-		return
-	}
+// renderRegistration shows the dashboard's own sign-up form.
+func renderRegistration(w http.ResponseWriter, r *http.Request, deps core.Deps, data pageData) {
 	render(w, r, deps, http.StatusOK, data)
 }
 
-func getOnboarding(deps core.Deps, service Service, tsAuth *auth.TSAuth) http.HandlerFunc {
+func getOnboarding(deps core.Deps, service Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		query := r.URL.Query()
 		ctx := r.Context()
@@ -92,7 +86,7 @@ func getOnboarding(deps core.Deps, service Service, tsAuth *auth.TSAuth) http.Ha
 		registration := pageData{Registration: true, Plan: offeredPlan(plans, query.Get("plan")), ReturnTo: returnPath(cmp.Or(query.Get("returnTo"), query.Get("return")))}
 		principal, ok := deps.Sessions.Principal(r)
 		if !ok {
-			renderRegistration(w, r, deps, tsAuth, registration)
+			renderRegistration(w, r, deps, registration)
 			return
 		}
 		account, err := deps.Store.SnapshotAs(ctx, principal)
@@ -101,7 +95,7 @@ func getOnboarding(deps core.Deps, service Service, tsAuth *auth.TSAuth) http.Ha
 				http.Error(w, "service unavailable", http.StatusServiceUnavailable)
 				return
 			}
-			renderRegistration(w, r, deps, tsAuth, registration)
+			renderRegistration(w, r, deps, registration)
 			return
 		}
 		if account.OnboardingCompleted {
@@ -152,10 +146,6 @@ func getOnboarding(deps core.Deps, service Service, tsAuth *auth.TSAuth) http.Ha
 
 func register(deps core.Deps, tsAuth *auth.TSAuth) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if tsAuth != nil && !tsAuth.Headless(r.Context()) {
-			core.RedirectToLogin(w, r)
-			return
-		}
 		if err := r.ParseForm(); err != nil {
 			http.Error(w, "invalid registration form", http.StatusBadRequest)
 			return

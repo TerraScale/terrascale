@@ -1,96 +1,76 @@
 # TerraBase state cutover
 
-COS-run checklist for moving dashboard state from the in-memory demo to
-TerraBase (TS-472). The dashboard keeps its own state with the ts-go
-Documents v1 client in one dedicated database. Users' databases live in
+The dashboard stores persistent state through the ts-go Documents v1 client
+against one dedicated database (TS-472). Users' databases live in
 TerraBase projects the dashboard makes as the signed-in user, through
 Management with their ts-auth access token
 ([store-contract.md](store-contract.md#user-databases-ts-671)), so
 `TS_AUTH_ISSUER` must be set as well.
 
-## 1. Inputs from TS-529
+Platform admin sign-in also reads
+system database inventory through ts-go Management, and system console pages
+read those databases with the signed-in user's ts-auth access token.
 
-`ts-orch ouroboros bootstrap` (TS-529) provisions, on production TerraBase:
+ts-auth owns users, organizations, projects, memberships, invitations and API
+keys. The dashboard owns platform preferences, plans, subscriptions, Stripe
+billing and spending caps. The existing dashboard identity records and admin
+inventory mirror are compatibility state pending the
+[TS-599 platform cutover](platform-cutover.md).
 
-- organization `terrascale`, project `ts-dashboard`, database `dashboard`;
-- a `tb_` key with `documents:read` + `documents:write`, narrowed to that
-  project and database, stored in Vault.
+## Runtime configuration
 
-Record the project ID and the key. Never put the key in git, logs or a
-dashboard document.
+`TERRABASE_URL`, `TERRABASE_API_KEY`, `TERRABASE_PROJECT_ID` and
+`TERRABASE_DATABASE` must be set together; partial configuration fails startup.
+The configured database also requires a stable `TS_DASHBOARD_CSRF_SECRET` of
+at least 32 bytes. Secrets belong in the deployment's secret store, never in
+git, logs or dashboard documents.
 
-## 2. Set the Fly secrets
+With no TerraBase configuration, the dashboard uses the in-memory demo store.
+Local development and tests use `TS_DASHBOARD_PRODUCTION_DEMO=1`; the four
+TerraBase variables take precedence over that flag. Production's `fly.toml`
+does not set the demo flag, and the deploy check refuses a production Machine
+that does. Billing stays disabled until the Stripe variables are set; Stripe
+bindings live in the same `dashboard` database.
 
-All four TerraBase variables must be set together; a partial set fails startup.
-With none set, the dashboard keeps the in-memory demo store, so merging this
-change does not alter a deployment without them.
+## Provisioning boundary
 
-```sh
-fly secrets set --stage \
-  TERRABASE_URL='https://<terrabase-origin>' \
-  TERRABASE_API_KEY='tb_<key-from-vault>' \
-  TERRABASE_PROJECT_ID='<ts-dashboard-project-id>' \
-  TERRABASE_DATABASE='dashboard' \
-  TS_DASHBOARD_CSRF_SECRET='<stable secret, at least 32 bytes>'
-```
+The ts-orchestrator bootstrap pipeline (TS-529) provisions the service's
+TerraBase project, database and access credential. State collections and the
+plan catalog must already exist before the dashboard serves traffic.
+`EnsureCollections` and `SeedPlans` remain provisioning/test-fixture helpers;
+neither application startup nor readiness creates collections or seeds plans.
+The dashboard has no provisioning or identity import CLI.
 
-`ts-orch ouroboros fly-secrets` stages the `TERRABASE_*` values the same way.
-The TerraBase variables take precedence over `TS_DASHBOARD_PRODUCTION_DEMO`;
-production's `fly.toml` no longer sets it (TS-581), and the deploy check
-refuses a production Machine that does. Billing stays disabled until the Stripe
-variables are set; Stripe bindings live in the same `dashboard` database.
+## System console access
 
-## 3. Import the organization
-
-From an operator host that can reach the TerraBase Management listener (the
-loopback admin listener while TS-519 applies), with the four variables above
-exported:
-
-```sh
-export TERRABASE_MANAGEMENT_URL='http://127.0.0.1:<admin-port>'   # default: TERRABASE_URL
-export TERRABASE_MANAGEMENT_CREDENTIAL='<dashboard service credential>'
-export TERRABASE_MANAGEMENT_USER_ID='<member of the org, e.g. the ts-orchestrator identity>'
-nice -n 19 go run ./cmd/dashboard import-org --org terrascale --owner-email mariogk@terrascale.tech
-```
-
-The command is idempotent:
-
-1. creates the state collections and seeds the plan catalog when empty;
-2. finds the owner account by email, creating it without a password when it
-   does not exist (the first OIDC sign-in links it, TS-492);
-3. mirrors the organization, its projects and databases under their
-   TerraBase IDs. Reruns rename and add; they never duplicate or delete.
-
-To open the `/admin` pages to an account, run the command on a dashboard
-machine, where the four variables above are already set:
+An account must first exist through normal verified sign-in. Until ts-auth
+serves `platform_admin`, the local grant remains necessary to open `/admin`.
+On a dashboard machine configured with the database variables above:
 
 ```sh
-fly ssh console -C "/dashboard grant-platform-admin --email mariogk@terrascale.tech"   # --revoke to undo
+fly ssh console -C "/dashboard grant-platform-admin --email mariogk@terrascale.tech"
 ```
 
-It is idempotent and records the change in the admin action log.
+`--revoke` reverses the grant. The command is idempotent and records changes
+in the admin action log; it does not create accounts, collections or plans.
 
-## 4. Deploy and verify
+At the platform admin's next ts-auth sign-in, `MirrorOrganizations` reads every
+TerraBase organization they belong to, including its projects and databases,
+into their existing dashboard account under TerraBase IDs. A missing account
+returns `core.ErrNotFound` without creating an identity. Repeated mirrors add
+or rename inventory without duplicating or deleting it. A mirror failure is
+logged without blocking sign-in. System databases remain read-only, with
+secrets masked in the console.
 
-```sh
-fly deploy
-curl -s https://<dashboard>/health/ready
-```
+## Verification and remaining cutover
 
-Readiness must report `"backend":"terrabase"`; it reads one `users` document
-and returns 503 when TerraBase is unreachable. Sign in as the owner and check
-the `terrascale` organization lists `ts-auth` and `ts-dashboard`.
+`GET /health/ready` must report `"backend":"terrabase"` for persistent
+deployments. It reads one `users` document and returns 503 when TerraBase is
+unreachable. After granting access, sign in again and check that the
+`terrascale` organization lists the service databases visible to that admin.
 
-## 5. Rollback
-
-Unset the secrets, or redeploy the previous image; both return to the memory
-store:
-
-```sh
-fly secrets unset TERRABASE_URL TERRABASE_API_KEY TERRABASE_PROJECT_ID TERRABASE_DATABASE
-# or
-fly deploy --image <previous-image-ref>
-```
-
-Keep the `dashboard` database and its key: dropping collections or rotating
-the key strands the migrated state. Rerun the readiness check afterwards.
+Removing the identity import CLI does not complete TS-599. The full cutover
+still requires ts-auth billing/usage scopes, `platform_admin`, project
+suspension and MCP OAuth support, plus TerraBase project JWT authorization.
+Keep system admin access and the automatic inventory mirror until those
+contracts and the public SDK cross-product flow are verified.

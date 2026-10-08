@@ -84,7 +84,7 @@ func newTestIssuer(t *testing.T) *testIssuer {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /.well-known/openid-configuration", issuer.discovery)
 	mux.HandleFunc("GET /keys", issuer.keys)
-	mux.HandleFunc("POST /token", issuer.token)
+	mux.HandleFunc("POST /oauth/token", issuer.token)
 	issuer.mountHeadless(mux)
 	issuer.server = httptest.NewServer(mux)
 	t.Cleanup(issuer.server.Close)
@@ -104,7 +104,7 @@ func (i *testIssuer) discovery(w http.ResponseWriter, _ *http.Request) {
 	i.mu.Lock()
 	defer i.mu.Unlock()
 	document := map[string]any{
-		"issuer": i.url(), "authorization_endpoint": i.url() + "/authorize", "token_endpoint": i.url() + "/token",
+		"issuer": i.url(), "authorization_endpoint": i.url() + "/authorize", "token_endpoint": i.url() + "/oauth/token",
 		"jwks_uri": i.url() + "/keys", "id_token_signing_alg_values_supported": []string{"RS256"},
 		"response_types_supported": []string{"code"}, "subject_types_supported": []string{"public"},
 		"code_challenge_methods_supported": i.pkce,
@@ -113,7 +113,7 @@ func (i *testIssuer) discovery(w http.ResponseWriter, _ *http.Request) {
 		document["end_session_endpoint"] = i.url() + "/logout?ui=1"
 	}
 	if i.revocation {
-		document["revocation_endpoint"] = i.url() + "/revoke"
+		document["revocation_endpoint"] = i.url() + "/oauth/revoke"
 	}
 	if !i.legacy {
 		document["grant_types_supported"] = []string{"authorization_code", "refresh_token", passwordGrant, emailCodeGrant}

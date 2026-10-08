@@ -15,11 +15,12 @@ The CSRF key is configuration, not state: `TS_DASHBOARD_CSRF_SECRET` (at least
 32 bytes, required outside the demo, random per process in the demo).
 
 This document describes the TerraBase adapter
-(`internal/adapters/terrabase`). Phase 1 uses Documents v1 only, including
-organizations, memberships, projects and database records. The Management
-mapping is phase 2 (TS-521). It lists what each
-interface promises, which invariants `memstore` enforces today with one global
-lock and full scans, and how each one maps onto the TerraBase v1 contract
+(`internal/adapters/terrabase`). Persistence uses Documents v1, including the
+current compatibility records for organizations, memberships, projects and
+databases. ts-auth owns identity; retiring these dashboard records remains
+part of [the TS-599 platform cutover](platform-cutover.md). This document lists
+what each interface promises, which invariants `memstore` enforces today with
+one global lock and full scans, and how each one maps onto the TerraBase v1 contract
 (`terrabase/docs/api-v1.md`, `terrabase/docs/query-v1.md`). The adapter talks
 to TerraBase through ts-go only.
 
@@ -426,7 +427,8 @@ application startup nor readiness seeds state.
 `TERRABASE_URL`, `TERRABASE_API_KEY`, `TERRABASE_PROJECT_ID` and
 `TERRABASE_DATABASE` select this backend together; unset selects memstore.
 Readiness reads `users` with a one-row limit and reports the backend. See
-[terrabase-cutover.md](terrabase-cutover.md) for the COS-run production steps.
+[terrabase-cutover.md](terrabase-cutover.md) for configuration and provisioning
+boundaries.
 
 Transactions are limited to 1024 operations and document bodies to 1 MiB,
 4096 nodes and depth 16. Oversized mutations fail before partial publication.
@@ -479,19 +481,24 @@ ts-go only (`internal/core/dataplane.go`).
 
 ## System databases (TS-611)
 
-Every TerraScale service keeps all its data in TerraBase (umbrella
-`AGENTS.md`, "All data lives in TerraBase"). TerraBase's bootstrap (TS-529,
+TerraScale services keep application state in TerraBase (umbrella
+`AGENTS.md`, "All data lives in TerraBase"), except ts-status, which uses D1
+to remain available during TerraBase outages. TerraBase's bootstrap (TS-529,
 terrabase decision 0007) places each service's database in organization
 `terrascale`, one project per service: `ts-auth` → `auth`, `ts-dashboard` →
-`dashboard`, and the services TS-612 adds (ts-router, ts-status, …) the same
+`dashboard`, and the services TS-612 adds (ts-router, …) the same
 way. The dashboard keeps no list of them:
 
 - Each time a platform admin signs in through ts-auth, the dashboard mirrors
   every TerraBase organization the admin belongs to, with all its projects
   and databases, into the admin's account under their TerraBase IDs
-  (`terrabase.MirrorOrganizations`, the same mirror as `import-org`). A new
-  service's database appears at the admin's next sign-in. A failed mirror is
-  logged and never blocks the sign-in; nothing is ever removed.
+  (`terrabase.MirrorOrganizations`). The mirror requires an existing
+  dashboard account; a missing email returns `core.ErrNotFound` and never
+  creates an identity. A new service's database appears at the admin's next
+  sign-in. A failed mirror is logged and never blocks the sign-in; nothing is
+  ever removed. This compatibility inventory remains until the full TS-599
+  cutover, along with the local platform admin grant until ts-auth serves
+  `platform_admin`.
 - A database record with a TerraBase UUID ID is a **system database**
   (`core.SystemDatabase`); dashboard records use prefixed IDs (`db_…`).
 - Its contents are never the record's: the Databases page, the database

@@ -421,17 +421,21 @@ func TestNativeLoginKeepsSingleSignOnRedirect(t *testing.T) {
 	signedInAs(t, page, fakeSSOEmail, fakeSSOEmail)
 }
 
-func TestNativeLoginFallsBackToRedirectWithoutHeadlessAPI(t *testing.T) {
+func TestNativeLoginStaysNativeWithoutAdvertisedHeadlessGrants(t *testing.T) {
 	t.Parallel()
 	base, fake := tsAuthDashboard(t)
 	fake.mu.Lock()
 	fake.legacy = true
 	fake.mu.Unlock()
-	// Signing in and signing up both go through ts-auth's own page, which
-	// approves the single sign-on user at once.
 	page := watchedPage(t, newContext(t, base))
-	goTo(t, page, "/onboarding")
-	waitForPath(t, page, func(u *url.URL) bool { return u.Path == "/onboarding" })
-	must(t, expect.Locator(page.Locator(`form[action="/onboarding"]`)).ToHaveCount(0))
-	signedInAs(t, page, fakeSSOEmail, fakeSSOEmail)
+	for _, path := range []string{"/login", "/login/code", "/onboarding", "/reset-password"} {
+		goTo(t, page, path)
+		must(t, expect.Locator(page.Locator(`form[action="`+path+`"]`)).ToBeVisible())
+	}
+	email := strings.ToLower(uniqueName("legacy")) + "@example.test"
+	signUpThroughTSAuth(t, page, fake, "Native Forms", email, "native password 1")
+	signedInAs(t, page, email, "Native Forms")
+	logout(t, page)
+	login(t, page, email, "native password 1")
+	signedInAs(t, page, email, "Native Forms")
 }

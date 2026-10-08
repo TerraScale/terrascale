@@ -17,7 +17,7 @@ var terraBaseID = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a
 
 // SystemDatabase reports whether a database record mirrors a TerraBase
 // database by its TerraBase ID: a database of a TerraScale service, which a
-// platform admin's sign-in (or import-org) mirrored. Its contents live in
+// platform admin's sign-in mirrored. Its contents live in
 // TerraBase, never in the record. A database a user created keeps its
 // dashboard ID and records TerraBase's in TerraBaseID.
 func SystemDatabase(db Database) bool { return terraBaseID.MatchString(db.ID) }

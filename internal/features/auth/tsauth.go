@@ -22,6 +22,7 @@ import (
 	"golang.org/x/oauth2"
 	"golang.org/x/sync/singleflight"
 	"terrascale.tech/dashboard/internal/core"
+	"terrascale.tech/sdk/tsauth"
 )
 
 // TSAuthConfig registers the dashboard as a confidential OpenID Connect
@@ -47,8 +48,9 @@ const adminSignInTimeout = 10 * time.Second
 // and signs them out of ts-auth with RP-initiated logout. It discovers
 // ts-auth on first use, so the dashboard starts while ts-auth is down.
 type TSAuth struct {
-	cfg    TSAuthConfig
-	client *http.Client
+	cfg            TSAuthConfig
+	client         *http.Client
+	headlessClient *tsauth.Headless
 	// recheck is how long discovery without the headless grants is trusted
 	// before it is fetched again.
 	recheck time.Duration
@@ -68,8 +70,8 @@ type tsAuthProvider struct {
 	keys       oidc.KeySet
 	endSession string
 	revocation string
-	// headless is whether discovery lists the headless grants, which the
-	// dashboard's own sign-in pages need.
+	// headless tracks the advertised grants for discovery cache refreshes;
+	// native forms render regardless of this metadata.
 	headless bool
 }
 
@@ -122,7 +124,15 @@ func NewTSAuth(cfg TSAuthConfig) (*TSAuth, error) {
 	// Redirects are not followed: a redirected token request would resend
 	// a password or code, and the client's credentials, elsewhere.
 	client := &http.Client{Timeout: 10 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	return &TSAuth{cfg: cfg, client: client, recheck: time.Minute}, nil
+	headlessHTTP := *client
+	headlessHTTP.Transport = headlessTransport{http.DefaultTransport}
+	headlessClient, err := tsauth.NewHeadless(tsauth.HeadlessConfig{
+		Issuer: cfg.Issuer, ClientID: cfg.ClientID, ClientSecret: cfg.ClientSecret, HTTPClient: &headlessHTTP,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &TSAuth{cfg: cfg, client: client, headlessClient: headlessClient, recheck: time.Minute}, nil
 }
 
 // discover returns ts-auth's endpoints and keys, fetching them on the first
@@ -157,14 +167,6 @@ func (t *TSAuth) discover(ctx context.Context) (*tsAuthProvider, error) {
 	t.provider, t.discovered = provider, time.Now()
 	t.mu.Unlock()
 	return provider, nil
-}
-
-// Headless reports whether ts-auth offers the headless API the dashboard's
-// own sign-in pages use. Without it, signing in and up keeps redirecting to
-// ts-auth, so the dashboard works before and after ts-auth ships it.
-func (t *TSAuth) Headless(ctx context.Context) bool {
-	provider, err := t.discover(ctx)
-	return err == nil && provider.headless
 }
 
 func (t *TSAuth) fetchDiscovery(ctx context.Context) (*tsAuthProvider, error) {
@@ -453,16 +455,19 @@ func (t *TSAuth) RefreshSession(ctx context.Context, refresh string) (string, ti
 	if err != nil {
 		return "", time.Time{}, err
 	}
-	ctx = oidc.ClientContext(ctx, t.client)
-	token, err := provider.oauth.TokenSource(ctx, &oauth2.Token{RefreshToken: state.Token}).Token()
-	if refused, ok := errors.AsType[*oauth2.RetrieveError](err); ok && refused.ErrorCode == "invalid_grant" {
+	tokens, err := t.headlessClient.Refresh(ctx, state.Token, nil)
+	if refused, ok := errors.AsType[*tsauth.Error](err); ok && refused.Code == "invalid_grant" {
 		return "", time.Time{}, fmt.Errorf("ts-auth refused the refresh token: %w", core.ErrUnauthorized)
 	}
 	if err != nil {
-		return "", time.Time{}, err
+		return "", time.Time{}, headlessError(err)
+	}
+	token := oauthTokens(tokens)
+	if token.RefreshToken == "" {
+		token.RefreshToken = state.Token
 	}
 	if raw, _ := token.Extra("id_token").(string); raw != "" {
-		idToken, err := provider.verifier.Verify(ctx, raw)
+		idToken, err := provider.verifier.Verify(oidc.ClientContext(ctx, t.client), raw)
 		if err != nil {
 			return "", time.Time{}, fmt.Errorf("refreshed ID token: %w: %w", err, core.ErrUnauthorized)
 		}

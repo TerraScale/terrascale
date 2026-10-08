@@ -11,25 +11,8 @@ import (
 	v1 "terrascale.tech/sdk/v1"
 )
 
-// OIDCPendingPassword marks an imported owner that has no password: no
-// password verifies against it, and the first OIDC sign-in links the account
-// by email (TS-492).
-const OIDCPendingPassword = "oidc-pending"
-
-// ImportOrganization mirrors one TerraBase Management organization, matched by
-// ID or name, with its projects and databases into the account of ownerEmail,
-// creating that account when it does not exist. TerraBase IDs are kept, so
-// rerunning it updates names and adds new resources without duplicates.
-func ImportOrganization(ctx context.Context, store core.Store, m *v1.ManagementUser, orgRef, ownerEmail string) (core.Organization, error) {
-	remote, err := findOrganization(ctx, m, orgRef)
-	if err != nil {
-		return core.Organization{}, err
-	}
-	return mirror(ctx, store, m, remote, ownerEmail)
-}
-
 // MirrorOrganizations mirrors every TerraBase organization the user of m
-// belongs to into the account of email, as ImportOrganization does. A
+// belongs to into the existing account of email. A
 // platform admin's sign-in runs it, so every service's database in
 // TerraBase (ts-auth, ts-dashboard, ts-router, ts-status, …) appears in the
 // dashboard as soon as TerraBase holds it.
@@ -60,7 +43,7 @@ func mirror(ctx context.Context, store core.Store, m *v1.ManagementUser, remote 
 			return core.Organization{}, fmt.Errorf("list databases of %s: %w", p.ID, err)
 		}
 	}
-	account, err := ownerAccount(ctx, store, ownerEmail)
+	account, err := store.FindByEmail(ctx, ownerEmail)
 	if err != nil {
 		return core.Organization{}, err
 	}
@@ -108,36 +91,6 @@ func mirror(ctx context.Context, store core.Store, m *v1.ManagementUser, remote 
 		return nil
 	})
 	return imported, err
-}
-
-func findOrganization(ctx context.Context, m *v1.ManagementUser, ref string) (v1.Organization, error) {
-	orgs, err := all(func(o v1.PageOptions) (*v1.Page[v1.Organization], error) { return m.Organizations(ctx, o) })
-	if err != nil {
-		return v1.Organization{}, fmt.Errorf("list organizations: %w", err)
-	}
-	var match []v1.Organization
-	for _, org := range orgs {
-		if org.ID == ref || org.Name == ref {
-			match = append(match, org)
-		}
-	}
-	if len(match) != 1 {
-		return v1.Organization{}, fmt.Errorf("organization %q: %d matches, want 1", ref, len(match))
-	}
-	return match[0], nil
-}
-
-func ownerAccount(ctx context.Context, store core.Store, email string) (core.Account, error) {
-	account, err := store.FindByEmail(ctx, email)
-	if !errors.Is(err, core.ErrNotFound) {
-		return account, err
-	}
-	name, _, _ := strings.Cut(email, "@")
-	account, err = store.CreateAccount(ctx, core.User{Email: email, Name: name, PasswordHash: OIDCPendingPassword})
-	if errors.Is(err, core.ErrConflict) {
-		return store.FindByEmail(ctx, email)
-	}
-	return account, err
 }
 
 func all[T any](page func(v1.PageOptions) (*v1.Page[T], error)) ([]T, error) {

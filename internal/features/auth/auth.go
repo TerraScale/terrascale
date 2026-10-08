@@ -188,13 +188,6 @@ func loginPage(deps core.Deps, tsAuth *TSAuth) http.HandlerFunc {
 			returnTo = r.URL.Query().Get("next")
 		}
 		data := loginPageData{RedirectTo: SafeRedirectTarget(returnTo)}
-		if tsAuth != nil && !tsAuth.Headless(r.Context()) {
-			// ts-auth's own page signs in until it offers the headless API.
-			if err := tsAuth.signIn(w, r, data.RedirectTo); err != nil {
-				signInFailed(w, r, deps, http.StatusServiceUnavailable, "ts-auth is unavailable right now. Try again in a moment.", data.RedirectTo, err)
-			}
-			return
-		}
 		if tsAuth != nil {
 			// Signing out without ts-auth's end-session endpoint asks it for
 			// credentials again at the next single sign-on.

@@ -73,58 +73,6 @@ func TestPersistsAcrossDashboardRestart(t *testing.T) {
 	}
 }
 
-func TestImportOrganizationIsIdempotent(t *testing.T) {
-	if testing.Short() {
-		t.Skip("starts pinned TerraBase release")
-	}
-	tb := terrabasetest.Start(t)
-	db, _ := terrabasetest.Database(t, tb, "dashboard")
-	if err := EnsureCollections(t.Context(), db); err != nil {
-		t.Fatal(err)
-	}
-	store := New(db)
-	if err := store.SeedPlans(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	m, err := v1.NewManagement(v1.Config{BaseURL: tb.AdminURL, Token: tb.Credential, HTTPClient: tb.Client})
-	if err != nil {
-		t.Fatal(err)
-	}
-	operator := m.As("ts-orchestrator")
-	org, err := operator.CreateOrganization(t.Context(), "terrascale")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, name := range []string{"ts-auth", "ts-dashboard"} {
-		project, err := operator.CreateProject(t.Context(), org.ID, name)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := operator.CreateDatabase(t.Context(), org.ID, project.ID, "main"); err != nil {
-			t.Fatal(err)
-		}
-	}
-	for range 2 {
-		imported, err := ImportOrganization(t.Context(), store, operator, "terrascale", "Owner@Example.test")
-		if err != nil {
-			t.Fatal(err)
-		}
-		if imported.ID != org.ID || len(imported.Projects) != 2 || imported.DatabaseCount() != 2 {
-			t.Fatalf("imported = %s, %d projects, %d databases", imported.ID, len(imported.Projects), imported.DatabaseCount())
-		}
-	}
-	owner, err := store.FindByEmail(t.Context(), "owner@example.test")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if owner.User.PasswordHash != OIDCPendingPassword || owner.Organizations[org.ID].Members[owner.User.ID].Role != "owner" {
-		t.Fatalf("owner = %+v", owner.User)
-	}
-	if _, err := ImportOrganization(t.Context(), store, operator, "missing", "owner@example.test"); err == nil {
-		t.Fatal("unknown organization imported")
-	}
-}
-
 // TestMirrorOrganizationsFollowsEveryServiceDatabase covers what a platform
 // admin's sign-in mirrors: every TerraBase organization the admin belongs
 // to, with every project and database, including ones a later service adds.
@@ -171,6 +119,12 @@ func TestMirrorOrganizationsFollowsEveryServiceDatabase(t *testing.T) {
 	addService(terrascale.ID, "ts-auth")
 	addService(terrascale.ID, "ts-dashboard")
 	addService(other.ID, "ts-status")
+	if err := MirrorOrganizations(t.Context(), store, user, "missing@example.test"); !errors.Is(err, core.ErrNotFound) {
+		t.Fatalf("mirror without a dashboard account = %v, want ErrNotFound", err)
+	}
+	if _, err := store.FindByEmail(t.Context(), "missing@example.test"); !errors.Is(err, core.ErrNotFound) {
+		t.Fatalf("mirror created an identity account: %v", err)
+	}
 	mirrored := func() (databases map[string]bool) {
 		t.Helper()
 		if err := MirrorOrganizations(t.Context(), store, user, "admin@example.test"); err != nil {

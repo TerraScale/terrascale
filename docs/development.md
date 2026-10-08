@@ -173,21 +173,24 @@ The MCP endpoint and its tool conventions are described in [mcp.md](mcp.md).
 
 ## Fly runtime
 
-`fly.toml` configures the production app for one warm machine. Its process-local
-accounts and sessions must remain on one machine and do not survive restarts.
-`fly.preview.toml` configures one machine per preview and allows it to stop
-while idle, so preview accounts are reset when it wakes. Both configurations
-probe `GET /health/ready` and set `TS_DASHBOARD_PRODUCTION_DEMO=1`.
+`fly.toml` configures the production app for one warm machine with TerraBase
+state selected by its `TERRABASE_*` secrets. `fly.preview.toml` configures one
+machine per preview with `TS_DASHBOARD_PRODUCTION_DEMO=1` and allows it to stop
+while idle, so its in-memory accounts are reset when it wakes. Both
+configurations probe `GET /health/ready`.
 
 ### State backend
 
 `TERRABASE_URL`, `TERRABASE_API_KEY`, `TERRABASE_PROJECT_ID` and
 `TERRABASE_DATABASE` (all four, or none) select the TerraBase Documents store;
 it then also needs a stable `TS_DASHBOARD_CSRF_SECRET` of at least 32 bytes.
-Unset, the dashboard keeps the in-memory store above. The operator command
-`dashboard import-org` additionally reads `TERRABASE_MANAGEMENT_URL`,
-`TERRABASE_MANAGEMENT_CREDENTIAL` and `TERRABASE_MANAGEMENT_USER_ID`. See
-[terrabase-cutover.md](terrabase-cutover.md).
+Unset, the dashboard keeps the in-memory store above. State collections and
+plans must already be provisioned; startup and readiness do not seed them.
+Platform admin sign-in automatically mirrors system database inventory through
+ts-go Management with the user's ts-auth token, using an existing dashboard
+account. `dashboard grant-platform-admin` remains available until ts-auth
+serves `platform_admin`. See [terrabase-cutover.md](terrabase-cutover.md) for
+the configuration and access boundaries.
 
 The health probes answer `{"status":"ok","version":"<commit>","backend":"memstore"}`
 (`terrabase` when configured; readiness then reads TerraBase and answers 503
@@ -267,9 +270,9 @@ on ts-auth's hosted page.
   hosted authorize page.
 - With `TS_AUTH_ISSUER` set, `GET /login` renders the dashboard's form
   (`type="password"`, links to `/login/code` and `/login/sso`). It never
-  answers 303 to `<region>.auth.terrascale.tech/.../oauth/authorize`. The one
-  exception is ts-auth's discovery dropping the headless grants: the dashboard
-  then falls back to the redirect, and the deploy smoke fails on it.
+  answers 303 to `<region>.auth.terrascale.tech/.../oauth/authorize`, even
+  when discovery omits headless grants or ts-auth is unavailable. API failures
+  stay on the native pages; `/login/sso` remains the explicit redirect.
 - **Incidents: fix forward.** Never roll the dashboard back past native login
   to "restore" sign-in, because that brings back the hosted page. The only
   allowed rollback target is the newest image that still has working native
@@ -291,7 +294,8 @@ headless API (TS-582), and single sign-on uses OpenID Connect's authorization
 code flow with PKCE.
 
 - `TS_AUTH_ISSUER`: the issuer exactly as ts-auth's discovery document names
-  it. It must use HTTPS, or HTTP when `DASHBOARD_DEV=1`. ts-auth's issuers are
+  it. It must use HTTPS. With `DASHBOARD_DEV=1`, HTTP is also allowed for
+  `localhost` or a loopback IP (`127.0.0.1`, `[::1]`). ts-auth's issuers are
   regional (`https://<region>.auth.terrascale.tech/<instance>`, so
   `https://gru.auth.terrascale.tech/<instance>` in production). Discovery
   through the `auth.terrascale.tech` proxy names the regional issuer too, so
@@ -305,14 +309,23 @@ Outside `DASHBOARD_DEV=1` the cookies must be secure (an HTTPS
 `DASHBOARD_PUBLIC_URL`, Fly, or `DASHBOARD_SECURE_COOKIES=1`), or startup
 fails.
 
+The ts-go client requires HTTPS for container hostnames and private-network
+addresses, even in development. Earlier dashboard configuration accepted
+issuers such as `http://ts-auth:8080/instance`; those setups must migrate.
+Serve ts-auth through trusted HTTPS and update both its advertised issuer
+and `TS_AUTH_ISSUER` to that URL. Alternatively, expose ts-auth on a loopback
+address reachable from the dashboard and configure both issuer values to
+that address. Changing only `TS_AUTH_ISSUER` fails discovery and JWT issuer
+verification. Dashboard HTTP callback URLs remain supported in development.
+
 The Authentication console builds each project's instance URLs (issuer,
 hosted pages, callbacks, Management API) under `TS_AUTH_ISSUER`'s origin, or
 `https://gru.auth.terrascale.tech` when it is unset.
 
 Register the redirect URI and the post-logout redirect URI (the dashboard's
 origin plus `/login`) at ts-auth. Discovery must list `S256` in
-`code_challenge_methods_supported`. The dashboard discovers ts-auth on first
-use, so it starts while ts-auth is down.
+`code_challenge_methods_supported`. Native form rendering does not require
+discovery, so sign-in pages remain available while ts-auth is down.
 
 With the variables set:
 
@@ -326,10 +339,11 @@ With the variables set:
   verifies the address; entering it, with the sign-up's pending token from
   an HttpOnly cookie, opens the account. The local password JSON API
   (`POST /api/v1/auth/password/login`) is disabled.
-- These pages need ts-auth's headless API. Until its discovery document lists
-  both headless grants in `grant_types_supported`, every way in redirects to
-  ts-auth as before TS-582, and discovery is fetched again every minute, so
-  deploying ts-auth switches the pages on without restarting the dashboard.
+- `/login`, `/login/code`, `/onboarding` and `/reset-password` always render
+  dashboard forms. Submissions use ts-auth's headless API through ts-go;
+  API failures stay on the native pages. Discovery advertising headless
+  grants does not control whether these forms appear. `/login/sso` is the
+  only explicit hosted sign-in redirect.
 - `/login/sso` redirects to ts-auth with the scopes `openid email profile
   offline_access`, a PKCE S256 challenge, `state` and `nonce`. ts-auth returns
   to `/login/callback`.
@@ -342,8 +356,8 @@ With the variables set:
 
 The account for a sign-in is found by ts-auth subject, else linked by verified
 email, else created. The ID token must carry `email_verified: true`. The
-subject is kept as `User.AuthSubject`, which Management calls will send as
-`X-TerraBase-User-Id`.
+subject is kept as `User.AuthSubject`; system database Management calls use
+the signed-in user's ts-auth access token.
 
 Sessions stay in the session store. Each is rechecked with its refresh token
 when ts-auth's access token expires, at most once every 5 minutes. A refused
