@@ -12,6 +12,34 @@ namespace TerraBase.Fast.Documents;
 public sealed class UniqueConstraintTests
 {
     [Test]
+    [Arguments("lowercase")]
+    [Arguments("trim_lowercase")]
+    public async Task Lowercase_normalization_handles_non_ASCII_without_promising_full_case_folding(string normalization)
+    {
+        await using var api = await ManagementApi.StartAsync();
+        var database = await api.CreateManagedDatabaseAsync();
+        using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
+        await DeclareAsync(api, data, database, new { fields = new[] { new { name = "email", unique = true, normalization } } });
+        using (var first = await data.PutAsJsonAsync(Document(database, Ulid.NewUlid().ToString()), new { email = "ÅNGSTRÖM" }))
+        {
+            first.EnsureSuccessStatusCode();
+        }
+
+        await DuplicateAsync(data.PutAsJsonAsync(Document(database, Ulid.NewUlid().ToString()),
+            new { email = normalization == "trim_lowercase" ? "\u2003ångström\u2003" : "ångström" }));
+        foreach (var email in new[] { "Straße", "STRASSE" })
+        {
+            using var distinct = await data.PutAsJsonAsync(Document(database, Ulid.NewUlid().ToString()), new { email });
+            distinct.EnsureSuccessStatusCode();
+        }
+
+        using var management = await SchemaClientAsync(api, database);
+        using var misnamed = await management.PutAsJsonAsync(Uri(database.Data + "/schema/people"),
+            new { fields = new[] { new { name = "email", unique = true, normalization = "case_fold" } } });
+        await Assert.That(misnamed.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+    }
+
+    [Test]
     public async Task Single_and_compound_keys_normalize_and_release_atomically()
     {
         await using var api = await ManagementApi.StartAsync();
@@ -21,8 +49,8 @@ public sealed class UniqueConstraintTests
         using var management = await SchemaClientAsync(api, database);
         var schema = new
         {
-            fields = new[] { new { name = "email", unique = true, normalization = "trim_case_fold" } },
-            indexes = new[] { new { name = "tenant_handle", fields = new[] { "tenant", "profile.handle" }, unique = true, normalization = "case_fold" } },
+            fields = new[] { new { name = "email", unique = true, normalization = "trim_lowercase" } },
+            indexes = new[] { new { name = "tenant_handle", fields = new[] { "tenant", "profile.handle" }, unique = true, normalization = "lowercase" } },
         };
         using (var declared = await management.PutAsJsonAsync(Uri(database.Data + "/schema/people"), schema))
         {

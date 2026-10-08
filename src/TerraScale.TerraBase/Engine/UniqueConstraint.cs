@@ -8,7 +8,7 @@ namespace TerraBase.Engine;
 /// <summary>A unique scalar or compound key in a collection.</summary>
 /// <param name="Name">Stable constraint name.</param>
 /// <param name="Fields">One to four distinct dotted member paths.</param>
-/// <param name="Normalization">String normalization: none, case_fold, or trim_case_fold.</param>
+/// <param name="Normalization">String normalization: none, lowercase, or trim_lowercase.</param>
 public sealed record UniqueConstraint(string Name, IReadOnlyList<string> Fields, string Normalization = "none");
 
 /// <summary>A write conflicts with a collection's unique keys; no part of its transaction may commit.</summary>
@@ -32,7 +32,7 @@ internal static class UniqueKeys
         constraints is { Count: <= MaxConstraints }
         && constraints.All(constraint => constraint is not null
             && DatabaseName.TryParse(constraint.Name, out _)
-            && constraint.Normalization is "none" or "case_fold" or "trim_case_fold"
+            && constraint.Normalization is "none" or "lowercase" or "trim_lowercase"
             && constraint.Fields is { Count: >= 1 and <= 4 }
             && constraint.Fields.All(field => DocumentField.TryParse(field, out var parsed) && !parsed.IsMetadata)
             && constraint.Fields.Distinct(StringComparer.Ordinal).Count() == constraint.Fields.Count)
@@ -70,8 +70,8 @@ internal static class UniqueKeys
 
                     text = constraint.Normalization switch
                     {
-                        "case_fold" => text.ToLowerInvariant(),
-                        "trim_case_fold" => text.Trim().ToLowerInvariant(),
+                        "lowercase" => text.ToLowerInvariant(),
+                        "trim_lowercase" => text.Trim().ToLowerInvariant(),
                         _ => text,
                     };
                     writer.WriteStringValue("s:" + text);

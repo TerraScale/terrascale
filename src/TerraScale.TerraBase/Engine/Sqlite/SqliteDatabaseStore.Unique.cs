@@ -12,6 +12,11 @@ internal sealed partial class SqliteDatabaseStore
             PRIMARY KEY (collection, constraint_name, value, id)
         ) WITHOUT ROWID;
         CREATE INDEX unique_keys_by_document ON unique_keys (collection, id);
+        CREATE TABLE unique_invalid (
+            collection TEXT NOT NULL,
+            id TEXT NOT NULL,
+            PRIMARY KEY (collection, id)
+        ) WITHOUT ROWID;
         CREATE TABLE unique_conflicts (
             collection TEXT NOT NULL,
             id TEXT NOT NULL,

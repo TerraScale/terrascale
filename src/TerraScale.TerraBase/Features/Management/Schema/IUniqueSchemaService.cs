@@ -12,14 +12,14 @@ public sealed record UniqueSchemaRequest(IReadOnlyList<UniqueSchemaField>? Field
 /// <summary>One declared field; only fields marked unique add a constraint.</summary>
 /// <param name="Name">Dotted member path.</param>
 /// <param name="Unique">Whether to enforce uniqueness.</param>
-/// <param name="Normalization">none, case_fold, or trim_case_fold.</param>
+/// <param name="Normalization">none, lowercase, or trim_lowercase.</param>
 public sealed record UniqueSchemaField(string? Name, bool Unique = false, string? Normalization = null);
 
 /// <summary>One declared compound key.</summary>
 /// <param name="Name">Lowercase constraint name.</param>
 /// <param name="Fields">One to four dotted member paths.</param>
 /// <param name="Unique">Whether to enforce uniqueness.</param>
-/// <param name="Normalization">none, case_fold, or trim_case_fold.</param>
+/// <param name="Normalization">none, lowercase, or trim_lowercase.</param>
 public sealed record UniqueSchemaIndex(string? Name, IReadOnlyList<string>? Fields, bool Unique = false, string? Normalization = null);
 
 /// <summary>A saved declaration or its input/state error.</summary>

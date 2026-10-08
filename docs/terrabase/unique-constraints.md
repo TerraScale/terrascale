@@ -7,7 +7,7 @@ required fields, TTL, or the SDK's other schema features.
 ```json
 {
   "fields": [
-    { "name": "email", "unique": true, "normalization": "trim_case_fold" }
+    { "name": "email", "unique": true, "normalization": "trim_lowercase" }
   ],
   "indexes": [
     { "name": "tenant_handle", "fields": ["tenant", "profile.handle"], "unique": true }
@@ -30,11 +30,15 @@ There is no upgrade, migration, or backfill of old files or consumer claim recor
   components; objects and arrays answer `400 invalid_request`. Types remain distinct: `1`, `"1"`, and `true`
   are different values. Numerically equal JSON spellings such as `1`, `1.0`, and `1e0` claim the same value, using
   the document contract's exact decimal representation.
-- `none` preserves strings, `case_fold` uses .NET invariant lowercase, and `trim_case_fold` trims Unicode whitespace
+- `none` preserves strings, `lowercase` uses .NET invariant lowercase, and `trim_lowercase` trims Unicode whitespace
   before invariant lowercase. The rule is deliberately explicit: it does not perform Unicode normalization or
   multi-character Unicode case folding. Normalization affects the key, not the stored document.
-- Encoded keys fit 16 KiB each and 64 KiB per document. A mutation reconciles at most 1024 affected documents and
-  2 MiB of source bodies. Derived shape changes share the existing transaction's write and history budgets.
+- Encoded keys fit 16 KiB each and 64 KiB per document. A local mutation reconciles at most 1024 affected documents
+  and 2 MiB of source bodies, sharing the existing transaction's write and history budgets. Replicated groups retain
+  their input limits; receiver-side reconciliation pages 128 ids at a time, reads one body at a time, and stages
+  derived history in disk-backed SQLite temporary tables. Collection size does not reject a valid incoming group.
+  If derived history exceeds a bounded shape log chunk, the commit advances the history floor atomically;
+  older shape cursors receive `409 must_refetch` and consumers restart from a current snapshot.
 
 ## Local transactions
 
@@ -67,8 +71,13 @@ the information needed to release a key later.
 
 `unique_conflicts` stores the bodies excluded from the ordinary document view; `unique_keys` indexes every
 contender. Neither is a consumer-visible collection or a `kind=unique_claim` document. Both are part of the fresh
-on-disk schema. A replica that applies a changed declaration to states from another origin uses the same bounded
-projection; exceeding its 1024-document/2-MiB bound fails the replication transaction without partial application.
+on-disk schema. When a declaration and an incompatible state arrive from different origins, the receiver retains
+that body as a conflict regardless of delivery order. Arrays, objects and over-limit keys claim no keys and are
+excluded from queries; point GET returns 409 with the source ETag. A valid local replacement or removing the
+constraint restores visibility. `unique_invalid` records these states separately from duplicate-key contenders.
+Local writes under the declared schema still reject incompatible values with 400. Baselines carry source bodies,
+so receivers recompute both kinds of conflict without losing data. Replicated collection drops end older retained
+states and declarations even when the dropping origin had never received them.
 
 ## Rollout and follow-up slices
 

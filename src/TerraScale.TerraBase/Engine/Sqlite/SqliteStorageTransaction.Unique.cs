@@ -1,7 +1,6 @@
 using System.Text;
 using System.Text.Json;
 using TerraBase.Hosting;
-using TerraBase.Primitives;
 
 namespace TerraBase.Engine.Sqlite;
 
@@ -26,7 +25,8 @@ internal sealed partial class SqliteStorageTransaction
     private const string UniqueLoses = """
         SELECT 1 FROM unique_keys mine JOIN unique_keys other
         ON other.collection = mine.collection AND other.constraint_name = mine.constraint_name AND other.value = mine.value
-        WHERE mine.collection = $collection AND mine.id = $id AND other.id < mine.id LIMIT 1;
+        WHERE mine.collection = $collection AND mine.id = $id AND other.id < mine.id
+        UNION ALL SELECT 1 FROM unique_invalid WHERE collection = $collection AND id = $id LIMIT 1;
         """;
     private const string UniqueDeleteKeys = "DELETE FROM unique_keys WHERE collection = $collection AND id = $id;";
     private const string UniqueDeleteConflict = "DELETE FROM unique_conflicts WHERE collection = $collection AND id = $id;";
@@ -99,37 +99,7 @@ internal sealed partial class SqliteStorageTransaction
             return [];
         }
 
-        var delete = Command(UniqueDeleteKeys, collection);
-        delete.Parameters.AddWithValue("$id", id);
-        delete.ExecuteNonQuery();
-        if (body is not null)
-        {
-            if (constraints.Count > 0)
-            {
-                using var document = JsonDocument.Parse(body);
-                var bytes = 0;
-                foreach (var constraint in constraints)
-                {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    if (UniqueKeys.Key(document.RootElement, constraint) is not { } key)
-                    {
-                        continue;
-                    }
-
-                    bytes += key.Length;
-                    if (bytes > UniqueKeys.MaxDocumentKeyBytes)
-                    {
-                        throw new DocumentValidationException("unique keys of a document fit at most 64 KiB", tooLarge: true);
-                    }
-
-                    var insert = Command("INSERT INTO unique_keys (collection, constraint_name, value, id) VALUES ($collection, $name, $value, $id);", collection);
-                    insert.Parameters.AddWithValue("$name", constraint.Name);
-                    insert.Parameters.AddWithValue("$value", key);
-                    insert.Parameters.AddWithValue("$id", id);
-                    insert.ExecuteNonQuery();
-                }
-            }
-        }
+        IndexUniqueKeys(collection, id, body, local, cancellationToken);
 
         var contenders = UniqueContenderIds(collection, id, cancellationToken);
         affected.UnionWith(contenders);
@@ -184,7 +154,7 @@ internal sealed partial class SqliteStorageTransaction
             }
 
             bytes += raw.Json.Length;
-            if (bytes > IStorageTransaction.MaxChangeGroupBytes)
+            if (_importedFromOffset is null && bytes > IStorageTransaction.MaxChangeGroupBytes)
             {
                 throw new StorageWriteLimitException("uniqueness reconciliation fits at most 2 MiB");
             }
@@ -223,13 +193,13 @@ internal sealed partial class SqliteStorageTransaction
 
     private void UniqueHistory(DocumentChange change, CancellationToken cancellationToken)
     {
-        Reserve(change.Collection, change.Id, change.Json?.Length ?? 0);
         if (_importedFromOffset is not null)
         {
-            _appliedChanges.Add(change);
+            ImportHistory(change);
         }
         else
         {
+            Reserve(change.Collection, change.Id, change.Json?.Length ?? 0);
             AppendChange(change.Collection, change.Id, Offset(), change.Version,
                 change.Json is { } json ? StrictUtf8.GetString(json.Span) : null, cancellationToken);
         }
@@ -264,13 +234,16 @@ internal sealed partial class SqliteStorageTransaction
             }
         }
 
-        var affected = ReplaceUniqueKeys(change.Collection, change.Id, body, local: false, cancellationToken);
+        QueueUniqueContenders(change.Collection, change.Id);
+        IndexUniqueKeys(change.Collection, change.Id, body, local: false, cancellationToken);
+        QueueUniqueContenders(change.Collection, change.Id);
         ClearUniqueConflict(change.Collection, change.Id);
         var put = BodyCommand(SqliteStatements.Put, change.Collection, change.Id);
         put.Parameters.AddWithValue("$version", change.Version);
         put.Parameters.AddWithValue("$body", (object?)body ?? DBNull.Value);
         put.ExecuteNonQuery();
-        ReconcileUnique(change.Collection, affected, change.Id, cancellationToken);
+        ReconcileUnique(change.Collection, UniqueProjectionIds(change.Collection, affected: true, cancellationToken), change.Id, cancellationToken);
+        Command("DELETE FROM temp.unique_affected;").ExecuteNonQuery();
         return true;
     }
 
@@ -281,6 +254,7 @@ internal sealed partial class SqliteStorageTransaction
     {
         Command("DELETE FROM unique_keys WHERE collection = $collection;", collection).ExecuteNonQuery();
         Command("DELETE FROM unique_conflicts WHERE collection = $collection;", collection).ExecuteNonQuery();
+        Command("DELETE FROM unique_invalid WHERE collection = $collection;", collection).ExecuteNonQuery();
         if (Command(UniqueDefinitions, collection).ExecuteScalar() is not null)
         {
             WriteMetadata(DocumentChange.Unique, collection, null);
@@ -294,37 +268,29 @@ internal sealed partial class SqliteStorageTransaction
             return;
         }
 
+        BeginUniqueAffected();
         var command = Command("""
-            SELECT d.id FROM documents d
-            WHERE d.collection = $collection AND d.version < $version
-                AND (d.body IS NOT NULL OR EXISTS (
-                    SELECT 1 FROM unique_conflicts c WHERE c.collection = d.collection AND c.id = d.id))
-            LIMIT 1025;
+            INSERT OR IGNORE INTO temp.unique_affected (id)
+            SELECT other.id FROM unique_keys mine JOIN unique_keys other
+                ON other.collection = mine.collection AND other.constraint_name = mine.constraint_name AND other.value = mine.value
+            JOIN documents d ON d.collection = mine.collection AND d.id = mine.id
+            WHERE d.collection = $collection AND d.version < $version;
             """, collection);
         command.Parameters.AddWithValue("$version", version);
-        var ids = new List<string>();
-        using (var reader = command.ExecuteReader())
+        command.ExecuteNonQuery();
+        foreach (var id in UniqueProjectionIds(collection, affected: false, cancellationToken, beforeVersion: version))
         {
-            while (reader.Read())
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                if (ids.Count == MaxWrites)
-                {
-                    throw new StorageWriteLimitException("a replicated unique collection drop affects at most 1024 documents");
-                }
-
-                ids.Add(reader.GetString(0));
-            }
-        }
-
-        foreach (var id in ids)
-        {
+            IndexUniqueKeys(collection, id, body: null, local: false, cancellationToken);
+            ClearUniqueConflict(collection, id);
             var deletion = new DocumentChange(collection, id, version, null);
-            if (ApplyUniqueState(deletion, body: null, cancellationToken))
+            if (ApplyState(deletion, admittedBody: null))
             {
                 UniqueHistory(deletion, cancellationToken);
             }
         }
+
+        ReconcileUnique(collection, UniqueProjectionIds(collection, affected: true, cancellationToken), writtenId: null, cancellationToken);
+        Command("DELETE FROM temp.unique_affected;").ExecuteNonQuery();
     }
 
     private bool ApplyUniqueMetadata(DocumentChange change, string? body, CancellationToken cancellationToken)
@@ -355,36 +321,16 @@ internal sealed partial class SqliteStorageTransaction
             return false;
         }
 
-        // Replaying a declaration projects the receiver's current states, including writes from other origins.
-        var ids = new List<string>();
-        var command = Command("""
-            SELECT d.id, coalesce(octet_length(c.body), octet_length(d.body), 0)
-            FROM documents d LEFT JOIN unique_conflicts c ON c.collection = d.collection AND c.id = d.id
-            WHERE d.collection = $collection LIMIT 1025;
-            """, change.Id);
-        long bytes = 0;
-        using (var reader = command.ExecuteReader())
-        {
-            while (reader.Read())
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                bytes += reader.GetInt64(1);
-                if (ids.Count == MaxWrites || bytes > IStorageTransaction.MaxChangeGroupBytes)
-                {
-                    throw new StorageWriteLimitException("a changed unique schema affects at most 1024 documents and 2 MiB");
-                }
-
-                ids.Add(reader.GetString(0));
-            }
-        }
-
-        foreach (var id in ids)
+        // Build all keys before projecting, so receiver size and arrival order cannot change the result.
+        Command("DELETE FROM unique_keys WHERE collection = $collection;", change.Id).ExecuteNonQuery();
+        Command("DELETE FROM unique_invalid WHERE collection = $collection;", change.Id).ExecuteNonQuery();
+        foreach (var id in UniqueProjectionIds(change.Id, affected: false, cancellationToken))
         {
             var raw = ReadUniqueDocument(change.Id, id);
-            _ = ReplaceUniqueKeys(change.Id, id, raw is null ? null : StrictUtf8.GetString(raw.Json.Span), local: false, cancellationToken);
+            IndexUniqueKeys(change.Id, id, raw is null ? null : StrictUtf8.GetString(raw.Json.Span), local: false, cancellationToken);
         }
 
-        ReconcileUnique(change.Id, ids, writtenId: null, cancellationToken);
+        ReconcileUnique(change.Id, UniqueProjectionIds(change.Id, affected: false, cancellationToken), writtenId: null, cancellationToken);
         _metadataChanged = true;
         return true;
     }
