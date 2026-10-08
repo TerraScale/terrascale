@@ -69,11 +69,9 @@ internal sealed partial class SqliteStorageTransaction
 
     private void BeginUniqueAffected()
     {
-        if (!_uniqueAffected)
-        {
-            Command("CREATE TEMP TABLE unique_affected (id TEXT PRIMARY KEY) WITHOUT ROWID;").ExecuteNonQuery();
-            _uniqueAffected = true;
-        }
+        // A group-commit savepoint can roll back table creation; do not cache its existence in managed state.
+        Command("CREATE TEMP TABLE IF NOT EXISTS unique_affected (id TEXT PRIMARY KEY) WITHOUT ROWID;").ExecuteNonQuery();
+        _uniqueAffected = true;
     }
 
     private void QueueUniqueContenders(string collection, string id)
@@ -139,7 +137,7 @@ internal sealed partial class SqliteStorageTransaction
     {
         if (_uniqueAffected)
         {
-            Command("DROP TABLE temp.unique_affected;").ExecuteNonQuery();
+            Command("DROP TABLE IF EXISTS temp.unique_affected;").ExecuteNonQuery();
         }
     }
 }

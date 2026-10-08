@@ -27,15 +27,17 @@ There is no upgrade, migration, or backfill of old files or consumer claim recor
 - A collection has at most 32 named keys; each holds 1 to 4 distinct dotted member paths. Paths follow the existing
   index path syntax. Names follow the existing collection name syntax. Field declarations receive stable derived names.
 - A missing or JSON-null component excludes the document from that key. Strings, numbers and booleans are valid
-  components; objects and arrays answer `400 invalid_request`. Types remain distinct: `1`, `"1"`, and `true`
+  components; a complete key containing objects or arrays answers `400 invalid_request`. Sparse compound keys are
+  omitted before validating any other components, regardless of declaration order. Types remain distinct: `1`, `"1"`, and `true`
   are different values. Numerically equal JSON spellings such as `1`, `1.0`, and `1e0` claim the same value, using
   the document contract's exact decimal representation.
 - `none` preserves strings, `lowercase` uses .NET invariant lowercase, and `trim_lowercase` trims Unicode whitespace
   before invariant lowercase. The rule is deliberately explicit: it does not perform Unicode normalization or
   multi-character Unicode case folding. Normalization affects the key, not the stored document.
-- Encoded keys fit 16 KiB each and 64 KiB per document. A local mutation reconciles at most 1024 affected documents
-  and 2 MiB of source bodies, sharing the existing transaction's write and history budgets. Replicated groups retain
-  their input limits; receiver-side reconciliation pages 128 ids at a time, reads one body at a time, and stages
+- Encoded keys fit 16 KiB each and 64 KiB per document. Local writes and derived visibility/history mutations share
+  the existing transaction's write and history budgets. Scanning contenders does not consume those mutation budgets:
+  a local delete or repair can resolve a conflict with more than 1024 contenders. Reconciliation pages 128 ids at a
+  time and reads one body at a time. Replicated groups retain their input limits and stage
   derived history in disk-backed SQLite temporary tables. Collection size does not reject a valid incoming group.
   If derived history exceeds a bounded shape log chunk, the commit advances the history floor atomically;
   older shape cursors receive `409 must_refetch` and consumers restart from a current snapshot.

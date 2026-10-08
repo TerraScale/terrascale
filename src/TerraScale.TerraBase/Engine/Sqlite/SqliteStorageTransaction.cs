@@ -133,7 +133,7 @@ internal sealed partial class SqliteStorageTransaction(
             }
 
             Reserve(collection, id, json.Length);
-            var affected = ReplaceUniqueKeys(collection, id, body, local: true, cancellationToken);
+            var affected = ReplaceUniqueKeys(collection, id, body, cancellationToken);
             ClearUniqueConflict(collection, id);
             return Write(offset =>
             {
@@ -158,7 +158,7 @@ internal sealed partial class SqliteStorageTransaction(
         {
             ThrowIfReadOnly();
             DocumentMutation(replicated: false);
-            var affected = ReplaceUniqueKeys(collection, id, null, local: true, cancellationToken);
+            var affected = ReplaceUniqueKeys(collection, id, null, cancellationToken);
             ClearUniqueConflict(collection, id);
             var command = Command(SqliteStatements.Delete, collection);
             command.Parameters.AddWithValue("$id", id);
@@ -205,7 +205,7 @@ internal sealed partial class SqliteStorageTransaction(
             }
 
             Reserve(collection, id, 0);
-            var affected = ReplaceUniqueKeys(collection, id, null, local: true, cancellationToken);
+            var affected = ReplaceUniqueKeys(collection, id, null, cancellationToken);
             ClearUniqueConflict(collection, id);
             // ponytail: keep tombstones until replication defines when they may be reaped.
             return Write(offset =>

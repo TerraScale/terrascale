@@ -40,13 +40,11 @@ internal static class UniqueKeys
 
     internal static byte[]? Key(JsonElement document, UniqueConstraint constraint)
     {
-        var buffer = new ArrayBufferWriter<byte>();
-        using var writer = new Utf8JsonWriter(buffer);
-        writer.WriteStartArray();
-        foreach (var path in constraint.Fields)
+        var values = new JsonElement[constraint.Fields.Count];
+        for (var index = 0; index < constraint.Fields.Count; index++)
         {
             var value = document;
-            foreach (var member in path.Split('.'))
+            foreach (var member in constraint.Fields[index].Split('.'))
             {
                 if (value.ValueKind != JsonValueKind.Object || !value.TryGetProperty(member, out value))
                 {
@@ -59,6 +57,14 @@ internal static class UniqueKeys
                 return null;
             }
 
+            values[index] = value;
+        }
+
+        var buffer = new ArrayBufferWriter<byte>();
+        using var writer = new Utf8JsonWriter(buffer);
+        writer.WriteStartArray();
+        foreach (var value in values)
+        {
             switch (value.ValueKind)
             {
                 case JsonValueKind.String:

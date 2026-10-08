@@ -17,10 +17,10 @@ internal sealed partial class SqliteStorageTransaction
         FROM documents d LEFT JOIN unique_conflicts c ON c.collection = d.collection AND c.id = d.id
         WHERE d.collection = $collection AND d.id = $id;
         """;
-    private const string UniqueContenders = """
-        SELECT DISTINCT other.id FROM unique_keys mine JOIN unique_keys other
+    private const string UniqueOtherContender = """
+        SELECT 1 FROM unique_keys mine JOIN unique_keys other
         ON other.collection = mine.collection AND other.constraint_name = mine.constraint_name AND other.value = mine.value
-        WHERE mine.collection = $collection AND mine.id = $id LIMIT 1025;
+        WHERE mine.collection = $collection AND mine.id = $id AND other.id != mine.id LIMIT 1;
         """;
     private const string UniqueLoses = """
         SELECT 1 FROM unique_keys mine JOIN unique_keys other
@@ -85,65 +85,30 @@ internal sealed partial class SqliteStorageTransaction
     }
 
     // All contenders retain their merged state. Visibility is a deterministic projection of the current keys.
-    private HashSet<string> ReplaceUniqueKeys(string collection, string id, string? body, bool local, CancellationToken cancellationToken)
+    private IEnumerable<string> ReplaceUniqueKeys(string collection, string id, string? body, CancellationToken cancellationToken)
     {
-        if (!Shaped)
+        if (!Shaped || ReadUniqueConstraints(collection).Count == 0)
         {
             return [];
         }
 
-        var affected = UniqueContenderIds(collection, id, cancellationToken);
-        var constraints = ReadUniqueConstraints(collection);
-        if (constraints.Count == 0 && affected.Count == 0)
-        {
-            return [];
-        }
-
-        IndexUniqueKeys(collection, id, body, local, cancellationToken);
-
-        var contenders = UniqueContenderIds(collection, id, cancellationToken);
-        affected.UnionWith(contenders);
-        if (affected.Count > MaxWrites)
-        {
-            throw new StorageWriteLimitException("a uniqueness conflict affects at most 1024 documents");
-        }
-
-        if (local && contenders.Any(other => other != id))
+        BeginUniqueAffected();
+        Command("DELETE FROM temp.unique_affected;").ExecuteNonQuery();
+        QueueUniqueContenders(collection, id);
+        IndexUniqueKeys(collection, id, body, local: true, cancellationToken);
+        var contenders = Command(UniqueOtherContender, collection);
+        contenders.Parameters.AddWithValue("$id", id);
+        if (contenders.ExecuteScalar() is not null)
         {
             throw new UniqueConstraintException();
         }
 
-        affected.Add(id);
-        if (affected.Count > MaxWrites)
-        {
-            throw new StorageWriteLimitException("a uniqueness conflict affects at most 1024 documents");
-        }
-        return affected;
-    }
-
-    private HashSet<string> UniqueContenderIds(string collection, string id, CancellationToken cancellationToken)
-    {
-        var command = Command(UniqueContenders, collection);
-        command.Parameters.AddWithValue("$id", id);
-        var ids = new HashSet<string>(StringComparer.Ordinal);
-        using var reader = command.ExecuteReader();
-        while (reader.Read())
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            if (ids.Count == MaxWrites)
-            {
-                throw new StorageWriteLimitException("a uniqueness conflict affects at most 1024 documents");
-            }
-
-            ids.Add(reader.GetString(0));
-        }
-
-        return ids;
+        QueueUniqueContenders(collection, id);
+        return UniqueProjectionIds(collection, affected: true, cancellationToken);
     }
 
     private void ReconcileUnique(string collection, IEnumerable<string> ids, string? writtenId, CancellationToken cancellationToken)
     {
-        long bytes = 0;
         foreach (var id in ids)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -151,12 +116,6 @@ internal sealed partial class SqliteStorageTransaction
             if (raw is null)
             {
                 continue;
-            }
-
-            bytes += raw.Json.Length;
-            if (_importedFromOffset is null && bytes > IStorageTransaction.MaxChangeGroupBytes)
-            {
-                throw new StorageWriteLimitException("uniqueness reconciliation fits at most 2 MiB");
             }
 
             var loses = Command(UniqueLoses, collection);

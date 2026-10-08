@@ -111,7 +111,45 @@ public sealed class UniqueReplicationTests
             }
         }
 
-        // An origin that has not received the schema may drop its empty collection while this receiver retains 1100 states.
+        await using (var read = await receiving.BeginTransactionAsync(write: false, token))
+        {
+            previous = await read.GetOffsetAsync(token);
+        }
+
+        using (var removedLoser = await client.DeleteAsync(Document(tenant, ids[^1]), token))
+        {
+            removedLoser.EnsureSuccessStatusCode();
+        }
+
+        using (var repairedLoser = await client.PutAsJsonAsync(Document(tenant, ids[^2]), new { email = "repaired", padding = new string('x', 10 * 1024) }, token))
+        {
+            repairedLoser.EnsureSuccessStatusCode();
+        }
+
+        await VisibleAsync(client, tenant, ids[^2], token);
+        using (var removedWinner = await client.DeleteAsync(Document(tenant, ids[0]), token))
+        {
+            removedWinner.EnsureSuccessStatusCode();
+        }
+
+        await VisibleAsync(client, tenant, ids[1], token);
+        using (var stillHidden = await client.GetAsync(Document(tenant, ids[2]), token))
+        {
+            await Assert.That(stillHidden.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
+        }
+
+        await using (var read = await receiving.BeginTransactionAsync(write: false, token))
+        {
+            var changes = new List<(string Id, bool Deleted)>();
+            await foreach (var change in read.ChangesAsync("people", null, previous, await read.GetOffsetAsync(token), token))
+            {
+                changes.Add((change.Id, change.Deleted));
+            }
+
+            await Assert.That(changes).IsEquivalentTo([(ids[^1], true), (ids[^2], false), (ids[0], true), (ids[1], false)]);
+        }
+
+        // An origin that has not received the schema may drop its empty collection while this receiver retains over 1024 states.
         using var dropping = dropOrigin.Tls.CreateClient(dropOrigin.Server.ClientAddress!,
             await tenant.KeyAsync(dropOrigin.Server, ["documents:read", "documents:write"], token));
         using (var created = await dropping.PostAsJsonAsync(new Uri(tenant.Path("db") + "/collections", UriKind.Relative), new { name = "people" }, token))
