@@ -10,8 +10,6 @@ public sealed class HintedHandoffTests
     [Test]
     public async Task A_restarted_sender_replays_durable_backlog_when_its_peer_returns_without_new_writes()
     {
-        using var peerTls = new PeerTls();
-        using var clientTls = new ClientTls();
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         var token = deadline.Token;
         var faker = new Faker();
@@ -20,8 +18,12 @@ public sealed class HintedHandoffTests
         var receiverPort = TerraBaseTestServer.FreePort();
         var servers = new List<TerraBaseTestServer>(4);
         var failedStarts = new List<Task>(1);
+        PeerTls? ownedPeerTls = null;
+        ClientTls? ownedClientTls = null;
         try
         {
+            var peerTls = ownedPeerTls = new PeerTls();
+            var clientTls = ownedClientTls = new ClientTls();
             void Receiver(Dictionary<string, string> settings)
             {
                 peerTls.Apply(settings);
@@ -150,19 +152,23 @@ public sealed class HintedHandoffTests
 
         async Task ReleaseResourcesAsync()
         {
-            try
+            using (ownedPeerTls)
+            using (ownedClientTls)
             {
-                foreach (var server in servers)
+                try
                 {
-                    server.Client.Dispose();
-                }
+                    foreach (var server in servers)
+                    {
+                        server.Client.Dispose();
+                    }
 
-                await Task.WhenAll(servers.Select(server => server.CleanupCompletion).Concat(failedStarts));
-            }
-            finally
-            {
-                Directory.Delete(senderData, recursive: true);
-                Directory.Delete(receiverData, recursive: true);
+                    await Task.WhenAll(servers.Select(server => server.CleanupCompletion).Concat(failedStarts));
+                }
+                finally
+                {
+                    Directory.Delete(senderData, recursive: true);
+                    Directory.Delete(receiverData, recursive: true);
+                }
             }
         }
     }
