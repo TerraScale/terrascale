@@ -159,7 +159,7 @@ func TestDocumentsPaginateAndSortFromTheGrid(t *testing.T) {
 		data.Documents = append(data.Documents, documentView{ID: fmt.Sprintf("ord_%02d", i), Value: []byte(fmt.Sprintf(`{"total":%d,"status":"paid"}`, i))})
 	}
 	paginate(&data)
-	if data.Page != 2 || data.PageCount != 2 || data.Matched != 30 || len(data.Documents) != 5 || data.Documents[0].ID != "11BSBA6TXPCVT7H8FMFWEAWW9M" {
+	if data.Page != 2 || data.PageCount != 2 || data.Matched != 30 || len(data.Documents) != 5 || data.Documents[0].ID != "ord_25" {
 		t.Fatalf("page 9 of 30 documents = page %d of %d with %d rows from %s", data.Page, data.PageCount, len(data.Documents), data.Documents[0].ID)
 	}
 	data.Section, data.Collections = "documents", []collectionEntry{{Name: "orders"}}

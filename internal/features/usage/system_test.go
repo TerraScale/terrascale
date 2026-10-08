@@ -1,7 +1,6 @@
 package usage
 
 import (
-	"crypto/rand"
 	"errors"
 	"strings"
 	"testing"
@@ -81,7 +80,7 @@ func TestSystemDatabaseOfAnotherMember(t *testing.T) {
 	tb := terrabasetest.Start(t)
 	store := memstore.New()
 	system := terrabasetest.SystemDatabase(t, tb, store)
-	outsider := tb.Token(t, "user-"+rand.Text(), "outsider@example.test")
+	outsider := tb.Token(t, core.NewID(), "outsider@example.test")
 	ctx := core.WithUserToken(t.Context(), func() (string, bool) { return outsider, true })
 	deps := core.Deps{Store: store, Management: system.Management}
 

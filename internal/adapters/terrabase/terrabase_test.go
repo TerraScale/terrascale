@@ -97,7 +97,7 @@ func TestMirrorOrganizationsFollowsEveryServiceDatabase(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	user := m.WithToken(tb.Token(t, "user-admin", "admin@example.test"))
+	user := m.WithToken(tb.Token(t, admin.User.ID, "admin@example.test"))
 	addService := func(org, name string) {
 		t.Helper()
 		project, err := user.CreateProject(t.Context(), org, name)

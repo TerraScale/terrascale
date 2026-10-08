@@ -29,7 +29,7 @@ func Database(t testing.TB, s *Server, name string) (db *v1.Database, key string
 	if err != nil {
 		t.Fatal(err)
 	}
-	u := m.WithToken(s.Token(t, "test-"+rand.Text(), ""))
+	u := m.WithToken(s.Token(t, core.NewID(), ""))
 	org, err := u.CreateOrganization(t.Context(), "Fixture "+rand.Text())
 	if err != nil {
 		t.Fatal(err)
@@ -71,7 +71,8 @@ func SystemDatabase(t testing.TB, s *Server, store core.Store) System {
 		t.Fatal(err)
 	}
 	email := "admin-" + strings.ToLower(rand.Text()) + "@example.test"
-	token := s.Token(t, "user-"+rand.Text(), email)
+	userID := core.NewID()
+	token := s.Token(t, userID, email)
 	u := m.WithToken(token)
 	org, err := u.CreateOrganization(ctx, "terrascale "+rand.Text())
 	if err != nil {
@@ -89,7 +90,7 @@ func SystemDatabase(t testing.TB, s *Server, store core.Store) System {
 	if err != nil {
 		t.Fatal(err)
 	}
-	account, err := store.CreateAccount(ctx, core.User{Name: "Admin", Email: email, PasswordHash: "unused", PlatformAdmin: true})
+	account, err := store.CreateAccount(ctx, core.User{ID: userID, Name: "Admin", Email: email, PasswordHash: "unused", PlatformAdmin: true})
 	if err != nil {
 		t.Fatal(err)
 	}

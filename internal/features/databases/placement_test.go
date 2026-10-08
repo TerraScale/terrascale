@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -76,7 +75,7 @@ func (r *contractRegion) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			refuse(http.StatusMisdirectedRequest, "wrong_region")
 			return
 		}
-		db := v1.ManagedDatabase{ID: fmt.Sprintf("01K7800000E00800000000%05d", len(r.held)), ProjectID: parts[3], Name: body.Name,
+		db := v1.ManagedDatabase{ID: core.NewID(), ProjectID: parts[3], Name: body.Name,
 			CreatedAt: time.Now().UTC(), Region: r.id, HomeRegion: r.id, ReplicaRegions: append([]string{}, body.ReplicaRegions...)}
 		r.held[db.ID] = db
 		answer(http.StatusCreated, db)
