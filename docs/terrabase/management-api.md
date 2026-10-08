@@ -172,9 +172,9 @@ before restart. Service bindings and credentials are recreated. See [the ID cont
 
 ### Database lifecycle recovery (TS-480)
 
-Version 4 adds `pending_database_cleanup` documents in `_system.db`, keyed by database id and
-holding its tenant context. Builds that only understand version 3 refuse this catalog; downgrade
-requires a supported recovery procedure, not editing the version marker.
+The current catalog stores `pending_database_cleanup` documents in `_system.db`, keyed by database ULID
+and holding its tenant context. Unsupported catalog versions are refused; changing the version marker
+does not make an older catalog compatible.
 
 - **Create and branch:** check that the target has no existing files and commit a cleanup intent
   under the engine lifecycle lock, keeping that lock through storage publication. Existing unknown
