@@ -13,7 +13,8 @@ public sealed record CollectionList(IReadOnlyList<CollectionStats> Items);
 /// <param name="Documents">Live documents in the collection.</param>
 /// <param name="SampledDocuments">Documents read, the first ones in id order.</param>
 /// <param name="Fields">Fields in path order.</param>
-public sealed record CollectionSchema(string Collection, long Documents, int SampledDocuments, IReadOnlyList<SchemaField> Fields);
+/// <param name="UniqueConstraints">Declared single and compound unique keys.</param>
+public sealed record CollectionSchema(string Collection, long Documents, int SampledDocuments, IReadOnlyList<SchemaField> Fields, IReadOnlyList<UniqueConstraint>? UniqueConstraints = null);
 
 /// <summary>One field seen in the sample.</summary>
 /// <param name="Path">Dotted path of object member names.</param>
@@ -27,7 +28,7 @@ public readonly union ListCollectionsResult(CollectionList, Validation);
 /// <summary>The inferred fields of a collection, that it does not exist, or that inferring them exceeded a budget.</summary>
 public readonly union InferSchemaResult(CollectionSchema, NotFound, Validation);
 
-/// <summary>Read-only views of a managed database's collections; TerraBase has no declared schemas, so fields are inferred.</summary>
+/// <summary>Collection views with inferred fields and declared unique keys.</summary>
 public interface ISchemaService
 {
     /// <summary>Lists the collections of <paramref name="database"/>; empty when its storage is missing.</summary>

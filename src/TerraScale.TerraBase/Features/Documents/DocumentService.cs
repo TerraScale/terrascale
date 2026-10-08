@@ -302,6 +302,10 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
             _schemaRejections.Add(1);
             return new DocumentRejected(new Validation("the document does not satisfy the collection schema", "schema_validation_failed", error.Details));
         }
+        catch (UniqueConstraintException error)
+        {
+            return new DocumentRejected(new Conflict(error.Message, "unique_violation"));
+        }
         catch (StorageWriteLimitException)
         {
             // One commit must fit one shape log chunk (docs/shape-reads.md).

@@ -21,6 +21,7 @@ public sealed class GetDocumentEndpoint(IDocumentService documents, ITenantDirec
         Tags("Documents");
         Produces<DocumentBody>();
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
+        Produces<ErrorBody>(StatusCodes.Status409Conflict);
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
         RequireAuthorization(ApiKeyScopes.DocumentsRead);
         Metadata(ListenerMetadata.Client);
@@ -50,6 +51,12 @@ public sealed class GetDocumentEndpoint(IDocumentService documents, ITenantDirec
 
     private IResult Conditional(DocumentKey key, StoredDocument? document, CancellationToken cancellationToken)
     {
+        if (document is { UniqueConflict: true })
+        {
+            ETags.Set(HttpContext, ETags.Version(document.Scope, key.Collection, document.Id, document.Version, document.Json));
+            return ErrorResponse.From(new Conflict("the document lost a replicated uniqueness conflict", "unique_violation"));
+        }
+
         var version = document is null ? null : ETags.Version(document.Scope, key.Collection, document.Id, document.Version, document.Json, document.Deleted);
         return ETags.CheckNotModified(HttpContext, document is { Deleted: false }, version) switch
         {

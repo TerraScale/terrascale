@@ -68,7 +68,7 @@ internal sealed class StampingStorageEngine(IStorageEngine inner, ISystemReplica
     public ValueTask<bool> IsReadyAsync(CancellationToken cancellationToken) => inner.IsReadyAsync(cancellationToken);
 
     public long Document(TenantContext? database, string collection, string id) =>
-        Volatile.Read(ref _epoch) + Volatile.Read(ref _stripes[DocumentStripe(database, collection, id)]);
+        Collection(database, collection) + Volatile.Read(ref _stripes[DocumentStripe(database, collection, id)]);
 
     public long Collection(TenantContext? database, string collection) =>
         Volatile.Read(ref _epoch) + Volatile.Read(ref _stripes[CollectionStripe(database, collection)]);
@@ -334,6 +334,16 @@ internal sealed class StampingStorageEngine(IStorageEngine inner, ISystemReplica
 
         public ValueTask<bool> DropIndexAsync(string name, CancellationToken cancellationToken) =>
             RunAsync(() => inner.DropIndexAsync(name, cancellationToken), cancellationToken, mutation: true);
+
+        public ValueTask<IReadOnlyList<UniqueConstraint>> GetUniqueConstraintsAsync(string collection, CancellationToken cancellationToken) =>
+            RunAsync(() => inner.GetUniqueConstraintsAsync(collection, cancellationToken), cancellationToken);
+
+        public async ValueTask SetUniqueConstraintsAsync(string collection, IReadOnlyList<UniqueConstraint> constraints, CancellationToken cancellationToken) =>
+            await WriteCollectionAsync(async () =>
+            {
+                await inner.SetUniqueConstraintsAsync(collection, constraints, cancellationToken).ConfigureAwait(false);
+                return true;
+            }, cancellationToken).ConfigureAwait(false);
 
         public ValueTask<CollectionInfo?> GetCollectionAsync(string name, CancellationToken cancellationToken) =>
             RunAsync(() => inner.GetCollectionAsync(name, cancellationToken), cancellationToken);
