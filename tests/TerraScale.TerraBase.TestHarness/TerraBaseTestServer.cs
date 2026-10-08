@@ -9,6 +9,7 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using OpenTelemetry.Exporter;
 using TerraBase.Configuration;
 using TerraBase.Engine.Sqlite;
@@ -404,6 +405,12 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
         ArgumentNullException.ThrowIfNull(settings);
         settings["query-budget-seconds"] = TerraBaseOptions.DefaultQueryBudgetSeconds.ToString(CultureInfo.InvariantCulture);
     }
+
+    /// <summary>Captures connection and TLS closure reasons for an individual fixture.</summary>
+    public static void EnableConnectionDiagnostics(IServiceCollection services) => services.AddLogging(logging => logging
+        .AddFilter("Microsoft.AspNetCore.Server.Kestrel.Connections", LogLevel.Debug)
+        .AddFilter("Microsoft.AspNetCore.Server.Kestrel.Https", LogLevel.Debug)
+        .AddFilter("Microsoft.AspNetCore.Server.Kestrel.BadRequests", LogLevel.Debug));
 
     internal static void ReportCleanupFailure(AggregateException error)
     {

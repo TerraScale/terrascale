@@ -339,6 +339,7 @@ public sealed partial class CrossRegionPagingProgressTests
             settings["nats-credentials-file"] = credentials;
         }, services =>
         {
+            TerraBaseTestServer.EnableConnectionDiagnostics(services);
             services.AddSingleton(bus ?? network.Join(cell, node));
             services.AddSingleton<IMemberStore>(new FakeMemberStore(TimeProvider.System));
             if (clock is not null)
@@ -364,9 +365,11 @@ public sealed partial class CrossRegionPagingProgressTests
     private static async Task<List<ManagedDatabaseRef>> CreatePlacedAsync(
         ManagementApi api, string organization, string project, IEnumerable<string> names, CancellationToken token)
     {
+        var output = TUnit.Core.TestContext.Current!.OutputWriter;
         var databases = new List<ManagedDatabaseRef>();
         foreach (var batch in names.Select(name => new ManagedDatabaseRef(organization, project, Guid.NewGuid().ToString("D"), name)).Chunk(16))
         {
+            output.WriteLine($"paging inventory: seed batch starts after {databases.Count} databases, adding {batch.Length}");
             using var created = await api.Client.PostAsJsonAsync(ManagementApi.Uri("/v1/management/commits"), new
             {
                 id = Guid.NewGuid().ToString("D"),
@@ -374,6 +377,7 @@ public sealed partial class CrossRegionPagingProgressTests
             }, token);
             await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.OK);
             databases.AddRange(batch);
+            output.WriteLine($"paging inventory: seed batch completed, {databases.Count} databases created");
         }
 
         return databases;
