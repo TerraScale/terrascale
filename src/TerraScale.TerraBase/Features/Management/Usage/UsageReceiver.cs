@@ -114,7 +114,7 @@ internal sealed class UsageReceiver(TerraBaseOptions options, UsageMeter meter, 
             }
 
             var payload = JsonSerializer.Deserialize(count.Measurements.Span, TerraBaseJsonContext.Default.OpCounts);
-            return payload is { Reads: 0, Writes: 0, Meters: { } readings } && readings.Count <= UsageMeter.MaxDimensions
+            return payload is { Reads: 0, Writes: 0, Meters: { } readings }
                 && readings.All(entry => entry.Value is { Dimension: { } dimension } reading
                     && entry.Key == dimension.Key && UsageMeter.ValidDimension(dimension)
                     && reading.Count is >= 0 and <= UsageMeter.MaxCount && reading.Value is >= 0 and <= UsageMeter.MaxCount

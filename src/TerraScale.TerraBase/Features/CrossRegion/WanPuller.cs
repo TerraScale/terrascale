@@ -202,10 +202,11 @@ internal sealed partial class WanPuller(
 
             var applied = await AppliedAsync(store, origin, cancellationToken).ConfigureAwait(false);
             var gone = false;
-            var diverged = applied > (long)head.Sequence;
-            if (!observations.ContainsKey(database) && observations.Count < 128)
+            // Only the origin's explicit Ahead answer or a journal-proof mismatch is divergence; a head snapshot may be stale.
+            var diverged = false;
+            // Bounded by this round's heads and retries, so every replicated database reports health each round.
+            if (observations.TryAdd(database, (0, false)))
             {
-                observations.Add(database, (0, false));
                 if ((long)head.Sequence > applied)
                 {
                     usage.RecordReplicationState(database, region, (long)head.Sequence - applied, false);

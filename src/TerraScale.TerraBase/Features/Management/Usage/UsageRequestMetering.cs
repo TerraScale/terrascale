@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using TerraBase.Features.Replication;
 using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
@@ -15,7 +16,8 @@ public static class UsageRequestMetering
         var meter = app.Services.GetRequiredService<IUsageMeter>();
         app.Use(async (context, next) =>
         {
-            if (Listeners.ArrivedOn(context) != TerraBaseListener.Client)
+            // The follower that relayed a forwarded request already meters it at the client edge.
+            if (Listeners.ArrivedOn(context) != TerraBaseListener.Client || context.Features.Get<ForwardedRequests.ForwardedRequest>() is not null)
             {
                 await next(context).ConfigureAwait(false);
                 return;
@@ -43,9 +45,10 @@ public static class UsageRequestMetering
                 context.Request.Body = input;
                 context.Response.Body = output;
                 var database = context.Features.Get<TenantContext>();
+                // databaseName is set only once the project catalog resolved the route's database to its ID.
                 if (database is null && context.Features.Get<ProjectAccess>() is { } access
                     && context.GetEndpoint()?.Metadata.GetMetadata<ProjectManagementRoute>() is not null
-                    && context.Request.RouteValues["database"] is string id)
+                    && context.Request.RouteValues.ContainsKey("databaseName") && context.Request.RouteValues["database"] is string id)
                 {
                     database = new(access.OrganizationId, PlanTier.Hobby, access.ProjectId, id);
                 }

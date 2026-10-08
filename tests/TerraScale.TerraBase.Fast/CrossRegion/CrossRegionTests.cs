@@ -71,6 +71,31 @@ public sealed class CrossRegionTests
         var saved = (await Management.UsageAnalyticsTests.ReadAsync(gru, gruRoute)).GetProperty("items")[0];
         await Assert.That(Traffic(saved, "gru-1", "sfo-1", "bytesSent")).IsGreaterThanOrEqualTo(sent);
 
+        // Replication into sfo is never client traffic there: with no sfo document requests while it arrives, client totals
+        // stay put as replication grows. Project analytics routes resolve no database, so reading them is not metered.
+        var sfoAnalytics = ManagementApi.Uri($"/projects/{regions.Project}/analytics?range=1h&region=sfo-1");
+        regions.Network.Partition("gru", "sfo");
+        using (var isolated = await regions.Gru.PutAsJsonAsync(regions.Document(ReplicationDocuments.Id("meter-isolated")), new { value }))
+        {
+            isolated.EnsureSuccessStatusCode();
+        }
+
+        var (clientBefore, replicationBefore) = await TotalsAsync();
+        var opsBefore = (await Management.UsageAnalyticsTests.ReadAsync(sfo, sfoRoute)).GetProperty("items")[0].GetProperty("replicatedOps").GetInt64();
+        regions.Network.Heal();
+        await TerraBaseTestServer.EventuallyAsync(async token =>
+            (await sfo.GetFromJsonAsync<JsonElement>(sfoRoute, token)).GetProperty("items")[0].GetProperty("replicatedOps").GetInt64() > opsBefore);
+        var (clientAfter, replicationAfter) = await TotalsAsync();
+        await Assert.That(clientAfter).IsEqualTo(clientBefore);
+        await Assert.That(replicationAfter).IsGreaterThan(replicationBefore);
+
+        async Task<(long Client, long Replication)> TotalsAsync()
+        {
+            var points = (await Management.UsageAnalyticsTests.ReadAsync(sfo, sfoAnalytics)).GetProperty("items")[0].GetProperty("series").EnumerateArray().ToArray();
+            return (points.Sum(point => point.GetProperty("clientBandwidth").GetProperty("bytesSent").GetInt64() + point.GetProperty("clientBandwidth").GetProperty("bytesReceived").GetInt64()),
+                points.Sum(point => point.GetProperty("replicationBandwidth").GetProperty("bytesReceived").GetInt64()));
+        }
+
         static long Traffic(JsonElement usage, string source, string destination, string field)
         {
             return usage.GetProperty("bandwidth").EnumerateArray()

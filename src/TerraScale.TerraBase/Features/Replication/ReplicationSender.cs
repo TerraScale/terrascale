@@ -321,6 +321,10 @@ internal sealed partial class ReplicationSender(
                     {
                         peer.MarkDirty(database);
                     }
+                    else
+                    {
+                        peer.CaughtUp(database);
+                    }
                 }
                 catch (Exception error) when (!stoppingToken.IsCancellationRequested)
                 {
@@ -446,7 +450,9 @@ internal sealed partial class ReplicationSender(
         peer.Welcomed(identity, receiverIncarnation, acknowledged);
         Progressed();
         LogPeerRegion(logger, peer.Number, options.Region, peerMember.Region is "" ? "unknown" : peerMember.Region);
-        var traffic = peer.Retrying(identity) || acknowledged == 0 && head > 1 ? ReplicationTrafficKind.Handoff : ReplicationTrafficKind.Delta;
+        // Replay after a failure, an initial catch-up or a backlog longer than one turn stays handoff until a turn reaches the head.
+        var traffic = peer.Handoff(identity, peer.Retrying(identity) || acknowledged == 0 && head > 1 || head - acknowledged > MaxGroupsPerTurn)
+            ? ReplicationTrafficKind.Handoff : ReplicationTrafficKind.Delta;
         var kind = traffic == ReplicationTrafficKind.Handoff ? "handoff" : "delta";
         var inFlight = new Queue<(long Sequence, uint Bytes, ReadOnlyMemory<byte> Digest)>();
         ulong inFlightBytes = 0;
@@ -724,6 +730,8 @@ internal sealed partial class ReplicationSender(
         private readonly HashSet<DatabaseIncarnation> _dirty = [];
         // Bounded by the sender's 128 slots; removed with the database incarnation.
         private readonly Dictionary<DatabaseIncarnation, Observation> _observations = [];
+        // Databases whose journal replay spans turns; bounded like the observations and removed with the incarnation.
+        private readonly HashSet<DatabaseIncarnation> _handoffs = [];
 
         private sealed class Observation
         {
@@ -920,6 +928,7 @@ internal sealed partial class ReplicationSender(
                 _retries.Remove(database);
                 _acknowledged.Remove(database);
                 _observations.Remove(database);
+                _handoffs.Remove(database);
             }
         }
 
@@ -990,6 +999,27 @@ internal sealed partial class ReplicationSender(
             lock (state)
             {
                 _retries.Remove(database);
+            }
+        }
+
+        public bool Handoff(DatabaseIncarnation database, bool starts)
+        {
+            lock (state)
+            {
+                if (starts && heads.ContainsKey(database))
+                {
+                    _handoffs.Add(database);
+                }
+
+                return _handoffs.Contains(database);
+            }
+        }
+
+        public void CaughtUp(DatabaseIncarnation database)
+        {
+            lock (state)
+            {
+                _handoffs.Remove(database);
             }
         }
 

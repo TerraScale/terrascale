@@ -20,10 +20,10 @@ internal sealed partial class UsageFlushService(
     UsageMeter meter, QueryFieldRecorder recorder, QueryShapeRecorder shapes, TimeProvider time, TerraBaseOptions options, ILogger<UsageFlushService> logger,
     IStorageEngine engine, IReplicationStatus replication, ICatalogPrimaryClient? primary = null) : BackgroundService
 {
-    private int _sampleOffset;
-
     // Storage is sampled once per minute bucket, so an idle node neither lists databases nor writes usage every tick.
+    private const int MaxSamplesPerMinute = 128;
     private long _sampledMinute = -1;
+    private int _listed;
 
     private static readonly TimeSpan Interval = TimeSpan.FromSeconds(10);
 
@@ -123,42 +123,27 @@ internal sealed partial class UsageFlushService(
         }
 
         var minute = time.GetUtcNow().ToUnixTimeSeconds() / 60;
-        if (_sampleOffset == 0 && minute == _sampledMinute)
+        if (minute == _sampledMinute)
         {
             return;
         }
 
+        // Each minute samples the databases whose stable hash falls in its slot: about MaxSamplesPerMinute of them, and every
+        // database within ceil(n / MaxSamplesPerMinute) minutes. No positional cursor, so an unordered listing cannot skip any.
         _sampledMinute = minute;
-        var started = time.GetTimestamp();
-        var skipped = 0;
-        var sampled = 0;
-        var complete = true;
+        var slots = Math.Max(1, (_listed + MaxSamplesPerMinute - 1) / MaxSamplesPerMinute);
+        var listed = 0;
         await foreach (var database in engine.ListDatabasesAsync(cancellationToken).ConfigureAwait(false))
         {
-            if (skipped++ < _sampleOffset)
-            {
-                continue;
-            }
-
-            if (sampled == 128 || time.GetElapsedTime(started) >= UsageService.Deadline)
-            {
-                _sampleOffset += sampled;
-                complete = false;
-                break;
-            }
-
-            if (await engine.GetDatabaseSizeAsync(database, cancellationToken).ConfigureAwait(false) is { } size)
+            listed++;
+            if ((uint)StringComparer.Ordinal.GetHashCode(database.DatabaseId ?? "") % slots == minute % slots
+                && await engine.GetDatabaseSizeAsync(database, cancellationToken).ConfigureAwait(false) is { } size)
             {
                 meter.RecordStorage(database, size);
             }
-
-            sampled++;
         }
 
-        if (complete)
-        {
-            _sampleOffset = 0;
-        }
+        _listed = listed;
     }
 
     // A tick sends one bounded batch; a follower's backlog drains a batch per tick.

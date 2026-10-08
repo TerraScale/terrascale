@@ -231,7 +231,6 @@ internal sealed partial class ReplicationService(
         if (prefix.Applied)
         {
             usage.RecordReplicatedOperations(store.Tenant!, peerRegion, changes.Count);
-            usage.RecordReplicationState(store.Tenant!, peerRegion, 0, false);
         }
 
         metrics.Received(prefix.Applied ? "applied" : prefix.Sequence >= sequence ? "duplicate" : "rejected");

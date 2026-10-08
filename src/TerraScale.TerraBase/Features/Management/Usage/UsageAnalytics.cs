@@ -9,6 +9,9 @@ internal sealed class UsageAnalytics(IManagementService management, UsageMeter m
     : IUsageAnalytics
 {
     private const int MaxPoints = 16384;
+    // Health sources refresh every ten seconds; a peer silent past Fresh is stopped, and past Forget it was removed.
+    private static readonly TimeSpan Fresh = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan Forget = TimeSpan.FromMinutes(10);
 
     public async ValueTask<ProjectAnalytics?> AnalyticsAsync(
         ProjectAccess access, AnalyticsWindow window, string? database, string? region, CancellationToken cancellationToken)
@@ -20,7 +23,7 @@ internal sealed class UsageAnalytics(IManagementService management, UsageMeter m
             return null;
         }
 
-        using var reservation = Reserve(databases, window);
+        using var reservation = Reserve(databases, window, region);
         var items = new List<DatabaseAnalytics>();
         foreach (var record in databases)
         {
@@ -53,7 +56,7 @@ internal sealed class UsageAnalytics(IManagementService management, UsageMeter m
             return null;
         }
 
-        using var reservation = Reserve(databases, window);
+        using var reservation = Reserve(databases, window, region);
         var items = new List<DatabaseReplication>();
         foreach (var record in databases)
         {
@@ -68,13 +71,16 @@ internal sealed class UsageAnalytics(IManagementService management, UsageMeter m
             foreach (var observing in Regions(record, lifetime, region))
             {
                 var readings = Readings(lifetime, observing).ToArray();
+                // Every peer observed within Forget counts; one fresh healthy peer cannot hide a silent or diverged one.
+                var now = time.GetUtcNow();
                 var health = readings.Where(reading => reading.Dimension.Meter == "replication_status" && reading.State is not null)
-                    .Select(reading => reading.State!).ToArray();
-                var recent = health.Where(state => time.GetUtcNow() - state.ObservedAt <= TimeSpan.FromSeconds(30)).ToArray();
+                    .Select(reading => reading.State!).Where(state => now - state.ObservedAt <= Forget).ToArray();
+                var recent = health.Where(state => now - state.ObservedAt <= Fresh).ToArray();
                 var applied = readings.Where(reading => reading.Dimension.Meter == "replicated_ops").Select(reading => reading.State?.LastApplied).Max();
                 var lag = recent.Length == 0 ? (double?)null : recent.Max(state => state.LagMs);
-                var diverged = recent.Length == 0 ? (bool?)null : recent.Any(state => state.Diverged);
-                var status = recent.Length == 0 ? "stopped" : diverged == true ? "diverged" : recent.Any(state => state.Remaining > 0) ? "lagging" : "healthy";
+                var diverged = health.Length == 0 ? (bool?)null : health.Any(state => state.Diverged);
+                var status = diverged == true ? "diverged" : recent.Length < health.Length || recent.Length == 0 ? "stopped"
+                    : recent.Any(state => state.Remaining > 0) ? "lagging" : "healthy";
                 var points = series.Select((point, index) =>
                 {
                     var values = Readings(point, observing).ToArray();
@@ -127,10 +133,11 @@ internal sealed class UsageAnalytics(IManagementService management, UsageMeter m
         return result;
     }
 
-    private IMemoryReservation Reserve(IReadOnlyList<ManagedDatabase> databases, AnalyticsWindow window)
+    private IMemoryReservation Reserve(IReadOnlyList<ManagedDatabase> databases, AnalyticsWindow window, string? region)
     {
-        // At most nine placement regions; bounded extra room for observed peer regions and two catalog read pages.
-        var points = databases.Sum(record => Math.Max(1, record.Regions(options.Region).Count)) * window.Usage.Count;
+        // At most nine placement regions, after the region filter; bounded extra room for observed peer regions and two catalog read pages.
+        var points = databases.Sum(record => Math.Max(1, record.Regions(options.Region).Count(observing => region is null || observing == region)))
+            * window.Usage.Count;
         if (points > MaxPoints)
         {
             throw new QueryCapacityException("analytics exceeds its result bucket limit");
@@ -149,7 +156,8 @@ internal sealed class UsageAnalytics(IManagementService management, UsageMeter m
     {
         if (time.GetElapsedTime(started) >= UsageService.Deadline)
         {
-            throw new QueryCapacityException("analytics exceeded its execution budget");
+            // The route answers this like its own deadline: a transient 503, not an invalid query.
+            throw new OperationCanceledException("analytics exceeded its execution budget");
         }
     }
 

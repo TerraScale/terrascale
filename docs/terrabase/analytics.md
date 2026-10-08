@@ -36,9 +36,10 @@ catalog is omitted. ts-go selects and pins regional client endpoints through
 Atlas to read those regions; regions retain independent catalogs and do not
 connect to each other's private peer listeners.
 
-Requests read at most 100 databases and 16,384 database-region buckets within
-five seconds, with memory admission. Invalid filters/ranges and excessive
-queries return 400; an expired read deadline returns 503 `capacity`. Cancellation
+Requests read at most 100 databases and 16,384 database-region buckets (after
+the `region` filter) within five seconds, with memory admission. Invalid
+filters/ranges and excessive queries return 400; exceeding the five-second
+execution budget returns 503 `capacity`. Cancellation
 releases request admission.
 
 ## Analytics response
@@ -53,11 +54,14 @@ Each point contains:
   bins. Empty request buckets return null percentiles. The highest bin includes
   requests above 65,536 ms and reports that boundary.
 - `storageBytes`: the average sampled physical database size, including the
-  engine's sidecars; null before any sample. Each node samples once per minute,
-  with bounded, rotating work over its databases.
+  engine's sidecars; null before any sample. Each node samples once per minute:
+  the databases whose stable hash falls in that minute's slot, about 128 per
+  minute, so every database is sampled within ceil(databases / 128) minutes.
 - `clientBandwidth` and `replicationBandwidth`, each with `bytesSent` and
   `bytesReceived`. Client bandwidth counts actual HTTP body reads and writes
   after a request resolves an authorized database; it excludes HTTP/TLS headers.
+  A request a catalog follower forwards is metered once, where the client sent it;
+  requests naming an unknown database record nothing.
 
 Failed writes do not become committed operation counts. Client request counts,
 errors and latency still include failed requests that resolved their database.
@@ -88,18 +92,23 @@ Failed handshakes before a gRPC peer identifies its region cannot be attributed
 to a region pair.
 
 Kinds are `delta` (current replication), `anti_entropy` (frontier handshakes and
-WAN discovery), and `handoff` (peer or WAN journal replay after a failed transfer or
-initial catch-up). Shared discovery payloads are divided across advertised
+WAN discovery), and `handoff` (peer or WAN journal replay after a failed transfer,
+initial catch-up, or a backlog longer than one 256-group sender turn). A peer
+replay stays `handoff` across turns until a turn ends with the peer at the head. Shared discovery payloads are divided across advertised
 databases, conserving their encoded length. No tenant identifiers are used as
 Prometheus labels; regional/database dimensions live in bounded usage records.
 
 Health builds on TS-681's verified peer prefixes, divergence and catch-up timing,
 plus WAN applied-prefix observations. `lagMs` is the observed backlog's age,
-not network round-trip latency. `divergence` denotes detected journal conflict,
-not a full comparison of document contents. Status is `diverged` after such an
-observation, `lagging` with remaining groups, otherwise `healthy`. Without a
-health observation in the last 30 seconds, status is `stopped` with null lag and
-divergence. `lastApplied` is the last newly applied received group; convergence
+not network round-trip latency. `divergence` denotes detected journal conflict
+(a verified prefix conflict, an origin's explicit ahead answer, or a journal
+proof mismatch), not a full comparison of document contents. Health sources
+refresh every ten seconds: each sender's peer observations and each WAN round.
+Every peer observed in the last ten minutes counts. Status is `diverged` if any
+reports divergence, `stopped` if any has been silent for more than 30 seconds
+(or none was observed), `lagging` with remaining groups, otherwise `healthy`;
+`lagMs` is null without a fresh observation. A peer silent for ten minutes is
+treated as removed. `lastApplied` is the last newly applied received group; convergence
 is the latest completed observed catch-up in milliseconds.
 
 ## Persistence and limits
@@ -113,9 +122,12 @@ the catalog feed replicates the saved observations within the region.
 
 These are best-effort dashboard observations. A crash can lose counts since the
 last successful flush; memory pressure can omit observations. Pending records
-admit at most 256 keys and 256 meter dimensions per key, and persisted maps keep
-at most 256 dimensions. `terrabase.usage.observations.dropped` reports bounded
-admission drops. A follower batch carries at most 1 MiB of measurement JSON,
+admit at most 256 keys and 256 meter dimensions per key; open replication
+backlogs keep at most 256 database/peer pairs, evicting the least recently
+observed. Rolled-up hour, day and lifetime maps are not capped: they hold the
+deployed regions' dimensions, and capping them would break subtraction.
+`terrabase.usage.observations.dropped` reports bounded admission drops. Usage
+totals read counts only; analytics reads reserve memory for their meters. A follower batch carries at most 1 MiB of measurement JSON,
 256 KiB per entry, with validated meter names, dimensions and histogram sizes.
 There are no migrations or backfills; existing entity-ID generation is owned by
 TS-754, and this slice introduces no ID encoding or compatibility fallback.

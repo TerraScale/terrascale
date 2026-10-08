@@ -3,11 +3,13 @@ using System.Text;
 using System.Text.Json;
 using Bogus;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
 using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Replication;
 using TerraBase.Features.Replication.V1;
+using TerraBase.Tenancy;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Management;
@@ -292,6 +294,72 @@ public sealed class UsageAnalyticsTests
             var result = await client.GetFromJsonAsync<JsonElement>(route, token);
             return result.GetProperty("items")[0].GetProperty("status").GetString() == "healthy";
         });
+    }
+
+    [Test]
+    public async Task A_silent_peer_stops_regional_health_beside_a_fresh_one_until_it_is_forgotten()
+    {
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 10, 8, 21, 30, 0, TimeSpan.Zero));
+        var peers = new ObservedPeers();
+        await using var api = await ManagementApi.StartAsync(settings => settings["region"] = "gru-1",
+            services => services.AddSingleton<IReplicationStatus>(peers), clock);
+        var database = await api.CreateManagedDatabaseAsync();
+        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
+        using var client = ProjectClient(api, database.Project);
+        var flush = api.Server.Services.GetServices<IHostedService>().OfType<UsageFlushService>().Single();
+        var route = ManagementApi.Uri($"/projects/{database.Project}/replication?range=1h&region=gru-1");
+        var synced = new ReplicationDatabaseStatus(0, database.Organization, database.Project, database.Id, Guid.NewGuid(), 3, 3, 0, false, 0, null);
+
+        peers.State = new(true, true, 1, 0, [new(0, 0, [synced], "sfo-1"), new(1, 0, [synced], "iad-1")]);
+        await Assert.That((await ObserveAsync(TimeSpan.FromSeconds(10))).GetProperty("status").GetString()).IsEqualTo("healthy");
+
+        // iad-1 goes silent while sfo-1 keeps reporting: the fresh peer must not hide it.
+        peers.State = new(true, true, 1, 0, [new(0, 0, [synced], "sfo-1")]);
+        JsonElement mixed = default;
+        for (var tick = 0; tick < 4; tick++)
+        {
+            mixed = await ObserveAsync(TimeSpan.FromSeconds(10));
+        }
+
+        await Assert.That(mixed.GetProperty("status").GetString()).IsEqualTo("stopped");
+        await Assert.That(mixed.GetProperty("lagMs").ValueKind).IsEqualTo(JsonValueKind.Number);
+
+        // Silent past ten minutes, iad-1 counts as removed.
+        await Assert.That((await ObserveAsync(TimeSpan.FromMinutes(10))).GetProperty("status").GetString()).IsEqualTo("healthy");
+
+        // Every peer silent: stopped, with no current lag.
+        peers.State = new(true, true, 1, 0, []);
+        var silent = await ObserveAsync(TimeSpan.FromSeconds(40));
+        await Assert.That(silent.GetProperty("status").GetString()).IsEqualTo("stopped");
+        await Assert.That(silent.GetProperty("lagMs").ValueKind).IsEqualTo(JsonValueKind.Null);
+
+        async Task<JsonElement> ObserveAsync(TimeSpan advance)
+        {
+            clock.Advance(advance);
+            await flush.FlushAsync(CancellationToken.None);
+            return (await ReadAsync(client, route)).GetProperty("items")[0];
+        }
+    }
+
+    [Test]
+    public async Task A_request_for_an_unknown_database_name_records_no_measurements()
+    {
+        await using var api = await ManagementApi.StartAsync(settings => settings["region"] = "gru-1");
+        var database = await api.CreateManagedDatabaseAsync();
+        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
+        using var client = ProjectClient(api, database.Project);
+        var missing = "missing-" + new Faker().Random.AlphaNumeric(8).ToLowerInvariant();
+        using var response = await client.GetAsync(ManagementApi.Uri($"/v1/projects/{database.Project}/databases/{missing}"));
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+        using var found = await client.GetAsync(ManagementApi.Uri($"/v1/projects/{database.Project}/databases/{database.Name}"));
+        found.EnsureSuccessStatusCode();
+
+        var meter = api.Server.Services.GetRequiredService<UsageMeter>();
+        var window = new UsageWindow(UsageWindow.Hour, DateTimeOffset.UtcNow.ToUnixTimeSeconds() / 3600, 1);
+        var (unknown, _) = await meter.GetObservationsAsync(new(database.Organization, PlanTier.Hobby, database.Project, missing), window, CancellationToken.None);
+        await Assert.That(unknown.Meters).IsNull();
+        var (known, _) = await meter.GetObservationsAsync(new(database.Organization, PlanTier.Hobby, database.Project, database.Id), window, CancellationToken.None);
+        await Assert.That(known.Meters?.ContainsKey("requests|gru-1||get") ?? false).IsTrue();
     }
 
     private sealed class ObservedPeers : IReplicationStatus

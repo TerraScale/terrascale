@@ -294,12 +294,17 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
     public async ValueTask<(OpCounts Lifetime, OpCounts[] Series)> GetAsync(
         TenantContext database, UsageWindow window, CancellationToken cancellationToken, Action? proceed = null)
     {
-        var (lifetime, series) = await GetObservationsAsync(database, window, cancellationToken, proceed).ConfigureAwait(false);
-        return (lifetime with { Meters = null }, [.. series.Select(point => point with { Meters = null })]);
+        return await ReadAsync(database, window, meters: false, proceed, cancellationToken).ConfigureAwait(false);
     }
 
+    /// <summary>Like <see cref="GetAsync"/>, with regional meters; callers reserve memory for them.</summary>
     public async ValueTask<(OpCounts Lifetime, OpCounts[] Series)> GetObservationsAsync(
-        TenantContext database, UsageWindow window, CancellationToken cancellationToken, Action? proceed = null)
+        TenantContext database, UsageWindow window, CancellationToken cancellationToken, Action? proceed = null) =>
+        await ReadAsync(database, window, meters: true, proceed, cancellationToken).ConfigureAwait(false);
+
+    // Counts-only reads drop every entry's meters as it is read, so usage totals retain no analytics observations.
+    private async ValueTask<(OpCounts Lifetime, OpCounts[] Series)> ReadAsync(
+        TenantContext database, UsageWindow window, bool meters, Action? proceed, CancellationToken cancellationToken)
     {
         var owner = DatabaseOwner.Of(database);
         await _flush.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -314,13 +319,14 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
 
             var (lifetime, series) = await catalog.ReadAsync(
                 async transaction => (
-                    await SystemCatalog.GetAsync(transaction, UsageCollection(owner.DatabaseId), Ops, TerraBaseJsonContext.Default.OpCounts, cancellationToken).ConfigureAwait(false) ?? OpCounts.Zero,
-                    await ReadSeriesAsync(transaction, owner.DatabaseId, window, proceed, cancellationToken).ConfigureAwait(false)),
+                    Strip(await SystemCatalog.GetAsync(transaction, UsageCollection(owner.DatabaseId), Ops, TerraBaseJsonContext.Default.OpCounts, cancellationToken).ConfigureAwait(false) ?? OpCounts.Zero, meters),
+                    await ReadSeriesAsync(transaction, owner.DatabaseId, window, meters, proceed, cancellationToken).ConfigureAwait(false)),
                 cancellationToken).ConfigureAwait(false);
             // A follower's own counts reach these totals once the primary saved them and they replicated here; adding the
             // ones still pending could count a batch twice, the primary having saved it before its acknowledgement came.
-            foreach (var (key, counts) in options.CatalogPrimary is null && _pending.TryGetValue(owner, out var pending) ? pending : [])
+            foreach (var (key, entry) in options.CatalogPrimary is null && _pending.TryGetValue(owner, out var pending) ? pending : [])
             {
+                var counts = Strip(entry, meters);
                 lifetime += counts;
                 if (key.In(window.Granularity) && window.IndexOf(key.Hour, key.Minute) is { } index)
                 {
@@ -735,8 +741,10 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
     }
 
     // proceed runs before each page, so a read that ends past a request's deadline starts no further one.
+    private static OpCounts Strip(OpCounts counts, bool meters) => meters || counts.Meters is null ? counts : counts with { Meters = null };
+
     private static async ValueTask<OpCounts[]> ReadSeriesAsync(
-        IStorageTransaction transaction, string databaseId, UsageWindow window, Action? proceed, CancellationToken cancellationToken)
+        IStorageTransaction transaction, string databaseId, UsageWindow window, bool meters, Action? proceed, CancellationToken cancellationToken)
     {
         var series = Enumerable.Repeat(OpCounts.Zero, window.Count).ToArray();
         var collection = Collection(databaseId, window.Granularity);
@@ -757,8 +765,7 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
                 // Coarser analytics buckets read finer persisted buckets after the preceding boundary.
                 if (index >= 0 && index < series.Length)
                 {
-                    var counts = JsonSerializer.Deserialize(document.Json.Span, TerraBaseJsonContext.Default.OpCounts)!;
-                    series[index] += counts;
+                    series[index] += Strip(JsonSerializer.Deserialize(document.Json.Span, TerraBaseJsonContext.Default.OpCounts)!, meters);
                 }
             }
 

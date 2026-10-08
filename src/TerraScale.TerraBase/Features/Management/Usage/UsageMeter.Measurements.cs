@@ -34,7 +34,8 @@ internal sealed partial class UsageMeter
     private const long MeasurementKeyBytes = 4096;
     private readonly Lock _measurements = new();
     private readonly Dictionary<UsageKey, List<IMemoryReservation>> _measurementMemory = [];
-    private readonly Dictionary<(DatabaseOwner Database, string Region), (DateTimeOffset Started, DateTimeOffset? Applied)> _backlogs = [];
+    // Open backlogs by database and peer region; when full, the least recently observed one (a removed database or peer) goes.
+    private readonly Dictionary<(DatabaseOwner Database, string Region), (DateTimeOffset Started, DateTimeOffset? Applied, DateTimeOffset Seen)> _backlogs = [];
     private readonly Counter<long> _measurementDrops = meters.Create(Telemetry.MeterName).CreateCounter<long>(
         "terrabase.usage.observations.dropped", "{observation}", "Usage observations dropped by bounded memory admission.");
     private readonly Counter<long> _replicationBytes = meters.Create(Telemetry.MeterName).CreateCounter<long>(
@@ -84,7 +85,7 @@ internal sealed partial class UsageMeter
             var key = (DatabaseOwner.Of(database), peerRegion);
             if (_backlogs.TryGetValue(key, out var state))
             {
-                _backlogs[key] = (state.Started, now);
+                _backlogs[key] = (state.Started, now, state.Seen);
             }
         }
 
@@ -105,13 +106,13 @@ internal sealed partial class UsageMeter
             var key = (DatabaseOwner.Of(database), peerRegion);
             if (!_backlogs.TryGetValue(key, out var backlog))
             {
-                if (_backlogs.Count >= MaxMeasurementKeys)
+                if (remaining > 0 && _backlogs.Count >= MaxMeasurementKeys)
                 {
                     _measurementDrops.Add(1);
-                    return;
+                    _backlogs.Remove(_backlogs.MinBy(entry => entry.Value.Seen).Key);
                 }
 
-                backlog = (now, null);
+                backlog = (now, null, now);
             }
 
             var lag = remaining > 0 ? Math.Max(0, (now - backlog.Started).TotalMilliseconds) : 0;
@@ -119,7 +120,7 @@ internal sealed partial class UsageMeter
             observation = new(now, lag, diverged, convergence, backlog.Applied, remaining);
             if (remaining > 0)
             {
-                _backlogs[key] = backlog;
+                _backlogs[key] = backlog with { Seen = now };
             }
             else
             {

@@ -40,11 +40,12 @@ internal sealed record UsageReading(UsageDimension Dimension, long Count, long V
         foreach (var (key, reading) in right)
         {
             var combined = result.TryGetValue(key, out var saved) ? saved.Add(reading, sign) : reading;
+            // No cap here: (a + b) - b must equal a. Admission bounds pending keys; aggregates hold the deployed dimensions.
             if (combined.IsZero)
             {
                 result.Remove(key);
             }
-            else if (result.ContainsKey(key) || result.Count < UsageMeter.MaxDimensions)
+            else
             {
                 result[key] = combined;
             }
