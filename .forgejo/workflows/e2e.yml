@@ -39,7 +39,8 @@ jobs:
         run: make lint check-css check-e2e-shards
   unit:
     runs-on: terrascale-builder
-    timeout-minutes: 10
+    # Three SDK downloads can each take five minutes; retain ten for tests.
+    timeout-minutes: 25
     steps:
       - name: Check out the event revision
         uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
@@ -48,6 +49,21 @@ jobs:
           persist-credentials: false
       - name: Install dashboard JS dependencies
         run: npm ci --no-audit --no-fund
+      # Download once before parallel Go test packages start. A fresh process
+      # retries transient download failures; the SDK verifies the pinned hash.
+      - name: Prepare pinned TerraBase test executable
+        env:
+          TERRABASE_TOKEN: ${{ secrets.ORG_READ_TOKEN }}
+        run: |
+          for attempt in 1 2 3; do
+            if go run -mod=vendor ./scripts/prepare-terrabase; then
+              exit 0
+            fi
+            if [ "$attempt" -lt 3 ]; then
+              sleep 5
+            fi
+          done
+          exit 1
       - name: Run Go unit tests
         env:
           TERRABASE_TOKEN: ${{ secrets.ORG_READ_TOKEN }}
