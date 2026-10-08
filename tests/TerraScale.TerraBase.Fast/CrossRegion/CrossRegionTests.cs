@@ -663,7 +663,7 @@ public sealed class CrossRegionTests
             id = EntityIds.New().ToString(),
             ops = new object?[]
             {
-                new { op = "create_organization", id = organization, name = $"canary-{organization[..8]}" },
+                new { op = "create_organization", id = organization, name = $"canary-{organization}" },
                 new { op = "create_project", organization, id = project, name = "canary" },
                 database is null ? null : new { op = "create_database", organization, project, name, id = database, replica_regions = replicas },
             }.OfType<object>(),
