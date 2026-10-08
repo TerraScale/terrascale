@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.AspNetCore.Server.Kestrel.Https;
 using Microsoft.Extensions.DependencyInjection;
+using TerraBase.Features.Replication;
 using TerraBase.Features.Replication.V1;
 
 namespace TerraBase.Testing;
