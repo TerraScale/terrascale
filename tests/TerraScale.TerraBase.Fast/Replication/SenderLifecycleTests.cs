@@ -45,6 +45,8 @@ public sealed class SenderLifecycleTests
         }, https =>
         {
             https.SslProtocols = System.Security.Authentication.SslProtocols.Tls12;
+            // A resumed TLS session can skip certificate validation and never signal the forced rejection.
+            https.OnAuthenticate = (_, authentication) => authentication.AllowTlsResume = false;
             https.ClientCertificateValidation = (_, _, _) =>
             {
                 if (Volatile.Read(ref reject) == 0)
@@ -69,19 +71,24 @@ public sealed class SenderLifecycleTests
         await TerraBaseTestServer.ReplicatedAsync(sender);
         await completed.Task.WaitAsync(TimeSpan.FromSeconds(30));
         await Assert.That(applied).IsEqualTo(2UL);
+        var convergences = await sender.MetricAsync("terrabase_replication_convergence_seconds_count");
 
         Volatile.Write(ref reject, 1);
         connection!.Abort();
         await refused.Task.WaitAsync(TimeSpan.FromSeconds(30));
         await TerraBaseTestServer.EventuallyAsync(async token =>
-            await sender.MetricAsync("terrabase_replication_sender_durable_lag", "", token) == 2);
+            await sender.MetricAsync("terrabase_replication_sender_durable_lag", "", token) == 2
+            && await sender.MetricAsync("terrabase_replication_database_catchup_seconds", "", token) > 0);
         Volatile.Write(ref reject, 0);
         await TerraBaseTestServer.ReplicatedAsync(sender);
         await Assert.That(applied).IsEqualTo(2UL);
+        await Assert.That(await sender.MetricAsync("terrabase_replication_database_catchup_seconds")).IsEqualTo(0);
+        await Assert.That(await sender.MetricAsync("terrabase_replication_convergence_seconds_count")).IsGreaterThan(convergences);
     }
 
     [Test]
     [Arguments("digest")]
+    [Arguments("ahead")]
     [Arguments("prefix")]
     [Arguments("origin")]
     [Arguments("identity")]
@@ -106,6 +113,9 @@ public sealed class SenderLifecycleTests
                 {
                     case "digest":
                         welcome.Welcome.Frontiers[0].JournalDigest = ByteString.CopyFrom(new byte[JournalDigest.Length]);
+                        break;
+                    case "ahead":
+                        welcome.Welcome.Frontiers[0].DurableSequence = applied + 1;
                         break;
                     case "prefix":
                         welcome.Welcome.Frontiers[0].DurableSequence = ulong.MaxValue;
@@ -153,9 +163,20 @@ public sealed class SenderLifecycleTests
         await refused.Task.WaitAsync(TimeSpan.FromSeconds(30));
         await TerraBaseTestServer.EventuallyAsync(async token =>
             await sender.MetricAsync("terrabase_replication_sender_durable_lag", "", token) == 2);
+        if (invalid is "digest" or "ahead")
+        {
+            await TerraBaseTestServer.EventuallyAsync(async token =>
+                await sender.MetricAsync("terrabase_replication_database_diverged", "peer=\"0\"", token) == 1);
+            var reason = invalid == "digest" ? "welcome_digest" : "peer_ahead";
+            await Assert.That(await sender.MetricAsync("terrabase_replication_divergence_detections_total", $"reason=\"{reason}\"")).IsGreaterThan(0);
+            using var status = await sender.Client.GetFromJsonAsync<JsonDocument>(new Uri("/replication", UriKind.Relative));
+            await Assert.That(status!.RootElement.GetProperty("peers")[0].GetProperty("databases")[0].GetProperty("diverged").GetBoolean()).IsTrue();
+        }
+
         Volatile.Write(ref reject, 0);
         await TerraBaseTestServer.ReplicatedAsync(sender);
         await Assert.That(applied).IsEqualTo(2UL);
+        await Assert.That(await sender.MetricAsync("terrabase_replication_database_diverged")).IsEqualTo(0);
     }
 
     [Test]
@@ -491,6 +512,13 @@ public sealed class SenderLifecycleTests
             await Assert.That(await engine.DeleteDatabaseAsync(database, CancellationToken.None)).IsTrue();
 
             await Assert.That(await sender.MetricAsync("terrabase_replication_sender_durable_lag")).IsEqualTo(0);
+            await Assert.That(await sender.MetricAsync("terrabase_replication_database_lag")).IsEqualTo(0);
+            using (var status = await sender.Client.GetFromJsonAsync<JsonDocument>(new Uri("/replication", UriKind.Relative)))
+            {
+                await Assert.That(status!.RootElement.GetProperty("databaseCount").GetInt32()).IsEqualTo(0);
+                await Assert.That(status.RootElement.GetProperty("peers")[0].GetProperty("databases").GetArrayLength()).IsEqualTo(0);
+            }
+
             await engine.CreateDatabaseAsync(database, CancellationToken.None);
             // The new database's groups: its collection's creation and the put.
             await CreateAsync(tenant, writer);

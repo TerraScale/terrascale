@@ -1,3 +1,4 @@
+using System.Diagnostics.Metrics;
 using System.Threading.Channels;
 using Grpc.Core;
 using Grpc.Net.Client;
@@ -23,11 +24,12 @@ namespace TerraBase.Features.Replication;
 internal sealed partial class ReplicationSender(
     IStorageEngine engine, ITenantDirectory tenants, PeerCredentials credentials, TerraBaseOptions options, ReplicationMetrics metrics, ILogger<ReplicationSender> logger,
     TimeProvider time)
-    : BackgroundService, IReplicationWait
+    : BackgroundService, IReplicationWait, IReplicationStatus
 {
     // Groups one stream sends before the database goes to the back of the queue, so a database that is
     // written as fast as it replicates cannot starve the others.
     private const int MaxGroupsPerTurn = 256;
+    internal const int MaxObservedDatabases = 128;
 
     private static readonly TimeSpan MaxBackoff = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan ReconciliationInterval = TimeSpan.FromSeconds(5);
@@ -36,6 +38,9 @@ internal sealed partial class ReplicationSender(
     // acknowledgments; a late stream or notification cannot revive it.
     private readonly Lock _state = new();
     private readonly Dictionary<DatabaseIncarnation, long> _heads = [];
+    private readonly Dictionary<DatabaseIncarnation, int> _slots = [];
+    // Never decreases: retired slots keep emitting zeroes without creating series for unused slots.
+    private int _allocatedSlotCount;
     private Peer[] _peers = [];
     private int _initialized;
     private int _disposed;
@@ -49,9 +54,23 @@ internal sealed partial class ReplicationSender(
         public TenantContext Tenant => new(Organization, PlanTier.Hobby, Project, Database);
     }
 
+    public ReplicationStatus Snapshot()
+    {
+        lock (_state)
+        {
+            return new(true, Volatile.Read(ref _initialized) == 1, _heads.Count, _heads.Count - _slots.Count,
+                [.. _peers.Select(peer => peer.Snapshot())]);
+        }
+    }
+
     public override Task StartAsync(CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        metrics.ObserveStatus(
+            () => DatabaseMeasurements(status => status.Lag),
+            () => DatabaseMeasurements(status => status.Diverged ? 1 : 0),
+            () => DatabaseMeasurements(status => status.CatchupSeconds),
+            PeerLagMeasurements, OmittedDatabases);
         metrics.ObserveDurableLag(() => Volatile.Read(ref _peers).Sum(peer => peer.Lag()), () => Volatile.Read(ref _initialized));
         // Here, not in ExecuteAsync (which runs later on the thread pool): hosted services start before the server listens,
         // so every client write commits after its peers exist and its head is tracked, and write-wait covers it.
@@ -121,6 +140,7 @@ internal sealed partial class ReplicationSender(
         lock (_state)
         {
             _heads.Remove(identity);
+            _slots.Remove(identity);
             foreach (var peer in _peers)
             {
                 peer.Forget(identity);
@@ -252,6 +272,7 @@ internal sealed partial class ReplicationSender(
         }
 
         // A failed database stays in durable discovery, without an unbounded in-memory retry queue.
+        metrics.Discovered();
         Volatile.Write(ref _initialized, complete ? 1 : 0);
     }
 
@@ -383,6 +404,8 @@ internal sealed partial class ReplicationSender(
         // from a snapshot); new groups would reuse numbers the peer already applied, so send nothing.
         if (acknowledged > head)
         {
+            metrics.DetectedDivergence("peer_ahead");
+            peer.Diverged(identity);
             throw new InvalidDataException("the peer has applied change groups this database never committed");
         }
 
@@ -396,6 +419,8 @@ internal sealed partial class ReplicationSender(
         var offeredProof = frontier?.JournalDigest.Memory ?? JournalDigest.Initial(origin.Span);
         if (!offeredProof.Span.SequenceEqual(acknowledgedProof.Span))
         {
+            metrics.DetectedDivergence("welcome_digest");
+            peer.Diverged(identity);
             metrics.PrefixMismatch();
             throw new InvalidDataException("the peer's durable prefix belongs to a different journal; restore recovery is required");
         }
@@ -515,6 +540,8 @@ internal sealed partial class ReplicationSender(
                 var proof = prefix == acknowledged ? acknowledgedProof : inFlight.First(group => group.Sequence == prefix).Digest;
                 if (!durable.JournalDigest.Span.SequenceEqual(proof.Span))
                 {
+                    metrics.DetectedDivergence("ack_digest");
+                    peer.Diverged(identity);
                     metrics.PrefixMismatch();
                     throw new InvalidDataException("the peer acknowledged a different journal prefix");
                 }
@@ -582,7 +609,7 @@ internal sealed partial class ReplicationSender(
         var initial = credentials.Capture();
         try
         {
-            return new Peer(number, CreateChannel(initial), initial, CreateChannel, _state, _heads, time);
+            return new Peer(number, CreateChannel(initial), initial, CreateChannel, _state, _heads, _slots, time, metrics);
         }
         catch
         {
@@ -611,16 +638,175 @@ internal sealed partial class ReplicationSender(
     private DatabaseIncarnation RaiseHead(IDatabaseStore store, long sequence)
     {
         var identity = Identity(store);
+        if (!_slots.ContainsKey(identity) && _slots.Count < MaxObservedDatabases)
+        {
+            var used = _slots.Values.ToHashSet();
+            var slot = Enumerable.Range(0, MaxObservedDatabases).First(slot => !used.Contains(slot));
+            _slots.Add(identity, slot);
+            _allocatedSlotCount = Math.Max(_allocatedSlotCount, slot + 1);
+        }
+
         _heads[identity] = Math.Max(_heads.GetValueOrDefault(identity), sequence);
         return identity;
     }
 
-    private sealed class Peer(int number, GrpcChannel channel, PeerCredentials.Lease credentials, Func<PeerCredentials.Lease, GrpcChannel> createChannel, Lock state, Dictionary<DatabaseIncarnation, long> heads, TimeProvider time) : IDisposable
+    private int OmittedDatabases()
+    {
+        lock (_state)
+        {
+            return _heads.Count - _slots.Count;
+        }
+    }
+
+    private Measurement<long>[] PeerLagMeasurements()
+    {
+        lock (_state)
+        {
+            return [.. _peers.Select(peer => new Measurement<long>(peer.Lag(), new KeyValuePair<string, object?>("peer", peer.Number)))];
+        }
+    }
+
+    private Measurement<double>[] DatabaseMeasurements(Func<(long Lag, bool Diverged, double CatchupSeconds), double> value)
+    {
+        lock (_state)
+        {
+            return [.. _peers.SelectMany(peer => peer.DatabaseMeasurements(value, _allocatedSlotCount))];
+        }
+    }
+
+    private sealed class Peer(int number, GrpcChannel channel, PeerCredentials.Lease credentials, Func<PeerCredentials.Lease, GrpcChannel> createChannel, Lock state, Dictionary<DatabaseIncarnation, long> heads, Dictionary<DatabaseIncarnation, int> slots, TimeProvider time, ReplicationMetrics metrics) : IDisposable
     {
         private readonly HashSet<DatabaseIncarnation> _dirty = [];
+        // Bounded by the sender's 128 slots; removed with the database incarnation.
+        private readonly Dictionary<DatabaseIncarnation, Observation> _observations = [];
+
+        private sealed class Observation
+        {
+            public long? Started { get; set; }
+            public double? ConvergenceSeconds { get; set; }
+        }
+
+        private Observation? Observe(DatabaseIncarnation database)
+        {
+            if (!slots.ContainsKey(database))
+            {
+                return null;
+            }
+
+            if (!_observations.TryGetValue(database, out var observation))
+            {
+                observation = new Observation();
+                _observations.Add(database, observation);
+            }
+
+            return observation;
+        }
+
+        private void CatchingUp(DatabaseIncarnation database, bool failedVerification = false)
+        {
+            if (Observe(database) is { } observation)
+            {
+                // Lag/waits discard unverified ACKs. Discovery must not mistake that temporary
+                // invalidation for new backlog while a healthy handshake is still in progress.
+                var (_, acknowledged, lastVerified, diverged) = _acknowledged.GetValueOrDefault(database);
+                var prefix = failedVerification || diverged ? acknowledged : lastVerified;
+                if (heads.GetValueOrDefault(database) > prefix)
+                {
+                    observation.Started ??= time.GetTimestamp();
+                }
+            }
+        }
+
+        private void Verified(DatabaseIncarnation database, long prefix)
+        {
+            // Conflict state outlives metric omission; only a validated prefix covering the latest head clears it.
+            var current = _acknowledged[database];
+            _acknowledged[database] = (current.Receiver, current.Prefix, current.LastVerified,
+                current.Diverged && prefix < heads.GetValueOrDefault(database));
+            if (Observe(database) is not { } observation)
+            {
+                return;
+            }
+
+            CatchingUp(database);
+            if (prefix < heads.GetValueOrDefault(database))
+            {
+                return;
+            }
+
+            if (observation.Started is { } started)
+            {
+                var elapsed = time.GetElapsedTime(started).TotalSeconds;
+                observation.ConvergenceSeconds = elapsed;
+                observation.Started = null;
+                metrics.Converged(number, slots[database], elapsed);
+            }
+        }
+
+        public void Diverged(DatabaseIncarnation database)
+        {
+            lock (state)
+            {
+                if (heads.ContainsKey(database))
+                {
+                    var current = _acknowledged.GetValueOrDefault(database);
+                    _acknowledged[database] = (current.Receiver, current.Prefix, current.LastVerified, true);
+                    CatchingUp(database, failedVerification: true);
+                }
+            }
+        }
+
+        public ReplicationPeerStatus Snapshot()
+        {
+            lock (state)
+            {
+                var databases = slots.Select(entry =>
+                {
+                    var database = entry.Key;
+                    var head = heads.GetValueOrDefault(database);
+                    var acknowledged = _acknowledged.GetValueOrDefault(database);
+                    var observation = _observations.GetValueOrDefault(database);
+                    return new ReplicationDatabaseStatus(entry.Value, database.Organization, database.Project, database.Database,
+                        database.Origin, head, acknowledged.Prefix, Math.Max(0, head - acknowledged.Prefix), acknowledged.Diverged,
+                        observation?.Started is { } started ? time.GetElapsedTime(started).TotalSeconds : 0,
+                        observation?.ConvergenceSeconds);
+                }).OrderBy(database => database.Slot).ToArray();
+                return new(number, Lag(), databases);
+            }
+        }
+
+        // Caller holds state. Gauge detail never scans all heads or materializes tenant identities.
+        public Measurement<double>[] DatabaseMeasurements(Func<(long Lag, bool Diverged, double CatchupSeconds), double> value, int allocatedSlotCount)
+        {
+            var measurements = new Measurement<double>[allocatedSlotCount];
+            for (var slot = 0; slot < measurements.Length; slot++)
+            {
+                // Explicit zeroes retire deleted slots in exporters that retain the last gauge sample.
+                measurements[slot] = Measure(slot, 0);
+            }
+
+            foreach (var (database, slot) in slots)
+            {
+                var observation = _observations.GetValueOrDefault(database);
+                var acknowledged = _acknowledged.GetValueOrDefault(database);
+                var lag = Math.Max(0, heads.GetValueOrDefault(database) - acknowledged.Prefix);
+                var catchup = observation?.Started is { } started ? time.GetElapsedTime(started).TotalSeconds : 0;
+                measurements[slot] = Measure(slot, value((lag, acknowledged.Diverged, catchup)));
+            }
+
+            return measurements;
+
+            Measurement<double> Measure(int slot, double sample)
+            {
+                return new(sample, new KeyValuePair<string, object?>("peer", number), new KeyValuePair<string, object?>("database", slot));
+            }
+        }
+
         private readonly Dictionary<DatabaseIncarnation, (int Failures, long Started, TimeSpan Delay)> _retries = [];
         // Only the latest receiving incarnation is retained; Welcome retires its predecessor's prefix.
-        private readonly Dictionary<DatabaseIncarnation, (Guid Receiver, long Prefix)> _acknowledged = [];
+        // LastVerified survives handshakes and slot promotion; Prefix/Receiver remain trusted only after validation.
+        // Unresolved conflicts are retained here even when the database has no observation slot.
+        private readonly Dictionary<DatabaseIncarnation, (Guid? Receiver, long Prefix, long LastVerified, bool Diverged)> _acknowledged = [];
 
         public int Number => number;
 
@@ -673,6 +859,7 @@ internal sealed partial class ReplicationSender(
                 }
 
                 _dirty.Add(database);
+                CatchingUp(database);
             }
 
             Signal.Writer.TryWrite(true);
@@ -685,6 +872,7 @@ internal sealed partial class ReplicationSender(
                 _dirty.Remove(database);
                 _retries.Remove(database);
                 _acknowledged.Remove(database);
+                _observations.Remove(database);
             }
         }
 
@@ -695,7 +883,8 @@ internal sealed partial class ReplicationSender(
                 if (heads.ContainsKey(database))
                 {
                     // Welcome can report a lower prefix after the receiving database is recreated.
-                    _acknowledged[database] = (receiver, prefix);
+                    _acknowledged[database] = (receiver, prefix, prefix, _acknowledged.GetValueOrDefault(database).Diverged);
+                    Verified(database, prefix);
                 }
             }
         }
@@ -704,7 +893,10 @@ internal sealed partial class ReplicationSender(
         {
             lock (state)
             {
-                _acknowledged.Remove(database);
+                if (_acknowledged.TryGetValue(database, out var current))
+                {
+                    _acknowledged[database] = (null, 0, current.LastVerified, current.Diverged);
+                }
             }
         }
 
@@ -714,7 +906,8 @@ internal sealed partial class ReplicationSender(
             {
                 if (heads.ContainsKey(database) && _acknowledged.TryGetValue(database, out var current) && current.Receiver == receiver)
                 {
-                    _acknowledged[database] = (receiver, prefix);
+                    _acknowledged[database] = (receiver, prefix, prefix, current.Diverged);
+                    Verified(database, prefix);
                 }
             }
         }
@@ -762,6 +955,7 @@ internal sealed partial class ReplicationSender(
                     return null;
                 }
 
+                CatchingUp(database, failedVerification: true);
                 var failures = _retries.GetValueOrDefault(database).Failures;
                 // Full jitter applies independently to each incarnation; cap the exponent as well as the delay.
                 var ceiling = Math.Min(MaxBackoff.TotalMilliseconds, 100 * Math.Pow(2, failures));

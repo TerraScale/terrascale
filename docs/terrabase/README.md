@@ -103,6 +103,9 @@ when `client-port` is set, on the client TLS listener.
 Point load balancers and reverse proxies (Caddy) at the client listener's `/readyz`.
 
 Replication setup, certificates, limits and metrics: [`docs/replication.md`](docs/replication.md).
+`GET /replication` on the loopback administrative listener reports outbound per-peer
+and per-database durable lag, detected journal conflicts and catch-up times; see
+[status and alert thresholds](docs/replication.md#replication-status-and-alerts).
 
 ## API reference
 

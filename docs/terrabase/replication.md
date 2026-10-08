@@ -303,9 +303,82 @@ through its own `IMeterFactory` plus process-wide ones (runtime), so several hos
 | `terrabase_replication_sent_plain_bytes_total` | Change group bytes sent, before LZ4 |
 | `terrabase_replication_sent_encoded_bytes_total` | Envelope bytes sent, after LZ4 |
 | `terrabase_replication_received_groups_total{result}` | Groups received; `result` is `applied`, `duplicate` or `rejected` |
+| `terrabase_replication_sender_discovery_passes_total` | Completed journal discovery passes, including passes with failures; useful with initialized state to identify stalled discovery |
 | `terrabase_replication_sender_initialized` | `0` while persisted journal heads are being measured, `1` once all existing databases are initialized |
 | `terrabase_replication_write_wait_seconds{result}` | Histogram of the time client writes waited for their peers' `DurableAck`; `result` is `acknowledged` (every peer acknowledged), `degraded` (answered without a peer whose stream is failing) or `timeout` (answered at `write-wait-ms`) |
 | `terrabase_replication_sender_durable_lag` | Committed groups some peer has not durably acknowledged, summed over peers and databases; `0` means the last validated prefixes acknowledge every group; receiver state loss is discovered by periodic reconciliation. It counts a commit before the commit returns, and a database's older groups before network progress; require `terrabase_replication_sender_initialized = 1` before interpreting zero lag |
+
+
+## Replication status and alerts
+
+`GET /replication` is an unauthenticated **loopback administrative** endpoint with
+`Cache-Control: no-store`. The client and peer listeners return 404. It reports
+whether the peer listener is enabled, whether journal discovery is initialized,
+the number of tracked outbound database incarnations, omitted database detail, and each
+configured outbound peer's durable lag and database observations. A receive-only
+node has no outbound peers. This endpoint never reads document bodies or opens
+storage; it snapshots the sender's existing state.
+
+New Prometheus instruments:
+
+| Prometheus name | Meaning |
+| --- | --- |
+| `terrabase_replication_divergence_detections_total{reason}` | Journal conflict detections across all databases, including omitted ones; reason is `peer_ahead`, `welcome_digest` or `ack_digest` |
+| `terrabase_replication_peer_lag{peer}` | Outstanding durable groups, including every database |
+| `terrabase_replication_database_lag{peer,database}` | Outstanding durable groups for a database slot |
+| `terrabase_replication_database_diverged{peer,database}` | 1 after detecting a conflicting journal digest or a peer prefix beyond the local head; clears only once a validated prefix reaches the latest head |
+| `terrabase_replication_database_catchup_seconds{peer,database}` | Monotonic age since observing an unacknowledged backlog, including retry time; 0 when no catch-up is timed |
+| `terrabase_replication_convergence_seconds{peer,database}` | Histogram of completed catch-ups, ending when a valid Welcome or DurableAck covers the latest local head |
+| `terrabase_replication_observability_omitted` | Database incarnations excluded from bounded detail; aggregate and per-peer lag still include them |
+
+`peer` is the zero-based position in configured `peer-addresses`. `database` is a
+reusable numeric slot from 0 through 127, assigned to the first 128 observed local
+database incarnations. The endpoint maps slots to organization, project, database
+and incarnation IDs. Tenant names, IDs, origins and peer URLs never become metric
+labels. Slots are released on deletion and available to later discovery. Previously
+allocated slots emit zero when unused to retire stale exporter samples; never-used
+slots are omitted. A slot's histogram can include earlier occupants; use the endpoint
+to identify its current occupant.
+Unresolved journal conflicts survive omission and slot promotion; only a validated
+prefix covering the latest local head clears them, or deletion retires the incarnation.
+Peer labels are bounded by operator configuration, database labels by 128, so
+database churn cannot create new time series. If more than 128 databases exist,
+`omittedDatabases` and the omitted gauge explicitly identify incomplete detail;
+do not interpret zero divergence as evidence for omitted databases.
+
+Catch-up starts when a commit or discovery reveals backlog, or an attempt fails
+after invalidating a previously verified prefix. It survives reconnects and
+additional writes until the latest head is durably acknowledged. Discovery of
+persisted backlog measures from discovery, not from the original write time.
+Ordinary periodic prefix validation can temporarily raise lag without starting a
+catch-up timer. Process restart and database deletion reset observations. These
+are local outbound measurements, **not** end-to-end request latency or a proof of
+whole-database document equality. Zero divergence means no journal conflict has
+been detected for observed slots; unreachable peers are represented by lag and
+catch-up age. Require `terrabase_replication_sender_initialized == 1` before
+interpreting zero lag.
+
+Initial alert thresholds (tune to the deployment's write rate and latency budget):
+
+- Warning: `terrabase_replication_peer_lag > 0` for 60 seconds, gated on
+  `terrabase_replication_sender_initialized == 1`.
+- Critical: `terrabase_replication_database_catchup_seconds > 300` for 30 seconds.
+- Critical: `terrabase_replication_database_diverged == 1` for 30 seconds, or
+  `increase(terrabase_replication_divergence_detections_total[5m]) > 0` to include
+  conflicts in omitted databases. Stop treating that database's replication as
+  healthy; inspect both journals and use
+  the existing restore recovery procedure. Never overwrite a serving cell.
+- Warning: `terrabase_replication_sender_initialized == 0` for 60 seconds, or
+  `terrabase_replication_observability_omitted > 0` for 60 seconds.
+- Warning: per-peer catch-up p95 above 30 seconds over 15 minutes, with at least
+  10 completed episodes: `histogram_quantile(0.95, sum by (instance, le, peer)
+  (rate(terrabase_replication_convergence_seconds_bucket[15m]))) > 30`, gated on
+  `sum by (instance, peer) (increase(terrabase_replication_convergence_seconds_count[15m])) >= 10`.
+  These aggregations retain the scrape target's `instance` label to separate nodes.
+  Uncompleted episodes require the catch-up-age alert above.
+
+The ts-dashboard admin panel is a separate ticket; no dashboard code or external
+persistence is introduced here.
 
 ## Not yet
 

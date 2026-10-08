@@ -13,6 +13,7 @@ using TerraBase.Features.Management.Queries;
 using TerraBase.Features.Management.Schema;
 using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Pressure;
+using TerraBase.Features.Replication;
 using TerraBase.Features.UserAuth;
 using TerraBase.Tenancy;
 
@@ -104,6 +105,9 @@ namespace TerraBase.Hosting;
 [JsonSerializable(typeof(OwnershipTransfer))]
 [JsonSerializable(typeof(PlanRequest))]
 [JsonSerializable(typeof(PressureBody))]
+[JsonSerializable(typeof(ReplicationStatus))]
+[JsonSerializable(typeof(ReplicationPeerStatus))]
+[JsonSerializable(typeof(ReplicationDatabaseStatus))]
 [JsonSerializable(typeof(Project))]
 [JsonSerializable(typeof(ProjectCatalogBinding))]
 [JsonSerializable(typeof(ProjectBindingRequest))]
