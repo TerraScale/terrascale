@@ -24,19 +24,26 @@ templ databasesContent(page core.Page, d pageData) {
 		@ui.Card(ui.CardProps{ID: "project-databases", Title: "Project databases", Description: databaseCount(d), Actions: databaseActions(d), Flush: true, ShrinkActions: true}) {
 			if len(d.Databases) > 0 {
 				<div class="ts-table-wrap">
-					<table class="ts-table">
-						<thead><tr><th>Name</th><th>Status</th><th>Region</th></tr></thead>
-						<tbody>
+					// Explicit roles keep the table semantics when narrow pages
+					// restyle its rows as blocks (databases.css).
+					<table class="ts-table ts-db-table" role="table">
+						<thead role="rowgroup"><tr role="row"><th role="columnheader">Name</th><th role="columnheader">Status</th><th role="columnheader">Regions</th></tr></thead>
+						<tbody role="rowgroup">
 							for _, db := range d.Databases {
-								<tr>
-									<td>
+								<tr role="row">
+									<td role="cell">
 										<a class="ts-db-name" href={ templ.SafeURL(TabPath(db.ID, "overview", nil)) }>
-											<span class="ts-db-icon" aria-hidden="true">@icons.Database(15)</span>
-											<span class="ts-strong">{ db.Name }</span>
+											<span class="ts-db-icon" aria-hidden="true">@icons.Database(18)</span>
+											<span class="ts-list-main">
+												<span class="ts-strong">{ db.Name }</span>
+												if !db.CreatedAt.IsZero() {
+													<span class="ts-meta">Created { db.CreatedAt.UTC().Format("Jan 2, 2006") }</span>
+												}
+											</span>
 										</a>
 									</td>
-									<td>@statusBadge(db.Status)</td>
-									<td class="ts-muted">{ regionListDisplay(db.Placement) }</td>
+									<td role="cell">@statusBadge(db.Status)</td>
+									<td role="cell">@regionChips(db.Placement)</td>
 								</tr>
 							}
 						</tbody>
@@ -49,7 +56,7 @@ templ databasesContent(page core.Page, d pageData) {
 			} else {
 				@ui.Empty("No databases yet.", "Create your first database in the region closest to your users.") {
 					if d.CanProvision {
-						@ui.DialogTrigger(ui.DialogTriggerProps{Dialog: "create-database", Label: "New database", Icon: icons.Plus(16), Small: true})
+						@ui.DialogTrigger(ui.DialogTriggerProps{Dialog: "create-database", Label: "New database", Icon: icons.Plus(16), Variant: "primary"})
 					}
 				}
 			}
@@ -74,59 +81,143 @@ templ databaseStats(s databaseSummary) {
 }
 
 templ createDatabase(page core.Page, d pageData) {
-	@ui.Dialog(ui.DialogProps{ID: "create-database", Title: "New database", Description: "Choose a name and one or more regions for your data.", Open: d.OpenCreate, Wide: true}) {
-		<form method="post" action="/api/v1/dashboard/databases" class="ts-db-create-form">
+	@ui.Dialog(ui.DialogProps{ID: "create-database", Title: "New database", Description: "Name it, choose where its data lives, and create it. It opens as soon as it is ready.", Open: d.OpenCreate, Class: "ts-db-create-dialog"}) {
+		// data-submit-once keeps a second click from creating twice; while
+		// the post is open the progress panel covers the form (databases.css).
+		<form method="post" action="/api/v1/dashboard/databases" class="ts-db-create-form" data-submit-once data-signals="{_nameInvalid: false, _noRegion: false, _creating: false}" data-class:ts-db-creating="$_creating" data-attr:inert="$_creating">
 			<input type="hidden" name="_csrf" value={ page.CSRFToken }/>
 			if d.Limit != nil {
 				@ui.Alert("warning", "Database limit reached", planLimitMessage(*d.Limit)) {
 					<a class="ts-link" href="/organization?tab=billing">Compare plans</a>
 				}
 			} else if d.Error != "" && d.OpenCreate {
-				@ui.Alert("danger", "", d.Error)
+				@ui.Alert("danger", "Database not created", d.Error)
 			}
-			<div class="ts-form">
-				@ui.Field(ui.FieldProps{ID: "database-name", Label: "Name", Hint: "1 to 63 lowercase letters, digits, and hyphens; start and end with a letter or digit."}) {
-					<input class="ts-input" id="database-name" name="name" value={ d.Name } pattern={ namePatternHTML } maxlength="63" required autofocus/>
-				}
+			<div class="ts-db-create-fields">
 				<div class="ts-field">
-					<span class="ts-label">Regions</span>
-					<details class="ts-db-region-picker" data-init={ databaseRegionSummary } data-on:change={ databaseRegionSummary }>
-						<summary class="ts-select"><span data-region-summary>{ regionChoiceSummary(d.Regions) }</span></summary>
-						@regionCheckboxes("database-region", d.Choices, d.Regions, "")
-					</details>
-					@regionHint(d.RegionsError)
+					<label class="ts-label" for="database-name">Database name</label>
+					<input
+						class="ts-input ts-input-lg"
+						id="database-name"
+						name="name"
+						value={ d.Name }
+						pattern={ namePatternHTML }
+						maxlength="63"
+						required
+						autofocus
+						autocomplete="off"
+						spellcheck="false"
+						placeholder="orders"
+						title={ formErrors[ErrInvalidName] }
+						aria-describedby="database-name-hint"
+						data-on:change="$_nameInvalid = !el.validity.valid"
+						data-on:input="$_nameInvalid && ($_nameInvalid = !el.validity.valid)"
+						data-attr:aria-invalid="$_nameInvalid ? 'true' : 'false'"
+						data-attr:aria-describedby="$_nameInvalid ? 'database-name-error database-name-hint' : 'database-name-hint'"
+					/>
+					<p class="ts-field-error" id="database-name-error" hidden data-attr:hidden="!$_nameInvalid">{ formErrors[ErrInvalidName] }</p>
+					<p class="ts-hint" id="database-name-hint">Lowercase letters, digits and hyphens, up to 63 characters. SDKs and API keys use this name.</p>
 				</div>
+				<fieldset class="ts-field ts-db-regions" aria-describedby="database-region-hint" data-on:change="$_noRegion = !el.querySelector('input:checked')">
+					<legend class="ts-label">Regions</legend>
+					@regionCards("database-region", d.Choices, d.Regions, "")
+					<p class="ts-field-error" hidden data-attr:hidden="!$_noRegion" role="alert">{ formErrors[ErrInvalidRegions] }</p>
+					@regionHint(d.RegionsError)
+				</fieldset>
+				if d.Plan != nil {
+					// A full plan's alert above already links to the plans.
+					@planSummary(*d.Plan, d.Limit == nil)
+				}
 			</div>
-			@ui.RegionMapOf("database-region", regionCodes(d.Choices), d.Regions...)
+			<div class="ts-db-create-aside">
+				@ui.RegionMapOf("database-region", regionCodes(d.Choices), d.Regions...)
+			</div>
+			// The submit listener sits on the panel, not the form: Datastar
+			// cancels the native submission of a form it listens on. It marks
+			// only this form's submissions, so links inside the form do not.
+			// The covered form turns inert, and focus moves to the dialog's
+			// close button, the one control left.
+			<div
+				class="ts-db-progress"
+				aria-hidden="true"
+				data-on:submit__window="evt.target === el.closest('form') && !evt.defaultPrevented && !$_creating && ($_creating = true, el.closest('dialog').querySelector('[command=close]').focus())"
+				data-on:pageshow__window="$_creating = false"
+				data-on:keydown__window="evt.key === 'Escape' && ($_creating = false)"
+			>
+				<span class="ts-db-progress-mark">
+					@icons.Database(28)
+				</span>
+				<p class="ts-db-progress-title">Creating database</p>
+				<p class="ts-meta">Placing the data in the regions you chose. It opens as soon as it is ready.</p>
+				<span class="ts-db-progress-bar"></span>
+			</div>
 			@ui.DialogActions("create-database") {
-				<button class="ts-btn ts-btn-primary" type="submit">Create database</button>
+				<button class="ts-btn ts-btn-primary ts-btn-lg" type="submit">@icons.Plus(16)<span>Create database</span></button>
 			}
 		</form>
+		// Screen readers hear the same progress the panel shows; outside the
+		// form, which is inert meanwhile.
+		<p class="ts-sr-only" role="status" data-text="$_creating ? 'Creating database. It opens as soon as it is ready.' : ''"></p>
 	}
 }
 
-const databaseRegionSummary = "el.querySelector('[data-region-summary]').textContent = [...el.querySelectorAll('input[name=region]:checked')].map(i => i.closest('label').querySelector('.ts-db-region-name').textContent.trim()).join(', ') || 'Choose regions'"
+// planSummary shows how much of the plan's database allowance is in use;
+// databases count toward the organization's plan, not each project's.
+templ planSummary(plan planUsage, compare bool) {
+	<div class="ts-field">
+		<span class="ts-label">Plan</span>
+		<div class="ts-db-plan">
+			<div class="ts-list-main">
+				<span class="ts-strong">{ plan.Name } plan</span>
+				<span class="ts-meta">{ plan.usage() }</span>
+			</div>
+			if compare {
+				<a class="ts-link" href="/organization?tab=billing">Compare plans</a>
+			}
+		</div>
+	</div>
+}
 
-// regionCheckboxes are the canonical placement control: the regions ts-atlas
-// discovery lists, checked when selected. A database's home region must stay
-// checked.
-templ regionCheckboxes(id string, choices []core.Region, selected []string, home string) {
-	<fieldset class="ts-db-region-panel" id={ id } aria-label="Database regions">
+// regionCards are the canonical placement control: a card per region that
+// ts-atlas discovery lists, checked when selected. The first checked region
+// is the primary one. A database's home region must stay checked.
+templ regionCards(id string, choices []core.Region, selected []string, home string) {
+	<div class="ts-db-region-grid" id={ id }>
 		for _, region := range choices {
-			<label class="ts-db-region-choice">
+			<label class="ts-db-region-card">
 				<input type="checkbox" name="region" value={ region.Code } checked?={ slices.Contains(selected, region.Code) } required?={ region.Code == home }/>
 				<img src={ static.URL("flags/" + region.Country + ".svg") } alt="" aria-hidden="true"/>
-				<span class="ts-db-region-name">{ region.Name } ({ region.Code })</span>
+				<span class="ts-db-region-text">
+					<span class="ts-db-region-name">{ region.Name }</span>
+					<span class="ts-meta ts-mono">{ region.Code }</span>
+				</span>
+				if region.Code == home {
+					@ui.Badge("info", "Home")
+				} else if home == "" {
+					<span class="ts-badge ts-badge-info ts-db-region-primary">Primary</span>
+				}
 			</label>
 		}
-	</fieldset>
+	</div>
+}
+
+// regionChips lists a database's regions, primary first.
+templ regionChips(codes []string) {
+	<span class="ts-db-chips">
+		for _, code := range codes {
+			<span class="ts-db-chip">{ regionDisplay(code) }</span>
+		}
+		if len(codes) == 0 {
+			<span class="ts-muted">{ regionDisplay("") }</span>
+		}
+	</span>
 }
 
 templ regionHint(unavailable string) {
 	if unavailable != "" {
-		<p class="ts-field-error" role="alert">{ unavailable }</p>
+		<p class="ts-field-error" id="database-region-hint" role="alert">{ unavailable }</p>
 	} else {
-		<p class="ts-hint">One region keeps the data only there. Two or more replicate it between them. The first region is primary.</p>
+		<p class="ts-hint" id="database-region-hint">One region keeps the data only there. Two or more replicate it between them, led by the primary region.</p>
 	}
 }
 

@@ -38,6 +38,8 @@ type detailData struct {
 	// explains an empty list.
 	Choices      []core.Region
 	RegionsError string
+	// Created marks the first view after the create dialog.
+	Created bool
 }
 
 // backupRefill is what a refused restore or policy form submitted.
@@ -76,6 +78,7 @@ func renderDetail(w http.ResponseWriter, r *http.Request, deps core.Deps, tab st
 		Error:      formError(query.Get("error")),
 		CanManage:  canManage,
 		OpenDelete: tab == "overview" && query.Get("delete") == "1",
+		Created:    tab == "overview" && query.Get("created") == "1",
 	}
 	// Only the overview shows the counts and the placement form.
 	if tab == "overview" {
@@ -218,13 +221,6 @@ func replicationDisplay(codes []string) string {
 	}
 }
 
-func regionChoiceSummary(codes []string) string {
-	if len(codes) == 0 {
-		return "Choose regions"
-	}
-	return regionListDisplay(codes)
-}
-
 // namePatternHTML is namePattern for an input's pattern attribute.
 const namePatternHTML = `[a-z0-9]([a-z0-9\-]{0,61}[a-z0-9])?`
 
@@ -320,4 +316,18 @@ func branchCapability(demo bool) string {
 		return "In-memory snapshot copy"
 	}
 	return "SDK branch request"
+}
+
+// createdState describes a new database by its status once the create
+// dialog opens it: the alert tone, its title and its message.
+func createdState(db core.Database) (tone, title, body string) {
+	regions := regionListDisplay(databaseRegions(db))
+	switch statusTone(db.Status) {
+	case "emerald":
+		return "success", db.Name + " is ready", "It serves " + regions + ". Add a collection in Documents, or connect with an API key."
+	case "rose":
+		return "danger", db.Name + " could not be created", "The data plane did not finish creating it. Delete it and create it again, or contact support if it keeps failing."
+	default:
+		return "info", db.Name + " is being created", "The data plane is still placing it in " + regions + ". Its status changes to ready when it can take requests."
+	}
 }
