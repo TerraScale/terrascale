@@ -1,2 +1,0 @@
-firecracker-harness: git -C /tmp/terrabase-fast-subject134-20260925-r4-env rev-parse HEAD failed: fatal: not a git repository (or any of the parent directories): .git
-

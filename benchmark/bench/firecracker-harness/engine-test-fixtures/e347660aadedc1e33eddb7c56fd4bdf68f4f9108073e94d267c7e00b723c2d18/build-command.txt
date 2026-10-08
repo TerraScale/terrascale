@@ -1,4 +1,0 @@
-make --silent test-build CARGO_ARGS='-p tb-core -p tb-format -p tb-storage -p tb-replication --features tb-storage/test-hooks'
-Makefile applies nice -n 19 to Cargo.
-Source inventory before: 2026-09-24 07:19:48.946 -0300; after: 2026-09-24 07:20:01.937 -0300 (identical SHA256 e347660aadedc1e33eddb7c56fd4bdf68f4f9108073e94d267c7e00b723c2d18).
-Cargo compiler-artifact stream and stderr were recorded 2026-09-24 07:19:57.467 -0300; artifacts indexed 2026-09-24 07:20:25.498 -0300. Cargo reports 3.67 s.

@@ -1,7 +1,0 @@
-prior_run_id=terrabase-fast-20260925-r4-env
-prior_subject_path=/tmp/terrabase-fast-subject134-20260925-r4-env
-prior_output_path=/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/terrabase-fast-20260925-r4-env (empty preflight-created directory retained)
-prior_controller_stdout=/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/.run-inputs/terrabase-fast-20260925-r4-env/provenance/controller.stdout.log
-prior_exit_file=/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/.run-inputs/terrabase-fast-20260925-r4-env/provenance/controller.exit (recorded 1; command session returned 127)
-prior_error=git rev-parse HEAD failed because the plain-copy subject had no .git metadata; no Firecracker VM launched
-retry_subject_is_detached_worktree=true

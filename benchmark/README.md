@@ -8,7 +8,7 @@ fake server or production data is used.
 | --- | --- |
 | `https-document/` | Project-scoped C# Document API driver and local release harness |
 | `https-document/release.json` | Exact release version, source revision, download URL and SHA-256 |
-| `bench/csharp-baseline/` | Committed baseline JSON, raw samples, environment and Markdown table |
+| `bench/` | Fresh smoke evidence; historical archives are being removed under TS-761 |
 | `https-document/deployed.py`, `bench/deployed/` | Production gru-1 benchmark from a homelab client through Cloudflare, with member metrics (TS-606) |
 | `local-engine/` | Retained pinned SQLite/Turso comparison subject |
 | `load-test/` | Bounded open-loop mixed-load scheduling and measurement (TS-721 foundation) |
@@ -86,15 +86,10 @@ process timings have different boundaries and are not directly comparable.
 
 ## Evidence
 
-All benchmarks have easy-to-compare Markdown tables in `bench/`, with links to
-JSON evidence. Preserve failed runs and use unique run directories. The
-[current insert-only baseline](bench/csharp-baseline/ts500-20261004-inserts/summary.md)
-covers 10,500 logical operations and 6,510 write readbacks. The
-[all-writes baseline](bench/csharp-baseline/ts500-20261004-all-writes/summary.md)
-remains historical: every write was checked, but its insert/update mix depended
-on the case. The [original baseline](bench/csharp-baseline/ts500-20261004/summary.md)
-remains historical with final overwritten-value readbacks only. C# receipts
-are process acceptance observations; the server and load generator share the
-host, and local low-priority scheduling affects timings. They establish API
-correctness and a reproducible workload baseline, not a production-region SLA
-or a Rust matrix throughput verdict. See [bench/README.md](bench/README.md).
+TS-761 is replacing the local acceptance evidence with the public-SDK regional
+capacity benchmark in [PR #13](https://git.terrascale.tech/TerraScale/ts-benchmark/pulls/13).
+Superseded receipt archives and frozen source snapshots are being deleted in
+separate bounded PRs because the reviewer admits patches up to 8 MiB. Original
+receipts remain in Git history; they are not deployed-region capacity reports.
+The active C# smoke still creates fresh evidence under `bench/csharp-smoke/`.
+See [bench/README.md](bench/README.md). No old result is relabelled as an e2e result.
