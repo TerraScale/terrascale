@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <UseAppHost>false</UseAppHost>
+    <AssemblyName>bench-client</AssemblyName>
+    <RootNamespace>BenchClient</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../.sdk/src/TerraScale.DotNet/TerraScale.DotNet.csproj" />
+    <InternalsVisibleTo Include="BenchClient.Tests" />
+    <EmbeddedResource Include="../sdk.rev" LogicalName="BenchClient.sdk.rev" />
+  </ItemGroup>
+  <Target Name="RequireOfficialSdk" BeforeTargets="PrepareForBuild">
+    <Exec Command="bash &quot;$(MSBuildThisFileDirectory)../prepare-sdk.sh&quot; --verify" />
+  </Target>
+</Project>
