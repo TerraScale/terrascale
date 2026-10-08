@@ -255,10 +255,14 @@ public sealed class HarnessShutdownTests
     }
 
     [Test]
-    public async Task An_early_hosted_StartingAsync_failure_joins_native_cleanup_before_releasing_the_directory()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task An_early_hosted_StartingAsync_failure_joins_native_cleanup_before_releasing_the_directory(bool throwCleanupCallback)
     {
         var token = TestContext.Current!.Execution.CancellationToken;
         var startError = new InvalidOperationException("early hosted starting failed");
+        var callbackError = new InvalidOperationException("cleanup callback failed");
+        var callbackEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var entered = new TaskCompletionSource<IStorageTransaction>(TaskCreationOptions.RunContinuationsAsynchronously);
         SqliteStorageEngine? engine = null;
         Task? runCompletion = null;
@@ -273,13 +277,21 @@ public sealed class HarnessShutdownTests
             engine = provider.GetRequiredService<SqliteStorageEngine>();
             runCompletion = provider.GetRequiredService<ApplicationRunCompletion>().Completion.Task;
             return probe = new EarlyFailingStartup(engine, entered, startError);
-        }));
+        }), failedStartCleanup: _ =>
+        {
+            callbackEntered.TrySetResult();
+            if (throwCleanupCallback)
+            {
+                throw callbackError;
+            }
+        });
         Exception? error = null;
         try
         {
             await entered.Task.WaitAsync(token);
             // Program has finished disposal; the harness must still join native cleanup with the session held.
             await Assert.That(async () => await runCompletion!.WaitAsync(token)).ThrowsException();
+            await callbackEntered.Task.WaitAsync(token);
             await Assert.That(probe!.Started).IsFalse();
             await Assert.That(engine!.CleanupCompletion.IsCompleted).IsFalse();
             await Assert.That(startup.IsCompleted).IsFalse();
@@ -304,6 +316,7 @@ public sealed class HarnessShutdownTests
         }
 
         await Assert.That(ContainsException(error!, startError)).IsTrue();
+        await Assert.That(ContainsException(error!, callbackError)).IsEqualTo(throwCleanupCallback);
     }
 
     [Test]
