@@ -234,13 +234,9 @@ internal sealed partial class SqliteStorageTransaction(
             return;
         }
 
-        // Engine callers may omit collection creation; its fresh generation keeps their history.
-        var create = Command(SqliteStatements.CreateCollection, collection);
-        create.Parameters.AddWithValue("$created", DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
-        create.Parameters.AddWithValue("$entityId", EntityIds.New().ToString());
+        // An implicit collection carries the same captured identity metadata as an explicit creation.
         cancellationToken.ThrowIfCancellationRequested();
-        create.ExecuteNonQuery();
-        _collectionsChanged = true;
+        CreateCollection(new CollectionInfo(collection, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()));
         if (Append() != 1)
         {
             throw new InvalidOperationException("a document write needs its collection's metadata for shape history");
@@ -744,14 +740,7 @@ internal sealed partial class SqliteStorageTransaction(
         return await RunAsync(() =>
         {
             ThrowIfReadOnly();
-            collection = collection with { Id = collection.Id.Length == 0 ? EntityIds.New().ToString() : collection.Id };
-            if (!CreateCollection(collection))
-            {
-                return false;
-            }
-
-            WriteMetadata(DocumentChange.Collections, collection.Name, string.Create(CultureInfo.InvariantCulture, $$"""{"created_at":{{collection.CreatedAt}},"entity_id":"{{collection.Id}}"}"""));
-            return true;
+            return CreateCollection(collection);
         }, cancellationToken, mutation: true).ConfigureAwait(false);
     }
 
@@ -778,9 +767,15 @@ internal sealed partial class SqliteStorageTransaction(
 
     private bool CreateCollection(CollectionInfo collection)
     {
+        collection = collection with { Id = collection.Id.Length == 0 ? EntityIds.New().ToString() : collection.Id };
+        if (!EntityIds.IsValid(collection.Id))
+        {
+            throw new ArgumentException("a collection id must be a canonical uppercase ULID", nameof(collection));
+        }
+
         var command = Command(SqliteStatements.CreateCollection, collection.Name);
         command.Parameters.AddWithValue("$created", collection.CreatedAt);
-        command.Parameters.AddWithValue("$entityId", collection.Id.Length == 0 ? EntityIds.New().ToString() : collection.Id);
+        command.Parameters.AddWithValue("$entityId", collection.Id);
         if (command.ExecuteNonQuery() == 0)
         {
             return false;
@@ -795,6 +790,7 @@ internal sealed partial class SqliteStorageTransaction(
             Offset();
         }
 
+        WriteMetadata(DocumentChange.Collections, collection.Name, string.Create(CultureInfo.InvariantCulture, $$"""{"created_at":{{collection.CreatedAt}},"entity_id":"{{collection.Id}}"}"""));
         return true;
     }
 

@@ -442,9 +442,10 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
                             return new DocumentRejected(error);
                     }
 
-                    // Existing legacy documents use the stored depth bound; the strict client limits still
-                    // apply to the patched result.
-                    var json = EntityPayload.WithoutId(JsonSerializer.SerializeToUtf8Bytes(document, TerraBaseJsonContext.Default.JsonObject), patch.Id);
+                    // Validate the complete patched result before removing duplicate identity.
+                    var patched = JsonSerializer.SerializeToUtf8Bytes(document, TerraBaseJsonContext.Default.JsonObject);
+                    _ = DocumentJson.Read(patched, requireObject: true);
+                    var json = EntityPayload.WithoutId(patched, patch.Id);
                     var version = await transaction.PutAsync(patch.Collection, patch.Id, json, cancellationToken).ConfigureAwait(false);
                     return new OperationResult(patch.Id, version, false, null,
                         ETags.Version(transaction.Scope, patch.Collection, patch.Id, version, json));

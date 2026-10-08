@@ -34,7 +34,7 @@ public sealed class GetDashboardDocumentEndpoint(IManagementCommits commits) : E
             return ErrorResponse.From(new Forbidden("the dashboard document space needs the management service credential"));
         }
 
-        return (DocumentRoute.CheckCollectionName(HttpContext), DocumentRoute.CheckDocumentId(ManagementRoute.Value(HttpContext, "id"))) switch
+        return (DocumentRoute.CheckCollectionName(HttpContext), DocumentRoute.CheckDocumentId(ManagementRoute.RawValue(HttpContext, "id"))) switch
         {
             (Validation error, _) => ErrorResponse.From(error),
             (_, Validation error) => ErrorResponse.From(error),

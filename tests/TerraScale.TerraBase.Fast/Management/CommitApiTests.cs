@@ -69,6 +69,23 @@ public sealed class CommitApiTests
     }
 
     [Test]
+    [Arguments("settings")]
+    [Arguments("doc_existing")]
+    [Arguments("00112233-4455-6677-8899-aabbccddeeff")]
+    public async Task Dashboard_documents_keep_caller_supplied_keys_in_commits_and_reads(string key)
+    {
+        await using var api = await ManagementApi.StartAsync(managementCredential: true);
+        using var service = api.Service(api.User);
+        var written = await CommitAsync(service, new { op = "put", collection = "settings", id = key, document = new { value = 1 } });
+        await Assert.That(written.Status).IsEqualTo(HttpStatusCode.OK);
+        var read = await GetAsync(service, $"/v1/management/documents/settings/{key}");
+        await Assert.That(read.Status).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(read.Json.GetProperty("id").GetString()).IsEqualTo(key);
+        await Assert.That(read.Json.GetProperty("document").GetProperty("value").GetInt32()).IsEqualTo(1);
+        await Assert.That(read.ETag).IsEqualTo(Version(written, 0));
+    }
+
+    [Test]
     public async Task A_failing_last_operation_publishes_nothing()
     {
         await using var api = await ManagementApi.StartAsync(managementCredential: true);

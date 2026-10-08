@@ -1,5 +1,6 @@
 using System.Diagnostics.Metrics;
 using System.Text;
+using System.Text.Json;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -594,8 +595,12 @@ public sealed class StorageTransactionTests
         await Assert.That(Encoding.UTF8.GetString(document!.Json.Span)).IsEqualTo("""{"n":1}""");
         await Assert.That(await reader.GetAsync("items", "b", CancellationToken.None)).IsNull();
         var original = await reader.ReadChangesAsync(1, CancellationToken.None);
-        await Assert.That(original?.Count).IsEqualTo(1);
+        await Assert.That(original?.Count).IsEqualTo(2);
         await Assert.That(Encoding.UTF8.GetString(original![0].Json!.Value.Span)).IsEqualTo("""{"n":1}""");
+        await Assert.That((original[1].Collection, original[1].Id)).IsEqualTo((DocumentChange.Collections, "items"));
+        using var metadata = JsonDocument.Parse(original[1].Json!.Value);
+        await Assert.That(metadata.RootElement.GetProperty("entity_id").GetString())
+            .IsEqualTo((await reader.GetCollectionAsync("items", CancellationToken.None))!.Id);
         await Assert.That(await reader.ReadChangesAsync(2, CancellationToken.None)).IsNull();
     }
 

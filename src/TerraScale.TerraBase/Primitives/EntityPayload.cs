@@ -9,9 +9,11 @@ namespace TerraBase.Primitives;
 /// <summary>Entity identity lives in the document key; typed responses restore it from that key.</summary>
 internal static class EntityPayload
 {
+    private static readonly JsonDocumentOptions StoredOptions = new() { MaxDepth = DocumentJson.MaxStoredDepth };
+
     public static ReadOnlyMemory<byte> WithoutId(ReadOnlyMemory<byte> json, string id, bool nested = false)
     {
-        using var parsed = JsonDocument.Parse(json);
+        using var parsed = JsonDocument.Parse(json, StoredOptions);
         if (parsed.RootElement.ValueKind != JsonValueKind.Object
             || (!nested && (!parsed.RootElement.TryGetProperty("id", out var field)
                 || field.ValueKind != JsonValueKind.String || field.GetString() != id)))
@@ -19,7 +21,7 @@ internal static class EntityPayload
             return json;
         }
 
-        var body = JsonNode.Parse(json.Span)!.AsObject();
+        var body = JsonNode.Parse(json.Span, documentOptions: StoredOptions)!.AsObject();
         Remove(body, id, nested);
         return JsonSerializer.SerializeToUtf8Bytes(body, TerraBaseJsonContext.Default.JsonObject);
     }
@@ -31,7 +33,7 @@ internal static class EntityPayload
             return JsonSerializer.Deserialize(document.Json.Span, type);
         }
 
-        var body = JsonNode.Parse(document.Json.Span)!.AsObject();
+        var body = JsonNode.Parse(document.Json.Span, documentOptions: StoredOptions)!.AsObject();
         Restore(body, type, document.Id);
         return JsonSerializer.Deserialize(body, type);
     }

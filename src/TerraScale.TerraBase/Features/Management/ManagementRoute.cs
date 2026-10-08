@@ -73,10 +73,12 @@ internal static class ManagementRoute
 
     public static string Value(HttpContext context, string name)
     {
-        var id = (string)context.Request.RouteValues[name]!;
+        var id = RawValue(context, name);
         return name is "index" or "collection" or "databaseName" or "recommendation" || EntityIds.IsValid(id)
             ? id : throw new BadHttpRequestException(name + " must be a canonical uppercase ULID");
     }
+
+    public static string RawValue(HttpContext context, string name) => (string)context.Request.RouteValues[name]!;
 
     /// <summary>The project addressed by <c>{organization}</c> and <c>{project}</c>; <see langword="null"/> when it does not exist or the acting user is not a member of its organization.</summary>
     public static ValueTask<Project?> ProjectAsync(HttpContext context, IManagementService management, CancellationToken cancellationToken) =>

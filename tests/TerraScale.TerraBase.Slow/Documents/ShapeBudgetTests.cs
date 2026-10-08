@@ -107,14 +107,14 @@ public sealed class ShapeBudgetTests
         (await client.PutAsync(tenant.Database("db"), null)).EnsureSuccessStatusCode();
         (await client.PostAsJsonAsync(tenant.Database("db", "/collections"), new { name = "items" })).EnsureSuccessStatusCode();
         var transactions = tenant.Database("db", "/transactions");
-        var kept = EntityIds.New().ToString();
+        const string kept = "7ZZZZZZZZZZZZZZZZZZZZZZZZZ";
         (await client.PutAsJsonAsync(tenant.Database("db", $"/collections/items/documents/{kept}"), new { n = 1 }))
             .EnsureSuccessStatusCode();
         using var start = await client.GetAsync(tenant.Database("db", "/collections/items/shape?offset=-1"));
         using var first = await client.GetAsync(start.Headers.Location!);
         var firstBody = await first.Content.ReadAsStringAsync();
 
-        // More new ids than one page examines, written after S, many of them ordering before the kept document.
+        // More new ids than one page examines, written after S, all ordering before the kept document.
         for (var batch = 0; batch < 11; batch++)
         {
             var ops = Enumerable.Range(0, 1000).Select(_ => new { op = "put", collection = "items", id = EntityIds.New().ToString(), document = new { n = 2 } });

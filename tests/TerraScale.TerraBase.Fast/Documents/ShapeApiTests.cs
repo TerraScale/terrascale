@@ -6,6 +6,7 @@ using Bogus;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
+using TerraBase.Engine.Sqlite;
 using TerraBase.Fast.Management;
 using TerraBase.Features.ApiKeys;
 using TerraBase.Features.Documents;
@@ -1120,13 +1121,24 @@ public sealed class ShapeApiTests
     {
         await using var api = await DocumentApi.StartAsync();
         using var shapes = await api.ClientWithScopesAsync(ApiKeyScopes.ShapesRead);
-        // Maximum-length supplied keys; each 700 KiB document fills a page.
-        string[] ids = [new string('a', 256), new string('b', 256)];
+        // Storage admits 1024-byte supplied keys; each 700 KiB document fills a page.
+        string[] ids = [new string('a', 1024), new string('b', 1024)];
         var padding = new string('x', 700 * 1024);
-        foreach (var id in ids)
+        var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
+        var engine = api.Server.Services.GetRequiredService<SqliteStorageEngine>();
+        var database = await api.TenantOfAsync();
+        // An uncaptured engine writer preserves the storage byte limit independently of the client's character bound.
+        using var store = new SqliteDatabaseStore(database.DatabaseId!, await api.DatabaseFileAsync(), engine.Pool, engine.Io,
+            "PRAGMA cache_size = -64; PRAGMA busy_timeout = 30000;", database, TimeProvider.System, changesCommitted: null, committed: null);
+        await using (var write = await store.BeginTransactionAsync(write: true, token))
         {
-            var written = await api.PutAsync(id, new { padding });
-            await Assert.That(written.Status).IsEqualTo(HttpStatusCode.Created);
+            var json = Encoding.UTF8.GetBytes($$"""{"padding":"{{padding}}"}""");
+            foreach (var id in ids)
+            {
+                await write.PutAsync(DocumentApi.Collection, id, json, token);
+            }
+
+            await write.CommitAsync(token);
         }
 
         static string Where(int length)
