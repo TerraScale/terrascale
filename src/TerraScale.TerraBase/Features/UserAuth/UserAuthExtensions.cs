@@ -38,7 +38,7 @@ public static class UserAuthExtensions
             client.MaxResponseContentBufferSize = TsAuthKeys.MaxDocumentBytes;
         })
             // Discovery and JWKS are fetched where auth-issuer and jwks_uri say, never where a redirect points.
-            .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false })
+            .ConfigurePrimaryHttpMessageHandler((handler, _) => ((SocketsHttpHandler)handler).AllowAutoRedirect = false)
             .RemoveAllLoggers();
         services.AddSingleton<TsAuthKeys>();
         services.AddSingleton<IIssuerKeys>(provider => provider.GetRequiredService<TsAuthKeys>());

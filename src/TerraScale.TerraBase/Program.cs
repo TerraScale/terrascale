@@ -67,6 +67,12 @@ var runCompletion = new ApplicationRunCompletion();
 builder.Services.AddSingleton(runCompletion);
 builder.Services.AddSingleton(options);
 builder.Services.AddSingleton(TimeProvider.System);
+// Outbound clients keep one handler for the host's lifetime and recycle its connections instead (DNS changes still
+// apply). A rotated handler's expiry timer would keep a stopped host's whole service provider, metrics included,
+// reachable for minutes after it stopped.
+builder.Services.ConfigureHttpClientDefaults(http => http
+    .SetHandlerLifetime(Timeout.InfiniteTimeSpan)
+    .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { PooledConnectionLifetime = TimeSpan.FromMinutes(2) }));
 builder.Services.ConfigureHttpJsonOptions(json =>
 {
     // Stored documents can reach SQLite's depth bound; response envelopes add a few levels.

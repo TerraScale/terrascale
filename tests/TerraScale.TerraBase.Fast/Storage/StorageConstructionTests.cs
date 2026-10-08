@@ -211,7 +211,7 @@ public sealed class StorageConstructionTests
             workers[index] = worker;
             if (index == 1)
             {
-                // Start it here so the pool's second Thread.Start throws a real ThreadStateException.
+                // Start it here so the pool's own UnsafeStart throws a real ThreadStateException.
                 worker.Start();
             }
 
