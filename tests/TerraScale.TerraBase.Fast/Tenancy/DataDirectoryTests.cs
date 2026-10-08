@@ -344,6 +344,7 @@ public sealed class DataDirectoryTests
     [Arguments("system-only", PreTenancyLayout)]
     [Arguments("stray-database", PreTenancyLayout)]
     [Arguments("system-prefixed", PreTenancyLayout)]
+    [Arguments("unrecorded-identity", PreTenancyLayout)]
     [Arguments("unknown-layout", "data directory has a layout this build does not support")]
     public async Task A_data_directory_from_before_tenancy_is_refused_without_changing_a_byte(string layout, string message)
     {
@@ -375,6 +376,10 @@ public sealed class DataDirectoryTests
                     // A data directory of this build with a database from before tenancy copied into it.
                     await TerraBaseTestServer.InitializeDataDirectoryAsync(dataDirectory);
                     await DocumentFiles.WriteAsync(Path.Combine(dataDirectory, "shop.db"), ("orders", "o1", "{}"));
+                    break;
+                case "unrecorded-identity":
+                    // A replica identity copied into a directory no server recorded: refused, not adopted.
+                    await File.WriteAllBytesAsync(Path.Combine(dataDirectory, ReplicaFileName), [1, 7, 0, 0, 0, 0, 0, 1]);
                     break;
                 default:
                     // A layout record this build does not know, from a newer build.
@@ -505,6 +510,7 @@ public sealed class DataDirectoryTests
     [Arguments(new byte[] { 2, 1, 0, 0, 0, 0, 0, 1 })]
     [Arguments(new byte[] { 1, 1, 0, 0, 0, 0, 0, 2 })]
     [Arguments(new byte[] { 1, 1, 0, 0, 0, 0, 0 })]
+    [Arguments(new byte[] { 1, 0, 0, 0, 0, 0, 0, 1 })]
     public async Task A_replica_identity_this_build_cannot_read_stops_the_start(byte[] identity)
     {
         var dataDirectory = Directory.CreateTempSubdirectory("terrabase-replica-").FullName;

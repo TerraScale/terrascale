@@ -355,11 +355,11 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
         try
         {
             Replica = ReplicaIdentityFile.Start(dataDirectory);
-
-            // Last fallible construction step: the pool owns rollback of any partially started workers.
-            Io = new(threads, queue, meter, createWorker);
             meter.CreateObservableGauge("terrabase.replica.member", () => (long)Replica.Member, description: "This member's number in its replica id.");
             meter.CreateObservableGauge("terrabase.replica.epoch", () => (long)Replica.Epoch, description: "Unclean starts of this member since its number was taken.");
+
+            // Last construction step: the pool owns rollback of any partially started workers.
+            Io = new(threads, queue, meter, createWorker);
         }
         catch
         {
@@ -1049,7 +1049,7 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
         var recorded = ownership.Length == 1;
         var entries = Directory.EnumerateFileSystemEntries(dataDirectory)
             .Select(entry => Path.GetFileName(entry))
-            .Where(name => !string.Equals(name, LockFileName, StringComparison.Ordinal) && !string.Equals(name, ReplicaIdentityFile.FileName, StringComparison.Ordinal));
+            .Where(name => !string.Equals(name, LockFileName, StringComparison.Ordinal));
         if (recorded ? entries.Any(IsFlatDatabaseFile) : entries.Any())
         {
             throw new TerraBaseConfigurationException(PreTenancyLayout);

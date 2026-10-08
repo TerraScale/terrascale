@@ -40,6 +40,12 @@ internal static class ReplicaIdentityFile
 
             var member = BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(1));
             var epoch = BinaryPrimitives.ReadUInt16LittleEndian(bytes.AsSpan(5));
+            if (member == 0)
+            {
+                // Never minted: zero is the empty replica id.
+                throw new TerraBaseConfigurationException("data directory has a replica identity this build does not support");
+            }
+
             if (bytes[7] == Stopped)
             {
                 id = Of(member, epoch);
