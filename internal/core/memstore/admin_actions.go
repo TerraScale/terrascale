@@ -21,7 +21,7 @@ func (s *Store) RecordPlatformAdminAction(_ context.Context, p core.Principal, a
 	if strings.TrimSpace(action) == "" || strings.TrimSpace(target) == "" || strings.TrimSpace(reason) == "" {
 		return core.ErrInvalid
 	}
-	s.adminActions = append(s.adminActions, core.AdminAction{
+	s.adminActions = append(s.adminActions, core.AdminAction{ID: core.NewID(),
 		ActorUserID: p.UserID,
 		Action:      action,
 		Target:      target,
@@ -53,7 +53,7 @@ func (s *Store) SetPlatformAdmin(_ context.Context, accountID string, admin bool
 	if admin {
 		action = "platformAdmin.grant"
 	}
-	s.adminActions = append(s.adminActions, core.AdminAction{
+	s.adminActions = append(s.adminActions, core.AdminAction{ID: core.NewID(),
 		ActorUserID: a.User.ID,
 		Action:      action,
 		Target:      a.User.Email,

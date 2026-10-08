@@ -164,12 +164,12 @@ func makeDetailInfo(demo bool, principal core.Principal, account core.Account, p
 	// The source dashboard's nearest-region 0 ms is illustrative fixture data,
 	// not a measured provider latency. Keep it scoped to that exact demo row.
 	sample := demo &&
-		principal.UserID == "usr_01JC9Q7T4N8Y2M3P5R7V9X1ZAB" &&
+		principal.UserID == "7CVZQJY80VY06TJG7VP8TQ44DM" &&
 		account.User.ID == principal.UserID && account.User.Email == "mario@terrascale.tech" &&
-		principal.OrganizationID == "org_01JC9Q5V2N4P6T8R0X2Z4B6D8" &&
+		principal.OrganizationID == "7N1PZ3BD9WCGBVV4V50V508NRX" &&
 		principal.ProjectID == project.ID &&
-		project.ID == "prj_01JC9Q6W3M5N7P9R2T4V6X8ZA" &&
-		db.ID == "db_01JC9Q8Y5N7P9R3T5V7X9Z2AC" &&
+		project.ID == "1X1TETYPPH2APBVN5WGY9D3S3G" &&
+		db.ID == "0Z793APJ2ECFW2F7P6J9F2RKVY" &&
 		db.ProjectID == project.ID &&
 		db.Name == "core-primary" && db.Region == "SFO"
 	for _, code := range databaseRegions(db) {

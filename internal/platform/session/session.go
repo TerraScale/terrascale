@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	v1 "terrascale.tech/sdk/v1"
 	"time"
 
 	"golang.org/x/sync/singleflight"
@@ -423,7 +424,7 @@ func (m *Manager) SessionsForUser(p core.Principal, r *http.Request) []core.Sess
 	for _, item := range entries {
 		if item.AuthVersion == p.AuthVersion {
 			result = append(result, core.SessionInfo{
-				ID: hex.EncodeToString(item.Key[:6]), Current: hasCurrent && item.Key == currentHash,
+				ID: v1.DocumentIDFor("sessions", hex.EncodeToString(item.Key[:])), Current: hasCurrent && item.Key == currentHash,
 				ExpiresAt: item.ExpiresAt,
 			})
 		}

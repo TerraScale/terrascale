@@ -8,7 +8,7 @@ import (
 
 // invitationNotification is an organization-wide unread notification seeded
 // for the sample account.
-const invitationNotification = "ntf_01JC9UCE5V7X9Z1C4E6H1M4OQ"
+const invitationNotification = "258GKYJS87W1EJH7BPDK6C3NNF"
 
 // TestMCPNotificationsListAndMarkRead reads the seeded inbox and marks one
 // notification read; a fresh account has nothing to mark.

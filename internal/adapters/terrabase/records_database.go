@@ -16,9 +16,9 @@ import (
 func encodeDatabase(records map[coreKey]coreRecord, orgID, projectID string, db core.Database) error {
 	put := func(key string, data any, r coreRecord) error {
 		r.Kind, r.OrgID, r.ProjectID, r.DatabaseID = "record", orgID, projectID, db.ID
-		r.ID = key
+		r.ID = recordKey("databases", key).id
 		var err error
-		r.Data, err = json.Marshal(data)
+		r.Data, err = encodeData(data)
 		if err != nil {
 			return core.ErrInvalid
 		}
@@ -36,7 +36,11 @@ func encodeDatabase(records map[coreKey]coreRecord, orgID, projectID string, db 
 	}
 	payload := func(kind, backupID, collection, id string, position int, data any) error {
 		parts, _ := json.Marshal([]string{db.ID, kind, backupID, collection, id, strconv.Itoa(position)})
-		return put("payload:"+string(parts), data, coreRecord{RecordType: kind, BackupID: backupID, CollectionName: collection, ResourceID: id, Position: position})
+		key := "payload:" + string(parts)
+		if kind == "backup" {
+			key = backupID
+		}
+		return put(key, data, coreRecord{RecordType: kind, BackupID: backupID, CollectionName: collection, ResourceID: id, Position: position})
 	}
 	contents := func(backupID string, documents map[string]map[string][]byte, schemas map[string][]byte, indexes map[string][]string) error {
 		for collection, docs := range documents {

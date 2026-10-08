@@ -208,11 +208,11 @@ func (fixture billingFixture) deliver(t *testing.T, event testEvent, secret stri
 
 func TestWebhookSyncsCustomerFromStripe(t *testing.T) {
 	fixture := newBillingFixture(t)
-	if response := fixture.deliver(t, testEvent{ID: "evt_invoice", Type: "invoice.paid"}, testWebhookSecret); response.Code != http.StatusOK {
+	if response := fixture.deliver(t, testEvent{ID: "56JWT0RPS8PP4YWRTA3C4ZYBPQ", Type: "invoice.paid"}, testWebhookSecret); response.Code != http.StatusOK {
 		t.Fatalf("webhook = %d %s", response.Code, response.Body)
 	}
 	org := fixture.organization(t)
-	if org.PlanID != "plan_pro" || org.Billing.SubscriptionID != "sub_test" || org.Billing.Status != "active" || org.BillingStatus != "active" {
+	if org.PlanID != "7CNW2H87JE68ATZX224CV2G625" || org.Billing.SubscriptionID != "sub_test" || org.Billing.Status != "active" || org.BillingStatus != "active" {
 		t.Fatalf("billing after sync = %#v", org.Billing)
 	}
 	if org.Billing.CheckoutID != "" || org.CheckoutSessions["cs_test"].Status != "complete" {
@@ -232,12 +232,12 @@ func TestWebhookSyncsCustomerFromStripe(t *testing.T) {
 
 func TestWebhookSyncIsIdempotentAcrossEventOrder(t *testing.T) {
 	fixture := newBillingFixture(t)
-	fixture.deliver(t, testEvent{ID: "evt_updated", Type: "customer.subscription.updated"}, testWebhookSecret)
+	fixture.deliver(t, testEvent{ID: "6C8X88CSXPME74H8BAS2EXNJPR", Type: "customer.subscription.updated"}, testWebhookSecret)
 	first := fixture.organization(t)
 	for _, event := range []testEvent{
-		{ID: "evt_updated", Type: "customer.subscription.updated"},
-		{ID: "evt_created", Type: "customer.subscription.created"},
-		{ID: "evt_checkout", Type: "checkout.session.completed"},
+		{ID: "6C8X88CSXPME74H8BAS2EXNJPR", Type: "customer.subscription.updated"},
+		{ID: "4P3H67Z267AN4XJ0RZWEB9WDAF", Type: "customer.subscription.created"},
+		{ID: "2A77QMSFACGJFMEN3AX1YF6F90", Type: "checkout.session.completed"},
 	} {
 		if response := fixture.deliver(t, event, testWebhookSecret); response.Code != http.StatusOK {
 			t.Fatalf("%s = %d", event.Type, response.Code)
@@ -258,9 +258,9 @@ func TestWebhookSyncIsIdempotentAcrossEventOrder(t *testing.T) {
 func TestWebhookSkipsUnboundAndUntrackedEvents(t *testing.T) {
 	fixture := newBillingFixture(t)
 	for _, event := range []testEvent{
-		{ID: "evt_other", Type: "invoice.paid", Customer: "cus_other"},
-		{ID: "evt_untracked", Type: "customer.updated"},
-		{ID: "evt_guest", Type: "checkout.session.completed", NoCustomer: true},
+		{ID: "02WYMFFAS1YRNJEV4K525SXD4F", Type: "invoice.paid", Customer: "cus_other"},
+		{ID: "7EDSB5SQ33XHMJ3C7S4J9G796A", Type: "customer.updated"},
+		{ID: "0ET53YHPE38WBZ9MRW48KF75ND", Type: "checkout.session.completed", NoCustomer: true},
 	} {
 		if response := fixture.deliver(t, event, testWebhookSecret); response.Code != http.StatusOK {
 			t.Fatalf("%s = %d", event.ID, response.Code)
@@ -324,11 +324,11 @@ func TestWebhookTerraBaseDistinguishesMissingCustomerFromStorageErrors(t *testin
 
 func TestWebhookSkipsCustomerOfMissingOrganization(t *testing.T) {
 	fixture := newBillingFixture(t)
-	if _, err := fixture.state.BindCustomer(t.Context(), "org_deleted", "cus_deleted"); err != nil {
+	if _, err := fixture.state.BindCustomer(t.Context(), "2321NCF5MJA6S5E61ZXKC4XVV6", "cus_deleted"); err != nil {
 		t.Fatal(err)
 	}
-	fixture.provider.customer.OrganizationID = "org_deleted"
-	if response := fixture.deliver(t, testEvent{ID: "evt_deleted", Type: "invoice.paid", Customer: "cus_deleted"}, testWebhookSecret); response.Code != http.StatusOK {
+	fixture.provider.customer.OrganizationID = "2321NCF5MJA6S5E61ZXKC4XVV6"
+	if response := fixture.deliver(t, testEvent{ID: "5B5P243HQJV4FFKV1JGGXXWVG1", Type: "invoice.paid", Customer: "cus_deleted"}, testWebhookSecret); response.Code != http.StatusOK {
 		t.Fatalf("event for a missing organization = %d, want 200", response.Code)
 	}
 }
@@ -337,7 +337,7 @@ func TestWebhookAsksStripeToRetryFailedSync(t *testing.T) {
 	fixture := newBillingFixture(t)
 	before := fixture.organization(t)
 	fixture.provider.fetchErr = errors.New("Stripe is unavailable")
-	if response := fixture.deliver(t, testEvent{ID: "evt_retry", Type: "invoice.paid"}, testWebhookSecret); response.Code != http.StatusInternalServerError {
+	if response := fixture.deliver(t, testEvent{ID: "4R3GYP9C7AM808TJCCKZW0M5T1", Type: "invoice.paid"}, testWebhookSecret); response.Code != http.StatusInternalServerError {
 		t.Fatalf("failed sync = %d, want 500", response.Code)
 	}
 	if !reflect.DeepEqual(before, fixture.organization(t)) {
@@ -406,9 +406,9 @@ func TestWebhookRejectsUntrustedEvents(t *testing.T) {
 		event  testEvent
 		secret string
 	}{
-		{"wrong signing secret", testEvent{ID: "evt_bad", Type: "invoice.paid"}, "whsec_other"},
-		{"old API version", testEvent{ID: "evt_old", Type: "invoice.paid", APIVersion: "2024-06-20"}, testWebhookSecret},
-		{"live event in test mode", testEvent{ID: "evt_live", Type: "invoice.paid", Livemode: true}, testWebhookSecret},
+		{"wrong signing secret", testEvent{ID: "0MDBWKHQ6EHPX38FRKK5KE75N4", Type: "invoice.paid"}, "whsec_other"},
+		{"old API version", testEvent{ID: "0TANW8VWDQ26FDDXBJZ2773F1V", Type: "invoice.paid", APIVersion: "2024-06-20"}, testWebhookSecret},
+		{"live event in test mode", testEvent{ID: "5GBT7CYQ3KB5ABKY9PD96J2QGV", Type: "invoice.paid", Livemode: true}, testWebhookSecret},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

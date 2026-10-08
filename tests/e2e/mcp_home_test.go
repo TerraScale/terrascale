@@ -43,7 +43,7 @@ func TestMCPOverviewMatchesHomeAndConnectTabDescribesTheServer(t *testing.T) {
 	if len(overview.GettingStarted) != 2 || !overview.GettingStarted[0].Done || overview.GettingStarted[1].Done {
 		t.Errorf("get_overview getting started = %+v, want only the database task done", overview.GettingStarted)
 	}
-	if message := callToolError(t, session, "get_overview", map[string]any{"projectId": "prj_missing"}); !strings.Contains(message, "not found") {
+	if message := callToolError(t, session, "get_overview", map[string]any{"projectId": "2K8BYPK0FZH8V1KTS834E6C45C"}); !strings.Contains(message, "not found") {
 		t.Errorf("unknown project overview error = %q", message)
 	}
 

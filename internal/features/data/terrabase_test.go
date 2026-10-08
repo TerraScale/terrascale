@@ -17,7 +17,7 @@ func TestDocumentsLiveInTerraBase(t *testing.T) {
 	d := dashboardtest.Start(t)
 	ctx := d.WithToken(t.Context())
 	// A phase-1 record (TS-472): in the dashboard, never used in TerraBase.
-	db := core.Database{ID: core.NewID("db"), ProjectID: d.Principal.ProjectID, Name: "shop", Region: "GRU", Status: "ready"}
+	db := core.Database{ID: core.NewID(), ProjectID: d.Principal.ProjectID, Name: "shop", Region: "GRU", Status: "ready"}
 	err := d.Deps.Store.UpdateAs(ctx, d.Principal, func(a *core.Account) error {
 		a.Organizations[d.Principal.OrganizationID].Projects[d.Principal.ProjectID].Databases[db.ID] = db
 		return nil
@@ -84,7 +84,7 @@ func TestDocumentsLiveInTerraBase(t *testing.T) {
 	if err := service.SetSchema(ctx, d.Principal, db.ID, "items", []byte(`{"name":"items"}`)); !errors.Is(err, errNoSchemas) {
 		t.Fatalf("schema = %v, want refused outside the demo", err)
 	}
-	if stored := d.Project(t).Databases[db.ID]; stored.TerraBaseID == "" || len(stored.Documents)+len(stored.Indexes)+len(stored.Schemas) != 0 {
+	if stored := d.Project(t).Databases[db.ID]; stored.ID == "" || len(stored.Documents)+len(stored.Indexes)+len(stored.Schemas) != 0 {
 		t.Fatalf("record = %+v; want TerraBase's ID and no local contents", stored)
 	}
 }

@@ -3,7 +3,6 @@ package e2e
 import (
 	"net/url"
 	"slices"
-	"strings"
 	"testing"
 
 	"github.com/mxschmitt/playwright-go"
@@ -117,7 +116,7 @@ func TestDatabasePlacementIsGRUOnlySFOOnlyOrBoth(t *testing.T) {
 		selectDatabaseRegions(t, dialog, placement.regions...)
 		fill(t, dialog.Locator("#database-name"), uniqueName("placement"))
 		submitAndExpect(t, page, "/api/v1/dashboard/databases", 303, byRole(dialog, *playwright.AriaRoleButton, "Create database").Click)
-		waitForPath(t, page, func(u *url.URL) bool { return strings.HasPrefix(u.Path, "/databases/db_") })
+		waitForPath(t, page, func(u *url.URL) bool { return entityPath(u.Path, "/databases/") })
 		card := page.Locator("#placement")
 		must(t, expect.Locator(card).ToContainText(placement.replication))
 		form := card.Locator(`form[action="/api/v1/dashboard/databases/regions"]`)
@@ -159,7 +158,7 @@ func TestCreateDatabaseRegionsWorkWithoutScripts(t *testing.T) {
 	submitAndExpect(t, nativePage, "/api/v1/dashboard/databases", 303, func(...playwright.LocatorClickOptions) error {
 		return byRole(dialog, *playwright.AriaRoleButton, "Create database").Press("Enter")
 	})
-	waitForPath(t, nativePage, func(u *url.URL) bool { return strings.HasPrefix(u.Path, "/databases/db_") })
+	waitForPath(t, nativePage, func(u *url.URL) bool { return entityPath(u.Path, "/databases/") })
 	must(t, expect.Locator(nativePage.Locator("main")).ToContainText("GRU · São Paulo"))
 	must(t, expect.Locator(nativePage.Locator("main")).ToContainText("SFO · San Francisco"))
 	must(t, expect.Locator(nativePage.Locator("#placement")).ToContainText("Replicated across GRU, SFO"))
@@ -180,7 +179,7 @@ func TestDatabaseFreePlanLimitIsExplainedAndHoldsForBranchesAndRestores(t *testi
 
 	first := uniqueName("first")
 	createDatabase(t, page, first, "GRU")
-	waitForPath(t, page, func(u *url.URL) bool { return strings.HasPrefix(u.Path, "/databases/db_") })
+	waitForPath(t, page, func(u *url.URL) bool { return entityPath(u.Path, "/databases/") })
 	databasePath := currentPath(t, page)
 
 	// The Free plan's one database is in use: the dialog says so up front,
@@ -227,7 +226,7 @@ func TestDatabaseNameConflictAndDeleteConfirmationStayInTheirDialogs(t *testing.
 
 	name := uniqueName("e2e-delete")
 	createDatabase(t, page, name, "GRU")
-	waitForPath(t, page, func(u *url.URL) bool { return strings.HasPrefix(u.Path, "/databases/db_") })
+	waitForPath(t, page, func(u *url.URL) bool { return entityPath(u.Path, "/databases/") })
 	databasePath := currentPath(t, page)
 
 	confirm := pageByRole(page, *playwright.AriaRoleDialog, "Delete "+name)
@@ -253,7 +252,7 @@ func TestBackupFormsReturnToTheBackupsTabWithTheirErrors(t *testing.T) {
 	registerAndOnboard(t, page, newAccount("backups"), "starter")
 	database := uniqueName("orders")
 	createDatabase(t, page, database, "GRU")
-	waitForPath(t, page, func(u *url.URL) bool { return strings.HasPrefix(u.Path, "/databases/db_") })
+	waitForPath(t, page, func(u *url.URL) bool { return entityPath(u.Path, "/databases/") })
 	databasePath := currentPath(t, page)
 	backupsPath := databasePath + "/backups"
 	onBackups := func() {

@@ -40,9 +40,9 @@ func TestDataSQLConsoleShowsResultsAsTableAndFailuresInPlace(t *testing.T) {
 	must(t, expect.Locator(result.Locator("thead th")).ToHaveText([]string{"id", "customerId", "createdAt", "status", "total"}))
 	rows := result.Locator("tbody tr")
 	must(t, expect.Locator(rows).ToHaveCount(3))
-	must(t, expect.Locator(rows.First().Locator("td")).ToHaveText([]string{"ord_1001", "cus_1001", "2026-09-17T07:02:00Z", "paid", "725.5"}))
+	must(t, expect.Locator(rows.First().Locator("td")).ToHaveText([]string{"01K78000000000000000001001", "cus_1001", "2026-09-17T07:02:00Z", "paid", "725.5"}))
 	click(t, result.GetByText("Raw JSON"))
-	must(t, expect.Locator(result.Locator("pre")).ToContainText(`"id": "ord_1001"`))
+	must(t, expect.Locator(result.Locator("pre")).ToContainText(`"id": "01K78000000000000000001001"`))
 
 	// The seeded saved query needs a WHERE the demo cannot execute: the
 	// console says so and keeps the statement.
@@ -114,7 +114,7 @@ func TestDataDocumentFormsKeepInputOnErrorAndConfirmDeletes(t *testing.T) {
 		fill(t, dialog.Locator("#new-document-json"), body)
 		submitAndExpect(t, page, "/api/v1/dashboard/data/documents", status, byRole(dialog, *playwright.AriaRoleButton, "Add document").Click)
 	}
-	id := "doc_0123456789abcdef0123456789abcdef"
+	id := "00VJV6Q1QTTX591QRVQSZ3Z26B"
 	add(id, `{"total": 1}`, 303)
 	table := page.Locator("#documents table")
 	must(t, expect.Locator(table).ToContainText(id))
@@ -173,10 +173,10 @@ func TestDataDocumentsListCollectionsAndCreateOne(t *testing.T) {
 	heading := func(name string) playwright.Locator { return byRole(grid, *playwright.AriaRoleColumnheader, name) }
 	click(t, byRole(heading("total"), *playwright.AriaRoleLink, "total"))
 	must(t, expect.Locator(heading("total")).ToHaveAttribute("aria-sort", "ascending"))
-	must(t, expect.Locator(rows.First()).ToContainText("ord_1003"))
+	must(t, expect.Locator(rows.First()).ToContainText("01K78000000000000000001003"))
 	click(t, byRole(heading("total"), *playwright.AriaRoleLink, "total"))
 	must(t, expect.Locator(heading("total")).ToHaveAttribute("aria-sort", "descending"))
-	must(t, expect.Locator(rows.First()).ToContainText("ord_1002"))
+	must(t, expect.Locator(rows.First()).ToContainText("01K78000000000000000001002"))
 	must(t, expect.Locator(page.Locator("#documents nav.ts-pager")).ToContainText("1–3 of 3 documents"))
 
 	// The list keeps the sort and shows each document as JSON.

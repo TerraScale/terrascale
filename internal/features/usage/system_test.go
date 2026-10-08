@@ -44,7 +44,7 @@ func TestSystemDatabaseUsageComesFromTerraBase(t *testing.T) {
 	p := system.Principal
 	if err := store.UpdateAs(ctx, p, func(a *core.Account) error {
 		project := a.Organizations[p.OrganizationID].Projects[p.ProjectID]
-		project.Databases["db_local"] = core.Database{ID: "db_local", ProjectID: project.ID, Name: "local", Status: "ready",
+		project.Databases["0C7YTA02YA8YQMSHY75W7SDF5X"] = core.Database{ID: "0C7YTA02YA8YQMSHY75W7SDF5X", ProjectID: project.ID, Name: "local", Status: "ready",
 			Documents: map[string]map[string][]byte{"items": {"a": []byte(`{}`), "b": []byte(`{}`), "c": []byte(`{}`)}}}
 		a.Organizations[p.OrganizationID].Projects[p.ProjectID] = project
 		return nil

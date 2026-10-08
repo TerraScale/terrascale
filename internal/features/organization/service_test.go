@@ -33,7 +33,7 @@ func TestCreateInvitationReportsTheMemberLimit(t *testing.T) {
 	owner := account.Principal()
 	if err := store.UpdateAs(t.Context(), owner, func(a *core.Account) error {
 		org := a.Organizations[owner.OrganizationID]
-		org.PlanID = "plan_starter"
+		org.PlanID = "443RCMMF70MNP6S1QMT230NF99"
 		a.Organizations[org.ID] = org
 		return nil
 	}); err != nil {

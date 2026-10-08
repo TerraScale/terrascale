@@ -32,8 +32,8 @@ func (d *Database) Project() string { return d.project }
 func (d *Database) Name() string { return d.name }
 
 func (d *Database) path(extra ...string) ([]string, error) {
-	if !uuidPattern.MatchString(d.project) {
-		return nil, fmt.Errorf("terrabase: project ID %q must be a lowercase hyphenated UUID", d.project)
+	if !ulidPattern.MatchString(d.project) {
+		return nil, fmt.Errorf("terrabase: project ID %q must be a canonical uppercase ULID", d.project)
 	}
 	if err := checkName("database", d.name); err != nil {
 		return nil, err
@@ -297,7 +297,7 @@ func (col *Collection) Put(ctx context.Context, id string, doc any, opts ...Writ
 	return col.write(ctx, request{method: http.MethodPut, path: p, body: body, header: w.header(), replaySafe: w.ifMatch != ""})
 }
 
-// Create stores a new document under a server-generated UUIDv7. It is never
+// Create stores a new document under a server-generated ULID. It is never
 // retried, since a replay would create a second document.
 func (col *Collection) Create(ctx context.Context, doc any, opts ...WriteOption) (*WriteResult, error) {
 	p, err := col.path("documents")

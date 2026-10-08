@@ -93,13 +93,13 @@ func SystemDatabase(t testing.TB, s *Server, store core.Store) System {
 	if err != nil {
 		t.Fatal(err)
 	}
-	db := core.Database{ID: managed.ID, ProjectID: project.ID, Name: managed.Name, Status: "ready", CreatedAt: managed.CreatedAt}
+	db := core.Database{System: true, ID: managed.ID, ProjectID: project.ID, Name: managed.Name, Status: "ready", CreatedAt: managed.CreatedAt}
 	err = store.Update(ctx, account.ID, func(a *core.Account) error {
 		a.Organizations[org.ID] = core.Organization{
 			ID: org.ID, Name: org.Name, Kind: "business", Status: "active", OwnerUserID: a.User.ID, CreatedAt: org.CreatedAt,
 			Members: map[string]core.Member{a.User.ID: {UserID: a.User.ID, Email: a.User.Email, Name: a.User.Name, Role: "owner", Status: "active", CreatedAt: org.CreatedAt}},
 			Projects: map[string]core.Project{project.ID: {
-				ID: project.ID, OrganizationID: org.ID, Name: project.Name, Status: "active", CreatedAt: project.CreatedAt,
+				ID: project.ID, System: true, OrganizationID: org.ID, Name: project.Name, Status: "active", CreatedAt: project.CreatedAt,
 				Databases: map[string]core.Database{db.ID: db}, APIKeys: map[string]core.APIKey{}, SavedQueries: map[string]core.SavedQuery{},
 				SharedResultConfigs: map[string]core.SharedResultConfig{}, BackupPolicies: map[string]core.BackupPolicy{},
 			}},

@@ -443,7 +443,7 @@ func (u *ManagementUser) RegisterProject(ctx context.Context, org Organization, 
 	commit := struct {
 		ID  string `json:"id"`
 		Ops []op   `json:"ops"`
-	}{formatUUID(uuidV5(namespaceURL, fmt.Sprintf("terrabase:register-project:%+v", ops))), ops}
+	}{DocumentIDFor("management_commits", fmt.Sprintf("terrabase:register-project:%+v", ops)), ops}
 	return u.call(ctx, http.MethodPost, []string{"commits"}, nil, commit, nil)
 }
 

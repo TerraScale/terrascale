@@ -55,6 +55,7 @@ func (a *coreSnapshot) remember(k coreKey, d *v1.Document) (coreRecord, error) {
 	if old, exists := a.records[k]; exists && old.version != d.Version {
 		return r, errCoreChanged
 	}
+	r.ID = d.ID
 	a.records[k] = coreLoaded{r, d.Version}
 	return r, nil
 }
@@ -294,7 +295,11 @@ func (s *Store) loadCore(ctx context.Context, need coreLoad) (*coreSnapshot, err
 		need.organizations = append(need.organizations, invitation.OrgID)
 	}
 	if need.tokenHash != "" {
-		r, err := a.get(ctx, recordKey("access_tokens", need.tokenHash))
+		claim, err := a.get(ctx, claimKey("access_tokens", "token_hash", need.tokenHash))
+		if err != nil {
+			return nil, err
+		}
+		r, err := a.get(ctx, recordKey("access_tokens", claim.OwnerID))
 		if err != nil {
 			return nil, err
 		}

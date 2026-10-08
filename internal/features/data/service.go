@@ -70,7 +70,7 @@ func (s Service) systemRows(ctx context.Context, p core.Principal, db core.Datab
 // as the signed-in user, and the TerraBase IDs of its project and itself.
 func (s Service) managed(ctx context.Context, p core.Principal, project core.Project, db core.Database) (m *v1.ManagementUser, org, proj, id string, err error) {
 	m, org, proj, db, err = s.deps.ManageDatabase(ctx, p, project, db)
-	return m, org, proj, db.TerraBaseID, err
+	return m, org, proj, db.ID, err
 }
 
 // terraBaseSQL runs a read-only statement on a database through TerraBase
@@ -676,10 +676,10 @@ func (s Service) WriteDocument(ctx context.Context, p core.Principal, databaseID
 	id = strings.TrimSpace(id)
 	// TerraBase names a new document itself.
 	if operation == "create" && id == "" && s.deps.LocalResources() {
-		id = core.NewULID()
+		id = core.NewID()
 	}
-	if id == "" && operation != "create" || len(id) > 256 {
-		return documentWrite{}, core.Invalid("document IDs use 1-256 characters")
+	if id == "" && operation != "create" {
+		return documentWrite{}, core.Invalid("document ID is required")
 	}
 	if operation != "delete" && (len(body) == 0 || len(body) > maxDocumentBytes || !jsontext.Value(body).IsValid()) {
 		return documentWrite{}, core.Invalid("document must be valid JSON within 1 MiB")
@@ -994,7 +994,7 @@ func (s Service) ApplyRecommendation(ctx context.Context, p core.Principal, data
 				continue
 			}
 			current.Indexes[result.Collection] = append(current.Indexes[result.Collection], field)
-			current.IndexBuilds = append(current.IndexBuilds, core.IndexBuild{ID: core.NewID("index"), Collection: result.Collection, Field: field, Status: "building"})
+			current.IndexBuilds = append(current.IndexBuilds, core.IndexBuild{ID: core.NewID(), Collection: result.Collection, Field: field, Status: "building"})
 		}
 		current.IndexRecommendations[recommendationIndex].State = "applied"
 		project.Databases[result.DatabaseID] = current
@@ -1159,7 +1159,7 @@ func (s Service) SaveQuery(ctx context.Context, p core.Principal, name, statemen
 	if statement == "" || len(statement) > maxSQLCheckBytes || sdk.ValidateSQL(statement, nil) != nil {
 		return savedQueryView{}, core.Invalid("saved queries hold one read-only SQL query")
 	}
-	query := core.SavedQuery{ID: core.NewID("qry"), Name: name, SQL: statement, CreatedAt: time.Now().UTC()}
+	query := core.SavedQuery{ID: core.NewID(), Name: name, SQL: statement, CreatedAt: time.Now().UTC()}
 	err := s.updateProject(ctx, p, core.Organization.CanWrite, func(project *core.Project) error {
 		if project.SavedQueries == nil {
 			project.SavedQueries = make(map[string]core.SavedQuery)

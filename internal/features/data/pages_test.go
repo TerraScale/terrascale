@@ -15,7 +15,7 @@ import (
 // render returns the HTML of one data section.
 func render(t *testing.T, d pageData) string {
 	t.Helper()
-	d.Database = core.Database{ID: "db_1", Name: "primary", Status: "ready"}
+	d.Database = core.Database{ID: "19T9WF6BRDZ1HTM3X1C9G1V4YJ", Name: "primary", Status: "ready"}
 	d.Collection = "orders"
 	var out bytes.Buffer
 	frame := databases.FrameProps{Database: d.Database, Tab: sections[d.Section].Tab}
@@ -47,11 +47,11 @@ func TestSchemaAndIndexChangesAreOfferedOnlyToManagers(t *testing.T) {
 }
 
 func TestFormErrorsShowBesideTheirInput(t *testing.T) {
-	const message = "A document with ID ord_1 already exists in orders."
-	page := render(t, pageData{Section: "documents", CanWrite: true, FormError: message, Dialog: "add-document", NewDocumentID: "ord_1", NewDocument: `{"a":1}`})
+	const message = "A document with ID 209AR8XRJWZZQ2627T9V0T3JST already exists in orders."
+	page := render(t, pageData{Section: "documents", CanWrite: true, FormError: message, Dialog: "add-document", NewDocumentID: "209AR8XRJWZZQ2627T9V0T3JST", NewDocument: `{"a":1}`})
 	dialog := page[strings.Index(page, `<dialog id="add-document"`):]
 	dialog = dialog[:strings.Index(dialog, "</dialog>")]
-	for _, want := range []string{message, `data-init="el.showModal()"`, `value="ord_1"`, `{&#34;a&#34;:1}`} {
+	for _, want := range []string{message, `data-init="el.showModal()"`, `value="209AR8XRJWZZQ2627T9V0T3JST"`, `{&#34;a&#34;:1}`} {
 		if !strings.Contains(dialog, want) {
 			t.Errorf("the reopened add-document dialog lacks %q", want)
 		}
@@ -76,12 +76,12 @@ func TestFormErrorsShowBesideTheirInput(t *testing.T) {
 }
 
 func TestDocumentsListEveryCollectionWithDeepLinks(t *testing.T) {
-	page := render(t, pageData{Section: "documents", CanWrite: true, Collections: []collectionEntry{{Name: "orders", Count: "3"}, {Name: "users", Count: "0"}}, Documents: []documentView{{ID: "ord_1", Value: []byte(`{}`)}}})
+	page := render(t, pageData{Section: "documents", CanWrite: true, Collections: []collectionEntry{{Name: "orders", Count: "3"}, {Name: "users", Count: "0"}}, Documents: []documentView{{ID: "209AR8XRJWZZQ2627T9V0T3JST", Value: []byte(`{}`)}}})
 	for _, want := range []string{
 		`<nav class="ts-data-nav" aria-label="Collections"`,
-		`href="/databases/db_1/documents/orders" aria-current="page"`,
-		`href="/databases/db_1/documents/users">`,
-		`href="/databases/db_1/documents/orders?edit=ord_1"`,
+		`href="/databases/19T9WF6BRDZ1HTM3X1C9G1V4YJ/documents/orders" aria-current="page"`,
+		`href="/databases/19T9WF6BRDZ1HTM3X1C9G1V4YJ/documents/users">`,
+		`href="/databases/19T9WF6BRDZ1HTM3X1C9G1V4YJ/documents/orders?edit=209AR8XRJWZZQ2627T9V0T3JST"`,
 		`<option value="orders" selected>orders (3)</option>`,
 		`commandfor="new-collection"`,
 		`action="/api/v1/dashboard/data/collections"`,
@@ -159,16 +159,16 @@ func TestDocumentsPaginateAndSortFromTheGrid(t *testing.T) {
 		data.Documents = append(data.Documents, documentView{ID: fmt.Sprintf("ord_%02d", i), Value: []byte(fmt.Sprintf(`{"total":%d,"status":"paid"}`, i))})
 	}
 	paginate(&data)
-	if data.Page != 2 || data.PageCount != 2 || data.Matched != 30 || len(data.Documents) != 5 || data.Documents[0].ID != "ord_25" {
+	if data.Page != 2 || data.PageCount != 2 || data.Matched != 30 || len(data.Documents) != 5 || data.Documents[0].ID != "11BSBA6TXPCVT7H8FMFWEAWW9M" {
 		t.Fatalf("page 9 of 30 documents = page %d of %d with %d rows from %s", data.Page, data.PageCount, len(data.Documents), data.Documents[0].ID)
 	}
 	data.Section, data.Collections = "documents", []collectionEntry{{Name: "orders"}}
 	page := render(t, data)
 	for _, want := range []string{
-		`<th scope="col" class="ts-num" aria-sort="descending"><a class="ts-data-sort" href="/databases/db_1/documents/orders?sort=total">`,
-		`<a class="ts-data-sort" href="/databases/db_1/documents/orders?sort=status">`,
-		`href="/databases/db_1/documents/orders?order=desc&amp;page=2&amp;sort=total&amp;view=list"`,
-		`rel="prev" href="/databases/db_1/documents/orders?order=desc&amp;page=1&amp;sort=total"`,
+		`<th scope="col" class="ts-num" aria-sort="descending"><a class="ts-data-sort" href="/databases/19T9WF6BRDZ1HTM3X1C9G1V4YJ/documents/orders?sort=total">`,
+		`<a class="ts-data-sort" href="/databases/19T9WF6BRDZ1HTM3X1C9G1V4YJ/documents/orders?sort=status">`,
+		`href="/databases/19T9WF6BRDZ1HTM3X1C9G1V4YJ/documents/orders?order=desc&amp;page=2&amp;sort=total&amp;view=list"`,
+		`rel="prev" href="/databases/19T9WF6BRDZ1HTM3X1C9G1V4YJ/documents/orders?order=desc&amp;page=1&amp;sort=total"`,
 		"26–30 of 30 documents · page 2 of 2",
 		`data-kind="number"`,
 	} {
@@ -239,14 +239,14 @@ func TestGridSortsOnlyAddressableFields(t *testing.T) {
 	if !strings.Contains(page, "?sort=value") || strings.Count(page, "?sort=value") != 1 {
 		t.Error("the value field sorts and the whole-value column does not")
 	}
-	if strings.Contains(page, "sort="+long) || strings.Contains(page, `href="/databases/db_1/documents/orders?sort="`) {
+	if strings.Contains(page, "sort="+long) || strings.Contains(page, `href="/databases/19T9WF6BRDZ1HTM3X1C9G1V4YJ/documents/orders?sort="`) {
 		t.Error("empty and overlong field names are not offered as sorts")
 	}
 }
 
 func TestDocumentFormsCarryTheBrowsingState(t *testing.T) {
 	page := render(t, pageData{Section: "documents", CanWrite: true, Layout: "list", Order: documentSort{Field: "total", Desc: true}, Search: "paid", Page: 3,
-		Collections: []collectionEntry{{Name: "orders"}}, Documents: []documentView{{ID: "ord_1", Value: []byte(`{}`)}}, Matched: 1, PageCount: 3})
+		Collections: []collectionEntry{{Name: "orders"}}, Documents: []documentView{{ID: "209AR8XRJWZZQ2627T9V0T3JST", Value: []byte(`{}`)}}, Matched: 1, PageCount: 3})
 	form := page[strings.Index(page, `<dialog id="add-document"`):]
 	form = form[:strings.Index(form, "</form>")]
 	for _, want := range []string{`name="view" value="list"`, `name="sort" value="total"`, `name="order" value="desc"`, `name="q" value="paid"`, `name="page" value="3"`} {

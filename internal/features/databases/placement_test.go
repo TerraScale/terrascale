@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -75,7 +76,7 @@ func (r *contractRegion) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			refuse(http.StatusMisdirectedRequest, "wrong_region")
 			return
 		}
-		db := v1.ManagedDatabase{ID: "0199d000-0000-7000-8000-00000000000" + string(rune('0'+len(r.held))), ProjectID: parts[3], Name: body.Name,
+		db := v1.ManagedDatabase{ID: fmt.Sprintf("01K7800000E00800000000%05d", len(r.held)), ProjectID: parts[3], Name: body.Name,
 			CreatedAt: time.Now().UTC(), Region: r.id, HomeRegion: r.id, ReplicaRegions: append([]string{}, body.ReplicaRegions...)}
 		r.held[db.ID] = db
 		answer(http.StatusCreated, db)
@@ -123,7 +124,7 @@ func TestTerraBasePlacementFollowsTheContract(t *testing.T) {
 
 	newService := func() (Service, core.Principal) {
 		store := memstore.New()
-		account, err := store.CreateAccount(t.Context(), core.User{Name: "Owner", Email: core.NewID("placement") + "@example.test", PasswordHash: "unused"})
+		account, err := store.CreateAccount(t.Context(), core.User{Name: "Owner", Email: core.NewID() + "@example.test", PasswordHash: "unused"})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -144,14 +145,14 @@ func TestTerraBasePlacementFollowsTheContract(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		return a.Organizations[p.OrganizationID].Projects[p.ProjectID].Databases[id].TerraBaseID
+		return a.Organizations[p.OrganizationID].Projects[p.ProjectID].Databases[id].ID
 	}
 
 	// GRU only: registered and created in gru alone.
 	service, p := newService()
 	org, project := paths(p)
 	db, err := service.Create(ctx, p, "orders", "GRU")
-	if err != nil || !slices.Equal(db.Placement, []string{"GRU"}) || !strings.HasPrefix(db.ID, "db_") || !strings.HasPrefix(terraBaseID(service, p, db.ID), "0199d000") {
+	if err != nil || !slices.Equal(db.Placement, []string{"GRU"}) || !core.ValidID(db.ID) || terraBaseID(service, p, db.ID) != db.ID {
 		t.Fatalf("create in GRU = %+v, %v", db, err)
 	}
 	if got, want := gru.take(), []string{"GET " + org, "GET " + project, "POST commits", "POST " + project + "/databases"}; !slices.Equal(got, want) {

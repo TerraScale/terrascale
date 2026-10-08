@@ -16,7 +16,7 @@ func addDatabase(store core.Store, p core.Principal) error {
 	return store.UpdateAs(ctx, p, func(a *core.Account) error {
 		org := a.Organizations[p.OrganizationID]
 		project := org.Projects[p.ProjectID]
-		id := core.NewID("db")
+		id := core.NewID()
 		project.Databases[id] = core.Database{ID: id, ProjectID: project.ID, Name: id}
 		org.Projects[project.ID] = project
 		a.Organizations[org.ID] = org
@@ -66,7 +66,7 @@ func TestUpdateKeepsDatabasesPastTheLimitAfterADowngrade(t *testing.T, store cor
 		t.Fatal(err)
 	}
 	p := account.Principal()
-	if err := setPlan(store, p, "plan_starter"); err != nil {
+	if err := setPlan(store, p, "443RCMMF70MNP6S1QMT230NF99"); err != nil {
 		t.Fatal(err)
 	}
 	for range 3 {
@@ -75,7 +75,7 @@ func TestUpdateKeepsDatabasesPastTheLimitAfterADowngrade(t *testing.T, store cor
 		}
 	}
 
-	if err := setPlan(store, p, "plan_free"); err != nil {
+	if err := setPlan(store, p, "3BN8V1JQWTB3R3NSZ26SERTHWT"); err != nil {
 		t.Fatalf("downgrade with 3 databases = %v, want the plan to change", err)
 	}
 	if err := store.UpdateAs(ctx, p, func(a *core.Account) error {
@@ -121,7 +121,7 @@ func TestUpdateAccountAsAdminRejectsDatabasesPastThePlanLimit(t *testing.T, stor
 	err = store.UpdateAccountAsAdmin(ctx, admin.Principal(), account.ID, func(a *core.Account) error {
 		org := a.Organizations[p.OrganizationID]
 		project := org.Projects[p.ProjectID]
-		project.Databases["db_admin"] = core.Database{ID: "db_admin", ProjectID: project.ID, Name: "admin"}
+		project.Databases["56JJ3A66RJ03V79RS9Y6KWK7BV"] = core.Database{ID: "56JJ3A66RJ03V79RS9Y6KWK7BV", ProjectID: project.ID, Name: "admin"}
 		org.Projects[project.ID] = project
 		a.Organizations[org.ID] = org
 		return nil

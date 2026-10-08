@@ -129,7 +129,7 @@ func (s Service) StartCheckout(ctx context.Context, p core.Principal, planKey, i
 	if organization.Billing.SubscriptionID != "" && organization.Billing.Status != "canceled" && organization.Billing.Status != "incomplete_expired" {
 		return "", ErrSubscriptionManaged
 	}
-	if organization.Billing.SubscriptionID == "" && organization.BillingStatus == "active" && organization.PlanID != "plan_free" {
+	if organization.Billing.SubscriptionID == "" && organization.BillingStatus == "active" && organization.PlanID != "3BN8V1JQWTB3R3NSZ26SERTHWT" {
 		return "", conflict("an existing active plan must be managed through its billing account")
 	}
 	plan, err := selectedPlan(ctx, s.store, planKey, interval)
@@ -170,7 +170,7 @@ func (s Service) StartCheckout(ctx context.Context, p core.Principal, planKey, i
 		SuccessURL:     origin + "/billing/checkout/return?session_id={CHECKOUT_SESSION_ID}",
 		CancelURL:      origin + WithPaymentOutcome(returnPath, "canceled"),
 		ExpiresAt:      time.Now().Add(checkoutLifetime),
-		IdempotencyKey: core.NewID("checkout"),
+		IdempotencyKey: core.NewID(),
 	})
 	if err != nil {
 		slog.Error("create Stripe checkout session", "organization_id", organization.ID, "error", err)
@@ -322,7 +322,7 @@ func (s Service) PortalURL(ctx context.Context, p core.Principal) (string, error
 	if organization.Billing.CustomerID == "" {
 		return "", conflict("no billing account is available for this organization")
 	}
-	portal, err := s.billing.provider.CreatePortalSession(ctx, organization.Billing.CustomerID, s.billing.config.PublicOrigin+"/organization?tab=billing", core.NewID("portal"))
+	portal, err := s.billing.provider.CreatePortalSession(ctx, organization.Billing.CustomerID, s.billing.config.PublicOrigin+"/organization?tab=billing", core.NewID())
 	if err != nil {
 		slog.Error("create Stripe billing portal", "organization_id", organization.ID, "error", err)
 		return "", providerError("Could not open the billing portal.")

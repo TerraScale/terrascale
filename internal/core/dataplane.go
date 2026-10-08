@@ -105,7 +105,7 @@ func (d Deps) Manage(ctx context.Context, region Region) (*v1.ManagementUser, er
 // TerraBase, so only a project admin may.
 func (d Deps) register(ctx context.Context, p Principal, project Project, regions ...Region) error {
 	// A project mirrored from TerraBase is a service's own (TS-611).
-	if terraBaseID.MatchString(project.ID) {
+	if project.System {
 		return ErrSystemReadOnly
 	}
 	if len(regions) == 0 {
@@ -193,9 +193,8 @@ func (d Deps) DataKeyRegions(ctx context.Context, project Project) ([]Region, er
 // Data returns the Documents API handle of a database (Ensure) in its home
 // region, with the project's data key there.
 func (d Deps) Data(ctx context.Context, p Principal, project Project, db Database) (*v1.Database, error) {
-	db, err := d.Ensure(ctx, p, project, db)
-	if err != nil {
-		return nil, err
+	if SystemDatabase(db) {
+		return nil, ErrSystemReadOnly
 	}
 	placed, err := d.placed(ctx, project, db)
 	if err != nil {
@@ -217,8 +216,8 @@ func (d Deps) Data(ctx context.Context, p Principal, project Project, db Databas
 // Management API acting as the signed-in user, and its project's TerraBase
 // IDs.
 func (d Deps) ManageDatabase(ctx context.Context, p Principal, project Project, db Database) (m *v1.ManagementUser, org, proj string, _ Database, err error) {
-	if db, err = d.Ensure(ctx, p, project, db); err != nil {
-		return nil, "", "", Database{}, err
+	if SystemDatabase(db) {
+		return nil, "", "", Database{}, ErrSystemReadOnly
 	}
 	placed, err := d.placed(ctx, project, db)
 	if err != nil {
@@ -229,35 +228,6 @@ func (d Deps) ManageDatabase(ctx context.Context, p Principal, project Project, 
 	}
 	org, proj = project.TerraBaseIDs(p.OrganizationID)
 	return m, org, proj, db, nil
-}
-
-// Ensure returns the database with its TerraBase ID. A database never used
-// in TerraBase (a phase-1 record of TS-472) is created there first, in its
-// recorded regions, and its ID recorded.
-func (d Deps) Ensure(ctx context.Context, p Principal, project Project, db Database) (Database, error) {
-	if SystemDatabase(db) {
-		return Database{}, ErrSystemReadOnly
-	}
-	if db.TerraBaseID != "" {
-		return db, nil
-	}
-	placed, err := d.placed(ctx, project, db)
-	if err != nil {
-		return Database{}, err
-	}
-	if db.TerraBaseID, err = d.CreateDatabase(ctx, p, project, db.Name, placed); err != nil {
-		return Database{}, err
-	}
-	err = d.Store.UpdateAs(context.WithoutCancel(ctx), p, func(a *Account) error {
-		current, ok := a.Organizations[p.OrganizationID].Projects[project.ID].Databases[db.ID]
-		if !ok {
-			return ErrNotFound
-		}
-		current.TerraBaseID = db.TerraBaseID
-		a.Organizations[p.OrganizationID].Projects[project.ID].Databases[db.ID] = current
-		return nil
-	})
-	return db, err
 }
 
 // CreateDatabase creates the database name in TerraBase: in its home region,
@@ -307,11 +277,9 @@ func replicaIDs(placed []Region) []string {
 	return ids
 }
 
-// SetDatabaseRegions replaces a database's replicas through its home region,
-// placed[0], after registering the project in the new ones. A database never
-// used in TerraBase is created in its recorded regions on first use.
+// SetDatabaseRegions replaces replicas through the database's home region.
 func (d Deps) SetDatabaseRegions(ctx context.Context, p Principal, project Project, db Database, placed []Region) error {
-	if db.TerraBaseID == "" {
+	if db.ID == "" {
 		return nil
 	}
 	if err := d.register(ctx, p, project, placed[1:]...); err != nil {
@@ -322,7 +290,7 @@ func (d Deps) SetDatabaseRegions(ctx context.Context, p Principal, project Proje
 		return err
 	}
 	org, proj := project.TerraBaseIDs(p.OrganizationID)
-	if _, err := m.SetDatabaseRegions(ctx, org, proj, db.TerraBaseID, replicaIDs(placed)); err != nil {
+	if _, err := m.SetDatabaseRegions(ctx, org, proj, db.ID, replicaIDs(placed)); err != nil {
 		return ProviderError{Action: "database placement", Err: err}
 	}
 	return nil
@@ -335,7 +303,7 @@ func (d Deps) BranchDatabase(ctx context.Context, p Principal, project Project, 
 	if err != nil {
 		return "", err
 	}
-	created, err := m.BranchDatabase(ctx, org, proj, source.TerraBaseID, name)
+	created, err := m.BranchDatabase(ctx, org, proj, source.ID, name)
 	if err != nil {
 		return "", ProviderError{Action: "database branch", Err: err}
 	}
@@ -345,14 +313,14 @@ func (d Deps) BranchDatabase(ctx context.Context, p Principal, project Project, 
 // DeleteDatabase deletes a database through its home region; one never used
 // in TerraBase has nothing there.
 func (d Deps) DeleteDatabase(ctx context.Context, p Principal, project Project, db Database) error {
-	if db.TerraBaseID == "" {
+	if db.ID == "" {
 		return nil
 	}
 	m, org, proj, db, err := d.ManageDatabase(ctx, p, project, db)
 	if err != nil {
 		return err
 	}
-	if err := m.DeleteDatabase(ctx, org, proj, db.TerraBaseID); err != nil && !errors.Is(err, v1.ErrNotFound) {
+	if err := m.DeleteDatabase(ctx, org, proj, db.ID); err != nil && !errors.Is(err, v1.ErrNotFound) {
 		return ProviderError{Action: "database delete", Err: err}
 	}
 	return nil

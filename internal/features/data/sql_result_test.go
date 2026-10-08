@@ -11,11 +11,24 @@ import (
 	"terrascale.tech/dashboard/internal/core"
 )
 
+func TestSQLResultShowsOnlyDocumentKeyAsID(t *testing.T) {
+	const key = "01K78000000000000000000001"
+	result := newSQLResult([]documentView{{ID: key, Value: jsontext.Value(`{"id":"payload","ID":"duplicate","name":"Ada","owner_id":"owner","nested":{"id":"nested"}}`)}}, 1)
+	if len(result.Rows) != 1 || result.Rows[0].ID != key || len(result.Columns) != 3 {
+		t.Fatalf("document key or columns lost: %+v", result)
+	}
+	for _, column := range result.Columns {
+		if strings.EqualFold(column.Name, "id") {
+			t.Fatalf("payload id became a second column: %+v", result.Columns)
+		}
+	}
+}
+
 func TestSQLResultColumnsFollowFirstUse(t *testing.T) {
 	result := newSQLResult([]documentView{
-		{ID: "ord_1", Value: jsontext.Value(`{"total":725.5,"status":"paid","tags":["a"]}`)},
-		{ID: "ord_2", Value: jsontext.Value(`{"status":"open","note":null,"customer":{"id":"cus_2"}}`)},
-		{ID: "ord_3", Value: jsontext.Value(`"legacy"`)},
+		{ID: "209AR8XRJWZZQ2627T9V0T3JST", Value: jsontext.Value(`{"total":725.5,"status":"paid","tags":["a"]}`)},
+		{ID: "5GEWSMK93NDESF3VXJN54M80EV", Value: jsontext.Value(`{"status":"open","note":null,"customer":{"id":"cus_2"}}`)},
+		{ID: "59JEDW9ZZ71146QW1X59EBFD58", Value: jsontext.Value(`"legacy"`)},
 	}, 3)
 
 	want := []sqlColumn{{"total", true, false}, {"status", false, false}, {"tags", false, false}, {"note", false, false}, {"customer", false, false}, {"value", false, true}}
@@ -42,7 +55,7 @@ func TestSQLResultColumnsFollowFirstUse(t *testing.T) {
 	if result.Truncated() || result.HiddenColumns != 0 {
 		t.Fatalf("a small result is shown whole: %+v", result)
 	}
-	if !strings.Contains(result.JSON, `"id": "ord_2"`) || !strings.Contains(result.JSON, "\n  ") {
+	if !strings.Contains(result.JSON, `"id": "5GEWSMK93NDESF3VXJN54M80EV"`) || !strings.Contains(result.JSON, "\n  ") {
 		t.Fatalf("raw JSON must hold the rows indented, got %s", result.JSON)
 	}
 }
@@ -65,7 +78,7 @@ func TestSQLResultBoundsLargeResults(t *testing.T) {
 	if len(result.Columns) != maxResultColumns || result.HiddenColumns != 4 {
 		t.Fatalf("columns = %d, hidden = %d; want %d and 4", len(result.Columns), result.HiddenColumns, maxResultColumns)
 	}
-	if strings.Contains(result.JSON, "doc_0200") {
+	if strings.Contains(result.JSON, "07B5QP7CJTENGYSP1ZF4YWGZPF") {
 		t.Fatal("the raw view holds only the rows the table shows")
 	}
 
@@ -92,12 +105,12 @@ func TestSQLResultReportsMatchedRowsBeyondTheRowsReturned(t *testing.T) {
 func TestDemoSelectReportsTheRowsItsDefaultCapLeavesOut(t *testing.T) {
 	documents := make(map[string][]byte, maxDemoRows+20)
 	for i := range maxDemoRows + 20 {
-		documents[fmt.Sprintf("doc_%03d", i)] = []byte(`{}`)
+		documents[fmt.Sprintf("00000000000000000000000%03d", i)] = []byte(`{}`)
 	}
 	db := core.Database{Documents: map[string]map[string][]byte{"orders": documents}}
 
 	rows, matched, err := demoSelect(db, "SELECT * FROM orders")
-	if err != nil || len(rows) != maxDemoRows || matched != maxDemoRows+20 || rows[0].ID != "doc_000" {
+	if err != nil || len(rows) != maxDemoRows || matched != maxDemoRows+20 || rows[0].ID != "00000000000000000000000000" {
 		t.Fatalf("without a LIMIT: %d rows, matched %d, %v; want the first %d of %d", len(rows), matched, err, maxDemoRows, maxDemoRows+20)
 	}
 	if !newSQLResult(rows, matched).Truncated() {

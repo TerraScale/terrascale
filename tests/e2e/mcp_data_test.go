@@ -41,27 +41,27 @@ func TestMCPDataDocumentsSchemaIndexesAndSQL(t *testing.T) {
 		return arguments
 	}
 
-	callTool(t, session, "create_document", with(map[string]any{"documentId": "usr_ada", "document": map[string]any{"name": "Ada", "age": 36}}), nil)
-	callTool(t, session, "create_document", with(map[string]any{"documentId": "usr_alan", "document": map[string]any{"name": "Alan"}}), nil)
-	if message := callToolError(t, session, "create_document", with(map[string]any{"documentId": "usr_ada", "document": map[string]any{"name": "Again"}})); !strings.Contains(message, "already exists") {
+	callTool(t, session, "create_document", with(map[string]any{"documentId": "09P950JZAAKVGNRPS2H48ZJP8F", "document": map[string]any{"name": "Ada", "age": 36}}), nil)
+	callTool(t, session, "create_document", with(map[string]any{"documentId": "0EZ27CE62R6MBWMWTTE3338PDV", "document": map[string]any{"name": "Alan"}}), nil)
+	if message := callToolError(t, session, "create_document", with(map[string]any{"documentId": "09P950JZAAKVGNRPS2H48ZJP8F", "document": map[string]any{"name": "Again"}})); !strings.Contains(message, "already exists") {
 		t.Errorf("duplicate create_document error = %q, want already exists", message)
 	}
-	callTool(t, session, "patch_document", with(map[string]any{"documentId": "usr_ada", "patch": map[string]any{"age": 37, "team": "engines"}}), nil)
+	callTool(t, session, "patch_document", with(map[string]any{"documentId": "09P950JZAAKVGNRPS2H48ZJP8F", "patch": map[string]any{"age": 37, "team": "engines"}}), nil)
 	var ada mcpDocument
-	callTool(t, session, "get_document", with(map[string]any{"documentId": "usr_ada"}), &ada)
+	callTool(t, session, "get_document", with(map[string]any{"documentId": "09P950JZAAKVGNRPS2H48ZJP8F"}), &ada)
 	if ada.Value["name"] != "Ada" || ada.Value["age"] != 37.0 || ada.Value["team"] != "engines" {
 		t.Errorf("patched document = %+v, want Ada aged 37 on engines", ada.Value)
 	}
-	callTool(t, session, "replace_document", with(map[string]any{"documentId": "usr_alan", "document": map[string]any{"name": "Alan Turing"}}), nil)
+	callTool(t, session, "replace_document", with(map[string]any{"documentId": "0EZ27CE62R6MBWMWTTE3338PDV", "document": map[string]any{"name": "Alan Turing"}}), nil)
 
 	var listed struct{ Documents []mcpDocument }
 	callTool(t, session, "list_documents", with(map[string]any{"search": "turing"}), &listed)
-	if len(listed.Documents) != 1 || listed.Documents[0].ID != "usr_alan" {
-		t.Errorf("list_documents search = %+v, want only usr_alan", listed.Documents)
+	if len(listed.Documents) != 1 || listed.Documents[0].ID != "0EZ27CE62R6MBWMWTTE3338PDV" {
+		t.Errorf("list_documents search = %+v, want only 0EZ27CE62R6MBWMWTTE3338PDV", listed.Documents)
 	}
-	callTool(t, session, "list_documents", with(map[string]any{"limit": 1, "after": "usr_ada"}), &listed)
-	if len(listed.Documents) != 1 || listed.Documents[0].ID != "usr_alan" {
-		t.Errorf("list_documents page after usr_ada = %+v, want usr_alan", listed.Documents)
+	callTool(t, session, "list_documents", with(map[string]any{"limit": 1, "after": "09P950JZAAKVGNRPS2H48ZJP8F"}), &listed)
+	if len(listed.Documents) != 1 || listed.Documents[0].ID != "0EZ27CE62R6MBWMWTTE3338PDV" {
+		t.Errorf("list_documents page after 09P950JZAAKVGNRPS2H48ZJP8F = %+v, want 0EZ27CE62R6MBWMWTTE3338PDV", listed.Documents)
 	}
 	var collections struct{ Collections []string }
 	callTool(t, session, "list_collections", map[string]any{"databaseId": databaseID}, &collections)
@@ -69,14 +69,14 @@ func TestMCPDataDocumentsSchemaIndexesAndSQL(t *testing.T) {
 		t.Errorf("list_collections = %v, want users", collections.Collections)
 	}
 
-	callTool(t, session, "delete_document", with(map[string]any{"documentId": "usr_alan"}), nil)
+	callTool(t, session, "delete_document", with(map[string]any{"documentId": "0EZ27CE62R6MBWMWTTE3338PDV"}), nil)
 	var history struct {
 		Versions []struct {
 			Revision string
 			Deleted  bool
 		}
 	}
-	callTool(t, session, "get_document_history", with(map[string]any{"documentId": "usr_alan"}), &history)
+	callTool(t, session, "get_document_history", with(map[string]any{"documentId": "0EZ27CE62R6MBWMWTTE3338PDV"}), &history)
 	if len(history.Versions) != 3 || !history.Versions[2].Deleted || history.Versions[0].Deleted {
 		t.Errorf("get_document_history = %+v, want create, replace, and a deletion", history.Versions)
 	}
@@ -120,8 +120,8 @@ func TestMCPDataDocumentsSchemaIndexesAndSQL(t *testing.T) {
 		Result struct{ Rows []mcpDocument }
 	}
 	callTool(t, session, "run_sql", map[string]any{"databaseId": databaseID, "sql": "SELECT * FROM users LIMIT 5"}, &result)
-	if len(result.Result.Rows) != 1 || result.Result.Rows[0].ID != "usr_ada" {
-		t.Errorf("run_sql rows = %+v, want usr_ada", result.Result.Rows)
+	if len(result.Result.Rows) != 1 || result.Result.Rows[0].ID != "09P950JZAAKVGNRPS2H48ZJP8F" {
+		t.Errorf("run_sql rows = %+v, want 09P950JZAAKVGNRPS2H48ZJP8F", result.Result.Rows)
 	}
 	if message := callToolError(t, session, "run_sql", map[string]any{"databaseId": databaseID, "sql": "DROP TABLE users"}); !strings.Contains(message, "read-only") {
 		t.Errorf("run_sql DROP error = %q, want a read-only rejection", message)
@@ -154,7 +154,7 @@ func TestMCPDataDocumentsSchemaIndexesAndSQL(t *testing.T) {
 	if message := callToolError(t, session, "list_documents", map[string]any{"databaseId": databaseID, "collection": "bad/name"}); !strings.Contains(message, "collection") {
 		t.Errorf("invalid collection error = %q, want a collection rule", message)
 	}
-	if message := callToolError(t, session, "get_document", map[string]any{"databaseId": "db_missing", "collection": "users", "documentId": "usr_ada"}); !strings.Contains(message, "not found") {
+	if message := callToolError(t, session, "get_document", map[string]any{"databaseId": "7CWZH5HEGFV2Z8DWE3144TJQSS", "collection": "users", "documentId": "09P950JZAAKVGNRPS2H48ZJP8F"}); !strings.Contains(message, "not found") {
 		t.Errorf("foreign database error = %q, want not found", message)
 	}
 }
@@ -166,7 +166,7 @@ func TestMCPSampleIndexRecommendationAndMigration(t *testing.T) {
 	page := newPage(t)
 	login(t, page, sampleAccount.Email, sampleAccount.Password)
 	session := connectMCP(t, createAccessToken(t, page, sampleAccount.Password, "sample index assistant"))
-	const databaseID = "db_01JC9Q8Y5N7P9R3T5V7X9Z2AC"
+	const databaseID = "0Z793APJ2ECFW2F7P6J9F2RKVY"
 
 	var recommendations struct {
 		Recommendations []struct {
@@ -215,7 +215,7 @@ func TestMCPBackupsAndQuerySubscriptions(t *testing.T) {
 	session := connectMCP(t, createAccessToken(t, page, journeyPassword, "backup assistant"))
 	databaseID := mcpDatabase(t, session)
 	callTool(t, session, "create_document", map[string]any{
-		"databaseId": databaseID, "collection": "orders", "documentId": "ord_1", "document": map[string]any{"total": 42},
+		"databaseId": databaseID, "collection": "orders", "documentId": "209AR8XRJWZZQ2627T9V0T3JST", "document": map[string]any{"total": 42},
 	}, nil)
 
 	var backup struct {
@@ -247,7 +247,7 @@ func TestMCPBackupsAndQuerySubscriptions(t *testing.T) {
 		t.Errorf("restore_backup = %+v, want a ready database", restored)
 	}
 	var order mcpDocument
-	callTool(t, session, "get_document", map[string]any{"databaseId": restored.DatabaseID, "collection": "orders", "documentId": "ord_1"}, &order)
+	callTool(t, session, "get_document", map[string]any{"databaseId": restored.DatabaseID, "collection": "orders", "documentId": "209AR8XRJWZZQ2627T9V0T3JST"}, &order)
 	if order.Value["total"] != 42.0 {
 		t.Errorf("restored document = %+v, want total 42", order.Value)
 	}

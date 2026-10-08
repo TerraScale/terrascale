@@ -16,11 +16,11 @@ func sharedOrganization(t *testing.T, store core.Store, guestEmail string) (owne
 		t.Fatal(err)
 	}
 	owner = account.Principal()
-	extraProjectID, token = core.NewID("prj"), core.NewID("tok")
+	extraProjectID, token = core.NewID(), core.NewID()
 	if err := store.UpdateAs(ctx, owner, func(account *core.Account) error {
 		org := account.Organizations[owner.OrganizationID]
 		org.Projects[extraProjectID] = core.Project{ID: extraProjectID, OrganizationID: org.ID, Name: "Extra", Status: "active"}
-		id := core.NewID("inv")
+		id := core.NewID()
 		org.Invitations[id] = core.Invitation{ID: id, Email: guestEmail, Role: "member", Status: "pending", TokenHash: token}
 		account.Organizations[org.ID] = org
 		return nil
@@ -116,7 +116,7 @@ func TestAuthorizePlatformAdmin(t *testing.T, store core.Store) {
 		{name: "administrator", principal: current},
 		{name: "member", principal: member.Principal(), want: core.ErrForbidden},
 		{name: "revoked credential", principal: stale, want: core.ErrUnauthorized},
-		{name: "unknown account", principal: core.Principal{AccountID: "acct_missing"}, want: core.ErrNotFound},
+		{name: "unknown account", principal: core.Principal{AccountID: "1X1GA5H0YDJ92W6VNKZKY2C32N"}, want: core.ErrNotFound},
 	} {
 		if err := store.AuthorizePlatformAdmin(ctx, tc.principal); !errors.Is(err, tc.want) {
 			t.Errorf("%s: AuthorizePlatformAdmin = %v, want %v", tc.name, err, tc.want)

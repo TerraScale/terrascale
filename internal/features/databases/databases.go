@@ -231,14 +231,14 @@ func contents(ctx context.Context, deps core.Deps, p core.Principal, project cor
 			}
 		}
 		return collections, documents, bytes, nil
-	case db.TerraBaseID == "":
+	case db.ID == "":
 		// Not used yet, so TerraBase holds nothing of it.
 		return 0, 0, 0, nil
 	default:
 		var m *v1.ManagementUser
 		var org, proj string
 		if m, org, proj, db, err = deps.ManageDatabase(ctx, p, project, db); err == nil {
-			stats, err = m.Collections(ctx, org, proj, db.TerraBaseID)
+			stats, err = m.Collections(ctx, org, proj, db.ID)
 		}
 	}
 	for _, collection := range stats {

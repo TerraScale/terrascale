@@ -18,7 +18,7 @@ func registerAndOnboard(t *testing.T, page playwright.Page, account credentials,
 	if len(paidPlan) > 0 {
 		must(t, payment.Locator(`[name="plan"][value="`+paidPlan[0]+`"]`).Check())
 		click(t, byRole(payment, *playwright.AriaRoleButton, "Continue to checkout"))
-		must(t, page.WaitForURL(regexp.MustCompile(`/checkout/cs_local_`)))
+		must(t, page.WaitForURL(regexp.MustCompile(`/checkout/[0-7][0-9A-HJKMNP-TV-Z]{25}(?:[?#]|$)`)))
 		click(t, pageByRole(page, *playwright.AriaRoleButton, "Confirm local demo setup"))
 		waitForPath(t, page, func(u *url.URL) bool { return u.Path == "/onboarding" && u.Query().Get("payment") == "success" })
 	} else {

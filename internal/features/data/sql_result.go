@@ -77,6 +77,9 @@ func newSQLResult(rows []documentView, matched int) sqlResult {
 		}
 		fields[i] = make(map[columnKey]jsontext.Value, len(names))
 		for j, name := range names {
+			if !root && strings.EqualFold(name, "id") {
+				continue
+			}
 			key := columnKey{name, root}
 			fields[i][key] = values[j]
 			if _, seen := index[key]; !seen {

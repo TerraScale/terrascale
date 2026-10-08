@@ -27,11 +27,11 @@ func TestDatabasesLiveInTerraBase(t *testing.T) {
 	project := d.Project(t)
 	org, proj, _ := d.TerraBase(t)
 	db := project.Databases[created.ID]
-	if db.TerraBaseID == "" || len(db.Documents) != 0 {
+	if db.ID == "" || len(db.Documents) != 0 {
 		t.Fatalf("database = %+v; want TerraBase's ID and no local documents", db)
 	}
 	m := d.Management()
-	if remote, err := m.Database(ctx, org, proj, db.TerraBaseID); err != nil || remote.Name != "orders" {
+	if remote, err := m.Database(ctx, org, proj, db.ID); err != nil || remote.Name != "orders" {
 		t.Fatalf("TerraBase database = %+v, %v; want orders", remote, err)
 	}
 	if remote, err := m.Organization(ctx, org); err != nil || remote.Name != d.Principal.OrganizationID {
@@ -73,7 +73,7 @@ func TestDatabasesLiveInTerraBase(t *testing.T) {
 	}
 	err = d.Deps.Store.Update(ctx, d.Principal.AccountID, func(a *core.Account) error {
 		org := a.Organizations[d.Principal.OrganizationID]
-		org.PlanID = "plan_pro"
+		org.PlanID = "7CNW2H87JE68ATZX224CV2G625"
 		a.Organizations[org.ID] = org
 		return nil
 	})
@@ -105,7 +105,7 @@ func TestDatabasesLiveInTerraBase(t *testing.T) {
 	if err := service.Delete(ctx, d.Principal, created.ID, "orders"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.Database(ctx, org, proj, db.TerraBaseID); !errors.Is(err, v1.ErrNotFound) && !errors.Is(err, v1.ErrUnknownRoute) {
+	if _, err := m.Database(ctx, org, proj, db.ID); !errors.Is(err, v1.ErrNotFound) && !errors.Is(err, v1.ErrUnknownRoute) {
 		t.Fatalf("deleted database still in TerraBase: %v", err)
 	}
 	if _, ok := d.Project(t).Databases[branch.ID]; !ok {

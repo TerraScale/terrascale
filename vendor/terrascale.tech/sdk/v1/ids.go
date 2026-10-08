@@ -1,54 +1,56 @@
 package v1
 
 import (
-	"crypto/sha1"
-	"encoding/hex"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base32"
 	"fmt"
 	"regexp"
-	"strings"
-	"unicode"
-	"unicode/utf16"
-	"unicode/utf8"
+	"time"
 )
 
-// namespaceURL is RFC 9562's NAMESPACE_URL, 6ba7b811-9dad-11d1-80b4-00c04fd430c8.
-var namespaceURL = [16]byte{0x6b, 0xa7, 0xb8, 0x11, 0x9d, 0xad, 0x11, 0xd1, 0x80, 0xb4, 0x00, 0xc0, 0x4f, 0xd4, 0x30, 0xc8}
+const ulidAlphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 
-// DocumentIDFor returns the deterministic document ID for a natural key in a
-// collection: uuidv5(uuidv5(NAMESPACE_URL, "terrabase:collection:" + collection), key).
+var ulidBase32 = base32.NewEncoding(ulidAlphabet)
+
+// DocumentIDFor returns the key itself for entity IDs and a deterministic ULID
+// for natural keys. Natural keys are framed by collection to retain uniqueness.
 func DocumentIDFor(collection, key string) string {
-	ns := uuidV5(namespaceURL, "terrabase:collection:"+collection)
-	return formatUUID(uuidV5(ns, key))
+	if ulidPattern.MatchString(key) {
+		return key
+	}
+	digest := sha256.Sum256([]byte(collection + "\x00" + key))
+	return encodeULID(digest[:16])
 }
 
-func uuidV5(ns [16]byte, name string) [16]byte {
-	h := sha1.New()
-	h.Write(ns[:])
-	h.Write([]byte(name))
-	var u [16]byte
-	copy(u[:], h.Sum(nil))
-	u[6] = u[6]&0x0f | 0x50
-	u[8] = u[8]&0x3f | 0x80
-	return u
+// NewULID generates a canonical ULID using cryptographic randomness.
+func NewULID() string {
+	var id [16]byte
+	rand.Read(id[:])
+	ms := uint64(time.Now().UnixMilli())
+	for i := 5; i >= 0; i-- {
+		id[i] = byte(ms)
+		ms >>= 8
+	}
+	return encodeULID(id[:])
 }
 
-func formatUUID(u [16]byte) string {
-	var b [36]byte
-	hex.Encode(b[0:8], u[0:4])
-	b[8] = '-'
-	hex.Encode(b[9:13], u[4:6])
-	b[13] = '-'
-	hex.Encode(b[14:18], u[6:8])
-	b[18] = '-'
-	hex.Encode(b[19:23], u[8:10])
-	b[23] = '-'
-	hex.Encode(b[24:], u[10:])
-	return string(b[:])
+func encodeULID(id []byte) string {
+	var timestamp [10]byte
+	ms := uint64(0)
+	for _, b := range id[:6] {
+		ms = ms<<8 | uint64(b)
+	}
+	for i := 9; i >= 0; i-- {
+		timestamp[i] = ulidAlphabet[ms&31]
+		ms >>= 5
+	}
+	return string(timestamp[:]) + ulidBase32.EncodeToString(id[6:16])
 }
 
 var (
 	namePattern = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,62}$`)
-	uuidPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+	ulidPattern = regexp.MustCompile(`^[0-7][0-9A-HJKMNP-TV-Z]{25}$`)
 	// versionPattern is any non-empty RFC 9110 entity-tag value without obs-text.
 	versionPattern = regexp.MustCompile(`^[\x21\x23-\x7e]+$`)
 )
@@ -60,12 +62,10 @@ func checkName(kind, name string) error {
 	return nil
 }
 
-// checkID accepts what TerraBase addresses: 1-256 UTF-16 units without control
-// characters. New ids must be UUIDs; older non-UUID ids stay addressable.
-// The path builder rejects a slash.
+// checkID accepts only canonical uppercase ULIDs.
 func checkID(id string) error {
-	if id == "" || !utf8.ValidString(id) || len(utf16.Encode([]rune(id))) > 256 || strings.ContainsFunc(id, unicode.IsControl) {
-		return fmt.Errorf("terrabase: document ID %q must be 1 to 256 characters without control characters", id)
+	if !ulidPattern.MatchString(id) {
+		return fmt.Errorf("terrabase: document ID %q must be a canonical uppercase ULID", id)
 	}
 	return nil
 }

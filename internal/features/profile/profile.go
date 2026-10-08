@@ -387,7 +387,7 @@ func beginTOTP(deps core.Deps) http.HandlerFunc {
 		rand.Read(random[:])
 		secret := strings.ToUpper(hex.EncodeToString(random[:]))
 		secret = strings.Join([]string{secret[:4], secret[4:8], secret[8:12], secret[12:16], secret[16:]}, " ")
-		token := core.NewID("enr")
+		token := rand.Text()
 		if err := deps.Store.UpdateAs(r.Context(), principal, func(current *core.Account) error {
 			if current.User.PasswordHash != account.User.PasswordHash {
 				return core.ErrConflict
@@ -509,7 +509,7 @@ func registerPasskey(deps core.Deps) http.HandlerFunc {
 		}
 		if err := deps.Store.UpdateAs(r.Context(), principal, func(account *core.Account) error {
 			account.DemoSecurity.Passkeys = append(account.DemoSecurity.Passkeys, core.DemoPasskey{
-				ID: core.NewID("pas"), Name: name, CreatedAt: time.Now().UTC(),
+				ID: core.NewID(), Name: name, CreatedAt: time.Now().UTC(),
 			})
 			return nil
 		}); err != nil {

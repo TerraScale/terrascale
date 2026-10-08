@@ -28,8 +28,8 @@ func TestAccountInformationRenamesAMemberOfAnotherOrganization(t *testing.T) {
 	token := hex.EncodeToString(digest[:])
 	if err := store.UpdateAs(t.Context(), ownerPrincipal, func(a *core.Account) error {
 		org := a.Organizations[ownerPrincipal.OrganizationID]
-		org.Invitations["inv_member"] = core.Invitation{
-			ID: "inv_member", Email: "member@example.test", Role: "member", Status: "pending",
+		org.Invitations["5WBKW9DRD8VRG71FZSCX8D37T4"] = core.Invitation{
+			ID: "5WBKW9DRD8VRG71FZSCX8D37T4", Email: "member@example.test", Role: "member", Status: "pending",
 			TokenHash: token, ExpiresAt: time.Now().Add(time.Hour),
 		}
 		a.Organizations[org.ID] = org

@@ -24,11 +24,11 @@ func TestDeleteDatabaseRevokesItsKeysAndDropsItsConfigurations(t *testing.T) {
 	if err := store.UpdateAs(t.Context(), p, func(a *core.Account) error {
 		org := a.Organizations[p.OrganizationID]
 		project := org.Projects[p.ProjectID]
-		project.Databases["db_tmp"] = core.Database{ID: "db_tmp", ProjectID: project.ID, Name: "tmp", Status: "ready"}
-		project.APIKeys["key_tmp"] = core.APIKey{ID: "key_tmp", Kind: "api-key", ProjectID: project.ID, DatabaseID: "db_tmp", Name: "scoped"}
-		project.APIKeys["key_project"] = core.APIKey{ID: "key_project", Kind: "api-key", ProjectID: project.ID, Name: "project"}
-		project.SharedResultConfigs["cfg_tmp"] = core.SharedResultConfig{ID: "cfg_tmp", DatabaseID: "db_tmp", Name: "orders_view"}
-		project.BackupPolicies["db_tmp"] = core.BackupPolicy{RetentionDays: 7}
+		project.Databases["7WTDQ8PZGQGTHSXG2Z6S4YT68Q"] = core.Database{ID: "7WTDQ8PZGQGTHSXG2Z6S4YT68Q", ProjectID: project.ID, Name: "tmp", Status: "ready"}
+		project.APIKeys["3WJQ9SNFJWXEFTDHDAK4JHT6H1"] = core.APIKey{ID: "3WJQ9SNFJWXEFTDHDAK4JHT6H1", Kind: "api-key", ProjectID: project.ID, DatabaseID: "7WTDQ8PZGQGTHSXG2Z6S4YT68Q", Name: "scoped"}
+		project.APIKeys["6J3PEQTTERR7271PVFZZB4P4VQ"] = core.APIKey{ID: "6J3PEQTTERR7271PVFZZB4P4VQ", Kind: "api-key", ProjectID: project.ID, Name: "project"}
+		project.SharedResultConfigs["742GE4NGG0F0TABM8NCSJFZNFD"] = core.SharedResultConfig{ID: "742GE4NGG0F0TABM8NCSJFZNFD", DatabaseID: "7WTDQ8PZGQGTHSXG2Z6S4YT68Q", Name: "orders_view"}
+		project.BackupPolicies["7WTDQ8PZGQGTHSXG2Z6S4YT68Q"] = core.BackupPolicy{RetentionDays: 7}
 		org.Projects[project.ID] = project
 		a.Organizations[org.ID] = org
 		return nil
@@ -45,7 +45,7 @@ func TestDeleteDatabaseRevokesItsKeysAndDropsItsConfigurations(t *testing.T) {
 		t.Fatal(err)
 	}
 	token := guard.Token(signIn, httptest.NewRequest(http.MethodGet, "/", nil))
-	form := url.Values{"databaseId": {"db_tmp"}, "confirmName": {"tmp"}, "_csrf": {token}}
+	form := url.Values{"databaseId": {"7WTDQ8PZGQGTHSXG2Z6S4YT68Q"}, "confirmName": {"tmp"}, "_csrf": {token}}
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/dashboard/databases/delete", strings.NewReader(form.Encode()))
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	for _, cookie := range signIn.Result().Cookies() {
@@ -62,19 +62,19 @@ func TestDeleteDatabaseRevokesItsKeysAndDropsItsConfigurations(t *testing.T) {
 		t.Fatal(err)
 	}
 	project := snapshot.Organizations[p.OrganizationID].Projects[p.ProjectID]
-	if _, ok := project.Databases["db_tmp"]; ok {
+	if _, ok := project.Databases["7WTDQ8PZGQGTHSXG2Z6S4YT68Q"]; ok {
 		t.Error("the database is still stored")
 	}
-	if revoked := project.APIKeys["key_tmp"].RevokedAt; revoked.IsZero() || time.Since(revoked) > time.Minute {
+	if revoked := project.APIKeys["3WJQ9SNFJWXEFTDHDAK4JHT6H1"].RevokedAt; revoked.IsZero() || time.Since(revoked) > time.Minute {
 		t.Errorf("key limited to the database revoked at %v, want now", revoked)
 	}
-	if revoked := project.APIKeys["key_project"].RevokedAt; !revoked.IsZero() {
+	if revoked := project.APIKeys["6J3PEQTTERR7271PVFZZB4P4VQ"].RevokedAt; !revoked.IsZero() {
 		t.Errorf("project-wide key revoked at %v, want it active", revoked)
 	}
-	if _, ok := project.SharedResultConfigs["cfg_tmp"]; ok {
+	if _, ok := project.SharedResultConfigs["742GE4NGG0F0TABM8NCSJFZNFD"]; ok {
 		t.Error("the database's shared result configuration is still stored")
 	}
-	if _, ok := project.BackupPolicies["db_tmp"]; ok {
+	if _, ok := project.BackupPolicies["7WTDQ8PZGQGTHSXG2Z6S4YT68Q"]; ok {
 		t.Error("the database's backup policy is still stored")
 	}
 }

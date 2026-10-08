@@ -66,7 +66,7 @@ func meterFixture(t *testing.T, meter *fakeMeter) (Service, core.Principal, *htt
 		t.Fatal(err)
 	}
 	principal := account.Principal()
-	meter.databaseID = "db_metered"
+	meter.databaseID = "3TM5VD5F8PMRENGQT60DC1MF6N"
 	if err := store.UpdateAs(t.Context(), principal, func(a *core.Account) error {
 		org := a.Organizations[principal.OrganizationID]
 		project := org.Projects[principal.ProjectID]
@@ -230,7 +230,7 @@ func TestUsageTakesStorageTotalsFromTerraBase(t *testing.T) {
 func twoProjectMeterFixture(t *testing.T, meter *fakeMeter) (Service, core.Principal, map[string]string) {
 	t.Helper()
 	service, principal, _ := meterFixture(t, meter)
-	imported := core.Project{ID: "9135698a-eaf6-4000-8000-000000000001", OrganizationID: principal.OrganizationID, Name: "Imported"}
+	imported := core.Project{ID: "4H6NMRNTQP8008000000000001", OrganizationID: principal.OrganizationID, Name: "Imported"}
 	if err := service.deps.Store.UpdateAs(t.Context(), principal, func(a *core.Account) error {
 		org := a.Organizations[principal.OrganizationID]
 		org.Projects[imported.ID] = imported
@@ -310,7 +310,7 @@ func TestUsageIncompleteOrganizationNeverReportsPartialAllowances(t *testing.T) 
 		t.Run(failure.name, func(t *testing.T) {
 			meter := &fakeMeter{reads: 7, writes: 3, logicalBytes: 2048}
 			service, principal, _ := twoProjectMeterFixture(t, meter)
-			meter.monthlyErrors = map[string]error{"9135698a-eaf6-4000-8000-000000000001": failure.err}
+			meter.monthlyErrors = map[string]error{"4H6NMRNTQP8008000000000001": failure.err}
 			report, err := service.Usage(t.Context(), principal, "user-token", "", "24h")
 			if err != nil {
 				t.Fatal(err)

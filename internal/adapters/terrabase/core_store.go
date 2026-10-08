@@ -3,9 +3,6 @@ package terrabase
 import (
 	"cmp"
 	"context"
-	"crypto/rand"
-	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"strings"
 	"time"
@@ -21,8 +18,7 @@ type Store struct{ db *v1.Database }
 
 var _ core.Store = (*Store)(nil)
 
-// New constructs a handle without I/O. Provision collections and SeedPlans
-// explicitly before using it; startup and readiness checks never provision.
+// New constructs a handle without I/O. Startup provisions collections and SeedPlans.
 func New(db *v1.Database) *Store { return &Store{db: db} }
 
 // SeedPlans atomically initializes a new database's default catalog. An
@@ -39,7 +35,7 @@ func (s *Store) SeedPlans(ctx context.Context) error {
 	}
 	tx := s.db.Tx().Create(k.collection, k.id, coreRecord{Kind: "catalog_lock", ID: coreCatalogID, Rev: 1})
 	for _, plan := range core.DefaultPlans() {
-		data, err := json.Marshal(plan)
+		data, err := encodeData(plan)
 		if err != nil {
 			return coreUnavailable(err)
 		}
@@ -205,19 +201,14 @@ func (s *Store) UpdateOrganization(ctx context.Context, organizationID string, m
 	return s.writeCore(ctx, coreLoad{organizations: []string{organizationID}, allOrganizations: true}, coreWrite{}, func(m *memstore.Store) error { return m.UpdateOrganization(ctx, organizationID, mutate) })
 }
 
-// Plans and Plan return seeded plans upgraded (core.UpgradeSeededPlan)
-// without writing them, so no other commit rewrites the catalog.
 func (s *Store) Plans(ctx context.Context) (out []core.Plan, err error) {
 	err = s.readCore(ctx, coreLoad{}, func(m *memstore.Store) error { out, err = m.Plans(ctx); return err })
-	for i := range out {
-		out[i] = core.UpgradeSeededPlan(out[i])
-	}
 	return
 }
 
 func (s *Store) Plan(ctx context.Context, idOrKey string) (out core.Plan, err error) {
 	err = s.readCore(ctx, coreLoad{}, func(m *memstore.Store) error { out, err = m.Plan(ctx, idOrKey); return err })
-	return core.UpgradeSeededPlan(out), err
+	return out, err
 }
 
 func (s *Store) UpsertPlanAs(ctx context.Context, p core.Principal, plan core.Plan) error {
@@ -259,25 +250,12 @@ func (s *Store) UpdateAccountAsAdmin(ctx context.Context, p core.Principal, targ
 	return s.writeCore(ctx, coreLoad{accounts: []string{p.AccountID, targetAccountID}}, coreWrite{}, func(m *memstore.Store) error { return m.UpdateAccountAsAdmin(ctx, p, targetAccountID, mutate) })
 }
 
-func newCoreUUIDv7() string {
-	var b [16]byte
-	rand.Read(b[:])
-	millis := uint64(time.Now().UnixMilli())
-	for i := 5; i >= 0; i-- {
-		b[i] = byte(millis)
-		millis >>= 8
-	}
-	b[6], b[8] = b[6]&15|0x70, b[8]&63|0x80
-	h := hex.EncodeToString(b[:])
-	return h[:8] + "-" + h[8:12] + "-" + h[12:16] + "-" + h[16:20] + "-" + h[20:]
-}
-
 func (s *Store) RecordPlatformAdminAction(ctx context.Context, p core.Principal, action, target, reason string) error {
-	return s.writeCore(ctx, coreLoad{accounts: []string{p.AccountID}}, coreWrite{adminID: newCoreUUIDv7()}, func(m *memstore.Store) error { return m.RecordPlatformAdminAction(ctx, p, action, target, reason) })
+	return s.writeCore(ctx, coreLoad{accounts: []string{p.AccountID}}, coreWrite{adminActions: true}, func(m *memstore.Store) error { return m.RecordPlatformAdminAction(ctx, p, action, target, reason) })
 }
 
 func (s *Store) SetPlatformAdmin(ctx context.Context, accountID string, admin bool) (changed bool, err error) {
-	err = s.writeCore(ctx, coreLoad{accounts: []string{accountID}}, coreWrite{adminID: newCoreUUIDv7()}, func(m *memstore.Store) error { changed, err = m.SetPlatformAdmin(ctx, accountID, admin); return err })
+	err = s.writeCore(ctx, coreLoad{accounts: []string{accountID}}, coreWrite{adminActions: true}, func(m *memstore.Store) error { changed, err = m.SetPlatformAdmin(ctx, accountID, admin); return err })
 	return changed, err
 }
 
