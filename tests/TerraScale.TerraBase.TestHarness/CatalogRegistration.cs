@@ -3,6 +3,7 @@ using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
 using TerraBase.Features.Management;
 using TerraBase.Hosting;
+using TerraBase.Primitives;
 using TerraBase.Tenancy;
 
 namespace TerraBase.Testing;
@@ -16,7 +17,7 @@ public static class CatalogRegistration
     public static async Task<TenantContext> RegisterAsync(this TerraBaseTestServer server, TenantContext? database = null)
     {
         ArgumentNullException.ThrowIfNull(server);
-        database ??= new TenantContext(Guid.NewGuid().ToString("D"), PlanTier.Hobby, Guid.NewGuid().ToString("D"), Guid.NewGuid().ToString("D"));
+        database ??= new TenantContext(EntityIds.New().ToString(), PlanTier.Hobby, EntityIds.New().ToString(), EntityIds.New().ToString());
         var (organization, project, id) = (database.OrganizationId, database.ProjectId!, database.DatabaseId!);
         var created = DateTimeOffset.UnixEpoch;
         (string Collection, string Id, byte[] Json)[] rows =

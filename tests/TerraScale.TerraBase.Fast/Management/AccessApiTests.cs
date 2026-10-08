@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text.Json;
 using Bogus;
+using TerraBase.Primitives;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Management;
@@ -86,7 +87,7 @@ public sealed class AccessApiTests
         using var acceptedAgain = await invitee.PostAsJsonAsync(accept, new { token });
         var afterAccept = await owner.GetFromJsonAsync<JsonElement>(invitations);
         using var revoke = await owner.DeleteAsync(Uri($"{org}/invitations/{revokedId}"));
-        using var revokeUnknown = await owner.DeleteAsync(Uri($"{org}/invitations/{Guid.NewGuid()}"));
+        using var revokeUnknown = await owner.DeleteAsync(Uri($"{org}/invitations/{EntityIds.New()}"));
         using var acceptRevoked = await stranger.PostAsJsonAsync(accept, new { token = revoked.GetProperty("token").GetString() });
         var laterToken = await InviteAsync(owner, org, laterEmail, "member");
         using var alreadyMember = await inviteeLater.PostAsJsonAsync(accept, new { token = laterToken });
@@ -160,7 +161,7 @@ public sealed class AccessApiTests
         using var adminInvitesAdmin = await admin.PostAsJsonAsync(Uri($"{org}/invitations"), new { email = Email(), role = "admin" });
         using var adminRemovesMember = await admin.DeleteAsync(Uri($"{org}/members/{removableId}"));
         using var notMember = await stranger.GetAsync(Uri($"{org}/members"));
-        using var unknownOrganization = await owner.GetAsync(Uri($"{Org(Guid.NewGuid().ToString())}/members"));
+        using var unknownOrganization = await owner.GetAsync(Uri($"{Org(EntityIds.New().ToString())}/members"));
         var page = await owner.GetFromJsonAsync<JsonElement>(Uri($"{org}/members"));
 
         await Assert.That(memberDenied).All().Satisfy(status => status.IsEqualTo(HttpStatusCode.Forbidden));
@@ -426,7 +427,7 @@ public sealed class AccessApiTests
         await using var server = await TerraBaseTestServer.StartAsync(tls.Apply, issuer.Route);
         using var client = tls.CreateClient(server.ClientAddress!, issuer.MintWithEmail(User(), Email()));
 
-        using var members = await client.GetAsync(Uri($"{Org(Guid.NewGuid().ToString())}/members"));
+        using var members = await client.GetAsync(Uri($"{Org(EntityIds.New().ToString())}/members"));
         using var accept = await client.PostAsJsonAsync(Uri(Accept), new { token = "token" });
 
         await Assert.That(members.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
@@ -490,7 +491,7 @@ public sealed class AccessApiTests
     // The path of one organization; access routes hang below it.
     private static string Org(string organization) => $"{Organizations}/{organization}";
 
-    private static string User() => Faker.Random.Guid().ToString();
+    private static string User() => EntityIds.New().ToString();
 
     // The suffix keeps two addresses of one test from colliding by chance.
     private static string Email() => Faker.Internet.Email(uniqueSuffix: Faker.Random.AlphaNumeric(6));

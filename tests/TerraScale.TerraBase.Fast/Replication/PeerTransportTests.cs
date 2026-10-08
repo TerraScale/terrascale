@@ -18,6 +18,7 @@ using TerraBase.Configuration;
 using TerraBase.Fast.Storage;
 using TerraBase.Features.Replication;
 using TerraBase.Features.Replication.V1;
+using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
 
@@ -469,7 +470,7 @@ public sealed class PeerTransportTests
         var rotatedClient = false;
         var documentConnection = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
         var value = new Faker().Random.AlphaNumeric(32);
-        var id = Guid.CreateVersion7().ToString("D");
+        var id = EntityIds.New().ToString();
         var directory = Directory.CreateTempSubdirectory("terrabase-outbound-rotation-").FullName;
         try
         {
@@ -813,7 +814,7 @@ public sealed class PeerTransportTests
         issuer.Start(1);
         var issuerUrl = $"http://127.0.0.1:{((IPEndPoint)issuer.LocalEndpoint).Port}/issuer.cer";
         using var issuerKey = ECDsa.Create(ECCurve.NamedCurves.nistP256);
-        var authorityRequest = new CertificateRequest($"CN={Guid.NewGuid():N}", issuerKey, HashAlgorithmName.SHA256);
+        var authorityRequest = new CertificateRequest($"CN={EntityIds.New()}", issuerKey, HashAlgorithmName.SHA256);
         authorityRequest.CertificateExtensions.Add(new X509BasicConstraintsExtension(true, false, 0, true));
         authorityRequest.CertificateExtensions.Add(new X509KeyUsageExtension(X509KeyUsageFlags.KeyCertSign, true));
         using var authority = authorityRequest.CreateSelfSigned(DateTimeOffset.UtcNow.AddMinutes(-5), DateTimeOffset.UtcNow.AddDays(1));
@@ -1248,5 +1249,5 @@ public sealed class PeerTransportTests
     }
 
     private static TenantContext Database() =>
-        new(Guid.NewGuid().ToString("D"), PlanTier.Hobby, Guid.NewGuid().ToString("D"), Guid.NewGuid().ToString("D"));
+        new(EntityIds.New().ToString(), PlanTier.Hobby, EntityIds.New().ToString(), EntityIds.New().ToString());
 }

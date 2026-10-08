@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text.Json;
+using TerraBase.Primitives;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Management;
@@ -34,7 +35,7 @@ public sealed class ProjectRouteCompatibilityTests
         var database = await api.CreateManagedDatabaseAsync();
         await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         using var client = ProjectClient(api, database.Project);
-        var path = ManagementApi.Uri($"/v1/projects/{database.Project}/saved-queries/{Guid.NewGuid()}");
+        var path = ManagementApi.Uri($"/v1/projects/{database.Project}/saved-queries/{EntityIds.New()}");
 
         await ErrorAssert.ErrorAsync(client.GetAsync(path), HttpStatusCode.NotFound, "not_found");
         await ErrorAssert.ErrorAsync(client.PutAsJsonAsync(path, new { name = "Missing", sql = "SELECT * FROM people" }), HttpStatusCode.NotFound, "not_found");

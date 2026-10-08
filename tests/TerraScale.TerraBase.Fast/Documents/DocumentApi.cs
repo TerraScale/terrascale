@@ -5,6 +5,7 @@ using System.Text.Json;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
+using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
 
@@ -152,7 +153,7 @@ internal sealed class DocumentApi : IAsyncDisposable
     }.ToString();
 
     /// <summary>A new document id.</summary>
-    public static string NewId() => Guid.CreateVersion7().ToString();
+    public static string NewId() => EntityIds.New().ToString();
 
     public string Document(string id) => $"{Documents}/{id}";
 

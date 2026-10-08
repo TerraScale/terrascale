@@ -9,6 +9,7 @@ using TerraBase.Engine;
 using TerraBase.Engine.Sqlite;
 using TerraBase.Fast.Documents;
 using TerraBase.Hosting;
+using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
 
@@ -21,7 +22,7 @@ namespace TerraBase.Fast.Storage;
 public sealed class StorageTransactionTests
 {
     // Every test runs its own server and data directory, so they can share the ids.
-    private static readonly TenantContext Database = Tenant(Guid.NewGuid().ToString());
+    private static readonly TenantContext Database = Tenant(EntityIds.New().ToString());
 
     [Test]
     [Arguments("put", false)]
@@ -47,9 +48,9 @@ public sealed class StorageTransactionTests
         }
 
         var engine = server.Services.GetRequiredService<IStorageEngine>();
-        var id = Guid.CreateVersion7().ToString("D");
+        var id = EntityIds.New().ToString();
         var json = "{\"n\":1}"u8.ToArray();
-        var origin = Guid.NewGuid().ToByteArray(bigEndian: true);
+        var origin = EntityIds.New().ToByteArray();
         foreach (var store in new[]
         {
             (await engine.OpenDatabaseAsync(tenant.Database("pool"), token))!,
@@ -273,14 +274,14 @@ public sealed class StorageTransactionTests
         SqliteSession? migratedSession = null;
         var inserts = 0;
         var inject = true;
-        var name = Tenant(Guid.NewGuid().ToString());
+        var name = Tenant(EntityIds.New().ToString());
         await using var server = await TerraBaseTestServer.StartAsync(services: services => services.AddSingleton(provider =>
         {
             var options = provider.GetRequiredService<TerraBaseOptions>();
             engine = new SqliteStorageEngine(options.DataDirectory, options.StorageThreads, options.StorageQueue, options.MemoryBudget,
                 provider.GetRequiredService<IMeterFactory>().Create(Telemetry.MeterName),
                 provider.GetRequiredService<ILogger<SqliteStorageEngine>>(), options.ShutdownGrace, readinessCacheTtl: options.ReadinessCacheTtl,
-                checkpoint: provider.GetRequiredService<DatabaseLifecycleCheckpoint>(), afterMigration: store =>
+                checkpoint: provider.GetRequiredService<DatabaseLifecycleCheckpoint>(), afterBootstrap: store =>
                 {
                     if (!inject || store.Tenant?.DatabaseId != name.DatabaseId)
                     {
@@ -436,7 +437,7 @@ public sealed class StorageTransactionTests
         var stores = new List<SqliteDatabaseStore>();
         for (var i = 0; i < engine.Pool.MaxIdle + 8; i++)
         {
-            var name = Database with { DatabaseId = Guid.NewGuid().ToString() };
+            var name = Database with { DatabaseId = EntityIds.New().ToString() };
             await engine.CreateDatabaseAsync(name, CancellationToken.None);
             var store = (SqliteDatabaseStore)(await engine.OpenDatabaseAsync(name, CancellationToken.None))!;
             await (await store.BeginTransactionAsync(write: false, CancellationToken.None)).DisposeAsync();
@@ -498,7 +499,7 @@ public sealed class StorageTransactionTests
             await seed.ExecuteNonQueryAsync(CancellationToken.None);
         }
 
-        var origin = Guid.NewGuid().ToByteArray();
+        var origin = EntityIds.New().ToByteArray();
 
         // A caller that catches an exhausted-version write must not commit its partial state or other work.
         await using (var writer = await store.BeginTransactionAsync(write: true, CancellationToken.None))
@@ -955,7 +956,7 @@ public sealed class StorageTransactionTests
         }
     }
 
-    private static TenantContext Tenant(string database) => new(Guid.NewGuid().ToString(), PlanTier.Hobby, Guid.NewGuid().ToString(), database);
+    private static TenantContext Tenant(string database) => new(EntityIds.New().ToString(), PlanTier.Hobby, EntityIds.New().ToString(), database);
 
     private static async Task<(IStorageEngine Engine, SqliteDatabaseStore Store)> OpenAsync(TerraBaseTestServer server)
     {

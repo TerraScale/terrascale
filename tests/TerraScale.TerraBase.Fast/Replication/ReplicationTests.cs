@@ -9,6 +9,7 @@ using TerraBase.Engine;
 using TerraBase.Fast.Documents;
 using TerraBase.Features.Replication;
 using TerraBase.Features.Replication.V1;
+using TerraBase.Primitives;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Replication;
@@ -1219,7 +1220,7 @@ public sealed class ReplicationTests
             using var rejected = await writer.PutAsync(new Uri($"{collection}/documents/{DocumentApi.NewId()}", UriKind.Relative),
                 new StringContent("{\"nested\":" + new string('[', 80) + "0" + new string(']', 80) + "}", System.Text.Encoding.UTF8, "application/json"), deadline.Token);
             await Assert.That(rejected.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
-            var next = Guid.CreateVersion7().ToString("D");
+            var next = EntityIds.New().ToString();
             using var added = await writer.PutAsJsonAsync(new Uri($"{tenant.Path("legacy")}/collections/people/documents/{next}", UriKind.Relative), new { after = "legacy" }, deadline.Token);
             added.EnsureSuccessStatusCode();
             await TerraBaseTestServer.ReplicatedAsync(upgraded);

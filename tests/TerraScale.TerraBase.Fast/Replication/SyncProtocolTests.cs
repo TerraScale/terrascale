@@ -13,6 +13,7 @@ using TerraBase.Engine.Sqlite;
 using TerraBase.Features.Documents;
 using TerraBase.Features.Replication;
 using TerraBase.Features.Replication.V1;
+using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
 
@@ -72,9 +73,9 @@ public sealed class SyncProtocolTests
         await using var server = await TerraBaseTestServer.StartAsync(tls.Apply);
         using var channel = tls.CreateChannel(server.PeerAddress!);
         var client = new Features.Replication.V1.Replication.ReplicationClient(channel);
-        var first = new TenantContext(Guid.NewGuid().ToString("D"), PlanTier.Hobby,
-            Guid.NewGuid().ToString("D"), Guid.NewGuid().ToString("D"));
-        var second = first with { OrganizationId = Guid.NewGuid().ToString("D") };
+        var first = new TenantContext(EntityIds.New().ToString(), PlanTier.Hobby,
+            EntityIds.New().ToString(), EntityIds.New().ToString());
+        var second = first with { OrganizationId = EntityIds.New().ToString() };
         TenantContext[] databases = [await server.RegisterAsync(first), await server.RegisterAsync(second)];
         var origin = RandomNumberGenerator.GetBytes(16);
         var engine = server.Services.GetRequiredService<IStorageEngine>();
@@ -85,7 +86,7 @@ public sealed class SyncProtocolTests
             using var call = client.Sync(cancellationToken: TUnit.Core.TestContext.Current!.Execution.CancellationToken);
             var welcome = await HelloAsync(call, database, origin);
             await Assert.That(welcome.Frontiers.Single().HasDurableSequence).IsFalse();
-            await Assert.That(welcome.LocalIdentity.TenantId.Span.SequenceEqual(Guid.Parse(database.OrganizationId).ToByteArray(bigEndian: true))).IsTrue();
+            await Assert.That(welcome.LocalIdentity.TenantId.Span.SequenceEqual(Ulid.Parse(database.OrganizationId).ToByteArray())).IsTrue();
             await SendAsync(call, Batch(database, origin, 1, [Put("items", "same", 1, database.OrganizationId)]));
             await Assert.That((await NextAsync(call)).Durable.DurablePrefix).IsEqualTo(1UL);
             await Assert.That((await NextAsync(call)).Applied.AppliedPrefix).IsEqualTo(1UL);
@@ -123,7 +124,7 @@ public sealed class SyncProtocolTests
         await using var node = await Node.StartAsync("json");
         using var writer = await node.ClientAsync("documents:write");
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
-        var id = Guid.CreateVersion7().ToString("D");
+        var id = EntityIds.New().ToString();
         var json = scenario switch
         {
             "duplicate" => """{"x":1,"x":2}""",

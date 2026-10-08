@@ -9,6 +9,7 @@ using TerraBase.Engine;
 using TerraBase.Fast.Storage;
 using TerraBase.Features.Replication;
 using TerraBase.Features.Replication.V1;
+using TerraBase.Primitives;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Replication;
@@ -124,7 +125,7 @@ public sealed class SenderLifecycleTests
                         welcome.Welcome.Frontiers[0].DurableSequence = ulong.MaxValue;
                         break;
                     case "origin":
-                        welcome.Welcome.Frontiers[0].Origin.ReplicaId = ByteString.CopyFrom(Guid.NewGuid().ToByteArray(bigEndian: true));
+                        welcome.Welcome.Frontiers[0].Origin.ReplicaId = ByteString.CopyFrom(EntityIds.New().ToByteArray());
                         break;
                     case "identity":
                         welcome.Welcome.LocalIdentity.MemberId = ByteString.Empty;

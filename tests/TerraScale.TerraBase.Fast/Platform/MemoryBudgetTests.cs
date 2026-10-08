@@ -9,6 +9,7 @@ using TerraBase.Engine;
 using TerraBase.Fast.Storage;
 using TerraBase.Features.Memory;
 using TerraBase.Hosting;
+using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
 
@@ -364,7 +365,7 @@ public sealed class MemoryBudgetTests
             SQLitePCL.raw.sqlite3_soft_heap_limit64(initialLimit);
             using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
             var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-            var database = new TenantContext(Guid.NewGuid().ToString(), PlanTier.Hobby, Guid.NewGuid().ToString(), Guid.NewGuid().ToString());
+            var database = new TenantContext(EntityIds.New().ToString(), PlanTier.Hobby, EntityIds.New().ToString(), EntityIds.New().ToString());
             var ready = 0;
             var initializations = Task.WhenAll(budgets.Select(InitializeAsync));
             Exception? primaryFailure = null;

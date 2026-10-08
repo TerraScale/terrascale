@@ -9,7 +9,7 @@ internal sealed partial class SqliteStorageTransaction
     private bool _replicaChanged;
 
     // The primary's incarnation a snapshot adopts; published as the store's right after the SQL commit.
-    private Guid? _adoptedIncarnation;
+    private Ulid? _adoptedIncarnation;
 
     // A system group replays every mutation in order, so a follower reaches the same state without a merge: no
     // final-state collapse and no client key or object rules. Keys must fit the u16 lengths of the wire encoding.
@@ -116,11 +116,11 @@ internal sealed partial class SqliteStorageTransaction
             }
 
             PlainCommand(SqliteStatements.ResetReplica).ExecuteNonQuery();
-            var hex = Convert.ToHexStringLower(origin.Span);
+            var id = new Ulid(origin.Span);
             var incarnation = Command(SqliteStatements.RenewIncarnation);
-            incarnation.Parameters.AddWithValue("$incarnation", hex);
+            incarnation.Parameters.AddWithValue("$incarnation", id.ToString());
             incarnation.ExecuteNonQuery();
-            _adoptedIncarnation = Guid.ParseExact(hex, "N");
+            _adoptedIncarnation = id;
             _replicaChanged = true;
             return true;
         }, cancellationToken, mutation: true).ConfigureAwait(false);

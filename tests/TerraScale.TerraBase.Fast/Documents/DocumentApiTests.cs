@@ -5,6 +5,7 @@ using Bogus;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
 using TerraBase.Features.Documents;
+using TerraBase.Primitives;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Documents;
@@ -34,7 +35,7 @@ public sealed class DocumentApiTests
             (await api.SendAsync(HttpMethod.Get, $"{api.Project}/databases/Not-Valid/collections"), HttpStatusCode.BadRequest, "invalid_request", BadDatabase),
             (await api.SendAsync(HttpMethod.Put, $"{api.Project}/databases/Not-Valid"), HttpStatusCode.BadRequest, "invalid_request", BadDatabase),
             (await api.SendAsync(HttpMethod.Get, $"{api.Project}/databases/missing/collections"), HttpStatusCode.NotFound, "unknown_database", UnknownDatabase),
-            (await api.SendAsync(HttpMethod.Put, $"/v1/projects/{Guid.NewGuid()}/databases/fresh"), HttpStatusCode.NotFound, "unknown_database", UnknownDatabase),
+            (await api.SendAsync(HttpMethod.Put, $"/v1/projects/{EntityIds.New()}/databases/fresh"), HttpStatusCode.NotFound, "unknown_database", UnknownDatabase),
             // The tenant answers before the request's own input: a key learns nothing about other databases.
             (await api.SendRawAsync(
                 HttpMethod.Put, $"{api.Project}/databases/missing/collections/items/documents/{id}?x=1", "{", "text/plain",
@@ -107,11 +108,11 @@ public sealed class DocumentApiTests
         // Database deletion has no Documents endpoint; it goes through the Management API.
         var engine = api.Server.Services.GetRequiredService<IStorageEngine>();
         var store = (await engine.OpenDatabaseAsync(await api.TenantOfAsync(), CancellationToken.None))!;
-        await Assert.That(store.Incarnation.Version).IsEqualTo(4);
+        await Assert.That(EntityIds.IsValid(store.Incarnation.ToString())).IsTrue();
         await api.DeleteDatabaseAsync();
         (await api.SendAsync(HttpMethod.Put, api.DatabasePath())).Status.ShouldBe(HttpStatusCode.Created);
         var recreatedStore = (await engine.OpenDatabaseAsync(await api.TenantOfAsync(), CancellationToken.None))!;
-        await Assert.That(recreatedStore.Incarnation.Version).IsEqualTo(4);
+        await Assert.That(EntityIds.IsValid(recreatedStore.Incarnation.ToString())).IsTrue();
         await Assert.That(recreatedStore.Incarnation).IsNotEqualTo(store.Incarnation);
         (await api.SendAsync(HttpMethod.Post, api.Collections, new { name = "items" })).Status.ShouldBe(HttpStatusCode.Created);
         var recreated = await api.PutAsync(id, new { n = 2 });
@@ -289,8 +290,8 @@ public sealed class DocumentApiTests
         var read = await api.SendAsync(HttpMethod.Get, created.Location!.OriginalString);
 
         await Assert.That(created.Status).IsEqualTo(HttpStatusCode.Created);
-        await Assert.That(Guid.Parse(id).Version).IsEqualTo(7);
-        await Assert.That(id).IsEqualTo(id.ToLowerInvariant());
+        await Assert.That(EntityIds.IsValid(id)).IsTrue();
+        await Assert.That(id).IsEqualTo(id.ToUpperInvariant());
         await Assert.That(created.Location.OriginalString).IsEqualTo(api.Document(id));
         await Assert.That(read.Status).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(read.Version).IsEqualTo(created.Version);
@@ -652,7 +653,7 @@ public sealed class DocumentApiTests
         await Assert.That(deviceName.Status).IsEqualTo(HttpStatusCode.BadRequest);
         await Assert.That(trailingNewline.Status).IsEqualTo(HttpStatusCode.BadRequest);
         await Assert.That((notUuid.Status, notUuid.Code)).IsEqualTo((HttpStatusCode.BadRequest, "invalid_request"));
-        await Assert.That(upperUuid.Status).IsEqualTo(HttpStatusCode.BadRequest);
+        await Assert.That(upperUuid.Status).IsEqualTo(HttpStatusCode.Created);
         await Assert.That(notObject.Status).IsEqualTo(HttpStatusCode.BadRequest);
         await Assert.That(notJson.Status).IsEqualTo(HttpStatusCode.BadRequest);
         await Assert.That(duplicate.Status).IsEqualTo(HttpStatusCode.BadRequest);
@@ -676,7 +677,7 @@ public sealed class DocumentApiTests
         await Assert.That(encoded.Status).IsEqualTo(HttpStatusCode.UnsupportedMediaType);
         await Assert.That(idempotent.Status).IsEqualTo(HttpStatusCode.BadRequest);
         await Assert.That(query.Status).IsEqualTo(HttpStatusCode.BadRequest);
-        // Only the valid 16-level document was stored.
+        // The valid document and the two valid supplied keys were stored.
         await Assert.That(absent.Status).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(absent.Version).IsEqualTo(deepest.Version);
     }

@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text.Json;
+using TerraBase.Primitives;
 
 namespace TerraBase.Fast.Documents;
 
@@ -62,7 +63,7 @@ public sealed class TransactionApiTests
         await Assert.That(results.Count).IsEqualTo(9);
         await Assert.That(results[0].GetProperty("id").GetString()).IsEqualTo(created);
         await Assert.That(results[0].GetProperty("version").GetString()).IsEqualTo(readCreated.Version);
-        await Assert.That(Guid.Parse(results[1].GetProperty("id").GetString()!).Version).IsEqualTo(7);
+        await Assert.That(EntityIds.IsValid(results[1].GetProperty("id").GetString())).IsTrue();
         await Assert.That(results[6].GetRawText()).IsEqualTo("""{"asserted":true}""");
         await Assert.That(results[7].GetRawText()).IsEqualTo("""{"asserted":true}""");
         // assert_count sees the state before this transaction's writes: only the removed document has /a.
@@ -146,21 +147,21 @@ public sealed class TransactionApiTests
         ("""{"ops":[]}""", null),
         ("""{"ops":[{"op":"create","collection":"items","document":{},"if_match":null}]}""", 0),
         ("""{"ops":[{"op":"create","collection":"items","document":{},"if_none_match":null}]}""", 0),
-        ("""{"ops":[{"op":"create","collection":"items","document":{}},{"op":"patch","collection":"items","id":"00000000-0000-7000-8000-000000000001","merge":{},"ops":null}]}""", 1),
-        ("""{"ops":[{"op":"assert","collection":"items","id":"00000000-0000-7000-8000-000000000001","absent":true,"filter":null}]}""", 0),
+        ("""{"ops":[{"op":"create","collection":"items","document":{}},{"op":"patch","collection":"items","id":"0000000000E008000000000001","merge":{},"ops":null}]}""", 1),
+        ("""{"ops":[{"op":"assert","collection":"items","id":"0000000000E008000000000001","absent":true,"filter":null}]}""", 0),
         ("""{"ops":[{"op":"assert_count","collection":"items","gte":0,"lte":null}]}""", 0),
         ("""{}""", null),
         ("""{"ops":[{"op":"create","collection":"items","document":{}}],"extra":1}""", null),
-        ("""{"ops":[{"op":"upsert","collection":"items","id":"00000000-0000-7000-8000-000000000001","document":{}}]}""", 0),
+        ("""{"ops":[{"op":"upsert","collection":"items","id":"0000000000E008000000000001","document":{}}]}""", 0),
         ("""{"ops":[{"op":"create","collection":"items","document":{},"if_match":"tbv1-x"}]}""", 0),
         ("""{"ops":[{"op":"create","collection":"items","document":[]}]}""", 0),
         ("""{"ops":[{"op":"put","collection":"items","document":{}}]}""", 0),
-        ("""{"ops":[{"op":"put","collection":"items","id":"00000000-0000-7000-8000-000000000001","document":{},"if_none_match":"tbv1-x"}]}""", 0),
-        ("""{"ops":[{"op":"patch","collection":"items","id":"00000000-0000-7000-8000-000000000001","merge":{},"ops":[{"op":"unset","path":"/a"}]}]}""", 0),
-        ("""{"ops":[{"op":"assert","collection":"items","id":"00000000-0000-7000-8000-000000000001"}]}""", 0),
+        ("""{"ops":[{"op":"put","collection":"items","id":"0000000000E008000000000001","document":{},"if_none_match":"tbv1-x"}]}""", 0),
+        ("""{"ops":[{"op":"patch","collection":"items","id":"0000000000E008000000000001","merge":{},"ops":[{"op":"unset","path":"/a"}]}]}""", 0),
+        ("""{"ops":[{"op":"assert","collection":"items","id":"0000000000E008000000000001"}]}""", 0),
         ("""{"ops":[{"op":"assert_count","collection":"items"}]}""", 0),
-        ("""{"ops":[{"op":"assert","collection":"items","id":"00000000-0000-7000-8000-000000000001","filter":{"bad":1}}]}""", 0),
-        ("""{"ops":[{"op":"delete","collection":"items","id":"00000000-0000-7000-8000-000000000001"},{"op":"assert","collection":"items","id":"00000000-0000-7000-8000-000000000001","absent":true}]}""", 1),
+        ("""{"ops":[{"op":"assert","collection":"items","id":"0000000000E008000000000001","filter":{"bad":1}}]}""", 0),
+        ("""{"ops":[{"op":"delete","collection":"items","id":"0000000000E008000000000001"},{"op":"assert","collection":"items","id":"0000000000E008000000000001","absent":true}]}""", 1),
         ("""{"ops":[null]}""", 0),
         ("""{"ops":[{"op":"create","collection":"items","document":{}},{"op":"assert_count","collection":"items","gte":"1"}]}""", 1),
         ("""{"ops":[{"op":"create","collection":"items","document":{}},{"op":"create","collection":"items","document":{},"extra":1}]}""", 1),
@@ -172,7 +173,7 @@ public sealed class TransactionApiTests
         ("""{"ops":[{"op":"create","collection":"items","document":{}},{"op":"create","collection":"items","document":{"a":1,"\u0061":2}}]}""", 1),
         ("""{"ops":[{"op":"create","collection":"items","document":{}}],"ops":[{"op":"create","collection":"items","document":{}}]}""", null),
         ("""{"ops":[{"op":"create","collection":"items","document":{}}]""", null),
-        ("""{"ops":[{"op":"delete","collection":"items","id":"00000000-0000-7000-8000-000000000001","if_match":""}]}""", 0),
+        ("""{"ops":[{"op":"delete","collection":"items","id":"0000000000E008000000000001","if_match":""}]}""", 0),
         ("""{"ops":[{"op":"create","collection":"items","document":{"s":"\ud800"}}]}""", null),
     ];
 
@@ -293,7 +294,7 @@ public sealed class TransactionApiTests
             (Ops(Patch(existing, """{"op":"unset","path":"/n"}"""), Patch(existing, """{"op":"unset","path":"/a"}""")), HttpStatusCode.BadRequest, "invalid_request", "two operations target the same document", 1),
             (Ops(create, """{"op":"create","collection":"nope","document":{}}"""), HttpStatusCode.NotFound, "unknown_collection", "the collection does not exist", 1),
             (Ops(create, Patch(DocumentApi.NewId(), """{"op":"unset","path":"/n"}""")), HttpStatusCode.NotFound, "not_found", "the document does not exist", 1),
-            (Ops(create, """{"op":"create","collection":"items","id":"NOT-A-UUID","document":{}}"""), HttpStatusCode.BadRequest, "invalid_request", "a new id must be a lowercase hyphenated UUID", 1),
+            (Ops(create, """{"op":"create","collection":"items","id":"","document":{}}"""), HttpStatusCode.BadRequest, "invalid_request", "id must be 1 to 256 characters without control characters", 1),
             (Ops(create, $$$"""{"op":"create","collection":"items","id":"{{{existing}}}","document":{}}"""), HttpStatusCode.PreconditionFailed, "precondition_failed", "the document exists", 1),
             (Ops(create, $$$"""{"op":"put","collection":"items","id":"{{{existing}}}","document":{},"if_match":"tbv1-00000000000000000000000000000000"}"""), HttpStatusCode.PreconditionFailed, "precondition_failed", "the document version does not match", 1),
             (Ops(create, $$$"""{"op":"assert","collection":"items","id":"{{{existing}}}","filter":{"exists":"/missing"}}"""), HttpStatusCode.PreconditionFailed, "precondition_failed", "the document does not match", 1),

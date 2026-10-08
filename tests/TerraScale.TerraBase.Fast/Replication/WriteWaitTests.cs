@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Net;
 using System.Net.Http.Headers;
 using Bogus;
+using TerraBase.Primitives;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Replication;
@@ -42,7 +43,7 @@ public sealed class WriteWaitTests
         for (var round = 0; round < 10; round++)
         {
             var (writer, reader) = round % 2 == 0 ? (clientB, clientA) : (clientA, clientB);
-            var document = new Uri($"{tenant.Path("shop")}/collections/{collection}/documents/{Guid.NewGuid():D}", UriKind.Relative);
+            var document = new Uri($"{tenant.Path("shop")}/collections/{collection}/documents/{EntityIds.New()}", UriKind.Relative);
             using var put = new HttpRequestMessage(HttpMethod.Put, document) { Content = JsonContent.Create(new { value = Faker.Lorem.Sentence() }) };
             put.Headers.IfNoneMatch.Add(EntityTagHeaderValue.Any);
             using var written = await writer.SendAsync(put, token);
@@ -98,7 +99,7 @@ public sealed class WriteWaitTests
 
         // Committed, so it answers success after the bound rather than an error a client would retry.
         using var written = await client.PutAsJsonAsync(
-            new Uri($"{tenant.Path("shop")}/collections/people/documents/{Guid.NewGuid():D}", UriKind.Relative), new { name = Faker.Name.FullName() }, token);
+            new Uri($"{tenant.Path("shop")}/collections/people/documents/{EntityIds.New()}", UriKind.Relative), new { name = Faker.Name.FullName() }, token);
         await Assert.That(written.StatusCode).IsEqualTo(HttpStatusCode.Created);
         await Assert.That(await server.MetricAsync("terrabase_replication_write_wait_seconds_count", "result=\"timeout\"", token)).IsEqualTo(2);
         // Each 200 ms bound expires on the kernel's coarse tick (at most 10 ms, at CONFIG_HZ=100) while the metric
@@ -129,7 +130,7 @@ public sealed class WriteWaitTests
         for (var i = 0; i < 3; i++)
         {
             using var written = await client.PutAsJsonAsync(
-                new Uri($"{tenant.Path("shop")}/collections/people/documents/{Guid.NewGuid():D}", UriKind.Relative), new { name = Faker.Name.FullName() }, token);
+                new Uri($"{tenant.Path("shop")}/collections/people/documents/{EntityIds.New()}", UriKind.Relative), new { name = Faker.Name.FullName() }, token);
             await Assert.That(written.StatusCode).IsEqualTo(HttpStatusCode.Created);
         }
 

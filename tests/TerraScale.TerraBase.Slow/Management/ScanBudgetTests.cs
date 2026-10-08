@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text.Json;
 using Microsoft.Extensions.Time.Testing;
+using TerraBase.Primitives;
 using TerraBase.Testing;
 
 namespace TerraBase.Slow.Management;
@@ -63,7 +64,7 @@ public sealed class ScanBudgetTests
     private static async Task AssertNoProgressHandlerLeftAsync(HttpClient data, ManagedDatabaseRef database, string rejected)
     {
         var ops = Enumerable.Range(0, 50)
-            .Select(_ => new { op = "put", collection = "probe", id = Guid.CreateVersion7().ToString(), document = new { n = 1 } })
+            .Select(_ => new { op = "put", collection = "probe", id = EntityIds.New().ToString(), document = new { n = 1 } })
             .ToArray();
         using var probe = await data.PostAsJsonAsync(ManagementApi.Uri($"{database.Data}/transactions"), new { ops });
         await Assert.That(probe.StatusCode).IsEqualTo(HttpStatusCode.OK).Because(rejected);

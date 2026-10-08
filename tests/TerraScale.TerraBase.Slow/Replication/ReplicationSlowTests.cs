@@ -553,8 +553,8 @@ public sealed class ReplicationSlowTests
             settings["write-wait-ms"] = "0";
         });
         var tenant = await ReplicationTenant.CreateAsync(sender, "busy", "quiet");
-        busyId = Google.Protobuf.ByteString.CopyFrom(Guid.Parse(tenant.Database("busy").DatabaseId!).ToByteArray(bigEndian: true));
-        quietId = Google.Protobuf.ByteString.CopyFrom(Guid.Parse(tenant.Database("quiet").DatabaseId!).ToByteArray(bigEndian: true));
+        busyId = Google.Protobuf.ByteString.CopyFrom(Ulid.Parse(tenant.Database("busy").DatabaseId!).ToByteArray());
+        quietId = Google.Protobuf.ByteString.CopyFrom(Ulid.Parse(tenant.Database("quiet").DatabaseId!).ToByteArray());
         await tenant.BindAsync(receiver);
         using var reader = clientTls.CreateClient(receiver.ClientAddress!, await tenant.KeyAsync(receiver, "documents:read"));
         var key = await tenant.KeyAsync(sender, "documents:write");

@@ -6,6 +6,7 @@ using TerraBase.Features.Documents;
 using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Memory;
 using TerraBase.Hosting;
+using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using static TerraBase.Features.Management.SystemCatalog;
 
@@ -126,7 +127,7 @@ internal sealed class QueryService(IStorageEngine engine, SystemCatalog catalog,
                 }
 
                 bytes += stored.Json.Length;
-                queries.Add(JsonSerializer.Deserialize(stored.Json.Span, TerraBaseJsonContext.Default.SavedQueryEntry)!.Query);
+                queries.Add(EntityPayload.Read(stored, TerraBaseJsonContext.Default.SavedQueryEntry)!.Query);
             }
 
             return new ManagementPage<SavedQuery>(queries, next);
@@ -142,7 +143,7 @@ internal sealed class QueryService(IStorageEngine engine, SystemCatalog catalog,
             }
 
             var now = time.GetUtcNow();
-            var query = new SavedQuery(Guid.CreateVersion7(now).ToString(), name, sql, now, null);
+            var query = new SavedQuery(EntityIds.New(time).ToString(), name, sql, now, null);
             // Lists follow the persisted per-organization sequence, so they keep creation order across restarts and clock steps.
             var order = EngineManagementService.AscendingKey(await EngineManagementService.NextSequenceAsync(
                 transaction, EngineManagementService.State(project.OrganizationId), QuerySequence, cancellationToken).ConfigureAwait(false));

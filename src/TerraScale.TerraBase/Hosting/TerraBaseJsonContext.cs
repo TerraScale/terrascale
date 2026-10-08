@@ -20,6 +20,7 @@ using TerraBase.Tenancy;
 namespace TerraBase.Hosting;
 
 /// <summary>Source-generated JSON metadata for every request and response type (fast startup, no reflection-based serialization).</summary>
+[JsonSerializable(typeof(Ulid))]
 [JsonSourceGenerationOptions(JsonSerializerDefaults.Web, MaxDepth = RequestJson.StoredDocumentMaxDepth + 8)]
 [JsonSerializable(typeof(AcceptInvitationRequest))]
 [JsonSerializable(typeof(AddMemberRequest))]

@@ -49,11 +49,12 @@ public sealed record SnapshotPage(IReadOnlyList<QueryRow> Rows, bool HasMore, st
 /// <summary>A collection of one database.</summary>
 /// <param name="Name">Collection name.</param>
 /// <param name="CreatedAt">Creation time in Unix milliseconds.</param>
+/// <param name="Id">Canonical uppercase ULID of this collection creation.</param>
 /// <param name="Generation">
 /// Random 64-bit value the engine draws on every creation, so a dropped and recreated collection is a
 /// different lineage; set by the engine, ignored on create.
 /// </param>
-public sealed record CollectionInfo(string Name, long CreatedAt, long Generation = 0);
+public sealed record CollectionInfo(string Name, long CreatedAt, long Generation = 0, string Id = "");
 
 /// <summary>One replicated document write: a JSON object, or a deletion, at the version it was written with.</summary>
 /// <param name="Collection">Collection name.</param>

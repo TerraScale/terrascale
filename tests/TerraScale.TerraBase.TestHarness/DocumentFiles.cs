@@ -2,10 +2,10 @@ using Microsoft.Data.Sqlite;
 
 namespace TerraBase.Testing;
 
-/// <summary>Writes and reads database files directly, the way an older build left them on disk.</summary>
+/// <summary>Seeds and reads current-format database fixtures after real-server bootstrap.</summary>
 public static class DocumentFiles
 {
-    /// <summary>Writes a schema-version-1 database file at <paramref name="path"/> holding exactly these documents.</summary>
+    /// <summary>Seeds a current-format database file at <paramref name="path"/> holding exactly these documents.</summary>
     public static async Task WriteAsync(string path, params (string Collection, string Id, string Body)[] documents)
     {
         // Built, never interpolated: a path may contain ';' or quotes.
@@ -61,15 +61,6 @@ public static class DocumentFiles
     private static async Task WriteDocumentsAsync(SqliteConnection connection, (string Collection, string Id, string Body)[] documents)
     {
         ArgumentNullException.ThrowIfNull(documents);
-        await using (var schema = connection.CreateCommand())
-        {
-            schema.CommandText = """
-                CREATE TABLE IF NOT EXISTS documents (collection TEXT NOT NULL, id TEXT NOT NULL, version INTEGER NOT NULL, body TEXT NOT NULL, PRIMARY KEY (collection, id)) WITHOUT ROWID;
-                PRAGMA user_version = 1;
-                """;
-            await schema.ExecuteNonQueryAsync();
-        }
-
         foreach (var (collection, id, body) in documents)
         {
             await using var insert = connection.CreateCommand();

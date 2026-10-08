@@ -1,13 +1,14 @@
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
 using TerraBase.Engine;
+using TerraBase.Primitives;
 
 namespace TerraBase.Features.Management;
 
 /// <summary>Brings the management catalog to the version this build supports, or refuses an unsupported one (503).</summary>
 internal interface ICatalogGuard
 {
-    /// <summary>Migrates once per process; throws a 503 <see cref="BadHttpRequestException"/> for a catalog this build cannot use.</summary>
+    /// <summary>Bootstraps once per process; throws a 503 <see cref="BadHttpRequestException"/> for a catalog this build cannot use.</summary>
     ValueTask EnsureCatalogAsync(CancellationToken cancellationToken);
 
     /// <summary>
@@ -96,12 +97,12 @@ internal sealed class SystemCatalog(IStorageEngine engine, ICatalogGuard guard)
         where T : class
     {
         var document = await transaction.GetAsync(collection, id, cancellationToken).ConfigureAwait(false);
-        return document is null ? null : JsonSerializer.Deserialize(document.Json.Span, type);
+        return document is null ? null : EntityPayload.Read(document, type);
     }
 
     public static async ValueTask PutAsync<T>(
         IStorageTransaction transaction, string collection, string id, T value, JsonTypeInfo<T> type, CancellationToken cancellationToken) =>
-        await transaction.PutAsync(collection, id, JsonSerializer.SerializeToUtf8Bytes(value, type), cancellationToken).ConfigureAwait(false);
+        await transaction.PutAsync(collection, id, EntityPayload.WithoutId(JsonSerializer.SerializeToUtf8Bytes(value, type), id, nested: true), cancellationToken).ConfigureAwait(false);
 
     public static async ValueTask<bool> AnyAsync(IStorageTransaction transaction, string collection, CancellationToken cancellationToken) =>
         (await transaction.ListAsync(collection, afterId: null, limit: 1, MaxPageBytes, cancellationToken).ConfigureAwait(false)).Documents.Count > 0;
@@ -111,7 +112,7 @@ internal sealed class SystemCatalog(IStorageEngine engine, ICatalogGuard guard)
         IStorageTransaction transaction, string collection, string? after, int limit, JsonTypeInfo<T> type, Func<T, string> id, CancellationToken cancellationToken)
     {
         var page = await transaction.ListAsync(collection, after, limit, MaxPageBytes, cancellationToken).ConfigureAwait(false);
-        var items = page.Documents.Select(document => JsonSerializer.Deserialize(document.Json.Span, type)!).ToList();
+        var items = page.Documents.Select(document => EntityPayload.Read(document, type)!).ToList();
         return new ManagementPage<T>(items, page.HasMore ? id(items[^1]) : null);
     }
 
@@ -125,7 +126,7 @@ internal sealed class SystemCatalog(IStorageEngine engine, ICatalogGuard guard)
         do
         {
             page = await transaction.ListAsync(collection, after, limit: 100, MaxPageBytes, cancellationToken).ConfigureAwait(false);
-            items.AddRange(page.Documents.Select(document => JsonSerializer.Deserialize(document.Json.Span, type)!));
+            items.AddRange(page.Documents.Select(document => EntityPayload.Read(document, type)!));
             after = page.Documents.Count > 0 ? page.Documents[^1].Id : after;
         }
         while (page.HasMore);

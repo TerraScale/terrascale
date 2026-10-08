@@ -4,6 +4,7 @@ using Microsoft.Extensions.Logging;
 using TerraBase.Configuration;
 using TerraBase.Engine.Sqlite;
 using TerraBase.Hosting;
+using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
 
@@ -16,7 +17,7 @@ public sealed class StoreInitializationTests
     [Test]
     public async Task A_store_initializes_only_after_its_creator_released_the_creation_lock()
     {
-        var database = new TenantContext(Guid.NewGuid().ToString(), PlanTier.Hobby, Guid.NewGuid().ToString(), Guid.NewGuid().ToString());
+        var database = new TenantContext(EntityIds.New().ToString(), PlanTier.Hobby, EntityIds.New().ToString(), EntityIds.New().ToString());
         SqliteStorageEngine? engine = null;
         var migratedUnderLock = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var server = await TerraBaseTestServer.StartAsync(services: services => services.AddSingleton(provider =>
@@ -34,7 +35,7 @@ public sealed class StoreInitializationTests
                         SpinWait.SpinUntil(() => migratedUnderLock.Task.IsCompleted || engine!.InitializationsAwaitingRelease > 0, TimeSpan.FromSeconds(30));
                     }
                 },
-                afterMigration: store =>
+                afterBootstrap: store =>
                 {
                     if (store.Tenant == database)
                     {

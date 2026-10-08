@@ -63,7 +63,7 @@ public sealed record ApiKey(
 /// A data API key of a project, as the dashboard lists it (an <see cref="ApiKey"/> of the project's organization narrowed
 /// to the project). Never carries the secret or its hash.
 /// </summary>
-/// <param name="Id">Lowercase hyphenated UUID; list order uses a separate persisted sequence.</param>
+/// <param name="Id">Canonical uppercase ULID; list order uses a separate persisted sequence.</param>
 /// <param name="ProjectId">Owning project.</param>
 /// <param name="Name">Label.</param>
 /// <param name="Scopes">Granted scopes: <c>documents:read</c> and/or <c>documents:write</c>.</param>

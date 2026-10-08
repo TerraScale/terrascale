@@ -3,6 +3,7 @@ using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
 using TerraBase.Engine.Sqlite;
+using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
 
@@ -18,7 +19,7 @@ internal static class StorageFixture
         Span<byte> bytes = stackalloc byte[16];
         bytes.Clear();
         Encoding.UTF8.GetBytes(name, bytes);
-        return new Guid(bytes, bigEndian: true).ToString("D");
+        return new Ulid(bytes).ToString();
     }
 
     /// <summary>Creates one collection through the actual client listener.</summary>
@@ -94,7 +95,7 @@ internal static class StorageFixture
     /// </summary>
     public static async Task<IAsyncDisposable> HoldWorkerAsync(SqliteStorageEngine engine, CancellationToken cancellationToken)
     {
-        var database = new TenantContext(Guid.NewGuid().ToString(), PlanTier.Hobby, Guid.NewGuid().ToString(), Guid.NewGuid().ToString());
+        var database = new TenantContext(EntityIds.New().ToString(), PlanTier.Hobby, EntityIds.New().ToString(), EntityIds.New().ToString());
         await engine.CreateDatabaseAsync(database, cancellationToken);
         var store = (SqliteDatabaseStore)(await engine.OpenDatabaseAsync(database, cancellationToken))!;
         await using (var seed = await store.BeginTransactionAsync(write: true, cancellationToken))

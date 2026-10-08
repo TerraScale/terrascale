@@ -6,6 +6,7 @@ using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
 using TerraBase.Features.UserAuth;
+using TerraBase.Primitives;
 using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Documents;
@@ -77,6 +78,11 @@ internal static class DocumentRoute
 
     private static async ValueTask<TenantResult> ResolveAsync(HttpContext context, ITenantDirectory tenants, DatabaseName name, CancellationToken cancellationToken)
     {
+        if (!EntityIds.IsValid(Project(context)))
+        {
+            return new Validation("project must be a canonical uppercase ULID");
+        }
+
         if (context.Features.Get<ProjectAccess>() is { } access)
         {
             if ((access.DatabaseName is not null && !string.Equals(access.DatabaseName, name.Value, StringComparison.Ordinal))
@@ -125,19 +131,16 @@ internal static class DocumentRoute
         };
 
     /// <summary>
-    /// A document id, or the rule it breaks; the service permits a non-UUID only when that legacy id already exists.
+    /// A caller-supplied document key, or the length or character rule it breaks.
     /// </summary>
     public static Valid<string> CheckDocumentId(string? id) =>
         id is { Length: > 0 and <= 256 } && !id.Any(char.IsControl)
             ? id
             : new Validation("id must be 1 to 256 characters without control characters");
 
-    /// <summary>A document URI built from escaped route values, preserving legacy identities.</summary>
+    /// <summary>A document URI built from escaped route values, escaping caller-supplied keys.</summary>
     public static string Location(HttpContext context, DocumentKey key) =>
         $"/v1/projects/{Uri.EscapeDataString(Project(context))}/databases/{Uri.EscapeDataString(Database(context).Value)}/collections/{Uri.EscapeDataString(key.Collection)}/documents/{Uri.EscapeDataString(key.Id)}";
-
-    public static bool IsUuid(string id) =>
-        Guid.TryParseExact(id, "D", out var guid) && string.Equals(guid.ToString("D"), id, StringComparison.Ordinal);
 
     /// <summary>Accepts only the listed query parameters, each at most once and non-empty.</summary>
     public static Valid<IQueryCollection> CheckParameters(HttpContext context, params string[] allowed)

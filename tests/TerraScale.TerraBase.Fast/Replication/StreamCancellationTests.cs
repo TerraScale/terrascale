@@ -5,6 +5,7 @@ using Grpc.Core.Interceptors;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Features.Replication;
 using TerraBase.Features.Replication.V1;
+using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
 
@@ -27,8 +28,8 @@ public sealed class StreamCancellationTests
         using var channel = tls.CreateChannel(server.PeerAddress!);
         var client = new Features.Replication.V1.Replication.ReplicationClient(channel);
         var fake = new Faker();
-        var database = await server.RegisterAsync(new TenantContext(fake.Random.Guid().ToString("D"), PlanTier.Hobby,
-            fake.Random.Guid().ToString("D"), fake.Random.Guid().ToString("D")));
+        var database = await server.RegisterAsync(new TenantContext(EntityIds.New().ToString(), PlanTier.Hobby,
+            EntityIds.New().ToString(), EntityIds.New().ToString()));
         var hello = ReplicationProtocol.CreateHello(database, RandomNumberGenerator.GetBytes(16));
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token);

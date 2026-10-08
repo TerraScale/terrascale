@@ -3,6 +3,7 @@ using System.Text.Json;
 using Bogus;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Time.Testing;
+using TerraBase.Primitives;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Management;
@@ -193,7 +194,7 @@ public sealed class CredentialApiTests
         var database = await api.CreateManagedDatabaseAsync();
         var foreign = await api.CreateManagedDatabaseAsync();
         var keys = $"{database.ProjectPath}/api-keys";
-        var unknownProject = $"/v1/management/organizations/{database.Organization}/projects/{Guid.NewGuid()}";
+        var unknownProject = $"/v1/management/organizations/{database.Organization}/projects/{EntityIds.New()}";
         const string BadName = "name must be 1 to 128 characters, include a letter or digit and have no control characters";
         const string BadScopes = "scopes must be a non-empty subset of: documents:read, documents:write";
         const string BadLimit = "limit must be an integer between 1 and 100";
@@ -210,7 +211,7 @@ public sealed class CredentialApiTests
         await ErrorAssert.ErrorAsync(
             api.Client.PostAsJsonAsync(Uri(keys), new { name = "ci", scopes = ReadOnly, databaseId = foreign.Id }), HttpStatusCode.NotFound, "not_found");
         await ErrorAssert.ErrorAsync(
-            api.Client.PostAsJsonAsync(Uri($"/v1/management/organizations/{Guid.NewGuid()}/projects/{database.Project}/api-keys"), new { name = "ci", scopes = ReadOnly }),
+            api.Client.PostAsJsonAsync(Uri($"/v1/management/organizations/{EntityIds.New()}/projects/{database.Project}/api-keys"), new { name = "ci", scopes = ReadOnly }),
             HttpStatusCode.NotFound, "not_found");
         await ErrorAssert.ErrorAsync(
             api.Client.PostAsJsonAsync(Uri($"/v1/management/organizations/{foreign.Organization}/projects/{database.Project}/api-keys"), new { name = "ci", scopes = ReadOnly }),
@@ -218,8 +219,8 @@ public sealed class CredentialApiTests
         await ErrorAssert.ErrorAsync(api.Client.GetAsync(Uri($"{unknownProject}/api-keys")), HttpStatusCode.NotFound, "not_found");
         await ErrorAssert.ErrorAsync(api.Client.GetAsync(Uri($"{keys}?limit=0")), HttpStatusCode.BadRequest, "invalid_request", BadLimit);
         await ErrorAssert.ErrorAsync(api.Client.GetAsync(Uri($"{keys}?limit=ten")), HttpStatusCode.BadRequest, "invalid_request", BadLimit);
-        await ErrorAssert.ErrorAsync(api.Client.DeleteAsync(Uri($"{keys}/{Guid.NewGuid()}")), HttpStatusCode.NotFound, "not_found");
-        await ErrorAssert.ErrorAsync(api.Client.DeleteAsync(Uri($"{unknownProject}/api-keys/{Guid.NewGuid()}")), HttpStatusCode.NotFound, "not_found");
+        await ErrorAssert.ErrorAsync(api.Client.DeleteAsync(Uri($"{keys}/{EntityIds.New()}")), HttpStatusCode.NotFound, "not_found");
+        await ErrorAssert.ErrorAsync(api.Client.DeleteAsync(Uri($"{unknownProject}/api-keys/{EntityIds.New()}")), HttpStatusCode.NotFound, "not_found");
 
         // A viewer reads the project's keys but can neither issue nor revoke one.
         using var created = await api.Client.PostAsJsonAsync(Uri(keys), new { name = "ci", scopes = ReadOnly });
@@ -230,7 +231,7 @@ public sealed class CredentialApiTests
         await Assert.That(listed.StatusCode).IsEqualTo(HttpStatusCode.OK);
         await ErrorAssert.ErrorAsync(viewer.PostAsJsonAsync(Uri(keys), new { name = "ci", scopes = ReadOnly }), HttpStatusCode.Forbidden, "forbidden_role", RoleTooLow);
         await ErrorAssert.ErrorAsync(viewer.DeleteAsync(Uri($"{keys}/{id}")), HttpStatusCode.Forbidden, "forbidden_role", RoleTooLow);
-        await ErrorAssert.ErrorAsync(viewer.DeleteAsync(Uri($"{keys}/{Guid.NewGuid()}")), HttpStatusCode.NotFound, "not_found");
+        await ErrorAssert.ErrorAsync(viewer.DeleteAsync(Uri($"{keys}/{EntityIds.New()}")), HttpStatusCode.NotFound, "not_found");
     }
 
     [Test]

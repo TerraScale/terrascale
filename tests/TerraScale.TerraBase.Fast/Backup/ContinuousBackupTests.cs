@@ -9,6 +9,7 @@ using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
 using TerraBase.Engine.Cluster;
 using TerraBase.Features.Backup;
+using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
 
@@ -186,7 +187,7 @@ public sealed class ContinuousBackupTests
         using var oci = new FakeOci();
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 7, 12, 0, 0, TimeSpan.Zero));
         var store = new FakeMemberStore(time);
-        var database = new TenantContext(Guid.NewGuid().ToString(), PlanTier.Hobby, Guid.NewGuid().ToString(), Guid.NewGuid().ToString());
+        var database = new TenantContext(EntityIds.New().ToString(), PlanTier.Hobby, EntityIds.New().ToString(), EntityIds.New().ToString());
         var file = $"v1/{database.OrganizationId}/{database.ProjectId}/{database.DatabaseId}";
         await using var a = await MemberAsync("member-a");
         await using var b = await MemberAsync("member-b");

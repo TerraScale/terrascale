@@ -2,6 +2,7 @@ using System.Runtime.ExceptionServices;
 using Bogus;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using TerraBase.Primitives;
 using TerraBase.Testing;
 
 namespace TerraBase.Slow.Platform;
@@ -42,7 +43,7 @@ public sealed class StorageShutdownTests
                         using var collection = await http.PostAsJsonAsync(
                             new Uri($"/v1/projects/{project}/databases/{database}/collections", UriKind.Relative), new { name = "items" }, stop.Token);
                         using var put = await http.PutAsJsonAsync(
-                            new Uri($"/v1/projects/{project}/databases/{database}/collections/items/documents/{Guid.CreateVersion7()}", UriKind.Relative),
+                            new Uri($"/v1/projects/{project}/databases/{database}/collections/items/documents/{EntityIds.New()}", UriKind.Relative),
                             new { title = Faker.Commerce.ProductName() },
                             stop.Token);
                         if (created.IsSuccessStatusCode && collection.IsSuccessStatusCode && put.IsSuccessStatusCode

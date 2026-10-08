@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Features.Management;
 using TerraBase.Hosting;
+using TerraBase.Primitives;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Tenancy;
@@ -22,7 +23,7 @@ public sealed class TenantIsolationTests
     private static readonly string[] OwnerField = ["owner"];
 
     // The id of every document these tests write; documents are created with UUID ids.
-    private const string DocumentId = "0199a000-0000-7000-8000-000000000001";
+    private const string DocumentId = "01K6G00000E008000000000001";
 
     private static readonly string[] CallerOnlyRoutes =
     [
@@ -215,7 +216,7 @@ public sealed class TenantIsolationTests
         foreach (var request in new object[]
         {
             new { name = "k", scopes = ReadScope },
-            new { name = "k", scopes = ReadScope, organizationId = Guid.NewGuid().ToString() },
+            new { name = "k", scopes = ReadScope, organizationId = EntityIds.New().ToString() },
             new { name = "k", scopes = ReadScope, organizationId = tenant.OrganizationId, projectId = other.ProjectId },
             new { name = "k", scopes = ReadScope, organizationId = tenant.OrganizationId, databaseId = app },
             new { name = "k", scopes = ReadScope, organizationId = tenant.OrganizationId, projectId = tenant.ProjectId, databaseId = secondAppId },
@@ -359,7 +360,7 @@ public sealed class TenantIsolationTests
     {
         using var invited = await dashboard.PostAsJsonAsync(
             new Uri($"/v1/management/organizations/{tenant.OrganizationId}/invitations", UriKind.Relative),
-            new { email = $"{Guid.NewGuid():N}@example.com", role = "member" });
+            new { email = $"{EntityIds.New()}@example.com", role = "member" });
         invited.EnsureSuccessStatusCode();
         return (await invited.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("invitation").GetProperty("id").GetString()!;
     }

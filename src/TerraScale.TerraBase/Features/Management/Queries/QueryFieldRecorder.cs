@@ -1,4 +1,5 @@
 using TerraBase.Hosting;
+using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using static TerraBase.Features.Management.SystemCatalog;
 
@@ -116,7 +117,7 @@ internal sealed class QueryFieldRecorder(SystemCatalog catalog, TimeProvider tim
                 return;
             }
 
-            var id = Guid.NewGuid().ToString("N");
+            var id = EntityIds.New().ToString();
             try
             {
                 await WriteAsync(id, batch, cancellationToken).ConfigureAwait(false);

@@ -7,6 +7,7 @@ using Bogus;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Hosting;
+using TerraBase.Primitives;
 using TerraBase.Testing;
 
 namespace TerraBase.Slow.Management;
@@ -360,9 +361,9 @@ public sealed class CommitConcurrencyTests
 
     private static Uri Uri(string path) => new(path, UriKind.Relative);
 
-    private static string NewId() => Guid.CreateVersion7().ToString();
+    private static string NewId() => EntityIds.New().ToString();
 
-    private static string User() => Faker.Random.Guid().ToString();
+    private static string User() => EntityIds.New().ToString();
 
     // The suffix keeps two addresses of one test from colliding by chance.
     private static string Email() => Faker.Internet.Email(uniqueSuffix: Faker.Random.AlphaNumeric(6));

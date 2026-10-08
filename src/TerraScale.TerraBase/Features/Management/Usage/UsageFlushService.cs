@@ -5,6 +5,7 @@ using TerraBase.Features.Management.Queries;
 using TerraBase.Features.Replication;
 using TerraBase.Features.Replication.V1;
 using TerraBase.Hosting;
+using TerraBase.Primitives;
 
 namespace TerraBase.Features.Management.Usage;
 
@@ -21,7 +22,7 @@ internal sealed partial class UsageFlushService(
     private static readonly TimeSpan Interval = TimeSpan.FromSeconds(10);
 
     // Shared process epoch; usage and query shapes number their own independent batches.
-    private readonly ByteString _epoch = ByteString.CopyFrom(Guid.NewGuid().ToByteArray());
+    private readonly ByteString _epoch = ByteString.CopyFrom(EntityIds.New().ToByteArray());
 
     // A clean shutdown saves what is pending, within the host's shutdown timeout. What this flush cannot save is lost
     // and logged: usage counts are best-effort dashboard figures, so they never fail or extend a shutdown.

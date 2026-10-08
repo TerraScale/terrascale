@@ -10,6 +10,7 @@ using TerraBase.Features.ApiKeys;
 using TerraBase.Features.Management;
 using TerraBase.Features.Replication;
 using TerraBase.Features.Replication.V1;
+using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
 
@@ -642,9 +643,9 @@ public sealed class CatalogReplicationTests
         public static async Task<CatalogTenant> CreateAsync(TerraBaseTestServer primary, string database)
         {
             using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
-            var user = Guid.NewGuid().ToString();
+            var user = EntityIds.New().ToString();
             var management = primary.Services.GetRequiredService<IManagementService>();
-            var organization = (await management.CreateOrganizationAsync(user, $"Org {Guid.NewGuid():N}", deadline.Token)).Value
+            var organization = (await management.CreateOrganizationAsync(user, $"Org {EntityIds.New()}", deadline.Token)).Value
                 ?? throw new InvalidOperationException("the primary did not create the organization");
             var project = (await management.CreateProjectAsync(user, organization.Id, "main", deadline.Token)).Value
                 ?? throw new InvalidOperationException("the primary did not create the project");

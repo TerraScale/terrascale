@@ -6,6 +6,7 @@ using TerraBase.Engine;
 using TerraBase.Features.Documents;
 using TerraBase.Features.Replication;
 using TerraBase.Features.Replication.V1;
+using TerraBase.Primitives;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Documents;
@@ -103,7 +104,7 @@ public sealed class ReplicationShapeTests
         var token = deadline.Token;
         using var channel = peerTls.CreateChannel(server.PeerAddress!);
         using var call = new Features.Replication.V1.Replication.ReplicationClient(channel).Sync(cancellationToken: token);
-        var origin = Guid.NewGuid().ToByteArray(bigEndian: true);
+        var origin = EntityIds.New().ToByteArray();
         ReadOnlyMemory<byte> proof = JournalDigest.Initial(origin);
         await call.RequestStream.WriteAsync(new SyncRequest { Hello = ReplicationProtocol.CreateHello(tenant.Database("db"), origin) }, token);
         await Assert.That(await call.ResponseStream.MoveNext(token)).IsTrue();

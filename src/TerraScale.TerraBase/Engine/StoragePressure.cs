@@ -6,6 +6,6 @@ namespace TerraBase.Engine;
 public sealed record StoragePressure(long? PhysicalBytes, IReadOnlyList<StoredTenantPressure> TopTenants);
 
 /// <summary>Physical storage attributed to one organization.</summary>
-/// <param name="Org">The organization's lowercase hyphenated UUID.</param>
+/// <param name="Org">The organization's canonical uppercase ULID.</param>
 /// <param name="Bytes">Sum of its database, WAL and SHM file lengths.</param>
 public sealed record StoredTenantPressure(string Org, long Bytes);

@@ -88,7 +88,7 @@ internal sealed class StampingStorageEngine(IStorageEngine inner, ISystemReplica
     public ValueTask<bool> CopyDatabaseAsync(TenantContext source, TenantContext target, CancellationToken cancellationToken) =>
         inner.CopyDatabaseAsync(source, target, cancellationToken);
 
-    public async ValueTask<bool> DeleteDatabaseAsync(TenantContext database, CancellationToken cancellationToken, bool retainIntentOwnership = false, Guid? incarnation = null)
+    public async ValueTask<bool> DeleteDatabaseAsync(TenantContext database, CancellationToken cancellationToken, bool retainIntentOwnership = false, Ulid? incarnation = null)
     {
         Interlocked.Increment(ref _epoch);
         try
@@ -138,7 +138,7 @@ internal sealed class StampingStorageEngine(IStorageEngine inner, ISystemReplica
 
     private sealed class Store(StampingStorageEngine engine, TenantContext? database, IDatabaseStore inner) : IDatabaseStore
     {
-        public Guid Incarnation => inner.Incarnation;
+        public Ulid Incarnation => inner.Incarnation;
 
         public TenantContext? Tenant => inner.Tenant;
 

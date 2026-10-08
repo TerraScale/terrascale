@@ -6,6 +6,7 @@ using System.Text.Json;
 using Bogus;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine.Cluster;
+using TerraBase.Primitives;
 using TerraBase.Testing;
 
 namespace TerraBase.Slow.CrossRegion;
@@ -57,7 +58,7 @@ public sealed class CrossRegionPartitionTests
 
             // The project in both regions; the canary at home in gru with a replica in sfo. A key per region (issued on its
             // primary, served by its follower).
-            var (organization, project, database) = (Guid.NewGuid().ToString("D"), Guid.NewGuid().ToString("D"), Guid.NewGuid().ToString("D"));
+            var (organization, project, database) = (EntityIds.New().ToString(), EntityIds.New().ToString(), EntityIds.New().ToString());
             foreach (var primary in members.Where(member => member.Name.EndsWith("-a", StringComparison.Ordinal)))
             {
                 using var service = primary.Api!.Service(primary.Api.User);
@@ -219,7 +220,7 @@ public sealed class CrossRegionPartitionTests
 
     private static string Registration(string organization, string project, string? database) => JsonSerializer.Serialize(new
     {
-        id = Guid.NewGuid().ToString("D"),
+        id = EntityIds.New().ToString(),
         ops = new object?[]
         {
             new { op = "create_organization", id = organization, name = $"partition-{organization[..8]}" },

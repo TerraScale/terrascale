@@ -12,7 +12,7 @@ public interface IDatabaseStore
     bool IsClosed { get; }
 
     /// <summary>Persisted identity shared by database-scoped handles and versions; stable across reopen, fresh for each new database or copy.</summary>
-    Guid Incarnation { get; }
+    Ulid Incarnation { get; }
 
     /// <summary>
     /// Starts a transaction. Write transactions are serialized per database; read transactions see

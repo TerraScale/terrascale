@@ -3,6 +3,7 @@ using System.Net.Http.Headers;
 using System.Text.Json;
 using Bogus;
 using Microsoft.IdentityModel.Tokens;
+using TerraBase.Primitives;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Management;
@@ -20,8 +21,8 @@ public sealed class ProjectTokenTests
     {
         var faker = new Faker();
         await using var api = await ManagementApi.StartAsync();
-        var project = faker.Random.Guid().ToString();
-        using var client = api.WithToken(Token(api, faker.Random.Guid().ToString(), project, AllScopes));
+        var project = EntityIds.New().ToString();
+        using var client = api.WithToken(Token(api, EntityIds.New().ToString(), project, AllScopes));
 
         using var created = await client.PostAsJsonAsync(Uri(prefix + project + suffix), new { name = "main" });
         await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created);
@@ -41,8 +42,8 @@ public sealed class ProjectTokenTests
     {
         var faker = new Faker();
         await using var api = await ManagementApi.StartAsync();
-        var project = faker.Random.Guid().ToString();
-        using var client = api.WithToken(Token(api, faker.Random.Guid().ToString(), project, AllScopes));
+        var project = EntityIds.New().ToString();
+        using var client = api.WithToken(Token(api, EntityIds.New().ToString(), project, AllScopes));
         using var request = new HttpRequestMessage(new HttpMethod(method), Uri($"/v1/projects/{project}" + suffix))
         {
             Content = method == "POST" ? JsonContent.Create(new { name = "other" }) : null,
@@ -57,8 +58,8 @@ public sealed class ProjectTokenTests
     {
         var faker = new Faker();
         await using var api = await ManagementApi.StartAsync();
-        var project = faker.Random.Guid().ToString();
-        using var client = api.WithToken(Token(api, "tsk_" + faker.Random.Guid().ToString("N"), project, AllScopes));
+        var project = EntityIds.New().ToString();
+        using var client = api.WithToken(Token(api, "tsk_" + EntityIds.New().ToString(), project, AllScopes));
         var databases = $"/v1/projects/{project}/databases";
         var database = databases + "/main";
         var collection = database + "/collections/people";
@@ -84,7 +85,7 @@ public sealed class ProjectTokenTests
         using var query = await client.PostAsJsonAsync(Uri(collection + "/query"), new { filter = new { eq = new object[] { "/count", 2 } } });
         query.EnsureSuccessStatusCode();
         await Assert.That((await query.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("items").GetArrayLength()).IsEqualTo(1);
-        var transactionId = faker.Random.Guid().ToString();
+        var transactionId = EntityIds.New().ToString();
         using var transaction = await client.PostAsJsonAsync(Uri(database + "/transactions"), new
         {
             ops = new object[] { new { op = "create", collection = "people", id = transactionId, document = new { name, count = 3 } } },
@@ -110,8 +111,8 @@ public sealed class ProjectTokenTests
         using var written = await legacy.PutAsJsonAsync(Uri(document), new { name });
         written.EnsureSuccessStatusCode();
 
-        var actor = "tsk_" + faker.Random.Guid().ToString("N");
-        using var jwt = api.WithToken(Token(api, actor, database.Project, AllScopes, edit: token => token.Claims["org_id"] = faker.Random.Guid().ToString()));
+        var actor = "tsk_" + EntityIds.New().ToString();
+        using var jwt = api.WithToken(Token(api, actor, database.Project, AllScopes, edit: token => token.Claims["org_id"] = EntityIds.New().ToString()));
         jwt.DefaultRequestHeaders.Add("X-TerraBase-User-Id", api.User);
         using var read = await jwt.GetAsync(Uri(document));
         read.EnsureSuccessStatusCode();
@@ -139,8 +140,8 @@ public sealed class ProjectTokenTests
         await using var api = await ManagementApi.StartAsync();
         var database = await api.CreateManagedDatabaseAsync();
         await api.VerifyProjectBindingAsync(database.Organization, database.Project);
-        var actor = faker.Random.Guid().ToString();
-        using var wrongProject = api.WithToken(Token(api, actor, faker.Random.Guid().ToString(), scope: null));
+        var actor = EntityIds.New().ToString();
+        using var wrongProject = api.WithToken(Token(api, actor, EntityIds.New().ToString(), scope: null));
         using var noProject = api.WithToken(Token(api, actor, project: null, scope: AllScopes));
         using var noScope = api.WithToken(Token(api, actor, database.Project, scope: null));
         using var readOnly = api.WithToken(Token(api, actor, database.Project, "databases:read documents:read"));
@@ -163,8 +164,8 @@ public sealed class ProjectTokenTests
     {
         var faker = new Faker();
         await using var api = await ManagementApi.StartAsync();
-        var project = faker.Random.Guid().ToString();
-        var actor = faker.Random.Guid().ToString();
+        var project = EntityIds.New().ToString();
+        var actor = EntityIds.New().ToString();
         var now = DateTime.UtcNow;
         var rsa = api.Issuer.AddKey(SecurityAlgorithms.RsaSha256);
         Action<SecurityTokenDescriptor>[] edits =
@@ -214,7 +215,7 @@ public sealed class ProjectTokenTests
         using var backupResponse = await api.Client.PostAsync(Uri(first.Path + "/backups"), content: null);
         backupResponse.EnsureSuccessStatusCode();
         var backup = (await backupResponse.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString();
-        using var restricted = api.WithToken(Token(api, faker.Random.Guid().ToString(), first.Project, AllScopes, database: "first"));
+        using var restricted = api.WithToken(Token(api, EntityIds.New().ToString(), first.Project, AllScopes, database: "first"));
         var databases = $"/v1/projects/{first.Project}/databases";
         var listed = await restricted.GetFromJsonAsync<JsonElement>(Uri(databases));
         await Assert.That(listed.GetProperty("items").EnumerateArray().Select(item => item.GetProperty("name").GetString()!))
@@ -234,7 +235,7 @@ public sealed class ProjectTokenTests
         await Assert.That(await StatusAsync(restricted.PostAsJsonAsync(Uri(first.Data + $"/backups/{backup}/restore"), new { name = "restored" })))
             .IsEqualTo(HttpStatusCode.NotFound);
 
-        using var unrestricted = api.WithToken(Token(api, faker.Random.Guid().ToString(), first.Project, AllScopes));
+        using var unrestricted = api.WithToken(Token(api, EntityIds.New().ToString(), first.Project, AllScopes));
         var unchanged = await unrestricted.GetFromJsonAsync<JsonElement>(Uri(databases));
         await Assert.That(unchanged.GetProperty("items").GetArrayLength()).IsEqualTo(2);
     }

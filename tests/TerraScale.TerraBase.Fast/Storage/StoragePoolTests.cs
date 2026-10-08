@@ -3,6 +3,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
 using TerraBase.Engine.Sqlite;
+using TerraBase.Primitives;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Storage;
@@ -67,8 +68,8 @@ public sealed class StoragePoolTests
         var pressure = server.Services.GetRequiredService<IStorageEngine>();
         var store = await engine.OpenDatabaseAsync(source, deadline.Token);
         var system = await engine.OpenSystemDatabaseAsync(deadline.Token);
-        var target = source with { DatabaseId = Guid.NewGuid().ToString() };
-        var cold = source with { DatabaseId = Guid.NewGuid().ToString() };
+        var target = source with { DatabaseId = EntityIds.New().ToString() };
+        var cold = source with { DatabaseId = EntityIds.New().ToString() };
         // An unopened file, as an earlier server left it, exercises first-open migration behind the gate.
         await DocumentFiles.WriteAsync(Path.Combine(server.DataDirectory, cold.OrganizationId, cold.ProjectId!, cold.DatabaseId + ".db"));
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);

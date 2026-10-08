@@ -47,16 +47,16 @@ internal static class SqliteStatements
 
     // Every creation draws a new generation, so a recreated collection starts a new shape lineage.
     public const string CreateCollection = """
-        INSERT INTO collections (name, created_at, generation) VALUES ($collection, $created, random())
+        INSERT INTO collections (name, created_at, generation, entity_id) VALUES ($collection, $created, random(), $entityId)
         ON CONFLICT (name) DO NOTHING;
         """;
 
-    public const string GetCollection = "SELECT name, created_at, generation FROM collections WHERE name = $collection;";
+    public const string GetCollection = "SELECT name, created_at, generation, entity_id FROM collections WHERE name = $collection;";
 
     // The first page walks the primary key in order and stops at the limit.
-    public const string ListCollectionsFirst = "SELECT name, created_at, generation FROM collections ORDER BY name LIMIT $limit;";
+    public const string ListCollectionsFirst = "SELECT name, created_at, generation, entity_id FROM collections ORDER BY name LIMIT $limit;";
 
-    public const string ListCollectionsAfter = "SELECT name, created_at, generation FROM collections WHERE name > $after ORDER BY name LIMIT $limit;";
+    public const string ListCollectionsAfter = "SELECT name, created_at, generation, entity_id FROM collections WHERE name > $after ORDER BY name LIMIT $limit;";
 
     // Shape history: every write of a client database, a NULL body for a tombstone. No row is
     // inserted when the collection has no metadata, which the writer refuses.
@@ -150,7 +150,7 @@ internal static class SqliteStatements
     public const string CollectionDocumentIds = "SELECT id, octet_length(id) FROM documents WHERE collection = $collection ORDER BY id LIMIT $limit;";
 
     // The origin is the existing persisted incarnation in RFC byte order.
-    public const string Origin = "SELECT unhex(incarnation) FROM commit_offset WHERE id = 1;";
+    public const string Origin = "SELECT incarnation FROM commit_offset WHERE id = 1;";
 
     public const string Complete = "SELECT complete FROM replication_state WHERE id = 1;";
 

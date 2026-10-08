@@ -24,7 +24,7 @@ internal static class BackupState
 }
 
 /// <summary>A backup and where it is in its lifecycle.</summary>
-/// <param name="Id">Lowercase hyphenated UUID; also the id of the snapshot, an engine database of the backed-up database's project (<see cref="Storage"/>).</param>
+/// <param name="Id">Canonical uppercase ULID; also the id of the snapshot, an engine database of the backed-up database's project (<see cref="Storage"/>).</param>
 /// <param name="OrganizationId">The organization (tenant) of the backed-up database.</param>
 /// <param name="ProjectId">Its project.</param>
 /// <param name="DatabaseId">The backed-up database.</param>

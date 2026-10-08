@@ -9,6 +9,7 @@ using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Fast.Storage;
 using TerraBase.Features.Documents;
+using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
 
@@ -661,9 +662,9 @@ public sealed class SqlApiTests
     /// <summary>A database path with, in turn, an unknown organization, project and database.</summary>
     internal static string[] UnknownDatabasePaths(ManagedDatabaseRef database) =>
     [
-        $"/v1/management/organizations/{Guid.NewGuid()}/projects/{database.Project}/databases/{database.Id}",
-        $"/v1/management/organizations/{database.Organization}/projects/{Guid.NewGuid()}/databases/{database.Id}",
-        $"{database.ProjectPath}/databases/{Guid.NewGuid()}",
+        $"/v1/management/organizations/{EntityIds.New()}/projects/{database.Project}/databases/{database.Id}",
+        $"/v1/management/organizations/{database.Organization}/projects/{EntityIds.New()}/databases/{database.Id}",
+        $"{database.ProjectPath}/databases/{EntityIds.New()}",
     ];
 
     private static async Task<Dictionary<string, Person>> SeedPeopleAsync(ManagementApi api, ManagedDatabaseRef database)

@@ -10,6 +10,7 @@ using Microsoft.Extensions.Time.Testing;
 using TerraBase.Features.Management;
 using TerraBase.Features.Management.Queries;
 using TerraBase.Hosting;
+using TerraBase.Primitives;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Management;
@@ -135,7 +136,7 @@ public sealed class QueryShapeApiTests
                 id = (await ShapesAsync(api.Client, database))[0].GetProperty("id").GetString()!;
                 var other = await api.CreateManagedDatabaseAsync();
                 await Assert.That((await ShapesAsync(api.Client, other)).Length).IsEqualTo(0);
-                using var stranger = api.As(Guid.NewGuid().ToString());
+                using var stranger = api.As(EntityIds.New().ToString());
                 using var denied = await stranger.GetAsync(ManagementApi.Uri(Stats(database)));
                 await Assert.That(denied.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
             }
@@ -164,10 +165,10 @@ public sealed class QueryShapeApiTests
     {
         await using var api = await ManagementApi.StartAsync(managementCredential: true);
         using var service = api.Service(api.User);
-        var document = Guid.NewGuid().ToString();
+        var document = EntityIds.New().ToString();
         await PostAsync(service, "/v1/management/commits", new
         {
-            id = Guid.NewGuid().ToString(),
+            id = EntityIds.New().ToString(),
             ops = new[] { new { op = "create", collection = "notes", id = document, document = new { text = new Faker().Lorem.Word() } } },
         });
         await PostAsync(service, "/v1/management/documents/notes/query", new { filter = Eq("/text", "private-dashboard-value") });

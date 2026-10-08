@@ -401,9 +401,9 @@ internal sealed class ShapeService : IShapeService
 
     // The shape id and handle bind the scope, the database incarnation and the collection generation,
     // so a recreated database or collection starts a new lineage.
-    private static (string ShapeId, string Handle) Identify(ShapeRequest request, Guid incarnation, CollectionInfo collection)
+    private static (string ShapeId, string Handle) Identify(ShapeRequest request, Ulid incarnation, CollectionInfo collection)
     {
-        var scope = string.Join('\0', request.Scope, incarnation.ToString("N"), DocumentRoute.Decimal(collection.Generation));
+        var scope = string.Join('\0', request.Scope, incarnation.ToString(), DocumentRoute.Decimal(collection.Generation));
         var shapeId = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes("TB-SHAPE-V1\0" + scope))[..16]);
         var handle = "h1-" + Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes("TB-SHAPE-HANDLE-V1\0" + scope))[..8]);
         return (shapeId, handle);

@@ -1189,7 +1189,7 @@ public sealed class ShapeApiTests
 
         // A document first written after S, ordering before the kept one, with 50000 revisions: walking them
         // would exhaust the query budget; the step skips the id by its first entry.
-        await WriteHistoryAsync(api, "00000000-0000-7000-8000-000000000000");
+        await WriteHistoryAsync(api, "0000000000E008000000000000");
 
         using var replay = await GetAsync(shapes, start.Headers.Location!.OriginalString);
 
@@ -1204,7 +1204,7 @@ public sealed class ShapeApiTests
         using var shapes = await api.ClientWithScopesAsync(ApiKeyScopes.ShapesRead);
         // Three pages of two documents each: 700 KiB bodies fill a page with one, so pages are one document.
         var padding = new string('x', 700 * 1024);
-        string[] ids = ["00000000-0000-7000-8000-000000000010", "00000000-0000-7000-8000-000000000020", "00000000-0000-7000-8000-000000000030"];
+        string[] ids = ["0000000000E00800000000000G", "0000000000E008000000000010", "0000000000E00800000000001G"];
         foreach (var id in ids)
         {
             await api.SendRawAsync(HttpMethod.Put, api.Document(id), $$"""{"padding":"{{padding}}"}""", "application/json");
@@ -1231,7 +1231,7 @@ public sealed class ShapeApiTests
         var before = await PagesAsync();
         // (a) ids first written after the offset, ordering before, between and after the snapshot's ids;
         // (b) the snapshot's own documents rewritten and deleted.
-        foreach (var later in new[] { "00000000-0000-7000-8000-000000000005", "00000000-0000-7000-8000-000000000015", "00000000-0000-7000-8000-000000000035" })
+        foreach (var later in new[] { "0000000000E008000000000005", "0000000000E00800000000000N", "0000000000E00800000000001N" })
         {
             await api.SendRawAsync(HttpMethod.Put, api.Document(later), $$"""{"padding":"{{padding}}"}""", "application/json");
         }

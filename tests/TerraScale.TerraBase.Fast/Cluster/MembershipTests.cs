@@ -2,6 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
 using TerraBase.Engine.Cluster;
+using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
 
@@ -19,7 +20,7 @@ public sealed class MembershipTests
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 7, 12, 0, 0, TimeSpan.Zero));
         var store = new FakeMemberStore(time);
         var databases = Enumerable.Range(0, Databases)
-            .Select(_ => new TenantContext(Guid.NewGuid().ToString(), PlanTier.Hobby, Guid.NewGuid().ToString(), Guid.NewGuid().ToString())).ToArray();
+            .Select(_ => new TenantContext(EntityIds.New().ToString(), PlanTier.Hobby, EntityIds.New().ToString(), EntityIds.New().ToString())).ToArray();
         var members = new Dictionary<string, TerraBaseTestServer>(StringComparer.Ordinal);
         try
         {
@@ -99,6 +100,6 @@ public sealed class MembershipTests
 
         await Assert.That(await leases.ShipperEpochAsync(null, CancellationToken.None)).IsEqualTo(1UL);
         await Assert.That(await leases.ShipperEpochAsync(
-            new TenantContext(Guid.NewGuid().ToString(), PlanTier.Hobby, Guid.NewGuid().ToString(), Guid.NewGuid().ToString()), CancellationToken.None)).IsEqualTo(1UL);
+            new TenantContext(EntityIds.New().ToString(), PlanTier.Hobby, EntityIds.New().ToString(), EntityIds.New().ToString()), CancellationToken.None)).IsEqualTo(1UL);
     }
 }

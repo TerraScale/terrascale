@@ -8,12 +8,13 @@ using TerraBase.Errors;
 using TerraBase.Features.Documents;
 using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
+using TerraBase.Primitives;
 using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management;
 
 /// <summary>A commit: its id and operations (docs/management-commits.md). Its schema documents the request; the endpoint reads it itself.</summary>
-/// <param name="Id">Client-chosen lowercase UUID, the same on every retry of one logical update.</param>
+/// <param name="Id">Client-chosen canonical uppercase ULID, the same on every retry of one logical update.</param>
 /// <param name="Ops">
 /// 1 to 1024 operations: Management operations as described here, and document operations, which have a <c>collection</c>
 /// member and the members of a Documents API transaction operation (<see cref="TransactionOpRequest"/>).
@@ -271,7 +272,7 @@ public sealed class CommitEndpoint(IManagementCommits commits) : EndpointWithout
         : !IsIdentifier(op.Project) ? new Validation("project must be an id")
         : !IsIdentifier(op.Database) ? new Validation("database must be an id")
         : !IsIdentifier(op.Invitation) ? new Validation("invitation must be an id")
-        : op.Id is { } id && !IsNewId(id) ? new Validation("id must be a lowercase hyphenated UUID")
+        : op.Id is { } id && !IsNewId(id) ? new Validation("id must be a canonical uppercase ULID")
         : op.HomeRegion is { } home && !TerraBaseOptions.IsRegion(home) ? new Validation("home_region must be a region id")
         : op.ReplicaRegions?.Any(region => region is null || !TerraBaseOptions.IsRegion(region)) == true ? new Validation("replica_regions must be region ids")
         : op.TokenHash is { } hash && !(hash.Length == 64 && hash.All(char.IsAsciiHexDigitLower)) ? new Validation("token_hash must be 64 lowercase hex characters")
@@ -301,9 +302,9 @@ public sealed class CommitEndpoint(IManagementCommits commits) : EndpointWithout
     }
 
     // Resource ids are opaque here, as in route segments: an unknown one is simply not found.
-    private static bool IsIdentifier(string? id) => id is null || (id.Length is > 0 and <= 64 && !id.Any(char.IsControl));
+    private static bool IsIdentifier(string? id) => id is null || EntityIds.IsValid(id);
 
-    private static bool IsNewId(string id) => Guid.TryParseExact(id, "D", out var parsed) && parsed.ToString("D") == id;
+    private static bool IsNewId(string id) => EntityIds.IsValid(id);
 }
 
 /// <summary>A commit request read and validated: its id and operations.</summary>

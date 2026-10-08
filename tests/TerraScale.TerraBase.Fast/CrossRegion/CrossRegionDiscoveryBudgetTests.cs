@@ -11,6 +11,7 @@ using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine.Cluster;
 using TerraBase.Features.CrossRegion;
 using TerraBase.Features.CrossRegion.V1;
+using TerraBase.Primitives;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.CrossRegion;
@@ -60,10 +61,10 @@ public sealed class CrossRegionDiscoveryBudgetTests
             await using var sfo = await StartAsync(network, credentials, "sfo-1", "sfo", "sfo-a", bus, clock);
             try
             {
-                var organization = Guid.NewGuid().ToString("D");
-                var project = Guid.NewGuid().ToString("D");
-                var holderOrganization = Guid.NewGuid().ToString("D");
-                var holderProject = Guid.NewGuid().ToString("D");
+                var organization = EntityIds.New().ToString();
+                var project = EntityIds.New().ToString();
+                var holderOrganization = EntityIds.New().ToString();
+                var holderProject = EntityIds.New().ToString();
                 var organizationName = faker.Company.CompanyName();
                 var projectName = faker.Random.AlphaNumeric(12);
                 // A cannot adopt C's database from SFO's replies: only C and SFO register its project.
@@ -76,7 +77,7 @@ public sealed class CrossRegionDiscoveryBudgetTests
                     using var service = api.Service(api.User);
                     using var registered = await service.PostAsJsonAsync(ManagementApi.Uri("/v1/management/commits"), new
                     {
-                        id = Guid.NewGuid().ToString("D"),
+                        id = EntityIds.New().ToString(),
                         ops = new object[]
                         {
                             new { op = "create_organization", id = registeredOrganization, name = organizationName + (registeredOrganization == organization ? " source" : " holder") },

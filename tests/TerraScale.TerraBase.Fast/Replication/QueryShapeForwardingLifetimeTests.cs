@@ -13,6 +13,7 @@ using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Replication;
 using TerraBase.Features.Replication.V1;
 using TerraBase.Hosting;
+using TerraBase.Primitives;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Replication;
@@ -110,7 +111,7 @@ public sealed class QueryShapeForwardingLifetimeTests
         var catalog = api.Server.Services.GetRequiredService<SystemCatalog>();
         const string limited = "node:replica";
         QueryShapeSenderRecord[] seeded = [.. Enumerable.Range(0, 15).Select(_ => new QueryShapeSenderRecord("alpha", limited,
-            Convert.ToBase64String(Guid.NewGuid().ToByteArray()), 1, time.GetUtcNow()))];
+            Convert.ToBase64String(EntityIds.New().ToByteArray()), 1, time.GetUtcNow()))];
         await SeedSendersAsync(catalog, seeded);
         using var channel = peers.CreateChannel(api.Server.PeerAddress!);
         var client = new CatalogQueryShapes.CatalogQueryShapesClient(channel);
@@ -136,10 +137,10 @@ public sealed class QueryShapeForwardingLifetimeTests
         await client.AddAsync(Batch(database, shape, time, "node"));
         await Assert.That(await SenderCountAsync(catalog)).IsEqualTo(17);
         await Assert.That((await ShapesAsync(owner, database)).Single().Queries).IsEqualTo(4);
-        var unknown = new QueryShapeSenderRecord("future", "unsupported-node", Convert.ToBase64String(Guid.NewGuid().ToByteArray()),
+        var unknown = new QueryShapeSenderRecord("future", "unsupported-node", Convert.ToBase64String(EntityIds.New().ToByteArray()),
             1, seeded[0].LastSeenAt);
         await SeedSendersAsync(catalog, Enumerable.Range(0, 1006).Select(index => new QueryShapeSenderRecord("alpha", "other-node-" + index,
-            Convert.ToBase64String(Guid.NewGuid().ToByteArray()), 1, time.GetUtcNow())).Append(unknown));
+            Convert.ToBase64String(EntityIds.New().ToByteArray()), 1, time.GetUtcNow())).Append(unknown));
         await Assert.That(await SenderCountAsync(catalog)).IsEqualTo(1024);
         var newcomer = Batch(database, shape, time, "new-node");
         await RefusedAsync(client, newcomer, StatusCode.ResourceExhausted);
@@ -220,7 +221,7 @@ public sealed class QueryShapeForwardingLifetimeTests
         {
             Format = "alpha",
             Sender = sender,
-            Epoch = epoch ?? ByteString.CopyFrom(Guid.NewGuid().ToByteArray()),
+            Epoch = epoch ?? ByteString.CopyFrom(EntityIds.New().ToByteArray()),
             Sequence = sequence,
             Envelope = ByteString.CopyFrom(ApplicationEnvelope.Encode(JsonSerializer.SerializeToUtf8Bytes(
             new QueryShapeForwardPayload([new QueryShapeTransfer(database.Organization, database.Project, database.Id, stats)], time.GetUtcNow()),

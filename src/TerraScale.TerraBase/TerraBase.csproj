@@ -37,6 +37,7 @@
     <PackageReference Include="NATS.Client.KeyValueStore" />
     <PackageReference Include="NativeCompressions" />
     <PackageReference Include="Ulid" />
+    <PackageReference Include="NUlid" />
     <PackageReference Include="SqlParserCS" />
   </ItemGroup>
 

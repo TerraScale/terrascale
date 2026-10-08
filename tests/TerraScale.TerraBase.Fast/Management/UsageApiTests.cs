@@ -8,6 +8,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Features.Management;
 using TerraBase.Features.Management.Usage;
+using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
 
@@ -262,7 +263,7 @@ public sealed class UsageApiTests
         await using var api = await ManagementApi.StartAsync(time: new FakeTimeProvider(Instant("2026-11-11T11:30:00Z")));
         var meter = api.Server.Services.GetRequiredService<UsageMeter>();
         var hour = Hour("2026-11-11T11:00:00Z");
-        var owners = Enumerable.Range(0, 50).Select(_ => new DatabaseOwner(Guid.NewGuid().ToString(), Guid.NewGuid().ToString(), Guid.NewGuid().ToString())).ToArray();
+        var owners = Enumerable.Range(0, 50).Select(_ => new DatabaseOwner(EntityIds.New().ToString(), EntityIds.New().ToString(), EntityIds.New().ToString())).ToArray();
         long sent = 0;
         Task<bool> Send(long sequence, KeyValuePair<UsageKey, OpCounts>[] batch, CancellationToken cancellationToken)
         {
@@ -415,7 +416,7 @@ public sealed class UsageApiTests
         await using var api = await ManagementApi.StartAsync(time: time, services: services =>
             services.Remove(services.Single(service => service.ImplementationType == typeof(UsageFlushService))));
         var meter = api.Server.Services.GetRequiredService<UsageMeter>();
-        var owner = new DatabaseOwner(Guid.NewGuid().ToString(), Guid.NewGuid().ToString(), Guid.NewGuid().ToString());
+        var owner = new DatabaseOwner(EntityIds.New().ToString(), EntityIds.New().ToString(), EntityIds.New().ToString());
         List<(long Sequence, KeyValuePair<UsageKey, OpCounts>[] Batch)> sent = [];
         var reachable = false;
         Task<bool> Send(long sequence, KeyValuePair<UsageKey, OpCounts>[] batch, CancellationToken cancellationToken)
@@ -445,7 +446,7 @@ public sealed class UsageApiTests
     {
         await using var api = await ManagementApi.StartAsync(time: new FakeTimeProvider(Instant("2026-11-11T11:30:00Z")));
         var meter = api.Server.Services.GetRequiredService<UsageMeter>();
-        var owner = new DatabaseOwner(Guid.NewGuid().ToString(), Guid.NewGuid().ToString(), Guid.NewGuid().ToString());
+        var owner = new DatabaseOwner(EntityIds.New().ToString(), EntityIds.New().ToString(), EntityIds.New().ToString());
         List<(long Sequence, KeyValuePair<UsageKey, OpCounts>[] Batch)> sent = [];
         Task<bool> Send(long sequence, KeyValuePair<UsageKey, OpCounts>[] batch, CancellationToken cancellationToken)
         {
@@ -511,7 +512,7 @@ public sealed class UsageApiTests
         var meter = api.Server.Services.GetRequiredService<UsageMeter>();
         var hour = Instant("2026-11-11T11:00:00Z").ToUnixTimeSeconds() / 3600;
         var keys = Enumerable.Range(0, UsageMeter.MaxBatch + 904)
-            .Select(_ => new UsageKey(new DatabaseOwner(Guid.NewGuid().ToString(), Guid.NewGuid().ToString(), Guid.NewGuid().ToString()), hour))
+            .Select(_ => new UsageKey(new DatabaseOwner(EntityIds.New().ToString(), EntityIds.New().ToString(), EntityIds.New().ToString()), hour))
             .ToList();
         foreach (var key in keys)
         {
@@ -1134,11 +1135,11 @@ public sealed class UsageApiTests
     {
         await using var api = await ManagementApi.StartAsync();
         var database = await api.CreateManagedDatabaseAsync();
-        var organization = $"/v1/management/organizations/{Guid.NewGuid()}/projects/{database.Project}";
+        var organization = $"/v1/management/organizations/{EntityIds.New()}/projects/{database.Project}";
 
-        using var unknownDatabase = await api.Client.GetAsync(Uri($"{database.ProjectPath}/databases/{Guid.NewGuid()}/usage"));
-        using var unknownProjectDatabase = await api.Client.GetAsync(Uri($"/v1/management/organizations/{database.Organization}/projects/{Guid.NewGuid()}/databases/{database.Id}/usage"));
-        using var unknownProject = await api.Client.GetAsync(Uri($"/v1/management/organizations/{database.Organization}/projects/{Guid.NewGuid()}/usage"));
+        using var unknownDatabase = await api.Client.GetAsync(Uri($"{database.ProjectPath}/databases/{EntityIds.New()}/usage"));
+        using var unknownProjectDatabase = await api.Client.GetAsync(Uri($"/v1/management/organizations/{database.Organization}/projects/{EntityIds.New()}/databases/{database.Id}/usage"));
+        using var unknownProject = await api.Client.GetAsync(Uri($"/v1/management/organizations/{database.Organization}/projects/{EntityIds.New()}/usage"));
         using var unknownOrganization = await api.Client.GetAsync(Uri(organization + "/usage"));
 
         await Assert.That(unknownDatabase.StatusCode).IsEqualTo(HttpStatusCode.NotFound);

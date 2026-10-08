@@ -6,6 +6,7 @@ using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Engine.Sqlite;
 using TerraBase.Hosting;
+using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
 
@@ -19,8 +20,8 @@ public sealed class BaselineInitializationTests
     public async Task Creation_pins_its_own_incarnation_before_a_delete_queued_at_publication(bool copy)
     {
         var fake = new Faker();
-        var target = new TenantContext(fake.Random.Guid().ToString("D"), PlanTier.Hobby,
-            fake.Random.Guid().ToString("D"), fake.Random.Guid().ToString("D"));
+        var target = new TenantContext(EntityIds.New().ToString(), PlanTier.Hobby,
+            EntityIds.New().ToString(), EntityIds.New().ToString());
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         SqliteStorageEngine? engine = null;
         SqliteDatabaseStore? initialized = null;
@@ -38,7 +39,7 @@ public sealed class BaselineInitializationTests
                         // Queue the deletion while publication still owns the lifecycle lock.
                         deletion = engine!.DeleteDatabaseAsync(target, deadline.Token).AsTask();
                     }
-                }, afterMigration: store =>
+                }, afterBootstrap: store =>
                 {
                     if (store.Tenant == target)
                     {
@@ -49,7 +50,7 @@ public sealed class BaselineInitializationTests
         }));
         try
         {
-            var source = target with { DatabaseId = fake.Random.Guid().ToString("D") };
+            var source = target with { DatabaseId = EntityIds.New().ToString() };
             if (copy)
             {
                 await engine!.CreateDatabaseAsync(source, deadline.Token);
@@ -92,10 +93,10 @@ public sealed class BaselineInitializationTests
     public async Task A_paused_baseline_is_isolated_and_its_store_stays_pinned_until_initialization_ends(string action)
     {
         var fake = new Faker();
-        TenantContext Database()
+        static TenantContext Database()
         {
-            return new(fake.Random.Guid().ToString("D"), PlanTier.Hobby,
-                fake.Random.Guid().ToString("D"), fake.Random.Guid().ToString("D"));
+            return new(EntityIds.New().ToString(), PlanTier.Hobby,
+                EntityIds.New().ToString(), EntityIds.New().ToString());
         }
         var target = Database();
         var unrelated = Database();
@@ -115,7 +116,7 @@ public sealed class BaselineInitializationTests
             engine = new SqliteStorageEngine(options.DataDirectory, options.StorageThreads, options.StorageQueue, options.MemoryBudget,
                 provider.GetRequiredService<IMeterFactory>().Create(Telemetry.MeterName),
                 provider.GetRequiredService<ILogger<SqliteStorageEngine>>(), options.ShutdownGrace, readinessCacheTtl: options.ReadinessCacheTtl,
-                checkpoint: provider.GetRequiredService<DatabaseLifecycleCheckpoint>(), afterMigration: store =>
+                checkpoint: provider.GetRequiredService<DatabaseLifecycleCheckpoint>(), afterBootstrap: store =>
                 {
                     if (store.Tenant != target)
                     {
@@ -148,7 +149,7 @@ public sealed class BaselineInitializationTests
         TenantContext? source = null;
         if (copy)
         {
-            source = target with { DatabaseId = fake.Random.Guid().ToString("D") };
+            source = target with { DatabaseId = EntityIds.New().ToString() };
             await engine!.CreateDatabaseAsync(source, deadline.Token);
             var sourceStore = (await engine.OpenDatabaseAsync(source, deadline.Token))!;
             await using var write = await sourceStore.BeginTransactionAsync(write: true, deadline.Token);

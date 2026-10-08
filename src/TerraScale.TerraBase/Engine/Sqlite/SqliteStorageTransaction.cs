@@ -237,6 +237,7 @@ internal sealed partial class SqliteStorageTransaction(
         // Engine callers may omit collection creation; its fresh generation keeps their history.
         var create = Command(SqliteStatements.CreateCollection, collection);
         create.Parameters.AddWithValue("$created", DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+        create.Parameters.AddWithValue("$entityId", EntityIds.New().ToString());
         cancellationToken.ThrowIfCancellationRequested();
         create.ExecuteNonQuery();
         _collectionsChanged = true;
@@ -743,12 +744,13 @@ internal sealed partial class SqliteStorageTransaction(
         return await RunAsync(() =>
         {
             ThrowIfReadOnly();
+            collection = collection with { Id = collection.Id.Length == 0 ? EntityIds.New().ToString() : collection.Id };
             if (!CreateCollection(collection))
             {
                 return false;
             }
 
-            WriteMetadata(DocumentChange.Collections, collection.Name, string.Create(CultureInfo.InvariantCulture, $$"""{"created_at":{{collection.CreatedAt}}}"""));
+            WriteMetadata(DocumentChange.Collections, collection.Name, string.Create(CultureInfo.InvariantCulture, $$"""{"created_at":{{collection.CreatedAt}},"entity_id":"{{collection.Id}}"}"""));
             return true;
         }, cancellationToken, mutation: true).ConfigureAwait(false);
     }
@@ -778,6 +780,7 @@ internal sealed partial class SqliteStorageTransaction(
     {
         var command = Command(SqliteStatements.CreateCollection, collection.Name);
         command.Parameters.AddWithValue("$created", collection.CreatedAt);
+        command.Parameters.AddWithValue("$entityId", collection.Id.Length == 0 ? EntityIds.New().ToString() : collection.Id);
         if (command.ExecuteNonQuery() == 0)
         {
             return false;
@@ -800,7 +803,7 @@ internal sealed partial class SqliteStorageTransaction(
         return await RunAsync(() =>
         {
             using var reader = Command(SqliteStatements.GetCollection, name).ExecuteReader();
-            return reader.Read() ? new CollectionInfo(reader.GetString(0), reader.GetInt64(1), reader.GetInt64(2)) : null;
+            return reader.Read() ? new CollectionInfo(reader.GetString(0), reader.GetInt64(1), reader.GetInt64(2), reader.GetString(3)) : null;
         }, cancellationToken).ConfigureAwait(false);
     }
 
@@ -831,7 +834,7 @@ internal sealed partial class SqliteStorageTransaction(
                     return (collections, true);
                 }
 
-                collections.Add(new CollectionInfo(reader.GetString(0), reader.GetInt64(1), reader.GetInt64(2)));
+                collections.Add(new CollectionInfo(reader.GetString(0), reader.GetInt64(1), reader.GetInt64(2), reader.GetString(3)));
             }
 
             return (collections, false);
@@ -1075,7 +1078,7 @@ internal sealed partial class SqliteStorageTransaction(
     public ValueTask<ReadOnlyMemory<byte>> GetOriginAsync(CancellationToken cancellationToken) =>
         RunAsync<ReadOnlyMemory<byte>>(() => GetOrigin(), cancellationToken, retry: true);
 
-    private byte[] GetOrigin() => (byte[])Command(SqliteStatements.Origin).ExecuteScalar()!;
+    private byte[] GetOrigin() => Ulid.Parse((string)Command(SqliteStatements.Origin).ExecuteScalar()!).ToByteArray();
 
     public ValueTask<long> GetLastChangeSequenceAsync(CancellationToken cancellationToken) =>
         RunAsync(LastSequence, cancellationToken, retry: true);
@@ -1282,7 +1285,10 @@ internal sealed partial class SqliteStorageTransaction(
                     throw new InvalidDataException("replicated metadata contains an invalid collection schema");
                 }
 
-                return new CollectionInfo(name, root.GetProperty("created_at").GetInt64());
+                var id = root.GetProperty("entity_id").GetString();
+                return EntityIds.IsValid(id)
+                    ? new CollectionInfo(name, root.GetProperty("created_at").GetInt64(), Id: id)
+                    : throw new InvalidDataException("invalid collection entity id");
             }
 
             var fields = root.GetProperty("fields").EnumerateArray()

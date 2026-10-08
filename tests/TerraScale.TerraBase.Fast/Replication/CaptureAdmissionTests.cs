@@ -4,6 +4,7 @@ using Bogus;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
 using TerraBase.Features.Replication;
+using TerraBase.Primitives;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Replication;
@@ -91,7 +92,7 @@ public sealed class CaptureAdmissionTests
             await write.CommitAsync(token);
         }
 
-        var following = Guid.CreateVersion7().ToString("D");
+        var following = EntityIds.New().ToString();
         using var added = await client.PutAsJsonAsync(new Uri($"{tenant.Path("db")}/collections/items/documents/{following}", UriKind.Relative), new { after = "rejection" }, token);
         added.EnsureSuccessStatusCode();
         await TerraBaseTestServer.ReplicatedAsync(sender);
@@ -143,11 +144,11 @@ public sealed class CaptureAdmissionTests
             created.EnsureSuccessStatusCode();
         }
 
-        const string early = "00000000-0000-0000-0000-000000000001";
-        const string late = "ffffffff-ffff-ffff-ffff-ffffffffffff";
+        const string early = "00000000000000000000000001";
+        const string late = "7ZZZZZZZZZZZZZZZZZZZZZZZZZ";
         var captured = capturedFirst ? early : late;
         var existing = capturedFirst ? late : early;
-        var retained = Guid.CreateVersion7().ToString("D");
+        var retained = EntityIds.New().ToString();
         using var seeded = await client.PutAsJsonAsync(new Uri($"{tenant.Path("db")}/collections/items/documents/{existing}", UriKind.Relative), new { value = "old" }, token);
         seeded.EnsureSuccessStatusCode();
         // Two names (5 bytes), UUIDs (36 bytes) and these bodies fill exactly the 2 MiB capture budget.
@@ -205,7 +206,7 @@ public sealed class CaptureAdmissionTests
         created.EnsureSuccessStatusCode();
         var source = (await sender.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(tenant.Database("db"), token))!;
         // The drop's group also holds the collection's own tombstone.
-        var ids = Enumerable.Range(0, IStorageTransaction.MaxChangeGroupChanges - 1).Select(_ => Guid.CreateVersion7().ToString("D")).ToArray();
+        var ids = Enumerable.Range(0, IStorageTransaction.MaxChangeGroupChanges - 1).Select(_ => EntityIds.New().ToString()).ToArray();
         var json = JsonSerializer.SerializeToUtf8Bytes(new { value = new Faker().Lorem.Word() });
         long offset;
         await using (var write = await source.BeginTransactionAsync(write: true, token))

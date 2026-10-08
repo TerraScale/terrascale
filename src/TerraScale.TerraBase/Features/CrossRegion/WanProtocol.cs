@@ -32,17 +32,17 @@ public static class WanProtocol
     public static bool IsMember(string member) =>
         member.Length is >= 1 and <= 63 && member[0] != '-' && member[^1] != '-' && member.All(c => c is (>= 'a' and <= 'z') or (>= '0' and <= '9') or '-');
 
-    /// <summary>The 48 bytes that order databases in heads: tenant, project and database UUIDs.</summary>
+    /// <summary>The 48 bytes that order databases in heads: tenant, project and database ULIDs.</summary>
     internal static byte[] Key(TenantContext database) =>
         [.. Id(database.OrganizationId).Span, .. Id(database.ProjectId!).Span, .. Id(database.DatabaseId!).Span];
 
-    internal static ByteString Id(string value) => ByteString.CopyFrom(Guid.ParseExact(value, "D").ToByteArray(bigEndian: true));
+    internal static ByteString Id(string value) => ByteString.CopyFrom(Ulid.Parse(value).ToByteArray());
 
-    /// <summary>The database of three 16-byte UUIDs, or <see langword="null"/> when one is malformed.</summary>
+    /// <summary>The database of three 16-byte ULIDs, or <see langword="null"/> when one is malformed.</summary>
     internal static TenantContext? Database(ByteString tenant, ByteString project, ByteString database) =>
         tenant.Length == 16 && project.Length == 16 && database.Length == 16
             ? new TenantContext(Text(tenant), PlanTier.Hobby, Text(project), Text(database))
             : null;
 
-    private static string Text(ByteString value) => new Guid(value.Span, bigEndian: true).ToString("D");
+    private static string Text(ByteString value) => new Ulid(value.Span).ToString();
 }

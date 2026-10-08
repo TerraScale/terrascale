@@ -5,6 +5,7 @@ using TerraBase.Engine;
 using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Replication;
 using TerraBase.Features.Replication.V1;
+using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
 
@@ -45,7 +46,7 @@ public sealed class DocumentCaptureTests
         var copy = tenant.Database("copied");
         var engine = sender.Services.GetRequiredService<IStorageEngine>();
         var source = (await engine.OpenDatabaseAsync(main, token))!;
-        var ids = Enumerable.Range(0, 4).Select(_ => Guid.CreateVersion7().ToString("D")).ToArray();
+        var ids = Enumerable.Range(0, 4).Select(_ => EntityIds.New().ToString()).ToArray();
         var old = ids.Select(id => new DocumentChange("items", id, 1, "{\"n\":1}"u8.ToArray())).ToArray();
         await using (var initial = await source.BeginTransactionAsync(write: true, token))
         {
@@ -63,7 +64,7 @@ public sealed class DocumentCaptureTests
         var sourceRpc = new Features.Replication.V1.Replication.ReplicationClient(sourceChannel);
         var targetRpc = new Features.Replication.V1.Replication.ReplicationClient(targetChannel);
         // The future copy's peer already holds the old live state when its new baseline arrives.
-        await ApplyGroupAsync(targetRpc, copy, Guid.NewGuid().ToByteArray(bigEndian: true), 1, old, token);
+        await ApplyGroupAsync(targetRpc, copy, EntityIds.New().ToByteArray(), 1, old, token);
         await using (var deletion = await source.BeginTransactionAsync(write: true, token))
         {
             if (drop)
@@ -103,7 +104,7 @@ public sealed class DocumentCaptureTests
             await Assert.That(await again.CommitAsync(token)).IsEqualTo(4);
         }
 
-        var remoteOrigin = Guid.NewGuid().ToByteArray(bigEndian: true);
+        var remoteOrigin = EntityIds.New().ToByteArray();
         await ApplyGroupAsync(sourceRpc, main, remoteOrigin, 1,
             [new DocumentChange("items", ids[3], 10, "{\"remote\":true}"u8.ToArray())], token);
         await Assert.That(await engine.DeleteDatabaseAsync(copy, token)).IsTrue();
@@ -117,7 +118,7 @@ public sealed class DocumentCaptureTests
         await using (var read = await copied.BeginTransactionAsync(write: false, token))
         {
             copyOrigin = await read.GetOriginAsync(token);
-            await Assert.That(new Guid(copyOrigin.Span, bigEndian: true)).IsEqualTo(copied.Incarnation);
+            await Assert.That(new Ulid(copyOrigin.Span)).IsEqualTo(copied.Incarnation);
             await Assert.That(await read.GetAppliedSequenceAsync(remoteOrigin, token)).IsEqualTo(0);
             head = await read.GetLastChangeSequenceAsync(token);
             await Assert.That(head).IsEqualTo(2);
@@ -141,7 +142,7 @@ public sealed class DocumentCaptureTests
         }
 
         // Both lower and equal-version delayed puts must lose after copying and after baseline import.
-        var delayedOrigin = Guid.NewGuid().ToByteArray(bigEndian: true);
+        var delayedOrigin = EntityIds.New().ToByteArray();
         foreach (var version in new[] { 1L, 2L })
         {
             var delayed = old.Select(change => change with { Version = version == 2 && change.Id == ids[1] ? 4 : version }).ToArray();
@@ -218,9 +219,9 @@ public sealed class DocumentCaptureTests
             response.EnsureSuccessStatusCode();
         }
 
-        var a = Guid.CreateVersion7().ToString("D");
-        var b = Guid.CreateVersion7().ToString("D");
-        var c = Guid.CreateVersion7().ToString("D");
+        var a = EntityIds.New().ToString();
+        var b = EntityIds.New().ToString();
+        var c = EntityIds.New().ToString();
         await PutAsync(tenant, writer, a);
         await TerraBaseTestServer.ReplicatedAsync(sender);
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
@@ -321,7 +322,7 @@ public sealed class DocumentCaptureTests
         await using (var targetRead = await target.BeginTransactionAsync(write: false, deadline.Token))
         {
             origin = await sourceRead.GetOriginAsync(deadline.Token);
-            await Assert.That(new Guid(origin.Span, bigEndian: true)).IsEqualTo(source.Incarnation);
+            await Assert.That(new Ulid(origin.Span)).IsEqualTo(source.Incarnation);
             await Assert.That(await sourceRead.GetLastChangeSequenceAsync(deadline.Token)).IsEqualTo(sequence);
             await Assert.That(await targetRead.GetAppliedSequenceAsync(origin, deadline.Token)).IsEqualTo(sequence);
             changes = (await sourceRead.ReadChangesAsync(sequence, deadline.Token))!;
@@ -457,7 +458,7 @@ public sealed class DocumentCaptureTests
             (Store: source, Client: writer, Rpc: new Features.Replication.V1.Replication.ReplicationClient(sourceChannel)),
             (Store: target, Client: reader, Rpc: new Features.Replication.V1.Replication.ReplicationClient(targetChannel)),
         };
-        var incomingOrigin = Guid.NewGuid().ToByteArray(bigEndian: true);
+        var incomingOrigin = EntityIds.New().ToByteArray();
         var version = deletions[0].Version;
         var sequence = 0L;
         var database = tenant.Database("captured");

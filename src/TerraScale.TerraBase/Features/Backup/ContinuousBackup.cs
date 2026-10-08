@@ -3,6 +3,7 @@ using System.Diagnostics.Metrics;
 using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Hosting;
+using TerraBase.Primitives;
 using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Backup;
@@ -263,7 +264,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
                 FileStream pending;
                 try
                 {
-                    pending = new FileStream(Path.Combine(_scratch, Guid.NewGuid().ToString("N") + ".frames"), FileMode.CreateNew, FileAccess.ReadWrite,
+                    pending = new FileStream(Path.Combine(_scratch, EntityIds.New().ToString() + ".frames"), FileMode.CreateNew, FileAccess.ReadWrite,
                         FileShare.None, 1 << 16, FileOptions.Asynchronous | FileOptions.DeleteOnClose);
                 }
                 catch
@@ -420,7 +421,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
     // A generation starts with a snapshot; the frames read before it are in it, so they are dropped.
     private async Task StartGenerationAsync(ShippedFile file, CancellationToken cancellationToken)
     {
-        var generation = Ulid.NewUlid(_time.GetUtcNow());
+        var generation = EntityIds.New(_time);
         var snapshot = ScratchFile(".db");
         try
         {
@@ -544,7 +545,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
 
     private static double Lag(ShippedFile file, DateTimeOffset now) => file.BehindSince is { } since ? Math.Max(0, (now - since).TotalSeconds) : 0;
 
-    private string ScratchFile(string extension) => Path.Combine(_scratch, Guid.NewGuid().ToString("N") + extension);
+    private string ScratchFile(string extension) => Path.Combine(_scratch, EntityIds.New().ToString() + extension);
 
     // SQLite may leave a journal, and a drill a log, next to a snapshot.
     private static void DeleteSnapshot(string path) => BackupReader.Delete(path);

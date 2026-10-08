@@ -19,7 +19,7 @@ public sealed record ReplicationPeerStatus(int Peer, long DurableLag, IReadOnlyL
 /// the last completed catch-up, or null until one has completed. Observations reset on process restart and slot reuse.
 /// </summary>
 public sealed record ReplicationDatabaseStatus(
-    int Slot, string OrganizationId, string ProjectId, string DatabaseId, Guid Incarnation,
+    int Slot, string OrganizationId, string ProjectId, string DatabaseId, Ulid Incarnation,
     long Head, long Acknowledged, long DurableLag, bool Diverged, double CatchupSeconds, double? ConvergenceSeconds);
 
 internal sealed class NoReplicationStatus : IReplicationStatus
