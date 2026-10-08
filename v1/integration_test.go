@@ -217,16 +217,16 @@ func testPinnedOpenAPI(t *testing.T, tb *terrabasetest.Server) {
 // region" created, under their ids, as a replica region needs (TS-643).
 func testRegisterProject(t *testing.T, tb *terrabasetest.Server, hc *http.Client) {
 	ctx := t.Context()
-	cara := user(t, tb, management(t, tb, hc), "user-cara", "cara@example.com")
-	org := v1.Organization{ID: "0199c0de-0000-7000-8000-000000000001", Name: "Replicated"}
-	project := v1.Project{ID: "0199c0de-0000-7000-8000-000000000002", Name: "Orders"}
+	cara := user(t, tb, management(t, tb, hc), "01ARZ3NDEKTSV4RRFFQ69G5FA3", "cara@example.com")
+	org := v1.Organization{ID: "01K70DW000E008000000000001", Name: "Replicated"}
+	project := v1.Project{ID: "01K70DW000E008000000000002", Name: "Orders"}
 	must(0, cara.RegisterProject(ctx, org, project))(t)
 	must(0, cara.RegisterProject(ctx, org, project))(t) // registered: nothing to do
 	if got := must(cara.Project(ctx, org.ID, project.ID))(t); got.Name != project.Name {
 		t.Fatalf("project: %+v", got)
 	}
 	// An organization the region has gets only the missing project.
-	second := v1.Project{ID: "0199c0de-0000-7000-8000-000000000003", Name: "Billing"}
+	second := v1.Project{ID: "01K70DW000E008000000000003", Name: "Billing"}
 	must(0, cara.RegisterProject(ctx, org, second))(t)
 	if got := must(cara.Organization(ctx, org.ID))(t); got.Name != org.Name {
 		t.Fatalf("organization: %+v", got)
@@ -239,10 +239,10 @@ func testRegisterProject(t *testing.T, tb *terrabasetest.Server, hc *http.Client
 func testManagement(t *testing.T, tb *terrabasetest.Server, hc *http.Client) {
 	ctx := t.Context()
 	m := management(t, tb, hc)
-	ana, bia := user(t, tb, m, "user-ana", "ana@example.com"), user(t, tb, m, "user-bia", "bia@example.com")
+	ana, bia := user(t, tb, m, "01ARZ3NDEKTSV4RRFFQ69G5FA1", "ana@example.com"), user(t, tb, m, "01ARZ3NDEKTSV4RRFFQ69G5FA2", "bia@example.com")
 
 	org := must(ana.CreateOrganization(ctx, "Acme"))(t)
-	if org.Name != "Acme" || org.CreatedBy != "user-ana" || org.Plan != v1.PlanHobby || org.CreatedAt.IsZero() {
+	if org.Name != "Acme" || org.CreatedBy != "01ARZ3NDEKTSV4RRFFQ69G5FA1" || org.Plan != v1.PlanHobby || org.CreatedAt.IsZero() {
 		t.Fatalf("organization: %+v", org)
 	}
 	_, err := ana.CreateOrganization(ctx, "acme")
@@ -312,7 +312,7 @@ func testManagement(t *testing.T, tb *terrabasetest.Server, hc *http.Client) {
 	}
 	must(keyed.Database(project.ID, "main").CreateCollection(ctx, "notes"))(t)
 	notes := keyed.Database(project.ID, "main").Collection("notes")
-	noteID := v1.DocumentIDFor("notes", "a")
+	noteID := v1.NewID()
 	must(notes.Put(ctx, noteID, map[string]any{"n": 1}))(t)
 	must(notes.Get(ctx, noteID))(t)
 	if got := must(ana.ProjectAPIKeys(ctx, org.ID, project.ID, v1.PageOptions{}))(t); len(got.Items) != 1 || got.Items[0].ID != key.Key.ID || got.Items[0].Name != "app" {
@@ -326,15 +326,15 @@ func testManagement(t *testing.T, tb *terrabasetest.Server, hc *http.Client) {
 
 	// Invitations, members and roles.
 	inv := must(ana.CreateInvitation(ctx, org.ID, "bia@example.com", v1.RoleAdmin))(t)
-	if inv.Token == "" || inv.Invitation.Role != v1.RoleAdmin || inv.Invitation.InvitedBy != "user-ana" {
+	if inv.Token == "" || inv.Invitation.Role != v1.RoleAdmin || inv.Invitation.InvitedBy != "01ARZ3NDEKTSV4RRFFQ69G5FA1" {
 		t.Fatalf("invitation: %+v", inv)
 	}
 	if got := must(ana.Invitations(ctx, org.ID, v1.PageOptions{}))(t); len(got.Items) != 1 {
 		t.Fatalf("invitations: %+v", got)
 	}
-	_, err = user(t, tb, m, "user-bia", "someone@example.com").AcceptInvitation(ctx, inv.Token)
+	_, err = user(t, tb, m, "01ARZ3NDEKTSV4RRFFQ69G5FA2", "someone@example.com").AcceptInvitation(ctx, inv.Token)
 	wantCode(t, err, v1.ErrForbidden)
-	if member := must(bia.AcceptInvitation(ctx, inv.Token))(t); member.UserID != "user-bia" || member.Role != v1.RoleAdmin {
+	if member := must(bia.AcceptInvitation(ctx, inv.Token))(t); member.UserID != "01ARZ3NDEKTSV4RRFFQ69G5FA2" || member.Role != v1.RoleAdmin {
 		t.Fatalf("accept: %+v", member)
 	}
 	cara := must(ana.CreateInvitation(ctx, org.ID, "cara@example.com", ""))(t)
@@ -347,29 +347,29 @@ func testManagement(t *testing.T, tb *terrabasetest.Server, hc *http.Client) {
 	if got := must(ana.Invitations(ctx, org.ID, v1.PageOptions{}))(t); len(got.Items) != 2 || got.Items[0].Status != v1.InvitationAccepted || got.Items[1].Status != v1.InvitationRevoked {
 		t.Fatalf("invitation history: %+v", got)
 	}
-	_, err = user(t, tb, m, "user-cara", "cara@example.com").AcceptInvitation(ctx, cara.Token)
+	_, err = user(t, tb, m, "01ARZ3NDEKTSV4RRFFQ69G5FA3", "cara@example.com").AcceptInvitation(ctx, cara.Token)
 	wantCode(t, err, v1.ErrConflict) // no longer pending
 	if got := must(bia.Members(ctx, org.ID, v1.PageOptions{}))(t); len(got.Items) != 2 {
 		t.Fatalf("members: %+v", got)
 	}
 	_, err = bia.SetPlan(ctx, org.ID, v1.PlanHobby)
 	wantCode(t, err, v1.ErrForbidden) // admin, not owner
-	if got := must(ana.SetMemberRole(ctx, org.ID, "user-bia", v1.RoleMember))(t); got.Role != v1.RoleMember {
+	if got := must(ana.SetMemberRole(ctx, org.ID, "01ARZ3NDEKTSV4RRFFQ69G5FA2", v1.RoleMember))(t); got.Role != v1.RoleMember {
 		t.Fatalf("role: %+v", got)
 	}
 
 	// Ownership transfer: start, cancel, start again, confirm.
 	_, err = ana.OwnershipTransfer(ctx, org.ID)
 	wantCode(t, err, v1.ErrUnknownRoute)
-	tr := must(ana.StartOwnershipTransfer(ctx, org.ID, "user-bia"))(t)
-	if tr.FromUserID != "user-ana" || tr.ToUserID != "user-bia" {
+	tr := must(ana.StartOwnershipTransfer(ctx, org.ID, "01ARZ3NDEKTSV4RRFFQ69G5FA2"))(t)
+	if tr.FromUserID != "01ARZ3NDEKTSV4RRFFQ69G5FA1" || tr.ToUserID != "01ARZ3NDEKTSV4RRFFQ69G5FA2" {
 		t.Fatalf("transfer: %+v", tr)
 	}
 	must(bia.OwnershipTransfer(ctx, org.ID))(t)
 	if err := ana.CancelOwnershipTransfer(ctx, org.ID); err != nil {
 		t.Fatal(err)
 	}
-	must(ana.StartOwnershipTransfer(ctx, org.ID, "user-bia"))(t)
+	must(ana.StartOwnershipTransfer(ctx, org.ID, "01ARZ3NDEKTSV4RRFFQ69G5FA2"))(t)
 	if got := must(bia.ConfirmOwnershipTransfer(ctx, org.ID))(t); got.Role != v1.RoleOwner {
 		t.Fatalf("confirm: %+v", got)
 	}
@@ -384,7 +384,7 @@ func testManagement(t *testing.T, tb *terrabasetest.Server, hc *http.Client) {
 		t.Fatalf("set retention: %d", days)
 	}
 	events := must(bia.AuditEvents(ctx, org.ID, v1.PageOptions{Limit: 2}))(t)
-	if len(events.Items) != 2 || events.Next == "" || events.Items[0].Action != "settings.audit_retention_updated" || events.Items[0].Actor != "user-bia" {
+	if len(events.Items) != 2 || events.Next == "" || events.Items[0].Action != "settings.audit_retention_updated" || events.Items[0].Actor != "01ARZ3NDEKTSV4RRFFQ69G5FA2" {
 		t.Fatalf("audit events: %+v", events)
 	}
 	must(bia.AuditEvents(ctx, org.ID, v1.PageOptions{After: events.Next}))(t)
@@ -399,13 +399,13 @@ func testManagement(t *testing.T, tb *terrabasetest.Server, hc *http.Client) {
 	must(ana.AcceptInvitation(ctx, inv2.Token))(t)
 	// An opaque user id is escaped as one segment; a slash or dot segment
 	// fails locally, since TerraBase matches %2F literally.
-	wantCode(t, bia.RemoveMember(ctx, org.ID, "no such user %"), v1.ErrUnknownRoute)
+	wantCode(t, bia.RemoveMember(ctx, org.ID, "01ARZ3NDEKTSV4RRFFQ69G5FAZ"), v1.ErrUnknownRoute)
 	for _, id := range []string{"a/b", ".."} {
 		if err := bia.RemoveMember(ctx, org.ID, id); err == nil || errors.As(err, new(*v1.APIError)) {
 			t.Fatalf("RemoveMember(%q) = %v, want a local error", id, err)
 		}
 	}
-	if err := bia.RemoveMember(ctx, org.ID, "user-ana"); err != nil {
+	if err := bia.RemoveMember(ctx, org.ID, "01ARZ3NDEKTSV4RRFFQ69G5FA1"); err != nil {
 		t.Fatal(err)
 	}
 	if err := bia.DeleteDatabase(ctx, org.ID, project.ID, db.ID); err != nil {
@@ -429,14 +429,14 @@ func testManagement(t *testing.T, tb *terrabasetest.Server, hc *http.Client) {
 	boot := admin.As("user-boot")
 	bootOrg := must(boot.CreateOrganization(ctx, "Bootstrap"))(t)
 	for range 2 { // idempotent
-		if got := must(boot.AddMember(ctx, bootOrg.ID, "user-ana", "ana@example.com"))(t); got.UserID != "user-ana" || got.Role != v1.RoleMember {
+		if got := must(boot.AddMember(ctx, bootOrg.ID, "01ARZ3NDEKTSV4RRFFQ69G5FA1", "ana@example.com"))(t); got.UserID != "01ARZ3NDEKTSV4RRFFQ69G5FA1" || got.Role != v1.RoleMember {
 			t.Fatalf("add member: %+v", got)
 		}
 	}
 	must(ana.Organization(ctx, bootOrg.ID))(t)
-	_, err = ana.AddMember(ctx, bootOrg.ID, "user-bia", "bia@example.com")
+	_, err = ana.AddMember(ctx, bootOrg.ID, "01ARZ3NDEKTSV4RRFFQ69G5FA2", "bia@example.com")
 	wantCode(t, err, v1.ErrUnknownRoute) // admin listener only
-	_, err = admin.WithToken(tb.Token(t, "user-ana", "")).Organizations(ctx, v1.PageOptions{})
+	_, err = admin.WithToken(tb.Token(t, "01ARZ3NDEKTSV4RRFFQ69G5FA1", "")).Organizations(ctx, v1.PageOptions{})
 	wantCode(t, err, v1.ErrInvalidKey)
 	onClient, err := v1.NewManagement(v1.Config{BaseURL: tb.URL, Token: tb.Credential, HTTPClient: hc})
 	if err != nil {
@@ -499,7 +499,7 @@ func testDocuments(t *testing.T, tb *terrabasetest.Server, hc *http.Client) {
 	}
 	_, err = db.Collection("tmp").Info(ctx)
 	wantCode(t, err, v1.ErrUnknownCollection)
-	_, err = c.Database(project.ID, "missing").Collection("users").Get(ctx, v1.DocumentIDFor("users", "x"))
+	_, err = c.Database(project.ID, "missing").Collection("users").Get(ctx, v1.NewID())
 	wantCode(t, err, v1.ErrUnknownDatabase)
 
 	// Documents with ETag/If-Match.
@@ -556,7 +556,7 @@ func testDocuments(t *testing.T, tb *terrabasetest.Server, hc *http.Client) {
 		t.Fatalf("indexes after drop: %+v", got)
 	}
 
-	id := v1.DocumentIDFor("users", "bia@example.com")
+	id := v1.NewID()
 	put := must(users.Put(ctx, id, map[string]any{"email": "bia@example.com"}, v1.IfNoneMatchAny()))(t)
 	if !put.Created {
 		t.Fatalf("put: %+v", put)
@@ -582,7 +582,7 @@ func testDocuments(t *testing.T, tb *terrabasetest.Server, hc *http.Client) {
 		t.Fatalf("tombstone etag: %+v", apiErr)
 	}
 	must(users.Put(ctx, id, map[string]any{"email": "bia@example.com"}, v1.IfMatch(deleted.Version)))(t)
-	other := v1.DocumentIDFor("users", "cara@example.com")
+	other := v1.NewID()
 	must(users.Put(ctx, other, map[string]any{"email": "cara@example.com"}))(t)
 	must(users.Delete(ctx, other))(t)
 
@@ -609,13 +609,11 @@ func testDocuments(t *testing.T, tb *terrabasetest.Server, hc *http.Client) {
 	if n != 2 {
 		t.Fatalf("items: %d", n)
 	}
-	// A non-UUID id reaches the server, which addresses only existing legacy ids.
-	_, err = users.Get(ctx, "legacy id")
-	wantCode(t, err, v1.ErrInvalidRequest)
-	// C# counts UTF-16 units, rather than UTF-8 bytes, in legacy identities.
-	for _, id := range []string{strings.Repeat("界", 256), strings.Repeat("😀", 128)} {
-		_, err := users.Get(ctx, id)
-		wantCode(t, err, v1.ErrInvalidRequest) // absent non-UUID, rejected by the server
+	// Legacy IDs never leave the client.
+	for _, id := range []string{"legacy id", strings.Repeat("界", 256), strings.Repeat("😀", 128)} {
+		if _, err := users.Get(ctx, id); err == nil || errors.As(err, new(*v1.APIError)) {
+			t.Fatalf("legacy ID was not rejected locally: %v", err)
+		}
 	}
 	_, err = users.Query(ctx, v1.Query{Cursor: "garbage"})
 	wantCode(t, err, v1.ErrInvalidCursor)
@@ -640,7 +638,7 @@ func testDocuments(t *testing.T, tb *terrabasetest.Server, hc *http.Client) {
 		t.Fatalf("op index: %v", apiErr)
 	}
 
-	auditID := v1.DocumentIDFor("audit", "tagged")
+	auditID := v1.NewID()
 	tx2 := must(db.Tx().
 		Put("audit", auditID, map[string]any{"tags": []string{"beta"}}, v1.IfNoneMatchAny()).
 		Delete("audit", tx.Results[0].ID).
@@ -713,7 +711,7 @@ func testRetries(t *testing.T, tb *terrabasetest.Server, hc *http.Client, rec *r
 	info := must(db.Create(ctx))(t)
 	must(db.CreateCollection(ctx, "items"))(t)
 	items := db.Collection("items")
-	id := v1.DocumentIDFor("items", "a")
+	id := v1.NewID()
 	must(items.Put(ctx, id, map[string]any{"n": 0}))(t)
 	version := func() string { return must(items.Get(ctx, id))(t).Version }
 

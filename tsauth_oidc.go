@@ -22,6 +22,8 @@ import (
 	"time"
 	"unicode"
 	"unicode/utf8"
+
+	"terrascale.tech/sdk/internal/entityid"
 )
 
 // TSAuthOAuthClientAuthentication binds requests to the registered OAuth method.
@@ -600,7 +602,7 @@ func (a *TSAuthOIDCApplication) VerifyIDToken(ctx context.Context, token string,
 	} else if json.Unmarshal(c.Audience, &audiences) != nil {
 		return nil, oidcError("invalid_audience", "verify_id_token", false, nil)
 	}
-	if c.Issuer != a.config.Issuer || c.Subject == "" || c.TokenUse != "id" || !slices.Contains(audiences, a.config.Authentication.ClientID) || (len(audiences) > 1 && (c.AuthorizedParty == nil || *c.AuthorizedParty != a.config.Authentication.ClientID)) || (c.AuthorizedParty != nil && *c.AuthorizedParty != a.config.Authentication.ClientID) {
+	if c.Issuer != a.config.Issuer || entityid.Check(c.Subject) != nil || c.TokenUse != "id" || !slices.Contains(audiences, a.config.Authentication.ClientID) || (len(audiences) > 1 && (c.AuthorizedParty == nil || *c.AuthorizedParty != a.config.Authentication.ClientID)) || (c.AuthorizedParty != nil && *c.AuthorizedParty != a.config.Authentication.ClientID) {
 		return nil, oidcError("invalid_identity_claims", "verify_id_token", false, nil)
 	}
 	unique := map[string]bool{}
@@ -618,7 +620,7 @@ func (a *TSAuthOIDCApplication) VerifyIDToken(ctx context.Context, token string,
 	if subtle.ConstantTimeCompare([]byte(c.Nonce), []byte(options.Nonce)) != 1 {
 		return nil, oidcError("nonce_mismatch", "verify_id_token", false, nil)
 	}
-	if (c.SessionID != nil && *c.SessionID == "") || (a.config.RequireSession && c.SessionID == nil) {
+	if (c.SessionID != nil && entityid.Check(*c.SessionID) != nil) || (a.config.RequireSession && c.SessionID == nil) {
 		return nil, oidcError("invalid_session_binding", "verify_id_token", false, nil)
 	}
 	if c.AuthTime != nil && (*c.AuthTime <= 0 || *c.AuthTime > now.Unix()+skew) {
@@ -784,5 +786,11 @@ func (r *TSAuthUserInfo) decodeHTTPResponse(status int, body []byte) error {
 	if status != http.StatusOK {
 		return oidcError("unexpected_status", "userinfo", false, nil)
 	}
-	return oidcDecodeExactJSON(body, r, []string{"sub", "email", "email_verified", "name"})
+	if err := oidcDecodeExactJSON(body, r, []string{"sub", "email", "email_verified", "name"}); err != nil {
+		return err
+	}
+	if err := entityid.Check(r.Sub); err != nil {
+		return oidcError("invalid_identity_claims", "userinfo", false, nil)
+	}
+	return nil
 }

@@ -9,6 +9,9 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
+
+	"terrascale.tech/sdk/internal/entityid"
 )
 
 // Database is a handle to one database of a project, by name. It performs no I/O.
@@ -32,8 +35,8 @@ func (d *Database) Project() string { return d.project }
 func (d *Database) Name() string { return d.name }
 
 func (d *Database) path(extra ...string) ([]string, error) {
-	if !uuidPattern.MatchString(d.project) {
-		return nil, fmt.Errorf("terrabase: project ID %q must be a lowercase hyphenated UUID", d.project)
+	if err := checkID(d.project); err != nil {
+		return nil, err
 	}
 	if err := checkName("database", d.name); err != nil {
 		return nil, err
@@ -43,8 +46,8 @@ func (d *Database) path(extra ...string) ([]string, error) {
 
 // DatabaseInfo is a database as returned by Database.Create.
 type DatabaseInfo struct {
-	ID        string `json:"id"`
-	ProjectID string `json:"projectId"`
+	ID        string `json:"id" ulid:"required"`
+	ProjectID string `json:"projectId" ulid:"required"`
 	Name      string `json:"name"`
 	// Created is true when the call created the database (201).
 	Created bool `json:"-"`
@@ -297,7 +300,7 @@ func (col *Collection) Put(ctx context.Context, id string, doc any, opts ...Writ
 	return col.write(ctx, request{method: http.MethodPut, path: p, body: body, header: w.header(), replaySafe: w.ifMatch != ""})
 }
 
-// Create stores a new document under a server-generated UUIDv7. It is never
+// Create stores a new document under a server-generated ULID. It is never
 // retried, since a replay would create a second document.
 func (col *Collection) Create(ctx context.Context, doc any, opts ...WriteOption) (*WriteResult, error) {
 	p, err := col.path("documents")
@@ -375,6 +378,9 @@ func encodeObject(doc any) ([]byte, error) {
 	if t := bytes.TrimLeft(body, " \t\r\n"); len(t) == 0 || t[0] != '{' {
 		return nil, errors.New("terrabase: a document must be a JSON object")
 	}
+	if err := entityid.Payload(body); err != nil {
+		return nil, err
+	}
 	return body, nil
 }
 
@@ -398,6 +404,9 @@ func Ops(ops ...PatchOp) Patch {
 		p.err = errors.New("terrabase: Ops needs at least one operation")
 	}
 	for _, op := range ops {
+		if op.path == "/id" || strings.HasPrefix(op.path, "/id/") {
+			p.err = errors.Join(p.err, errors.New("document payload must not contain id; use the document key"))
+		}
 		p.err = errors.Join(p.err, op.err)
 	}
 	return p

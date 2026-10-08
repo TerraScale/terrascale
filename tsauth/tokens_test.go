@@ -15,7 +15,7 @@ import (
 	"time"
 )
 
-const testKey = "tsk_3k9f2m8q1x7v4c6n0b5z_0123456789abcdefghjkmnpqrstvwxyz0123456789abcdefghjk"
+const testKey = "tsk_01ARZ3NDEKTSV4RRFFQ69G5FA8_0123456789abcdefghjkmnpqrstvwxyz0123456789abcdefghjk"
 
 // tokenServer is a token endpoint of the contract (section 6). handle
 // answers each request after checking it; hits counts requests.
@@ -51,14 +51,14 @@ func TestAPIKeySourceCachesUntilAMinuteBeforeExpiry(t *testing.T) {
 	var srv *tokenServer
 	srv = newTokenServer(t, func(w http.ResponseWriter, r *http.Request, form url.Values) {
 		id, secret, ok := r.BasicAuth()
-		if !ok || id != testKey[:24] || secret != testKey || form.Get("grant_type") != "client_credentials" ||
-			form.Get("project") != "0199b3e4-5b6a-7c8d-9e0f-1a2b3c4d5e6f" || form.Get("scope") != "documents:read documents:write" {
+		if !ok || id != testKey[4:30] || secret != testKey || form.Get("grant_type") != "client_credentials" ||
+			form.Get("project") != "01K6SY8PVAFJ6SW3RT5CY4TQKF" || form.Get("scope") != "documents:read documents:write" {
 			t.Errorf("client credentials request: %q %q %v", id, secret, form)
 		}
 		answer(w, fmt.Sprintf("token-%d", srv.hits.Load()), 900)
 	})
 	s, err := NewAPIKeySource(APIKeyConfig{Issuer: srv.URL + "/terrascale", Key: testKey,
-		Project: "0199b3e4-5b6a-7c8d-9e0f-1a2b3c4d5e6f", Scopes: []string{ScopeDocumentsRead, ScopeDocumentsWrite}})
+		Project: "01K6SY8PVAFJ6SW3RT5CY4TQKF", Scopes: []string{ScopeDocumentsRead, ScopeDocumentsWrite}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -246,12 +246,12 @@ func TestExchangeSource(t *testing.T) {
 				}
 				if form.Get("grant_type") != "urn:ietf:params:oauth:grant-type:token-exchange" || form.Get("subject_token") != "user-token" ||
 					form.Get("subject_token_type") != "urn:ietf:params:oauth:token-type:access_token" ||
-					form.Get("organization") != "org" || form.Get("project") != "proj" || form.Get("scope") != "shapes:read" {
+					form.Get("organization") != "01ARZ3NDEKTSV4RRFFQ69G5FA6" || form.Get("project") != "01ARZ3NDEKTSV4RRFFQ69G5FA7" || form.Get("scope") != "shapes:read" {
 					t.Errorf("exchange form: %v", form)
 				}
 				answer(w, "project-token", 900)
 			})
-			cfg := ExchangeConfig{Issuer: srv.URL + "/terrascale", ClientID: "ts-cli", Organization: "org", Project: "proj",
+			cfg := ExchangeConfig{Issuer: srv.URL + "/terrascale", ClientID: "ts-cli", Organization: "01ARZ3NDEKTSV4RRFFQ69G5FA6", Project: "01ARZ3NDEKTSV4RRFFQ69G5FA7",
 				Scopes: []string{ScopeShapesRead}, SubjectToken: func(context.Context) (string, error) { return "user-token", nil }}
 			if confidential {
 				cfg.ClientID, cfg.ClientSecret = "ts-dashboard", "s3cret"
@@ -266,7 +266,7 @@ func TestExchangeSource(t *testing.T) {
 		})
 	}
 	failure := errors.New("signed out")
-	s, err := NewExchangeSource(ExchangeConfig{Issuer: "https://auth.example/terrascale", ClientID: "ts-cli", Organization: "org",
+	s, err := NewExchangeSource(ExchangeConfig{Issuer: "https://auth.example/terrascale", ClientID: "ts-cli", Organization: "01ARZ3NDEKTSV4RRFFQ69G5FA6",
 		SubjectToken: func(context.Context) (string, error) { return "", failure }})
 	if err != nil {
 		t.Fatal(err)
@@ -297,16 +297,19 @@ func TestNoRedirects(t *testing.T) {
 func TestConfigRejection(t *testing.T) {
 	subject := func(context.Context) (string, error) { return "", nil }
 	for name, err := range map[string]error{
-		"short key":       second(NewAPIKeySource(APIKeyConfig{Key: "tsk_123"})),
-		"tb_ key":         second(NewAPIKeySource(APIKeyConfig{Key: "tb_" + strings.Repeat("a", 43)})),
-		"key with l":      second(NewAPIKeySource(APIKeyConfig{Key: strings.Replace(testKey, "0", "l", 1)})),
-		"http issuer":     second(NewAPIKeySource(APIKeyConfig{Key: testKey, Issuer: "http://auth.example/terrascale"})),
-		"issuer query":    second(NewAPIKeySource(APIKeyConfig{Key: testKey, Issuer: "https://auth.example/terrascale?x=1"})),
-		"empty query":     second(NewAPIKeySource(APIKeyConfig{Key: testKey, Issuer: "https://auth.example/terrascale?"})),
-		"escaped slash":   second(NewAPIKeySource(APIKeyConfig{Key: testKey, Issuer: "https://auth.example/tenant%2Fname"})),
-		"no client":       second(NewExchangeSource(ExchangeConfig{Organization: "org", SubjectToken: subject})),
-		"no organization": second(NewExchangeSource(ExchangeConfig{ClientID: "ts-cli", SubjectToken: subject})),
-		"no subject":      second(NewExchangeSource(ExchangeConfig{ClientID: "ts-cli", Organization: "org"})),
+		"old key ID":        second(NewAPIKeySource(APIKeyConfig{Key: "tsk_3k9f2m8q1x7v4c6n0b5z_0123456789abcdefghjkmnpqrstvwxyz0123456789abcdefghjk"})),
+		"prefixed project":  second(NewAPIKeySource(APIKeyConfig{Key: testKey, Project: "prj_01ARZ3NDEKTSV4RRFFQ69G5FAV"})),
+		"UUID organization": second(NewExchangeSource(ExchangeConfig{ClientID: "ts-cli", Organization: "0190a6e4-7c3b-7d2e-8f00-0123456789ab", SubjectToken: subject})),
+		"short key":         second(NewAPIKeySource(APIKeyConfig{Key: "tsk_123"})),
+		"tb_ key":           second(NewAPIKeySource(APIKeyConfig{Key: "tb_" + strings.Repeat("a", 43)})),
+		"key with l":        second(NewAPIKeySource(APIKeyConfig{Key: strings.Replace(testKey, "0", "l", 1)})),
+		"http issuer":       second(NewAPIKeySource(APIKeyConfig{Key: testKey, Issuer: "http://auth.example/terrascale"})),
+		"issuer query":      second(NewAPIKeySource(APIKeyConfig{Key: testKey, Issuer: "https://auth.example/terrascale?x=1"})),
+		"empty query":       second(NewAPIKeySource(APIKeyConfig{Key: testKey, Issuer: "https://auth.example/terrascale?"})),
+		"escaped slash":     second(NewAPIKeySource(APIKeyConfig{Key: testKey, Issuer: "https://auth.example/tenant%2Fname"})),
+		"no client":         second(NewExchangeSource(ExchangeConfig{Organization: "01ARZ3NDEKTSV4RRFFQ69G5FA6", SubjectToken: subject})),
+		"no organization":   second(NewExchangeSource(ExchangeConfig{ClientID: "ts-cli", SubjectToken: subject})),
+		"no subject":        second(NewExchangeSource(ExchangeConfig{ClientID: "ts-cli", Organization: "01ARZ3NDEKTSV4RRFFQ69G5FA6"})),
 	} {
 		if err == nil {
 			t.Errorf("%s: no error", name)

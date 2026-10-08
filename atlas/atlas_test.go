@@ -40,7 +40,7 @@ func atlasServer(t *testing.T, key *ecdsa.PublicKey) (*httptest.Server, *atlas.D
 		if err := json.Unmarshal(body, &got); err != nil {
 			t.Error(err)
 		}
-		io.WriteString(w, `{"topology":"updated","placements":[{"project":"p1","result":"stale"}]}`)
+		io.WriteString(w, `{"topology":"updated","placements":[{"project":"01ARZ3NDEKTSV4RRFFQ69G5FAD","result":"stale"}]}`)
 	}))
 	t.Cleanup(srv.Close)
 	return srv, &got
@@ -61,7 +61,7 @@ func TestPublish(t *testing.T) {
 		Topology: &atlas.Topology{V: 1, Updated: 1791159807,
 			Regions:  []atlas.Region{{ID: "gru-1", Name: "São Paulo", Country: "BR", API: "https://gru.api.terrascale.tech", Auth: "https://gru.auth.terrascale.tech", OK: true}},
 			Services: []atlas.Service{{ID: "terrabase", Name: "TerraBase", URL: "https://api.terrascale.tech", Health: "https://api.terrascale.tech/readyz"}}},
-		Placements: []atlas.Placement{{V: 1, Project: "p1", Region: "gru-1", Databases: map[string]string{"orders": "gru-1"}, Updated: 1791159807}},
+		Placements: []atlas.Placement{{V: 1, Project: "01ARZ3NDEKTSV4RRFFQ69G5FAD", Region: "gru-1", Databases: map[string]string{"orders": "gru-1"}, Updated: 1791159807}},
 	}
 	if _, err := (&atlas.Publisher{BaseURL: srv.URL + "/", Key: key}).Publish(t.Context(), doc); err != nil {
 		t.Fatalf("trailing slash: %v", err)

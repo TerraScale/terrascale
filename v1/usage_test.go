@@ -38,7 +38,7 @@ func TestUsageDistinguishesMissingPeriodFromMeasuredZero(t *testing.T) {
 	if err := json.Unmarshal([]byte(`{"reads":500,"writes":200}`), &old); err != nil {
 		t.Fatal(err)
 	}
-	if err := json.Unmarshal([]byte(`{"reads":500,"writes":200,"logicalBytes":123,"period":{"from":"2026-10-01T00:00:00Z","to":"2026-10-07T00:00:00Z","granularity":"day","reads":0,"writes":0},"items":[{"databaseId":"db","period":{"reads":1,"writes":2}}]}`), &current); err != nil {
+	if err := json.Unmarshal([]byte(`{"reads":500,"writes":200,"logicalBytes":123,"period":{"from":"2026-10-01T00:00:00Z","to":"2026-10-07T00:00:00Z","granularity":"day","reads":0,"writes":0},"items":[{"databaseId":"01ARZ3NDEKTSV4RRFFQ69G5FA5","period":{"reads":1,"writes":2}}]}`), &current); err != nil {
 		t.Fatal(err)
 	}
 	if old.Period != nil || current.Period == nil || current.Period.Reads != 0 || current.Period.From.Day() != 1 || current.LogicalBytes != 123 || len(current.Items) != 1 || current.Items[0].Period.Writes != 2 {

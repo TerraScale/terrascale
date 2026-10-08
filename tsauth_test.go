@@ -28,7 +28,7 @@ func TestTSAuthPublicOriginDiscoversRegionsAndProxyOptIn(t *testing.T) {
 	var hosts []string
 	transport := tsAuthEdgeTransport(func(r *http.Request) (*http.Response, error) {
 		hosts = append(hosts, r.URL.Hostname())
-		body := `{"sub":"user-1"}`
+		body := `{"sub":"01ARZ3NDEKTSV4RRFFQ69G5FA4"}`
 		status := http.StatusOK
 		switch r.URL.Hostname() {
 		case "atlas.terrascale.tech":
@@ -140,7 +140,7 @@ func TestTSAuthRetryPolicy(t *testing.T) {
 				w.WriteHeader(http.StatusServiceUnavailable)
 				return
 			}
-			_, _ = w.Write([]byte(`{"sub":"user-1"}`))
+			_, _ = w.Write([]byte(`{"sub":"01ARZ3NDEKTSV4RRFFQ69G5FA4"}`))
 		case r.URL.Path == "/acme/oauth/revoke" && r.Method == http.MethodPost:
 			posts++
 			w.WriteHeader(http.StatusServiceUnavailable)
@@ -279,7 +279,7 @@ func TestTSAuthOIDC(t *testing.T) {
 			if got := r.Header.Get("Authorization"); got != "Bearer at_live" {
 				t.Errorf("userinfo authorization = %q", got)
 			}
-			_, _ = w.Write([]byte(`{"sub":"user-1","email":"ada@example.com","email_verified":true,"name":"Ada"}`))
+			_, _ = w.Write([]byte(`{"sub":"01ARZ3NDEKTSV4RRFFQ69G5FA4","email":"ada@example.com","email_verified":true,"name":"Ada"}`))
 		default:
 			http.NotFound(w, r)
 		}
@@ -312,7 +312,7 @@ func TestTSAuthOIDC(t *testing.T) {
 		t.Fatalf("revoke error = %v", err)
 	}
 	userInfo, err := oidc.GetUserInfo(t.Context(), "at_live")
-	if err != nil || userInfo.Sub != "user-1" || userInfo.Email == nil || userInfo.EmailVerified == nil || !*userInfo.EmailVerified {
+	if err != nil || userInfo.Sub != "01ARZ3NDEKTSV4RRFFQ69G5FA4" || userInfo.Email == nil || userInfo.EmailVerified == nil || !*userInfo.EmailVerified {
 		t.Fatalf("userinfo = %+v, error = %v", userInfo, err)
 	}
 }

@@ -14,7 +14,7 @@ func TestDownstreamRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	u := m.WithToken(s.Token(t, "downstream-user", ""))
+	u := m.WithToken(s.Token(t, "01ARZ3NDEKTSV4RRFFQ69G5FAF", ""))
 	org, err := u.CreateOrganization(ctx, "Downstream")
 	if err != nil {
 		t.Fatal(err)

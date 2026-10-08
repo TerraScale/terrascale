@@ -5,6 +5,20 @@ transactions with an API key, and the Management API for the dashboard
 backend. The root package holds the hosted TSAuth clients and the pure schema
 and SQL builders.
 
+All entity IDs are canonical uppercase, 26-character Crockford ULIDs. Use
+`sdk.NewID()` (or `v1.NewID()`) to generate one and `ValidateID` to validate it.
+Generation is concurrency-safe and monotonic within a millisecond. UUIDs,
+prefixed IDs, lowercase IDs and legacy document keys are rejected at SDK
+boundaries. The TerraBase document key is the entity ID: document payloads
+must not contain a top-level `id` field. OAuth client names, database and
+collection names, region/service catalog names, versions and credentials
+remain protocol names or opaque tokens, not entity IDs.
+
+This greenfield change provides no data migration or compatibility path.
+The SDK owns no persistent collections, databases or KV records; no stored
+data is deleted by this repository. Services must wipe affected data and
+recreate bootstrap state before serving the new contract.
+
 ## TerraBase v1 client (`terrascale.tech/sdk/v1`)
 
 Package `v1` talks to the C# TerraBase server: the Documents API v1 and the
@@ -22,12 +36,12 @@ _, err = db.CreateCollection(ctx, "users") // 409 name_taken when it exists
 cols, err := db.Collections(ctx, tb.ListOptions{Limit: 50})
 users := db.Collection("users")             // also Info and Drop
 
-res, err := users.Create(ctx, map[string]any{"email": "ana@example.com"}) // server UUIDv7
+res, err := users.Create(ctx, map[string]any{"email": "ana@example.com"}) // server ULID
 doc, err := users.Get(ctx, res.ID)
 var body map[string]any
 err = doc.Decode(&body) // numbers decode as json.Number, never float64
 
-id := tb.DocumentIDFor("users", "ana@example.com") // deterministic UUIDv5 natural key
+id := tb.NewID() // monotonic ULID; keep natural keys in payload fields
 _, err = users.Put(ctx, id, body, tb.IfNoneMatchAny())
 _, err = users.Patch(ctx, id, tb.Ops(tb.Inc("/logins", 1), tb.Append("/tags", "beta")), tb.IfMatch(doc.Version))
 _, err = users.Patch(ctx, id, tb.MergePatch(map[string]any{"legacy": nil}))
@@ -186,10 +200,12 @@ errors and safe-read retries.
 
 ### Tests
 
-Existing TerraBase integration tests run against the real TerraBase release.
-TS-762's `v1/metrics_test.go` uses `httptest` for the provisional replication and
-analytics contract while the server endpoints are being added in parallel.
-The importable `terrascale.tech/sdk/terrabasetest` package is the
+TerraBase storage and management journeys run against the real release.
+Focused HTTP boundary tests also check generated IDs and malformed response
+envelopes without simulating persistence. TS-762's `v1/metrics_test.go` uses
+`httptest` for the provisional replication and analytics contract while the
+server endpoints are being added in parallel. The importable
+`terrascale.tech/sdk/terrabasetest` package is the
 shared harness for SDK and downstream tests: it pins the release
 by version and SHA-256, downloads it once with `TERRABASE_TOKEN` (read access
 to TerraScale/terrabase) into the user cache directory (or `TERRABASE_CACHE`),
@@ -328,7 +344,7 @@ var atlasErr *atlas.Error // errors.As: Status, Code (invalid_signature, invalid
 ts-auth's platform contract (TS-598) issues every token TerraBase accepts.
 `tsauth` turns credentials into short-lived tokens:
 
-- `NewAPIKeySource` exchanges an API key (`tsk_…`, an OAuth client
+- `NewAPIKeySource` exchanges an API key (`tsk_<ULID>_<secret>`, an OAuth client
   credential) at `{issuer}/oauth/token` for an organization or project token
   (`Project`, optional `Scopes`).
 - `NewExchangeSource` exchanges a signed-in user's token (RFC 8693) for an
@@ -419,3 +435,9 @@ nice -n 19 go test -race ./...
 The module requires Go 1.25 and has no CGO dependency. CI runs the pinned
 vulnerability scanner alongside formatting, vet, build and race tests,
 including the v1 integration tests against the pinned TerraBase.
+
+PostgreSQL connections require plain ULIDs for both `PostgresConfig.Database`
+and `PostgresConfig.KeyID`; the key ID is also the PostgreSQL username.
+API key token sources use `tsk_<26-character ULID>_<52-character secret>`:
+the ULID alone is the OAuth client ID. Credential prefixes identify secret
+formats and are never part of an entity ID.

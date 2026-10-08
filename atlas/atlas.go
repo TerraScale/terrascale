@@ -24,6 +24,8 @@ import (
 	"slices"
 	"strconv"
 	"time"
+
+	"terrascale.tech/sdk/internal/entityid"
 )
 
 // Document is one publish: the whole topology, placements, or both.
@@ -111,6 +113,11 @@ type Publisher struct {
 
 // Publish signs doc with the current time and posts it.
 func (p *Publisher) Publish(ctx context.Context, doc Document) (*Report, error) {
+	for _, placement := range doc.Placements {
+		if err := entityid.Check(placement.Project); err != nil {
+			return nil, err
+		}
+	}
 	base, err := url.Parse(p.BaseURL)
 	if err != nil || base.Host == "" || base.User != nil || base.RawQuery != "" || base.ForceQuery || base.Fragment != "" ||
 		(base.Path != "" && base.Path != "/") || (base.Scheme != "https" && !(base.Scheme == "http" && loopback(base.Hostname()))) {
@@ -160,6 +167,11 @@ func (p *Publisher) Publish(ctx context.Context, doc Document) (*Report, error) 
 	var report Report
 	if err := json.Unmarshal(answer, &report); err != nil {
 		return nil, fmt.Errorf("atlas: decode publish response: %w", err)
+	}
+	for _, placement := range report.Placements {
+		if err := entityid.Check(placement.Project); err != nil {
+			return nil, err
+		}
 	}
 	return &report, nil
 }

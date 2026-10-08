@@ -52,7 +52,7 @@ func scriptedUsers(t *testing.T, responses ...scripted) (*v1.Collection, *v1.Dat
 }
 
 func TestOpaqueVersions(t *testing.T) {
-	const id = "0190a6e4-7c3b-7d2e-8f00-0000000000d0"
+	const id = "01J2KE8Z1VFMQ8Y0000000006G"
 	for _, version := range []string{"tbv1-0123456789abcdef0123456789abcdef", "tbv2-AQID.Bf_x-9~"} {
 		t.Run(version[:4], func(t *testing.T) {
 			busy := scripted{status: http.StatusTooManyRequests, header: http.Header{"Retry-After": {"0"}}, body: `{"error":{"code":"rate_limited","message":"slow down"}}`}
@@ -96,7 +96,7 @@ func TestOpaqueVersions(t *testing.T) {
 }
 
 func TestNewResponseMembers(t *testing.T) {
-	const id = "0190a6e4-7c3b-7d2e-8f00-0000000000d0"
+	const id = "01J2KE8Z1VFMQ8Y0000000006G"
 	users, _, _ := scriptedUsers(t,
 		scripted{status: http.StatusOK, body: `{"id":"` + id + `","version":"tbv2-x","state":"conflict","causal":{"clock":"opaque"},"siblings":[
 			{"event":{"replica":"` + testProject + `","incarnation":"0123456789abcdef0123456789abcdef","sequence":"1","hlc":"9"},"deleted":false,"document":{"n":1},"origin":"gru"},

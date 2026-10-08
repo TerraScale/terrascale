@@ -46,26 +46,36 @@ func TestPackagedGoConsumerPreservesIntegers(t *testing.T) {
 	write(filepath.Join(versionRoot, "v0.0.0.info"), []byte(`{"Version":"v0.0.0","Time":"2026-01-01T00:00:00Z"}`))
 	var packed bytes.Buffer
 	archive := zip.NewWriter(&packed)
-	files, err := os.ReadDir(root)
+	err = filepath.WalkDir(root, func(path string, file os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if file.IsDir() {
+			if strings.HasPrefix(file.Name(), ".") && path != root {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		name, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		if strings.HasSuffix(name, "_test.go") || !(strings.HasSuffix(name, ".go") || name == "go.mod" || name == "go.sum") {
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		entry, err := archive.Create("terrascale.tech/sdk@v0.0.0/" + filepath.ToSlash(name))
+		if err != nil {
+			return err
+		}
+		_, err = entry.Write(data)
+		return err
+	})
 	if err != nil {
 		t.Fatal(err)
-	}
-	for _, file := range files {
-		name := file.Name()
-		if file.IsDir() || strings.HasSuffix(name, "_test.go") || !(strings.HasSuffix(name, ".go") || name == "go.mod" || name == "go.sum") {
-			continue
-		}
-		data, err := os.ReadFile(filepath.Join(root, name))
-		if err != nil {
-			t.Fatal(err)
-		}
-		entry, err := archive.Create("terrascale.tech/sdk@v0.0.0/" + name)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := entry.Write(data); err != nil {
-			t.Fatal(err)
-		}
 	}
 	if err := archive.Close(); err != nil {
 		t.Fatal(err)

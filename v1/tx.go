@@ -20,7 +20,7 @@ type Tx struct {
 type txOp struct {
 	Op          string          `json:"op"`
 	Collection  string          `json:"collection"`
-	ID          string          `json:"id,omitempty"`
+	ID          string          `json:"id,omitempty" ulid:"optional"`
 	Document    json.RawMessage `json:"document,omitempty"`
 	IfMatch     string          `json:"if_match,omitempty"`
 	IfNoneMatch string          `json:"if_none_match,omitempty"`
@@ -43,7 +43,7 @@ type TxResult struct {
 // OpResult is the outcome of one transaction op: ID and Version for writes,
 // Asserted for asserts, and Count for AssertCount.
 type OpResult struct {
-	ID       string  `json:"id,omitempty"`
+	ID       string  `json:"id,omitempty" ulid:"optional"`
 	Version  string  `json:"version,omitempty"`
 	Asserted bool    `json:"asserted,omitempty"`
 	Count    *Uint64 `json:"count,omitempty"`
@@ -103,7 +103,7 @@ func (t *Tx) addOp(op txOp, pre []Precondition, collection, id string, idRequire
 }
 
 // Create adds a create op (a put that requires absence). An empty id lets
-// the server generate a UUIDv7, returned in the op's result.
+// the server generate a ULID, returned in the op's result.
 func (t *Tx) Create(collection, id string, doc any) *Tx {
 	body, err := encodeObject(doc)
 	if err != nil {

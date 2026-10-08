@@ -2,7 +2,10 @@ module terrascale.tech/sdk
 
 go 1.25.0
 
-require github.com/jackc/pgx/v5 v5.9.2
+require (
+	github.com/jackc/pgx/v5 v5.9.2
+	github.com/oklog/ulid/v2 v2.1.2
+)
 
 require (
 	github.com/jackc/pgpassfile v1.0.0 // indirect

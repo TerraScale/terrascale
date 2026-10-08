@@ -37,8 +37,8 @@ func postgresTestConfig(t *testing.T) PostgresConfig {
 	if err != nil {
 		t.Fatal(err)
 	}
-	id := base64.RawURLEncoding.EncodeToString(make([]byte, 16))
-	return PostgresConfig{Host: "127.0.0.1", Port: 55432, TLSServerName: "postgres.example", Database: "01900000-0000-7000-8000-000000000001",
+	id := "01ARZ3NDEKTSV4RRFFQ69G5FAE"
+	return PostgresConfig{Host: "127.0.0.1", Port: 55432, TLSServerName: "postgres.example", Database: "01J0000000E008000000000001",
 		KeyID: id, Password: "tbk1." + id + "." + base64.RawURLEncoding.EncodeToString(make([]byte, 32)),
 		CACertificatePEM: pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})}
 }
