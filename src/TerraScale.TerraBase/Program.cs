@@ -95,6 +95,8 @@ builder.Services.AddTerraBaseCrossRegion(options);
 
 try
 {
+    // Dispose startup certificates before publishing completion; the outer scope also covers setup failures.
+    using var runConfiguration = configuration;
     await using var app = builder.Build();
     try
     {
