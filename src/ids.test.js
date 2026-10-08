@@ -92,4 +92,6 @@ test("hosted-auth validates entity references and leaves customer metadata untou
     expect(() => validateTsAuthIds({ data: [{ id, user_id: invalid }] }, "tsauth.organizations.list")).toThrow(TypeError);
   }
   expect(() => validateTsAuthIds({ id, allowed_client_ids: ["client_1"] }, "tsauth.oauthResources.list")).toThrow(TypeError);
+  expect(() => validateTsAuthIds({ data: [{ email: "user@example.test" }] }, "tsauth.users.list")).toThrow(TypeError);
+  expect(() => validateTsAuthIds({ email: "user@example.test" }, "tsauth.oidc.userinfo")).toThrow(TypeError);
 });
