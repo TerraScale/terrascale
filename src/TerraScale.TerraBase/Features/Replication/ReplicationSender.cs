@@ -319,17 +319,18 @@ internal sealed partial class ReplicationSender(
         using var progress = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
         progress.CancelAfter(ReplicationProtocol.ProgressTimeout);
         var database = identity.Tenant;
-        if (await engine.OpenDatabaseAsync(database, progress.Token).ConfigureAwait(false) is not { } store || store.Incarnation != identity.Origin)
-        {
-            return false;
-        }
-
         // Peers refuse a database their catalog does not register, so send none of a database that is neither registered nor being
         // created (backup snapshots and restore staging are primary-local storage): its groups would count as lag forever.
+        // Check before opening the file too: a queued commit must not reopen an ineligible snapshot or staging database.
         if (await tenants.ReplicatesAsync(database, progress.Token).ConfigureAwait(false) is false)
         {
             Drop(identity);
             Progressed();
+            return false;
+        }
+
+        if (await engine.OpenDatabaseAsync(database, progress.Token).ConfigureAwait(false) is not { } store || store.Incarnation != identity.Origin)
+        {
             return false;
         }
 

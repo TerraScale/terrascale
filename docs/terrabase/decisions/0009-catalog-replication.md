@@ -183,9 +183,10 @@ primary without `catalog-primary` while another one serves.
 - A follower serves a registered database from an empty local file until client replication delivers its
   documents; for a branch or restore of a populated database that is a short window of missing documents.
 - A follower that catches up with a snapshot (behind the 1,024 retained groups) misses the intents the primary already
-  cleared: the files of databases deleted meanwhile stay, counted as unknown, until an operator removes them. Its sender
-  keeps offering them to peers, which refuse them, so its `terrabase_replication_sender_durable_lag` stays above 0 for
-  as long and a drain that waits for 0 does not end.
+  cleared: the files of databases deleted meanwhile stay, counted as unknown, until an operator removes them. Since
+  TS-660, its sender excludes files the catalog does not register or is not creating, including backup snapshots and
+  restore staging, so those files do not keep `terrabase_replication_sender_durable_lag` above 0. TS-644 also checks
+  eligibility before opening a queued database file; existing backup copies stay available to restore and retention.
 - A member with a catalog of its own (before 0009) refuses client replication of every database its catalog does not
   register, and a follower whose disk cannot delete a database's files stops following until it can.
 - Tombstones of dashboard documents are not replicated: a follower holds no row for a deleted document.
