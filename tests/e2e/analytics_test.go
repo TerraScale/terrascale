@@ -46,6 +46,13 @@ func (c *contractMetrics) Analytics(ctx context.Context, _ string, s core.Metric
 		return core.Analytics{}, nil
 	}
 	start := time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
+	if c.mode == "sparse" {
+		return core.Analytics{Series: []core.AnalyticsPoint{
+			{Start: start},
+			{Start: start.Add(time.Minute), P95LatencyMS: new(1.5)},
+			{Start: start.Add(2 * time.Minute)},
+		}}, nil
+	}
 	return core.Analytics{Series: []core.AnalyticsPoint{
 		{Start: start, Requests: map[string]int64{"query": 12, "write": 3}, Operations: map[string]int64{"read": 8, "put": 3}, Errors: 1, P50LatencyMS: new(0.25), P95LatencyMS: new(1.5), P99LatencyMS: new(3.5), StorageBytes: 2048, ClientSentBytes: 1024, ClientReceivedBytes: 2048, ReplicationBytes: 4096},
 		{Start: start.Add(time.Minute), Requests: map[string]int64{"query": 20}, Operations: map[string]int64{"read": 12, "delete": 1}, Errors: 2, P50LatencyMS: new(0.5), P95LatencyMS: new(2.5), P99LatencyMS: new(5.0), StorageBytes: 4096, ClientSentBytes: 2048, ClientReceivedBytes: 4096, ReplicationBytes: 2048},
@@ -202,6 +209,20 @@ func TestAnalyticsLoadingStateDuringNativeFilterNavigation(t *testing.T) {
 	close(client.release)
 	must(t, expect.Locator(page.Locator("#analytics-range")).ToHaveValue("7d"))
 	must(t, expect.Locator(page.Locator(".ts-measurement-loading")).ToBeHidden())
+}
+
+func TestAnalyticsIsolatedLatencyRemainsVisibleWithoutHover(t *testing.T) {
+	page := metricsPage(t, &contractMetrics{mode: "sparse"})
+	goToOK(t, page, "/analytics")
+	marker := page.Locator(".ts-chart-marker")
+	must(t, expect.Locator(marker).ToHaveCount(1))
+	must(t, marker.ScrollIntoViewIfNeeded())
+	must(t, page.Mouse().Move(0, 0))
+	must(t, expect.Locator(marker).ToBeVisible())
+	must(t, expect.Locator(marker).ToHaveCSS("opacity", "1"))
+	must(t, expect.Locator(page.Locator(".ts-chart-column .ts-chart-marker")).ToHaveCount(0))
+	expectAccessible(t, page, "analytics isolated latency", "main")
+	screenshot(t, page, "analytics-isolated-latency")
 }
 
 func TestAnalyticsAndReplicationEmptyAndErrorStates(t *testing.T) {

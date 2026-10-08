@@ -1,10 +1,43 @@
 package charts
 
 import (
+	"bytes"
 	"strings"
 	"testing"
 	"time"
 )
+
+func TestIsolatedObservationsRenderPersistentMarkers(t *testing.T) {
+	denseValues, denseMissing := make([]int64, 121), make([]bool, 121)
+	for i := range denseMissing {
+		denseMissing[i] = true
+	}
+	denseValues[60], denseMissing[60] = 4, false
+	for _, tc := range []struct {
+		name    string
+		values  []int64
+		missing []bool
+		markers int
+	}{
+		{"intermediate", []int64{0, 4, 0}, []bool{true, false, true}, 1},
+		{"measured zero at start", []int64{0, 99, 4}, []bool{false, true, false}, 2},
+		{"one bucket", []int64{4}, nil, 1},
+		{"connected observations", []int64{2, 4, 0}, []bool{false, false, true}, 0},
+		{"all missing", []int64{2, 4, 0}, []bool{true, true, true}, 0},
+		{"outside sampled hover columns", denseValues, denseMissing, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			data := NewLine("nullable", nil, nil, 200, Series{Name: "p95", Values: tc.values, Missing: tc.missing})
+			var html bytes.Buffer
+			if err := Line(data).Render(t.Context(), &html); err != nil {
+				t.Fatal(err)
+			}
+			if got := strings.Count(html.String(), `class="ts-chart-dot ts-chart-marker `); got != tc.markers {
+				t.Fatalf("persistent markers=%d, want %d", got, tc.markers)
+			}
+		})
+	}
+}
 
 func TestNewLineLabelsTicksWithTheirSamplesWhenGivenNoTicks(t *testing.T) {
 	points := []string{"a", "b", "c", "d", "e", "f", "g", "h", "i"}

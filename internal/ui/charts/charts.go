@@ -36,7 +36,7 @@ type LinePath struct {
 	Data  string
 }
 
-// ChartDot marks one series value inside a hover column.
+// ChartDot marks a reported series value.
 type ChartDot struct {
 	X, Y  string
 	Class string
@@ -80,6 +80,7 @@ type LineData struct {
 	Grid     []AxisLine
 	Ticks    []AxisTick
 	Paths    []LinePath
+	Markers  []ChartDot
 	AreaPath string
 	Columns  []ChartColumn
 	// GradientID names the area fill gradient; unique per chart label.
@@ -179,6 +180,10 @@ func NewLine(label string, ticks, points []string, height int, series ...Series)
 	xAt := func(i int) float64 { return left + float64(plotWidth)*float64(i)/float64(max(1, count-1)) }
 	yAt := func(value int64) float64 { return top + float64(plotHeight)*(1-float64(max(0, value))/float64(scale)) }
 	for index, item := range series {
+		class := fmt.Sprintf("ts-cat-%d", index%3+1)
+		if len(series) == 1 {
+			class = "ts-chart-series-1"
+		}
 		var segments []string
 		var points [][2]float64
 		for i, value := range item.Values {
@@ -190,14 +195,17 @@ func NewLine(label string, ticks, points []string, height int, series ...Series)
 				continue
 			}
 			points = append(points, [2]float64{xAt(i), yAt(value)})
+			previousMissing := i == 0 || len(item.Missing) > 0 && item.Missing[i-1]
+			nextMissing := i == count-1 || len(item.Missing) > 0 && item.Missing[i+1]
+			if previousMissing && nextMissing {
+				data.Markers = append(data.Markers, ChartDot{X: coordinate(xAt(i)), Y: coordinate(yAt(value)), Class: class})
+			}
 		}
 		if len(points) > 0 {
 			segments = append(segments, smoothPath(points))
 		}
 		line := strings.Join(segments, " ")
-		class := fmt.Sprintf("ts-cat-%d", index%3+1)
 		if len(series) == 1 {
-			class = "ts-chart-series-1"
 			if !slices.Contains(item.Missing, true) {
 				data.AreaPath = fmt.Sprintf("%s L %d,%d L %d,%d Z", line, width-right, top+plotHeight, left, top+plotHeight)
 			}

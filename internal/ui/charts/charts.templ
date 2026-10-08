@@ -33,6 +33,9 @@ templ Line(data LineData) {
 			for _, path := range data.Paths {
 				<path class={ "ts-chart-line " + path.Class } d={ path.Data }></path>
 			}
+			for _, marker := range data.Markers {
+				<circle class={ "ts-chart-dot ts-chart-marker " + marker.Class } cx={ marker.X } cy={ marker.Y } r="4" aria-hidden="true"></circle>
+			}
 			for _, column := range data.Columns {
 				<g class="ts-chart-column" tabindex="0" role="img" aria-label={ column.Label }>
 					<rect class="ts-chart-hit" x={ column.Left } y={ fmt.Sprint(data.PlotTop) } width={ column.Width } height={ fmt.Sprint(data.PlotBottom - data.PlotTop) }></rect>
