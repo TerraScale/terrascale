@@ -379,7 +379,7 @@ public sealed class DataDirectoryTests
                     break;
                 case "unrecorded-identity":
                     // A replica identity copied into a directory no server recorded: refused, not adopted.
-                    await File.WriteAllBytesAsync(Path.Combine(dataDirectory, ReplicaFileName), [1, 7, 0, 0, 0, 0, 0, 1]);
+                    await WriteReplicaAsync(dataDirectory, 1, [7, 0, 0, 0], [0, 0], running: false);
                     break;
                 default:
                     // A layout record this build does not know, from a newer build.
@@ -523,12 +523,11 @@ public sealed class DataDirectoryTests
                     await File.WriteAllBytesAsync(path, identity[..3]);
                     break;
                 default:
-                    // A running record at epoch 0x0100 whose rewrite to 0x0101 a power loss tore: the epoch reads 0x0000
-                    // under the old checksum. Trusted, it would restart at epoch 1, which may have minted dots.
+                    // A running record at epoch 0x0100 whose rewrite to 0x0101 a power loss tore after the epoch landed:
+                    // the epoch reads 0x0101 under the old checksum, so no part of the record can be trusted.
                     await WriteReplicaAsync(dataDirectory, 1, identity.AsSpan(1, 4).ToArray(), [0x00, 0x01], running: true);
                     identity = await File.ReadAllBytesAsync(path);
-                    identity[5] = 0;
-                    identity[6] = 0;
+                    identity[5] = 1;
                     await File.WriteAllBytesAsync(path, identity);
                     break;
             }

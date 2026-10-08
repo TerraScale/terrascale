@@ -77,7 +77,7 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
     internal SqliteIoPool Io { get; }
 
     /// <summary>This member's replica id: who mints the dots of the writes it makes (docs/design/anna-core.md).</summary>
-    internal ReplicaId Replica { get; }
+    internal ReplicaId ReplicaId { get; }
     private readonly string _pragmas;
     private bool _heapInitialized;
 
@@ -354,9 +354,9 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
         _ownership = Own(dataDirectory);
         try
         {
-            Replica = ReplicaIdentityFile.Start(dataDirectory);
-            meter.CreateObservableGauge("terrabase.replica.member", () => (long)Replica.Member, description: "This member's number in its replica id.");
-            meter.CreateObservableGauge("terrabase.replica.epoch", () => (long)Replica.Epoch, description: "Unclean starts of this member since its number was taken.");
+            ReplicaId = ReplicaIdentityFile.Start(dataDirectory);
+            meter.CreateObservableGauge("terrabase.replica.member", () => (long)ReplicaId.Member, description: "This member's number in its replica id.");
+            meter.CreateObservableGauge("terrabase.replica.epoch", () => (long)ReplicaId.Epoch, description: "Unclean starts of this member since its number was taken.");
 
             // Last construction step: the pool owns rollback of any partially started workers.
             Io = new(threads, queue, meter, createWorker);
@@ -968,7 +968,7 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
         {
             try
             {
-                ReplicaIdentityFile.Stop(_dataDirectory, Replica);
+                ReplicaIdentityFile.Stop(_dataDirectory, ReplicaId);
             }
             catch (Exception error)
             {
