@@ -53,7 +53,7 @@ Each point contains:
   bins. Empty request buckets return null percentiles. The highest bin includes
   requests above 65,536 ms and reports that boundary.
 - `storageBytes`: the average sampled physical database size, including the
-  engine's sidecars; null before any sample. Each node samples every ten seconds,
+  engine's sidecars; null before any sample. Each node samples once per minute,
   with bounded, rotating work over its databases.
 - `clientBandwidth` and `replicationBandwidth`, each with `bytesSent` and
   `bytesReceived`. Client bandwidth counts actual HTTP body reads and writes

@@ -22,6 +22,9 @@ internal sealed partial class UsageFlushService(
 {
     private int _sampleOffset;
 
+    // Storage is sampled once per minute bucket, so an idle node neither lists databases nor writes usage every tick.
+    private long _sampledMinute = -1;
+
     private static readonly TimeSpan Interval = TimeSpan.FromSeconds(10);
 
     // Shared process epoch; usage and query shapes number their own independent batches.
@@ -119,6 +122,13 @@ internal sealed partial class UsageFlushService(
             }
         }
 
+        var minute = time.GetUtcNow().ToUnixTimeSeconds() / 60;
+        if (_sampleOffset == 0 && minute == _sampledMinute)
+        {
+            return;
+        }
+
+        _sampledMinute = minute;
         var started = time.GetTimestamp();
         var skipped = 0;
         var sampled = 0;
