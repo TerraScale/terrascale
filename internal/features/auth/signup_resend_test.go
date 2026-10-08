@@ -110,6 +110,55 @@ func TestSignUpCodeResendWaitsOneMinuteAndCompletesRegistration(t *testing.T) {
 	}
 }
 
+func TestSignUpOversizedRetryStillVerifiesEmail(t *testing.T) {
+	t.Parallel()
+	issuer := newTestIssuer(t)
+	d, _ := signUpResendDashboard(t, issuer)
+	password := strings.Repeat("x", 1024)
+	returnTo := "/onboarding?plan=starter&extra=" + strings.Repeat("x", 2000)
+	d.cookies[d.tsAuth.signUpRetryCookie()] = &http.Cookie{Name: d.tsAuth.signUpRetryCookie(), Value: "obsolete"}
+	d.mux.HandleFunc("POST /large-sign-up", func(w http.ResponseWriter, r *http.Request) {
+		if err := d.tsAuth.SignUp(w, r, d.deps, RegistrationInput{
+			DisplayName: "Ada Lovelace", Email: "ada@example.test", Password: password,
+			ConfirmPassword: password, AcceptedTerms: true,
+		}, returnTo); err != nil {
+			http.Error(w, err.Error(), http.StatusUnprocessableEntity)
+		}
+	})
+	response := d.post("/large-sign-up", nil)
+	if response.Code != http.StatusOK || issuer.headlessCalls(headlessSignUp) != 1 {
+		t.Fatalf("large sign-up = %d: %s", response.Code, response.Body)
+	}
+	if _, ok := d.cookies[d.tsAuth.signUpCookie()]; !ok {
+		t.Fatal("sent verification code has no pending token")
+	}
+	if _, ok := d.cookies[d.tsAuth.signUpRetryCookie()]; ok {
+		t.Fatal("oversized sign-up retained an unusable retry cookie")
+	}
+	for _, marker := range []string{"Verify your email", "Create account again"} {
+		if !strings.Contains(response.Body.String(), marker) {
+			t.Fatalf("large sign-up has no %q", marker)
+		}
+	}
+	if strings.Contains(response.Body.String(), password) || strings.Contains(response.Body.String(), `action="/login/code/resend"`) {
+		t.Fatal("large sign-up exposes credentials or offers an unavailable resend")
+	}
+	verify := url.Values{"email": {"ada@example.test"}, "signUp": {"1"}, "name": {"Ada Lovelace"}, "redirectTo": {returnTo}, "code": {"000000"}}
+	response = d.post("/login/code/verify", verify)
+	if response.Code != http.StatusUnauthorized || !strings.Contains(response.Body.String(), "Create account again") {
+		t.Fatalf("wrong code lost verification recovery: %d", response.Code)
+	}
+	verify.Set("code", "654321")
+	response = d.post("/login/code/verify", verify)
+	if response.Code != http.StatusSeeOther || response.Header().Get("Location") != returnTo || !d.signedIn(t) {
+		t.Fatalf("large sign-up verification = %d → %q", response.Code, response.Header().Get("Location"))
+	}
+	d.do(http.MethodPost, "/api/v1/auth/logout")
+	if response := d.post("/login", url.Values{"email": {"ada@example.test"}, "password": {password}}); response.Code != http.StatusSeeOther {
+		t.Fatalf("original long password after verification = %d", response.Code)
+	}
+}
+
 func TestSignUpCodeResendRejectsInvalidRetryCookies(t *testing.T) {
 	t.Parallel()
 	for _, variant := range []string{"missing", "tampered", "expired", "another-token", "another-client"} {

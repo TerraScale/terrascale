@@ -22,15 +22,16 @@ import (
 // a new account's address, and Name is the one given at sign-up, which ts-auth
 // does not keep.
 type codePageData struct {
-	CodeStep      bool
-	SignUp        bool
-	Name          string
-	Email         string
-	RedirectTo    string
-	Error         string
-	CodeError     string
-	ResendSeconds int
-	Notice        string
+	CodeStep          bool
+	SignUp            bool
+	Name              string
+	Email             string
+	RedirectTo        string
+	Error             string
+	CodeError         string
+	ResendSeconds     int
+	ResendUnavailable bool
+	Notice            string
 }
 
 // resetPageData is password recovery: the email step asks where to send a
@@ -228,8 +229,12 @@ func (t *TSAuth) verifyCode(deps core.Deps) http.HandlerFunc {
 			RedirectTo: SafeRedirectTarget(r.PostForm.Get("redirectTo")),
 			SignUp:     r.PostForm.Get("signUp") == "1", Name: signUpName(r.PostForm.Get("name")),
 		}
-		if retry, err := t.readSignUpRetry(r); err == nil && data.SignUp && retry.Email == data.Email {
-			data.ResendSeconds = retry.remaining()
+		if data.SignUp {
+			if retry, err := t.readSignUpRetry(r); err == nil && retry.Email == data.Email {
+				data.ResendSeconds = retry.remaining()
+			} else {
+				data.ResendUnavailable = true
+			}
 		}
 		code := emailedCode(r.PostForm.Get("code"))
 		if !usableEmail(data.Email) {
@@ -321,14 +326,19 @@ func (t *TSAuth) SignUp(w http.ResponseWriter, r *http.Request, deps core.Deps, 
 		ReturnTo: SafeRedirectTarget(returnTo), Expires: now.Add(time.Hour), ResendAt: now.Add(time.Minute),
 	}
 	sealed, err := t.sealSignUpRetry(retry)
-	if err != nil {
-		return core.ErrUnavailable
-	}
 	t.setSignUpCookie(w, pending.Token, int(time.Hour.Seconds()))
-	t.setSignUpRetryCookie(w, sealed, int(time.Hour.Seconds()))
 	data := retry.pageData()
 	if r.URL.Path == "/login/code/resend" {
 		data.Notice = "Check your email for a new code."
+	}
+	if err != nil {
+		// The email has already been sent. Preserve verification even if
+		// the request is too large for the optional resend cookie.
+		t.setSignUpRetryCookie(w, "", -1)
+		data.ResendUnavailable = true
+		data.Notice = "Check your email for the verification code. To request another code, create your account again."
+	} else {
+		t.setSignUpRetryCookie(w, sealed, int(time.Hour.Seconds()))
 	}
 	renderCode(w, r, deps, http.StatusOK, data)
 	return nil

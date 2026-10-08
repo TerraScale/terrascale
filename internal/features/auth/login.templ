@@ -134,7 +134,9 @@ templ codeView(data codePageData, csrfToken string) {
 				}
 				<button class="ts-btn ts-btn-primary ts-btn-lg ts-btn-block" type="submit">Continue</button>
 			</form>
-			if data.SignUp {
+			if data.SignUp && data.ResendUnavailable {
+				<a class="ts-btn ts-btn-outline ts-btn-lg ts-btn-block" href={ signUpURL(data.RedirectTo) }>Create account again</a>
+			} else if data.SignUp {
 				<form
 					class="ts-form"
 					method="post"
