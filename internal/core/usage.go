@@ -17,9 +17,8 @@ type UsageMeter interface {
 	Usage(ctx context.Context, token string, scope UsageScope) (Usage, error)
 }
 
-// UsageScope selects the organization, or one of its projects, or one of
-// that project's databases, and the period: buckets of Granularity ("hour"
-// or "day", UTC) from From until now.
+// UsageScope selects a project, or one of its databases, and the period:
+// buckets of Granularity ("hour" or "day", UTC) from From until now.
 type UsageScope struct {
 	OrganizationID, ProjectID, DatabaseID string
 	Granularity                           string

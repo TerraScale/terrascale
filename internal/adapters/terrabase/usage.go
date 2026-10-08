@@ -1,25 +1,20 @@
 package terrabase
 
 import (
+	"cmp"
 	"context"
-	"encoding/json/v2"
+	"errors"
 	"fmt"
-	"io"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 
 	"terrascale.tech/dashboard/internal/core"
+	"terrascale.tech/sdk/v1"
 )
 
-// Meter reads usage from TerraBase's Management API (GET …/usage on the
-// organization, project and database routes) with the signed-in user's
-// ts-auth access token.
-// ponytail: a dashboard-side client, against "services talk only through the
-// SDKs", until ts-go's Management client (which acts as ts-auth users since
-// ts-go#19) gains the usage routes of terrabase#42 and the dashboard moves to
-// that ts-go; then call it and delete this type.
+// Meter reads TerraBase's project and database usage through ts-go, with the
+// signed-in user's ts-auth access token.
 type Meter struct {
 	BaseURL string
 	Client  *http.Client
@@ -27,65 +22,61 @@ type Meter struct {
 
 var _ core.UsageMeter = Meter{}
 
-// meterTimeout bounds one usage request, so a slow TerraBase delays a page
-// by at most this long.
 const meterTimeout = 10 * time.Second
 
 func (m Meter) Usage(ctx context.Context, token string, scope core.UsageScope) (core.Usage, error) {
-	path := []string{"organizations", scope.OrganizationID}
-	if scope.ProjectID != "" {
-		path = append(path, "projects", scope.ProjectID)
-		if scope.DatabaseID != "" {
-			path = append(path, "databases", scope.DatabaseID)
-		}
+	if strings.TrimSpace(scope.OrganizationID) == "" || strings.TrimSpace(scope.ProjectID) == "" {
+		return core.Usage{}, core.Invalid("usage needs an organization and a project")
 	}
-	endpoint := strings.TrimRight(m.BaseURL, "/") + "/v1/management"
-	for _, segment := range path {
-		if strings.TrimSpace(segment) == "" {
-			return core.Usage{}, core.Invalid("usage scope needs an organization, and a project for a database")
-		}
-		endpoint += "/" + url.PathEscape(segment)
+	management, err := v1.NewManagement(v1.Config{BaseURL: m.BaseURL, HTTPClient: cmp.Or(m.Client, http.DefaultClient), MaxResponseBytes: 4 << 20})
+	if err != nil {
+		return core.Usage{}, fmt.Errorf("%w: usage: %w", core.ErrUnavailable, err)
 	}
-	query := url.Values{"granularity": {scope.Granularity}, "from": {scope.From.UTC().Format(time.RFC3339)}}
 	ctx, cancel := context.WithTimeout(ctx, meterTimeout)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint+"/usage?"+query.Encode(), nil)
+	usage, err := management.WithToken(token).Usage(ctx, scope.OrganizationID, scope.ProjectID, scope.DatabaseID, v1.UsageOptions{
+		Granularity: scope.Granularity, From: scope.From,
+	})
 	if err != nil {
-		return core.Usage{}, err
-	}
-	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("Accept", "application/json")
-	client := m.Client
-	if client == nil {
-		client = http.DefaultClient
-	}
-	res, err := client.Do(req)
-	if err != nil {
+		var apiError *v1.APIError
+		if errors.As(err, &apiError) {
+			switch apiError.Status {
+			case http.StatusNotFound:
+				return core.Usage{}, core.ErrNotMetered
+			case http.StatusUnauthorized:
+				return core.Usage{}, fmt.Errorf("%w: usage: TerraBase refused the access token", core.ErrUnauthorized)
+			}
+		}
 		return core.Usage{}, fmt.Errorf("%w: usage: %w", core.ErrUnavailable, err)
 	}
-	defer res.Body.Close()
-	switch res.StatusCode {
-	case http.StatusOK:
-	case http.StatusNotFound:
-		// TerraBase answers 404 for resources it does not store and for
-		// organizations the user is not a member of there.
+	return meteredUsage(*usage)
+}
+
+func meteredUsage(usage v1.Usage) (core.Usage, error) {
+	if usage.Period == nil {
 		return core.Usage{}, core.ErrNotMetered
-	case http.StatusUnauthorized:
-		return core.Usage{}, fmt.Errorf("%w: usage: TerraBase refused the access token", core.ErrUnauthorized)
-	default:
-		return core.Usage{}, fmt.Errorf("%w: usage: TerraBase answered %s", core.ErrUnavailable, res.Status)
 	}
-	// A 30-day hourly series is under 100 KiB; 4 MiB bounds a broken answer.
-	body, err := io.ReadAll(io.LimitReader(res.Body, 4<<20))
-	if err != nil {
-		return core.Usage{}, fmt.Errorf("%w: usage: %w", core.ErrUnavailable, err)
-	}
-	var usage core.Usage
-	if err := json.Unmarshal(body, &usage); err != nil {
-		return core.Usage{}, fmt.Errorf("%w: usage: %w", core.ErrUnavailable, err)
-	}
-	if usage.Reads < 0 || usage.Writes < 0 || usage.Period.Reads < 0 || usage.Period.Writes < 0 {
+	if usage.StorageBytes < 0 || usage.LogicalBytes < 0 || usage.Documents < 0 || usage.Reads < 0 || usage.Writes < 0 || usage.Period.Reads < 0 || usage.Period.Writes < 0 {
 		return core.Usage{}, fmt.Errorf("%w: usage: negative counts", core.ErrUnavailable)
 	}
-	return usage, nil
+	result := core.Usage{
+		ProjectID: usage.ProjectID, DatabaseID: usage.DatabaseID,
+		StorageBytes: usage.StorageBytes, LogicalBytes: usage.LogicalBytes, Documents: usage.Documents, Reads: usage.Reads, Writes: usage.Writes,
+		Period: core.UsagePeriod{From: usage.Period.From, To: usage.Period.To, Granularity: usage.Period.Granularity, Reads: usage.Period.Reads, Writes: usage.Period.Writes},
+		Series: make([]core.UsagePoint, 0, len(usage.Series)), Items: make([]core.Usage, 0, len(usage.Items)),
+	}
+	for _, point := range usage.Series {
+		if point.Reads < 0 || point.Writes < 0 {
+			return core.Usage{}, fmt.Errorf("%w: usage: negative counts", core.ErrUnavailable)
+		}
+		result.Series = append(result.Series, core.UsagePoint{Start: point.Start, Reads: point.Reads, Writes: point.Writes})
+	}
+	for _, item := range usage.Items {
+		converted, err := meteredUsage(item)
+		if err != nil {
+			return core.Usage{}, err
+		}
+		result.Items = append(result.Items, converted)
+	}
+	return result, nil
 }

@@ -13,18 +13,19 @@ import (
 	"terrascale.tech/dashboard/internal/core/memstore"
 )
 
-// fakeMeter answers like TerraBase's usage routes: the organization this
-// month, and the project or database over the range.
+// fakeMeter answers monthly project usage and the selected scope's range.
 type fakeMeter struct {
 	reads, writes, monthReads, monthWrites, logicalBytes int64
 	databaseID                                           string
 	// organizationBytes and projectBytes are TerraBase's own sums, which
 	// may count resources the dashboard doesn't list.
 	organizationBytes, projectBytes int64
-	// err fails every call; orgErr and scopeErr only the organization's or
-	// the selected scope's.
+	// err fails every call; orgErr and scopeErr fail monthly or selected-range
+	// calls, preserving the single-project fixtures' separate answers.
 	err, orgErr, scopeErr error
 	scopes                []core.UsageScope
+	monthlyUsage          map[string]core.Usage
+	monthlyErrors         map[string]error
 }
 
 func (m *fakeMeter) Usage(_ context.Context, token string, scope core.UsageScope) (core.Usage, error) {
@@ -35,7 +36,10 @@ func (m *fakeMeter) Usage(_ context.Context, token string, scope core.UsageScope
 	if m.err != nil {
 		return core.Usage{}, m.err
 	}
-	if scope.ProjectID == "" {
+	if scope.Granularity == "day" && scope.From.Day() == 1 {
+		if m.monthlyUsage != nil {
+			return m.monthlyUsage[scope.ProjectID], m.monthlyErrors[scope.ProjectID]
+		}
 		return core.Usage{LogicalBytes: m.organizationBytes, Period: core.UsagePeriod{Reads: m.monthReads, Writes: m.monthWrites}}, m.orgErr
 	}
 	if m.scopeErr != nil {
@@ -102,7 +106,7 @@ func TestUsageShowsMeteredReadsAndWritesSeparately(t *testing.T) {
 	// TerraBase knows the project under the IDs derived from the dashboard's.
 	org, project := meter.scopes[0], meter.scopes[1]
 	terraBaseOrg, terraBaseProject := core.Project{ID: principal.ProjectID}.TerraBaseIDs(principal.OrganizationID)
-	if org.OrganizationID != terraBaseOrg || org.ProjectID != "" || org.Granularity != "day" || org.From.Day() != 1 ||
+	if org.OrganizationID != terraBaseOrg || org.ProjectID != terraBaseProject || org.DatabaseID != "" || org.Granularity != "day" || org.From.Day() != 1 ||
 		project.ProjectID != terraBaseProject || project.Granularity != "hour" || time.Since(project.From) > 24*time.Hour {
 		t.Fatalf("scopes = %+v", meter.scopes)
 	}
@@ -146,9 +150,8 @@ func TestUsageExplainsUnmeteredScopes(t *testing.T) {
 	}
 }
 
-// TestUsageAppliesEachTerraBaseAnswerOnItsOwn covers a project TerraBase
-// doesn't store inside an organization it does, and an organization answer
-// that fails while the project's loads.
+// Monthly allowances and the selected range apply independently, even when
+// one answer fails and the other succeeds.
 func TestUsageAppliesEachTerraBaseAnswerOnItsOwn(t *testing.T) {
 	meter := &fakeMeter{monthReads: 50_000, monthWrites: 7, scopeErr: core.ErrNotMetered}
 	service, principal, _ := meterFixture(t, meter)
@@ -215,5 +218,111 @@ func TestUsageTakesStorageTotalsFromTerraBase(t *testing.T) {
 	if report.Totals.LogicalBytes != 5000 || report.Allowances[2].Used != 9000 || report.Databases[0].LogicalBytes != 2048 || report.Databases[0].SharePercent != 100 {
 		t.Fatalf("storage = totals %d, allowance %d, row %+v; want TerraBase's sums with rows for shares",
 			report.Totals.LogicalBytes, report.Allowances[2].Used, report.Databases[0])
+	}
+}
+
+// Include both a dashboard project with derived IDs and an imported project
+// whose TerraBase IDs differ, so each monthly call must use its own mapping.
+func twoProjectMeterFixture(t *testing.T, meter *fakeMeter) (Service, core.Principal, map[string]string) {
+	t.Helper()
+	service, principal, _ := meterFixture(t, meter)
+	imported := core.Project{ID: "9135698a-eaf6-4000-8000-000000000001", OrganizationID: principal.OrganizationID, Name: "Imported"}
+	if err := service.deps.Store.UpdateAs(t.Context(), principal, func(a *core.Account) error {
+		org := a.Organizations[principal.OrganizationID]
+		org.Projects[imported.ID] = imported
+		a.Organizations[org.ID] = org
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	firstOrg, firstProject := (core.Project{ID: principal.ProjectID}).TerraBaseIDs(principal.OrganizationID)
+	secondOrg, secondProject := imported.TerraBaseIDs(principal.OrganizationID)
+	meter.monthlyUsage = map[string]core.Usage{
+		firstProject:  {LogicalBytes: 3000, Reads: 900_000, Writes: 400_000, Period: core.UsagePeriod{Reads: 25_000, Writes: 10}},
+		secondProject: {LogicalBytes: 6000, Reads: 800_000, Writes: 300_000, Period: core.UsagePeriod{Reads: 35_000, Writes: 20}},
+	}
+	return service, principal, map[string]string{firstProject: firstOrg, secondProject: secondOrg}
+}
+
+func TestUsageSumsEveryOrganizationsProject(t *testing.T) {
+	meter := &fakeMeter{reads: 7, writes: 3, logicalBytes: 2048}
+	service, principal, projects := twoProjectMeterFixture(t, meter)
+	report, err := service.Usage(t.Context(), principal, "user-token", meter.databaseID, "24h")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, want := range []int64{60_000, 30, 9000} {
+		if row := report.Allowances[i]; !row.Measured || row.Used != want {
+			t.Errorf("allowance %d = %+v, want measured usage %d", i, row, want)
+		}
+	}
+	if !report.Totals.Available || report.Totals.Reads != 7 || report.Totals.Writes != 3 || len(report.Totals.Series) != 2 || report.AllowanceError != "" {
+		t.Fatalf("selected database report = %+v", report)
+	}
+	for _, row := range report.Projects {
+		_, projectID := (core.Project{ID: row.ID}).TerraBaseIDs(principal.OrganizationID)
+		if row.LogicalBytes != meter.monthlyUsage[projectID].LogicalBytes {
+			t.Errorf("project row = %+v, want its monthly storage total", row)
+		}
+	}
+	monthly := make(map[string]int)
+	var selected int
+	for _, scope := range meter.scopes {
+		if scope.ProjectID == "" || scope.OrganizationID != projects[scope.ProjectID] {
+			t.Errorf("scope = %+v, want that project's own TerraBase IDs", scope)
+		}
+		if scope.Granularity == "day" && scope.From.Day() == 1 {
+			monthly[scope.ProjectID]++
+			if scope.DatabaseID != "" || scope.From.Hour() != 0 || scope.From.Location() != time.UTC {
+				t.Errorf("monthly scope = %+v, want the entire project from UTC month start", scope)
+			}
+		} else {
+			selected++
+			_, projectID := (core.Project{ID: principal.ProjectID}).TerraBaseIDs(principal.OrganizationID)
+			if scope.ProjectID != projectID || scope.DatabaseID != meter.databaseID || scope.Granularity != "hour" {
+				t.Errorf("selected scope = %+v", scope)
+			}
+		}
+	}
+	for projectID := range projects {
+		if monthly[projectID] != 1 {
+			t.Errorf("monthly calls for %s = %d, want 1", projectID, monthly[projectID])
+		}
+	}
+	if selected != 1 || len(meter.scopes) != 3 {
+		t.Fatalf("scopes = %+v, want both projects' months and one selected database range", meter.scopes)
+	}
+}
+
+func TestUsageIncompleteOrganizationNeverReportsPartialAllowances(t *testing.T) {
+	for _, failure := range []struct {
+		name string
+		err  error
+	}{
+		{"unmetered", core.ErrNotMetered},
+		{"unavailable", core.ErrUnavailable},
+		{"unauthorized", core.ErrUnauthorized},
+	} {
+		t.Run(failure.name, func(t *testing.T) {
+			meter := &fakeMeter{reads: 7, writes: 3, logicalBytes: 2048}
+			service, principal, _ := twoProjectMeterFixture(t, meter)
+			meter.monthlyErrors = map[string]error{"9135698a-eaf6-4000-8000-000000000001": failure.err}
+			report, err := service.Usage(t.Context(), principal, "user-token", "", "24h")
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, allowance := range report.Allowances {
+				if allowance.Measured || allowance.Percent != 0 {
+					t.Errorf("allowance = %+v, want unknown organization usage", allowance)
+				}
+			}
+			if !report.Totals.Available || !report.Totals.StorageMeasured || report.Totals.Reads != 7 || report.Totals.Writes != 3 ||
+				report.Totals.LogicalBytes != 2048 || len(report.Totals.Series) != 2 || report.Totals.Error != "" || !report.Databases[0].Metered {
+				t.Fatalf("selected chart = %+v, rows = %+v; want it to survive the other project's failure", report.Totals, report.Databases)
+			}
+			if failure.err != core.ErrNotMetered && report.AllowanceError == "" {
+				t.Error("monthly usage failure has no allowance error")
+			}
+		})
 	}
 }
