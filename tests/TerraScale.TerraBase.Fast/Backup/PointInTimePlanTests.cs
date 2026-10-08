@@ -161,18 +161,27 @@ public sealed class PointInTimePlanTests
         time.Advance(TimeSpan.FromSeconds(1));
         await backup.RunOnceAsync(CancellationToken.None);
         await backup.RunOnceAsync(CancellationToken.None);
+        oci.FailPut = _ => true;
+        time.Advance(TimeSpan.FromSeconds(1));
+        using var window = JsonDocument.Parse(await api.Client.GetStringAsync(Uri(database.Path + "/point-in-time")));
+        var earliest = window.RootElement.GetProperty("earliest").GetDateTimeOffset();
+        var latest = window.RootElement.GetProperty("latest").GetDateTimeOffset();
+        await Assert.That(earliest).IsEqualTo(snapshot);
+        await Assert.That(latest.AddTicks(1)).IsLessThan(time.GetUtcNow());
+        var retained = oci.Objects.Keys.Where(key => key.StartsWith(File(database) + "/", StringComparison.Ordinal)).ToArray();
+        await Assert.That(retained.Length).IsGreaterThan(0);
         var route = Uri(database.Path + "/point-in-time/plan");
         await ErrorAssert.ErrorAsync(api.Client.PostAsJsonAsync(route, new { }), HttpStatusCode.BadRequest, "invalid_request", "pointInTime is required");
-        foreach (var at in new[] { snapshot.AddTicks(-1), time.GetUtcNow().AddTicks(1) })
+        foreach (var at in new[] { earliest.AddTicks(-1), latest.AddTicks(1), time.GetUtcNow(), time.GetUtcNow().AddTicks(1) })
         {
             await ErrorAssert.ErrorAsync(api.Client.PostAsJsonAsync(route, new { pointInTime = at }), HttpStatusCode.BadRequest, "invalid_request",
-                "pointInTime must lie between the restore window's earliest time and now");
+                "pointInTime must lie between the restore window's earliest and latest times");
         }
 
         using var missing = await outsider.PostAsJsonAsync(route, new { });
         using var invalid = await outsider.PostAsJsonAsync(route, new { pointInTime = time.GetUtcNow().AddDays(1) });
         using var hidden = await outsider.PostAsJsonAsync(route, new { pointInTime = snapshot });
-        using var allowed = await viewer.PostAsJsonAsync(route, new { pointInTime = time.GetUtcNow() });
+        using var allowed = await viewer.PostAsJsonAsync(route, new { pointInTime = latest });
         using var anonymous = api.WithToken(null);
         using var unauthenticated = await anonymous.PostAsJsonAsync(route, new { pointInTime = snapshot });
         await Assert.That(missing.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
@@ -182,10 +191,22 @@ public sealed class PointInTimePlanTests
         await Assert.That((await allowed.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("snapshotAt").GetDateTimeOffset()).IsEqualTo(snapshot);
         await Assert.That(unauthenticated.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
 
-        // The bucket still has the snapshot, but hobby retention restricts the window to the last day.
-        time.Advance(TimeSpan.FromDays(1));
-        await ErrorAssert.ErrorAsync(api.Client.PostAsJsonAsync(route, new { pointInTime = snapshot }), HttpStatusCode.BadRequest, "invalid_request",
-            "pointInTime must lie between the restore window's earliest time and now");
+        // Hobby retention includes the stored endpoint exactly at its one-day boundary.
+        time.Advance(TimeSpan.FromDays(1) - (time.GetUtcNow() - latest));
+        using var boundary = await viewer.PostAsJsonAsync(route, new { pointInTime = latest });
+        boundary.EnsureSuccessStatusCode();
+        var boundaryPlan = await boundary.Content.ReadFromJsonAsync<JsonElement>();
+        await Assert.That(boundaryPlan.GetProperty("window").GetProperty("earliest").GetDateTimeOffset()).IsEqualTo(latest);
+        await Assert.That(boundaryPlan.GetProperty("window").GetProperty("latest").GetDateTimeOffset()).IsEqualTo(latest);
+
+        // Retained objects cannot keep a fully expired plan window available.
+        time.Advance(TimeSpan.FromSeconds(1));
+        foreach (var at in new[] { latest, time.GetUtcNow() })
+        {
+            await ErrorAssert.ErrorAsync(viewer.PostAsJsonAsync(route, new { pointInTime = at }), HttpStatusCode.NotFound, "not_found",
+                "continuous backup holds nothing of this database within its plan's retention window");
+        }
+        await Assert.That(oci.Objects.Keys.Where(key => key.StartsWith(File(database) + "/", StringComparison.Ordinal))).IsEquivalentTo(retained);
     }
 
     [Test]
@@ -193,12 +214,14 @@ public sealed class PointInTimePlanTests
     [Arguments(true)]
     public async Task Backup_off_or_without_a_snapshot_returns_not_found(bool enabled)
     {
-        using var oci = new FakeOci();
+        using var oci = new FakeOci { FailPut = _ => true };
         var time = Clock();
         await using var api = await ManagementApi.StartAsync(enabled ? oci.Configure : null, enabled ? oci.Route : null, time);
         var database = await api.CreateManagedDatabaseAsync();
-        using var response = await api.Client.PostAsJsonAsync(Uri(database.Path + "/point-in-time/plan"), new { pointInTime = time.GetUtcNow() });
-        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+        await ErrorAssert.ErrorAsync(api.Client.PostAsJsonAsync(Uri(database.Path + "/point-in-time/plan"), new { pointInTime = time.GetUtcNow() }),
+            HttpStatusCode.NotFound, "not_found", "continuous backup holds nothing of this database");
+        await ErrorAssert.ErrorAsync(api.Client.PostAsJsonAsync(Uri(database.Path + "/point-in-time/restore"), new { pointInTime = time.GetUtcNow(), name = "main-empty" }),
+            HttpStatusCode.NotFound, "not_found", "continuous backup holds nothing of this database");
     }
 
     [Test]

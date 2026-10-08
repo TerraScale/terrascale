@@ -161,7 +161,9 @@ TS-647, through anti-entropy). Backups taken before the TS-602 wipe use the old 
 it (user decision, 2026-10-07). Production backup starts right after that cutover.
 
 `GET …/databases/{database}/point-in-time` returns the restore window: from the oldest snapshot, but no earlier than the
-plan's retention window (a bucket rule may keep older objects), to the newest data in the bucket. `POST …/databases/{database}/point-in-time/restore` with `{"pointInTime": "…", "name": "…"}` restores into a
+plan's retention window (a bucket rule may keep older objects), to the newest data in the bucket. It returns 404 when no
+stored data falls within the plan's window, including when retained objects have all expired under the plan.
+`POST …/databases/{database}/point-in-time/restore` with `{"pointInTime": "…", "name": "…"}` restores into a
 new database of the same project (`branchedFrom` set, like a backup restore). The restore:
 
 1. takes the newest snapshot at or before `pointInTime`;
@@ -169,6 +171,13 @@ new database of the same project (`branchedFrom` set, like a backup restore). Th
    written in place, and the file is cut at every commit that shrinks the database, as a checkpoint at that commit
    would. Eight segments download at once, each retried up to three times if the stream drops;
 3. runs `PRAGMA integrity_check`, then imports the file as a copy, so its replication starts over from a baseline.
+
+`pointInTime` must fall between `earliest` and `latest`, inclusive; requests outside those bounds return 400. A time after
+`latest` is refused even when it is before now, so a delayed shipper cannot silently restore older data for that time.
+The shared restore service validates these bounds once before downloading or importing a database. It captures the
+retention reference time before reading metadata and uses one snapshot scan for both the window and snapshot selection,
+so metadata latency cannot move the retention floor during a restore. Window reads and previews also capture their
+reference time before reading metadata.
 
 The result holds every transaction the shipper read by `pointInTime`. The shipper reads every second, so a transaction
 committed in the second before `pointInTime` may be missing.
@@ -197,9 +206,9 @@ none apply. No object keys or credentials are returned.
 The request needs a ts-auth project token granting `databases:read`; `{database}` is its name.
 The hidden legacy management alias retains membership checks, including organization viewers. Access is checked
 before time validation: another tenant's database returns `404`. Missing time, a time
-before the retention window or after now returns `400`; disabled/empty backup or no
-applicable snapshot returns `404`. A request between `window.latest` and now previews
-the latest available data. Metadata scanning is bounded to 10,000 items and 10 seconds;
+outside the inclusive `window.earliest` and `window.latest` bounds returns `400`;
+disabled/empty backup, a wholly expired retention window or no applicable snapshot returns `404`.
+Preview uses the same restore-window bounds as restore. Metadata scanning is bounded to 10,000 items and 10 seconds;
 exhaustion returns `503` without a partial plan (`pitr_plan_limit` or
 `pitr_plan_timeout`). Object-store listing failures return `503`
 `pitr_plan_unavailable` without exposing provider details.

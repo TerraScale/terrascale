@@ -7,7 +7,7 @@ using TerraBase.Tenancy;
 namespace TerraBase.Features.Backup;
 
 /// <summary>The times a database can be restored to.</summary>
-/// <param name="Earliest">Its oldest snapshot.</param>
+/// <param name="Earliest">Its oldest snapshot, limited by the plan's retention window.</param>
 /// <param name="Latest">The newest data in the bucket.</param>
 public sealed record RestoreWindow(DateTimeOffset Earliest, DateTimeOffset Latest);
 
@@ -22,10 +22,13 @@ public sealed record PointInTimePlan(RestoreWindow Window, DateTimeOffset PointI
 /// <summary>A read-only restore plan, or why its metadata could not be read.</summary>
 public readonly union PointInTimePlanResult(PointInTimePlan, NotFound, Validation, Unavailable);
 
+/// <summary>A completed restore, or why its requested time could not be restored.</summary>
+public readonly union PointInTimeRestoreResult(Done, NotFound, Validation);
+
 /// <summary>Point-in-time restore from continuous backup (TS-633).</summary>
 public interface IPointInTimeRestore
 {
-    /// <summary>The restore window of <paramref name="database"/>; <see langword="null"/> when no backup of it exists.</summary>
+    /// <summary>The restore window of <paramref name="database"/>; <see langword="null"/> when no backup remains within its plan's retention window.</summary>
     Task<RestoreWindow?> GetWindowAsync(TenantContext database, CancellationToken cancellationToken);
 
     /// <summary>Reads bounded backup metadata without downloading, decrypting or importing any backup.</summary>
@@ -33,10 +36,10 @@ public interface IPointInTimeRestore
 
     /// <summary>
     /// Creates <paramref name="target"/>, a new engine database, holding <paramref name="source"/> as of <paramref name="at"/>:
-    /// every transaction the backup read by then. <see langword="false"/> when no backup reaches back to <paramref name="at"/>.
+    /// every transaction the backup read by then. Validates its restore window at entry, before downloading or importing.
     /// </summary>
     /// <exception cref="InvalidDataException">The backup is incomplete or fails authentication or its integrity check.</exception>
-    Task<bool> RestoreAsync(TenantContext source, DateTimeOffset at, TenantContext target, CancellationToken cancellationToken);
+    Task<PointInTimeRestoreResult> RestoreAsync(TenantContext source, DateTimeOffset at, TenantContext target, CancellationToken cancellationToken);
 }
 
 /// <summary>Restores from the newest snapshot at or before the time, rolled forward through its generation's segments.</summary>
@@ -49,12 +52,13 @@ internal sealed class PointInTimeRestore(
 
     public async Task<PointInTimePlanResult> PlanAsync(TenantContext database, DateTimeOffset at, CancellationToken cancellationToken)
     {
+        var now = time.GetUtcNow();
         using var timeout = new CancellationTokenSource(PlanTimeout, time);
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeout.Token);
         try
         {
             var file = BackupLayout.File(database);
-            var snapshots = await ScanSnapshotsAsync(file, at, MaxPlanItems, stopAfterTarget: false, deadline.Token).ConfigureAwait(false);
+            var snapshots = await ScanSnapshotsAsync(file, at, MaxPlanItems, deadline.Token).ConfigureAwait(false);
             if (snapshots is null)
             {
                 return PlanLimit();
@@ -65,19 +69,7 @@ internal sealed class PointInTimeRestore(
                 return new NotFound("continuous backup holds nothing of this database");
             }
 
-            var now = time.GetUtcNow();
-            var retention = now - TimeSpan.FromDays(settings.RetentionDays[await tenants.PlanAsync(database.OrganizationId, deadline.Token).ConfigureAwait(false)]);
-            var earliest = first.At > retention ? first.At : retention;
-            if (at < earliest || at > now)
-            {
-                return new Validation("pointInTime must lie between the restore window's earliest time and now");
-            }
-
-            if (snapshots.Chosen is not { } chosen)
-            {
-                return new NotFound("continuous backup holds nothing of this database");
-            }
-
+            var earliest = await EarliestAsync(database, first.At, now, deadline.Token).ConfigureAwait(false);
             var remaining = MaxPlanItems - snapshots.Scanned;
             var latest = shipper.LastShipped(database);
             SegmentScan? segments = null;
@@ -91,16 +83,32 @@ internal sealed class PointInTimeRestore(
 
                 latest = newest.Newest ?? last.At;
                 remaining -= newest.Scanned;
-                if (chosen == last)
+                if (snapshots.Chosen == last)
                 {
                     segments = newest;
                 }
             }
 
+            var storedLatest = latest.Value > last.At ? latest.Value : last.At;
+            if (earliest > storedLatest)
+            {
+                return new NotFound("continuous backup holds nothing of this database within its plan's retention window");
+            }
+
+            if (at < earliest || at > storedLatest)
+            {
+                return new Validation("pointInTime must lie between the restore window's earliest and latest times");
+            }
+
+            if (snapshots.Chosen is not { } chosen)
+            {
+                return new NotFound("continuous backup holds nothing of this database");
+            }
+
             segments ??= await ScanSegmentsAsync(file, chosen, at, remaining, stopAfterTarget: true, deadline.Token).ConfigureAwait(false);
             return segments is null
                 ? PlanLimit()
-                : new PointInTimePlan(new(earliest, latest.Value > last.At ? latest.Value : last.At), at, chosen.At, segments.Latest, segments.Count);
+                : new PointInTimePlan(new(earliest, storedLatest), at, chosen.At, segments.Latest, segments.Count);
         }
         catch (OperationCanceledException) when (timeout.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
         {
@@ -117,23 +125,23 @@ internal sealed class PointInTimeRestore(
 
     public async Task<RestoreWindow?> GetWindowAsync(TenantContext database, CancellationToken cancellationToken)
     {
+        var now = time.GetUtcNow();
         var file = BackupLayout.File(database);
-        SnapshotKey? first = null;
-        SnapshotKey? last = null;
-        await foreach (var snapshot in reader.SnapshotsAsync(file, cancellationToken).ConfigureAwait(false))
-        {
-            first ??= snapshot;
-            last = snapshot;
-        }
+        var snapshots = await ScanSnapshotsAsync(file, DateTimeOffset.MaxValue, int.MaxValue, cancellationToken).ConfigureAwait(false);
+        return await WindowAsync(database, file, snapshots, now, cancellationToken).ConfigureAwait(false);
+    }
 
-        if (first is null || last is null)
+    private async Task<RestoreWindow?> WindowAsync(TenantContext database, string file, SnapshotScan? snapshots, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        if (snapshots?.First is not { } first || snapshots.Last is not { } last)
         {
             return null;
         }
 
         // The shipper knows its own progress; otherwise the newest segment after the newest snapshot tells.
-        var latest = shipper.LastShipped(database) ?? last.At;
-        if (shipper.LastShipped(database) is null)
+        var shipped = shipper.LastShipped(database);
+        var latest = shipped ?? last.At;
+        if (shipped is null)
         {
             await foreach (var item in store.ListAsync(BackupLayout.Segments(file, last.Generation),
                 BackupLayout.SegmentsBefore(file, last.Generation, last.Position), cancellationToken).ConfigureAwait(false))
@@ -145,25 +153,42 @@ internal sealed class PointInTimeRestore(
             }
         }
 
-        // The plan's window, not the bucket's: retention keeps a snapshot from before it, and an object lock may keep more.
-        var plan = time.GetUtcNow() - TimeSpan.FromDays(settings.RetentionDays[await tenants.PlanAsync(database.OrganizationId, cancellationToken).ConfigureAwait(false)]);
-        return new(first.At > plan ? first.At : plan, latest > last.At ? latest : last.At);
+        var earliest = await EarliestAsync(database, first.At, now, cancellationToken).ConfigureAwait(false);
+        latest = latest > last.At ? latest : last.At;
+        return earliest <= latest ? new(earliest, latest) : null;
     }
 
-    public async Task<bool> RestoreAsync(TenantContext source, DateTimeOffset at, TenantContext target, CancellationToken cancellationToken)
+    public async Task<PointInTimeRestoreResult> RestoreAsync(TenantContext source, DateTimeOffset at, TenantContext target, CancellationToken cancellationToken)
     {
+        // Pin retention before metadata awaits; the same scan discovers the window and selects the snapshot.
+        var now = time.GetUtcNow();
         var file = BackupLayout.File(source);
-        var snapshots = await ScanSnapshotsAsync(file, at, int.MaxValue, stopAfterTarget: true, cancellationToken).ConfigureAwait(false);
+        var snapshots = await ScanSnapshotsAsync(file, at, int.MaxValue, cancellationToken).ConfigureAwait(false);
+        if (snapshots?.First is null)
+        {
+            return new NotFound("continuous backup holds nothing of this database");
+        }
+
+        if (await WindowAsync(source, file, snapshots, now, cancellationToken).ConfigureAwait(false) is not { } window)
+        {
+            return new NotFound("continuous backup holds nothing of this database within its plan's retention window");
+        }
+
+        if (at < window.Earliest || at > window.Latest)
+        {
+            return new Validation("pointInTime must lie between the restore window's earliest and latest times");
+        }
+
         if (snapshots?.Chosen is not { } chosen)
         {
-            return false;
+            return new NotFound("continuous backup holds nothing of this database");
         }
 
         var (restored, _) = await reader.BuildAsync(file, BackupLayout.KeyScope(source), chosen, at, until: null, cancellationToken).ConfigureAwait(false);
         try
         {
             await engine.ImportDatabaseAsync(target, restored, cancellationToken).ConfigureAwait(false);
-            return true;
+            return new Done();
         }
         finally
         {
@@ -173,8 +198,15 @@ internal sealed class PointInTimeRestore(
 
     private static Unavailable PlanLimit() => new("the point-in-time plan metadata scan exceeds 10000 objects", "pitr_plan_limit");
 
+    private async Task<DateTimeOffset> EarliestAsync(TenantContext database, DateTimeOffset snapshotAt, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        // The plan's window, not the bucket's: retention keeps a predecessor snapshot, and object lock may keep more.
+        var floor = now - TimeSpan.FromDays(settings.RetentionDays[await tenants.PlanAsync(database.OrganizationId, cancellationToken).ConfigureAwait(false)]);
+        return snapshotAt > floor ? snapshotAt : floor;
+    }
+
     // Scan raw objects so malformed metadata also consumes the preview budget. Both restore and preview select here.
-    private async Task<SnapshotScan?> ScanSnapshotsAsync(string file, DateTimeOffset at, int limit, bool stopAfterTarget, CancellationToken cancellationToken)
+    private async Task<SnapshotScan?> ScanSnapshotsAsync(string file, DateTimeOffset at, int limit, CancellationToken cancellationToken)
     {
         SnapshotKey? first = null;
         SnapshotKey? last = null;
@@ -198,10 +230,6 @@ internal sealed class PointInTimeRestore(
             if (snapshot.At <= at)
             {
                 chosen = snapshot;
-            }
-            else if (stopAfterTarget)
-            {
-                break;
             }
         }
 

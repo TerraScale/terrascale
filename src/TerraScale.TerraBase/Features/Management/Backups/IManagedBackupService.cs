@@ -37,7 +37,7 @@ public readonly union CreateBackupResult(DatabaseBackup, NotFound);
 public readonly union SetBackupPolicyResult(BackupPolicy, NotFound, Forbidden);
 
 /// <summary>The database a backup was restored into, or why it was not restored; a taken name is a conflict.</summary>
-public readonly union RestoreBackupResult(ManagedDatabase, NotFound, Conflict, Forbidden);
+public readonly union RestoreBackupResult(ManagedDatabase, NotFound, Conflict, Forbidden, Validation);
 
 /// <summary>Backups of managed databases, their policy, and restoring them into new databases.</summary>
 public interface IManagedBackupService
@@ -64,7 +64,7 @@ public interface IManagedBackupService
 
     /// <summary>
     /// Restores <paramref name="database"/> as of <paramref name="at"/> from continuous backup into a new database in the same
-    /// project, named like <see cref="RestoreAsync"/>; not found when no backup reaches back to <paramref name="at"/>.
+    /// project, named like <see cref="RestoreAsync"/>; validates <paramref name="at"/> against its restore window before downloading.
     /// </summary>
     ValueTask<RestoreBackupResult> RestorePointInTimeAsync(
         string userId, string organizationId, TenantContext database, DateTimeOffset at, string? name, CancellationToken cancellationToken);

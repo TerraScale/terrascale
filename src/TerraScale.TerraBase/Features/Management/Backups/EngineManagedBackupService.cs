@@ -176,9 +176,12 @@ internal sealed partial class EngineManagedBackupService(
         var staging = database with { DatabaseId = Guid.NewGuid().ToString() };
         try
         {
-            return await pointInTime.RestoreAsync(database, at, staging, cancellationToken).ConfigureAwait(false)
-                ? await CopyRestoredAsync(userId, organizationId, owner, source.Name, staging.DatabaseId!, name, cancellationToken).ConfigureAwait(false)
-                : new NotFound("no backup of this database reaches back to pointInTime");
+            return await pointInTime.RestoreAsync(database, at, staging, cancellationToken).ConfigureAwait(false) switch
+            {
+                Done => await CopyRestoredAsync(userId, organizationId, owner, source.Name, staging.DatabaseId!, name, cancellationToken).ConfigureAwait(false),
+                NotFound error => error,
+                Validation error => error,
+            };
         }
         finally
         {

@@ -49,7 +49,7 @@ public sealed class ContinuousBackupTests
         var bounds = await window.Content.ReadFromJsonAsync<JsonElement>();
         using var earlier = await api.Client.PostAsJsonAsync(Uri($"{database.Path}/point-in-time/restore"), new { pointInTime = snapshotted.AddSeconds(3) });
         var earlierDatabase = await earlier.Content.ReadFromJsonAsync<JsonElement>();
-        using var latest = await api.Client.PostAsJsonAsync(Uri($"{database.Path}/point-in-time/restore"), new { pointInTime = shipped, name = "main-latest" });
+        using var latest = await api.Client.PostAsJsonAsync(Uri($"{database.Path}/point-in-time/restore"), new { pointInTime = lastShipped!.Value, name = "main-latest" });
         using var tooEarly = await api.Client.PostAsJsonAsync(Uri($"{database.Path}/point-in-time/restore"), new { pointInTime = snapshotted.AddMinutes(-1) });
         using var future = await api.Client.PostAsJsonAsync(Uri($"{database.Path}/point-in-time/restore"), new { pointInTime = shipped.AddMinutes(1) });
         using var missing = await api.Client.PostAsJsonAsync(Uri($"{database.Path}/point-in-time/restore"), new { name = "main-missing" });
@@ -124,7 +124,7 @@ public sealed class ContinuousBackupTests
         (await data.PutAsJsonAsync(Uri(ManagementApi.DocumentPath(database, "people", "large-5")), new { text = texts[5] })).EnsureSuccessStatusCode();
         time.Advance(TimeSpan.FromSeconds(1));
         await backup.RunOnceAsync(CancellationToken.None);
-        var shipped = time.GetUtcNow();
+        var shipped = backup.Status.Files.Single(file => file.File == File(database)).LastShippedAt!.Value;
 
         using var restored = await api.Client.PostAsJsonAsync(Uri($"{database.Path}/point-in-time/restore"), new { pointInTime = shipped, name = "main-latest" });
         var documents = new List<string>();
@@ -169,7 +169,8 @@ public sealed class ContinuousBackupTests
 
         time.Advance(TimeSpan.FromSeconds(1));
         await backup.RunOnceAsync(CancellationToken.None);
-        using var restored = await api.Client.PostAsJsonAsync(Uri($"{database.Path}/point-in-time/restore"), new { pointInTime = time.GetUtcNow(), name = "main-latest" });
+        var shipped = backup.Status.Files.Single(file => file.File == File(database)).LastShippedAt!.Value;
+        using var restored = await api.Client.PostAsJsonAsync(Uri($"{database.Path}/point-in-time/restore"), new { pointInTime = shipped, name = "main-latest" });
         using var read = await data.GetAsync(Uri(DocumentPath(database, "main-latest", "outside")));
         var metrics = await api.Server.Client.GetStringAsync(Uri("/metrics"));
 

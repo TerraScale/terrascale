@@ -44,6 +44,9 @@ public sealed class FakeOci : IDisposable
     /// <summary>An optional asynchronous barrier before an object GET returns; receives the bucket key, never its content.</summary>
     public Func<string, CancellationToken, Task>? BeforeGet { get; set; }
 
+    /// <summary>An optional asynchronous barrier before an object LIST returns; receives the requested prefix.</summary>
+    public Func<string, CancellationToken, Task>? BeforeList { get; set; }
+
     /// <summary>The single prefix whose LIST count and last cursor are observed.</summary>
     public string? ObservedListPrefix { get; set; }
 
@@ -157,6 +160,11 @@ public sealed class FakeOci : IDisposable
             {
                 Volatile.Write(ref _lastListStartAfter, startAfter);
                 Interlocked.Increment(ref _listRequests);
+            }
+
+            if (BeforeList is { } beforeList)
+            {
+                await beforeList(prefix, cancellationToken);
             }
 
             var keys = _objects.Keys.Where(item => item.StartsWith(prefix, StringComparison.Ordinal) && string.CompareOrdinal(item, after) > 0)

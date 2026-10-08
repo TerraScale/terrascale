@@ -50,7 +50,7 @@ public static class BackupExtensions
         public Task<PointInTimePlanResult> PlanAsync(TenantContext database, DateTimeOffset at, CancellationToken cancellationToken) =>
             Task.FromResult<PointInTimePlanResult>(new NotFound("continuous backup holds nothing of this database"));
 
-        public Task<bool> RestoreAsync(TenantContext source, DateTimeOffset at, TenantContext target, CancellationToken cancellationToken) =>
-            Task.FromResult(false);
+        public Task<PointInTimeRestoreResult> RestoreAsync(TenantContext source, DateTimeOffset at, TenantContext target, CancellationToken cancellationToken) =>
+            Task.FromResult<PointInTimeRestoreResult>(new NotFound("continuous backup holds nothing of this database"));
     }
 }

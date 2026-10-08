@@ -55,6 +55,7 @@ public sealed class RestoreBackupEndpoint(IManagementService management, IManage
                 NotFound error => ErrorResponse.From(error),
                 Conflict error => ErrorResponse.From(error),
                 Forbidden error => ErrorResponse.From(error),
+                Validation error => ErrorResponse.From(error),
             },
         };
     }

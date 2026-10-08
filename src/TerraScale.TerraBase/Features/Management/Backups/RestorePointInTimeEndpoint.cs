@@ -1,5 +1,4 @@
 using TerraBase.Errors;
-using TerraBase.Features.Backup;
 using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
@@ -8,7 +7,7 @@ using TerraScale.Endpoints;
 namespace TerraBase.Features.Management.Backups;
 
 /// <summary><c>POST …/databases/{database}/point-in-time/restore</c>: restores a database as of a time into a new database.</summary>
-public sealed class RestorePointInTimeEndpoint(IManagementService management, IManagedBackupService backups, IPointInTimeRestore restore, TimeProvider time)
+public sealed class RestorePointInTimeEndpoint(IManagementService management, IManagedBackupService backups)
     : Endpoint<PointInTimeRestoreRequest, IResult>
 {
     /// <inheritdoc />
@@ -17,7 +16,7 @@ public sealed class RestorePointInTimeEndpoint(IManagementService management, IM
         Post(ManagementRoute.Database + "/point-in-time/restore");
         Name("restorePointInTime");
         Summary("Restores a database as of a time into a new database");
-        Description("Restores every transaction continuous backup read by pointInTime (backup reads each second) into a new database in the same project, with branchedFrom set to the restored database; the database itself is unchanged. pointInTime must lie between the window's earliest time (GET …/point-in-time) and now; after the window's latest time it restores the latest data. name follows the database name rules; without it the first free of <source>-restore, <source>-restore-2, … is used." + " " + ManagementRoute.IdentityDescription);
+        Description("Restores every transaction continuous backup read by pointInTime (backup reads each second) into a new database in the same project, with branchedFrom set to the restored database; the database itself is unchanged. pointInTime must lie between the restore window's earliest and latest times, inclusive (GET …/point-in-time). name follows the database name rules; without it the first free of <source>-restore, <source>-restore-2, … is used." + " " + ManagementRoute.IdentityDescription);
         Tags(ManagementRoute.Tag);
         Produces<ManagedDatabase>(StatusCodes.Status201Created);
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
@@ -61,16 +60,6 @@ public sealed class RestorePointInTimeEndpoint(IManagementService management, IM
             }
         }
 
-        if (await restore.GetWindowAsync(database, cancellationToken) is not { } window)
-        {
-            return ErrorResponse.From(new NotFound("continuous backup holds nothing of this database"));
-        }
-
-        if (at < window.Earliest || at > time.GetUtcNow())
-        {
-            return ErrorResponse.From(new Validation("pointInTime must lie between the restore window's earliest time and now"));
-        }
-
         var organization = ManagementRoute.OrganizationId(HttpContext);
         return await backups.RestorePointInTimeAsync(ManagementRoute.UserId(HttpContext), organization, database, at, name, cancellationToken) switch
         {
@@ -78,6 +67,7 @@ public sealed class RestorePointInTimeEndpoint(IManagementService management, IM
             NotFound error => ErrorResponse.From(error),
             Conflict error => ErrorResponse.From(error),
             Forbidden error => ErrorResponse.From(error),
+            Validation error => ErrorResponse.From(error),
         };
     }
 }

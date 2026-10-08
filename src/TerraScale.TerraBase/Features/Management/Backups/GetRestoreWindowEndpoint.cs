@@ -15,7 +15,7 @@ public sealed class GetRestoreWindowEndpoint(IManagementService management, IPoi
         Get(ManagementRoute.Database + "/point-in-time");
         Name("getRestoreWindow");
         Summary("Reads the point-in-time restore window of a database");
-        Description("earliest is the oldest continuous backup snapshot of the database, latest the newest data in the backup (normally about a second old). 404 when continuous backup is off or holds nothing of the database yet." + " " + ManagementRoute.IdentityDescription);
+        Description("earliest is the oldest continuous backup snapshot of the database limited by its plan's retention window, latest the newest data in the backup (normally about a second old). 404 when continuous backup is off or holds no data of the database within its plan's retention window." + " " + ManagementRoute.IdentityDescription);
         Tags(ManagementRoute.Tag);
         Produces<RestoreWindow>();
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
