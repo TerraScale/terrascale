@@ -1,10 +1,12 @@
 using System.Collections.Concurrent;
+using System.Diagnostics.Metrics;
 using System.Globalization;
 using Bogus;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using TerraBase.Engine;
 using TerraBase.Engine.Actors;
 using TerraBase.Tenancy;
@@ -13,7 +15,7 @@ using TerraBase.Testing;
 namespace TerraBase.Fast.Actors;
 
 // Test-only middleware wraps the existing endpoint; every callback must serve the real health response.
-internal sealed class ActorRequests(int actorCount = 2, int maxItems = 256, int maxBytes = 2_097_152) : IStartupFilter, IAsyncDisposable
+internal sealed class ActorRequests(int actorCount = 2, int maxItems = 256, int maxBytes = 2_097_152, Meter? meter = null) : IStartupFilter, IAsyncDisposable
 {
     private readonly ConcurrentDictionary<string, Work> _requests = new(StringComparer.Ordinal);
     private readonly int[] _active = new int[actorCount];
@@ -27,6 +29,11 @@ internal sealed class ActorRequests(int actorCount = 2, int maxItems = 256, int 
     public async Task StartAsync() => _server = await TerraBaseTestServer.StartAsync(services: services =>
     {
         services.AddTerraBaseActors(actorCount, maxItems, maxBytes);
+        if (meter is not null)
+        {
+            services.Replace(ServiceDescriptor.Singleton<IActorRouter>(_ => new ChannelActorRouter(actorCount, maxItems, maxBytes, meter)));
+        }
+
         services.AddSingleton<IStartupFilter>(this);
     });
 
@@ -41,7 +48,14 @@ internal sealed class ActorRequests(int actorCount = 2, int maxItems = 256, int 
     {
         using var request = new HttpRequestMessage(HttpMethod.Get, new Uri("/healthz", UriKind.Relative));
         request.Headers.Add("X-Test-Actor-Request", id);
-        return await _server!.Client.SendAsync(request, TestContext.Current!.Execution.CancellationToken);
+        try
+        {
+            return await _server!.Client.SendAsync(request, TestContext.Current!.Execution.CancellationToken);
+        }
+        finally
+        {
+            _requests.TryRemove(id, out _);
+        }
     }
 
     public Action<IApplicationBuilder> Configure(Action<IApplicationBuilder> next) => app =>
@@ -85,7 +99,7 @@ internal sealed class ActorRequests(int actorCount = 2, int maxItems = 256, int 
                         }
 
                         await continuation(context);
-                        return true;
+                        return work.Payload;
                     }
                     finally
                     {
@@ -125,6 +139,7 @@ internal sealed class ActorRequests(int actorCount = 2, int maxItems = 256, int 
             finally
             {
                 work.Submitted.TrySetResult(false);
+                _requestContext.Value = null;
             }
         });
         next(app);
@@ -151,7 +166,7 @@ internal sealed class ActorRequests(int actorCount = 2, int maxItems = 256, int 
         return new ActorKey(tenant, fake.Random.AlphaNumeric(12), fake.Random.AlphaNumeric(24));
     }
 
-    internal sealed class Work(ActorKey? key = null, int? actor = 0, int retainedBytes = 1, bool held = false, bool fail = false, TaskCompletionSource? admissionGate = null, CancellationToken cancellationToken = default)
+    internal sealed class Work(ActorKey? key = null, int? actor = 0, int retainedBytes = 1, bool held = false, bool fail = false, TaskCompletionSource? admissionGate = null, byte[]? payload = null, CancellationToken cancellationToken = default)
     {
         public ActorKey Key { get; } = key ?? NewKey();
 
@@ -160,6 +175,8 @@ internal sealed class ActorRequests(int actorCount = 2, int maxItems = 256, int 
         public int RetainedBytes { get; } = retainedBytes;
 
         public bool Fail { get; } = fail;
+
+        public byte[]? Payload { get; } = payload;
 
         public CancellationToken CancellationToken { get; } = cancellationToken;
 

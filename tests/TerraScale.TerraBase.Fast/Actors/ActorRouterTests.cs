@@ -1,9 +1,11 @@
+using System.Diagnostics.Metrics;
 using System.Globalization;
 using System.Net;
 using System.Text.Json;
 using Bogus;
 using TerraBase.Engine.Actors;
 using TerraBase.Tenancy;
+using TerraBase.Testing;
 using static TerraBase.Fast.Actors.ActorRequests;
 
 namespace TerraBase.Fast.Actors;
@@ -230,6 +232,112 @@ public sealed class ActorRouterTests
             shutdownStarted.SetResult();
             await completion;
         }
+    }
+
+    [Test]
+    public async Task Throwing_metric_listeners_preserve_queued_callers_busy_rejection_and_shutdown()
+    {
+        // A private Meter keeps this throwing callback off every other parallel fixture.
+        using var meter = new Meter($"TerraBase.Fast.Actors.{Guid.NewGuid():N}");
+        using var listener = new MeterListener();
+        var completed = 0;
+        var rejected = 0;
+        listener.InstrumentPublished = (instrument, observer) =>
+        {
+            if (ReferenceEquals(instrument.Meter, meter))
+            {
+                observer.EnableMeasurementEvents(instrument);
+            }
+        };
+        listener.SetMeasurementEventCallback<long>((instrument, _, _, _) =>
+        {
+            if (instrument.Name == "terrabase.actors.completed")
+            {
+                Interlocked.Increment(ref completed);
+            }
+            else if (instrument.Name == "terrabase.actors.rejected")
+            {
+                Interlocked.Increment(ref rejected);
+            }
+
+            throw new InvalidOperationException("test metric listener failure");
+        });
+        listener.Start();
+        await using var requests = new ActorRequests(maxItems: 2, maxBytes: 8, meter: meter);
+        await requests.StartAsync();
+        var held = new Work(retainedBytes: 4, held: true);
+        var running = requests.SendAsync(held);
+        await SignalAsync(held.Entered.Task);
+        var queued = new Work(retainedBytes: 4);
+        var waiting = requests.SendAsync(queued);
+        await Assert.That(await SignalAsync(queued.Submitted.Task)).IsTrue();
+        using var busy = await requests.SendAsync(new Work());
+        await AssertRejectedAsync(busy, HttpStatusCode.ServiceUnavailable, "busy");
+        held.Release.TrySetResult();
+        using var runningResponse = await running;
+        using var queuedResponse = await waiting;
+        await AssertHealthyAsync(runningResponse);
+        await AssertHealthyAsync(queuedResponse);
+        var later = new Work(retainedBytes: 4, held: true);
+        var laterRequest = requests.SendAsync(later);
+        await SignalAsync(later.Entered.Task);
+        var final = new Work(retainedBytes: 4);
+        var finalRequest = requests.SendAsync(final);
+        await Assert.That(await SignalAsync(final.Submitted.Task)).IsTrue();
+        var disposal = requests.Router.DisposeAsync().AsTask();
+        await Assert.That(disposal.IsCompleted).IsFalse();
+        later.Release.TrySetResult();
+        using var laterResponse = await laterRequest;
+        using var finalResponse = await finalRequest;
+        await AssertHealthyAsync(laterResponse);
+        await AssertHealthyAsync(finalResponse);
+        await SignalAsync(disposal);
+        await Assert.That(Volatile.Read(ref completed)).IsEqualTo(4);
+        await Assert.That(Volatile.Read(ref rejected)).IsEqualTo(1);
+        using var disposed = await requests.SendAsync(new Work());
+        await AssertRejectedAsync(disposed, HttpStatusCode.ServiceUnavailable, "disposed");
+    }
+
+    [Test]
+    public async Task An_idle_actor_releases_its_last_callback_payload_and_result_before_next_admission()
+    {
+        using var meter = new Meter($"TerraBase.Fast.Actors.{Guid.NewGuid():N}");
+        using var listener = new MeterListener();
+        var completed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        listener.InstrumentPublished = (instrument, observer) =>
+        {
+            if (ReferenceEquals(instrument.Meter, meter) && instrument.Name == "terrabase.actors.completed")
+            {
+                observer.EnableMeasurementEvents(instrument);
+            }
+        };
+        listener.SetMeasurementEventCallback<long>((_, _, _, _) => completed.TrySetResult());
+        listener.Start();
+        await using var requests = new ActorRequests(actorCount: 1, meter: meter);
+        await requests.StartAsync();
+        var references = await CompletePayloadRequestAsync(requests);
+        await SignalAsync(completed.Task);
+
+        // No new callback or router disposal may advance the mailbox and hide last-item retention.
+        await TerraBaseTestServer.EventuallyAsync(token =>
+        {
+            token.ThrowIfCancellationRequested();
+            GC.Collect(GC.MaxGeneration, GCCollectionMode.Forced, blocking: true);
+            return Task.FromResult(!references.Work.IsAlive && !references.Payload.IsAlive);
+        }, timeout: TimeSpan.FromSeconds(5));
+
+        using var later = await requests.SendAsync(new Work());
+        await AssertHealthyAsync(later);
+    }
+
+    private static async Task<(WeakReference Work, WeakReference Payload)> CompletePayloadRequestAsync(ActorRequests requests)
+    {
+        // The payload is captured by the callback AND returned as its result. Neither may remain rooted.
+        var work = new Work(retainedBytes: 4096, payload: new byte[4096]);
+        var references = (new WeakReference(work), new WeakReference(work.Payload!));
+        using var response = await requests.SendAsync(work);
+        await AssertHealthyAsync(response);
+        return references;
     }
 
     [Test]

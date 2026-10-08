@@ -71,7 +71,7 @@ internal sealed class ChannelActorRouter : IActorRouter
         var mailbox = _actors[actor];
         if (!mailbox.Reserve(retainedBytes))
         {
-            _rejected.Add(1, new KeyValuePair<string, object?>("actor", actor));
+            Record(_rejected, actor);
             throw new StorageBusyException();
         }
 
@@ -88,6 +88,18 @@ internal sealed class ChannelActorRouter : IActorRouter
         }
 
         return await item.Completion.Task.ConfigureAwait(false);
+    }
+
+    private static void Record(Counter<long> counter, int actor)
+    {
+        try
+        {
+            counter.Add(1, new KeyValuePair<string, object?>("actor", actor));
+        }
+        catch (Exception)
+        {
+            // MeterListener callbacks run synchronously. Telemetry cannot interrupt admission or consumption.
+        }
     }
 
     public async ValueTask DisposeAsync()
@@ -165,12 +177,16 @@ internal sealed class ChannelActorRouter : IActorRouter
 
         private async Task ConsumeAsync()
         {
-            await foreach (var item in Queue.Reader.ReadAllAsync().ConfigureAwait(false))
+            while (await Queue.Reader.WaitToReadAsync().ConfigureAwait(false))
             {
-                await item.ExecuteAsync().ConfigureAwait(false);
-                Release(item.Bytes);
-                _completed.Add(1, new KeyValuePair<string, object?>("actor", _index));
-                item.Complete();
+                // A failed TryRead clears item before the async state machine waits for more work.
+                while (Queue.Reader.TryRead(out var item))
+                {
+                    await item.ExecuteAsync().ConfigureAwait(false);
+                    Release(item.Bytes);
+                    item.Complete();
+                    Record(_completed, _index);
+                }
             }
         }
     }
