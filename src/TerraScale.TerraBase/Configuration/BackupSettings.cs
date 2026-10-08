@@ -11,7 +11,7 @@ namespace TerraBase.Configuration;
 public sealed class BackupSettings
 {
     /// <summary>Every backup setting.</summary>
-    internal static string[] Keys => [.. Required, "backup-retention-days"];
+    internal static string[] Keys => [.. Required, "backup-retention-days", "backup-key-rotation-days"];
 
     // Required together; the rest are optional.
     private static readonly string[] Required =
@@ -46,6 +46,9 @@ public sealed class BackupSettings
 
     /// <summary>PEM private key of <see cref="KmsApiKey"/>.</summary>
     public required string KmsPrivateKeyPem { get; init; }
+
+    /// <summary>Maximum age of a backup data key before the next upload rotates it; 90 days by default.</summary>
+    public int KeyRotationDays { get; init; } = 90;
 
     /// <summary>
     /// Days each plan keeps backups (<c>backup-retention-days</c>, default <c>hobby=1,pro=7,enterprise=30</c>): a database
@@ -86,9 +89,15 @@ public sealed class BackupSettings
                 ? values["backup-kms-api-key"]
                 : throw new TerraBaseConfigurationException("backup-kms-api-key must be <tenancy OCID>/<user OCID>/<fingerprint>"),
             KmsPrivateKeyPem = ReadPrivateKey(values["backup-kms-private-key-file"]),
+            KeyRotationDays = values.TryGetValue("backup-key-rotation-days", out var rotation) ? ParseKeyRotation(rotation) : 90,
             RetentionDays = values.TryGetValue("backup-retention-days", out var retention) ? ParseRetention(retention) : DefaultRetentionDays,
         };
     }
+
+    private static int ParseKeyRotation(string value) =>
+        int.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out var days) && days is >= 1 and <= 3650
+            ? days
+            : throw new TerraBaseConfigurationException("backup-key-rotation-days must be an integer from 1 to 3650");
 
     // plan=days pairs, each 1 to 3650; plans not named keep their default.
     private static Dictionary<PlanTier, int> ParseRetention(string value)

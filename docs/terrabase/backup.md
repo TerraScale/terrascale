@@ -35,6 +35,7 @@ values.
 | `backup-kms-api-key` | OCI API signing key id, `<tenancy OCID>/<user OCID>/<fingerprint>` |
 | `backup-kms-private-key-file` | PEM private key of that API key |
 | `backup-retention-days` | Optional. Days each plan keeps backups, `hobby=1,pro=7,enterprise=30` by default; a plan not named keeps its default (1 to 3650 days) |
+| `backup-key-rotation-days` | Optional. Maximum data-key age, 90 days by default (1 to 3650 days); the next upload rotates an expired key |
 
 Give the backup identity only what it needs: object read, write and list in the backup bucket, and `use` of the one
 master key.
@@ -110,6 +111,36 @@ when smaller, AES-256-GCM. Each object's AES key is HKDF-SHA256 of its project's
 own key in the bucket, so an object moved elsewhere does not decrypt. Data keys come from OCI Vault (`generateDataEncryptionKey`
 on the master key) and are stored in the bucket wrapped. Only the Vault can unwrap them. Each project gets its own data
 key, and `_system.db` gets one too.
+
+### Data-key rotation
+
+Before an upload, TerraBase checks the data key's age using the creation time in its existing ULID. An expired key is
+replaced with a new OCI Vault data key, whose wrapped copy is uploaded before any object uses it. Running nodes refresh
+their current selection at most once a minute, listing only keys after their cached selection, so they adopt a newer key
+published by another member without rescanning retained history. If two nodes rotate together, both wrapped keys remain
+available and each object names the key it used. A failed key upload leaves
+the previous selection intact and backup shipping retries; it never publishes an object with an unavailable key.
+
+Old snapshots and log segments are not rewritten. Old wrapped data keys are retained for historical restores, including
+generations whose snapshot and log segments use different keys. Current plaintext keys are cached for at most 65536
+scopes, with another 65536 unwrapped keys cached for restores (at most 4 MiB of key material in both caches). Entries
+expire after a day without access. At capacity, cache admission synchronously makes room for new results so waiting
+downloads can reuse them. Evicted-key lookups retrieve keys from the bucket and Vault;
+size nodes to keep active scopes and restore keys within these limits. Generated keys enter the restore cache only
+after their wrapped copy is persisted. Concurrent downloads using one historical key share its retrieval and unwrap;
+distinct keys use bounded key stripes independently of selection and publication. Unrelated, nested, and future-dated
+key objects are ignored during selection; a future-dated key can still decrypt historical objects naming it.
+Changing `backup-key-rotation-days` requires a rolling
+restart; use `1` for the next daily rotation when shortening the schedule.
+
+Keep the configured master key OCID and all versions needed to unwrap retained data keys. Replacing
+`backup-kms-key-id` with another master key is not a supported rotation path: retained wrapped keys would no longer
+unwrap. OCI master-key version rotation is distinct from this data-key rotation and requires an OCI restore drill
+before retiring a version. Do not delete wrapped keys or master versions while their backups are still retained.
+
+This rotation preserves the existing backup bytes, bucket layout and SQLite files. Live SQLite files, WAL files, local
+managed snapshots and restore scratch files still require encryption of the node's storage; TS-702's disk-encryption
+and in-place migration work follows separately.
 
 ## Bucket layout (version 1)
 

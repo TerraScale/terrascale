@@ -143,14 +143,21 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
         }
     }
 
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    public override Task StartAsync(CancellationToken cancellationToken)
     {
+        // ExecuteAsync runs on a background thread in .NET 11. Prepare scratch before startup completes, so a caller's
+        // first pass cannot race the cleanup or open a tap before the frames directory exists.
         if (Directory.Exists(_scratch))
         {
             Directory.Delete(_scratch, recursive: true);
         }
 
         Directory.CreateDirectory(_scratch);
+        return base.StartAsync(cancellationToken);
+    }
+
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
         using var timer = new PeriodicTimer(Interval, _time);
         do
         {
@@ -233,8 +240,18 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
         {
             if (await _engine.OpenTapAsync(database, cancellationToken).ConfigureAwait(false) is { } tap)
             {
-                var pending = new FileStream(Path.Combine(_scratch, Guid.NewGuid().ToString("N") + ".frames"), FileMode.CreateNew, FileAccess.ReadWrite,
-                    FileShare.None, 1 << 16, FileOptions.Asynchronous | FileOptions.DeleteOnClose);
+                FileStream pending;
+                try
+                {
+                    pending = new FileStream(Path.Combine(_scratch, Guid.NewGuid().ToString("N") + ".frames"), FileMode.CreateNew, FileAccess.ReadWrite,
+                        FileShare.None, 1 << 16, FileOptions.Asynchronous | FileOptions.DeleteOnClose);
+                }
+                catch
+                {
+                    await tap.DisposeAsync().ConfigureAwait(false);
+                    throw;
+                }
+
                 _files[prefix] = new ShippedFile(database, prefix, BackupLayout.KeyScope(database), tap, pending, _time.GetUtcNow());
             }
         }

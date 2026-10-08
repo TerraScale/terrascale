@@ -1,83 +1,183 @@
-using System.Collections.Concurrent;
 using System.Text;
+using Microsoft.Extensions.Caching.Memory;
+using Microsoft.Extensions.Internal;
+using TerraBase.Configuration;
 
 namespace TerraBase.Features.Backup;
 
 /// <summary>
 /// Per-project data keys (envelope encryption): generated and wrapped by the master key, stored wrapped in the bucket,
-/// kept in the clear only in memory. A project uses its newest key; objects name the key that sealed them.
+/// kept in the clear only in memory. A project uses its newest unexpired key; objects name the key that sealed them.
 /// </summary>
 /// <remarks>
-/// ponytail: unwrapped keys stay cached for the process lifetime (32 bytes per project key); evict when projects number in
-/// the millions. Two members creating a project's first key at once both succeed; each object names its own.
+/// Two members rotating a project's key at once both succeed; each object names its own persisted key. Current keys
+/// refresh at most once a minute and are cached for at most 65536 scopes. Another 65536 unwrapped keys are cached for
+/// restores (at most 4 MiB of key material in both caches), including concurrent downloads using the same key.
+/// Entries expire after a day without access; a cache miss retrieves the retained wrapped key.
 /// </remarks>
-internal sealed class DataKeys(IObjectStore store, IMasterKey master, TimeProvider time) : IDisposable
+internal sealed class DataKeys(IObjectStore store, IMasterKey master, TimeProvider time, BackupSettings settings) : IDisposable
 {
-    private readonly ConcurrentDictionary<(string Scope, string Id), byte[]> _keys = new();
-    private readonly ConcurrentDictionary<string, string> _current = new(StringComparer.Ordinal);
-    private readonly SemaphoreSlim _creating = new(1, 1);
+    private static readonly TimeSpan RefreshInterval = TimeSpan.FromMinutes(1);
+    private static readonly TimeSpan CacheLifetime = TimeSpan.FromDays(1);
+    private const int CacheCapacity = 65536;
+    private readonly TimeSpan _rotation = TimeSpan.FromDays(settings.KeyRotationDays);
+    private readonly MemoryCache _current = new(new MemoryCacheOptions { Clock = new CacheClock(time) });
+    private readonly MemoryCache _keys = new(new MemoryCacheOptions { Clock = new CacheClock(time) });
+    private readonly Lock _cacheAdmission = new();
+    // ponytail: 64 stripes per operation bound synchronization memory; colliding selections or key reads serialize.
+    // Separate arrays keep a slow publication from blocking historical reads and prevent re-entering a selection stripe.
+    private readonly SemaphoreSlim[] _selectionGates = [.. Enumerable.Range(0, 64).Select(_ => new SemaphoreSlim(1, 1))];
+    private readonly SemaphoreSlim[] _keyGates = [.. Enumerable.Range(0, 64).Select(_ => new SemaphoreSlim(1, 1))];
 
     /// <summary>The data key new objects of <paramref name="scope"/> are sealed with.</summary>
     public async Task<(string Id, byte[] Key)> CurrentAsync(string scope, CancellationToken cancellationToken)
     {
-        if (_current.TryGetValue(scope, out var id) && _keys.TryGetValue((scope, id), out var cached))
+        if (Current(scope) is { } cached)
         {
-            return (id, cached);
+            return (cached.Id, cached.Key);
         }
 
-        await _creating.WaitAsync(cancellationToken).ConfigureAwait(false);
+        var gate = Gate(_selectionGates, scope);
+        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            string? newest = null;
-            await foreach (var item in store.ListAsync(BackupLayout.Keys(scope), null, cancellationToken).ConfigureAwait(false))
+            // Another file of the same project may have selected a key while this call waited.
+            if (Current(scope) is { } selected)
             {
-                newest = item.Key;
+                return (selected.Id, selected.Key);
             }
 
-            if (newest is not null)
+            _current.TryGetValue(scope, out CurrentKey? previous);
+            var id = previous?.Id;
+            var after = id is null ? null : BackupLayout.Key(scope, id);
+            var prefix = BackupLayout.Keys(scope);
+            await foreach (var item in store.ListAsync(prefix, after, cancellationToken).ConfigureAwait(false))
             {
-                id = newest[(newest.LastIndexOf('/') + 1)..];
-                cached = await GetAsync(scope, id, cancellationToken).ConfigureAwait(false);
+                var candidate = item.Key[prefix.Length..];
+                if (TryParseKey(candidate, out var candidateKey) && NotFuture(candidateKey))
+                {
+                    id = candidate;
+                }
+            }
+
+            byte[] key;
+            if (id is not null && Fresh(id))
+            {
+                key = await ReadKeyAsync(scope, id, cancellationToken).ConfigureAwait(false);
             }
             else
             {
-                var (key, wrapped) = await master.GenerateDataKeyAsync(cancellationToken).ConfigureAwait(false);
+                var (generated, wrapped) = await master.GenerateDataKeyAsync(cancellationToken).ConfigureAwait(false);
+                key = generated;
                 id = Ulid.NewUlid(time.GetUtcNow()).ToString();
                 using var content = new MemoryStream(Encoding.ASCII.GetBytes(wrapped));
                 await store.PutAsync(BackupLayout.Key(scope, id), content, cancellationToken).ConfigureAwait(false);
-                cached = _keys.GetOrAdd((scope, id), key);
             }
 
-            _current[scope] = id;
-            return (id, cached);
+            // Never select a key until its wrapped copy is durable; old objects keep naming old keys.
+            Cache(_keys, (scope, id), key);
+            Cache(_current, scope, new CurrentKey(id, key, time.GetUtcNow()));
+            return (id, key);
         }
         finally
         {
-            _creating.Release();
+            gate.Release();
         }
     }
 
     /// <summary>The data key <paramref name="id"/> of <paramref name="scope"/>.</summary>
     /// <exception cref="InvalidDataException">The bucket holds no such key.</exception>
-    public async Task<byte[]> GetAsync(string scope, string id, CancellationToken cancellationToken)
+    public Task<byte[]> GetAsync(string scope, string id, CancellationToken cancellationToken) =>
+        ReadKeyAsync(scope, id, cancellationToken);
+
+    private async Task<byte[]> ReadKeyAsync(string scope, string id, CancellationToken cancellationToken)
     {
-        if (_keys.TryGetValue((scope, id), out var cached))
+        if (Cached(scope, id) is { } cached)
         {
             return cached;
         }
 
-        string? wrapped = null;
-        if (!await store.ReadAsync(BackupLayout.Key(scope, id), async content =>
-            {
-                using var reader = new StreamReader(content, Encoding.ASCII);
-                wrapped = await reader.ReadToEndAsync(cancellationToken).ConfigureAwait(false);
-            }, cancellationToken).ConfigureAwait(false) || string.IsNullOrEmpty(wrapped))
+        var gate = Gate(_keyGates, BackupLayout.Key(scope, id));
+        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
         {
-            throw new InvalidDataException("a backup object names a data key the bucket does not hold");
-        }
+            if (Cached(scope, id) is { } selected)
+            {
+                return selected;
+            }
 
-        return _keys.GetOrAdd((scope, id), await master.UnwrapAsync(wrapped, cancellationToken).ConfigureAwait(false));
+            string? wrapped = null;
+            if (!await store.ReadAsync(BackupLayout.Key(scope, id), async content =>
+                {
+                    using var reader = new StreamReader(content, Encoding.ASCII);
+                    wrapped = await reader.ReadToEndAsync(cancellationToken).ConfigureAwait(false);
+                }, cancellationToken).ConfigureAwait(false) || string.IsNullOrEmpty(wrapped))
+            {
+                throw new InvalidDataException("a backup object names a data key the bucket does not hold");
+            }
+
+            var key = await master.UnwrapAsync(wrapped, cancellationToken).ConfigureAwait(false);
+            Cache(_keys, (scope, id), key);
+            return key;
+        }
+        finally
+        {
+            gate.Release();
+        }
     }
 
-    public void Dispose() => _creating.Dispose();
+    public void Dispose()
+    {
+        _current.Dispose();
+        _keys.Dispose();
+        // Async-only gates never expose a wait handle. Let GC reclaim them after holders and waiters finish;
+        // disposing a gate here could mask an in-flight operation's outcome when its finally releases it.
+    }
+
+    private static SemaphoreSlim Gate(SemaphoreSlim[] gates, string key) =>
+        gates[(StringComparer.Ordinal.GetHashCode(key) & int.MaxValue) % gates.Length];
+
+    private void Cache<T>(MemoryCache cache, object id, T value)
+    {
+        lock (_cacheAdmission)
+        {
+            // Bound admission by count: MemoryCache's size accounting can lag concurrent expiration and reject Set.
+            // Make room synchronously before publishing the gate's result so waiters reuse it.
+            if (cache.Count >= CacheCapacity && !cache.TryGetValue(id, out _))
+            {
+                cache.Compact(0.05);
+            }
+
+            cache.Set(id, value, new MemoryCacheEntryOptions { SlidingExpiration = CacheLifetime });
+        }
+    }
+
+    private byte[]? Cached(string scope, string id) =>
+        _current.TryGetValue(scope, out CurrentKey? current) && current?.Id == id
+            ? current.Key
+            : _keys.TryGetValue((scope, id), out byte[]? key) ? key : null;
+
+    private CurrentKey? Current(string scope) =>
+        _current.TryGetValue(scope, out CurrentKey? current) && current is not null
+            && time.GetUtcNow() - current.CheckedAt < RefreshInterval && Fresh(current.Id)
+            ? current
+            : null;
+
+    // The pinned parser accepts some invalid ASCII; only canonical IDs are persisted key names.
+    private static bool TryParseKey(string id, out Ulid key) => Ulid.TryParse(id, out key) && key.ToString() == id;
+
+    // Compare raw ULIDs before converting Time: a valid 48-bit timestamp may exceed DateTimeOffset's range.
+    // Maximum randomness includes every key created in the current millisecond.
+    private bool NotFuture(Ulid key) => key.CompareTo(Ulid.NewUlid(time.GetUtcNow(),
+        [255, 255, 255, 255, 255, 255, 255, 255, 255, 255])) <= 0;
+
+    private bool Fresh(string id) => TryParseKey(id, out var key) && NotFuture(key)
+        && time.GetUtcNow() - key.Time is var age && age >= TimeSpan.Zero && age < _rotation;
+
+    private sealed record CurrentKey(string Id, byte[] Key, DateTimeOffset CheckedAt);
+
+    private sealed class CacheClock(TimeProvider time) : ISystemClock
+    {
+        public DateTimeOffset UtcNow => time.GetUtcNow();
+    }
 }
