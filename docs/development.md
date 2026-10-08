@@ -353,7 +353,8 @@ With the variables set:
   confidential client's secret derives the cookie key, so rotating that
   secret expires pending resend requests. If the request exceeds the retry
   cookie's size limit, the emailed code still verifies the account; the page
-  offers account creation again to request another code.
+  offers account creation again to request another code. Without JavaScript,
+  the native resend form stays usable and the server enforces the minute.
 - `/login/sso` redirects to ts-auth with the scopes `openid email profile
   offline_access`, a PKCE S256 challenge, `state` and `nonce`. ts-auth returns
   to `/login/callback`.

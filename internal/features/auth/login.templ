@@ -149,7 +149,6 @@ templ codeView(data codePageData, csrfToken string) {
 					<button
 						class="ts-btn ts-btn-outline ts-btn-lg ts-btn-block"
 						type="submit"
-						disabled?={ data.ResendSeconds > 0 }
 						data-attr:disabled="$_resendSeconds > 0 || $_navPending"
 						data-text="$_resendSeconds > 0 ? 'Resend code (' + $_resendSeconds + 's)' : 'Resend code'"
 					>

@@ -4,6 +4,7 @@ import (
 	"encoding/json/v2"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -13,19 +14,21 @@ import (
 )
 
 func TestSignUpResendCountdown(t *testing.T) {
+	var sends atomic.Int64
 	mux := http.NewServeMux()
 	issuer := httptest.NewServer(mux)
 	t.Cleanup(issuer.Close)
 	mux.HandleFunc("GET /.well-known/openid-configuration", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.MarshalWrite(w, map[string]any{
-			"issuer": issuer.URL, "authorization_endpoint": issuer.URL + "/authorize", "token_endpoint": issuer.URL + "/token",
+			"issuer": issuer.URL, "authorization_endpoint": issuer.URL + "/authorize", "token_endpoint": issuer.URL + "/oauth/token",
 			"jwks_uri": issuer.URL + "/jwks", "response_types_supported": []string{"code"}, "subject_types_supported": []string{"public"},
 			"id_token_signing_alg_values_supported": []string{"ES256"}, "code_challenge_methods_supported": []string{"S256"},
 			"grant_types_supported": []string{"urn:terrascale:params:oauth:grant-type:password", "urn:terrascale:params:oauth:grant-type:email-code"},
 		})
 	})
 	mux.HandleFunc("POST /headless/v1/sign-up", func(w http.ResponseWriter, r *http.Request) {
+		sends.Add(1)
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.MarshalWrite(w, map[string]string{"pending_token": "browser-test-pending-token"})
 	})
@@ -70,4 +73,35 @@ func TestSignUpResendCountdown(t *testing.T) {
 	must(t, expect.Locator(button).ToBeDisabled())
 	visible(t, page.GetByRole(*playwright.AriaRoleAlert).GetByText("before resending the code.", playwright.LocatorGetByTextOptions{Exact: new(false)}))
 	screenshot(t, page, "ts631-resend-cooldown")
+
+	// Without the reactive runtime, the native form must remain usable;
+	// the server still rejects resends within the reserved minute.
+	context, err := browser.NewContext(playwright.BrowserNewContextOptions{
+		BaseURL: new(dashboard.URL), JavaScriptEnabled: new(false),
+	})
+	must(t, err)
+	t.Cleanup(func() { _ = context.Close() })
+	nativePage := watchedPageExcept(t, context, func(message playwright.ConsoleMessage) bool {
+		return rejectedFormDocument.MatchString(message.Text())
+	})
+	goTo(t, nativePage, "/onboarding")
+	account = newAccount("resend-no-js")
+	form = nativePage.Locator(`form[action="/onboarding"]`)
+	fill(t, form.Locator(`[name="displayName"]`), account.DisplayName)
+	fill(t, form.Locator(`[name="email"]`), account.Email)
+	fill(t, form.Locator(`[name="password"]`), account.Password)
+	fill(t, form.Locator(`[name="confirmPassword"]`), account.Password)
+	must(t, form.Locator(`[name="terms"]`).Check())
+	click(t, byRole(form, *playwright.AriaRoleButton, "Create account"))
+	button = nativePage.Locator(`form[action="/login/code/resend"] button`)
+	must(t, expect.Locator(button).ToBeEnabled())
+	before := sends.Load()
+	response, err := nativePage.ExpectResponse("**/login/code/resend", func() error {
+		return button.Click()
+	})
+	must(t, err)
+	if response.Status() != http.StatusTooManyRequests || sends.Load() != before {
+		t.Fatalf("resend without JavaScript = %d, sends %d → %d", response.Status(), before, sends.Load())
+	}
+	must(t, expect.Locator(button).ToBeEnabled())
 }
