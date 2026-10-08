@@ -2,10 +2,43 @@ package charts
 
 import (
 	"bytes"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
 )
+
+func TestManySeriesKeepDistinctStrokesAcrossChartKeys(t *testing.T) {
+	series := make([]Series, 12)
+	for i := range series {
+		series[i] = Series{Name: fmt.Sprint("series ", i), Values: []int64{int64(i)}, Missing: []bool{false}}
+	}
+	data := NewLine("many series", nil, nil, 200, series...)
+	seen := make(map[string]bool)
+	for i, path := range data.Paths {
+		style := path.Class + "/" + path.Dash
+		if seen[style] {
+			t.Fatalf("series %d repeats visual style %q", i, style)
+		}
+		seen[style] = true
+		row, dot, marker := data.Columns[0].Tip.Rows[i], data.Columns[0].Dots[i], data.Markers[i]
+		if row.Class != path.Class || dot.Class != path.Class || marker.Class != path.Class || row.Dash != path.Dash || dot.Dash != path.Dash || marker.Dash != path.Dash {
+			t.Fatalf("series %d keys do not match its curve", i)
+		}
+	}
+	var html bytes.Buffer
+	if err := Line(data).Render(t.Context(), &html); err != nil {
+		t.Fatal(err)
+	}
+	if err := Legend(data).Render(t.Context(), &html); err != nil {
+		t.Fatal(err)
+	}
+	// Each dashed series renders its pattern on the curve, marker, hover dot,
+	// tooltip key and legend stroke; the first three keep their solid strokes.
+	if got := strings.Count(html.String(), `stroke-dasharray="6 5"`); got != 15 {
+		t.Fatalf("first repeated color group has %d patterned elements, want 15", got)
+	}
+}
 
 func TestIsolatedObservationsRenderPersistentMarkers(t *testing.T) {
 	denseValues, denseMissing := make([]int64, 121), make([]bool, 121)

@@ -53,6 +53,16 @@ func (c *contractMetrics) Analytics(ctx context.Context, _ string, s core.Metric
 			{Start: start.Add(2 * time.Minute)},
 		}}, nil
 	}
+	if c.mode == "multiple" {
+		points := make([]core.AnalyticsPoint, 0, 4)
+		for bucket := range 2 {
+			for group, region := range []string{"GRU", "SFO"} {
+				value := float64(1 + bucket + group)
+				points = append(points, core.AnalyticsPoint{Start: start.Add(time.Duration(bucket) * time.Minute), DatabaseID: "01JC9Q8Y5N7P9R3T5V7X9Z2AC", Region: region, P50LatencyMS: new(value), P95LatencyMS: new(value + 3), P99LatencyMS: new(value + 6)})
+			}
+		}
+		return core.Analytics{Series: points}, nil
+	}
 	return core.Analytics{Series: []core.AnalyticsPoint{
 		{Start: start, Requests: map[string]int64{"query": 12, "write": 3}, Operations: map[string]int64{"read": 8, "put": 3}, Errors: 1, P50LatencyMS: new(0.25), P95LatencyMS: new(1.5), P99LatencyMS: new(3.5), StorageBytes: 2048, ClientSentBytes: 1024, ClientReceivedBytes: 2048, ReplicationBytes: 4096},
 		{Start: start.Add(time.Minute), Requests: map[string]int64{"query": 20}, Operations: map[string]int64{"read": 12, "delete": 1}, Errors: 2, P50LatencyMS: new(0.5), P95LatencyMS: new(2.5), P99LatencyMS: new(5.0), StorageBytes: 4096, ClientSentBytes: 2048, ClientReceivedBytes: 4096, ReplicationBytes: 2048},
@@ -223,6 +233,43 @@ func TestAnalyticsIsolatedLatencyRemainsVisibleWithoutHover(t *testing.T) {
 	must(t, expect.Locator(page.Locator(".ts-chart-column .ts-chart-marker")).ToHaveCount(0))
 	expectAccessible(t, page, "analytics isolated latency", "main")
 	screenshot(t, page, "analytics-isolated-latency")
+}
+
+func TestAnalyticsMultipleRegionLatencySeriesStayDistinct(t *testing.T) {
+	page := metricsPage(t, &contractMetrics{mode: "multiple"})
+	goToOK(t, page, "/analytics")
+	chart := page.Locator(`svg.ts-chart[aria-label^="Latency percentiles"]`)
+	must(t, expect.Locator(chart.Locator(".ts-chart-line")).ToHaveCount(6))
+	screenshot(t, page, "analytics-multiple-latency")
+	styles, err := chart.Evaluate(`chart => [...chart.querySelectorAll('.ts-chart-line')].map(line => {
+		const style = getComputedStyle(line);
+		return style.stroke + '/' + style.strokeDasharray;
+	})`, nil)
+	must(t, err)
+	seen := make(map[string]bool)
+	for _, style := range styles.([]any) {
+		key := style.(string)
+		if seen[key] {
+			t.Fatalf("latency series repeat visual style %q", key)
+		}
+		seen[key] = true
+	}
+	matched, err := chart.Evaluate(`chart => {
+		const style = element => {
+			const css = getComputedStyle(element);
+			return css.stroke + '/' + css.strokeDasharray;
+		};
+		const legends = chart.closest('section').querySelectorAll('.ts-chart-legend line');
+		const keys = chart.querySelectorAll('.ts-chart-column:last-of-type .ts-chart-tip-swatch');
+		return [...chart.querySelectorAll('.ts-chart-line')].every((line, i) =>
+			legends[i] && keys[i] && style(line) === style(legends[i]) && style(line) === style(keys[i]) &&
+			getComputedStyle(legends[i].closest('svg')).backgroundColor === 'rgba(0, 0, 0, 0)');
+	}`, nil)
+	must(t, err)
+	if matched != true {
+		t.Fatal("latency curve styles do not match their legend and tooltip keys")
+	}
+	expectAccessible(t, page, "analytics multiple latency series", "main")
 }
 
 func TestAnalyticsAndReplicationEmptyAndErrorStates(t *testing.T) {

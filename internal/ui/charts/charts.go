@@ -33,6 +33,7 @@ type AxisTick struct {
 type LinePath struct {
 	Name  string
 	Class string
+	Dash  string
 	Data  string
 }
 
@@ -40,6 +41,7 @@ type LinePath struct {
 type ChartDot struct {
 	X, Y  string
 	Class string
+	Dash  string
 }
 
 // ChartColumn is the hover and focus target for one data point: the guide
@@ -58,15 +60,16 @@ type ChartColumn struct {
 type ChartTip struct {
 	X, Y, Width, Height string
 	// SwatchX, NameX, and ValueX are the row columns; values end at ValueX.
-	SwatchX, NameX, ValueX   string
-	Header, HeaderX, HeaderY string
-	Rows                     []ChartTipRow
+	SwatchX, SwatchEndX, NameX, ValueX string
+	Header, HeaderX, HeaderY           string
+	Rows                               []ChartTipRow
 }
 
 // ChartTipRow is one series value inside a ChartTip.
 type ChartTipRow struct {
 	Name, Value string
 	Class       string
+	Dash        string
 	Y           string
 }
 
@@ -181,6 +184,11 @@ func NewLine(label string, ticks, points []string, height int, series ...Series)
 	yAt := func(value int64) float64 { return top + float64(plotHeight)*(1-float64(max(0, value))/float64(scale)) }
 	for index, item := range series {
 		class := fmt.Sprintf("ts-cat-%d", index%3+1)
+		dash := ""
+		if index >= 3 {
+			// Reused token colors keep distinct strokes in the curve and its keys.
+			dash = fmt.Sprintf("%d 5", 3*(index/3+1))
+		}
 		if len(series) == 1 {
 			class = "ts-chart-series-1"
 		}
@@ -198,7 +206,7 @@ func NewLine(label string, ticks, points []string, height int, series ...Series)
 			previousMissing := i == 0 || len(item.Missing) > 0 && item.Missing[i-1]
 			nextMissing := i == count-1 || len(item.Missing) > 0 && item.Missing[i+1]
 			if previousMissing && nextMissing {
-				data.Markers = append(data.Markers, ChartDot{X: coordinate(xAt(i)), Y: coordinate(yAt(value)), Class: class})
+				data.Markers = append(data.Markers, ChartDot{X: coordinate(xAt(i)), Y: coordinate(yAt(value)), Class: class, Dash: dash})
 			}
 		}
 		if len(points) > 0 {
@@ -210,7 +218,7 @@ func NewLine(label string, ticks, points []string, height int, series ...Series)
 				data.AreaPath = fmt.Sprintf("%s L %d,%d L %d,%d Z", line, width-right, top+plotHeight, left, top+plotHeight)
 			}
 		}
-		data.Paths = append(data.Paths, LinePath{Name: item.Name, Class: class, Data: line})
+		data.Paths = append(data.Paths, LinePath{Name: item.Name, Class: class, Dash: dash, Data: line})
 	}
 	// Dense series share hover columns so the markup stays small; each
 	// column reports the sample at its center.
@@ -230,7 +238,7 @@ func NewLine(label string, ticks, points []string, height int, series ...Series)
 		rows := make([]ChartTipRow, 0, len(series))
 		values := make([]string, 0, len(series))
 		for index, item := range series {
-			row := ChartTipRow{Name: item.Name, Value: grouped(item.Values[i]), Class: data.Paths[index].Class}
+			row := ChartTipRow{Name: item.Name, Value: grouped(item.Values[i]), Class: data.Paths[index].Class, Dash: data.Paths[index].Dash}
 			missing := len(item.Missing) > 0 && item.Missing[i]
 			if missing {
 				row.Value = "Not reported"
@@ -238,7 +246,7 @@ func NewLine(label string, ticks, points []string, height int, series ...Series)
 			rows = append(rows, row)
 			values = append(values, row.Name+" "+row.Value)
 			if !missing {
-				column.Dots = append(column.Dots, ChartDot{X: coordinate(x), Y: coordinate(yAt(item.Values[i])), Class: row.Class})
+				column.Dots = append(column.Dots, ChartDot{X: coordinate(x), Y: coordinate(yAt(item.Values[i])), Class: row.Class, Dash: row.Dash})
 			}
 		}
 		column.Label = strings.Join(values, ", ")
@@ -272,7 +280,7 @@ const (
 	tipPadX      = 10
 	tipPadY      = 6
 	tipLine      = 17
-	tipSwatch    = 12
+	tipSwatch    = 32
 	tipColumnGap = 16
 	tipOffset    = 10
 )
@@ -297,7 +305,7 @@ func newTip(x, top, end float64, header string, rows []ChartTipRow) ChartTip {
 	}
 	tip := ChartTip{
 		X: coordinate(left), Y: coordinate(top), Width: coordinate(width), Height: coordinate(float64(2*tipPadY + lines*tipLine)),
-		SwatchX: coordinate(left + tipPadX + 3), NameX: coordinate(left + tipPadX + tipSwatch), ValueX: coordinate(left + width - tipPadX),
+		SwatchX: coordinate(left + tipPadX), SwatchEndX: coordinate(left + tipPadX + tipSwatch - 8), NameX: coordinate(left + tipPadX + tipSwatch), ValueX: coordinate(left + width - tipPadX),
 		Header: header, HeaderX: coordinate(left + tipPadX),
 	}
 	lineY := func(line int) string { return coordinate(top + tipPadY + tipLine*(float64(line)+0.5)) }

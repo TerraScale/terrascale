@@ -31,17 +31,17 @@ templ Line(data LineData) {
 				<path class="ts-chart-area" d={ data.AreaPath } fill={ "url(#" + data.GradientID + ")" }></path>
 			}
 			for _, path := range data.Paths {
-				<path class={ "ts-chart-line " + path.Class } d={ path.Data }></path>
+				<path class={ "ts-chart-line " + path.Class } d={ path.Data } stroke-dasharray={ path.Dash }></path>
 			}
 			for _, marker := range data.Markers {
-				<circle class={ "ts-chart-dot ts-chart-marker " + marker.Class } cx={ marker.X } cy={ marker.Y } r="4" aria-hidden="true"></circle>
+				<circle class={ "ts-chart-dot ts-chart-marker " + marker.Class } cx={ marker.X } cy={ marker.Y } stroke-dasharray={ marker.Dash } r="4" aria-hidden="true"></circle>
 			}
 			for _, column := range data.Columns {
 				<g class="ts-chart-column" tabindex="0" role="img" aria-label={ column.Label }>
 					<rect class="ts-chart-hit" x={ column.Left } y={ fmt.Sprint(data.PlotTop) } width={ column.Width } height={ fmt.Sprint(data.PlotBottom - data.PlotTop) }></rect>
 					<line class="ts-chart-guide" x1={ column.X } y1={ fmt.Sprint(data.PlotTop) } x2={ column.X } y2={ fmt.Sprint(data.PlotBottom) }></line>
 					for _, dot := range column.Dots {
-						<circle class={ "ts-chart-dot " + dot.Class } cx={ dot.X } cy={ dot.Y } r="4"></circle>
+						<circle class={ "ts-chart-dot " + dot.Class } cx={ dot.X } cy={ dot.Y } stroke-dasharray={ dot.Dash } r="4"></circle>
 					}
 					@lineTip(column.Tip)
 				</g>
@@ -59,7 +59,7 @@ templ lineTip(tip ChartTip) {
 			<text class="ts-chart-tip-label" x={ tip.HeaderX } y={ tip.HeaderY } dy="0.35em">{ tip.Header }</text>
 		}
 		for _, row := range tip.Rows {
-			<circle class={ "ts-chart-tip-swatch " + row.Class } cx={ tip.SwatchX } cy={ row.Y } r="3"></circle>
+			<line class={ "ts-chart-tip-swatch " + row.Class } x1={ tip.SwatchX } x2={ tip.SwatchEndX } y1={ row.Y } y2={ row.Y } stroke-dasharray={ row.Dash }></line>
 			<text class="ts-chart-tip-name" x={ tip.NameX } y={ row.Y } dy="0.35em">{ row.Name }</text>
 			<text class="ts-chart-tip-value" x={ tip.ValueX } y={ row.Y } dy="0.35em" text-anchor="end">{ row.Value }</text>
 		}
@@ -97,7 +97,7 @@ templ meterTip(name, value string) {
 templ Legend(data LineData) {
 	<ul class="ts-chart-legend" aria-label="Chart series">
 		for _, path := range data.Paths {
-			<li class="ts-chart-legend-item"><span class={ "ts-chart-swatch " + path.Class } aria-hidden="true"></span>{ path.Name }</li>
+			<li class="ts-chart-legend-item"><svg class={ "ts-chart-swatch " + path.Class } viewBox="0 0 32 8" aria-hidden="true"><line x1="0" x2="32" y1="4" y2="4" stroke-dasharray={ path.Dash }></line></svg>{ path.Name }</li>
 		}
 	</ul>
 }
