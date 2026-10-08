@@ -114,7 +114,7 @@ func TestSignUpOversizedRetryStillVerifiesEmail(t *testing.T) {
 	t.Parallel()
 	issuer := newTestIssuer(t)
 	d, _ := signUpResendDashboard(t, issuer)
-	password := strings.Repeat("x", 1024)
+	password := strings.Repeat("secret-X", 128)
 	returnTo := "/onboarding?plan=starter&extra=" + strings.Repeat("x", 2000)
 	d.cookies[d.tsAuth.signUpRetryCookie()] = &http.Cookie{Name: d.tsAuth.signUpRetryCookie(), Value: "obsolete"}
 	d.mux.HandleFunc("POST /large-sign-up", func(w http.ResponseWriter, r *http.Request) {

@@ -108,6 +108,9 @@ func TestNativeSignInThrottlesWithTerraBase(t *testing.T) {
 	if err := terrabase.EnsureCollections(t.Context(), db); err != nil {
 		t.Fatal(err)
 	}
+	if err := terrabase.New(db).SeedPlans(t.Context()); err != nil {
+		t.Fatal(err)
+	}
 	tsAuth := refusingTSAuth(t)
 	var handler http.Handler
 	dashboard := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { handler.ServeHTTP(w, r) }))
