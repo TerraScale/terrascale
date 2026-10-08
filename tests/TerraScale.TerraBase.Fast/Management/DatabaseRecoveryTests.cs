@@ -1799,8 +1799,17 @@ public sealed class DatabaseRecoveryTests
     {
         using var health = await api.Server.Client.GetAsync(Uri("/healthz"));
         await Assert.That(health.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        using var ready = await api.Server.Client.GetAsync(Uri("/readyz"));
-        await Assert.That(ready.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await TerraBaseTestServer.EventuallyAsync(async token =>
+        {
+            using var ready = await api.Server.Client.GetAsync(Uri("/readyz"), token);
+            if (ready.StatusCode == HttpStatusCode.ServiceUnavailable)
+            {
+                return false;
+            }
+
+            await Assert.That(ready.StatusCode).IsEqualTo(HttpStatusCode.OK);
+            return true;
+        });
     }
 
     private static async Task AssertUnknownCountAsync(ManagementApi api, int expected)

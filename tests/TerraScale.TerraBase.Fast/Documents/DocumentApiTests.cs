@@ -60,7 +60,8 @@ public sealed class DocumentApiTests
             (await api.SendRawAsync(HttpMethod.Put, api.Document(id), """{"a":1}""", "text/plain"),
                 HttpStatusCode.UnsupportedMediaType, "unsupported_media_type", "Content-Type must be application/json"),
             // A Content-Length past the limit is refused before the body is read.
-            (await api.SendRawAsync(HttpMethod.Put, api.Document(id), $$"""{"blob":"{{new string('x', 1024 * 1024)}}"}""", Json),
+            (await api.SendRawAsync(HttpMethod.Put, api.Document(id), $$"""{"blob":"{{new string('x', 1024 * 1024)}}"}""", Json,
+                request => request.Headers.ExpectContinue = true),
                 HttpStatusCode.RequestEntityTooLarge, "payload_too_large", "the body is at most 1 MiB"),
             (await api.SendRawAsync(HttpMethod.Put, api.Document(id), """{"a":"\uD800"}""", Json),
                 HttpStatusCode.BadRequest, "invalid_request", "strings must be valid UTF-8 without lone UTF-16 surrogate escapes"),
