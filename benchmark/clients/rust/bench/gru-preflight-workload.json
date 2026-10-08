@@ -1,0 +1,9 @@
+{
+  "name": "point-reads",
+  "duration_s": 5,
+  "warmup_s": 1,
+  "concurrency": 1,
+  "dataset": {"documents": 10, "doc_size_bytes": 128},
+  "mix": [{"op": "doc.get", "weight": 100}],
+  "targets": {"p99_ms": 100}
+}
