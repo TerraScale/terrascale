@@ -1,4 +1,5 @@
 using TerraBase.Configuration;
+using TerraBase.Errors;
 using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Backup;
@@ -45,6 +46,9 @@ public static class BackupExtensions
         public Task RunOnceAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 
         public Task<RestoreWindow?> GetWindowAsync(TenantContext database, CancellationToken cancellationToken) => Task.FromResult<RestoreWindow?>(null);
+
+        public Task<PointInTimePlanResult> PlanAsync(TenantContext database, DateTimeOffset at, CancellationToken cancellationToken) =>
+            Task.FromResult<PointInTimePlanResult>(new NotFound("continuous backup holds nothing of this database"));
 
         public Task<bool> RestoreAsync(TenantContext source, DateTimeOffset at, TenantContext target, CancellationToken cancellationToken) =>
             Task.FromResult(false);

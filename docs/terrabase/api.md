@@ -120,6 +120,14 @@ This is the public way to create a database. The old data-plane `PUT D` remains 
 | POST | `D/backups/{backup}/restore` | `restoreBackup` | `databases:write` | `MD/backups/{backup}/restore` |
 | GET | `D/backup-policy` | `getBackupPolicy` | `databases:read` | `MD/backup-policy` |
 | PUT | `D/backup-policy` | `setBackupPolicy` | `databases:write` | `MD/backup-policy` |
+| POST | `D/point-in-time/plan` | `planPointInTime` | `databases:read` | `MD/point-in-time/plan` (TS-493) |
+
+Continuous backup's window and restore from TS-633 remain legacy-only at
+`GET MD/point-in-time` and `POST MD/point-in-time/restore`; they are not public project routes.
+TS-493 adds the public read-only preview above, with its hidden legacy alias.
+Preview describes snapshot selection from backup metadata; it does not reserve objects or
+prove that their contents pass the integrity checks performed during restore. See
+[backup restore](backup.md#restore).
 
 TS-588 adds `GET D/backups/{backup}/download` (`downloadBackup`, `databases:read`) here.
 

@@ -61,7 +61,7 @@ public static class LegacyRoutes
         if (suffix is ["databases", _, ..] && suffix.Length > 2)
         {
             suffix[2] = suffix[2].ToLowerInvariant();
-            if (suffix is ["databases", _, "sql", _])
+            if (suffix is ["databases", _, "sql" or "point-in-time", _])
             {
                 suffix[3] = suffix[3].ToLowerInvariant();
             }
@@ -90,6 +90,7 @@ public static class LegacyRoutes
         ["backups"] => HttpMethods.IsGet(method) || HttpMethods.IsPost(method),
         ["backups", _, "restore"] => HttpMethods.IsPost(method),
         ["backup-policy"] => HttpMethods.IsGet(method) || HttpMethods.IsPut(method),
+        ["point-in-time", "plan"] => HttpMethods.IsPost(method),
         ["indexes"] => HttpMethods.IsGet(method) || HttpMethods.IsPost(method),
         ["indexes", _] => HttpMethods.IsDelete(method),
         ["index-recommendations"] => HttpMethods.IsGet(method),

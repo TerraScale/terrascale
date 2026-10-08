@@ -1,5 +1,11 @@
 # Management API (`/v1/management`)
 
+This describes the legacy compatibility implementation retained after TS-589. The service ownership
+decision of 2026-10-06 supersedes its organization, project, invitation, credential and organization
+audit contracts: those belong to ts-auth. The public routes and JWT scopes are in
+[the HTTP API table](api.md). See [the TS-493 dashboard map](dashboard-endpoints.md) for the
+remaining work and its owners; do not extend legacy identity routes.
+
 The Management feature (`src/TerraBase/Features/Management`, OpenAPI tag
 `Management`) stores organizations, projects and the databases they own, so ts-dashboard
 has a server-side home for state it keeps in memory today. This document maps every
@@ -443,7 +449,9 @@ The bootstrap, every call on the admin listener with the credential:
 Step 2 is safe to repeat until step 4. After step 4 the bootstrap identity is no longer an admin, so repeating step 2
 answers `403`: resume from step 5.
 
-Not covered yet: audit filters and export, and audit events for organization, project and database changes.
+Audit filters/export and organization/project change events belong to ts-auth under the
+2026-10-06 ownership decision. TerraBase database change events still need a delivery and
+consumer contract; the legacy organization audit log is not their target.
 
 ## Database tooling endpoints
 
@@ -841,18 +849,18 @@ A project key is an API key of the project's organization narrowed to the projec
 
 | Dashboard feature | Dashboard routes |
 | --- | --- |
-| Project switcher (current project) | `POST /api/v1/dashboard/switch-project` |
 | Declared collection schemas | `POST /api/v1/dashboard/schema` |
 | Live-query subscriptions | `/api/v1/dashboard/subscriptions/attach\|pause\|resume\|detach` |
-| Spending controls | `/api/v1/dashboard/usage/spending-controls` |
-| M2M credentials, key rotation | `/api/v1/dashboard/credentials/m2m\|rotate` |
-| Audit export and filters | `GET /audit/export`, `GET /audit?action=…&range=…&search=…` |
-| Platform admin: rename any organization or project | `/api/v1/admin/organizations/{accountID}/{organizationID}`, `/api/v1/admin/projects/{accountID}/{organizationID}/{projectID}` (needs admin authorization, see above) |
 
 ### Owned elsewhere
 
 | Dashboard feature | Dashboard routes | Owner |
 | --- | --- | --- |
+| Invitations, resend, organization/project changes and their audit | `/api/v1/access/invitations…`, `/audit`, `/audit/export`, organization/project settings | ts-auth; ts-dashboard calls it through the SDK |
+| Project switcher (current project) | `POST /api/v1/dashboard/switch-project` | ts-dashboard session; projects come from ts-auth |
+| M2M credentials, key rotation | `/api/v1/dashboard/credentials/m2m\|rotate` | ts-auth client credentials |
+| Spending controls | `/api/v1/dashboard/usage/spending-controls` | ts-dashboard; usage comes from TerraBase |
+| Platform admin: rename organizations/projects | `/api/v1/admin/organizations/…`, `/api/v1/admin/projects/…` | ts-auth |
 | Login, logout, current user, register, onboarding, password reset | `/api/v1/auth/password/login`, `/api/v1/auth/logout`, `/api/v1/auth/me`, `/login`, `/register`, `/onboarding`, `/reset-password` | ts-auth |
 | Profile, password, email, language | `/api/v1/dashboard/profile[/password\|/email-change\|/language]` | ts-auth |
 | MFA (TOTP, recovery codes) | `/api/v1/dashboard/profile/mfa/enroll\|verify\|remove\|recovery-codes` | ts-auth |
@@ -866,6 +874,7 @@ A project key is an API key of the project's organization narrowed to the projec
 | Database placement, regions, partition directory | none in the dashboard; SDK `placement` on create | ts-orchestrator |
 | MCP server | `/mcp` | ts-dashboard (a client of this API) |
 
+The following paragraph records the older implementation assessment, not the current ownership contract.
 ts-orchestrator owns no organizations or projects and has no HTTP create, list, delete or branch
 for databases. Its API is read-only (regions, decisions, history). It places database
 partitions through operator-signed NATS `placement.intent` envelopes. ts-auth's C# rewrite serves
@@ -875,7 +884,8 @@ duplicates this API.
 
 ## Ownership and tenancy
 
-Decided by a human on 2026-10-04 (see [0005](decisions/0005-multi-tenancy.md)): TerraBase owns
+Historical decision, superseded by the 2026-10-06 ownership decision and [HTTP API table](api.md):
+decided by a human on 2026-10-04 (see [0005](decisions/0005-multi-tenancy.md)), TerraBase owns
 organizations and projects. The organization is the tenant, because it owns billing; a project is a
 folder of databases inside it. `terrabase-rust/docs/control-plane-v1.md` still says the dashboard
 owns them and that a tenant is a project; it needs updating in that repository. This API still does

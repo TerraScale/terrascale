@@ -173,6 +173,42 @@ new database of the same project (`branchedFrom` set, like a backup restore). Th
 The result holds every transaction the shipper read by `pointInTime`. The shipper reads every second, so a transaction
 committed in the second before `pointInTime` may be missing.
 
+### Restore preview (TS-493)
+
+`POST /v1/projects/{project}/databases/{database}/point-in-time/plan` with `{"pointInTime":"…"}` reads
+backup metadata without downloading or decrypting backup contents, creating scratch files,
+or changing databases. It returns:
+
+```json
+{
+  "window": {"earliest":"2026-10-07T12:00:00Z","latest":"2026-10-07T12:00:16Z"},
+  "pointInTime":"2026-10-07T12:00:13Z",
+  "snapshotAt":"2026-10-07T12:00:10Z",
+  "latestSegmentAt":null,
+  "segmentCount":0
+}
+```
+
+The snapshot is the newest at or before `pointInTime`, selected by the same code as
+restore. `segmentCount` and `latestSegmentAt` describe that snapshot generation's
+segments after its position and read by the requested time. The latter is null when
+none apply. No object keys or credentials are returned.
+
+The request needs a ts-auth project token granting `databases:read`; `{database}` is its name.
+The hidden legacy management alias retains membership checks, including organization viewers. Access is checked
+before time validation: another tenant's database returns `404`. Missing time, a time
+before the retention window or after now returns `400`; disabled/empty backup or no
+applicable snapshot returns `404`. A request between `window.latest` and now previews
+the latest available data. Metadata scanning is bounded to 10,000 items and 10 seconds;
+exhaustion returns `503` without a partial plan (`pitr_plan_limit` or
+`pitr_plan_timeout`). Object-store listing failures return `503`
+`pitr_plan_unavailable` without exposing provider details.
+
+This is an advisory preview. It does not reserve objects against retention, validate
+their encrypted contents, or prove WAL continuity. Restore still performs the download,
+authentication, continuity and integrity checks. The public project route and its hidden
+legacy alias follow [the HTTP API table](api.md).
+
 ## Retention
 
 Every hour the member that ships a file trims its backup to the plan of the file's organization (`backup-retention-days`;
