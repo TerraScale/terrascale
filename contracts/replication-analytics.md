@@ -13,7 +13,8 @@ PR. The TerraBase PR must merge first. These routes have no version component.
 Both use `Authorization: Bearer <ts-auth project access token>` and the same
 optional query parameters: `range` (`1h`, `24h`, `7d`, `30d`), `database` (plain
 ULID), `region` (region identifier), `after` (opaque cursor) and `limit` (1-100).
-The project path parameter is a plain ULID. Omitted range/limit use server
+The project path parameter is a plain ULID. ULIDs accept upper, lower and mixed
+ASCII case; the SDK preserves the supplied encoding. Omitted range/limit use server
 defaults; omitted database/region select all. `next` is empty at the last page.
 Pass it back as `after`, retaining the other filters. The SDK fetches one page
 per call and delegates bucketing to TerraBase.

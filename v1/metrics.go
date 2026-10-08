@@ -128,7 +128,8 @@ func (u *ManagementUser) Replication(ctx context.Context, project string, opts M
 	return &out, nil
 }
 
-var metricsIDPattern = regexp.MustCompile(`^[0-7][0-9A-HJKMNP-TV-Z]{25}$`)
+// ULIDs use ASCII base32; Unicode case-fold equivalents are invalid.
+var metricsIDPattern = regexp.MustCompile(`^[0-7][0-9A-HJKMNP-TV-Za-hjkmnp-tv-z]{25}$`)
 
 func (u *ManagementUser) metrics(ctx context.Context, project, endpoint string, opts MetricsOptions, out any) error {
 	if u.err != nil {

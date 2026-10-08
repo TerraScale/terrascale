@@ -38,6 +38,40 @@ func metricsUser(t *testing.T, server *httptest.Server, retries int) *tb.Managem
 	return m.WithToken("project-access-token")
 }
 
+func TestMetricsAcceptCaseInsensitiveULIDs(t *testing.T) {
+	t.Parallel()
+	for _, ids := range []struct{ project, database string }{
+		{metricsProject, metricsDatabase},
+		{"01arz3ndektsv4rrffq69g5fav", "01arz3ndektsv4rrffq69g5faw"},
+		{"01aRz3NdEkTsV4rRfFq69G5fAv", "01ArZ3nDeKtSv4RrFfQ69g5FaW"},
+	} {
+		t.Run(ids.project, func(t *testing.T) {
+			t.Parallel()
+			var calls atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodGet || (r.URL.Path != "/proxy/projects/"+ids.project+"/analytics" && r.URL.Path != "/proxy/projects/"+ids.project+"/replication") || r.URL.Query().Get("database") != ids.database {
+					t.Errorf("ULIDs changed in request: %s %s", r.Method, r.URL)
+				}
+				calls.Add(1)
+				w.Header().Set("Content-Type", "application/json")
+				io.WriteString(w, `{}`)
+			}))
+			t.Cleanup(server.Close)
+			u := metricsUser(t, server, -1)
+			opts := tb.MetricsOptions{DatabaseID: ids.database}
+			if _, err := u.Analytics(t.Context(), ids.project, opts); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := u.Replication(t.Context(), ids.project, opts); err != nil {
+				t.Fatal(err)
+			}
+			if calls.Load() != 2 {
+				t.Fatalf("calls = %d, want both APIs", calls.Load())
+			}
+		})
+	}
+}
+
 func TestMetricsFiltersAndPaging(t *testing.T) {
 	t.Parallel()
 	for _, endpoint := range []string{"analytics", "replication"} {
@@ -168,6 +202,9 @@ func TestMetricsRejectInvalidFilters(t *testing.T) {
 	}{
 		{"", tb.MetricsOptions{}}, {testProject, tb.MetricsOptions{}}, {"proj_" + metricsProject, tb.MetricsOptions{}}, {"../" + metricsProject, tb.MetricsOptions{}}, {"81ARZ3NDEKTSV4RRFFQ69G5FAV", tb.MetricsOptions{}},
 		{metricsProject, tb.MetricsOptions{DatabaseID: "main"}}, {metricsProject, tb.MetricsOptions{DatabaseID: testProject}}, {metricsProject, tb.MetricsOptions{Range: "2h"}}, {metricsProject, tb.MetricsOptions{Limit: -1}}, {metricsProject, tb.MetricsOptions{Limit: 101}},
+		{"01arz3ndektsv4rrffq69g5fai", tb.MetricsOptions{}}, {metricsProject, tb.MetricsOptions{DatabaseID: "01arz3ndektsv4rrffq69g5fau"}},
+		{"01arz3ndektsv4rrffq69g5fal", tb.MetricsOptions{}}, {metricsProject, tb.MetricsOptions{DatabaseID: "01arz3ndektsv4rrffq69g5fao"}},
+		{"01ARZ3NDEKTSV4RRFFQ69G5FAV", tb.MetricsOptions{}}, {metricsProject, tb.MetricsOptions{DatabaseID: "01ARZ3NDEKTſV4RRFFQ69G5FAW"}},
 	} {
 		if _, err := u.Analytics(t.Context(), test.project, test.opts); err == nil {
 			t.Fatalf("analytics accepted %+v", test)
