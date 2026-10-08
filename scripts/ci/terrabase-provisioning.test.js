@@ -70,18 +70,23 @@ test("selected release asset URL and size are validated before download", () => 
 test("tenant IDs and key secrets reject malformed responses with endpoint diagnostics", () => {
   const fields = /** @type {const} */ ([["id", "/v1/management/organizations"], ["id", "/v1/management/organizations/org/projects"], ["secret", "/admin/api-keys"]]);
   for (const [field, route] of fields) {
-    expect(provisioningField({ [field]: "valid-value" }, field, route)).toBe("valid-value");
+    const valid = field === "id" ? "01ARZ3NDEKTSV4RRFFQ69G5FAV" : "valid-value";
+    expect(provisioningField({ [field]: valid }, field, route)).toBe(valid);
     for (const value of [undefined, null, [], true, "response", 42, {}, { [field]: null }, { [field]: 42 }, { [field]: "" }, { [field]: "   " }])
       expect(() => provisioningField(value, field, route)).toThrow(route);
+    if (field === "id") {
+      for (const id of ["00000000-0000-0000-0000-000000000001", valid.toLowerCase(), `org_${valid}`, "8" + valid.slice(1)])
+        expect(() => provisioningField({ id }, field, route)).toThrow("TS-754 requires a ULID producer release");
+    }
   }
 });
 
 test("successful provisioning consumes JSON once without cloning or reading error text", async () => {
-  const response = new Response('{"id":"organization-id"}', { status: 201 });
+  const response = new Response('{"id":"01ARZ3NDEKTSV4RRFFQ69G5FAV"}', { status: 201 });
   const json = vi.spyOn(response, "json");
   const text = vi.spyOn(response, "text");
   const clone = vi.spyOn(response, "clone");
-  await expect(provisioningResponse(response, "POST", "/v1/management/organizations")).resolves.toEqual({ id: "organization-id" });
+  await expect(provisioningResponse(response, "POST", "/v1/management/organizations")).resolves.toEqual({ id: "01ARZ3NDEKTSV4RRFFQ69G5FAV" });
   expect(json).toHaveBeenCalledTimes(1);
   expect(text).not.toHaveBeenCalled();
   expect(clone).not.toHaveBeenCalled();

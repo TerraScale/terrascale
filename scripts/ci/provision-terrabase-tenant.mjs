@@ -7,6 +7,7 @@ import { database, collections as fixtureCollections } from "../../test/support/
 import { v1Route, v1RoutePath } from "../../src/v1/routes.js";
 import { producerContract } from "../terrabase-contract.mjs";
 import { provisioningRoute } from "../../test/support/terrabase-v1-setup.js";
+import { generateId, isValidId } from "../../src/ids.js";
 
 /** @param {Response} response @param {string} method @param {string} route */
 export async function provisioningResponse(response, method, route) {
@@ -19,6 +20,8 @@ export async function provisioningResponse(response, method, route) {
 export function provisioningField(value, field, route) {
   const result = string(object(value, `${route} response`)[field], `${route} ${field}`);
   assert.ok(result.trim() !== "", `Real provisioning ${route} returned an empty ${field}.`);
+  if (field === "id")
+    assert.ok(isValidId(result), `Real provisioning ${route} returned a noncanonical entity ID; TS-754 requires a ULID producer release.`);
   return result;
 }
 
@@ -35,7 +38,7 @@ export async function provisionTerraBaseTenant() {
   assert.ok(client && admin && credential && process.env.TB_PROVISION_FILE, "Isolated provisioning configuration is required.");
   const contract = await producerContract();
   /** @type {Record<string, string>} */
-  const managementHeaders = { Authorization: `Bearer ${credential}`, "X-TerraBase-User-Id": "ts498-test-user" };
+  const managementHeaders = { Authorization: `Bearer ${credential}`, "X-TerraBase-User-Id": generateId() };
   const organizations = provisioningRoute(contract, "createOrganization");
   const organizationId = provisioningField(await request(admin, organizations.path, { name: "SDK integration" }, managementHeaders, organizations.method), "id", organizations.path);
   managementHeaders["X-TerraBase-Organization-Id"] = organizationId;
