@@ -39,7 +39,7 @@ public sealed class SubscriptionLifetimeTests
         {
             if (instrument.Name == "terrabase.memory.reserved")
             {
-                reserved = value;
+                reserved = value - api.Server.Services.GetRequiredService<UsageMeter>().ReservedMeasurementBytes;
             }
             else if (value == 1)
             {

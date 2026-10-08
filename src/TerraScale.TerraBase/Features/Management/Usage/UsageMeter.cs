@@ -1,7 +1,9 @@
 using System.Collections.Concurrent;
+using System.Diagnostics.Metrics;
 using System.Text.Json;
 using TerraBase.Configuration;
 using TerraBase.Engine;
+using TerraBase.Features.Memory;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
 using static TerraBase.Features.Management.SystemCatalog;
@@ -14,18 +16,19 @@ namespace TerraBase.Features.Management.Usage;
 /// </summary>
 /// <param name="Reads">Document reads.</param>
 /// <param name="Writes">Document writes.</param>
-internal sealed record OpCounts(long Reads, long Writes)
+/// <param name="Meters">Regional meter observations keyed by their bounded dimensions.</param>
+internal sealed record OpCounts(long Reads, long Writes, IReadOnlyDictionary<string, UsageReading>? Meters = null)
 {
     public static OpCounts Zero { get; } = new(0, 0);
 
     public static OpCounts operator +(OpCounts left, OpCounts right)
     {
-        return new(left.Reads + right.Reads, left.Writes + right.Writes);
+        return new(left.Reads + right.Reads, left.Writes + right.Writes, UsageReading.Combine(left.Meters, right.Meters, 1));
     }
 
     public static OpCounts operator -(OpCounts left, OpCounts right)
     {
-        return new(left.Reads - right.Reads, left.Writes - right.Writes);
+        return new(left.Reads - right.Reads, left.Writes - right.Writes, UsageReading.Combine(left.Meters, right.Meters, -1));
     }
 }
 
@@ -68,16 +71,23 @@ internal enum UsageScope
 
     /// <summary>Only the lifetime totals: counts held past the kept days.</summary>
     Lifetime,
+
+    /// <summary>The minute, hour and day.</summary>
+    Minute,
 }
 
 /// <summary>The counts of one database in one UTC hour.</summary>
 /// <param name="Database">The database.</param>
 /// <param name="Hour">Hours since the Unix epoch.</param>
 /// <param name="Scope">Which buckets the counts belong in.</param>
-internal readonly record struct UsageKey(DatabaseOwner Database, long Hour, UsageScope Scope = UsageScope.Hour)
+/// <param name="Minute">Minute within the UTC hour for minute-scoped observations.</param>
+internal readonly record struct UsageKey(DatabaseOwner Database, long Hour, UsageScope Scope = UsageScope.Hour, int Minute = 0)
 {
     /// <summary>Whether the counts belong in a bucket of <paramref name="granularity"/>.</summary>
-    public bool In(UsageGranularity granularity) => Scope == UsageScope.Hour || (Scope == UsageScope.Day && granularity == UsageWindow.Day);
+    public bool In(UsageGranularity granularity) => granularity == UsageWindow.Minute ? Scope == UsageScope.Minute
+        : Scope is UsageScope.Hour or UsageScope.Minute || (Scope == UsageScope.Day && granularity == UsageWindow.Day);
+
+    public long Bucket(UsageGranularity granularity) => (Hour * 60 + Minute) / granularity.Minutes;
 }
 
 /// <summary>
@@ -92,7 +102,7 @@ internal readonly record struct UsageKey(DatabaseOwner Database, long Hour, Usag
 /// follower sends folded entries with their scope, so the primary never saves them in an hour.
 /// Entries are indexed by database; a flush or send drops the maps it emptied.
 /// </remarks>
-internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider time, TerraBaseOptions options, ILogger<UsageMeter> logger)
+internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider time, TerraBaseOptions options, ILogger<UsageMeter> logger, IMemoryBudget memory, IMeterFactory meters)
     : IUsageMeter, IDisposable
 {
     // Senders are peer-authenticated members; a cell has a handful.
@@ -174,7 +184,11 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
     // with every pending key once empty. Guarded by _flush.
     private readonly Queue<UsageKey> _turns = new();
 
-    public void RecordRead(TenantContext database) => Add(new(DatabaseOwner.Of(database), CurrentHour()), Read);
+    public void RecordRead(TenantContext database)
+    {
+        Add(new(DatabaseOwner.Of(database), CurrentHour()), Read);
+        RecordOperation(database, "read", 1);
+    }
 
     public void RecordWrites(TenantContext database, int writes) => Add(new(DatabaseOwner.Of(database), CurrentHour()), new OpCounts(0, writes));
 
@@ -184,6 +198,22 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
     /// <summary>Adds counts.</summary>
     public void Add(UsageKey key, OpCounts counts)
     {
+        if (counts.Meters is not null)
+        {
+            AddMeasurements(key, counts);
+            return;
+        }
+
+        AddCore(key, counts);
+    }
+
+    private void AddCore(UsageKey key, OpCounts counts)
+    {
+        if (counts == OpCounts.Zero)
+        {
+            return;
+        }
+
         _maps.EnterReadLock();
         try
         {
@@ -264,6 +294,13 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
     public async ValueTask<(OpCounts Lifetime, OpCounts[] Series)> GetAsync(
         TenantContext database, UsageWindow window, CancellationToken cancellationToken, Action? proceed = null)
     {
+        var (lifetime, series) = await GetObservationsAsync(database, window, cancellationToken, proceed).ConfigureAwait(false);
+        return (lifetime with { Meters = null }, [.. series.Select(point => point with { Meters = null })]);
+    }
+
+    public async ValueTask<(OpCounts Lifetime, OpCounts[] Series)> GetObservationsAsync(
+        TenantContext database, UsageWindow window, CancellationToken cancellationToken, Action? proceed = null)
+    {
         var owner = DatabaseOwner.Of(database);
         await _flush.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
@@ -285,14 +322,14 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
             foreach (var (key, counts) in options.CatalogPrimary is null && _pending.TryGetValue(owner, out var pending) ? pending : [])
             {
                 lifetime += counts;
-                if (key.In(window.Granularity) && window.IndexOf(key.Hour) is { } index)
+                if (key.In(window.Granularity) && window.IndexOf(key.Hour, key.Minute) is { } index)
                 {
                     series[index] += counts;
                 }
             }
 
             // Only kept buckets have counts, saved or not: a saved bucket the next flush would prune reads as zero.
-            var oldestKept = OldestKept(window.Granularity, CurrentHour());
+            var oldestKept = OldestKept(window.Granularity, CurrentMinute());
             for (var i = 0; i < series.Length && window.First + i < oldestKept; i++)
             {
                 series[i] = OpCounts.Zero;
@@ -494,7 +531,7 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
     private ValueTask<int> WriteAsync(
         string id, KeyValuePair<UsageKey, OpCounts>[] batch, UsageSender[] senders, string[] retired, CancellationToken cancellationToken)
     {
-        var hour = CurrentHour();
+        var minute = CurrentMinute();
         return catalog.WriteAsync(async transaction =>
         {
             foreach (var sender in senders)
@@ -530,8 +567,8 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
                     // Buckets past retention (counts held through a long outage) only add to the lifetime totals, and each
                     // flush deletes every expired bucket of the databases it saves: so a database holds at most the kept
                     // buckets and those that expired since its last flush.
-                    var oldestKept = OldestKept(granularity, hour);
-                    foreach (var bucket in entries.Where(entry => entry.Key.In(granularity)).GroupBy(entry => entry.Key.Hour / granularity.Hours)
+                    var oldestKept = OldestKept(granularity, minute);
+                    foreach (var bucket in entries.Where(entry => entry.Key.In(granularity)).GroupBy(entry => entry.Key.Bucket(granularity))
                         .Where(bucket => bucket.Key >= oldestKept))
                     {
                         var counts = bucket.Aggregate(OpCounts.Zero, (sum, entry) => sum + entry.Value);
@@ -576,6 +613,7 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
     private KeyValuePair<UsageKey, OpCounts>[] NextBatch()
     {
         var batch = new List<KeyValuePair<UsageKey, OpCounts>>();
+        var measurementBytes = 0;
         for (var round = 0; round < 2 && batch.Count == 0; round++)
         {
             if (_turns.Count == 0)
@@ -590,6 +628,14 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
             {
                 if (_pending.TryGetValue(key.Database, out var pending) && pending.TryGetValue(key, out var counts))
                 {
+                    var bytes = counts.Meters is null ? 0 : JsonSerializer.SerializeToUtf8Bytes(new OpCounts(0, 0, counts.Meters), TerraBaseJsonContext.Default.OpCounts).Length;
+                    if (measurementBytes + bytes > 1024 * 1024)
+                    {
+                        _turns.Enqueue(key);
+                        break;
+                    }
+
+                    measurementBytes += bytes;
                     batch.Add(KeyValuePair.Create(key, counts));
                 }
             }
@@ -599,26 +645,29 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
     }
 
     // The first bucket a flush still saves: the kept buckets end with the current one.
-    private static long OldestKept(UsageGranularity granularity, long hour) => (hour / granularity.Hours) - granularity.Kept + 1;
+    private static long OldestKept(UsageGranularity granularity, long minute) => (minute / granularity.Minutes) - granularity.Kept + 1;
 
     // Folds entries past the kept hours into a day-only entry at their day's first hour, and those past the kept days into
     // a lifetime-only entry at hour 0; a concurrent Add leaves an entry for the next pass. Under _flush. The keys of a batch
     // in doubt or unsent keep their counts, which settling or acknowledging it subtracts.
     private void Compact()
     {
-        var hour = CurrentHour();
+        var minute = CurrentMinute();
+        var hour = minute / 60;
         var held = (_inDoubt?.Batch ?? []).Concat(_unsent?.Batch ?? []).Select(entry => entry.Key).ToHashSet();
         foreach (var pending in _pending.Values)
         {
             foreach (var (key, counts) in pending)
             {
-                var folded = key.Scope == UsageScope.Lifetime ? key
-                    : key.Hour / 24 < OldestKept(UsageWindow.Day, hour) ? key with { Hour = 0, Scope = UsageScope.Lifetime }
-                    : key.Scope == UsageScope.Hour && key.Hour < OldestKept(UsageWindow.Hour, hour) ? key with { Hour = key.Hour / 24 * 24, Scope = UsageScope.Day }
+                var folded = key.Scope == UsageScope.Minute && key.Hour * 60 + key.Minute < OldestKept(UsageWindow.Minute, minute)
+                    ? key with { Scope = UsageScope.Hour, Minute = 0 }
+                    : key.Scope == UsageScope.Lifetime ? key
+                    : key.Hour / 24 < OldestKept(UsageWindow.Day, minute) ? key with { Hour = 0, Scope = UsageScope.Lifetime }
+                    : key.Scope == UsageScope.Hour && key.Hour < OldestKept(UsageWindow.Hour, minute) ? key with { Hour = key.Hour / 24 * 24, Scope = UsageScope.Day }
                     : key;
-                if (folded != key && !held.Contains(key) && pending.TryRemove(KeyValuePair.Create(key, counts)))
+                if (folded != key && !held.Contains(key))
                 {
-                    Add(folded, counts);
+                    FoldMeasurements(key, folded, counts);
                 }
             }
         }
@@ -722,11 +771,14 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
         _flush.Dispose();
         _send.Dispose();
         _maps.Dispose();
+        DisposeMeasurements();
     }
 
     private static string UsageCollection(string databaseId) => DatabaseState(databaseId) + "usage";
 
     private static string Collection(string databaseId, UsageGranularity granularity) => DatabaseState(databaseId) + granularity.Collection;
+
+    private long CurrentMinute() => time.GetUtcNow().ToUnixTimeSeconds() / 60;
 
     private long CurrentHour() => time.GetUtcNow().ToUnixTimeSeconds() / 3600;
 
@@ -743,6 +795,7 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
             var rest = current - counts;
             if (rest == OpCounts.Zero ? pending.TryRemove(KeyValuePair.Create(key, current)) : pending.TryUpdate(key, rest, current))
             {
+                ReleaseMeasurement(key, rest);
                 return;
             }
         }

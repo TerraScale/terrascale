@@ -29,6 +29,58 @@ public sealed class CrossRegionTests
     private static readonly string[] Unknown = ["iad-1"];
 
     [Test]
+    public async Task Both_regions_meter_encoded_replication_bytes_by_direction_without_charging_client_bandwidth()
+    {
+        await using var regions = await Regions.StartAsync();
+        await regions.GruApi.VerifyProjectBindingAsync(regions.Organization, regions.Project);
+        await regions.SfoApi.VerifyProjectBindingAsync(regions.Organization, regions.Project);
+        using var gru = Management.UsageAnalyticsTests.ProjectClient(regions.GruApi, regions.Project);
+        using var sfo = Management.UsageAnalyticsTests.ProjectClient(regions.SfoApi, regions.Project);
+        var value = new Faker().Lorem.Paragraph();
+        using var written = await regions.Gru.PutAsJsonAsync(regions.Document(ReplicationDocuments.Id("meter-gru")), new { value });
+        written.EnsureSuccessStatusCode();
+        _ = await Regions.EventuallyReadAsync(regions.Sfo, regions.Document(ReplicationDocuments.Id("meter-gru")), value);
+        using var reverse = await regions.Sfo.PutAsJsonAsync(regions.Document(ReplicationDocuments.Id("meter-sfo")), new { value });
+        reverse.EnsureSuccessStatusCode();
+        _ = await Regions.EventuallyReadAsync(regions.Gru, regions.Document(ReplicationDocuments.Id("meter-sfo")), value);
+        await regions.ConvergedAsync();
+
+        var gruRoute = ManagementApi.Uri($"/projects/{regions.Project}/replication?range=1h&region=gru-1");
+        var sfoRoute = ManagementApi.Uri($"/projects/{regions.Project}/replication?range=1h&region=sfo-1");
+        var gruUsage = (await Management.UsageAnalyticsTests.ReadAsync(gru, gruRoute)).GetProperty("items")[0];
+        var sfoUsage = (await Management.UsageAnalyticsTests.ReadAsync(sfo, sfoRoute)).GetProperty("items")[0];
+        await Assert.That(gruUsage.GetProperty("replicatedOps").GetInt64()).IsGreaterThan(0);
+        await Assert.That(sfoUsage.GetProperty("replicatedOps").GetInt64()).IsGreaterThan(0);
+        await Assert.That(gruUsage.GetProperty("status").GetString()).IsEqualTo("healthy");
+        await Assert.That(sfoUsage.GetProperty("lastApplied").ValueKind).IsEqualTo(JsonValueKind.String);
+        var sent = Traffic(gruUsage, "gru-1", "sfo-1", "bytesSent");
+        var received = Traffic(sfoUsage, "gru-1", "sfo-1", "bytesReceived");
+        await Assert.That(sent).IsGreaterThan(0);
+        await Assert.That(received).IsEqualTo(sent);
+        await Assert.That(Traffic(sfoUsage, "sfo-1", "gru-1", "bytesSent")).IsGreaterThan(0);
+        await Assert.That(gruUsage.GetProperty("bandwidth").EnumerateArray().Any(pair => pair.GetProperty("kind").GetString() == "anti_entropy")).IsTrue();
+        var analytics = await Management.UsageAnalyticsTests.ReadAsync(gru, ManagementApi.Uri($"/projects/{regions.Project}/analytics?range=1h&region=gru-1"));
+        var buckets = analytics.GetProperty("items")[0].GetProperty("series").EnumerateArray().ToArray();
+        await Assert.That(buckets.Sum(point => point.GetProperty("replicationBandwidth").GetProperty("bytesSent").GetInt64())).IsGreaterThan(0);
+        await Assert.That(buckets.Sum(point => point.GetProperty("clientBandwidth").GetProperty("bytesReceived").GetInt64())).IsGreaterThan(0);
+
+        var outside = await Management.UsageAnalyticsTests.ReadAsync(gru, ManagementApi.Uri($"/projects/{regions.Project}/analytics?range=1h&region=sfo-1"));
+        await Assert.That(outside.GetProperty("items").GetArrayLength()).IsEqualTo(0);
+
+        await regions.GruApi.Server.Services.GetRequiredService<TerraBase.Features.Management.Usage.UsageMeter>().FlushAsync(CancellationToken.None);
+        var saved = (await Management.UsageAnalyticsTests.ReadAsync(gru, gruRoute)).GetProperty("items")[0];
+        await Assert.That(Traffic(saved, "gru-1", "sfo-1", "bytesSent")).IsGreaterThanOrEqualTo(sent);
+
+        static long Traffic(JsonElement usage, string source, string destination, string field)
+        {
+            return usage.GetProperty("bandwidth").EnumerateArray()
+                .Where(pair => pair.GetProperty("kind").GetString() is "delta" or "handoff" && pair.GetProperty("sourceRegion").GetString() == source
+                    && pair.GetProperty("destinationRegion").GetString() == destination)
+                .Sum(pair => pair.GetProperty(field).GetInt64());
+        }
+    }
+
+    [Test]
     public async Task A_write_in_either_region_is_readable_in_the_other_with_the_same_version()
     {
         await using var regions = await Regions.StartAsync();

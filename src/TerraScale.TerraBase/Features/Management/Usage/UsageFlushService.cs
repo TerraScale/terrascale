@@ -1,10 +1,12 @@
 using System.Text.Json;
 using Google.Protobuf;
 using TerraBase.Configuration;
+using TerraBase.Engine;
 using TerraBase.Features.Management.Queries;
 using TerraBase.Features.Replication;
 using TerraBase.Features.Replication.V1;
 using TerraBase.Hosting;
+using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Management.Usage;
 
@@ -16,8 +18,10 @@ namespace TerraBase.Features.Management.Usage;
 /// </summary>
 internal sealed partial class UsageFlushService(
     UsageMeter meter, QueryFieldRecorder recorder, QueryShapeRecorder shapes, TimeProvider time, TerraBaseOptions options, ILogger<UsageFlushService> logger,
-    ICatalogPrimaryClient? primary = null) : BackgroundService
+    IStorageEngine engine, IReplicationStatus replication, ICatalogPrimaryClient? primary = null) : BackgroundService
 {
+    private int _sampleOffset;
+
     private static readonly TimeSpan Interval = TimeSpan.FromSeconds(10);
 
     // Shared process epoch; usage and query shapes number their own independent batches.
@@ -78,7 +82,7 @@ internal sealed partial class UsageFlushService(
     // Each flush runs on its own; a failed one keeps its counts pending for the next and never stops the process.
     internal async Task FlushAsync(CancellationToken cancellationToken)
     {
-        foreach (var flush in Flushes)
+        foreach (var flush in new Func<CancellationToken, ValueTask>[] { SampleAsync }.Concat(Flushes))
         {
             try
             {
@@ -94,6 +98,58 @@ internal sealed partial class UsageFlushService(
     private Func<CancellationToken, ValueTask>[] Flushes => options.CatalogPrimary is null
         ? [meter.FlushAsync, recorder.FlushAsync, shapes.FlushAsync]
         : [SendOnceAsync, SendShapesOnceAsync];
+
+    private async ValueTask SampleAsync(CancellationToken cancellationToken)
+    {
+        if (!UsageMeter.ValidRegion(options.Region))
+        {
+            return;
+        }
+
+        var status = replication.Snapshot();
+        if (status.Initialized)
+        {
+            foreach (var group in status.Peers.SelectMany(peer => peer.Databases.Select(database => (peer.Region, Database: database)))
+                .GroupBy(observation => (observation.Database.OrganizationId, observation.Database.ProjectId, observation.Database.DatabaseId, observation.Region)))
+            {
+                var (organization, project, database, region) = group.Key;
+                meter.RecordPeerState(new(organization, PlanTier.Hobby, project, database), region,
+                    group.Max(observation => observation.Database.DurableLag), group.Max(observation => observation.Database.CatchupSeconds) * 1000,
+                    group.Any(observation => observation.Database.Diverged), group.Max(observation => observation.Database.ConvergenceSeconds) * 1000);
+            }
+        }
+
+        var started = time.GetTimestamp();
+        var skipped = 0;
+        var sampled = 0;
+        var complete = true;
+        await foreach (var database in engine.ListDatabasesAsync(cancellationToken).ConfigureAwait(false))
+        {
+            if (skipped++ < _sampleOffset)
+            {
+                continue;
+            }
+
+            if (sampled == 128 || time.GetElapsedTime(started) >= UsageService.Deadline)
+            {
+                _sampleOffset += sampled;
+                complete = false;
+                break;
+            }
+
+            if (await engine.GetDatabaseSizeAsync(database, cancellationToken).ConfigureAwait(false) is { } size)
+            {
+                meter.RecordStorage(database, size);
+            }
+
+            sampled++;
+        }
+
+        if (complete)
+        {
+            _sampleOffset = 0;
+        }
+    }
 
     // A tick sends one bounded batch; a follower's backlog drains a batch per tick.
     private async ValueTask SendOnceAsync(CancellationToken cancellationToken) => await meter.SendAsync(SendAsync, cancellationToken).ConfigureAwait(false);
@@ -164,6 +220,9 @@ internal sealed partial class UsageFlushService(
             Reads = (ulong)Math.Min(entry.Value.Reads, UsageMeter.MaxCount),
             Writes = (ulong)Math.Min(entry.Value.Writes, UsageMeter.MaxCount),
             Scope = (Replication.V1.UsageScope)entry.Key.Scope,
+            Minute = (uint)entry.Key.Minute,
+            Measurements = entry.Value.Meters is null ? ByteString.Empty
+                : ByteString.CopyFrom(JsonSerializer.SerializeToUtf8Bytes(new OpCounts(0, 0, entry.Value.Meters), TerraBaseJsonContext.Default.OpCounts)),
         }));
         return primary!.AddUsageAsync(request, cancellationToken);
     }

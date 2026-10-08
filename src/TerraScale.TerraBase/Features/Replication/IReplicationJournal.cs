@@ -20,8 +20,9 @@ public interface IReplicationJournal
     /// on the pinned <paramref name="store"/>, and returns the applied prefix afterwards. A retired store
     /// fails instead of reopening the database by tenant identity. A group at or below the
     /// prefix is a duplicate and changes nothing; a prefix below <paramref name="sequence"/> means a gap.
+    /// Applied is true only when this call committed a new group, including with concurrent streams.
     /// </summary>
-    ValueTask<(long Sequence, ReadOnlyMemory<byte> Digest)> AppendAsync(
+    ValueTask<(long Sequence, ReadOnlyMemory<byte> Digest, bool Applied)> AppendAsync(
         IDatabaseStore store, ReadOnlyMemory<byte> origin, long sequence, IReadOnlyList<DocumentChange> changes,
         ReadOnlyMemory<byte> previousDigest, ReadOnlyMemory<byte> digest, CancellationToken cancellationToken);
 }
@@ -40,7 +41,7 @@ internal sealed class EngineReplicationJournal(IStorageEngine engine) : IReplica
         }
     }
 
-    public async ValueTask<(long Sequence, ReadOnlyMemory<byte> Digest)> AppendAsync(
+    public async ValueTask<(long Sequence, ReadOnlyMemory<byte> Digest, bool Applied)> AppendAsync(
         IDatabaseStore store, ReadOnlyMemory<byte> origin, long sequence, IReadOnlyList<DocumentChange> changes,
         ReadOnlyMemory<byte> previousDigest, ReadOnlyMemory<byte> digest, CancellationToken cancellationToken)
     {
@@ -53,24 +54,24 @@ internal sealed class EngineReplicationJournal(IStorageEngine engine) : IReplica
         var transaction = await store.BeginDurableTransactionAsync(cancellationToken).ConfigureAwait(false);
         await using (transaction.ConfigureAwait(false))
         {
-            var applied = await transaction.GetAppliedFrontierAsync(origin, cancellationToken).ConfigureAwait(false);
+            var (appliedSequence, appliedDigest) = await transaction.GetAppliedFrontierAsync(origin, cancellationToken).ConfigureAwait(false);
             if (digest.Length != JournalDigest.Length || previousDigest.Length != JournalDigest.Length
                 || !digest.Span.SequenceEqual(JournalDigest.Compute(origin.Span, sequence, previousDigest.Span, changes)))
             {
                 throw new InvalidDataException("the group journal proof is invalid");
             }
 
-            if (sequence != applied.Sequence + 1)
+            if (sequence != appliedSequence + 1)
             {
-                if (sequence == applied.Sequence && !digest.Span.SequenceEqual(applied.Digest.Span))
+                if (sequence == appliedSequence && !digest.Span.SequenceEqual(appliedDigest.Span))
                 {
                     throw new InvalidDataException("the duplicate group has a different journal identity");
                 }
 
-                return applied;
+                return (appliedSequence, appliedDigest, false);
             }
 
-            if (!previousDigest.Span.SequenceEqual(applied.Digest.Span))
+            if (!previousDigest.Span.SequenceEqual(appliedDigest.Span))
             {
                 throw new InvalidDataException("the group does not extend the applied journal prefix");
             }
@@ -91,7 +92,7 @@ internal sealed class EngineReplicationJournal(IStorageEngine engine) : IReplica
             await transaction.SetAppliedFrontierAsync(origin, sequence, digest, cancellationToken).ConfigureAwait(false);
             await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
             ObjectDisposedException.ThrowIf(store.IsClosed, store);
-            return (sequence, digest);
+            return (sequence, digest, true);
         }
     }
 

@@ -2,6 +2,7 @@ using Google.Protobuf;
 using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Features.CrossRegion.V1;
+using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Replication;
 using TerraBase.Features.Replication.V1;
 using TerraBase.Primitives;
@@ -24,7 +25,7 @@ namespace TerraBase.Features.CrossRegion;
 /// </remarks>
 internal sealed partial class WanPuller(
     IRegionBus bus, IStorageEngine engine, IReplicationJournal journal, ITenantDirectory tenants, TerraBaseOptions options, WanMetrics metrics,
-    TimeProvider time, ILogger<WanPuller> logger) : BackgroundService
+    TimeProvider time, ILogger<WanPuller> logger, IUsageMeter usage) : BackgroundService
 {
     /// <summary>Pause between rounds that found nothing more to pull.</summary>
     public static readonly TimeSpan Interval = TimeSpan.FromSeconds(1);
@@ -139,7 +140,7 @@ internal sealed partial class WanPuller(
         var previouslyLagging = discovery.Lagging;
         // Heads can advance the saved sweep before pulling finishes. An interrupted round must not certify catch-up.
         discovery.Lagging = true;
-        var (members, sweepEnded, heads) = await HeadsAsync(cell, discovery, cancellationToken).ConfigureAwait(false);
+        var (members, sweepEnded, heads) = await HeadsAsync(region, cell, discovery, cancellationToken).ConfigureAwait(false);
         // Unanswered discovery certifies nothing and measures no lag, but retained retries still pull from their members.
         var unanswered = heads.Count == 0 && members == 0;
         var complete = !unanswered && sweepEnded && !discovery.Invalid;
@@ -180,6 +181,7 @@ internal sealed partial class WanPuller(
         var failures = 0;
         var unregistered = new HashSet<string>(StringComparer.Ordinal);
         var clashes = new HashSet<string>(StringComparer.Ordinal);
+        var observations = new Dictionary<TenantContext, (long Remaining, bool Diverged)>();
         foreach (var (member, head) in heads)
         {
             if (WanProtocol.Database(head.TenantId, head.ProjectId, head.DatabaseId) is not { } database || head.Origin.Length != 16 || head.Sequence > long.MaxValue)
@@ -199,16 +201,29 @@ internal sealed partial class WanPuller(
 
             var applied = await AppliedAsync(store, origin, cancellationToken).ConfigureAwait(false);
             var gone = false;
+            var diverged = false;
+            if (!observations.ContainsKey(database) && observations.Count < 128)
+            {
+                observations.Add(database, (0, false));
+                if ((long)head.Sequence > applied)
+                {
+                    usage.RecordReplicationState(database, region, (long)head.Sequence - applied, false);
+                }
+            }
             if (applied < (long)head.Sequence)
             {
                 try
                 {
-                    (var pulled, gone) = await PullAsync(region, cell, member, database, store, origin, applied, (long)head.Sequence, cancellationToken).ConfigureAwait(false);
+                    var traffic = applied == 0 && head.Sequence > 1
+                        || discovery.Retry.Any(entry => RetryKey(entry.Member, entry.Head) == RetryKey(member, head))
+                        ? ReplicationTrafficKind.Handoff : ReplicationTrafficKind.Delta;
+                    (var pulled, gone) = await PullAsync(region, cell, member, database, store, origin, applied, (long)head.Sequence, traffic, cancellationToken).ConfigureAwait(false);
                     progressed |= pulled > applied;
                     applied = pulled;
                 }
                 catch (Exception error) when (!cancellationToken.IsCancellationRequested)
                 {
+                    diverged = error is OriginAheadException or InvalidDataException;
                     metrics.Failed(region, error switch
                     {
                         OriginAheadException => "ahead",
@@ -223,6 +238,10 @@ internal sealed partial class WanPuller(
             }
 
             var remaining = Math.Max(0, (long)head.Sequence - applied);
+            if (observations.TryGetValue(database, out var observed))
+            {
+                observations[database] = (observed.Remaining + Math.Min(remaining, long.MaxValue - observed.Remaining), observed.Diverged || diverged);
+            }
             lag += Math.Min(remaining, long.MaxValue - lag);
             // Bounded like one heads reply; anything beyond waits for a fresh scan to advertise it again. A member that no longer
             // holds the origin cannot serve a retry.
@@ -231,6 +250,11 @@ internal sealed partial class WanPuller(
                 retry.Add((member, head));
                 retryBytes += head.CalculateSize();
             }
+        }
+
+        foreach (var (database, observed) in observations)
+        {
+            usage.RecordReplicationState(database, region, observed.Remaining, observed.Diverged);
         }
 
         discovery.Retry.Clear();
@@ -280,7 +304,7 @@ internal sealed partial class WanPuller(
 
     // Every member's heads, all pages. Discover members from every reply, including direct replies and later pages:
     // different members may hold different views. Ask each discovered member at most once this round.
-    private async Task<(int Members, bool SweepEnded, List<(string Member, Head Head)> Heads)> HeadsAsync(string cell, HeadsProgress progress, CancellationToken cancellationToken)
+    private async Task<(int Members, bool SweepEnded, List<(string Member, Head Head)> Heads)> HeadsAsync(string region, string cell, HeadsProgress progress, CancellationToken cancellationToken)
     {
         using var deadline = new CancellationTokenSource(HeadsDeadline, time);
         using var discovery = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token);
@@ -300,7 +324,7 @@ internal sealed partial class WanPuller(
         var queued = new HashSet<string>(deferredMembers, StringComparer.Ordinal);
         var continuations = new Dictionary<string, HeadsReply>(StringComparer.Ordinal);
         var pending = new List<Task<(string Member, HeadsPage? Page)>>();
-        var first = new WanRequest { Version = WanProtocol.Version, Heads = new HeadsRequest() }.ToByteArray();
+        var first = new WanRequest { Version = WanProtocol.Version, Heads = new HeadsRequest { Region = options.Region } }.ToByteArray();
         var budget = new HeadsBudget(MaxHeadsPerRound, MaxHeadBytesPerRound);
         // Scattered first pages repeat every round: at most half the budget, so saved cursors and deferred members progress.
         var scatterBudget = new HeadsBudget(MaxHeadsPerRound / 2, MaxHeadBytesPerRound / 2);
@@ -555,9 +579,9 @@ internal sealed partial class WanPuller(
 
                 for (var pages = 1; reply.More && reply.Heads.Count > 0 && pages < MaxHeadsPagesPerMember && !budget.Exhausted; pages++)
                 {
-                    var next = new WanRequest { Version = WanProtocol.Version, Heads = new HeadsRequest { After = after! } };
+                    var next = new WanRequest { Version = WanProtocol.Version, Heads = new HeadsRequest { After = after!, Region = options.Region } };
                     var member = reply.Member;
-                    var following = Parse(await bus.RequestAsync(WanProtocol.MemberSubject(cell, member), next.ToByteArray(), discovery.Token).ConfigureAwait(false)) is { } page && page.Member == member
+                    var following = Parse(await bus.RequestAsync(WanProtocol.MemberSubject(cell, member), next.ToByteArray(), discovery.Token).ConfigureAwait(false), next.CalculateSize()) is { } page && page.Member == member
                         ? page
                         : throw new InvalidDataException("a member answered a heads page with an invalid reply");
                     if (following.Members.Distinct(StringComparer.Ordinal).Count(candidate => !members.Contains(candidate)) > MaxMembersPerRound - members.Count)
@@ -629,11 +653,16 @@ internal sealed partial class WanPuller(
             return ByteString.CopyFrom([.. head.TenantId.Span, .. head.ProjectId.Span, .. head.DatabaseId.Span]);
         }
 
-        static HeadsReply? Parse(ReadOnlyMemory<byte> data)
+        HeadsReply? Parse(ReadOnlyMemory<byte> data, int requestBytes = 0)
         {
             try
             {
                 var reply = data.Length <= WanProtocol.MaxMessageBytes ? HeadsReply.Parser.ParseFrom(data.Span) : null;
+                if (reply is not null)
+                {
+                    WanUsage.Heads(usage, region, reply, requestBytes == 0 ? first.Length : requestBytes, data.Length, responding: false);
+                }
+
                 // The member names the subject of its next requests: it must be a single subject token.
                 return reply is not null && (!reply.More || reply.Heads.Count > 0)
                     && WanProtocol.IsMember(reply.Member) && reply.Heads.Count <= WanProtocol.MaxHeadsPerReply
@@ -714,7 +743,7 @@ internal sealed partial class WanPuller(
     // prefix, and whether the member no longer holds that origin.
     private async Task<(long Applied, bool Gone)> PullAsync(
         string region, string cell, string member, TenantContext database, IDatabaseStore store, ReadOnlyMemory<byte> origin, long applied, long head,
-        CancellationToken cancellationToken)
+        ReplicationTrafficKind traffic, CancellationToken cancellationToken)
     {
         var subject = WanProtocol.MemberSubject(cell, member);
         byte[]? parts = null;
@@ -726,6 +755,7 @@ internal sealed partial class WanPuller(
                 Version = WanProtocol.Version,
                 Pull = new PullRequest
                 {
+                    TrafficKind = traffic,
                     Region = options.Region,
                     TenantId = WanProtocol.Id(database.OrganizationId),
                     ProjectId = WanProtocol.Id(database.ProjectId!),
@@ -735,7 +765,10 @@ internal sealed partial class WanPuller(
                     Offset = (uint)received,
                 },
             };
-            var data = await bus.RequestAsync(subject, request.ToByteArray(), cancellationToken).ConfigureAwait(false);
+            var payload = request.ToByteArray();
+            usage.RecordReplicationBytes(database, region, WanUsage.Kind(traffic), true, payload.Length);
+            var data = await bus.RequestAsync(subject, payload, cancellationToken).ConfigureAwait(false);
+            usage.RecordReplicationBytes(database, region, WanUsage.Kind(traffic), false, data.Length);
             var reply = data.Length <= WanProtocol.MaxMessageBytes ? PullReply.Parser.ParseFrom(data.Span) : throw new InvalidDataException("the pull reply is too large");
             switch (reply.Status)
             {
@@ -778,7 +811,7 @@ internal sealed partial class WanPuller(
                 }
 
                 var changes = ReplicationProtocol.Read(new SyncRequest { CommittedGroup = batch }, database, origin, ReplicationProtocol.Limits);
-                var (sequence, _) = await journal.AppendAsync(
+                var (sequence, _, newlyApplied) = await journal.AppendAsync(
                     store, origin, (long)batch.EventId.Sequence, changes, batch.PreviousJournalDigest.Memory, batch.JournalDigest.Memory, cancellationToken).ConfigureAwait(false);
                 lock (_gate)
                 {
@@ -791,6 +824,10 @@ internal sealed partial class WanPuller(
                 }
 
                 applied = sequence;
+                if (newlyApplied)
+                {
+                    usage.RecordReplicatedOperations(database, region, changes.Count);
+                }
                 metrics.Pulled(region, batch.EncodedApplicationBytes);
             }
         }

@@ -356,6 +356,16 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
         if (writes > 0)
         {
             usage.RecordWrites(database, writes);
+            foreach (var group in operations.OfType<DocumentOperation>().GroupBy(operation => operation switch
+            {
+                PutOperation => "put",
+                PatchOperation => "patch",
+                DeleteOperation => "delete",
+                _ => "",
+            }).Where(group => group.Key.Length > 0))
+            {
+                usage.RecordOperation(database, group.Key, group.Count());
+            }
         }
 
         return written with { Offset = offset };

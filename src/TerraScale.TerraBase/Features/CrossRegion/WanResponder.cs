@@ -3,6 +3,7 @@ using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Engine.Cluster;
 using TerraBase.Features.CrossRegion.V1;
+using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Replication;
 using TerraBase.Tenancy;
 
@@ -15,7 +16,7 @@ namespace TerraBase.Features.CrossRegion;
 /// </summary>
 internal sealed partial class WanResponder(
     IRegionBus bus, IStorageEngine engine, IMembership membership, ITenantDirectory tenants, TerraBaseOptions options, WanMetrics metrics,
-    ILogger<WanResponder> logger)
+    ILogger<WanResponder> logger, IUsageMeter usage)
     : BackgroundService
 {
     private const int MaxGroupsPerReply = 1024;
@@ -49,13 +50,24 @@ internal sealed partial class WanResponder(
         try
         {
             var request = data.Length <= WanProtocol.MaxMessageBytes ? WanRequest.Parser.ParseFrom(data.Span) : null;
-            return request?.Version != WanProtocol.Version ? new PullReply { Status = PullReply.Types.Status.Invalid }.ToByteArray()
+            if (request?.Pull is { } incoming && WanProtocol.Database(incoming.TenantId, incoming.ProjectId, incoming.DatabaseId) is { } receiving)
+            {
+                usage.RecordReplicationBytes(receiving, incoming.Region, WanUsage.Kind(incoming.TrafficKind), false, data.Length);
+            }
+
+            var result = request?.Version != WanProtocol.Version ? new PullReply { Status = PullReply.Types.Status.Invalid }.ToByteArray()
                 : request.RequestCase switch
                 {
-                    WanRequest.RequestOneofCase.Heads => (await HeadsAsync(request.Heads, cancellationToken).ConfigureAwait(false)).ToByteArray(),
+                    WanRequest.RequestOneofCase.Heads => (await HeadsAsync(request.Heads, data.Length, cancellationToken).ConfigureAwait(false)).ToByteArray(),
                     WanRequest.RequestOneofCase.Pull => (await PullAsync(request.Pull, cancellationToken).ConfigureAwait(false)).ToByteArray(),
                     _ => new PullReply { Status = PullReply.Types.Status.Invalid }.ToByteArray(),
                 };
+            if (request?.Pull is { } pull && WanProtocol.Database(pull.TenantId, pull.ProjectId, pull.DatabaseId) is { } database)
+            {
+                usage.RecordReplicationBytes(database, pull.Region, WanUsage.Kind(pull.TrafficKind), true, result.Length);
+            }
+
+            return result;
         }
         catch (InvalidProtocolBufferException)
         {
@@ -68,7 +80,7 @@ internal sealed partial class WanResponder(
         }
     }
 
-    private async ValueTask<HeadsReply> HeadsAsync(HeadsRequest request, CancellationToken cancellationToken)
+    private async ValueTask<HeadsReply> HeadsAsync(HeadsRequest request, int requestBytes, CancellationToken cancellationToken)
     {
         // ponytail: lists and reads every database per request; track heads from commits once members hold thousands.
         var databases = new List<(byte[] Key, TenantContext Database)>();
@@ -122,6 +134,7 @@ internal sealed partial class WanResponder(
             });
         }
 
+        WanUsage.Heads(usage, request.Region, reply, requestBytes, reply.CalculateSize(), responding: true);
         return reply;
     }
 

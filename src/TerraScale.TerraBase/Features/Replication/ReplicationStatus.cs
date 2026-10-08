@@ -11,7 +11,7 @@ public interface IReplicationStatus
 public sealed record ReplicationStatus(bool Enabled, bool Initialized, int DatabaseCount, int OmittedDatabases, IReadOnlyList<ReplicationPeerStatus> Peers);
 
 /// <summary>A configured peer's position in peer-addresses, total durable lag and bounded database detail.</summary>
-public sealed record ReplicationPeerStatus(int Peer, long DurableLag, IReadOnlyList<ReplicationDatabaseStatus> Databases);
+public sealed record ReplicationPeerStatus(int Peer, long DurableLag, IReadOnlyList<ReplicationDatabaseStatus> Databases, string Region = "");
 
 /// <summary>
 /// Slot identifies a bounded metric label; identities appear only in this loopback response. Diverged means a detected

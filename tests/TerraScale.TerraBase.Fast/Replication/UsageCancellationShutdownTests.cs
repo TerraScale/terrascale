@@ -64,9 +64,10 @@ public sealed class UsageCancellationShutdownTests
             }
             else
             {
-                await Assert.That(((UsageBatch)batch).Counts.Count).IsEqualTo(1);
-                await Assert.That(((UsageBatch)batch).Counts[0].DatabaseId).IsEqualTo(tenant.DatabaseId);
-                await Assert.That(((UsageBatch)batch).Counts[0].Reads).IsEqualTo(1UL);
+                await Assert.That(((UsageBatch)batch).Counts.Count).IsEqualTo(2);
+                await Assert.That(((UsageBatch)batch).Counts.All(count => count.DatabaseId == tenant.DatabaseId)).IsTrue();
+                await Assert.That(((UsageBatch)batch).Counts.Sum(count => (long)count.Reads)).IsEqualTo(1L);
+                await Assert.That(((UsageBatch)batch).Counts.Single(count => count.Scope == TerraBase.Features.Replication.V1.UsageScope.Minute).Measurements.IsEmpty).IsFalse();
             }
             var execution = usage.ExecuteTask!;
             await Assert.That(execution.IsCompleted).IsFalse();

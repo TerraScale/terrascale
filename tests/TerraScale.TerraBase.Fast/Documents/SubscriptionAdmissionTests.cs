@@ -336,7 +336,7 @@ public sealed class SubscriptionAdmissionTests
                 switch (instrument.Name)
                 {
                     case "terrabase.memory.reserved":
-                        Interlocked.Exchange(ref _reserved, value);
+                        Interlocked.Exchange(ref _reserved, value - api.Server.Services.GetRequiredService<UsageMeter>().ReservedMeasurementBytes);
                         break;
                     case "terrabase.subscriptions.active":
                         Interlocked.Add(ref _active, value);

@@ -1,0 +1,275 @@
+using System.Diagnostics.Metrics;
+using TerraBase.Features.Memory;
+using TerraBase.Hosting;
+using TerraBase.Tenancy;
+
+namespace TerraBase.Features.Management.Usage;
+
+internal sealed partial class UsageMeter
+{
+    internal long ReservedMeasurementBytes
+    {
+        get
+        {
+            lock (_measurements)
+            {
+                return _measurementMemory.Values.Sum(reservations => reservations.Sum(reservation => reservation.Bytes));
+            }
+        }
+    }
+
+    internal const int MaxDimensions = 256;
+    private const int MaxMeasurementKeys = 256;
+    // Owner/dimension strings, dictionaries, histogram arrays and overlapping immutable snapshots.
+    private const long MeasurementBytes = 2048;
+    private const long MeasurementKeyBytes = 4096;
+    private readonly Lock _measurements = new();
+    private readonly Dictionary<UsageKey, List<IMemoryReservation>> _measurementMemory = [];
+    private readonly Dictionary<(DatabaseOwner Database, string Region), (DateTimeOffset Started, DateTimeOffset? Applied)> _backlogs = [];
+    private readonly Counter<long> _measurementDrops = meters.Create(Telemetry.MeterName).CreateCounter<long>(
+        "terrabase.usage.observations.dropped", "{observation}", "Usage observations dropped by bounded memory admission.");
+    private readonly Counter<long> _replicationBytes = meters.Create(Telemetry.MeterName).CreateCounter<long>(
+        "replication_bytes", "By", "Encoded replication message bytes, including repeated attempts and protocol control messages.");
+
+    public void RecordOperation(TenantContext database, string kind, int count) =>
+        Record(database, new(new("ops", options.Region, "", kind), count));
+
+    public void RecordRequest(TenantContext database, string method, int status, TimeSpan elapsed, long received, long sent)
+    {
+        var kind = method is "GET" or "POST" or "PUT" or "PATCH" or "DELETE" or "HEAD" or "OPTIONS" ? method.ToLowerInvariant() : "other";
+        var latency = new long[UsageReading.LatencyBounds.Count];
+        var index = 0;
+        while (index < latency.Length - 1 && elapsed.TotalMilliseconds > UsageReading.LatencyBounds[index])
+        {
+            index++;
+        }
+
+        latency[index] = 1;
+        Record(database, new(new("requests", options.Region, "", kind), 1, status >= 400 ? 1 : 0, latency));
+        Record(database, new(new("client_bytes", options.Region, "", "received"), received));
+        Record(database, new(new("client_bytes", options.Region, "", "sent"), sent));
+    }
+
+    public void RecordReplicationBytes(TenantContext database, string peerRegion, string kind, bool sent, long bytes)
+    {
+        if (bytes <= 0 || !ValidRegion(peerRegion) || kind is not ("delta" or "anti_entropy" or "handoff"))
+        {
+            return;
+        }
+
+        var direction = sent ? "sent" : "received";
+        _replicationBytes.Add(bytes, new KeyValuePair<string, object?>("kind", kind), new KeyValuePair<string, object?>("direction", direction));
+        Record(database, new(new("replication_bytes", options.Region, peerRegion, kind + ":" + direction), bytes));
+    }
+
+    public void RecordReplicatedOperations(TenantContext database, string peerRegion, int operations)
+    {
+        if (!ValidRegion(peerRegion) || operations <= 0)
+        {
+            return;
+        }
+
+        var now = time.GetUtcNow();
+        lock (_measurements)
+        {
+            var key = (DatabaseOwner.Of(database), peerRegion);
+            if (_backlogs.TryGetValue(key, out var state))
+            {
+                _backlogs[key] = (state.Started, now);
+            }
+        }
+
+        Record(database, new(new("replicated_ops", options.Region, peerRegion, "applied"), operations, State: new(now, 0, false, null, now)));
+    }
+
+    public void RecordReplicationState(TenantContext database, string peerRegion, long remaining, bool diverged, double? convergenceMs = null)
+    {
+        if (!ValidRegion(peerRegion))
+        {
+            return;
+        }
+
+        var now = time.GetUtcNow();
+        UsageReplicationState observation;
+        lock (_measurements)
+        {
+            var key = (DatabaseOwner.Of(database), peerRegion);
+            if (!_backlogs.TryGetValue(key, out var backlog))
+            {
+                if (_backlogs.Count >= MaxMeasurementKeys)
+                {
+                    _measurementDrops.Add(1);
+                    return;
+                }
+
+                backlog = (now, null);
+            }
+
+            var lag = remaining > 0 ? Math.Max(0, (now - backlog.Started).TotalMilliseconds) : 0;
+            var convergence = convergenceMs ?? (remaining == 0 && backlog.Started < now ? (now - backlog.Started).TotalMilliseconds : null);
+            observation = new(now, lag, diverged, convergence, backlog.Applied, remaining);
+            if (remaining > 0)
+            {
+                _backlogs[key] = backlog;
+            }
+            else
+            {
+                _backlogs.Remove(key);
+            }
+        }
+
+        Record(database, new(new("replication_status", options.Region, peerRegion, "inbound"), 1, State: observation));
+    }
+
+    internal void RecordPeerState(TenantContext database, string peerRegion, long remaining, double lagMs, bool diverged, double? convergenceMs)
+    {
+        if (ValidRegion(peerRegion))
+        {
+            Record(database, new(new("replication_status", options.Region, peerRegion, "outbound"), 1,
+                State: new(time.GetUtcNow(), lagMs, diverged, convergenceMs, null, remaining)));
+        }
+    }
+
+    internal void RecordStorage(TenantContext database, long bytes) =>
+        Record(database, new(new("storage_bytes", options.Region, "", "sample"), 1, bytes));
+
+    internal static bool ValidRegion(string region) => region is not null && TerraBase.Configuration.TerraBaseOptions.IsRegion(region);
+
+    internal static bool ValidDimension(UsageDimension dimension) =>
+        ValidRegion(dimension.Region) && dimension.Meter switch
+        {
+            "ops" => dimension.PeerRegion == "" && dimension.Kind is "read" or "put" or "patch" or "delete",
+            "requests" => dimension.PeerRegion == "" && dimension.Kind is "get" or "post" or "put" or "patch" or "delete" or "head" or "options" or "other",
+            "client_bytes" => dimension.PeerRegion == "" && dimension.Kind is "sent" or "received",
+            "storage_bytes" => dimension.PeerRegion == "" && dimension.Kind == "sample",
+            "replication_bytes" => ValidRegion(dimension.PeerRegion) && dimension.Kind is "delta:sent" or "delta:received"
+                or "anti_entropy:sent" or "anti_entropy:received" or "handoff:sent" or "handoff:received",
+            "replicated_ops" => ValidRegion(dimension.PeerRegion) && dimension.Kind == "applied",
+            "replication_status" => ValidRegion(dimension.PeerRegion) && dimension.Kind is "inbound" or "outbound",
+            _ => false,
+        };
+
+    private void Record(TenantContext database, UsageReading reading)
+    {
+        if (!ValidDimension(reading.Dimension) || reading.IsZero)
+        {
+            return;
+        }
+
+        var minute = time.GetUtcNow().ToUnixTimeSeconds() / 60;
+        var key = new UsageKey(DatabaseOwner.Of(database), minute / 60, UsageScope.Minute, (int)(minute % 60));
+        Add(key, new(0, 0, new Dictionary<string, UsageReading>(StringComparer.Ordinal) { [reading.Dimension.Key] = reading }));
+    }
+
+    private void AddMeasurements(UsageKey key, OpCounts counts)
+    {
+        lock (_measurements)
+        {
+            var current = _pending.TryGetValue(key.Database, out var pending) ? pending.GetValueOrDefault(key) : null;
+            var added = counts.Meters!.Keys.Count(dimension => current?.Meters?.ContainsKey(dimension) != true);
+            var dimensions = (current?.Meters?.Count ?? 0) + added;
+            var existing = _measurementMemory.TryGetValue(key, out var reservations);
+            var needed = Math.Max(0, MeasurementKeyBytes + dimensions * MeasurementBytes - (reservations?.Sum(reservation => reservation.Bytes) ?? 0));
+            if (dimensions > MaxDimensions || !existing && _measurementMemory.Count >= MaxMeasurementKeys)
+            {
+                _measurementDrops.Add(1);
+                AddCore(key, counts with { Meters = null });
+                return;
+            }
+
+            if (needed > 0)
+            {
+                if (memory.TryReserve(MemoryLane.Foreground, needed) is not { } reservation)
+                {
+                    _measurementDrops.Add(1);
+                    AddCore(key, counts with { Meters = null });
+                    return;
+                }
+
+                if (reservations is null)
+                {
+                    reservations = [];
+                    _measurementMemory.Add(key, reservations);
+                }
+
+                reservations.Add(reservation);
+            }
+
+            AddCore(key, counts);
+        }
+    }
+
+    private void FoldMeasurements(UsageKey key, UsageKey folded, OpCounts counts)
+    {
+        lock (_measurements)
+        {
+            if (!_pending.TryGetValue(key.Database, out var pending) || !pending.TryRemove(KeyValuePair.Create(key, counts)))
+            {
+                return;
+            }
+
+            // Transfer the existing admission; compaction must not drop observations by admitting them twice.
+            if (_measurementMemory.Remove(key, out var reservations))
+            {
+                if (_measurementMemory.TryGetValue(folded, out var destination))
+                {
+                    destination.AddRange(reservations);
+                }
+                else
+                {
+                    _measurementMemory.Add(folded, reservations);
+                }
+            }
+
+            AddCore(folded, counts);
+            if (_measurementMemory.TryGetValue(folded, out var retained))
+            {
+                var needed = MeasurementKeyBytes + (pending[folded].Meters?.Count ?? 0) * MeasurementBytes;
+                var reserved = retained.Sum(reservation => reservation.Bytes);
+                for (var i = retained.Count - 1; i >= 0; i--)
+                {
+                    if (reserved - retained[i].Bytes >= needed)
+                    {
+                        reserved -= retained[i].Bytes;
+                        retained[i].Dispose();
+                        retained.RemoveAt(i);
+                    }
+                }
+            }
+        }
+    }
+
+    private void ReleaseMeasurement(UsageKey key, OpCounts remaining)
+    {
+        if (remaining != OpCounts.Zero)
+        {
+            return;
+        }
+
+        lock (_measurements)
+        {
+            // A recorder may have added to the same key between subtraction and this lock.
+            if ((!_pending.TryGetValue(key.Database, out var pending) || !pending.ContainsKey(key)) && _measurementMemory.Remove(key, out var reservations))
+            {
+                foreach (var reservation in reservations)
+                {
+                    reservation.Dispose();
+                }
+            }
+        }
+    }
+
+    private void DisposeMeasurements()
+    {
+        lock (_measurements)
+        {
+            foreach (var reservation in _measurementMemory.Values.SelectMany(reservations => reservations))
+            {
+                reservation.Dispose();
+            }
+
+            _measurementMemory.Clear();
+            _backlogs.Clear();
+        }
+    }
+}

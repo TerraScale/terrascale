@@ -194,7 +194,7 @@ public sealed class SubscriptionResourceTests
             switch (instrument.Name)
             {
                 case "terrabase.memory.reserved":
-                    Interlocked.Exchange(ref reserved, value);
+                    Interlocked.Exchange(ref reserved, value - api.Server.Services.GetRequiredService<UsageMeter>().ReservedMeasurementBytes);
                     break;
                 case "terrabase.shape.requests.waiting":
                     var count = Interlocked.Add(ref waiting, value);
@@ -366,7 +366,7 @@ public sealed class SubscriptionResourceTests
             switch (instrument.Name)
             {
                 case "terrabase.memory.reserved":
-                    Interlocked.Exchange(ref reserved, value);
+                    Interlocked.Exchange(ref reserved, value - api.Server.Services.GetRequiredService<UsageMeter>().ReservedMeasurementBytes);
                     break;
                 case "terrabase.shape.flights.active":
                     Interlocked.Add(ref flights, value);

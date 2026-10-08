@@ -110,6 +110,7 @@ try
     // Forwarded requests run through everything after it. Error bodies first, so they also cover the listener check's 404.
     app.UseTerraBaseForwardedRequests();
     app.UseTerraBasePressure();
+    app.UseTerraBaseUsage();
     app.UseTerraBaseBadRequests();
     app.UseTerraBaseLegacyRoutes();
     app.UseRouting();

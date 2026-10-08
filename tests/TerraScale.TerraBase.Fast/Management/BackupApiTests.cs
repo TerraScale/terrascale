@@ -787,6 +787,10 @@ public sealed class BackupApiTests
         await using var api = await ManagementApi.StartAsync(time: time, services: services =>
         {
             hook.Install(services);
+            // This test owns the backup clock; usage's unrelated periodic writes have their own timer.
+            var usage = services.Single(service => service.ImplementationType == typeof(TerraBase.Features.Management.Usage.UsageFlushService));
+            services[services.IndexOf(usage)] = ServiceDescriptor.Singleton<IHostedService>(provider =>
+                ActivatorUtilities.CreateInstance<TerraBase.Features.Management.Usage.UsageFlushService>(provider, new FakeTimeProvider(time.GetUtcNow())));
             services.Remove(services.Single(service => service.ServiceType == typeof(IHostedService) && service.ImplementationType?.Name == "BackupScheduler"));
         });
         var database = await api.CreateManagedDatabaseAsync();
