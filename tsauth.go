@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -69,21 +68,7 @@ func tsAuthResolveBase(cfg Config) (string, error) {
 		}
 		field = "api_base_url"
 	}
-	base := strings.TrimSuffix(raw, "/")
-	u, err := url.Parse(base + "/")
-	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-		return "", &ValidationError{Field: field, Message: "must be an absolute http or https URL"}
-	}
-	if u.RawQuery != "" || u.Fragment != "" {
-		return "", &ValidationError{Field: field, Message: "must not contain a query or fragment"}
-	}
-	if u.User != nil {
-		return "", &ValidationError{Field: field, Message: "must not contain userinfo"}
-	}
-	if u.Scheme == "http" && !tsAuthDevTransport(u.Hostname()) {
-		return "", &ValidationError{Field: field, Message: "must use HTTPS outside loopback and .test dev origins"}
-	}
-	return base, nil
+	return resolveServiceBase(raw, field, true)
 }
 
 // tsAuthAnySuccess accepts any 2xx answer without touching the body: the
@@ -91,19 +76,6 @@ func tsAuthResolveBase(cfg Config) (string, error) {
 type tsAuthAnySuccess struct{}
 
 func (tsAuthAnySuccess) decodeHTTPResponse(status int, body []byte) error { return nil }
-
-// tsAuthDevTransport mirrors the plain-HTTP rule: loopback always, plus the
-// .test dev origins (reserved TLD, never routable) like the other SDKs.
-func tsAuthDevTransport(hostname string) bool {
-	host := strings.ToLower(hostname)
-	if host == "localhost" {
-		return true
-	}
-	if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
-		return true
-	}
-	return host == "test" || strings.HasSuffix(host, ".test")
-}
 
 // TSAuthInstanceClient is ts-auth for one tenant slug.
 type TSAuthInstanceClient struct {
@@ -156,6 +128,12 @@ func (c *Client) tsAuthSend(ctx context.Context, base, method, path string, quer
 }
 
 func (c *Client) tsAuthSendAuthorized(ctx context.Context, base, method, path string, query url.Values, payload []byte, contentType string, authorization tsAuthAuthorization, out any, route string) error {
+	return c.sendAuthorized(ctx, base, method, path, query, payload, contentType, authorization, out, route, true)
+}
+
+// sendAuthorized shares the bounded request and retry pipeline. Only auth
+// calls opt into regional auth discovery.
+func (c *Client) sendAuthorized(ctx context.Context, base, method, path string, query url.Values, payload []byte, contentType string, authorization tsAuthAuthorization, out any, route string, discoverAuth bool) error {
 	if ctx == nil {
 		return &ValidationError{Field: "context", Message: "cannot be nil"}
 	}
@@ -172,7 +150,7 @@ func (c *Client) tsAuthSendAuthorized(ctx context.Context, base, method, path st
 	}
 	defer cancel()
 	bases := []string{base}
-	if base == "https://auth.terrascale.tech" && !c.cfg.TSAuthUseReverseProxy {
+	if discoverAuth && base == "https://auth.terrascale.tech" && !c.cfg.TSAuthUseReverseProxy {
 		var err error
 		bases, err = c.authDiscovery.resolve(requestCtx, c.http, c.cfg.DiscoveryBaseURL)
 		if err != nil {

@@ -225,6 +225,58 @@ listener configuration, credentials, and CA trust. Actual PostgreSQL execution
 requires its producer protocol and an admitted signed listener; source and
 package checks do not qualify an actual admitted PostgreSQL runtime.
 
+## Region latency (`client.Status`)
+
+`client.Status.Latency(ctx, "")` reads all regions from the public
+`https://status.terrascale.tech/api/latency` endpoint. Pass a region code such
+as `"gru"` to send `?region=gru`; codes are trimmed and lowercased without
+restricting the available regions. Override the origin with `Config.StatusBaseURL`
+(HTTPS, or HTTP on loopback and `.test` origins for development). Status calls
+need no credentials and do not use auth discovery.
+
+```go
+client, err := sdk.NewClient(sdk.Config{MaxRetryAttempts: 2})
+if err != nil {
+    return err
+}
+latency, err := client.Status.Latency(ctx, "gru")
+if err != nil {
+    return err
+}
+for _, region := range latency.Regions {
+    if region.Consensus != nil && region.Consensus.MedianMS != nil {
+        fmt.Printf("%s: %d ms (%s)\n", region.Name, *region.Consensus.MedianMS, region.Status)
+    }
+}
+```
+
+`LatencyResponse.GeneratedAt` is a parsed RFC3339 timestamp; `Window` is `"1h"`.
+Each region contains its code, name, ping URL, status, consensus, and individual
+vantages. Median and p95 measurements are `*int` milliseconds: `nil` means no
+measurement, while a pointer to zero is a measured zero. Consensus may also be
+`nil`. `Samples` is an integer count. Status is `operational`, `degraded`, `down`,
+or `planned`. These are probe measurements, not the caller's own browser ping.
+
+The client shares the SDK's bounded HTTP transport, `RequestTimeout`, retries
+on transient failures (`MaxRetryAttempts`, `RetryDelay`, and `Retry-After`),
+and `*sdk.APIError` responses. Retries default to zero; redirects are refused.
+The service briefly caches responses; the SDK adds no cache.
+[`status_example_test.go`](status_example_test.go) contains a compilable example.
+
+Unit tests use `httptest`. The live contract test is opt-in and skips HTTP 404
+until the endpoint is deployed:
+
+```sh
+TERRASCALE_STATUS_LIVE=1 nice -n 19 go test . -run '^TestStatusLatencyLive$' -v
+```
+
+Before merging this client, require the deployed endpoint to match the response,
+region filter, public CORS, and cache contract (404 now fails):
+
+```sh
+TERRASCALE_STATUS_REQUIRE_LATENCY=1 nice -n 19 go test . -run '^TestStatusLatencyLive$' -v
+```
+
 ## Atlas publishing (`terrascale.tech/sdk/atlas`)
 
 `atlas.Publisher` posts signed documents to ts-atlas (`POST /v1/publish`,
@@ -329,9 +381,9 @@ The edge artifacts and pins are in `contracts/edge/v1`.
 
 ```sh
 test -z "$(gofmt -l .)"
-go vet ./...
-go build ./...
-go test -race ./...
+nice -n 19 go vet ./...
+nice -n 19 go build ./...
+nice -n 19 go test -race ./...
 ```
 
 The module requires Go 1.25 and has no CGO dependency. CI runs the pinned
