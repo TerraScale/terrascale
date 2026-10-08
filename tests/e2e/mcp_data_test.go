@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -137,6 +138,17 @@ func TestMCPDataDocumentsSchemaIndexesAndSQL(t *testing.T) {
 	callTool(t, session, "list_saved_queries", nil, &queries)
 	if len(queries.Queries) != 0 {
 		t.Errorf("list_saved_queries after delete = %+v, want none", queries.Queries)
+	}
+
+	var generated struct{ ID string }
+	callTool(t, session, "create_document", with(map[string]any{"document": map[string]any{"name": "Generated"}}), &generated)
+	if !regexp.MustCompile(`^[0-9A-HJKMNP-TV-Z]{26}$`).MatchString(generated.ID) {
+		t.Fatalf("create_document returned ID %q, want a pure ULID", generated.ID)
+	}
+	var document mcpDocument
+	callTool(t, session, "get_document", with(map[string]any{"documentId": generated.ID}), &document)
+	if document.ID != generated.ID || document.Value["name"] != "Generated" {
+		t.Fatalf("generated document = %+v, want %s with its saved contents", document, generated.ID)
 	}
 
 	if message := callToolError(t, session, "list_documents", map[string]any{"databaseId": databaseID, "collection": "bad/name"}); !strings.Contains(message, "collection") {

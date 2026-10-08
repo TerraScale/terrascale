@@ -75,10 +75,10 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			return
 		}
 		id := submittedID
-		if operation == "create" && id == "" {
-			id = core.NewID("doc")
+		if operation == "create" && id == "" && deps.LocalResources() {
+			id = core.NewULID()
 		}
-		if id == "" || !slices.Contains([]string{"create", "replace", "patch", "delete"}, operation) {
+		if id == "" && operation != "create" || !slices.Contains([]string{"create", "replace", "patch", "delete"}, operation) {
 			failed(http.StatusBadRequest, "Choose a document and an operation.")
 			return
 		}

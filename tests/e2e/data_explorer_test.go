@@ -114,7 +114,7 @@ func TestDataDocumentFormsKeepInputOnErrorAndConfirmDeletes(t *testing.T) {
 		fill(t, dialog.Locator("#new-document-json"), body)
 		submitAndExpect(t, page, "/api/v1/dashboard/data/documents", status, byRole(dialog, *playwright.AriaRoleButton, "Add document").Click)
 	}
-	id := uniqueName("doc")
+	id := "doc_0123456789abcdef0123456789abcdef"
 	add(id, `{"total": 1}`, 303)
 	table := page.Locator("#documents table")
 	must(t, expect.Locator(table).ToContainText(id))
@@ -146,6 +146,9 @@ func TestDataDocumentFormsKeepInputOnErrorAndConfirmDeletes(t *testing.T) {
 	must(t, expect.Locator(table).ToContainText(id))
 	submitAndExpect(t, page, "/api/v1/dashboard/data/documents", 303, byRole(confirm, *playwright.AriaRoleButton, "Delete document").Click)
 	visible(t, page.GetByText("No documents match this collection and filter."))
+
+	add("", `{"total": 3}`, 303)
+	must(t, expect.Locator(table.Locator(".ts-data-doc-id")).ToHaveText(regexp.MustCompile(`^[0-9A-HJKMNP-TV-Z]{26}$`)))
 }
 
 func TestDataDocumentsListCollectionsAndCreateOne(t *testing.T) {
