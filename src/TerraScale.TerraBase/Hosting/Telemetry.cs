@@ -1,4 +1,6 @@
 using System.Diagnostics.Metrics;
+using System.Runtime.CompilerServices;
+using OpenTelemetry;
 using OpenTelemetry.Metrics;
 
 namespace TerraBase.Hosting;
@@ -18,6 +20,12 @@ public static class Telemetry
     /// <summary>Registers runtime, HTTP server and TerraBase meters.</summary>
     public static IServiceCollection AddTerraBaseTelemetry(this IServiceCollection services)
     {
+        // SDK self-diagnostics lives for the process; its worker must not retain the first host's context.
+        using (ExecutionContext.SuppressFlow())
+        {
+            RuntimeHelpers.RunClassConstructor(typeof(Sdk).TypeHandle);
+        }
+
         services.AddOpenTelemetry().WithMetrics(metrics => metrics
             .AddMeter(MeterName)
             .AddAspNetCoreInstrumentation()
