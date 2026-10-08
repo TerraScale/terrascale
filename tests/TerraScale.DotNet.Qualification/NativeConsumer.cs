@@ -1,6 +1,13 @@
 using System.Text.Json;
+using TerraScale.DotNet;
 using TerraScale.DotNet.Native;
 using TerraScale.DotNet.Qualification;
+
+var ids = new TerraScaleIdGenerator();
+var entityId = ids.NewId();
+if (!TerraScaleIds.IsValid(entityId) || TerraScaleIds.Validate(entityId) != entityId ||
+    TerraScaleIds.IsValid("org_" + entityId) || TerraScaleIds.IsValid(entityId.ToLowerInvariant()))
+    throw new InvalidOperationException("Installed SDK does not generate and validate canonical entity ULIDs.");
 
 await NativeChecks.ContractResourcesAsync();
 await NativeChecks.TransportOwnershipAsync();

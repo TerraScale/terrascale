@@ -38,5 +38,6 @@
     <EmbeddedResource Include="../../contracts/auth/error-codes.json" LogicalName="TerraScale.DotNet.Auth.error-codes.json" />
     <None Include="../../contracts/auth/error-codes.json" Pack="true" PackagePath="contracts/auth" />
     <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.11" />
+    <PackageReference Include="NUlid" Version="1.7.3" />
   </ItemGroup>
 </Project>

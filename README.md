@@ -4,6 +4,50 @@ The official .NET SDK for TerraBase, the TerraScale native database APIs and
 ts-auth. The package supports .NET 10 LTS and .NET 11; a .NET 11 toolchain builds
 both targets.
 
+## Entity IDs (TS-754)
+
+TerraScale's target entity ID contract is a plain 26-character uppercase
+Crockford ULID, with no prefixes or UUIDs. Generate and validate these IDs with
+the SDK's shared helpers:
+
+```csharp
+using TerraScale.DotNet;
+
+var ids = new TerraScaleIdGenerator(); // reuse per caller-owned service
+string id = ids.NewId();
+bool valid = TerraScaleIds.IsValid(id);
+string validated = TerraScaleIds.Validate(id); // ArgumentException for invalid input
+```
+
+The generator uses NUlid 1.7.3 with cryptographic randomness and instance-owned
+monotonic state. Calls on one instance are thread-safe and strictly increasing,
+including within the same millisecond and during clock rollback. Independent
+instances do not share ordering. IDs are not authentication secrets. Validation
+rejects lowercase, whitespace, ambiguous letters, prefixes, UUIDs and 128-bit
+overflow; it does not normalize input. IDs remain strings in SDK records.
+
+ULID timestamps are logical ordering values, not trusted creation times. A
+forward clock glitch followed by correction leaves that generator's IDs at the
+future timestamp until UTC catches up, even for a multi-year jump. Correct the
+host clock and replace the generator to resume current timestamps; ordering
+across old and new instances is not guaranteed. Forward jumps are accepted
+because a generator can legitimately be idle for any length of time.
+
+The TerraBase document key is the entity ID. Entity payloads must not repeat
+that key in a separate `id` field. Keep IDs in document metadata and references
+to other entities in their reference fields.
+
+**Server cutover is pending.** This foundation does not change request or
+response validation in existing clients. The pinned TerraBase release below
+still generates and accepts UUIDs. ULID-only entity models, request/response
+validation and integration fixtures must follow the owning TerraBase and
+ts-auth contracts and a verified ULID server release. Existing Documents and
+Management clients remain available, including queries, conditional writes
+and transactions. For the greenfield cutover, the owning services delete the
+verified affected data and recreate bootstrap state on startup. There is no
+migration, backfill, compatibility shim or dual-read/write path. This SDK owns
+no persisted service data and performs no production reset.
+
 ## TerraBase client
 
 `TerraScale.DotNet.TerraBase` talks to the C# TerraBase server over its public
