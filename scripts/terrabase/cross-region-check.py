@@ -51,6 +51,8 @@ class Region:
         request.add_header("Authorization", f"Bearer {self.key}")
         # A request that reaches another region answers 421 instead of being served there.
         request.add_header("X-TerraScale-Region-Pin", self.name)
+        # Cloudflare's browser integrity check refuses urllib's default User-Agent with 403 (error 1010).
+        request.add_header("User-Agent", "terrabase-cross-region-check/1")
         if data is not None:
             request.add_header("Content-Type", "application/json")
         try:

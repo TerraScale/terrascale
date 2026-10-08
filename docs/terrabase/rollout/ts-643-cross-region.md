@@ -21,6 +21,15 @@ Add the same setting to both cells' TerraBase profiles and release them (root-si
 TERRABASE_WAN_REGIONS=gru-1=gru,sfo-1=sfo
 ```
 
+Members load a profile only with their next release (`operator terrabase-release --profile`, the profile from the cell
+spec). What the first live release (2026-10-08) ran into:
+
+- `invalid delivery input: artifact object did not become visible`: the cell's artifact store (`OBJ_TS_ARTIFACTS`) is
+  full. Delete superseded TerraBase binaries that no member runs.
+- `resolve rollback artifact …: durable artifact claim signature`: the members run a CI-released digest, and the
+  operator config trusts only its own signer. Release with a copy of the config whose `controller.trusted_signers` also
+  holds the cell spec's `ci-release` signer.
+
 On one member of each region, the admin listener should then show the other region's members and no lag:
 
 ```sh
@@ -56,8 +65,8 @@ sfo-1 ([placement](../cross-region.md#placement)).
      -H "Authorization: Bearer $(cat "$TERRABASE_MANAGEMENT_CREDENTIAL_FILE")" -H 'X-TerraBase-User-Id: terrabase-canary' -d @project.json
    ```
 
-   sfo-1's profile has no management credential yet: add `TERRABASE_MANAGEMENT_CREDENTIAL_FILE` as gru-1 has, or send the
-   commit to `https://sfo.api.terrascale.tech/v1/management/commits` with a ts-auth access token of the owner.
+   The credential is the file the member's `TERRABASE_MANAGEMENT_CREDENTIAL_FILE` names (read it from the process
+   environment); both profiles set it.
 
 3. Create the canary on gru-1-ctl-1 only, with sfo-1 as its replica; sfo-1 records it from gru's heads within seconds:
 
