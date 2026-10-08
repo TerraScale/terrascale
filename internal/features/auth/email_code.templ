@@ -6,13 +6,46 @@ import (
 	"terrascale.tech/dashboard/internal/ui"
 )
 
+// Map pointer gestures to the displayed boxes, including range selection.
+const codePointerDown = `
+if (evt.button !== 0 || !evt.isPrimary) return;
+evt.preventDefault();
+const anchor = el.selectionDirection === 'backward' ? el.selectionEnd : el.selectionStart;
+el.focus();
+const index = Math.min(el.value.length, Math.max(0, Math.min(5, Math.floor((evt.clientX - el.getBoundingClientRect().left) / (el.clientWidth / 6)))));
+el._codePointer = {id: evt.pointerId, index, anchor, shift: evt.shiftKey, x: evt.clientX};
+el.setPointerCapture(evt.pointerId);
+const start = evt.shiftKey ? Math.min(anchor, index) : index;
+const end = evt.shiftKey ? Math.max(anchor, Math.min(index + 1, el.value.length)) : Math.min(index + 1, el.value.length);
+el.setSelectionRange(start, end, evt.shiftKey && index < anchor ? 'backward' : 'forward');
+$_codeCaret = el.selectionStart; $_codeEnd = el.selectionEnd;
+`
+
+const codePointerMove = `
+const pointer = el._codePointer;
+if (!pointer || pointer.id !== evt.pointerId || (!pointer.dragging && Math.abs(evt.clientX - pointer.x) < 4)) return;
+evt.preventDefault();
+pointer.dragging = true;
+const index = Math.min(el.value.length, Math.max(0, Math.min(5, Math.floor((evt.clientX - el.getBoundingClientRect().left) / (el.clientWidth / 6)))));
+const anchor = pointer.shift ? pointer.anchor : pointer.index + (index < pointer.index ? 1 : 0);
+el.setSelectionRange(Math.min(anchor, index), Math.max(anchor, Math.min(index + 1, el.value.length)), index < anchor ? 'backward' : 'forward');
+$_codeCaret = el.selectionStart; $_codeEnd = el.selectionEnd;
+`
+
+const codePointerUp = `
+if (el._codePointer?.id === evt.pointerId) {
+    el._codePointer = null;
+    if (el.hasPointerCapture(evt.pointerId)) el.releasePointerCapture(evt.pointerId);
+}
+`
+
 // One native input keeps paste, autofill, keyboard editing and screen readers
 // working as usual; Datastar mirrors its value and selection into six boxes.
 templ emailCodeInput(errorMessage string) {
 	{{ field := ui.FieldProps{ID: "code", Label: "Six-digit code", Error: errorMessage} }}
 	<div class="ts-field">
 		<label class="ts-sr-only" for="code">{ field.Label }</label>
-		<div class="ts-email-code" data-signals="{_emailCode: '', _codeCaret: 0, _codeEnd: 0}" data-init="el.classList.add('ts-email-code-ready')">
+		<div class="ts-email-code" data-signals="{_codeCaret: 0, _codeEnd: 0}">
 			<input
 				class="ts-input ts-input-lg ts-email-code-input"
 				id="code"
@@ -25,12 +58,17 @@ templ emailCodeInput(errorMessage string) {
 				autofocus
 				spellcheck="false"
 				data-bind="_emailCode"
-				data-init="el.maxLength = 6"
+				data-init="el.maxLength = 6; $_codeCaret = el.selectionStart; $_codeEnd = el.selectionEnd; el.parentElement.classList.add('ts-email-code-ready')"
 				data-on:input="const start = el.value.slice(0, el.selectionStart).replace(/[^0-9]/g, '').length; const end = el.value.slice(0, el.selectionEnd).replace(/[^0-9]/g, '').length; el.value = el.value.replace(/[^0-9]/g, '').slice(0, 6); el.setSelectionRange(start, end); $_emailCode = el.value; $_codeCaret = el.selectionStart; $_codeEnd = el.selectionEnd"
 				data-on:select="$_codeCaret = el.selectionStart; $_codeEnd = el.selectionEnd"
 				data-on:keyup="$_codeCaret = el.selectionStart; $_codeEnd = el.selectionEnd"
 				data-on:focus="$_codeCaret = el.selectionStart; $_codeEnd = el.selectionEnd"
-				data-on:pointerdown="evt.preventDefault(); el.focus(); const index = Math.min(el.value.length, Math.max(0, Math.min(5, Math.floor((evt.clientX - el.getBoundingClientRect().left) / (el.clientWidth / 6))))); el.setSelectionRange(index, Math.min(index + 1, el.value.length)); $_codeCaret = el.selectionStart; $_codeEnd = el.selectionEnd"
+				data-on:pointerdown={ codePointerDown }
+				data-on:pointermove={ codePointerMove }
+				data-on:pointerup={ codePointerUp }
+				data-on:pointercancel={ codePointerUp }
+				data-on:lostpointercapture="el._codePointer = null"
+				data-on:dblclick="el.select()"
 				data-on:paste="evt.preventDefault(); const digits = evt.clipboardData.getData('text').replace(/[^0-9]/g, ''); el.setRangeText(digits.slice(0, 6 - el.value.length + el.selectionEnd - el.selectionStart), el.selectionStart, el.selectionEnd, 'end'); el.dispatchEvent(new Event('input', {bubbles: true}))"
 				{ field.ControlAttrs()... }
 			/>

@@ -420,6 +420,38 @@ func TestNativeEmailCodeInputEditing(t *testing.T) {
 	}}))
 	must(t, code.Press("1"))
 	must(t, expect.Locator(code).ToHaveValue("901027"))
+
+	// Dragging in either direction selects a range of visible boxes. Shift-click
+	// extends that range, and double-click still selects the complete code.
+	position := func(index int) *playwright.Position {
+		t.Helper()
+		box, err := slots.Nth(index).BoundingBox()
+		must(t, err)
+		return &playwright.Position{X: box.X + box.Width/2, Y: box.Y + box.Height/2}
+	}
+	for _, endpoints := range [][2]int{{1, 4}, {4, 1}} {
+		fill(t, code, "012345")
+		from, to := position(endpoints[0]), position(endpoints[1])
+		must(t, page.Mouse().Move(from.X, from.Y))
+		must(t, page.Mouse().Down())
+		must(t, page.Mouse().Move(to.X, to.Y, playwright.MouseMoveOptions{Steps: new(8)}))
+		must(t, page.Mouse().Up())
+		must(t, expect.Locator(page.Locator(".ts-email-code-selected")).ToHaveCount(4))
+		must(t, code.Press("8"))
+		must(t, expect.Locator(code).ToHaveValue("085"))
+	}
+	fill(t, code, "012345")
+	from, to := position(1), position(4)
+	must(t, code.Click(playwright.LocatorClickOptions{Position: &playwright.Position{X: from.X - inputBox.X, Y: from.Y - inputBox.Y}}))
+	must(t, code.Click(playwright.LocatorClickOptions{
+		Position:  &playwright.Position{X: to.X - inputBox.X, Y: to.Y - inputBox.Y},
+		Modifiers: []playwright.KeyboardModifier{*playwright.KeyboardModifierShift},
+	}))
+	must(t, code.Press("8"))
+	must(t, expect.Locator(code).ToHaveValue("085"))
+	must(t, code.Dblclick())
+	must(t, code.Press("9"))
+	must(t, expect.Locator(code).ToHaveValue("9"))
 	must(t, code.Press("Tab"))
 	must(t, expect.Locator(pageByRole(page, *playwright.AriaRoleButton, "Continue")).ToBeFocused())
 
@@ -440,6 +472,41 @@ func TestNativeEmailCodeInputEditing(t *testing.T) {
 	must(t, expect.Locator(page.Locator("#code-error")).ToContainText("Enter the code"))
 	expectAccessible(t, page, "email code error", "")
 	screenshot(t, page, "email-code-error")
+}
+
+func TestNativeEmailCodeBeforeDatastarLoads(t *testing.T) {
+	t.Parallel()
+	base, _ := tsAuthDashboard(t)
+	page := watchedPage(t, newContext(t, base))
+	goTo(t, page, "/login/code")
+	fill(t, page.Locator("#email"), "early-code@example.test")
+
+	// Hold the real module response so the fallback field can receive input
+	// before binding, without replacing the script or bypassing its integrity.
+	pending := make(chan playwright.Route, 1)
+	must(t, page.Route("**/js/datastar.js*", func(route playwright.Route) { pending <- route }))
+	_, err := pageByRole(page, *playwright.AriaRoleButton, "Email me a code").Evaluate(`button => button.click()`, nil)
+	must(t, err)
+	code := page.Locator("#code")
+	must(t, expect.Locator(code).ToBeVisible())
+	must(t, expect.Locator(page.Locator(".ts-email-code-ready")).ToHaveCount(0))
+	must(t, code.PressSequentially("012345"))
+	_, err = code.Evaluate(`input => input.setSelectionRange(1, 4)`, nil)
+	must(t, err)
+	select {
+	case route := <-pending:
+		must(t, route.Continue())
+	case <-time.After(10 * time.Second):
+		t.Fatal("Datastar module request was not intercepted")
+	}
+	must(t, expect.Locator(page.Locator(".ts-email-code-slot")).ToHaveText([]string{"0", "1", "2", "3", "4", "5"}))
+	must(t, expect.Locator(code).ToHaveValue("012345"))
+	selection, err := code.Evaluate(`input => input.selectionStart === 1 && input.selectionEnd === 4`, nil)
+	must(t, err)
+	if selection != true {
+		t.Fatal("Datastar initialization changed the native selection")
+	}
+	must(t, expect.Locator(page.Locator(".ts-email-code-selected")).ToHaveCount(3))
 }
 
 func TestNativeSignUpWithoutJavaScript(t *testing.T) {
