@@ -606,7 +606,9 @@ type Deps struct {
 	// Usage reads TerraBase's metered usage; nil without TerraBase.
 	Usage    UsageMeter
 	Throttle Throttle
-	Tools    *Tools
+	// SignUpMail limits verification emails to one per minute per address.
+	SignUpMail Throttle
+	Tools      *Tools
 	// Regions lists the regions a database can be placed in, from ts-atlas
 	// discovery; nil when discovery is not configured.
 	Regions func(context.Context) ([]Region, error)

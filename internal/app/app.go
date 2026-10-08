@@ -169,6 +169,10 @@ func New(cfg config.Config) (*Application, error) {
 		Events: datastar.Events{}, Demo: cfg.Demo, Tools: core.NewTools(store),
 		SDK: sdkFactory, Management: management, Usage: meter, DocumentsOnly: db != nil && management == nil,
 		Throttle: throttle.New(throttle.Options{ClientHeader: cfg.ClientIPHeader, Store: throttleStore}),
+		SignUpMail: throttle.New(throttle.Options{
+			ClientHeader: cfg.ClientIPHeader, Store: throttleStore, KeyPrefix: "signup-mail ",
+			Account: throttle.Budget{Burst: 1, Interval: time.Minute},
+		}),
 	}
 	if cfg.AtlasURL != "" {
 		deps.Regions = (&atlas.Catalog{BaseURL: cfg.AtlasURL}).Regions
