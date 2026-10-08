@@ -14,6 +14,32 @@ public static class DocumentFiles
         await WriteDocumentsAsync(connection, documents);
     }
 
+    /// <summary>Replaces existing live document bodies in a closed database file without changing its schema.</summary>
+    public static async Task UpdateAsync(string path, params (string Collection, string Id, string Body)[] documents)
+    {
+        ArgumentNullException.ThrowIfNull(documents);
+        await using var connection = new SqliteConnection(
+            new SqliteConnectionStringBuilder { DataSource = path, Mode = SqliteOpenMode.ReadWrite, Pooling = false }.ToString());
+        await connection.OpenAsync();
+        // All or nothing: a missing document leaves the closed fixture file untouched.
+        await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync();
+        foreach (var (collection, id, body) in documents)
+        {
+            await using var update = connection.CreateCommand();
+            update.Transaction = transaction;
+            update.CommandText = "UPDATE documents SET body = $body WHERE collection = $collection AND id = $id AND body IS NOT NULL;";
+            update.Parameters.AddWithValue("$collection", collection);
+            update.Parameters.AddWithValue("$id", id);
+            update.Parameters.AddWithValue("$body", body);
+            if (await update.ExecuteNonQueryAsync() != 1)
+            {
+                throw new InvalidDataException("the fixture document does not exist");
+            }
+        }
+
+        await transaction.CommitAsync();
+    }
+
     /// <summary>Every live document of the file at <paramref name="path"/>, as "collection|id|body" lines in key order; tombstones are left out.</summary>
     public static async Task<List<string>> ReadAsync(string path)
     {

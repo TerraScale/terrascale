@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Connections.Features;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
+using TerraBase.Fast.Storage;
 using TerraBase.Features.Replication;
 using TerraBase.Features.Replication.V1;
 using TerraBase.Testing;
@@ -390,33 +391,71 @@ public sealed class SenderLifecycleTests
         var heldNew = new TaskCompletionSource<CommittedGroupBatch>(TaskCreationOptions.RunContinuationsAsynchronously);
         var releaseOld = NewSignal();
         var releaseNew = NewSignal();
+        var oldAckWritten = new TaskCompletionSource<Exception?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var handlers = new List<Task>();
+        var finishing = false;
+        Exception? primaryFailure = null;
         ByteString? oldOrigin = null;
         var prefixes = new Dictionary<ByteString, ulong>();
         var digests = new Dictionary<ByteString, ByteString>();
-        await using var peer = await FakePeer.StartAsync(peerTls, async (requests, responses, context) =>
+        await using var peer = await FakePeer.StartAsync(peerTls, (requests, responses, context) =>
         {
-            await requests.MoveNext(context.CancellationToken);
-            var origin = requests.Current.Hello.LocalIdentity.MemberIncarnation;
-            await responses.WriteAsync(Welcome(requests.Current.Hello, prefixes.GetValueOrDefault(origin), out var member, digests.GetValueOrDefault(origin)), context.CancellationToken);
-            while (await requests.MoveNext(context.CancellationToken))
+            lock (handlers)
             {
-                var batch = requests.Current.CommittedGroup;
-                oldOrigin ??= batch.EventId.Origin.Incarnation;
-                if (!batch.EventId.Origin.Incarnation.Equals(oldOrigin))
+                if (finishing)
                 {
-                    heldNew.TrySetResult(batch);
-                    await releaseNew.Task.WaitAsync(context.CancellationToken);
-                }
-                // Groups 1 to 17 are the collection's creation and the first 16 writes.
-                else if (batch.EventId.Sequence == 18)
-                {
-                    heldOld.TrySetResult(batch);
-                    await releaseOld.Task.WaitAsync(context.CancellationToken);
+                    return Task.CompletedTask;
                 }
 
-                prefixes[origin] = batch.EventId.Sequence;
-                digests[origin] = batch.JournalDigest;
-                await responses.WriteAsync(FakePeer.Ack(member, batch, batch.EventId.Sequence), context.CancellationToken);
+                var handler = HandleAsync();
+                handlers.Add(handler);
+                return handler;
+            }
+
+            async Task HandleAsync()
+            {
+                try
+                {
+                    await requests.MoveNext(context.CancellationToken);
+                    var origin = requests.Current.Hello.LocalIdentity.MemberIncarnation;
+                    await responses.WriteAsync(Welcome(requests.Current.Hello, prefixes.GetValueOrDefault(origin), out var member, digests.GetValueOrDefault(origin)), context.CancellationToken);
+                    var wroteOldAck = false;
+                    while (await requests.MoveNext(context.CancellationToken))
+                    {
+                        var batch = requests.Current.CommittedGroup;
+                        oldOrigin ??= batch.EventId.Origin.Incarnation;
+                        // Apply the group before holding only its acknowledgment.
+                        prefixes[origin] = batch.EventId.Sequence;
+                        digests[origin] = batch.JournalDigest;
+                        if (!batch.EventId.Origin.Incarnation.Equals(oldOrigin))
+                        {
+                            heldNew.TrySetResult(batch);
+                            await releaseNew.Task.WaitAsync(context.CancellationToken);
+                        }
+                        // Groups 1 to 17 are the collection's creation and the first 16 writes.
+                        else if (batch.EventId.Sequence == 18)
+                        {
+                            heldOld.TrySetResult(batch);
+                            await releaseOld.Task.WaitAsync(context.CancellationToken);
+                        }
+
+                        await responses.WriteAsync(FakePeer.Ack(member, batch, batch.EventId.Sequence), context.CancellationToken);
+                        if (batch.EventId.Origin.Incarnation.Equals(oldOrigin) && batch.EventId.Sequence == 18)
+                        {
+                            wroteOldAck = true;
+                        }
+                    }
+
+                    if (wroteOldAck)
+                    {
+                        oldAckWritten.TrySetResult(null);
+                    }
+                }
+                catch (Exception error)
+                {
+                    oldAckWritten.TrySetResult(error);
+                    throw;
+                }
             }
         });
         await using var sender = await TerraBaseTestServer.StartAsync(settings =>
@@ -424,48 +463,72 @@ public sealed class SenderLifecycleTests
             peerTls.Apply(settings);
             clientTls.Apply(settings);
             settings["peer-addresses"] = peer.Address.ToString();
+            // Writes must return while this fixture deliberately withholds acknowledgments.
+            settings["write-wait-ms"] = "0";
         });
-        var tenant = await ReplicationTenant.CreateAsync(sender, "backlog");
-        using var writer = clientTls.CreateClient(sender.ClientAddress!, await tenant.KeyAsync(sender, "documents:write"));
-        await CreateAsync(tenant, writer);
-        for (var index = 0; index < 16; index++)
+        try
         {
+            var tenant = await ReplicationTenant.CreateAsync(sender, "backlog");
+            using var writer = clientTls.CreateClient(sender.ClientAddress!, await tenant.KeyAsync(sender, "documents:write"));
+            await CreateAsync(tenant, writer);
+            for (var index = 0; index < 16; index++)
+            {
+                await PutAsync(tenant, writer, "old");
+            }
+
+            await TerraBaseTestServer.ReplicatedAsync(sender);
+            // Database deletion is exposed through Management, not the document route; drive the running
+            // application's engine to cover deletion while the document writes still use the HTTPS listener.
+            var database = tenant.Database("backlog");
+            var engine = sender.Services.GetRequiredService<IStorageEngine>();
+            var oldStore = await engine.OpenDatabaseAsync(database, CancellationToken.None);
             await PutAsync(tenant, writer, "old");
+            await heldOld.Task.WaitAsync(TimeSpan.FromSeconds(30));
+            // This already-open transaction can finish on the unlinked old file after recreation.
+            var orphan = await oldStore!.BeginTransactionAsync(write: true, CancellationToken.None);
+            await using var orphanScope = orphan;
+            await orphan.PutAsync("items", ReplicationDocuments.Id("orphan"), "{}"u8.ToArray(), CancellationToken.None);
+            await Assert.That(await engine.DeleteDatabaseAsync(database, CancellationToken.None)).IsTrue();
+
+            await Assert.That(await sender.MetricAsync("terrabase_replication_sender_durable_lag")).IsEqualTo(0);
+            await engine.CreateDatabaseAsync(database, CancellationToken.None);
+            // The new database's groups: its collection's creation and the put.
+            await CreateAsync(tenant, writer);
+            await PutAsync(tenant, writer, "new");
+            await Assert.That(await sender.MetricAsync("terrabase_replication_sender_durable_lag")).IsEqualTo(2);
+            await orphan.CommitAsync(CancellationToken.None);
+            await orphan.DisposeAsync();
+            await Assert.That(await sender.MetricAsync("terrabase_replication_sender_durable_lag")).IsEqualTo(2);
+            // Neither this old-origin ACK nor the old transaction's callback may revive retired state.
+            releaseOld.SetResult();
+            await Assert.That(await oldAckWritten.Task.WaitAsync(TimeSpan.FromSeconds(30))).IsNull();
+            var batch = await heldNew.Task.WaitAsync(TimeSpan.FromSeconds(30));
+            await Assert.That(batch.EventId.Sequence).IsEqualTo(1UL);
+            await Assert.That(oldOrigin).IsNotNull();
+            await Assert.That(batch.EventId.Origin.Incarnation.Span.SequenceEqual(oldOrigin!.Span)).IsFalse();
+            await Assert.That(await sender.MetricAsync("terrabase_replication_sender_durable_lag")).IsEqualTo(2);
+            releaseNew.SetResult();
+            await TerraBaseTestServer.ReplicatedAsync(sender);
+            await Assert.That(prefixes[oldOrigin!]).IsEqualTo(18UL);
         }
+        catch (Exception error)
+        {
+            primaryFailure = error;
+            throw;
+        }
+        finally
+        {
+            Task[] pending;
+            lock (handlers)
+            {
+                finishing = true;
+                pending = [.. handlers];
+            }
 
-        await TerraBaseTestServer.ReplicatedAsync(sender);
-        await PutAsync(tenant, writer, "old");
-        await heldOld.Task.WaitAsync(TimeSpan.FromSeconds(30));
-        // Database deletion is exposed through Management, not the document route; drive the running
-        // application's engine to cover deletion while the document writes still use the HTTPS listener.
-        var database = tenant.Database("backlog");
-        var engine = sender.Services.GetRequiredService<IStorageEngine>();
-        var oldStore = await engine.OpenDatabaseAsync(database, CancellationToken.None);
-        // This already-open transaction can finish on the unlinked old file after recreation.
-        var orphan = await oldStore!.BeginTransactionAsync(write: true, CancellationToken.None);
-        await using var orphanScope = orphan;
-        await orphan.PutAsync("items", ReplicationDocuments.Id("orphan"), "{}"u8.ToArray(), CancellationToken.None);
-        await Assert.That(await engine.DeleteDatabaseAsync(database, CancellationToken.None)).IsTrue();
-
-        await Assert.That(await sender.MetricAsync("terrabase_replication_sender_durable_lag")).IsEqualTo(0);
-        await engine.CreateDatabaseAsync(database, CancellationToken.None);
-        // The new database's groups: its collection's creation and the put.
-        await CreateAsync(tenant, writer);
-        await PutAsync(tenant, writer, "new");
-        await Assert.That(await sender.MetricAsync("terrabase_replication_sender_durable_lag")).IsEqualTo(2);
-        await orphan.CommitAsync(CancellationToken.None);
-        await orphan.DisposeAsync();
-        await Assert.That(await sender.MetricAsync("terrabase_replication_sender_durable_lag")).IsEqualTo(2);
-        // Neither this old-origin ACK nor the old transaction's callback may revive retired state.
-        releaseOld.SetResult();
-        var batch = await heldNew.Task.WaitAsync(TimeSpan.FromSeconds(30));
-        await Assert.That(batch.EventId.Sequence).IsEqualTo(1UL);
-        await Assert.That(oldOrigin).IsNotNull();
-        await Assert.That(batch.EventId.Origin.Incarnation.Span.SequenceEqual(oldOrigin!.Span)).IsFalse();
-        await Assert.That(await sender.MetricAsync("terrabase_replication_sender_durable_lag")).IsEqualTo(2);
-        releaseNew.SetResult();
-        await TerraBaseTestServer.ReplicatedAsync(sender);
-        await Assert.That(prefixes[oldOrigin!]).IsEqualTo(18UL);
+            releaseOld.TrySetResult();
+            releaseNew.TrySetResult();
+            await StoragePoolTests.JoinCleanupAsync(pending, primaryFailure);
+        }
     }
 
     [Test]
@@ -475,14 +538,14 @@ public sealed class SenderLifecycleTests
     {
         using var peerTls = new PeerTls();
         using var clientTls = new ClientTls();
-        var waiting = NewSignal();
+        var waiting = new TaskCompletionSource<CancellationToken>(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = NewSignal();
         await using var peer = await FakePeer.StartAsync(peerTls, async (requests, responses, context) =>
         {
             await requests.MoveNext(context.CancellationToken);
             if (!waitForAck)
             {
-                waiting.TrySetResult();
+                waiting.TrySetResult(context.CancellationToken);
                 await release.Task.WaitAsync(context.CancellationToken);
             }
 
@@ -491,7 +554,7 @@ public sealed class SenderLifecycleTests
             {
                 if (waitForAck)
                 {
-                    waiting.TrySetResult();
+                    waiting.TrySetResult(context.CancellationToken);
                     await release.Task.WaitAsync(context.CancellationToken);
                 }
 
@@ -511,7 +574,7 @@ public sealed class SenderLifecycleTests
         using var writer = clientTls.CreateClient(sender.ClientAddress!, await tenant.KeyAsync(sender, "documents:write"));
         await CreateAsync(tenant, writer);
         await PutAsync(tenant, writer, "first");
-        await waiting.Task.WaitAsync(TimeSpan.FromSeconds(30));
+        var heldRpc = await waiting.Task.WaitAsync(TimeSpan.FromSeconds(30));
         for (var index = 0; index < 16; index++)
         {
             await PutAsync(tenant, writer, "later");
@@ -528,12 +591,23 @@ public sealed class SenderLifecycleTests
         command.CommandText = "PRAGMA busy_timeout = 0;";
         await command.ExecuteNonQueryAsync();
         command.CommandText = "PRAGMA wal_checkpoint(TRUNCATE);";
-        await using (var result = await command.ExecuteReaderAsync())
+        long busy = -1;
+        long frames = -1;
+        // Discovery can briefly read the same WAL. The original held RPC must survive every attempt,
+        // so a sender timeout cannot release a leaked transaction and falsely let the checkpoint pass.
+        await TerraBaseTestServer.EventuallyAsync(async token =>
         {
-            await Assert.That(await result.ReadAsync()).IsTrue();
-            await Assert.That(result.GetInt64(0)).IsEqualTo(0);
-            await Assert.That(result.GetInt64(1)).IsEqualTo(0);
-        }
+            heldRpc.ThrowIfCancellationRequested();
+            await using var result = await command.ExecuteReaderAsync(token);
+            await Assert.That(await result.ReadAsync(token)).IsTrue();
+            busy = result.GetInt64(0);
+            frames = result.GetInt64(1);
+            heldRpc.ThrowIfCancellationRequested();
+            return busy == 0;
+        });
+        await Assert.That(busy).IsEqualTo(0);
+        await Assert.That(frames).IsEqualTo(0);
+        heldRpc.ThrowIfCancellationRequested();
 
         release.SetResult();
         await TerraBaseTestServer.ReplicatedAsync(sender);

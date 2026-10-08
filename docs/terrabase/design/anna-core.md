@@ -413,10 +413,22 @@ every push to `main`.
 
 Merged under TS-634: the design (#50), the lattice library (#51), and slice 2 (#53), whose surface step 1 deletes.
 
-Independent follow-up under TS-634: restart-safe database deletion in the existing TS-643 WAN path. Reconcile records
+Merged independent follow-up under TS-634 (#84): restart-safe database deletion in the existing TS-643 WAN path. Reconcile records
 from bounded pages of the local catalog against a complete home-region heads round; remove missed deletions after restart,
 including records without a local file. This needs no TS-647 format flip, per-core actors or memory tier. See
 [cross-region deletion](../cross-region.md#placement) and its Fast integration coverage.
+
+Next independent follow-up under TS-634: complete WAN member discovery across direct replies and later heads pages.
+Different members can list different views; every discovered member must answer before a round authorizes deletion or
+resets staleness. Discovery bounds member count, concurrent requests and elapsed time; retained heads can still be pulled
+after its ten-second deadline while cleanup remains postponed. Bounded pagination cursors let consistently slow scans
+reach tail databases. A fixed catalog page of at most 100 candidates, bounded presence witnesses and member EOF
+certificates let a whole sweep qualify cleanup across rounds; only lagging heads, one reply's worth, are retried.
+Once every member holds one, a
+deadline-cut fresh scan cannot veto it. Catalog advancement waits for every discovered member's EOF; staleness reset also requires catch-up on every accepted prefix and suffix page.
+Historical discovery overflow keeps useful heads and permanently blocks cleanup before dropping unresolved identities.
+This needs no TS-647/648/649 changes. See
+[cross-region heads](../cross-region.md#how-it-works) and its Fast integration coverage.
 
 ## 16. Decisions and open questions
 

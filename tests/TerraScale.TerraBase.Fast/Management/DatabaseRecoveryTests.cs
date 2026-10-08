@@ -915,20 +915,19 @@ public sealed class DatabaseRecoveryTests
         await using (var api = await state.StartAsync())
         {
             await state.SeedAsync(api);
-            var (collection, id) = row switch
-            {
-                "organization" => ("organizations", state.Organization),
-                "project" => ($"organizations/{state.Organization}/projects", state.Project),
-                _ => ($"projects/{state.Project}/databases", state.Source),
-            };
-            // Valid future JSON: an unknown enum for organizations, an incompatible date for projects/databases.
-            var json = $$$"""{"id":"{{{id}}}","plan":"future","createdAt":{"unixNanos":"1"}}""";
-            var system = await api.Server.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(CancellationToken.None);
-            await using var transaction = await system.BeginTransactionAsync(write: true, CancellationToken.None);
-            await transaction.PutAsync("catalog", "version", Encoding.UTF8.GetBytes("\"99\""), CancellationToken.None);
-            await transaction.PutAsync(collection, id, Encoding.UTF8.GetBytes(json), CancellationToken.None);
-            await transaction.CommitAsync(CancellationToken.None);
         }
+
+        var (collection, id) = row switch
+        {
+            "organization" => ("organizations", state.Organization),
+            "project" => ($"organizations/{state.Organization}/projects", state.Project),
+            _ => ($"projects/{state.Project}/databases", state.Source),
+        };
+        // Only replace rows after shutdown: the seeded host's usage writer still understands the current format.
+        // Valid future JSON: an unknown enum for organizations, an incompatible date for projects/databases.
+        var json = $$$"""{"id":"{{{id}}}","plan":"future","createdAt":{"unixNanos":"1"}}""";
+        var systemPath = System.IO.Path.Combine(state.Directory, "_system.db");
+        await DocumentFiles.UpdateAsync(systemPath, ("catalog", "version", "\"99\""), (collection, id, json));
 
         // Add crash sidecars only after the seeded host has closed its real tenant stores.
         foreach (var database in new[] { state.Source, state.Neighbor })
@@ -947,7 +946,6 @@ public sealed class DatabaseRecoveryTests
             before[path] = await File.ReadAllBytesAsync(path);
         }
 
-        var systemPath = System.IO.Path.Combine(state.Directory, "_system.db");
         var catalog = await DocumentFiles.ReadAsync(systemPath);
         for (var restart = 0; restart < 2; restart++)
         {

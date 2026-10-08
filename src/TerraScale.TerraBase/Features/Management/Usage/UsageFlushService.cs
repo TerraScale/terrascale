@@ -62,7 +62,16 @@ internal sealed partial class UsageFlushService(
             // The tick resumes this loop on the clock's callback thread. Leave it, as the pressure samplers do (TS-517): a
             // flush reads the clock and the catalog, and a test clock advanced by days would otherwise flush inline.
             await Task.Yield();
-            await FlushAsync(stoppingToken).ConfigureAwait(false);
+            try
+            {
+                await FlushAsync(stoppingToken).ConfigureAwait(false);
+            }
+            // FlushAsync stops catching once shutdown begins, so any send failure would otherwise fault this task and the
+            // host's shutdown. StopAsync's drain resends what is still pending and logs what it cannot save.
+            catch (Exception) when (stoppingToken.IsCancellationRequested)
+            {
+                return;
+            }
         }
     }
 

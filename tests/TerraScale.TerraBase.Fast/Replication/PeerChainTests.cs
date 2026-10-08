@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using Grpc.Net.Client;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using TerraBase.Configuration;
 using TerraBase.Features.Replication;
 using TerraBase.Features.Replication.V1;
@@ -27,7 +28,8 @@ public sealed class PeerChainTests
             a.Apply(settings);
             tls.Apply(settings);
             settings["peer-addresses"] = receiver.PeerAddress!.ToString();
-        }, services => services.AddSingleton<TimeProvider>(clock));
+        }, services => services.AddSingleton(provider => new PeerCredentials(
+            provider.GetRequiredService<TerraBaseOptions>(), provider.GetRequiredService<ILogger<PeerCredentials>>(), clock)));
         var tenant = await ReplicationTenant.CreateAsync(sender, "db");
         await tenant.BindAsync(receiver);
         using var writer = tls.CreateClient(sender.ClientAddress!, await tenant.KeyAsync(sender, "documents:write"));

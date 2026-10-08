@@ -1,5 +1,6 @@
 using System.Net;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
 using TerraBase.Engine.Sqlite;
 using TerraBase.Testing;
@@ -46,7 +47,7 @@ public sealed class StoragePoolTests
         {
             settings["storage-threads"] = "1";
             settings["storage-queue"] = capacity.ToString(System.Globalization.CultureInfo.InvariantCulture);
-        });
+        }, time: new FakeTimeProvider(DateTimeOffset.UtcNow));
         using var tenant = await management.CreateTenantAsync("documents:read", "documents:write");
         var source = await tenant.ContextAsync(management.Server, "source", deadline.Token);
         await StorageFixture.CreateCollectionAsync(tenant, "source", "items", deadline.Token);
@@ -166,12 +167,12 @@ public sealed class StoragePoolTests
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         const int Rejected = 4;
-        // One SQLite thread and two admitted transactions.
+        // One SQLite thread and two admitted transactions. Freeze periodic catalog work so only the test takes slots.
         await using var management = await ManagementApi.StartAsync(settings =>
         {
             settings["storage-threads"] = "1";
             settings["storage-queue"] = "2";
-        }, StorageTransactionTests.ConfigurePool);
+        }, StorageTransactionTests.ConfigurePool, time: new FakeTimeProvider(DateTimeOffset.UtcNow));
         var server = management.Server;
         using var tenant = await management.CreateTenantAsync("documents:read", "documents:write");
         var client = tenant.Data;
@@ -227,7 +228,9 @@ public sealed class StoragePoolTests
     public async Task Evicting_the_last_connection_checkpoints_its_wal_on_a_storage_thread()
     {
         using var operationTimeout = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
-        await using var management = await ManagementApi.StartAsync(services: StorageTransactionTests.ConfigurePool);
+        // Keep periodic catalog writes from returning a session between the fixture's controlled evictions.
+        await using var management = await ManagementApi.StartAsync(
+            services: StorageTransactionTests.ConfigurePool, time: new FakeTimeProvider(DateTimeOffset.UtcNow));
         var server = management.Server;
         using var tenant = await management.CreateTenantAsync("documents:read", "documents:write");
         var client = tenant.Data;
@@ -274,7 +277,7 @@ public sealed class StoragePoolTests
         {
             settings["storage-threads"] = "1";
             settings["storage-queue"] = "2";
-        }, StorageTransactionTests.ConfigurePool);
+        }, StorageTransactionTests.ConfigurePool, time: new FakeTimeProvider(DateTimeOffset.UtcNow));
         var server = management.Server;
         using var tenant = await management.CreateTenantAsync("documents:read", "documents:write");
         var client = tenant.Data;

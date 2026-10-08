@@ -605,16 +605,29 @@ public sealed class ReplicationSlowTests
             using var quietResponse = await quietWriter.PutAsJsonAsync(new Uri($"{tenant.Path("quiet")}/collections/items/documents/{ReplicationDocuments.Id("q1")}", UriKind.Relative), new { note = "quiet" });
             quietResponse.EnsureSuccessStatusCode();
             releaseFirst.TrySetResult();
-            await TerraBaseTestServer.EventuallyAsync(async token =>
+            var quietReads = 0;
+            HttpStatusCode? quietStatus = null;
+            try
             {
-                if (fairnessFailure.Task.IsFaulted)
+                await TerraBaseTestServer.EventuallyAsync(async token =>
                 {
-                    await fairnessFailure.Task;
-                }
+                    if (fairnessFailure.Task.IsFaulted)
+                    {
+                        await fairnessFailure.Task;
+                    }
 
-                using var response = await reader.GetAsync(new Uri($"{tenant.Path("quiet")}/collections/items/documents/{ReplicationDocuments.Id("q1")}", UriKind.Relative), token);
-                return response.IsSuccessStatusCode;
-            }, TimeSpan.FromSeconds(30));
+                    quietReads++;
+                    using var response = await reader.GetAsync(new Uri($"{tenant.Path("quiet")}/collections/items/documents/{ReplicationDocuments.Id("q1")}", UriKind.Relative), token);
+                    quietStatus = response.StatusCode;
+                    return response.IsSuccessStatusCode;
+                }, TimeSpan.FromSeconds(30));
+            }
+            catch (Exception error)
+            {
+                throw new InvalidOperationException(
+                    $"Quiet replication did not finish: reads={quietReads}, status={quietStatus}, durable={quietDurable.Task.Status}, busyGate={furtherBusy.Task.Status}, fairness={fairnessFailure.Task.Status}", error);
+            }
+
             // Holding request 259 proves 258 was forwarded; its durable response proves it committed.
             await Task.WhenAll(furtherBusy.Task, busyDurable.Task).WaitAsync(TimeSpan.FromSeconds(30));
             if (fairnessFailure.Task.IsFaulted)

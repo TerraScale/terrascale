@@ -90,20 +90,27 @@ public sealed class CredentialReloadTests
         using var rotated = new PeerTls();
         var clock = new PeerCredentialClock();
         var pairs = new List<(X509Certificate2 Certificate, X509Certificate2Collection Authorities, X509Certificate2Collection Intermediates)>();
+        var ownerDisposed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         PeerCredentials? credentials = null;
         PeerCredentials.Lease? held = null;
         try
         {
-            await using (var server = await TerraBaseTestServer.StartAsync(original.Apply, services => services.AddSingleton(provider =>
+            await using (var server = await TerraBaseTestServer.StartAsync(original.Apply, services =>
             {
-                var options = provider.GetRequiredService<TerraBaseOptions>();
-                return new PeerCredentials(options, provider.GetRequiredService<ILogger<PeerCredentials>>(), () =>
+                services.AddSingleton(_ => new ObserveCredentialDisposal(ownerDisposed));
+                services.AddSingleton(provider =>
                 {
-                    var pair = options.PeerTls!.Load();
-                    pairs.Add(pair);
-                    return pair;
-                }, time: clock);
-            })))
+                    // DI disposes in reverse creation order: this signal follows the credential owner.
+                    _ = provider.GetRequiredService<ObserveCredentialDisposal>();
+                    var options = provider.GetRequiredService<TerraBaseOptions>();
+                    return new PeerCredentials(options, provider.GetRequiredService<ILogger<PeerCredentials>>(), () =>
+                    {
+                        var pair = options.PeerTls!.Load();
+                        pairs.Add(pair);
+                        return pair;
+                    }, time: clock);
+                });
+            }))
             {
                 credentials = server.Services.GetRequiredService<PeerCredentials>();
                 await Assert.That(server.Services.GetRequiredService<TerraBaseOptions>().PeerCredentialSnapshot).IsNull();
@@ -127,6 +134,8 @@ public sealed class CredentialReloadTests
                 held = credentials.Capture();
             }
 
+            // Program's provider disposal may still be running when the test factory returns.
+            await ownerDisposed.Task.WaitAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
             // The host releases its owner, while this explicit connection lease still owns the active pair.
             await Assert.That(held!.Certificate.Handle != IntPtr.Zero).IsTrue();
             await Assert.That(() => credentials!.Capture()).Throws<ObjectDisposedException>();
@@ -175,6 +184,11 @@ public sealed class CredentialReloadTests
         original.OverwriteWith(rotated, preserveTimestamps: true);
         clock.Advance();
         await WelcomeAsync(rotated, server.PeerAddress!, hello);
+    }
+
+    private sealed class ObserveCredentialDisposal(TaskCompletionSource disposed) : IDisposable
+    {
+        public void Dispose() => disposed.TrySetResult();
     }
 
     private static bool Disposed((X509Certificate2 Certificate, X509Certificate2Collection Authorities, X509Certificate2Collection Intermediates) pair) =>

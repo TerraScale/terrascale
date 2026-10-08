@@ -7,6 +7,7 @@ using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using Bogus;
 using Grpc.Core;
+using Grpc.Core.Interceptors;
 using Grpc.Net.Client;
 using Microsoft.AspNetCore.Connections.Features;
 using Microsoft.AspNetCore.Hosting.Server;
@@ -61,10 +62,21 @@ public sealed class PeerTransportTests
     }
 
     [Test]
-    public async Task A_node_refuses_Sync_streams_beyond_its_limit()
+    [Arguments(false, false)]
+    [Arguments(true, false)]
+    [Arguments(true, true)]
+    public async Task A_node_refuses_Sync_streams_beyond_its_limit(bool holdEcho, bool failEcho)
     {
         using var tls = new PeerTls();
-        await using var server = await TerraBaseTestServer.StartAsync(tls.Apply);
+        var echo = new HeldKeepAliveEcho { FailureNonce = failEcho ? ReplicationProtocol.MaxOpenStreams : null };
+        await using var server = await TerraBaseTestServer.StartAsync(tls.Apply, services =>
+        {
+            if (holdEcho)
+            {
+                services.AddSingleton(echo);
+                services.AddGrpc(options => options.Interceptors.Add<HeldKeepAliveEcho>());
+            }
+        });
         using var channel = tls.CreateChannel(server.PeerAddress!);
         var client = new Features.Replication.V1.Replication.ReplicationClient(channel);
         var hellos = new List<SyncRequest>();
@@ -73,20 +85,22 @@ public sealed class PeerTransportTests
             hellos.Add(new SyncRequest { Hello = ReplicationProtocol.CreateHello(await server.RegisterAsync(), RandomNumberGenerator.GetBytes(16)) });
         }
 
-        using var stop = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
+        var testCancellation = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
+        using var stop = CancellationTokenSource.CreateLinkedTokenSource(testCancellation);
         var calls = new List<AsyncDuplexStreamingCall<SyncRequest, SyncResponse>>();
         var answers = new List<SyncResponse>();
         var maintenance = new List<Task>();
+        Task<bool>? heldRead = null;
         Exception? primaryFailure = null;
         try
         {
             for (var i = 0; i <= ReplicationProtocol.MaxOpenStreams; i++)
             {
-                var call = client.Sync(cancellationToken: stop.Token);
+                var call = client.Sync(cancellationToken: testCancellation);
                 calls.Add(call);
                 try
                 {
-                    await call.RequestStream.WriteAsync(hellos[i], stop.Token);
+                    await call.RequestStream.WriteAsync(hellos[i], testCancellation);
                 }
                 catch (RpcException error) when (i == ReplicationProtocol.MaxOpenStreams && error.StatusCode == StatusCode.Cancelled)
                 {
@@ -94,12 +108,12 @@ public sealed class PeerTransportTests
                     // The response below must still contain the exact retryable rejection.
                 }
 
-                await Assert.That(await call.ResponseStream.MoveNext(stop.Token)).IsTrue();
+                await Assert.That(await call.ResponseStream.MoveNext(testCancellation)).IsTrue();
                 answers.Add(call.ResponseStream.Current);
                 if (i < ReplicationProtocol.MaxOpenStreams)
                 {
                     await Assert.That(answers[^1].Welcome).IsNotNull();
-                    maintenance.Add(KeepAliveAsync(call));
+                    maintenance.Add(KeepAliveAsync(call, (ulong)i + 1));
                 }
             }
 
@@ -107,6 +121,30 @@ public sealed class PeerTransportTests
             await Assert.That(answers[^1].Error).IsNotNull();
             await Assert.That(answers[^1].Error.Code).IsEqualTo(StreamErrorCode.StreamErrorResourceExhausted);
             await Assert.That(answers[^1].Error.Retryable).IsTrue();
+            if (holdEcho)
+            {
+                // Cleanup must interrupt a real pending echo, rather than wait for the test deadline.
+                echo.Hold = true;
+                if (failEcho)
+                {
+                    var error = await Assert.ThrowsAsync<RpcException>(WaitForHeldEchoAsync);
+                    await Assert.That(error!.StatusCode).IsEqualTo(StatusCode.DataLoss);
+                    await Assert.That(error.Status.Detail).IsEqualTo("injected keep-alive failure");
+                    await Assert.That(echo.Pending.Task.IsCompleted).IsFalse();
+                    await Assert.That(maintenance.Take(maintenance.Count - 1).All(task => !task.IsCompleted)).IsTrue();
+                    // Observe the expected fault without hiding failures from any other cleanup task.
+                    maintenance[^1] = ObserveExpectedFailureAsync(maintenance[^1], error);
+                    await maintenance[^1];
+                }
+                else
+                {
+                    await WaitForHeldEchoAsync();
+                }
+
+                await Assert.That(echo.Held.Task.IsCompletedSuccessfully).IsTrue();
+                heldRead = await echo.Held.Task;
+                await Assert.That(heldRead.IsCompleted).IsFalse();
+            }
         }
         catch (Exception error)
         {
@@ -125,7 +163,29 @@ public sealed class PeerTransportTests
             }
         }
 
-        async Task KeepAliveAsync(AsyncDuplexStreamingCall<SyncRequest, SyncResponse> call)
+        if (heldRead is not null)
+        {
+            await Assert.That(heldRead.IsCompleted).IsTrue();
+        }
+
+        async Task WaitForHeldEchoAsync()
+        {
+            var completed = await Task.WhenAny(maintenance.Append(echo.Pending.Task))
+                .WaitAsync(TimeSpan.FromSeconds(30), testCancellation);
+            await completed;
+            if (completed != echo.Pending.Task)
+            {
+                throw new InvalidOperationException("keep-alive maintenance ended before an echo was held");
+            }
+        }
+
+        static async Task ObserveExpectedFailureAsync(Task failed, RpcException expected)
+        {
+            var actual = await Assert.ThrowsAsync<RpcException>(() => failed);
+            await Assert.That(actual).IsSameReferenceAs(expected);
+        }
+
+        async Task KeepAliveAsync(AsyncDuplexStreamingCall<SyncRequest, SyncResponse> call, ulong nonce)
         {
             // Keep every accepted slot occupied while later handshakes run, and drain the protocol's echoes.
             using var timer = new PeriodicTimer(ReplicationProtocol.IdleTimeout / 3);
@@ -133,19 +193,137 @@ public sealed class PeerTransportTests
             {
                 do
                 {
-                    await call.RequestStream.WriteAsync(new SyncRequest { KeepAlive = new KeepAlive { Nonce = 7 } }, stop.Token);
-                    await Assert.That(await call.ResponseStream.MoveNext(stop.Token)).IsTrue();
+                    // Publish before sending so a held server write can identify this exact response read.
+                    var read = holdEcho ? new TaskCompletionSource<Task<bool>>(TaskCreationOptions.RunContinuationsAsynchronously) : null;
+                    Volatile.Write(ref echo.Reads[(int)nonce - 1], read);
+                    await WaitForIoAsync(call.RequestStream.WriteAsync(new SyncRequest { KeepAlive = new KeepAlive { Nonce = nonce } }, testCancellation));
+                    stop.Token.ThrowIfCancellationRequested();
+                    var next = call.ResponseStream.MoveNext(testCancellation);
+                    read?.TrySetResult(next);
+                    await WaitForIoAsync(next);
+                    await Assert.That(await next).IsTrue();
                     await Assert.That(call.ResponseStream.Current.FrameCase).IsEqualTo(SyncResponse.FrameOneofCase.KeepAlive);
-                    await Assert.That(call.ResponseStream.Current.KeepAlive.Nonce).IsEqualTo(7UL);
+                    await Assert.That(call.ResponseStream.Current.KeepAlive.Nonce).IsEqualTo(nonce);
                 }
                 while (await timer.WaitForNextTickAsync(stop.Token));
             }
             catch (OperationCanceledException) when (stop.IsCancellationRequested)
             {
             }
-            catch (RpcException error) when (error.StatusCode is StatusCode.Cancelled or StatusCode.Unavailable && stop.IsCancellationRequested)
+            catch (RpcException error) when (error.StatusCode == StatusCode.Cancelled && testCancellation.IsCancellationRequested)
             {
-                // Cancelling a pending read can surface as the HTTP/2 stream's abort (Unavailable) rather than Cancelled.
+            }
+
+            async Task WaitForIoAsync(Task pending)
+            {
+                try
+                {
+                    await pending.WaitAsync(stop.Token);
+                }
+                catch (OperationCanceledException error) when (error.CancellationToken == stop.Token && stop.IsCancellationRequested)
+                {
+                    // Preserve completed I/O even when local cancellation won the wait.
+                    if (pending.IsCompleted)
+                    {
+                        await pending;
+                        return;
+                    }
+
+                    call.Dispose();
+                    try
+                    {
+                        await pending;
+                        return;
+                    }
+                    catch (Exception aborted) when (IsLocalAbort(aborted))
+                    {
+                    }
+                    catch (Exception aborted)
+                    {
+                        // A gRPC upgrade can change the local-abort shape; name it rather than fail as a generic cleanup error.
+                        throw new InvalidOperationException("unrecognized gRPC abort shape or transport failure after local disposal", aborted);
+                    }
+
+                    throw;
+                }
+            }
+
+            bool IsLocalAbort(Exception error)
+            {
+                return call.GetStatus() is { StatusCode: StatusCode.Cancelled, Detail: "gRPC call disposed." } && (error switch
+                {
+                    RpcException { StatusCode: StatusCode.Cancelled, Status.Detail: "gRPC call disposed." } => true,
+                    // gRPC 2.84 maps HTTP/2's local abort IOException to Unavailable; a transport reset has an inner cause.
+                    RpcException { StatusCode: StatusCode.Unavailable, Status.DebugException: IOException { Message: "The request was aborted.", InnerException: null } io } => io.GetType() == typeof(IOException),
+                    IOException { Message: "The request was aborted.", InnerException: null } io => io.GetType() == typeof(IOException),
+                    _ => false,
+                });
+            }
+        }
+    }
+
+    private sealed class HeldKeepAliveEcho : Interceptor
+    {
+        public TaskCompletionSource Pending { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource<Task<bool>> Held { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource<Task<bool>>?[] Reads { get; } = new TaskCompletionSource<Task<bool>>?[(int)ReplicationProtocol.MaxOpenStreams];
+
+        public ulong? FailureNonce { get; init; }
+
+        public bool Hold
+        {
+            get => Volatile.Read(ref field);
+            set => Volatile.Write(ref field, value);
+        }
+
+        public override Task DuplexStreamingServerHandler<TRequest, TResponse>(
+            IAsyncStreamReader<TRequest> requestStream, IServerStreamWriter<TResponse> responseStream,
+            ServerCallContext context, DuplexStreamingServerMethod<TRequest, TResponse> continuation) =>
+            continuation(requestStream, new HeldWriter<TResponse>(responseStream, this, context.CancellationToken), context);
+
+        private sealed class HeldWriter<T>(IServerStreamWriter<T> inner, HeldKeepAliveEcho echo, CancellationToken cancellationToken) : IServerStreamWriter<T>
+        {
+            public WriteOptions? WriteOptions
+            {
+                get => inner.WriteOptions;
+                set => inner.WriteOptions = value;
+            }
+
+            public Task WriteAsync(T message) => WriteAsync(message, CancellationToken.None);
+
+            public async Task WriteAsync(T message, CancellationToken writeCancellation)
+            {
+                if (echo.Hold && message is SyncResponse { FrameCase: SyncResponse.FrameOneofCase.KeepAlive } response)
+                {
+                    using var stop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, writeCancellation);
+                    if (response.KeepAlive.Nonce == echo.FailureNonce)
+                    {
+                        // Fail only after another response write is held and its client read is outstanding.
+                        await echo.Held.Task.WaitAsync(stop.Token);
+                        throw new RpcException(new Status(StatusCode.DataLoss, "injected keep-alive failure"));
+                    }
+
+                    var nonce = response.KeepAlive.Nonce;
+                    if (nonce is 0 or > ReplicationProtocol.MaxOpenStreams || Volatile.Read(ref echo.Reads[(int)nonce - 1]) is not { } published)
+                    {
+                        throw new InvalidOperationException($"keep-alive nonce {nonce} has no published client read");
+                    }
+
+                    var read = await published.Task.WaitAsync(stop.Token);
+                    var held = Task.Delay(Timeout.Infinite, stop.Token);
+                    echo.Held.TrySetResult(read);
+                    if (echo.FailureNonce is null)
+                    {
+                        // Keep the success signal unset when maintenance must win the fault race.
+                        echo.Pending.TrySetResult();
+                    }
+
+                    await held;
+                }
+
+                await inner.WriteAsync(message, writeCancellation);
             }
         }
     }
