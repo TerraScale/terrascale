@@ -550,6 +550,7 @@ public sealed class DataDirectoryTests
     [Arguments("member zero")]
     [Arguments("a short record of another format")]
     [Arguments("a longer record")]
+    [Arguments("a much larger file")]
     public async Task A_replica_identity_this_build_cannot_read_stops_the_start(string problem)
     {
         var dataDirectory = Directory.CreateTempSubdirectory("terrabase-replica-").FullName;
@@ -574,6 +575,10 @@ public sealed class DataDirectoryTests
                     break;
                 case "a short record of another format":
                     await File.WriteAllBytesAsync(path, [2, 1, 0]);
+                    break;
+                case "a much larger file":
+                    // Replaced by something else entirely: refused after reading one byte past a record.
+                    await File.WriteAllBytesAsync(path, [.. await File.ReadAllBytesAsync(path), .. new byte[1 << 20]]);
                     break;
                 default:
                     await File.WriteAllBytesAsync(path, [.. await File.ReadAllBytesAsync(path), 0]);

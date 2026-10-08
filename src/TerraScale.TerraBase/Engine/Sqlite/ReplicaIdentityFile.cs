@@ -36,7 +36,7 @@ internal static class ReplicaIdentityFile
         var id = New();
 
         // An empty file: a first start died between creating it and writing it, so nothing minted under it.
-        if (File.Exists(path) && File.ReadAllBytes(path) is { Length: > 0 } bytes)
+        if (Read(path) is { Length: > 0 } bytes)
         {
             // Every record of this format starts with its format byte, which a torn rewrite cannot change: any other first
             // byte or a longer record is another build's identity, never overwritten.
@@ -122,6 +122,19 @@ internal static class ReplicaIdentityFile
     }
 
     private static byte[] Checksum(ReadOnlySpan<byte> record) => SHA256.HashData(record)[..4];
+
+    // At most one byte past a record, so whatever replaced the file costs no more memory than a record to refuse.
+    private static byte[] Read(string path)
+    {
+        if (!File.Exists(path))
+        {
+            return [];
+        }
+
+        using var file = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.None, 1);
+        var bytes = new byte[Length + 1];
+        return bytes[..file.ReadAtLeast(bytes, bytes.Length, throwOnEndOfStream: false)];
+    }
 
     // One write at offset 0, through to disk. A crash can still tear it: the checksum catches that at the next start.
     private static void Write(string path, ReplicaId id, byte state)
