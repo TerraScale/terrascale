@@ -39,6 +39,20 @@ integration contract (guest accounts, browser origins, device authorization,
 organization permission checks) is in
 [`docs/consumer-integration.md`](docs/consumer-integration.md).
 
+## Authentication rate limits (TS-704)
+
+All token requests have a TerraBase-backed peer-IP admission limit before
+client authentication (`TS_AUTH_RATE_LIMIT`, default 1,000 per minute).
+Hosted and headless sign-in share IP budgets and normalized-email code
+budgets; password reset has a separate redemption budget. Exhaustion returns
+429 and `Retry-After`; unavailable storage returns 503. Unknown emails spend
+the same budget as accounts, and replacing a code does not reset it. Code
+request and issuance budgets both reset on UTC clock-hour boundaries. Socket
+peer addresses are used for hosted/general token limits; forwarding headers
+are ignored, so a proxy shares its budget unless it preserves client addresses.
+See [the budget table](docs/csharp-port.md#limits). Lockout email notices
+are the next TS-704 slice.
+
 ## Target feature inventory
 
 | Area | Target capability |
@@ -141,7 +155,7 @@ nice -n 19 dotnet run --project src/TerraScale.Auth
 | `TS_AUTH_OPERATOR_KEY` | Bearer key that can create instances (`POST /v1/instances`) |
 | `TS_AUTH_LISTEN` | Plain-HTTP listen address with an explicit port (default `http://0.0.0.0:8080`) |
 | `TS_AUTH_ENVIRONMENT` | `Development` waives the audit-signing key requirement and permits a loopback HTTPS TerraBase API origin |
-| `TS_AUTH_RATE_LIMIT` | Management API requests per key per window (default 1000) |
+| `TS_AUTH_RATE_LIMIT` | Management API requests per key and token requests per peer IP per minute, with separate budgets (default 1000) |
 | `TS_AUTH_SMTP_HOST` / `_PORT` / `_USERNAME` / `_PASSWORD` / `_FROM_ADDRESS` | SMTP delivery; host, username, password and from address are all or nothing, port defaults to 587 |
 | `TS_AUTH_SMTP_CHECK_REVOCATION` | `true` (default) or `false`: whether the relay certificate's revocation is checked online; see [Email delivery](#email-delivery-oci) |
 | `TS_AUTH_DASHBOARD_CLIENT_SECRET` | Optional secret of the confidential OIDC client `ts-dashboard`, 32 to 512 characters without whitespace. Required together with the redirect URIs; only OpenIddict's PBKDF2 hash is stored |
@@ -440,7 +454,8 @@ TS-631: send the original sign-up `pending_token` to `email-code/start` to
 resend its verification code without choosing another password or token. All
 headless mail-start routes share a persisted 60-second cooldown per normalized
 email, including unknown addresses; earlier repeats answer 429 with
-`Retry-After: 60`. The existing five-code hourly budget still applies.
+`Retry-After` for the remaining cooldown. The five-code hourly request budget
+is shared with hosted sign-in and applies to unknown emails too.
 
 All of them appear in `/openapi/v1.json` under the `OAuth`, `Sign-in` and
 `Headless` tags. Introspection and device authorization are not served. The

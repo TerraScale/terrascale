@@ -31,7 +31,7 @@ public sealed record SessionRecord(string InstanceId, string UserId, string Toke
 /// <param name="ExpiresAt">Expiry of this code.</param>
 /// <param name="FailedAttempts">Wrong guesses charged against this code.</param>
 /// <param name="Consumed">Set once the code is redeemed.</param>
-/// <param name="WindowStartedAt">Start of the current issue-limit window.</param>
+/// <param name="WindowStartedAt">Timestamp identifying the current UTC clock-hour issue-limit window.</param>
 /// <param name="IssuedInWindow">Codes issued in that window.</param>
 /// <param name="Purpose"><c>password-reset</c> or <c>sign-up</c>; <see langword="null"/> for a sign-in code.</param>
 /// <param name="PasswordHash">A pending sign-up's Argon2id hash, cleared when the code is redeemed.</param>

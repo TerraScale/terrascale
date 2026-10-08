@@ -46,32 +46,45 @@ public sealed class AttemptLimiter(IDocumentStore storage, TimeProvider clock, A
     public Task<bool> TryAcquireAsync(string instanceId, string purpose, string subject, int maximum, CancellationToken cancellationToken) =>
         this.TryAcquireAsync(instanceId, purpose, subject, maximum, DefaultWindow, cancellationToken);
 
+    /// <summary>Charges one attempt; returns whether it was admitted. See <see cref="AcquireAsync(string, string, string, int, TimeSpan, CancellationToken)"/>.</summary>
+    public async Task<bool> TryAcquireAsync(string instanceId, string purpose, string subject, int maximum, TimeSpan window, CancellationToken cancellationToken) =>
+        await this.AcquireAsync(instanceId, purpose, subject, maximum, window, cancellationToken) is null;
+
     /// <summary>
     /// Charges one attempt to <paramref name="subject"/> for <paramref name="purpose"/> in the
-    /// instance. Returns <see langword="false"/> once <paramref name="maximum"/> attempts were
-    /// admitted in the current window. Each distinct subject keeps one bucket document, so the
-    /// subject must be an identifier the service already holds (user, client); a caller that
+    /// instance. Returns <see langword="null"/> when admitted; once <paramref name="maximum"/>
+    /// attempts were admitted, returns the delay to the persisted window's end, rounded up to whole
+    /// seconds (at least one), even when another replica's clock is ahead. Each distinct subject keeps
+    /// one bucket document, so the subject must be an identifier the service already holds (user, client); a caller that
     /// limits by attacker-chosen text must first <see cref="Fold"/> it. Windows are fixed
     /// multiples of <paramref name="window"/> (whole seconds); one purpose must always use the same window.
     /// </summary>
-    public Task<bool> TryAcquireAsync(string instanceId, string purpose, string subject, int maximum, TimeSpan window, CancellationToken cancellationToken) =>
+    public Task<TimeSpan?> AcquireAsync(string instanceId, string purpose, string subject, int maximum, TimeSpan window, CancellationToken cancellationToken) =>
         this.AcquireAsync(instanceId, purpose, subject, maximum, window, cooldown: false, cancellationToken);
+
+    /// <summary>Admits one cooldown attempt; returns whether it was admitted. See <see cref="AcquireCooldownAsync"/>.</summary>
+    public async Task<bool> TryAcquireCooldownAsync(string instanceId, string purpose, string subject, TimeSpan interval, CancellationToken cancellationToken) =>
+        await this.AcquireCooldownAsync(instanceId, purpose, subject, interval, cancellationToken) is null;
 
     /// <summary>
     /// Admits one attempt per elapsed <paramref name="interval"/>, measured from the last admission rather than fixed
-    /// clock boundaries. Uses a separate purpose from fixed windows; attacker-chosen subjects must be folded.
+    /// clock boundaries. Returns <see langword="null"/> when admitted or the remaining delay rounded up to whole seconds (at least one).
+    /// Uses a separate purpose from fixed windows; attacker-chosen subjects must be folded.
     /// </summary>
-    public Task<bool> TryAcquireCooldownAsync(string instanceId, string purpose, string subject, TimeSpan interval, CancellationToken cancellationToken) =>
+    public Task<TimeSpan?> AcquireCooldownAsync(string instanceId, string purpose, string subject, TimeSpan interval, CancellationToken cancellationToken) =>
         this.AcquireAsync(instanceId, purpose, subject, 1, interval, cooldown: true, cancellationToken);
 
-    private async Task<bool> AcquireAsync(string instanceId, string purpose, string subject, int maximum, TimeSpan window, bool cooldown, CancellationToken cancellationToken)
+    private async Task<TimeSpan?> AcquireAsync(string instanceId, string purpose, string subject, int maximum, TimeSpan window, bool cooldown, CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrEmpty(instanceId);
         ArgumentException.ThrowIfNullOrEmpty(purpose);
         ArgumentNullException.ThrowIfNull(subject);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maximum);
-        var windowSeconds = (long)window.TotalSeconds;
+        var windowSeconds = window.Ticks / TimeSpan.TicksPerSecond;
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(windowSeconds, nameof(window));
+        var latestWindow = cooldown
+            ? (DateTimeOffset.MaxValue.UtcTicks - DateTimeOffset.UnixEpoch.UtcTicks - window.Ticks) / TimeSpan.TicksPerMillisecond
+            : DateTimeOffset.MaxValue.ToUnixTimeSeconds() / windowSeconds - 1;
 
         // The address is scoped to the instance; purposes are service-chosen and never contain
         // ':', and the subject comes last.
@@ -89,27 +102,35 @@ public sealed class AttemptLimiter(IDocumentStore storage, TimeProvider clock, A
             {
                 if (await this.store.TryCreateAsync(Collection, instanceId, key, new AttemptBucket(number, 1), cancellationToken))
                 {
-                    return true;
+                    return null;
                 }
 
                 continue;
             }
 
-            if (current.Document is not { Window: >= 0, Used: >= 0 })
+            // Cooldowns store Unix milliseconds; fixed windows store window numbers. Bound each
+            // so its end timestamp is representable before charging anything.
+            if (current.Document is not { Window: >= 0, Used: >= 0 }
+                || current.Document.Window > latestWindow)
             {
-                throw ApiException.Unavailable(new InvalidDataException("A stored attempt bucket holds a negative window or count."));
+                throw ApiException.Unavailable(new InvalidDataException("A stored attempt bucket holds an invalid window timestamp or count."));
             }
 
-            var expired = cooldown ? number - current.Document.Window >= window.TotalMilliseconds : current.Document.Window < number;
+            var expired = cooldown
+                ? (number - current.Document.Window) * TimeSpan.TicksPerMillisecond >= window.Ticks
+                : current.Document.Window < number;
             var bucket = expired ? new AttemptBucket(number, 0) : current.Document;
             if (bucket.Used >= maximum)
             {
-                return false;
+                var end = cooldown
+                    ? DateTimeOffset.FromUnixTimeMilliseconds(bucket.Window) + window
+                    : DateTimeOffset.FromUnixTimeSeconds((bucket.Window + 1) * windowSeconds);
+                return TimeSpan.FromSeconds(Math.Max(1, Math.Ceiling((end - clock.GetUtcNow()).TotalSeconds)));
             }
 
             if (await this.store.TryReplaceAsync(Collection, instanceId, key, bucket with { Used = bucket.Used + 1 }, current.Version, cancellationToken))
             {
-                return true;
+                return null;
             }
         }
 

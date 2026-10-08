@@ -165,6 +165,18 @@ public static partial class OpenApiSetup
                 }
 
                 operation.Responses ??= [];
+                if ((path is "/{slug}/oauth/token" or "/ui/{slug}/sign-in" or "/ui/{slug}/sign-in/verify"
+                    || path.StartsWith("/{slug}/headless/", StringComparison.Ordinal))
+                    && operation.Responses.TryGetValue("429", out var limited) && limited is OpenApiResponse response)
+                {
+                    (response.Headers ??= new Dictionary<string, IOpenApiHeader>(StringComparer.Ordinal))["Retry-After"] = new OpenApiHeader
+                    {
+                        Description = "Minimum delay in whole seconds before retrying a rate-limited request.",
+                        Required = true,
+                        Schema = new OpenApiSchema { Type = JsonSchemaType.Integer, Minimum = "1" },
+                    };
+                }
+
                 if (operation.Responses.Count == 0)
                 {
                     operation.Responses["default"] = new OpenApiResponse

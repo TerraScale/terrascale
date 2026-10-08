@@ -67,7 +67,7 @@ public sealed class HeadlessEmailCodeStartEndpoint(HeadlessAuth headless, IOpenI
         Post("/{slug}/headless/v1/email-code/start");
         Name("headless_email_code_start");
         Summary("Email a sign-in or pending sign-up code");
-        Description("202 whether or not the address has an account or the optional pending_token matches. With the original pending_token, resends a pending sign-up verification code while preserving its password hash and token binding; never revives a consumed sign-up or replaces another sign-up. Without it, only an existing account is mailed a sign-in code. Existing accounts receive sign-in codes regardless of pending_token. Codes work once, for 10 minutes, and die after 5 wrong guesses; at most 5 codes per account or pending sign-up per hour, and a new code replaces the previous one. Redeem at the token endpoint with grant_type=urn:terrascale:params:oauth:grant-type:email-code and the original pending_token for sign-up. Mail-start requests share a persisted 60-second cooldown per normalized email across this route, sign-up and password-reset/start, including unknown addresses and all clients; earlier repeats answer 429 rate_limited with Retry-After: 60.");
+        Description("202 within the shared IP and email budgets, whether or not the address has an account or the optional pending_token matches. With the original pending_token, resends a pending sign-up verification code while preserving its password hash and token binding; never revives a consumed sign-up or replaces another sign-up. Without it, only an existing account is mailed a sign-in code. Existing accounts receive sign-in codes regardless of pending_token. Codes work once, for 10 minutes, and die after 5 wrong guesses; at most 5 codes per account or pending sign-up per UTC clock hour, and a new code replaces the previous one. Redeem at the token endpoint with grant_type=urn:terrascale:params:oauth:grant-type:email-code and the original pending_token for sign-up. Mail-start requests share a persisted 60-second cooldown per normalized email across this route, sign-up and password-reset/start, including unknown addresses and all clients; earlier repeats answer 429 rate_limited with Retry-After in remaining whole seconds. Every normalized email, including unknown addresses, may request 5 codes per UTC clock hour across hosted sign-in, sign-up and password reset; exhaustion answers 429 with Retry-After.");
         this.Document(StatusCodes.Status202Accepted);
     }
 
@@ -87,7 +87,7 @@ public sealed class HeadlessSignUpEndpoint(HeadlessAuth headless, IOpenIddictApp
         Post("/{slug}/headless/v1/sign-up");
         Name("headless_sign_up");
         Summary("Sign up");
-        Description("202 with a pending_token for a valid request within the rate limits, whether or not the address has an account. A new address is mailed a verification code; the account exists only once the code is redeemed at the token endpoint with grant_type=urn:terrascale:params:oauth:grant-type:email-code together with this pending_token, and then has this password. Only the requester holding the token can redeem the code, so nobody can attach a password to someone else's address. A later sign-up of the same address replaces the code and token. An address that already has an account is mailed a sign-in code instead (redeemed the same way; the token is then ignored) and the password is discarded. Mail-start requests share a persisted 60-second cooldown per normalized email across sign-up, email-code/start and password-reset/start, including unknown addresses and all clients; earlier repeats answer 429 rate_limited with Retry-After: 60.");
+        Description("202 with a pending_token for a valid request within the rate limits, whether or not the address has an account. A new address is mailed a verification code; the account exists only once the code is redeemed at the token endpoint with grant_type=urn:terrascale:params:oauth:grant-type:email-code together with this pending_token, and then has this password. Only the requester holding the token can redeem the code, so nobody can attach a password to someone else's address. A later sign-up of the same address replaces the code and token. An address that already has an account is mailed a sign-in code instead (redeemed the same way; the token is then ignored) and the password is discarded. Mail-start requests share a persisted 60-second cooldown per normalized email across sign-up, email-code/start and password-reset/start, including unknown addresses and all clients; earlier repeats answer 429 rate_limited with Retry-After in remaining whole seconds. Every normalized email, including unknown addresses, may request 5 codes per UTC clock hour across hosted sign-in, sign-up and password reset; exhaustion answers 429 with Retry-After.");
         this.Document(StatusCodes.Status202Accepted, typeof(HeadlessSignUpResponse));
     }
 
@@ -124,7 +124,7 @@ public sealed class HeadlessPasswordResetStartEndpoint(HeadlessAuth headless, IO
         Post("/{slug}/headless/v1/password-reset/start");
         Name("headless_password_reset_start");
         Summary("Email a password reset code");
-        Description("202 within the rate limits, whether or not the address has an account. If it has one, mails a six-digit reset code (10 minutes, 5 wrong guesses); it shares the account's limit of 5 codes per hour and replaces any earlier code. Mail-start requests share a persisted 60-second cooldown per normalized email across password-reset/start, email-code/start and sign-up, including unknown addresses and all clients; earlier repeats answer 429 rate_limited with Retry-After: 60.");
+        Description("202 within the rate limits, whether or not the address has an account. If it has one, mails a six-digit reset code (10 minutes, 5 wrong guesses); it shares the account's limit of 5 codes per UTC clock hour and replaces any earlier code. Mail-start requests share a persisted 60-second cooldown per normalized email across password-reset/start, email-code/start and sign-up, including unknown addresses and all clients; earlier repeats answer 429 rate_limited with Retry-After in remaining whole seconds. Every normalized email, including unknown addresses, may request 5 codes per UTC clock hour across hosted sign-in, sign-up and password reset; exhaustion answers 429 with Retry-After.");
         this.Document(StatusCodes.Status202Accepted);
     }
 
@@ -144,7 +144,7 @@ public sealed class HeadlessPasswordResetCompleteEndpoint(HeadlessAuth headless,
         Post("/{slug}/headless/v1/password-reset/complete");
         Name("headless_password_reset_complete");
         Summary("Set a new password with a reset code");
-        Description("204 once the password is set. The user is then signed out everywhere: hosted sessions and every refresh token are refused (access tokens already issued live out their hour). A wrong, expired, used or superseded code and an unknown address all answer 400 invalid_code.");
+        Description("204 once the password is set. The user is then signed out everywhere: hosted sessions and every refresh token are refused (access tokens already issued live out their hour). A wrong, expired, used or superseded code and an unknown address all answer 400 invalid_code. Every normalized email has a separate reset budget of 5 attempts per 15 minutes; exhaustion answers 429 with Retry-After before password hashing or code redemption.");
         this.Document(StatusCodes.Status204NoContent);
     }
 
@@ -247,6 +247,7 @@ public abstract class HeadlessEndpoint<TBody>(IOpenIddictApplicationManager appl
     protected IResult TooMany(TimeSpan wait)
     {
         this.HttpContext.Response.Headers.RetryAfter = ((long)wait.TotalSeconds).ToString(CultureInfo.InvariantCulture);
+        this.HttpContext.Response.Headers.CacheControl = "no-store";
         return Error(StatusCodes.Status429TooManyRequests, "rate_limited", "Too many attempts; retry later.");
     }
 

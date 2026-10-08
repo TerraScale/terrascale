@@ -39,7 +39,7 @@ public sealed record IssuedPasscode(string Email, string Code, DateTimeOffset Ex
 /// current code, whatever its purpose, and each pending sign-up (an email without an account) has its own: it expires
 /// after <see cref="Lifetime"/>, works once, for its purpose only, and dies after <see cref="MaxAttempts"/> wrong
 /// guesses; at most <see cref="MaxIssuesPerWindow"/> codes are issued per user (or pending sign-up) per
-/// <see cref="IssueWindow"/>. Only an HMAC of the code, keyed from the master key and bound to its instance and user, is
+/// fixed UTC clock hour. Only an HMAC of the code, keyed from the master key and bound to its instance and user, is
 /// stored, so a database copy alone cannot be brute-forced offline. A guess at a live code is answered only after the
 /// conditional write that charges it (or consumes the code) wins, so concurrent guesses cannot exceed the attempt limit
 /// and concurrent redemptions have one winner. Callers authorize the instance, deliver the code, and answer every
@@ -56,7 +56,7 @@ public sealed class Passcodes(AuthStore store, Users users, Sessions sessions, T
     /// <summary>How long a code works.</summary>
     public static readonly TimeSpan Lifetime = TimeSpan.FromMinutes(10);
 
-    /// <summary>The issue-limit window.</summary>
+    /// <summary>The issue-limit window, aligned to UTC clock hours.</summary>
     public static readonly TimeSpan IssueWindow = TimeSpan.FromHours(1);
 
     private const string SignUpKey = "sign-up:";
@@ -134,7 +134,9 @@ public sealed class Passcodes(AuthStore store, Users users, Sessions sessions, T
         }
 
         var now = clock.GetUtcNow();
-        var window = previous.WindowStartedAt + IssueWindow > now ? previous : null;
+        var windowStart = IssueWindowStart(now);
+        var previousWindowStart = IssueWindowStart(previous.WindowStartedAt);
+        var window = previousWindowStart >= windowStart ? previous : null;
         if (window?.IssuedInWindow >= MaxIssuesPerWindow)
         {
             return null;
@@ -154,7 +156,7 @@ public sealed class Passcodes(AuthStore store, Users users, Sessions sessions, T
             CodeHash = digest,
             ExpiresAt = now + Lifetime,
             FailedAttempts = 0,
-            WindowStartedAt = window?.WindowStartedAt ?? now,
+            WindowStartedAt = window is null ? windowStart : previousWindowStart,
             IssuedInWindow = (window?.IssuedInWindow ?? 0) + 1,
         };
         return await store.CompareAndPutAsync(AuthStore.PasscodeCollection, instanceId, key,
@@ -258,13 +260,19 @@ public sealed class Passcodes(AuthStore store, Users users, Sessions sessions, T
         _ => null,
     };
 
+    // Every timestamp, including existing non-rounded records, identifies its containing UTC clock hour.
+    private static DateTimeOffset IssueWindowStart(DateTimeOffset timestamp) =>
+        new(timestamp.UtcTicks / IssueWindow.Ticks * IssueWindow.Ticks, TimeSpan.Zero);
+
     private async Task<IssuedPasscode?> IssueAsync(string instanceId, string key, string userId, string email, long authEpoch, PasscodePurpose purpose,
         string? passwordHash, string? pendingTokenHash, CancellationToken cancellationToken)
     {
         var now = clock.GetUtcNow();
         var document = await store.GetAsync(AuthStore.PasscodeCollection, instanceId, key, cancellationToken).ConfigureAwait(false);
         var previous = document?.Document.Deserialize(IdentityJson.Default.PasscodeRecord);
-        var window = previous is not null && previous.WindowStartedAt + IssueWindow > now ? previous : null;
+        var windowStart = IssueWindowStart(now);
+        var previousWindowStart = previous is null ? windowStart : IssueWindowStart(previous.WindowStartedAt);
+        var window = previousWindowStart >= windowStart ? previous : null;
         if (window?.IssuedInWindow >= MaxIssuesPerWindow)
         {
             return null;
@@ -272,7 +280,7 @@ public sealed class Passcodes(AuthStore store, Users users, Sessions sessions, T
 
         var code = Tokens.RandomDigits(6)!;
         var passcode = new PasscodeRecord(instanceId, userId, email, this.Digest(instanceId, userId, code), authEpoch, now + Lifetime,
-            FailedAttempts: 0, Consumed: false, window?.WindowStartedAt ?? now, (window?.IssuedInWindow ?? 0) + 1, StoredPurpose(purpose), passwordHash, pendingTokenHash);
+            FailedAttempts: 0, Consumed: false, window is null ? windowStart : previousWindowStart, (window?.IssuedInWindow ?? 0) + 1, StoredPurpose(purpose), passwordHash, pendingTokenHash);
         var record = JsonSerializer.SerializeToElement(passcode, IdentityJson.Default.PasscodeRecord);
         bool written;
         if (document is null)

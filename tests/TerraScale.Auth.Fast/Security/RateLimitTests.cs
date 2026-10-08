@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Net;
 using System.Net.Http.Json;
 using System.Security.Cryptography;
@@ -16,8 +17,9 @@ using TerraScale.DotNet.TerraBase;
 namespace TerraScale.Auth.Fast.Security;
 
 /// <summary>
-/// The shared attempt limiter: fixed one-minute windows in TerraBase, scoped by instance, purpose
-/// and subject. The test route admits an attempt with 200 or refuses it with 429.
+/// The shared attempt limiter: fixed windows and elapsed cooldowns in TerraBase, scoped by instance, purpose
+/// and subject. Test routes admit an attempt with 200 or refuse it with 429; the decision route
+/// also reports the persisted expiry's remaining delay as Retry-After.
 /// </summary>
 [ClassDataSource<TerraBaseFixture>(Shared = SharedType.PerTestSession)]
 public sealed class RateLimitTests(TerraBaseFixture fixture)
@@ -47,10 +49,28 @@ public sealed class RateLimitTests(TerraBaseFixture fixture)
 
             services.AddSingleton(clock);
         },
-        routes: app => app.MapPost("/__test/attempts/{instance}/{purpose}/{subject}", async (string instance, string purpose, string subject, int? maximum, AttemptLimiter limiter, CancellationToken cancellationToken) =>
-            await limiter.TryAcquireAsync(instance, purpose, subject, maximum ?? Maximum, cancellationToken)
-                ? Results.Ok()
-                : Results.StatusCode(StatusCodes.Status429TooManyRequests)));
+        routes: app =>
+        {
+            app.MapPost("/__test/attempts/{instance}/{purpose}/{subject}", async (string instance, string purpose, string subject, int? maximum, bool? cooldown, AttemptLimiter limiter, CancellationToken cancellationToken) =>
+                await (cooldown == true
+                    ? limiter.TryAcquireCooldownAsync(instance, purpose, subject, TimeSpan.FromMinutes(1), cancellationToken)
+                    : limiter.TryAcquireAsync(instance, purpose, subject, maximum ?? Maximum, cancellationToken))
+                    ? Results.Ok()
+                    : Results.StatusCode(StatusCodes.Status429TooManyRequests));
+            app.MapPost("/__test/decisions/{instance}/{purpose}/{subject}", async (string instance, string purpose, string subject, int? windowSeconds, bool? cooldown, HttpContext context, AttemptLimiter limiter, CancellationToken cancellationToken) =>
+            {
+                var decision = cooldown == true
+                    ? await limiter.AcquireCooldownAsync(instance, purpose, subject, TimeSpan.FromSeconds(windowSeconds ?? 60), cancellationToken)
+                    : await limiter.AcquireAsync(instance, purpose, subject, Maximum, TimeSpan.FromSeconds(windowSeconds ?? 60), cancellationToken);
+                if (decision is not { } retryAfter)
+                {
+                    return Results.Ok();
+                }
+
+                context.Response.Headers.RetryAfter = ((long)retryAfter.TotalSeconds).ToString(CultureInfo.InvariantCulture);
+                return Results.StatusCode(StatusCodes.Status429TooManyRequests);
+            });
+        });
 
     [Test]
     public async Task Attempts_are_refused_after_the_maximum_until_the_next_window()
@@ -67,6 +87,109 @@ public sealed class RateLimitTests(TerraBaseFixture fixture)
         await Assert.That(string.Join(",", admitted)).IsEqualTo("True,True,True,False,False");
         await Assert.That(stillLimited).IsFalse();
         await Assert.That(string.Join(",", nextWindow)).IsEqualTo("True,True,True,False");
+    }
+
+    [Test]
+    [Arguments(60)]
+    [Arguments(900)]
+    public async Task Decisions_report_the_persisted_window_expiry_without_extending_it(int windowSeconds)
+    {
+        var target = await SharedStateTarget.CreateAsync(fixture);
+        var clock = new ManualClock(Start);
+        await using var server = await StartAsync(target, clock);
+
+        for (var attempt = 0; attempt < Maximum; attempt++)
+        {
+            await Assert.That(await DecisionAsync(server, "ins_a", "sign-in", "user_1", windowSeconds)).IsNull();
+        }
+
+        var full = (await target.Database.ListDocumentsAsync(AttemptLimiter.Collection)).Items.Single();
+        await Assert.That(full.Document.GetProperty("window").GetInt64()).IsEqualTo(Start.ToUnixTimeSeconds() / windowSeconds);
+        await Assert.That(full.Document.GetProperty("used").GetInt32()).IsEqualTo(Maximum);
+        await Assert.That(await DecisionAsync(server, "ins_a", "sign-in", "user_1", windowSeconds)).IsEqualTo(TimeSpan.FromSeconds(windowSeconds - 5));
+
+        // Refusals leave the stored window unchanged; the final half-second rounds up to one.
+        clock.Advance(TimeSpan.FromSeconds(windowSeconds - 5) - TimeSpan.FromMilliseconds(500));
+        await Assert.That(await DecisionAsync(server, "ins_a", "sign-in", "user_1", windowSeconds)).IsEqualTo(TimeSpan.FromSeconds(1));
+        var unchanged = await target.Database.GetDocumentAsync(AttemptLimiter.Collection, full.Id);
+        await Assert.That(unchanged!.Version).IsEqualTo(full.Version);
+
+        clock.Advance(TimeSpan.FromMilliseconds(500));
+        await Assert.That(await DecisionAsync(server, "ins_a", "sign-in", "user_1", windowSeconds)).IsNull();
+        var renewed = (await target.Database.GetDocumentAsync(AttemptLimiter.Collection, full.Id))!;
+        await Assert.That(renewed.Document.GetProperty("window").GetInt64()).IsEqualTo(full.Document.GetProperty("window").GetInt64() + 1);
+        await Assert.That(renewed.Document.GetProperty("used").GetInt32()).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task Decisions_wait_for_an_ahead_of_clock_bucket_to_expire()
+    {
+        var target = await SharedStateTarget.CreateAsync(fixture);
+        var behindClock = new ManualClock(Start);
+        await using var ahead = await StartAsync(target, new ManualClock(Start.AddMinutes(1)));
+        await using var behind = await StartAsync(target, behindClock);
+
+        await AttemptsAsync(ahead, "ins_a", "sign-in", "user_1", Maximum - 1);
+        await Assert.That(await DecisionAsync(behind, "ins_a", "sign-in", "user_1")).IsNull();
+        await Assert.That(await DecisionAsync(behind, "ins_a", "sign-in", "user_1")).IsEqualTo(TimeSpan.FromSeconds(115));
+        await Assert.That(await DecisionAsync(ahead, "ins_a", "sign-in", "user_1")).IsEqualTo(TimeSpan.FromSeconds(55));
+
+        // Catching up to the persisted window's start still does not renew its budget.
+        behindClock.Advance(TimeSpan.FromMinutes(1));
+        await Assert.That(await DecisionAsync(behind, "ins_a", "sign-in", "user_1")).IsEqualTo(TimeSpan.FromSeconds(55));
+        behindClock.Advance(TimeSpan.FromSeconds(55));
+        await Assert.That(await DecisionAsync(behind, "ins_a", "sign-in", "user_1")).IsNull();
+    }
+
+    [Test]
+    public async Task Cooldown_decisions_report_elapsed_remaining_time_without_extending_it()
+    {
+        var target = await SharedStateTarget.CreateAsync(fixture);
+        var start = Start.AddSeconds(55).AddMilliseconds(-1);
+        var clock = new ManualClock(start);
+        await using var server = await StartAsync(target, clock);
+
+        await Assert.That(await AttemptAsync(server, "ins_a", "mail-cooldown", "user_1", cooldown: true)).IsTrue();
+        var full = (await target.Database.ListDocumentsAsync(AttemptLimiter.Collection)).Items.Single();
+        await Assert.That(full.Document.GetProperty("window").GetInt64()).IsEqualTo(start.ToUnixTimeMilliseconds());
+        await Assert.That(await DecisionAsync(server, "ins_a", "mail-cooldown", "user_1", cooldown: true)).IsEqualTo(TimeSpan.FromSeconds(60));
+
+        // Crossing a fixed minute boundary does not reset an elapsed cooldown.
+        clock.Advance(TimeSpan.FromMilliseconds(1));
+        await Assert.That(await DecisionAsync(server, "ins_a", "mail-cooldown", "user_1", cooldown: true)).IsEqualTo(TimeSpan.FromSeconds(60));
+        clock.Advance(TimeSpan.FromMilliseconds(59499));
+        await Assert.That(await DecisionAsync(server, "ins_a", "mail-cooldown", "user_1", cooldown: true)).IsEqualTo(TimeSpan.FromSeconds(1));
+        var unchanged = await target.Database.GetDocumentAsync(AttemptLimiter.Collection, full.Id);
+        await Assert.That(unchanged!.Version).IsEqualTo(full.Version);
+
+        clock.Advance(TimeSpan.FromMilliseconds(500));
+        await Assert.That(await DecisionAsync(server, "ins_a", "mail-cooldown", "user_1", cooldown: true)).IsNull();
+        var renewed = (await target.Database.GetDocumentAsync(AttemptLimiter.Collection, full.Id))!;
+        await Assert.That(renewed.Document.GetProperty("window").GetInt64()).IsEqualTo(start.AddMinutes(1).ToUnixTimeMilliseconds());
+        await Assert.That(renewed.Document.GetProperty("used").GetInt32()).IsEqualTo(1);
+        await Assert.That(await AttemptAsync(server, "ins_a", "mail-cooldown", "user_1", cooldown: true)).IsFalse();
+    }
+
+    [Test]
+    public async Task Cooldown_decisions_wait_for_an_ahead_of_clock_admission_to_expire()
+    {
+        var target = await SharedStateTarget.CreateAsync(fixture);
+        var behindClock = new ManualClock(Start);
+        await using var ahead = await StartAsync(target, new ManualClock(Start.AddMinutes(1)));
+        await using var behind = await StartAsync(target, behindClock);
+
+        await Assert.That(await DecisionAsync(ahead, "ins_a", "mail-cooldown", "user_1", cooldown: true)).IsNull();
+        await Assert.That(await DecisionAsync(behind, "ins_a", "mail-cooldown", "user_1", cooldown: true)).IsEqualTo(TimeSpan.FromSeconds(120));
+        await Assert.That(await DecisionAsync(ahead, "ins_a", "mail-cooldown", "user_1", cooldown: true)).IsEqualTo(TimeSpan.FromSeconds(60));
+
+        // Catching up to the last admission still leaves the entire elapsed interval.
+        behindClock.Advance(TimeSpan.FromMinutes(1));
+        await Assert.That(await DecisionAsync(behind, "ins_a", "mail-cooldown", "user_1", cooldown: true)).IsEqualTo(TimeSpan.FromSeconds(60));
+        behindClock.Advance(TimeSpan.FromMilliseconds(59500));
+        await Assert.That(await DecisionAsync(behind, "ins_a", "mail-cooldown", "user_1", cooldown: true)).IsEqualTo(TimeSpan.FromSeconds(1));
+        behindClock.Advance(TimeSpan.FromMilliseconds(500));
+        await Assert.That(await DecisionAsync(behind, "ins_a", "mail-cooldown", "user_1", cooldown: true)).IsNull();
+        await Assert.That(await DecisionAsync(ahead, "ins_a", "mail-cooldown", "user_1", cooldown: true)).IsEqualTo(TimeSpan.FromSeconds(120));
     }
 
     [Test]
@@ -192,20 +315,34 @@ public sealed class RateLimitTests(TerraBaseFixture fixture)
     }
 
     [Test]
-    [Arguments("used")]
-    [Arguments("window")]
-    [Arguments("negative-used")]
-    [Arguments("negative-window")]
-    public async Task A_malformed_stored_bucket_admits_nothing(string damage)
+    [Arguments("used", false)]
+    [Arguments("window", false)]
+    [Arguments("negative-used", false)]
+    [Arguments("negative-window", false)]
+    [Arguments("overflow-window", false)]
+    [Arguments("out-of-range-window", false)]
+    [Arguments("used", true)]
+    [Arguments("window", true)]
+    [Arguments("negative-used", true)]
+    [Arguments("negative-window", true)]
+    [Arguments("overflow-window", true)]
+    [Arguments("out-of-range-window", true)]
+    public async Task A_malformed_stored_bucket_admits_nothing(string damage, bool cooldown)
     {
         var target = await SharedStateTarget.CreateAsync(fixture);
         await using var server = await StartAsync(target, new ManualClock(Start));
-        using var created = await server.Client.PostAsync("/__test/attempts/ins_a/sign-in/user_1", null);
+        using var created = await server.Client.PostAsync($"/__test/attempts/ins_a/sign-in/user_1?cooldown={cooldown}", null);
 
-        // Storage-level damage: a member removed, or a negative count/window.
+        // Storage-level damage: missing members, negative values, or an unrepresentable end.
         var stored = (await target.Database.ListDocumentsAsync(AttemptLimiter.Collection)).Items.Single();
         var bucket = JsonNode.Parse(stored.Document.GetRawText())!.AsObject();
-        if (damage.StartsWith("negative-", StringComparison.Ordinal))
+        if (damage is "overflow-window" or "out-of-range-window")
+        {
+            bucket["window"] = damage == "overflow-window" ? long.MaxValue : cooldown
+                ? DateTimeOffset.MaxValue.AddMinutes(-1).ToUnixTimeMilliseconds() + 1
+                : DateTimeOffset.MaxValue.ToUnixTimeSeconds() / 60;
+        }
+        else if (damage.StartsWith("negative-", StringComparison.Ordinal))
         {
             bucket[damage["negative-".Length..]] = -1;
         }
@@ -215,12 +352,17 @@ public sealed class RateLimitTests(TerraBaseFixture fixture)
         }
 
         await target.Database.PutDocumentAsync(AttemptLimiter.Collection, stored.Id, JsonSerializer.SerializeToElement(bucket), TerraBasePrecondition.Matches(stored.Version));
-        using var attempt = await server.Client.PostAsync("/__test/attempts/ins_a/sign-in/user_1", null);
+        var damaged = await target.Database.GetDocumentAsync(AttemptLimiter.Collection, stored.Id);
+        using var attempt = await server.Client.PostAsync($"/__test/attempts/ins_a/sign-in/user_1?cooldown={cooldown}", null);
+        using var decision = await server.Client.PostAsync($"/__test/decisions/ins_a/sign-in/user_1?cooldown={cooldown}", null);
         var body = await attempt.Content.ReadFromJsonAsync<JsonElement>();
 
         await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(attempt.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+        await Assert.That(decision.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
         await Assert.That(body.GetProperty("error").GetProperty("code").GetString()).IsEqualTo("temporarily_unavailable");
+        var unchanged = await target.Database.GetDocumentAsync(AttemptLimiter.Collection, stored.Id);
+        await Assert.That(unchanged!.Version).IsEqualTo(damaged!.Version);
     }
 
     [Test]
@@ -287,9 +429,20 @@ public sealed class RateLimitTests(TerraBaseFixture fixture)
         }
     }
 
-    private static async Task<bool> AttemptAsync(AuthTestServer server, string instance, string purpose, string subject)
+    private static async Task<TimeSpan?> DecisionAsync(AuthTestServer server, string instance, string purpose, string subject, int windowSeconds = 60, bool cooldown = false)
     {
-        using var response = await server.Client.PostAsync($"/__test/attempts/{instance}/{purpose}/{subject}", null);
+        using var response = await server.Client.PostAsync($"/__test/decisions/{instance}/{purpose}/{subject}?windowSeconds={windowSeconds}&cooldown={cooldown}", null);
+        return response.StatusCode switch
+        {
+            HttpStatusCode.OK => null,
+            HttpStatusCode.TooManyRequests => response.Headers.RetryAfter?.Delta ?? throw new InvalidOperationException("A refusal must include Retry-After."),
+            var other => throw new InvalidOperationException($"unexpected status {other}"),
+        };
+    }
+
+    private static async Task<bool> AttemptAsync(AuthTestServer server, string instance, string purpose, string subject, bool cooldown = false)
+    {
+        using var response = await server.Client.PostAsync($"/__test/attempts/{instance}/{purpose}/{subject}?cooldown={cooldown}", null);
         return response.StatusCode switch
         {
             HttpStatusCode.OK => true,

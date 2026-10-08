@@ -104,6 +104,7 @@ public static partial class App
         }
 
         app.UseMiddleware<ErrorEnvelopeMiddleware>();
+        app.UseMiddleware<TokenRateLimitMiddleware>();
         // OpenIddict answers discovery, JWKS and protocol errors here and validates passthrough requests first.
         app.UseAuthentication();
         app.MapTerraScaleEndpoints();

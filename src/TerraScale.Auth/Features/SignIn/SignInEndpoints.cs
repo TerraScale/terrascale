@@ -1,5 +1,8 @@
+using System.Globalization;
 using TerraScale.Auth.Configuration;
+using TerraScale.Auth.Contracts;
 using TerraScale.Auth.Features.Email;
+using TerraScale.Auth.Features.Headless;
 using TerraScale.Auth.Features.Identity;
 using TerraScale.Auth.Features.Oidc;
 using TerraScale.Auth.Features.Ui;
@@ -40,7 +43,7 @@ public sealed class SignInPageEndpoint : EndpointWithoutRequest<IResult>
 /// <c>POST /ui/{slug}/sign-in</c>: emails a code when the address has an account. The page and its timing are the same
 /// either way: <see cref="SignInMail"/> delivers after the response.
 /// </summary>
-public sealed class RequestPasscodeEndpoint(Passcodes passcodes, SignInMail mail, AuthOptions options) : EndpointWithoutRequest<IResult>
+public sealed class RequestPasscodeEndpoint(Passcodes passcodes, SignInMail mail, HeadlessAuth headless, AuthOptions options) : EndpointWithoutRequest<IResult>
 {
     /// <inheritdoc />
     public override void Configure()
@@ -48,11 +51,13 @@ public sealed class RequestPasscodeEndpoint(Passcodes passcodes, SignInMail mail
         Post("/ui/{slug}/sign-in");
         Name("ui_sign_in_request_code");
         Summary("Email a sign-in code");
-        Description("Same-origin form post (the Origin header must be the public origin). The response never reveals whether the address has an account. At most 5 codes per account per hour; a new code replaces the previous one.");
+        Description("Same-origin form post (the Origin header must be the public origin). The response never reveals whether the address has an account. Shared hosted/headless limits: 30 calls per IP per minute, 10 mail calls per IP per 15 minutes, and 5 mail calls per normalized email per hour, including unknown emails. IPv6 is grouped per /64 and additionally per /48 at four times the IP budget. Exhaustion answers 429 with Retry-After. A new code replaces the previous one.");
         Tags("Sign-in");
         Accepts<SignInForm>("application/x-www-form-urlencoded");
         Produces<string>(StatusCodes.Status200OK, "text/html");
         Produces<string>(StatusCodes.Status403Forbidden, "text/html");
+        Produces<string>(StatusCodes.Status429TooManyRequests, "text/html");
+        Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
         AllowAnonymous();
     }
 
@@ -65,6 +70,17 @@ public sealed class RequestPasscodeEndpoint(Passcodes passcodes, SignInMail mail
         }
 
         var address = form.Email?.Trim() ?? string.Empty;
+        if (HeadlessAuth.Subject(this.HttpContext.Connection.RemoteIpAddress?.ToString()) is not { } ip)
+        {
+            throw ApiException.Unavailable();
+        }
+
+        if ((await headless.LimitIpAsync(ip, mails: true, cancellationToken)
+            ?? await headless.LimitCodeAsync(address, PasscodePurpose.SignIn, issuing: true, cancellationToken)) is { } wait)
+        {
+            return SignInFlow.Limited(this.HttpContext, SignInStep.Email, wait, address, SignInFlow.SafeNext(form.Next));
+        }
+
         if (await passcodes.RequestAsync(OidcIssuer.InstanceId, address, cancellationToken) is { } issued)
         {
             mail.Enqueue(issued, AuthEmails.Locale(this.HttpContext.Request.Headers.AcceptLanguage));
@@ -78,7 +94,7 @@ public sealed class RequestPasscodeEndpoint(Passcodes passcodes, SignInMail mail
 /// <c>POST /ui/{slug}/sign-in/verify</c>: redeems the code, opens a fresh session and sets the session cookie, then
 /// resumes the authorization request.
 /// </summary>
-public sealed class VerifyPasscodeEndpoint(Passcodes passcodes, Sessions sessions, AuthOptions options) : EndpointWithoutRequest<IResult>
+public sealed class VerifyPasscodeEndpoint(Passcodes passcodes, Sessions sessions, HeadlessAuth headless, AuthOptions options) : EndpointWithoutRequest<IResult>
 {
     /// <inheritdoc />
     public override void Configure()
@@ -86,12 +102,14 @@ public sealed class VerifyPasscodeEndpoint(Passcodes passcodes, Sessions session
         Post("/ui/{slug}/sign-in/verify");
         Name("ui_sign_in_verify_code");
         Summary("Sign in with an emailed code");
-        Description("Same-origin form post. A code works once, for 10 minutes, and dies after 5 wrong guesses. Success sets the tsauth_session cookie (Secure, HttpOnly, SameSite=Lax) and continues to next.");
+        Description("Same-origin form post. A code works once, for 10 minutes, and dies after 5 wrong guesses. Hosted and headless sign-in share 30 calls per IP per minute and 5 attempts per normalized email per 15 minutes, including unknown emails and replaced codes; exhaustion answers 429 with Retry-After. Success sets the tsauth_session cookie (Secure, HttpOnly, SameSite=Lax) and continues to next.");
         Tags("Sign-in");
         Accepts<SignInForm>("application/x-www-form-urlencoded");
         Produces<string>(StatusCodes.Status200OK, "text/html");
         Produces<string>(StatusCodes.Status401Unauthorized, "text/html");
         Produces<string>(StatusCodes.Status403Forbidden, "text/html");
+        Produces<string>(StatusCodes.Status429TooManyRequests, "text/html");
+        Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
         AllowAnonymous();
     }
 
@@ -105,6 +123,17 @@ public sealed class VerifyPasscodeEndpoint(Passcodes passcodes, Sessions session
 
         var address = form.Email?.Trim() ?? string.Empty;
         var next = SignInFlow.SafeNext(form.Next);
+        if (HeadlessAuth.Subject(this.HttpContext.Connection.RemoteIpAddress?.ToString()) is not { } ip)
+        {
+            throw ApiException.Unavailable();
+        }
+
+        if ((await headless.LimitIpAsync(ip, mails: false, cancellationToken)
+            ?? await headless.LimitCodeAsync(address, PasscodePurpose.SignIn, issuing: false, cancellationToken)) is { } wait)
+        {
+            return SignInFlow.Limited(this.HttpContext, SignInStep.Code, wait, address, next);
+        }
+
         if (await passcodes.VerifyAsync(OidcIssuer.InstanceId, address, form.Code ?? string.Empty, cancellationToken) is not { } session)
         {
             return SignInPageModel.Render(this.HttpContext,
@@ -121,6 +150,15 @@ public sealed class VerifyPasscodeEndpoint(Passcodes passcodes, Sessions session
 /// <summary>Checks shared by the sign-in forms.</summary>
 internal static class SignInFlow
 {
+    public static IResult Limited(HttpContext context, SignInStep step, TimeSpan wait, string email, string? next)
+    {
+        var retryAfter = ((long)wait.TotalSeconds).ToString(CultureInfo.InvariantCulture);
+        context.Response.Headers.RetryAfter = retryAfter;
+        context.Response.Headers.CacheControl = "no-store";
+        return SignInPageModel.Render(context,
+            new SignInPageModel(step, OidcIssuer.Slug, email, next, $"Too many attempts. Try again in {retryAfter} seconds."), StatusCodes.Status429TooManyRequests);
+    }
+
     public static bool WrongSlug(HttpContext context) => !string.Equals(context.GetRouteValue("slug") as string, OidcIssuer.Slug, StringComparison.Ordinal);
 
     /// <summary>Only this issuer's authorization endpoint may be resumed, as a same-origin path.</summary>

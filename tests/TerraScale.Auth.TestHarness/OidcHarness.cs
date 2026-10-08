@@ -155,12 +155,12 @@ public sealed class OidcHarness : IAsyncDisposable
     }
 
     /// <summary>Another replica on this harness's database and master key; the caller disposes it.</summary>
-    public Task<AuthTestServer> StartReplicaAsync(Action<Dictionary<string, string>>? settings = null) =>
+    public Task<AuthTestServer> StartReplicaAsync(Action<Dictionary<string, string>>? settings = null, TimeProvider? clock = null) =>
         StartServerAsync(this.fixture, this.Tenant, this.Email, values =>
         {
             values["master-key"] = this.masterKey;
             settings?.Invoke(values);
-        });
+        }, clock: clock);
 
     /// <summary>Another replica bound to the same database.</summary>
     public static Task<AuthTestServer> StartServerAsync(TerraBaseFixture fixture, TerraBaseTestTenant tenant, CapturingEmailSender email, Action<Dictionary<string, string>>? settings = null,

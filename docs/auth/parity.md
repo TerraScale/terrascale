@@ -21,7 +21,7 @@ Nothing here implies acceptance against a live TerraBase deployment.
 | Email links, hosted sign-up and recovery pages, management users/sessions/keys | TS-432 design (not in TS-490/TS-491/TS-582) | Not implemented |
 | Auth email templates, branding and copy API | TS-583 | Served: HTML + plain-text emails in `en` and `pt-BR` for every kind (the sign-in code, email verification and password reset are sent today), and `/v1/{slug}/email/*` for the `ts-dashboard` client: branding, per-kind copy with `{{ name }}` placeholders only, previews, rate-limited test sends, versions and restore. Fast tests cover authentication, validation, encoding, conflicts under concurrent saves, rollback, snapshots of every kind and the next code email using the saved branding. Sender domains (custom From addresses with OCI DKIM) are not implemented |
 | OAuth 2.0/OIDC provider on OpenIddict: authorization code with S256 PKCE, rotating refresh tokens, discovery, JWKS, userinfo, RP-initiated logout | TS-491 (TS-433 design) | Served for one issuer, `{public origin}/terrascale`, and the `ts-dashboard` client. ES256 access tokens (`at+jwt`, configured audiences, email claims) and identity tokens from the key ring; client credentials for configured service clients; exactly-once code and refresh redemption with reuse revocation. Fast test covers sign-in, code redemption, token verification with IdentityModel, userinfo and identity-token rejection (see below) |
-| Introspection, per-instance issuers, client management API, token pruning, rate limits on the code and refresh grants | TS-433 design (not in TS-491) | Not implemented |
+| Introspection, per-instance issuers, client management API, token pruning | TS-433 design (not in TS-491) | Not implemented; TS-704 adds peer-IP admission limits on every token grant and IP/email limits on hosted sign-in |
 | Device flow, guest accounts, browser CORS | TS-495 (TS-433 design) | Not implemented |
 | MFA (TOTP, recovery codes, step-up) | TS-434 | Not yet ported; email passcodes moved to TS-490 |
 | Passkeys | TS-435 | Not yet ported |
@@ -158,10 +158,10 @@ yields two sessions. Unknown emails write nothing.
 Differences from Rust: Rust stored SHA-256 of the code and had a 30-second resend
 throttle. C# stores the keyed HMAC and uses the hourly issue cap instead.
 
-Per-user limits live on the passcode document. The hosted sign-in routes have
-no per-client or per-route limit; the TS-488 `AttemptLimiter` limits only the
-TS-582 headless API. They give the same response whether or not
-an account exists and send email after the response.
+Per-code limits live on the passcode document. TS-704 adds shared IP and
+normalized-email budgets to hosted and headless sign-in through the TerraBase
+attempt limiter, including unknown emails. Code replacement never resets the
+email budget. Exceeding a budget returns 429 with Retry-After.
 
 `AuthStore.ProvisionAsync` now also creates `users`, `sessions` and
 `passcodes`, and `/readyz` requires them: a database provisioned before TS-490
@@ -200,7 +200,7 @@ Client credentials are served for configured service clients only.
 Not implemented: introspection, device flow, guest
 accounts, CORS, forced reauthentication for `prompt=login` or
 `max_age`, per-instance issuers, token and authorization
-pruning, and a rate limit on the code and refresh grants. After sign-out everywhere or logout,
+pruning. TS-704 adds peer-IP admission limits on every token request. After sign-out everywhere or logout,
 access tokens already issued stay valid until they expire (at most 1 hour).
 The [port guide](csharp-port.md#openid-connect-ts-491) has the details.
 

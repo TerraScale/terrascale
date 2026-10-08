@@ -57,6 +57,12 @@ public sealed partial class HeadlessAuth(Users users, Passcodes passcodes, Passw
     /// <summary>Minimum interval between mail-start requests for one normalized email, shared across routes and replicas.</summary>
     public static readonly TimeSpan MailCooldown = TimeSpan.FromSeconds(60);
 
+    /// <summary>Code redemption attempts per email, shared by hosted and headless sign-in.</summary>
+    public const int CodePerEmail = Passcodes.MaxAttempts;
+
+    /// <summary>The code budget's window; password reset has its own budget.</summary>
+    public static readonly TimeSpan CodeWindow = TimeSpan.FromMinutes(15);
+
     private static readonly TimeSpan IpWindow = TimeSpan.FromMinutes(1);
 
     /// <summary>
@@ -86,7 +92,7 @@ public sealed partial class HeadlessAuth(Users users, Passcodes passcodes, Passw
             return OidcResults.Forbid(Errors.InvalidRequest, "email, ip_address and the grant's password or code are required; ip_address is the end user's IP address.");
         }
 
-        if (await this.LimitAsync(ip, mails: false, cancellationToken) is { } wait)
+        if (await this.LimitIpAsync(ip, mails: false, cancellationToken) is { } wait)
         {
             return TooMany(wait);
         }
@@ -97,16 +103,21 @@ public sealed partial class HeadlessAuth(Users users, Passcodes passcodes, Passw
         {
             var normalized = Users.NormalizeEmail(email);
             if (normalized is not null
-                && !await limiter.TryAcquireAsync(OidcIssuer.InstanceId, "headless-password-email", limiter.Fold(normalized), PasswordPerEmail, PasswordWindow, cancellationToken))
+                && await limiter.AcquireAsync(OidcIssuer.InstanceId, "headless-password-email", limiter.Fold(normalized), PasswordPerEmail, PasswordWindow, cancellationToken) is { } passwordWait)
             {
                 LogLimited(logger, "headless-password-email");
-                return TooMany(PasswordWindow);
+                return TooMany(passwordWait);
             }
 
             user = normalized is null ? null : await this.CheckPasswordAsync(normalized, secret, cancellationToken);
         }
         else
         {
+            if (await this.LimitCodeAsync(email, PasscodePurpose.SignIn, issuing: false, cancellationToken) is { } codeWait)
+            {
+                return TooMany(codeWait);
+            }
+
             user = await passcodes.RedeemAsync(OidcIssuer.InstanceId, email, secret, PasscodePurpose.SignIn, cancellationToken);
             if (user is null && (string?)request["pending_token"] is { } pending
                 && await passcodes.RedeemSignUpAsync(OidcIssuer.InstanceId, email, secret, pending, cancellationToken) is { } created)
@@ -178,7 +189,8 @@ public sealed partial class HeadlessAuth(Users users, Passcodes passcodes, Passw
     /// </summary>
     public async Task<(bool Reset, TimeSpan? Wait)> CompletePasswordResetAsync(string email, string code, string password, string ip, CancellationToken cancellationToken)
     {
-        if (await this.LimitAsync(ip, mails: false, cancellationToken) is { } wait)
+        if ((await this.LimitIpAsync(ip, mails: false, cancellationToken)
+            ?? await this.LimitCodeAsync(email, PasscodePurpose.PasswordReset, issuing: false, cancellationToken)) is { } wait)
         {
             return (false, wait);
         }
@@ -246,23 +258,26 @@ public sealed partial class HeadlessAuth(Users users, Passcodes passcodes, Passw
 
     private async Task<TimeSpan?> LimitMailAsync(string email, string ip, CancellationToken cancellationToken)
     {
-        if (await this.LimitAsync(ip, mails: true, cancellationToken) is { } wait)
+        if (await this.LimitIpAsync(ip, mails: true, cancellationToken) is { } wait)
         {
             return wait;
         }
 
         if (Users.NormalizeEmail(email) is { } normalized
-            && !await limiter.TryAcquireCooldownAsync(OidcIssuer.InstanceId, "headless-mail-email", limiter.Fold(normalized), MailCooldown, cancellationToken))
+            && await limiter.AcquireCooldownAsync(OidcIssuer.InstanceId, "headless-mail-email", limiter.Fold(normalized), MailCooldown, cancellationToken) is { } cooldownWait)
         {
             LogLimited(logger, "headless-mail-email");
-            return MailCooldown;
+            return cooldownWait;
         }
 
-        return null;
+        var issueWait = await this.LimitCodeAsync(email, PasscodePurpose.SignIn, issuing: true, cancellationToken);
+        // The cooldown was just admitted. Cover it too when the hourly budget refuses this request,
+        // even if the UTC hour ends first; cooldown refusals still spend no hourly allowance.
+        return issueWait is { } hourlyWait && hourlyWait < MailCooldown ? MailCooldown : issueWait;
     }
 
-    // Charges the IP's call budget and, for calls that send mail, its mail budget; an IPv6 /64 also charges its /48.
-    private async Task<TimeSpan?> LimitAsync(string ip, bool mails, CancellationToken cancellationToken)
+    /// <summary>Charges the IP call and mail budgets, including the IPv6 /48 budget, across sign-in surfaces.</summary>
+    public async Task<TimeSpan?> LimitIpAsync(string ip, bool mails, CancellationToken cancellationToken)
     {
         var site = IPAddress.Parse(ip) is { AddressFamily: AddressFamily.InterNetworkV6 } v6 ? Prefix(v6, 6) : null;
         List<(string Purpose, string Subject, int Maximum, TimeSpan Window)> budgets = [("headless-ip", ip, PerIp, IpWindow)];
@@ -282,14 +297,28 @@ public sealed partial class HeadlessAuth(Users users, Passcodes passcodes, Passw
 
         foreach (var (purpose, subject, maximum, window) in budgets)
         {
-            if (!await limiter.TryAcquireAsync(OidcIssuer.InstanceId, purpose, limiter.Fold(subject), maximum, window, cancellationToken))
+            if (await limiter.AcquireAsync(OidcIssuer.InstanceId, purpose, limiter.Fold(subject), maximum, window, cancellationToken) is { } wait)
             {
                 LogLimited(logger, purpose);
-                return window;
+                return wait;
             }
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// Charges normalized emails before account lookup, including unknown addresses. Every code issue shares one
+    /// hourly budget; sign-in redemption (including sign-up) and reset redemption have separate budgets so recovery
+    /// remains available during a sign-in throttle. Replacing a code never renews its email's budget.
+    /// </summary>
+    public Task<TimeSpan?> LimitCodeAsync(string email, PasscodePurpose purpose, bool issuing, CancellationToken cancellationToken)
+    {
+        var key = issuing ? "code-mail-email" : purpose == PasscodePurpose.PasswordReset ? "reset-code-email" : "sign-in-code-email";
+        return Users.NormalizeEmail(email) is { } normalized
+            ? limiter.AcquireAsync(OidcIssuer.InstanceId, key, limiter.Fold(normalized),
+                issuing ? Passcodes.MaxIssuesPerWindow : CodePerEmail, issuing ? Passcodes.IssueWindow : CodeWindow, cancellationToken)
+            : Task.FromResult<TimeSpan?>(null);
     }
 
     [LoggerMessage(Level = LogLevel.Information, Message = "Audit: headless {Method} sign-in succeeded for user {UserId}")]

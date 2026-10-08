@@ -64,6 +64,14 @@ public sealed partial class OpenApiTests
                 }
 
                 await Assert.That(operation.GetProperty("responses").EnumerateObject().Any()).IsTrue();
+                if ((path.Name is "/{slug}/oauth/token" or "/ui/{slug}/sign-in" or "/ui/{slug}/sign-in/verify"
+                    || path.Name.StartsWith("/{slug}/headless/", StringComparison.Ordinal))
+                    && method == "post")
+                {
+                    var retry = operation.GetProperty("responses").GetProperty("429").GetProperty("headers").GetProperty("Retry-After");
+                    await Assert.That(retry.GetProperty("required").GetBoolean()).IsTrue();
+                    await Assert.That(retry.GetProperty("schema").GetProperty("minimum").GetInt32()).IsEqualTo(1);
+                }
                 if (operation.TryGetProperty("operationId", out var id))
                 {
                     await Assert.That(operationIds.Add(id.GetString()!)).IsTrue();

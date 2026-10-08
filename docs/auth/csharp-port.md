@@ -376,10 +376,9 @@ token.
 
 ### Limitations and follow-ups
 
-- No rate limit on the code and refresh grants, and none on the hosted sign-in
-  routes beyond the per-account passcode limits (the TS-582 headless grants are
-  limited). A single per-client bucket would serialize every dashboard refresh
-  through one document.
+- TS-704 now limits every token request by peer IP before client authentication,
+  and hosted sign-in shares the headless IP and normalized-email budgets.
+  Lockout notifications remain the next TS-704 slice.
 - Expired tokens and authorizations are not pruned.
 - Per-instance issuers wait for the instance registry.
 
@@ -488,17 +487,38 @@ mailboxes), so storage stays bounded and nobody can target a victim's bucket.
 
 | Budget | Limit | Purpose |
 | --- | --- | --- |
-| Every headless call per IP (IPv6 per /64) | 30 per minute | `headless-ip` |
-| Every headless call per IPv6 /48 | 120 per minute | `headless-ip-site` |
+| Every hosted/headless sign-in call per IP (IPv6 per /64) | 30 per minute | `headless-ip` |
+| Every hosted/headless sign-in call per IPv6 /48 | 120 per minute | `headless-ip-site` |
 | Mail-sending calls per IP (IPv6 per /64) | 10 per 15 minutes | `headless-ip-mail` |
 | Mail-sending calls per IPv6 /48 | 40 per 15 minutes | `headless-ip-site-mail` |
 | Mail-start calls per normalized email, with or without an account | One per 60 elapsed seconds, shared by email-code/start, sign-up and password-reset/start across all clients and replicas | `headless-mail-email` |
 | Password attempts per email, with or without an account | 10 per 15 minutes | `headless-password-email` |
+| Hosted/headless sign-in code attempts per email | 5 per 15 minutes | `sign-in-code-email` |
+| Password-reset code attempts per email | 5 per 15 minutes | `reset-code-email` |
+| Code requests per email, across all mail starts | 5 per UTC clock hour | `code-mail-email` |
+| Every token request per peer IP (IPv6 per /64) | `TS_AUTH_RATE_LIMIT` per minute (default 1,000) | `token-peer-ip` |
+| Every token request per peer IPv6 /48 | Four times the peer-IP limit | `token-peer-ip-site` |
+
+The normalized-email request budget and the passcode issued-code budget both
+reset on UTC clock-hour boundaries. Stored issue timestamps identify their
+containing UTC hour; this changes no record format.
 
 Every attempt counts, successful ones included. An email whose password budget
 is spent still signs in with an emailed code; someone who knows an address can
 spend its password budget, which delays only password sign-in for that address.
-`Retry-After` is the window's full length, an upper bound. Since TS-582
+Unknown emails spend the same budgets as existing accounts, and replacing a
+code never renews its email budget. Reset redemption has its own budget, so a
+sign-in throttle does not consume recovery attempts. `Retry-After` rounds up to
+whole seconds until the persisted window or cooldown ends, including state
+advanced by a replica whose clock is ahead. A headless mail start admitted by
+the cooldown but rejected by the hourly budget reports at least 60 seconds,
+covering both constraints even just before an hour boundary. Cooldown refusals
+do not spend the hourly allowance. Hosted and general token guards use the socket
+peer address and ignore forwarding headers; behind a proxy they conservatively
+share that proxy's budget. End-user headless limits still trust `ip_address`
+only after authenticating the first-party client. An ingress that preserves
+client addresses, or an explicitly trusted proxy design, is needed for separate
+browser budgets behind a shared reverse proxy. Since TS-582
 `rate_limits` is one of `AuthStore.RequiredCollections`: `/readyz` answers 503
 while it is missing, and the limiter fails closed with 503 on any storage
 failure.
@@ -513,7 +533,7 @@ failure.
   other registration, behind client authentication and the limits above. The
   authorization code flow stays the only flow for every other client and for
   SSO and social sign-in.
-- **No enumeration.** Starts answer 202 and leave issuing and mail to the
+- **No enumeration.** Starts within their budgets answer 202 and leave issuing and mail to the
   `SignInMail` worker, grants answer one `invalid_grant`, and limits apply to
   unknown emails the same way. The Argon2id timing equalizer is hashed at
   startup, so the first unknown account costs no more than later ones.

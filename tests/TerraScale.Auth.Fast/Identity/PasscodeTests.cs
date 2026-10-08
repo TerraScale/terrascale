@@ -240,31 +240,107 @@ public sealed class PasscodeTests(TerraBaseFixture fixture)
     }
 
     [Test]
-    public async Task Issuing_is_limited_per_user_per_window()
+    [Arguments(PasscodePurpose.SignIn)]
+    [Arguments(PasscodePurpose.PasswordReset)]
+    [Arguments(PasscodePurpose.SignUp)]
+    public async Task Issuing_is_limited_per_user_or_pending_signup_per_UTC_clock_hour(PasscodePurpose purpose)
     {
         var (tenant, database) = await fixture.CreateDatabaseAsync();
         var clock = new StoreTestClock();
         var (users, _, passcodes) = this.Stack(tenant, clock, AuthOptions.Load(AuthTestServer.DefaultSettings()));
-        await users.CreateAsync("instance", Email);
+        if (purpose != PasscodePurpose.SignUp)
+        {
+            await users.CreateAsync("instance", Email);
+        }
+
         await users.CreateAsync("instance", "bob@example.test");
         var windowStart = clock.UtcNow;
 
+        Task<IssuedPasscode?> IssueAsync() => purpose == PasscodePurpose.SignUp
+            ? passcodes.RequestSignUpAsync("instance", Email, "argon2-hash", "pending-token")
+            : passcodes.RequestAsync("instance", Email, purpose, CancellationToken.None);
+
         for (var request = 0; request < Passcodes.MaxIssuesPerWindow; request++)
         {
-            clock.UtcNow = windowStart.AddMinutes(request);
-            await Assert.That(await passcodes.RequestAsync("instance", Email)).IsNotNull();
+            clock.UtcNow = windowStart.AddMinutes(50 + request);
+            await Assert.That(await IssueAsync()).IsNotNull();
         }
 
         var limited = (await database.ListDocumentsAsync("passcodes")).Items.Single();
-        clock.UtcNow = windowStart + Passcodes.IssueWindow - TimeSpan.FromSeconds(1);
-        await Assert.That(await passcodes.RequestAsync("instance", Email)).IsNull();
+        await Assert.That(limited.Document.GetProperty("windowStartedAt").GetDateTimeOffset()).IsEqualTo(windowStart);
+        await Assert.That(limited.Document.GetProperty("issuedInWindow").GetInt32()).IsEqualTo(Passcodes.MaxIssuesPerWindow);
+        clock.UtcNow = windowStart + Passcodes.IssueWindow - TimeSpan.FromTicks(1);
+        await Assert.That(await IssueAsync()).IsNull();
         await Assert.That((await database.ListDocumentsAsync("passcodes")).Items.Single().Version).IsEqualTo(limited.Version);
         await Assert.That(await passcodes.RequestAsync("instance", "bob@example.test")).IsNotNull();
 
         clock.UtcNow = windowStart + Passcodes.IssueWindow;
-        var renewed = await passcodes.RequestAsync("instance", Email);
+        var renewed = await IssueAsync();
         await Assert.That(renewed).IsNotNull();
-        await Assert.That(await passcodes.VerifyAsync("instance", Email, renewed!.Code)).IsNotNull();
+        var stored = (await database.ListDocumentsAsync("passcodes")).Items.Single(item => item.Id == limited.Id).Document;
+        await Assert.That(stored.GetProperty("windowStartedAt").GetDateTimeOffset()).IsEqualTo(clock.UtcNow);
+        await Assert.That(stored.GetProperty("issuedInWindow").GetInt32()).IsEqualTo(1);
+        await Assert.That(purpose == PasscodePurpose.SignUp
+            ? await passcodes.RedeemSignUpAsync("instance", Email, renewed!.Code, "pending-token")
+            : await passcodes.RedeemAsync("instance", Email, renewed!.Code, purpose)).IsNotNull();
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Existing_issue_timestamps_identify_their_UTC_hour_and_slower_clocks_preserve_newer_windows(bool resend)
+    {
+        var (tenant, database) = await fixture.CreateDatabaseAsync();
+        var clock = new StoreTestClock();
+        var windowStart = clock.UtcNow;
+        clock.UtcNow = windowStart.AddMinutes(50);
+        var (_, _, passcodes) = this.Stack(tenant, clock, AuthOptions.Load(AuthTestServer.DefaultSettings()));
+        await Assert.That(await passcodes.RequestSignUpAsync("instance", Email, "argon2-hash", "pending-token")).IsNotNull();
+        var store = new AuthStore(database, clock);
+
+        async Task StoreTimestampAsync()
+        {
+            var document = (await database.ListDocumentsAsync("passcodes")).Items.Single();
+            var record = document.Document.Deserialize(IdentityJson.Default.PasscodeRecord)! with
+            {
+                WindowStartedAt = windowStart.AddMinutes(50).ToOffset(TimeSpan.FromHours(3)),
+            };
+            await Assert.That(await store.CompareAndPutAsync(AuthStore.PasscodeCollection, "instance", "sign-up:" + Email,
+                JsonSerializer.SerializeToElement(record, IdentityJson.Default.PasscodeRecord), document.Version)).IsTrue();
+        }
+
+        Task<IssuedPasscode?> IssueAsync() => resend
+            ? passcodes.ResendSignUpAsync("instance", Email, "pending-token")
+            : passcodes.RequestSignUpAsync("instance", Email, "argon2-hash", "pending-token");
+
+        // Existing non-rounded timestamps belong to their containing UTC hour, even ahead of this replica's clock.
+        await StoreTimestampAsync();
+        clock.UtcNow = windowStart.AddMinutes(-10);
+        for (var issued = 1; issued < Passcodes.MaxIssuesPerWindow; issued++)
+        {
+            await Assert.That(await IssueAsync()).IsNotNull();
+        }
+
+        var full = (await database.ListDocumentsAsync("passcodes")).Items.Single().Document;
+        await Assert.That(full.GetProperty("windowStartedAt").GetDateTimeOffset()).IsEqualTo(windowStart);
+        await Assert.That(full.GetProperty("issuedInWindow").GetInt32()).IsEqualTo(Passcodes.MaxIssuesPerWindow);
+        await Assert.That(await IssueAsync()).IsNull();
+
+        // Also roll an existing non-rounded, exhausted record over at the exact next clock-hour boundary.
+        await StoreTimestampAsync();
+        var limited = (await database.ListDocumentsAsync("passcodes")).Items.Single();
+        clock.UtcNow = windowStart + Passcodes.IssueWindow - TimeSpan.FromTicks(1);
+        await Assert.That(await IssueAsync()).IsNull();
+        await Assert.That((await database.ListDocumentsAsync("passcodes")).Items.Single().Version).IsEqualTo(limited.Version);
+        clock.UtcNow += TimeSpan.FromTicks(1);
+        await Assert.That(await IssueAsync()).IsNotNull();
+        var renewed = (await database.ListDocumentsAsync("passcodes")).Items.Single().Document;
+        await Assert.That(renewed.GetProperty("windowStartedAt").GetDateTimeOffset()).IsEqualTo(clock.UtcNow);
+        await Assert.That(renewed.GetProperty("issuedInWindow").GetInt32()).IsEqualTo(1);
+        foreach (var field in new[] { "passwordHash", "pendingTokenHash" })
+        {
+            await Assert.That(renewed.GetProperty(field).GetRawText()).IsEqualTo(full.GetProperty(field).GetRawText());
+        }
     }
 
     [Test]
