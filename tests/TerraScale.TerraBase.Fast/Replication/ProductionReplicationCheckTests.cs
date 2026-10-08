@@ -31,15 +31,17 @@ public sealed class ProductionReplicationCheckTests
         "zero-lag", "negative-lag", "nan-lag", "infinite-lag",
     ];
 
-    // A checker run has three convergence windows of --max-lag-seconds each (documents, listings, host lag). Test
-    // members converge in well under a second, so these tests deliberately allow 5 s (they used 10 s, production
-    // defaults to 15 s): a run that needs longer has stalled and fails rather than waits. A run also starts
-    // interpreters, writes the canary and runs host commands, with up to 17 runs sharing one member pair.
-    private const int MaxLagSeconds = 5;
-    private static readonly TimeSpan CheckerRun = TimeSpan.FromSeconds((3 * MaxLagSeconds) + 15);
+    // Each test takes a few seconds, but on a loaded CI runner setup alone has taken over 45 s (run 660), so
+    // provisioning, readiness and checker runs share one deadline rather than fixed per-step slices. It ends below
+    // the suite's 2-minute timeout, which leaves time for disposal. Servers start under that suite timeout instead:
+    // the harness ties a server's lifetime and its startup cleanup to the token it starts with, and keeps no handle on
+    // a canceled start's cleanup, so a start cut short by this deadline could outlive the certificates it reads.
+    private static readonly TimeSpan TestDeadline = TimeSpan.FromSeconds(105);
 
-    // Server startup, provisioning and readiness share one budget, so a slow setup cannot take a checker run's time.
-    private static readonly TimeSpan SetupBudget = TimeSpan.FromSeconds(45);
+    // A checker run has three convergence windows of --max-lag-seconds each (documents, listings, host lag), plus
+    // interpreter startup, canary writes and host commands; past this guard a run counts as hung.
+    private const int MaxLagSeconds = 10;
+    private static readonly TimeSpan CheckerRun = TimeSpan.FromSeconds(60);
 
     // These need both members converged, and durable lag is server-wide, so each scenario owns its member pair.
     [Test]
@@ -51,8 +53,7 @@ public sealed class ProductionReplicationCheckTests
     public async Task Checker_succeeds_only_with_complete_valid_observations_of_real_members(string scenario)
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
-        // Setup, then one checker run and, for passing scenarios, a second.
-        deadline.CancelAfter(SetupBudget + (2 * CheckerRun));
+        deadline.CancelAfter(TestDeadline);
         await using var pair = new MemberPair();
         await pair.StartAsync([scenario], deadline.Token);
         await pair.RunAsync(scenario, repeat: false, deadline.Token);
@@ -66,8 +67,7 @@ public sealed class ProductionReplicationCheckTests
     public async Task Checker_fails_on_incomplete_or_invalid_observations_of_real_members()
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
-        // Setup, then one wave of concurrent checker runs.
-        deadline.CancelAfter(SetupBudget + CheckerRun);
+        deadline.CancelAfter(TestDeadline);
         await using var pair = new MemberPair();
         await pair.StartAsync(ObservationFaults, deadline.Token);
         await Task.WhenAll(ObservationFaults.Select(fault => pair.RunAsync(fault, repeat: false, deadline.Token)));
@@ -78,29 +78,46 @@ public sealed class ProductionReplicationCheckTests
     {
         // One server for every configuration, each with its own canary database and directory, under one deadline.
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
-        // Setup, then one wave of concurrent checker runs.
-        deadline.CancelAfter(SetupBudget + CheckerRun);
+        deadline.CancelAfter(TestDeadline);
         var token = deadline.Token;
-        using var setup = CancellationTokenSource.CreateLinkedTokenSource(token);
-        setup.CancelAfter(SetupBudget);
-        using var tls = new ClientTls();
-        await using var server = await TerraBaseTestServer.StartAsync(tls.Apply, cancellationToken: setup.Token);
-        var faker = new Faker();
-        var databases = InvalidConfigurations.ToDictionary(fault => fault, _ => "check-" + faker.Random.AlphaNumeric(8).ToLowerInvariant());
-        var tenant = await ReplicationTenant.CreateAsync(server, [.. databases.Values], setup.Token);
-        var secret = await tenant.KeyAsync(server, ["documents:read", "documents:write"], setup.Token);
-        var member = server.ClientAddress!.Authority;
-        var directory = Directory.CreateTempSubdirectory("terrabase-prod-check-invalid-").FullName;
+        var tls = new ClientTls();
+        TerraBaseTestServer? started = null;
+        Task? failedStart = null;
         try
         {
-            await Task.WhenAll(InvalidConfigurations.Select(ConfigurationAsync));
+            var server = started = await TerraBaseTestServer.StartAsync(tls.Apply, failedStartCleanup: cleanup => failedStart = cleanup);
+            var faker = new Faker();
+            var databases = InvalidConfigurations.ToDictionary(fault => fault, _ => "check-" + faker.Random.AlphaNumeric(8).ToLowerInvariant());
+            var tenant = await ReplicationTenant.CreateAsync(server, [.. databases.Values], token);
+            var secret = await tenant.KeyAsync(server, ["documents:read", "documents:write"], token);
+            var member = server.ClientAddress!.Authority;
+            var directory = Directory.CreateTempSubdirectory("terrabase-prod-check-invalid-").FullName;
+            try
+            {
+                await Task.WhenAll(InvalidConfigurations.Select(fault => ConfigurationAsync(server, tenant, secret, member, databases[fault], directory, fault)));
+            }
+            finally
+            {
+                Directory.Delete(directory, recursive: true);
+            }
         }
         finally
         {
-            Directory.Delete(directory, recursive: true);
+            try
+            {
+                if (started is not null)
+                {
+                    await started.DisposeAsync();
+                }
+            }
+            finally
+            {
+                ReleaseAfterCleanup([started], failedStart is null ? [] : [failedStart], tls.Dispose);
+            }
         }
 
-        async Task ConfigurationAsync(string fault)
+        async Task ConfigurationAsync(TerraBaseTestServer server, ReplicationTenant tenant, string secret, string member, string database,
+            string directory, string fault)
         {
             string[] members = fault switch
             {
@@ -119,7 +136,6 @@ public sealed class ProductionReplicationCheckTests
                 "infinite-lag" => "inf",
                 _ => "10",
             };
-            var database = databases[fault];
             var canary = Path.Combine(Directory.CreateDirectory(Path.Combine(directory, fault)).FullName, "canary.json");
             await WriteCanaryAsync(canary, server, tls, tenant, database, secret, members, token);
             var command = fault switch { "empty-host" => string.Empty, "blank-host" => " \t ", _ => "exit 23" };
@@ -137,7 +153,37 @@ public sealed class ProductionReplicationCheckTests
         }
     }
 
-    // TerraBaseTestServer.EventuallyAsync under the caller's setup token.
+    // A wait canceled by the suite timeout leaves a server's cleanup running, after a disposal or a failed start, and
+    // it may still read the certificates or write the logs: release such fixtures only once every cleanup has ended.
+    private static void ReleaseAfterCleanup(IEnumerable<TerraBaseTestServer?> servers, IEnumerable<Task> failedStarts, Action release)
+    {
+        var cleanup = Task.WhenAll(servers.OfType<TerraBaseTestServer>().Select(server => server.CleanupCompletion).Concat(failedStarts));
+        if (cleanup.IsCompleted)
+        {
+            // Cleanup failures are the harness's to report.
+            _ = cleanup.Exception;
+            release();
+            return;
+        }
+
+        _ = cleanup.ContinueWith(
+            task =>
+            {
+                _ = task.Exception;
+                try
+                {
+                    release();
+                }
+                catch (Exception error)
+                {
+                    // No test awaits this continuation any more: report a leaked fixture as the harness does.
+                    TerraBaseTestServer.ReportCleanupFailure(new AggregateException(error));
+                }
+            },
+            CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+    }
+
+    // TerraBaseTestServer.EventuallyAsync under the test's deadline.
     private static async Task UntilAsync(Func<CancellationToken, Task<bool>> condition, CancellationToken token)
     {
         while (!await condition(token))
@@ -198,16 +244,38 @@ public sealed class ProductionReplicationCheckTests
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
         deadline.CancelAfter(CheckerRun);
         using var process = Process.Start(start) ?? throw new InvalidOperationException("the production checker did not start");
+        // The reads end when the process tree closes its pipes, so a run that times out still reports what it printed.
+        var output = process.StandardOutput.ReadToEndAsync(CancellationToken.None);
+        var error = process.StandardError.ReadToEndAsync(CancellationToken.None);
         try
         {
-            var output = process.StandardOutput.ReadToEndAsync(deadline.Token);
-            var error = process.StandardError.ReadToEndAsync(deadline.Token);
-            await Task.WhenAll(output, error, process.WaitForExitAsync(deadline.Token));
-            return (process.ExitCode, await output, await error);
+            await process.WaitForExitAsync(deadline.Token);
+            return (process.ExitCode, await output.WaitAsync(deadline.Token), await error.WaitAsync(deadline.Token));
         }
-        catch (OperationCanceledException error) when (deadline.IsCancellationRequested)
+        catch (OperationCanceledException timeout) when (deadline.IsCancellationRequested)
         {
-            throw new TimeoutException($"the checker for {canary} did not exit within its {CheckerRun.TotalSeconds:g} s budget", error);
+            // The run may have exited just as the guard fired; Kill does nothing to an exited process.
+            if (!process.HasExited)
+            {
+                process.Kill(entireProcessTree: true);
+            }
+
+            var printed = "";
+            using var drain = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            try
+            {
+                printed = string.Concat(await Task.WhenAll(output, error).WaitAsync(drain.Token));
+            }
+            catch (OperationCanceledException) when (drain.IsCancellationRequested)
+            {
+                // A surviving descendant still holds a pipe: report whichever stream did close.
+                printed = (output.IsCompletedSuccessfully ? await output : "") + (error.IsCompletedSuccessfully ? await error : "")
+                    + "\n(a pipe stayed open 5 s after the kill)";
+            }
+
+            throw new TimeoutException(
+                $"the checker for {canary} did not exit within its {CheckerRun.TotalSeconds:g} s guard or the test deadline; it printed:\n"
+                + printed, timeout);
         }
         finally
         {
@@ -250,7 +318,7 @@ public sealed class ProductionReplicationCheckTests
                     with urllib.request.urlopen(url, timeout=max(0.1, 5 - (time.monotonic() - started))) as response:
                         lines = response.read(1048576).decode().splitlines()
                 except Exception as error:
-                    # The checker reports only the first 200 characters of stderr: say what failed before any traceback.
+                    # The checker reports only the last 200 characters of stderr: this message is the whole of it.
                     sys.exit(f"{type(error).__name__}: {error} reading {url} after {time.monotonic() - started:.1f}s")
                 if not baseline or converged(lines) or time.monotonic() - started >= 5:
                     return lines
@@ -280,6 +348,10 @@ public sealed class ProductionReplicationCheckTests
         with open(host["logs"], encoding="utf-8") as file:
             logs = file.read(65536)
         if fault == "host-exit":
+            # Jump-host ssh warnings come before the cause, which the checker must still report.
+            for hop in ("mariogk-dev", "ts-ops", member):
+                print(f"Warning: Permanently added '{hop}' (ED25519) to the list of known hosts.", file=sys.stderr)
+            print("host adapter failed: the test's host-exit fault", file=sys.stderr)
             sys.exit(23)
         if fault != "missing-start":
             print("start " + os.environ["CHECKER_STARTED"])
@@ -366,6 +438,7 @@ public sealed class ProductionReplicationCheckTests
         private readonly string _directory = Directory.CreateTempSubdirectory("terrabase-prod-check-").FullName;
         private readonly Dictionary<string, string> _databases = [with(StringComparer.Ordinal)];
         private readonly string[] _members = new string[2];
+        private readonly List<Task> _failedStarts = [];
         private HostLogs? _primaryLogs;
         private HostLogs? _followerLogs;
         private TerraBaseTestServer? _primary;
@@ -378,11 +451,9 @@ public sealed class ProductionReplicationCheckTests
 
         private string Tools => Path.Combine(_directory, "bin");
 
-        public async Task StartAsync(IReadOnlyList<string> scenarios, CancellationToken cancellationToken)
+        // The token is the test's deadline: it bounds provisioning and readiness (see TestDeadline for startup).
+        public async Task StartAsync(IReadOnlyList<string> scenarios, CancellationToken token)
         {
-            using var setup = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            setup.CancelAfter(SetupBudget);
-            var token = setup.Token;
             var primaryPort = TerraBaseTestServer.FreePort();
             var followerPort = TerraBaseTestServer.FreePort();
             var primaryLog = Path.Combine(_directory, "primary.log");
@@ -410,9 +481,11 @@ public sealed class ProductionReplicationCheckTests
             }
 
             _primary = await TerraBaseTestServer.StartAsync(
-                settings => Configure(settings, "primary", primaryPort), services => ConfigureServices(services, _primaryLogs), cancellationToken: token);
+                settings => Configure(settings, "primary", primaryPort), services => ConfigureServices(services, _primaryLogs),
+                failedStartCleanup: _failedStarts.Add);
             _follower = await TerraBaseTestServer.StartAsync(
-                settings => Configure(settings, "follower", followerPort), services => ConfigureServices(services, _followerLogs), cancellationToken: token);
+                settings => Configure(settings, "follower", followerPort), services => ConfigureServices(services, _followerLogs),
+                failedStartCleanup: _failedStarts.Add);
             var primary = _primary;
             var follower = _follower;
             var faker = new Faker();
@@ -599,6 +672,12 @@ public sealed class ProductionReplicationCheckTests
                     }
                 }
 
+                if (fault == "host-exit")
+                {
+                    await Assert.That(output).Contains("host command exited 23: ...").Because(because);
+                    await Assert.That(output).Contains("host adapter failed: the test's host-exit fault").Because(because);
+                }
+
                 if (fault is "shell-scrape-exit" or "shell-journal-exit")
                 {
                     await Assert.That(output).Contains("host command exited " + (fault == "shell-scrape-exit" ? "22" : "23")).Because(because);
@@ -643,23 +722,28 @@ public sealed class ProductionReplicationCheckTests
             }
             finally
             {
-                _followerLogs?.Dispose();
-                _primaryLogs?.Dispose();
-                _process.Dispose();
+                ReleaseAfterCleanup([_follower, _primary], _failedStarts, ReleaseFixtures);
+            }
+        }
+
+        private void ReleaseFixtures()
+        {
+            _followerLogs?.Dispose();
+            _primaryLogs?.Dispose();
+            _process.Dispose();
+            try
+            {
+                _tls.Dispose();
+            }
+            finally
+            {
                 try
                 {
-                    _tls.Dispose();
+                    _peers.Dispose();
                 }
                 finally
                 {
-                    try
-                    {
-                        _peers.Dispose();
-                    }
-                    finally
-                    {
-                        Directory.Delete(_directory, recursive: true);
-                    }
+                    Directory.Delete(_directory, recursive: true);
                 }
             }
         }
@@ -673,6 +757,7 @@ public sealed class ProductionReplicationCheckTests
         private readonly Lock _gate = new();
         private readonly StringBuilder _lines = new();
         private int _bytes;
+        private bool _disposed;
 
         public HostLogs(string path)
         {
@@ -692,14 +777,24 @@ public sealed class ProductionReplicationCheckTests
             }
         }
 
+        // A server whose cleanup outlives a canceled wait can still log after its fixture directory is gone.
         public void Dispose()
         {
+            lock (_gate)
+            {
+                _disposed = true;
+            }
         }
 
         private void Append(string line)
         {
             lock (_gate)
             {
+                if (_disposed)
+                {
+                    return;
+                }
+
                 var bytes = Encoding.UTF8.GetByteCount(line);
                 if (_bytes + bytes > 65536)
                 {

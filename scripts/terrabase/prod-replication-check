@@ -248,7 +248,9 @@ def host(command, member, minutes):
         command.replace("{ip}", ip).replace("{member}", member), shell=True, input=HOST_SCRIPT.replace("MINUTES", str(minutes)),
         capture_output=True, text=True, timeout=120, check=False)
     if result.returncode != 0:
-        raise RuntimeError(f"host command exited {result.returncode}: {result.stderr.strip()[:200]}")
+        # The cause comes last: ssh's jump-host warnings and banners come first.
+        stderr = result.stderr.strip()
+        raise RuntimeError(f"host command exited {result.returncode}: {stderr if len(stderr) <= 200 else '...' + stderr[-197:]}")
     report = {"start": None, "metrics": {}, "logs": [], "bad": []}
     complete = set()
     for line in result.stdout.splitlines():

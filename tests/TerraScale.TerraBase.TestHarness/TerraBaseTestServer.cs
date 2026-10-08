@@ -107,10 +107,12 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
     /// (for example a <see cref="TimeProvider"/> that tests move forward).
     /// <paramref name="environmentName"/> selects the host environment without changing process-wide variables.
     /// <paramref name="cancellationToken"/> defaults to the test execution token and bounds the caller's waits.
+    /// <paramref name="failedStartCleanup"/> receives a failed start's cleanup, which outlives the throw when that token
+    /// ends the wait for it; owners of files the startup reads (certificates) join it before releasing them.
     /// </summary>
     public static async Task<TerraBaseTestServer> StartAsync(
         Action<Dictionary<string, string>>? settings = null, Action<IServiceCollection>? services = null, string environmentName = "Development",
-        CancellationToken? cancellationToken = null)
+        CancellationToken? cancellationToken = null, Action<Task>? failedStartCleanup = null)
     {
         var dataDirectory = Directory.CreateTempSubdirectory("terrabase-test-").FullName;
         var testToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
@@ -176,6 +178,7 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
             {
                 if (factory is not null)
                 {
+                    failedStartCleanup?.Invoke(factory.BeginCleanupAsync(dataDirectory));
                     await factory.CleanupAsync(dataDirectory);
                 }
                 else
