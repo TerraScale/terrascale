@@ -191,3 +191,26 @@ enum UsageScope {
 
 message UsageAck {
 }
+
+// Internal: a catalog follower forwards bounded query observations to its primary. The primary
+// durably adds the observations and the sender watermark together before acknowledging them.
+service CatalogQueryShapes {
+  rpc Add(QueryShapesBatch) returns (QueryShapesAck);
+}
+
+message QueryShapesBatch {
+  // Payload format: alpha.
+  string format = 1;
+  // 16 bytes, random for each follower process; shared with usage forwarding.
+  bytes epoch = 2;
+  // The follower's node name, 1 to 128 characters.
+  string sender = 3;
+  // 1 through the signed 64-bit maximum; unchanged on retries of the same payload.
+  uint64 sequence = 4;
+  // Source-generated JSON QueryShapeForwardPayload in a TBLZ4E01 LZ4 application envelope.
+  // Encoded and decoded bytes are each at most 1 MiB, with 1 to 128 items.
+  bytes envelope = 5;
+}
+
+message QueryShapesAck {
+}

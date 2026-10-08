@@ -2,6 +2,7 @@ using System.Diagnostics.Metrics;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.Memory;
@@ -13,10 +14,10 @@ namespace TerraBase.Features.Management.Queries;
 
 /// <summary>
 /// Bounded, memory-admitted query observations, flushed with usage every 10 seconds and at shutdown.
-/// Like QueryFieldRecorder, catalog followers retain local observations only in memory: these are not forwarded
-/// to the primary and are lost on restart. A crash also loses observations since the primary's last flush.
+/// Catalog followers forward immutable batches to the primary for durable retry deduplication.
+/// A crash loses observations not yet persisted or acknowledged.
 /// </summary>
-internal sealed class QueryShapeRecorder(SystemCatalog catalog, TimeProvider time, IMemoryBudget memory, IMeterFactory meters) : IQueryShapeTracker, IAsyncDisposable
+internal sealed partial class QueryShapeRecorder(SystemCatalog catalog, TimeProvider time, IMemoryBudget memory, IMeterFactory meters, TerraBaseOptions options) : IQueryShapeTracker, IAsyncDisposable
 {
     private const int MaxPending = 1024;
     private const int MaxRecords = 128;
@@ -43,7 +44,9 @@ internal sealed class QueryShapeRecorder(SystemCatalog catalog, TimeProvider tim
 
     public void Record(TenantContext? database, string collection, string shape, TimeSpan latency, long rowsScanned)
     {
-        if ((database is not null && (string.IsNullOrEmpty(database.ProjectId) || string.IsNullOrEmpty(database.DatabaseId))) || !DatabaseName.TryParse(collection, out _)
+        if ((database is not null && (string.IsNullOrEmpty(database.OrganizationId) || database.OrganizationId.Length > 128
+            || string.IsNullOrEmpty(database.ProjectId) || database.ProjectId.Length > 128
+            || string.IsNullOrEmpty(database.DatabaseId) || database.DatabaseId.Length > 128)) || !DatabaseName.TryParse(collection, out _)
             || shape.Length is 0 or > MaxShapeBytes || Encoding.UTF8.GetByteCount(shape) > MaxShapeBytes
             || latency < TimeSpan.Zero || rowsScanned < 0)
         {
@@ -141,7 +144,7 @@ internal sealed class QueryShapeRecorder(SystemCatalog catalog, TimeProvider tim
             }
 
             var stats = saved.ToDictionary(stat => Key(stat.Collection, stat.Id), StringComparer.Ordinal);
-            foreach (var pending in Snapshot(owner))
+            foreach (var pending in options.CatalogPrimary is null ? Snapshot(owner) : [])
             {
                 var key = Key(pending.Collection, pending.Id);
                 if (stats.TryGetValue(key, out var previous))
@@ -262,54 +265,60 @@ internal sealed class QueryShapeRecorder(SystemCatalog catalog, TimeProvider tim
     }
 
     private ValueTask<(long Dropped, long Unsupported)> WriteAsync(string id, Taken[] batch, CancellationToken cancellationToken) =>
-        catalog.WriteAsync(async transaction =>
+        catalog.WriteAsync(transaction => WriteShapesAsync(transaction, batch, id, cancellationToken), cancellationToken);
+
+    private static async ValueTask<(long Dropped, long Unsupported)> WriteShapesAsync(
+        IStorageTransaction transaction, Taken[] batch, string? flushId, CancellationToken cancellationToken)
+    {
+        var dropped = 0L;
+        var unsupported = 0L;
+        foreach (var (database, shapes) in batch)
         {
-            var dropped = 0L;
-            var unsupported = 0L;
-            foreach (var (database, shapes) in batch)
+            // Do not recreate database state deleted since the observation.
+            if (database != Dashboard && await EngineManagementService.DatabaseTenantUncheckedAsync(
+                transaction, database.OrganizationId, database.ProjectId, database.DatabaseId, cancellationToken).ConfigureAwait(false) is null)
             {
-                // Do not recreate database state deleted since the observation.
-                if (database != Dashboard && await EngineManagementService.DatabaseTenantUncheckedAsync(
-                    transaction, database.OrganizationId, database.ProjectId, database.DatabaseId, cancellationToken).ConfigureAwait(false) is null)
+                continue;
+            }
+
+            var records = Records(database.DatabaseId);
+            var count = await transaction.CountDocumentsAsync(records, cancellationToken).ConfigureAwait(false);
+            foreach (var shape in shapes)
+            {
+                var key = Key(shape.Collection, shape.Id);
+                var document = await transaction.GetAsync(records, key, cancellationToken).ConfigureAwait(false);
+                var saved = document is null ? null : Read(document.Json, document.Id);
+                // Leave incompatible records intact and their API unavailable, without blocking other observations.
+                if (document is not null && saved is null)
                 {
+                    unsupported = Add(unsupported, shape.Queries);
                     continue;
                 }
 
-                var records = Records(database.DatabaseId);
-                var count = await transaction.CountDocumentsAsync(records, cancellationToken).ConfigureAwait(false);
-                foreach (var shape in shapes)
+                if (saved is null)
                 {
-                    var key = Key(shape.Collection, shape.Id);
-                    var document = await transaction.GetAsync(records, key, cancellationToken).ConfigureAwait(false);
-                    var saved = document is null ? null : Read(document.Json, document.Id);
-                    // Leave incompatible records intact and their API unavailable, without blocking other observations.
-                    if (document is not null && saved is null)
+                    // ponytail: new shapes after the 128-record cap are dropped; add eviction when workloads need it.
+                    if (count >= MaxRecords)
                     {
-                        unsupported = Add(unsupported, shape.Queries);
+                        dropped = Add(dropped, shape.Queries);
                         continue;
                     }
 
-                    if (saved is null)
-                    {
-                        // ponytail: new shapes after the 128-record cap are dropped; add eviction when workloads need it.
-                        if (count >= MaxRecords)
-                        {
-                            dropped = Add(dropped, shape.Queries);
-                            continue;
-                        }
-
-                        count++;
-                    }
-
-                    var stats = saved is null ? shape : Merge(saved, shape);
-                    await PutAsync(transaction, records, key, new QueryShapeRecord(Format, stats), TerraBaseJsonContext.Default.QueryShapeRecord, cancellationToken).ConfigureAwait(false);
+                    count++;
                 }
 
-                await PutAsync(transaction, Flushes(database.DatabaseId), LastFlush, id, TerraBaseJsonContext.Default.String, cancellationToken).ConfigureAwait(false);
+                var stats = saved is null ? shape : Merge(saved, shape);
+                await PutAsync(transaction, records, key, new QueryShapeRecord(Format, stats), TerraBaseJsonContext.Default.QueryShapeRecord, cancellationToken).ConfigureAwait(false);
             }
 
-            return (dropped, unsupported);
-        }, cancellationToken);
+            if (flushId is not null)
+            {
+                await PutAsync(transaction, Flushes(database.DatabaseId), LastFlush, flushId, TerraBaseJsonContext.Default.String, cancellationToken).ConfigureAwait(false);
+            }
+        }
+
+        return (dropped, unsupported);
+    }
 
     private void Complete(Taken[] batch, bool committed)
     {
@@ -413,9 +422,9 @@ internal sealed class QueryShapeRecorder(SystemCatalog catalog, TimeProvider tim
         }
     }
 
-    private static bool Valid(QueryShapeStats stats, string id)
+    internal static bool Valid(QueryShapeStats? stats, string id)
     {
-        if (string.IsNullOrEmpty(stats.Id) || !DatabaseName.TryParse(stats.Collection, out _)
+        if (stats is null || string.IsNullOrEmpty(stats.Id) || !DatabaseName.TryParse(stats.Collection, out _)
             || string.IsNullOrEmpty(stats.Shape) || stats.Shape.Length > MaxShapeBytes
             || !stats.Shape.StartsWith("[\"alpha\",", StringComparison.Ordinal) || Encoding.UTF8.GetByteCount(stats.Shape) > MaxShapeBytes
             || stats.Queries <= 0 || stats.RowsScanned < 0 || stats.LastSeenAt == default
@@ -458,6 +467,7 @@ internal sealed class QueryShapeRecorder(SystemCatalog catalog, TimeProvider tim
         }
 
         // The host can dispose DI while a shutdown flush is still finishing. Join it before releasing its entries.
+        await _send.WaitAsync().ConfigureAwait(false);
         await _flush.WaitAsync().ConfigureAwait(false);
         try
         {
@@ -471,12 +481,15 @@ internal sealed class QueryShapeRecorder(SystemCatalog catalog, TimeProvider tim
                 _pending.Clear();
                 _entries = 0;
                 _inDoubt = null;
+                _outgoing = null;
+                _turns.Clear();
             }
         }
         finally
         {
             // No wait handle is created; leave the semaphore usable for late shutdown calls and repeated DI disposal.
             _flush.Release();
+            _send.Release();
         }
     }
 

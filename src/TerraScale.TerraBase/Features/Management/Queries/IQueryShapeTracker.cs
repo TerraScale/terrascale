@@ -23,7 +23,7 @@ public sealed record QueryShapeStats(
     [property: JsonRequired] long RowsScanned,
     [property: JsonRequired] DateTimeOffset LastSeenAt);
 
-/// <summary>The bounded observed query shapes of a database or dashboard scope, including pending observations.</summary>
+/// <summary>The bounded observed query shapes of a database or dashboard scope, including pending observations on the primary.</summary>
 /// <param name="Items">Most queried first, then collection and shape id in ordinal order.</param>
 public sealed record QueryShapeListBody(IReadOnlyList<QueryShapeStats> Items);
 
@@ -40,6 +40,6 @@ public interface IQueryShapeTracker
     /// </summary>
     void Record(TenantContext? database, string collection, string shape, TimeSpan latency, long rowsScanned);
 
-    /// <summary>Reads admitted statistics with pending observations added; the caller executes or disposes the read. Null selects the dashboard scope.</summary>
+    /// <summary>Reads admitted statistics, adding pending observations on the primary; the caller executes or disposes the read. Null selects the dashboard scope.</summary>
     ValueTask<QueryShapeReadResult> ReadAsync(TenantContext? database, CancellationToken cancellationToken);
 }

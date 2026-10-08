@@ -55,6 +55,13 @@ internal sealed class SystemCatalog(IStorageEngine engine, ICatalogGuard guard)
         return await WriteUncheckedAsync(write, cancellationToken).ConfigureAwait(false);
     }
 
+    /// <summary>Writes catalog state with a disk-synced commit before acknowledging a peer batch.</summary>
+    public async ValueTask<T> WriteDurableAsync<T>(Func<IStorageTransaction, ValueTask<T>> write, CancellationToken cancellationToken)
+    {
+        await guard.EnsureCatalogAsync(cancellationToken).ConfigureAwait(false);
+        return await WriteUncheckedAsync(write, cancellationToken, durable: true).ConfigureAwait(false);
+    }
+
     /// <summary>
     /// Reads without the catalog version check, for state that does not depend on the management catalog (operator API
     /// keys, and authenticating any key), so the data plane keeps working while the catalog needs attention.
@@ -70,10 +77,12 @@ internal sealed class SystemCatalog(IStorageEngine engine, ICatalogGuard guard)
     }
 
     /// <summary>Writes without the catalog version check (see <see cref="ReadUncheckedAsync"/>); a failure result simply writes nothing.</summary>
-    public async ValueTask<T> WriteUncheckedAsync<T>(Func<IStorageTransaction, ValueTask<T>> write, CancellationToken cancellationToken)
+    public async ValueTask<T> WriteUncheckedAsync<T>(Func<IStorageTransaction, ValueTask<T>> write, CancellationToken cancellationToken, bool durable = false)
     {
         var store = await engine.OpenSystemDatabaseAsync(cancellationToken).ConfigureAwait(false);
-        var transaction = await store.BeginTransactionAsync(write: true, cancellationToken).ConfigureAwait(false);
+        var transaction = durable
+            ? await store.BeginDurableTransactionAsync(cancellationToken).ConfigureAwait(false)
+            : await store.BeginTransactionAsync(write: true, cancellationToken).ConfigureAwait(false);
         await using (transaction.ConfigureAwait(false))
         {
             var result = await write(transaction).ConfigureAwait(false);

@@ -824,6 +824,9 @@ public sealed class CatalogForwardingTests
     {
         public List<ulong> Sequences { get; } = [];
 
+        public Task<bool> AddQueryShapesAsync(QueryShapesBatch batch, CancellationToken cancellationToken) =>
+            inner.AddQueryShapesAsync(batch, cancellationToken);
+
         public async Task<bool> AddUsageAsync(UsageBatch batch, CancellationToken cancellationToken)
         {
             var added = await inner.AddUsageAsync(batch, cancellationToken);

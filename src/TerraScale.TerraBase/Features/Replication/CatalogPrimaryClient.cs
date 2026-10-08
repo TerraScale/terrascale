@@ -12,11 +12,17 @@ public interface ICatalogPrimaryClient
     /// <see langword="false"/> when it refused it as invalid (it added none of it). Throws when the outcome is unknown.
     /// </summary>
     Task<bool> AddUsageAsync(UsageBatch batch, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Sends <paramref name="batch"/> to <c>CatalogQueryShapes.Add</c>: true after durable acknowledgement,
+    /// false when the whole batch was rejected as invalid before mutation. Throws when the outcome is unknown.
+    /// </summary>
+    Task<bool> AddQueryShapesAsync(QueryShapesBatch batch, CancellationToken cancellationToken);
 }
 
 internal sealed class CatalogPrimaryClient(TerraBaseOptions options, PeerCredentials credentials) : ICatalogPrimaryClient
 {
-    // A batch is small and the primary only adds it to memory.
+    // Batches are bounded; query shapes are durably committed before acknowledgement.
     private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(10);
 
     public async Task<bool> AddUsageAsync(UsageBatch batch, CancellationToken cancellationToken)
@@ -35,6 +41,23 @@ internal sealed class CatalogPrimaryClient(TerraBaseOptions options, PeerCredent
         catch (RpcException error) when (error.StatusCode == StatusCode.InvalidArgument)
         {
             // The primary validates a whole batch before it adds any of it, so a retry would be refused the same way.
+            return false;
+        }
+    }
+
+    public async Task<bool> AddQueryShapesAsync(QueryShapesBatch batch, CancellationToken cancellationToken)
+    {
+        using var lease = credentials.Capture();
+        using var channel = PeerChannel.Create(options.CatalogPrimary!, lease);
+        try
+        {
+            await new CatalogQueryShapes.CatalogQueryShapesClient(channel)
+                .AddAsync(batch, deadline: DateTime.UtcNow.Add(Timeout), cancellationToken: cancellationToken)
+                .ConfigureAwait(false);
+            return true;
+        }
+        catch (RpcException error) when (error.StatusCode == StatusCode.InvalidArgument)
+        {
             return false;
         }
     }

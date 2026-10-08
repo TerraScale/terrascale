@@ -14,10 +14,10 @@ public sealed class ListDashboardQueryShapesEndpoint(IQueryShapeTracker tracker)
         Get("/management/query-shapes");
         Name("listDashboardQueryShapes");
         Summary("Lists observed dashboard query shapes and workload statistics");
-        Description("At most 128 canonical shapes of the dashboard document space, with literal values removed, including pending observations. " +
+        Description("At most 128 canonical shapes of the dashboard document space, with literal values removed, including pending observations on the primary. " +
             "Most queried first, then by collection and shape id. Statistics are best-effort; new shapes are dropped when bounds are full. " +
             "Management service credential only (loopback administrative listener): a ts-auth user token gets 403. " +
-            "Catalog followers add their local pending observations to replicated statistics; local observations are not forwarded or persisted and are lost on restart.");
+            "Catalog followers forward observations to the primary and return replicated persisted statistics only; replication can delay visibility. Pending observations are lost on crash.");
         Tags(ManagementRoute.Tag);
         Produces<QueryShapeListBody>();
         Produces<ErrorBody>(StatusCodes.Status403Forbidden);
