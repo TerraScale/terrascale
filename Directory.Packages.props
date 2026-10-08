@@ -16,36 +16,24 @@
     <PackageVersion Include="Microsoft.CodeAnalysis.CSharp" Version="5.9.0" />
   </ItemGroup>
   <!-- Microsoft.Extensions track the .NET 11 SDK and shared framework; lower pins
-       downgrade what ASP.NET Core 11 requires (NU1109). Resilience and service
-       discovery ship on their own 10.x train, which supports net11.0. -->
+       downgrade what ASP.NET Core 11 requires (NU1109). -->
   <ItemGroup Label="Microsoft Extensions (Core)">
     <PackageVersion Include="Microsoft.Extensions.Configuration" Version="11.0.0-rc.1.26425.128" />
     <PackageVersion Include="Microsoft.Extensions.Configuration.Binder" Version="11.0.0-rc.1.26425.128" />
     <PackageVersion Include="Microsoft.Extensions.Configuration.EnvironmentVariables" Version="11.0.0-rc.1.26425.128" />
     <PackageVersion Include="Microsoft.Extensions.Configuration.Json" Version="11.0.0-rc.1.26425.128" />
-    <PackageVersion Include="Microsoft.Extensions.Configuration.Abstractions" Version="11.0.0-rc.1.26425.128" />
-    <PackageVersion Include="Microsoft.Extensions.Caching.Memory" Version="11.0.0-rc.1.26425.128" />
     <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="11.0.0-rc.1.26425.128" />
-    <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="11.0.0-rc.1.26425.128" />
-    <PackageVersion Include="Microsoft.Extensions.FileProviders.Embedded" Version="11.0.0-rc.1.26425.128" />
     <PackageVersion Include="Microsoft.Extensions.FileProviders.Physical" Version="11.0.0-rc.1.26425.128" />
     <PackageVersion Include="Microsoft.Extensions.Hosting" Version="11.0.0-rc.1.26425.128" />
     <PackageVersion Include="Microsoft.Extensions.Http" Version="11.0.0-rc.1.26425.128" />
-    <PackageVersion Include="Microsoft.Extensions.Http.Resilience" Version="10.10.0" />
     <PackageVersion Include="Microsoft.Extensions.Logging" Version="11.0.0-rc.1.26425.128" />
-    <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="11.0.0-rc.1.26425.128" />
-    <PackageVersion Include="Microsoft.Extensions.Options" Version="11.0.0-rc.1.26425.128" />
     <PackageVersion Include="Microsoft.Extensions.Options.ConfigurationExtensions" Version="11.0.0-rc.1.26425.128" />
-    <PackageVersion Include="Microsoft.Extensions.Options.DataAnnotations" Version="11.0.0-rc.1.26425.128" />
-    <PackageVersion Include="Microsoft.Extensions.Resilience" Version="10.10.0" />
-    <PackageVersion Include="Microsoft.Extensions.ServiceDiscovery" Version="10.10.0" />
   </ItemGroup>
   <ItemGroup Label="API and hosting">
     <!-- Published by TerraScale/ts-libs to the TerraScale Forgejo registry (NuGet.config). -->
     <PackageVersion Include="TerraScale.Endpoints" Version="3.0.23-rc.1" />
     <PackageVersion Include="Microsoft.AspNetCore.OpenApi" Version="11.0.0-rc.1.26425.128" />
     <PackageVersion Include="Scalar.AspNetCore" Version="2.17.13" />
-    <PackageVersion Include="AspNetCore.HealthChecks.UI.Client" Version="9.0.0" />
   </ItemGroup>
   <!-- ts-auth OIDC discovery, JWKS and JWT validation (Features/UserAuth). -->
   <ItemGroup Label="Authentication">
@@ -54,13 +42,10 @@
   <!-- OpenTelemetry: keep every package on the same release train. The Prometheus
        exporter is only published as beta; it serves the required /metrics scrape. -->
   <ItemGroup Label="OpenTelemetry">
-    <PackageVersion Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.15.3" />
     <PackageVersion Include="OpenTelemetry.Exporter.Prometheus.AspNetCore" Version="1.15.3-beta.1" />
     <PackageVersion Include="OpenTelemetry.Extensions.Hosting" Version="1.15.3" />
     <PackageVersion Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.15.2" />
-    <PackageVersion Include="OpenTelemetry.Instrumentation.Http" Version="1.15.1" />
     <PackageVersion Include="OpenTelemetry.Instrumentation.Runtime" Version="1.15.1" />
-    <PackageVersion Include="Sentry.Extensions.Logging" Version="6.4.0" />
   </ItemGroup>
   <!-- Storage engine (Engine/Sqlite): tracks the .NET 11 train like Microsoft.Extensions. -->
   <ItemGroup Label="Storage engine">
@@ -83,15 +68,12 @@
     <PackageVersion Include="Google.Protobuf" Version="3.36.2" />
     <PackageVersion Include="Grpc.AspNetCore" Version="2.84.0" />
     <PackageVersion Include="Grpc.Net.Client" Version="2.84.0" />
-    <PackageVersion Include="Grpc.Net.ClientFactory" Version="2.84.0" />
     <PackageVersion Include="Grpc.Tools" Version="2.84.0" />
   </ItemGroup>
-  <!-- Cysharp performance primitives: native LZ4/Zstandard (inter-node gRPC
-       compression), ULID identifiers and allocation-free string building. -->
+  <!-- Cysharp performance primitives: native LZ4 (inter-node gRPC compression) and ULID identifiers. -->
   <ItemGroup Label="Performance primitives">
     <PackageVersion Include="NativeCompressions" Version="0.6.1" />
     <PackageVersion Include="Ulid" Version="1.4.1" />
-    <PackageVersion Include="ZString" Version="2.6.0" />
   </ItemGroup>
   <!-- Management SQL subset (Features/Management/Queries): parses read-only SELECT into engine queries. -->
   <ItemGroup Label="SQL parsing">

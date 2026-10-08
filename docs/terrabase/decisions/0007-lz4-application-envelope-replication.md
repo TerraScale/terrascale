@@ -208,7 +208,7 @@ become operationally relevant.
 - A baseline costs as much log space as the data it covers.
 - `DurableAck` follows the receiver's SQLite commit, which [0010](0010-write-wait-and-synced-durable-ack.md) syncs to
   disk (`synchronous = FULL` for replicated applies), as the terrabase-rust contract requires.
-- No SQL write path exists yet (`ISqlExecutor` is unimplemented). A future SQL write through
+- No SQL write path exists yet. A future SQL write through
   `IStorageTransaction` is captured as one group.
 
 ### Journal prefix proof (schema 8)

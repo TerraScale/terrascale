@@ -28,7 +28,6 @@
     <PackageReference Include="Google.Protobuf" />
     <PackageReference Include="Grpc.AspNetCore" />
     <PackageReference Include="Grpc.Net.Client" />
-    <PackageReference Include="Grpc.Net.ClientFactory" />
     <PackageReference Include="Grpc.Tools" PrivateAssets="all" />
     <PackageReference Include="AWSSDK.S3" />
     <PackageReference Include="Cronos" />
@@ -37,7 +36,6 @@
     <PackageReference Include="NATS.Client.KeyValueStore" />
     <PackageReference Include="NativeCompressions" />
     <PackageReference Include="Ulid" />
-    <PackageReference Include="ZString" />
     <PackageReference Include="SqlParserCS" />
   </ItemGroup>
 

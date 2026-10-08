@@ -67,9 +67,9 @@ and what a tenant is. Until now the engine and the data API addressed a database
   `CommittedGroupBatch` carries no database identity yet. When replication applies batches, they
   must carry (organization, project, database) and go through the engine API, which accepts only a
   `TenantContext`.
-- **Stub interfaces.** `IBackupService`, `ICatalog`, `IIndexAdvisor` and `ISqlExecutor` (not
-  implemented) take a `TenantContext`. `IBackupService.RestoreAsync` takes the source tenant and
-  requires the same organization.
+- **Historical stub interfaces.** The initial, unimplemented interfaces took a `TenantContext`.
+  The unused catalog, index advisor and SQL executor stubs were removed in TS-626; the implemented
+  services live in `Features/Documents` and `Features/Management`.
 
 ## Consequences
 

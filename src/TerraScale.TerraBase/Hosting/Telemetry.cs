@@ -18,14 +18,6 @@ public static class Telemetry
     /// <summary>Registers runtime, HTTP server and TerraBase meters.</summary>
     public static IServiceCollection AddTerraBaseTelemetry(this IServiceCollection services)
     {
-        services.ConfigureOpenTelemetryMeterProvider((provider, builder) =>
-        {
-            var meters = provider.GetRequiredService<IMeterFactory>();
-            // Scoped meters belong to one host; runtime meters remain process-wide.
-            builder.AddView(instrument => instrument.Meter.Scope is { } scope && !ReferenceEquals(scope, meters)
-                ? MetricStreamConfiguration.Drop
-                : null);
-        });
         services.AddOpenTelemetry().WithMetrics(metrics => metrics
             .AddMeter(MeterName)
             .AddAspNetCoreInstrumentation()

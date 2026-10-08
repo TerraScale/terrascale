@@ -33,13 +33,14 @@ public sealed class SubscriptionAdmissionTests
         using var client = Subscriber(api, database, clock);
         client.DefaultRequestVersion = HttpVersion.Version20;
         client.DefaultVersionPolicy = HttpVersionPolicy.RequestVersionExact;
-        List<HttpResponseMessage> connections = [];
+        // Open the bounded set together instead of spending the deadline on 128 serial round trips.
+        var opening = Enumerable.Range(0, 128)
+            .Select(_ => SubscribeAsync(client, database, block: true, deadline.Token)).ToArray();
         try
         {
-            for (var index = 0; index < 128; index++)
+            var connections = await Task.WhenAll(opening);
+            foreach (var response in connections)
             {
-                var response = await SubscribeAsync(client, database, block: true, deadline.Token);
-                connections.Add(response);
                 await AssertStreamAsync(response);
                 await Assert.That(response.Version).IsEqualTo(HttpVersion.Version20);
             }
@@ -62,7 +63,6 @@ public sealed class SubscriptionAdmissionTests
                 response.Dispose();
             }
 
-            connections.Clear();
             await writes.AllReturned.Task.WaitAsync(deadline.Token);
             await resources.WaitForCleanupAsync(baseline, deadline.Token);
             await Assert.That(writes.Cancelled).IsEqualTo(128);
@@ -79,9 +79,9 @@ public sealed class SubscriptionAdmissionTests
         }
         finally
         {
-            foreach (var response in connections)
+            foreach (var task in opening.Where(task => task.IsCompletedSuccessfully))
             {
-                response.Dispose();
+                (await task).Dispose();
             }
         }
     }

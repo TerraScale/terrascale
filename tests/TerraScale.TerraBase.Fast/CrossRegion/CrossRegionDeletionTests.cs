@@ -208,7 +208,13 @@ public sealed class CrossRegionDeletionTests
                 var response = await client.GetAsync(ManagementApi.Uri(path), token);
                 if (response.StatusCode == HttpStatusCode.ServiceUnavailable)
                 {
-                    response.Dispose();
+                    using (response)
+                    {
+                        await Assert.That(response.Headers.RetryAfter?.Delta).IsEqualTo(TimeSpan.FromSeconds(1));
+                        var busy = await response.Content.ReadFromJsonAsync<JsonElement>(token);
+                        await Assert.That(busy.GetProperty("error").GetProperty("code").GetString()).IsEqualTo("storage_busy");
+                    }
+
                     return false;
                 }
 
