@@ -650,6 +650,14 @@ one organization or project. Both are in
   revoking deletes the record, and deleting a project or organization deletes
   its keys after it (every exchange reads the organization and project first,
   so a key left behind issues nothing).
+- **Rotation overlap (TS-703).** A second rotation answers `409 rotation_pending`
+  while the previous secret's grace is active, even if the request asks for
+  no grace. The check runs inside the version-conditional transaction retry,
+  so competing replicas cannot replace an unexpired previous digest. At the
+  grace expiry another rotation is allowed; revocation still deletes both
+  digests immediately. No storage migration is needed. This is the first
+  TS-703 slice; scheduled signing-key rollover and OCI Vault integration
+  remain separate work.
 - **Client authentication.** `OidcApplicationStore` answers a `tsk_` client id
   with a client built from the key: confidential, only the token endpoint and
   the client-credentials grant, every TerraBase scope permission, and a stored

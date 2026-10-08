@@ -2,6 +2,8 @@ using System.Net;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.DependencyInjection;
+using TerraScale.Auth.Configuration;
+using TerraScale.Auth.Store;
 using TerraScale.Auth.Tests;
 using static TerraScale.Auth.Tests.PlatformCalls;
 
@@ -252,6 +254,142 @@ public sealed partial class ApiKeyTests(TerraBaseFixture fixture)
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task An_active_rotation_grace_cannot_be_shortened_and_rotation_resumes_at_exact_expiry(bool projectKey)
+    {
+        var clock = new ManualClock(DateTimeOffset.UtcNow);
+        await using var oidc = await OidcHarness.StartAsync(fixture, values => values["access-token-audiences"] = Audience, clock: clock);
+        var (_, token) = await oidc.SignInUserAsync("alice@example.test");
+        var organization = await oidc.CreateOrganizationAsync(token);
+        var project = projectKey ? await oidc.CreateProjectAsync(token, organization, "Production") : null;
+        var keys = $"{Organizations}/{organization}{(project is null ? string.Empty : $"/projects/{project}")}/api-keys";
+        var first = (await oidc.OkAsync(HttpMethod.Post, keys, token, new { name = "backend", scopes = ReadOnly }, HttpStatusCode.Created)).GetProperty("key").GetString()!;
+        var id = first[..24];
+        var route = $"{keys}/{id}";
+        await using var replica = await StartReplicaAsync(oidc, clock);
+        await Assert.That((await TokenErrorAsync(replica.Client.SendAsync(KeyTokenRequest(first)))).Status).IsEqualTo(200);
+
+        var rotated = await oidc.OkAsync(HttpMethod.Post, $"{route}/rotate", token, new { previous_secret_ttl = 60 });
+        var second = rotated.GetProperty("key").GetString()!;
+        var expiry = rotated.GetProperty("api_key").GetProperty("previous_secret_expires_at").GetDateTimeOffset();
+        await Assert.That(expiry).IsEqualTo(clock.GetUtcNow().AddSeconds(60));
+        var metadata = (await oidc.OkAsync(HttpMethod.Get, route, token)).GetRawText();
+        var store = oidc.Server.App.Services.GetRequiredService<AuthStore>();
+        var before = (await store.GetAsync(AuthStore.ApiKeyCollection, "terrascale", id))!;
+        var auditRoute = $"{Organizations}/{organization}/audit-events";
+        var events = (await oidc.OkAsync(HttpMethod.Get, auditRoute, token)).GetRawText();
+
+        clock.Advance(TimeSpan.FromSeconds(30));
+        // Neither a shorter/longer grace nor an explicit/default zero may replace the two working credentials.
+        foreach (var body in new object?[] { new { previous_secret_ttl = 1 }, new { previous_secret_ttl = 60 }, new { previous_secret_ttl = 120 }, new { previous_secret_ttl = 0 }, null })
+        {
+            await Assert.That(await oidc.FailAsync(HttpMethod.Post, $"{route}/rotate", token, body)).IsEqualTo((409, "rotation_pending"));
+            await Assert.That((await oidc.OkAsync(HttpMethod.Get, route, token)).GetRawText()).IsEqualTo(metadata);
+            var after = (await store.GetAsync(AuthStore.ApiKeyCollection, "terrascale", id))!;
+            await Assert.That(after.Version).IsEqualTo(before.Version);
+            await Assert.That(after.Document.GetRawText()).IsEqualTo(before.Document.GetRawText());
+            await Assert.That((await oidc.OkAsync(HttpMethod.Get, auditRoute, token)).GetRawText()).IsEqualTo(events);
+            foreach (var client in new[] { oidc.Client, replica.Client })
+            {
+                await Assert.That((await TokenErrorAsync(client.SendAsync(KeyTokenRequest(first)))).Status).IsEqualTo(200);
+                await Assert.That((await TokenErrorAsync(client.SendAsync(KeyTokenRequest(second)))).Status).IsEqualTo(200);
+            }
+        }
+
+        clock.Advance(expiry - clock.GetUtcNow() - TimeSpan.FromTicks(1));
+        await Assert.That(await oidc.FailAsync(HttpMethod.Post, $"{route}/rotate", token, new { previous_secret_ttl = 0 })).IsEqualTo((409, "rotation_pending"));
+        var last = (await store.GetAsync(AuthStore.ApiKeyCollection, "terrascale", id))!;
+        await Assert.That(last.Version).IsEqualTo(before.Version);
+        await Assert.That(last.Document.GetRawText()).IsEqualTo(before.Document.GetRawText());
+        await Assert.That((await oidc.OkAsync(HttpMethod.Get, route, token)).GetRawText()).IsEqualTo(metadata);
+        await Assert.That((await oidc.OkAsync(HttpMethod.Get, auditRoute, token)).GetRawText()).IsEqualTo(events);
+        clock.Advance(TimeSpan.FromTicks(1));
+        foreach (var client in new[] { oidc.Client, replica.Client })
+        {
+            await Assert.That(await TokenErrorAsync(client.SendAsync(KeyTokenRequest(first)))).IsEqualTo((401, "invalid_client"));
+            await Assert.That((await TokenErrorAsync(client.SendAsync(KeyTokenRequest(second)))).Status).IsEqualTo(200);
+        }
+
+        // The expired grace no longer blocks rotation; successive no-grace rotations are still permitted.
+        var current = second;
+        foreach (var body in new object?[] { null, new { previous_secret_ttl = 0 } })
+        {
+            var next = await oidc.OkAsync(HttpMethod.Post, $"{route}/rotate", token, body);
+            var key = next.GetProperty("key").GetString()!;
+            await Assert.That(key[..24]).IsEqualTo(id);
+            await Assert.That(next.GetProperty("api_key").GetProperty("previous_secret_expires_at").ValueKind).IsEqualTo(JsonValueKind.Null);
+            foreach (var client in new[] { oidc.Client, replica.Client })
+            {
+                await Assert.That(await TokenErrorAsync(client.SendAsync(KeyTokenRequest(current)))).IsEqualTo((401, "invalid_client"));
+                await Assert.That((await TokenErrorAsync(client.SendAsync(KeyTokenRequest(key)))).Status).IsEqualTo(200);
+            }
+
+            current = key;
+        }
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Concurrent_positive_grace_rotations_across_replicas_have_one_winner_and_preserve_the_original_secret(bool projectKey)
+    {
+        var clock = new ManualClock(DateTimeOffset.UtcNow);
+        var pause = new PausingTransactions { InnerHandler = fixture.NewHandler() };
+        await using var oidc = await OidcHarness.StartAsync(fixture, values => values["access-token-audiences"] = Audience, clock: clock,
+            services: services => services.AddSingleton(new HttpClient(pause)));
+        var (_, token) = await oidc.SignInUserAsync("alice@example.test");
+        var organization = await oidc.CreateOrganizationAsync(token);
+        var project = projectKey ? await oidc.CreateProjectAsync(token, organization, "Production") : null;
+        var keys = $"{Organizations}/{organization}{(project is null ? string.Empty : $"/projects/{project}")}/api-keys";
+        var original = (await oidc.OkAsync(HttpMethod.Post, keys, token, new { name = "backend", scopes = ReadOnly }, HttpStatusCode.Created)).GetProperty("key").GetString()!;
+        var id = original[..24];
+        var store = oidc.Server.App.Services.GetRequiredService<AuthStore>();
+        var before = (await store.GetAsync(AuthStore.ApiKeyCollection, "terrascale", id))!;
+        await using var replica = await StartReplicaAsync(oidc, clock);
+
+        // Hold one real transaction after its reads so it must retry against a rotation committed by another replica.
+        var held = await pause.HoldNextAsync(() => oidc.FailAsync(HttpMethod.Post, $"{keys}/{id}/rotate", token, new { previous_secret_ttl = 60 }));
+        (HttpStatusCode Status, JsonElement Body)[] responses;
+        (int Status, string? Code) refused;
+        try
+        {
+            responses = await Task.WhenAll(Enumerable.Range(0, 3).Select(async _ =>
+            {
+                using var response = await oidc.CallAsync(HttpMethod.Post, $"{keys}/{id}/rotate", token, new { previous_secret_ttl = 60 }, client: replica.Client);
+                return (response.StatusCode, await OidcHarness.JsonAsync(response));
+            }));
+        }
+        finally
+        {
+            refused = await pause.ReleaseAsync(held);
+        }
+
+        await Assert.That(refused).IsEqualTo((409, "rotation_pending"));
+        await Assert.That(responses.Count(response => response.Status == HttpStatusCode.OK)).IsEqualTo(1);
+        await Assert.That(responses.Count(response => response.Status == HttpStatusCode.Conflict)).IsEqualTo(2);
+        foreach (var response in responses.Where(response => response.Status == HttpStatusCode.Conflict))
+        {
+            await Assert.That(response.Body.GetProperty("error").GetProperty("code").GetString()).IsEqualTo("rotation_pending");
+        }
+
+        var winner = responses.Single(response => response.Status == HttpStatusCode.OK).Body;
+        var key = winner.GetProperty("key").GetString()!;
+        await Assert.That(key[..24]).IsEqualTo(id);
+        var after = (await store.GetAsync(AuthStore.ApiKeyCollection, "terrascale", id))!;
+        await Assert.That(after.Document.GetProperty("previousSecretHash").GetString()).IsEqualTo(before.Document.GetProperty("secretHash").GetString());
+        await Assert.That(after.Document.GetProperty("previousSecretExpiresAt").GetDateTimeOffset()).IsEqualTo(clock.GetUtcNow().AddSeconds(60));
+        await Assert.That((await oidc.OkAsync(HttpMethod.Get, $"{keys}/{id}", token)).GetRawText()).IsEqualTo(winner.GetProperty("api_key").GetRawText());
+        var events = (await oidc.OkAsync(HttpMethod.Get, $"{Organizations}/{organization}/audit-events", token)).GetProperty("items");
+        await Assert.That(events.EnumerateArray().Count(item => item.GetProperty("action").GetString() == "api_key.rotated")).IsEqualTo(1);
+        foreach (var client in new[] { oidc.Client, replica.Client })
+        {
+            await Assert.That((await TokenErrorAsync(client.SendAsync(KeyTokenRequest(original)))).Status).IsEqualTo(200);
+            await Assert.That((await TokenErrorAsync(client.SendAsync(KeyTokenRequest(key)))).Status).IsEqualTo(200);
+        }
+    }
+
+    [Test]
     public async Task Users_exchange_their_sign_in_for_organization_and_project_tokens_their_role_allows()
     {
         await using var oidc = await StartAsync();
@@ -337,6 +475,13 @@ public sealed partial class ApiKeyTests(TerraBaseFixture fixture)
     }
 
     private Task<OidcHarness> StartAsync() => OidcHarness.StartAsync(fixture, values => values["access-token-audiences"] = Audience);
+
+    private Task<AuthTestServer> StartReplicaAsync(OidcHarness oidc, ManualClock clock) =>
+        OidcHarness.StartServerAsync(fixture, oidc.Tenant, oidc.Email, values =>
+        {
+            values["master-key"] = Convert.ToBase64String(oidc.Server.App.Services.GetRequiredService<AuthOptions>().MasterKey);
+            values["access-token-audiences"] = Audience;
+        }, clock: clock);
 
     private static HttpRequestMessage KeyTokenRequest(string key)
     {

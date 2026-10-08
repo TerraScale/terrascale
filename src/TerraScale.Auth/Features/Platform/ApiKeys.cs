@@ -119,19 +119,25 @@ public sealed partial class ApiKeys(AuthStore store, PlatformDirectory directory
 
     /// <summary>
     /// Issues a new key string for the same id. The previous string keeps working for <paramref name="previousTtl"/>
-    /// (at most a day), then only the new one does.
+    /// (at most a day), then only the new one does. Another rotation is refused while that grace is still active.
     /// </summary>
     public Task<(ApiKeyRecord Key, string Secret)> RotateAsync(string userId, string organizationId, string? projectId, string keyId, TimeSpan previousTtl, CancellationToken cancellationToken) =>
         directory.CommitAsync(async () =>
         {
             var authority = await this.AuthorizeAsync(userId, organizationId, projectId, cancellationToken).ConfigureAwait(false);
             var key = await this.OwnedAsync(organizationId, projectId, keyId, cancellationToken).ConfigureAwait(false) ?? throw PlatformDirectory.NotFound();
+            var now = clock.GetUtcNow();
+            if (key.Value.PreviousSecretHash is not null && key.Value.PreviousSecretExpiresAt > now)
+            {
+                throw PlatformDirectory.Conflict("rotation_pending", "The previous API key secret is still in its rotation grace period.");
+            }
+
             var secret = $"{keyId}_{RandomNumberGenerator.GetString(Alphabet, 52)}";
             var rotated = key.Value with
             {
                 SecretHash = Tokens.Sha256Hex(secret),
                 PreviousSecretHash = previousTtl > TimeSpan.Zero ? key.Value.SecretHash : null,
-                PreviousSecretExpiresAt = previousTtl > TimeSpan.Zero ? clock.GetUtcNow() + previousTtl : null,
+                PreviousSecretExpiresAt = previousTtl > TimeSpan.Zero ? now + previousTtl : null,
             };
             return new PlatformDirectory.Plan<(ApiKeyRecord, string)>(
                 [authority.Assertion, AuthStore.Replace(AuthStore.ApiKeyCollection, Instance, keyId, Serialize(rotated), key.Version), directory.Audit(organizationId, userId, "api_key.rotated", keyId)], (rotated, secret));
