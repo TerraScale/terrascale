@@ -3,6 +3,7 @@ using System.Net.Http.Headers;
 using System.Text.Json;
 using TerraBase.Fast.Documents;
 using TerraBase.Hosting;
+using TerraBase.Primitives;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Platform;
@@ -175,6 +176,14 @@ public sealed class ApiReferenceTests
             if (operation.GetProperty("operationId").GetString() is "getDatabaseUsage" or "getProjectUsage")
             {
                 await Assert.That(operation.GetProperty("responses").GetProperty("400").GetProperty("description").GetString()).Contains("invalid_query");
+            }
+
+            if (operation.GetProperty("operationId").GetString() is "createDatabase" or "branchDatabase" or "restoreBackup"
+                or "createBackup" or "createSavedQuery" or "createCollection" or "createDocument")
+            {
+                var success = responses.First(status => status.Name.StartsWith('2')).Value;
+                var example = success.GetProperty("content").GetProperty("application/json").GetProperty("example");
+                await Assert.That(EntityIds.IsValid(example.GetProperty("id").GetString())).IsTrue().Because(line);
             }
 
             // Every operation documents a success, and every error status the error envelope (or the readiness body).
