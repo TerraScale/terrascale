@@ -121,13 +121,20 @@ internal sealed partial class CatalogFollower : BackgroundService, ICatalogReadi
         }
     }
 
-    public override async Task StopAsync(CancellationToken cancellationToken)
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        await base.StopAsync(cancellationToken).ConfigureAwait(false);
-        await _caughtUpObservers.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await FollowUntilStoppedAsync(stoppingToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            // ExecuteTask owns every follower task, including the off-loop audit, so the host/harness can join them.
+            await _caughtUpObservers.ConfigureAwait(false);
+        }
     }
 
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    private async Task FollowUntilStoppedAsync(CancellationToken stoppingToken)
     {
         var backoff = InitialBackoff;
         while (!stoppingToken.IsCancellationRequested)

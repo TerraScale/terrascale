@@ -61,6 +61,8 @@ builder.WebHost.ConfigureKestrel(kestrel =>
 // Per-request framework logs are metrics' job; keep the log stream for events.
 builder.Logging.AddFilter("Microsoft.AspNetCore", LogLevel.Warning);
 
+var runCompletion = new ApplicationRunCompletion();
+builder.Services.AddSingleton(runCompletion);
 builder.Services.AddSingleton(options);
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.ConfigureHttpJsonOptions(json =>
@@ -91,37 +93,51 @@ builder.Services.AddTerraBasePressure();
 builder.AddTerraBaseReplication(options);
 builder.Services.AddTerraBaseCrossRegion(options);
 
-await using var app = builder.Build();
 try
 {
-    // The engine takes the data directory's lock and checks its layout before anything is served.
-    _ = app.Services.GetRequiredService<IStorageEngine>();
-}
-catch (TerraBaseConfigurationException error)
-{
-    await Console.Error.WriteLineAsync($"terrabase: {error.Message}");
-    return 2;
-}
+    await using var app = builder.Build();
+    try
+    {
+        // The engine takes the data directory's lock and checks its layout before anything is served.
+        _ = app.Services.GetRequiredService<IStorageEngine>();
+    }
+    catch (TerraBaseConfigurationException error)
+    {
+        await Console.Error.WriteLineAsync($"terrabase: {error.Message}");
+        return 2;
+    }
 
-// Forwarded requests run through everything after it. Error bodies first, so they also cover the listener check's 404.
-app.UseTerraBaseForwardedRequests();
-app.UseTerraBasePressure();
-app.UseTerraBaseBadRequests();
-app.UseTerraBaseLegacyRoutes();
-app.UseRouting();
-app.UseTerraBaseListeners();
-app.UseTerraBaseQueryShapeAdmission();
-app.UseAuthentication();
-app.UseTerraBaseProjectCheck();
-app.UseAuthorization();
-app.UseTerraBaseCatalogForwarding();
-app.UseTerraBaseProjectCatalog();
-app.UseTerraBaseDatabasePlacement();
-app.MapTerraScaleEndpoints();
-app.MapTerraBaseApiReference();
-app.MapTerraBaseMetrics();
-app.MapTerraBaseReplication();
-app.MapTerraBaseUsage();
-app.MapTerraBaseQueryShapes();
-await app.RunAsync();
-return 0;
+    // Forwarded requests run through everything after it. Error bodies first, so they also cover the listener check's 404.
+    app.UseTerraBaseForwardedRequests();
+    app.UseTerraBasePressure();
+    app.UseTerraBaseBadRequests();
+    app.UseTerraBaseLegacyRoutes();
+    app.UseRouting();
+    app.UseTerraBaseListeners();
+    app.UseTerraBaseQueryShapeAdmission();
+    app.UseAuthentication();
+    app.UseTerraBaseProjectCheck();
+    app.UseAuthorization();
+    app.UseTerraBaseCatalogForwarding();
+    app.UseTerraBaseProjectCatalog();
+    app.UseTerraBaseDatabasePlacement();
+    app.MapTerraScaleEndpoints();
+    app.MapTerraBaseApiReference();
+    app.MapTerraBaseMetrics();
+    app.MapTerraBaseReplication();
+    app.MapTerraBaseUsage();
+    app.MapTerraBaseQueryShapes();
+    await ApplicationRunCompletion.RunAsync(app);
+    return 0;
+}
+catch (Exception error)
+{
+    runCompletion.Completion.TrySetException(error);
+    // A failed Build has no host/owner to await this signal; the entry point still rethrows the original error.
+    _ = runCompletion.Completion.Task.Exception;
+    throw;
+}
+finally
+{
+    runCompletion.Completion.TrySetResult();
+}

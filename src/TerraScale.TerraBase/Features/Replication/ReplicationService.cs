@@ -17,7 +17,7 @@ namespace TerraBase.Features.Replication;
 /// </summary>
 internal sealed partial class ReplicationService(
     IStorageEngine engine, IReplicationJournal journal, ITenantDirectory tenants, ReplicationMetrics metrics, TerraBaseOptions options, ILogger<ReplicationService> logger,
-    DatabaseLifecycleCheckpoint checkpoint)
+    DatabaseLifecycleCheckpoint checkpoint, IHostApplicationLifetime application)
     : V1.Replication.ReplicationBase
 {
     // One instance per node (registered as a singleton), so this bounds the node's open streams.
@@ -32,7 +32,8 @@ internal sealed partial class ReplicationService(
         ArgumentNullException.ThrowIfNull(context);
         try
         {
-            using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(context.CancellationToken);
+            using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(context.CancellationToken, application.ApplicationStopping);
+            using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(cancellation.Token);
             var stream = new Stream(requestStream, responseStream, lifetime);
             if (Interlocked.Increment(ref _streams) > ReplicationProtocol.MaxOpenStreams)
             {
@@ -40,7 +41,7 @@ internal sealed partial class ReplicationService(
                 return;
             }
 
-            await ServeAsync(stream, lifetime, context.CancellationToken).ConfigureAwait(false);
+            await ServeAsync(stream, lifetime, cancellation.Token).ConfigureAwait(false);
         }
         finally
         {

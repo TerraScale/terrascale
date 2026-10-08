@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Net;
+using System.Runtime.ExceptionServices;
 using System.Security.Cryptography;
 using System.Text;
 using Bogus;
@@ -202,41 +203,110 @@ public sealed class DataDirectoryTests
     }
 
     [Test]
-    public async Task Shutdown_closes_every_idle_connection_even_when_one_fails_to_close()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Shutdown_closes_every_idle_connection_even_when_one_fails_to_close(bool disposeEngineFirst)
     {
-        await using var server = await TerraBaseTestServer.StartAsync(settings => settings["shutdown-grace-seconds"] = "1");
-        var engine = server.Services.GetRequiredService<SqliteStorageEngine>();
-        var database = new TenantContext(Guid.NewGuid().ToString(), PlanTier.Hobby, Guid.NewGuid().ToString(), Guid.NewGuid().ToString());
-        await engine.CreateDatabaseAsync(database, CancellationToken.None);
-        var path = Path.Combine(server.DataDirectory, database.OrganizationId, database.ProjectId!, database.DatabaseId + ".db");
-        // Stores the engine does not track, one session each (so no per-database cap applies), closed by the pool's own
-        // stop in the order they were pooled: two whose close fails with different exceptions, then a working one.
-        SqliteConnection[] connections =
-        [
-            new FailingConnection(Connect(path), new InvalidOperationException("closing failed")),
-            new FailingConnection(Connect(path), new IOException("closing failed")),
-            new SqliteConnection(Connect(path)),
-        ];
-        foreach (var connection in connections)
+        var server = await TerraBaseTestServer.StartAsync(settings => settings["shutdown-grace-seconds"] = "1");
+        Exception? failure = null;
+        Exception? cleanupFailure = null;
+        try
         {
-            var store = new SqliteDatabaseStore("probe", path, engine.Pool, engine.Io, "PRAGMA cache_size = -64; PRAGMA busy_timeout = 30000;");
-            var session = await OpenSessionAsync(connection);
-            await Assert.That(engine.Pool.Rent(store)).IsNull();
-            engine.Pool.Adopt(store, session);
-            engine.Pool.Return(store, session);
-            await Assert.That(store.IdleCount).IsEqualTo(1);
+            var engine = server.Services.GetRequiredService<SqliteStorageEngine>();
+            var database = new TenantContext(Guid.NewGuid().ToString(), PlanTier.Hobby, Guid.NewGuid().ToString(), Guid.NewGuid().ToString());
+            await engine.CreateDatabaseAsync(database, CancellationToken.None);
+            var path = Path.Combine(server.DataDirectory, database.OrganizationId, database.ProjectId!, database.DatabaseId + ".db");
+            // Stores the engine does not track, one session each (so no per-database cap applies), closed by the pool's own
+            // stop in the order they were pooled: two whose close fails with different exceptions, then a working one.
+            Exception[] failures = [new InvalidOperationException("closing failed"), new IOException("closing failed")];
+            SqliteConnection[] connections =
+            [
+                new FailingConnection(Connect(path), failures[0]),
+                new FailingConnection(Connect(path), failures[1]),
+                new SqliteConnection(Connect(path)),
+            ];
+            foreach (var connection in connections)
+            {
+                var store = new SqliteDatabaseStore("probe", path, engine.Pool, engine.Io, "PRAGMA cache_size = -64; PRAGMA busy_timeout = 30000;");
+                var session = await OpenSessionAsync(connection);
+                await Assert.That(engine.Pool.Rent(store)).IsNull();
+                engine.Pool.Adopt(store, session);
+                engine.Pool.Return(store, session);
+                await Assert.That(store.IdleCount).IsEqualTo(1);
+            }
+
+            await Assert.That(OpenDatabaseFiles(server.DataDirectory)).IsNotEmpty();
+
+            var error = await Assert.That(async () =>
+            {
+                if (disposeEngineFirst)
+                {
+                    await engine.DisposeAsync();
+                    await engine.CleanupCompletion.WaitAsync(TestContext.Current!.Execution.CancellationToken);
+                }
+                else
+                {
+                    await server.DisposeAsync();
+                }
+            }).Throws<AggregateException>();
+
+            // The failure is reported after the batch: every connection was closed, the failing one's native handle too,
+            // the accounting is balanced, and so the directory was released.
+            await Assert.That(error!.Flatten().InnerExceptions).IsEquivalentTo(failures);
+            await Assert.That(engine.Pool.OpenCount).IsEqualTo(0);
+            await Assert.That(OpenDatabaseFiles(server.DataDirectory)).IsEmpty();
+            await Assert.That(TerraBaseTestServer.IsDataDirectoryOwned(server.DataDirectory)).IsFalse();
+            await Assert.That(Directory.Exists(server.DataDirectory)).IsTrue();
+        }
+        catch (Exception error)
+        {
+            failure = error;
+        }
+        finally
+        {
+            // Harness disposal must observe CleanupCompletion even if engine disposal already reported its fault.
+            var resources = ReleaseResourcesAsync();
+            try
+            {
+                await TerraBaseTestServer.WaitForCleanupAsync(resources, TerraBaseTestServer.ReportCleanupFailure,
+                    TestContext.Current!.Execution.CancellationToken);
+            }
+            catch (Exception error)
+            {
+                cleanupFailure = error;
+            }
         }
 
-        await Assert.That(OpenDatabaseFiles(server.DataDirectory)).IsNotEmpty();
+        if (failure is not null)
+        {
+            if (cleanupFailure is not null)
+            {
+                throw new AggregateException(failure, cleanupFailure).Flatten();
+            }
 
-        var error = await Assert.That(async () => await engine.DisposeAsync()).Throws<AggregateException>();
+            ExceptionDispatchInfo.Capture(failure).Throw();
+        }
 
-        // The failure is reported after the batch: every connection was closed, the failing one's native handle too,
-        // the accounting is balanced, and so the directory was released.
-        await Assert.That(error!.InnerExceptions.Select(inner => inner.GetType())).IsEquivalentTo([typeof(InvalidOperationException), typeof(IOException)]);
-        await Assert.That(engine.Pool.OpenCount).IsEqualTo(0);
-        await Assert.That(OpenDatabaseFiles(server.DataDirectory)).IsEmpty();
-        await Assert.That(TerraBaseTestServer.IsDataDirectoryOwned(server.DataDirectory)).IsFalse();
+        await Assert.That(cleanupFailure is AggregateException).IsTrue();
+        await Assert.That(((AggregateException)cleanupFailure!).Flatten().InnerExceptions.Select(inner => inner.GetType()))
+            .IsEquivalentTo([typeof(InvalidOperationException), typeof(IOException)]);
+        await Assert.That(Directory.Exists(server.DataDirectory)).IsFalse();
+
+        async Task ReleaseResourcesAsync()
+        {
+            try
+            {
+                await server.CleanupCompletion;
+            }
+            finally
+            {
+                server.Client.Dispose();
+                if (Directory.Exists(server.DataDirectory))
+                {
+                    Directory.Delete(server.DataDirectory, recursive: true);
+                }
+            }
+        }
     }
 
     [Test]

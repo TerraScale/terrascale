@@ -1,16 +1,18 @@
 using System.Globalization;
 using System.Net;
 using System.Net.Sockets;
+using System.Runtime.ExceptionServices;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using OpenTelemetry.Exporter;
 using TerraBase.Configuration;
-using TerraBase.Engine;
 using TerraBase.Engine.Sqlite;
+using TerraBase.Hosting;
 
 namespace TerraBase.Testing;
 
@@ -21,19 +23,15 @@ namespace TerraBase.Testing;
 /// </summary>
 public sealed class TerraBaseTestServer : IAsyncDisposable
 {
-    private readonly WebApplicationFactory<Program> _factory;
-    private readonly IStorageEngine _engine;
-    private readonly SqliteStorageEngine? _sqlite;
+    private readonly Factory _factory;
 
     // The temporary directory this harness created, deleted on dispose even when a test chose another data directory.
     private readonly string _temporaryDirectory;
 
     private TerraBaseTestServer(
-        WebApplicationFactory<Program> factory, string temporaryDirectory, IReadOnlyList<Uri> listeners, IReadOnlyDictionary<string, string> settings)
+        Factory factory, string temporaryDirectory, IReadOnlyList<Uri> listeners, IReadOnlyDictionary<string, string> settings)
     {
         _factory = factory;
-        _engine = factory.Services.GetRequiredService<IStorageEngine>();
-        _sqlite = factory.Services.GetService<SqliteStorageEngine>();
         _temporaryDirectory = temporaryDirectory;
         DataDirectory = Path.GetFullPath(settings["data-directory"]);
         BaseAddress = listeners.Single(address => address.Scheme == Uri.UriSchemeHttp);
@@ -108,12 +106,19 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
     /// <paramref name="services"/> replaces services after the application registered its own
     /// (for example a <see cref="TimeProvider"/> that tests move forward).
     /// <paramref name="environmentName"/> selects the host environment without changing process-wide variables.
+    /// <paramref name="cancellationToken"/> defaults to the test execution token and bounds the caller's waits.
     /// </summary>
     public static async Task<TerraBaseTestServer> StartAsync(
-        Action<Dictionary<string, string>>? settings = null, Action<IServiceCollection>? services = null, string environmentName = "Development")
+        Action<Dictionary<string, string>>? settings = null, Action<IServiceCollection>? services = null, string environmentName = "Development",
+        CancellationToken? cancellationToken = null)
     {
         var dataDirectory = Directory.CreateTempSubdirectory("terrabase-test-").FullName;
-        WebApplicationFactory<Program>? factory = null;
+        var testToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
+        var linkedCancellation = cancellationToken is { } callerCancellation
+            ? CancellationTokenSource.CreateLinkedTokenSource(testToken, callerCancellation)
+            : null;
+        var testCancellation = linkedCancellation?.Token ?? testToken;
+        Factory? factory = null;
         try
         {
             var values = new Dictionary<string, string>(StringComparer.Ordinal)
@@ -136,13 +141,14 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
                 arguments[key] = value;
             }
 
-            factory = new Factory(arguments, services, environmentName);
+            factory = new Factory(arguments, services, environmentName, linkedCancellation, testCancellation);
             factory.UseKestrel();
             IServerAddressesFeature addresses;
             try
             {
                 // Factory startup blocks waiting for the host; keep parallel starts off request workers.
-                await Task.Factory.StartNew(factory.StartServer, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+                factory.Startup = Task.Factory.StartNew(factory.StartServer, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+                await factory.Startup.WaitAsync(testCancellation);
                 addresses = factory.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()
                     ?? throw new InvalidOperationException("the server did not report its listening addresses");
             }
@@ -160,15 +166,26 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
 
             return new TerraBaseTestServer(factory, dataDirectory, [.. addresses.Addresses.Select(address => new Uri(address))], values);
         }
-        catch
+        catch (Exception startupError)
         {
-            // The caller gets nothing to dispose: stop the host and remove its directory here.
-            if (factory is not null)
+            // Failed starts have no caller to dispose them. Keep both the startup and cleanup failures.
+            try
             {
-                await factory.DisposeAsync();
+                if (factory is not null)
+                {
+                    await factory.CleanupAsync(dataDirectory);
+                }
+                else
+                {
+                    linkedCancellation?.Dispose();
+                    Directory.Delete(dataDirectory, recursive: true);
+                }
+            }
+            catch (Exception cleanupError)
+            {
+                throw new AggregateException(startupError, cleanupError).Flatten();
             }
 
-            Directory.Delete(dataDirectory, recursive: true);
             throw;
         }
     }
@@ -340,23 +357,129 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         Client.Dispose();
-        await _factory.DisposeAsync();
-        // Program's host may still be draining its files when the factory returns. Rejoin that drain
-        // within the configured shutdown grace before cleaning up this harness's directory.
-        await _engine.DisposeAsync();
-        // Past the grace the engine still owns its data directory until its last connection closed (a closing checkpoint
-        // on a slow disk). A process exit releases it; a test that restarts on the directory waits for it instead. The
-        // engine's DisposeAsync above already reported any cleanup failure.
-        if (_sqlite is not null)
-        {
-            await _sqlite.CleanupCompletion.WaitAsync(TUnit.Core.TestContext.Current?.Execution.CancellationToken ?? CancellationToken.None)
-                .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
-        }
-        Directory.Delete(_temporaryDirectory, recursive: true);
+        await _factory.CleanupAsync(_temporaryDirectory);
     }
 
-    private sealed class Factory(IReadOnlyDictionary<string, string> settings, Action<IServiceCollection>? services, string environmentName) : WebApplicationFactory<Program>
+    // Resource owners can retain the actual cleanup after a bounded DisposeAsync wait is canceled.
+    internal Task CleanupCompletion => _factory.BeginCleanupAsync(_temporaryDirectory);
+
+    internal static async Task WaitForCleanupAsync(Task cleanup, Action<AggregateException> reportFailure, CancellationToken cancellationToken)
     {
+        try
+        {
+            await cleanup.WaitAsync(cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // The test can finish before its cleanup owner. Observe and report every eventual leaf failure.
+            _ = cleanup.ContinueWith(task => reportFailure(task.Exception!.Flatten()), CancellationToken.None,
+                TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+            throw;
+        }
+    }
+
+    internal static void ReportCleanupFailure(AggregateException error)
+    {
+        // Bypass per-test console capture: this test's report may already have been emitted.
+        using var standardError = Console.OpenStandardError();
+        using var diagnostics = new StreamWriter(standardError, leaveOpen: true);
+        diagnostics.WriteLine($"Test cleanup failed after caller cancellation: {error}");
+    }
+
+    private sealed class Factory(
+        IReadOnlyDictionary<string, string> settings, Action<IServiceCollection>? services, string environmentName,
+        CancellationTokenSource? linkedCancellation, CancellationToken cancellationToken) : WebApplicationFactory<Program>
+    {
+        private ShutdownHost? _host;
+        private SqliteStorageEngine? _nativeEngine;
+
+        public Task Startup { get; set; } = Task.CompletedTask;
+
+        private readonly Lock _cleanupGate = new();
+        private Task? _cleanup;
+
+        public Task CleanupAsync(string directory) => WaitForCleanupAsync(
+            BeginCleanupAsync(directory), ReportCleanupFailure, cancellationToken);
+
+        public Task BeginCleanupAsync(string directory)
+        {
+            lock (_cleanupGate)
+            {
+                // Bound the caller, not cleanup ownership. A timed-out test must not dispose live dependencies.
+                return _cleanup ??= CleanupCoreAsync(directory);
+            }
+        }
+
+        private async Task CleanupCoreAsync(string directory)
+        {
+            using var cleanupLifetime = linkedCancellation;
+            var errors = new List<Exception>();
+            try
+            {
+                // Startup may publish a host after the caller cancels. Keep responsibility for that host.
+                await Startup;
+            }
+            catch (Exception error)
+            {
+                // A normal failed start is reported by StartAsync. After cancellation, retain late failures here.
+                if (cancellationToken.IsCancellationRequested && error is not OperationCanceledException)
+                {
+                    errors.Add(error);
+                }
+            }
+
+            // Program owns StopAsync and service disposal. Attempt every join even if a previous cleanup failed.
+            if (_host is not null && Startup.IsCompletedSuccessfully)
+            {
+                _host.RequestStop();
+            }
+
+            await ObserveAsync(() => DisposeAsync().AsTask());
+            if (_host is not null)
+            {
+                if (Startup.IsCompletedSuccessfully)
+                {
+                    await ObserveAsync(() => _host.RunCompletion);
+                }
+            }
+
+            // Capture can precede adapter construction; even an early startup failure must join native ownership.
+            await ObserveAsync(() => _nativeEngine?.CleanupCompletion ?? Task.CompletedTask);
+            _host?.Dispose();
+
+            var failures = new AggregateException(errors).Flatten().InnerExceptions.Distinct<Exception>(ReferenceEqualityComparer.Instance).ToArray();
+            if (failures.Length == 1)
+            {
+                ExceptionDispatchInfo.Capture(failures[0]).Throw();
+            }
+            else if (failures.Length > 1)
+            {
+                throw new AggregateException(failures);
+            }
+
+            async Task ObserveAsync(Func<Task> cleanup)
+            {
+                try
+                {
+                    await cleanup();
+                }
+                catch (Exception error)
+                {
+                    errors.Add(error);
+                }
+            }
+
+            Directory.Delete(directory, recursive: true);
+        }
+
+        protected override IHost CreateHost(IHostBuilder builder)
+        {
+            _host = new ShutdownHost(builder.Build(), cancellationToken);
+            // StartServer already runs on the harness's dedicated startup thread, as in the factory default.
+            _host.Start();
+            return _host;
+        }
+
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
             builder.UseEnvironment(environmentName);
@@ -370,7 +493,64 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
                 // Completion barriers must observe commits after the previous scrape, not its cached zero.
                 values.Configure<PrometheusAspNetCoreOptions>(options => options.ScrapeResponseCacheDurationMilliseconds = 0);
                 services?.Invoke(values);
+                // Capture when Program validates the directory, before service activation/StartingAsync can fail.
+                var native = values.Last(value => value.ServiceType == typeof(SqliteStorageEngine));
+                if (native.ImplementationInstance is SqliteStorageEngine instance)
+                {
+                    // Keep instance registrations externally owned, as DI does.
+                    _nativeEngine = instance;
+                }
+                else
+                {
+                    values[values.IndexOf(native)] = ServiceDescriptor.Describe(typeof(SqliteStorageEngine),
+                        provider => _nativeEngine = (SqliteStorageEngine)(native.ImplementationFactory is { } create
+                            ? create(provider)
+                            : ActivatorUtilities.CreateInstance(provider, native.ImplementationType!)), native.Lifetime);
+                }
             });
+        }
+    }
+
+    // Calling the factory's normal StopAsync races Program.RunAsync's own StopAsync and disposes flush dependencies
+    // while another shutdown flush still uses them. Only Program stops/disposes the real host.
+    private sealed class ShutdownHost : IHost
+    {
+        private readonly IHost _inner;
+        private readonly IHostApplicationLifetime _lifetime;
+        private readonly CancellationTokenRegistration _cancellation;
+
+        public ShutdownHost(IHost inner, CancellationToken testCancellation)
+        {
+            _inner = inner;
+            _lifetime = inner.Services.GetRequiredService<IHostApplicationLifetime>();
+            RunCompletion = inner.Services.GetRequiredService<ApplicationRunCompletion>().Completion.Task;
+            _cancellation = testCancellation.Register(_lifetime.StopApplication);
+        }
+
+        public IServiceProvider Services => _inner.Services;
+
+        public Task RunCompletion { get; }
+
+        public Task StartAsync(CancellationToken cancellationToken = default) => _inner.StartAsync(cancellationToken);
+
+        public async Task StopAsync(CancellationToken cancellationToken = default)
+        {
+            RequestStop();
+            await RunCompletion.WaitAsync(cancellationToken);
+        }
+
+        public void RequestStop()
+        {
+            if (!RunCompletion.IsCompleted)
+            {
+                _lifetime.StopApplication();
+            }
+        }
+
+        public void Dispose()
+        {
+            // Program.RunAsync (and its await using) owns service disposal, including failed starts.
+            _cancellation.Dispose();
         }
     }
 }

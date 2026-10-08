@@ -23,6 +23,7 @@ public sealed class FakeNats : IAsyncDisposable
     private readonly Lock _gate = new();
     private readonly Dictionary<string, (ulong Sequence, byte[] Headers, byte[] Data)> _last = [with(StringComparer.Ordinal)];
     private readonly Task _serving;
+    private Task? _cleanup;
     private ulong _sequence;
     private int _violations;
 
@@ -47,12 +48,30 @@ public sealed class FakeNats : IAsyncDisposable
         }
     }
 
-    public async ValueTask DisposeAsync()
+    public ValueTask DisposeAsync()
     {
-        await _stop.CancelAsync();
-        _listener.Stop();
-        await _serving;
-        _stop.Dispose();
+        Task cleanup;
+        lock (_gate)
+        {
+            cleanup = _cleanup ??= CleanupAsync();
+        }
+
+        return new ValueTask(TerraBaseTestServer.WaitForCleanupAsync(cleanup,
+            TerraBaseTestServer.ReportCleanupFailure, TUnit.Core.TestContext.Current!.Execution.CancellationToken));
+    }
+
+    private async Task CleanupAsync()
+    {
+        try
+        {
+            var cancellation = _stop.CancelAsync();
+            _listener.Stop();
+            await Task.WhenAll(cancellation, _serving);
+        }
+        finally
+        {
+            _stop.Dispose();
+        }
     }
 
     private async Task ServeAsync(CancellationToken cancellationToken)

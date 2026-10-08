@@ -65,5 +65,9 @@ internal sealed class CatalogPrimaryClient(TerraBaseOptions options, PeerCredent
         {
             return false;
         }
+        catch (RpcException error) when (error.StatusCode == StatusCode.Cancelled && cancellationToken.IsCancellationRequested)
+        {
+            throw new OperationCanceledException("Catalog query shapes call canceled", error, cancellationToken);
+        }
     }
 }

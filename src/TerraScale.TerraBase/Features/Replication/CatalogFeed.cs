@@ -46,7 +46,8 @@ internal static class CatalogProtocol
 /// of this journal, then every system database group, in pages, as it commits. No read transaction spans a network write.
 /// </summary>
 internal sealed partial class CatalogFeed(
-    IStorageEngine engine, ISystemReplication system, TerraBaseOptions options, ILogger<CatalogFeed> logger, TimeProvider time)
+    IStorageEngine engine, ISystemReplication system, TerraBaseOptions options, ILogger<CatalogFeed> logger, TimeProvider time,
+    IHostApplicationLifetime lifetime)
     : CatalogReplication.CatalogReplicationBase
 {
     private int _streams;
@@ -75,7 +76,8 @@ internal sealed partial class CatalogFeed(
 
             var region = TerraBaseOptions.IsRegion(request.Region) ? request.Region : "unknown";
             LogFollower(logger, region);
-            await ServeAsync(request, responseStream, context.CancellationToken).ConfigureAwait(false);
+            using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(context.CancellationToken, lifetime.ApplicationStopping);
+            await ServeAsync(request, responseStream, cancellation.Token).ConfigureAwait(false);
         }
         finally
         {
