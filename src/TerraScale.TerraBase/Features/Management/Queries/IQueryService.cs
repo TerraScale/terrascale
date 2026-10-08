@@ -68,8 +68,8 @@ public sealed record SavedQueryRequest(string? Name, string? Sql);
 /// <summary>The rows a statement selected, or that it exhausted the engine read budget.</summary>
 public readonly union RunSqlResult(SqlResultBody, Validation);
 
-/// <summary>How the engine would run a statement, or that explaining it exhausted the engine read budget.</summary>
-public readonly union CheckSqlResult(SqlCheckBody, Validation);
+/// <summary>How the engine would run a statement, missing storage, or an exhausted engine read budget.</summary>
+public readonly union CheckSqlResult(SqlCheckBody, NotFound, Validation);
 
 /// <summary>A deleted saved query, or that it (or its project) does not exist for the user.</summary>
 public readonly union DeleteSavedQueryResult(Done, NotFound);

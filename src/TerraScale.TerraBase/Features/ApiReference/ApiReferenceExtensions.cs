@@ -72,6 +72,12 @@ public static class ApiReferenceExtensions
                     scopes.Add(ApiKeyScopes.ShapesRead);
                 }
 
+                // EXPLAIN validates its exact project scope in the endpoint after JWT authentication.
+                if (operation.OperationId == "explainSql" && policies.Contains(UserAuthExtensions.PolicyName))
+                {
+                    scopes.Add(ApiKeyScopes.DatabasesRead);
+                }
+
                 if (scopes.Count == 0)
                 {
                     return;

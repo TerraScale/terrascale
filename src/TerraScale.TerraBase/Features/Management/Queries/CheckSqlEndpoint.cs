@@ -39,6 +39,7 @@ public sealed class CheckSqlEndpoint(IManagementService management, IQueryServic
             SqlStatement statement => await queries.CheckAsync(database, statement, cancellationToken) switch
             {
                 SqlCheckBody check => TypedResults.Ok(check),
+                NotFound error => ErrorResponse.From(error),
                 Validation error => ErrorResponse.From(error),
             },
         };

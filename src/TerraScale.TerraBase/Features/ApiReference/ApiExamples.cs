@@ -86,6 +86,7 @@ internal static class ApiExamples
         "patchDocument" when mediaType == "application/vnd.terrabase.ops+json" => """{"ops":[{"op":"set","path":"/name","value":"Ada"}]}""",
         "patchDocument" => """{"name":"Ada"}""",
         "queryDocuments" => """{"filter":{"eq":["/name","Ada"]},"limit":50,"count":true}""",
+        "explainSql" => """{"sql":"SELECT * FROM people WHERE email = 'person@example.com' LIMIT 10"}""",
         "runSql" or "checkSql" => """{"sql":"SELECT * FROM people LIMIT 50"}""",
         "createSavedQuery" or "updateSavedQuery" => """{"name":"People","sql":"SELECT * FROM people LIMIT 50"}""",
         "runTransaction" => """{"ops":[{"op":"create","collection":"people","document":{"name":"Ada"}}]}""",
@@ -121,6 +122,7 @@ internal static class ApiExamples
         "listDocuments" => DataPage(Document),
         "queryDocuments" => "{\"items\":[" + Document + "],\"next_cursor\":null,\"count\":{\"value\":\"1\",\"exact\":true}}",
         "runSql" => """{"matched":1,"truncated":false,"rows":[{"id":"00000000-0000-7000-8000-000000000003","value":{"name":"Ada"}}]}""",
+        "explainSql" => """{"ok":true,"error":null,"collection":"people","hasLimit":true,"plan":["SEARCH documents USING INDEX tb_index_people_email (collection=? AND <expr>=?)"],"indexes":["people_email"],"suggestions":[]}""",
         "checkSql" => """{"ok":true,"error":null,"collection":"people","hasLimit":true,"plan":[],"indexes":[],"suggestions":[]}""",
         "createSavedQuery" or "getSavedQuery" => Saved,
         "updateSavedQuery" => Saved.Replace("\"updatedAt\":null", "\"updatedAt\":\"2026-10-07T12:00:00Z\"", StringComparison.Ordinal),
@@ -133,7 +135,7 @@ internal static class ApiExamples
     private static string Codes(string? id, string status) => status switch
     {
         "400" when id == "queryDocuments" => "invalid_request, invalid_query, invalid_cursor, sort_requires_index",
-        "400" when id is "getDatabaseSchema" or "getCollectionSchema" or "runSql" or "checkSql" or "getDatabaseUsage" or "getProjectUsage" =>
+        "400" when id is "getDatabaseSchema" or "getCollectionSchema" or "runSql" or "checkSql" or "explainSql" or "getDatabaseUsage" or "getProjectUsage" =>
             "invalid_request, invalid_query",
         "400" when id == "patchDocument" => "invalid_request, invalid_patch",
         "400" when id == "listCollections" => "invalid_request, invalid_cursor",
@@ -149,6 +151,7 @@ internal static class ApiExamples
         "404" when id is "getCollection" or "dropCollection" or "getShape" or "subscribeCollection" or "listDocuments" or "createDocument" or "putDocument" or "queryDocuments" => "unknown_database, unknown_collection",
         "404" when id is "createDatabase" or "getDatabase" or "listDatabases" or "updateDatabase" or "deleteDatabase" or "branchDatabase" or "getDatabaseUsage" or "getProjectUsage" => "unknown_database, unknown_route",
         "404" => "unknown_database, unknown_route, not_found",
+        "408" => "request_timeout",
         "409" when id is "getShape" or "subscribeCollection" => "must_refetch",
         "409" when id is "patchDocument" or "runTransaction" => "patch_conflict",
         "409" when id == "deleteDatabase" => "database_replicated, wrong_region",

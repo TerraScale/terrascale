@@ -22,6 +22,7 @@ internal static class ErrorResponse
         UriTooLong e => new Response(StatusCodes.Status414UriTooLong, e.Code, e.Message, op),
         PayloadTooLarge e => new Response(StatusCodes.Status413PayloadTooLarge, e.Code, e.Message, op),
         UnsupportedMediaType e => new Response(StatusCodes.Status415UnsupportedMediaType, e.Code, e.Message, op),
+        RequestTimeout e => new Response(StatusCodes.Status408RequestTimeout, e.Code, e.Message, op),
     };
 
     private sealed class Response(int status, string code, string? message, int? op) : IResult

@@ -688,6 +688,27 @@ The schema is inferred and read-only: TerraBase has no declared schemas yet.
 
 ### SQL
 
+`POST /projects/{project}/databases/{database}/sql/explain`
+accepts `{sql}` and returns `{ok, error, collection, hasLimit, plan, indexes, suggestions:[{field, reason}]}`.
+This unversioned EXPLAIN endpoint requires a ts-auth project access token whose `project_id` equals the
+route's project, whose `scope` grants `databases:read`, and whose optional `database` claim matches the
+database name. It is served only on the client TLS listener. `plan` contains SQLite's plan steps and `indexes` contains only the
+names of the secondary indexes selected by that plan, not every index defined on the collection.
+It prepares the plan without executing the query, metering a document read or recording recommendation
+usage. Invalid SQL returns `400 invalid_request`; an exhausted engine work budget returns
+`400 invalid_query`. A database absent or outside the token's project or database restriction returns
+`404 not_found`; project-grant or database-restriction mismatches return `404 unknown_database`.
+A missing scope returns `403 forbidden_scope`. A sign-in token without a project cannot explain databases.
+The project must have a verified ts-auth catalog binding; an unbound project returns `404 unknown_database`.
+Project grants must be JSON strings: non-string claims, a malformed or noncanonical `project_id`,
+or an invalid `database` restriction return `401`.
+The complete JSON body is bounded to 128 KiB (enough for a fully escaped 16,384-character statement); larger bodies
+return `413 payload_too_large`, including chunked requests. Memory is reserved before reading or decoding it;
+exhausted admission returns `503 unavailable`. A cross-region node outside the database's placement returns
+`421 wrong_region` with `X-TerraBase-Database-Home` and `X-TerraBase-Database-Regions` before planning.
+Body reception has a 30-second deadline starting before the endpoint's first catalog lookup, including on HTTP/2. An unfinished upload
+returns `408 request_timeout` and releases its memory reservation without waiting for the client to disconnect.
+
 The data page runs a read-only SQL subset against one database:
 `SELECT * | field, … FROM collection [WHERE expr] [ORDER BY field [ASC|DESC], …] [LIMIT n]`, with an optional trailing `;`.
 TerraBase parses it (SqlParserCS, SQLite dialect) and runs its own query; client SQL never reaches the engine.

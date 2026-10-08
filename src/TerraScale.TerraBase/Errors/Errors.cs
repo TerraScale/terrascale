@@ -59,11 +59,16 @@ public sealed record PayloadTooLarge(string Message, string Code = "payload_too_
 /// <param name="Code">Stable machine-readable code.</param>
 public sealed record UnsupportedMediaType(string Message, string Code = "unsupported_media_type");
 
+/// <summary>The request body was not received before its deadline.</summary>
+/// <param name="Message">The deadline that was exceeded.</param>
+/// <param name="Code">Stable machine-readable code.</param>
+public sealed record RequestTimeout(string Message, string Code = "request_timeout");
+
 /// <summary>Success without a value, such as a deletion.</summary>
 public sealed record Done;
 
 /// <summary>Every expected failure; <see cref="ErrorResponse.From"/> maps each to its HTTP response.</summary>
-public readonly union Failure(NotFound, Conflict, Validation, PreconditionFailed, Unauthorized, Forbidden, QuotaExceeded, Unavailable, UriTooLong, PayloadTooLarge, UnsupportedMediaType);
+public readonly union Failure(NotFound, Conflict, Validation, PreconditionFailed, Unauthorized, Forbidden, QuotaExceeded, Unavailable, UriTooLong, PayloadTooLarge, UnsupportedMediaType, RequestTimeout);
 
 /// <summary>A value read from a request, or the input rule it breaks.</summary>
 /// <typeparam name="T">The value type.</typeparam>

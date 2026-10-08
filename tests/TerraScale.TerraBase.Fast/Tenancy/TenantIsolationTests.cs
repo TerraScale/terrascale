@@ -80,6 +80,15 @@ public sealed class TenantIsolationTests
         // And the database tooling of the Management API: a project API key, a saved query, an index, a backup and a recommendation.
         var aTooling = await SeedToolingAsync(a, aDashboard, aSecret);
         var bTooling = await SeedToolingAsync(b, bDashboard, bSecret);
+        // Prove EXPLAIN accepts these credentials before testing the same route against another project.
+        foreach (var (tenant, client) in new[] { (a, aProject), (b, bProject) })
+        {
+            using var response = await client.PostAsJsonAsync(
+                new Uri($"/projects/{tenant.ProjectId}/databases/secret/sql/explain", UriKind.Relative), new { sql = "SELECT * FROM people" });
+            await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
+            await Assert.That((await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("ok").GetBoolean()).IsTrue();
+        }
+
         var aBefore = await SnapshotAsync(api, a, aDashboard, aSecret);
         var bBefore = await SnapshotAsync(api, b, bDashboard, bSecret);
 
@@ -384,7 +393,8 @@ public sealed class TenantIsolationTests
             .OfType<RouteEndpoint>()
             .Where(endpoint => endpoint.Metadata.GetMetadata<ListenerMetadata>()?.Listeners.Contains(TerraBaseListener.Client) == true)
             .SelectMany(endpoint => (endpoint.Metadata.GetMetadata<HttpMethodMetadata>()?.HttpMethods ?? [])
-                .Select(method => (method, endpoint.RoutePattern.RawText!, endpoint.Metadata.GetMetadata<ProjectManagementRoute>() is not null)))
+                .Select(method => (method, endpoint.RoutePattern.RawText!, endpoint.Metadata.GetMetadata<ProjectManagementRoute>() is not null
+                    || endpoint.RoutePattern.RawText!.EndsWith("/sql/explain", StringComparison.Ordinal))))
             .Order(),
     ];
 

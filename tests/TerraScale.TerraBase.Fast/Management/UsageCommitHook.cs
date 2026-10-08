@@ -27,6 +27,9 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
     // Runs before a page of a catalog collection is listed; while it is set, catalog reads go through the hook too.
     public Action<string>? BeforeList { get; set; }
 
+    // Runs after a catalog row is captured, so tests can change its mapping before the next lookup.
+    public Func<string, string, CancellationToken, ValueTask>? AfterGet { get; set; }
+
     // A user database for which this returns true opens as missing storage, while the catalog still lists it.
     public Func<TenantContext, bool>? Hidden { get; set; }
 
@@ -188,7 +191,7 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
             }
 
             var transaction = await inner.BeginTransactionAsync(write, cancellationToken);
-            return write || hook.BeforeList is not null ? new Transaction(transaction, hook) : transaction;
+            return write || hook.BeforeList is not null || hook.AfterGet is not null ? new Transaction(transaction, hook) : transaction;
         }
     }
 
@@ -223,7 +226,16 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
             inner.ChangesAsync(collection, filter, after, through, cancellationToken);
 
         public Guid Scope => inner.Scope;
-        public ValueTask<StoredDocument?> GetAsync(string collection, string id, CancellationToken cancellationToken) => inner.GetAsync(collection, id, cancellationToken);
+        public async ValueTask<StoredDocument?> GetAsync(string collection, string id, CancellationToken cancellationToken)
+        {
+            var document = await inner.GetAsync(collection, id, cancellationToken);
+            if (hook.AfterGet is { } afterGet)
+            {
+                await afterGet(collection, id, cancellationToken);
+            }
+
+            return document;
+        }
         public ValueTask<DocumentVersion?> GetVersionAsync(string collection, string id, CancellationToken cancellationToken) => inner.GetVersionAsync(collection, id, cancellationToken);
         public ValueTask<bool> DeleteAsync(string collection, string id, CancellationToken cancellationToken) => inner.DeleteAsync(collection, id, cancellationToken);
         public ValueTask<long?> TombstoneAsync(string collection, string id, CancellationToken cancellationToken) => inner.TombstoneAsync(collection, id, cancellationToken);

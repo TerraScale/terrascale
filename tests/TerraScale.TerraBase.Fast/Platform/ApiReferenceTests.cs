@@ -40,6 +40,7 @@ public sealed class ApiReferenceTests
         GET /v1/projects/{project}/usage TsAuth(databases:read) getProjectUsage Usage
         PATCH /v1/projects/{project}/databases/{database} TsAuth(databases:write) updateDatabase Databases
         PATCH /v1/projects/{project}/databases/{database}/collections/{collection}/documents/{id} TsAuth(documents:write) patchDocument Documents
+        POST /projects/{project}/databases/{database}/sql/explain TsAuth(databases:read) explainSql Queries
         POST /v1/projects/{project}/databases TsAuth(databases:write) createDatabase Databases
         POST /v1/projects/{project}/databases/{database}/backups TsAuth(databases:write) createBackup Backups
         POST /v1/projects/{project}/databases/{database}/backups/{backup}/restore TsAuth(databases:write) restoreBackup Backups

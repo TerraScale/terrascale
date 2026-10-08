@@ -81,21 +81,26 @@ internal sealed class QueryService(IStorageEngine engine, SystemCatalog catalog,
     public async ValueTask<CheckSqlResult> CheckAsync(TenantContext database, SqlStatement statement, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(statement);
-        SqlQueryPlan plan;
+        SqlQueryPlan? plan;
         IReadOnlyList<IndexDefinition> indexes;
         try
         {
-            (plan, indexes) = await ReadAsync(
+            (plan, indexes) = await ReadAsync<(SqlQueryPlan? Plan, IReadOnlyList<IndexDefinition> Indexes)>(
                 database,
                 async transaction => (
                     await transaction.ExplainSqlAsync(statement.Query, cancellationToken).ConfigureAwait(false),
                     await transaction.ListIndexesAsync(cancellationToken).ConfigureAwait(false)),
-                (new SqlQueryPlan([], []), []),
+                (null, []),
                 cancellationToken).ConfigureAwait(false);
         }
         catch (QueryCapacityException)
         {
             return TooExpensive;
+        }
+
+        if (plan is null)
+        {
+            return new NotFound();
         }
 
         return new SqlCheckBody(true, null, statement.Query.Collection, statement.HasLimit, plan.Steps, plan.Indexes, Suggest(statement.Query, indexes));

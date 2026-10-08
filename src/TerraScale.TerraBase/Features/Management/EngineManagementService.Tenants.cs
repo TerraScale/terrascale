@@ -8,10 +8,25 @@ using TerraBase.Tenancy;
 namespace TerraBase.Features.Management;
 
 /// <summary>
-/// The catalog as a <see cref="ITenantDirectory"/> for API keys, which act for an organization rather than a user.
+/// The catalog as a <see cref="ITenantDirectory"/> for organization API keys and scoped project access tokens.
 /// </summary>
 internal sealed partial class EngineManagementService
 {
+    public ValueTask<(TenantContext Database, DatabasePlacement Placement)?> ResolveProjectDatabaseAsync(string projectId, string database, CancellationToken cancellationToken) =>
+        ReadAsync<(TenantContext, DatabasePlacement)?>(async transaction =>
+            await GetAsync(transaction, ProjectOrganizations, projectId, Id, cancellationToken).ConfigureAwait(false) is { } organizationId
+                && await IsProjectBoundAsync(transaction, projectId, organizationId, cancellationToken).ConfigureAwait(false)
+                && await FindDatabaseAsync(transaction, organizationId, projectId, database, cancellationToken).ConfigureAwait(false) is { } tenant
+                && await GetAsync(transaction, Databases(projectId), tenant.DatabaseId!, TerraBaseJsonContext.Default.ManagedDatabase, cancellationToken)
+                    .ConfigureAwait(false) is { } record && record.Id == tenant.DatabaseId && record.ProjectId == projectId && record.Name == database
+                    ? (tenant, record.Placement(options.Region))
+                    : null,
+            cancellationToken);
+
+    public async ValueTask<bool> EnsureLocalDatabaseAsync(TenantContext database, CancellationToken cancellationToken) =>
+        await RegisteredAsync(database, cancellationToken).ConfigureAwait(false) is true
+            && await InitializeFollowerAsync(database, cancellationToken).ConfigureAwait(false);
+
     // Bounded by count; each entry holds three ids of at most a few hundred bytes.
     private const int MaxCachedTenants = 4096;
 
@@ -50,11 +65,16 @@ internal sealed partial class EngineManagementService
     {
         var tenant = await ReadAsync(transaction => FindDatabaseAsync(transaction, organizationId, projectId, database, cancellationToken), cancellationToken)
             .ConfigureAwait(false);
+        return tenant is not null && await InitializeFollowerAsync(tenant, cancellationToken).ConfigureAwait(false) ? tenant : null;
+    }
+
+    private async ValueTask<bool> InitializeFollowerAsync(TenantContext tenant, CancellationToken cancellationToken)
+    {
         // A follower serves a database the replicated catalog registers before any of its documents arrived: an empty
         // local file, which replication then fills like any other (docs/decisions/0009).
         // A deletion it applies meanwhile could miss the new file: one this call created is checked again, and deleted with it
         // once the catalog, at a version this build reads, no longer registers the database.
-        if (tenant is not null && options.CatalogPrimary is not null && await engine.OpenDatabaseAsync(tenant, cancellationToken).ConfigureAwait(false) is null
+        if (options.CatalogPrimary is not null && await engine.OpenDatabaseAsync(tenant, cancellationToken).ConfigureAwait(false) is null
             && await engine.CreateDatabaseAsync(tenant, cancellationToken).ConfigureAwait(false)
             && await RegisteredAsync(tenant, cancellationToken).ConfigureAwait(false) is false)
         {
@@ -63,10 +83,10 @@ internal sealed partial class EngineManagementService
                 _ = await engine.DeleteDatabaseAsync(tenant, cancellationToken, incarnation: created.Incarnation).ConfigureAwait(false);
             }
 
-            return null;
+            return false;
         }
 
-        return tenant;
+        return true;
     }
 
     public async ValueTask<(TenantContext Database, bool Created)?> CreateDatabaseAsync(

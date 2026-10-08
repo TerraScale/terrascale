@@ -1,12 +1,24 @@
 namespace TerraBase.Tenancy;
 
 /// <summary>
-/// Resolves and registers the databases of a tenant for callers that act for an organization, not for a user
-/// (API keys). Every lookup starts at the organization: a project is found only among that organization's
-/// projects and a database only among that project's, so ids from another tenant never resolve.
+/// Resolves and registers databases for organization API keys and scoped project access tokens, without user
+/// membership checks. A project is found only among its organization's projects and a database only among that
+/// project's databases, so ids from another tenant never resolve.
 /// </summary>
 public interface ITenantDirectory
 {
+    /// <summary>
+    /// Resolves a database name and its placement from one catalog snapshot, without initializing local storage.
+    /// The caller must validate the token's project, database restriction and operation scope first.
+    /// </summary>
+    ValueTask<(TenantContext Database, DatabasePlacement Placement)?> ResolveProjectDatabaseAsync(string projectId, string database, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Initializes local storage for a registered database identity on a catalog follower, without resolving its name
+    /// again. The caller must validate the request and placement first and revalidate the catalog before using storage.
+    /// </summary>
+    ValueTask<bool> EnsureLocalDatabaseAsync(TenantContext database, CancellationToken cancellationToken);
+
     /// <summary>
     /// The database named <paramref name="database"/> in project <paramref name="projectId"/> of organization
     /// <paramref name="organizationId"/>; <see langword="null"/> when the organization, the project in it or the

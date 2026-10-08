@@ -192,11 +192,16 @@ routes (TS-581) go in this group and follow these conventions. Both routes take 
 | POST | `D/sql` | `runSql` | `databases:read` | `MD/sql` |
 | POST | `D/sql/check` | `checkSql` | `databases:read` | `MD/sql/check` |
 | GET | `D/query-shapes` | `listQueryShapes` | `databases:read` | `/management/organizations/{organization}/projects/{project}/databases/{database-id}/query-shapes` |
+| POST | `/projects/{project}/databases/{database}/sql/explain` | `explainSql` | `databases:read` | — |
 | POST | `P/saved-queries` | `createSavedQuery` | `databases:write` | `MP/saved-queries` |
 | GET | `P/saved-queries` | `listSavedQueries` | `databases:read` | `MP/saved-queries` |
 | GET | `P/saved-queries/{query}` | `getSavedQuery` | `databases:read` | `MP/saved-queries/{query}` |
 | PUT | `P/saved-queries/{query}` | `updateSavedQuery` | `databases:write` | `MP/saved-queries/{query}` |
 | DELETE | `P/saved-queries/{query}` | `deleteSavedQuery` | `databases:write` | `MP/saved-queries/{query}` |
+
+TS-722 adds the unversioned SQL EXPLAIN route above. It uses a database name and project JWT scopes,
+returns the existing SQL check body (plan steps, selected secondary index names and suggestions), and
+rejects invalid SQL with `400 invalid_request`. It does not execute or meter the query. The EXPLAIN route omits the legacy version prefix.
 
 ### Transactions
 

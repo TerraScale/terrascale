@@ -140,6 +140,7 @@ public static partial class BadRequests
         StatusCodes.Status403Forbidden => "forbidden_scope",
         StatusCodes.Status404NotFound => "unknown_route",
         StatusCodes.Status405MethodNotAllowed => "method_not_allowed",
+        StatusCodes.Status408RequestTimeout => "request_timeout",
         StatusCodes.Status413PayloadTooLarge => "payload_too_large",
         StatusCodes.Status415UnsupportedMediaType => "unsupported_media_type",
         StatusCodes.Status421MisdirectedRequest => "misdirected_request",
