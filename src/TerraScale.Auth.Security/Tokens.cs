@@ -12,9 +12,6 @@ public static class Tokens
     /// <summary>A URL-safe alphanumeric token drawn from the OS CSPRNG.</summary>
     public static string RandomToken(int length) => RandomNumberGenerator.GetString(Alphabet, length);
 
-    /// <summary>Fresh random bytes from the OS CSPRNG.</summary>
-    public static byte[] RandomBytes(int length) => RandomNumberGenerator.GetBytes(length);
-
     /// <summary>A zero-padded numeric code of 1–9 digits, or <see langword="null"/> for other lengths.</summary>
     public static string? RandomDigits(int length)
     {
@@ -52,11 +49,4 @@ public static class Tokens
             MemoryMarshal.AsBytes(left.AsSpan()),
             MemoryMarshal.AsBytes(right.AsSpan()));
     }
-
-    /// <summary>HMAC-SHA256 of the message.</summary>
-    public static byte[] HmacSha256(byte[] key, byte[] message) => HMACSHA256.HashData(key, message);
-
-    /// <summary>Verifies an HMAC-SHA256 signature in constant time.</summary>
-    public static bool VerifyHmacSha256(byte[] key, byte[] message, byte[] signature) =>
-        CryptographicOperations.FixedTimeEquals(HmacSha256(key, message), signature);
 }
