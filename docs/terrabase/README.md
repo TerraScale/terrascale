@@ -133,8 +133,18 @@ See [signal definitions and follow-ups](docs/node-pressure.md).
 
 ## Production replication check
 
-`scripts/prod-replication-check` writes to the gru-1 canary database through the API, then exits non-zero when any
+`scripts/prod-replication-check` writes to the configured canary database through the API, then exits non-zero when any
 member's documents, versions, replication lag or logs disagree; COS runs it on beta every 20 minutes (usage in its header).
+Host observations are required: a failed metrics scrape or log read, missing sender gauges, a partial pair of catalog
+follower gauges, or invalid metric values fail the check. Custom `--host-exec` adapters must emit `complete metrics` and
+`complete logs` only after collecting each observation, along with the process start time and metric samples. `{ip}` is
+the host and `{member}` is its full host:port. Empty or duplicate member inventories and skipped host checks are refused
+before any canary writes.
+
+A pass proves sampled canary convergence on the configured members. It does not establish a complete serving inventory,
+an Anna-only release, or 48 continuous clean hours. TS-677 remains open until the legacy replication path is removed,
+every serving member in gru-1 and sfo-1 runs the reviewed artifact, and continuous operational evidence covers the soak
+without failures, gaps or unverifiable counter resets.
 
 ## Layout
 

@@ -7,18 +7,22 @@ Writes only to the canary database named in FILE: creates, replaces, patches and
 (UUIDv5 ids per host; runs on one host take turns through FILE.lock) of collection "canary" through the API, with If-None-Match and If-Match, and checks that stale
 conditional writes answer 412. Then it reads every document directly from every member and compares status,
 JSON and version (ETag, tombstones included) with what the API answered, until they agree or S seconds pass.
-With host access it also reads each member's admin /metrics (replication durable lag, catalog follower lag,
+It also requires each member's admin /metrics (replication durable lag, catalog follower lag,
 rejected groups, prefix mismatches) and its last M minutes of logs (replication warnings, corruption).
+This is a sampled canary check, not proof of Anna-only service or a continuous production soak.
 
 FILE (mode 0600) is JSON: {"api": "https://gru.api.terrascale.tech", "project": "<project id>",
 "database": "<database name>", "secret": "tb_...", "members": ["10.251.0.11:9465", ...],
 "member_ca": "<PEM of the member CA>"}. CMD runs a shell script from stdin on a member; {ip} is replaced
-by the member's address, and an empty CMD skips the host checks.
+by the member's host, and {member} by its full host:port. CMD must report completion of both metrics and logs;
+an empty CMD, missing gauges or incomplete host observations cannot pass.
 """
 import argparse
 import concurrent.futures
 import fcntl
+import ipaddress
 import json
+import math
 import os
 import re
 import socket
@@ -28,6 +32,7 @@ import subprocess
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
 
@@ -44,13 +49,24 @@ CORRUPT = re.compile(r"corrupt|malformed|checksum mismatch|digest mismatch", re.
 
 # Prints one record per line: start, metric, log (category, message, first exception line) and bad (corruption).
 HOST_SCRIPT = r"""
-pid=$(pgrep -f /install/terrabase/ | head -1)
-echo "start ${pid:+$(stat -c %Y /proc/$pid)}"
-curl -s -m 5 http://127.0.0.1:9464/metrics | grep -E '^terrabase_(replication_(sender_durable_lag|sender_initialized|received_groups_total|sender_prefix_mismatches_total)|catalog_follower_(connected|lag))[ {]' | sed 's/^/metric /'
-sudo journalctl -u terrascale-orchestrator-host --since "-MINUTES min" -o cat --no-pager > /tmp/tb-check.$$
-awk '/^(warn|fail|crit): TerraBase\.(Features\.(Replication|Catalog)|Engine)/ { c = $0; getline m; getline e; print "log " c "\t" m "\t" e }' /tmp/tb-check.$$
-grep -iE 'corrupt|malformed|checksum mismatch|digest mismatch' /tmp/tb-check.$$ | head -5 | sed 's/^/bad /'
-rm -f /tmp/tb-check.$$
+set -euo pipefail
+metrics=$(mktemp)
+logs=$(mktemp)
+trap 'rm -f "$metrics" "$logs"' EXIT
+pid=$(pgrep -f /install/terrabase/)
+if [[ ! $pid =~ ^[0-9]+$ ]]; then
+    echo "expected one TerraBase process, found: ${pid//[[:space:]]/ }" >&2
+    exit 3
+fi
+started=$(stat -c %Y "/proc/$pid")
+echo "start $started"
+curl --fail --silent --show-error --max-time 5 http://127.0.0.1:9464/metrics > "$metrics"
+awk '/^terrabase_(replication_(sender_durable_lag|sender_initialized|received_groups_total|sender_prefix_mismatches_total)|catalog_follower_(connected|lag))[ {]/ { print "metric " $0 }' "$metrics"
+echo "complete metrics"
+sudo journalctl -u terrascale-orchestrator-host --since "-MINUTES min" -o cat --no-pager > "$logs"
+awk '/^(warn|fail|crit): TerraBase\.(Features\.(Replication|Catalog|CrossRegion)|Engine)/ { c = $0; getline m; getline e; print "log " c "\t" m "\t" e }' "$logs"
+awk 'tolower($0) ~ /corrupt|malformed|checksum mismatch|digest mismatch/ && count++ < 5 { print "bad " $0 }' "$logs"
+echo "complete logs"
 """
 
 failures = []
@@ -64,12 +80,33 @@ def fail(message):
 def load_canary(path):
     mode = os.stat(path).st_mode
     if mode & (stat.S_IRWXG | stat.S_IRWXO):
-        sys.exit(f"{path} holds an API key: chmod 600 it")
+        raise ValueError("canary file holds an API key: chmod 600 it")
     with open(path, encoding="utf-8") as file:
         canary = json.load(file)
+    if not isinstance(canary, dict):
+        raise ValueError("canary file must contain an object")
     missing = {"api", "project", "database", "secret", "members", "member_ca"} - canary.keys()
     if missing:
-        sys.exit(f"{path} lacks {', '.join(sorted(missing))}")
+        raise ValueError(f"canary file lacks {', '.join(sorted(missing))}")
+    members = canary["members"]
+    if not isinstance(members, list) or not 1 <= len(members) <= 100:
+        raise ValueError("canary members must contain 1 to 100 distinct host:port addresses")
+    identities = set()
+    for member in members:
+        if not isinstance(member, str) or not re.fullmatch(r"(?:[A-Za-z0-9.-]+|\[[A-Fa-f0-9:]+\]):[0-9]+", member):
+            raise ValueError("canary members must contain valid host:port addresses")
+        address = urllib.parse.urlsplit("https://" + member)
+        hostname = address.hostname
+        if ":" in hostname or re.fullmatch(r"[0-9]+(?:\.[0-9]+){3}", hostname):
+            hostname = str(ipaddress.ip_address(hostname))
+        else:
+            label = r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
+            if len(hostname) > 253 or not re.fullmatch(rf"{label}(?:\.{label})*\.?", hostname):
+                raise ValueError("canary members must contain valid hostname labels")
+            hostname = hostname.rstrip(".")
+        if not address.port or (hostname, address.port) in identities:
+            raise ValueError("canary members must contain distinct host:port addresses with valid ports")
+        identities.add((hostname, address.port))
     return canary
 
 
@@ -205,68 +242,96 @@ def agree(members, deadline):
         time.sleep(0.5)
 
 
-def host(command, ip, minutes):
+def host(command, member, minutes):
+    ip = urllib.parse.urlsplit("https://" + member).hostname
     result = subprocess.run(
-        command.replace("{ip}", ip), shell=True, input=HOST_SCRIPT.replace("MINUTES", str(minutes)),
+        command.replace("{ip}", ip).replace("{member}", member), shell=True, input=HOST_SCRIPT.replace("MINUTES", str(minutes)),
         capture_output=True, text=True, timeout=120, check=False)
     if result.returncode != 0:
         raise RuntimeError(f"host command exited {result.returncode}: {result.stderr.strip()[:200]}")
     report = {"start": None, "metrics": {}, "logs": [], "bad": []}
+    complete = set()
     for line in result.stdout.splitlines():
         kind, _, rest = line.partition(" ")
         if kind == "start":
             report["start"] = int(rest) if rest.strip() else None
+        elif kind == "complete":
+            complete.add(rest)
         elif kind == "metric":
             # name{labels} value [timestamp]; the scope label is the same on every series.
             name, value = rest.split()[:2]
             name = re.sub(r'otel_scope_name="[^"]*"', "", name).replace("{,", "{").replace(",}", "}").replace("{}", "")
-            report["metrics"][name] = float(value)
+            number = float(value)
+            if not math.isfinite(number) or number < 0 or name in report["metrics"]:
+                raise ValueError("host metrics contain an invalid value or duplicate series")
+            report["metrics"][name] = number
         elif kind == "log":
             report["logs"].append(rest)
         elif kind == "bad":
             report["bad"].append(rest)
+    if complete != {"metrics", "logs"}:
+        raise ValueError("host observations incomplete: metrics and logs completion required")
+    if report["start"] is None or report["start"] <= 0:
+        raise ValueError("host observations lack a process start time")
+    required = {"terrabase_replication_sender_initialized", "terrabase_replication_sender_durable_lag"}
+    missing = required - report["metrics"].keys()
+    if missing:
+        raise ValueError("host metrics missing " + ", ".join(sorted(missing)))
+    catalog = {"terrabase_catalog_follower_connected", "terrabase_catalog_follower_lag"}
+    if report["metrics"].keys() & catalog and catalog - report["metrics"].keys():
+        raise ValueError("host metrics require both catalog follower connected and lag gauges")
     return report
 
 
-def sample(command, ip, minutes):
+def signals(report, minutes):
+    """Failure signals in one sample: rejection counters, persistent replication warnings and corruption signs."""
+    found = []
+    metrics = report["metrics"]
+    for name in ('terrabase_replication_received_groups_total{result="rejected"}', "terrabase_replication_sender_prefix_mismatches_total"):
+        if metrics.get(name, 0) > 0:
+            found.append(f"{name} = {metrics[name]:g} since the process started")
+    # Retry delays and counts differ on every line: group by the text without its numbers.
+    persistent = [re.sub(r"\d+(\.\d+)?", "N", re.sub(r"\s+", " ", entry)) for entry in report["logs"] if not TRANSIENT.search(entry)]
+    report["transient"] = len(report["logs"]) - len(persistent)
+    report["errors"] = len(persistent)
+    for entry in sorted(set(persistent), key=persistent.count, reverse=True)[:3]:
+        found.append(f"log ({persistent.count(entry)}x in {minutes} min): {entry[:300]}")
+    for entry in report["bad"]:
+        found.append(f"corruption sign in the log: {entry[:300]}")
+    return found
+
+
+def sample(command, member, minutes):
     try:
-        return host(command, ip, minutes)
+        report = host(command, member, minutes)
     except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as error:
         return {"error": str(error)}
+    report["signals"] = signals(report, minutes)
+    return report
 
 
 def check_hosts(command, members, minutes, deadline):
-    """Samples every member until replication lag is 0 everywhere or the deadline passes; returns ip -> report."""
-    ips = [member.split(":")[0] for member in members]
-    with concurrent.futures.ThreadPoolExecutor(len(ips)) as pool:
+    """Samples every member until replication lag is 0 everywhere or the deadline passes; returns member -> report."""
+    with concurrent.futures.ThreadPoolExecutor(len(members)) as pool:
         while True:
-            reports = dict(zip(ips, pool.map(lambda ip: sample(command, ip, minutes), ips)))
-            lagging = [ip for ip, report in reports.items() if "error" not in report and lag(report)]
-            if not lagging or time.monotonic() > deadline:
+            reports = dict(zip(members, pool.map(lambda member: sample(command, member, minutes), members)))
+            lagging = [member for member, report in reports.items() if "error" not in report and lag(report)]
+            # A later healthy scrape must not erase missing evidence or a failure signal from this run: a restart resets
+            # the counters and the log window moves on. Only convergence is retried.
+            if any("error" in report or report["signals"] for report in reports.values()) or not lagging or time.monotonic() > deadline:
                 break
             time.sleep(2)
-    for ip, report in reports.items():
+    for member, report in reports.items():
         if "error" in report:
-            fail(f"{ip}: host checks failed: {report['error']}")
+            fail(f"{member}: host checks failed: {report['error']}")
             continue
         metrics = report["metrics"]
-        if report["start"] is None:
-            fail(f"{ip}: no TerraBase process")
-        if metrics.get("terrabase_replication_sender_initialized") != 1:
-            fail(f"{ip}: replication sender not initialized (journal heads still being measured)")
+        if metrics["terrabase_replication_sender_initialized"] != 1:
+            fail(f"{member}: replication sender not initialized (journal heads still being measured)")
         if lag(report):
-            fail(f"{ip}: replication lag over the threshold: {lag(report)}")
-        for name in ('terrabase_replication_received_groups_total{result="rejected"}', "terrabase_replication_sender_prefix_mismatches_total"):
-            if metrics.get(name, 0) > 0:
-                fail(f"{ip}: {name} = {metrics[name]:g} since the process started")
-        # Retry delays and counts differ on every line: group by the text without its numbers.
-        persistent = [re.sub(r"\d+(\.\d+)?", "N", re.sub(r"\s+", " ", entry)) for entry in report["logs"] if not TRANSIENT.search(entry)]
-        report["transient"] = len(report["logs"]) - len(persistent)
-        report["errors"] = len(persistent)
-        for entry in sorted(set(persistent), key=persistent.count, reverse=True)[:3]:
-            fail(f"{ip}: log ({persistent.count(entry)}x in {minutes} min): {entry[:300]}")
-        for entry in report["bad"]:
-            fail(f"{ip}: corruption sign in the log: {entry[:300]}")
+            fail(f"{member}: replication not converged: {lag(report)}")
+        for message in report["signals"]:
+            fail(f"{member}: {message}")
     return reports
 
 
@@ -274,12 +339,12 @@ def lag(report):
     """Non-zero replication lag of one member: the sender's durable lag, and a follower's catalog lag or disconnection."""
     metrics = report["metrics"]
     found = {}
-    if metrics.get("terrabase_replication_sender_durable_lag", 0) != 0:
+    if metrics["terrabase_replication_sender_durable_lag"] != 0:
         found["durable_lag"] = metrics["terrabase_replication_sender_durable_lag"]
     if "terrabase_catalog_follower_connected" in metrics:
         if metrics["terrabase_catalog_follower_connected"] != 1:
             found["catalog_connected"] = metrics["terrabase_catalog_follower_connected"]
-        if metrics.get("terrabase_catalog_follower_lag", 0) != 0:
+        if metrics["terrabase_catalog_follower_lag"] != 0:
             found["catalog_lag"] = metrics["terrabase_catalog_follower_lag"]
     return found
 
@@ -294,7 +359,16 @@ def main():
     options = parser.parse_args()
     if not 1 <= options.docs <= 100:
         parser.error("--docs must be 1 to 100")
-    canary = load_canary(options.canary)
+    if not math.isfinite(options.max_lag_seconds) or options.max_lag_seconds <= 0:
+        parser.error("--max-lag-seconds must be positive and finite")
+    if not 1 <= options.log_minutes <= 2880:
+        parser.error("--log-minutes must be 1 to 2880")
+    if not options.host_exec.strip():
+        parser.error("--host-exec must collect metrics and logs; host checks cannot be skipped")
+    try:
+        canary = load_canary(options.canary)
+    except (OSError, ValueError, TypeError) as error:
+        parser.error(f"cannot load canary file: {error}")
     # Runs on this host take turns, so one never rewrites the documents another is still comparing; another host has its own.
     lock = open(options.canary + ".lock", "w", encoding="utf-8")  # held until the process exits
     for _ in range(180):
@@ -345,22 +419,19 @@ def main():
     except (OSError, ValueError, KeyError) as error:
         fail(f"API {canary['api']}: {error!r}")
 
-    if options.host_exec:
-        try:
-            reports = check_hosts(options.host_exec, list(members), options.log_minutes, time.monotonic() + options.max_lag_seconds)
-            for member in members:
-                report = reports[member.split(":")[0]]
-                if "error" in report:
-                    continue
-                rows[member].update(
-                    durable_lag=f"{report['metrics'].get('terrabase_replication_sender_durable_lag', float('nan')):g}",
-                    catalog_lag=f"{report['metrics'].get('terrabase_catalog_follower_lag', 0):g}",
-                    log_errors=report["errors"], log_transient=report["transient"],
-                    started=time.strftime("%H:%M:%SZ", time.gmtime(report["start"])) if report["start"] else "-")
-        except (OSError, RuntimeError, ValueError) as error:
-            fail(f"host checks: {error!r}")
-    else:
-        print("host checks skipped (--host-exec '')", flush=True)
+    try:
+        reports = check_hosts(options.host_exec, list(members), options.log_minutes, time.monotonic() + options.max_lag_seconds)
+        for member in members:
+            report = reports[member]
+            if "error" in report:
+                continue
+            rows[member].update(
+                durable_lag=f"{report['metrics']['terrabase_replication_sender_durable_lag']:g}",
+                catalog_lag=f"{report['metrics'].get('terrabase_catalog_follower_lag', 0):g}",
+                log_errors=report["errors"], log_transient=report["transient"],
+                started=time.strftime("%H:%M:%SZ", time.gmtime(report["start"])))
+    except (OSError, RuntimeError, ValueError) as error:
+        fail(f"host checks: {error!r}")
 
     columns = ["matched", "seconds", "durable_lag", "catalog_lag", "log_errors", "log_transient", "started"]
     print("member".ljust(18) + "".join(column.ljust(15) for column in columns))
@@ -369,7 +440,7 @@ def main():
     if failures:
         print(f"FAILED: {len(failures)} problems in run {run}", flush=True)
         return 1
-    print(f"OK: every member agrees on run {run}", flush=True)
+    print(f"OK: sampled canary state and host observations agree on run {run}", flush=True)
     return 0
 
 

@@ -12,6 +12,9 @@ public sealed class ClientTls : IDisposable
     private readonly string _directory = Directory.CreateTempSubdirectory("terrabase-client-tls-").FullName;
     private readonly X509Certificate2 _certificate;
 
+    /// <summary>The public certificate PEM for clients that use their own TLS trust store.</summary>
+    public string CertificatePem => _certificate.ExportCertificatePem();
+
     /// <summary>Creates the certificate.</summary>
     public ClientTls()
     {
