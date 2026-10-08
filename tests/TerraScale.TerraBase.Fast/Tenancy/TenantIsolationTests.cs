@@ -307,7 +307,7 @@ public sealed class TenantIsolationTests
                 });
             }
 
-            var client = projectManagement || pattern.EndsWith("/subscribe", StringComparison.Ordinal) ? projectToken : IsManagement(pattern) ? dashboard : data;
+            var client = projectManagement || pattern.EndsWith("/subscribe", StringComparison.Ordinal) || pattern.EndsWith("/changes", StringComparison.Ordinal) ? projectToken : IsManagement(pattern) ? dashboard : data;
             using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead,
                 TUnit.Core.TestContext.Current!.Execution.CancellationToken);
             sent.Add(($"{method} {path}", response.StatusCode));
