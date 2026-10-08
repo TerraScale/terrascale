@@ -7,6 +7,7 @@ namespace TerraBase.Testing;
 // One directed link. All envelopes and acknowledgements come from the real nodes.
 internal sealed class PartitionablePeer : IAsyncDisposable
 {
+    private static readonly TimeSpan CleanupTimeout = TimeSpan.FromSeconds(10);
     private readonly Lock _gate = new();
     private readonly HashSet<TaskCompletionSource> _streams = [];
     private readonly GrpcChannel _channel;
@@ -14,6 +15,8 @@ internal sealed class PartitionablePeer : IAsyncDisposable
     private FakePeer? _listener;
     private TaskCompletionSource? _nextBatch;
     private bool _cut;
+    private Task<int>? _cutCompletion;
+    private Task? _cleanupCompletion;
 
     private PartitionablePeer(PeerTls tls, Uri target)
     {
@@ -21,6 +24,17 @@ internal sealed class PartitionablePeer : IAsyncDisposable
     }
 
     public Uri Address => _listener!.Address;
+
+    public Task CleanupCompletion
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _cleanupCompletion ??= CleanupAsync();
+            }
+        }
+    }
 
     public static async Task<PartitionablePeer> StartAsync(PeerTls tls, Uri target)
     {
@@ -47,29 +61,43 @@ internal sealed class PartitionablePeer : IAsyncDisposable
         }
     }
 
-    public async Task<int> CutAsync()
+    public Task<int> CutAsync(CancellationToken token) => BeginCut().WaitAsync(token);
+
+    private Task<int> BeginCut()
     {
-        Task[] active;
-        CancellationTokenSource generation;
         lock (_gate)
         {
             _cut = true;
-            generation = _generation;
-            active = [.. _streams.Select(stream => stream.Task)];
+            return _cutCompletion ??= JoinCutAsync(_generation, [.. _streams.Select(stream => stream.Task)]);
+        }
+    }
+
+    private static async Task<int> JoinCutAsync(CancellationTokenSource generation, Task[] active)
+    {
+        try
+        {
+            await generation.CancelAsync();
+        }
+        finally
+        {
+            await Task.WhenAll(active);
         }
 
-        await generation.CancelAsync();
-        await Task.WhenAll(active);
         return active.Length;
     }
 
-    // CutAsync joins the old generation before a test heals it.
     public void Heal()
     {
         lock (_gate)
         {
+            if (_cleanupCompletion is not null || _cutCompletion?.IsCompletedSuccessfully is not true)
+            {
+                throw new InvalidOperationException("the relay can heal only after its cut finished successfully");
+            }
+
             _generation.Dispose();
             _generation = new();
+            _cutCompletion = null;
             _cut = false;
         }
     }
@@ -165,9 +193,15 @@ internal sealed class PartitionablePeer : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
+        using var deadline = new CancellationTokenSource(CleanupTimeout);
+        await TerraBaseTestServer.WaitForCleanupAsync(CleanupCompletion, TerraBaseTestServer.ReportCleanupFailure, deadline.Token);
+    }
+
+    private async Task CleanupAsync()
+    {
         try
         {
-            await CutAsync();
+            await BeginCut();
         }
         finally
         {

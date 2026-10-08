@@ -11,7 +11,7 @@ To replay only these scenarios:
 nice -n 19 make build
 nice -n 19 dotnet run --project src/Tests/TerraBase.Slow --no-build -- \
   --treenode-filter '/TerraBase.Slow/TerraBase.Slow.Replication/ReplicationChaosTests/*' \
-  --minimum-expected-tests 4
+  --minimum-expected-tests 5
 ```
 
 Each seed (682 and 683) owns three nodes, data directories, ports, certificates
@@ -45,6 +45,8 @@ Every acknowledged write must exist unchanged on every node. Indeterminate
 writes may exist, but invented IDs and altered bodies fail. Failure messages
 include the seed and history. Integration checks deliberately delete or alter
 an acknowledged document beyond the first page to prove checker rejection.
+A failed-launch check validates the real child's exit cause, captured startup
+diagnostic and completed cleanup ownership.
 
 This is a Jepsen-style convergence and acknowledged-write preservation check
 for unique, never-overwritten documents, not a linearizability claim. The

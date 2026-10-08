@@ -19,6 +19,8 @@ internal sealed class CrashableTerraBase : IAsyncDisposable
     private Task<string> _stdout = Task.FromResult(string.Empty);
     private Task<string> _stderr = Task.FromResult(string.Empty);
     private bool _disposed;
+    private OutputTail _stdoutTail = new();
+    private OutputTail _stderrTail = new();
 
     private CrashableTerraBase(IReadOnlyDictionary<string, string> settings)
     {
@@ -62,10 +64,18 @@ internal sealed class CrashableTerraBase : IAsyncDisposable
             await server.RestartAsync(token);
             return server;
         }
-        catch
+        catch (Exception startupError)
         {
-            failedStartCleanup?.Invoke(server.CleanupCompletion);
-            await server.DisposeAsync();
+            try
+            {
+                failedStartCleanup?.Invoke(server.CleanupCompletion);
+                await server.DisposeAsync();
+            }
+            catch (Exception cleanupError)
+            {
+                throw new AggregateException(startupError, cleanupError).Flatten();
+            }
+
             throw;
         }
     }
@@ -96,13 +106,15 @@ internal sealed class CrashableTerraBase : IAsyncDisposable
 
         _stdout = Task.FromResult(string.Empty);
         _stderr = Task.FromResult(string.Empty);
+        _stdoutTail = new();
+        _stderrTail = new();
         try
         {
             // No shell or wrapper: the production child inherits the suite's nice priority.
             _process = Process.Start(start) ?? throw new InvalidOperationException("the TerraBase process did not start");
             var drainStop = new CancellationTokenSource();
-            _stdout = CaptureAsync(_process.StandardOutput, drainStop.Token);
-            _stderr = CaptureAsync(_process.StandardError, drainStop.Token);
+            _stdout = CaptureAsync(_process.StandardOutput, _stdoutTail, drainStop.Token);
+            _stderr = CaptureAsync(_process.StandardError, _stderrTail, drainStop.Token);
             _exitCleanup = CompleteExitAsync(_process, _stdout, _stderr, drainStop);
             using var startup = CancellationTokenSource.CreateLinkedTokenSource(token);
             startup.CancelAfter(StartupTimeout);
@@ -139,13 +151,24 @@ internal sealed class CrashableTerraBase : IAsyncDisposable
         }
         catch (Exception error)
         {
-            await StopAsync();
-            if (error is OperationCanceledException && token.IsCancellationRequested)
+            Exception? cleanupError = null;
+            try
+            {
+                await StopAsync();
+            }
+            catch (Exception failure)
+            {
+                cleanupError = failure;
+            }
+
+            if (error is OperationCanceledException && token.IsCancellationRequested && cleanupError is null)
             {
                 throw;
             }
 
-            throw new InvalidOperationException($"TerraBase startup failed: {error.Message}\nstdout:\n{await _stdout}\nstderr:\n{await _stderr}", error);
+            var startupError = new InvalidOperationException(
+                $"TerraBase startup failed: {error.Message}\nstdout:\n{_stdoutTail.Text}\nstderr:\n{_stderrTail.Text}", error);
+            throw cleanupError is null ? startupError : new AggregateException(startupError, cleanupError).Flatten();
         }
     }
 
@@ -253,22 +276,15 @@ internal sealed class CrashableTerraBase : IAsyncDisposable
         return exitCode;
     }
 
-    private static async Task<string> CaptureAsync(StreamReader reader, CancellationToken token)
+    private static async Task<string> CaptureAsync(StreamReader reader, OutputTail output, CancellationToken token)
     {
-        var output = new StringBuilder(MaxOutputCharacters, MaxOutputCharacters);
         var chunk = new char[1024];
         try
         {
             int read;
             while ((read = await reader.ReadAsync(chunk.AsMemory(), token)) != 0)
             {
-                var excess = output.Length + read - MaxOutputCharacters;
-                if (excess > 0)
-                {
-                    output.Remove(0, excess);
-                }
-
-                output.Append(chunk, 0, read);
+                output.Append(chunk, read);
             }
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested)
@@ -276,6 +292,37 @@ internal sealed class CrashableTerraBase : IAsyncDisposable
             // Retain bounded diagnostics even if a pipe outlives cleanup's deadline.
         }
 
-        return output.ToString();
+        return output.Text;
+    }
+
+    private sealed class OutputTail
+    {
+        private readonly Lock _gate = new();
+        private readonly StringBuilder _text = new(MaxOutputCharacters, MaxOutputCharacters);
+
+        public string Text
+        {
+            get
+            {
+                lock (_gate)
+                {
+                    return _text.ToString();
+                }
+            }
+        }
+
+        public void Append(char[] chunk, int count)
+        {
+            lock (_gate)
+            {
+                var excess = _text.Length + count - MaxOutputCharacters;
+                if (excess > 0)
+                {
+                    _text.Remove(0, excess);
+                }
+
+                _text.Append(chunk, 0, count);
+            }
+        }
     }
 }

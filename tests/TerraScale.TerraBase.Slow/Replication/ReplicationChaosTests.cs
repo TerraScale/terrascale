@@ -23,7 +23,7 @@ public sealed class ReplicationChaosTests
         await ConvergedAsync(cluster, history, token);
 
         // Isolate the crashable member in both directions; the other two must still exchange writes.
-        await cluster.IsolateAsync(2);
+        await cluster.IsolateAsync(2, token);
         var isolated = await history.PutAsync(cluster.Clients[2], 2, "partition", 0, token);
         await Assert.That(history.AcknowledgedCount).IsEqualTo(13);
         var connected = await history.PutAsync(cluster.Clients[0], 0, "partition", 0, token);
@@ -85,7 +85,7 @@ public sealed class ReplicationChaosTests
             await forwarded.WaitAsync(token);
             await Assert.That(stalled.IsCompleted).IsFalse();
             // Cut links with real streams waiting on the stalled receiver, not just future connections.
-            await Assert.That((await cluster.IsolateAsync(0)).Sum()).IsGreaterThan(0);
+            await Assert.That((await cluster.IsolateAsync(0, token)).Sum()).IsGreaterThan(0);
         }
         finally
         {
@@ -107,6 +107,37 @@ public sealed class ReplicationChaosTests
                     await history.PutAsync(cluster.Clients[node], node, phase, ordinal, token);
                 }
             }));
+        }
+    }
+
+    [Test]
+    public async Task Failed_child_start_preserves_its_original_cause_and_output()
+    {
+        var directory = Directory.CreateTempSubdirectory("terrabase-chaos-start-").FullName;
+        Task? cleanup = null;
+        var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
+        try
+        {
+            var settings = new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["data-directory"] = directory,
+                ["admin-port"] = TerraBaseTestServer.FreePort().ToString(CultureInfo.InvariantCulture),
+                ["client-port"] = TerraBaseTestServer.FreePort().ToString(CultureInfo.InvariantCulture),
+                ["peer-port"] = TerraBaseTestServer.FreePort().ToString(CultureInfo.InvariantCulture),
+                ["region"] = "INVALID-REGION",
+            };
+            var error = await Assert.That(async () =>
+            {
+                await CrashableTerraBase.StartAsync(settings, token, owner => cleanup = owner);
+            }).Throws<InvalidOperationException>();
+            await Assert.That(error!.InnerException!.Message).Contains("exited before readiness with code 2");
+            await Assert.That(error.Message).Contains("stderr:\nterrabase: region");
+            await Assert.That(cleanup is not null).IsTrue();
+            await cleanup!.WaitAsync(token);
+        }
+        finally
+        {
+            ReleaseAfterCleanup(cleanup ?? Task.CompletedTask, () => Directory.Delete(directory, recursive: true));
         }
     }
 
@@ -299,9 +330,17 @@ public sealed class ReplicationChaosTests
                 await cluster.ReplicatedAsync(token);
                 return cluster;
             }
-            catch
+            catch (Exception startupError)
             {
-                await cluster.DisposeAsync();
+                try
+                {
+                    await cluster.DisposeAsync();
+                }
+                catch (Exception cleanupError)
+                {
+                    throw new AggregateException(startupError, cleanupError).Flatten();
+                }
+
                 throw;
             }
         }
@@ -323,8 +362,8 @@ public sealed class ReplicationChaosTests
 
         public Task ObserveNextBatch(int from, int to) => _links[from, to]!.ObserveNextBatch();
 
-        public Task<int[]> IsolateAsync(int node) => Task.WhenAll(Enumerable.Range(0, 3).Where(other => other != node)
-            .SelectMany(other => new[] { _links[node, other]!.CutAsync(), _links[other, node]!.CutAsync() }));
+        public Task<int[]> IsolateAsync(int node, CancellationToken token) => Task.WhenAll(Enumerable.Range(0, 3).Where(other => other != node)
+            .SelectMany(other => new[] { _links[node, other]!.CutAsync(token), _links[other, node]!.CutAsync(token) }));
 
         public void Heal(int node)
         {
@@ -387,7 +426,8 @@ public sealed class ReplicationChaosTests
             }
 
             Attempt(() => ReleaseAfterCleanup(Task.WhenAll(_servers.Select(server => server.CleanupCompletion).Concat(_failedStarts)
-                .Append(Child?.CleanupCompletion ?? Task.CompletedTask)), ReleaseFixtures));
+                .Append(Child?.CleanupCompletion ?? Task.CompletedTask)
+                .Concat(_links.OfType<PartitionablePeer>().Select(link => link.CleanupCompletion))), ReleaseFixtures));
             if (errors.Count > 0)
             {
                 throw new AggregateException("chaos cluster cleanup failed", errors);
