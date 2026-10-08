@@ -474,6 +474,45 @@ func TestNativeEmailCodeInputEditing(t *testing.T) {
 	screenshot(t, page, "email-code-error")
 }
 
+func TestNativeEmailCodePasteUndo(t *testing.T) {
+	t.Parallel()
+	base, _ := tsAuthDashboard(t)
+	page := rejectingPage(t, base)
+	must(t, page.Context().GrantPermissions([]string{"clipboard-read", "clipboard-write"}))
+	for _, test := range []struct {
+		name, clipboard, want string
+		start, end            int
+	}{
+		{"digits", "908027", "908027", 0, 6},
+		{"formatted", "908 027", "908027", 0, 6},
+		{"selected range", "9 0", "09045", 1, 4},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			goTo(t, page, "/login/code")
+			fill(t, page.Locator("#email"), "paste-undo@example.test")
+			click(t, pageByRole(page, *playwright.AriaRoleButton, "Email me a code"))
+			code := page.Locator("#code")
+			slots := page.Locator(".ts-email-code-slot")
+			fill(t, code, "012345")
+			_, err := code.Evaluate(`(input, range) => input.setSelectionRange(range[0], range[1])`, []int{test.start, test.end})
+			must(t, err)
+			_, err = page.Evaluate(`text => navigator.clipboard.writeText(text)`, test.clipboard)
+			must(t, err)
+			// Exercise the real browser paste transaction, then undo and redo it.
+			must(t, code.Press("ControlOrMeta+v"))
+			must(t, expect.Locator(code).ToHaveValue(test.want))
+			must(t, code.Press("ControlOrMeta+z"))
+			must(t, expect.Locator(code).ToHaveValue("012345"))
+			must(t, expect.Locator(slots).ToHaveText([]string{"0", "1", "2", "3", "4", "5"}))
+			must(t, code.Press("ControlOrMeta+Shift+z"))
+			must(t, expect.Locator(code).ToHaveValue(test.want))
+			wantSlots := make([]string, 6)
+			copy(wantSlots, strings.Split(test.want, ""))
+			must(t, expect.Locator(slots).ToHaveText(wantSlots))
+		})
+	}
+}
+
 func TestNativeEmailCodeBeforeDatastarLoads(t *testing.T) {
 	t.Parallel()
 	base, _ := tsAuthDashboard(t)

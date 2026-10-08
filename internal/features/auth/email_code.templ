@@ -39,6 +39,28 @@ if (el._codePointer?.id === evt.pointerId) {
 }
 `
 
+// Leave valid native edits intact so the browser keeps their undo history.
+const codeInput = `
+const digits = el.value.replace(/[^0-9]/g, '').slice(0, 6);
+if (digits !== el.value) {
+    const start = el.value.slice(0, el.selectionStart).replace(/[^0-9]/g, '').length;
+    const end = el.value.slice(0, el.selectionEnd).replace(/[^0-9]/g, '').length;
+    el.value = digits;
+    el.setSelectionRange(start, end);
+}
+$_emailCode = el.value; $_codeCaret = el.selectionStart; $_codeEnd = el.selectionEnd;
+`
+
+// Only intercept formatted codes. insertText keeps the replacement in the
+// browser's undo history; setRangeText and assigning value do not.
+const codePaste = `
+const text = evt.clipboardData?.getData('text');
+if (text == null || /^[0-9]*$/.test(text)) return;
+evt.preventDefault();
+const digits = text.replace(/[^0-9]/g, '').slice(0, 6 - el.value.length + el.selectionEnd - el.selectionStart);
+if (digits) document.execCommand('insertText', false, digits);
+`
+
 // One native input keeps paste, autofill, keyboard editing and screen readers
 // working as usual; Datastar mirrors its value and selection into six boxes.
 templ emailCodeInput(errorMessage string) {
@@ -59,7 +81,7 @@ templ emailCodeInput(errorMessage string) {
 				spellcheck="false"
 				data-bind="_emailCode"
 				data-init="el.maxLength = 6; $_codeCaret = el.selectionStart; $_codeEnd = el.selectionEnd; el.parentElement.classList.add('ts-email-code-ready')"
-				data-on:input="const start = el.value.slice(0, el.selectionStart).replace(/[^0-9]/g, '').length; const end = el.value.slice(0, el.selectionEnd).replace(/[^0-9]/g, '').length; el.value = el.value.replace(/[^0-9]/g, '').slice(0, 6); el.setSelectionRange(start, end); $_emailCode = el.value; $_codeCaret = el.selectionStart; $_codeEnd = el.selectionEnd"
+				data-on:input={ codeInput }
 				data-on:select="$_codeCaret = el.selectionStart; $_codeEnd = el.selectionEnd"
 				data-on:keyup="$_codeCaret = el.selectionStart; $_codeEnd = el.selectionEnd"
 				data-on:focus="$_codeCaret = el.selectionStart; $_codeEnd = el.selectionEnd"
@@ -69,7 +91,7 @@ templ emailCodeInput(errorMessage string) {
 				data-on:pointercancel={ codePointerUp }
 				data-on:lostpointercapture="el._codePointer = null"
 				data-on:dblclick="el.select()"
-				data-on:paste="evt.preventDefault(); const digits = evt.clipboardData.getData('text').replace(/[^0-9]/g, ''); el.setRangeText(digits.slice(0, 6 - el.value.length + el.selectionEnd - el.selectionStart), el.selectionStart, el.selectionEnd, 'end'); el.dispatchEvent(new Event('input', {bubbles: true}))"
+				data-on:paste={ codePaste }
 				{ field.ControlAttrs()... }
 			/>
 			<div class="ts-email-code-slots" aria-hidden="true">
