@@ -55,19 +55,17 @@ internal static class ReplicaIdentityFile
     }
 
     /// <summary>
-    /// Records that the member stopped cleanly, so its next start keeps <paramref name="id"/>: only once every database
-    /// file and write-ahead log is on disk. Closing does not report a checkpoint SQLite skipped (another process held the
-    /// file), and under <c>synchronous = NORMAL</c> such a log could still be lost to an OS crash that keeps the mark.
+    /// Records that the member stopped cleanly, so its next start keeps <paramref name="id"/>: only once every committed
+    /// write is on disk. A checkpoint SQLite completes at close syncs its database file and deletes the write-ahead log
+    /// (<c>synchronous = NORMAL</c>); closing does not report one it skipped (another process held the file), so every log
+    /// still present is synced first, lest an OS crash lose it and keep the mark.
     /// </summary>
     public static void Stop(string dataDirectory, ReplicaId id)
     {
-        foreach (var file in Directory.EnumerateFiles(dataDirectory, "*", new EnumerationOptions { RecurseSubdirectories = true, AttributesToSkip = FileAttributes.ReparsePoint }))
+        foreach (var log in Directory.EnumerateFiles(dataDirectory, "*.db-wal", new EnumerationOptions { RecurseSubdirectories = true, AttributesToSkip = FileAttributes.ReparsePoint }))
         {
-            if (file.EndsWith(".db", StringComparison.Ordinal) || file.EndsWith(".db-wal", StringComparison.Ordinal))
-            {
-                using var stream = new FileStream(file, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite);
-                stream.Flush(flushToDisk: true);
-            }
+            using var stream = new FileStream(log, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite);
+            stream.Flush(flushToDisk: true);
         }
 
         Write(Path.Combine(dataDirectory, FileName), id, Stopped);
