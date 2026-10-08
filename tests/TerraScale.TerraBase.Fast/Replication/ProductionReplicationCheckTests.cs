@@ -373,10 +373,42 @@ public sealed class ProductionReplicationCheckTests
 
     private static string ShellQuote(string value) => "'" + value.Replace("'", "'\\''", StringComparison.Ordinal) + "'";
 
-    private const string HostAdapter = """
-        import json, os, re, sys, urllib.request
+    // Shared by both host command fakes: reads a member's real admin metrics.
+    private const string MetricsReader = """
+        import json, os, re, sys, time, urllib.request
 
         COUNTERS = ("terrabase_replication_received_groups_total", "terrabase_replication_sender_prefix_mismatches_total")
+
+
+        # True when the member's real gauges show no replication lag, as the checker's lag() defines it.
+        def converged(lines):
+            values = {}
+            for line in lines:
+                name = re.split(r"[ {]", line, maxsplit=1)[0]
+                if name.startswith(("terrabase_replication_sender_", "terrabase_catalog_follower_")):
+                    values[name] = float(line.split()[1])
+            return (values.get("terrabase_replication_sender_initialized") == 1 and values.get("terrabase_replication_sender_durable_lag") == 0
+                    and values.get("terrabase_catalog_follower_connected", 1) == 1 and values.get("terrabase_catalog_follower_lag", 0) == 0)
+
+
+        # One real scrape within 5 s. Reported-fault cases stop the checker at its first sample, so there a member's real
+        # baseline is read again within the same 5 s until it is converged; the last real sample is returned either way.
+        def scrape(url):
+            baseline = "reported-faults" in os.environ["CHECKER_FAULT"]
+            started = time.monotonic()
+            while True:
+                try:
+                    with urllib.request.urlopen(url, timeout=max(0.1, 5 - (time.monotonic() - started))) as response:
+                        lines = response.read(1048576).decode().splitlines()
+                except Exception as error:
+                    # The checker reports only the first 200 characters of stderr: say what failed before any traceback.
+                    sys.exit(f"{type(error).__name__}: {error} reading {url} after {time.monotonic() - started:.1f}s")
+                if not baseline or converged(lines) or time.monotonic() - started >= 5:
+                    return lines
+                time.sleep(0.1)
+        """;
+
+    private const string HostAdapter = MetricsReader + "\n" + """
         member = sys.argv[1]
         assert sys.argv[2] == member.rsplit(":", 1)[0], "{ip} must remain the member hostname"
         host = json.loads(os.environ["CHECKER_HOSTS"])[member]
@@ -395,8 +427,7 @@ public sealed class ProductionReplicationCheckTests
                 fault = "lagging-reported-faults" if member == os.environ["CHECKER_FAULT_MEMBER"] else "none"
             else:
                 fault = "missing-durable-lag" if member == os.environ["CHECKER_FAULT_MEMBER"] else "first-sample-lag"
-        with urllib.request.urlopen(host["metrics"], timeout=5) as response:
-            metrics = response.read(1048576).decode().splitlines()
+        metrics = scrape(host["metrics"])
         with open(host["logs"], encoding="utf-8") as file:
             logs = file.read(65536)
         if fault == "host-exit":
@@ -437,11 +468,7 @@ public sealed class ProductionReplicationCheckTests
         """;
 
     // These commands exist only on the checker's PATH; bash receives the real production HOST_SCRIPT on stdin.
-    private const string HostTools = """
-        #!/usr/bin/env python3
-        import json, os, sys, urllib.request
-
-        COUNTERS = ("terrabase_replication_received_groups_total", "terrabase_replication_sender_prefix_mismatches_total")
+    private const string HostTools = "#!/usr/bin/env python3\n" + MetricsReader + "\n" + """
         tool = os.path.basename(sys.argv[0])
         member = os.environ["CHECKER_MEMBER"]
         host = json.loads(os.environ["CHECKER_HOSTS"])[member]
@@ -452,8 +479,7 @@ public sealed class ProductionReplicationCheckTests
             print({"shell-two-processes": os.environ["CHECKER_PID"] + "\n1", "shell-missing-process": "4194305"}.get(fault, os.environ["CHECKER_PID"]))
         elif tool == "curl":
             assert sys.argv[-1] == "http://127.0.0.1:9464/metrics"
-            with urllib.request.urlopen(host["metrics"], timeout=5) as response:
-                lines = response.read(1048576).decode().splitlines()
+            lines = scrape(host["metrics"])
             if fault == "shell-reported-faults":
                 lines = [line for line in lines if not line.startswith(COUNTERS)] + [
                     'terrabase_replication_received_groups_total{otel_scope_name="TerraScale.TerraBase",result="rejected"} 1',
