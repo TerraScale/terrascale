@@ -5,28 +5,12 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
-	"time"
-
-	"github.com/a-h/templ"
 
 	"terrascale.tech/dashboard/internal/core"
 	"terrascale.tech/dashboard/internal/features/backups"
 )
 
-type pageData struct {
-	projectSettings
-	Tab                string
-	UpdatedAt          string
-	SelectedDatabaseID string
-	SelectedBackups    []core.Backup
-	Policy             backupPolicyView
-	Credentials        []core.APIKey
-	Toast              string
-	Error              string
-	Demo               bool
-}
-
-// Mount registers settings pages, their project-scoped mutations, and tools.
+// Mount registers project-scoped settings mutations and tools.
 func Mount(mux *http.ServeMux, deps core.Deps) {
 	service := Service{deps: deps, backups: backups.NewService(deps)}
 	mountTools(deps.Tools, service)
@@ -144,19 +128,6 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 	})
 }
 
-func signedIn(deps core.Deps, w http.ResponseWriter, r *http.Request) (core.Principal, bool) {
-	if deps.Sessions == nil {
-		http.Error(w, "authentication required", http.StatusUnauthorized)
-		return core.Principal{}, false
-	}
-	p, ok := deps.Sessions.Principal(r)
-	if !ok {
-		core.RedirectToLogin(w, r)
-		return core.Principal{}, false
-	}
-	return p, true
-}
-
 // redirectOrError returns validation and provider-contract failures explicitly.
 func redirectOrError(w http.ResponseWriter, r *http.Request, err error, tab, database string) {
 	reason, invalid := core.InvalidReason(err)
@@ -167,16 +138,6 @@ func redirectOrError(w http.ResponseWriter, r *http.Request, err error, tab, dat
 		http.Error(w, msgBackupsUnavailable, http.StatusServiceUnavailable)
 	default:
 		writeError(w, err)
-	}
-}
-
-func render(w http.ResponseWriter, r *http.Request, deps core.Deps, p core.Principal, data pageData) {
-	page := core.Page{
-		Layout: "shell", Title: "Project settings", Principal: p,
-		View: func(view core.Page) templ.Component { return settingsView(data, view.CSRFToken) },
-	}
-	if err := deps.Render.Page(w, r, page); err != nil {
-		http.Error(w, "could not render settings", http.StatusInternalServerError)
 	}
 }
 
@@ -198,12 +159,4 @@ func writeError(w http.ResponseWriter, err error) {
 	default:
 		http.Error(w, "invalid request", http.StatusBadRequest)
 	}
-}
-
-// changedAt formats a settings timestamp; a zero time means never changed.
-func changedAt(t time.Time) string {
-	if t.IsZero() {
-		return ""
-	}
-	return t.UTC().Format("Jan 2, 2006 15:04 UTC")
 }

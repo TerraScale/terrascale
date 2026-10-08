@@ -180,7 +180,14 @@ func click(t *testing.T, locator playwright.Locator) {
 
 func fill(t *testing.T, locator playwright.Locator, value string) {
 	t.Helper()
-	must(t, locator.Fill(value))
+	if err := locator.Fill(value); err != nil {
+		if page, pageErr := locator.Page(); pageErr == nil {
+			if location, parseErr := url.Parse(page.URL()); parseErr == nil {
+				t.Logf("page path at fill failure: %q", location.Path)
+			}
+		}
+		t.Fatal(err)
+	}
 }
 
 func selectOption(t *testing.T, locator playwright.Locator, value string) {

@@ -73,6 +73,8 @@ jobs:
         run: npm ci --no-audit --no-fund
       - name: Run Go browser and account-to-ts-go tests (shard ${{ matrix.shard }})
         env:
+          GO_TEST_FLAGS: "-race -count=1 -v"
+          NODE_OPTIONS: "--trace-warnings"
           TERRABASE_TOKEN: ${{ secrets.ORG_READ_TOKEN }}
           TERRABASE_REQUIRE: "1"
         run: make test-browser E2E_SHARD="${{ matrix.shard }}/$(scripts/e2e-shard-count.sh)"

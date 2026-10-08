@@ -26,7 +26,6 @@
 @import "../Features/Usage/usage.css" layer(features);
 @import "../Features/Subscriptions/subscriptions.css" layer(features);
 @import "../Features/Notifications/notifications.css" layer(features);
-@import "../Features/Settings/settings.css" layer(features);
 @import "../Features/Organization/organization.css" layer(features);
 @import "../Features/Profile/profile.css" layer(features);
 @import "../Features/Admin/admin.css" layer(features);
