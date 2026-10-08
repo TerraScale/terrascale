@@ -48,16 +48,23 @@ budgets; password reset has a separate redemption budget. Exhaustion returns
 429 and `Retry-After`; unavailable storage returns 503. Unknown emails spend
 the same budget as accounts, and replacing a code does not reset it. Code
 request and issuance budgets both reset on UTC clock-hour boundaries. Socket
-peer addresses are used for hosted/general token limits; forwarding headers
-are ignored, so a proxy shares its budget unless it preserves client addresses.
+peer addresses are used for hosted/general token limits by default. Optional
+`TS_AUTH_TRUSTED_PROXIES` is a semicolon-separated list of at most eight exact
+numeric proxy IPs; only these peers can supply the rightmost `X-Forwarded-For`
+hop. Hosted guards use that client IP; token requests retain an aggregate
+socket budget (four times the normal limit for configured proxies) and also
+charge a separate client budget before authentication. Missing or malformed
+rightmost addresses share the proxy's client budget. Other forwarding headers
+cannot change identity, origin or scheme.
 An account-budget refusal temporarily blocks that method until its window ends
 and queues one lockout email notice per account, method and stored deadline.
 Other sign-in and recovery budgets remain separate. Notice claims live in
 TerraBase; delivery uses a separate bounded notice queue and worker, so notice
 floods cannot displace sign-in or recovery mail. Delivery remains best-effort,
 and notices whose lockout has expired before sending are suppressed.
-See [the budget table](docs/csharp-port.md#limits). Explicit trusted-proxy
-handling remains a TS-704 follow-up.
+See [the budget table](docs/csharp-port.md#limits). Production forwarding remains
+disabled until its actual socket peers and rightmost client-IP header are
+verified; see [the ingress checklist](docs/csharp-port.md#trusted-proxy-ingress).
 
 ## Target feature inventory
 
@@ -162,6 +169,7 @@ nice -n 19 dotnet run --project src/TerraScale.Auth
 | `TS_AUTH_LISTEN` | Plain-HTTP listen address with an explicit port (default `http://0.0.0.0:8080`) |
 | `TS_AUTH_ENVIRONMENT` | `Development` waives the audit-signing key requirement and permits a loopback HTTPS TerraBase API origin |
 | `TS_AUTH_RATE_LIMIT` | Management API requests per key and token requests per peer IP per minute, with separate budgets (default 1000) |
+| `TS_AUTH_TRUSTED_PROXIES` | Optional semicolon-separated list of at most eight exact numeric immediate proxy IPs. Only their rightmost `X-Forwarded-For` entry establishes a client address; requires the documented ingress verification before activation |
 | `TS_AUTH_SMTP_HOST` / `_PORT` / `_USERNAME` / `_PASSWORD` / `_FROM_ADDRESS` | SMTP delivery; host, username, password and from address are all or nothing, port defaults to 587 |
 | `TS_AUTH_SMTP_CHECK_REVOCATION` | `true` (default) or `false`: whether the relay certificate's revocation is checked online; see [Email delivery](#email-delivery-oci) |
 | `TS_AUTH_DASHBOARD_CLIENT_SECRET` | Optional secret of the confidential OIDC client `ts-dashboard`, 32 to 512 characters without whitespace. Required together with the redirect URIs; only OpenIddict's PBKDF2 hash is stored |
@@ -531,6 +539,8 @@ rotation.
   document, the image-transfer, binary-publish and arm64-smoke guard tests and the fast integration suite,
   including Chromium and storage/readiness against the real SDK-pinned
   TerraBase binary. Missing binary/download prerequisites fail the suite.
+  Fast cases share one TerraBase process and run at most two at a time;
+  concurrency tests still create their own parallel requests.
 - **`release`** publishes a self-contained single-file linux-x64 executable
   (`scripts/ci/stage-release.sh`), packages it into the chiseled
   `runtime-deps` image (`Containerfile`, pinned by digest), and smoke-checks

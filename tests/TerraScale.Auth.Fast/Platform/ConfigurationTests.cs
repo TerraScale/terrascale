@@ -1,13 +1,24 @@
 using System.Diagnostics;
+using System.Net;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
+using System.Text.Json;
 using TerraScale.Auth.Configuration;
+using TerraScale.Auth.Features.Oidc;
+using TerraScale.Auth.Features.RateLimiting;
+using TerraScale.Auth.Store;
 using TerraScale.Auth.Tests;
+using TerraScale.DotNet.TerraBase;
 
 namespace TerraScale.Auth.Fast.Platform;
 
 public sealed class ConfigurationTests
 {
+    private const string TrustedProxiesError = "TS_AUTH_TRUSTED_PROXIES must contain unadorned numeric IP addresses";
+    private const string UnspecifiedProxiesError = "TS_AUTH_TRUSTED_PROXIES must not contain unspecified addresses";
+    private const string DuplicateProxiesError = "TS_AUTH_TRUSTED_PROXIES must contain distinct normalized addresses";
+    private const string TooManyProxiesError = "TS_AUTH_TRUSTED_PROXIES must contain at most 8 addresses";
+
     [Test]
     [Arguments("master-key", "TS_AUTH_MASTER_KEY is required")]
     [Arguments("operator-key", "TS_AUTH_OPERATOR_KEY is required")]
@@ -99,6 +110,27 @@ public sealed class ConfigurationTests
     [Arguments("smtp-host", "smtp.example", "TS_AUTH_SMTP_* is partially configured")]
     [Arguments("smtp-check-revocation", "no", "TS_AUTH_SMTP_CHECK_REVOCATION must be true or false")]
     [Arguments("rate-limit", "0", "TS_AUTH_RATE_LIMIT must be positive")]
+    [Arguments("trusted-proxies", "proxy.example.invalid", TrustedProxiesError)]
+    [Arguments("trusted-proxies", "10.0.0.0/24", TrustedProxiesError)]
+    [Arguments("trusted-proxies", "10.0.0.1:443", TrustedProxiesError)]
+    [Arguments("trusted-proxies", "[2001:db8::1]:443", TrustedProxiesError)]
+    [Arguments("trusted-proxies", "[2001:db8::1]", TrustedProxiesError)]
+    [Arguments("trusted-proxies", "0.0.0.0", UnspecifiedProxiesError)]
+    [Arguments("trusted-proxies", "::", UnspecifiedProxiesError)]
+    [Arguments("trusted-proxies", "::ffff:0.0.0.0", UnspecifiedProxiesError)]
+    [Arguments("trusted-proxies", "fe80::1%2", TrustedProxiesError)]
+    [Arguments("trusted-proxies", "10.1", TrustedProxiesError)]
+    [Arguments("trusted-proxies", "167772161", TrustedProxiesError)]
+    [Arguments("trusted-proxies", "0x0a000001", TrustedProxiesError)]
+    [Arguments("trusted-proxies", "010.0.0.1", TrustedProxiesError)]
+    [Arguments("trusted-proxies", "::ffff:010.0.0.1", TrustedProxiesError)]
+    [Arguments("trusted-proxies", "10.0.0.256", TrustedProxiesError)]
+    [Arguments("trusted-proxies", "10.0.0.1;", TrustedProxiesError)]
+    [Arguments("trusted-proxies", "10.0.0.1;;10.0.0.2", TrustedProxiesError)]
+    [Arguments("trusted-proxies", "10.0.0.1;10.0.0.1", DuplicateProxiesError)]
+    [Arguments("trusted-proxies", "10.0.0.1;::ffff:10.0.0.1", DuplicateProxiesError)]
+    [Arguments("trusted-proxies", "2001:db8::1;2001:0db8:0000:0000:0000:0000:0000:0001", DuplicateProxiesError)]
+    [Arguments("trusted-proxies", "10.0.0.1;10.0.0.2;10.0.0.3;10.0.0.4;10.0.0.5;10.0.0.6;10.0.0.7;10.0.0.8;10.0.0.9", TooManyProxiesError)]
     [Arguments("terrascale-api-endpoints", "https://10.0.0.1:9465", "TS_AUTH_TERRASCALE_API_ENDPOINTS and TS_AUTH_TERRASCALE_API_CA are required together")]
     [Arguments("terrascale-api-ca", "-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----", "TS_AUTH_TERRASCALE_API_CA must hold 1 to 4 PEM certificates and nothing else")]
     [Arguments("terrascale-api-ca", "not a certificate", "TS_AUTH_TERRASCALE_API_CA must hold 1 to 4 PEM certificates and nothing else")]
@@ -243,6 +275,128 @@ public sealed class ConfigurationTests
     }
 
     [Test]
+    [Arguments(null, false)]
+    [Arguments("10.0.0.1;2001:db8::1;::ffff:10.0.0.2", false)]
+    [Arguments("10.0.0.1;10.0.0.2;10.0.0.3;10.0.0.4;10.0.0.5;10.0.0.6;10.0.0.7;10.0.0.8", false)]
+    [Arguments("10.0.0.1;2001:db8::1", true)]
+    public async Task The_service_binary_accepts_numeric_proxy_settings_from_the_environment_or_command_line(string? proxies, bool commandLine)
+    {
+        var settings = AuthTestServer.DefaultSettings();
+        if (proxies is not null)
+        {
+            settings["trusted-proxies"] = commandLine ? "invalid-proxy.example.invalid" : proxies;
+        }
+
+        await using var service = await RunningBinary.StartAsync(settings, commandLine ? ["--trusted-proxies=" + proxies] : []);
+        using var health = await service.Client.GetAsync("/healthz");
+        await Assert.That(health.StatusCode).IsEqualTo(System.Net.HttpStatusCode.OK);
+    }
+
+    [Test]
+    [ClassDataSource<TerraBaseFixture>(Shared = SharedType.PerTestSession)]
+    public async Task Global_forwarding_flags_cannot_enable_untrusted_hops_bypass_empty_tails_or_remove_the_proxy_aggregate(TerraBaseFixture fixture)
+    {
+        const string path = "/terrascale/oauth/token";
+        const int clientCapacity = 1;
+        const int emptyTailAttempts = 2;
+        var proxyCapacity = clientCapacity * TokenRateLimitMiddleware.ProxyFactor;
+        var forwardedClientCount = proxyCapacity - emptyTailAttempts;
+        foreach (var (proxies, listen) in new (string? Proxies, string Listen)[]
+        {
+            (null, "http://127.0.0.1:0"),
+            ("10.0.0.1", "http://127.0.0.1:0"),
+            ("127.0.0.1", "http://127.0.0.1:0"),
+            // IPv4 connections to a dual-stack listener arrive as IPv4-mapped IPv6 peers.
+            ("127.0.0.1", "http://[::]:0"),
+        })
+        {
+            var scenario = $"trusted-proxies={proxies ?? "<unset>"}, listen={listen}";
+            var trusted = proxies == "127.0.0.1";
+            var target = await SharedStateTarget.CreateAsync(fixture);
+            var settings = AuthTestServer.DefaultSettings();
+            target.Bind(settings);
+            settings["terrascale-api-endpoints"] = fixture.Server.ClientAddress.GetLeftPart(UriPartial.Authority);
+            settings["terrascale-api-ca"] = fixture.Server.Certificate.ExportCertificatePem();
+            settings["rate-limit"] = clientCapacity.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            settings["listen"] = listen;
+            if (proxies is not null)
+            {
+                settings["trusted-proxies"] = proxies;
+            }
+
+            // A persisted ahead-of-clock window cannot roll over during the live binary's bounded request sequence.
+            var clock = new ManualClock(DateTimeOffset.UtcNow.AddDays(1));
+            var limiter = new AttemptLimiter(new TerraBaseDocumentStore(new AuthStore(target.Database, clock)), clock, AuthOptions.Load(settings));
+            var clients = Enumerable.Range(1, 254).Select(number => $"203.0.113.{number}")
+                .Where(address => limiter.Fold(address) != limiter.Fold("127.0.0.1"))
+                .DistinctBy(limiter.Fold).Take(forwardedClientCount + 1).ToArray();
+            var subjects = new List<(string Purpose, string Subject)> { (trusted ? "token-proxy-ip" : "token-peer-ip", "127.0.0.1") };
+            if (trusted)
+            {
+                subjects.Add(("token-client-ip", "127.0.0.1"));
+                subjects.AddRange(clients.Take(forwardedClientCount).Select(subject => ("token-client-ip", subject)));
+            }
+
+            foreach (var (purpose, subject) in subjects)
+            {
+                await Assert.That(await limiter.TryAcquireAsync(OidcIssuer.InstanceId, purpose, limiter.Fold(subject), clientCapacity, CancellationToken.None)).IsTrue().Because(scenario);
+            }
+
+            foreach (var bucket in (await target.Database.ListDocumentsAsync(AttemptLimiter.Collection)).Items)
+            {
+                await target.Database.PutDocumentAsync(AttemptLimiter.Collection, bucket.Id,
+                    JsonSerializer.SerializeToElement(new { window = bucket.Document.GetProperty("window").GetInt64(), used = 0 }), TerraBasePrecondition.Matches(bucket.Version));
+            }
+
+            await using var service = await RunningBinary.StartAsync(settings, new Dictionary<string, string>
+            {
+                ["ASPNETCORE_FORWARDEDHEADERS_ENABLED"] = "true",
+                ["ForwardedHeaders_Enabled"] = "true",
+            });
+
+            var (first, _) = await RawHttp.DuplicateForwardedAsync(service.Client.BaseAddress!, path, clients[0], trusted ? string.Empty : clients[0], 0);
+            await Assert.That(first).IsEqualTo(HttpStatusCode.Unauthorized).Because(scenario);
+            var (second, delay) = await RawHttp.DuplicateForwardedAsync(service.Client.BaseAddress!, path, clients[1], trusted ? " \t " : clients[1], 1);
+            await Assert.That(second).IsEqualTo(HttpStatusCode.TooManyRequests).Because(scenario);
+            await Assert.That(delay).IsNotNull().Because(scenario);
+
+            if (trusted)
+            {
+                // Empty final wire lines spent the socket's client allowance, neither preceding fake client's allowance.
+                for (var attempt = 0; attempt < forwardedClientCount; attempt++)
+                {
+                    var (status, _) = await RawHttp.DuplicateForwardedAsync(service.Client.BaseAddress!, path, clients[attempt], clients[attempt], attempt + emptyTailAttempts);
+                    await Assert.That(status).IsEqualTo(HttpStatusCode.Unauthorized).Because(scenario);
+                }
+
+                // The client-budget refusal also spent the original proxy's aggregate budget.
+                var (limited, retryAfter) = await RawHttp.DuplicateForwardedAsync(service.Client.BaseAddress!, path, clients[forwardedClientCount], clients[forwardedClientCount], proxyCapacity);
+                await Assert.That(limited).IsEqualTo(HttpStatusCode.TooManyRequests).Because(scenario);
+                await Assert.That(retryAfter).IsNotNull().Because(scenario);
+            }
+
+            var buckets = (await target.Database.ListDocumentsAsync(AttemptLimiter.Collection)).Items;
+            var expectedClientBuckets = trusted ? 1 + forwardedClientCount : 0;
+            var expectedBucketCount = 1 + expectedClientBuckets;
+            var expectedPeerUsed = trusted ? proxyCapacity : clientCapacity;
+            var expectedUsed = expectedPeerUsed + expectedClientBuckets * clientCapacity;
+            await Assert.That(buckets.Count).IsEqualTo(expectedBucketCount).Because(scenario);
+            await Assert.That(buckets.All(bucket => bucket.Document.GetProperty("window").GetInt64() == clock.GetUtcNow().ToUnixTimeSeconds() / 60)).IsTrue().Because(scenario);
+            await Assert.That(buckets.Sum(bucket => bucket.Document.GetProperty("used").GetInt32())).IsEqualTo(expectedUsed).Because(scenario);
+            using var discoveryRequest = new HttpRequestMessage(HttpMethod.Get, "/terrascale/.well-known/openid-configuration");
+            discoveryRequest.Headers.Host = "spoofed.example.invalid";
+            discoveryRequest.Headers.Add("X-Forwarded-For", clients[forwardedClientCount]);
+            discoveryRequest.Headers.Add("X-Forwarded-Host", "spoofed.example.invalid");
+            discoveryRequest.Headers.Add("X-Forwarded-Proto", "https");
+            using var discovery = await service.Client.SendAsync(discoveryRequest);
+            await Assert.That(discovery.StatusCode).IsEqualTo(HttpStatusCode.OK).Because(scenario);
+            var document = await OidcHarness.JsonAsync(discovery);
+            await Assert.That(document.GetProperty("issuer").GetString()).IsEqualTo(OidcHarness.Issuer).Because(scenario);
+            await Assert.That(document.GetProperty("token_endpoint").GetString()).IsEqualTo(OidcHarness.Issuer + "/oauth/token").Because(scenario);
+        }
+    }
+
+    [Test]
     [Arguments("https://api.terrascale.tech")]
     [Arguments("https://gru.api.terrascale.tech")]
     public async Task Production_starts_with_either_permitted_storage_host(string apiUrl)
@@ -272,11 +426,14 @@ public sealed class ConfigurationTests
 
         public HttpClient Client { get; }
 
-        public static async Task<RunningBinary> StartAsync(Dictionary<string, string> settings, params string[] arguments)
+        public static Task<RunningBinary> StartAsync(Dictionary<string, string> settings, params string[] arguments) =>
+            StartAsync(settings, [], arguments);
+
+        public static async Task<RunningBinary> StartAsync(Dictionary<string, string> settings, Dictionary<string, string> environment, params string[] arguments)
         {
             // Port 0: the child binds a free port itself and reports it on its startup line,
             // so no other process can answer in its place.
-            settings["listen"] = "http://127.0.0.1:0";
+            settings.TryAdd("listen", "http://127.0.0.1:0");
             var start = new ProcessStartInfo("dotnet", [Path.Combine(AppContext.BaseDirectory, "ts-auth.dll"), .. arguments])
             {
                 RedirectStandardError = true,
@@ -292,6 +449,11 @@ public sealed class ConfigurationTests
                 start.Environment[$"TS_AUTH_{key.Replace('-', '_').ToUpperInvariant()}"] = value;
             }
 
+            foreach (var (key, value) in environment)
+            {
+                start.Environment[key] = value;
+            }
+
             start.Environment["Logging__LogLevel__Microsoft.Hosting.Lifetime"] = "Information";
             var listening = new TaskCompletionSource<Uri>(TaskCreationOptions.RunContinuationsAsynchronously);
             var process = Process.Start(start)!;
@@ -299,7 +461,7 @@ public sealed class ConfigurationTests
             {
                 if (line.Data?.IndexOf("Now listening on: ", StringComparison.Ordinal) is >= 0 and var at)
                 {
-                    listening.TrySetResult(new Uri(line.Data[(at + "Now listening on: ".Length)..].Trim()));
+                    listening.TrySetResult(new Uri(line.Data[(at + "Now listening on: ".Length)..].Trim().Replace("[::]", "127.0.0.1", StringComparison.Ordinal)));
                 }
             };
             process.ErrorDataReceived += (_, _) => { };

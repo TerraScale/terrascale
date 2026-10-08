@@ -33,8 +33,9 @@ openapi-check: build
 	scripts/export-openapi.sh $(HOST_DLL) artifacts/openapi.json
 	$(REDOCLY) lint artifacts/openapi.json docs/platform-api.openapi.yaml
 
+# Cases share one TerraBase process; individual concurrency tests still run their own request races.
 test-fast: build
-	dotnet run --project tests/TerraScale.Auth.Fast --configuration $(CONFIGURATION) --no-build
+	dotnet run --project tests/TerraScale.Auth.Fast --configuration $(CONFIGURATION) --no-build -- --maximum-parallel-tests 2
 
 test-slow: build
 	dotnet run --project tests/TerraScale.Auth.Slow --configuration $(CONFIGURATION) --no-build

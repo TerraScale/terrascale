@@ -34,6 +34,7 @@ public sealed partial record AuthOptions
         "audit-verify-keys",
         "operator-key",
         "rate-limit",
+        "trusted-proxies",
         "smtp-host",
         "smtp-port",
         "smtp-username",
@@ -98,8 +99,11 @@ public sealed partial record AuthOptions
     /// <summary>Bearer key for operator instance bootstrap.</summary>
     public required string OperatorKey { get; init; }
 
-    /// <summary>Protective per-process management request limit.</summary>
+    /// <summary>Shared per-IP token and management request capacity per minute.</summary>
     public int RateLimitPerWindow { get; init; } = 1000;
+
+    /// <summary>Exact socket peers allowed to supply one rightmost X-Forwarded-For hop. Empty disables forwarding.</summary>
+    public IReadOnlyList<IPAddress> TrustedProxies { get; init; } = [];
 
     /// <summary>SMTP relay host; all four SMTP credentials are set together or not at all.</summary>
     public string? SmtpHost { get; init; }
@@ -297,6 +301,7 @@ public sealed partial record AuthOptions
             AuditVerificationKeys = [.. verifyValues.Select(raw => DecodeKey("audit-verify-keys", raw))],
             OperatorKey = Required("operator-key"),
             RateLimitPerWindow = rateLimit,
+            TrustedProxies = ParseTrustedProxies(Optional("trusted-proxies")),
             SmtpHost = smtp[0],
             SmtpPort = smtpPort,
             SmtpCheckRevocation = smtpCheckRevocation,
@@ -312,6 +317,45 @@ public sealed partial record AuthOptions
         };
         options.EnforceProductionGuards();
         return options;
+    }
+
+    private static IReadOnlyList<IPAddress> ParseTrustedProxies(string? value)
+    {
+        if (value is null)
+        {
+            return [];
+        }
+
+        var addresses = new HashSet<IPAddress>();
+        foreach (var text in value.Split(';', StringSplitOptions.TrimEntries))
+        {
+            // IPAddress.TryParse accepts bracketed IPv6 literals; this setting requires bare numeric addresses.
+            if (!IPAddress.TryParse(text, out var address) || text.Contains('%')
+                || text.StartsWith('[')
+                || (address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork && text != address.ToString())
+                || (text.Contains('.') && text[(text.LastIndexOf(':') + 1)..] != address.MapToIPv4().ToString()))
+            {
+                throw Invalid("TS_AUTH_TRUSTED_PROXIES must contain unadorned numeric IP addresses");
+            }
+
+            address = address.IsIPv4MappedToIPv6 ? address.MapToIPv4() : address;
+            if (address.Equals(IPAddress.Any) || address.Equals(IPAddress.IPv6Any))
+            {
+                throw Invalid("TS_AUTH_TRUSTED_PROXIES must not contain unspecified addresses");
+            }
+
+            if (!addresses.Add(address))
+            {
+                throw Invalid("TS_AUTH_TRUSTED_PROXIES must contain distinct normalized addresses");
+            }
+
+            if (addresses.Count > 8)
+            {
+                throw Invalid("TS_AUTH_TRUSTED_PROXIES must contain at most 8 addresses");
+            }
+        }
+
+        return [.. addresses];
     }
 
     private void EnforceProductionGuards()

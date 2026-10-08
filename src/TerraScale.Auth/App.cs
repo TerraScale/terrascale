@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.HttpOverrides;
 using TerraScale.Auth.Configuration;
 using TerraScale.Auth.Features.Email;
 using TerraScale.Auth.Features.Headless;
@@ -32,6 +33,21 @@ public static partial class App
         builder.WebHost.ConfigureKestrel(kestrel => kestrel.Listen(options.Listen));
 
         builder.Services.AddSingleton(options);
+        if (options.TrustedProxies.Count > 0)
+        {
+            builder.Services.Configure<ForwardedHeadersOptions>(forwarding =>
+            {
+                forwarding.ForwardedHeaders = ForwardedHeaders.XForwardedFor;
+                forwarding.ForwardLimit = 1;
+                forwarding.KnownProxies.Clear();
+                forwarding.KnownIPNetworks.Clear();
+                foreach (var proxy in options.TrustedProxies)
+                {
+                    forwarding.KnownProxies.Add(proxy);
+                }
+            });
+        }
+
         builder.Services.AddSingleton(TimeProvider.System);
         if (options.TerraScaleApiEndpoints.Count == 0)
         {
@@ -95,6 +111,9 @@ public static partial class App
 
         configure?.Invoke(builder);
 
+        // This pipeline owns forwarding order and trust, even when ASP.NET's automatic forwarding setting is enabled.
+        builder.Configuration["ForwardedHeaders_Enabled"] = "false";
+
         var app = builder.Build();
         // Hashes its timing equalizer now, so the first password check of an unknown account costs no more than any other.
         app.Services.GetRequiredService<PasswordHasher>();
@@ -104,7 +123,24 @@ public static partial class App
         }
 
         app.UseMiddleware<ErrorEnvelopeMiddleware>();
-        app.UseMiddleware<TokenRateLimitMiddleware>();
+        TokenRateLimitMiddleware.UsePeerGuard(app);
+        if (options.TrustedProxies.Count > 0)
+        {
+            app.Use((HttpContext context, RequestDelegate next) =>
+            {
+                // Joining header values and native splitting drop empty entries. Inspect the last raw wire value.
+                var values = context.Request.Headers["X-Forwarded-For"];
+                var last = values.Count == 0 ? string.Empty : values[^1] ?? string.Empty;
+                if (last.AsSpan(last.LastIndexOf(',') + 1).Trim().Trim('"').Trim().IsEmpty)
+                {
+                    context.Request.Headers.Remove("X-Forwarded-For");
+                }
+
+                return next(context);
+            });
+            app.UseForwardedHeaders();
+            TokenRateLimitMiddleware.UseClientGuard(app);
+        }
         // OpenIddict answers discovery, JWKS and protocol errors here and validates passthrough requests first.
         app.UseAuthentication();
         app.MapTerraScaleEndpoints();

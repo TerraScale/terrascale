@@ -379,8 +379,8 @@ token.
 
 - TS-704 now limits every token request by peer IP before client authentication,
   and hosted sign-in shares the headless IP and normalized-email budgets.
-  Account-budget refusals now queue deduplicated lockout notices; explicit
-  trusted-proxy handling remains a follow-up.
+  Account-budget refusals now queue deduplicated lockout notices. Explicit
+  trusted-proxy support is opt-in; production ingress verification remains a follow-up.
 - Expired tokens and authorizations are not pruned.
 - Per-instance issuers wait for the instance registry.
 
@@ -498,8 +498,12 @@ mailboxes), so storage stays bounded and nobody can target a victim's bucket.
 | Hosted/headless sign-in code attempts per email | 5 per 15 minutes | `sign-in-code-email` |
 | Password-reset code attempts per email | 5 per 15 minutes | `reset-code-email` |
 | Code requests per email, across all mail starts | 5 per UTC clock hour | `code-mail-email` |
-| Every token request per peer IP (IPv6 per /64) | `TS_AUTH_RATE_LIMIT` per minute (default 1,000) | `token-peer-ip` |
-| Every token request per peer IPv6 /48 | Four times the peer-IP limit | `token-peer-ip-site` |
+| Every token request per ordinary peer IP (IPv6 per /64) | `TS_AUTH_RATE_LIMIT` per minute (default 1,000) | `token-peer-ip` |
+| Every token request per ordinary peer IPv6 /48 | Four times the peer-IP limit | `token-peer-ip-site` |
+| Every token request per trusted proxy IP (IPv6 per /64) | Four times `TS_AUTH_RATE_LIMIT` per minute | `token-proxy-ip` |
+| Every token request per trusted proxy IPv6 /48 | Four times the proxy-IP limit | `token-proxy-ip-site` |
+| Token requests through an explicitly trusted proxy per resolved client IP (IPv6 per /64) | `TS_AUTH_RATE_LIMIT` per minute | `token-client-ip` |
+| Token requests through an explicitly trusted proxy per resolved client IPv6 /48 | Four times the client-IP limit | `token-client-ip-site` |
 
 The normalized-email request budget and the passcode issued-code budget both
 reset on UTC clock-hour boundaries. Stored issue timestamps identify their
@@ -516,11 +520,9 @@ advanced by a replica whose clock is ahead. A headless mail start admitted by
 the cooldown but rejected by the hourly budget reports at least 60 seconds,
 covering both constraints even just before an hour boundary. Cooldown refusals
 do not spend the hourly allowance. Hosted and general token guards use the socket
-peer address and ignore forwarding headers; behind a proxy they conservatively
-share that proxy's budget. End-user headless limits still trust `ip_address`
-only after authenticating the first-party client. An ingress that preserves
-client addresses, or an explicitly trusted proxy design, is needed for separate
-browser budgets behind a shared reverse proxy. Since TS-582
+peer address by default, sharing a proxy's budget. Explicit trusted peers can
+supply client addresses under the policy below. End-user headless limits still
+trust `ip_address` only after authenticating the first-party client. Since TS-582
 `rate_limits` is one of `AuthStore.RequiredCollections`: `/readyz` answers 503
 while it is missing, and the limiter fails closed with 503 on any storage
 failure.
@@ -552,6 +554,56 @@ but the existing worker and SMTP sender remain best-effort: process failure
 after the claim or SMTP failure can lose a notice. There is no durable delivery
 outbox or promise of eventual delivery. These failures never admit a blocked
 authentication attempt or change its public response.
+
+### Trusted proxy ingress
+
+`TS_AUTH_TRUSTED_PROXIES` (or `--trusted-proxies`) enables ASP.NET Core's native
+forwarded-header middleware for at most eight distinct exact numeric socket
+peer addresses, separated by semicolons. IPv4-mapped IPv6 normalizes to IPv4.
+DNS names, networks, unspecified addresses, scoped IPv6 and ambiguous IPv4
+forms are rejected at startup. There is no implicit loopback or network trust;
+the unset default ignores forwarding headers.
+Equivalent numeric IPv6 spellings are allowed; duplicate normalized addresses
+are rejected. Startup errors distinguish malformed, unspecified, duplicate and
+over-capacity proxy lists.
+The application disables ASP.NET's automatic forwarding startup path, including
+`ASPNETCORE_FORWARDEDHEADERS_ENABLED`, so only this explicitly ordered policy applies.
+
+Only `X-Forwarded-For` is processed, one hop from the right. Earlier chain
+entries remain untrusted and are never followed, even if they name another
+configured proxy. Empty final entries, including blank repeated wire headers and
+empty quoted values, suppress forwarding before native parsing can discard them.
+Missing or malformed rightmost entries leave the socket
+address unchanged, sharing that proxy's client budget. `Forwarded`, `X-Real-IP`,
+`CF-Connecting-IP`, forwarded host and forwarded protocol are not used.
+Issuer URLs remain bound to `TS_AUTH_PUBLIC_ORIGIN`.
+
+Token requests first charge the original socket peer before forwarding. An
+exact configured proxy gets four times the normal aggregate capacity (capped
+at `Int32.MaxValue`); after forwarding its request also charges the separate
+client budget before OpenIddict checks client credentials. Direct and untrusted
+peers keep their existing socket-only budget. Trusted-proxy aggregate purposes
+are separate from ordinary peer purposes, so sharing an IPv6 /64 or /48 does
+not mix their different capacities. Both levels retain IPv4-mapped
+normalization and IPv6 /64 and /48 limits, persisted through the existing
+TerraBase limiter. Hosted sign-in request and verification use the resolved
+address; headless submitted IP handling is unchanged.
+
+Production trust is **not enabled or claimed verified by this change**. Before
+configuring it through ts-orchestrator, verify the intended region and service:
+
+1. Establish the exact immediate load-balancer socket addresses and enforce
+   that only the intended ingress can reach the auth listener.
+2. Verify that the rightmost X-Forwarded-For entry is the real browser/client
+   address for both regional and Atlas routes, including spoofed incoming headers.
+3. If that entry is another intermediary, arrange a canonical client header
+   at the trusted ingress; this one-hop policy cannot traverse a proxy chain.
+4. Configure only the verified immediate peer addresses, then check separate
+   client throttles, aggregate proxy throttles, 429/Retry-After and fixed issuer URLs.
+
+Source inspection shows Atlas replaces X-Forwarded-For with CF-Connecting-IP,
+but does not establish the final OCI load-balancer header order, actual backend
+peers or current network enforcement. No deployment values are inferred from it.
 
 ### Security decisions
 
