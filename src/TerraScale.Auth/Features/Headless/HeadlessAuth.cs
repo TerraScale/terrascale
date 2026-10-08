@@ -4,6 +4,7 @@ using System.Net.Sockets;
 using OpenIddict.Abstractions;
 using TerraScale.Auth.Configuration;
 using TerraScale.Auth.Contracts;
+using TerraScale.Auth.Features.Email;
 using TerraScale.Auth.Features.Identity;
 using TerraScale.Auth.Features.Oidc;
 using TerraScale.Auth.Features.RateLimiting;
@@ -102,10 +103,8 @@ public sealed partial class HeadlessAuth(Users users, Passcodes passcodes, Passw
         if (request.GrantType == HeadlessGrants.Password)
         {
             var normalized = Users.NormalizeEmail(email);
-            if (normalized is not null
-                && await limiter.AcquireAsync(OidcIssuer.InstanceId, "headless-password-email", limiter.Fold(normalized), PasswordPerEmail, PasswordWindow, cancellationToken) is { } passwordWait)
+            if (await this.LimitEmailAsync(email, "headless-password-email", PasswordPerEmail, PasswordWindow, notify: true, cancellationToken) is { } passwordWait)
             {
-                LogLimited(logger, "headless-password-email");
                 return TooMany(passwordWait);
             }
 
@@ -312,13 +311,33 @@ public sealed partial class HeadlessAuth(Users users, Passcodes passcodes, Passw
     /// hourly budget; sign-in redemption (including sign-up) and reset redemption have separate budgets so recovery
     /// remains available during a sign-in throttle. Replacing a code never renews its email's budget.
     /// </summary>
-    public Task<TimeSpan?> LimitCodeAsync(string email, PasscodePurpose purpose, bool issuing, CancellationToken cancellationToken)
+    public Task<TimeSpan?> LimitCodeAsync(string email, PasscodePurpose purpose, bool issuing, CancellationToken cancellationToken, string locale = AuthEmails.English)
     {
         var key = issuing ? "code-mail-email" : purpose == PasscodePurpose.PasswordReset ? "reset-code-email" : "sign-in-code-email";
-        return Users.NormalizeEmail(email) is { } normalized
-            ? limiter.AcquireAsync(OidcIssuer.InstanceId, key, limiter.Fold(normalized),
-                issuing ? Passcodes.MaxIssuesPerWindow : CodePerEmail, issuing ? Passcodes.IssueWindow : CodeWindow, cancellationToken)
-            : Task.FromResult<TimeSpan?>(null);
+        return this.LimitEmailAsync(email, key, issuing ? Passcodes.MaxIssuesPerWindow : CodePerEmail,
+            issuing ? Passcodes.IssueWindow : CodeWindow, notify: !issuing, cancellationToken, locale);
+    }
+
+    private async Task<TimeSpan?> LimitEmailAsync(string email, string purpose, int maximum, TimeSpan window, bool notify,
+        CancellationToken cancellationToken, string locale = AuthEmails.English)
+    {
+        if (Users.NormalizeEmail(email) is not { } normalized
+            || await limiter.AcquireWithDeadlineAsync(OidcIssuer.InstanceId, purpose, limiter.Fold(normalized), maximum, window, cancellationToken) is not { } rejection)
+        {
+            return null;
+        }
+
+        LogLimited(logger, purpose);
+        if (notify)
+        {
+            // Both known and unknown addresses enqueue the same work; only the worker looks up the account.
+            mail.EnqueueLockout(async () => await users.FindByEmailAsync(OidcIssuer.InstanceId, normalized, CancellationToken.None) is { } user
+                && await limiter.ClaimLockoutNoticeAsync(OidcIssuer.InstanceId, purpose, user.Id, rejection.Until, CancellationToken.None)
+                    ? new AuthEmailValues(user.Email) { LockoutUntil = rejection.Until }
+                    : null, locale);
+        }
+
+        return rejection.RetryAfter;
     }
 
     [LoggerMessage(Level = LogLevel.Information, Message = "Audit: headless {Method} sign-in succeeded for user {UserId}")]

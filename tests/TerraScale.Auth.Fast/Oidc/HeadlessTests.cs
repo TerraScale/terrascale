@@ -301,8 +301,11 @@ public sealed class HeadlessTests(TerraBaseFixture fixture)
         // A frozen clock keeps every attempt in one limiter window.
         await using var oidc = await StartAsync(clock: new ManualClock(DateTimeOffset.FromUnixTimeSeconds(DateTimeOffset.UtcNow.ToUnixTimeSeconds() / 3600 * 3600)));
         await CreateUserAsync(oidc, "alice@example.test", Password);
+        var limiter = oidc.Server.App.Services.GetRequiredService<AttemptLimiter>();
+        var unknown = Enumerable.Range(0, 128).Select(index => $"nobody{index}@example.test")
+            .First(email => limiter.Fold(email) != limiter.Fold("alice@example.test"));
 
-        foreach (var email in new[] { "alice@example.test", "nobody@example.test" })
+        foreach (var email in new[] { "alice@example.test", unknown })
         {
             for (var attempt = 0; attempt < HeadlessAuth.PasswordPerEmail; attempt++)
             {
@@ -316,6 +319,10 @@ public sealed class HeadlessTests(TerraBaseFixture fixture)
             await Assert.That(await OidcHarness.ErrorAsync(locked)).IsEqualTo("rate_limited");
             await Assert.That(locked.Headers.RetryAfter!.Delta).IsEqualTo(HeadlessAuth.PasswordWindow);
         }
+
+        var (recipient, notice) = await oidc.Email.NextAsync();
+        await Assert.That(recipient).IsEqualTo("alice@example.test");
+        await Assert.That(notice.Subject).Contains("Temporary authentication pause");
 
         using (var start = await oidc.HeadlessAsync("email-code/start", new { email = "alice@example.test", ip_address = Ip }))
         {
@@ -352,6 +359,10 @@ public sealed class HeadlessTests(TerraBaseFixture fixture)
             await Assert.That(await OidcHarness.ErrorAsync(dead)).IsEqualTo("rate_limited");
             await Assert.That(dead.Headers.RetryAfter!.Delta).IsEqualTo(HeadlessAuth.CodeWindow);
         }
+
+        var (recipient, notice) = await oidc.Email.NextAsync();
+        await Assert.That(recipient).IsEqualTo("alice@example.test");
+        await Assert.That(notice.Subject).Contains("Temporary authentication pause");
 
         // Select separate email buckets so this IP test cannot reuse Alice's exhausted budget.
         var limiter = oidc.Server.App.Services.GetRequiredService<AttemptLimiter>();

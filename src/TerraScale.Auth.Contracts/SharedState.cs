@@ -24,9 +24,9 @@ public sealed record SigningKeyRecord(
     [property: JsonPropertyName("secretBox"), JsonRequired] string SecretBox,
     [property: JsonPropertyName("createdAt"), JsonRequired] long CreatedAt);
 
-/// <summary>An attempt counter or cooldown shared by every replica (collection <c>rate_limits</c>).</summary>
-/// <param name="Window">Fixed window number (Unix seconds divided by length), or last admission's Unix milliseconds for a cooldown purpose.</param>
-/// <param name="Used">Attempts admitted in that window.</param>
+/// <summary>An attempt counter, cooldown or lockout notice claim shared by every replica (collection <c>rate_limits</c>).</summary>
+/// <param name="Window">Fixed window number (Unix seconds divided by length), last admission's Unix milliseconds for a cooldown purpose, or the latest claimed lockout deadline's Unix seconds for a notice purpose.</param>
+/// <param name="Used">Attempts admitted in that window; one for a notice claim.</param>
 public sealed record AttemptBucket(
     [property: JsonPropertyName("window"), JsonRequired] long Window,
     [property: JsonPropertyName("used"), JsonRequired] int Used);

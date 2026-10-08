@@ -77,6 +77,9 @@ public sealed partial class EmailApiTests(TerraBaseFixture fixture)
                 await Assert.That(schema).Matches("^#/components/schemas/Email[A-Za-z]+Request$").Because($"{method} {path}");
             }
         }
+
+        await Assert.That(paths.GetProperty("/v1/{slug}/email/templates/{kind}/{locale}").GetProperty("get").GetProperty("description").GetString())
+            .Contains("lockout").And.Contains("locked_until");
     }
 
     [Test]
@@ -163,6 +166,7 @@ public sealed partial class EmailApiTests(TerraBaseFixture fixture)
         foreach (var (fields, message) in new (JsonObject, string)[]
         {
             (new() { ["subject"] = "Abra {{ link }}" }, "{{ link }}"),
+            (new() { ["subject"] = "Until {{ locked_until }}" }, "{{ locked_until }}"),
             (new() { ["subject"] = "{% if code %}{{ code }}{% endif %}" }, "placeholders"),
             (new() { ["subject"] = "{{ code | upcase }}" }, "placeholders"),
             (new() { ["subject"] = "{{ user.password }}" }, "{{ user.password }}"),
@@ -197,7 +201,7 @@ public sealed partial class EmailApiTests(TerraBaseFixture fixture)
 
         var list = await JsonAsync(await SendAsync(oidc, HttpMethod.Get, Base + "/templates"));
         var templates = list["templates"]!.AsArray();
-        await Assert.That(templates.Count).IsEqualTo(14);
+        await Assert.That(templates.Count).IsEqualTo(16);
         await Assert.That(templates.Single(entry => entry!["overridden"]!.GetValue<bool>())!["locale"]!.GetValue<string>()).IsEqualTo("pt-BR");
 
         var reset = await JsonAsync(await SendAsync(oidc, HttpMethod.Put, Template, Body(1, "fields", new JsonObject { ["subject"] = null })));
@@ -208,7 +212,7 @@ public sealed partial class EmailApiTests(TerraBaseFixture fixture)
     [Test]
     public async Task Previews_encode_every_value_and_match_the_snapshots()
     {
-        await using var oidc = await OidcHarness.StartAsync(fixture);
+        await using var oidc = await OidcHarness.StartAsync(fixture, clock: new ManualClock(new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero)));
         var hostile = await JsonAsync(await SendAsync(oidc, HttpMethod.Post, Base + "/preview", new JsonObject
         {
             ["kind"] = "magic_link",
@@ -231,13 +235,60 @@ public sealed partial class EmailApiTests(TerraBaseFixture fixture)
             {
                 var preview = await JsonAsync(await SendAsync(oidc, HttpMethod.Post, Base + "/preview", new JsonObject { ["kind"] = kind, ["locale"] = locale }));
                 var text = $"Subject: {preview["subject"]!.GetValue<string>()}\n\n{preview["text"]!.GetValue<string>()}";
-                await MatchesSnapshotAsync($"{kind}.{locale}.txt", Stable(text));
-                if (locale == AuthEmails.English && kind is "magic_link" or "new_device")
+                await MatchesSnapshotAsync($"{kind}.{locale}.txt", text);
+                if (locale == AuthEmails.English && kind is "magic_link" or "new_device" or "lockout")
                 {
-                    await MatchesSnapshotAsync($"{kind}.{locale}.html", Stable(preview["html"]!.GetValue<string>()));
+                    await MatchesSnapshotAsync($"{kind}.{locale}.html", preview["html"]!.GetValue<string>());
                 }
             }
         }
+    }
+
+    [Test]
+    [Arguments("en", "Temporary authentication pause for Acme Cloud")]
+    [Arguments("pt-BR", "Pausa temporária de autenticação em Acme Cloud")]
+    public async Task Lockout_copy_uses_the_UTC_deadline_and_saved_branding_without_a_code_link_or_expiry(string locale, string subject)
+    {
+        var clock = new ManualClock(new DateTimeOffset(2026, 1, 1, 21, 45, 5, TimeSpan.FromHours(-3)));
+        await using var oidc = await OidcHarness.StartAsync(fixture, clock: clock);
+        const string Deadline = "2026-01-02 01:00:05 UTC";
+        var template = Base + $"/templates/lockout/{locale}";
+        var defaults = await JsonAsync(await SendAsync(oidc, HttpMethod.Get, template));
+        await Assert.That(string.Join(',', defaults["variables"]!.AsArray().Select(node => node!.GetValue<string>())))
+            .IsEqualTo("app_name,user.email,support_email,locked_until");
+        await Assert.That(defaults["defaults"]!["button"]).IsNull();
+
+        foreach (var fields in new JsonObject[]
+        {
+            new() { ["body"] = "{{ code }}" }, new() { ["body"] = "{{ link }}" }, new() { ["body"] = "{{ expires_in }}" },
+            new() { ["body"] = "{{ time }}" }, new() { ["button"] = "Continue" },
+        })
+        {
+            using var invalid = await SendAsync(oidc, HttpMethod.Put, template, Body(0, "fields", fields));
+            await Assert.That(invalid.StatusCode).IsEqualTo(HttpStatusCode.UnprocessableEntity).Because(fields.ToJsonString());
+        }
+
+        using var branding = await SendAsync(oidc, HttpMethod.Put, Base + "/branding", Body(0, "branding", new JsonObject
+        {
+            ["brand_name"] = "Acme Cloud",
+            ["support_email"] = "security@acme.test",
+        }));
+        await Assert.That(branding.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        using var saved = await SendAsync(oidc, HttpMethod.Put, template, Body(1, "fields", new JsonObject
+        {
+            ["footnote"] = "{{ app_name }}: {{ locked_until }}. {{ support_email }}",
+        }));
+        await Assert.That(saved.StatusCode).IsEqualTo(HttpStatusCode.OK);
+
+        var preview = await JsonAsync(await SendAsync(oidc, HttpMethod.Post, Base + "/preview", new JsonObject { ["kind"] = "lockout", ["locale"] = locale }));
+        await Assert.That(preview["subject"]!.GetValue<string>()).IsEqualTo(subject);
+        var text = preview["text"]!.GetValue<string>();
+        var html = preview["html"]!.GetValue<string>();
+        await Assert.That(text).Contains($"Acme Cloud: {Deadline}. security@acme.test").And.Contains("jane@example.com")
+            .And.DoesNotContain("123456").And.DoesNotContain("/ui/terrascale/sign-in")
+            .And.DoesNotContain("This code expires").And.DoesNotContain("Este código expira");
+        await Assert.That(html).Contains(Deadline).And.Contains(">Acme Cloud</td>").And.Contains("mailto:security@acme.test")
+            .And.DoesNotContain("class=\"code\"").And.DoesNotContain("mso-padding-alt:").And.DoesNotContain("/ui/terrascale/sign-in");
     }
 
     [Test]
@@ -597,9 +648,6 @@ public sealed partial class EmailApiTests(TerraBaseFixture fixture)
     private static async Task<string> MessageAsync(HttpResponseMessage response) =>
         (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("error").GetProperty("message").GetString()!;
 
-    /// <summary>The preview's only time-dependent value is the new-device time.</summary>
-    private static string Stable(string rendered) => PreviewTime().Replace(rendered, "2026-01-01 00:00 UTC");
-
     private static async Task MatchesSnapshotAsync(string name, string actual, [CallerFilePath] string source = "")
     {
         var path = Path.Combine(Path.GetDirectoryName(source)!, "Snapshots", name);
@@ -615,7 +663,4 @@ public sealed partial class EmailApiTests(TerraBaseFixture fixture)
 
     [GeneratedRegex(@"\b[0-9]{6}\b")]
     private static partial Regex SixDigits();
-
-    [GeneratedRegex(@"\d{4}-\d{2}-\d{2} \d{2}:\d{2} UTC")]
-    private static partial Regex PreviewTime();
 }

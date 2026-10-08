@@ -50,8 +50,14 @@ the same budget as accounts, and replacing a code does not reset it. Code
 request and issuance budgets both reset on UTC clock-hour boundaries. Socket
 peer addresses are used for hosted/general token limits; forwarding headers
 are ignored, so a proxy shares its budget unless it preserves client addresses.
-See [the budget table](docs/csharp-port.md#limits). Lockout email notices
-are the next TS-704 slice.
+An account-budget refusal temporarily blocks that method until its window ends
+and queues one lockout email notice per account, method and stored deadline.
+Other sign-in and recovery budgets remain separate. Notice claims live in
+TerraBase; delivery uses a separate bounded notice queue and worker, so notice
+floods cannot displace sign-in or recovery mail. Delivery remains best-effort,
+and notices whose lockout has expired before sending are suppressed.
+See [the budget table](docs/csharp-port.md#limits). Explicit trusted-proxy
+handling remains a TS-704 follow-up.
 
 ## Target feature inventory
 

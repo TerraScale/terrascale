@@ -233,13 +233,13 @@ internal static class EmailApi
     /// <summary>Realistic synthetic values for previews and test sends.</summary>
     public static AuthEmailValues Sample(AuthEmailKind kind, string email, AuthOptions options, DateTimeOffset now) => new(email)
     {
-        Code = kind is AuthEmailKind.MagicLink or AuthEmailKind.Invitation or AuthEmailKind.NewDevice ? null : "123456",
+        Code = kind is AuthEmailKind.MagicLink or AuthEmailKind.Invitation or AuthEmailKind.NewDevice or AuthEmailKind.Lockout ? null : "123456",
         Link = kind is AuthEmailKind.MagicLink or AuthEmailKind.Invitation ? new Uri(options.PublicOrigin, $"/ui/{OidcIssuer.Slug}/sign-in") : null,
         ExpiresIn = kind switch
         {
             AuthEmailKind.MagicLink => TimeSpan.FromMinutes(15),
             AuthEmailKind.Invitation => TimeSpan.FromDays(7),
-            AuthEmailKind.NewDevice => null,
+            AuthEmailKind.NewDevice or AuthEmailKind.Lockout => null,
             _ => Passcodes.Lifetime,
         },
         Organization = "Acme",
@@ -247,6 +247,7 @@ internal static class EmailApi
         Device = "Chrome on macOS",
         Location = "São Paulo, Brazil",
         Time = now,
+        LockoutUntil = kind == AuthEmailKind.Lockout ? now.AddMinutes(15) : null,
     };
 
     public static EmailBrandingResponse Branding(EmailConfig config, AuthEmails emails) =>
@@ -400,7 +401,7 @@ public sealed class GetEmailTemplateEndpoint(EmailSettings settings, AuthOptions
         Get("/v1/{slug}/email/templates/{kind}/{locale}");
         Name("email_template_get");
         Summary("Read an email template");
-        Description("kind is sign_in_code, magic_link, verify_email, password_reset, invitation, mfa_code or new_device; locale is en or pt-BR.");
+        Description("kind is sign_in_code, magic_link, verify_email, password_reset, invitation, mfa_code, new_device or lockout; locale is en or pt-BR. Lockout copy uses locked_until, an absolute UTC timestamp.");
         Tags("Email");
         Produces<EmailTemplateResponse>();
         Produces<ErrorBody>(StatusCodes.Status401Unauthorized);
@@ -473,7 +474,7 @@ public sealed class PreviewEmailEndpoint(EmailSettings settings, AuthEmails emai
         Post("/v1/{slug}/email/preview");
         Name("email_preview");
         Summary("Preview an email");
-        Description("Renders kind in locale with synthetic values (code 123456) and the saved configuration, or the draft branding and fields given. Nothing is saved or sent. color_scheme light or dark pins an auto theme for the preview.");
+        Description("Renders kind in locale with synthetic values (code 123456; lockout until 15 minutes from now in UTC, without a code, link or expiry line) and the saved configuration, or the draft branding and fields given. Nothing is saved or sent. color_scheme light or dark pins an auto theme for the preview.");
         Tags("Email");
         // TerraScale.Endpoints drops Accepts<T>\'s type from OpenAPI; ASP.NET\'s own metadata keeps the request schema.
         Metadata(new AcceptsMetadata(["application/json"], typeof(EmailPreviewRequest)));

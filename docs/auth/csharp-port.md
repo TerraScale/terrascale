@@ -276,7 +276,8 @@ guesses, 5 codes per account per hour. It signs in existing accounts only;
 accounts are created by the [headless sign-up](#headless-api-ts-582). The page is the same whether or not the address has an account, and
 the email is sent after the response, so its timing does not reveal it either.
 `SignInMail`, a hosted service, queues at most 256 codes and sends them one at
-a time, so a slow relay holds at most one SMTP connection. Codes still queued
+a time. Lockout notices use a separate bounded queue and worker, so a slow
+relay holds at most two SMTP connections and notices cannot displace codes. Codes still queued
 when the host stops are sent within its shutdown timeout; a full queue drops
 a code and logs that (the user can request another). The code email is
 rendered by `AuthEmails` (TS-583) as HTML with a plain-text alternative, in
@@ -378,7 +379,8 @@ token.
 
 - TS-704 now limits every token request by peer IP before client authentication,
   and hosted sign-in shares the headless IP and normalized-email budgets.
-  Lockout notifications remain the next TS-704 slice.
+  Account-budget refusals now queue deduplicated lockout notices; explicit
+  trusted-proxy handling remains a follow-up.
 - Expired tokens and authorizations are not pruned.
 - Per-instance issuers wait for the instance registry.
 
@@ -523,6 +525,34 @@ browser budgets behind a shared reverse proxy. Since TS-582
 while it is missing, and the limiter fails closed with 503 on any storage
 failure.
 
+On a password, sign-in-code or reset-code account-budget refusal, the existing
+notice worker looks up the normalized address and sends its real account owner
+a branded lockout notice. Unknown addresses enqueue the same lookup but send
+no email. IP refusals, mail cooldowns and hourly issuance caps do not notify.
+Each method is paused only until the original fixed window ends; every
+attempt counts, and another method's budget remains available. The English
+and Portuguese notice states the absolute UTC deadline without implying a
+successful sign-in. Hosted verification uses its `Accept-Language`; headless
+notices use English, as headless code emails do.
+
+The limiter preserves the exact persisted deadline alongside `Retry-After`.
+The worker conditionally creates or replaces one `AttemptBucket` per actual
+user id and method in `rate_limits`, under a separate keyed notice purpose;
+its `window` holds the latest claimed deadline in Unix seconds and `used` is
+one. Notice ownership never uses an email fold, so colliding budgets do not
+merge recipients. Equal or older deadlines are suppressed across replicas,
+including a slower clock, and later windows can notify again. This adds no
+collection or migration. Claims recheck the clock after storage operations,
+and the sender suppresses notices that expire while configuration or rendering
+is awaited. A separate 256-entry notice queue and worker keeps refusals from
+filling the sign-in and recovery queue or holding up its sender. A full notice
+queue drops work before a claim is made;
+later refused attempts can retry. The claim prevents duplicate send attempts,
+but the existing worker and SMTP sender remain best-effort: process failure
+after the claim or SMTP failure can lose a notice. There is no durable delivery
+outbox or promise of eventual delivery. These failures never admit a blocked
+authentication attempt or change its public response.
+
 ### Security decisions
 
 - **Password grant.** The repository rules forbid the resource-owner password
@@ -564,9 +594,9 @@ failure.
   response, so their timing does not depend on the account. The code grants
   and the reset completion still make two or three more storage round trips
   for an existing account than for a stranger, as the hosted page does.
-- One delivery queue per replica (256 codes) serves sign-in, reset and sign-up
+- One code delivery queue per replica (256 codes) serves sign-in, reset and sign-up
   mail; a flood beyond the per-IP budgets that outpaces the relay drops codes,
-  and the user asks for another.
+  and the user asks for another. Lockout work uses a separate queue and worker.
 - The hosted page still signs in existing accounts by email code only.
 - Rolling out: replicas of an older release ignore `purpose` and would accept
   a reset code on the hosted sign-in page (which needs the inbox anyway); they

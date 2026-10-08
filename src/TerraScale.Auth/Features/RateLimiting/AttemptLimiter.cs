@@ -6,6 +6,11 @@ using TerraScale.Auth.Store;
 
 namespace TerraScale.Auth.Features.RateLimiting;
 
+/// <summary>A refused attempt's persisted deadline and remaining delay, rounded up to whole seconds.</summary>
+/// <param name="Until">The stored window's end, shared by all replicas even when their clocks differ.</param>
+/// <param name="RetryAfter">How long this replica must wait before retrying.</param>
+public readonly record struct AttemptRejection(DateTimeOffset Until, TimeSpan RetryAfter);
+
 /// <summary>
 /// Fixed attempt windows (one minute unless a caller chooses another) and elapsed cooldowns shared by every replica through conditional writes to
 /// TerraBase, for authentication, recovery, verification and token endpoints. A replica with a
@@ -59,7 +64,11 @@ public sealed class AttemptLimiter(IDocumentStore storage, TimeProvider clock, A
     /// limits by attacker-chosen text must first <see cref="Fold"/> it. Windows are fixed
     /// multiples of <paramref name="window"/> (whole seconds); one purpose must always use the same window.
     /// </summary>
-    public Task<TimeSpan?> AcquireAsync(string instanceId, string purpose, string subject, int maximum, TimeSpan window, CancellationToken cancellationToken) =>
+    public async Task<TimeSpan?> AcquireAsync(string instanceId, string purpose, string subject, int maximum, TimeSpan window, CancellationToken cancellationToken) =>
+        (await this.AcquireWithDeadlineAsync(instanceId, purpose, subject, maximum, window, cancellationToken))?.RetryAfter;
+
+    /// <summary>Charges a fixed-window attempt, retaining the exact stored deadline for a lockout notice claim.</summary>
+    public Task<AttemptRejection?> AcquireWithDeadlineAsync(string instanceId, string purpose, string subject, int maximum, TimeSpan window, CancellationToken cancellationToken) =>
         this.AcquireAsync(instanceId, purpose, subject, maximum, window, cooldown: false, cancellationToken);
 
     /// <summary>Admits one cooldown attempt; returns whether it was admitted. See <see cref="AcquireCooldownAsync"/>.</summary>
@@ -71,10 +80,66 @@ public sealed class AttemptLimiter(IDocumentStore storage, TimeProvider clock, A
     /// clock boundaries. Returns <see langword="null"/> when admitted or the remaining delay rounded up to whole seconds (at least one).
     /// Uses a separate purpose from fixed windows; attacker-chosen subjects must be folded.
     /// </summary>
-    public Task<TimeSpan?> AcquireCooldownAsync(string instanceId, string purpose, string subject, TimeSpan interval, CancellationToken cancellationToken) =>
-        this.AcquireAsync(instanceId, purpose, subject, 1, interval, cooldown: true, cancellationToken);
+    public async Task<TimeSpan?> AcquireCooldownAsync(string instanceId, string purpose, string subject, TimeSpan interval, CancellationToken cancellationToken) =>
+        (await this.AcquireAsync(instanceId, purpose, subject, 1, interval, cooldown: true, cancellationToken))?.RetryAfter;
 
-    private async Task<TimeSpan?> AcquireAsync(string instanceId, string purpose, string subject, int maximum, TimeSpan window, bool cooldown, CancellationToken cancellationToken)
+    /// <summary>
+    /// Claims one notice attempt for an actual account and authentication purpose at the persisted lockout deadline.
+    /// Uses the existing collection and conditional writes; newer deadlines supersede older ones, so a slower replica
+    /// cannot claim an old episode again. Call on the mail worker after account lookup, never with a folded account id.
+    /// The claim prevents duplicate send attempts, not delivery loss if a sender or process fails after claiming.
+    /// </summary>
+    public async Task<bool> ClaimLockoutNoticeAsync(string instanceId, string purpose, string userId, DateTimeOffset until, CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(instanceId);
+        ArgumentException.ThrowIfNullOrEmpty(purpose);
+        ArgumentException.ThrowIfNullOrEmpty(userId);
+        var key = this.BucketKey($"lockout-notice-{purpose}", userId);
+        var notice = new AttemptBucket(until.ToUnixTimeSeconds(), 1);
+        for (var round = 0; round < MaxRounds; round++)
+        {
+            if (until <= clock.GetUtcNow())
+            {
+                return false;
+            }
+
+            var current = await this.store.GetAsync<AttemptBucket>(Collection, instanceId, key, cancellationToken);
+            if (until <= clock.GetUtcNow())
+            {
+                return false;
+            }
+
+            if (current is null)
+            {
+                if (await this.store.TryCreateAsync(Collection, instanceId, key, notice, cancellationToken))
+                {
+                    // An expired claim may remain persisted, but must never authorize a send.
+                    return until > clock.GetUtcNow();
+                }
+
+                continue;
+            }
+
+            if (current.Document is not { Window: > 0, Used: 1 } || current.Document.Window > DateTimeOffset.MaxValue.ToUnixTimeSeconds())
+            {
+                throw ApiException.Unavailable(new InvalidDataException("A stored lockout notice claim holds an invalid deadline or count."));
+            }
+
+            if (current.Document.Window >= notice.Window)
+            {
+                return false;
+            }
+
+            if (await this.store.TryReplaceAsync(Collection, instanceId, key, notice, current.Version, cancellationToken))
+            {
+                return until > clock.GetUtcNow();
+            }
+        }
+
+        throw ApiException.Unavailable();
+    }
+
+    private async Task<AttemptRejection?> AcquireAsync(string instanceId, string purpose, string subject, int maximum, TimeSpan window, bool cooldown, CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrEmpty(instanceId);
         ArgumentException.ThrowIfNullOrEmpty(purpose);
@@ -88,7 +153,7 @@ public sealed class AttemptLimiter(IDocumentStore storage, TimeProvider clock, A
 
         // The address is scoped to the instance; purposes are service-chosen and never contain
         // ':', and the subject comes last.
-        var key = Convert.ToHexStringLower(HMACSHA256.HashData(this.idKey, Encoding.UTF8.GetBytes($"{purpose}:{subject}")));
+        var key = this.BucketKey(purpose, subject);
 
         // Every lost conditional write means another attempt was admitted (or the window rolled
         // over, or the bucket was created), so maximum + 2 rounds always reach a decision unless
@@ -125,7 +190,7 @@ public sealed class AttemptLimiter(IDocumentStore storage, TimeProvider clock, A
                 var end = cooldown
                     ? DateTimeOffset.FromUnixTimeMilliseconds(bucket.Window) + window
                     : DateTimeOffset.FromUnixTimeSeconds((bucket.Window + 1) * windowSeconds);
-                return TimeSpan.FromSeconds(Math.Max(1, Math.Ceiling((end - clock.GetUtcNow()).TotalSeconds)));
+                return new AttemptRejection(end, TimeSpan.FromSeconds(Math.Max(1, Math.Ceiling((end - clock.GetUtcNow()).TotalSeconds))));
             }
 
             if (await this.store.TryReplaceAsync(Collection, instanceId, key, bucket with { Used = bucket.Used + 1 }, current.Version, cancellationToken))
@@ -136,4 +201,7 @@ public sealed class AttemptLimiter(IDocumentStore storage, TimeProvider clock, A
 
         throw ApiException.Unavailable();
     }
+
+    private string BucketKey(string purpose, string subject) =>
+        Convert.ToHexStringLower(HMACSHA256.HashData(this.idKey, Encoding.UTF8.GetBytes($"{purpose}:{subject}")));
 }

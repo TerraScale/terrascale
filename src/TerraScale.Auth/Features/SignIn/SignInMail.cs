@@ -6,8 +6,9 @@ using TerraScale.Auth.Features.Oidc;
 namespace TerraScale.Auth.Features.SignIn;
 
 /// <summary>
-/// Delivers emailed codes (sign-in, password reset, sign-up) and invitations (TS-598) after the response, so request timing never tells an account from a stranger. One worker
-/// sends them in order, so a slow relay holds at most one SMTP connection however many requests arrive. Codes queued
+/// Delivers emailed codes (sign-in, password reset, sign-up), invitations (TS-598) and lockout notices after the response, so request timing never tells an account from a stranger. Codes and invitations
+/// use one worker; notices use another bounded queue and worker, so refused attempts cannot crowd out recovery mail.
+/// A slow relay holds at most two SMTP connections however many requests arrive. Codes queued
 /// when the host stops are still sent within its shutdown timeout. A full queue drops the code and logs it; the user
 /// can ask for another.
 /// </summary>
@@ -22,11 +23,14 @@ public sealed partial class SignInMail(IEmailSender email, AuthEmails emails, Em
     /// <summary>After a failed configuration read, codes go out with the defaults this long without trying again.</summary>
     public static readonly TimeSpan ConfigBackoff = TimeSpan.FromSeconds(30);
 
-    // Only the single worker reads and writes it. ponytail: per replica, so each replica pays one timeout per backoff.
-    private DateTimeOffset configRetryAt;
+    // Shared by both workers. ponytail: per replica, each worker can pay one timeout per backoff.
+    private long configRetryAt;
 
-    // ponytail: one sequential sender, add workers if a healthy relay cannot keep up with sign-in volume.
+    // ponytail: one sequential sender per queue, add workers if a healthy relay cannot keep up with sign-in volume.
     private readonly Channel<(Func<Task<Outgoing?>> Prepare, string Locale)> queue =
+        Channel.CreateBounded<(Func<Task<Outgoing?>>, string)>(new BoundedChannelOptions(Capacity) { SingleReader = true });
+
+    private readonly Channel<(Func<Task<Outgoing?>> Prepare, string Locale)> notices =
         Channel.CreateBounded<(Func<Task<Outgoing?>>, string)>(new BoundedChannelOptions(Capacity) { SingleReader = true });
 
     /// <summary>Queues <paramref name="passcode"/> for delivery in <paramref name="locale"/> without waiting for it.</summary>
@@ -60,19 +64,35 @@ public sealed partial class SignInMail(IEmailSender email, AuthEmails emails, Em
         this.Enqueue(() => Task.FromResult<Outgoing?>(new Outgoing(values.Email, AuthEmailKind.Invitation, values)), locale);
     }
 
+    /// <summary>
+    /// Queues account lookup and a persisted notice claim on the separate notice worker, then sends the claimed lockout notice. A null result
+    /// suppresses unknown accounts, duplicate episodes and expired lockouts without affecting the HTTP response.
+    /// </summary>
+    public void EnqueueLockout(Func<Task<AuthEmailValues?>> claim, string locale = AuthEmails.English)
+    {
+        ArgumentNullException.ThrowIfNull(claim);
+        this.Enqueue(async () => await claim().ConfigureAwait(false) is { } values
+            ? new Outgoing(values.Email, AuthEmailKind.Lockout, values)
+            : null, locale, notice: true);
+    }
+
     /// <inheritdoc />
     public override Task StopAsync(CancellationToken cancellationToken)
     {
         // Accept nothing new; the worker drains what is queued and then ends.
         this.queue.Writer.TryComplete();
+        this.notices.Writer.TryComplete();
         return base.StopAsync(cancellationToken);
     }
 
     /// <inheritdoc />
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    protected override Task ExecuteAsync(CancellationToken stoppingToken) =>
+        Task.WhenAll(this.DeliverAsync(this.queue.Reader), this.DeliverAsync(this.notices.Reader));
+
+    private async Task DeliverAsync(ChannelReader<(Func<Task<Outgoing?>> Prepare, string Locale)> reader)
     {
         // Not stoppingToken: codes already issued are still delivered while the host shuts down.
-        await foreach (var (prepare, locale) in this.queue.Reader.ReadAllAsync(CancellationToken.None))
+        await foreach (var (prepare, locale) in reader.ReadAllAsync(CancellationToken.None))
         {
             try
             {
@@ -82,6 +102,11 @@ public sealed partial class SignInMail(IEmailSender email, AuthEmails emails, Em
                 }
 
                 var message = await emails.RenderAsync(outgoing.Kind, locale, outgoing.Values, await this.ConfigAsync(), cancellationToken: CancellationToken.None);
+                if (outgoing.Kind == AuthEmailKind.Lockout && outgoing.Values.LockoutUntil <= clock.GetUtcNow())
+                {
+                    continue;
+                }
+
                 await email.SendAsync(outgoing.To, message, CancellationToken.None);
             }
             catch (Exception failure) when (failure is not OutOfMemoryException)
@@ -95,12 +120,12 @@ public sealed partial class SignInMail(IEmailSender email, AuthEmails emails, Em
     /// <summary>
     /// The instance's email configuration, read for every code so a change applies to the next email on every replica.
     /// When it cannot be read the code still goes out, with the default branding and copy: delivering it matters more.
-    /// One worker sends every code, so a read waits at most <see cref="ConfigTimeout"/>, and after a failure the next
-    /// <see cref="ConfigBackoff"/> of codes skip the read: a stalled store costs a backlog one timeout, not one per code.
+    /// Each queue has one worker, so a read waits at most <see cref="ConfigTimeout"/>, and after a failure the next
+    /// <see cref="ConfigBackoff"/> of emails skip the read: a stalled store costs at most one timeout per worker, not one per email.
     /// </summary>
     private async Task<EmailConfig?> ConfigAsync()
     {
-        if (clock.GetUtcNow() < this.configRetryAt)
+        if (clock.GetUtcNow().UtcTicks < Volatile.Read(ref this.configRetryAt))
         {
             return null;
         }
@@ -112,15 +137,15 @@ public sealed partial class SignInMail(IEmailSender email, AuthEmails emails, Em
         }
         catch (Exception failure) when (failure is not OutOfMemoryException)
         {
-            this.configRetryAt = clock.GetUtcNow() + ConfigBackoff;
+            Volatile.Write(ref this.configRetryAt, (clock.GetUtcNow() + ConfigBackoff).UtcTicks);
             LogConfigUnavailable(logger, failure);
             return null;
         }
     }
 
-    private void Enqueue(Func<Task<Outgoing?>> prepare, string locale)
+    private void Enqueue(Func<Task<Outgoing?>> prepare, string locale, bool notice = false)
     {
-        if (!this.queue.Writer.TryWrite((prepare, locale)))
+        if (!(notice ? this.notices : this.queue).Writer.TryWrite((prepare, locale)))
         {
             LogDropped(logger);
         }
@@ -129,10 +154,10 @@ public sealed partial class SignInMail(IEmailSender email, AuthEmails emails, Em
     [LoggerMessage(Level = LogLevel.Warning, Message = "Email configuration unavailable; sending the sign-in code with the defaults")]
     private static partial void LogConfigUnavailable(ILogger logger, Exception exception);
 
-    [LoggerMessage(Level = LogLevel.Warning, Message = "Sign-in code dropped: the delivery queue is full")]
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Authentication email dropped: the delivery queue is full")]
     private static partial void LogDropped(ILogger logger);
 
-    [LoggerMessage(Level = LogLevel.Error, Message = "Sign-in code delivery failed")]
+    [LoggerMessage(Level = LogLevel.Error, Message = "Authentication email delivery failed")]
     private static partial void LogFailed(ILogger logger, Exception exception);
 
     // One email to render and send; Values never formats its code or link.

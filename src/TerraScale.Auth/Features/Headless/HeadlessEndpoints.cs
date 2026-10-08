@@ -144,7 +144,7 @@ public sealed class HeadlessPasswordResetCompleteEndpoint(HeadlessAuth headless,
         Post("/{slug}/headless/v1/password-reset/complete");
         Name("headless_password_reset_complete");
         Summary("Set a new password with a reset code");
-        Description("204 once the password is set. The user is then signed out everywhere: hosted sessions and every refresh token are refused (access tokens already issued live out their hour). A wrong, expired, used or superseded code and an unknown address all answer 400 invalid_code. Every normalized email has a separate reset budget of 5 attempts per 15 minutes; exhaustion answers 429 with Retry-After before password hashing or code redemption.");
+        Description("204 once the password is set. The user is then signed out everywhere: hosted sessions and every refresh token are refused (access tokens already issued live out their hour). A wrong, expired, used or superseded code and an unknown address all answer 400 invalid_code. Every normalized email has a separate reset budget of 5 attempts per 15 minutes; exhaustion answers 429 with Retry-After before password hashing or code redemption. A reset account-budget refusal queues one best-effort lockout email notice per real account for that deadline; sign-in budgets remain available.");
         this.Document(StatusCodes.Status204NoContent);
     }
 

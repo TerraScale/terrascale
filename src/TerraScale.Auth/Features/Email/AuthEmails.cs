@@ -32,12 +32,15 @@ public enum AuthEmailKind
 
     /// <summary>An alert about a sign-in from a device not seen before.</summary>
     NewDevice,
+
+    /// <summary>An alert about a temporary pause of an authentication method after excessive attempts.</summary>
+    Lockout,
 }
 
 /// <summary>
 /// The values one email shows. Each kind's copy uses only some of them: a code for the code kinds, a link for
 /// <see cref="AuthEmailKind.MagicLink"/> and <see cref="AuthEmailKind.Invitation"/>, the device details for
-/// <see cref="AuthEmailKind.NewDevice"/>.
+/// <see cref="AuthEmailKind.NewDevice"/>, the pause deadline for <see cref="AuthEmailKind.Lockout"/>.
 /// </summary>
 /// <param name="Email">The recipient's address.</param>
 public sealed record AuthEmailValues(string Email)
@@ -65,6 +68,9 @@ public sealed record AuthEmailValues(string Email)
 
     /// <summary>When the new device signed in.</summary>
     public DateTimeOffset? Time { get; init; }
+
+    /// <summary>When the authentication method's temporary pause ends, rendered in UTC.</summary>
+    public DateTimeOffset? LockoutUntil { get; init; }
 
     /// <summary>Omits every value, so formatting or logging the record never discloses a code or a link.</summary>
     public override string ToString() => nameof(AuthEmailValues);
@@ -260,6 +266,7 @@ public sealed partial class AuthEmails(AuthOptions options)
         ["invitation"] = AuthEmailKind.Invitation,
         ["mfa_code"] = AuthEmailKind.MfaCode,
         ["new_device"] = AuthEmailKind.NewDevice,
+        ["lockout"] = AuthEmailKind.Lockout,
     };
 
     // Keeps accented letters readable in the HTML part; markup characters are still encoded.
@@ -296,6 +303,7 @@ public sealed partial class AuthEmails(AuthOptions options)
             AuthEmailKind.MagicLink => ["link", "expires_in"],
             AuthEmailKind.Invitation => ["link", "expires_in", "organization", "inviter"],
             AuthEmailKind.NewDevice => ["device", "location", "time"],
+            AuthEmailKind.Lockout => ["locked_until"],
             _ => (string[])["code", "expires_in"],
         },
     ];
@@ -369,6 +377,7 @@ public sealed partial class AuthEmails(AuthOptions options)
             ["device"] = values.Device ?? string.Empty,
             ["location"] = values.Location ?? string.Empty,
             ["time"] = values.Time?.UtcDateTime.ToString("yyyy-MM-dd HH:mm 'UTC'", CultureInfo.InvariantCulture) ?? string.Empty,
+            ["locked_until"] = values.LockoutUntil?.UtcDateTime.ToString("yyyy-MM-dd HH:mm:ss 'UTC'", CultureInfo.InvariantCulture) ?? string.Empty,
         };
         string Fill(string? template) => Placeholder().Replace(template ?? string.Empty, match => variables.GetValueOrDefault(match.Groups["name"].Value, string.Empty));
 
@@ -376,7 +385,7 @@ public sealed partial class AuthEmails(AuthOptions options)
         {
             AuthEmailKind.MagicLink => chrome.LinkExpiry,
             AuthEmailKind.Invitation => chrome.InvitationExpiry,
-            AuthEmailKind.NewDevice => string.Empty,
+            AuthEmailKind.NewDevice or AuthEmailKind.Lockout => string.Empty,
             _ => chrome.CodeExpiry,
         });
         var view = new AuthEmailView(
@@ -385,10 +394,10 @@ public sealed partial class AuthEmails(AuthOptions options)
             Fill(copy.Preheader),
             Fill(copy.Heading),
             [.. Fill(copy.Body).Split("\n\n").Select(paragraph => paragraph.Split('\n'))],
-            values.Code,
+            kind == AuthEmailKind.Lockout ? null : values.Code,
             string.IsNullOrEmpty(expiry) ? null : expiry,
-            values.Link is null || copy.Button is null ? null : Fill(copy.Button),
-            values.Link?.AbsoluteUri,
+            kind == AuthEmailKind.Lockout || values.Link is null || copy.Button is null ? null : Fill(copy.Button),
+            kind == AuthEmailKind.Lockout ? null : values.Link?.AbsoluteUri,
             Fill(chrome.LinkFallback),
             Fill(copy.Footnote),
             Fill(chrome.SentTo),
@@ -586,6 +595,20 @@ public sealed partial class AuthEmails(AuthOptions options)
             "{{ user.email }} acabou de entrar em {{ app_name }} em um novo dispositivo.\n\nDispositivo: {{ device }}\nLocal: {{ location }}\nHorário: {{ time }}",
             null,
             "Se foi você, não é preciso fazer nada. Se não foi, redefina sua senha e encerre suas outras sessões agora."),
+        [(AuthEmailKind.Lockout, English)] = new(
+            "Temporary authentication pause for {{ app_name }}",
+            "An authentication method is paused until {{ locked_until }}.",
+            "An authentication method is temporarily paused",
+            "Too many attempts temporarily paused an authentication method for {{ user.email }} on {{ app_name }} until {{ locked_until }}.\n\nOther sign-in or recovery methods may still be available.",
+            null,
+            "If you didn't make these attempts, use an available method to review your account security or contact support. If password reset is paused, try it again after the pause ends."),
+        [(AuthEmailKind.Lockout, Portuguese)] = new(
+            "Pausa temporária de autenticação em {{ app_name }}",
+            "Um método de autenticação está pausado até {{ locked_until }}.",
+            "Um método de autenticação está temporariamente pausado",
+            "Muitas tentativas pausaram temporariamente um método de autenticação para {{ user.email }} em {{ app_name }} até {{ locked_until }}.\n\nOutros métodos de acesso ou recuperação podem continuar disponíveis.",
+            null,
+            "Se não foi você, use um método disponível para revisar a segurança da sua conta ou entre em contato com o suporte. Se a redefinição de senha estiver pausada, tente novamente após o fim da pausa."),
     };
 }
 

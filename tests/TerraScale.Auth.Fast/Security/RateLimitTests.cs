@@ -70,7 +70,123 @@ public sealed class RateLimitTests(TerraBaseFixture fixture)
                 context.Response.Headers.RetryAfter = ((long)retryAfter.TotalSeconds).ToString(CultureInfo.InvariantCulture);
                 return Results.StatusCode(StatusCodes.Status429TooManyRequests);
             });
+            app.MapPost("/__test/notices/{instance}/{purpose}/{userId}", async (string instance, string purpose, string userId, long until, AttemptLimiter limiter, CancellationToken cancellationToken) =>
+                await limiter.ClaimLockoutNoticeAsync(instance, purpose, userId, DateTimeOffset.FromUnixTimeSeconds(until), cancellationToken)
+                    ? Results.Ok()
+                    : Results.Conflict());
         });
+
+    [Test]
+    public async Task Notice_claims_are_atomic_scoped_and_never_reclaim_an_older_deadline()
+    {
+        var target = await SharedStateTarget.CreateAsync(fixture);
+        var clock = new ManualClock(Start);
+        await using var first = await StartAsync(target, clock);
+        await using var second = await StartAsync(target, new ManualClock(Start.AddSeconds(-7)));
+        var until = Start.AddMinutes(1).ToUnixTimeSeconds();
+        var claims = await Task.WhenAll(Enumerable.Range(0, 12).Select(index => ClaimNoticeAsync(index % 2 == 0 ? first : second, "ins_a", "password", "user_1", until)));
+        await Assert.That(claims.Count(claimed => claimed)).IsEqualTo(1);
+
+        var original = (await target.Database.ListDocumentsAsync(AttemptLimiter.Collection)).Items.Single();
+        await Assert.That(original.Document.GetProperty("window").GetInt64()).IsEqualTo(until);
+        await Assert.That(await ClaimNoticeAsync(second, "ins_a", "password", "user_1", until - 1)).IsFalse();
+        await Assert.That((await target.Database.ListDocumentsAsync(AttemptLimiter.Collection)).Items.Single().Version).IsEqualTo(original.Version);
+
+        await Assert.That(await ClaimNoticeAsync(first, "ins_a", "password", "user_1", until + 60)).IsTrue();
+        await Assert.That(await ClaimNoticeAsync(second, "ins_a", "password", "user_1", until)).IsFalse();
+        clock.Advance(TimeSpan.FromMinutes(2));
+        await Assert.That(await ClaimNoticeAsync(first, "ins_a", "password", "user_1", until + 120)).IsTrue();
+        clock.Advance(TimeSpan.FromMinutes(1));
+        await Assert.That(await ClaimNoticeAsync(first, "ins_a", "password", "user_2", until + 120)).IsFalse();
+
+        var future = until + 240;
+        await Assert.That(await ClaimNoticeAsync(first, "ins_b", "password", "user_1", future)).IsTrue();
+        await Assert.That(await ClaimNoticeAsync(first, "ins_a", "reset", "user_1", future)).IsTrue();
+        await Assert.That(await ClaimNoticeAsync(first, "ins_a", "password", "user_2", future)).IsTrue();
+        await Assert.That(await target.CountAsync(AttemptLimiter.Collection)).IsEqualTo(4);
+    }
+
+    [Test]
+    [Arguments("get", false)]
+    [Arguments("get", true)]
+    [Arguments("create", false)]
+    [Arguments("replace", true)]
+    [Arguments("contended-replace", true)]
+    public async Task Notice_claims_that_expire_during_storage_never_authorize_a_send(string operation, bool existing)
+    {
+        var target = await SharedStateTarget.CreateAsync(fixture);
+        var clock = new ManualClock(Start);
+        await using var server = await StartAsync(target, clock, inner => new ClockAdvancingStore(inner, clock));
+        var until = Start.AddMinutes(1).ToUnixTimeSeconds();
+        if (existing)
+        {
+            await Assert.That(await ClaimNoticeAsync(server, "ins_a", "password", "user_1", until - 2)).IsTrue();
+        }
+
+        var previousVersion = existing ? (await target.Database.ListDocumentsAsync(AttemptLimiter.Collection)).Items.Single().Version : null;
+        var store = (ClockAdvancingStore)server.App.Services.GetRequiredService<IDocumentStore>();
+        store.AdvanceAfter = operation;
+        using var response = await server.Client.PostAsync($"/__test/notices/ins_a/password/user_1?until={until}", null);
+
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
+        await Assert.That(clock.GetUtcNow()).IsEqualTo(DateTimeOffset.FromUnixTimeSeconds(until));
+        // A lost write that crosses expiry must stop before another storage round trip.
+        await Assert.That(store.Reads).IsEqualTo(existing ? 2 : 1);
+        var stored = (await target.Database.ListDocumentsAsync(AttemptLimiter.Collection)).Items;
+        await Assert.That(stored.Count).IsEqualTo(existing || operation == "create" ? 1 : 0);
+        if (existing || operation == "create")
+        {
+            var expectedDeadline = operation switch
+            {
+                "get" => until - 2,
+                "contended-replace" => until - 1,
+                _ => until,
+            };
+            await Assert.That(stored.Single().Document.GetProperty("window").GetInt64()).IsEqualTo(expectedDeadline);
+            await Assert.That(stored.Single().Document.GetProperty("used").GetInt32()).IsEqualTo(1);
+            if (operation == "get")
+            {
+                await Assert.That(stored.Single().Version).IsEqualTo(previousVersion);
+            }
+        }
+
+        // A claim persisted during expiry still permits a subsequent, live lockout episode.
+        await Assert.That(await ClaimNoticeAsync(server, "ins_a", "password", "user_1", until + 60)).IsTrue();
+    }
+
+    [Test]
+    [Arguments("get", HttpStatusCode.ServiceUnavailable)]
+    [Arguments("create", HttpStatusCode.ServiceUnavailable)]
+    [Arguments("replace", HttpStatusCode.OK)]
+    public async Task A_failed_notice_claim_never_authorizes_a_send(string failing, HttpStatusCode first)
+    {
+        var target = await SharedStateTarget.CreateAsync(fixture);
+        await using var server = await StartAsync(target, new ManualClock(Start), inner => new FailingDocumentStore(inner, failing));
+        var until = Start.AddMinutes(1).ToUnixTimeSeconds();
+        using var creating = await server.Client.PostAsync($"/__test/notices/ins_a/password/user_1?until={until}", null);
+        using var replacing = await server.Client.PostAsync($"/__test/notices/ins_a/password/user_1?until={until + 60}", null);
+        await Assert.That(creating.StatusCode).IsEqualTo(first);
+        await Assert.That(replacing.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+        await Assert.That((await replacing.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("error").GetProperty("code").GetString()).IsEqualTo("temporarily_unavailable");
+    }
+
+    [Test]
+    [Arguments("window")]
+    [Arguments("used")]
+    [Arguments("overflow-window")]
+    public async Task A_damaged_notice_claim_never_authorizes_a_send(string damage)
+    {
+        var target = await SharedStateTarget.CreateAsync(fixture);
+        await using var server = await StartAsync(target, new ManualClock(Start));
+        var until = Start.AddMinutes(1).ToUnixTimeSeconds();
+        await Assert.That(await ClaimNoticeAsync(server, "ins_a", "password", "user_1", until)).IsTrue();
+        var stored = (await target.Database.ListDocumentsAsync(AttemptLimiter.Collection)).Items.Single();
+        var bucket = JsonNode.Parse(stored.Document.GetRawText())!.AsObject();
+        bucket[damage == "used" ? "used" : "window"] = damage == "overflow-window" ? long.MaxValue : 0;
+        await target.Database.PutDocumentAsync(AttemptLimiter.Collection, stored.Id, JsonSerializer.SerializeToElement(bucket), TerraBasePrecondition.Matches(stored.Version));
+        using var response = await server.Client.PostAsync($"/__test/notices/ins_a/password/user_1?until={until + 60}", null);
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+    }
 
     [Test]
     public async Task Attempts_are_refused_after_the_maximum_until_the_next_window()
@@ -377,6 +493,54 @@ public sealed class RateLimitTests(TerraBaseFixture fixture)
         await Assert.That(body.GetProperty("error").GetProperty("code").GetString()).IsEqualTo("temporarily_unavailable");
     }
 
+    /// <summary>Advances the clock after a real storage operation, including a version race with another notice claim.</summary>
+    private sealed class ClockAdvancingStore(IDocumentStore inner, ManualClock clock) : IDocumentStore
+    {
+        private int reads;
+
+        public int Reads => Volatile.Read(ref this.reads);
+
+        public string? AdvanceAfter { get; set; }
+
+        public Task<Versioned<T>?> GetAsync<T>(string collection, string instanceId, string key, CancellationToken cancellationToken)
+        {
+            Interlocked.Increment(ref this.reads);
+            return this.CompleteAsync("get", inner.GetAsync<T>(collection, instanceId, key, cancellationToken));
+        }
+
+        public Task<bool> TryCreateAsync<T>(string collection, string instanceId, string key, T document, CancellationToken cancellationToken) =>
+            this.CompleteAsync("create", inner.TryCreateAsync(collection, instanceId, key, document, cancellationToken));
+
+        public async Task<bool> TryReplaceAsync<T>(string collection, string instanceId, string key, T document, string version, CancellationToken cancellationToken)
+        {
+            if (this.AdvanceAfter == "contended-replace")
+            {
+                // Another replica claims an intermediate deadline, so the original version loses.
+                if (document is not AttemptBucket notice
+                    || !await inner.TryReplaceAsync(collection, instanceId, key, notice with { Window = notice.Window - 1 }, version, cancellationToken))
+                {
+                    throw new InvalidOperationException("The competing notice claim must succeed.");
+                }
+
+                return await this.CompleteAsync("contended-replace", inner.TryReplaceAsync(collection, instanceId, key, document, version, cancellationToken));
+            }
+
+            return await this.CompleteAsync("replace", inner.TryReplaceAsync(collection, instanceId, key, document, version, cancellationToken));
+        }
+
+        private async Task<T> CompleteAsync<T>(string operation, Task<T> pending)
+        {
+            var result = await pending;
+            if (this.AdvanceAfter == operation)
+            {
+                this.AdvanceAfter = null;
+                clock.Advance(TimeSpan.FromMinutes(1));
+            }
+
+            return result;
+        }
+    }
+
     /// <summary>A store whose conditional replacements always lose, as under endless contention.</summary>
     private sealed class LosingStore(IDocumentStore inner) : IDocumentStore
     {
@@ -427,6 +591,17 @@ public sealed class RateLimitTests(TerraBaseFixture fixture)
 
             return await this.inner.TryReplaceAsync(collection, instanceId, key, document, version, cancellationToken);
         }
+    }
+
+    private static async Task<bool> ClaimNoticeAsync(AuthTestServer server, string instance, string purpose, string userId, long until)
+    {
+        using var response = await server.Client.PostAsync($"/__test/notices/{instance}/{purpose}/{userId}?until={until}", null);
+        return response.StatusCode switch
+        {
+            HttpStatusCode.OK => true,
+            HttpStatusCode.Conflict => false,
+            var other => throw new InvalidOperationException($"unexpected status {other}"),
+        };
     }
 
     private static async Task<TimeSpan?> DecisionAsync(AuthTestServer server, string instance, string purpose, string subject, int windowSeconds = 60, bool cooldown = false)
