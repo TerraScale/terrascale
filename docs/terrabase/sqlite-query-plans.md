@@ -195,6 +195,7 @@ indexes; neither is in `SqliteStatements.All`. Both read live documents only.
   `documents_live` (`"<rows> <rows> 1"`) keep the planner from preferring either collection-leading index over it. Plans
   are reported by `POST …/sql/check` and asserted by the Fast `SqlApiTests` and `IndexApiTests`.
 - SQL-subset queries share the document query work budget (`QueryBudget` in `SqliteStorageTransaction`: 5 million VM instructions or 5 seconds,
-  or cancellation).
+  or cancellation). The seconds are `query-budget-seconds` (default 5); the test harness raises them so that a loaded runner's
+  descheduling or GC pauses do not fail tiny queries, and tests of the time budget pin the default.
 
 Schema 8 stores prefix SHA-256 values in `journal_prefixes` (sequence primary key) and `applied.digest`. `GetChangeDigest` seeks `journal_prefixes` by sequence; `GetAppliedFrontier` seeks `applied` by origin. Their inserts have no returned query plan.

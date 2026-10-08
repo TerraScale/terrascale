@@ -460,6 +460,7 @@ public sealed class ReplicationSlowTests
         var firstBusy = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var releaseFirst = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var quietDurable = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var busyDurable = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var furtherBusy = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var releaseFurther = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var fairnessFailure = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -531,6 +532,11 @@ public sealed class ReplicationSlowTests
                     if (database == quietId && response.Durable is { DurablePrefix: >= 2 })
                     {
                         quietDurable.TrySetResult();
+                    }
+
+                    if (database == busyId && response.Durable is { DurablePrefix: >= 258 })
+                    {
+                        busyDurable.TrySetResult();
                     }
 
                     await responses.WriteAsync(response, token);
@@ -609,7 +615,8 @@ public sealed class ReplicationSlowTests
                 using var response = await reader.GetAsync(new Uri($"{tenant.Path("quiet")}/collections/items/documents/{ReplicationDocuments.Id("q1")}", UriKind.Relative), token);
                 return response.IsSuccessStatusCode;
             }, TimeSpan.FromSeconds(30));
-            await furtherBusy.Task.WaitAsync(TimeSpan.FromSeconds(30));
+            // Holding request 259 proves 258 was forwarded; its durable response proves it committed.
+            await Task.WhenAll(furtherBusy.Task, busyDurable.Task).WaitAsync(TimeSpan.FromSeconds(30));
             if (fairnessFailure.Task.IsFaulted)
             {
                 await fairnessFailure.Task;

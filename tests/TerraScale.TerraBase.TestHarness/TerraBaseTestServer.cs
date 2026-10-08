@@ -129,6 +129,9 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
                 // Each server starts its read threads eagerly, one per core by default: on a 46-core host the parallel suite
                 // held about 7,400 threads and exhausted the user's process limit. Production nodes resolve this to 1.
                 ["storage-threads"] = "2",
+                // The query budget's time half counts wall time while SQLite runs, so a loaded runner that deschedules or
+                // GC-pauses a tiny list fails it (TS-742). Tests of that budget pin it with UseProductionQueryBudget.
+                ["query-budget-seconds"] = "120",
             };
             settings?.Invoke(values);
 
@@ -376,6 +379,13 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
                 TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
             throw;
         }
+    }
+
+    /// <summary>Pins the production query time budget, for tests that cross it with a faked deadline clock.</summary>
+    public static void UseProductionQueryBudget(Dictionary<string, string> settings)
+    {
+        ArgumentNullException.ThrowIfNull(settings);
+        settings["query-budget-seconds"] = TerraBaseOptions.DefaultQueryBudgetSeconds.ToString(CultureInfo.InvariantCulture);
     }
 
     internal static void ReportCleanupFailure(AggregateException error)

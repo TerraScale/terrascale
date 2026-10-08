@@ -461,7 +461,7 @@ public sealed class ShapeApiTests
     {
         var clock = new SteppingClock();
         var hook = new UsageCommitHook();
-        await using var api = await DocumentApi.StartAsync(services: services =>
+        await using var api = await DocumentApi.StartAsync(TerraBaseTestServer.UseProductionQueryBudget, services: services =>
         {
             hook.Install(services);
             services.AddKeyedSingleton<TimeProvider>(EngineExtensions.QueryDeadlineClock, clock);

@@ -1,8 +1,11 @@
+using System.Globalization;
 using System.Net;
 using System.Text.Json;
 using Bogus;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Time.Testing;
+using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Features.Documents;
 using TerraBase.Tenancy;
@@ -309,7 +312,8 @@ public sealed class SqlApiTests
     public async Task Time_a_consumer_spends_between_rows_is_not_counted_against_the_query_deadline()
     {
         var time = new FakeTimeProvider();
-        await using var api = await ManagementApi.StartAsync(services: services => services.AddKeyedSingleton<TimeProvider>(EngineExtensions.QueryDeadlineClock, time));
+        await using var api = await ManagementApi.StartAsync(
+            TerraBaseTestServer.UseProductionQueryBudget, services: services => services.AddKeyedSingleton<TimeProvider>(EngineExtensions.QueryDeadlineClock, time));
         var database = await api.CreateManagedDatabaseAsync();
         await SeedPeopleAsync(api, database);
         var engine = api.Server.Services.GetRequiredService<IStorageEngine>();
@@ -333,7 +337,8 @@ public sealed class SqlApiTests
     public async Task A_query_deadline_clock_that_starts_at_zero_still_bounds_a_query()
     {
         var clock = new SteppingClock();
-        await using var api = await ManagementApi.StartAsync(services: services => services.AddKeyedSingleton<TimeProvider>(EngineExtensions.QueryDeadlineClock, clock));
+        await using var api = await ManagementApi.StartAsync(
+            TerraBaseTestServer.UseProductionQueryBudget, services: services => services.AddKeyedSingleton<TimeProvider>(EngineExtensions.QueryDeadlineClock, clock));
         var database = await api.CreateManagedDatabaseAsync();
         await SeedPeopleAsync(api, database);
         var engine = api.Server.Services.GetRequiredService<IStorageEngine>();
@@ -344,6 +349,90 @@ public sealed class SqlApiTests
         clock.Armed = true;
 
         await Assert.ThrowsAsync<QueryCapacityException>(() => transaction.ListCollectionStatsAsync(CancellationToken.None).AsTask());
+    }
+
+    [Test]
+    [Arguments(5, true)]
+    [Arguments(120, false)]
+    public async Task A_pause_inside_SQLite_fails_a_query_only_past_the_configured_time_budget(int seconds, bool refused)
+    {
+        var clock = new SteppingClock();
+        await using var api = await ManagementApi.StartAsync(
+            settings => settings["query-budget-seconds"] = seconds.ToString(CultureInfo.InvariantCulture),
+            services: services => services.AddKeyedSingleton<TimeProvider>(EngineExtensions.QueryDeadlineClock, clock));
+        var database = await api.CreateManagedDatabaseAsync();
+        await SeedPeopleAsync(api, database);
+        var engine = api.Server.Services.GetRequiredService<IStorageEngine>();
+        await using var transaction = (await engine.BeginTransactionAsync(
+            new TenantContext(database.Organization, PlanTier.Hobby, database.Project, database.Id), write: false, CancellationToken.None))!;
+
+        // A descheduled or GC-paused worker: every deadline reading of this tiny list lands 6 seconds after the last (TS-742).
+        clock.Armed = true;
+        var listing = transaction.ListCollectionStatsAsync(CancellationToken.None).AsTask();
+
+        if (refused)
+        {
+            await Assert.ThrowsAsync<QueryCapacityException>(() => listing);
+        }
+        else
+        {
+            await Assert.That(await listing).IsNotEmpty();
+        }
+    }
+
+    [Test]
+    [Arguments(0)]
+    [Arguments(-1)]
+    [Arguments(601)]
+    public async Task Programmatic_options_reject_a_query_time_budget_outside_the_setting_bounds(int seconds)
+    {
+        var error = await Assert.ThrowsAsync<TerraBaseConfigurationException>(async () =>
+        {
+            await using var server = await TerraBaseTestServer.StartAsync(services: services =>
+            {
+                var options = (TerraBaseOptions)services.Single(service => service.ServiceType == typeof(TerraBaseOptions)).ImplementationInstance!;
+                // Replace the singleton directly: the engine reads this property, never the parsed setting.
+                services.Replace(ServiceDescriptor.Singleton(options with { QueryBudget = TimeSpan.FromSeconds(seconds) }));
+            });
+        });
+        await Assert.That(error!.Message).Contains("query-budget-seconds");
+    }
+
+    [Test]
+    [Arguments(1, false)]
+    [Arguments(600, false)]
+    [Arguments(1, true)]
+    [Arguments(600, true)]
+    public async Task A_query_time_budget_at_either_setting_bound_is_accepted_and_reaches_the_engine(int seconds, bool programmatic)
+    {
+        var value = seconds.ToString(CultureInfo.InvariantCulture);
+        await using var api = await ManagementApi.StartAsync(
+            settings =>
+            {
+                if (!programmatic)
+                {
+                    settings["query-budget-seconds"] = value;
+                }
+            },
+            services: services =>
+            {
+                // A still deadline clock: a 1 s budget must not depend on a loaded runner's scheduling or GC pauses.
+                services.AddKeyedSingleton<TimeProvider>(EngineExtensions.QueryDeadlineClock, new FakeTimeProvider());
+                if (programmatic)
+                {
+                    var options = (TerraBaseOptions)services.Single(service => service.ServiceType == typeof(TerraBaseOptions)).ImplementationInstance!;
+                    services.Replace(ServiceDescriptor.Singleton(options with { QueryBudget = TimeSpan.FromSeconds(seconds) }));
+                }
+            });
+
+        // Both bounds are inclusive: the server starts, and its engine runs queries under exactly that budget.
+        var engine = api.Server.Services.GetRequiredService<TerraBase.Engine.Sqlite.SqliteStorageEngine>();
+        await Assert.That(engine.QueryBudget).IsEqualTo(TimeSpan.FromSeconds(seconds));
+        var database = await api.CreateManagedDatabaseAsync();
+        await SeedPeopleAsync(api, database);
+        await using var transaction = (await api.Server.Services.GetRequiredService<IStorageEngine>().BeginTransactionAsync(
+            new TenantContext(database.Organization, PlanTier.Hobby, database.Project, database.Id), write: false, CancellationToken.None))!;
+        await Assert.That(await transaction.ListCollectionStatsAsync(CancellationToken.None)).IsNotEmpty();
     }
 
     [Test]

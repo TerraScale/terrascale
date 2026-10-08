@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text.Json;
+using Microsoft.Extensions.Time.Testing;
 using TerraBase.Testing;
 
 namespace TerraBase.Slow.Management;
@@ -37,7 +38,8 @@ public sealed class ScanBudgetTests
     [Test]
     public async Task Project_usage_refuses_more_databases_than_one_request_reads()
     {
-        await using var api = await ManagementApi.StartAsync();
+        // Test the database-count boundary independently of the request's five-second execution budget.
+        await using var api = await ManagementApi.StartAsync(time: new FakeTimeProvider());
         var first = await api.CreateManagedDatabaseAsync("db-0");
         for (var i = 1; i < 100; i++)
         {

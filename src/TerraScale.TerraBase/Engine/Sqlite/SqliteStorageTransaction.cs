@@ -338,7 +338,7 @@ internal sealed partial class SqliteStorageTransaction(
         try
         {
             var result = execute();
-            if (budget.Spent >= QueryDeadline)
+            if (budget.Spent >= store.QueryBudget)
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 throw new QueryCapacityException("query execution budget exceeded");
@@ -357,7 +357,6 @@ internal sealed partial class SqliteStorageTransaction(
         }
     }
 
-    private static readonly TimeSpan QueryDeadline = TimeSpan.FromSeconds(5);
     private const int MaxSnapshotSteps = 10_000;
     private const int MaxSnapshotSkips = 50_000;
 
@@ -366,7 +365,7 @@ internal sealed partial class SqliteStorageTransaction(
     {
         var budget = new QueryBudget(store.Time);
         raw.sqlite3_progress_handler(session.Connection.Handle, 1000,
-            _ => cancellationToken.IsCancellationRequested || ++budget.Callbacks >= 5000 || budget.Spent >= QueryDeadline ? 1 : 0, null);
+            _ => cancellationToken.IsCancellationRequested || ++budget.Callbacks >= 5000 || budget.Spent >= store.QueryBudget ? 1 : 0, null);
         return budget;
     }
 
@@ -540,7 +539,7 @@ internal sealed partial class SqliteStorageTransaction(
                         return new SnapshotPage(rows, HasMore: false, ResumeAfter: null);
                     }
 
-                    if (budget.Spent >= QueryDeadline)
+                    if (budget.Spent >= store.QueryBudget)
                     {
                         cancellationToken.ThrowIfCancellationRequested();
                         throw new QueryCapacityException("query execution budget exceeded");
@@ -652,7 +651,7 @@ internal sealed partial class SqliteStorageTransaction(
                     try
                     {
                         var read = changes.Read();
-                        if (queryBudget.Spent >= QueryDeadline)
+                        if (queryBudget.Spent >= store.QueryBudget)
                         {
                             cancellationToken.ThrowIfCancellationRequested();
                             throw new QueryCapacityException("query execution budget exceeded");
@@ -666,7 +665,7 @@ internal sealed partial class SqliteStorageTransaction(
                                     HistoryOffset: changes.GetInt64(3))
                                 : new StoredDocument(changes.GetString(0), changes.GetInt64(1), ReadShapeJson(changes, 2), Scope,
                                     HistoryOffset: changes.GetInt64(3));
-                        if (queryBudget.Spent >= QueryDeadline)
+                        if (queryBudget.Spent >= store.QueryBudget)
                         {
                             cancellationToken.ThrowIfCancellationRequested();
                             throw new QueryCapacityException("query execution budget exceeded");

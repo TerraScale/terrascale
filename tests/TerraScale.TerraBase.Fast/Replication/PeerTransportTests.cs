@@ -143,8 +143,9 @@ public sealed class PeerTransportTests
             catch (OperationCanceledException) when (stop.IsCancellationRequested)
             {
             }
-            catch (RpcException error) when (error.StatusCode == StatusCode.Cancelled && stop.IsCancellationRequested)
+            catch (RpcException error) when (error.StatusCode is StatusCode.Cancelled or StatusCode.Unavailable && stop.IsCancellationRequested)
             {
+                // Cancelling a pending read can surface as the HTTP/2 stream's abort (Unavailable) rather than Cancelled.
             }
         }
     }

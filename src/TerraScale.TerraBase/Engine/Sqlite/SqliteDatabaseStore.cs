@@ -1,6 +1,7 @@
 using System.Collections.Frozen;
 using System.Runtime.CompilerServices;
 using Microsoft.Data.Sqlite;
+using TerraBase.Configuration;
 using TerraBase.Tenancy;
 
 namespace TerraBase.Engine.Sqlite;
@@ -252,6 +253,11 @@ internal sealed partial class SqliteDatabaseStore(
     public bool IsClosed => Closed;
 
     internal TimeProvider Time => time ?? TimeProvider.System;
+
+    internal static readonly TimeSpan DefaultQueryBudget = TimeSpan.FromSeconds(TerraBaseOptions.DefaultQueryBudgetSeconds);
+
+    /// <summary>SQLite execution time one query may spend on <see cref="Time"/> before it is refused.</summary>
+    internal TimeSpan QueryBudget { get; init; } = DefaultQueryBudget;
 
     /// <summary>Idle sessions of this database, for tests.</summary>
     internal int IdleCount => pool.IdleCountOf(this);

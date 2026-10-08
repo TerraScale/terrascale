@@ -162,6 +162,11 @@ public sealed record TerraBaseOptions : IDisposable
 
     private const int MaxReadinessCacheSeconds = 60;
 
+    /// <summary>Default seconds of SQLite execution one query may spend before it is refused as too expensive.</summary>
+    public const int DefaultQueryBudgetSeconds = 5;
+
+    private const int MaxQueryBudgetSeconds = 600;
+
     /// <summary>Default milliseconds a write waits for its active peers' durable acknowledgment (docs/decisions/0010).</summary>
     public const int DefaultWriteWaitMilliseconds = 2000;
 
@@ -182,7 +187,7 @@ public sealed record TerraBaseOptions : IDisposable
 
     private static readonly FrozenSet<string> Keys = FrozenSet.Create(
         StringComparer.Ordinal,
-        ["admin-port", "data-directory", "region", "node-name", "memory-budget", "client-port", .. ClientTlsKeys, "auth-issuer", "auth-audience", "management-credential-file", "management-legacy-owner", "peer-port", .. PeerTlsKeys, "peer-addresses", "peers", "catalog-primary", "write-wait-ms", "shutdown-grace-seconds", "readiness-cache-seconds", "storage-threads", "storage-queue", .. BackupSettings.Keys, .. NatsSettings.Keys, .. WanSettings.Keys]);
+        ["admin-port", "data-directory", "region", "node-name", "memory-budget", "client-port", .. ClientTlsKeys, "auth-issuer", "auth-audience", "management-credential-file", "management-legacy-owner", "peer-port", .. PeerTlsKeys, "peer-addresses", "peers", "catalog-primary", "write-wait-ms", "shutdown-grace-seconds", "readiness-cache-seconds", "query-budget-seconds", "storage-threads", "storage-queue", .. BackupSettings.Keys, .. NatsSettings.Keys, .. WanSettings.Keys]);
 
     /// <summary>Every setting name, in <c>--name=value</c> form without the dashes.</summary>
     public static IReadOnlySet<string> SettingNames => Keys;
@@ -269,6 +274,19 @@ public sealed record TerraBaseOptions : IDisposable
 
     /// <summary>How long completed readiness filesystem results are cached; shutdown bypasses this cache.</summary>
     public TimeSpan ReadinessCacheTtl { get; init; } = TimeSpan.FromSeconds(DefaultReadinessCacheSeconds);
+
+    /// <summary>
+    /// The time half of the engine's query work budget: SQLite execution time one query may spend, excluding queueing and
+    /// consumer time between rows. The 5 million VM instruction half is fixed.
+    /// </summary>
+    public TimeSpan QueryBudget
+    {
+        get;
+        // Programmatic configuration gets the same bounds as the setting: a zero budget would refuse every query.
+        init => field = value >= TimeSpan.FromSeconds(1) && value <= TimeSpan.FromSeconds(MaxQueryBudgetSeconds)
+            ? value
+            : throw new TerraBaseConfigurationException($"query-budget-seconds must be between 1 and {MaxQueryBudgetSeconds} seconds");
+    } = TimeSpan.FromSeconds(DefaultQueryBudgetSeconds);
 
     /// <summary>
     /// Peer listeners (<c>https://host:port</c>) this node sends its committed changes to; empty
@@ -454,6 +472,7 @@ public sealed record TerraBaseOptions : IDisposable
         var adminPort = ParsePort(values, "admin-port") ?? DefaultAdminPort;
         var shutdownGrace = TimeSpan.FromSeconds(ParseShutdownGraceSeconds(values));
         var readinessCacheTtl = TimeSpan.FromSeconds(ParseReadinessCacheSeconds(values));
+        var queryBudget = TimeSpan.FromSeconds(ParseInteger(values, "query-budget-seconds", 1, MaxQueryBudgetSeconds) ?? DefaultQueryBudgetSeconds);
         var writeWait = TimeSpan.FromMilliseconds(ParseInteger(values, "write-wait-ms", 0, 60_000) ?? DefaultWriteWaitMilliseconds);
         var backup = BackupSettings.Parse(values);
         var nats = NatsSettings.Parse(values);
@@ -501,6 +520,7 @@ public sealed record TerraBaseOptions : IDisposable
                 WriteWait = writeWait,
                 ShutdownGrace = shutdownGrace,
                 ReadinessCacheTtl = readinessCacheTtl,
+                QueryBudget = queryBudget,
                 Backup = backup,
                 Nats = nats,
                 Wan = wan,

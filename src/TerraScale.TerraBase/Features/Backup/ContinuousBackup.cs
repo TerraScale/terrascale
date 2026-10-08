@@ -189,16 +189,31 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
         await base.StopAsync(cancellationToken).ConfigureAwait(false);
         // Ship what committed since the last pass, then give the taps' connections back before the engine closes.
         await _pass.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+        var errors = new List<Exception>();
         try
         {
             foreach (var file in _files.Values)
             {
-                if (!cancellationToken.IsCancellationRequested)
+                try
                 {
-                    await ShipAsync(file, cancellationToken).ConfigureAwait(false);
+                    if (!cancellationToken.IsCancellationRequested)
+                    {
+                        await ShipAsync(file, cancellationToken).ConfigureAwait(false);
+                    }
+                }
+                catch (Exception error)
+                {
+                    errors.Add(error);
                 }
 
-                await file.DisposeAsync().ConfigureAwait(false);
+                try
+                {
+                    await file.DisposeAsync().ConfigureAwait(false);
+                }
+                catch (Exception error)
+                {
+                    errors.Add(error);
+                }
             }
 
             _files.Clear();
@@ -206,6 +221,11 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
         finally
         {
             _pass.Release();
+        }
+
+        if (errors.Count != 0)
+        {
+            throw new AggregateException("continuous backup shutdown failed", errors).Flatten();
         }
     }
 

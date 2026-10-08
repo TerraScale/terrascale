@@ -36,7 +36,7 @@ public static class EngineExtensions
                 provider.GetRequiredService<IMeterFactory>().Create(Telemetry.MeterName),
                 provider.GetRequiredService<ILogger<SqliteStorageEngine>>(), configured.ShutdownGrace, readinessCacheTtl: configured.ReadinessCacheTtl,
                 checkpoint: provider.GetRequiredService<DatabaseLifecycleCheckpoint>(),
-                time: provider.GetKeyedService<TimeProvider>(QueryDeadlineClock),
+                time: provider.GetKeyedService<TimeProvider>(QueryDeadlineClock), queryBudget: configured.QueryBudget,
                 systemReplica: configured.CatalogPrimary is not null,
                 walTaps: configured.Backup is not null);
         });

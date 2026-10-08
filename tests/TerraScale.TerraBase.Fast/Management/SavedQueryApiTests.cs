@@ -21,7 +21,7 @@ public sealed class SavedQueryApiTests
         const string RoleTooLow = "your role in the organization does not allow this";
         var clock = new SteppingClock();
         var hook = new UsageCommitHook();
-        await using var api = await ManagementApi.StartAsync(services: services =>
+        await using var api = await ManagementApi.StartAsync(TerraBaseTestServer.UseProductionQueryBudget, services: services =>
         {
             hook.Install(services);
             services.AddKeyedSingleton<TimeProvider>(EngineExtensions.QueryDeadlineClock, clock);

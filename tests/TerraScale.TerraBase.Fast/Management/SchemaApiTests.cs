@@ -217,7 +217,7 @@ public sealed class SchemaApiTests
     {
         var clock = new SteppingClock();
         var hook = new UsageCommitHook();
-        await using var api = await ManagementApi.StartAsync(services: services =>
+        await using var api = await ManagementApi.StartAsync(TerraBaseTestServer.UseProductionQueryBudget, services: services =>
         {
             hook.Install(services);
             services.AddKeyedSingleton<TimeProvider>(EngineExtensions.QueryDeadlineClock, clock);

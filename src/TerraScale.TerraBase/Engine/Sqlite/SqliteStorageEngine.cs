@@ -293,6 +293,8 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
     /// times that in total.
     /// </summary>
     internal TimeProvider Time { get; }
+
+    internal TimeSpan QueryBudget { get; }
     internal SqliteSessionPool Pool { get; }
 
     /// <summary>Owns the directory only after managed setup; failed worker startup rolls back before releasing it.</summary>
@@ -309,6 +311,7 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
     /// <param name="readinessCacheTtl">How long completed filesystem readiness checks are reused.</param>
     /// <param name="checkpoint">A per-host lifecycle checkpoint for integration tests.</param>
     /// <param name="time">The clock of the query deadline; the system clock by default.</param>
+    /// <param name="queryBudget">SQLite execution time one query may spend; <see cref="SqliteDatabaseStore.DefaultQueryBudget"/> by default.</param>
     /// <param name="afterMigration">Optional integration-test hook before a tenant database's baseline is seeded.</param>
     /// <param name="systemReplica">Whether this node follows a catalog primary: its system database accepts only replicated writes.</param>
     /// <param name="walTaps">Whether continuous backup ships from this node: its <see cref="IWalTap"/>s checkpoint every database, not SQLite.</param>
@@ -316,7 +319,7 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
         string dataDirectory, int threads, int queue, long memoryBudget, Meter meter, ILogger<SqliteStorageEngine> logger,
         TimeSpan shutdownGrace, int? maxIdle = null, int? maxIdlePerDatabase = null, Func<ThreadStart, Thread>? createWorker = null,
         TimeSpan? readinessCacheTtl = null, DatabaseLifecycleCheckpoint? checkpoint = null, TimeProvider? time = null,
-        Action<SqliteDatabaseStore>? afterMigration = null, bool systemReplica = false, bool walTaps = false)
+        Action<SqliteDatabaseStore>? afterMigration = null, bool systemReplica = false, bool walTaps = false, TimeSpan? queryBudget = null)
     {
         _systemReplica = systemReplica;
         _dataDirectory = dataDirectory;
@@ -327,6 +330,7 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
         _afterMigration = afterMigration;
         _readinessCacheTtl = readinessCacheTtl ?? TimeSpan.FromSeconds(1);
         Time = time ?? TimeProvider.System;
+        QueryBudget = queryBudget ?? SqliteDatabaseStore.DefaultQueryBudget;
         // Prepare managed state before taking ownership or starting workers.
         _pragmas = SqliteSession.Pragmas(memoryBudget, threads, walTaps);
         Pool = new(maxIdle: maxIdle ?? 4 * Environment.ProcessorCount, maxIdlePerDatabase: maxIdlePerDatabase ?? Environment.ProcessorCount);
@@ -730,6 +734,7 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
                 system = new SqliteDatabaseStore(SystemName, path, Pool, Io, _pragmas, null, Time, static _ => { }, RecordCommittedWrite, _logger)
                 {
                     Replica = _systemReplica,
+                    QueryBudget = QueryBudget,
                 };
                 try
                 {
@@ -1339,7 +1344,10 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
         var tenant = new TenantContext(key.Organization, PlanTier.Hobby, key.Project, key.Database);
         SqliteDatabaseStore? store = null;
         store = new SqliteDatabaseStore(key.Database, path, Pool, Io, _pragmas, tenant, Time,
-            sequence => Notify(ChangesCommitted, new ChangeGroupCommitted(store!, sequence), key.Database), RecordCommittedWrite, _logger);
+            sequence => Notify(ChangesCommitted, new ChangeGroupCommitted(store!, sequence), key.Database), RecordCommittedWrite, _logger)
+        {
+            QueryBudget = QueryBudget,
+        };
         var published = false;
         var admitted = false;
         try
