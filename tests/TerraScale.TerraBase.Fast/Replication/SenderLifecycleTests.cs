@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.Json;
 using Google.Protobuf;
 using Grpc.Core;
@@ -603,9 +604,22 @@ public sealed class SenderLifecycleTests
         await CreateAsync(tenant, writer);
         await PutAsync(tenant, writer, "first");
         var heldRpc = await waiting.Task.WaitAsync(TimeSpan.FromSeconds(30));
-        for (var index = 0; index < 16; index++)
+        var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
+        var output = TUnit.Core.TestContext.Current!.OutputWriter;
+        var writesStarted = Stopwatch.GetTimestamp();
+        var writesCompleted = 0;
+        try
         {
-            await PutAsync(tenant, writer, "later");
+            // All 16 writes must commit while the original RPC is held; overlap their HTTP round trips.
+            await Task.WhenAll(Enumerable.Range(0, 16).Select(async _ =>
+            {
+                await PutAsync(tenant, writer, "later", token);
+                Interlocked.Increment(ref writesCompleted);
+            }));
+        }
+        finally
+        {
+            output.WriteLine($"WAL backlog writes: {writesCompleted}/16 completed in {Stopwatch.GetElapsedTime(writesStarted).TotalMilliseconds:F0} ms; held RPC cancelled: {heldRpc.IsCancellationRequested}");
         }
 
         await using var connection = new SqliteConnection(new SqliteConnectionStringBuilder
@@ -621,21 +635,31 @@ public sealed class SenderLifecycleTests
         command.CommandText = "PRAGMA wal_checkpoint(TRUNCATE);";
         long busy = -1;
         long frames = -1;
+        var checkpointStarted = Stopwatch.GetTimestamp();
+        var attempts = 0;
         // Discovery can briefly read the same WAL. The original held RPC must survive every attempt,
         // so a sender timeout cannot release a leaked transaction and falsely let the checkpoint pass.
-        await TerraBaseTestServer.EventuallyAsync(async token =>
+        try
         {
+            await TerraBaseTestServer.EventuallyAsync(async checkpointToken =>
+            {
+                heldRpc.ThrowIfCancellationRequested();
+                attempts++;
+                await using var result = await command.ExecuteReaderAsync(checkpointToken);
+                await Assert.That(await result.ReadAsync(checkpointToken)).IsTrue();
+                busy = result.GetInt64(0);
+                frames = result.GetInt64(1);
+                heldRpc.ThrowIfCancellationRequested();
+                return busy == 0;
+            });
+            await Assert.That(busy).IsEqualTo(0);
+            await Assert.That(frames).IsEqualTo(0);
             heldRpc.ThrowIfCancellationRequested();
-            await using var result = await command.ExecuteReaderAsync(token);
-            await Assert.That(await result.ReadAsync(token)).IsTrue();
-            busy = result.GetInt64(0);
-            frames = result.GetInt64(1);
-            heldRpc.ThrowIfCancellationRequested();
-            return busy == 0;
-        });
-        await Assert.That(busy).IsEqualTo(0);
-        await Assert.That(frames).IsEqualTo(0);
-        heldRpc.ThrowIfCancellationRequested();
+        }
+        finally
+        {
+            output.WriteLine($"WAL checkpoint: {attempts} attempts in {Stopwatch.GetElapsedTime(checkpointStarted).TotalMilliseconds:F0} ms; busy: {busy}; frames: {frames}; held RPC cancelled: {heldRpc.IsCancellationRequested}");
+        }
 
         release.SetResult();
         await TerraBaseTestServer.ReplicatedAsync(sender);
@@ -663,9 +687,9 @@ public sealed class SenderLifecycleTests
         collection.EnsureSuccessStatusCode();
     }
 
-    private static async Task PutAsync(ReplicationTenant tenant, HttpClient client, string id)
+    private static async Task PutAsync(ReplicationTenant tenant, HttpClient client, string id, CancellationToken cancellationToken = default)
     {
-        using var response = await client.PutAsJsonAsync(new Uri($"{tenant.Path("backlog")}/collections/items/documents/{ReplicationDocuments.Id(id)}", UriKind.Relative), new { value = id });
+        using var response = await client.PutAsJsonAsync(new Uri($"{tenant.Path("backlog")}/collections/items/documents/{ReplicationDocuments.Id(id)}", UriKind.Relative), new { value = id }, cancellationToken);
         response.EnsureSuccessStatusCode();
     }
 }

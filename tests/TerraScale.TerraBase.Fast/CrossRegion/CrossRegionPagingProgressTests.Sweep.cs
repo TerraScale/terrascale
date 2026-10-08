@@ -223,7 +223,8 @@ public sealed partial class CrossRegionPagingProgressTests
                 for (var index = 0; index < observed.Length; index++)
                 {
                     output.WriteLine($"paging inventory: seeding observed document {index}");
-                    await ManagementApi.CreateCollectionAsync(source, observed[index], "items");
+                    await ManagementApi.CreateCollectionAsync(source, observed[index], "items", token);
+                    output.WriteLine($"paging inventory: collection {index} created, writing its document");
                     using var written = await source.PutAsJsonAsync(documents[index], new { value = values[index] }, token);
                     await Assert.That(written.StatusCode).IsEqualTo(HttpStatusCode.Created);
                     versions[index] = written.Headers.ETag!.Tag;
@@ -331,6 +332,12 @@ public sealed partial class CrossRegionPagingProgressTests
                         await AssertStaleGrowthAsync(sfo, clock, token);
                     }
                 }
+            }
+            catch (Exception error)
+            {
+                output.WriteLine($"paging inventory: body failed with {error.GetType().Name} before cleanup");
+                output.WriteLine(string.Join('\n', (error.StackTrace ?? "").Split('\n').Take(8)));
+                throw;
             }
             finally
             {

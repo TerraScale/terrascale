@@ -36,7 +36,7 @@ public sealed class BackupKeySaturationTests
                 database = await live.CreateManagedDatabaseAsync();
                 user = live.User;
                 using var data = await live.CreateClientAsync(database.Organization, "documents:read", "documents:write");
-                await ManagementApi.CreateCollectionAsync(data, database, "items");
+                await ManagementApi.CreateCollectionAsync(data, database, "items", cancellationToken);
                 using var written = await data.PutAsJsonAsync(ManagementApi.Uri(ManagementApi.DocumentPath(database, "items", "before")), new { text }, cancellationToken);
                 written.EnsureSuccessStatusCode();
                 time.Advance(TimeSpan.FromSeconds(10));

@@ -227,7 +227,7 @@ public sealed class SubscriptionAdmissionTests
         var database = await api.CreateManagedDatabaseAsync("db" + faker.Random.AlphaNumeric(8).ToLowerInvariant());
         await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         using var data = await api.CreateClientAsync(database.Organization, ApiKeyScopes.DocumentsWrite, ApiKeyScopes.ShapesRead);
-        await ManagementApi.CreateCollectionAsync(data, database, "items");
+        await ManagementApi.CreateCollectionAsync(data, database, "items", cancellationToken);
         var text = faker.Lorem.Sentence();
         using var put = await data.PutAsJsonAsync(ManagementApi.Uri(
             $"{database.Data}/collections/items/documents/{faker.Random.Guid():D}"), new { text }, cancellationToken);
