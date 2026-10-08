@@ -158,7 +158,7 @@ public sealed class AuthorizeEndpoint(Sessions sessions, TimeProvider clock, Aut
 /// client-credentials access token. Each code and refresh token works once: a second presentation, even a concurrent
 /// one, fails and revokes every token of that sign-in. Tokens are refused once the user signed out everywhere.
 /// </summary>
-public sealed class TokenEndpoint(Users users, TotpCredentials mfa, HeadlessAuth headless, PlatformGrants platform, AuthOptions options) : EndpointWithoutRequest<IResult>
+public sealed class TokenEndpoint(Users users, TotpCredentials mfa, HeadlessAuth headless, PlatformGrants platform, AuthOptions options, IOpenIddictApplicationStore<OidcApplication> applications) : EndpointWithoutRequest<IResult>
 {
     /// <inheritdoc />
     public override void Configure()
@@ -212,7 +212,9 @@ public sealed class TokenEndpoint(Users users, TotpCredentials mfa, HeadlessAuth
             return await headless.GrantAsync(request, cancellationToken);
         }
 
-        if (request.IsClientCredentialsGrantType() && ApiKeys.IsKeyId(request.ClientId))
+        if (request.IsClientCredentialsGrantType()
+            && await applications.FindByClientIdAsync(request.ClientId!, cancellationToken) is { } application
+            && application.ClientSecret?.StartsWith(ApiKeyApplicationManager.DigestPrefix, StringComparison.Ordinal) == true)
         {
             // An API key (TS-598) OpenIddict has authenticated: an organization or project token.
             return await platform.ApiKeyAsync(this.HttpContext, request, cancellationToken);

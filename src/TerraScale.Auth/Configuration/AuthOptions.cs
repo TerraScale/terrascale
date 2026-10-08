@@ -4,6 +4,8 @@ using System.Net;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Text.RegularExpressions;
+using TerraScale.Auth.Features.Oidc;
+using TerraScale.DotNet;
 
 namespace TerraScale.Auth.Configuration;
 
@@ -484,8 +486,7 @@ public sealed partial record AuthOptions
             : throw Invalid("TS_AUTH_ACCESS_TOKEN_AUDIENCES must hold at most 10 absolute HTTPS URIs without credentials, query or fragment");
     }
 
-    // id:secret pairs, semicolon-separated. Ids are lowercase slugs that can never look like a user id (a UUID) or
-    // collide with the dashboard client, because a client-credentials token's sub is the client id.
+    // id:secret pairs, semicolon-separated. Ids are canonical ULIDs. A client-credentials token is distinguished by its grant, audience and token bindings.
     private static List<ServiceClientOptions> ParseServiceClients(string? raw)
     {
         var clients = new List<ServiceClientOptions>();
@@ -494,10 +495,10 @@ public sealed partial record AuthOptions
             var separator = entry.IndexOf(':', StringComparison.Ordinal);
             var id = separator < 0 ? string.Empty : entry[..separator];
             var secret = separator < 0 ? string.Empty : entry[(separator + 1)..];
-            if (!ServiceClientId().IsMatch(id) || Guid.TryParse(id, out _) || id == "ts-dashboard" || !IsClientSecret(secret)
+            if (!TerraScaleIds.IsValid(id) || id == OidcIssuer.DashboardClientId || !IsClientSecret(secret)
                 || clients.Any(client => client.ClientId == id))
             {
-                throw Invalid("TS_AUTH_SERVICE_CLIENTS must hold distinct id:secret pairs: lowercase ids of 3 to 64 characters other than ts-dashboard, secrets of 32 to 512 characters");
+                throw Invalid("TS_AUTH_SERVICE_CLIENTS must hold distinct id:secret pairs: canonical ULIDs other than the dashboard client id, secrets of 32 to 512 characters");
             }
 
             clients.Add(new ServiceClientOptions(id, secret));
@@ -505,9 +506,6 @@ public sealed partial record AuthOptions
 
         return clients.Count <= 20 ? clients : throw Invalid("TS_AUTH_SERVICE_CLIENTS may hold at most 20 clients");
     }
-
-    [GeneratedRegex(@"\A[a-z][a-z0-9-]{2,63}\z")]
-    private static partial Regex ServiceClientId();
 
     // Exact URIs, semicolon-separated: HTTPS, or plain HTTP only to localhost or a loopback IP; never credentials or a fragment.
     private static IReadOnlyList<Uri> RedirectUris(string key, string? raw)

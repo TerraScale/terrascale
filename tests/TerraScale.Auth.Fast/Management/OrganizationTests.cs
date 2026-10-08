@@ -2,7 +2,6 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
-using System.Text.RegularExpressions;
 using Microsoft.Extensions.DependencyInjection;
 using TerraScale.Auth.Store;
 using TerraScale.Auth.Tests;
@@ -15,9 +14,9 @@ namespace TerraScale.Auth.Fast.Management;
 /// real TerraBase, as signed-in users.
 /// </summary>
 [ClassDataSource<TerraBaseFixture>(Shared = SharedType.PerTestSession)]
-public sealed partial class OrganizationTests(TerraBaseFixture fixture)
+public sealed class OrganizationTests(TerraBaseFixture fixture)
 {
-    private const string ServiceId = "ts-orchestrator";
+    private const string ServiceId = "01M4EQ2FRJ8S8B29E8TQVWNW4K";
     private const string ServiceSecret = "service-test-secret-0123456789abcdefghij";
 
     [Test]
@@ -136,7 +135,7 @@ public sealed partial class OrganizationTests(TerraBaseFixture fixture)
             Content = new FormUrlEncodedContent(new Dictionary<string, string> { ["token"] = tokens.GetProperty("refresh_token").GetString()!, ["token_type_hint"] = "refresh_token" }),
         })
         {
-            revoke.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Basic", Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes($"ts-dashboard:{OidcHarness.ClientSecret}")));
+            revoke.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Basic", Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes($"01M4EQ2FRJ8S8B29E8TQVWNW4J:{OidcHarness.ClientSecret}")));
             using var revoked = await replica.Client.SendAsync(revoke);
             await Assert.That(revoked.StatusCode).IsEqualTo(HttpStatusCode.OK);
         }
@@ -157,7 +156,7 @@ public sealed partial class OrganizationTests(TerraBaseFixture fixture)
         var organization = await OidcHarness.JsonAsync(created);
         var id = organization.GetProperty("id").GetString()!;
         await Assert.That(created.Headers.Location!.OriginalString).IsEqualTo($"{Organizations}/{id}");
-        await Assert.That(Uuid().IsMatch(id)).IsTrue();
+        await Assert.That(TerraScale.DotNet.TerraScaleIds.IsValid(id)).IsTrue();
         await Assert.That(organization.GetProperty("name").GetString()).IsEqualTo("Acme");
         await Assert.That(organization.GetProperty("created_by").GetString()).IsEqualTo(alice.Id);
         await Assert.That(organization.GetProperty("role").GetString()).IsEqualTo("owner");
@@ -174,7 +173,7 @@ public sealed partial class OrganizationTests(TerraBaseFixture fixture)
 
         await Assert.That(await oidc.FailAsync(HttpMethod.Patch, $"{Organizations}/{id}", bobToken, new { name = "Mine" })).IsEqualTo((404, "not_found"));
         await Assert.That(await oidc.FailAsync(HttpMethod.Get, $"{Organizations}/{Guid.CreateVersion7():D}", aliceToken)).IsEqualTo((404, "not_found"));
-        await Assert.That(await oidc.FailAsync(HttpMethod.Get, $"{Organizations}/{id.ToUpperInvariant()}", aliceToken)).IsEqualTo((404, "not_found"));
+        await Assert.That(await oidc.FailAsync(HttpMethod.Get, $"{Organizations}/{id.ToLowerInvariant()}", aliceToken)).IsEqualTo((404, "not_found"));
 
         // Names are validated; unknown members and other bodies are refused.
         foreach (var body in new object[] { new { name = "   " }, new { name = "--" }, new { name = "a\u0007b" }, new { name = new string('a', 129) }, new { name = "Ok", plan = "pro" }, new { other = 1 } })
@@ -497,6 +496,4 @@ public sealed partial class OrganizationTests(TerraBaseFixture fixture)
         return ((int)response.StatusCode, await response.Content.ReadAsStringAsync());
     }
 
-    [GeneratedRegex("^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")]
-    private static partial Regex Uuid();
 }

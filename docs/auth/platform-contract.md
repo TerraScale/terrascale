@@ -37,7 +37,7 @@ Connect issuer.
   name the regional issuer, so configure relying parties with the regional one.
   The issuer never comes from a request's `Host` header.
 - **Project tenants.** Creating a project creates its tenant, whose slug is the
-  project id (a lowercase hyphenated UUID). Deleting the project deletes the
+  project id (a canonical uppercase ULID). Deleting the project deletes the
   tenant: its routes answer `404`, and ts-auth refuses its tokens. The slug
   `terrascale` is reserved; project ids can never equal it.
 - **One base path per tenant.** Discovery is
@@ -86,8 +86,8 @@ organization ─┬─ members            (org roles)
 | API key | `{id, name, organization_id, project_id, database, scopes, created_by, created_at, expires_at, previous_secret_expires_at}` |
 | Audit event | `{id, actor, action, target, detail, occurred_at}` |
 
-- Ids are lowercase hyphenated UUIDv7, except user ids (the `sub` of the
-  user's tokens, a lowercase UUID) and API key ids (`tsk_…`, section 5).
+- Entity ids in APIs and JWT `sub`, `org_id` and `project_id` are plain canonical
+  uppercase 26-character Crockford ULIDs, without prefixes.
 - Names are 1 to 128 characters after trimming, contain a letter or digit and no
   control characters. Project names are unique within their organization,
   ignoring case (`409 name_taken`). Organization names are not unique.
@@ -196,11 +196,10 @@ An API key is an OAuth 2.0 client credential owned by an organization or a
 project. It is not a bearer token: code exchanges it at the token endpoint
 (section 6) for a short-lived token.
 
-- **Format.** `tsk_<20 chars>_<52 chars>`, 77 characters of lowercase
-  Crockford base32 (`0-9a-z` without `i`, `l`, `o`, `u`) and `_`. The first 24
-  characters, `tsk_<20 chars>`, are the key's `id`: its OAuth `client_id`, the
-  `sub` of its tokens and its id in URLs. The secret part holds 260 random
-  bits. The client secret is the **whole** key string.
+- **Format.** `<ULID>_<52 chars>`, 79 characters. The first 26 characters
+  are the canonical uppercase ULID client id; the secret uses lowercase Crockford
+  base32 (`0-9a-z` without `i`, `l`, `o`, `u`) and holds 260 random bits.
+  The client secret is the **whole** key string.
 - **Shown once.** Creation and rotation answer the key string once (`key`).
   ts-auth stores only its SHA-256 and compares in constant time.
 - **Scope.** A project key reaches only its project, and only one database if it
@@ -238,10 +237,10 @@ Every token endpoint request is `POST {issuer}/oauth/token`,
 
 ```http
 POST /terrascale/oauth/token
-Authorization: Basic base64(tsk_3k9f2m8q1x7v4c6n0b5z:tsk_3k9f2m8q1x7v4c6n0b5z_<secret>)
+Authorization: Basic base64(01M4EQ2FRJ8S8B29E8TQVWNW4K:01M4EQ2FRJ8S8B29E8TQVWNW4K_<secret>)
 Content-Type: application/x-www-form-urlencoded
 
-grant_type=client_credentials&project=0199b3e4-5b6a-7c8d-9e0f-1a2b3c4d5e6f&scope=documents:read%20documents:write
+grant_type=client_credentials&project=01M4EQ2FRJ8S8B29E8TQVWNW41&scope=documents:read%20documents:write
 ```
 
 | Parameter | Meaning |
@@ -261,14 +260,14 @@ are not involved.
 
 ```http
 POST /terrascale/oauth/token
-Authorization: Basic base64(ts-dashboard:<secret>)
+Authorization: Basic base64(01M4EQ2FRJ8S8B29E8TQVWNW4J:<secret>)
 Content-Type: application/x-www-form-urlencoded
 
 grant_type=urn:ietf:params:oauth:grant-type:token-exchange
 &subject_token=<sign-in access token>
 &subject_token_type=urn:ietf:params:oauth:token-type:access_token
-&organization=0199b3e4-0000-7000-8000-000000000001
-&project=0199b3e4-5b6a-7c8d-9e0f-1a2b3c4d5e6f
+&organization=01M4EQ2FRJ8S8B29E8TQVWNW42
+&project=01M4EQ2FRJ8S8B29E8TQVWNW41
 ```
 
 | Parameter | Meaning |
@@ -295,7 +294,7 @@ answer `invalid_grant`. Submitted values cannot repair or override it.
 | Claim | Sign-in token | User org/project token | API key token |
 | --- | --- | --- | --- |
 | `iss` | issuer | issuer | issuer |
-| `sub` | user id | user id | key id `tsk_…` |
+| `sub` | user id | user id | key ULID |
 | `client_id` | the client | the exchanging client | key id |
 | `aud` | issuer and every `TS_AUTH_ACCESS_TOKEN_AUDIENCES` value | every `TS_AUTH_ACCESS_TOKEN_AUDIENCES` value | every `TS_AUTH_ACCESS_TOKEN_AUDIENCES` value |
 | `exp`, `iat`, `jti` | 1 hour | at most 15 minutes | 15 minutes |
@@ -482,7 +481,7 @@ without a signed-in user.
 | `ts-dashboard` | confidential | authorization code + S256 PKCE, refresh token, the headless grants (TS-582), token exchange |
 | `ts-cli` | public | device code (RFC 8628), refresh token, token exchange |
 | service clients (`TS_AUTH_SERVICE_CLIENTS`) | confidential | client credentials |
-| API keys (`tsk_…`) | confidential | client credentials |
+| API keys (ULID clients) | confidential | client credentials |
 
 **Device flow for ts-cli.** Users sign in and approve on ts-dashboard's own
 pages, never on a ts-auth page:

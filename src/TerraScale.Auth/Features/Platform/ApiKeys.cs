@@ -1,4 +1,3 @@
-using System.Buffers;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -6,6 +5,7 @@ using System.Text.RegularExpressions;
 using TerraScale.Auth.Contracts;
 using TerraScale.Auth.Security;
 using TerraScale.Auth.Store;
+using TerraScale.DotNet;
 
 namespace TerraScale.Auth.Features.Platform;
 
@@ -41,24 +41,20 @@ public static class TerraBaseScopes
 
 /// <summary>
 /// API keys (TS-598): OAuth client credentials owned by an organization or a project, exchanged at the token endpoint
-/// for 15-minute tokens. A key string is <c>tsk_</c>, 20 base32 characters (its id), <c>_</c> and 52 base32
+/// for 15-minute tokens. A key string is a canonical ULID (its client id), <c>_</c> and 52 base32
 /// characters (260 random bits); only SHA-256 digests are stored and compared in constant time.
 /// </summary>
 public sealed partial class ApiKeys(AuthStore store, PlatformDirectory directory, TimeProvider clock)
 {
-    /// <summary>Every key id starts with it.</summary>
-    public const string Prefix = "tsk_";
-
     /// <summary>The longest grace a rotation gives the previous key string.</summary>
     public static readonly TimeSpan MaxPreviousSecretTtl = TimeSpan.FromDays(1);
 
     private const string Alphabet = "0123456789abcdefghjkmnpqrstvwxyz";
     private const string Instance = PlatformDirectory.Instance;
-    private static readonly SearchValues<char> Base32 = SearchValues.Create(Alphabet);
 
     /// <summary>Whether <paramref name="value"/> has the shape of a key id.</summary>
     public static bool IsKeyId(string? value) =>
-        value is { Length: 24 } && value.StartsWith(Prefix, StringComparison.Ordinal) && value.AsSpan(Prefix.Length).IndexOfAnyExcept(Base32) < 0;
+        TerraScaleIds.IsValid(value);
 
     /// <summary>Whether <paramref name="value"/> is a TerraBase database name.</summary>
     public static bool IsDatabaseName(string? value) => value is not null && DatabaseName().IsMatch(value);
@@ -167,7 +163,7 @@ public sealed partial class ApiKeys(AuthStore store, PlatformDirectory directory
 
     private static (string Id, string Secret) Generate()
     {
-        var id = Prefix + RandomNumberGenerator.GetString(Alphabet, 20);
+        var id = AuthStore.NewId();
         return (id, $"{id}_{RandomNumberGenerator.GetString(Alphabet, 52)}");
     }
 
