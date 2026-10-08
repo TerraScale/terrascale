@@ -173,6 +173,7 @@ internal sealed partial class WanPuller(
         // Retries replicate only; they never witness a sweep.
         // Only a head this round can replicate supersedes; a malformed one is skipped below and must not drop the retry.
         var fresh = new HashSet<string>(heads.Where(entry => Replicable(entry.Head)).Select(entry => RetryKey(entry.Member, entry.Head)), StringComparer.Ordinal);
+        var retrying = discovery.Retry.Select(entry => RetryKey(entry.Member, entry.Head)).ToHashSet(StringComparer.Ordinal);
         heads.AddRange(discovery.Retry.Where(entry => !fresh.Contains(RetryKey(entry.Member, entry.Head))));
         var retry = new List<(string Member, Head Head)>();
         long retryBytes = 0;
@@ -201,7 +202,7 @@ internal sealed partial class WanPuller(
 
             var applied = await AppliedAsync(store, origin, cancellationToken).ConfigureAwait(false);
             var gone = false;
-            var diverged = false;
+            var diverged = applied > (long)head.Sequence;
             if (!observations.ContainsKey(database) && observations.Count < 128)
             {
                 observations.Add(database, (0, false));
@@ -215,7 +216,7 @@ internal sealed partial class WanPuller(
                 try
                 {
                     var traffic = applied == 0 && head.Sequence > 1
-                        || discovery.Retry.Any(entry => RetryKey(entry.Member, entry.Head) == RetryKey(member, head))
+                        || retrying.Contains(RetryKey(member, head))
                         ? ReplicationTrafficKind.Handoff : ReplicationTrafficKind.Delta;
                     (var pulled, gone) = await PullAsync(region, cell, member, database, store, origin, applied, (long)head.Sequence, traffic, cancellationToken).ConfigureAwait(false);
                     progressed |= pulled > applied;

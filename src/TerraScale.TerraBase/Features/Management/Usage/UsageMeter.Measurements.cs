@@ -7,6 +7,15 @@ namespace TerraBase.Features.Management.Usage;
 
 internal sealed partial class UsageMeter
 {
+    // Keep total-budget gauges and usage admission in the same observation while recorders or flushes run.
+    internal void ObserveMemory(Action observe)
+    {
+        lock (_measurements)
+        {
+            observe();
+        }
+    }
+
     internal long ReservedMeasurementBytes
     {
         get

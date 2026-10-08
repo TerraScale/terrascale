@@ -314,6 +314,7 @@ public sealed class SubscriptionAdmissionTests
     {
         private readonly MeterListener _listener = new();
         private readonly SqliteStorageEngine _engine;
+        private readonly UsageMeter _usage;
         private long _reserved;
         private long _active;
         private long _flights;
@@ -322,6 +323,7 @@ public sealed class SubscriptionAdmissionTests
         public SubscriptionResources(ManagementApi api)
         {
             _engine = api.Server.Services.GetRequiredService<SqliteStorageEngine>();
+            _usage = api.Server.Services.GetRequiredService<UsageMeter>();
             var meter = api.Server.Services.GetRequiredService<IMeterFactory>().Create(Telemetry.MeterName);
             _listener.InstrumentPublished = (instrument, observer) =>
             {
@@ -356,7 +358,7 @@ public sealed class SubscriptionAdmissionTests
         {
             get
             {
-                _listener.RecordObservableInstruments();
+                _usage.ObserveMemory(_listener.RecordObservableInstruments);
                 return Volatile.Read(ref _reserved);
             }
         }

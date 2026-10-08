@@ -62,6 +62,38 @@ public sealed class UsageAnalyticsTests
     }
 
     [Test]
+    public async Task Seven_day_buckets_exclude_older_hourly_records_before_the_first_boundary()
+    {
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 10, 1, 21, 30, 0, TimeSpan.Zero));
+        await using var api = await ManagementApi.StartAsync(settings => settings["region"] = "gru-1", time: clock);
+        var database = await api.CreateManagedDatabaseAsync();
+        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
+        using var client = ProjectClient(api, database.Project);
+        await ManagementApi.CreateCollectionAsync(client, database, "people");
+        using var older = await client.PutAsJsonAsync(ManagementApi.Uri(ManagementApi.DocumentPath(database, "people", "old")),
+            new { name = new Faker().Name.FullName() });
+        older.EnsureSuccessStatusCode();
+        await api.Server.Services.GetRequiredService<UsageMeter>().FlushAsync(CancellationToken.None);
+
+        clock.Advance(TimeSpan.FromDays(7));
+        using var current = await client.PutAsJsonAsync(ManagementApi.Uri(ManagementApi.DocumentPath(database, "people", "current")),
+            new { name = new Faker().Name.FullName() });
+        current.EnsureSuccessStatusCode();
+        await api.Server.Services.GetRequiredService<UsageMeter>().FlushAsync(CancellationToken.None);
+        foreach (var feature in new[] { "analytics", "replication" })
+        {
+            var result = await ReadAsync(client, ManagementApi.Uri($"/projects/{database.Project}/{feature}?range=7d"));
+            var series = result.GetProperty("items")[0].GetProperty("series");
+            await Assert.That(series.GetArrayLength()).IsEqualTo(28);
+            if (feature == "analytics")
+            {
+                await Assert.That(series.EnumerateArray().Sum(point => point.GetProperty("operations").TryGetProperty("put", out var count)
+                    ? count.GetInt64() : 0)).IsEqualTo(1);
+            }
+        }
+    }
+
+    [Test]
     [Arguments("analytics")]
     [Arguments("replication")]
     public async Task Project_JWT_scope_and_database_narrowing_protect_every_observation(string feature)

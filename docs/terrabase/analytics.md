@@ -84,6 +84,8 @@ Repeated transfers count bytes each time; replicated operations count only
 when the durable journal transaction applies a new group, including with
 concurrent duplicate streams. Incomplete writes do not provide an exact
 transport-level byte measurement.
+Failed handshakes before a gRPC peer identifies its region cannot be attributed
+to a region pair.
 
 Kinds are `delta` (current replication), `anti_entropy` (frontier handshakes and
 WAN discovery), and `handoff` (peer or WAN journal replay after a failed transfer or

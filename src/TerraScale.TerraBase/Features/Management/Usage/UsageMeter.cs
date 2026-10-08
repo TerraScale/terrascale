@@ -753,8 +753,13 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
                     return series;
                 }
 
-                var counts = JsonSerializer.Deserialize(document.Json.Span, TerraBaseJsonContext.Default.OpCounts)!;
-                series[window.Granularity.Parse(document.Id) - window.First] += counts;
+                var index = window.Granularity.Parse(document.Id) - window.First;
+                // Coarser analytics buckets read finer persisted buckets after the preceding boundary.
+                if (index >= 0 && index < series.Length)
+                {
+                    var counts = JsonSerializer.Deserialize(document.Json.Span, TerraBaseJsonContext.Default.OpCounts)!;
+                    series[index] += counts;
+                }
             }
 
             if (!page.HasMore)

@@ -679,9 +679,15 @@ public sealed class ExplainSqlBoundaryTests
         };
         listener.SetMeasurementEventCallback<long>((_, value, _, _) => reserved = value);
         listener.Start();
-        listener.RecordObservableInstruments();
-        return (reserved ?? throw new InvalidOperationException("the server's memory budget gauge was not observed"))
-            - api.Server.Services.GetRequiredService<UsageMeter>().ReservedMeasurementBytes;
+        var usage = api.Server.Services.GetRequiredService<UsageMeter>();
+        long result = 0;
+        usage.ObserveMemory(() =>
+        {
+            listener.RecordObservableInstruments();
+            result = (reserved ?? throw new InvalidOperationException("the server's memory budget gauge was not observed"))
+                - usage.ReservedMeasurementBytes;
+        });
+        return result;
     }
 
     private static async Task SeedRemotePlacementAsync(ManagementApi api, ManagedDatabaseRef database, CancellationToken token)
