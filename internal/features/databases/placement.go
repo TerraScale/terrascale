@@ -40,7 +40,11 @@ func (s Service) placement(ctx context.Context, regions []string) ([]core.Region
 	}
 	placed := make([]core.Region, 0, len(regions))
 	for _, region := range regions {
-		code := strings.ToUpper(strings.TrimSpace(region))
+		parsed, err := core.ParsePlacementRegion(region)
+		if err != nil {
+			return nil, err
+		}
+		code := string(parsed)
 		i := slices.IndexFunc(catalog, func(r core.Region) bool { return r.Code == code })
 		if i < 0 {
 			return nil, core.Invalid(fmt.Sprintf("unknown region %q", region))

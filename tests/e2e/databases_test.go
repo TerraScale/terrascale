@@ -58,6 +58,7 @@ func TestCreateDatabaseRegionMapAndSelectStayInSync(t *testing.T) {
 	// The picker offers what ts-atlas discovery lists, and nothing else.
 	must(t, expect.Locator(region.Locator(`input[name="region"]`)).ToHaveCount(2))
 	must(t, expect.Locator(regionMap.Locator(`button[data-region]`)).ToHaveCount(2))
+	must(t, expect.Locator(dialog.Locator(`[value="FRA"], [data-region="FRA"]`)).ToHaveCount(0))
 	must(t, expect.Locator(region.Locator(`input[value="SFO"]`)).ToBeChecked())
 	selectDatabaseRegions(t, dialog, "GRU")
 

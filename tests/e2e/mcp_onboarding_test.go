@@ -44,7 +44,7 @@ func TestMCPOnboardingFinishesAccountSetup(t *testing.T) {
 	if free.Step != "project" || free.Completed {
 		t.Fatalf("free payment step = %+v, want the project step next", free)
 	}
-	if message := callToolError(t, session, "save_onboarding_step", map[string]any{"step": "project", "name": "MCP project", "region": "XXX"}); !strings.Contains(message, "supported project region") {
+	if message := callToolError(t, session, "save_onboarding_step", map[string]any{"step": "project", "name": "MCP project", "region": "FRA"}); !strings.Contains(message, "supported project region") {
 		t.Errorf("unsupported region error = %q", message)
 	}
 	var done result
