@@ -247,8 +247,8 @@ public sealed class PressureTests
         await Assert.That(original.GetProperty("node").GetString()).IsEqualTo(Environment.MachineName);
         await Assert.That(other.GetProperty("node").GetString()).IsEqualTo("pressure-test-node");
         var incarnation = Incarnation(original);
-        await Assert.That(incarnation).IsNotEqualTo(default(Ulid));
-        await Assert.That(Incarnation(other)).IsNotEqualTo(default(Ulid));
+        await Assert.That(incarnation).IsNotEqualTo(default);
+        await Assert.That(Incarnation(other)).IsNotEqualTo(default);
         await Assert.That(Incarnation(other)).IsNotEqualTo(incarnation);
         await Assert.That(Incarnation(repeated)).IsEqualTo(incarnation);
     }
@@ -597,7 +597,7 @@ public sealed class PressureTests
         await Assert.That(snapshot.GetProperty("schema").GetInt32()).IsEqualTo(2);
         await Assert.That(snapshot.GetProperty("state").GetString()).IsEqualTo("unknown");
         await Assert.That(snapshot.GetProperty("node").GetString()).IsNotEmpty();
-        await Assert.That(Incarnation(snapshot)).IsNotEqualTo(default(Ulid));
+        await Assert.That(Incarnation(snapshot)).IsNotEqualTo(default);
         await Assert.That(snapshot.GetProperty("release").GetString()).IsEqualTo(
             typeof(Program).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()!.InformationalVersion);
         await Assert.That(snapshot.GetProperty("region").GetString()).IsNotEmpty();
