@@ -18,14 +18,15 @@ public sealed class UniqueConstraintTests
         var database = await api.CreateManagedDatabaseAsync();
         using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
         await ManagementApi.CreateCollectionAsync(data, database, "people");
+        using var management = await SchemaClientAsync(api, database);
         var schema = new
         {
             fields = new[] { new { name = "email", unique = true, normalization = "trim_case_fold" } },
             indexes = new[] { new { name = "tenant_handle", fields = new[] { "tenant", "profile.handle" }, unique = true, normalization = "case_fold" } },
         };
-        using (var declared = await api.Client.PutAsJsonAsync(Uri(database.Data + "/schema/people"), schema))
+        using (var declared = await management.PutAsJsonAsync(Uri(database.Data + "/schema/people"), schema))
         {
-            declared.EnsureSuccessStatusCode();
+            await Assert.That(declared.IsSuccessStatusCode).IsTrue().Because(await declared.Content.ReadAsStringAsync());
         }
 
         var email = new Faker().Internet.Email().ToLowerInvariant();
@@ -48,11 +49,32 @@ public sealed class UniqueConstraintTests
             reused.EnsureSuccessStatusCode();
         }
 
-        using var inferred = await api.Client.GetAsync(Uri(database.Data + "/schema/people"));
+        using var patch = new StringContent(JsonSerializer.Serialize(new { email }), Encoding.UTF8, "application/merge-patch+json");
+        await DuplicateAsync(data.PatchAsync(Document(database, first), patch));
+        using (var unchanged = await data.GetAsync(Document(database, first)))
+        {
+            unchanged.EnsureSuccessStatusCode();
+            var document = await unchanged.Content.ReadFromJsonAsync<JsonElement>();
+            await Assert.That(document.GetProperty("document").GetProperty("email").GetString()).IsEqualTo("changed");
+        }
+
+        using (var transferred = await data.PostAsJsonAsync(Uri(database.Data + "/transactions"), new
+        {
+            ops = new object[]
+            {
+                new { op = "delete", collection = "people", id = second },
+                new { op = "put", collection = "people", id = Ulid.NewUlid().ToString(), document = new { email, tenant = "a", profile = new { handle = "name" } } },
+            },
+        }))
+        {
+            transferred.EnsureSuccessStatusCode();
+        }
+
+        using var inferred = await management.GetAsync(Uri(database.Data + "/schema/people"));
         inferred.EnsureSuccessStatusCode();
         var body = await inferred.Content.ReadFromJsonAsync<JsonElement>();
         await Assert.That(body.GetProperty("uniqueConstraints").GetArrayLength()).IsEqualTo(2);
-        using var again = await api.Client.PutAsJsonAsync(Uri(database.Data + "/schema/people"), schema);
+        using var again = await management.PutAsJsonAsync(Uri(database.Data + "/schema/people"), schema);
         again.EnsureSuccessStatusCode();
     }
 
@@ -150,15 +172,79 @@ public sealed class UniqueConstraintTests
         using var invalidContent = new StringContent("{\"value\":[1]}", Encoding.UTF8, "application/json");
         using var invalid = await data.PutAsync(Document(database, Ulid.NewUlid().ToString()), invalidContent);
         await Assert.That(invalid.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
-        using var changed = await api.Client.PutAsJsonAsync(Uri(database.Data + "/schema/people"), new { fields = Array.Empty<object>() });
+        using var management = await SchemaClientAsync(api, database);
+        using var changed = await management.PutAsJsonAsync(Uri(database.Data + "/schema/people"), new { fields = Array.Empty<object>() });
         await Assert.That(changed.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
+    }
+
+    [Test]
+    public async Task A_replicated_declaration_reprojects_cached_documents_and_shape_history()
+    {
+        await using var api = await ManagementApi.StartAsync();
+        var database = await api.CreateManagedDatabaseAsync();
+        using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
+        await ManagementApi.CreateCollectionAsync(data, database, "people");
+        var low = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+        var high = "01ARZ3NDEKTSV4RRFFQ69G5FAW";
+        var email = new Faker().Internet.Email();
+        foreach (var id in new[] { low, high })
+        {
+            using var put = await data.PutAsJsonAsync(Document(database, id), new { email });
+            put.EnsureSuccessStatusCode();
+        }
+
+        using (var cached = await data.GetAsync(Document(database, high)))
+        {
+            cached.EnsureSuccessStatusCode();
+        }
+
+        var tenant = new TenantContext(database.Organization, PlanTier.Hobby, database.Project, database.Id);
+        var store = (await api.Server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(tenant, CancellationToken.None))!;
+        foreach (var hidden in new[] { true, false })
+        {
+            long previous;
+            long current;
+            await using (var transaction = await store.BeginTransactionAsync(write: true, CancellationToken.None))
+            {
+                previous = await transaction.GetOffsetAsync(CancellationToken.None);
+                var schema = hidden
+                    ? "{\"constraints\":[{\"name\":\"email\",\"fields\":[\"email\"],\"normalization\":\"none\"}]}"
+                    : "{\"constraints\":[]}";
+                await transaction.ApplyAsync(new DocumentChange("_unique", "people", previous + 1, Encoding.UTF8.GetBytes(schema)), CancellationToken.None);
+                current = await transaction.CommitAsync(CancellationToken.None);
+            }
+
+            using var projected = await data.GetAsync(Document(database, high));
+            await Assert.That(projected.StatusCode).IsEqualTo(hidden ? HttpStatusCode.Conflict : HttpStatusCode.OK);
+            await using var read = await store.BeginTransactionAsync(write: false, CancellationToken.None);
+            var changes = new List<StoredDocument>();
+            await foreach (var change in read.ChangesAsync("people", null, previous, current, CancellationToken.None))
+            {
+                changes.Add(change);
+            }
+
+            await Assert.That(changes.Count).IsEqualTo(1);
+            await Assert.That(changes[0].Id).IsEqualTo(high);
+            await Assert.That(changes[0].Deleted).IsEqualTo(hidden);
+        }
     }
 
     internal static async Task DeclareAsync(ManagementApi api, HttpClient data, ManagedDatabaseRef database, object schema)
     {
         await ManagementApi.CreateCollectionAsync(data, database, "people");
-        using var declared = await api.Client.PutAsJsonAsync(Uri(database.Data + "/schema/people"), schema);
-        declared.EnsureSuccessStatusCode();
+        using var management = await SchemaClientAsync(api, database);
+        using var declared = await management.PutAsJsonAsync(Uri(database.Data + "/schema/people"), schema);
+        await Assert.That(declared.IsSuccessStatusCode).IsTrue().Because(await declared.Content.ReadAsStringAsync());
+    }
+
+    private static async Task<HttpClient> SchemaClientAsync(ManagementApi api, ManagedDatabaseRef database)
+    {
+        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
+        return api.WithToken(api.Issuer.Mint(api.User, token =>
+        {
+            token.Claims["project_id"] = database.Project;
+            token.Claims["scope"] = "databases:read databases:write";
+        }));
     }
 
     private static Task DuplicateAsync(Task<HttpResponseMessage> response) =>

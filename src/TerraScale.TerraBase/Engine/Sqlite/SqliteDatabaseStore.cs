@@ -863,7 +863,7 @@ internal sealed partial class SqliteDatabaseStore(
         }
 
         cancellationToken.ThrowIfCancellationRequested();
-        Scalar(connection, transaction, SchemaSql + $"PRAGMA user_version = {SchemaVersion};");
+        Scalar(connection, transaction, SchemaSql + UniqueSchemaSql + $"PRAGMA user_version = {SchemaVersion};");
         RenewIncarnation(connection, transaction);
         cancellationToken.ThrowIfCancellationRequested();
         transaction.Commit();

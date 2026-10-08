@@ -93,12 +93,17 @@ internal sealed partial class SqliteStorageTransaction
         }
 
         var affected = UniqueContenderIds(collection, id, cancellationToken);
+        var constraints = ReadUniqueConstraints(collection);
+        if (constraints.Count == 0 && affected.Count == 0)
+        {
+            return [];
+        }
+
         var delete = Command(UniqueDeleteKeys, collection);
         delete.Parameters.AddWithValue("$id", id);
         delete.ExecuteNonQuery();
         if (body is not null)
         {
-            var constraints = ReadUniqueConstraints(collection);
             if (constraints.Count > 0)
             {
                 using var document = JsonDocument.Parse(body);
@@ -126,13 +131,14 @@ internal sealed partial class SqliteStorageTransaction
             }
         }
 
-        affected.UnionWith(UniqueContenderIds(collection, id, cancellationToken));
+        var contenders = UniqueContenderIds(collection, id, cancellationToken);
+        affected.UnionWith(contenders);
         if (affected.Count > MaxWrites)
         {
             throw new StorageWriteLimitException("a uniqueness conflict affects at most 1024 documents");
         }
 
-        if (local && affected.Any(other => other != id && UniqueSharesKey(collection, id, other)))
+        if (local && contenders.Any(other => other != id))
         {
             throw new UniqueConstraintException();
         }
@@ -163,18 +169,6 @@ internal sealed partial class SqliteStorageTransaction
         }
 
         return ids;
-    }
-
-    private bool UniqueSharesKey(string collection, string id, string other)
-    {
-        var command = Command("""
-            SELECT 1 FROM unique_keys mine JOIN unique_keys other
-            ON other.collection = mine.collection AND other.constraint_name = mine.constraint_name AND other.value = mine.value
-            WHERE mine.collection = $collection AND mine.id = $id AND other.id = $other LIMIT 1;
-            """, collection);
-        command.Parameters.AddWithValue("$id", id);
-        command.Parameters.AddWithValue("$other", other);
-        return command.ExecuteScalar() is not null;
     }
 
     private void ReconcileUnique(string collection, IEnumerable<string> ids, string? writtenId, CancellationToken cancellationToken)
@@ -222,7 +216,7 @@ internal sealed partial class SqliteStorageTransaction
 
             if (hidden != raw.UniqueConflict && id != writtenId)
             {
-                UniqueHistory(new DocumentChange(collection, id, raw.Version, hidden ? null : raw.Json), cancellationToken);
+                UniqueHistory(new DocumentChange(collection, id, raw.Version, hidden ? (ReadOnlyMemory<byte>?)null : raw.Json), cancellationToken);
             }
         }
     }
@@ -250,6 +244,11 @@ internal sealed partial class SqliteStorageTransaction
 
     private bool ApplyUniqueState(DocumentChange change, string? body, CancellationToken cancellationToken)
     {
+        if (ReadUniqueConstraints(change.Collection).Count == 0)
+        {
+            return ApplyState(change, body);
+        }
+
         var command = Command(UniqueRawDocument, change.Collection);
         command.Parameters.AddWithValue("$id", change.Id);
         using (var reader = command.ExecuteReader())

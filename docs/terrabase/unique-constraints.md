@@ -72,7 +72,7 @@ projection; exceeding its 1024-document/2-MiB bound fails the replication transa
 
 ## Rollout and follow-up slices
 
-The fresh SQL schema includes uniqueness storage and rejects incompatible files. Coordinate its deployment and
+The fresh SQL schema 10 includes uniqueness storage and rejects incompatible files. Coordinate its deployment and
 exact storage reset with TS-754's layout-2 ULID cutover; verify and list the deleted targets in the PR. Bootstrap
 state recreates itself. No migration command is shipped.
 

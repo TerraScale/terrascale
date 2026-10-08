@@ -2,6 +2,8 @@ using System.Globalization;
 using System.Net;
 using System.Text.Json;
 using Bogus;
+using Microsoft.Extensions.DependencyInjection;
+using TerraBase.Engine;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Replication;
@@ -28,7 +30,7 @@ public sealed class UniqueReplicationTests
             await using (var first = await ManagementApi.StartAsync(settings => { tls.Apply(settings); settings["data-directory"] = firstData; }))
             await using (var second = await ManagementApi.StartAsync(settings => { tls.Apply(settings); settings["data-directory"] = secondData; }))
             {
-                tenant = await ReplicationTenant.CreateAsync(first.Server, ["db"], token);
+                tenant = await ReplicationTenant.CreateAsync(first.Server, ["db", "snapshot"], token);
                 await tenant.BindAsync(second.Server);
                 firstPort = first.Server.PeerAddress!.Port;
                 secondPort = second.Server.PeerAddress!.Port;
@@ -41,7 +43,7 @@ public sealed class UniqueReplicationTests
                 tls.Apply(settings);
                 settings["data-directory"] = firstData;
                 settings["peer-port"] = firstPort.ToString(CultureInfo.InvariantCulture);
-                settings["peer-addresses"] = $"https://127.0.0.1:{secondPort}";
+                settings["peer-addresses"] = $"https://localhost:{secondPort}";
             });
             await using var b = await ManagementApi.StartAsync(settings =>
             {
@@ -68,6 +70,26 @@ public sealed class UniqueReplicationTests
                 await Assert.That(page.GetProperty("items").EnumerateArray().Select(item => item.GetProperty("id").GetString()!)).IsEquivalentTo([low]);
             }
 
+            var engine = a.Server.Services.GetRequiredService<IStorageEngine>();
+            await Assert.That(await engine.DeleteDatabaseAsync(tenant.Database("snapshot"), token)).IsTrue();
+            await Assert.That(await engine.CopyDatabaseAsync(tenant.Database("db"), tenant.Database("snapshot"), token)).IsTrue();
+            await TerraBaseTestServer.ReplicatedAsync(a.Server);
+            using (var baselineConflict = await secondClient.GetAsync(Document(tenant, high, "snapshot"), token))
+            {
+                await Assert.That(baselineConflict.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
+            }
+
+            using (var snapshotDelete = await firstClient.DeleteAsync(Document(tenant, low, "snapshot"), token))
+            {
+                snapshotDelete.EnsureSuccessStatusCode();
+            }
+
+            await TerraBaseTestServer.ReplicatedAsync(a.Server);
+            using (var baselineRestored = await secondClient.GetAsync(Document(tenant, high, "snapshot"), token))
+            {
+                baselineRestored.EnsureSuccessStatusCode();
+            }
+
             using var deleted = await firstClient.DeleteAsync(Document(tenant, low), token);
             deleted.EnsureSuccessStatusCode();
             await TerraBaseTestServer.ReplicatedAsync(a.Server);
@@ -88,12 +110,12 @@ public sealed class UniqueReplicationTests
         using var data = api.Tls.CreateClient(api.Server.ClientAddress!, await tenant.KeyAsync(api.Server, ["documents:read", "documents:write"], token));
         using var create = await data.PostAsJsonAsync(new Uri(tenant.Path("db") + "/collections", UriKind.Relative), new { name = "people" }, token);
         create.EnsureSuccessStatusCode();
-        using var management = api.As(tenant.UserId);
-        using var declared = await management.PutAsJsonAsync(new Uri(tenant.Path("db") + "/schema/people", UriKind.Relative), new
+        var store = (await api.Server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(tenant.Database("db"), token))!;
+        await using (var transaction = await store.BeginTransactionAsync(write: true, token))
         {
-            fields = new[] { new { name = "email", unique = true, normalization = "case_fold" } },
-        }, token);
-        declared.EnsureSuccessStatusCode();
+            await transaction.SetUniqueConstraintsAsync("people", [new UniqueConstraint("email", ["email"], "case_fold")], token);
+            await transaction.CommitAsync(token);
+        }
         using var put = await data.PutAsJsonAsync(Document(tenant, id), new { email }, token);
         put.EnsureSuccessStatusCode();
     }
@@ -106,5 +128,5 @@ public sealed class UniqueReplicationTests
         await Assert.That(document.GetProperty("id").GetString()).IsEqualTo(id);
     }
 
-    private static Uri Document(ReplicationTenant tenant, string id) => new(tenant.Path("db") + "/collections/people/documents/" + id, UriKind.Relative);
+    private static Uri Document(ReplicationTenant tenant, string id, string database = "db") => new(tenant.Path(database) + "/collections/people/documents/" + id, UriKind.Relative);
 }

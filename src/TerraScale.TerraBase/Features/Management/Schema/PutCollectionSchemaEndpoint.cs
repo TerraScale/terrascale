@@ -31,7 +31,7 @@ public sealed class PutCollectionSchemaEndpoint(IManagementService management, I
     public override async ValueTask<IResult> HandleAsync(UniqueSchemaRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
-        if (!DatabaseName.TryParse(ManagementRoute.Value(HttpContext, "collection"), out var collection))
+        if (!DatabaseName.TryParse(HttpContext.Request.RouteValues["collection"] as string, out var collection))
         {
             return ErrorResponse.From(new Validation("collection must be a lowercase name of at most 63 characters"));
         }
