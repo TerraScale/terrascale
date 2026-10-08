@@ -31,6 +31,8 @@ type UsageScope struct {
 func UsageBuckets(rangeKey string, now time.Time) (string, time.Time) {
 	now = now.UTC()
 	switch rangeKey {
+	case "1h":
+		return "hour", now.Truncate(time.Hour)
 	case "24h":
 		return "hour", now.Truncate(time.Hour).Add(-23 * time.Hour)
 	case "30d":

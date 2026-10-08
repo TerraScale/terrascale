@@ -176,6 +176,7 @@ var (
 			// the console routes and endpoints stay available.
 		}},
 		{Label: "Manage", Items: []core.NavItem{
+			{Label: "Analytics", URL: "/analytics"},
 			{Label: "Usage", URL: "/usage"},
 			{Label: "Organization", URL: "/organization"},
 		}},

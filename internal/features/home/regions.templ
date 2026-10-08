@@ -1,0 +1,31 @@
+package home
+
+import (
+	"fmt"
+	"terrascale.tech/dashboard/internal/features/replication"
+	"terrascale.tech/dashboard/internal/ui"
+)
+
+templ regionsPanel(v regionsView) {
+	@ui.Card(ui.CardProps{ID: "home-regions", Title: "Regions", Description: "Regions used by this organization · ts-status measurements"}) {
+		if v.Error!="" {
+			@ui.Alert("warning", "Region measurements unavailable", v.Error)
+		}
+		if len(v.Rows)==0 {
+			@ui.Empty("No database regions in this organization.", "")
+		} else {
+			<div class="ts-table-wrap" role="region" aria-label="Organization regions table" tabindex="0">
+				<table class="ts-table">
+					<caption class="ts-sr-only">Organization region health, latency and database counts</caption>
+					<thead><tr><th>Region</th><th>Health</th><th class="ts-num">Latency</th><th class="ts-num">Databases</th></tr></thead>
+					<tbody>
+						for _,row:=range v.Rows {
+							<tr><th scope="row">{ row.Code }</th><td>@ui.Badge(replication.StatusTone(row.Status), row.Status)
+</td><td class="ts-num">{ row.Latency }</td><td class="ts-num">{ fmt.Sprint(row.Databases) }</td></tr>
+						}
+					</tbody>
+				</table>
+			</div>
+		}
+	}
+}

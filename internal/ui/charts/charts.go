@@ -4,14 +4,19 @@ package charts
 import (
 	"fmt"
 	"math"
+	"slices"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 )
 
 type Series struct {
 	Name   string
 	Values []int64
+	// Missing marks unavailable observations; their paths have gaps and their
+	// tooltips report unknown rather than drawing a fabricated zero.
+	Missing []bool
 }
 
 type AxisLine struct {
@@ -83,6 +88,31 @@ type LineData struct {
 	PlotBottom int
 }
 
+// TimeTicks keeps UTC axis labels short and avoids repeated labels when a
+// provider returns fewer than five buckets. Tooltips retain full timestamps.
+func TimeTicks(starts []time.Time, rangeKey string) []string {
+	ticks := make([]string, 5)
+	if len(starts) == 0 {
+		return ticks
+	}
+	seen := make(map[int]bool)
+	format := "15:04"
+	if rangeKey == "7d" || rangeKey == "30d" {
+		format = "Jan 2 15:04"
+	}
+	for step := range 5 {
+		index := int(math.Round(float64(step) * float64(len(starts)-1) / 4))
+		if len(starts) > 1 && index == len(starts)-1 && step != 4 {
+			continue
+		}
+		if !seen[index] {
+			ticks[step] = starts[index].UTC().Format(format)
+			seen[index] = true
+		}
+	}
+	return ticks
+}
+
 // NewLine draws zero-based values and returns an empty view for inconsistent
 // series lengths, so chart paths cannot silently shift relative to each other.
 // ticks label the five x-axis ticks; points, when given, name every sample in
@@ -98,13 +128,16 @@ func NewLine(label string, ticks, points []string, height int, series ...Series)
 	}
 	count := len(series[0].Values)
 	for _, item := range series {
-		if len(item.Values) != count {
+		if len(item.Values) != count || len(item.Missing) != 0 && len(item.Missing) != count {
 			return data
 		}
 	}
 	var maximum int64
 	for _, item := range series {
-		for _, value := range item.Values {
+		for i, value := range item.Values {
+			if len(item.Missing) > 0 && item.Missing[i] {
+				continue
+			}
 			maximum = max(maximum, value)
 		}
 	}
@@ -146,15 +179,28 @@ func NewLine(label string, ticks, points []string, height int, series ...Series)
 	xAt := func(i int) float64 { return left + float64(plotWidth)*float64(i)/float64(max(1, count-1)) }
 	yAt := func(value int64) float64 { return top + float64(plotHeight)*(1-float64(max(0, value))/float64(scale)) }
 	for index, item := range series {
-		points := make([][2]float64, count)
+		var segments []string
+		var points [][2]float64
 		for i, value := range item.Values {
-			points[i] = [2]float64{xAt(i), yAt(value)}
+			if len(item.Missing) > 0 && item.Missing[i] {
+				if len(points) > 0 {
+					segments = append(segments, smoothPath(points))
+					points = nil
+				}
+				continue
+			}
+			points = append(points, [2]float64{xAt(i), yAt(value)})
 		}
-		line := smoothPath(points)
-		class := fmt.Sprintf("ts-cat-%d", index+1)
+		if len(points) > 0 {
+			segments = append(segments, smoothPath(points))
+		}
+		line := strings.Join(segments, " ")
+		class := fmt.Sprintf("ts-cat-%d", index%3+1)
 		if len(series) == 1 {
 			class = "ts-chart-series-1"
-			data.AreaPath = fmt.Sprintf("%s L %d,%d L %d,%d Z", line, width-right, top+plotHeight, left, top+plotHeight)
+			if !slices.Contains(item.Missing, true) {
+				data.AreaPath = fmt.Sprintf("%s L %d,%d L %d,%d Z", line, width-right, top+plotHeight, left, top+plotHeight)
+			}
 		}
 		data.Paths = append(data.Paths, LinePath{Name: item.Name, Class: class, Data: line})
 	}
@@ -177,9 +223,15 @@ func NewLine(label string, ticks, points []string, height int, series ...Series)
 		values := make([]string, 0, len(series))
 		for index, item := range series {
 			row := ChartTipRow{Name: item.Name, Value: grouped(item.Values[i]), Class: data.Paths[index].Class}
+			missing := len(item.Missing) > 0 && item.Missing[i]
+			if missing {
+				row.Value = "Not reported"
+			}
 			rows = append(rows, row)
 			values = append(values, row.Name+" "+row.Value)
-			column.Dots = append(column.Dots, ChartDot{X: coordinate(x), Y: coordinate(yAt(item.Values[i])), Class: row.Class})
+			if !missing {
+				column.Dots = append(column.Dots, ChartDot{X: coordinate(x), Y: coordinate(yAt(item.Values[i])), Class: row.Class})
+			}
 		}
 		column.Label = strings.Join(values, ", ")
 		if header != "" {

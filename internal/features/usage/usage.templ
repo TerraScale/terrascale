@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"terrascale.tech/dashboard/internal/ui"
+	"terrascale.tech/dashboard/internal/features/replication"
 	"terrascale.tech/dashboard/internal/ui/aria"
 	"terrascale.tech/dashboard/internal/ui/charts"
 	"terrascale.tech/dashboard/internal/ui/icons"
@@ -36,7 +37,9 @@ templ usageView(data pageData, csrfToken string) {
 		}
 		switch data.Tab {
 			case "overview":
+				<p class="ts-meta ts-measurement-loading" role="status">Loading usage and replication…</p>
 				@overviewTab(data)
+				@replication.Section(data.Replication)
 			case "billing":
 				@billingTab(data, csrfToken)
 			default:
@@ -68,6 +71,7 @@ templ overviewFilters(data pageData) {
 		<label class="ts-filter-inline" for="usage-range">
 			<span class="ts-filter-inline-label">Period</span>
 			<select class="ts-select" id="usage-range" name="range">
+				<option value="1h" selected?={ data.HistoryRange == "1h" }>Last hour</option>
 				<option value="24h" selected?={ data.HistoryRange == "24h" }>Last 24 hours</option>
 				<option value="7d" selected?={ data.HistoryRange == "7d" }>Last 7 days</option>
 				<option value="30d" selected?={ data.HistoryRange == "30d" }>Last 30 days</option>

@@ -60,6 +60,7 @@ var parityRouteStates = []routeState{
 	{key: "profile", path: "/profile", heading: "Profile"},
 	{key: "subscriptions", path: "/subscriptions", heading: "Shared result configuration"},
 	{key: "usage", path: "/usage", heading: "Usage"},
+	{key: "analytics", path: "/analytics", heading: "Analytics"},
 	{key: "agent-approve", path: "/agent/approve", heading: "Approve agent access"},
 	{key: "cli-approve", path: "/cli/approve", heading: "Approve CLI access"},
 	{key: "login", path: "/login", heading: "Sign in", anonymous: true},

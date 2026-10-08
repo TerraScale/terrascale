@@ -18,6 +18,7 @@ import (
 	"terrascale.tech/dashboard/internal/core/memstore"
 	"terrascale.tech/dashboard/internal/features/access"
 	"terrascale.tech/dashboard/internal/features/admin"
+	"terrascale.tech/dashboard/internal/features/analytics"
 	"terrascale.tech/dashboard/internal/features/apikeys"
 	"terrascale.tech/dashboard/internal/features/audit"
 	"terrascale.tech/dashboard/internal/features/auth"
@@ -56,10 +57,23 @@ type Application struct {
 }
 
 func New(cfg config.Config) (*Application, error) {
+	return NewWithMetrics(cfg, nil, nil)
+}
+
+// NewWithMetrics supplies the typed ts-go metrics boundary. Test clients live
+// in tests; the in-memory demo never fabricates provider measurements.
+func NewWithMetrics(cfg config.Config, metrics core.MetricsReader, regionHealth core.RegionHealthReader) (*Application, error) {
 	if err := cfg.ValidateBackend(); err != nil {
 		return nil, err
 	}
 	ctx := context.Background()
+	if regionHealth == nil && cfg.RegionStatusURL != "" {
+		reader, err := tsgo.NewStatusRegions(cfg.RegionStatusURL)
+		if err != nil {
+			return nil, err
+		}
+		regionHealth = reader
+	}
 	var store core.Store
 	var sessionStore session.Store
 	var throttleStore throttle.Store
@@ -185,6 +199,7 @@ func New(cfg config.Config) (*Application, error) {
 		Store: store, Sessions: sessions, CSRF: guard, Render: renderer,
 		Events: datastar.Events{}, Demo: memoryDemo, Tools: core.NewTools(store),
 		SDK: sdkFactory, Management: management, Usage: meter, DocumentsOnly: db != nil && management == nil,
+		Metrics: metrics, RegionHealth: regionHealth,
 		Throttle: throttle.New(throttle.Options{ClientHeader: cfg.ClientIPHeader, Store: throttleStore}),
 		SignUpMail: throttle.New(throttle.Options{
 			ClientHeader: cfg.ClientIPHeader, Store: throttleStore, KeyPrefix: "signup-mail ",
@@ -211,6 +226,7 @@ func New(cfg config.Config) (*Application, error) {
 	organization.Mount(mux, deps)
 	access.Mount(mux, deps, billing)
 	home.Mount(mux, deps)
+	analytics.Mount(mux, deps)
 	databases.Mount(mux, deps)
 	apikeys.Mount(mux, deps)
 	data.Mount(mux, deps)

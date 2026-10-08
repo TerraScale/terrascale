@@ -91,3 +91,10 @@ templ meterTip(name, value string) {
 		<strong>{ value }</strong>
 	</span>
 }
+templ Legend(data LineData) {
+	<ul class="ts-chart-legend" aria-label="Chart series">
+		for _, path := range data.Paths {
+			<li class="ts-chart-legend-item"><span class={ "ts-chart-swatch " + path.Class } aria-hidden="true"></span>{ path.Name }</li>
+		}
+	</ul>
+}

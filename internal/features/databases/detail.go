@@ -11,6 +11,7 @@ import (
 	"github.com/a-h/templ"
 	"terrascale.tech/dashboard/internal/core"
 	"terrascale.tech/dashboard/internal/features/notfound"
+	"terrascale.tech/dashboard/internal/features/replication"
 )
 
 // detailTabs are the database detail tabs this slice renders; the data tabs
@@ -25,11 +26,12 @@ func mountDetail(mux *http.ServeMux, deps core.Deps) {
 }
 
 type detailData struct {
-	Database  core.Database
-	Tab       string
-	Info      detailInfo
-	Error     string
-	CanManage bool
+	Replication replication.View
+	Database    core.Database
+	Tab         string
+	Info        detailInfo
+	Error       string
+	CanManage   bool
 	// OpenDelete reopens the delete dialog after a refused delete.
 	OpenDelete bool
 	// Refill holds the input of a refused backup form.
@@ -82,6 +84,7 @@ func renderDetail(w http.ResponseWriter, r *http.Request, deps core.Deps, tab st
 	}
 	// Only the overview shows the counts and the placement form.
 	if tab == "overview" {
+		data.Replication = replication.Load(r.Context(), deps, p, project.ID, db.ID, r.URL.Query().Get("range"))
 		data.Info = data.Info.withContents(r.Context(), deps, p, project, db)
 		if canManage {
 			data.Choices, data.RegionsError = regionChoices(r.Context(), deps)
@@ -217,7 +220,7 @@ func replicationDisplay(codes []string) string {
 	case 1:
 		return "Single region · " + strings.ToUpper(codes[0]) + " only"
 	default:
-		return "Replicated across " + strings.ToUpper(strings.Join(codes, ", ")) + " · lag not reported"
+		return "Replicated across " + strings.ToUpper(strings.Join(codes, ", "))
 	}
 }
 
