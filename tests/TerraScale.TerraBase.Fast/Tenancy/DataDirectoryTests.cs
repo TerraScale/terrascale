@@ -484,8 +484,26 @@ public sealed class DataDirectoryTests
     }
 
     [Test]
+    public async Task An_unclean_start_carries_the_epoch_past_its_low_byte()
+    {
+        var dataDirectory = Directory.CreateTempSubdirectory("terrabase-replica-").FullName;
+        try
+        {
+            var (member, _) = await ReplicaAsync(dataDirectory);
+            var identity = await File.ReadAllBytesAsync(Path.Combine(dataDirectory, ReplicaFileName));
+            await WriteReplicaAsync(dataDirectory, 1, identity.AsSpan(1, 4).ToArray(), [0xff, 0x00], running: true);
+            await Assert.That(await ReplicaAsync(dataDirectory)).IsEqualTo((member, 256d));
+        }
+        finally
+        {
+            Directory.Delete(dataDirectory, recursive: true);
+        }
+    }
+
+    [Test]
     [Arguments("empty")]
-    [Arguments("torn")]
+    [Arguments("a partial first write")]
+    [Arguments("a torn epoch")]
     public async Task A_replica_identity_a_crash_left_unfinished_is_a_new_member(string damage)
     {
         var dataDirectory = Directory.CreateTempSubdirectory("terrabase-replica-").FullName;
@@ -494,18 +512,25 @@ public sealed class DataDirectoryTests
             var (member, _) = await ReplicaAsync(dataDirectory);
             var path = Path.Combine(dataDirectory, ReplicaFileName);
             var identity = await File.ReadAllBytesAsync(path);
-            if (damage == "empty")
+            switch (damage)
             {
-                // Killed between creating the file and writing it: nothing could have minted under it.
-                await File.WriteAllBytesAsync(path, []);
-            }
-            else
-            {
-                // A write torn by a power loss: epoch 0x00ff to 0x0100 reached disk as 0x0000, still marked running.
-                identity[5] = 0;
-                identity[6] = 0;
-                identity[7] = 0;
-                await File.WriteAllBytesAsync(path, identity);
+                case "empty":
+                    // Killed between creating the file and writing it: nothing could have minted under it.
+                    await File.WriteAllBytesAsync(path, []);
+                    break;
+                case "a partial first write":
+                    // Killed while the new file grew: only the format byte and part of the member reached disk.
+                    await File.WriteAllBytesAsync(path, identity[..3]);
+                    break;
+                default:
+                    // A running record at epoch 0x0100 whose rewrite to 0x0101 a power loss tore: the epoch reads 0x0000
+                    // under the old checksum. Trusted, it would restart at epoch 1, which may have minted dots.
+                    await WriteReplicaAsync(dataDirectory, 1, identity.AsSpan(1, 4).ToArray(), [0x00, 0x01], running: true);
+                    identity = await File.ReadAllBytesAsync(path);
+                    identity[5] = 0;
+                    identity[6] = 0;
+                    await File.WriteAllBytesAsync(path, identity);
+                    break;
             }
 
             var (renumbered, epoch) = await ReplicaAsync(dataDirectory);
@@ -523,7 +548,8 @@ public sealed class DataDirectoryTests
     [Arguments("an unknown format")]
     [Arguments("an unknown state")]
     [Arguments("member zero")]
-    [Arguments("a shorter record")]
+    [Arguments("a short record of another format")]
+    [Arguments("a longer record")]
     public async Task A_replica_identity_this_build_cannot_read_stops_the_start(string problem)
     {
         var dataDirectory = Directory.CreateTempSubdirectory("terrabase-replica-").FullName;
@@ -542,8 +568,11 @@ public sealed class DataDirectoryTests
                 case "member zero":
                     await WriteReplicaAsync(dataDirectory, 1, [0, 0, 0, 0], [0, 0], running: false);
                     break;
+                case "a short record of another format":
+                    await File.WriteAllBytesAsync(path, [2, 1, 0]);
+                    break;
                 default:
-                    await File.WriteAllBytesAsync(path, (await File.ReadAllBytesAsync(path))[..8]);
+                    await File.WriteAllBytesAsync(path, [.. await File.ReadAllBytesAsync(path), 0]);
                     break;
             }
 

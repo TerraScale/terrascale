@@ -35,9 +35,10 @@ internal static class ReplicaIdentityFile
         RefuseLink(path);
         var id = New();
 
-        // Empty: a first start died between creating the file and writing it. A record that fails its checksum: a write
-        // was torn by a crash. Either way nothing it says can be trusted, and a new member number reuses no dot.
-        if (File.Exists(path) && File.ReadAllBytes(path) is { Length: > 0 } bytes)
+        // Empty or a short record of this format: a first start died while creating the file, which grows as it is written.
+        // A record that fails its checksum: a write was torn by a crash. Either way nothing it says can be trusted, and a
+        // new member number reuses no dot. Anything else this build cannot read stops the start.
+        if (File.Exists(path) && File.ReadAllBytes(path) is { Length: > 0 } bytes && !(bytes.Length < Length && bytes[0] == Format))
         {
             if (bytes.Length != Length)
             {
