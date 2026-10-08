@@ -1,5 +1,5 @@
+import { generateId } from "./ids.js";
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
 import { test } from "vitest";
 import { createTerraScaleSqliteRuntime } from "./local/index.js";
 import {
@@ -13,7 +13,7 @@ test.skipIf(!localSqliteUnitTestsAllowed)(
   async () => {
     const fixture = await localFixture();
     try {
-      const document = randomUUID();
+      const document = generateId();
       const fields = [
         { id: 1, value: { type: /** @type {const} */ ("i64"), value: -(1n << 63n) } },
         {
@@ -69,14 +69,14 @@ test.skipIf(!localSqliteUnitTestsAllowed)(
   async () => {
     const fixture = await localFixture();
     try {
-      const first = randomUUID();
+      const first = generateId();
       const fields = [{ id: 1, value: { type: /** @type {const} */ ("bool"), value: true } }];
       const initial = await fixture.client.commit(
         await fixture.client.prepareCommit(fixture.commit(first, fields)),
       );
       assert.ok(initial.ok);
       const failed = fixture.commit(first, fields);
-      const other = randomUUID();
+      const other = generateId();
       const extra = /** @type {DatabaseWrite} */ (fixture.commit(other, fields).writes[0]);
       const prepared = await fixture.client.prepareCommit({
         ...failed,
@@ -130,7 +130,7 @@ test.skipIf(!localSqliteUnitTestsAllowed)(
   async () => {
     const fixture = await localFixture();
     try {
-      const document = randomUUID();
+      const document = generateId();
       assert.ok(
         (
           await fixture.client.commit(

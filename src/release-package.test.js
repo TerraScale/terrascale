@@ -45,7 +45,7 @@ test("packed SDK independently installs its project-scoped JavaScript and declar
 
 const installedCaller = `import { createTerraBaseClient, createTerraBaseV1Client, TerraBaseV1Client, ExactDecimal } from "@terrascale/sdk";
 const token = "eyJ0eXAiOiJhdCtqd3QifQ.eyJwcm9qZWN0X2lkIjoicHJvamVjdCJ9.c2lnbmF0dXJl";
-const client = createTerraBaseClient({ project: "project", baseUrl: "http://127.0.0.1:18447", token });
+const client = createTerraBaseClient({ project: "01ARZ3NDEKTSV4RRFFQ69G5FA1", baseUrl: "http://127.0.0.1:18447", token });
 if (!(client instanceof TerraBaseV1Client) || createTerraBaseClient !== createTerraBaseV1Client) throw new Error("Multiple client implementations.");
 const collection = client.database("main").collection("users");
 for (const name of ["get", "put", "create", "patch", "delete", "query"] as const) if (typeof collection[name] !== "function") throw new Error(name);

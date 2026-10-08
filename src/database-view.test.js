@@ -1,5 +1,6 @@
+import { generateId } from "./ids.js";
 import assert from "node:assert/strict";
-import { randomBytes, randomUUID } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import { describe, test } from "vitest";
 import { createTerraBaseClient } from "./local/legacy-client.js";
 import { createDatabaseQuery, DatabaseSubscriptionView } from "./database-view.js";
@@ -9,20 +10,20 @@ const nativeTestKey = `tbk1.${"A".repeat(22)}.${"A".repeat(43)}`;
 /** @returns {Promise<Response>} */
 const unavailableDiscovery = async () => { throw new Error("Discovery transport is disabled in this lifecycle test."); };
 /** @type {(tail: number) => string} */
-const uuid = tail => `00000000-0000-4000-8000-${tail.toString(16).padStart(12, "0")}`;
-const scope = { tenant: uuid(1), database: uuid(2), shard: 9n };
-const collection = uuid(3);
+const entityId = tail => String(tail).padStart(26, "0");
+const scope = { tenant: entityId(1), database: entityId(2), shard: 9n };
+const collection = entityId(3);
 /** @type {DatabaseQueryPredicate} */
 const predicate = { op: "equal", path: [1], value: { type: "utf8", value: "match" } };
-const event = (sequence = 1n, replica = uuid(4)) => ({ database: scope.database, shard: scope.shard, replica, incarnation: "11".repeat(16), sequence });
+const event = (sequence = 1n, replica = entityId(4)) => ({ database: scope.database, shard: scope.shard, replica, incarnation: "11".repeat(16), sequence });
 /** @type {(value?: DatabaseValue) => DatabasePoint} */
 const point = (value = { type: "utf8", value: "match" }) => ({
   version: 1, state: "value", state_version: "22".repeat(32),
-  context: [{ replica: uuid(4), incarnation: "11".repeat(16), sequence: 1n }],
+  context: [{ replica: entityId(4), incarnation: "11".repeat(16), sequence: 1n }],
   siblings: [{ schema_generation: 1n, schema_digest: "33".repeat(32), event: event(), kind: "live", fields: [{ id: 1, value }] }],
 });
 /** @type {(id: number, value?: DatabaseValue) => DatabaseQueryRow} */
-const row = (id, value) => ({ document: uuid(id), point: point(value) });
+const row = (id, value) => ({ document: entityId(id), point: point(value) });
 /** @type {(maximumRows?: number) => DatabaseSubscriptionView} */
 const view = (maximumRows = 10_000) => new DatabaseSubscriptionView(scope, { collection, predicate, limit: 2, maximumRows });
 
@@ -43,7 +44,7 @@ describe("native database view reducer", () => {
     assert.equal(state.getSnapshot(), undefined);
     assert.deepEqual(state.getRequest(), { phase: "snapshot", predicate, limit: 2, snapshot_cursor: "snapshot-page-2" });
     const complete = defined(state.apply({ version: 1, phase: "snapshot", rows: [row(20)], poll_cursor: "poll-cut-1" }));
-    assert.deepEqual(complete.rows.map(value => value.document), [uuid(10), uuid(20)]);
+    assert.deepEqual(complete.rows.map(value => value.document), [entityId(10), entityId(20)]);
     assert.equal(complete.position.poll_cursor, "poll-cut-1");
     assert.deepEqual(state.getRequest(), { phase: "poll", predicate, poll_cursor: "poll-cut-1" });
   });
@@ -52,11 +53,11 @@ describe("native database view reducer", () => {
     const state = view();
     const first = defined(state.apply({ version: 1, phase: "snapshot", rows: [row(10), row(20)], poll_cursor: "cut-1" }));
     const next = defined(state.apply({ version: 1, phase: "poll", poll_cursor: "cut-3", groups: [
-      { sequence: 2n, effects: [{ document: uuid(10), point: point({ type: "i64", value: -9_223_372_036_854_775_808n }) }, { document: uuid(20), point: null }] },
-      { sequence: 3n, effects: [{ document: uuid(30), point: point() }] },
+      { sequence: 2n, effects: [{ document: entityId(10), point: point({ type: "i64", value: -9_223_372_036_854_775_808n }) }, { document: entityId(20), point: null }] },
+      { sequence: 3n, effects: [{ document: entityId(30), point: point() }] },
     ] }));
-    assert.deepEqual(first.rows.map(value => value.document), [uuid(10), uuid(20)]);
-    assert.deepEqual(next.rows.map(value => value.document), [uuid(10), uuid(30)]);
+    assert.deepEqual(first.rows.map(value => value.document), [entityId(10), entityId(20)]);
+    assert.deepEqual(next.rows.map(value => value.document), [entityId(10), entityId(30)]);
     assert.equal(next.position.sequence, 3n);
     assert.equal(next.position.poll_cursor, "cut-3");
     const sibling = defined(defined(next.rows[0]).point.siblings[0]);
@@ -81,7 +82,7 @@ describe("native database view reducer", () => {
     const state = view();
     const first = defined(state.apply({ version: 1, phase: "snapshot", rows: [row(10)], poll_cursor: "old" }));
     assert.throws(() => state.apply({ version: 1, phase: "poll", poll_cursor: "invalid", groups: [
-      { sequence: 2n, effects: [{ document: uuid(10), point: null }] },
+      { sequence: 2n, effects: [{ document: entityId(10), point: null }] },
       { sequence: 1n, effects: [] },
     ] }), /group_order_invalid/u);
     assert.equal(state.getSnapshot(), first);
@@ -94,11 +95,11 @@ describe("native database view reducer", () => {
     /** @type {DatabasePoint} */
     const conflict = {
       ...point(), state: "conflict", state_version: null,
-      context: [...point().context, { replica: uuid(5), incarnation: "44".repeat(16), sequence: 7n }],
-      siblings: [...point().siblings, { schema_generation: 1n, schema_digest: "33".repeat(32), event: { ...event(7n, uuid(5)), incarnation: "44".repeat(16) }, kind: "tombstone" }],
+      context: [...point().context, { replica: entityId(5), incarnation: "44".repeat(16), sequence: 7n }],
+      siblings: [...point().siblings, { schema_generation: 1n, schema_digest: "33".repeat(32), event: { ...event(7n, entityId(5)), incarnation: "44".repeat(16) }, kind: "tombstone" }],
     };
     const state = view();
-    const cut = defined(state.apply({ version: 1, phase: "snapshot", rows: [{ document: uuid(10), point: conflict }, row(20, { type: "map", fields: [{ id: 8, value: { type: "null" } }] })], poll_cursor: "conflicts" }));
+    const cut = defined(state.apply({ version: 1, phase: "snapshot", rows: [{ document: entityId(10), point: conflict }, row(20, { type: "map", fields: [{ id: 8, value: { type: "null" } }] })], poll_cursor: "conflicts" }));
     assert.deepEqual(defined(cut.rows[0]).point, conflict);
     assert.equal(defined(cut.rows[0]).point.siblings.length, 2);
     assert.equal(defined(defined(cut.rows[0]).point.context[1]).sequence, 7n);
@@ -106,7 +107,7 @@ describe("native database view reducer", () => {
     const absent = { version: 1, state: "absent", state_version: null, context: [], siblings: [] };
     /** @type {DatabasePoint} */
     const deleted = { ...point(), state: "deleted", siblings: [{ schema_generation: 1n, schema_digest: "33".repeat(32), event: event(), kind: "tombstone" }] };
-    const changed = defined(state.apply({ version: 1, phase: "poll", groups: [{ sequence: 8n, effects: [{ document: uuid(10), point: absent }, { document: uuid(20), point: deleted }] }], poll_cursor: "states" }));
+    const changed = defined(state.apply({ version: 1, phase: "poll", groups: [{ sequence: 8n, effects: [{ document: entityId(10), point: absent }, { document: entityId(20), point: deleted }] }], poll_cursor: "states" }));
     assert.deepEqual(changed.rows.map(value => value.point.state), ["absent", "deleted"]);
   });
 
@@ -133,17 +134,17 @@ describe("native database view reducer", () => {
     const path = [1];
     const mutableScope = { ...scope };
     const state = new DatabaseSubscriptionView(mutableScope, { collection, predicate: { op: "equal", path, value: { type: "bytes", value: bytes } } });
-    mutableScope.database = uuid(99);
+    mutableScope.database = entityId(99);
     bytes[0] = 9;
     path[0] = 9;
     const captured = state.binding.predicate;
     assert.equal(state.binding.scope.database, scope.database);
     assert.deepEqual(captured.path, [1]);
     if (captured.op === "equal" && captured.value.type === "bytes") assert.deepEqual([...captured.value.value], [1]);
-    assert.throws(() => state.apply({ version: 1, phase: "snapshot", rows: [{ document: uuid(10), point: { ...point(), siblings: point().siblings.map(sibling => ({ ...sibling, event: { ...sibling.event, database: uuid(99) } })) } }], poll_cursor: "wrong-scope" }), /scope_mismatch/u);
+    assert.throws(() => state.apply({ version: 1, phase: "snapshot", rows: [{ document: entityId(10), point: { ...point(), siblings: point().siblings.map(sibling => ({ ...sibling, event: { ...sibling.event, database: entityId(99) } })) } }], poll_cursor: "wrong-scope" }), /scope_mismatch/u);
     const client = createTerraBaseClient({ ...scope, apiKey: nativeTestKey, fetch: unavailableDiscovery });
     const first = createDatabaseQuery(client, { collection, predicate });
-    const otherCollection = createDatabaseQuery(client, { collection: uuid(99), predicate });
+    const otherCollection = createDatabaseQuery(client, { collection: entityId(99), predicate });
     assert.notDeepEqual(first.key, otherCollection.key);
   });
 
@@ -153,7 +154,7 @@ describe("native database view reducer", () => {
     state.restart();
     assert.deepEqual(state.getRequest(), { phase: "snapshot", predicate, limit: 2 });
     const cut = defined(state.apply({ version: 1, phase: "snapshot", rows: [row(20)], poll_cursor: "fresh" }));
-    assert.deepEqual(cut.rows.map(value => value.document), [uuid(20)]);
+    assert.deepEqual(cut.rows.map(value => value.document), [entityId(20)]);
     state.restart();
     const fresh = defined(state.apply({ version: 1, phase: "snapshot", rows: [], poll_cursor: "fresh-2" }));
     assert.equal(fresh.position.generation, cut.position.generation + 1);
@@ -199,7 +200,7 @@ test.skipIf(!liveConfigured)("native view observes a real admitted producer writ
   const env = process.env;
   const client = createTerraBaseClient({ tenant: defined(env.TERRABASE_TENANT), database: defined(env.TERRABASE_DATABASE), shard: BigInt(defined(env.TERRABASE_SHARD)), endpoint: defined(env.TERRABASE_ENDPOINT), apiKey: defined(env.TERRABASE_API_KEY) });
   const liveCollection = defined(env.TERRABASE_COLLECTION);
-  const document = randomUUID();
+  const document = generateId();
   const field = Number(env.TERRABASE_TEST_FIELD_ID);
   /** @type {DatabaseValue} */
   const value = env.TERRABASE_TEST_FIELD_TYPE === "i64" ? { type: "i64", value: BigInt(Date.now()) } : { type: "utf8", value: `native-view-${document}` };

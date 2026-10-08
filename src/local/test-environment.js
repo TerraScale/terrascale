@@ -1,3 +1,4 @@
+import { generateId } from "../ids.js";
 import { assertLocalSqliteEnvironment } from "./environment.js";
 /** Local development tests never relax CI/deployment/qualification guards. */
 export const localSqliteUnitTestsAllowed = (() => {
@@ -11,7 +12,7 @@ export const localSqliteUnitTestsAllowed = (() => {
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { randomBytes, randomUUID } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import { createTerraScaleSqliteRuntime } from "./index.js";
 /** @import { TerraScaleSqliteRuntimeOptions } from "./index.js" */
 /** @import { DatabaseCommit, DatabaseField, DatabasePoint } from "../database-types.js" */
@@ -25,7 +26,7 @@ export async function localFixture(options = {}) {
     ...options,
     sqlite: { enabled: true, databasePath },
   });
-  const collection = randomUUID();
+  const collection = generateId();
   const binding = {
     collection,
     schema_generation: 1n,

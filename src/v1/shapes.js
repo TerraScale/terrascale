@@ -1,7 +1,7 @@
 // Current C# GET collection/shape contract (docs/shape-reads.md).
-import { array, boolean, malformed, object, string, u64 } from "./decode.js";
+import { array, boolean, documentObject, malformed, object, string, u64 } from "./decode.js";
 import { requireFilter } from "./filter.js";
-import { parseU64, requireVersion } from "./ids.js";
+import { parseU64, requireDocumentId, requireVersion } from "./ids.js";
 import { stringifyExactJson } from "./json.js";
 /**
  * @import { JsonObject, JsonValue } from "./json.js"
@@ -16,7 +16,7 @@ import { stringifyExactJson } from "./json.js";
  * @property {boolean | undefined} [live] True only for log positions; waits up to 20 seconds.
  * @property {string | undefined} [cursor] Previous live response's TB-Shape-Cursor.
  */
-/** @typedef {{ readonly op: "upsert"; readonly id: string; readonly version: string; readonly document: JsonObject } | { readonly op: "delete"; readonly id: string }} V1ShapeOp */
+/** @typedef {{ readonly op: "upsert"; readonly id: import("../ids.js").EntityId; readonly version: string; readonly document: JsonObject } | { readonly op: "delete"; readonly id: import("../ids.js").EntityId }} V1ShapeOp */
 /** @typedef {{ readonly offset: string; readonly ops: readonly V1ShapeOp[] }} V1ShapeChange */
 /**
  * One snapshot page or log chunk. Only a fresh open tail/live response can report upToDate.
@@ -53,7 +53,7 @@ export function requireShapeOffset(value) {
       const bytes = Uint8Array.from(atob(encoded.replace(/-/gu, "+").replace(/_/gu, "/")), c => c.charCodeAt(0));
       const id = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
       const canonical = btoa(String.fromCharCode(...new TextEncoder().encode(id))).replace(/\+/gu, "-").replace(/\//gu, "_").replace(/=+$/u, "");
-      if (canonical === encoded) return value;
+      if (canonical === encoded) { requireDocumentId(id); return value; }
     } catch { /* Invalid base64url or UTF-8. */ }
   }
   throw new TypeError("A shape offset is -1, a signed-64-bit decimal log position, or snap.<head>.<canonical-base64url-id>.");
@@ -102,11 +102,10 @@ export function decodeShapePage(value, headers) {
       const change = object(value, "shape change");
       return Object.freeze({ offset: u64(change.offset, "shape change offset"), ops: Object.freeze(array(change.ops, "shape operations").map(value => {
         const op = object(value, "shape operation");
-        // Shape snapshots can include stored legacy ids beyond the HTTP point-id limit.
-        const id = string(op.id, "shape document id");
+        const id = requireDocumentId(op.id);
         if (op.op === "delete") return Object.freeze({ op: /** @type {const} */ ("delete"), id });
         if (op.op !== "upsert") malformed("shape operation kind");
-        return Object.freeze({ op: /** @type {const} */ ("upsert"), id, version: requireVersion(op.version), document: object(op.document, "shape document") });
+        return Object.freeze({ op: /** @type {const} */ ("upsert"), id, version: requireVersion(op.version), document: documentObject(op.document) });
       })) });
     })),
   });

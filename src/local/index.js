@@ -1,5 +1,5 @@
+import { generateId } from "../ids.js";
 import { isAbsolute } from "node:path";
-import { randomUUID } from "node:crypto";
 import { createTerraBaseClient } from "./legacy-client.js";
 import { normalizeLocalBearerToken } from "./authentication.js";
 import { assertLocalSqliteEnvironment } from "./environment.js";
@@ -86,7 +86,7 @@ export class TerraScaleSqliteRuntime {
       const scope =
         options.scope ??
         (stored === undefined
-          ? { tenant: randomUUID(), database: randomUUID(), shard: 0n }
+          ? { tenant: generateId(), database: generateId(), shard: 0n }
           : { ...stored, shard: BigInt(stored.shard) });
       this.#router = new TerraScaleLocalRouter(this.#store, scope, {
         authentication,

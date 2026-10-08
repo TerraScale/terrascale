@@ -14,7 +14,7 @@ import {
 } from "./ts-auth.js";
 
 const baseUser = {
-  id: "usr_1",
+  id: "01ARZ3NDEKTSV4RRFFQ6000004",
   email: "ada@acme.test",
   email_verified: true,
   username: "ada",
@@ -85,18 +85,16 @@ function sign(secret, timestamp, payload) {
 }
 
 describe("ts-auth client edge cases: A. response-decode edges", () => {
-  test("A1 user JSON without id still decodes; the id is undefined, never a silent null use", async () => {
+  test("A1 user JSON without an entity ID is rejected", async () => {
     /** @type {Request[]} */
     const requests = [];
     const tsAuth = tsAuthClient(
       () => json({ email: "ada@acme.test" }),
       requests,
     );
-    const missing = await tsAuth.users.get("usr_1");
-    // pins current behavior: the TS layer decodes structurally (JSON only);
-    // required-field validation is compile-time, so no invalid-response error.
-    assert.equal(missing.ok, true);
-    if (missing.ok) assert.equal(missing.value.id, undefined);
+    const missing = await tsAuth.users.get("01ARZ3NDEKTSV4RRFFQ6000004");
+    assert.equal(missing.ok, false);
+    if (!missing.ok) assert.equal(missing.error.kind, "invalid-response");
   });
 
   test("A2 present-null and absent optional fields deserialize to null and undefined", async () => {
@@ -106,18 +104,18 @@ describe("ts-auth client edge cases: A. response-decode edges", () => {
       (_request, index) =>
         json(
           index === 0
-            ? { ...user("usr_1"), ban_reason: null, last_sign_in_at: null }
-            : user("usr_1"),
+            ? { ...user("01ARZ3NDEKTSV4RRFFQ6000004"), ban_reason: null, last_sign_in_at: null }
+            : user("01ARZ3NDEKTSV4RRFFQ6000004"),
         ),
       requests,
     );
-    const presentNull = await tsAuth.users.get("usr_1");
+    const presentNull = await tsAuth.users.get("01ARZ3NDEKTSV4RRFFQ6000004");
     assert.equal(presentNull.ok, true);
     if (presentNull.ok) {
       assert.equal(presentNull.value.ban_reason, null);
       assert.equal(presentNull.value.last_sign_in_at, null);
     }
-    const absent = await tsAuth.users.get("usr_1");
+    const absent = await tsAuth.users.get("01ARZ3NDEKTSV4RRFFQ6000004");
     assert.equal(absent.ok, true);
     if (absent.ok) {
       assert.equal(absent.value.ban_reason, undefined);
@@ -129,13 +127,13 @@ describe("ts-auth client edge cases: A. response-decode edges", () => {
     /** @type {Request[]} */
     const requests = [];
     const tsAuth = tsAuthClient(
-      () => json({ ...user("usr_1"), future_field: { x: 1 } }),
+      () => json({ ...user("01ARZ3NDEKTSV4RRFFQ6000004"), future_field: { x: 1 } }),
       requests,
     );
-    const decoded = await tsAuth.users.get("usr_1");
+    const decoded = await tsAuth.users.get("01ARZ3NDEKTSV4RRFFQ6000004");
     assert.equal(decoded.ok, true);
     if (decoded.ok) {
-      assert.equal(decoded.value.id, "usr_1");
+      assert.equal(decoded.value.id, "01ARZ3NDEKTSV4RRFFQ6000004");
       // pins current behavior: unknown fields pass through verbatim (no stripping).
       assert.deepEqual(
         /** @type {Record<string, unknown>} */ (decoded.value).future_field,
@@ -148,10 +146,10 @@ describe("ts-auth client edge cases: A. response-decode edges", () => {
     /** @type {Request[]} */
     const requests = [];
     const tsAuth = tsAuthClient(
-      () => json({ ...user("usr_1"), email_verified: "yes", banned: 1 }),
+      () => json({ ...user("01ARZ3NDEKTSV4RRFFQ6000004"), email_verified: "yes", banned: 1 }),
       requests,
     );
-    const decoded = await tsAuth.users.get("usr_1");
+    const decoded = await tsAuth.users.get("01ARZ3NDEKTSV4RRFFQ6000004");
     // pins current behavior: no runtime type checking of response fields.
     assert.equal(decoded.ok, true);
     if (decoded.ok) {
@@ -192,7 +190,7 @@ describe("ts-auth client edge cases: A. response-decode edges", () => {
       () => new Response(null, { status: 200 }),
       requests,
     );
-    const got = await tsAuth.users.get("usr_1");
+    const got = await tsAuth.users.get("01ARZ3NDEKTSV4RRFFQ6000004");
     assert.equal(got.ok, false);
     if (!got.ok) {
       assert.equal(got.status, 200);
@@ -216,7 +214,7 @@ describe("ts-auth client edge cases: A. response-decode edges", () => {
         }),
       requests,
     );
-    const got = await tsAuth.users.get("usr_1");
+    const got = await tsAuth.users.get("01ARZ3NDEKTSV4RRFFQ6000004");
     assert.equal(got.ok, false);
     if (!got.ok) {
       assert.equal(got.status, 200);
@@ -235,12 +233,12 @@ describe("ts-auth client edge cases: A. response-decode edges", () => {
     const tsAuth = tsAuthClient((request) => {
       const path = new URL(request.url).pathname;
       if (path === "/v1/acme/users")
-        return json([user("usr_1"), user("usr_2")]);
+        return json([user("01ARZ3NDEKTSV4RRFFQ6000004"), user("01ARZ3NDEKTSV4RRFFQ6000006")]);
       if (path === "/v1/acme/organizations") {
         return json({
           data: [
             {
-              id: "org_1",
+              id: "01ARZ3NDEKTSV4RRFFQ6000002",
               name: "Acme",
               slug: "acme",
               created_at: 1_788_220_800,
@@ -290,7 +288,7 @@ describe("ts-auth client edge cases: A. response-decode edges", () => {
 
   test("A10 a 100-user page (~70 KB) decodes with every id verified", async () => {
     const page = Array.from({ length: 100 }, (_, index) =>
-      user(`usr_${String(index + 1).padStart(3, "0")}`, {
+      user(`01ARZ3NDEKTSV4RRFFQ6${String(index + 1).padStart(6, "0")}`, {
         email: `user${index}@acme.test`,
         name: `User ${index}`,
         public_metadata: { tier: "pro", notes: "n".repeat(450) },
@@ -304,8 +302,8 @@ describe("ts-auth client edge cases: A. response-decode edges", () => {
     assert.equal(listed.ok, true);
     if (listed.ok) {
       assert.equal(listed.value.data.length, 100);
-      assert.equal(listed.value.data[0]?.id, "usr_001");
-      assert.equal(listed.value.data[99]?.id, "usr_100");
+      assert.equal(listed.value.data[0]?.id, "01ARZ3NDEKTSV4RRFFQ6000001");
+      assert.equal(listed.value.data[99]?.id, "01ARZ3NDEKTSV4RRFFQ6000100");
       assert.equal(
         new Set(listed.value.data.map((entry) => entry.id)).size,
         100,
@@ -318,17 +316,17 @@ describe("ts-auth client edge cases: A. response-decode edges", () => {
     /** @type {Request[]} */
     const requests = [];
     const tsAuth = tsAuthClient(
-      () => json(user("usr_1", { name: unicodeName })),
+      () => json(user("01ARZ3NDEKTSV4RRFFQ6000004", { name: unicodeName })),
       requests,
     );
 
-    const got = await tsAuth.users.get("usr_1");
+    const got = await tsAuth.users.get("01ARZ3NDEKTSV4RRFFQ6000004");
     assert.equal(got.ok, true);
     if (got.ok) assert.equal(got.value.name, unicodeName);
 
     const expectedBytes = `{"name":${JSON.stringify(unicodeName)}}`;
     const updated = await tsAuth.users.update(
-      "usr_1",
+      "01ARZ3NDEKTSV4RRFFQ6000004",
       new TsAuthUserPatch().withName(unicodeName),
     );
     assert.equal(updated.ok, true);
@@ -381,7 +379,7 @@ describe("ts-auth client edge cases: B. status-code and error-mapping edges", ()
         ),
       requests,
     );
-    const got = await tsAuth.users.get("usr_1");
+    const got = await tsAuth.users.get("01ARZ3NDEKTSV4RRFFQ6000004");
     assert.equal(got.ok, false);
     if (!got.ok) {
       assert.equal(got.error.kind, "authorization");
@@ -404,7 +402,7 @@ describe("ts-auth client edge cases: B. status-code and error-mapping edges", ()
       requests,
     );
     for (const code of ["user_not_found", "not_found"]) {
-      const got = await tsAuth.users.get("usr_missing");
+      const got = await tsAuth.users.get("01ARZ3NDEKTSV4RRFFQ6000010");
       assert.equal(got.ok, false);
       if (!got.ok) {
         assert.equal(got.error.kind, "not-found");
@@ -522,7 +520,7 @@ describe("ts-auth client edge cases: B. status-code and error-mapping edges", ()
         ),
       requests,
     );
-    const token = await tsAuth.oidc.token("clt_1", "cs_wrong", {
+    const token = await tsAuth.oidc.token("01ARZ3NDEKTSV4RRFFQ6000002", "cs_wrong", {
       grant_type: "client_credentials",
       resource: "https://api.example.test/management",
       scope: "management:read",
@@ -543,7 +541,7 @@ describe("ts-auth client edge cases: B. status-code and error-mapping edges", ()
       () => json({ error: "invalid_grant" }, 401),
       requests,
     );
-    const token = await tsAuth.oidc.token("clt_1", "cs_1", {
+    const token = await tsAuth.oidc.token("01ARZ3NDEKTSV4RRFFQ6000002", "cs_1", {
       grant_type: "refresh_token",
       refresh_token: "rt_old",
     });
@@ -564,7 +562,7 @@ describe("ts-auth client edge cases: B. status-code and error-mapping edges", ()
       () => json({ error: { code: null, message: null } }, 400),
       requests,
     );
-    const got = await tsAuth.users.get("usr_1");
+    const got = await tsAuth.users.get("01ARZ3NDEKTSV4RRFFQ6000004");
     assert.equal(got.ok, false);
     if (!got.ok) {
       assert.equal(got.error.kind, "domain");
@@ -594,7 +592,7 @@ describe("ts-auth client edge cases: B. status-code and error-mapping edges", ()
     /** @type {Request[]} */
     const requests = [];
     const tsAuth = tsAuthClient(() => json({ deleted: true }, 200), requests);
-    const deleted = await tsAuth.users.delete("usr_1");
+    const deleted = await tsAuth.users.delete("01ARZ3NDEKTSV4RRFFQ6000004");
     // pins current behavior: any 2xx (with or without a body) is a success.
     assert.equal(deleted.ok, true);
     if (deleted.ok) assert.equal(deleted.status, 200);
@@ -602,33 +600,15 @@ describe("ts-auth client edge cases: B. status-code and error-mapping edges", ()
 });
 
 describe("ts-auth client edge cases: C. request-construction edges", () => {
-  test("C23 path segments percent-encode / ? # % & + space and unicode exactly", async () => {
+  test("C23 non-ULID paths reject punctuation, Unicode and dot segments before HTTP", () => {
     /** @type {Request[]} */
     const requests = [];
-    const tsAuth = tsAuthClient(() => json(user("x")), requests);
-    await tsAuth.users.get("a/b?c#d%e&f+g 中");
-    assert.equal(requests.length, 1);
-    assert.equal(
-      new URL(/** @type {Request} */ (requests[0]).url).pathname,
-      "/v1/acme/users/a%2Fb%3Fc%23d%25e%26f%2Bg%20%E4%B8%AD",
-    );
-  });
-
-  test("C23 bare dot-segment ids are rejected preflight; embedded slashes are inert once encoded", async () => {
-    /** @type {Request[]} */
-    const requests = [];
-    const tsAuth = tsAuthClient(() => json(user("x")), requests);
-    for (const id of [".", ".."]) {
-      assert.throws(() => tsAuth.users.get(id), /user id/u, id);
-      assert.throws(() => tsAuth.users.delete(id), /user id/u, id);
+    const tsAuth = tsAuthClient(() => json({}), requests);
+    for (const id of [".", "..", "a/..", "a/b?c#d%e&f+g 中", "usr_1", "01arz3ndektsv4rrffq69g5fav"]) {
+      assert.throws(() => tsAuth.users.get(id), /user id/u);
+      assert.throws(() => tsAuth.users.delete(id), /user id/u);
     }
-    // An id containing slashes is one opaque encoded segment: no dot collapse.
-    await tsAuth.users.get("a/..");
-    assert.equal(
-      new URL(/** @type {Request} */ (requests[0]).url).pathname,
-      "/v1/acme/users/a%2F..",
-    );
-    assert.equal(requests.length, 1);
+    assert.equal(requests.length, 0);
   });
 
   test("C24 blank and whitespace-only ids and fields fail preflight with the field named, no HTTP issued", async () => {
@@ -641,7 +621,7 @@ describe("ts-auth client edge cases: C. request-construction edges", () => {
     assert.throws(() => tsAuth.organizations.create({ name: " " }), /name/u);
     assert.throws(
       () =>
-        tsAuth.organizations.createInvitation("org_1", {
+        tsAuth.organizations.createInvitation("01ARZ3NDEKTSV4RRFFQ6000002", {
           email: "\t",
           role: "admin",
         }),
@@ -651,15 +631,12 @@ describe("ts-auth client edge cases: C. request-construction edges", () => {
     assert.equal(requests.length, 0);
   });
 
-  test("C25 query values are percent-encoded exactly once via URLSearchParams semantics", async () => {
+  test("C25 non-ULID pagination cursors fail before HTTP", () => {
     /** @type {Request[]} */
     const requests = [];
     const tsAuth = tsAuthClient(() => json({ data: [] }), requests);
-    await tsAuth.users.list({ startingAfter: "a&b=c+d%e中" });
-    assert.equal(
-      new URL(/** @type {Request} */ (requests[0]).url).search,
-      "?starting_after=a%26b%3Dc%2Bd%25e%E4%B8%AD",
-    );
+    assert.throws(() => tsAuth.users.list({ startingAfter: "a&b=c+d%e中" }), /startingAfter/u);
+    assert.equal(requests.length, 0);
   });
 
   test("C26 limit 1 and 100 are sent as-is; 0 and 101 are rejected preflight consistently", async () => {
@@ -751,7 +728,7 @@ describe("ts-auth client edge cases: C. request-construction edges", () => {
   test("C29 tri-state patch sends exact bytes for all fields at once, then for exactly one field", async () => {
     /** @type {Request[]} */
     const requests = [];
-    const tsAuth = tsAuthClient(() => json(user("usr_1")), requests);
+    const tsAuth = tsAuthClient(() => json(user("01ARZ3NDEKTSV4RRFFQ6000004")), requests);
     const patch = new TsAuthUserPatch()
       .withName("Ada Lovelace")
       .unsetUsername()
@@ -761,7 +738,7 @@ describe("ts-auth client edge cases: C. request-construction edges", () => {
       .withBanReason("policy")
       .withPublicMetadata({ tier: "pro" })
       .unsetPrivateMetadata();
-    const updated = await tsAuth.users.update("usr_1", patch);
+    const updated = await tsAuth.users.update("01ARZ3NDEKTSV4RRFFQ6000004", patch);
     assert.equal(updated.ok, true);
     assert.equal(
       await /** @type {Request} */ (requests[0]).text(),
@@ -769,7 +746,7 @@ describe("ts-auth client edge cases: C. request-construction edges", () => {
     );
 
     const single = await tsAuth.users.update(
-      "usr_1",
+      "01ARZ3NDEKTSV4RRFFQ6000004",
       new TsAuthUserPatch().withBanned(false),
     );
     assert.equal(single.ok, true);
@@ -787,9 +764,9 @@ describe("ts-auth client edge cases: C. request-construction edges", () => {
   test("C31 an empty patch is rejected preflight", async () => {
     /** @type {Request[]} */
     const requests = [];
-    const tsAuth = tsAuthClient(() => json(user("usr_1")), requests);
+    const tsAuth = tsAuthClient(() => json(user("01ARZ3NDEKTSV4RRFFQ6000004")), requests);
     assert.throws(
-      () => tsAuth.users.update("usr_1", new TsAuthUserPatch()),
+      () => tsAuth.users.update("01ARZ3NDEKTSV4RRFFQ6000004", new TsAuthUserPatch()),
       /patch is empty/u,
     );
     assert.equal(requests.length, 0);
@@ -798,7 +775,7 @@ describe("ts-auth client edge cases: C. request-construction edges", () => {
   test("C32 create with every optional field omitted sends {}", async () => {
     /** @type {Request[]} */
     const requests = [];
-    const tsAuth = tsAuthClient(() => json(user("usr_new")), requests);
+    const tsAuth = tsAuthClient(() => json(user("01ARZ3NDEKTSV4RRFFQ6000011")), requests);
     const created = await tsAuth.users.create({});
     assert.equal(created.ok, true);
     assert.equal(await /** @type {Request} */ (requests[0]).text(), "{}");
@@ -810,7 +787,7 @@ describe("ts-auth client edge cases: C. request-construction edges", () => {
     const tsAuth = tsAuthClient(() => {
       throw new Error("Token form probe; no provider response.");
     }, requests);
-    const token = await tsAuth.oidc.token("clt_1", "s&=+% #1", {
+    const token = await tsAuth.oidc.token("01ARZ3NDEKTSV4RRFFQ6000002", "s&=+% #1", {
       grant_type: "client_credentials",
       resource: "https://api.example.test/management",
       scope: "management:read",
@@ -818,14 +795,14 @@ describe("ts-auth client edge cases: C. request-construction edges", () => {
     assert.equal(token.ok, false);
     assert.equal(
       await /** @type {Request} */ (requests[0]).text(),
-      "client_id=clt_1&client_secret=s%26%3D%2B%25+%231&grant_type=client_credentials&resource=https%3A%2F%2Fapi.example.test%2Fmanagement&scope=management%3Aread",
+      "client_id=01ARZ3NDEKTSV4RRFFQ6000002&client_secret=s%26%3D%2B%25+%231&grant_type=client_credentials&resource=https%3A%2F%2Fapi.example.test%2Fmanagement&scope=management%3Aread",
     );
   });
 
   test("C34 nested metadata values serialize faithfully", async () => {
     /** @type {Request[]} */
     const requests = [];
-    const tsAuth = tsAuthClient(() => json(user("usr_1")), requests);
+    const tsAuth = tsAuthClient(() => json(user("01ARZ3NDEKTSV4RRFFQ6000004")), requests);
     const metadata = {
       plan: "pro",
       nested: {
@@ -838,7 +815,7 @@ describe("ts-auth client edge cases: C. request-construction edges", () => {
       zero: 0,
     };
     const updated = await tsAuth.users.update(
-      "usr_1",
+      "01ARZ3NDEKTSV4RRFFQ6000004",
       new TsAuthUserPatch().withPublicMetadata(metadata),
     );
     assert.equal(updated.ok, true);
@@ -884,7 +861,7 @@ describe("ts-auth client edge cases: D. retry / deadline / cancellation edges", 
               503,
               { "retry-after": "0" },
             )
-          : json({ data: [user("usr_1")] }),
+          : json({ data: [user("01ARZ3NDEKTSV4RRFFQ6000004")] }),
       requests,
       { maxRetryAttempts: 1, retryDelayMs: 5_000 },
     );
@@ -895,7 +872,7 @@ describe("ts-auth client edge cases: D. retry / deadline / cancellation edges", 
     assert.ok(Date.now() - startedAt < 1_000, "Retry-After: 0 must not sleep");
     assert.equal(requests.length, 2);
     assert.equal(listed.ok, true);
-    if (listed.ok) assert.equal(listed.value.data[0]?.id, "usr_1");
+    if (listed.ok) assert.equal(listed.value.data[0]?.id, "01ARZ3NDEKTSV4RRFFQ6000004");
   });
 
   test("D37 POST with 503 makes exactly one attempt even with retries enabled", async () => {
@@ -951,7 +928,7 @@ describe("ts-auth client edge cases: D. retry / deadline / cancellation edges", 
       getRequests.push(new Request(input).clone());
       calls += 1;
       if (calls === 1) throw new TypeError("fetch failed");
-      return json({ data: [user("usr_1")] });
+      return json({ data: [user("01ARZ3NDEKTSV4RRFFQ6000004")] });
     };
     const retried = createTsAuthClient({
       apiBaseUrl: "https://auth.acme.test",
@@ -1038,8 +1015,8 @@ describe("ts-auth client edge cases: E. pagination edges", () => {
     /** @type {Request[]} */
     const requests = [];
     const pages = [
-      { data: [user("usr_1"), user("usr_2")] },
-      { data: [user("usr_3"), user("usr_4")] },
+      { data: [user("01ARZ3NDEKTSV4RRFFQ6000004"), user("01ARZ3NDEKTSV4RRFFQ6000006")] },
+      { data: [user("01ARZ3NDEKTSV4RRFFQ6000007"), user("01ARZ3NDEKTSV4RRFFQ6000008")] },
       { data: [] },
     ];
     const tsAuth = tsAuthClient(
@@ -1051,7 +1028,7 @@ describe("ts-auth client edge cases: E. pagination edges", () => {
     if (all.ok)
       assert.deepEqual(
         all.value.map((entry) => entry.id),
-        ["usr_1", "usr_2", "usr_3", "usr_4"],
+        ["01ARZ3NDEKTSV4RRFFQ6000004", "01ARZ3NDEKTSV4RRFFQ6000006", "01ARZ3NDEKTSV4RRFFQ6000007", "01ARZ3NDEKTSV4RRFFQ6000008"],
       );
     assert.equal(requests.length, 3);
 
@@ -1059,7 +1036,7 @@ describe("ts-auth client edge cases: E. pagination edges", () => {
 
     const hostileRequests = [];
     const hostile = tsAuthClient(
-      () => json({ data: [user("usr_1"), user("usr_2")] }),
+      () => json({ data: [user("01ARZ3NDEKTSV4RRFFQ6000004"), user("01ARZ3NDEKTSV4RRFFQ6000006")] }),
       hostileRequests,
     );
     const repeated = await hostile.users.listAll({ pageSize: 2 });
@@ -1070,7 +1047,7 @@ describe("ts-auth client edge cases: E. pagination edges", () => {
     if (repeated.ok)
       assert.deepEqual(
         repeated.value.map((entry) => entry.id),
-        ["usr_1", "usr_2", "usr_1", "usr_2"],
+        ["01ARZ3NDEKTSV4RRFFQ6000004", "01ARZ3NDEKTSV4RRFFQ6000006", "01ARZ3NDEKTSV4RRFFQ6000004", "01ARZ3NDEKTSV4RRFFQ6000006"],
       );
     assert.equal(hostileRequests.length, 2);
   });
@@ -1079,8 +1056,8 @@ describe("ts-auth client edge cases: E. pagination edges", () => {
     /** @type {Request[]} */
     const requests = [];
     const pages = [
-      { data: [user("usr_1"), user("usr_2")] },
-      { data: [user("usr_3")] },
+      { data: [user("01ARZ3NDEKTSV4RRFFQ6000004"), user("01ARZ3NDEKTSV4RRFFQ6000006")] },
+      { data: [user("01ARZ3NDEKTSV4RRFFQ6000007")] },
     ];
     const tsAuth = tsAuthClient(
       (_request, index) => json(pages[index] ?? { data: [] }),
@@ -1091,12 +1068,12 @@ describe("ts-auth client edge cases: E. pagination edges", () => {
     if (all.ok)
       assert.deepEqual(
         all.value.map((entry) => entry.id),
-        ["usr_1", "usr_2", "usr_3"],
+        ["01ARZ3NDEKTSV4RRFFQ6000004", "01ARZ3NDEKTSV4RRFFQ6000006", "01ARZ3NDEKTSV4RRFFQ6000007"],
       );
     assert.equal(requests.length, 2);
     assert.equal(
       new URL(/** @type {Request} */ (requests[1]).url).search,
-      "?limit=2&starting_after=usr_2",
+      "?limit=2&starting_after=01ARZ3NDEKTSV4RRFFQ6000006",
     );
   });
 
@@ -1104,22 +1081,22 @@ describe("ts-auth client edge cases: E. pagination edges", () => {
     /** @type {Request[]} */
     const requests = [];
     const tsAuth = tsAuthClient(
-      () => json({ data: [user("usr_1"), user("usr_2"), user("usr_3")] }),
+      () => json({ data: [user("01ARZ3NDEKTSV4RRFFQ6000004"), user("01ARZ3NDEKTSV4RRFFQ6000006"), user("01ARZ3NDEKTSV4RRFFQ6000007")] }),
       requests,
     );
     const listed = await tsAuth.users.list({
       limit: 2,
-      startingAfter: "usr_ghost",
+      startingAfter: "01ARZ3NDEKTSV4RRFFQ6000009",
     });
     assert.equal(listed.ok, true);
     if (listed.ok)
       assert.deepEqual(
         listed.value.data.map((entry) => entry.id),
-        ["usr_1", "usr_2", "usr_3"],
+        ["01ARZ3NDEKTSV4RRFFQ6000004", "01ARZ3NDEKTSV4RRFFQ6000006", "01ARZ3NDEKTSV4RRFFQ6000007"],
       );
     assert.equal(
       new URL(/** @type {Request} */ (requests[0]).url).search,
-      "?limit=2&starting_after=usr_ghost",
+      "?limit=2&starting_after=01ARZ3NDEKTSV4RRFFQ6000009",
     );
   });
 });
@@ -1128,7 +1105,7 @@ describe("ts-auth client edge cases: F. webhook verifier edges", () => {
   const secret = `whsec_${"k".repeat(40)}`;
   const timestamp = "1758340000";
   const payload = new TextEncoder().encode(
-    JSON.stringify({ id: "evt_1", type: "user.created", data: {} }),
+    JSON.stringify({ id: "01ARZ3NDEKTSV4RRFFQ6000001", type: "user.created", data: {} }),
   );
   const signature = sign(secret, timestamp, payload);
 
@@ -1485,7 +1462,7 @@ test("resource introspection rejects missing, extra, misbound and unhealthy prin
   const credentials = {
     issuer: "https://issuer.example.test/example",
     audience: "https://api.example.test/management",
-    introspection_client_id: "resource",
+    introspection_client_id: "01ARZ3NDEKTSV4RRFFQ6000003",
     introspection_secret: "secret",
   };
   const now = Math.floor(Date.now() / 1000);
@@ -1493,13 +1470,13 @@ test("resource introspection rejects missing, extra, misbound and unhealthy prin
     active: true,
     token_type: "Bearer",
     iss: credentials.issuer,
-    sub: "user",
+    sub: "01ARZ3NDEKTSV4RRFFQ6000001",
     aud: credentials.audience,
-    client_id: "client",
+    client_id: "01ARZ3NDEKTSV4RRFFQ6000002",
     scope: "management:read",
     exp: now + 60,
     iat: now - 10,
-    sid: "session",
+    sid: "01ARZ3NDEKTSV4RRFFQ6000004",
     principal_kind: "user",
   };
   const withoutSid = Object.fromEntries(
@@ -1515,7 +1492,7 @@ test("resource introspection rejects missing, extra, misbound and unhealthy prin
     { ...claims, iat: now + 60 },
     { ...claims, sid: null },
     { ...claims, sid: "" },
-    { ...claims, principal_kind: "service", sid: "session" },
+    { ...claims, principal_kind: "service", sid: "01ARZ3NDEKTSV4RRFFQ6000004" },
     { ...claims, principal_kind: "service", sid: null, sub: "wrong-service" },
     { ...claims, principal_kind: "unknown" },
     { ...claims, family_id: "internal-family" },
@@ -1552,13 +1529,13 @@ test("OAuth policy decoding denies lossy epochs and wrong rotation response bran
       instanceSlug: "example",
       fetch: async () => Response.json(body),
     });
-    assert.equal((await client.oauthClients.update("id", {})).ok, false);
+    assert.equal((await client.oauthClients.update("01ARZ3NDEKTSV4RRFFQ69G5FAV", {})).ok, false);
     assert.equal(
-      (await client.oauthClients.update("id", { rotate_secret: true })).ok,
+      (await client.oauthClients.update("01ARZ3NDEKTSV4RRFFQ69G5FAV", { rotate_secret: true })).ok,
       false,
     );
     assert.equal(
-      (await client.oauthResources.update("id", { expected_auth_epoch: 1 })).ok,
+      (await client.oauthResources.update("01ARZ3NDEKTSV4RRFFQ69G5FAV", { expected_auth_epoch: 1 })).ok,
       false,
     );
   }

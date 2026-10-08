@@ -1,4 +1,4 @@
-import { encodeDatabaseSubscription, requireDatabaseUuid, requireDatabaseU64 } from "./database-codec.js";
+import { encodeDatabaseSubscription, requireDatabaseId, requireDatabaseU64 } from "./database-codec.js";
 /**
  * @import { TerraBaseClient } from "./local/legacy-client.js"
  * @import {
@@ -213,14 +213,14 @@ export class DatabaseSubscriptionView {
    */
   constructor(scope, options) {
     const capturedScope = Object.freeze({
-      tenant: requireDatabaseUuid(scope.tenant, "tenant"),
-      database: requireDatabaseUuid(scope.database, "database"),
+      tenant: requireDatabaseId(scope.tenant, "tenant"),
+      database: requireDatabaseId(scope.database, "database"),
       shard: requireDatabaseU64(scope.shard, "shard"),
     });
     const predicate = predicateCopy(options.predicate);
     const limit = boundedInteger(options.limit, 128, 128, "Snapshot page size");
     encodeDatabaseSubscription({ phase: "snapshot", predicate, limit });
-    this.binding = Object.freeze({ scope: capturedScope, collection: requireDatabaseUuid(options.collection, "collection"), predicate, limit });
+    this.binding = Object.freeze({ scope: capturedScope, collection: requireDatabaseId(options.collection, "collection"), predicate, limit });
     this.#maximumRows = boundedInteger(options.maximumRows, 10_000, 1_000_000, "Maximum rows");
   }
 
@@ -258,7 +258,7 @@ export class DatabaseSubscriptionView {
       if (response.rows.length > this.binding.limit) throw new DatabaseSubscriptionError("page_limit_exceeded");
       let previous = this.#snapshotRows.at(-1)?.document ?? "";
       const page = response.rows.map(row => {
-        const document = requireDatabaseUuid(row.document, "document");
+        const document = requireDatabaseId(row.document, "document");
         if (document <= previous) throw new DatabaseSubscriptionError("snapshot_order_invalid");
         previous = document;
         return Object.freeze({ document, point: pointCopy(row.point, this.binding.scope) });
@@ -293,7 +293,7 @@ export class DatabaseSubscriptionView {
       /** @type {Set<string>} */
       const documents = new Set();
       for (const effect of group.effects) {
-        const document = requireDatabaseUuid(effect.document, "document");
+        const document = requireDatabaseId(effect.document, "document");
         if (documents.has(document)) throw new DatabaseSubscriptionError("duplicate_group_document");
         documents.add(document);
         if (effect.point === null) rows.delete(document);

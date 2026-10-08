@@ -1,5 +1,5 @@
+import { generateId } from "./ids.js";
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
 import { test } from "vitest";
 import {
   localSqliteUnitTestsAllowed,
@@ -18,7 +18,7 @@ test.skipIf(!localSqliteUnitTestsAllowed)(
   async () => {
     const fixture = await localFixture();
     try {
-      const documents = [randomUUID(), randomUUID()].sort();
+      const documents = [generateId(), generateId()].sort();
       for (const document of documents)
         assert.ok(
           (
@@ -41,7 +41,7 @@ test.skipIf(!localSqliteUnitTestsAllowed)(
           first.value.phase === "snapshot" &&
           "next_snapshot_cursor" in first.value,
       );
-      const newDocument = randomUUID();
+      const newDocument = generateId();
       assert.ok(
         (
           await fixture.client.commit(
@@ -78,7 +78,7 @@ test.skipIf(!localSqliteUnitTestsAllowed)(
       assert.ok(poll.ok && poll.value.phase === "poll");
       assert.equal(poll.value.groups.length, 1);
       assert.equal(poll.value.groups[0]?.effects[0]?.document, newDocument);
-      const nonmatch = randomUUID();
+      const nonmatch = generateId();
       assert.ok(
         (
           await fixture.client.commit(
@@ -148,7 +148,7 @@ test.skipIf(!localSqliteUnitTestsAllowed)(
           (
             await fixture.client.commit(
               await fixture.client.prepareCommit(
-                fixture.commit(randomUUID(), [
+                fixture.commit(generateId(), [
                   { id: 1, value: { type: "bool", value: true } },
                 ]),
               ),
@@ -193,7 +193,7 @@ test.skipIf(!localSqliteUnitTestsAllowed)(
   async () => {
     const fixture = await localFixture();
     try {
-      const documents = Array.from({ length: 5 }, () => randomUUID()).sort();
+      const documents = Array.from({ length: 5 }, () => generateId()).sort();
       for (const document of documents) {
         const prepared = await fixture.client.prepareCommit(
           fixture.commit(document, [

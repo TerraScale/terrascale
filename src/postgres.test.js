@@ -7,13 +7,13 @@ import { PostgresClient, PostgresError, postgresQuery } from "./postgres.js";
 /** @import { Socket } from "node:net" */
 /** @import { PostgresConfig } from "./postgres.js" */
 
-const keyId = Buffer.alloc(16).toString("base64url");
+const keyId = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
 const config = {
   host: "127.0.0.1",
   port: 5432,
   tlsServerName: "postgres.example.test",
   caCertificatePem: rootCertificates[0] ?? "",
-  database: "00000000-0000-0000-0000-000000000000",
+  database: "00000000000000000000000000",
   keyId,
   password: `tbk1.${keyId}.${Buffer.alloc(32).toString("base64url")}`,
 };

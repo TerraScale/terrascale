@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "vitest";
+import { isValidId } from "./ids.js";
+import { TerraScaleSqliteStore } from "./local/store.js";
+import { createLocalBetterAuthAdapter } from "./local/better-auth.js";
 import {
   localSqliteUnitTestsAllowed,
   localFixture,
@@ -17,6 +20,26 @@ const user = (email) => ({
   emailVerified: false,
   createdAt: new Date(),
   updatedAt: new Date(),
+});
+
+test.skipIf(!localSqliteUnitTestsAllowed)("local auth persists one ULID key and rejects UUID or prefixed identities", async () => {
+  const store = new TerraScaleSqliteStore(":memory:");
+  try {
+    const factory = createLocalBetterAuthAdapter(store);
+    const adapter = factory(options);
+    const created = /** @type {{ id: string }} */ (await adapter.create({ model: "user", data: user("ulid@example.test") }));
+    assert.ok(isValidId(created.id));
+    const record = store.listNamespace("local-auth")[0];
+    assert.equal(record?.id, created.id);
+    assert.equal(Object.hasOwn(/** @type {object} */ (record?.value), "id"), false);
+    assert.equal((/** @type {{ id: string }} */ (await adapter.findOne({ model: "user", where: [{ field: "id", value: created.id }] }))).id, created.id);
+    for (const id of ["usr_1", "00000000-0000-4000-8000-000000000001", created.id.toLowerCase()])
+      await assert.rejects(adapter.create({ model: "user", data: { ...user("invalid@example.test"), id }, forceAllowId: true }), /ULID/u);
+    assert.throws(() => factory({ ...options, advanced: { database: { generateId: "uuid" } } }), /ULID/u);
+    assert.equal(await adapter.count({ model: "user" }), 1);
+  } finally {
+    store.close();
+  }
 });
 
 test.skipIf(!localSqliteUnitTestsAllowed)(

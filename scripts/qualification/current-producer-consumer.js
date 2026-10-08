@@ -23,15 +23,15 @@ export function qualificationConfiguration() {
 
 const consumerSource = String.raw`
 import assert from "node:assert/strict";
-import { randomBytes, randomUUID } from "node:crypto";
-import { createTerraBaseClient } from "@terrascale/sdk";
+import { randomBytes } from "node:crypto";
+import { createTerraBaseClient, generateId } from "@terrascale/sdk";
 
 const env = process.env;
 const scope = { tenant: env.TERRABASE_TENANT, database: env.TERRABASE_DATABASE, shard: BigInt(env.TERRABASE_SHARD) };
 const config = { ...scope, apiKey: env.TERRABASE_API_KEY, ...(env.TERRABASE_ENDPOINT === undefined ? {} : { endpoint: env.TERRABASE_ENDPOINT }) };
 const client = createTerraBaseClient(config);
 const collection = env.TERRABASE_COLLECTION;
-const document = randomUUID();
+const document = generateId();
 const fieldId = Number(env.TERRABASE_TEST_FIELD_ID);
 assert.ok(Number.isInteger(fieldId) && fieldId > 0);
 const makeValue = (suffix) => env.TERRABASE_TEST_FIELD_TYPE === "i64"
@@ -123,8 +123,8 @@ try {
 
 const atlasConsumerSource = String.raw`
 import assert from "node:assert/strict";
-import { createHash, randomBytes, randomUUID } from "node:crypto";
-import { createTerraBaseClient } from "@terrascale/sdk";
+import { createHash, randomBytes } from "node:crypto";
+import { createTerraBaseClient, generateId } from "@terrascale/sdk";
 
 const env = process.env;
 const scope = { tenant: env.TERRABASE_TENANT, database: env.TERRABASE_DATABASE, shard: BigInt(env.TERRABASE_SHARD) };
@@ -161,7 +161,7 @@ const trace = async (input, init) => {
 const config = { ...scope, apiKey: env.TERRABASE_API_KEY, fetch: trace };
 const client = createTerraBaseClient(config);
 assert.equal(atlasCalls + nativeCalls, 0, "construction does not dispatch or prove readiness");
-const collection = env.TERRABASE_COLLECTION, document = randomUUID();
+const collection = env.TERRABASE_COLLECTION, document = generateId();
 const fieldId = Number(env.TERRABASE_TEST_FIELD_ID);
 assert.ok(Number.isInteger(fieldId) && fieldId > 0);
 const value = env.TERRABASE_TEST_FIELD_TYPE === "i64" ? { type: "i64", value: -9223372036854775808n } : { type: "utf8", value: "atlas-package-" + document };
@@ -216,7 +216,7 @@ try {
   const deniedConditional = observe("conditional-capability-closed", await client.commit(conditional));
   assert.equal(deniedConditional.ok, false); assert.equal(deniedConditional.error.code, "capability_unavailable"); assert.equal(deniedConditional.error.mutation_outcome, "unknown");
   const groupRequest = mutation({ kind: "none" }, point.context, { kind: "tombstone" });
-  const groupWrites = [...groupRequest.writes, { ...groupRequest.writes[0], document: randomUUID() }].sort((a, b) => a.document < b.document ? -1 : 1);
+  const groupWrites = [...groupRequest.writes, { ...groupRequest.writes[0], document: generateId() }].sort((a, b) => a.document < b.document ? -1 : 1);
   const group = await client.prepareCommit({ ...groupRequest, writes: groupWrites });
   const deniedGroup = observe("atomic-group-capability-closed", await client.commit(group));
   assert.equal(deniedGroup.ok, false); assert.equal(deniedGroup.error.code, "capability_unavailable");

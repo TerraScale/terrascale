@@ -1,4 +1,5 @@
 import { afterAll, test } from "vitest";
+import { generateId } from "./ids.js";
 import {
   authFlowTestSuite,
   caseInsensitiveTestSuite,
@@ -6,7 +7,6 @@ import {
   normalTestSuite,
   testAdapter,
   transactionsTestSuite,
-  uuidTestSuite,
 } from "@better-auth/test-utils/adapter";
 import {
   localFixture,
@@ -22,6 +22,7 @@ if (!localSqliteUnitTestsAllowed) {
   const factory = await fixture.runtime.createBetterAuthAdapter();
   const suite = await testAdapter({
     adapter: () => factory,
+    customIdGenerator: generateId,
     runMigrations: async (options) => {
       await factory(options).count({ model: "user" });
     },
@@ -31,7 +32,6 @@ if (!localSqliteUnitTestsAllowed) {
       authFlowTestSuite(),
       joinsTestSuite(),
       caseInsensitiveTestSuite(),
-      uuidTestSuite(),
     ],
   });
   suite.execute();

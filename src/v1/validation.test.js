@@ -11,9 +11,9 @@ import { staticBaseUrlResolver, V1Transport } from "./transport.js";
 import { v1Route, v1RoutePath, v1Routes } from "./routes.js";
 
 // Pure validators, encoders and decoders only: no HTTP fixture, fetch substitute, or producer emulation.
-const project = "019a0000-0000-7000-8000-000000000001";
+const project = "01ARZ3NDEKTSV4RRFFQ69G5FA1";
 const token = "eyJ0eXAiOiJhdCtqd3QifQ.eyJwcm9qZWN0X2lkIjoiMDE5YTAwMDAtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwMDAxIn0.c2lnbmF0dXJl";
-const id = "019a0000-0000-7000-8000-000000000002";
+const id = "01ARZ3NDEKTSV4RRFFQ69G5FA2";
 const version = `tbv1-${"0".repeat(32)}`;
 const tbv2 = "tbv2-AYCBgoOEhYaHiImKi4yNjo-QkZKTlJWWl5iZmpucnZ6f";
 const handle = `h1-${"1".repeat(16)}`;
@@ -168,10 +168,9 @@ describe("C# v1 pure contract validation", () => {
     expect(v1Route("dropCollection").successStatuses).toEqual([200]);
   });
 
-  it("accepts legacy point ids while preventing dot-segment route traversal", () => {
-    expect(requireDocumentId("legacy/id ?#%+é")).toBe("legacy/id ?#%+é");
+  it("rejects non-ULID point ids before dispatch", () => {
     expect(requireDocumentId(id)).toBe(id);
-    for (const bad of ["", ".", "..", "a\nb", "\ud800", "a".repeat(257)]) expect(() => requireDocumentId(bad)).toThrow(TypeError);
+    for (const bad of ["", ".", "..", "legacy/id ?#%+é", "019a0000-0000-7000-8000-000000000002", "a\nb", "\ud800", "a".repeat(257)]) expect(() => requireDocumentId(bad)).toThrow(TypeError);
   });
 
   it("treats tbv1 and tbv2 version tokens as opaque If-Match-safe strings", () => {
@@ -264,7 +263,7 @@ describe("C# v1 pure contract validation", () => {
     let deep = {};
     for (let depth = 0; depth < 65; depth++) deep = { child: deep };
     const transaction = db.transaction().put("users", id, {});
-    const laterId = "019a0000-0000-7000-8000-000000000003";
+    const laterId = "01ARZ3NDEKTSV4RRFFQ69G5FA3";
     expect(() => transaction.put("users", laterId, deep)).toThrow(/16 levels/u);
     expect(() => transaction.patch("users", laterId, { merge: deep })).toThrow(/16 levels/u);
     expect(transaction.size).toBe(1);
@@ -290,18 +289,9 @@ describe("C# v1 pure contract validation", () => {
     expect(() => encodeShapeRequest(/** @type {any} */ ({ mode: "sse" }))).toThrow(TypeError);
   });
 
-  it("preserves BOM-prefixed legacy ids in snapshot continuation tokens", () => {
-    const encoded = btoa(String.fromCharCode(...new TextEncoder().encode("\uFEFFlegacy")))
-      .replace(/\+/gu, "-").replace(/\//gu, "_").replace(/=+$/u, "");
-    const offset = `snap.42.${encoded}`;
-    expect(requireShapeOffset(offset)).toBe(offset);
-    const page = decodeShapePage({ shape_id: "2".repeat(32), handle, offset: "snap.42.0", next_offset: offset, up_to_date: false, changes: [] }, new Headers());
-    expect(page.nextOffset).toBe(offset);
-  });
-
   it("decodes the actual shape upsert fields without synthetic state", () => {
     const page = decodeShapePage({ shape_id: "2".repeat(32), handle, offset: "snap.42.0", next_offset: "42", up_to_date: false,
-      changes: [{ offset: "42", ops: [{ op: "upsert", id, version, document: { seats: 1 } }, { op: "delete", id: "legacy" }] }] }, new Headers());
+      changes: [{ offset: "42", ops: [{ op: "upsert", id, version, document: { seats: 1 } }, { op: "delete", id }] }] }, new Headers());
     expect(page.nextOffset).toBe("42");
     expect(page.upToDate).toBe(false);
     expect(page.changes[0]?.ops[0]).toEqual({ op: "upsert", id, version, document: { seats: 1 } });

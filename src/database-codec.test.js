@@ -3,15 +3,15 @@ import {
   decodeDatabasePoint, decodeDatabaseQueryPage, decodeDatabaseSubscription,
   decodeDatabaseValue, encodeDatabaseCommit, encodeDatabaseQuery,
   encodeDatabaseSubscription, encodeDatabaseValue, requireDatabaseU64,
-  requireDatabaseUuid, decodeDatabaseStatus, parseDatabaseJson,
+  requireDatabaseId, decodeDatabaseStatus, parseDatabaseJson,
 } from "./database-codec.js";
 /** @import { DatabaseCommit, DatabasePoint, DatabaseValue, DatabaseWrite } from "./database-types.js" */
 
-const tenant = "00000000-0000-0000-0000-000000000001";
-const database = "00000000-0000-0000-0000-000000000002";
-const collection = "00000000-0000-0000-0000-000000000003";
-const document = "00000000-0000-0000-0000-000000000004";
-const replica = "00000000-0000-0000-0000-000000000005";
+const tenant = "00000000000000000000000001";
+const database = "00000000000000000000000002";
+const collection = "00000000000000000000000003";
+const document = "00000000000000000000000004";
+const replica = "00000000000000000000000005";
 const maxU64 = (1n << 64n) - 1n;
 const schemaDigest = "01".repeat(32);
 const token = "ab".repeat(32);
@@ -50,7 +50,7 @@ function wirePoint(state = "value") {
   };
 }
 
-describe("current database exact codec", () => {
+describe("local database exact codec", () => {
   test("preserves i64 extremes, empty/zero bytes, missing fields, null and recursive numeric maps", () => {
     /** @type {DatabaseValue} */
     const value = { type: "map", fields: [
@@ -86,11 +86,11 @@ describe("current database exact codec", () => {
     expect(() => encodeDatabaseValue({ type: "array", items: Array.from({ length: 1025 }, () => ({ type: "null" })) })).toThrow(TypeError);
   });
 
-  test("canonical UUID and full-u64 scope do not reinterpret ULIDs, unsafe numbers or uppercase", () => {
-    expect(requireDatabaseUuid(document)).toBe(document);
+  test("canonical ULID and full-u64 scope reject UUIDs, unsafe numbers or lowercase", () => {
+    expect(requireDatabaseId(document)).toBe(document);
     expect(requireDatabaseU64(maxU64)).toBe(maxU64);
-    expect(() => requireDatabaseUuid("01ARZ3NDEKTSV4RRFFQ69G5FAV")).toThrow(TypeError);
-    expect(() => requireDatabaseUuid("ABCDEF01-0000-0000-0000-000000000001")).toThrow(TypeError);
+    expect(() => requireDatabaseId("00000000-0000-4000-8000-000000000001")).toThrow(TypeError);
+    expect(() => requireDatabaseId("01arz3ndektsv4rrffq69g5fav")).toThrow(TypeError);
     expect(() => requireDatabaseU64(Number(maxU64))).toThrow(TypeError);
     expect(() => requireDatabaseU64(maxU64 + 1n)).toThrow(TypeError);
   });
@@ -217,7 +217,7 @@ describe("current database exact codec", () => {
   test("fingerprints exact logical effects independently of transaction identity", async () => {
     const request = commit();
     const encoded = await encodeDatabaseCommit(scope, request);
-    // Independently encoded with Python uuid/struct from the frozen binary grammar.
+    // Independently encoded from the 128-bit identifiers and integer fields.
     expect(encoded.effect_digest).toBe("80cc8d2dac2e807a4a841d15b100fe41b5d928be7dd0b4e8f980be1f4b75de96");
     const otherIdentity = await encodeDatabaseCommit(scope, { ...request, transaction_id: { expires_at_unix_ms: 1n, nonce: "09".repeat(16) } });
     expect(encoded.effect_digest).toMatch(/^[0-9a-f]{64}$/u);

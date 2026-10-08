@@ -2,7 +2,7 @@
 import {
   decodeDatabaseCommitReceipt, decodeDatabasePoint, decodeDatabaseQueryPage,
   decodeDatabaseSubscription, decodeDatabaseStatus, encodeDatabaseStatus, encodeDatabaseCommit, encodeDatabaseQuery,
-  encodeDatabaseSubscription, encodeDatabaseAuthority, parseDatabaseJson, requireDatabaseU64, requireDatabaseUuid,
+  encodeDatabaseSubscription, encodeDatabaseAuthority, parseDatabaseJson, requireDatabaseU64, requireDatabaseId,
 } from "../database-codec.js";
 /**
  * @import {
@@ -61,7 +61,7 @@ function identityAuthority(authority) {
  * @returns {string}
  */
 function scopePath(scope) {
-  return `/v1/tenants/${requireDatabaseUuid(scope.tenant, "tenant")}/databases/${requireDatabaseUuid(scope.database, "database")}/shards/${requireDatabaseU64(scope.shard, "shard")}`;
+  return `/v1/tenants/${requireDatabaseId(scope.tenant, "tenant")}/databases/${requireDatabaseId(scope.database, "database")}/shards/${requireDatabaseU64(scope.shard, "shard")}`;
 }
 
 /**
@@ -195,7 +195,7 @@ export class TerraBaseClient {
 
   /** @param {TerraBaseClientConfig} config */
   constructor(config) {
-    this.#scope = Object.freeze({ tenant: requireDatabaseUuid(config.tenant, "tenant"), database: requireDatabaseUuid(config.database, "database"), shard: requireDatabaseU64(config.shard, "shard") });
+    this.#scope = Object.freeze({ tenant: requireDatabaseId(config.tenant, "tenant"), database: requireDatabaseId(config.database, "database"), shard: requireDatabaseU64(config.shard, "shard") });
     this.#config = { ...config };
     this.#fetch = config.fetch ?? globalThis.fetch.bind(globalThis);
     this.#path = scopePath(this.#scope);
@@ -214,7 +214,7 @@ export class TerraBaseClient {
    * @returns {Promise<DatabaseResult<DatabasePoint>>}
    */
   read(collection, document, options = {}) {
-    const path = `${this.#collectionPath(collection)}/documents/${requireDatabaseUuid(document, "document")}`;
+    const path = `${this.#collectionPath(collection)}/documents/${requireDatabaseId(document, "document")}`;
     return this.#request(path, "GET", undefined, raw => this.#scopedPoint(decodeDatabasePoint(raw)), options);
   }
 
@@ -312,7 +312,7 @@ export class TerraBaseClient {
    * @param {string} collection
    * @returns {string}
    */
-  #collectionPath(collection) { return `${this.#path}/collections/${requireDatabaseUuid(collection, "collection")}`; }
+  #collectionPath(collection) { return `${this.#path}/collections/${requireDatabaseId(collection, "collection")}`; }
 
   /**
    * @param {DatabasePoint} point

@@ -1,20 +1,20 @@
 /**
- * The current TerraBase document protocol uses canonical UUID entity IDs.
- * @typedef {string} CanonicalUuid
+ * Entity identities are canonical uppercase ULIDs, including explicit local development.
+ * @typedef {import("./ids.js").EntityId} EntityId
  */
 
 /**
  * All 64-bit quantities stay bigint in JavaScript and decimal strings on the wire.
  * @typedef {{
- *   readonly tenant: CanonicalUuid;
- *   readonly database: CanonicalUuid;
+ *   readonly tenant: EntityId;
+ *   readonly database: EntityId;
  *   readonly shard: bigint;
  * }} DatabaseScope
  */
 
 /**
  * @typedef {{
- *   readonly collection: CanonicalUuid;
+ *   readonly collection: EntityId;
  *   readonly schema_generation: bigint;
  *   readonly schema_digest: string;
  * }} CollectionBinding
@@ -39,7 +39,7 @@
 
 /**
  * @typedef {{
- *   readonly replica: CanonicalUuid;
+ *   readonly replica: EntityId;
  *   readonly incarnation: string;
  *   readonly sequence: bigint;
  * }} DatabaseObserved
@@ -47,7 +47,7 @@
 
 /**
  * @typedef {DatabaseObserved & {
- *   readonly database: CanonicalUuid;
+ *   readonly database: EntityId;
  *   readonly shard: bigint;
  * }} DatabaseEvent
  */
@@ -58,7 +58,7 @@
  *   | {
  *     readonly mode: "single_writer";
  *     readonly generation: bigint;
- *     readonly writer: { readonly replica: CanonicalUuid; readonly incarnation: string };
+ *     readonly writer: { readonly replica: EntityId; readonly incarnation: string };
  *   }
  * )} DatabaseAuthority
  */
@@ -80,7 +80,7 @@
 
 /**
  * @typedef {CollectionBinding & {
- *   readonly document: CanonicalUuid;
+ *   readonly document: EntityId;
  *   readonly condition: DatabaseCondition;
  *   readonly observed: readonly DatabaseObserved[];
  *   readonly value: DatabaseWriteValue;
@@ -135,7 +135,7 @@
  * }} DatabaseQuery
  */
 
-/** @typedef {{ readonly document: CanonicalUuid; readonly point: DatabasePoint }} DatabaseQueryRow */
+/** @typedef {{ readonly document: EntityId; readonly point: DatabasePoint }} DatabaseQueryRow */
 
 /**
  * @typedef {{
@@ -202,7 +202,7 @@
  * )} DatabaseSubscriptionRequest
  */
 
-/** @typedef {{ readonly document: CanonicalUuid; readonly point: DatabasePoint | null }} DatabaseSubscriptionEffect */
+/** @typedef {{ readonly document: EntityId; readonly point: DatabasePoint | null }} DatabaseSubscriptionEffect */
 
 /**
  * @typedef {{

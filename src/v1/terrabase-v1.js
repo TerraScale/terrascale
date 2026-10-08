@@ -94,6 +94,8 @@ function pointer(path) {
  */
 function patchOp(op) {
   if (typeof op !== "object" || op === null || Array.isArray(op)) throw new TypeError("A patch op is an object.");
+  if (op.path === "/id" || op.path?.startsWith("/id/")) throw new TypeError("The document key is the entity ID; payloads must not contain an id field.");
+  if (op.path === "" && op.op === "set") assertNoPayloadId(op.value);
   let allowed = ["op", "path", "value"];
   switch (op.op) {
     case "unset": allowed = ["op", "path"]; break;
@@ -133,6 +135,7 @@ function normalizePatch(patch) {
   if (hasMerge) {
     const merge = /** @type {{ readonly merge: JsonInputObject }} */ (patch).merge;
     assertJsonObject(merge, "merge patch");
+    assertNoPayloadId(merge);
     return { merge };
   }
   const ops = /** @type {{ readonly ops: readonly V1PatchOp[] }} */ (patch).ops;
@@ -228,9 +231,16 @@ function rejectIdempotency(options) {
 /** @param {JsonInputObject} document @returns {string} */
 function encodeDocument(document) {
   assertJsonObject(document, "document");
+  assertNoPayloadId(document);
   const body = stringifyExactJson(document, "document");
   if (new TextEncoder().encode(body).byteLength > 1024 * 1024) throw new TypeError("A document is at most 1 MiB.");
   return body;
+}
+
+/** @param {unknown} document @returns {void} */
+function assertNoPayloadId(document) {
+  if (typeof document === "object" && document !== null && Object.hasOwn(document, "id"))
+    throw new TypeError("The document key is the entity ID; payloads must not contain an id field.");
 }
 
 /** A collection handle by name. It performs no I/O until an operation runs. */
@@ -296,7 +306,7 @@ export class V1Collection {
   }
 
   /**
-   * Creates a document under a server-generated UUIDv7.
+   * Creates a document under a server-generated ULID.
    * @param {JsonInputObject} document
    * @param {V1CreateOptions} [options]
    * @returns {Promise<V1WriteResult>}
@@ -459,7 +469,7 @@ export class V1Transaction {
 
   /**
    * Adds a create (a put requiring absence). Omit `id` to have the server
-   * generate a UUIDv7, returned in the op's result.
+   * generate a ULID, returned in the op's result.
    * @param {string} collection
    * @param {JsonInputObject} document
    * @param {string} [id]

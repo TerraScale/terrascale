@@ -75,9 +75,9 @@ describe("svelte reactive bindings", () => {
      * @param {string} tail
      * @returns {string}
      */
-    const uuid = tail => `00000000-0000-4000-8000-${tail.padStart(12, "0")}`;
-    const client = createTerraBaseClient({ tenant: uuid("1"), database: uuid("2"), shard: 1n, apiKey: nativeTestKey, fetch: unavailableDiscovery });
-    const query = createQuery(createDatabaseQuery(client, { collection: uuid("3"), predicate: { op: "is_missing", path: [1] } }));
+    const entityId = tail => String(tail).padStart(26, "0");
+    const client = createTerraBaseClient({ tenant: entityId("1"), database: entityId("2"), shard: 1n, apiKey: nativeTestKey, fetch: unavailableDiscovery });
+    const query = createQuery(createDatabaseQuery(client, { collection: entityId("3"), predicate: { op: "is_missing", path: [1] } }));
     /** @type {() => void} */
     let finish = () => undefined;
     /** @type {Promise<void>} */

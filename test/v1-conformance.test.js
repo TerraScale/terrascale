@@ -1,5 +1,5 @@
 import { collections } from "./support/terrabase-v1-fixture.js";
-import { randomUUID } from "node:crypto";
+import { generateId } from "../src/ids.js";
 import { describe, expect, test } from "vitest";
 import { v1Filter } from "../src/index.js";
 import { liveConfigured, liveDatabase } from "./support/terrabase-v1-live.js";
@@ -8,8 +8,8 @@ describe.skipIf(!liveConfigured)("real C# transaction and collection conformance
   test("pending commits validate only the operations sent to the producer", async () => {
     const database = liveDatabase();
     const documents = database.collection(collections.transactions);
-    const first = randomUUID();
-    const second = randomUUID();
+    const first = generateId();
+    const second = generateId();
     try {
       const transaction = database.transaction().put(collections.transactions, first, { value: 1 });
       const pending = transaction.commit();
@@ -24,10 +24,10 @@ describe.skipIf(!liveConfigured)("real C# transaction and collection conformance
     const database = liveDatabase();
     const documents = database.collection(collections.transactions);
     const other = database.collection(collections.conformance);
-    const existing = randomUUID();
-    const first = randomUUID();
-    const second = randomUUID();
-    const marker = randomUUID();
+    const existing = generateId();
+    const first = generateId();
+    const second = generateId();
+    const marker = generateId();
     try {
       await documents.put(existing, { marker, active: true });
       const result = await database.transaction()
@@ -54,7 +54,7 @@ describe.skipIf(!liveConfigured)("real C# transaction and collection conformance
 
   test("named collection create/get/list/drop and name conflict use real producer routes", async () => {
     const collections = liveDatabase().collections;
-    const name = `c_${randomUUID().replaceAll("-", "")}`;
+    const name = `c_${generateId().toLowerCase()}`;
     const created = await collections.create(name);
     try {
       expect(created.name).toBe(name);

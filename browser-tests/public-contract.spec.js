@@ -6,7 +6,7 @@ test("packed browser exposes the C# client and exact decimal values", async ({ p
     const candidate = "/candidate/src/index.js";
     const sdk = /** @type {typeof import("../src/index.js")} */ (await import(candidate));
     const client = sdk.createTerraBaseClient({
-      project: "project", baseUrl: "https://database.example.test", token: `tb_${"a".repeat(43)}`,
+      project: "01ARZ3NDEKTSV4RRFFQ69G5FA1", baseUrl: "https://database.example.test", token: `tb_${"a".repeat(43)}`,
     });
     const collection = client.database("main").collection("users");
     return {
@@ -20,15 +20,16 @@ test("packed browser exposes the C# client and exact decimal values", async ({ p
   expect(observation).toEqual({ methods: true, exact: "9007199254740993", credential: false, retired: [] });
 });
 
-test("packed shape decoder preserves BOM-prefixed continuation ids", async ({ page }) => {
+test("packed browser generates monotonic ULIDs and rejects noncanonical ids", async ({ page }) => {
   await page.goto("/browser-tests/fixture.html");
-  const preserved = await page.evaluate(async () => {
-    const candidate = "/candidate/src/v1/shapes.js";
-    const shapes = /** @type {typeof import("../src/v1/shapes.js")} */ (await import(candidate));
-    const encoded = btoa(String.fromCharCode(...new TextEncoder().encode("\uFEFFlegacy")))
-      .replace(/\+/gu, "-").replace(/\//gu, "_").replace(/=+$/u, "");
-    const offset = `snap.42.${encoded}`;
-    return shapes.requireShapeOffset(offset) === offset;
+  const valid = await page.evaluate(async () => {
+    const candidate = "/candidate/src/index.js";
+    const sdk = /** @type {typeof import("../src/index.js")} */ (await import(candidate));
+    const first = sdk.generateId();
+    const second = sdk.generateId();
+    return sdk.isValidId(first) && sdk.isValidId(second) && first < second &&
+      !sdk.isValidId(first.toLowerCase()) && !sdk.isValidId("org_" + first) &&
+      !sdk.isValidId("8" + first.slice(1)) && !("documentIdFor" in sdk);
   });
-  expect(preserved).toBe(true);
+  expect(valid).toBe(true);
 });

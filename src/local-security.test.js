@@ -1,8 +1,8 @@
+import { generateId } from "./ids.js";
 import assert from "node:assert/strict";
 import { join } from "node:path";
 import { TerraScaleLocalRouter } from "./local/router.js";
 import { TerraScaleSqliteStore } from "./local/store.js";
-import { randomUUID } from "node:crypto";
 import { test } from "vitest";
 import { createTerraBaseClient } from "./local/legacy-client.js";
 import {
@@ -26,19 +26,19 @@ test.skipIf(!localSqliteUnitTestsAllowed)(
         apiKey: token,
       };
       const client = createTerraBaseClient(configured);
-      const result = await client.read(fixture.collection, randomUUID());
+      const result = await client.read(fixture.collection, generateId());
       assert.ok(result.ok);
       assert.equal(result.value.state, "absent");
       const denied = await createTerraBaseClient({
         ...configured,
         apiKey: "wrong",
-      }).read(fixture.collection, randomUUID());
+      }).read(fixture.collection, generateId());
       assert.equal(denied.ok, false);
       if (!denied.ok) assert.equal(denied.error.code, "invalid_key");
       const crossScope = await createTerraBaseClient({
         ...configured,
-        database: randomUUID(),
-      }).read(fixture.collection, randomUUID());
+        database: generateId(),
+      }).read(fixture.collection, generateId());
       assert.equal(crossScope.ok, false);
       if (!crossScope.ok)
         assert.equal(crossScope.error.code, "forbidden_scope");

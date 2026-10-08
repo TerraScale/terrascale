@@ -187,12 +187,12 @@ test("strict OAuth envelopes reject duplicate members and lossy numeric spelling
           {
             issuer: "https://issuer.example.test/example",
             audience: "https://api.example.test",
-            introspection_client_id: "resource",
+            introspection_client_id: "01ARZ3NDEKTSV4RRFFQ69G5FAV",
             introspection_secret: "secret",
           },
           "opaque",
         )
-      : await client.oauthClients.update("id", {});
+      : await client.oauthClients.update("01ARZ3NDEKTSV4RRFFQ69G5FAV", {});
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error.kind).toBe("invalid-response");
   }

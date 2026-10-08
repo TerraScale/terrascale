@@ -1,8 +1,8 @@
+import { generateId } from "../ids.js";
 import {
   createHash,
   createHmac,
   randomBytes,
-  randomUUID,
   timingSafeEqual,
 } from "node:crypto";
 import {
@@ -18,7 +18,7 @@ import {
   encodeDatabaseValue,
   parseDatabaseJson,
   requireDatabaseU64,
-  requireDatabaseUuid,
+  requireDatabaseId,
 } from "../database-codec.js";
 import { matchesLocalBearerAuthorization } from "./authentication.js";
 import { jsonResponse, problemResponse } from "./context.js";
@@ -101,8 +101,8 @@ export class TerraScaleLocalRouter {
   constructor(store, scope, options) {
     this.#store = store;
     this.#scope = Object.freeze({
-      tenant: requireDatabaseUuid(scope.tenant),
-      database: requireDatabaseUuid(scope.database),
+      tenant: requireDatabaseId(scope.tenant),
+      database: requireDatabaseId(scope.database),
       shard: requireDatabaseU64(scope.shard),
     });
     this.#scopeKey = `${scope.tenant}/${scope.database}/${scope.shard}`;
@@ -112,7 +112,7 @@ export class TerraScaleLocalRouter {
     const writer = /** @type {{ readonly replica: string; readonly incarnation: string } | undefined} */ (
       store.getMeta(`native-writer:${this.#scopeKey}`)
     ) ?? {
-      replica: randomUUID(),
+      replica: generateId(),
       incarnation: randomBytes(16).toString("hex"),
     };
     this.#writer = Object.freeze(writer);
@@ -131,7 +131,7 @@ export class TerraScaleLocalRouter {
    * @returns {void}
    */
   bindCollection(binding) {
-    requireDatabaseUuid(binding.collection);
+    requireDatabaseId(binding.collection);
     requireDatabaseU64(binding.schema_generation, "schema generation", true);
     if (!/^[0-9a-f]{64}$/u.test(binding.schema_digest))
       throw new TypeError("Schema digest must be lowercase SHA256.");
@@ -170,8 +170,8 @@ export class TerraScaleLocalRouter {
           suffix,
         );
         if (match === null) return problemResponse(404, "unknown_route");
-        const collection = requireDatabaseUuid(match[1]);
-        const document = requireDatabaseUuid(match[2]);
+        const collection = requireDatabaseId(match[1]);
+        const document = requireDatabaseId(match[2]);
         return await this.#store.exclusive(() => {
           this.#binding(collection);
           return jsonResponse(this.#point(collection, document));
@@ -246,7 +246,7 @@ export class TerraScaleLocalRouter {
           suffix,
         );
       if (match === null) return problemResponse(404, "unknown_route");
-      const collection = requireDatabaseUuid(match[1]);
+      const collection = requireDatabaseId(match[1]);
       return await this.#store.exclusive(() => {
         this.#binding(collection);
         return this.#query(collection, match[2] === "subscriptions", raw);
@@ -599,7 +599,7 @@ export class TerraScaleLocalRouter {
     let id;
     let offset = 0;
     if (cursorValue === undefined) {
-      id = randomUUID();
+      id = generateId();
       const rows = /** @type {readonly { readonly scope: string; readonly id: string; readonly value: WirePoint }[]} */ (
         this.#store.listNamespace("native-points")
       )
@@ -812,10 +812,10 @@ function decodeCommit(raw) {
       if (!Array.isArray(write.observed))
         throw new TypeError("Invalid observed.");
       return {
-        collection: requireDatabaseUuid(write.collection),
+        collection: requireDatabaseId(write.collection),
         schema_generation: decimal(write.schema_generation),
         schema_digest: text(write.schema_digest),
-        document: requireDatabaseUuid(write.document),
+        document: requireDatabaseId(write.document),
         condition: /** @type {DatabaseCondition} */ (parsedCondition),
         observed: write.observed.map((rawObserved) => {
           const observed = object(rawObserved);

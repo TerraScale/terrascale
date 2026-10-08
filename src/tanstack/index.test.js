@@ -15,9 +15,9 @@ const unavailableDiscovery = async () => { throw new Error("Discovery transport 
  * @param {number} tail
  * @returns {string}
  */
-const uuid = tail => `00000000-0000-4000-8000-${tail.toString(16).padStart(12, "0")}`;
-const scope = { tenant: uuid(1), database: uuid(2), shard: 9n };
-const collection = uuid(3);
+const entityId = tail => String(tail).padStart(26, "0");
+const scope = { tenant: entityId(1), database: entityId(2), shard: 9n };
+const collection = entityId(3);
 const predicate = { op: /** @type {const} */ ("is_missing"), path: [1] };
 /** @type {DatabasePoint} */
 const point = { version: 1, state: "absent", state_version: null, context: [], siblings: [] };
@@ -31,7 +31,7 @@ const point = { version: 1, state: "absent", state_version: null, context: [], s
  * @param {number} id
  * @returns {DatabaseQueryRow}
  */
-const row = id => ({ document: uuid(id), point });
+const row = id => ({ document: entityId(id), point });
 /**
  * @param {DatabaseQueryRow} value
  * @returns {Row}
@@ -89,7 +89,7 @@ describe("native TanStack collection publication", () => {
     assert.ok(first);
     await publisher.publish(first);
     assert.deepEqual(output.writes.map(value => value.type), ["truncate", "insert", "insert"]);
-    const second = state.apply({ version: 1, phase: "poll", groups: [{ sequence: 5n, effects: [{ document: uuid(10), point: null }, { document: uuid(30), point }] }], poll_cursor: "changed" });
+    const second = state.apply({ version: 1, phase: "poll", groups: [{ sequence: 5n, effects: [{ document: entityId(10), point: null }, { document: entityId(30), point }] }], poll_cursor: "changed" });
     assert.ok(second);
     await publisher.publish(second);
     assert.deepEqual(output.writes.slice(3).map(value => value.type), ["delete", "insert"]);
@@ -138,17 +138,17 @@ describe("native TanStack collection publication", () => {
     let count = 0;
     const output = callbacks(() => ++count === 1 ? commit.promise : true);
     /** @type {{ id: string; point: DatabasePoint }} */
-    const mutable = { id: uuid(20), point };
-    const publisher = new TerraScaleTanStackCollectionPublisher(output.params, value => value.document === uuid(20) ? mutable : mapRow(value), value => value.id);
+    const mutable = { id: entityId(20), point };
+    const publisher = new TerraScaleTanStackCollectionPublisher(output.params, value => value.document === entityId(20) ? mutable : mapRow(value), value => value.id);
     const first = publisher.publish(cut([row(10)], "first"));
     const second = publisher.publish(cut([row(20)], "second"));
-    mutable.id = uuid(99);
+    mutable.id = entityId(99);
     await Promise.resolve();
     assert.equal(output.commits(), 1);
     commit.resolve();
     await Promise.all([first, second]);
     const inserts = output.writes.filter(value => value.type === "insert");
-    assert.deepEqual(inserts.flatMap(value => "value" in value ? [value.value.id] : []), [uuid(10), uuid(20)]);
+    assert.deepEqual(inserts.flatMap(value => "value" in value ? [value.value.id] : []), [entityId(10), entityId(20)]);
     assert.equal(publisher.getPosition()?.poll_cursor, "second");
     publisher.dispose();
   });
@@ -192,7 +192,7 @@ describe("native TanStack collection publication", () => {
     const inserted = output.writes.find(value => value.type === "insert");
     assert.equal(inserted?.type, "insert");
     if (inserted?.type !== "insert") throw new Error("expected insert");
-    (/** @type {{ id: string }} */ (inserted.value)).id = uuid(99);
+    (/** @type {{ id: string }} */ (inserted.value)).id = entityId(99);
     const before = output.writes.length;
     await publisher.publish(cut([row(10)], "same"));
     assert.equal(output.writes.length, before);
@@ -204,15 +204,15 @@ describe("native TanStack collection publication", () => {
     /** @type {DatabasePoint} */
     const conflict = {
       version: 1, state: "conflict", state_version: null,
-      context: [{ replica: uuid(4), incarnation: "11".repeat(16), sequence: 18_446_744_073_709_551_615n }, { replica: uuid(5), incarnation: "22".repeat(16), sequence: 1n }],
+      context: [{ replica: entityId(4), incarnation: "11".repeat(16), sequence: 18_446_744_073_709_551_615n }, { replica: entityId(5), incarnation: "22".repeat(16), sequence: 1n }],
       siblings: [
-        { schema_generation: 1n, schema_digest: "33".repeat(32), event: { database: scope.database, shard: scope.shard, replica: uuid(4), incarnation: "11".repeat(16), sequence: 18_446_744_073_709_551_615n }, kind: "live", fields: [{ id: 1, value: { type: "utf8", value: "one" } }] },
-        { schema_generation: 1n, schema_digest: "33".repeat(32), event: { database: scope.database, shard: scope.shard, replica: uuid(5), incarnation: "22".repeat(16), sequence: 1n }, kind: "tombstone" },
+        { schema_generation: 1n, schema_digest: "33".repeat(32), event: { database: scope.database, shard: scope.shard, replica: entityId(4), incarnation: "11".repeat(16), sequence: 18_446_744_073_709_551_615n }, kind: "live", fields: [{ id: 1, value: { type: "utf8", value: "one" } }] },
+        { schema_generation: 1n, schema_digest: "33".repeat(32), event: { database: scope.database, shard: scope.shard, replica: entityId(5), incarnation: "22".repeat(16), sequence: 1n }, kind: "tombstone" },
       ],
     };
     const output = callbacks();
     const publisher = new TerraScaleTanStackCollectionPublisher(output.params, mapRow, value => value.id);
-    await publisher.publish(cut([{ document: uuid(10), point: conflict }], "conflict"));
+    await publisher.publish(cut([{ document: entityId(10), point: conflict }], "conflict"));
     const inserted = output.writes.find(value => value.type === "insert");
     if (inserted?.type !== "insert") throw new Error("expected insert");
     assert.deepEqual(inserted.value.point, conflict);
@@ -263,18 +263,18 @@ describe("native TanStack adapter admission", () => {
     await terminal.promise;
     assert.equal(errors.length, 1);
     assert.match(String(errors[0]), /transport_unavailable/u);
-    await assert.rejects(options.onInsert({ transaction: { id: "never-queued", mutations: [{ key: uuid(10), type: "insert", modified: mapRow(row(10)) }] } }), /current native subscription/u);
+    await assert.rejects(options.onInsert({ transaction: { id: "never-queued", mutations: [{ key: entityId(10), type: "insert", modified: mapRow(row(10)) }] } }), /current native subscription/u);
     const frameworkTransaction = {
       id: "real-shape-not-cloneable", mutationFn: () => undefined,
-      mutations: [{ key: uuid(10), type: /** @type {const} */ ("insert"), modified: mapRow(row(10)), original: {}, collection: { runtime: () => undefined }, createdAt: new Date() }],
+      mutations: [{ key: entityId(10), type: /** @type {const} */ ("insert"), modified: mapRow(row(10)), original: {}, collection: { runtime: () => undefined }, createdAt: new Date() }],
     };
     await assert.rejects(options.onInsert({ transaction: frameworkTransaction }), /current native subscription/u);
     assert.equal(prepared, 0);
     assert.equal(options.adapter.getCheckpoint(), undefined);
     stop();
-    await assert.rejects(options.onInsert({ transaction: { id: "cleaned-up", mutations: [{ key: uuid(10), type: "insert", modified: mapRow(row(10)) }] } }), /current native subscription/u);
+    await assert.rejects(options.onInsert({ transaction: { id: "cleaned-up", mutations: [{ key: entityId(10), type: "insert", modified: mapRow(row(10)) }] } }), /current native subscription/u);
     options.adapter.dispose();
-    await assert.rejects(options.onInsert({ transaction: { id: "disposed", mutations: [{ key: uuid(10), type: "insert", modified: mapRow(row(10)) }] } }), /disposed/u);
+    await assert.rejects(options.onInsert({ transaction: { id: "disposed", mutations: [{ key: entityId(10), type: "insert", modified: mapRow(row(10)) }] } }), /disposed/u);
   });
 
   test("keeps typed uncertain outcomes unresolved", () => {

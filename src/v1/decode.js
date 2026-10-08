@@ -1,5 +1,5 @@
 // Typed decoding of TerraBase v1 response bodies.
-import { parseU64, requireVersion } from "./ids.js";
+import { parseU64, requireDocumentId, requireVersion } from "./ids.js";
 import { isJsonObject } from "./json.js";
 /** @import { JsonObject, JsonValue } from "./json.js" */
 
@@ -8,7 +8,7 @@ import { isJsonObject } from "./json.js";
  * `document` is the value, or the LWW winner when a causal read answers `"conflict"` with `siblings`.
  * Unknown future states pass through.
  * @typedef {object} V1Document
- * @property {string} id
+ * @property {import("../ids.js").EntityId} id
  * @property {string} version
  * @property {"value" | "conflict" | (string & {})} state
  * @property {JsonObject} document
@@ -18,7 +18,7 @@ import { isJsonObject } from "./json.js";
 /**
  * The result of a document write.
  * @typedef {object} V1WriteResult
- * @property {string} id
+ * @property {import("../ids.js").EntityId} id
  * @property {string} version For a delete, the tombstone's version.
  * @property {string} offset The database commit offset (decimal u64), usable with shape `waitFor`.
  * @property {V1Durability} durability
@@ -41,6 +41,13 @@ export function malformed(what) {
  */
 export function object(value, what) {
   return isJsonObject(value) ? value : malformed(what);
+}
+
+/** @param {JsonValue | undefined} value @returns {JsonObject} */
+export function documentObject(value) {
+  const document = object(value, "document body");
+  if (Object.hasOwn(document, "id")) malformed("document body: the entity ID belongs in the document key");
+  return document;
 }
 
 /**
@@ -93,10 +100,10 @@ export function durability(value) {
  */
 export function decodeDocument(value) {
   const raw = object(value, "document");
-  const id = string(raw.id, "document id");
+  const id = requireDocumentId(raw.id);
   const version = requireVersion(raw.version);
   const state = string(raw.state, "document state");
-  const document = object(raw.document, "document body");
+  const document = documentObject(raw.document);
   if (raw.siblings === undefined) return Object.freeze({ id, version, state, document });
   return Object.freeze({ id, version, state, document, siblings: Object.freeze(array(raw.siblings, "document siblings")) });
 }
@@ -108,7 +115,7 @@ export function decodeDocument(value) {
 export function decodeWrite(response) {
   const raw = object(response.value, "write result");
   return Object.freeze({
-    id: string(raw.id, "write id"),
+    id: requireDocumentId(raw.id),
     version: requireVersion(raw.version),
     offset: u64(raw.offset, "write offset"),
     durability: durability(raw.durability),

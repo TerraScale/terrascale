@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { generateId, requireId } from "../ids.js";
 import { createAdapterFactory } from "@better-auth/core/db/adapter";
 /** @import { CleanedWhere, CustomAdapter, DBAdapter, JoinConfig } from "@better-auth/core/db/adapter" */
 /** @import { BetterAuthOptions } from "@better-auth/core" */
@@ -29,6 +29,8 @@ export function createLocalBetterAuthAdapter(store) {
    * @returns {DBAdapter<BetterAuthOptions>}
    */
   function make(options, scoped) {
+    if (options.advanced?.database?.generateId === "uuid")
+      throw new TypeError("Better Auth entity IDs must be ULIDs; UUID generation is unavailable.");
     /** @type {ReturnType<typeof createAdapterFactory<BetterAuthOptions>>} */
     const factory = createAdapterFactory({
       config: {
@@ -38,7 +40,7 @@ export function createLocalBetterAuthAdapter(store) {
         supportsArrays: true,
         supportsBooleans: true,
         supportsNumericIds: false,
-        supportsUUIDs: true,
+        customIdGenerator: generateId,
         transaction: async (callback) => {
           if (scoped)
             throw new Error("Nested local auth transactions are unavailable.");
@@ -65,7 +67,9 @@ function customAdapter(store, config, scoped) {
    * @param {string} model
    * @returns {Row[]}
    */
-  const rows = (model) => store.list("local-auth", model);
+  const rows = (model) => store.listNamespace("local-auth")
+    .filter(entry => entry.scope === model)
+    .map(entry => ({ .../** @type {Row} */ (entry.value), id: requireId(entry.id) }));
   /**
    * @param {string} model
    * @param {readonly CleanedWhere[]} clauses
@@ -150,13 +154,21 @@ function customAdapter(store, config, scoped) {
    */
   const save = (model, input, creating = false) => {
     const row = jsonRow(input);
-    const id =
-      typeof row.id === "string" && row.id.length > 0 ? row.id : randomUUID();
+    const id = row.id === undefined ? generateId() : requireId(row.id);
+    for (const [logical, table] of Object.entries(config.schema)) {
+      if (config.getModelName(logical) !== model) continue;
+      for (const [field, schema] of Object.entries(table.fields)) {
+        if (schema.references?.field !== "id") continue;
+        const value = row[config.getFieldName({ model: logical, field })];
+        if (value !== undefined && value !== null) requireId(value, field);
+      }
+    }
     const candidate = { ...row, id };
     if (creating && store.get("local-auth", model, id) !== undefined)
       throw new LocalAuthConstraintError();
     ensureUnique(model, candidate);
-    store.put("local-auth", model, id, candidate);
+    delete row.id;
+    store.put("local-auth", model, id, row);
     return candidate;
   };
   /**

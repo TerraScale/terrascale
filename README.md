@@ -11,7 +11,7 @@ npm install @terrascale/sdk
 ```
 
 ```js
-import { createTerraBaseV1Client, documentIdFor, v1Filter } from "@terrascale/sdk";
+import { createTerraBaseV1Client, generateId, v1Filter } from "@terrascale/sdk";
 
 const client = createTerraBaseV1Client({
   project: process.env.TERRABASE_PROJECT,
@@ -21,7 +21,7 @@ const client = createTerraBaseV1Client({
 const db = client.database("app");
 const todos = db.collection("todos");
 
-const id = await documentIdFor("todos", "first-task");
+const id = generateId();
 await todos.put(id, { title: "Use TerraBase", done: false }, { ifNoneMatchAny: true });
 const doc = await todos.get(id);
 await todos.patch(id, { merge: { done: true } }, { ifMatch: doc.version });
@@ -94,8 +94,12 @@ The C# producer owns these routes:
 | Shape | `GET /v1/projects/{project}/databases/{db}/collections/{c}/shape` |
 
 Collection methods are `get`, `put`, `create`, `patch`, `delete`, `query`,
-`pages` and `items`. New document IDs are canonical UUIDs; `documentIdFor`
-generates a stable UUIDv5 from a natural key. Documents return
+`pages` and `items`. Every entity ID is a plain 26-character Crockford ULID,
+canonical uppercase, without a prefix. `generateId()` uses the maintained
+`ulid` library and increases monotonically within a millisecond. `isValidId`
+checks IDs; `requireId` throws for invalid IDs. UUIDs and legacy IDs are rejected.
+The document key is the entity ID: keep it out of the JSON payload. Natural
+keys belong in indexed document fields, not deterministic UUID IDs. Documents return
 `{ id, version, state: "value", document }`; a causal read can answer
 `state: "conflict"` with `siblings`, and unknown states pass through. Versions
 (`tbv1-…`, `tbv2-…`) are opaque tokens. Writes return the version and a
