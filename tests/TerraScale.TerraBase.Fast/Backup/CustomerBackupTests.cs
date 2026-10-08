@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Net;
 using System.Text;
 using System.Text.Json;
@@ -47,12 +48,16 @@ public sealed class CustomerBackupTests
             await Assert.That(absent.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
         }
 
-        // Omitted destination selects platform for both window and restore.
-        using var defaultWindow = await api.Client.GetAsync(Uri(database.Path + "/point-in-time"));
-        defaultWindow.EnsureSuccessStatusCode();
-        var defaultBounds = await defaultWindow.Content.ReadFromJsonAsync<JsonElement>();
-        var defaultRestore = await RestoreAsync(api, database, defaultBounds.GetProperty("latest").GetDateTimeOffset(), "default-restore");
-        await AssertDocumentAsync(data, defaultRestore, "after", after);
+        foreach (var destination in new string?[] { null, "", "platform" })
+        {
+            var query = destination is null ? "" : "?destination=" + destination;
+            using var defaultWindow = await api.Client.GetAsync(Uri(database.Path + "/point-in-time" + query));
+            defaultWindow.EnsureSuccessStatusCode();
+            var defaultBounds = await defaultWindow.Content.ReadFromJsonAsync<JsonElement>();
+            var defaultRestore = await RestoreAsync(api, database, defaultBounds.GetProperty("latest").GetDateTimeOffset(),
+                "default-" + (destination is null ? "omitted" : destination.Length == 0 ? "empty" : destination), destination);
+            await AssertDocumentAsync(data, defaultRestore, "after", after);
+        }
         var customerKeys = oci.CustomerObjects.Keys.ToArray();
         await Assert.That(customerKeys.Any(key => key.StartsWith(File(database) + "/snapshots/", StringComparison.Ordinal))).IsTrue();
         await Assert.That(customerKeys.Any(key => key.StartsWith(File(database) + "/wal/", StringComparison.Ordinal))).IsTrue();
@@ -93,6 +98,11 @@ public sealed class CustomerBackupTests
         using var siblingWindow = await api.Client.GetAsync(Uri(sibling.Path + "/point-in-time?destination=customer"));
         await Assert.That(platformWindow.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
         await Assert.That(platformRestore.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+        using var emptyWindow = await api.Client.GetAsync(Uri(customer.Path + "/point-in-time?destination="));
+        using var emptyRestore = await api.Client.PostAsJsonAsync(Uri(customer.Path + "/point-in-time/restore"),
+            new { pointInTime = time.GetUtcNow(), name = "no-platform-empty", destination = "" });
+        await Assert.That(emptyWindow.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+        await Assert.That(emptyRestore.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
         await Assert.That(siblingWindow.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
         var restored = await RestoreAsync(api, customer, time.GetUtcNow(), "customer-restored", "customer");
         await AssertDocumentAsync(data, restored, "only", text);
@@ -114,6 +124,7 @@ public sealed class CustomerBackupTests
         get.EnsureSuccessStatusCode();
         await AssertDestinationAsync(await get.Content.ReadAsStringAsync(), "customer");
         await Assert.That(oci.Secrets.Count).IsEqualTo(1);
+        var secretId = oci.Secrets.Keys.Single();
         using var secret = JsonDocument.Parse(oci.Secrets.Values.Single());
         await Assert.That(secret.RootElement.GetProperty("version").GetInt32()).IsEqualTo(1);
         await Assert.That(secret.RootElement.GetProperty("accessKeyId").GetString()).IsEqualTo(FakeOci.CustomerAccessKey);
@@ -137,6 +148,8 @@ public sealed class CustomerBackupTests
         using var gone = await api.Client.GetAsync(route);
         await Assert.That(deleted.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
         await Assert.That(gone.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+        await Assert.That(oci.ScheduledSecrets).IsEquivalentTo([secretId]);
+        await Assert.That(oci.SecretDeletionTimes[secretId]).IsGreaterThanOrEqualTo(time.GetUtcNow().AddDays(7));
         await ShipAsync(api, time);
         await Assert.That(oci.CustomerObjects.Keys).IsEquivalentTo(retained.Keys);
         await Assert.That(retained.All(item => oci.CustomerObjects[item.Key].AsSpan().SequenceEqual(item.Value))).IsTrue();
@@ -146,6 +159,109 @@ public sealed class CustomerBackupTests
         var restored = await RestoreAsync(api, database, time.GetUtcNow(), "platform-resumed");
         await AssertDocumentAsync(data, restored, "kept", text);
         await Assert.That(oci.BadSignatures).IsEqualTo(0);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task An_empty_project_with_a_customer_backup_destination_requires_detach_before_deletion(bool viaCommit)
+    {
+        using var oci = new FakeOci();
+        var time = Clock();
+        await using var api = await ManagementApi.StartAsync(oci.ConfigureCustomer, oci.Route, time);
+        var organization = await api.CreateOrganizationAsync(new Faker().Company.CompanyName());
+        var project = await api.CreateProjectAsync(organization, "Empty project");
+        var projectRoute = Uri($"/v1/management/organizations/{organization}/projects/{project}");
+        var destinationRoute = Uri(projectRoute.OriginalString + "/backup-destination");
+        using var saved = await api.Client.PutAsJsonAsync(destinationRoute, Destination("customer"));
+        saved.EnsureSuccessStatusCode();
+        var secretId = oci.Secrets.Keys.Single();
+        var secret = oci.Secrets[secretId];
+
+        using var rejected = await DeleteProjectAsync();
+        await Assert.That(rejected.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
+        using var configured = await api.Client.GetAsync(destinationRoute);
+        configured.EnsureSuccessStatusCode();
+        await AssertDestinationAsync(await configured.Content.ReadAsStringAsync(), "customer");
+        await Assert.That(oci.Secrets.Keys).IsEquivalentTo([secretId]);
+        await Assert.That(oci.Secrets[secretId]).IsEqualTo(secret);
+        await Assert.That(oci.ScheduledSecrets.Count).IsEqualTo(0);
+
+        using var detached = await api.Client.DeleteAsync(destinationRoute);
+        await Assert.That(detached.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
+        using var unconfigured = await api.Client.GetAsync(destinationRoute);
+        await Assert.That(unconfigured.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+        await Assert.That(oci.ScheduledSecrets).IsEquivalentTo([secretId]);
+        await Assert.That(oci.SecretDeletionTimes[secretId]).IsGreaterThanOrEqualTo(time.GetUtcNow().AddDays(7));
+        using var deleted = await DeleteProjectAsync();
+        await Assert.That(deleted.StatusCode).IsEqualTo(viaCommit ? HttpStatusCode.OK : HttpStatusCode.NoContent);
+        using var gone = await api.Client.GetAsync(projectRoute);
+        await Assert.That(gone.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+        await Assert.That(oci.ScheduledSecrets).IsEquivalentTo([secretId]);
+        await Assert.That(oci.BadSignatures).IsEqualTo(0);
+
+        Task<HttpResponseMessage> DeleteProjectAsync()
+        {
+            return viaCommit
+                ? api.Client.PostAsJsonAsync(Uri("/v1/management/commits"), new
+                {
+                    id = Guid.NewGuid().ToString(),
+                    ops = new[] { new { op = "delete_project", organization, project } },
+                })
+                : api.Client.DeleteAsync(projectRoute);
+        }
+    }
+
+    [Test]
+    public async Task Creating_replacing_and_detaching_a_backup_destination_advances_the_organization_fence()
+    {
+        using var oci = new FakeOci();
+        var time = Clock();
+        await using var api = await ManagementApi.StartAsync(oci.ConfigureCustomer, oci.Route, time);
+        var organization = await api.CreateOrganizationAsync(new Faker().Company.CompanyName());
+        var project = await api.CreateProjectAsync(organization, "Backup fencing");
+        var route = Uri($"/v1/management/organizations/{organization}/projects/{project}/backup-destination");
+
+        foreach (var mode in new[] { "customer", "both" })
+        {
+            var before = await VersionAsync();
+            using var saved = await api.Client.PutAsJsonAsync(route, Destination(mode));
+            saved.EnsureSuccessStatusCode();
+            await AssertDestinationAsync(await saved.Content.ReadAsStringAsync(), mode);
+            await AssertChangedAndStaleFenceAsync(before);
+        }
+
+        var beforeDetach = await VersionAsync();
+        using var detached = await api.Client.DeleteAsync(route);
+        await Assert.That(detached.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
+        await AssertChangedAndStaleFenceAsync(beforeDetach);
+
+        var beforeRepeatedDelete = await VersionAsync();
+        using var repeated = await api.Client.DeleteAsync(route);
+        await Assert.That(repeated.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
+        await Assert.That(await VersionAsync()).IsEqualTo(beforeRepeatedDelete);
+
+        async Task<string> VersionAsync()
+        {
+            using var response = await api.Client.GetAsync(Uri($"/v1/management/versions?organization={organization}"));
+            response.EnsureSuccessStatusCode();
+            var versions = await response.Content.ReadFromJsonAsync<JsonElement>();
+            return versions.GetProperty("organizations").GetProperty(organization).GetString()!;
+        }
+
+        async Task AssertChangedAndStaleFenceAsync(string before)
+        {
+            var after = await VersionAsync();
+            await Assert.That(after).IsNotEqualTo(before);
+            using var rejected = await api.Client.PostAsJsonAsync(Uri("/v1/management/commits"), new
+            {
+                id = Guid.CreateVersion7().ToString(),
+                ops = new[] { new { op = "fence", organization, version = before } },
+            });
+            await Assert.That(rejected.StatusCode).IsEqualTo(HttpStatusCode.PreconditionFailed);
+            var body = await rejected.Content.ReadFromJsonAsync<JsonElement>();
+            await Assert.That(body.GetProperty("error").GetProperty("code").GetString()).IsEqualTo("precondition_failed");
+        }
     }
 
     [Test]
@@ -163,8 +279,10 @@ public sealed class CustomerBackupTests
         var after = faker.Lorem.Sentence(12);
         await PutAsync(data, database, "before", before);
         await ShipAsync(api, time);
+        var platformLatest = time.GetUtcNow();
         var initial = Generations(oci.CustomerObjects, database);
         await Assert.That(initial.Count).IsEqualTo(1);
+        var oldSecret = oci.Secrets.Keys.Single();
         var platformKeys = oci.Objects.Keys.Where(key => key.StartsWith(File(database) + "/", StringComparison.Ordinal)).ToArray();
         await SetAsync(api, database, "customer");
         await PutAsync(data, database, "after", after);
@@ -173,10 +291,19 @@ public sealed class CustomerBackupTests
         await Assert.That(changed.Count).IsEqualTo(2);
         await Assert.That(changed.IsSupersetOf(initial)).IsTrue();
         await Assert.That(oci.Objects.Keys.Where(key => key.StartsWith(File(database) + "/", StringComparison.Ordinal))).IsEquivalentTo(platformKeys);
+        using var platformWindow = await api.Client.GetAsync(Uri(database.Path + "/point-in-time?destination=platform"));
+        using var customerWindow = await api.Client.GetAsync(Uri(database.Path + "/point-in-time?destination=customer"));
+        platformWindow.EnsureSuccessStatusCode();
+        customerWindow.EnsureSuccessStatusCode();
+        await Assert.That((await platformWindow.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("latest").GetDateTimeOffset()).IsEqualTo(platformLatest);
+        await Assert.That((await customerWindow.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("latest").GetDateTimeOffset()).IsEqualTo(time.GetUtcNow());
         var restored = await RestoreAsync(api, database, time.GetUtcNow(), "changed-destination", "customer");
         await AssertDocumentAsync(data, restored, "before", before);
         await AssertDocumentAsync(data, restored, "after", after);
         await Assert.That(oci.Secrets.Count).IsEqualTo(2);
+        await Assert.That(oci.ScheduledSecrets).IsEquivalentTo([oldSecret]);
+        await Assert.That(oci.SecretDeletionTimes[oldSecret]).IsGreaterThanOrEqualTo(time.GetUtcNow().AddDays(7));
+        await Assert.That(oci.ScheduledSecrets.Contains(oci.Secrets.Keys.Single(id => id != oldSecret), StringComparer.Ordinal)).IsFalse();
         await Assert.That(oci.BadSignatures).IsEqualTo(0);
     }
 
@@ -223,10 +350,13 @@ public sealed class CustomerBackupTests
             await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
         }
 
-        using var invalidWindow = await api.Client.GetAsync(Uri(database.Path + "/point-in-time?destination=other"));
-        using var invalidRestore = await api.Client.PostAsJsonAsync(Uri(database.Path + "/point-in-time/restore"), new { pointInTime = time.GetUtcNow(), destination = "other" });
-        await Assert.That(invalidWindow.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
-        await Assert.That(invalidRestore.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+        foreach (var source in new[] { "other", "PLATFORM", "Customer", " platform " })
+        {
+            using var invalidWindow = await api.Client.GetAsync(Uri(database.Path + "/point-in-time?destination=" + System.Uri.EscapeDataString(source)));
+            using var invalidRestore = await api.Client.PostAsJsonAsync(Uri(database.Path + "/point-in-time/restore"), new { pointInTime = time.GetUtcNow(), destination = source });
+            await Assert.That(invalidWindow.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+            await Assert.That(invalidRestore.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+        }
         using var wrongCredentials = await api.Client.PutAsJsonAsync(route,
             new Dictionary<string, string>(valid, StringComparer.Ordinal) { ["secretKey"] = "wrong-secret" });
         await Assert.That(wrongCredentials.IsSuccessStatusCode).IsFalse();
@@ -318,9 +448,11 @@ public sealed class CustomerBackupTests
         await ShipAsync(api, time);
         var foreignSegment = oci.Objects.Keys.Single(key => key.StartsWith(File(foreign) + "/wal/", StringComparison.Ordinal));
         var preserved = new[] { foreignSnapshot, foreignSegment }.ToDictionary(key => key, key => oci.Objects[key].ToArray(), StringComparer.Ordinal);
-        // Freeze this sibling project's platform history so legitimate retention cannot remove the sentinels.
-        await SetAsync(api, foreign, "customer");
-        await ShipAsync(api, time);
+        // Foreign objects in the customer bucket are not this project's retention responsibility.
+        foreach (var item in preserved)
+        {
+            oci.SeedObject(customer: true, item.Key, item.Value);
+        }
         for (var day = 0; day < 2; day++)
         {
             await PutAsync(data, database, "day-" + day, new Faker().Lorem.Sentence(12));
@@ -332,9 +464,9 @@ public sealed class CustomerBackupTests
         var foreignDeletes = 0;
         var snapshotListings = 0;
         var segmentListings = 0;
-        oci.ObjectRequested = (_, method, key) =>
+        oci.ObjectRequested = (customer, method, key) =>
         {
-            if (preserved.ContainsKey(key))
+            if (customer && preserved.ContainsKey(key))
             {
                 if (method == HttpMethod.Get)
                 {
@@ -402,7 +534,7 @@ public sealed class CustomerBackupTests
         await Assert.That(segmentListings).IsGreaterThan(0);
         await Assert.That(foreignReads).IsEqualTo(0);
         await Assert.That(foreignDeletes).IsEqualTo(0);
-        await Assert.That(preserved.All(item => oci.Objects.TryGetValue(item.Key, out var bytes) && bytes.AsSpan().SequenceEqual(item.Value))).IsTrue();
+        await Assert.That(preserved.All(item => oci.CustomerObjects.TryGetValue(item.Key, out var bytes) && bytes.AsSpan().SequenceEqual(item.Value))).IsTrue();
         oci.CustomerListingOverride = null;
         oci.ObjectRequested = null;
         var restored = await RestoreAsync(api, database, time.GetUtcNow(), "safe-listing", "customer");
@@ -636,7 +768,7 @@ public sealed class CustomerBackupTests
     }
 
     [Test]
-    public async Task Customer_restore_rejects_wrapped_key_bodies_larger_than_sixteen_kibibytes()
+    public async Task Customer_restore_accepts_exactly_sixteen_kibibytes_of_wrapped_key_and_rejects_larger_bodies()
     {
         using var oci = new FakeOci();
         var time = Clock();
@@ -649,8 +781,8 @@ public sealed class CustomerBackupTests
         await PutAsync(data, database, "kept", text);
         await ShipAsync(api, time);
         var key = oci.CustomerObjects.Single(item => item.Key.StartsWith($"v1/keys/{database.Organization}/{database.Project}/", StringComparison.Ordinal));
-        // Whitespace still decodes to the original key: without a body bound, this hostile restore succeeds.
-        var oversized = Encoding.ASCII.GetBytes(Encoding.ASCII.GetString(key.Value) + new string(' ', 16 * 1024));
+        // Trailing whitespace decodes to the same key. Exactly 16 KiB must remain accepted, catching >= regressions.
+        var keyBody = Encoding.ASCII.GetBytes(Encoding.ASCII.GetString(key.Value).PadRight(16 * 1024));
         var keyReads = 0;
         oci.CustomerReadOverride = requested =>
         {
@@ -660,8 +792,13 @@ public sealed class CustomerBackupTests
             }
 
             Interlocked.Increment(ref keyReads);
-            return oversized;
+            return keyBody;
         };
+        var boundary = await RestoreAsync(api, database, time.GetUtcNow(), "boundary-key", "customer");
+        await AssertDocumentAsync(data, boundary, "kept", text);
+        await Assert.That(keyReads).IsGreaterThan(0);
+        keyReads = 0;
+        keyBody = [.. keyBody, (byte)' '];
         using var rejected = await api.Client.PostAsJsonAsync(Uri(database.Path + "/point-in-time/restore"),
             new { pointInTime = time.GetUtcNow(), name = "oversized-key", destination = "customer" });
         await Assert.That(keyReads).IsGreaterThan(0);
@@ -718,6 +855,476 @@ public sealed class CustomerBackupTests
         await Assert.That(oci.BadSignatures).IsEqualTo(0);
     }
 
+    [Test]
+    public async Task Retention_drains_more_than_ten_thousand_expired_snapshots_without_deleting_a_later_snapshots_wal()
+    {
+        using var oci = new FakeOci();
+        var time = Clock();
+        await using var api = await ManagementApi.StartAsync(oci.ConfigureCustomer, services => ManualShipping(oci, services), time);
+        Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
+        var database = await api.CreateManagedDatabaseAsync();
+        using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
+        await SetAsync(api, database, "customer");
+        await ManagementApi.CreateCollectionAsync(data, database, "people");
+        var faker = new Faker();
+        var before = faker.Lorem.Sentence(12);
+        var after = faker.Lorem.Sentence(12);
+        await PutAsync(data, database, "before", before);
+        await ShipAsync(api, time);
+        var currentSnapshot = oci.CustomerObjects.Keys.Single(key => key.StartsWith(File(database) + "/snapshots/", StringComparison.Ordinal));
+        var generation = currentSnapshot.Split('/')[^1].Split('-')[1];
+        await PutAsync(data, database, "after", after);
+        await ShipAsync(api, time);
+        var neededSegment = oci.CustomerObjects.Keys.Single(key => key.StartsWith(File(database) + "/wal/", StringComparison.Ordinal));
+        const int expiredCount = 10_002;
+        var first = time.GetUtcNow().AddDays(-3).ToUnixTimeMilliseconds();
+        for (var index = 0; index < expiredCount; index++)
+        {
+            // The retained real snapshot has position zero, below every candidate's position. Its WAL remains needed.
+            var key = string.Create(CultureInfo.InvariantCulture,
+                $"{File(database)}/snapshots/{first + index:D13}-{generation}-0000000000009999");
+            oci.SeedObject(customer: true, key, []);
+        }
+
+        var snapshotListings = 0;
+        oci.CustomerListingOverride = (prefix, keys) =>
+        {
+            if (prefix == File(database) + "/snapshots/")
+            {
+                Interlocked.Increment(ref snapshotListings);
+            }
+
+            return keys;
+        };
+        var previous = expiredCount + 1;
+        for (var pass = 0; pass < 2; pass++)
+        {
+            time.Advance(TimeSpan.FromHours(1));
+            await ShipAsync(api, time);
+            await Assert.That(Volatile.Read(ref snapshotListings)).IsGreaterThan(10);
+            var remaining = oci.CustomerObjects.Keys.Count(key => key.StartsWith(File(database) + "/snapshots/", StringComparison.Ordinal));
+            await Assert.That(remaining).IsLessThan(previous);
+            previous = remaining;
+            await Assert.That(oci.CustomerObjects.ContainsKey(currentSnapshot)).IsTrue();
+            await Assert.That(oci.CustomerObjects.ContainsKey(neededSegment)).IsTrue();
+            var restored = await RestoreAsync(api, database, time.GetUtcNow(), "backlog-" + pass, "customer");
+            await AssertDocumentAsync(data, restored, "before", before);
+            await AssertDocumentAsync(data, restored, "after", after);
+        }
+
+        // One snapshot before the cutoff remains as the floor; all other expired snapshots have drained.
+        await Assert.That(previous).IsEqualTo(2);
+        await Assert.That(oci.BadSignatures).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task Customer_only_switch_refreshes_size_and_prunes_old_platform_history_while_expired_window_is_absent()
+    {
+        using var oci = new FakeOci();
+        var time = Clock();
+        await using var api = await ManagementApi.StartAsync(oci.ConfigureCustomer, services => ManualShipping(oci, services), time);
+        Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
+        var database = await api.CreateManagedDatabaseAsync();
+        using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
+        await ManagementApi.CreateCollectionAsync(data, database, "people");
+        var text = new Faker().Lorem.Sentence(12);
+        await PutAsync(data, database, "kept", text);
+        await ShipAsync(api, time);
+        await ShipAsync(api, time);
+        var old = oci.Objects.Keys.Single(key => key.StartsWith(File(database) + "/snapshots/", StringComparison.Ordinal));
+        var measured = await BackupRecordAsync(api, database);
+        await Assert.That(measured.GetProperty("sizeBytes").GetInt64()).IsGreaterThan(0);
+        var previousMeasurement = measured.GetProperty("sizedAt").GetDateTimeOffset();
+
+        await SetAsync(api, database, "customer");
+        await ShipAsync(api, time);
+        var switched = await BackupRecordAsync(api, database);
+        await Assert.That(switched.GetProperty("sizeBytes").ValueKind).IsEqualTo(JsonValueKind.Null);
+        await Assert.That(switched.GetProperty("sizedAt").ValueKind).IsEqualTo(JsonValueKind.Null);
+        await ShipAsync(api, time);
+        var refreshed = await BackupRecordAsync(api, database);
+        await Assert.That(refreshed.GetProperty("sizeBytes").GetInt64()).IsGreaterThan(0);
+        await Assert.That(refreshed.GetProperty("sizedAt").GetDateTimeOffset()).IsGreaterThan(previousMeasurement);
+
+        // Retention preserves the newest platform snapshot before the cutoff; seed an older one to prune.
+        var parts = old.Split('/')[^1].Split('-');
+        var expired = string.Create(CultureInfo.InvariantCulture,
+            $"{File(database)}/snapshots/{time.GetUtcNow().AddDays(-2).ToUnixTimeMilliseconds():D13}-{parts[1]}-{parts[2]}");
+        oci.SeedObject(customer: false, expired, []);
+        time.Advance(TimeSpan.FromDays(2));
+        await ShipAsync(api, time);
+        await ShipAsync(api, time);
+        await Assert.That(oci.Objects.ContainsKey(expired)).IsFalse();
+        await Assert.That(oci.Objects.ContainsKey(old)).IsTrue();
+        using var platformWindow = await api.Client.GetAsync(Uri(database.Path + "/point-in-time?destination=platform"));
+        await Assert.That(platformWindow.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+        using var platformRestore = await api.Client.PostAsJsonAsync(Uri(database.Path + "/point-in-time/restore"),
+            new { pointInTime = time.GetUtcNow(), name = "expired-platform", destination = "platform" });
+        await Assert.That(platformRestore.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+        var restored = await RestoreAsync(api, database, time.GetUtcNow(), "retained-customer", "customer");
+        await AssertDocumentAsync(data, restored, "kept", text);
+        await Assert.That(oci.BadSignatures).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task Own_prefix_junk_is_ignored_but_nonascending_customer_listings_still_fail()
+    {
+        using var oci = new FakeOci();
+        var time = Clock();
+        await using var api = await ManagementApi.StartAsync(oci.ConfigureCustomer, services => ManualShipping(oci, services), time);
+        Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
+        var database = await api.CreateManagedDatabaseAsync();
+        using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
+        await SetAsync(api, database, "customer");
+        await ManagementApi.CreateCollectionAsync(data, database, "people");
+        var text = new Faker().Lorem.Sentence(12);
+        await PutAsync(data, database, "kept", text);
+        await ShipAsync(api, time);
+        var snapshot = oci.CustomerObjects.Keys.Single(key => key.StartsWith(File(database) + "/snapshots/", StringComparison.Ordinal));
+        var prefix = File(database) + "/snapshots/";
+        string[] junk = [prefix + new string('x', 1025), prefix + "./" + snapshot.Split('/')[^1],
+            prefix + "junk/../" + snapshot.Split('/')[^1], prefix + "negative", prefix + "invalid-name"];
+        var touched = 0;
+        oci.CustomerListingOverride = (requested, keys) => requested == prefix ? [.. keys.Concat(junk).Order(StringComparer.Ordinal)] : keys;
+        oci.CustomerListingSizeOverride = key => key == prefix + "negative" ? -1 : null;
+        oci.ObjectRequested = (customer, method, key) =>
+        {
+            if (customer && (method == HttpMethod.Get || method == HttpMethod.Delete) && junk.Contains(key, StringComparer.Ordinal))
+            {
+                Interlocked.Increment(ref touched);
+            }
+        };
+        await ShipAsync(api, time);
+        using var validWindow = await api.Client.GetAsync(Uri(database.Path + "/point-in-time?destination=customer"));
+        validWindow.EnsureSuccessStatusCode();
+        var restored = await RestoreAsync(api, database, time.GetUtcNow(), "junk-ignored", "customer");
+        await AssertDocumentAsync(data, restored, "kept", text);
+        await Assert.That(touched).IsEqualTo(0);
+        foreach (var repeated in new[] { true, false })
+        {
+            oci.CustomerListingOverride = (requested, keys) => requested != prefix ? keys
+                : repeated ? [snapshot, snapshot] : [prefix + "z-last", snapshot];
+            using var rejected = await api.Client.GetAsync(Uri(database.Path + "/point-in-time?destination=customer"));
+            await Assert.That(rejected.IsSuccessStatusCode).IsFalse();
+            await AssertPublicAsync(await rejected.Content.ReadAsStringAsync());
+        }
+
+        await Assert.That(oci.BadSignatures).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task Missing_customer_bucket_is_unavailable_while_a_missing_snapshot_is_an_incomplete_backup()
+    {
+        using var oci = new FakeOci();
+        var time = Clock();
+        await using var api = await ManagementApi.StartAsync(oci.ConfigureCustomer, services => ManualShipping(oci, services), time);
+        Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
+        var database = await api.CreateManagedDatabaseAsync();
+        using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
+        await SetAsync(api, database, "customer");
+        await ManagementApi.CreateCollectionAsync(data, database, "people");
+        var text = new Faker().Lorem.Sentence(12);
+        await PutAsync(data, database, "kept", text);
+        await ShipAsync(api, time);
+        var snapshot = oci.CustomerObjects.Keys.Single(key => key.StartsWith(File(database) + "/snapshots/", StringComparison.Ordinal));
+        foreach (var (code, status) in new[] { ("NoSuchBucket", HttpStatusCode.ServiceUnavailable), ("NoSuchKey", HttpStatusCode.InternalServerError) })
+        {
+            oci.CustomerReadError = key => key == snapshot ? code : null;
+            using var rejected = await api.Client.PostAsJsonAsync(Uri(database.Path + "/point-in-time/restore"),
+                new { pointInTime = time.GetUtcNow(), name = "missing-" + code.ToLowerInvariant(), destination = "customer" });
+            await Assert.That(rejected.StatusCode).IsEqualTo(status);
+            if (code == "NoSuchBucket")
+            {
+                await AssertUnavailableAsync(rejected, "backup bucket or OCI Vault could not be accessed");
+            }
+
+            await AssertPublicAsync(await rejected.Content.ReadAsStringAsync());
+        }
+
+        oci.CustomerReadError = null;
+        var restored = await RestoreAsync(api, database, time.GetUtcNow(), "bucket-returned", "customer");
+        await AssertDocumentAsync(data, restored, "kept", text);
+    }
+
+    [Test]
+    [Arguments("non-json")]
+    [Arguments("null")]
+    [Arguments("missing-id")]
+    [Arguments("invalid-id")]
+    [Arguments("oversized")]
+    public async Task Malformed_vault_create_answers_fixed_unavailable_without_replacing_the_current_destination(string fault)
+    {
+        using var oci = new FakeOci();
+        var time = Clock();
+        await using var api = await ManagementApi.StartAsync(oci.ConfigureCustomer, services => ManualShipping(oci, services), time);
+        var database = await api.CreateManagedDatabaseAsync();
+        var route = Uri(database.ProjectPath + "/backup-destination");
+        await SetAsync(api, database, "customer");
+        var currentSecret = oci.Secrets.Keys.Single();
+        var marker = "vault-protocol-marker-" + Guid.NewGuid().ToString("N");
+        oci.SecretResponseOverride = (method, path) => method == HttpMethod.Post && path == "/20180608/secrets"
+            ? new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(MalformedVaultBody(fault, bundle: false, marker), Encoding.UTF8, "application/json") }
+            : null;
+        using var failed = await api.Client.PutAsJsonAsync(route, Destination("both"));
+        await AssertUnavailableAsync(failed, "customer backup bucket or OCI Vault could not be accessed", marker);
+        using var unchanged = await api.Client.GetAsync(route);
+        unchanged.EnsureSuccessStatusCode();
+        await AssertDestinationAsync(await unchanged.Content.ReadAsStringAsync(), "customer");
+        await Assert.That(oci.ScheduledSecrets.Contains(currentSecret, StringComparer.Ordinal)).IsFalse();
+        oci.SecretResponseOverride = null;
+        // The failed request releases admission; its successor can publish and retire the predecessor.
+        await SetAsync(api, database, "both");
+        await Assert.That(oci.ScheduledSecrets).IsEquivalentTo([currentSecret]);
+        await Assert.That(oci.BadSignatures).IsEqualTo(0);
+    }
+
+    [Test]
+    [Arguments("non-json")]
+    [Arguments("null")]
+    [Arguments("oversized")]
+    [Arguments("missing-content")]
+    [Arguments("wrong-content-type")]
+    [Arguments("invalid-base64")]
+    [Arguments("wrong-version")]
+    [Arguments("invalid-credentials")]
+    public async Task Malformed_vault_bundle_answers_fixed_unavailable_for_window_and_restore(string fault)
+    {
+        using var oci = new FakeOci();
+        var time = Clock();
+        await using var api = await ManagementApi.StartAsync(oci.ConfigureCustomer, services => ManualShipping(oci, services), time);
+        Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
+        var database = await api.CreateManagedDatabaseAsync();
+        using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
+        await SetAsync(api, database, "customer");
+        await ManagementApi.CreateCollectionAsync(data, database, "people");
+        var text = new Faker().Lorem.Sentence(12);
+        await PutAsync(data, database, "kept", text);
+        await ShipAsync(api, time);
+        var marker = "vault-protocol-marker-" + Guid.NewGuid().ToString("N");
+        oci.SecretResponseOverride = (method, path) => method == HttpMethod.Get && path.StartsWith("/20190301/secretbundles/", StringComparison.Ordinal)
+            ? new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(MalformedVaultBody(fault, bundle: true, marker), Encoding.UTF8, "application/json") }
+            : null;
+        using var window = await api.Client.GetAsync(Uri(database.Path + "/point-in-time?destination=customer"));
+        using var restore = await api.Client.PostAsJsonAsync(Uri(database.Path + "/point-in-time/restore"),
+            new { pointInTime = time.GetUtcNow(), name = "malformed-bundle", destination = "customer" });
+        await AssertUnavailableAsync(window, "backup bucket or OCI Vault could not be accessed", marker);
+        await AssertUnavailableAsync(restore, "backup bucket or OCI Vault could not be accessed", marker);
+        oci.SecretResponseOverride = null;
+        var restored = await RestoreAsync(api, database, time.GetUtcNow(), "bundle-recovered", "customer");
+        await AssertDocumentAsync(data, restored, "kept", text);
+        await Assert.That(oci.BadSignatures).IsEqualTo(0);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Retirement_failure_preserves_committed_save_and_delete_and_releases_organization_admission(bool protocolFailure)
+    {
+        using var oci = new FakeOci();
+        var time = Clock();
+        await using var api = await ManagementApi.StartAsync(oci.ConfigureCustomer, services => ManualShipping(oci, services), time);
+        Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
+        var database = await api.CreateManagedDatabaseAsync();
+        var siblingProject = await api.CreateProjectAsync(database.Organization, "Retirement sibling");
+        using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
+        await SetAsync(api, database, "both");
+        var oldSecret = oci.Secrets.Keys.Single();
+        await ManagementApi.CreateCollectionAsync(data, database, "people");
+        await PutAsync(data, database, "kept", new Faker().Lorem.Sentence(12));
+        await ShipAsync(api, time);
+        var preserved = oci.CustomerObjects.ToDictionary(item => item.Key, item => item.Value.ToArray(), StringComparer.Ordinal);
+        var marker = "retirement-marker-" + Guid.NewGuid().ToString("N");
+        var reached = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var retirements = 0;
+        oci.BeforeSecretRequest = async (_, path, cancellationToken) =>
+        {
+            if (!path.EndsWith("/actions/scheduleDeletion", StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            Interlocked.Increment(ref retirements);
+            if (path.Contains(oldSecret, StringComparison.Ordinal))
+            {
+                reached.TrySetResult();
+                await release.Task.WaitAsync(cancellationToken);
+            }
+
+            // Deletion ignores response bodies; inject a transport protocol failure to exercise its explicit catch.
+            if (protocolFailure)
+            {
+                throw new InvalidDataException(marker);
+            }
+        };
+        oci.SecretResponseOverride = (_, path) => path.EndsWith("/actions/scheduleDeletion", StringComparison.Ordinal)
+            ? new HttpResponseMessage(HttpStatusCode.ServiceUnavailable) { Content = new StringContent(marker) } : null;
+        using var stop = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        var saving = api.Client.PutAsJsonAsync(Uri(database.ProjectPath + "/backup-destination"), Destination("customer"), stop.Token);
+        try
+        {
+            await reached.Task.WaitAsync(stop.Token);
+            using var committed = await api.Client.GetAsync(Uri(database.ProjectPath + "/backup-destination"), stop.Token);
+            committed.EnsureSuccessStatusCode();
+            await AssertDestinationAsync(await committed.Content.ReadAsStringAsync(), "customer");
+            var currentSecret = oci.Secrets.Keys.Single(id => id != oldSecret);
+            using var sibling = await api.Client.PutAsJsonAsync(
+                Uri($"/v1/management/organizations/{database.Organization}/projects/{siblingProject}/backup-destination"), Destination("customer"), stop.Token);
+            sibling.EnsureSuccessStatusCode();
+            release.TrySetResult();
+            using var saved = await saving.WaitAsync(stop.Token);
+            saved.EnsureSuccessStatusCode();
+            await AssertDestinationAsync(await saved.Content.ReadAsStringAsync(), "customer");
+            await Assert.That(oci.ScheduledSecrets.Contains(currentSecret, StringComparer.Ordinal)).IsFalse();
+            using var deleted = await api.Client.DeleteAsync(Uri(database.ProjectPath + "/backup-destination"), stop.Token);
+            await Assert.That(deleted.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
+            using var gone = await api.Client.GetAsync(Uri(database.ProjectPath + "/backup-destination"), stop.Token);
+            await Assert.That(gone.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+            await Assert.That(retirements).IsEqualTo(2);
+            await Assert.That(preserved.All(item => oci.CustomerObjects.TryGetValue(item.Key, out var bytes) && bytes.AsSpan().SequenceEqual(item.Value))).IsTrue();
+        }
+        finally
+        {
+            release.TrySetResult();
+            await stop.CancelAsync();
+            await ((Task)saving).WaitAsync(TimeSpan.FromSeconds(10)).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+            if (saving.IsCompletedSuccessfully)
+            {
+                using var response = await saving;
+            }
+        }
+    }
+
+    [Test]
+    public async Task Destination_save_admission_authorizes_first_limits_each_organization_and_bounds_global_saves()
+    {
+        using var oci = new FakeOci();
+        var time = Clock();
+        await using var api = await ManagementApi.StartAsync(oci.ConfigureCustomer, services => ManualShipping(oci, services), time);
+        var databases = new List<ManagedDatabaseRef>();
+        for (var index = 0; index < 5; index++)
+        {
+            databases.Add(await api.CreateManagedDatabaseAsync());
+        }
+
+        var sibling = await api.CreateProjectAsync(databases[0].Organization, "Admission sibling");
+        var viewerId = await api.AddMemberAsync(api.Client, databases[0].Organization, "viewer");
+        using var viewer = api.As(viewerId);
+        using var outsider = api.As(Guid.NewGuid().ToString());
+        var firstEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var fourEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var creates = 0;
+        oci.BeforeSecretRequest = async (method, path, cancellationToken) =>
+        {
+            if (method != HttpMethod.Post || path != "/20180608/secrets")
+            {
+                return;
+            }
+
+            var count = Interlocked.Increment(ref creates);
+            firstEntered.TrySetResult();
+            if (count == 4)
+            {
+                fourEntered.TrySetResult();
+            }
+
+            await release.Task.WaitAsync(cancellationToken);
+        };
+        using var stop = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        var pending = new List<Task<HttpResponseMessage>>();
+        try
+        {
+            var firstRoute = Uri(databases[0].ProjectPath + "/backup-destination");
+            pending.Add(api.Client.PutAsJsonAsync(firstRoute, Destination("customer"), stop.Token));
+            await firstEntered.Task.WaitAsync(stop.Token);
+            using var duplicate = await api.Client.PutAsJsonAsync(
+                Uri($"/v1/management/organizations/{databases[0].Organization}/projects/{sibling}/backup-destination"), Destination("both"), stop.Token);
+            await AssertUnavailableAsync(duplicate, "customer backup configuration request limit reached");
+            using var forbidden = await viewer.PutAsJsonAsync(firstRoute, Destination("both"), stop.Token);
+            using var hidden = await outsider.PutAsJsonAsync(firstRoute, Destination("both"), stop.Token);
+            await Assert.That(forbidden.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
+            await Assert.That(hidden.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+            for (var index = 1; index < 4; index++)
+            {
+                pending.Add(api.Client.PutAsJsonAsync(Uri(databases[index].ProjectPath + "/backup-destination"), Destination("customer"), stop.Token));
+            }
+
+            await fourEntered.Task.WaitAsync(stop.Token);
+            using var excess = await api.Client.PutAsJsonAsync(Uri(databases[4].ProjectPath + "/backup-destination"), Destination("customer"), stop.Token);
+            await AssertUnavailableAsync(excess, "customer backup configuration request limit reached");
+            await Assert.That(creates).IsEqualTo(4);
+            release.TrySetResult();
+            foreach (var request in pending)
+            {
+                using var response = await request.WaitAsync(stop.Token);
+                response.EnsureSuccessStatusCode();
+            }
+
+            oci.BeforeSecretRequest = null;
+            await SetAsync(api, databases[4], "customer");
+            await SetAsync(api, databases[0], "both");
+            await Assert.That(oci.BadSignatures).IsEqualTo(0);
+        }
+        finally
+        {
+            release.TrySetResult();
+            await stop.CancelAsync();
+            await ((Task)Task.WhenAll(pending)).WaitAsync(TimeSpan.FromSeconds(10)).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+            foreach (var request in pending.Where(request => request.IsCompletedSuccessfully))
+            {
+                using var response = await request;
+            }
+        }
+    }
+
+    private static string MalformedVaultBody(string fault, bool bundle, string marker)
+    {
+        if (fault is "non-json" or "null" or "oversized")
+        {
+            return fault switch { "non-json" => marker, "null" => "null", _ => new string(' ', 64 * 1024) + marker };
+        }
+
+        if (!bundle)
+        {
+            return fault == "missing-id" ? $$"""{"marker":"{{marker}}"}""" : $$"""{"id":"{{marker}}/invalid"}""";
+        }
+
+        if (fault == "missing-content")
+        {
+            return $$"""{"marker":"{{marker}}"}""";
+        }
+
+        var version = fault == "wrong-version" ? 2 : 1;
+        var access = fault == "invalid-credentials" ? "" : FakeOci.CustomerAccessKey;
+        var credentials = $$"""{"version":{{version}},"accessKeyId":"{{access}}","secretKey":"{{FakeOci.CustomerSecretKey}}","marker":"{{marker}}"}""";
+        var content = fault == "invalid-base64" ? marker + "!" : Convert.ToBase64String(Encoding.UTF8.GetBytes(credentials));
+        var type = fault == "wrong-content-type" ? "PLAINTEXT" : "BASE64";
+        return $$$"""{"marker":"{{{marker}}}","secretBundleContent":{"contentType":"{{{type}}}","content":"{{{content}}}"}}""";
+    }
+
+    private static async Task AssertUnavailableAsync(HttpResponseMessage response, string message, string? marker = null)
+    {
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+        var json = await response.Content.ReadAsStringAsync();
+        using var body = JsonDocument.Parse(json);
+        await Assert.That(body.RootElement.GetProperty("error").GetProperty("code").GetString()).IsEqualTo("unavailable");
+        await Assert.That(body.RootElement.GetProperty("error").GetProperty("message").GetString()).IsEqualTo(message);
+        await AssertPublicAsync(json);
+        if (marker is not null)
+        {
+            await Assert.That(json.Contains(marker, StringComparison.Ordinal)).IsFalse();
+        }
+    }
+
+    private static async Task<JsonElement> BackupRecordAsync(ManagementApi api, ManagedDatabaseRef database)
+    {
+        var prefix = $"databases/{database.Id}/backup_status|current|";
+        var rows = await DocumentFiles.ReadAsync(Path.Combine(api.Server.DataDirectory, "_system.db"));
+        using var body = JsonDocument.Parse(rows.Single(row => row.StartsWith(prefix, StringComparison.Ordinal))[prefix.Length..]);
+        return body.RootElement.Clone();
+    }
+
     private sealed class StalledReadStream : MemoryStream
     {
         private readonly TaskCompletionSource<int> _body = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -754,6 +1361,8 @@ public sealed class CustomerBackupTests
     {
         oci.Route(services);
         // Only the test drives shipping. Keep the real service and its shutdown cleanup, without timer races.
+        // BackupExtensions uses AddHostedService(provider => provider.GetRequiredService<ContinuousBackup>());
+        // identify that factory by its return type, and keep this lookup in sync if registration changes shape.
         var host = services.Single(descriptor => descriptor.ServiceType == typeof(IHostedService)
             && descriptor.ImplementationFactory?.Method.ReturnType is { } type && typeof(IContinuousBackup).IsAssignableFrom(type));
         services[services.IndexOf(host)] = ServiceDescriptor.Singleton<IHostedService, ManualBackupHost>();

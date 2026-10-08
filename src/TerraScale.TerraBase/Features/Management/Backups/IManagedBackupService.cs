@@ -1,4 +1,5 @@
 using TerraBase.Errors;
+using TerraBase.Features.Backup;
 using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Management.Backups;
@@ -68,7 +69,7 @@ public interface IManagedBackupService
     /// project, named like <see cref="RestoreAsync"/>; validates <paramref name="at"/> against its restore window before downloading.
     /// </summary>
     ValueTask<RestoreBackupResult> RestorePointInTimeAsync(
-        string userId, string organizationId, TenantContext database, DateTimeOffset at, string? name, CancellationToken cancellationToken, string destination = "platform");
+        string userId, string organizationId, TenantContext database, DateTimeOffset at, string? name, CancellationToken cancellationToken, string destination = BackupDestinationNames.Platform);
 
     /// <summary>One scheduler pass: a page of the storage sweep, retention, then the scheduled backups that are due.</summary>
     ValueTask RunScheduleAsync(CancellationToken cancellationToken);

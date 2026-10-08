@@ -163,7 +163,7 @@ internal sealed partial class EngineManagedBackupService(
     /// process that stops between the two leaves the staging file, which startup reports as unknown and keeps.
     /// </remarks>
     public async ValueTask<RestoreBackupResult> RestorePointInTimeAsync(
-        string userId, string organizationId, TenantContext database, DateTimeOffset at, string? name, CancellationToken cancellationToken, string destination = "platform")
+        string userId, string organizationId, TenantContext database, DateTimeOffset at, string? name, CancellationToken cancellationToken, string destination = BackupDestinationNames.Platform)
     {
         var owner = DatabaseOwner.Of(database);
         var source = await catalog.ReadAsync(

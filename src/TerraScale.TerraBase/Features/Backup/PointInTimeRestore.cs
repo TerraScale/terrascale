@@ -29,17 +29,17 @@ public readonly union PointInTimeRestoreResult(Done, NotFound, Validation);
 public interface IPointInTimeRestore
 {
     /// <summary>The restore window of <paramref name="database"/>; <see langword="null"/> when no backup remains within its plan's retention window.</summary>
-    Task<RestoreWindow?> GetWindowAsync(TenantContext database, CancellationToken cancellationToken, string destination = "platform");
+    Task<RestoreWindow?> GetWindowAsync(TenantContext database, CancellationToken cancellationToken, string destination = BackupDestinationNames.Platform);
 
     /// <summary>Reads bounded backup metadata without downloading, decrypting or importing any backup.</summary>
-    Task<PointInTimePlanResult> PlanAsync(TenantContext database, DateTimeOffset at, CancellationToken cancellationToken, string destination = "platform");
+    Task<PointInTimePlanResult> PlanAsync(TenantContext database, DateTimeOffset at, CancellationToken cancellationToken, string destination = BackupDestinationNames.Platform);
 
     /// <summary>
     /// Creates <paramref name="target"/>, a new engine database, holding <paramref name="source"/> as of <paramref name="at"/>:
     /// every transaction the backup read by then. Validates its restore window at entry, before downloading or importing.
     /// </summary>
     /// <exception cref="InvalidDataException">The backup is incomplete or fails authentication or its integrity check.</exception>
-    Task<PointInTimeRestoreResult> RestoreAsync(TenantContext source, DateTimeOffset at, TenantContext target, CancellationToken cancellationToken, string destination = "platform");
+    Task<PointInTimeRestoreResult> RestoreAsync(TenantContext source, DateTimeOffset at, TenantContext target, CancellationToken cancellationToken, string destination = BackupDestinationNames.Platform);
 }
 
 /// <summary>Restores from the newest snapshot at or before the time, rolled forward through its generation's segments.</summary>
@@ -50,7 +50,7 @@ internal sealed class PointInTimeRestore(
     private const int MaxPlanItems = 10_000;
     private static readonly TimeSpan PlanTimeout = TimeSpan.FromSeconds(10);
 
-    public async Task<PointInTimePlanResult> PlanAsync(TenantContext database, DateTimeOffset at, CancellationToken cancellationToken, string destination = "platform")
+    public async Task<PointInTimePlanResult> PlanAsync(TenantContext database, DateTimeOffset at, CancellationToken cancellationToken, string destination = BackupDestinationNames.Platform)
     {
         var now = time.GetUtcNow();
         using var timeout = new CancellationTokenSource(PlanTimeout, time);
@@ -77,7 +77,7 @@ internal sealed class PointInTimeRestore(
 
             var earliest = await EarliestAsync(database, first.At, now, deadline.Token).ConfigureAwait(false);
             var remaining = MaxPlanItems - snapshots.Scanned;
-            var latest = destination == "platform" ? shipper.LastShipped(database, last.Generation) : null;
+            var latest = destination == BackupDestinationNames.Platform ? shipper.LastShipped(database, last.Generation) : null;
             SegmentScan? segments = null;
             if (latest is null)
             {
@@ -129,7 +129,7 @@ internal sealed class PointInTimeRestore(
         }
     }
 
-    public async Task<RestoreWindow?> GetWindowAsync(TenantContext database, CancellationToken cancellationToken, string destination = "platform")
+    public async Task<RestoreWindow?> GetWindowAsync(TenantContext database, CancellationToken cancellationToken, string destination = BackupDestinationNames.Platform)
     {
         var now = time.GetUtcNow();
         using var backup = await targets.RestoreAsync(database, destination, cancellationToken).ConfigureAwait(false);
@@ -151,7 +151,7 @@ internal sealed class PointInTimeRestore(
         }
 
         // The shipper knows its own progress; otherwise the newest segment after the newest snapshot tells.
-        var shipped = destination == "platform" ? shipper.LastShipped(database, last.Generation) : null;
+        var shipped = destination == BackupDestinationNames.Platform ? shipper.LastShipped(database, last.Generation) : null;
         var latest = shipped ?? last.At;
         if (shipped is null)
         {
@@ -170,7 +170,7 @@ internal sealed class PointInTimeRestore(
         return earliest <= latest ? new(earliest, latest) : null;
     }
 
-    public async Task<PointInTimeRestoreResult> RestoreAsync(TenantContext source, DateTimeOffset at, TenantContext target, CancellationToken cancellationToken, string destination = "platform")
+    public async Task<PointInTimeRestoreResult> RestoreAsync(TenantContext source, DateTimeOffset at, TenantContext target, CancellationToken cancellationToken, string destination = BackupDestinationNames.Platform)
     {
         // Pin retention before metadata awaits; the same scan discovers the window and selects the snapshot.
         var now = time.GetUtcNow();

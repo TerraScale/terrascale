@@ -74,46 +74,59 @@ internal sealed partial class ContinuousBackup
     }
 
     // Inventories and deletions belong to one destination: partial uploads or a failed delete in the other destination
-    // must remain discoverable on later passes. Bound snapshots, and stream expired segments in batches of sixteen.
+    // must remain discoverable on later passes. Bound deletion candidates, scanning the entire inventory to protect
+    // snapshots beyond the batch. Each hourly pass drains another expired prefix; segments delete sixteen at a time.
     private static async Task RetainStoreAsync(ShippedFile file, IObjectStore store, DateTimeOffset cutoff, CancellationToken cancellationToken)
     {
         const int maxSnapshots = 10_000;
-        var snapshots = new List<SnapshotKey>();
+        var snapshots = new List<SnapshotKey>(maxSnapshots);
+        SnapshotKey? oldest = null;
         await foreach (var item in store.ListAsync(BackupLayout.Snapshots(file.Prefix), null, cancellationToken).ConfigureAwait(false))
         {
-            if (BackupLayout.ParseSnapshot(item.Key) is not { } snapshot)
+            if (BackupLayout.ParseSnapshot(item.Key) is not { } snapshot || snapshot.At >= cutoff)
             {
                 continue;
             }
 
-            if (snapshots.Count == maxSnapshots)
+            oldest = snapshot;
+            if (snapshots.Count < maxSnapshots)
             {
-                throw new InvalidDataException("backup snapshot inventory exceeds its item limit");
+                snapshots.Add(snapshot);
             }
-
-            snapshots.Add(snapshot);
         }
 
-        var floor = snapshots.FindLastIndex(snapshot => snapshot.At < cutoff);
-        if (floor <= 0)
+        if (oldest is null)
         {
             return;
         }
 
-        var kept = snapshots[floor..].Select(snapshot => snapshot.Generation).ToHashSet();
-        foreach (var generation in snapshots[..floor].Select(snapshot => snapshot.Generation).Distinct().Where(generation => !kept.Contains(generation)))
+        if (snapshots.Count > 0 && snapshots[^1].Key == oldest.Key)
         {
-            if (!await DeleteSegmentsAsync(store, file.Prefix, generation, before: null, cancellationToken).ConfigureAwait(false))
+            snapshots.RemoveAt(snapshots.Count - 1);
+        }
+
+        // At most maxSnapshots + 1 generations: only deletion candidates and the floor need segment cleanup.
+        // An unselected snapshot (even an expired one awaiting a later batch) protects its generation from its position.
+        var kept = snapshots.Select(snapshot => snapshot.Generation).Distinct().ToDictionary(generation => generation, _ => (long?)null);
+        kept[oldest.Generation] = oldest.Position;
+        var lastCandidate = snapshots.Count > 0 ? snapshots[^1].Key : null;
+        await foreach (var item in store.ListAsync(BackupLayout.Snapshots(file.Prefix), lastCandidate, cancellationToken).ConfigureAwait(false))
+        {
+            if (BackupLayout.ParseSnapshot(item.Key) is { } snapshot && kept.TryGetValue(snapshot.Generation, out var position))
+            {
+                kept[snapshot.Generation] = position is { } frames ? Math.Min(frames, snapshot.Position) : snapshot.Position;
+            }
+        }
+
+        foreach (var (generation, before) in kept)
+        {
+            if (!await DeleteSegmentsAsync(store, file.Prefix, generation, before, cancellationToken).ConfigureAwait(false))
             {
                 return;
             }
         }
 
-        var oldest = snapshots[floor];
-        if (await DeleteSegmentsAsync(store, file.Prefix, oldest.Generation, oldest.Position, cancellationToken).ConfigureAwait(false))
-        {
-            _ = await DeleteAsync(store, [.. snapshots[..floor].Select(snapshot => snapshot.Key)], cancellationToken).ConfigureAwait(false);
-        }
+        _ = await DeleteAsync(store, [.. snapshots.Select(snapshot => snapshot.Key)], cancellationToken).ConfigureAwait(false);
     }
 
     private static async Task<bool> DeleteSegmentsAsync(IObjectStore store, string file, Ulid generation, long? before, CancellationToken cancellationToken)

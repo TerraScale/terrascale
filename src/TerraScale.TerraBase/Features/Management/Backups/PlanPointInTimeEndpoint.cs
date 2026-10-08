@@ -46,7 +46,7 @@ public sealed class PlanPointInTimeEndpoint(IManagementService management, IPoin
             return ErrorResponse.From(new Validation("pointInTime is required"));
         }
 
-        string destination = "platform";
+        string destination = BackupDestinationNames.Platform;
         switch (BackupDestinationRoute.Source(request.Destination))
         {
             case Validation error:

@@ -58,6 +58,12 @@ public static class ApiReferenceExtensions
             });
             options.AddOperationTransformer(async (operation, context, cancellationToken) =>
             {
+                foreach (var parameter in context.Description.ActionDescriptor.EndpointMetadata.OfType<OpenApiParameter>())
+                {
+                    operation.Parameters ??= [];
+                    operation.Parameters.Add(parameter);
+                }
+
                 var policies = context.Description.ActionDescriptor.EndpointMetadata.OfType<IAuthorizeData>()
                     .Select(data => data.Policy).OfType<string>().ToList();
                 if (policies.Count == 0)

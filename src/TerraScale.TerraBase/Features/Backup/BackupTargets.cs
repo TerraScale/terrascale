@@ -28,7 +28,7 @@ internal sealed class BackupTargets(
     IObjectStore platform, DataKeys platformKeys, BackupReader platformReader, IProjectBackupDestinations destinations,
     IMasterKey master, IWalBackup engine, TerraBaseOptions options, IHttpClientFactory http, TimeProvider time, IOciVaultSecrets? secrets = null)
 {
-    public BackupTarget Platform { get; } = new("platform", platform, platformKeys, platformReader, [platform]);
+    public BackupTarget Platform { get; } = new(BackupDestinationNames.Platform, platform, platformKeys, platformReader, [platform]);
 
     public async ValueTask<ProjectBackupDestinationRecord?> ConfigurationAsync(TenantContext? database, CancellationToken cancellationToken) =>
         database is null ? null : await destinations.ReadAsync(database.OrganizationId, database.ProjectId!, cancellationToken).ConfigureAwait(false);
@@ -38,9 +38,14 @@ internal sealed class BackupTargets(
 
     public async Task<BackupTarget?> RestoreAsync(TenantContext database, string destination, CancellationToken cancellationToken)
     {
-        if (destination == "platform")
+        if (destination == BackupDestinationNames.Platform)
         {
             return Platform;
+        }
+
+        if (destination != BackupDestinationNames.Customer)
+        {
+            throw new ArgumentException("backup destination is invalid", nameof(destination));
         }
 
         return await ConfigurationAsync(database, cancellationToken).ConfigureAwait(false) is { } record
@@ -61,8 +66,8 @@ internal sealed class BackupTargets(
         var scope = BackupLayout.KeyScope(database);
         var scopedCustomer = new ProjectStore(customer, scope);
         IObjectStore store = mirror ? new MirroredStore(new ProjectStore(platform, scope), scopedCustomer) : scopedCustomer;
-        var keys = new DataKeys(store, master, time, freshKey, platformKeys.ReadSlots);
-        return new(record.Revision, store, keys, new BackupReader(engine, store, keys, options), mirror ? [new ProjectStore(platform, scope), scopedCustomer] : [scopedCustomer], customer);
+        var keys = new DataKeys(store, master, time, options.Backup!, freshKey, platformKeys.ReadSlots);
+        return new(record.Revision, store, keys, new BackupReader(engine, store, keys, options), [new ProjectStore(platform, scope), scopedCustomer], customer);
     }
 
     // Enforce the project boundary on every operation, including keys fabricated by an untrusted S3 listing.
@@ -70,7 +75,7 @@ internal sealed class BackupTargets(
     {
         private void Check(string key)
         {
-            if ((!key.StartsWith($"v1/{scope}/", StringComparison.Ordinal) && !key.StartsWith(BackupLayout.Keys(scope), StringComparison.Ordinal))
+            if ((!key.StartsWith(BackupLayout.Data(scope), StringComparison.Ordinal) && !key.StartsWith(BackupLayout.Keys(scope), StringComparison.Ordinal))
                 || key.Split('/').Any(part => part is "." or ".."))
             {
                 throw new InvalidDataException("backup object is outside the project's namespace");

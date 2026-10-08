@@ -50,6 +50,8 @@ internal static class BackupLayout
     public static string SegmentsBefore(string file, Ulid generation, long start) =>
         string.Create(CultureInfo.InvariantCulture, $"{Segments(file, generation)}{start:D16}");
 
+    public static string Data(string scope) => $"{Version}/{scope}/";
+
     public static string Keys(string scope) => $"{Version}/keys/{scope}/";
 
     public static string Key(string scope, string id) => Keys(scope) + id;

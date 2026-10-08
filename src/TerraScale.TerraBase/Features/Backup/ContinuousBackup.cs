@@ -34,7 +34,7 @@ public interface IContinuousBackup
     /// <summary>What this node ships, and how far each file is.</summary>
     BackupStatus Status { get; }
 
-    /// <summary>When the newest data of <paramref name="database"/> in the bucket was read, if this node ships it.</summary>
+    /// <summary>When the newest platform data was read, if this node ships <paramref name="database"/> and the requested generation to the platform.</summary>
     DateTimeOffset? LastShipped(TenantContext database, Ulid? generation = null);
 
     /// <summary>One pass: finds new and deleted files when due, then ships each file once. Passes never overlap.</summary>
@@ -120,8 +120,8 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
     }
 
     public DateTimeOffset? LastShipped(TenantContext database, Ulid? generation = null) =>
-        _files.TryGetValue(BackupLayout.File(database), out var file) && file.Shipping && file.Target.Revision == "platform"
-        && (generation is null || file.Generation == generation) ? file.LastShipped : null;
+        _files.TryGetValue(BackupLayout.File(database), out var file) && file.Shipping && file.Target.Revision == BackupDestinationNames.Platform
+            && (generation is null || file.Generation == generation) ? file.LastShipped : null;
 
     public async Task RunOnceAsync(CancellationToken cancellationToken)
     {
@@ -294,19 +294,24 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
                 return;
             }
 
-            // Refresh before each pass, but keep a generation's stores fixed until it starts over. A failed Vault
-            // refresh fails closed: customer-only data never falls back into the platform bucket.
+            // Refresh one catalog record per file at discovery cadence, keeping a generation's stores fixed until it
+            // starts over. Failed catalog or Vault reads fail closed: customer-only data never falls back to platform.
             var due = _time.GetUtcNow() >= file.RetryAt;
             if (due)
             {
-                var configuration = await _targets.ConfigurationAsync(file.Database, cancellationToken).ConfigureAwait(false);
-                if (file.Target.Revision != (configuration?.Revision ?? "platform"))
+                if (_time.GetUtcNow() >= file.NextConfiguration)
                 {
-                    var target = await _targets.ShippingAsync(file.Database, configuration, cancellationToken).ConfigureAwait(false);
+                    file.Configuration = await _targets.ConfigurationAsync(file.Database, cancellationToken).ConfigureAwait(false);
+                    file.NextConfiguration = _time.GetUtcNow() + DiscoveryInterval;
+                }
+
+                if (file.Target.Revision != (file.Configuration?.Revision ?? BackupDestinationNames.Platform))
+                {
+                    var target = await _targets.ShippingAsync(file.Database, file.Configuration, cancellationToken).ConfigureAwait(false);
                     file.Target.Dispose();
                     file.Target = target;
                     Abandon(file);
-                    (file.LastShipped, file.LastSnapshot, file.RetainedAt, file.DrilledAt, file.SizeBytes) = (null, default, default, default, null);
+                    (file.LastShipped, file.LastSnapshot, file.RetainedAt, file.DrilledAt, file.SizeBytes, file.SizedAt) = (null, default, default, default, null, default);
                 }
             }
             if (file.Generation is null)
@@ -393,7 +398,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
         {
             // A mirror may have accepted an object in only one bucket. End this generation instead of retrying
             // an expanding segment under a different timestamp, which would leave overlapping segments there.
-            if (file.Target.Revision != "platform")
+            if (file.Target.Revision != BackupDestinationNames.Platform)
             {
                 Abandon(file);
             }
@@ -406,7 +411,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
         }
         finally
         {
-            if (cancellationToken.IsCancellationRequested && file.Target.Revision != "platform")
+            if (cancellationToken.IsCancellationRequested && file.Target.Revision != BackupDestinationNames.Platform)
             {
                 // Cancellation can follow an acknowledgement in only one bucket, regardless of the thrown type.
                 Abandon(file);
@@ -612,6 +617,8 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
         : IAsyncDisposable
     {
         public BackupTarget Target { get; set; } = target;
+        public ProjectBackupDestinationRecord? Configuration { get; set; }
+        public DateTimeOffset NextConfiguration { get; set; } = DateTimeOffset.MinValue;
         public TenantContext? Database { get; } = database;
         public string Prefix { get; } = prefix;
 

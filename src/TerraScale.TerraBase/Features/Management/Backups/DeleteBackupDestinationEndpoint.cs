@@ -17,11 +17,10 @@ public sealed class DeleteBackupDestinationEndpoint(IProjectBackupDestinations d
         Summary("Delete a project's customer backup destination");
         Description(BackupDestinationRoute.Description);
         Tags(ManagementRoute.Tag);
-        Produces<object>(StatusCodes.Status204NoContent);
+        Metadata(new ProducesResponseTypeMetadata(StatusCodes.Status204NoContent, typeof(void)));
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
         Produces<ErrorBody>(StatusCodes.Status403Forbidden);
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
-        Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
         RequireAuthorization(UserAuthExtensions.PolicyName);
         Metadata(ListenerMetadata.Management);
     }

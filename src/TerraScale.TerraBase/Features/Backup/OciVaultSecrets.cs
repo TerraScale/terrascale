@@ -120,8 +120,8 @@ internal sealed class OciVaultSecrets(BackupSettings settings, IHttpClientFactor
 
             using var response = await SendAsync(HttpMethod.Post, new Uri(_vaultEndpoint, "/20180608/secrets"), body, cancellationToken).ConfigureAwait(false);
             var secret = await ReadResponseAsync<OciSecretResponse>(response, cancellationToken).ConfigureAwait(false);
-            cancellationToken.ThrowIfCancellationRequested();
-            return IsName(secret.Id, 512) ? secret.Id! : throw new InvalidDataException("OCI Vault Secrets returned no valid secret id");
+            // A completed create must hand its id to the caller, even if cancellation now prevents publishing it.
+            return IsName(secret.Id, 512) ? secret.Id! : throw new HttpRequestException("OCI Vault Secrets returned no valid secret id", null, HttpStatusCode.BadGateway);
         }
         finally
         {
@@ -144,7 +144,7 @@ internal sealed class OciVaultSecrets(BackupSettings settings, IHttpClientFactor
             if (bundle.SecretBundleContent is not { ContentType: "BASE64", Content: { Length: > 0 } content }
                 || content.Length > 4 * ((MaxSecretBytes + 2) / 3))
             {
-                throw new InvalidDataException("OCI Vault Secrets returned invalid secret content");
+                throw new HttpRequestException("OCI Vault Secrets returned invalid secret content", null, HttpStatusCode.BadGateway);
             }
 
             var decoded = new byte[MaxSecretBytes];
@@ -153,13 +153,13 @@ internal sealed class OciVaultSecrets(BackupSettings settings, IHttpClientFactor
                 cancellationToken.ThrowIfCancellationRequested();
                 if (!Convert.TryFromBase64String(content, decoded, out var length))
                 {
-                    throw new InvalidDataException("OCI Vault Secrets returned invalid base64 secret content");
+                    throw new HttpRequestException("OCI Vault Secrets returned invalid base64 secret content", null, HttpStatusCode.BadGateway);
                 }
                 var credentials = Deserialize<OciSecretCredentials>(decoded.AsSpan(0, length));
                 if (credentials is not { Version: 1, AccessKeyId: { } accessKeyId, SecretKey: { } secretKey }
                     || !IsCredential(accessKeyId) || !IsCredential(secretKey))
                 {
-                    throw new InvalidDataException("OCI Vault Secrets returned an unsupported or invalid backup credential record");
+                    throw new HttpRequestException("OCI Vault Secrets returned an unsupported or invalid backup credential record", null, HttpStatusCode.BadGateway);
                 }
                 cancellationToken.ThrowIfCancellationRequested();
                 return (accessKeyId, secretKey);
@@ -216,7 +216,7 @@ internal sealed class OciVaultSecrets(BackupSettings settings, IHttpClientFactor
         {
             if (body is { Length: > MaxBodyBytes })
             {
-                throw new InvalidDataException("OCI Vault Secrets request exceeds its byte limit");
+                throw new HttpRequestException("OCI Vault Secrets request exceeds its byte limit", null, HttpStatusCode.BadGateway);
             }
             using var request = new HttpRequestMessage(method, uri);
             Sign(request, body);
@@ -271,19 +271,16 @@ internal sealed class OciVaultSecrets(BackupSettings settings, IHttpClientFactor
     {
         if (response.Content.Headers.ContentLength is > MaxBodyBytes)
         {
-            throw new InvalidDataException("OCI Vault Secrets response exceeds its byte limit");
+            throw new HttpRequestException("OCI Vault Secrets response exceeds its byte limit", null, HttpStatusCode.BadGateway);
         }
         var buffer = new byte[MaxBodyBytes + 1];
         try
         {
             using var stream = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
             var length = await stream.ReadAtLeastAsync(buffer, buffer.Length, throwOnEndOfStream: false, cancellationToken).ConfigureAwait(false);
-            cancellationToken.ThrowIfCancellationRequested();
-            var value = length <= MaxBodyBytes
+            return length <= MaxBodyBytes
                 ? Deserialize<T>(buffer.AsSpan(0, length))
-                : throw new InvalidDataException("OCI Vault Secrets response exceeds its byte limit");
-            cancellationToken.ThrowIfCancellationRequested();
-            return value;
+                : throw new HttpRequestException("OCI Vault Secrets response exceeds its byte limit", null, HttpStatusCode.BadGateway);
         }
         finally
         {
@@ -295,12 +292,12 @@ internal sealed class OciVaultSecrets(BackupSettings settings, IHttpClientFactor
     {
         try
         {
-            return JsonSerializer.Deserialize(json, Metadata<T>()) ?? throw new InvalidDataException("OCI Vault Secrets returned an empty response");
+            return JsonSerializer.Deserialize(json, Metadata<T>()) ?? throw new HttpRequestException("OCI Vault Secrets returned an empty response", null, HttpStatusCode.BadGateway);
         }
         catch (JsonException)
         {
             // JSON diagnostics can contain attacker-supplied property names, including credentials.
-            throw new InvalidDataException("OCI Vault Secrets returned invalid JSON");
+            throw new HttpRequestException("OCI Vault Secrets returned invalid JSON", null, HttpStatusCode.BadGateway);
         }
     }
 

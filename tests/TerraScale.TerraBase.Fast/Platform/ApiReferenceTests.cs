@@ -136,6 +136,55 @@ public sealed class ApiReferenceTests
             .IsEqualTo("Management,Data,System");
         await Assert.That(string.Join('\n', operations.Select(operation => operation.Line).Order(StringComparer.Ordinal)))
             .IsEqualTo(Operations.ReplaceLineEndings("\n"));
+        const string project = "/v1/management/organizations/{organization}/projects/{project}";
+        var paths = document.GetProperty("paths");
+        foreach (var (path, method, statuses) in new[]
+        {
+            (project + "/backup-destination", "get", "200,400,401,403,404,421"),
+            (project + "/backup-destination", "put", "200,400,401,403,404,421,503"),
+            (project + "/backup-destination", "delete", "204,400,401,403,404,421"),
+            (project + "/databases/{database}/point-in-time", "get", "200,400,401,404,421,503"),
+            (project + "/databases/{database}/point-in-time/restore", "post", "201,400,401,403,404,409,421,503"),
+        })
+        {
+            await Assert.That(string.Join(',', paths.GetProperty(path).GetProperty(method).GetProperty("responses")
+                .EnumerateObject().Select(status => status.Name).Order(StringComparer.Ordinal)))
+                .IsEqualTo(statuses).Because($"{method} {path}");
+        }
+
+        var destination = paths.GetProperty(project + "/backup-destination");
+        await Assert.That(destination.GetProperty("delete").GetProperty("responses").GetProperty("204").TryGetProperty("content", out _)).IsFalse();
+        await Assert.That(destination.GetProperty("put").GetProperty("requestBody").GetProperty("content")
+            .GetProperty("application/json").GetProperty("schema").GetProperty("$ref").GetString())
+            .IsEqualTo("#/components/schemas/ProjectBackupDestinationRequest");
+        foreach (var method in new[] { "get", "put" })
+        {
+            await Assert.That(destination.GetProperty(method).GetProperty("responses").GetProperty("200")
+                .GetProperty("content").GetProperty("application/json").GetProperty("schema").GetProperty("oneOf").EnumerateArray()
+                .Single(schema => schema.TryGetProperty("$ref", out _)).GetProperty("$ref").GetString())
+                .IsEqualTo("#/components/schemas/ProjectBackupDestination");
+        }
+
+        var schemas = document.GetProperty("components").GetProperty("schemas");
+        // Credentials belong only to the request; responses also exclude the internal Vault secret reference.
+        await Assert.That(schemas.GetProperty("ProjectBackupDestinationRequest").GetProperty("properties")
+            .EnumerateObject().Select(property => property.Name).ToList())
+            .IsEquivalentTo(["endpoint", "region", "bucket", "accessKeyId", "secretKey", "mode"]);
+        await Assert.That(schemas.GetProperty("ProjectBackupDestination").GetProperty("properties")
+            .EnumerateObject().Select(property => property.Name).ToList())
+            .IsEquivalentTo(["endpoint", "region", "bucket", "mode", "updatedAt"]);
+        var restoreRequest = schemas.GetProperty("PointInTimeRestoreRequest");
+        await Assert.That(restoreRequest.GetProperty("properties").TryGetProperty("destination", out _)).IsTrue();
+        await Assert.That(restoreRequest.TryGetProperty("required", out var required)
+            && required.EnumerateArray().Any(property => property.GetString() == "destination")).IsFalse();
+        var selector = paths.GetProperty(project + "/databases/{database}/point-in-time").GetProperty("get")
+            .GetProperty("parameters").EnumerateArray().Single(parameter => parameter.GetProperty("name").GetString() == "destination");
+        await Assert.That(selector.GetProperty("in").GetString()).IsEqualTo("query");
+        await Assert.That(selector.TryGetProperty("required", out var requiredSelector) && requiredSelector.GetBoolean()).IsFalse();
+        await Assert.That(selector.GetProperty("schema").GetProperty("default").GetString()).IsEqualTo("platform");
+        await Assert.That(selector.GetProperty("schema").GetProperty("enum").EnumerateArray().Select(value => value.GetString() ?? string.Empty).ToList())
+            .IsEquivalentTo(["platform", "customer"]);
+
         foreach (var (line, operation) in operations)
         {
             await Assert.That(operation.GetProperty("tags").GetArrayLength()).IsEqualTo(1).Because(line);

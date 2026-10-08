@@ -1,3 +1,4 @@
+using System.Buffers.Text;
 using System.Collections.Concurrent;
 using System.Globalization;
 using System.Net;
@@ -35,7 +36,7 @@ public sealed class FakeOci : IDisposable
     private readonly ConcurrentDictionary<string, KeyRequests> _keyRequests = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, byte[]> _customerObjects = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, string> _secrets = new(StringComparer.Ordinal);
-    private readonly ConcurrentDictionary<string, byte> _scheduledSecrets = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, DateTimeOffset> _scheduledSecrets = new(StringComparer.Ordinal);
     private readonly RSA _apiKey = RSA.Create(2048);
     private readonly string _directory = Directory.CreateTempSubdirectory("terrabase-oci-").FullName;
     private int _badSignatures;
@@ -73,6 +74,12 @@ public sealed class FakeOci : IDisposable
     /// <summary>Replaces a customer listing after normal prefix filtering, including deliberately foreign keys.</summary>
     public Func<string, IReadOnlyList<string>, IReadOnlyList<string>>? CustomerListingOverride { get; set; }
 
+    /// <summary>Overrides a listed customer object's size, including malformed negative sizes.</summary>
+    public Func<string, long?>? CustomerListingSizeOverride { get; set; }
+
+    /// <summary>Overrides a customer GET's S3 error code with a 404, to distinguish a missing bucket from a missing key.</summary>
+    public Func<string, string?>? CustomerReadError { get; set; }
+
     /// <summary>Customer prefixes returning empty truncated pages with alternating continuation tokens.</summary>
     public Func<string, bool>? EmptyCustomerPages { get; set; }
 
@@ -84,6 +91,12 @@ public sealed class FakeOci : IDisposable
 
     /// <summary>Runs before a customer PUT is accepted; gates must observe the request's cancellation token.</summary>
     public Func<string, CancellationToken, Task>? BeforeCustomerWrite { get; set; }
+
+    /// <summary>Gates a Vault Secrets request; observes cancellation without wall-clock sleeps.</summary>
+    public Func<HttpMethod, string, CancellationToken, Task>? BeforeSecretRequest { get; set; }
+
+    /// <summary>Overrides a signed Vault Secrets response, including malformed successful protocol bodies.</summary>
+    public Func<HttpMethod, string, HttpResponseMessage?>? SecretResponseOverride { get; set; }
 
     /// <summary>Observes object requests without retaining an unbounded request history; true identifies the customer.</summary>
     public Action<bool, HttpMethod, string>? ObjectRequested { get; set; }
@@ -99,6 +112,9 @@ public sealed class FakeOci : IDisposable
 
     /// <summary>Secret OCIDs scheduled for deletion (OCI keeps their contents until deletion).</summary>
     public IReadOnlyCollection<string> ScheduledSecrets => [.. _scheduledSecrets.Keys];
+
+    /// <summary>Requested retirement times by secret OCID; OCI keeps secrets available for at least seven days.</summary>
+    public IReadOnlyDictionary<string, DateTimeOffset> SecretDeletionTimes => _scheduledSecrets;
 
     /// <summary>Vault requests whose signature did not verify; they were refused.</summary>
     public int BadSignatures => Volatile.Read(ref _badSignatures);
@@ -139,6 +155,14 @@ public sealed class FakeOci : IDisposable
         ArgumentNullException.ThrowIfNull(key);
         ArgumentNullException.ThrowIfNull(content);
         _objects[key] = content;
+    }
+
+    /// <summary>Seeds an object in this test's bucket, including historical keys whose timestamp is encoded in the key.</summary>
+    public void SeedObject(bool customer, string key, byte[] content)
+    {
+        ArgumentNullException.ThrowIfNull(key);
+        ArgumentNullException.ThrowIfNull(content);
+        (customer ? _customerObjects : _objects)[key] = [.. content];
     }
 
     /// <summary>Sets every <c>backup-*</c> setting to this fake.</summary>
@@ -189,6 +213,11 @@ public sealed class FakeOci : IDisposable
     {
         var body = request.Content is null ? [] : await request.Content.ReadAsByteArrayAsync(cancellationToken);
         var uri = request.RequestUri!;
+        if (uri.GetLeftPart(UriPartial.Authority) is VaultManagement or VaultSecrets && BeforeSecretRequest is { } beforeSecret)
+        {
+            await beforeSecret(request.Method, uri.AbsolutePath, cancellationToken).ConfigureAwait(false);
+        }
+
         if (uri.GetLeftPart(UriPartial.Authority) == CustomerEndpoint && request.Method == HttpMethod.Put
             && BeforeCustomerWrite is { } beforeWrite)
         {
@@ -254,6 +283,12 @@ public sealed class FakeOci : IDisposable
                     new XElement(S3 + "NextContinuationToken", query["continuation-token"] == "A" ? "B" : "A")));
             }
 
+            if (query["continuation-token"] is { } token)
+            {
+                after = Encoding.UTF8.GetString(Base64Url.DecodeFromChars(token));
+            }
+
+            var maxKeys = Math.Clamp(int.Parse(query["max-keys"] ?? "1000", CultureInfo.InvariantCulture), 0, 1000);
             IReadOnlyList<string> keys = [.. objects.Keys.Where(item => item.StartsWith(prefix, StringComparison.Ordinal) && string.CompareOrdinal(item, after) > 0)
                 .Order(StringComparer.Ordinal).Take(1001)];
             if (customer && CustomerListingOverride is { } listing)
@@ -261,20 +296,21 @@ public sealed class FakeOci : IDisposable
                 keys = listing(prefix, keys);
             }
 
-            var truncated = keys.Count > 1000;
-            keys = [.. keys.Take(1000)];
+            var truncated = maxKeys > 0 && keys.Count > maxKeys;
+            keys = [.. keys.Take(maxKeys)];
             var result = new XElement(S3 + "ListBucketResult",
                 new XElement(S3 + "Name", bucket),
                 new XElement(S3 + "Prefix", prefix),
                 new XElement(S3 + "KeyCount", keys.Count),
-                new XElement(S3 + "MaxKeys", 1000),
+                new XElement(S3 + "MaxKeys", maxKeys),
                 new XElement(S3 + "IsTruncated", truncated ? "true" : "false"),
-                truncated ? new XElement(S3 + "NextContinuationToken", keys[^1]) : null,
+                truncated ? new XElement(S3 + "NextContinuationToken", Base64Url.EncodeToString(Encoding.UTF8.GetBytes(keys[^1]))) : null,
                 keys.Select(item => new XElement(S3 + "Contents",
                     new XElement(S3 + "Key", item),
                     new XElement(S3 + "LastModified", "2026-10-07T00:00:00.000Z"),
                     new XElement(S3 + "ETag", ETag(objects.GetValueOrDefault(item, []))),
-                    new XElement(S3 + "Size", objects.TryGetValue(item, out var bytes) ? bytes.Length : 0),
+                    new XElement(S3 + "Size", (customer ? CustomerListingSizeOverride?.Invoke(item) : null)
+                        ?? (objects.TryGetValue(item, out var bytes) ? bytes.Length : 0)),
                     new XElement(S3 + "StorageClass", "STANDARD"))));
             return Xml(HttpStatusCode.OK, result);
         }
@@ -307,6 +343,11 @@ public sealed class FakeOci : IDisposable
             if (BeforeGet is { } before)
             {
                 await before(key, cancellationToken);
+            }
+
+            if (customer && CustomerReadError?.Invoke(key) is { } code)
+            {
+                return S3Error(HttpStatusCode.NotFound, code);
             }
 
             if (!objects.TryGetValue(key, out var stored))
@@ -396,6 +437,11 @@ public sealed class FakeOci : IDisposable
 
         var uri = request.RequestUri!;
         var path = uri.AbsolutePath;
+        if (SecretResponseOverride?.Invoke(request.Method, path) is { } overridden)
+        {
+            return overridden;
+        }
+
         if (uri.GetLeftPart(UriPartial.Authority) == VaultManagement && request.Method == HttpMethod.Post && path == "/20180608/secrets")
         {
             var json = JsonNode.Parse(body)!;
@@ -433,7 +479,8 @@ public sealed class FakeOci : IDisposable
                 return new HttpResponseMessage(HttpStatusCode.NotFound);
             }
 
-            _scheduledSecrets[id] = 0;
+            var deletion = (DateTimeOffset)JsonNode.Parse(body)!["timeOfDeletion"]!;
+            _scheduledSecrets[id] = deletion;
             return Json(HttpStatusCode.OK, new JsonObject { ["id"] = id, ["lifecycleState"] = "PENDING_DELETION" });
         }
 
@@ -482,7 +529,9 @@ public sealed class FakeOci : IDisposable
             HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
     }
 
-    // Verify AWS SigV4 with the customer's credentials, including the payload hash and signing region.
+    // Partial SigV4: checks customer credentials, payload hash and region, but not required SignedHeaders or
+    // scope-date freshness. Path/query canonicalization covers current AWS-URL-safe ULID/digit keys only;
+    // extend before testing keys or query values requiring percent encoding.
     private static bool S3SignatureVerifies(HttpRequestMessage request, byte[] body)
     {
         if (Header(request, "authorization") is not { } authorization || !authorization.StartsWith("AWS4-HMAC-SHA256 ", StringComparison.Ordinal))

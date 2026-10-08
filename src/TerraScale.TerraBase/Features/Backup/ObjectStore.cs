@@ -122,14 +122,24 @@ internal sealed class S3ObjectStore : IObjectStore, IDisposable
             var page = await SafeAsync(_s3.ListObjectsV2Async(request, cancellationToken)).ConfigureAwait(false);
             foreach (var item in page.S3Objects ?? [])
             {
-                if (item.Key is not { Length: > 0 and <= 1024 } key || !key.StartsWith(prefix, StringComparison.Ordinal)
-                    || key.Split('/').Any(part => part is "." or "..") || (previous is not null && string.CompareOrdinal(key, previous) <= 0)
-                    || item.Size is < 0)
+                if (item.Key is not { } key || !key.StartsWith(prefix, StringComparison.Ordinal))
                 {
-                    throw new InvalidDataException("backup object listing returned an invalid key or size");
+                    throw new InvalidDataException("backup object listing returned a key outside its prefix");
+                }
+
+                if (previous is not null && string.CompareOrdinal(key, previous) <= 0)
+                {
+                    throw new InvalidDataException("backup object listing returned an out-of-order key");
                 }
 
                 previous = key;
+                // Customers can write unrelated junk under their prefix. Never operate on it, but let valid backups
+                // remain discoverable. A foreign or nonascending response above still fails before any operation.
+                if (key is not { Length: > 0 and <= 1024 } || key.Split('/').Any(part => part is "." or "..") || item.Size is < 0)
+                {
+                    continue;
+                }
+
                 yield return new(key, item.Size ?? 0);
             }
 
@@ -175,6 +185,11 @@ internal sealed class S3ObjectStore : IObjectStore, IDisposable
         catch (AmazonS3Exception error) when (_customer)
         {
             // Untrusted S3 errors can echo signed request fields. Preserve only statuses needed for normal control flow.
+            if (error.ErrorCode == "NoSuchBucket")
+            {
+                throw new HttpRequestException("customer backup bucket is unavailable", null, error.StatusCode);
+            }
+
             if (error.StatusCode == HttpStatusCode.NotFound || error.ErrorCode == "RetentionRuleViolation")
             {
                 throw new AmazonS3Exception("customer backup object operation failed")

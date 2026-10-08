@@ -1,4 +1,5 @@
 using TerraBase.Errors;
+using TerraBase.Features.Backup;
 using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
@@ -44,13 +45,28 @@ public sealed class RestorePointInTimeEndpoint(IManagementService management, IM
 
     private async ValueTask<IResult> RestoreAsync(TenantContext database, PointInTimeRestoreRequest request, CancellationToken cancellationToken)
     {
-        var selected = BackupDestinationRoute.Source(request.Destination);
-        if (selected is Validation selectionError)
+        try
         {
-            return ErrorResponse.From(selectionError);
+            return await RestoreCoreAsync(database, request, cancellationToken);
+        }
+        catch (Exception error) when (BackupDestinationRoute.IsUnavailable(error, cancellationToken))
+        {
+            return ErrorResponse.From(BackupDestinationRoute.Unavailable());
+        }
+    }
+
+    private async ValueTask<IResult> RestoreCoreAsync(TenantContext database, PointInTimeRestoreRequest request, CancellationToken cancellationToken)
+    {
+        string destination = BackupDestinationNames.Platform;
+        switch (BackupDestinationRoute.Source(request.Destination))
+        {
+            case Validation selectionError:
+                return ErrorResponse.From(selectionError);
+            case string normalized:
+                destination = normalized;
+                break;
         }
 
-        var destination = string.IsNullOrEmpty(request.Destination) ? "platform" : request.Destination;
         if (request.PointInTime is not { } at)
         {
             return ErrorResponse.From(new Validation("pointInTime is required"));

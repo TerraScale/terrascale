@@ -1,3 +1,5 @@
+using System.Text.Json.Nodes;
+using Microsoft.OpenApi;
 using TerraBase.Errors;
 using TerraBase.Features.Backup;
 using TerraBase.Features.UserAuth;
@@ -18,7 +20,21 @@ public sealed class GetRestoreWindowEndpoint(IManagementService management, IPoi
         Description("Query destination selects platform (default) or customer. earliest is the oldest continuous backup snapshot of the database limited by its plan's retention window, latest the newest data in the backup (normally about a second old). 404 when continuous backup is off or holds no data of the database within its plan's retention window." + " " + ManagementRoute.IdentityDescription);
         Tags(ManagementRoute.Tag);
         Produces<RestoreWindow>();
+        Produces<ErrorBody>(StatusCodes.Status400BadRequest);
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
+        Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
+        Metadata(new OpenApiParameter
+        {
+            Name = "destination",
+            In = ParameterLocation.Query,
+            Description = "The backup bucket to inspect; defaults to platform.",
+            Schema = new OpenApiSchema
+            {
+                Type = JsonSchemaType.String,
+                Enum = [JsonValue.Create(BackupDestinationNames.Platform), JsonValue.Create(BackupDestinationNames.Customer)],
+                Default = JsonValue.Create(BackupDestinationNames.Platform),
+            },
+        });
         RequireAuthorization(UserAuthExtensions.PolicyName);
         Metadata(ListenerMetadata.Management);
     }
@@ -31,11 +47,18 @@ public sealed class GetRestoreWindowEndpoint(IManagementService management, IPoi
             return ErrorResponse.From(new NotFound());
         }
 
-        return BackupDestinationRoute.Source(HttpContext.Request.Query["destination"]) switch
+        try
         {
-            Validation error => ErrorResponse.From(error),
-            string source => await restore.GetWindowAsync(database, cancellationToken, source) is { } window
-                ? TypedResults.Ok(window) : ErrorResponse.From(new NotFound()),
-        };
+            return BackupDestinationRoute.Source(HttpContext.Request.Query["destination"]) switch
+            {
+                Validation error => ErrorResponse.From(error),
+                string source => await restore.GetWindowAsync(database, cancellationToken, source) is { } window
+                    ? TypedResults.Ok(window) : ErrorResponse.From(new NotFound()),
+            };
+        }
+        catch (Exception error) when (BackupDestinationRoute.IsUnavailable(error, cancellationToken))
+        {
+            return ErrorResponse.From(BackupDestinationRoute.Unavailable());
+        }
     }
 }

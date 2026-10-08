@@ -2,6 +2,16 @@ using TerraBase.Errors;
 
 namespace TerraBase.Features.Backup;
 
+/// <summary>The public names of the continuous backup destinations.</summary>
+public static class BackupDestinationNames
+{
+    /// <summary>The built-in bucket; also the platform target's revision.</summary>
+    public const string Platform = "platform";
+
+    /// <summary>The project's configured S3-compatible bucket.</summary>
+    public const string Customer = "customer";
+}
+
 /// <summary>A project's customer bucket. Credentials are held only in OCI Vault.</summary>
 /// <param name="Endpoint">S3-compatible HTTPS endpoint.</param>
 /// <param name="Region">S3 signing region.</param>
@@ -45,6 +55,6 @@ public interface IProjectBackupDestinations
     /// <summary>Validates bucket access, creates a Vault secret, and saves the destination with a fresh authorization check.</summary>
     Task<SaveBackupDestinationResult> SaveAsync(string userId, string organizationId, string projectId, ProjectBackupDestinationRequest request, CancellationToken cancellationToken);
 
-    /// <summary>Detaches a customer bucket; its objects are preserved and shipping returns to the platform.</summary>
+    /// <summary>Detaches a customer bucket, preserves its objects, schedules its Vault secret for retirement, and resumes platform shipping.</summary>
     Task<DeleteBackupDestinationResult> DeleteAsync(string userId, string organizationId, string projectId, CancellationToken cancellationToken);
 }

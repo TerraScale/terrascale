@@ -62,6 +62,11 @@ Vault references. `DELETE` detaches the customer destination and resumes platfor
 objects. Reattaching the same bucket and credentials makes its older backups accessible again. Every save replaces the
 credentials and starts a new generation with a snapshot, so a newly attached bucket never receives WAL without a base.
 A viewer cannot save or detach destinations; other existing writable-project roles can. Outsiders receive 404.
+Deleting an unset destination is idempotent and returns 204. Saves admit at most four organizations concurrently,
+with one save per organization, so one organization cannot occupy every slot. Each file's shipper refreshes
+destination configuration at a ten-second cadence on successful passes; shipping work and retries can delay refresh.
+Project deletion returns 409 while a customer destination remains configured; detach it first so its Vault secret can retire.
+Saving, replacing or detaching a destination advances the organization's management version, invalidating stale fences.
 
 The bucket must allow read, write, list and delete under `v1/<organization>/<project>/` and read/write/list under
 `v1/keys/<organization>/<project>/`. Saving checks the object permissions using a small non-secret probe, which may
@@ -71,8 +76,8 @@ supported.
 
 Customer credentials live encrypted in OCI Vault Secrets as a versioned JSON secret. TerraBase's versioned catalog
 record under `projects/<project>/backup_destination` holds public settings and the secret OCID only. Credentials are
-write-only, and errors never include provider response bodies. The runtime identity needs secret creation/retrieval and
-secret encryption-key permissions in addition to the original backup permissions. Configure all four settings together:
+write-only, and errors never include provider response bodies. The runtime identity needs secret creation, retrieval,
+scheduled deletion and secret encryption-key permissions in addition to the original backup permissions. Configure all four settings together:
 
 | Setting | Meaning |
 | --- | --- |
@@ -82,9 +87,9 @@ secret encryption-key permissions in addition to the original backup permissions
 | `backup-secrets-endpoint` | HTTPS Secret Retrieval endpoint |
 
 The existing `backup-kms-api-key`, `backup-kms-private-key-file` and `backup-kms-key-id` sign and encrypt the secret
-operations. Changing a destination creates a new secret, leaving prior secrets for operator retirement after any
-in-flight work and required recovery access end. Detached/replaced buckets and unreferenced secrets are not automatically
-purged. An unsuccessfully saved secret is scheduled for deletion after OCI's minimum seven-day window when possible;
+operations. Changing a destination creates a new secret. After replacement or detachment commits, the old secret is
+scheduled for deletion after OCI's minimum seven-day window when possible; in-flight work keeps its acquired credentials.
+Customer objects are preserved. Unsuccessfully saved secrets are also scheduled for deletion when possible;
 a transport failure before receiving its OCID can leave an orphan named `terrabase-backup-<random id>`.
 
 Restore selection is explicit and never falls back between buckets:
@@ -97,8 +102,12 @@ Each source's window comes from its own stored objects, so old platform backups 
 customer-only. Encryption and the object layout are unchanged; restoring either source still requires OCI KMS access.
 In `both` mode, shipping succeeds only when both uploads succeed; a failed destination delays this project's progress
 and starts a fresh generation after backoff to avoid overlapping WAL segments after a partial upload. Other projects
-continue shipping. Retention scans and deletes each bucket independently in `both` mode; drills exercise the customer
-copy. Snapshot inventories are capped at 10,000 per file and bucket; expired segments are deleted in batches of sixteen.
+continue shipping. Retention scans both configured buckets independently, including earlier platform backups in
+customer-only mode; drills exercise the customer copy. Retention processes at most 10,000 expired snapshots per file
+and bucket per pass, checking later snapshots before removing their generations' segments. Expired segments are deleted
+in batches of sixteen. Object locks may delay cleanup, and a bucket entirely outside the plan's window returns no
+restore window. Customer-written junk keys inside the requested prefix are skipped; foreign or nonascending listing
+responses are rejected.
 Customer object operations have a fifteen-minute deadline covering response headers, streamed body decoding and all
 pages of a listing.
 
