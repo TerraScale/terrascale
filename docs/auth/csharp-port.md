@@ -34,7 +34,11 @@ location. CI checks out the revisions pinned in `.forgejo/workflows/ci.yml`
 into a job-owned directory outside the repository.
 
 Both `.forgejo/workflows/ci.yml` and `.forgejo/workflows/slow.yml` pin ts-dotnet
-to `bdea1e8f4926e46367b751d8f633dcec04d760e9` (SDK merge #24). That revision's
+to `a4ff285c051e63e72cb01c4a94173c91da1dd69a` (SDK merge #28). This adds the
+TS-754 NUlid generator and canonical validator while preserving the Documents
+and Management APIs. It is the helper foundation: auth's persisted IDs and
+storage protocol have not changed. The ULID wire cutover awaits TerraBase's
+landed storage contract and compatible release. That revision's
 `src/TerraScale.DotNet.Testing/TerraBaseRelease.cs` pins the Linux x64 server:
 
 | Pin | Value |

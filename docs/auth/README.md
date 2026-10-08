@@ -132,7 +132,10 @@ and `ts-libs` checkouts at the revisions pinned in `.forgejo/workflows/ci.yml`.
 They are looked up at `../ts-dotnet` and `../ts-libs`, or under
 `~/Projects/TerraScale/`; pass `-p:TerraScaleRoot=<dir>` or set the
 `TerraScaleRoot` environment variable to use another location. Both workflows
-pin ts-dotnet to SDK merge #24, `bdea1e8f4926e46367b751d8f633dcec04d760e9`.
+pin ts-dotnet to SDK merge #28, `a4ff285c051e63e72cb01c4a94173c91da1dd69a`,
+which supplies the TS-754 ULID generator and canonical validator. The storage
+wire cutover still requires a compatible TerraBase release; this helper pin
+does not change persisted IDs or reset data.
 Storage integration tests require the real SDK-pinned Linux x64 TerraBase
 binary locally and in CI; unavailable prerequisites fail instead of skipping.
 See [the port guide](docs/csharp-port.md) for the binary tag, SHA-256 and
