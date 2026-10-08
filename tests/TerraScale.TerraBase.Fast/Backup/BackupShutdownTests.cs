@@ -295,7 +295,7 @@ public sealed class BackupShutdownTests
 
         public ValueTask<WalRead> ReadAsync(Stream destination, CancellationToken cancellationToken) => tap.ReadAsync(destination, cancellationToken);
 
-        public ValueTask<WalRead> SnapshotAsync(Stream destination, string snapshotPath, CancellationToken cancellationToken) =>
+        public ValueTask<WalSnapshot> SnapshotAsync(Stream destination, string snapshotPath, CancellationToken cancellationToken) =>
             tap.SnapshotAsync(destination, snapshotPath, cancellationToken);
 
         // Shutdown and the test's fallback cleanup can both dispose a tap: they share one disposal, so its session returns once.

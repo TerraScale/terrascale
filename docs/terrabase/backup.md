@@ -152,7 +152,9 @@ v1/keys/<organization>/<project>/<data key id> wrapped data keys (v1/keys/_syste
 ```
 
 Times are 13-digit Unix milliseconds and positions 16 digits, so key order is time order for snapshots and frame order for
-segments. A segment's time is when its last frame was read.
+segments. A snapshot's time is when its read transaction was pinned under the writer gate, before the copy begins.
+Copying and uploading do not move that boundary; later writes are shipped in subsequent log segments. A segment's time
+is when its last frame was read.
 
 ## Restore
 

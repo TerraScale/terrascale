@@ -426,8 +426,8 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
         {
             file.BehindSince ??= _time.GetUtcNow();
             file.Pending.SetLength(0);
-            await file.Tap.SnapshotAsync(Stream.Null, snapshot, cancellationToken).ConfigureAwait(false);
-            var at = _time.GetUtcNow();
+            var captured = await file.Tap.SnapshotAsync(Stream.Null, snapshot, cancellationToken).ConfigureAwait(false);
+            var at = captured.At;
             var key = BackupLayout.Snapshot(file.Prefix, at, generation, 0);
             await StoreAsync(file, key, snapshot, "snapshot", cancellationToken).ConfigureAwait(false);
             (file.Generation, file.Position, file.PendingStart, file.LastSnapshot, file.LastShipped, file.BehindSince) = (generation, 0, 0, at, at, null);
@@ -449,10 +449,10 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
         var snapshot = ScratchFile(".db");
         try
         {
-            WalRead read;
+            WalSnapshot captured;
             try
             {
-                read = await file.Tap.SnapshotAsync(file.Pending, snapshot, cancellationToken).ConfigureAwait(false);
+                captured = await file.Tap.SnapshotAsync(file.Pending, snapshot, cancellationToken).ConfigureAwait(false);
             }
             catch
             {
@@ -460,6 +460,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
                 throw;
             }
 
+            var read = captured.Read;
             if (!read.Continuous)
             {
                 // The frames before the snapshot have a hole: this generation ends; the next pass starts one.
@@ -467,7 +468,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
                 return;
             }
 
-            var at = _time.GetUtcNow();
+            var at = captured.At;
             file.Position += read.Frames;
             if (read.Frames > 0)
             {

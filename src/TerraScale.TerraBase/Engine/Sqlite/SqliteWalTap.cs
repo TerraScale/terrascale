@@ -26,7 +26,7 @@ namespace TerraBase.Engine.Sqlite;
 /// <c>-shm</c>), so opening and closing it here releases none of SQLite's locks.
 /// </para>
 /// </remarks>
-internal sealed class SqliteWalTap(SqliteDatabaseStore store, SqliteIoPool io, SqliteSession keepAlive) : IWalTap
+internal sealed class SqliteWalTap(SqliteDatabaseStore store, SqliteIoPool io, SqliteSession keepAlive, TimeProvider time) : IWalTap
 {
     private const int HeaderBytes = 32;
     private const int FrameHeaderBytes = 24;
@@ -47,6 +47,9 @@ internal sealed class SqliteWalTap(SqliteDatabaseStore store, SqliteIoPool io, S
 
     // Whether the tap's last checkpoint copied every frame back and no frame was read since: only then may the log restart.
     private bool _checkpointed;
+
+    // Instance-local barrier for integration tests of writes while the pinned snapshot is copied.
+    internal Func<CancellationToken, Task>? AfterSnapshotPinned { get; set; }
 
     public async ValueTask<WalRead> ReadAsync(Stream destination, CancellationToken cancellationToken)
     {
@@ -74,7 +77,7 @@ internal sealed class SqliteWalTap(SqliteDatabaseStore store, SqliteIoPool io, S
         return new(read.Frames + rest.Frames, read.Continuous && rest.Continuous);
     }
 
-    public async ValueTask<WalRead> SnapshotAsync(Stream destination, string snapshotPath, CancellationToken cancellationToken)
+    public async ValueTask<WalSnapshot> SnapshotAsync(Stream destination, string snapshotPath, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(destination);
         ArgumentException.ThrowIfNullOrEmpty(snapshotPath);
@@ -89,7 +92,7 @@ internal sealed class SqliteWalTap(SqliteDatabaseStore store, SqliteIoPool io, S
                 var read = await store.WithWritersHeldAsync(async () =>
                 {
                     var frames = await ReadCoreAsync(destination, cancellationToken).ConfigureAwait(false);
-                    snapshot = await io.RunAsync(() =>
+                    var at = await io.RunAsync(() =>
                     {
                         var transaction = reader.Connection.BeginTransaction(deferred: true);
                         using var command = reader.Connection.CreateCommand();
@@ -97,10 +100,16 @@ internal sealed class SqliteWalTap(SqliteDatabaseStore store, SqliteIoPool io, S
                         // Any read starts the transaction's snapshot of the log.
                         command.CommandText = "PRAGMA schema_version;";
                         command.ExecuteScalar();
-                        return transaction;
+                        snapshot = transaction;
+                        return time.GetUtcNow();
                     }, cancellationToken).ConfigureAwait(false);
-                    return frames;
+                    return new WalSnapshot(frames, at);
                 }, cancellationToken).ConfigureAwait(false);
+
+                if (AfterSnapshotPinned is { } pinned)
+                {
+                    await pinned(cancellationToken).ConfigureAwait(false);
+                }
 
                 // The online backup API copies page for page within the open read transaction, so frames apply to the copy.
                 await io.RunAsync(() =>

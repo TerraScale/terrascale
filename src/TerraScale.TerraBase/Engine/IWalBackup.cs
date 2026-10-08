@@ -10,6 +10,11 @@ namespace TerraBase.Engine;
 /// </param>
 public readonly record struct WalRead(long Frames, bool Continuous);
 
+/// <summary>A consistent snapshot and the log frames read before it was pinned.</summary>
+/// <param name="Read">Committed frames appended before the snapshot, including whether they remain continuous.</param>
+/// <param name="At">UTC time when the snapshot's state was pinned, before copying it.</param>
+public readonly record struct WalSnapshot(WalRead Read, DateTimeOffset At);
+
 /// <summary>
 /// The committed write-ahead log of one open storage file, for continuous backup (TS-633). While a tap is open the log
 /// is checkpointed only by the tap, after it has read every committed frame, so no frame is lost between two reads.
@@ -25,7 +30,7 @@ public interface IWalTap : IAsyncDisposable
     /// Appends frames like <see cref="ReadAsync"/>, then writes a consistent copy of the file, exactly as of the last frame
     /// appended, to a new file at <paramref name="snapshotPath"/>. Frames appended later apply on top of it.
     /// </summary>
-    ValueTask<WalRead> SnapshotAsync(Stream destination, string snapshotPath, CancellationToken cancellationToken);
+    ValueTask<WalSnapshot> SnapshotAsync(Stream destination, string snapshotPath, CancellationToken cancellationToken);
 }
 
 /// <summary>Continuous physical backup of this node's storage files (TS-633): one file per database, plus the system database.</summary>

@@ -66,6 +66,7 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
     private readonly TimeSpan _shutdownGrace;
     private readonly DatabaseLifecycleCheckpoint _checkpoint;
     private readonly Action<SqliteDatabaseStore>? _afterMigration;
+    private readonly TimeProvider _backupTime;
 
     /// <summary>Runs every SQLite call of this engine.</summary>
     internal SqliteIoPool Io { get; }
@@ -315,11 +316,13 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
     /// <param name="afterMigration">Optional integration-test hook before a tenant database's baseline is seeded.</param>
     /// <param name="systemReplica">Whether this node follows a catalog primary: its system database accepts only replicated writes.</param>
     /// <param name="walTaps">Whether continuous backup ships from this node: its <see cref="IWalTap"/>s checkpoint every database, not SQLite.</param>
+    /// <param name="backupTime">The host's UTC clock for snapshot boundaries, independent of query deadlines.</param>
     public SqliteStorageEngine(
         string dataDirectory, int threads, int queue, long memoryBudget, Meter meter, ILogger<SqliteStorageEngine> logger,
         TimeSpan shutdownGrace, int? maxIdle = null, int? maxIdlePerDatabase = null, Func<ThreadStart, Thread>? createWorker = null,
         TimeSpan? readinessCacheTtl = null, DatabaseLifecycleCheckpoint? checkpoint = null, TimeProvider? time = null,
-        Action<SqliteDatabaseStore>? afterMigration = null, bool systemReplica = false, bool walTaps = false, TimeSpan? queryBudget = null)
+        Action<SqliteDatabaseStore>? afterMigration = null, bool systemReplica = false, bool walTaps = false, TimeSpan? queryBudget = null,
+        TimeProvider? backupTime = null)
     {
         _systemReplica = systemReplica;
         _dataDirectory = dataDirectory;
@@ -328,6 +331,7 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
         _shutdownGrace = shutdownGrace;
         _checkpoint = checkpoint ?? (static (_, _) => { });
         _afterMigration = afterMigration;
+        _backupTime = backupTime ?? TimeProvider.System;
         _readinessCacheTtl = readinessCacheTtl ?? TimeSpan.FromSeconds(1);
         Time = time ?? TimeProvider.System;
         QueryBudget = queryBudget ?? SqliteDatabaseStore.DefaultQueryBudget;

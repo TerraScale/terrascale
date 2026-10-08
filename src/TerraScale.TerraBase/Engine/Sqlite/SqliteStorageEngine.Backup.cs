@@ -31,7 +31,7 @@ internal sealed partial class SqliteStorageEngine
         Io.Admit();
         try
         {
-            return new SqliteWalTap(store, Io, await store.RentSessionAsync(cancellationToken).ConfigureAwait(false));
+            return new SqliteWalTap(store, Io, await store.RentSessionAsync(cancellationToken).ConfigureAwait(false), _backupTime);
         }
         finally
         {
