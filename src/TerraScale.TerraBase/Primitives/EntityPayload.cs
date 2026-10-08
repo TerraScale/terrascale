@@ -1,8 +1,9 @@
+using System.Buffers;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization.Metadata;
 using TerraBase.Engine;
-using TerraBase.Hosting;
 
 namespace TerraBase.Primitives;
 
@@ -21,9 +22,9 @@ internal static class EntityPayload
             return json;
         }
 
-        var body = JsonNode.Parse(json.Span, documentOptions: StoredOptions)!.AsObject();
-        Remove(body, id, nested);
-        return JsonSerializer.SerializeToUtf8Bytes(body, TerraBaseJsonContext.Default.JsonObject);
+        var buffer = new ArrayBufferWriter<byte>(json.Length);
+        WriteWithoutId(buffer, parsed.RootElement, id, nested);
+        return buffer.WrittenMemory;
     }
 
     public static T? Read<T>(StoredDocument document, JsonTypeInfo<T> type)
@@ -38,23 +39,38 @@ internal static class EntityPayload
         return JsonSerializer.Deserialize(body, type);
     }
 
-    private static void Remove(JsonObject body, string id, bool nested)
+    private static void WriteWithoutId(ArrayBufferWriter<byte> buffer, JsonElement body, string id, bool nested)
     {
-        if (body["id"] is JsonValue field && field.TryGetValue<string>(out var value) && value == id)
+        buffer.Write("{"u8);
+        var first = true;
+        foreach (var property in body.EnumerateObject())
         {
-            body.Remove("id");
-        }
-
-        if (nested)
-        {
-            foreach (var property in body)
+            if (property.NameEquals("id") && property.Value.ValueKind == JsonValueKind.String && property.Value.GetString() == id)
             {
-                if (property.Value is JsonObject child)
-                {
-                    Remove(child, id, nested: true);
-                }
+                continue;
+            }
+
+            if (!first)
+            {
+                buffer.Write(","u8);
+            }
+
+            first = false;
+            // Preserve parsed token bytes so removing identity cannot expand names or values.
+            buffer.Write("\""u8);
+            buffer.Write(JsonMarshal.GetRawUtf8PropertyName(property));
+            buffer.Write("\":"u8);
+            if (nested && property.Value.ValueKind == JsonValueKind.Object)
+            {
+                WriteWithoutId(buffer, property.Value, id, nested: true);
+            }
+            else
+            {
+                buffer.Write(JsonMarshal.GetRawUtf8Value(property.Value));
             }
         }
+
+        buffer.Write("}"u8);
     }
 
     private static void Restore(JsonObject body, JsonTypeInfo type, string id)

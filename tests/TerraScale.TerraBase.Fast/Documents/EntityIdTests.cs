@@ -1,4 +1,5 @@
 using System.Net;
+using System.Text;
 using System.Text.Json;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
@@ -104,6 +105,26 @@ public sealed class EntityIdTests
 
         var read = await api.SendAsync(HttpMethod.Get, api.Collections + "/invalid");
         await Assert.That(read.Status).IsEqualTo(HttpStatusCode.NotFound);
+    }
+
+    [Test]
+    [Arguments('<')]
+    [Arguments('é')]
+    [Arguments('\u2028')]
+    public async Task Removing_duplicate_identity_keeps_near_limit_raw_documents_within_the_storage_byte_limit(char character)
+    {
+        await using var api = await DocumentApi.StartAsync();
+        var id = DocumentApi.NewId();
+        var value = new string(character, (DocumentJson.MaxBytes - 128) / Encoding.UTF8.GetByteCount(character.ToString()));
+        var plain = await api.SendRawAsync(HttpMethod.Put, api.Document(DocumentApi.NewId()),
+            $$"""{"value":"{{value}}"}""", "application/json");
+        await Assert.That(plain.Status).IsEqualTo(HttpStatusCode.Created);
+        var created = await api.SendRawAsync(HttpMethod.Put, api.Document(id),
+            $$"""{"id":"{{id}}","value":"{{value}}"}""", "application/json");
+        await Assert.That(created.Status).IsEqualTo(HttpStatusCode.Created);
+        var read = await api.GetAsync(id);
+        await Assert.That(read.Json.GetProperty("document").GetProperty("value").GetString()).IsEqualTo(value);
+        await Assert.That(read.Json.GetProperty("document").TryGetProperty("id", out _)).IsFalse();
     }
 
     [Test]

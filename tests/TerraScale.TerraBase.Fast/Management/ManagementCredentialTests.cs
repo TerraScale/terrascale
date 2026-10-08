@@ -180,6 +180,10 @@ public sealed class ManagementCredentialTests
             (Credential, []),
             (Credential, [new string('u', 257)]),
             (Credential, ["bad\u0001user"]),
+            (Credential, ["00112233-4455-6677-8899-aabbccddeeff"]),
+            (Credential, ["01arz3ndektsv4rrffq69g5fav"]),
+            (Credential, ["01ARZ3NDEKTSV4RRFFQ69G5FAI"]),
+            (Credential, ["81ARZ3NDEKTSV4RRFFQ69G5FAV"]),
         ];
 
         var statuses = new List<HttpStatusCode>();

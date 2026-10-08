@@ -99,7 +99,14 @@ public sealed class UserAuthTests
     public async Task Tokens_without_a_usable_sub_or_of_a_guest_are_rejected()
     {
         await using var api = await ManagementApi.StartAsync(services: TerraBaseTestServer.EnableConnectionDiagnostics);
-        string?[] subjects = [null, "", new string('u', 257), "bad\u0001user"];
+        string?[] subjects =
+        [
+            null, "", new string('u', 257), "bad\u0001user",
+            "00112233-4455-6677-8899-aabbccddeeff",
+            "01arz3ndektsv4rrffq69g5fav",
+            "01ARZ3NDEKTSV4RRFFQ69G5FAI",
+            "81ARZ3NDEKTSV4RRFFQ69G5FAV",
+        ];
 
         var statuses = new List<HttpStatusCode>();
         foreach (var subject in subjects)
