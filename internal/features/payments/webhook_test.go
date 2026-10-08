@@ -278,9 +278,68 @@ func TestWebhookSkipsCustomerOfMissingOrganization(t *testing.T) {
 
 func TestWebhookAsksStripeToRetryFailedSync(t *testing.T) {
 	fixture := newBillingFixture(t)
+	before := fixture.organization(t)
 	fixture.provider.fetchErr = errors.New("Stripe is unavailable")
 	if response := fixture.deliver(t, testEvent{ID: "evt_retry", Type: "invoice.paid"}, testWebhookSecret); response.Code != http.StatusInternalServerError {
 		t.Fatalf("failed sync = %d, want 500", response.Code)
+	}
+	if !reflect.DeepEqual(before, fixture.organization(t)) {
+		t.Fatal("failed delivery changed organization billing")
+	}
+	fixture.provider.fetchErr = nil
+	for range 2 {
+		if response := fixture.deliver(t, testEvent{ID: "evt_retry", Type: "invoice.paid"}, testWebhookSecret); response.Code != http.StatusOK {
+			t.Fatalf("redelivery = %d, want 200", response.Code)
+		}
+	}
+	if org := fixture.organization(t); org.PlanID != "plan_pro" || len(org.Billing.Invoices) != 1 {
+		t.Fatalf("redeliveries did not converge: %#v", org.Billing)
+	}
+}
+
+func TestWebhookLiveMode(t *testing.T) {
+	fixture := newBillingFixture(t)
+	config := testConfig
+	config.Mode = payments.ModeLive
+	fixture.billing = payments.NewStripeForTest(config, fixture.provider, fixture.state)
+	fixture.mux = http.NewServeMux()
+	payments.Mount(fixture.mux, core.Deps{Store: fixture.store, Sessions: fixtureSessions{principal: fixture.principal}}, fixture.service, fixture.billing)
+	if response := fixture.deliver(t, testEvent{ID: "evt_test", Type: "invoice.paid"}, testWebhookSecret); response.Code != http.StatusBadRequest || fixture.provider.fetches != 0 {
+		t.Fatalf("test event in live mode = %d, Stripe reads %d", response.Code, fixture.provider.fetches)
+	}
+	for range 2 {
+		if response := fixture.deliver(t, testEvent{ID: "evt_live", Type: "invoice.paid", Livemode: true}, testWebhookSecret); response.Code != http.StatusOK {
+			t.Fatalf("live delivery = %d", response.Code)
+		}
+	}
+	if org := fixture.organization(t); org.PlanID != "plan_pro" || len(org.Billing.Invoices) != 1 {
+		t.Fatalf("duplicate live deliveries did not converge: %#v", org.Billing)
+	}
+}
+
+func TestWebhookRejectsInvalidRawSignatures(t *testing.T) {
+	payload := []byte(`{"id":"evt_signed","object":"event","type":"invoice.paid","api_version":"` + stripe.APIVersion + `","data":{"object":{"customer":"cus_test"}}}`)
+	valid := webhook.GenerateTestSignedPayload(&webhook.UnsignedPayload{Payload: payload, Secret: testWebhookSecret})
+	expired := webhook.GenerateTestSignedPayload(&webhook.UnsignedPayload{Payload: payload, Secret: testWebhookSecret, Timestamp: time.Now().Add(-6 * time.Minute)})
+	for _, test := range []struct {
+		name, header string
+		body         []byte
+	}{
+		{"missing header", "", payload},
+		{"malformed header", "t=invalid,v1=invalid", payload},
+		{"expired signature", expired.Header, payload},
+		{"tampered body", valid.Header, append(bytes.Clone(payload), ' ')},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newBillingFixture(t)
+			request := httptest.NewRequest(http.MethodPost, payments.WebhookPath, bytes.NewReader(test.body))
+			request.Header.Set("Stripe-Signature", test.header)
+			response := httptest.NewRecorder()
+			fixture.mux.ServeHTTP(response, request)
+			if response.Code != http.StatusBadRequest || fixture.provider.fetches != 0 {
+				t.Fatalf("untrusted delivery = %d, Stripe reads %d", response.Code, fixture.provider.fetches)
+			}
+		})
 	}
 }
 

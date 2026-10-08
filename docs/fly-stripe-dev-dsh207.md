@@ -3,10 +3,10 @@
 Estas instruções são para `terrascale-dashboard-dev` e chaves **Stripe de teste**.
 A referência de configuração e o comportamento da integração estão em
 [`stripe.md`](stripe.md).
-O runtime atual rejeita `TS_DASHBOARD_PRODUCTION_DEMO=0` e guarda contas e sessões
-em memória. Conclua primeiro a integração persistente de contas, sessões e
-ts-auth. Fazer o deploy deste commit com Stripe configurado não ativa a
-cobrança real do sandbox.
+O runtime atual usa TerraBase via ts-go para contas, sessões, throttle e estado
+Stripe, e a API headless do ts-auth para autenticação. O login permanece nas
+páginas do dashboard; apenas SSO redireciona para a página hospedada. Execuções
+locais de demonstração continuam com `TS_DASHBOARD_PRODUCTION_DEMO=1`.
 
 ## 1. Acesso e app
 
@@ -18,16 +18,11 @@ fly apps list
 fly status -a terrascale-dashboard-dev
 ```
 
-Se o app não aparecer na lista, crie-o na organização correta:
+Confirme o app existente e a organização. Se ele não existir, pare: estas
+instruções não autorizam criar ou substituir infraestrutura. Não use o app de
+produção `ts-dashboard` para estes testes.
 
-```sh
-fly apps create terrascale-dashboard-dev --org <slug-da-organizacao>
-```
-
-Confirme o nome e a organização antes de criar. Não use o app de produção
-`ts-dashboard` para estes testes.
-
-## 2. Configuração dev após a persistência funcionar
+## 2. Configuração dev persistente
 
 Crie um `fly.dev.toml` próprio a partir de `fly.toml` e revise pelo menos:
 
@@ -46,8 +41,11 @@ primary_region = "gru"
 Remova `TS_DASHBOARD_PRODUCTION_DEMO` desse arquivo. Com o modo demo
 desligado, o app valida todas as variáveis Stripe na inicialização e não sobe
 se alguma estiver ausente ou inconsistente. Mantenha o serviço HTTP na porta interna 8080, HTTPS obrigatório e o health
-check `/health/ready`. Configure as URLs e credenciais de ts-auth e do banco
-conforme a integração persistente definir. Valide o arquivo antes do deploy:
+check `/health/ready`. Preserve a conexão existente `TERRABASE_URL`,
+`TERRABASE_API_KEY`, `TERRABASE_PROJECT_ID` e `TERRABASE_DATABASE`. Configure
+`TS_AUTH_ISSUER`, `TS_AUTH_CLIENT_ID`, `TS_AUTH_CLIENT_SECRET` e
+`TS_AUTH_REDIRECT_URL` para esse app, e `TS_DASHBOARD_CSRF_SECRET` com pelo menos
+32 bytes. Valide o arquivo antes do deploy:
 
 ```sh
 fly config validate --strict -c fly.dev.toml -a terrascale-dashboard-dev
@@ -67,9 +65,10 @@ repositório. Use os nomes `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`,
 `STRIPE_PRICE_STARTER_MONTHLY`, `STRIPE_PRICE_STARTER_ANNUAL`,
 `STRIPE_PRICE_PRO_MONTHLY`, `STRIPE_PRICE_PRO_ANNUAL`,
 `STRIPE_PRICE_BUSINESS_MONTHLY` e `STRIPE_PRICE_BUSINESS_ANNUAL`, além de
-`TS_API_ACCESS_TOKEN` e do escopo TerraBase `TS_BILLING_TENANT_ID`,
-`TS_BILLING_PROJECT_ID` e `TS_BILLING_DATABASE_ID`, onde o estado sincronizado
-do Stripe fica guardado. As permissões da chave restrita estão em
+`STRIPE_MODE=test` e `DASHBOARD_PUBLIC_ORIGIN`. O estado Stripe usa o mesmo
+banco do dashboard: preserve as credenciais `TERRABASE_*`, `TS_AUTH_*` e CSRF
+existentes, sem configurar um escopo `TS_BILLING_*` separado.
+As permissões da chave restrita estão em
 [`stripe.md`](stripe.md).
 Importe sem colocar valores no histórico do shell:
 
@@ -84,8 +83,7 @@ no portal porque o dashboard confirma essa ação.
 
 ## 4. Deploy e verificação
 
-Depois que o runtime persistente iniciar localmente sem
-`TS_DASHBOARD_PRODUCTION_DEMO`:
+Depois de verificar a configuração persistente do app dev existente:
 
 ```sh
 fly deploy -c fly.dev.toml -a terrascale-dashboard-dev --ha=false
@@ -93,7 +91,8 @@ fly status -a terrascale-dashboard-dev
 fly machine list -a terrascale-dashboard-dev
 fly logs -a terrascale-dashboard-dev
 curl -fsS https://terrascale-dashboard-dev.fly.dev/health/ready
-python3 scripts/audit-stripe-test.py --online --env-file /caminho/privado/stripe-dev.env
+nice -n 19 python3 scripts/audit-stripe.py --online --env-file /caminho/privado/stripe-dev.env
+scripts/smoke-native-login.sh https://terrascale-dashboard-dev.fly.dev
 ```
 
 O arquivo privado usado na auditoria também precisa conter

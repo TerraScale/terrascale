@@ -15,7 +15,7 @@ database cap is enforced for new databases while existing data is retained.
 ## Reproduce the read-only configuration audit
 
 ```sh
-python3 scripts/audit-stripe-test.py --online --env-file /path/to/local/test.env
+nice -n 19 python3 scripts/audit-stripe.py --online --env-file /path/to/local/test.env
 ```
 
 The file uses the `STRIPE_*` names documented in [`stripe.md`](stripe.md). It
@@ -50,25 +50,20 @@ which endpoint is pending.
 
 ## Staging gate
 
-`origin/main` currently rejects non-demo startup in
-`internal/platform/config/config.go` and `internal/app/app.go`. Its account and
-session store is process memory. `fly.toml` forces
-`TS_DASHBOARD_PRODUCTION_DEMO=1`, which disables Stripe. The existing Go
-runtime therefore cannot run the live Stripe path on
-`terrascale-dashboard-dev` or prove recovery after restart. The local Fly CLI
-has no access token, so the dev app could not be inspected or changed.
-The user confirmed that the identity/database integration still needs to be
-built and that Fly access will not be available in this workspace. The
-`TerraScale/ts-dotnet` SDK exists in Forgejo and includes a ts-auth client, but
-the current Go dashboard does not use that C# SDK and has no durable account
-adapter. Implementing that integration requires a separate runtime design.
+The Go runtime now has TerraBase-backed account, session and throttle storage
+through ts-go, and headless ts-auth integration. Dashboard sign-in remains on
+its own password/email-code pages; only SSO redirects to hosted authorization.
+Production uses the existing `TERRABASE_*`, `TS_AUTH_*` and
+`TS_DASHBOARD_CSRF_SECRET` configuration. Billing uses that same database.
+Local demo runs remain `TS_DASHBOARD_PRODUCTION_DEMO=1` and do not satisfy the
+Stripe staging gate.
 
-Before sandbox E2E, integrate durable account and session storage and ts-auth
-into the Go runtime, configure a dedicated dev origin and webhook with all
-required events, and verify successful deliveries. Then run Checkout, card
-failure, upgrades, downgrades, Free, cancellation, renewal, and trial expiry
-with Stripe test clocks against that app. This document records current
-evidence; local demo tests do not satisfy the staging gate.
+Verify the existing dev target and configure a dedicated test origin and
+webhook with all required events. Require successful signed deliveries and
+durable state after restart. Run Checkout, card failure, upgrades, downgrades,
+Free, cancellation, renewal and trial expiry with Stripe test clocks against
+that app. The 2026-09-25 evidence above is historical; repeat these checks
+against the current runtime before passing the gate.
 
 The operator steps for the dev app are in
 [`fly-stripe-dev-dsh207.md`](fly-stripe-dev-dsh207.md).

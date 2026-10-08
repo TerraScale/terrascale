@@ -6,7 +6,7 @@ GO_TEST_FLAGS ?= -race -count=1
 VERSION ?= $(shell git rev-parse HEAD 2>/dev/null || echo dev)
 export GOFLAGS
 
-.PHONY: build check-css check-generated check-modules check-e2e-shards css dev generate js serve lint perf test-fast test-slow test-unit test-browser
+.PHONY: build check-css check-generated check-modules check-e2e-shards css dev generate js serve lint perf test-fast test-slow test-unit test-browser test-stripe-audit
 
 TEMPL_GENERATE_ARGS = -path internal -include-version=false -include-timestamp=false
 
@@ -65,7 +65,10 @@ lint: js check-generated
 # Serial browser runs take about 6–7 minutes, within CI's 30-minute budget;
 # keep internal unit tests parallel and fail fast if they fail. -p 1 prevents
 # future browser test packages from running alongside each other as well.
-test-fast: js
+test-stripe-audit:
+	PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts -p 'test_stripe_audit.py'
+
+test-fast: js test-stripe-audit
 	$(GO) test $(GO_TEST_FLAGS) -short -parallel 8 ./cmd/... ./internal/...
 	$(GO) test $(GO_TEST_FLAGS) -short -p 1 -parallel 1 ./tests/...
 
@@ -81,7 +84,7 @@ E2E_SHARDS ?= $(shell scripts/e2e-shard-count.sh)
 check-e2e-shards: js
 	@GO="$(GO)" scripts/check-e2e-shards.sh "$(E2E_SHARDS)" $(GO_TEST_FLAGS)
 
-test-unit: js
+test-unit: js test-stripe-audit
 	$(GO) test $(GO_TEST_FLAGS) -parallel 8 ./cmd/... ./internal/...
 
 test-browser: js

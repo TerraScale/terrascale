@@ -29,6 +29,10 @@ projected state was read and ignores an older one that a slower sync projects
 late. Duplicate, late, and out-of-order events therefore converge on Stripe's
 current state without event IDs.
 
+Current projection ordering relies on replica wall clocks. The live cutover
+gate requires ordering tied to conditional saves before relying on this model
+across replicas with clock skew.
+
 ## State store
 
 Live mode stores synced state in the dashboard's own TerraBase database through
@@ -40,17 +44,26 @@ TerraBase.
 | `stripe_organizations` | organization ID | `customerId` (unique), written create-only |
 | `stripe_customers` | Stripe customer ID | `organizationId` (unique) and the synced `CustomerState` |
 
-`payments.New` declares both schemas at startup and fails if TerraBase is
-unreachable.
+The collections belong to the dashboard's provisioned TerraBase database.
+`payments.New` requires that database handle. State read/write errors normally
+trigger webhook retries, but the current adapter treats all HTTP `404` responses
+as missing documents, including missing collections. That case can acknowledge
+a delivery without syncing it. Fix and test this limitation before passing the
+runtime hardening gate in [`stripe-live-cutover.md`](stripe-live-cutover.md).
 
 ## Modes
 
-- **Demo** (`TS_DASHBOARD_PRODUCTION_DEMO=1`, currently required): no Stripe
+- **Demo** (local `TS_DASHBOARD_PRODUCTION_DEMO=1`, with no TerraBase connection): no Stripe
   client is created and every `STRIPE_*` setting is ignored. Checkout, plan
   changes, and the portal use the in-memory simulator.
 - **Live**: `payments.New` loads and validates the settings below once at
   startup and builds one shared stripe-go client. Any invalid setting stops
   startup with a single error listing every problem.
+
+Persistence configuration currently takes precedence over the explicit demo
+flag in the application. Do not rely on that flag to isolate Stripe when a
+TerraBase connection is configured; the cutover's runtime hardening gate must
+resolve that precedence while preserving production persistence.
 
 In-place plan changes (upgrade, scheduled downgrade, Personal to Free) are
 enabled only when `STRIPE_MODE=test` until the staging gate in
@@ -65,9 +78,11 @@ enabled only when `STRIPE_MODE=test` until the staging gate in
 | `STRIPE_WEBHOOK_SECRET` | Signing secret (`whsec_…`) of this app's webhook endpoint |
 | `DASHBOARD_PUBLIC_ORIGIN` | HTTPS origin Stripe redirects back to; plain HTTP only on loopback |
 | `STRIPE_PRICE_{STARTER,PRO,BUSINESS}_{MONTHLY,ANNUAL}` | Six distinct recurring USD Price IDs |
-| `TS_BILLING_TENANT_ID`, `TS_BILLING_PROJECT_ID` | TerraBase scope of the dashboard's own billing data |
-| `TS_BILLING_DATABASE_ID` | TerraBase database name (lowercase letters, digits, dashes) |
-| `TS_API_BASE_URL`, `TS_API_ACCESS_TOKEN` | ts-go endpoint and a token that can read and write that database |
+| `TERRABASE_URL`, `TERRABASE_API_KEY`, `TERRABASE_PROJECT_ID`, `TERRABASE_DATABASE` | Existing dashboard TerraBase connection; billing uses the same ts-go database handle |
+
+The application supplies `TS_BILLING_TENANT_ID`, `TS_BILLING_PROJECT_ID` and
+`TS_BILLING_DATABASE_ID` internally from that provisioned scope. Stripe
+cutover does not create or select a separate billing database.
 
 Store the key, signing secret, and TerraBase token as Fly secrets, never in `fly.toml`:
 
@@ -85,7 +100,8 @@ endpoints, Events, and portal configurations.
 Create one endpoint per app at `<DASHBOARD_PUBLIC_ORIGIN>/api/auth/stripe/webhook`
 with the API version stripe-go decodes (`stripe.APIVersion` in
 `vendor/github.com/stripe/stripe-go/v*/api_version.go`). Events rendered with
-another version are rejected with `400` and logged, because fields such as
+an incompatible API release train are rejected with `400` and logged, because
+fields such as
 `invoice.parent` and per-item billing periods would otherwise be dropped.
 
 Subscribe to exactly the events in `payments.WebhookEvents`. Each one only
@@ -129,8 +145,9 @@ invoice.voided
 ## Reliability
 
 - Every mutating call sends an idempotency key. stripe-go retries connection
-  errors, lock timeouts, `429`, and retryable `5xx` responses up to three
-  times with the same key, and each attempt is bounded by a 20-second timeout.
+  errors, lock timeouts (including lock-timeout `429`), and retryable `5xx`
+  responses up to three times with the same key. Ordinary rate-limit `429`
+  errors return to the caller. Each attempt has a 20-second timeout.
 - Webhooks are verified against the raw body, the signing secret, a
   five-minute timestamp tolerance, the API version, and the configured mode.
   A failed sync returns `5xx`, so Stripe redelivers; syncing is idempotent.
@@ -141,6 +158,15 @@ invoice.voided
 
 ## Audit
 
-`scripts/audit-stripe-test.py --online --env-file <file>` checks a test-mode
+`scripts/audit-stripe.py --online --env-file <file>` checks a test-mode
 configuration read-only: prices and products, the webhook URL, events, and API
-version, and the portal features. It never prints credentials or customer IDs.
+version, and the portal features. Use `--mode live` to check live configuration;
+the default remains test. `--env-file -` accepts settings piped from OCI Vault.
+Explicit file/stdin settings are audited alone, without filling missing values
+from the environment. The default portal configuration must satisfy the feature
+checks, because portal sessions use it. Invalid
+local settings prevent online requests. It never prints credentials or customer
+IDs and never switches the running app's mode.
+
+Follow [`stripe-live-cutover.md`](stripe-live-cutover.md) for the production
+targets, Vault handoff, confirmation gate, and test-to-live checklist.
