@@ -1,9 +1,13 @@
+using System.Diagnostics;
 using System.Diagnostics.Metrics;
 using System.Globalization;
 using System.Net;
 using System.Text.Json;
+using System.Xml.Linq;
 using Bogus;
 using TerraBase.Engine.Actors;
+using TerraBase.Fast.Platform;
+using TerraBase.Fast.Storage;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
 using static TerraBase.Fast.Actors.ActorRequests;
@@ -301,6 +305,14 @@ public sealed class ActorRouterTests
     [Test]
     public async Task An_idle_actor_releases_its_last_callback_payload_and_result_before_next_admission()
     {
+        const string ChildFlag = "TERRABASE_TEST_ACTOR_RETENTION_CHILD";
+        if (Environment.GetEnvironmentVariable(ChildFlag) != "1")
+        {
+            // Full collections must not pause unrelated fixtures in the parallel suite.
+            await VerifyRetentionInChildAsync(ChildFlag);
+            return;
+        }
+
         using var meter = new Meter($"TerraBase.Fast.Actors.{Guid.NewGuid():N}");
         using var listener = new MeterListener();
         var completed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -328,6 +340,110 @@ public sealed class ActorRouterTests
 
         using var later = await requests.SendAsync(new Work());
         await AssertHealthyAsync(later);
+    }
+
+    private static async Task VerifyRetentionInChildAsync(string childFlag)
+    {
+        var executable = Environment.ProcessPath ?? throw new InvalidOperationException("The test executable path is unavailable.");
+        var start = new ProcessStartInfo(executable)
+        {
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        };
+        if (string.Equals(Path.GetFileNameWithoutExtension(executable), "dotnet", StringComparison.OrdinalIgnoreCase))
+        {
+            start.ArgumentList.Add(Path.GetFullPath(Environment.GetCommandLineArgs()[0]));
+        }
+
+        start.ArgumentList.Add("--treenode-filter");
+        start.ArgumentList.Add("/TerraBase.Fast/TerraBase.Fast.Actors/ActorRouterTests/" + nameof(An_idle_actor_releases_its_last_callback_payload_and_result_before_next_admission));
+        start.ArgumentList.Add("--minimum-expected-tests");
+        start.ArgumentList.Add("1");
+        start.ArgumentList.Add("--no-progress");
+        start.ArgumentList.Add("--disable-logo");
+        start.ArgumentList.Add("--exit-on-process-exit");
+        start.ArgumentList.Add(Environment.ProcessId.ToString(CultureInfo.InvariantCulture));
+        start.ArgumentList.Add("--report-trx");
+        start.ArgumentList.Add("--report-trx-filename");
+        start.ArgumentList.Add("retention.trx");
+        start.Environment[childFlag] = "1";
+        var results = Directory.CreateTempSubdirectory("terrabase-actor-retention-");
+        start.ArgumentList.Add("--results-directory");
+        start.ArgumentList.Add(results.FullName);
+        start.ArgumentList.Add("--report-html-filename");
+        start.ArgumentList.Add(Path.Combine(results.FullName, "retention.html"));
+        start.ArgumentList.Add("--junit-output-path");
+        start.ArgumentList.Add(Path.Combine(results.FullName, "retention-junit.xml"));
+        Exception? primaryFailure = null;
+        try
+        {
+            using var child = Process.Start(start) ?? throw new InvalidOperationException("The isolated actor retention test could not start.");
+            var stdout = MemoryBudgetTests.ReadChildOutputAsync(child.StandardOutput, CancellationToken.None);
+            var stderr = MemoryBudgetTests.ReadChildOutputAsync(child.StandardError, CancellationToken.None);
+            var exited = child.WaitForExitAsync(CancellationToken.None);
+            var completed = Task.WhenAll(exited, stdout, stderr);
+            try
+            {
+                await SignalAsync(completed);
+                if (child.ExitCode != 0)
+                {
+                    throw new InvalidOperationException($"Isolated actor retention test exited with code {child.ExitCode}.\n{await stdout}\n{await stderr}");
+                }
+
+                var reportPath = Path.Combine(results.FullName, "retention.trx");
+                // A successful exit with a missing filter or skipped test is not a retention proof.
+                await Assert.That(new FileInfo(reportPath).Length).IsLessThanOrEqualTo(1024 * 1024);
+                await using var report = File.OpenRead(reportPath);
+                var document = await XDocument.LoadAsync(report, LoadOptions.None, TestContext.Current!.Execution.CancellationToken);
+                XNamespace ns = "http://microsoft.com/schemas/VisualStudio/TeamTest/2010";
+                var result = document.Descendants(ns + "UnitTestResult").Single();
+                await Assert.That((string?)result.Attribute("outcome")).IsEqualTo("Passed");
+                await Assert.That((string?)result.Attribute("testName")).IsEqualTo(nameof(An_idle_actor_releases_its_last_callback_payload_and_result_before_next_admission));
+                var counters = document.Descendants(ns + "Counters").Single();
+                await Assert.That((string?)counters.Attribute("total")).IsEqualTo("1");
+                await Assert.That((string?)counters.Attribute("passed")).IsEqualTo("1");
+                await Assert.That((string?)counters.Attribute("notExecuted")).IsEqualTo("0");
+            }
+            catch (Exception error)
+            {
+                primaryFailure = error;
+                throw;
+            }
+            finally
+            {
+                try
+                {
+                    if (!child.HasExited)
+                    {
+                        child.Kill(entireProcessTree: true);
+                    }
+                }
+                catch (InvalidOperationException) when (child.HasExited)
+                {
+                }
+                finally
+                {
+                    await StoragePoolTests.JoinCleanupAsync([exited.WaitAsync(TimeSpan.FromSeconds(30)), completed], primaryFailure);
+                }
+            }
+        }
+        catch (Exception error)
+        {
+            primaryFailure = error;
+            throw;
+        }
+        finally
+        {
+            try
+            {
+                results.Delete(recursive: true);
+            }
+            catch (Exception error) when (primaryFailure is not null)
+            {
+                primaryFailure.Data["ResultsCleanupFailure"] = error;
+            }
+        }
     }
 
     private static async Task<(WeakReference Work, WeakReference Payload)> CompletePayloadRequestAsync(ActorRequests requests)

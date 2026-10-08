@@ -433,7 +433,7 @@ public sealed class MemoryBudgetTests
         }
     }
 
-    private static async Task<string> ReadChildOutputAsync(StreamReader reader, CancellationToken cancellationToken)
+    internal static async Task<string> ReadChildOutputAsync(StreamReader reader, CancellationToken cancellationToken)
     {
         const int MaxCharacters = 64 * 1024;
         var output = new StringBuilder();
