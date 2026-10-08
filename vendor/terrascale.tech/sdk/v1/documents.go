@@ -32,8 +32,8 @@ func (d *Database) Project() string { return d.project }
 func (d *Database) Name() string { return d.name }
 
 func (d *Database) path(extra ...string) ([]string, error) {
-	if !ulidPattern.MatchString(d.project) {
-		return nil, fmt.Errorf("terrabase: project ID %q must be a canonical uppercase ULID", d.project)
+	if err := checkID(d.project); err != nil {
+		return nil, err
 	}
 	if err := checkName("database", d.name); err != nil {
 		return nil, err
@@ -43,8 +43,8 @@ func (d *Database) path(extra ...string) ([]string, error) {
 
 // DatabaseInfo is a database as returned by Database.Create.
 type DatabaseInfo struct {
-	ID        string `json:"id"`
-	ProjectID string `json:"projectId"`
+	ID        string `json:"id" ulid:"required"`
+	ProjectID string `json:"projectId" ulid:"required"`
 	Name      string `json:"name"`
 	// Created is true when the call created the database (201).
 	Created bool `json:"-"`
@@ -147,7 +147,7 @@ func (col *Collection) path(extra ...string) ([]string, error) {
 }
 
 func (col *Collection) docPath(id string) ([]string, error) {
-	if err := checkID(id); err != nil {
+	if err := checkDocumentKey(id); err != nil {
 		return nil, err
 	}
 	return col.path("documents", id)
@@ -315,7 +315,14 @@ func (col *Collection) Create(ctx context.Context, doc any, opts ...WriteOption)
 	if err != nil {
 		return nil, err
 	}
-	return col.write(ctx, request{method: http.MethodPost, path: p, body: body})
+	res, err := col.write(ctx, request{method: http.MethodPost, path: p, body: body})
+	if err == nil {
+		err = ValidateID(res.ID)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return res, nil
 }
 
 // Patch applies a MergePatch or an Ops patch to an existing document.

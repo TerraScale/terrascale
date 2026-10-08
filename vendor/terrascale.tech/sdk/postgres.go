@@ -127,22 +127,6 @@ func postgresBase64(value string, length int) bool {
 	return err == nil && len(decoded) == length && base64.RawURLEncoding.EncodeToString(decoded) == value
 }
 
-func postgresDatabase(value string) bool {
-	if len(value) != 36 {
-		return false
-	}
-	for index, character := range value {
-		if index == 8 || index == 13 || index == 18 || index == 23 {
-			if character != '-' {
-				return false
-			}
-		} else if !(character >= '0' && character <= '9' || character >= 'a' && character <= 'f') {
-			return false
-		}
-	}
-	return true
-}
-
 func buildPostgresConfig(config PostgresConfig) (*pgx.ConnConfig, error) {
 	timeout := config.ConnectTimeout
 	if timeout == 0 {
@@ -151,7 +135,7 @@ func buildPostgresConfig(config PostgresConfig) (*pgx.ConnConfig, error) {
 	parts := strings.Split(config.Password, ".")
 	if config.Host == "" || len(config.Host) > 253 || strings.ContainsAny(config.Host, " \t\r\n,/\x00") || config.Port == 0 ||
 		config.TLSServerName == "" || strings.ContainsAny(config.TLSServerName, " \t\r\n,/\x00") || timeout <= 0 || timeout > 10*time.Second ||
-		!postgresDatabase(config.Database) || !postgresBase64(config.KeyID, 16) || len(parts) != 3 || parts[0] != "tbk1" ||
+		ValidateID(config.Database) != nil || ValidateID(config.KeyID) != nil || len(parts) != 3 || parts[0] != "tbk1" ||
 		parts[1] != config.KeyID || !postgresBase64(parts[2], 32) || len(config.CACertificatePEM) > 64*1024 {
 		return nil, &PostgresError{Kind: "configuration"}
 	}

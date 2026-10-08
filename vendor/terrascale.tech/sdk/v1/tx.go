@@ -76,7 +76,7 @@ func (t *Tx) addOp(op txOp, pre []Precondition, collection, id string, idRequire
 		return fail(err)
 	}
 	if id != "" || idRequired {
-		if err := checkID(id); err != nil {
+		if err := checkDocumentKey(id); err != nil {
 			return fail(err)
 		}
 	}
@@ -103,7 +103,7 @@ func (t *Tx) addOp(op txOp, pre []Precondition, collection, id string, idRequire
 }
 
 // Create adds a create op (a put that requires absence). An empty id lets
-// the server generate a UUIDv7, returned in the op's result.
+// the server generate a ULID, returned in the op's result.
 func (t *Tx) Create(collection, id string, doc any) *Tx {
 	body, err := encodeObject(doc)
 	if err != nil {
@@ -197,6 +197,16 @@ func (t *Tx) Commit(ctx context.Context) (*TxResult, error) {
 		Ops []txOp `json:"ops"`
 	}{t.ops}, &res); err != nil {
 		return nil, err
+	}
+	for i, op := range t.ops {
+		if op.Op == "create" && op.ID == "" {
+			if i >= len(res.Results) {
+				return nil, errors.New("terrabase: transaction response is missing a generated document key")
+			}
+			if err := ValidateID(res.Results[i].ID); err != nil {
+				return nil, err
+			}
+		}
 	}
 	return &res, nil
 }

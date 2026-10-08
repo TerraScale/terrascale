@@ -35,6 +35,9 @@ func TestDocumentsLiveInTerraBase(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if !core.ValidID(created.ID) {
+		t.Fatalf("dashboard create returned a non-ULID key %q", created.ID)
+	}
 	org, proj, _ := d.TerraBase(t)
 	key, err := d.Management().CreateProjectAPIKey(ctx, org, proj, v1.ProjectAPIKeyRequest{Name: "app", Scopes: []string{"documents:read", "documents:write"}})
 	if err != nil {
@@ -57,8 +60,15 @@ func TestDocumentsLiveInTerraBase(t *testing.T) {
 	if doc, err := api.Get(ctx, fromAPI.ID); err != nil || !strings.Contains(string(doc.Document), `"price":180`) {
 		t.Fatalf("API read after the dashboard's patch = %+v, %v", doc, err)
 	}
-	if _, err := service.WriteDocument(ctx, d.Principal, db.ID, "items", "create", "not-a-uuid", []byte(`{}`)); !errors.Is(err, core.ErrInvalid) {
-		t.Fatalf("an ID TerraBase refuses = %v, want invalid input", err)
+	raw, err := service.WriteDocument(ctx, d.Principal, db.ID, "items", "create", "natural-document-key", []byte(`{"name":"raw"}`))
+	if err != nil || raw.ID != "natural-document-key" {
+		t.Fatalf("caller-supplied document key = %+v, %v", raw, err)
+	}
+	if _, err := service.WriteDocument(ctx, d.Principal, db.ID, "items", "delete", raw.ID, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.WriteDocument(ctx, d.Principal, db.ID, "items", "create", "bad\x00key", []byte(`{}`)); err == nil {
+		t.Fatal("accepted a document key containing a control character")
 	}
 
 	if names, err := service.Collections(ctx, d.Principal, db.ID); err != nil || strings.Join(names, ",") != "items" {

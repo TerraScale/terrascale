@@ -110,6 +110,7 @@ func TestDataDocumentFormsKeepInputOnErrorAndConfirmDeletes(t *testing.T) {
 		click(t, pageByRole(page, *playwright.AriaRoleButton, "Add document"))
 		dialog := pageByRole(page, *playwright.AriaRoleDialog, "Add document")
 		codeEditor(t, page, "new-document-json")
+		must(t, expect.Locator(dialog.Locator("#new-document-id")).ToHaveValue(""))
 		fill(t, dialog.Locator("#new-document-id"), id)
 		fill(t, dialog.Locator("#new-document-json"), body)
 		submitAndExpect(t, page, "/api/v1/dashboard/data/documents", status, byRole(dialog, *playwright.AriaRoleButton, "Add document").Click)

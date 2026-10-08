@@ -746,11 +746,19 @@ func writeDemoDocument(db *core.Database, collection, operation, id string, body
 	}
 	switch operation {
 	case "create", "replace":
-		docs[id] = slices.Clone(body)
+		value, err := omitDocumentIdentity(body, id)
+		if err != nil {
+			return err
+		}
+		docs[id] = slices.Clone(value)
 	case "patch":
 		merged, err := mergePatch(old, body)
 		if err != nil {
 			return core.Invalid("merge patch must be a JSON object")
+		}
+		merged, err = omitDocumentIdentity(merged, id)
+		if err != nil {
+			return err
 		}
 		docs[id] = merged
 	case "delete":
@@ -769,6 +777,30 @@ func writeDemoDocument(db *core.Database, collection, operation, id string, body
 	db.DocumentHistory[collection][id] = append(db.DocumentHistory[collection][id], slices.Clone(version))
 	db.Documents[collection] = docs
 	return nil
+}
+
+// Match TerraBase's write contract: the key owns identity, while other payload
+// fields (including unrelated id values) remain application data.
+func omitDocumentIdentity(body []byte, id string) ([]byte, error) {
+	if jsontext.Value(body).Kind() != '{' {
+		return body, nil
+	}
+	var fields map[string]jsontext.Value
+	if err := json.Unmarshal(body, &fields); err != nil {
+		return nil, err
+	}
+	var value string
+	if raw := fields["id"]; raw.Kind() != '"' {
+		return body, nil
+	}
+	if err := json.Unmarshal(fields["id"], &value); err != nil {
+		return nil, err
+	}
+	if value != id {
+		return body, nil
+	}
+	delete(fields, "id")
+	return json.Marshal(fields)
 }
 
 // History lists a document's recorded versions, oldest first. Demo versions

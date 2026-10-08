@@ -97,7 +97,8 @@ jobs:
 
   deploy:
     needs: [modules, lint, unit, browser]
-    if: forgejo.event_name == 'push' && forgejo.ref == 'refs/heads/main'
+    # Pause production during the coordinated storage/auth cutover; source CI still runs.
+    if: forgejo.event_name == 'push' && forgejo.ref == 'refs/heads/main' && vars.TS_DASHBOARD_DEPLOY_PAUSED != '1'
     runs-on: terrascale-builder
     timeout-minutes: 10
     steps:

@@ -37,6 +37,7 @@ func (r *contractRegion) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	var body struct {
+		ID             string           `json:"id"`
 		Name           string           `json:"name"`
 		HomeRegion     string           `json:"homeRegion"`
 		ReplicaRegions []string         `json:"replicaRegions"`
@@ -60,12 +61,16 @@ func (r *contractRegion) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			refuse(http.StatusNotFound, "unknown_route")
 			return
 		}
-		answer(http.StatusOK, map[string]string{"id": parts[len(parts)-1], "name": "registered"})
+		if len(parts) == 2 {
+			answer(http.StatusOK, v1.Organization{ID: parts[1], Name: "registered", CreatedBy: "01ARZ3NDEKTSV4RRFFQ69G5FAV"})
+		} else {
+			answer(http.StatusOK, v1.Project{ID: parts[3], OrganizationID: parts[1], Name: "registered"})
+		}
 	case req.Method == http.MethodPost && path == "commits":
 		for _, op := range body.Ops {
 			r.known[op["id"].(string)] = true
 		}
-		answer(http.StatusOK, map[string]any{"id": "c", "offset": "1", "results": []any{}, "versions": map[string]any{}})
+		answer(http.StatusOK, map[string]any{"id": body.ID, "offset": "1", "results": []any{}, "versions": map[string]any{}})
 	case req.Method == http.MethodPost && len(parts) == 5:
 		if !r.known[parts[3]] {
 			refuse(http.StatusNotFound, "unknown_route")

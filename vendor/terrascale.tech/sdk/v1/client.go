@@ -34,6 +34,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"terrascale.tech/sdk/internal/entityid"
 )
 
 // Protocol limits and client defaults.
@@ -362,6 +364,9 @@ func (c *Client) call(ctx context.Context, req request, in, out any) (*response,
 	if out != nil && !(resp.status == http.StatusNoContent && len(bytes.TrimSpace(resp.body)) == 0) {
 		if err := decodeExact(resp.body, out); err != nil {
 			return resp, fmt.Errorf("terrabase: decode %s response: %w", req.method, err)
+		}
+		if err := entityid.Model(out); err != nil {
+			return resp, fmt.Errorf("terrabase: invalid response: %w", err)
 		}
 	}
 	return resp, nil
