@@ -131,6 +131,25 @@ export class TerraScaleSqliteStore {
   /**
    * @template T
    * @param {string} namespace
+   * @param {string} scope
+   * @returns {readonly { readonly id: string; readonly value: T }[]}
+   */
+  listEntries(namespace, scope) {
+    this.#assertOpen();
+    assertKey(namespace, "namespace");
+    assertKey(scope, "scope");
+    const rows = this.#database
+      .prepare("SELECT id, value FROM records WHERE namespace = ? AND scope = ? ORDER BY id ASC")
+      .all(namespace, scope);
+    return rows.map(row => ({
+      id: String(row.id),
+      value: /** @type {T} */ (parseJson(row.value, "record")),
+    }));
+  }
+
+  /**
+   * @template T
+   * @param {string} namespace
    * @returns {readonly {
    *   readonly scope: string;
    *   readonly id: string;

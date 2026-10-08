@@ -207,6 +207,9 @@ See [CHANGELOG.md](CHANGELOG.md) for the 0.0.1 migration and breaking changes.
 client, with its own origin, instance and credentials. Management,
 administration and production Better Auth capabilities remain subject to their
 explicit admission errors; they are not a shortcut into the database transport.
+Webhook dead-letter replay uses the documented `endpointId:eventId` delivery
+selector; both references must be canonical ULIDs. Entity pages reject null and
+primitive records; recovery-code pages contain strings.
 
 `@terrascale/sdk/local` (including `terrascale-local`) and `@terrascale/sdk/postgres` are
 **deprecated legacy entrypoints**. SQLite stays opt-in for development only and

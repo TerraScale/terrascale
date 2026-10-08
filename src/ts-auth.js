@@ -1,6 +1,7 @@
 import { TsAuthHttp } from "./http.js";
 import { err } from "./result.js";
 import { isValidId, requireId } from "./ids.js";
+import { requireDeadLetterId } from "./ts-auth-ids.js";
 /** @import { TerraScaleResult } from "./result.js" */
 
 /** @typedef {import("./config.js").TsAuthRuntimeConfig} TsAuthRuntimeConfig */
@@ -1639,7 +1640,7 @@ export class TsAuthJwtTemplatesClient {
 
 /**
  * @typedef {{
- *   readonly id: import("./ids.js").EntityId;
+ *   readonly id: `${import("./ids.js").EntityId}:${import("./ids.js").EntityId}`; // endpointId:eventId delivery selector.
  *   readonly endpoint_id: import("./ids.js").EntityId;
  *   readonly event_id: import("./ids.js").EntityId;
  *   readonly attempts: number;
@@ -1742,7 +1743,7 @@ export class TsAuthWebhooksClient {
   replayDeadLetter(entryId) {
     return this.#http.request({
       method: "POST",
-      path: `v1/${this.#slug}/webhooks/dead-letter/${segment(entryId, "dead-letter id")}/replay`,
+      path: `v1/${this.#slug}/webhooks/dead-letter/${encodeURIComponent(requireDeadLetterId(entryId))}/replay`,
       routeName: "tsauth.webhooks.replayDeadLetter",
     });
   }

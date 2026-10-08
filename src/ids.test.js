@@ -4,7 +4,7 @@ import { decodeDocument, decodeWrite } from "./v1/decode.js";
 import { requireDocumentId, requireProject } from "./v1/ids.js";
 import { decodeShapePage, requireShapeOffset } from "./v1/shapes.js";
 import { createTerraBaseClient } from "./index.js";
-import { validateTsAuthIds } from "./ts-auth-ids.js";
+import { requireDeadLetterId, validateTsAuthIds } from "./ts-auth-ids.js";
 
 afterEach(() => vi.useRealTimers());
 
@@ -94,4 +94,27 @@ test("hosted-auth validates entity references and leaves customer metadata untou
   expect(() => validateTsAuthIds({ id, allowed_client_ids: ["client_1"] }, "tsauth.oauthResources.list")).toThrow(TypeError);
   expect(() => validateTsAuthIds({ data: [{ email: "user@example.test" }] }, "tsauth.users.list")).toThrow(TypeError);
   expect(() => validateTsAuthIds({ email: "user@example.test" }, "tsauth.oidc.userinfo")).toThrow(TypeError);
+});
+
+test("hosted-auth entity pages reject primitives and nested arrays while recovery codes remain strings", () => {
+  for (const entry of [null, "legacy-id", 1, true, [], [ { id } ], undefined]) {
+    expect(() => validateTsAuthIds({ data: [entry] }, "tsauth.users.list")).toThrow(TypeError);
+    expect(() => validateTsAuthIds({ user: entry }, "tsauth.organizations.members")).toThrow(TypeError);
+  }
+  expect(() => validateTsAuthIds({ passkeys: [{ id }] }, "tsauth.users.passkeys")).not.toThrow();
+  expect(() => validateTsAuthIds({ data: ["recovery-code"] }, "tsauth.users.regenerateRecoveryCodes")).not.toThrow();
+  for (const entry of [null, 1, true, {}, []])
+    expect(() => validateTsAuthIds({ data: [entry] }, "tsauth.users.regenerateRecoveryCodes")).toThrow(TypeError);
+});
+
+test("dead-letter selectors contain exactly two canonical ULID entity references", () => {
+  const event = "01ARZ3NDEKTSV4RRFFQ6000002";
+  const selector = `${id}:${event}`;
+  expect(requireDeadLetterId(selector)).toBe(selector);
+  expect(() => validateTsAuthIds([{ id: selector, endpoint_id: id, event_id: event }], "tsauth.webhooks.deadLetter")).not.toThrow();
+  for (const invalid of [...invalidIds, selector.toLowerCase(), `${selector}:${id}`, `${id}:`, `:${event}`, `${id}:event_1`]) {
+    expect(() => requireDeadLetterId(invalid)).toThrow(TypeError);
+    expect(() => validateTsAuthIds([{ id: invalid, endpoint_id: id, event_id: event }], "tsauth.webhooks.deadLetter")).toThrow(TypeError);
+  }
+  expect(() => validateTsAuthIds([{ id: selector }], "tsauth.users.list")).toThrow(TypeError);
 });

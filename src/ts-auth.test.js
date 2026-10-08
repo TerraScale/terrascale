@@ -84,6 +84,38 @@ function tsAuthClient(respond, requests, overrides = {}) {
   });
 }
 
+test("dead-letter list and replay use the documented two-ULID delivery selector", async () => {
+  const endpoint = "01ARZ3NDEKTSV4RRFFQ6000001";
+  const event = "01ARZ3NDEKTSV4RRFFQ6000002";
+  const entry = { id: `${endpoint}:${event}`, endpoint_id: endpoint, event_id: event, attempts: 3, updated_at: 1 };
+  /** @type {Request[]} */
+  const requests = [];
+  const client = tsAuthClient((_request, index) => index === 0 ? json([entry]) : json({ replayed: true }), requests);
+  const page = await client.webhooks.deadLetter();
+  assert.equal(page.ok, true);
+  if (page.ok) assert.deepEqual(page.value, [entry]);
+  const replay = await client.webhooks.replayDeadLetter(entry.id);
+  assert.equal(replay.ok, true);
+  assert.equal(requests[1]?.method, "POST");
+  assert.equal(new URL(/** @type {Request} */ (requests[1]).url).pathname, `/v1/acme/webhooks/dead-letter/${endpoint}%3A${event}/replay`);
+  for (const invalid of [endpoint, `${endpoint}:event_1`, entry.id.toLowerCase(), `${entry.id}:${event}`])
+    assert.throws(() => client.webhooks.replayDeadLetter(invalid), /ULID/u);
+  assert.equal(requests.length, 2);
+});
+
+test("malformed entity pages return invalid-response while recovery-code pages succeed", async () => {
+  for (const entry of [null, "legacy-id", 1, true, []]) {
+    const client = tsAuthClient(() => json({ data: [entry] }), []);
+    const result = await client.users.list();
+    assert.equal(result.ok, false);
+    if (!result.ok) assert.equal(result.error.kind, "invalid-response");
+  }
+  const client = tsAuthClient(() => json({ data: ["recovery-code"] }), []);
+  const result = await client.users.regenerateRecoveryCodes(user.id, "01ARZ3NDEKTSV4RRFFQ6000001");
+  assert.equal(result.ok, true);
+  if (result.ok) assert.deepEqual(result.value.data, ["recovery-code"]);
+});
+
 describe("ts-auth client", () => {
   test("public auth origin selects a regional endpoint and fails over safe reads", async () => {
     /** @type {Request[]} */

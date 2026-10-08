@@ -22,6 +22,25 @@ const user = (email) => ({
   updatedAt: new Date(),
 });
 
+test.skipIf(!localSqliteUnitTestsAllowed)("scoped entries preserve record keys and exclude unrelated models and namespaces", () => {
+  const store = new TerraScaleSqliteStore(":memory:");
+  try {
+    const first = "01ARZ3NDEKTSV4RRFFQ6000001";
+    const second = "01ARZ3NDEKTSV4RRFFQ6000002";
+    store.put("local-auth", "user", second, { email: "second@example.test" });
+    store.put("local-auth", "user", first, { email: "first@example.test" });
+    store.put("local-auth", "session", first, { token: "unrelated-session" });
+    store.put("other", "user", first, { email: "unrelated@example.test" });
+    assert.deepEqual(store.listEntries("local-auth", "user"), [
+      { id: first, value: { email: "first@example.test" } },
+      { id: second, value: { email: "second@example.test" } },
+    ]);
+    assert.deepEqual(store.listEntries("local-auth", "account"), []);
+  } finally {
+    store.close();
+  }
+});
+
 test.skipIf(!localSqliteUnitTestsAllowed)("local auth persists one ULID key and rejects UUID or prefixed identities", async () => {
   const store = new TerraScaleSqliteStore(":memory:");
   try {

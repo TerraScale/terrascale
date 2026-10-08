@@ -67,8 +67,7 @@ function customAdapter(store, config, scoped) {
    * @param {string} model
    * @returns {Row[]}
    */
-  const rows = (model) => store.listNamespace("local-auth")
-    .filter(entry => entry.scope === model)
+  const rows = (model) => store.listEntries("local-auth", model)
     .map(entry => ({ .../** @type {Row} */ (entry.value), id: requireId(entry.id) }));
   /**
    * @param {string} model
