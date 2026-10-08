@@ -122,8 +122,10 @@ idempotent ([Anna] §III). Mutators are delta-mutators: they return the delta, a
 
 - `ReplicaId` packs region (16 bits), member (32 bits) and **epoch** (16 bits). The member number is drawn at random
   when a data directory is first used (decision 8); the region keeps dots distinct across regions later and is 0 until
-  then. Both live in `.terrabase.replica` in the data directory (step 4b): a format byte, the member number, the epoch
-  and whether the last process stopped cleanly.
+  then. Both live in `.terrabase.replica` in the data directory (step 4b): a format byte, the member number, the epoch,
+  whether the last process stopped cleanly, and a 4-byte SHA-256 checksum of those. An empty file or one whose checksum
+  fails (a first start or a write a crash cut short) gives a new member number; an unknown format or a link refuses
+  the start.
 - **The epoch rises on every unclean start** (the file does not say the last process stopped cleanly), and is written
   through to disk before the storage engine starts, so before the member can mint a dot. Past epoch 65535 the member
   takes a new number. A clean stop is recorded only once every store closed without error. With `synchronous = NORMAL`
