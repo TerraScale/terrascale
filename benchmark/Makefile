@@ -1,4 +1,27 @@
 .DEFAULT_GOAL := help
+
+# Preparatory TS-648 transport diagnostic against an explicitly selected TerraBase checkout.
+TERRABASE_ROOT ?= ../terrabase
+export TERRABASE_ROOT
+DOTNET ?= dotnet
+ACTOR_PYTHON ?= python3
+ACTOR_ARGS ?=
+.PHONY: actor-check actor-run
+actor-check:
+	ACTOR_TERRABASE_ROOT="$$(cd "$$TERRABASE_ROOT" && pwd -P)" && \
+		cd actor-harness && \
+		$(DOTNET) build ActorHarness.csproj --configuration Release -p:TerraBaseRoot="$$ACTOR_TERRABASE_ROOT" && \
+		$(DOTNET) format whitespace . --folder --verify-no-changes && \
+		$(DOTNET) build ../tests/actor-harness/ActorHarnessChecks.csproj --configuration Release && \
+		$(DOTNET) format whitespace ../tests/actor-harness --folder --verify-no-changes && \
+		$(ACTOR_PYTHON) ../tests/actor-harness.py --dotnet="$(DOTNET)" --terrabase-root="$$ACTOR_TERRABASE_ROOT"
+
+actor-run:
+	ACTOR_TERRABASE_ROOT="$$(cd "$$TERRABASE_ROOT" && pwd -P)" && \
+		cd actor-harness && ACTOR_SOURCE_REVISION="$$(git -C "$$ACTOR_TERRABASE_ROOT" rev-parse --verify HEAD)" && \
+		ACTOR_HARNESS_REVISION="$$(git rev-parse --verify HEAD)" && \
+		export ACTOR_SOURCE_REVISION ACTOR_HARNESS_REVISION && \
+		$(DOTNET) run --project ActorHarness.csproj --configuration Release -p:TerraBaseRoot="$$ACTOR_TERRABASE_ROOT" -- $(ACTOR_ARGS)
 .PHONY: help fast lint-fast build-fast test-fast csharp-smoke deployed-smoke load-check fmt check lint build build-guest check-engine lint-engine build-guest-engine test-build test test-vm vm-preflight vm-smoke vm-network-smoke vm-run local-engine-lock local-engine-fmt local-engine-check local-engine-lint local-engine-build local-engine-build-guest
 
 help:
