@@ -67,7 +67,7 @@ public sealed class SyncProtocolTests
     }
 
     [Test]
-    public async Task Equal_project_and_database_UUIDs_in_different_organizations_keep_separate_files_and_applied_frontiers()
+    public async Task Equal_project_and_database_ULIDs_in_different_organizations_keep_separate_files_and_applied_frontiers()
     {
         using var tls = new PeerTls();
         await using var server = await TerraBaseTestServer.StartAsync(tls.Apply);

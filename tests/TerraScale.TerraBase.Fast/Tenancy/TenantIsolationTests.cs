@@ -22,7 +22,7 @@ public sealed class TenantIsolationTests
     private static readonly string[] NameField = ["name"];
     private static readonly string[] OwnerField = ["owner"];
 
-    // The id of every document these tests write; documents are created with UUID ids.
+    // The id of every document these tests write; documents are created with ULID keys.
     private const string DocumentId = "01K6G00000E008000000000001";
 
     private static readonly string[] CallerOnlyRoutes =

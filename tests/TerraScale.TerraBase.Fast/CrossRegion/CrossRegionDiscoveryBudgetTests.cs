@@ -89,7 +89,7 @@ public sealed class CrossRegionDiscoveryBudgetTests
 
                 var first = await CreatePlacedAsync(a, organization, project, "page-one", token);
                 var second = await CreatePlacedAsync(a, organization, project, "page-two", token);
-                // UUID text has the same ordering as the protocol's big-endian keys within this project.
+                // ULID text has the same ordering as the protocol's big-endian keys within this project.
                 var healthy = string.CompareOrdinal(first.Id, second.Id) < 0 ? first : second;
                 var retained = await CreatePlacedAsync(c, holderOrganization, holderProject, "retained", token);
                 using var source = await a.CreateClientAsync(organization, "documents:read", "documents:write");

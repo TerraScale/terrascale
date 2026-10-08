@@ -77,7 +77,7 @@ public sealed class CredentialApiTests
         var first = await api.Client.GetFromJsonAsync<JsonElement>(Uri(path + "?limit=5"));
         var listed = first.GetProperty("items").EnumerateArray().Select(item => item.GetProperty("id").GetString()!).ToList();
         var next = first.GetProperty("next").GetString();
-        // Cursors are the persisted sequence, not random UUID bits.
+        // Cursors follow the persisted sequence independently of the key ULID.
         await Assert.That(next).IsEqualTo("0000000000000000004");
         time.AdjustTime(time.GetUtcNow().AddDays(-1));
         using var appended = await api.Client.PostAsJsonAsync(Uri(path), new { name = "after-first-page", scopes = ReadOnly });

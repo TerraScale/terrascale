@@ -860,7 +860,7 @@ public sealed class BackupApiTests
             }
         }
 
-        // Ids are UUIDv7: a later millisecond sorts the healthy database after every failing one. No scheduler tick yet.
+        // Ids are ULIDs: a later millisecond sorts the healthy database after every failing one. No scheduler tick yet.
         time.Advance(TimeSpan.FromMilliseconds(1));
         var healthy = await api.CreateManagedDatabaseAsync(organization, project, "healthy");
         (await api.Client.PutAsJsonAsync(Uri($"{healthy.Path}/backup-policy"), new { fullBackupCron = "* * * * *", retentionDays = 35 })).EnsureSuccessStatusCode();

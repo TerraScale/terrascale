@@ -625,7 +625,7 @@ public sealed class UsageApiTests
     public async Task Project_usage_sums_every_database()
     {
         // A fake clock: on a slow machine the request's 5 seconds of wall-clock time would end it early. It moves between
-        // creations, so database ids (UUIDv7) keep their creation order.
+        // creations, so database ULIDs keep their creation order.
         var time = new FakeTimeProvider();
         await using var api = await ManagementApi.StartAsync(time: time);
         var first = await api.CreateManagedDatabaseAsync("first");
@@ -654,7 +654,7 @@ public sealed class UsageApiTests
     public async Task Project_usage_reads_every_database_across_catalog_pages()
     {
         // A fake clock: on a slow machine the request's 5 seconds of wall-clock time would end it early. It moves between
-        // creations, so database ids (UUIDv7) keep their creation order.
+        // creations, so database ULIDs keep their creation order.
         var time = new FakeTimeProvider();
         await using var api = await ManagementApi.StartAsync(time: time);
         var first = await api.CreateManagedDatabaseAsync("db-0");

@@ -186,7 +186,7 @@ public sealed class ShapeBudgetTests
         using var first = await client.GetAsync(start.Headers.Location!);
         var firstBody = await first.Content.ReadAsStringAsync();
 
-        // Server-generated ids are UUIDv7: 200000 later ones all sort after the snapshot's only id, four times
+        // Server-generated ids are monotonic ULIDs: 200000 later ones all sort after the snapshot's only id, four times
         // the per-page skip bound.
         for (var batch = 0; batch < 200; batch++)
         {

@@ -210,7 +210,7 @@ public sealed partial class CrossRegionPagingProgressTests
                 var databases = await CreatePlacedAsync(gru, organization, project,
                     Enumerable.Range(0, 103).Select(index => "sweep-" + index.ToString(CultureInfo.InvariantCulture)), token);
 
-                // Within one project, canonical UUID text orders like both the catalog and 48-byte WAN cursors.
+                // Within one project, canonical ULID text orders like both the catalog and 48-byte WAN cursors.
                 databases.Sort((left, right) => string.CompareOrdinal(left.Id, right.Id));
                 var firstPageDeleted = databases[1];
                 var nextPageDeleted = databases[^2];

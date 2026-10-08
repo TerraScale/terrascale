@@ -151,8 +151,8 @@ public sealed class CaptureAdmissionTests
         var retained = EntityIds.New().ToString();
         using var seeded = await client.PutAsJsonAsync(new Uri($"{tenant.Path("db")}/collections/items/documents/{existing}", UriKind.Relative), new { value = "old" }, token);
         seeded.EnsureSuccessStatusCode();
-        // Two names (5 bytes), UUIDs (36 bytes) and these bodies fill exactly the 2 MiB capture budget.
-        var json = Encoding.UTF8.GetBytes("{\"value\":\"" + new string('x', IStorageTransaction.MaxChangeGroupBytes / 2 - 41 - 12) + "\"}");
+        // Two names (5 bytes), ULIDs (26 bytes) and these bodies fill exactly the 2 MiB capture budget.
+        var json = Encoding.UTF8.GetBytes("{\"value\":\"" + new string('x', IStorageTransaction.MaxChangeGroupBytes / 2 - 31 - 12) + "\"}");
         var source = (await sender.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(tenant.Database("db"), token))!;
         long offset;
         await using (var write = await source.BeginTransactionAsync(write: true, token))

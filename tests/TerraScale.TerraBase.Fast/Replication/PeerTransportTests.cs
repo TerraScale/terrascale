@@ -943,7 +943,7 @@ public sealed class PeerTransportTests
     [Arguments("tenant", true)]
     [Arguments("project", false)]
     [Arguments("project", true)]
-    public async Task Hello_refuses_missing_or_malformed_tenant_and_project_UUIDs(string field, bool malformed)
+    public async Task Hello_refuses_missing_or_malformed_tenant_and_project_ULIDs(string field, bool malformed)
     {
         using var tls = new PeerTls();
         await using var server = await TerraBaseTestServer.StartAsync(tls.Apply);

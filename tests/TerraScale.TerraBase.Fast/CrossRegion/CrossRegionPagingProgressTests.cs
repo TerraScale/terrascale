@@ -76,7 +76,7 @@ public sealed partial class CrossRegionPagingProgressTests
                     databases.Add(await CreatePlacedAsync(a, organization, project, "page-" + index.ToString(CultureInfo.InvariantCulture), token));
                 }
 
-                // Protocol cursors use big-endian UUIDs, which order like their text within one project.
+                // Protocol cursors use big-endian ULIDs, which order like their text within one project.
                 databases.Sort((left, right) => string.CompareOrdinal(left.Id, right.Id));
                 var prefix = databases[0];
                 var tail = fullMembership ? await CreatePlacedAsync(newcomer, organization, newcomerProject, "new-member", token) : databases[^1];
