@@ -83,7 +83,7 @@ internal sealed class ActorRequests(int actorCount = 2, int maxItems = 256, int 
                     await gate.Task.WaitAsync(cancellation.Token);
                 }
 
-                var pending = router.InvokeAsync(actor, work.RetainedBytes, async token =>
+                var pending = router.InvokeAsync<byte[]?>(actor, work.RetainedBytes, work.NullCallback ? null! : async token =>
                 {
                     context.Response.Headers["X-Test-Executed"] = "true";
                     context.Response.Headers["X-Test-Ambient"] = _requestContext.Value is null ? "none" : "request";
@@ -131,10 +131,12 @@ internal sealed class ActorRequests(int actorCount = 2, int maxItems = 256, int 
                 context.Response.StatusCode = StatusCodes.Status500InternalServerError;
                 context.Response.Headers["X-Test-Failure"] = "callback";
             }
-            catch (ArgumentException)
+            catch (ArgumentException error)
             {
                 context.Response.StatusCode = StatusCodes.Status400BadRequest;
-                context.Response.Headers["X-Test-Failure"] = "key";
+                context.Response.Headers["X-Test-Failure"] = work.Actor is null ? "key" : "argument";
+                context.Response.Headers["X-Test-Exception"] = error.GetType().Name;
+                context.Response.Headers["X-Test-Parameter"] = error.ParamName;
             }
             finally
             {
@@ -166,7 +168,7 @@ internal sealed class ActorRequests(int actorCount = 2, int maxItems = 256, int 
         return new ActorKey(tenant, fake.Random.AlphaNumeric(12), fake.Random.AlphaNumeric(24));
     }
 
-    internal sealed class Work(ActorKey? key = null, int? actor = 0, int retainedBytes = 1, bool held = false, bool fail = false, TaskCompletionSource? admissionGate = null, byte[]? payload = null, CancellationToken cancellationToken = default)
+    internal sealed class Work(ActorKey? key = null, int? actor = 0, int retainedBytes = 1, bool held = false, bool fail = false, TaskCompletionSource? admissionGate = null, byte[]? payload = null, bool nullCallback = false, CancellationToken cancellationToken = default)
     {
         public ActorKey Key { get; } = key ?? NewKey();
 
@@ -175,6 +177,8 @@ internal sealed class ActorRequests(int actorCount = 2, int maxItems = 256, int 
         public int RetainedBytes { get; } = retainedBytes;
 
         public bool Fail { get; } = fail;
+
+        public bool NullCallback { get; } = nullCallback;
 
         public byte[]? Payload { get; } = payload;
 

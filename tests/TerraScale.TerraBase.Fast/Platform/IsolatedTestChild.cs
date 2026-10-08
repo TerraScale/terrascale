@@ -1,7 +1,6 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.Xml.Linq;
-using TerraBase.Fast.Storage;
 
 namespace TerraBase.Fast.Platform;
 
@@ -44,9 +43,10 @@ internal static class IsolatedTestChild
         try
         {
             using var child = Process.Start(start) ?? throw new InvalidOperationException("The isolated test could not start.");
-            var stdout = MemoryBudgetTests.ReadChildOutputAsync(child.StandardOutput, CancellationToken.None);
-            var stderr = MemoryBudgetTests.ReadChildOutputAsync(child.StandardError, CancellationToken.None);
-            var exited = child.WaitForExitAsync(CancellationToken.None);
+            using var outputCancellation = new CancellationTokenSource();
+            var stdout = MemoryBudgetTests.ReadChildOutputAsync(child.StandardOutput, outputCancellation.Token);
+            var stderr = MemoryBudgetTests.ReadChildOutputAsync(child.StandardError, outputCancellation.Token);
+            var exited = child.WaitForExitAsync(outputCancellation.Token);
             var completed = Task.WhenAll(exited, stdout, stderr);
             try
             {
@@ -77,20 +77,7 @@ internal static class IsolatedTestChild
             }
             finally
             {
-                try
-                {
-                    if (!child.HasExited)
-                    {
-                        child.Kill(entireProcessTree: true);
-                    }
-                }
-                catch (InvalidOperationException) when (child.HasExited)
-                {
-                }
-                finally
-                {
-                    await StoragePoolTests.JoinCleanupAsync([exited.WaitAsync(TimeSpan.FromSeconds(30)), completed], primaryFailure);
-                }
+                await CleanupAsync(child, completed, outputCancellation, primaryFailure);
             }
         }
         catch (Exception error)
@@ -108,6 +95,83 @@ internal static class IsolatedTestChild
             {
                 primaryFailure.Data["ResultsCleanupFailure"] = error;
             }
+        }
+    }
+
+    internal static async Task CleanupAsync(
+        Process child, Task completed, CancellationTokenSource outputCancellation, Exception? primaryFailure, TimeSpan? timeout = null)
+    {
+        using var deadline = new CancellationTokenSource(timeout ?? TimeSpan.FromSeconds(30));
+        var errors = new List<Exception>();
+        try
+        {
+            if (!child.HasExited)
+            {
+                child.Kill(entireProcessTree: true);
+            }
+        }
+        catch (InvalidOperationException) when (child.HasExited)
+        {
+        }
+        catch (Exception error)
+        {
+            errors.Add(error);
+        }
+
+        try
+        {
+            // Exit and both pipes share the deadline; a descendant can keep a pipe open after exit.
+            await completed.WaitAsync(deadline.Token);
+        }
+        catch (OperationCanceledException) when (completed.IsCanceled)
+        {
+        }
+        catch (OperationCanceledException error) when (deadline.IsCancellationRequested)
+        {
+            errors.Add(new TimeoutException("The isolated child cleanup exceeded its deadline.", error));
+        }
+        catch (Exception error)
+        {
+            errors.Add(completed.Exception ?? error);
+        }
+        finally
+        {
+            try
+            {
+                outputCancellation.Cancel();
+            }
+            catch (Exception error)
+            {
+                errors.Add(error);
+            }
+
+            foreach (var reader in new[] { child.StandardOutput, child.StandardError })
+            {
+                try
+                {
+                    reader.Dispose();
+                }
+                catch (Exception error)
+                {
+                    errors.Add(error);
+                }
+            }
+
+            // Observe late cancellation/disposal faults without reopening the bounded cleanup wait.
+            _ = completed.ContinueWith(static task => _ = task.Exception, CancellationToken.None,
+                TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+        }
+
+        if (errors.Count > 0)
+        {
+            var failure = new AggregateException("isolated child cleanup failed", errors);
+            if (primaryFailure is null)
+            {
+                throw failure;
+            }
+
+            primaryFailure.Data["CleanupFailure"] = primaryFailure.Data["CleanupFailure"] is Exception earlier
+                ? new AggregateException(earlier, failure) : failure;
         }
     }
 }

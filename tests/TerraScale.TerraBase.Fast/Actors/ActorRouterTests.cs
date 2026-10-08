@@ -14,6 +14,50 @@ namespace TerraBase.Fast.Actors;
 public sealed class ActorRouterTests
 {
     [Test]
+    [Arguments(0, 1, 1, "actorCount")]
+    [Arguments(257, 1, 1, "actorCount")]
+    [Arguments(1, 0, 1, "maxItemsPerActor")]
+    [Arguments(1, -1, 1, "maxItemsPerActor")]
+    [Arguments(1, 1, 0, "maxBytesPerActor")]
+    [Arguments(1, 1, -1, "maxBytesPerActor")]
+    public async Task Actor_registration_rejects_invalid_limits_during_real_host_startup(int actors, int items, int bytes, string parameter)
+    {
+        var error = await Assert.ThrowsAsync<ArgumentOutOfRangeException>(async () =>
+        {
+            await using var unexpected = await TerraBaseTestServer.StartAsync(services: services =>
+                services.AddTerraBaseActors(actors, items, bytes));
+        });
+        await Assert.That(error!.GetType()).IsEqualTo(typeof(ArgumentOutOfRangeException));
+        await Assert.That(error.ParamName).IsEqualTo(parameter);
+    }
+
+    [Test]
+    [Arguments(-1, 1, false, "actor", nameof(ArgumentOutOfRangeException))]
+    [Arguments(1, 1, false, "actor", nameof(ArgumentOutOfRangeException))]
+    [Arguments(0, -1, false, "retainedBytes", nameof(ArgumentOutOfRangeException))]
+    [Arguments(0, 1, true, "work", nameof(ArgumentNullException))]
+    public async Task Invalid_invocation_arguments_reject_over_http_without_consuming_mailbox_capacity(int actor, int bytes, bool nullCallback, string parameter, string exception)
+    {
+        await using var requests = new ActorRequests(actorCount: 1, maxItems: 1, maxBytes: 1);
+        await requests.StartAsync();
+        using var invalid = await requests.SendAsync(new Work(actor: actor, retainedBytes: bytes, nullCallback: nullCallback));
+        await AssertRejectedAsync(invalid, HttpStatusCode.BadRequest, "argument");
+        await Assert.That(Header(invalid, "X-Test-Exception")).IsEqualTo(exception);
+        await Assert.That(Header(invalid, "X-Test-Parameter")).IsEqualTo(parameter);
+
+        var held = new Work(held: true);
+        var running = requests.SendAsync(held);
+        await SignalAsync(held.Entered.Task);
+        using var full = await requests.SendAsync(new Work());
+        await AssertRejectedAsync(full, HttpStatusCode.ServiceUnavailable, "busy");
+        held.Release.TrySetResult();
+        using var completed = await running;
+        await AssertHealthyAsync(completed);
+        using var recovered = await requests.SendAsync(new Work());
+        await AssertHealthyAsync(recovered);
+    }
+
+    [Test]
     public async Task Document_identity_routes_deterministically_across_requests_plans_and_router_instances()
     {
         await using var first = new ActorRequests(actorCount: 4);

@@ -312,10 +312,11 @@ public sealed class MemoryBudgetTests
 
             using var child = Process.Start(start) ?? throw new InvalidOperationException("The isolated heap-limit test could not start.");
             using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
-            var stdout = ReadChildOutputAsync(child.StandardOutput, deadline.Token);
-            var stderr = ReadChildOutputAsync(child.StandardError, deadline.Token);
+            using var outputCancellation = new CancellationTokenSource();
+            var stdout = ReadChildOutputAsync(child.StandardOutput, outputCancellation.Token);
+            var stderr = ReadChildOutputAsync(child.StandardError, outputCancellation.Token);
             // Retain actual exit even when the test's wait or its output readers are cancelled.
-            var exited = child.WaitForExitAsync(CancellationToken.None);
+            var exited = child.WaitForExitAsync(outputCancellation.Token);
             var completed = Task.WhenAll(exited, stdout, stderr);
             Exception? primaryFailure = null;
             try
@@ -340,22 +341,7 @@ public sealed class MemoryBudgetTests
             finally
             {
                 deadline.Cancel();
-                try
-                {
-                    if (!child.HasExited)
-                    {
-                        child.Kill(entireProcessTree: true);
-                    }
-                }
-                catch (InvalidOperationException) when (child.HasExited)
-                {
-                }
-                finally
-                {
-                    // The bounded exit wait does not abandon completed's actual exit/readers join.
-                    await StoragePoolTests.JoinCleanupAsync(
-                        [exited.WaitAsync(TimeSpan.FromSeconds(30)), completed], primaryFailure);
-                }
+                await IsolatedTestChild.CleanupAsync(child, completed, outputCancellation, primaryFailure);
             }
 
             return;
