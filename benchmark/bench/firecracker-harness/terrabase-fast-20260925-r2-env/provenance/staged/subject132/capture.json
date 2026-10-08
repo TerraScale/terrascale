@@ -1,8 +1,0 @@
-{
-  "source_file_count": 132,
-  "live_before_equals_copy": true,
-  "live_before_equals_after": true,
-  "manifest_sha256": "f8109bcef5bdf44850733968a988fb9a3be5be2665dcd1e146c6559743b64954",
-  "unreferenced_member_control_present": true,
-  "git_head": "352d9f61185d1b685e3032519579040d169ad47d"
-}

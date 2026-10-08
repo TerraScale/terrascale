@@ -1,8 +1,0 @@
-{
-  "checked_utc": "2026-09-25T13:23:20Z",
-  "manifest_path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/v2-image-apt-helper-source-20260925/source.sha256",
-  "manifest_sha256": "9003630ad3b3c017c47b8e21b1d3e3dfd8e4f4ab8a557d1b401be86fab9d9149",
-  "mismatches": [],
-  "status": "passed",
-  "verified_files": 42
-}
