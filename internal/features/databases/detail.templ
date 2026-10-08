@@ -18,6 +18,9 @@ templ detailContent(page core.Page, d detailData) {
 		if d.Error != "" && !d.OpenDelete && !restoreErrorInDialog(d) {
 			@ui.Alert("danger", "", d.Error)
 		}
+		if d.Created {
+			@createdNotice(d.Database)
+		}
 		switch d.Tab {
 			case "backups":
 				@detailBackups(page, d)
@@ -49,6 +52,25 @@ templ detailContent(page core.Page, d detailData) {
 	}
 }
 
+// createdNotice ends the create flow on the new database: ready, still
+// provisioning, or failed, as its status says.
+templ createdNotice(db core.Database) {
+	{{ tone, title, body := createdState(db) }}
+	<div class={ "ts-alert", "ts-db-created", "ts-alert-" + tone } data-status={ db.Status }>
+		<span class="ts-db-created-mark" aria-hidden="true">
+			if tone == "success" {
+				@icons.Check(18)
+			} else {
+				@icons.Database(18)
+			}
+		</span>
+		<div class="ts-list-main">
+			<p class="ts-alert-title">{ title }</p>
+			<p class="ts-alert-body">{ body }</p>
+		</div>
+	</div>
+}
+
 templ facts(items []fact) {
 	<dl class="ts-db-facts">
 		for _, item := range items {
@@ -73,15 +95,15 @@ templ detailPlacement(page core.Page, d detailData) {
 			<form method="post" action="/api/v1/dashboard/databases/regions" class="ts-form" aria-label="Change regions">
 				<input type="hidden" name="_csrf" value={ page.CSRFToken }/>
 				<input type="hidden" name="databaseId" value={ d.Database.ID }/>
-				<div class="ts-field">
-					<span class="ts-label">Regions</span>
-					@regionCheckboxes("database-placement", d.Choices, databaseRegions(d.Database), d.Database.Region)
+				<fieldset class="ts-field ts-db-regions">
+					<legend class="ts-label">Regions</legend>
+					@regionCards("database-placement", d.Choices, databaseRegions(d.Database), d.Database.Region)
 					if d.RegionsError != "" {
 						@regionHint(d.RegionsError)
 					} else {
 						<p class="ts-hint">{ regionDisplay(d.Database.Region) } is the home region and stays selected. Add a region to replicate the database there; remove one to stop serving it there.</p>
 					}
-				</div>
+				</fieldset>
 				<div class="ts-row">
 					<button class="ts-btn ts-btn-secondary" type="submit">Save regions</button>
 				</div>

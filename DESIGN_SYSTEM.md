@@ -123,7 +123,12 @@ Page navigations show a full-width gradient progress bar
 (`body.ts-nav-pending`, set by Datastar in `internal/ui/layouts.templ`). A form
 marked `data-submit-once` is not sent again while that navigation loads, and
 its submit buttons read as busy; use it where a second submission would fail
-or repeat an action. Fonts are preloaded (the monospace face only once someone
+or repeat an action. A long create shows its own progress inside the form:
+the Create database dialog covers its fields with a progress panel from the
+moment the form is submitted, announces it through a `role="status"` line,
+and the new database opens on a ready notice (`?created=1`). Motion uses
+`--ts-fast` and `--ts-base` for transitions and `--ts-loop` for one cycle of
+an ongoing wait. Fonts are preloaded (the monospace face only once someone
 is signed in, since signed-out pages never show it) and use
 `font-display: block`, so text never flashes a fallback face.
 `prefers-reduced-motion` disables animation.

@@ -20,14 +20,10 @@ func createDatabase(t *testing.T, page playwright.Page, name, region string) {
 	submitAndExpect(t, page, "/api/v1/dashboard/databases", 303, byRole(form, *playwright.AriaRoleButton, "Create database").Click)
 }
 
+// selectDatabaseRegions sets the region cards to exactly regions, by
+// keyboard, the way the native no-script controls are used.
 func selectDatabaseRegions(t *testing.T, scope playwright.Locator, regions ...string) {
 	t.Helper()
-	picker := scope.Locator(".ts-db-region-picker")
-	summary := picker.Locator("summary")
-	// Keyboard activation avoids waiting for the animated dialog to reach a
-	// stable bounding box, while exercising the native no-script controls.
-	must(t, summary.Press("Space"))
-	must(t, expect.Locator(picker).ToHaveAttribute("open", ""))
 	for _, code := range []string{"GRU", "SFO"} {
 		checkbox := scope.Locator(`#database-region input[value="` + code + `"]`)
 		checked, err := checkbox.IsChecked()
@@ -41,8 +37,6 @@ func selectDatabaseRegions(t *testing.T, scope playwright.Locator, regions ...st
 			must(t, expect.Locator(checkbox).Not().ToBeChecked())
 		}
 	}
-	must(t, summary.Press("Space"))
-	must(t, expect.Locator(picker).Not().ToHaveAttribute("open", ""))
 }
 
 func TestCreateDatabaseRegionMapAndSelectStayInSync(t *testing.T) {
@@ -76,13 +70,10 @@ func TestCreateDatabaseRegionMapAndSelectStayInSync(t *testing.T) {
 
 	selectDatabaseRegions(t, dialog, "SFO")
 	must(t, expect.Locator(region.Locator(`input[value="GRU"]`)).Not().ToBeChecked())
-	click(t, dialog.Locator(".ts-db-region-picker summary"))
 	must(t, expect.Locator(regionMap).ToHaveAttribute("data-selected", "SFO"))
 	must(t, expect.Locator(sanFrancisco).ToHaveAttribute("aria-pressed", "true"))
 	must(t, expect.Locator(saoPaulo).ToHaveAttribute("aria-pressed", "false"))
-	must(t, expect.Locator(dialog.Locator("[data-region-summary]")).ToContainText("San Francisco"))
-	screenshot(t, page, "database-region-dropdown")
-	click(t, dialog.Locator(".ts-db-region-picker summary"))
+	screenshot(t, page, "database-region-cards")
 	must(t, saoPaulo.Hover())
 	must(t, expect.Locator(saoPaulo.Locator(".ts-region-node-label")).ToHaveCSS("opacity", "1"))
 

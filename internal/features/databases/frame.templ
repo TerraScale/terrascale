@@ -28,10 +28,10 @@ templ Frame(p FrameProps) {
 				<span aria-current="page">{ p.Database.Name }</span>
 			</nav>
 			<div class="ts-db-identity">
-				<span class="ts-db-icon ts-db-icon-lg" aria-hidden="true">@icons.Database(20)</span>
+				<span class="ts-db-icon ts-db-icon-lg" aria-hidden="true">@icons.Database(24)</span>
 				<h1 class="ts-db-title">{ p.Database.Name }</h1>
 				@statusBadge(p.Database.Status)
-				<span class="ts-meta">{ regionDisplay(p.Database.Region) }</span>
+				@regionChips(databaseRegions(p.Database))
 			</div>
 		</header>
 		@ui.Tabs("Database sections", frameTabs(p))

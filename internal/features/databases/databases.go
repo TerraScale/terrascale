@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"slices"
@@ -81,7 +82,8 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			return
 		}
 		if core.WantsHTML(r) {
-			http.Redirect(w, r, "/databases/"+url.PathEscape(db.ID), http.StatusSeeOther)
+			// created=1 shows the database's ready state once it opens.
+			http.Redirect(w, r, TabPath(db.ID, "overview", url.Values{"created": {"1"}}), http.StatusSeeOther)
 			return
 		}
 		core.WriteJSON(w, http.StatusCreated, db)
@@ -173,6 +175,22 @@ type pageData struct {
 	Name string
 	// Limit explains a plan whose database allowance is used up.
 	Limit *planLimit
+	// Plan is the organization's plan and its databases in use.
+	Plan *planUsage
+}
+
+// planUsage is how much of a plan's database allowance is in use; Max 0
+// means the plan sets no limit.
+type planUsage struct {
+	Name      string
+	Used, Max int
+}
+
+func (u planUsage) usage() string {
+	if u.Max == 0 {
+		return fmt.Sprintf("%d %s in use, no plan limit", u.Used, plural(u.Used, "database", "databases"))
+	}
+	return fmt.Sprintf("%d of %d %s in use", u.Used, u.Max, plural(u.Max, "database", "databases"))
 }
 
 // planLimit is a plan's database allowance when every database is in use.
@@ -335,6 +353,9 @@ func renderList(w http.ResponseWriter, r *http.Request, deps core.Deps) {
 			http.Error(w, "could not render databases", http.StatusInternalServerError)
 		}
 		return
+	}
+	if err == nil {
+		data.Plan = &planUsage{Name: plan.Name, Used: org.DatabaseCount(), Max: plan.MaxDatabases}
 	}
 	if err == nil && plan.MaxDatabases > 0 && org.DatabaseCount() >= plan.MaxDatabases {
 		data.Limit = &planLimit{Plan: plan.Name, Databases: plan.MaxDatabases}
