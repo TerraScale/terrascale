@@ -8,7 +8,7 @@ public sealed class PressureEndpoint(IPressureSignals pressure) : EndpointWithou
     /// <inheritdoc />
     public override void Configure()
     {
-        Get("/v1/node/pressure");
+        Get("/admin/node/pressure");
         Name("nodePressure");
         Summary("Cached node pressure signals");
         Description("Unknown I/O and replication signals remain explicit null; membership state is unknown. Autoscaling remains gated until #13 and #11 land and this producer and its consumer agree on availability.");

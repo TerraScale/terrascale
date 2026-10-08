@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Authorization;
 using TerraBase.Configuration;
 using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
@@ -89,6 +90,14 @@ public static class DatabaseRegions
     // for an API key that reaches it. Anything else is left to the endpoint, which answers 404.
     private static async ValueTask<ManagedDatabase?> RecordAsync(HttpContext context, string project, string database)
     {
+        // Subscriptions end at signed expiration without authentication skew; their endpoint returns 401.
+        if (context.GetEndpoint()?.Metadata.GetMetadata<IAuthorizeData>()?.Policy == UserAuthExtensions.SubscriptionPolicy
+            && context.Features.Get<ProjectToken>() is { } token
+            && token.ExpiresAt <= context.RequestServices.GetRequiredService<TimeProvider>().GetUtcNow())
+        {
+            return null;
+        }
+
         var management = context.RequestServices.GetRequiredService<IManagementService>();
         if (context.Request.RouteValues.TryGetValue("organization", out var organization) && organization is string organizationId)
         {
@@ -97,10 +106,9 @@ public static class DatabaseRegions
                 : null;
         }
 
-        if (context.Features.Get<ProjectToken>() is { } token && token.Reaches(project, database) && token.Grants(ApiKeyScopes.ShapesRead)
-            && token.ExpiresAt > context.RequestServices.GetRequiredService<TimeProvider>().GetUtcNow())
+        if (context.Features.Get<ProjectAccess>() is { } access)
         {
-            return await management.FindProjectDatabaseRecordAsync(project, database, context.RequestAborted).ConfigureAwait(false);
+            return await management.FindDatabaseRecordAsync(access.OrganizationId, project, database, context.RequestAborted).ConfigureAwait(false);
         }
 
         return context.Features.Get<ApiKey>() is { } key

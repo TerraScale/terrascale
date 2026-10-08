@@ -1,4 +1,4 @@
-using TerraBase.Features.UserAuth;
+using TerraBase.Features.ApiKeys;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
 
@@ -10,15 +10,15 @@ public sealed class ListManagedDatabasesEndpoint(IManagementService management) 
     /// <inheritdoc />
     public override void Configure()
     {
-        Get(ManagementRoute.Databases);
-        Name("listManagedDatabases");
+        Get(ProjectApiRoute.Databases);
+        Name("listDatabases");
         Summary("Lists the databases of a project");
-        Description(ManagementRoute.PageDescription + " " + ManagementRoute.IdentityDescription);
-        Tags(ManagementRoute.Tag);
+        Description(ManagementRoute.PageDescription + " " + ProjectApiRoute.IdentityDescription);
+        Tags("Databases");
         Produces<ManagementPage<ManagedDatabaseBody>>();
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
-        RequireAuthorization(UserAuthExtensions.PolicyName);
-        Metadata(ListenerMetadata.Management);
+        RequireAuthorization(ApiKeyScopes.DatabasesRead);
+        Metadata(new ProjectManagementRoute(), ListenerMetadata.Management);
     }
 
     /// <inheritdoc />

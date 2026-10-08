@@ -1,5 +1,5 @@
 using TerraBase.Errors;
-using TerraBase.Features.UserAuth;
+using TerraBase.Features.ApiKeys;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
 using TerraScale.Endpoints;
@@ -12,16 +12,16 @@ public sealed class CreateBackupEndpoint(IManagementService management, IManaged
     /// <inheritdoc />
     public override void Configure()
     {
-        Post(ManagementRoute.Database + "/backups");
+        Post(ProjectApiRoute.Database + "/backups");
         Name("createBackup");
         Summary("Backs a database up now");
-        Description("Takes a consistent snapshot of the database now; no request body. The backup is kept until the retention of the backup policy expires or the database is deleted." + " " + ManagementRoute.IdentityDescription);
-        Tags(ManagementRoute.Tag);
+        Description("Takes a consistent snapshot of the database now; no request body. The backup is kept until the retention of the backup policy expires or the database is deleted." + " " + ProjectApiRoute.IdentityDescription);
+        Tags("Backups");
         Produces<DatabaseBackup>(StatusCodes.Status201Created);
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
         Produces<ErrorBody>(StatusCodes.Status403Forbidden);
-        RequireAuthorization(UserAuthExtensions.PolicyName);
-        Metadata(ListenerMetadata.Management);
+        RequireAuthorization(ApiKeyScopes.DatabasesWrite);
+        Metadata(new ProjectManagementRoute(), ListenerMetadata.Management);
     }
 
     /// <inheritdoc />
@@ -32,7 +32,7 @@ public sealed class CreateBackupEndpoint(IManagementService management, IManaged
             Forbidden error => ErrorResponse.From(error),
             TenantContext database => await backups.CreateBackupAsync(ManagementRoute.UserId(HttpContext), ManagementRoute.OrganizationId(HttpContext), database, cancellationToken) switch
             {
-                DatabaseBackup backup => TypedResults.Created($"{ManagementRoute.DatabasePath(database)}/backups/{backup.Id}", backup),
+                DatabaseBackup backup => TypedResults.Created($"{ManagementRoute.DatabasePath(HttpContext, database)}/backups/{backup.Id}", backup),
                 NotFound error => ErrorResponse.From(error),
             },
         };

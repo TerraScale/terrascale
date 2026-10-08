@@ -9,6 +9,7 @@ using TerraBase.Features.Management.Backups;
 using TerraBase.Features.Management.Queries;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Replication;
+using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
 
@@ -44,7 +45,7 @@ namespace TerraBase.Features.Management;
 /// </remarks>
 internal sealed partial class EngineManagementService(
     IStorageEngine engine, TimeProvider time, TerraBaseOptions options, ILogger<EngineManagementService> logger, DatabaseLifecycleCheckpoint checkpoint, IMeterFactory meters,
-    Lazy<IDocumentService> documents, Lazy<IQueryShapeTracker> shapes, IMemoryBudget memory)
+    Lazy<IDocumentService> documents, Lazy<IQueryShapeTracker> shapes, IMemoryBudget memory, IProjectAuthorityVerifier projectAuthority)
     : IManagementService, IAccessService, IManagementCommits, ITenantDirectory, IHostedService, ICatalogGuard, ICatalogApplyObserver
 {
     private const string Organizations = "organizations";
@@ -388,11 +389,23 @@ internal sealed partial class EngineManagementService(
     public ValueTask<ManagementPage<ManagedDatabase>?> ListDatabasesAsync(
         string userId, string organizationId, string projectId, string? after, int limit, CancellationToken cancellationToken) =>
         ReadAsync<ManagementPage<ManagedDatabase>?>(async transaction =>
-            await GetProjectAsync(transaction, userId, organizationId, projectId, cancellationToken).ConfigureAwait(false) is null
-                ? null
-                : await ListAsync(
-                    transaction, Databases(projectId), after, limit, TerraBaseJsonContext.Default.ManagedDatabase, database => database.Id, cancellationToken)
-                    .ConfigureAwait(false),
+        {
+            if (await GetProjectAsync(transaction, userId, organizationId, projectId, cancellationToken).ConfigureAwait(false) is null)
+            {
+                return null;
+            }
+
+            if (ProjectAccess.Current is { DatabaseName: not null } access)
+            {
+                var restricted = access.DatabaseId is null ? null
+                    : await GetAsync(transaction, Databases(projectId), access.DatabaseId, TerraBaseJsonContext.Default.ManagedDatabase, cancellationToken).ConfigureAwait(false);
+                return new ManagementPage<ManagedDatabase>(restricted is not null && (after is null || string.CompareOrdinal(restricted.Id, after) > 0)
+                    ? [restricted] : [], null);
+            }
+
+            return await ListAsync(transaction, Databases(projectId), after, limit, TerraBaseJsonContext.Default.ManagedDatabase, database => database.Id, cancellationToken)
+                .ConfigureAwait(false);
+        },
             cancellationToken);
 
     public ValueTask<ManagedDatabase?> GetDatabaseAsync(
@@ -603,7 +616,17 @@ internal sealed partial class EngineManagementService(
         ManagementError error;
         try
         {
-            error = await WriteAsync(transaction => RegisterDatabaseAsync(transaction, project, database, cancellationToken), cancellationToken).ConfigureAwait(false);
+            error = await WriteAsync(async transaction =>
+            {
+                var registered = await RegisterDatabaseAsync(transaction, project, database, cancellationToken).ConfigureAwait(false);
+                if (registered == ManagementError.None && ProjectAccess.Current is { } access)
+                {
+                    await RecordAsync(transaction, tenant.OrganizationId, access.Actor,
+                        branchedFrom is null ? "database.created" : "database.branched", database.Id, database.Name, cancellationToken).ConfigureAwait(false);
+                }
+
+                return registered;
+            }, cancellationToken).ConfigureAwait(false);
             if (error == ManagementError.None)
             {
                 checkpoint("create.committed", storage);
@@ -717,6 +740,11 @@ internal sealed partial class EngineManagementService(
     private static async ValueTask<ManagementResult<TenantContext>> CanAddDatabaseAsync(
         IStorageTransaction transaction, Func<IStorageTransaction, ValueTask<ManagementResult<TenantContext>>> project, string name, CancellationToken cancellationToken)
     {
+        if (ProjectAccess.Current is { DatabaseName: not null } access && access.DatabaseName != name)
+        {
+            return ManagementError.NotFound;
+        }
+
         var resolved = await project(transaction).ConfigureAwait(false);
         if (resolved.Value is not { } tenant)
         {
@@ -732,6 +760,7 @@ internal sealed partial class EngineManagementService(
     private static async ValueTask<TenantContext?> ProjectTenantAsync(
         IStorageTransaction transaction, Organization? organization, string projectId, CancellationToken cancellationToken) =>
         organization is not null
+        && (ProjectAccess.Current is not { } access || access.ProjectId == projectId && access.OrganizationId == organization.Id)
         && await GetAsync(transaction, Projects(organization.Id), projectId, TerraBaseJsonContext.Default.Project, cancellationToken).ConfigureAwait(false) is not null
             ? new TenantContext(organization.Id, organization.Plan, projectId)
             : null;
@@ -756,6 +785,7 @@ internal sealed partial class EngineManagementService(
     private static async ValueTask<TenantContext?> DatabaseTenantAsync(
         IStorageTransaction transaction, TenantContext? project, string databaseId, CancellationToken cancellationToken) =>
         project is not null
+        && (ProjectAccess.Current is not { DatabaseName: not null } access || access.DatabaseId == databaseId)
         && await GetAsync(transaction, Databases(project.ProjectId!), databaseId, TerraBaseJsonContext.Default.ManagedDatabase, cancellationToken)
             .ConfigureAwait(false) is not null
             ? project with { DatabaseId = databaseId }
@@ -813,21 +843,23 @@ internal sealed partial class EngineManagementService(
     // The single authorization point: non-members get null, exactly like a missing organization.
     private static async ValueTask<Organization?> GetOrganizationAsync(
         IStorageTransaction transaction, string userId, string organizationId, CancellationToken cancellationToken) =>
-        await GetMemberAsync(transaction, organizationId, userId, cancellationToken).ConfigureAwait(false) is null
+        !ProjectActor(userId, organizationId) && await GetMemberAsync(transaction, organizationId, userId, cancellationToken).ConfigureAwait(false) is null
             ? null
             : await GetAsync(transaction, Organizations, organizationId, TerraBaseJsonContext.Default.Organization, cancellationToken).ConfigureAwait(false);
 
     // A project is looked up under its organization, so a project id under another organization is not found.
     internal static async ValueTask<Project?> GetProjectAsync(
         IStorageTransaction transaction, string userId, string organizationId, string projectId, CancellationToken cancellationToken) =>
-        await GetOrganizationAsync(transaction, userId, organizationId, cancellationToken).ConfigureAwait(false) is null
+        ProjectAccess.Current is { } access && access.ProjectId != projectId
+            || await GetOrganizationAsync(transaction, userId, organizationId, cancellationToken).ConfigureAwait(false) is null
             ? null
             : await GetAsync(transaction, Projects(organizationId), projectId, TerraBaseJsonContext.Default.Project, cancellationToken).ConfigureAwait(false);
 
     /// <summary>The database inside a catalog transaction, for slices that register state atomically with its existence.</summary>
     internal static async ValueTask<ManagedDatabase?> GetDatabaseAsync(
         IStorageTransaction transaction, string userId, string organizationId, string projectId, string databaseId, CancellationToken cancellationToken) =>
-        await GetProjectAsync(transaction, userId, organizationId, projectId, cancellationToken).ConfigureAwait(false) is null
+        ProjectAccess.Current is { DatabaseName: not null } access && access.DatabaseId != databaseId
+            || await GetProjectAsync(transaction, userId, organizationId, projectId, cancellationToken).ConfigureAwait(false) is null
             ? null
             : await GetAsync(transaction, Databases(projectId), databaseId, TerraBaseJsonContext.Default.ManagedDatabase, cancellationToken)
                 .ConfigureAwait(false);

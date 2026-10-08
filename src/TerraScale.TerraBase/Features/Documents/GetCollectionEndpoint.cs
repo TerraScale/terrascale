@@ -15,6 +15,7 @@ public sealed class GetCollectionEndpoint(IDocumentService documents, ITenantDir
         Get(DocumentRoute.Collections + "/{collection}");
         Name("getCollection");
         Summary("Reads a collection");
+        Description("Reads the collection's name and creation time in the token's project. An unknown database or collection answers 404.");
         Tags("Collections");
         Produces<CollectionBody>();
         Produces<ErrorBody>(StatusCodes.Status404NotFound);

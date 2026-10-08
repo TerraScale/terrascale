@@ -1,4 +1,4 @@
-using TerraBase.Features.UserAuth;
+using TerraBase.Features.ApiKeys;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
 
@@ -10,15 +10,15 @@ public sealed class GetManagedDatabaseEndpoint(IManagementService management) : 
     /// <inheritdoc />
     public override void Configure()
     {
-        Get(ManagementRoute.Database);
-        Name("getManagedDatabase");
+        Get(ProjectApiRoute.Database);
+        Name("getDatabase");
         Summary("Reads a database");
-        Description(ManagementRoute.IdentityDescription);
-        Tags(ManagementRoute.Tag);
+        Description(ProjectApiRoute.IdentityDescription);
+        Tags("Databases");
         Produces<ManagedDatabaseBody>();
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
-        RequireAuthorization(UserAuthExtensions.PolicyName);
-        Metadata(ListenerMetadata.Management, new DatabaseRegions.PlacementAware());
+        RequireAuthorization(ApiKeyScopes.DatabasesRead);
+        Metadata(new ProjectManagementRoute(), ListenerMetadata.Management, new DatabaseRegions.PlacementAware());
     }
 
     /// <inheritdoc />

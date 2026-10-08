@@ -1,5 +1,5 @@
 using TerraBase.Errors;
-using TerraBase.Features.UserAuth;
+using TerraBase.Features.ApiKeys;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
 
@@ -11,18 +11,18 @@ public sealed class RunSqlEndpoint(IManagementService management, IQueryService 
     /// <inheritdoc />
     public override void Configure()
     {
-        Post(ManagementRoute.Sql);
+        Post(ProjectApiRoute.Sql);
         Name("runSql");
         Summary("Runs a read-only SQL statement on a database");
         Description(QueriesExtensions.SqlDescription + " Rows stop at the limit or at 8 MiB of JSON; truncated reports either. "
             + "A statement that needs more than the engine's work budget (5 million SQLite instructions or 5 seconds) answers 400 query too expensive. "
-            + ManagementRoute.IdentityDescription);
-        Tags(ManagementRoute.Tag);
+            + ProjectApiRoute.IdentityDescription);
+        Tags("Queries");
         Produces<SqlResultBody>();
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
-        RequireAuthorization(UserAuthExtensions.PolicyName);
-        Metadata(ListenerMetadata.Management);
+        RequireAuthorization(ApiKeyScopes.DatabasesRead);
+        Metadata(new ProjectManagementRoute(), ListenerMetadata.Management);
     }
 
     /// <inheritdoc />

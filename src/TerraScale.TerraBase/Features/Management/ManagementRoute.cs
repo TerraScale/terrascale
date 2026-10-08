@@ -29,23 +29,24 @@ internal sealed record PageQuery(string? After, int Limit);
 internal static class ManagementRoute
 {
     public const string Tag = "Management";
-    public const string Organizations = "/v1/management/organizations";
+    public const string Prefix = "/v1/management";
+    public const string Organizations = Prefix + "/organizations";
     public const string Organization = Organizations + "/{organization}";
     public const string Projects = Organization + "/projects";
     public const string Project = Projects + "/{project}";
     public const string Databases = Project + "/databases";
     public const string Database = Databases + "/{database}";
-    public const string CurrentOrganization = "/v1/management/current-organization";
+    public const string CurrentOrganization = Prefix + "/current-organization";
     public const string AccessTag = "Access";
     public const string Members = Organization + "/members";
     public const string Member = Members + "/{user}";
     public const string Leave = Organization + "/leave";
     public const string Invitations = Organization + "/invitations";
-    public const string AcceptInvitation = "/v1/management/invitations/accept";
-    public const string LookupInvitation = "/v1/management/invitations/lookup";
-    public const string Commits = "/v1/management/commits";
-    public const string Versions = "/v1/management/versions";
-    public const string Documents = "/v1/management/documents/{collection}";
+    public const string AcceptInvitation = Prefix + "/invitations/accept";
+    public const string LookupInvitation = Prefix + "/invitations/lookup";
+    public const string Commits = Prefix + "/commits";
+    public const string Versions = Prefix + "/versions";
+    public const string Documents = Prefix + "/documents/{collection}";
     public const string OwnershipTransfer = Organization + "/ownership-transfer";
     public const string AuditRetention = Organization + "/audit-retention";
     public const string AuditEvents = Organization + "/audit-events";
@@ -110,11 +111,22 @@ internal static class ManagementRoute
         management.GetWritableProjectAsync(UserId(context), OrganizationId(context), Value(context, "project"), cancellationToken);
 
     /// <summary>The canonical path of a project, from route values: request paths may differ in case or end in a slash.</summary>
-    public static string ProjectPath(HttpContext context, Project project) => $"{Organizations}/{OrganizationId(context)}/projects/{project.Id}";
+    public static string ProjectPath(HttpContext context, Project project) =>
+        context.Features.Get<LegacyManagementRoute>() is not null
+            ? $"{Organizations}/{OrganizationId(context)}/projects/{project.Id}"
+            : $"/v1/projects/{project.Id}";
 
     /// <summary>The canonical path of a database, from its tenant (see <see cref="ProjectPath"/>).</summary>
-    public static string DatabasePath(TenantContext database) =>
-        $"{Organizations}/{database.OrganizationId}/projects/{database.ProjectId}/databases/{database.DatabaseId}";
+    public static string DatabasePath(HttpContext context, TenantContext database) =>
+        context.Features.Get<LegacyManagementRoute>() is not null
+            ? $"{Organizations}/{database.OrganizationId}/projects/{database.ProjectId}/databases/{database.DatabaseId}"
+            : $"/v1/projects/{database.ProjectId}/databases/{Value(context, "databaseName")}";
+
+    /// <summary>The path of a database just created or branched by a canonical route or its hidden legacy alias.</summary>
+    public static string CreatedDatabasePath(HttpContext context, ManagedDatabase database) =>
+        context.Features.Get<LegacyManagementRoute>() is not null
+            ? $"{Organizations}/{OrganizationId(context)}/projects/{database.ProjectId}/databases/{database.Id}"
+            : $"/v1/projects/{database.ProjectId}/databases/{database.Name}";
 
     /// <summary>
     /// The acting user: the <c>sub</c> of the caller's ts-auth access token, or the user named with the management service
@@ -218,10 +230,16 @@ internal static class ManagementRoute
 
     public static IResult Error(ManagementError error) => error switch
     {
-        ManagementError.NotFound => TypedResults.NotFound(),
-        ManagementError.NameTaken => TypedResults.Conflict("name is already taken"),
+        ManagementError.NotFound => ProjectAccess.Current is not null
+            ? ErrorResponse.From(new NotFound(Code: "unknown_route"))
+            : TypedResults.NotFound(),
+        ManagementError.NameTaken => ProjectAccess.Current is not null
+            ? ErrorResponse.From(ManagementErrors.NameTaken)
+            : TypedResults.Conflict("name is already taken"),
         ManagementError.NotEmpty => TypedResults.Conflict("delete what it contains first"),
-        ManagementError.Forbidden => TypedResults.Json("your role in the organization does not allow this", statusCode: StatusCodes.Status403Forbidden),
+        ManagementError.Forbidden => ProjectAccess.Current is not null
+            ? ErrorResponse.From(ManagementErrors.RoleTooLow)
+            : TypedResults.Json("your role in the organization does not allow this", statusCode: StatusCodes.Status403Forbidden),
         ManagementError.LastOwner => TypedResults.Conflict("the organization must keep an owner"),
         ManagementError.AlreadyMember => TypedResults.Conflict("the user is already a member"),
         ManagementError.InvitationPending => TypedResults.Conflict("an invitation for this email is pending"),

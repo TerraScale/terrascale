@@ -13,6 +13,7 @@ using TerraBase.Features.Management.Queries;
 using TerraBase.Features.Management.Schema;
 using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Pressure;
+using TerraBase.Features.UserAuth;
 using TerraBase.Tenancy;
 
 namespace TerraBase.Hosting;
@@ -102,6 +103,8 @@ namespace TerraBase.Hosting;
 [JsonSerializable(typeof(PlanRequest))]
 [JsonSerializable(typeof(PressureBody))]
 [JsonSerializable(typeof(Project))]
+[JsonSerializable(typeof(ProjectCatalogBinding))]
+[JsonSerializable(typeof(ProjectBindingRequest))]
 [JsonSerializable(typeof(ProjectApiKey))]
 [JsonSerializable(typeof(ProjectKeyEntry))]
 [JsonSerializable(typeof(ProjectUsage))]
@@ -127,5 +130,6 @@ namespace TerraBase.Hosting;
 [JsonSerializable(typeof(SweepEntry))]
 [JsonSerializable(typeof(SwitchOrganizationRequest))]
 [JsonSerializable(typeof(TransferRequest))]
+[JsonSerializable(typeof(TsAuthProjectAuthority))]
 [JsonSerializable(typeof(VersionsBody))]
 internal sealed partial class TerraBaseJsonContext : JsonSerializerContext;

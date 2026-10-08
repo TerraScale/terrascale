@@ -349,8 +349,8 @@ public sealed class ManagementApiTests
         await Assert.That(withApiKey.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
         // The admin listener takes only the management service credential, never a ts-auth token.
         await Assert.That(onAdmin.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
-        // A user token is not an API key: the data API refuses it.
-        await Assert.That(noDocumentAccess.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+        // A sign-in token without project_id does not reach a data project.
+        await Assert.That(noDocumentAccess.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
     }
 
     [Test]

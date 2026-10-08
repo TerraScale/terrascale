@@ -1,5 +1,5 @@
 using TerraBase.Errors;
-using TerraBase.Features.UserAuth;
+using TerraBase.Features.ApiKeys;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
 
@@ -11,15 +11,15 @@ public sealed class ListIndexRecommendationsEndpoint(IManagementService manageme
     /// <inheritdoc />
     public override void Configure()
     {
-        Get(ManagementRoute.IndexRecommendations);
+        Get(ProjectApiRoute.IndexRecommendations);
         Name("listIndexRecommendations");
         Summary("Recommends indexes from the SQL workload");
-        Description("One single-field recommendation per collection and field that runSql statements filtered or sorted on while no index of the collection led with it. Most queried first, then by id (collection:field)." + " " + ManagementRoute.IdentityDescription);
-        Tags(ManagementRoute.Tag);
+        Description("One single-field recommendation per collection and field that runSql statements filtered or sorted on while no index of the collection led with it. Most queried first, then by id (collection:field)." + " " + ProjectApiRoute.IdentityDescription);
+        Tags("Indexes");
         Produces<IndexRecommendationListBody>();
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
-        RequireAuthorization(UserAuthExtensions.PolicyName);
-        Metadata(ListenerMetadata.Management);
+        RequireAuthorization(ApiKeyScopes.DatabasesRead);
+        Metadata(new ProjectManagementRoute(), ListenerMetadata.Management);
     }
 
     /// <inheritdoc />

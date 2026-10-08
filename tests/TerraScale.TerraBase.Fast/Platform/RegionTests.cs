@@ -11,6 +11,7 @@ public sealed class RegionTests
     private const string RegionHeader = "X-TerraBase-Region";
     private const string PinHeader = "X-TerraScale-Region-Pin";
     private const string Organizations = "/v1/management/organizations";
+    private const string Database = "/v1/projects/{project}/databases/{database}";
 
     [Test]
     [Arguments("", "development", "Development")]
@@ -183,7 +184,7 @@ public sealed class RegionTests
         await using var server = await TerraBaseTestServer.StartAsync(tls.Apply);
         using var client = tls.CreateClient(server.ClientAddress!);
         var document = await client.GetFromJsonAsync<JsonElement>(new Uri("/openapi/v1.json", UriKind.Relative));
-        var operation = document.GetProperty("paths").GetProperty(Organizations).GetProperty("get");
+        var operation = document.GetProperty("paths").GetProperty(Database).GetProperty("get");
         var parameter = operation.GetProperty("parameters").EnumerateArray()
             .Single(item => item.GetProperty("name").GetString() == PinHeader);
         await Assert.That(parameter.GetProperty("in").GetString()).IsEqualTo("header");

@@ -33,13 +33,17 @@ public sealed class TestIssuer : IDisposable
     public const string MovedJwks = Issuer + "/.well-known/moved-jwks.json";
 
     private static readonly JsonWebTokenHandler Tokens = new() { SetDefaultTimesOnTokenCreation = false };
+    private static readonly Uri IssuerAddress = new(Issuer);
+    private static readonly string ProjectAuthorityPath = "/v1" + IssuerAddress.AbsolutePath.TrimEnd('/') + "/organizations/";
 
     private readonly Lock _gate = new();
     private readonly List<JsonObject> _published = [];
     private readonly List<IDisposable> _keys = [];
+    private readonly Dictionary<(string Token, string Organization, string Project), ProjectAuthority> _projects = [];
     private int _discoveryFetches;
     private int _jwksFetches;
     private int _movedJwksFetches;
+    private int _projectFetches;
     private volatile bool _available = true;
     private readonly TaskCompletionSource _hanging = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -81,6 +85,26 @@ public sealed class TestIssuer : IDisposable
 
     /// <summary>Requests for <see cref="MovedJwks"/>.</summary>
     public int MovedJwksFetches => Volatile.Read(ref _movedJwksFetches);
+
+    /// <summary>Requests for a project's ts-auth authority, including denied requests.</summary>
+    public int ProjectFetches => Volatile.Read(ref _projectFetches);
+
+    /// <summary>An explicit response to a project authority request; defaults to admin access to the requested project.</summary>
+    public sealed record ProjectAuthority(
+        string Id, string OrganizationId, string Role = "admin", HttpStatusCode Status = HttpStatusCode.OK,
+        Uri? Redirect = null, bool Available = true);
+
+    /// <summary>Grants only this exact bearer token access to this organization's project; no token is granted by default.</summary>
+    public void GrantProject(string token, string organization, string project, ProjectAuthority? authority = null)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(token);
+        ArgumentException.ThrowIfNullOrWhiteSpace(organization);
+        ArgumentException.ThrowIfNullOrWhiteSpace(project);
+        lock (_gate)
+        {
+            _projects[(token, organization, project)] = authority ?? new ProjectAuthority(project, organization);
+        }
+    }
 
     /// <summary>Points <paramref name="settings"/> at <see cref="Issuer"/> with <see cref="Audience"/>.</summary>
     public static void Configure(Dictionary<string, string> settings)
@@ -210,6 +234,7 @@ public sealed class TestIssuer : IDisposable
             }
 
             _keys.Clear();
+            _projects.Clear();
         }
     }
 
@@ -222,7 +247,7 @@ public sealed class TestIssuer : IDisposable
     }
 
     // Answers one request for uri, as ts-auth would.
-    private async Task<HttpResponseMessage> RespondAsync(Uri uri, CancellationToken cancellationToken)
+    private async Task<HttpResponseMessage> RespondAsync(Uri uri, string method, string? authorization, CancellationToken cancellationToken)
     {
         if (HangJwks && uri.AbsoluteUri == Jwks)
         {
@@ -230,10 +255,10 @@ public sealed class TestIssuer : IDisposable
             await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
         }
 
-        return Serve(uri);
+        return Serve(uri, method, authorization);
     }
 
-    private HttpResponseMessage Serve(Uri uri)
+    private HttpResponseMessage Serve(Uri uri, string method, string? authorization)
     {
         if (uri.AbsoluteUri == Discovery)
         {
@@ -243,6 +268,46 @@ public sealed class TestIssuer : IDisposable
         if (!Available)
         {
             throw new HttpRequestException("connection refused (test issuer unavailable)");
+        }
+
+        if (uri.GetLeftPart(UriPartial.Authority) == IssuerAddress.GetLeftPart(UriPartial.Authority)
+            && uri.AbsolutePath.StartsWith(ProjectAuthorityPath, StringComparison.Ordinal)
+            && uri.AbsolutePath[ProjectAuthorityPath.Length..].Split('/') is [var organization, "projects", var project])
+        {
+            Interlocked.Increment(ref _projectFetches);
+            if (method != "GET")
+            {
+                return new HttpResponseMessage(HttpStatusCode.MethodNotAllowed);
+            }
+
+            ProjectAuthority? authority;
+            lock (_gate)
+            {
+                authority = authorization?.StartsWith("Bearer ", StringComparison.Ordinal) == true
+                    ? _projects.GetValueOrDefault((authorization[7..], organization, project)) : null;
+            }
+
+            if (authority is null)
+            {
+                return new HttpResponseMessage(HttpStatusCode.Forbidden);
+            }
+
+            if (!authority.Available)
+            {
+                throw new HttpRequestException("connection refused (test project authority unavailable)");
+            }
+
+            var result = new HttpResponseMessage(authority.Status)
+            {
+                Content = new StringContent(new JsonObject
+                {
+                    ["id"] = authority.Id,
+                    ["organization_id"] = authority.OrganizationId,
+                    ["role"] = authority.Role,
+                }.ToJsonString(), Encoding.UTF8, "application/json"),
+            };
+            result.Headers.Location = authority.Redirect;
+            return result;
         }
 
         string body;
@@ -283,7 +348,7 @@ public sealed class TestIssuer : IDisposable
     private sealed class Handler(TestIssuer issuer) : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
-            issuer.RespondAsync(request.RequestUri!, cancellationToken);
+            issuer.RespondAsync(request.RequestUri!, request.Method.Method, request.Headers.Authorization?.ToString(), cancellationToken);
     }
 
     /// <summary>
@@ -346,7 +411,8 @@ public sealed class TestIssuer : IDisposable
                 app = builder.Build();
                 app.Run(async context =>
                 {
-                    using var response = await issuer.RespondAsync(new Uri(context.Request.GetEncodedUrl()), context.RequestAborted);
+                    using var response = await issuer.RespondAsync(new Uri(context.Request.GetEncodedUrl()), context.Request.Method,
+                        context.Request.Headers.Authorization.ToString(), context.RequestAborted);
                     context.Response.StatusCode = (int)response.StatusCode;
                     if (response.Headers.Location is { } location)
                     {

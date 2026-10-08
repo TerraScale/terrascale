@@ -23,6 +23,7 @@ public sealed class HealthzEndpoint(TerraBaseOptions options) : EndpointWithoutR
         Get("/healthz");
         Name("healthz");
         Summary("Liveness probe");
+        Description("Answers while this TerraBase process serves requests; available anonymously on the client and administrative listeners.");
         Tags("Health");
         AllowAnonymous();
         Metadata(ListenerMetadata.Probe);

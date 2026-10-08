@@ -1,6 +1,6 @@
 using TerraBase.Engine;
 using TerraBase.Errors;
-using TerraBase.Features.UserAuth;
+using TerraBase.Features.ApiKeys;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
 
@@ -20,16 +20,16 @@ public sealed class GetDatabaseUsageEndpoint(IManagementService management, IUsa
     /// <inheritdoc />
     public override void Configure()
     {
-        Get(ManagementRoute.Database + "/usage");
+        Get(ProjectApiRoute.Database + "/usage");
         Name("getDatabaseUsage");
         Summary("Reads the usage of a database");
-        Description("Bytes on disk, JSON bytes of the live documents (logicalBytes), collections, live documents, and document reads (gets, list, query and shape pages, SQL runs) and writes (committed puts, patches and deletes, each operation of a transaction), with one point per hour or day of the period. " + CountsDescription + " " + ManagementRoute.IdentityDescription);
-        Tags(ManagementRoute.Tag);
+        Description("Bytes on disk, JSON bytes of the live documents (logicalBytes), collections, live documents, and document reads (gets, list, query and shape pages, SQL runs) and writes (committed puts, patches and deletes, each operation of a transaction), with one point per hour or day of the period. " + CountsDescription + " " + ProjectApiRoute.IdentityDescription);
+        Tags("Usage");
         Produces<DatabaseUsage>();
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
-        RequireAuthorization(UserAuthExtensions.PolicyName);
-        Metadata(ListenerMetadata.Management);
+        RequireAuthorization(ApiKeyScopes.DatabasesRead);
+        Metadata(new ProjectManagementRoute(), ListenerMetadata.Management);
     }
 
     /// <inheritdoc />
@@ -51,7 +51,9 @@ public sealed class GetDatabaseUsageEndpoint(IManagementService management, IUsa
         }
         catch (QueryCapacityException)
         {
-            return TypedResults.BadRequest("query too expensive");
+            return HttpContext.Features.Get<LegacyManagementRoute>() is not null
+                ? TypedResults.BadRequest("query too expensive")
+                : ErrorResponse.From(new Validation("query too expensive", "invalid_query"));
         }
     }
 }

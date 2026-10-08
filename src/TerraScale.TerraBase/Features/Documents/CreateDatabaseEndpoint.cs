@@ -21,7 +21,7 @@ public sealed class CreateDatabaseEndpoint(ITenantDirectory tenants) : EndpointW
     public override void Configure()
     {
         Put(DocumentRoute.DatabaseRoute);
-        Name("createDatabase");
+        Name("legacyCreateDatabase");
         Summary("Creates a database");
         Description("{project} is a project of the API key's organization. A key narrowed to one database cannot create others. A project the key does not reach answers 404.");
         Tags("Documents");
@@ -41,6 +41,11 @@ public sealed class CreateDatabaseEndpoint(ITenantDirectory tenants) : EndpointW
 
     private async ValueTask<IResult> CreateAsync(DatabaseName name, CancellationToken cancellationToken)
     {
+        if (HttpContext.Features.Get<UserAuth.ProjectAccess>() is not null)
+        {
+            return ErrorResponse.From(DocumentRoute.UnknownDatabase);
+        }
+
         var key = ApiKey.Of(HttpContext);
         var project = DocumentRoute.Project(HttpContext);
         if (key.DatabaseId is not null)

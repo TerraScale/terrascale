@@ -1,5 +1,5 @@
 using TerraBase.Errors;
-using TerraBase.Features.UserAuth;
+using TerraBase.Features.ApiKeys;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
 
@@ -11,19 +11,19 @@ public sealed class ListQueryShapesEndpoint(IManagementService management, IQuer
     /// <inheritdoc />
     public override void Configure()
     {
-        Get("/management/organizations/{organization}/projects/{project}/databases/{database}/query-shapes");
+        Get(ProjectApiRoute.Database + "/query-shapes");
         Name("listQueryShapes");
         Summary("Lists observed query shapes and workload statistics");
         Description("At most 128 canonical shapes per database, with literal values removed, including pending observations on the primary. " +
             "Most queried first, then by collection and shape id. Statistics are best-effort; new shapes are dropped when bounds are full. " +
             "Catalog followers forward observations to the primary and return replicated persisted statistics only; replication can delay visibility. Pending observations are lost on crash. " +
-            ManagementRoute.IdentityDescription);
-        Tags(ManagementRoute.Tag);
+            ProjectApiRoute.IdentityDescription);
+        Tags("Queries");
         Produces<QueryShapeListBody>();
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
         Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
-        RequireAuthorization(UserAuthExtensions.PolicyName);
-        Metadata(ListenerMetadata.Management);
+        RequireAuthorization(ApiKeyScopes.DatabasesRead);
+        Metadata(new ProjectManagementRoute(), ListenerMetadata.Management);
     }
 
     /// <inheritdoc />

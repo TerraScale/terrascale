@@ -148,7 +148,7 @@ public sealed class CrossRegionDeletionTests
         {
             services.AddSingleton(network.Join(cell));
             services.AddSingleton<IMemberStore>(members);
-        });
+        }, managementCredential: true);
 
     private static async Task RegisterAsync(
         ManagementApi api, string organization, string project, string organizationName, string projectName, CancellationToken token)
@@ -162,7 +162,8 @@ public sealed class CrossRegionDeletionTests
                 new { op = "create_project", organization, id = project, name = projectName },
             },
         }), Encoding.UTF8, "application/json");
-        using var registered = await api.Client.PostAsync(ManagementApi.Uri("/v1/management/commits"), body, token);
+        using var service = api.Service(api.User);
+        using var registered = await service.PostAsync(ManagementApi.Uri("/v1/management/commits"), body, token);
         registered.EnsureSuccessStatusCode();
     }
 

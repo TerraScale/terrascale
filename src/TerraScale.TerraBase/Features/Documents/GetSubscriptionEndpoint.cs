@@ -22,7 +22,7 @@ public sealed class GetSubscriptionEndpoint(ITenantDirectory tenants, IShapeSubs
         Name("subscribeCollection");
         Summary("Subscribes to a collection or document over SSE");
         Description("Requires a ts-auth JWT with project_id matching the project, optional database restriction and shapes:read scope. Sends shape events containing ShapeBody snapshots and filtered change pages. Optional id selects one document; where uses the shape filter grammar. offset defaults to -1; other offsets require handle. Resume using Last-Event-ID or explicit handle and offset, with the same id and where. Each event id is handle:next_offset. Deleted documents and documents leaving the filter emit delete operations. Terminal failures emit an error event and close; stale history requires a new snapshot. The stream ends at the signed token expiration without skew. Use fetch with an Authorization header; query-string tokens and cookie authentication are unsupported. Node admission and memory limits return 429 subscription_busy. This slice does not enforce plan entitlements.");
-        Tags("Shapes");
+        Tags("Live");
         Produces<ShapeBody>(StatusCodes.Status200OK, "text/event-stream");
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
         Produces<ErrorBody>(StatusCodes.Status401Unauthorized);
@@ -39,7 +39,8 @@ public sealed class GetSubscriptionEndpoint(ITenantDirectory tenants, IShapeSubs
     {
         var project = DocumentRoute.Project(HttpContext);
         var name = HttpContext.Request.RouteValues["database"] as string;
-        if (HttpContext.Features.Get<ProjectToken>() is not { } token || !token.Reaches(project, name ?? ""))
+        if (HttpContext.Features.Get<ProjectAccess>() is null
+            || HttpContext.Features.Get<ProjectToken>() is not { } token || !token.Reaches(project, name ?? ""))
         {
             return ErrorResponse.From(DocumentRoute.UnknownDatabase);
         }
@@ -60,16 +61,15 @@ public sealed class GetSubscriptionEndpoint(ITenantDirectory tenants, IShapeSubs
             return ErrorResponse.From(ShapeSubscriptionService.Busy);
         }
 
-        return (DocumentRoute.CheckDatabase(HttpContext), DocumentRoute.CheckCollectionName(HttpContext),
+        return (await DocumentRoute.CheckTenantAsync(HttpContext, tenants, cancellationToken), DocumentRoute.CheckCollectionName(HttpContext),
             DocumentRoute.CheckParameters(HttpContext, "where", "id", "handle", "offset")) switch
         {
             (Validation error, _, _) => ErrorResponse.From(error),
+            (NotFound error, _, _) => ErrorResponse.From(error),
             (_, Validation error, _) => ErrorResponse.From(error),
             (_, _, Validation error) => ErrorResponse.From(error),
-            (DatabaseName databaseName, string collection, IQueryCollection query) =>
-                await tenants.FindProjectDatabaseAsync(project, databaseName.Value, cancellationToken) is not { } database
-                    ? ErrorResponse.From(DocumentRoute.UnknownDatabase)
-                    : await SubscribeAsync(database, collection, query, token, cancellationToken),
+            (TenantContext database, string collection, IQueryCollection query) =>
+                await SubscribeAsync(database, collection, query, token, cancellationToken),
         };
     }
 

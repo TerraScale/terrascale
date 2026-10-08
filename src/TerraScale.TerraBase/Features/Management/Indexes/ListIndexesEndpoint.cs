@@ -1,6 +1,6 @@
 using TerraBase.Engine;
 using TerraBase.Errors;
-using TerraBase.Features.UserAuth;
+using TerraBase.Features.ApiKeys;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
 
@@ -12,16 +12,16 @@ public sealed class ListIndexesEndpoint(IManagementService management, IIndexSer
     /// <inheritdoc />
     public override void Configure()
     {
-        Get(ManagementRoute.Indexes);
+        Get(ProjectApiRoute.Indexes);
         Name("listIndexes");
         Summary("Lists the indexes of a database");
-        Description("Query: collection (optional) keeps the indexes of one collection. Items are in name order; state is always active." + " " + ManagementRoute.IdentityDescription);
-        Tags(ManagementRoute.Tag);
+        Description("Query: collection (optional) keeps the indexes of one collection. Items are in name order; state is always active." + " " + ProjectApiRoute.IdentityDescription);
+        Tags("Indexes");
         Produces<IndexListBody>();
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
-        RequireAuthorization(UserAuthExtensions.PolicyName);
-        Metadata(ListenerMetadata.Management);
+        RequireAuthorization(ApiKeyScopes.DatabasesRead);
+        Metadata(new ProjectManagementRoute(), ListenerMetadata.Management);
     }
 
     /// <inheritdoc />

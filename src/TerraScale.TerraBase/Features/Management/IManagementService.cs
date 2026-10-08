@@ -198,12 +198,6 @@ public interface IManagementService
     /// </summary>
     ValueTask<ManagedDatabase?> FindDatabaseRecordAsync(string organizationId, string projectId, string name, CancellationToken cancellationToken);
 
-    /// <summary>
-    /// Resolves a database record through its project's ownership, without creating local storage or checking membership.
-    /// The caller must first check its JWT project grant.
-    /// </summary>
-    ValueTask<ManagedDatabase?> FindProjectDatabaseRecordAsync(string projectId, string name, CancellationToken cancellationToken);
-
     /// <summary>Lists the databases of a project; <see langword="null"/> when it does not exist.</summary>
     ValueTask<ManagementPage<ManagedDatabase>?> ListDatabasesAsync(
         string userId, string organizationId, string projectId, string? after, int limit, CancellationToken cancellationToken);

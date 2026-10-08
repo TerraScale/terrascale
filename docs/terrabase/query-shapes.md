@@ -5,12 +5,15 @@ Query shapes group workload observations across catalog members for index planni
 one tracker. SQL checks, saved-query writes, assertions, replication, schema
 sampling, and change streams do not count as query executions.
 
-`GET /management/organizations/{organization}/projects/{project}/databases/{database}/query-shapes`
-requires the same organization membership as other database management reads.
+`GET /v1/projects/{project}/databases/{database}/query-shapes` uses the database name and requires
+a ts-auth project JWT with `databases:read` and a verified project/storage binding, following the
+[TS-589 API hierarchy](api.md). The previous
+`GET /management/organizations/{organization}/projects/{project}/databases/{database-id}/query-shapes`
+remains a hidden compatibility alias with its original organization-membership checks.
 `GET /management/query-shapes` reads the separate dashboard document-space
 statistics and requires the management service credential on the loopback
-administrative listener. Both endpoints return an `items` array, sorted by query
-frequency, then collection and shape id. No new versioned route is introduced.
+administrative listener and remains hidden from the public API reference. Both endpoints return an
+`items` array, sorted by query frequency, then collection and shape id.
 
 Each item contains `id` (SHA-256 of the canonical shape), `collection`, `shape`,
 `queries`, `totalLatencyMs`, `maxLatencyMs`, `rowsScanned`, and `lastSeenAt`.

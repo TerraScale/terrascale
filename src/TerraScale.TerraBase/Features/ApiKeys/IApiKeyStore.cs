@@ -4,7 +4,7 @@ using TerraBase.Tenancy;
 
 namespace TerraBase.Features.ApiKeys;
 
-/// <summary>Scopes an API key can grant. Each scope is also the name of its authorization policy.</summary>
+/// <summary>Bearer-token scopes. Each scope is also the name of its authorization policy.</summary>
 public static class ApiKeyScopes
 {
     /// <summary>Read documents and list collections.</summary>
@@ -16,8 +16,17 @@ public static class ApiKeyScopes
     /// <summary>Read shapes: CDN-cacheable snapshots and change logs of a collection and filter.</summary>
     public const string ShapesRead = "shapes:read";
 
-    /// <summary>Every known scope.</summary>
+    /// <summary>Read databases and database tooling.</summary>
+    public const string DatabasesRead = "databases:read";
+
+    /// <summary>Manage databases and database tooling.</summary>
+    public const string DatabasesWrite = "databases:write";
+
+    /// <summary>Scopes a legacy API key can grant.</summary>
     public static IReadOnlyList<string> All { get; } = [DocumentsRead, DocumentsWrite, ShapesRead];
+
+    /// <summary>Additional scopes only ts-auth project access tokens carry, never legacy API keys.</summary>
+    public static IReadOnlyList<string> ProjectTokenScopes { get; } = [DatabasesRead, DatabasesWrite];
 }
 
 /// <summary>A stored API key, without its secret.</summary>

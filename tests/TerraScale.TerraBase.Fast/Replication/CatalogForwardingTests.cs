@@ -25,6 +25,158 @@ public sealed class CatalogForwardingTests
     private static readonly string[] Scopes = [ApiKeyScopes.DocumentsRead, ApiKeyScopes.DocumentsWrite];
 
     [Test]
+    public async Task Project_JWTs_provision_through_a_follower_and_serve_documents_on_both_members_while_legacy_aliases_keep_their_identity()
+    {
+        using var peers = new PeerTls();
+        using var tls = new ClientTls();
+        using var issuer = new TestIssuer();
+        var faker = new Faker();
+        await using var primary = await TerraBaseTestServer.StartAsync(settings =>
+        {
+            peers.Apply(settings);
+            tls.Apply(settings);
+            TestIssuer.Configure(settings);
+        }, issuer.Route);
+        await using var follower = await StartFollowerAsync(peers, tls, issuer, primary.PeerAddress!);
+        await ReadyAsync(follower);
+
+        var project = faker.Random.Guid().ToString();
+        var actor = "tsk_" + faker.Random.Guid().ToString("N");
+        const string allScopes = "databases:read databases:write documents:read documents:write shapes:read";
+        string Token(string target, string? scope)
+        {
+            return issuer.Mint(actor, token =>
+            {
+                token.Claims["project_id"] = target;
+                if (scope is not null)
+                {
+                    token.Claims["scope"] = scope;
+                }
+            });
+        }
+
+        var databases = $"/v1/projects/{project}/databases";
+        var database = databases + "/main";
+        using var jwt = tls.CreateClient(follower.ClientAddress!, Token(project, allScopes));
+        using (var created = await jwt.PostAsJsonAsync(Relative(databases), new { name = "main" }))
+        {
+            await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created);
+            await Assert.That(created.Headers.Location?.OriginalString).IsEqualTo(database);
+            await Assert.That((await created.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("projectId").GetString()).IsEqualTo(project);
+        }
+
+        using var nonmember = tls.CreateClient(follower.ClientAddress!, issuer.Mint(actor));
+        using (var denied = await nonmember.GetAsync(Relative($"/v1/management/organizations/{project}/projects/{project}")))
+        {
+            await Assert.That(denied.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+        }
+
+        // The primary must receive the original aliases, or it would require project claims from this dashboard token.
+        var signIn = issuer.Mint(faker.Random.Guid().ToString());
+        using var dashboard = tls.CreateClient(follower.ClientAddress!, signIn);
+        var organization = await CreatedIdAsync(dashboard, "/v1/management/organizations", new { name = faker.Company.CompanyName() });
+        var legacyProject = await CreatedIdAsync(dashboard, $"/v1/management/organizations/{organization}/projects", new { name = "Legacy" });
+        var legacyDatabases = $"/v1/management/organizations/{organization}/projects/{legacyProject}/databases";
+        var legacyDatabase = await CreatedIdAsync(dashboard, legacyDatabases, new { name = "legacy" });
+        using (var read = await dashboard.GetAsync(Relative(legacyDatabases + "/" + legacyDatabase)))
+        {
+            await Assert.That(read.StatusCode).IsEqualTo(HttpStatusCode.OK);
+            await Assert.That((await read.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString()).IsEqualTo(legacyDatabase);
+        }
+
+        // A migration requested at a follower is verified once on the primary, then its binding is replicated before answering.
+        var legacyData = $"/v1/projects/{legacyProject}/databases/legacy";
+        using var legacyJwt = tls.CreateClient(follower.ClientAddress!, Token(legacyProject, allScopes));
+        using (var denied = await legacyJwt.GetAsync(Relative(legacyData)))
+        {
+            await Assert.That(denied.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+        }
+
+        issuer.GrantProject(signIn, organization, legacyProject);
+        using (var verified = await dashboard.PostAsJsonAsync(Relative(legacyDatabases[..^"/databases".Length] + "/binding"), new { organization }))
+        {
+            await Assert.That(verified.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
+        }
+
+        await Assert.That(issuer.ProjectFetches).IsEqualTo(1);
+        foreach (var address in new[] { follower.ClientAddress!, primary.ClientAddress! })
+        {
+            using var reader = tls.CreateClient(address, Token(legacyProject, allScopes));
+            await Assert.That((await reader.GetFromJsonAsync<JsonElement>(Relative(legacyData))).GetProperty("id").GetString()).IsEqualTo(legacyDatabase);
+        }
+
+        // Catalog following does not replicate document files; exercise each member's real data listener independently.
+        foreach (var address in new[] { follower.ClientAddress!, primary.ClientAddress! })
+        {
+            using var data = tls.CreateClient(address, Token(project, allScopes));
+            await Assert.That((await data.GetFromJsonAsync<JsonElement>(Relative(database))).GetProperty("projectId").GetString()).IsEqualTo(project);
+            var collection = database + "/collections/people";
+            using (var created = await data.PostAsJsonAsync(Relative(database + "/collections"), new { name = "people" }))
+            {
+                await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created);
+            }
+
+            await Assert.That((await data.GetFromJsonAsync<JsonElement>(Relative(collection))).GetProperty("name").GetString()).IsEqualTo("people");
+            var document = collection + "/documents/" + faker.Random.Guid();
+            var name = faker.Name.FullName();
+            using (var written = await data.PutAsJsonAsync(Relative(document), new { name, count = 1 }))
+            {
+                await Assert.That(written.StatusCode).IsEqualTo(HttpStatusCode.Created);
+            }
+
+            await Assert.That((await data.GetFromJsonAsync<JsonElement>(Relative(document))).GetProperty("document").GetProperty("name").GetString()).IsEqualTo(name);
+            using var patch = JsonContent.Create(new { count = 2 }, mediaType: new MediaTypeHeaderValue("application/merge-patch+json"));
+            using (var updated = await data.PatchAsync(Relative(document), patch))
+            {
+                await Assert.That(updated.StatusCode).IsEqualTo(HttpStatusCode.OK);
+            }
+
+            using (var query = await data.PostAsJsonAsync(Relative(collection + "/query"), new { filter = new { eq = new object[] { "/count", 2 } } }))
+            {
+                await Assert.That(query.StatusCode).IsEqualTo(HttpStatusCode.OK);
+                await Assert.That((await query.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("items").GetArrayLength()).IsEqualTo(1);
+            }
+
+            using var noScope = tls.CreateClient(address, Token(project, scope: null));
+            using (var denied = await noScope.GetAsync(Relative(document)))
+            {
+                await Assert.That(denied.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
+                await Assert.That(await CodeAsync(denied)).IsEqualTo("forbidden_scope");
+            }
+
+            using var readOnly = tls.CreateClient(address, Token(project, "databases:read documents:read"));
+            using (var denied = await readOnly.PostAsJsonAsync(Relative(databases), new { name = "denied" }))
+            {
+                await Assert.That(denied.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
+                await Assert.That(await CodeAsync(denied)).IsEqualTo("forbidden_scope");
+            }
+
+            using (var denied = await readOnly.PutAsJsonAsync(Relative(document), new { count = 3 }))
+            {
+                await Assert.That(denied.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
+                await Assert.That(await CodeAsync(denied)).IsEqualTo("forbidden_scope");
+            }
+
+            using var wrongProject = tls.CreateClient(address, Token(faker.Random.Guid().ToString(), allScopes));
+            foreach (var path in new[] { database, document })
+            {
+                using var denied = await wrongProject.GetAsync(Relative(path));
+                await Assert.That(denied.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+                await Assert.That(await CodeAsync(denied)).IsEqualTo("unknown_database");
+            }
+
+            await Assert.That((await data.GetFromJsonAsync<JsonElement>(Relative(document))).GetProperty("document").GetProperty("count").GetInt32()).IsEqualTo(2);
+            using (var deleted = await data.DeleteAsync(Relative(document)))
+            {
+                await Assert.That(deleted.StatusCode).IsEqualTo(HttpStatusCode.OK);
+            }
+
+            using var missing = await data.GetAsync(Relative(document));
+            await Assert.That(missing.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+        }
+    }
+
+    [Test]
     public async Task Management_requests_through_a_follower_are_served_by_the_primary_as_the_follower_and_what_they_wrote_serves_there_at_once()
     {
         using var peers = new PeerTls();

@@ -1,5 +1,5 @@
 using TerraBase.Errors;
-using TerraBase.Features.UserAuth;
+using TerraBase.Features.ApiKeys;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
 
@@ -11,17 +11,17 @@ public sealed class UpdateSavedQueryEndpoint(IManagementService management, IQue
     /// <inheritdoc />
     public override void Configure()
     {
-        Put(ManagementRoute.SavedQuery);
+        Put(ProjectApiRoute.SavedQuery);
         Name("updateSavedQuery");
         Summary("Replaces a saved query");
-        Description("Same rules as createSavedQuery; sets updatedAt." + " " + ManagementRoute.IdentityDescription);
-        Tags(ManagementRoute.Tag);
+        Description("Same rules as createSavedQuery; sets updatedAt." + " " + ProjectApiRoute.IdentityDescription);
+        Tags("Queries");
         Produces<SavedQuery>();
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
         Produces<ErrorBody>(StatusCodes.Status403Forbidden);
-        RequireAuthorization(UserAuthExtensions.PolicyName);
-        Metadata(ListenerMetadata.Management);
+        RequireAuthorization(ApiKeyScopes.DatabasesWrite);
+        Metadata(new ProjectManagementRoute(), ListenerMetadata.Management);
     }
 
     /// <inheritdoc />

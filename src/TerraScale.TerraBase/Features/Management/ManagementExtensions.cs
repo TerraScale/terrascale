@@ -25,6 +25,7 @@ public static class ManagementExtensions
         services.AddSingleton(provider => new Lazy<IQueryShapeTracker>(provider.GetRequiredService<IQueryShapeTracker>));
         services.AddHostedService(provider => provider.GetRequiredService<EngineManagementService>());
         services.AddSingleton<IManagementService>(provider => provider.GetRequiredService<EngineManagementService>());
+        services.AddSingleton<IProjectCatalog>(provider => provider.GetRequiredService<EngineManagementService>());
         services.AddSingleton<IAccessService>(provider => provider.GetRequiredService<EngineManagementService>());
         services.AddSingleton<IManagementCommits>(provider => provider.GetRequiredService<EngineManagementService>());
         services.AddSingleton<ITenantDirectory>(provider => provider.GetRequiredService<EngineManagementService>());

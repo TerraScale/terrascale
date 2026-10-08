@@ -20,13 +20,13 @@ public sealed class TransactionEndpoint(IDocumentService documents, IAuthorizati
     public override void Configure()
     {
         Post(DocumentRoute.DatabaseRoute + "/transactions");
-        Name("transaction");
+        Name("runTransaction");
         Summary("Applies document operations atomically");
         Description("""
             {"ops":[…]} with 1 to 1024 operations across the collections of one database: create (put with if_none_match "*"; id is generated as a UUIDv7 when omitted), put (document, optional if_match or if_none_match "*"), patch (exactly one of merge or ops, optional if_match), delete (optional if_match), assert (filter: the document exists and matches; or absent: true) and assert_count (filter, gte and/or lte; at most 16 per transaction, at most 10000 documents examined). Assertions see the state before this transaction's writes. Two operations may not target the same document. Every failure names the failing operation in error.op. Assertions also need the documents:read scope. Query assertions and counts are interrupted at SQLite progress callbacks after 5 million VM instructions or a 5-second deadline (400 invalid_query, query too expensive). Existing non-UUID legacy document ids remain addressable; new ids must be lowercase hyphenated UUIDs.
             Captured changes contain at most 2 MiB of UTF-8 collection names, ids and JSON. Exceeding this limit returns 503 capacity with the failing error.op, rolling back the entire transaction; split the writes into smaller transactions.
             """);
-        Tags("Documents");
+        Tags("Transactions");
         Metadata(new RequestBodyMetadata(typeof(TransactionRequest), DocumentRoute.JsonMediaType));
         Produces<TransactionBody>();
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);

@@ -1,5 +1,5 @@
 using TerraBase.Errors;
-using TerraBase.Features.UserAuth;
+using TerraBase.Features.ApiKeys;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
 
@@ -11,16 +11,16 @@ public sealed class CheckSqlEndpoint(IManagementService management, IQueryServic
     /// <inheritdoc />
     public override void Configure()
     {
-        Post(ManagementRoute.Sql + "/check");
+        Post(ProjectApiRoute.Sql + "/check");
         Name("checkSql");
         Summary("Validates and explains a SQL statement");
-        Description(QueriesExtensions.SqlDescription + " Invalid SQL returns ok false and the error. suggestions lists filtered or sorted fields that no index of the collection leads with." + " " + ManagementRoute.IdentityDescription);
-        Tags(ManagementRoute.Tag);
+        Description(QueriesExtensions.SqlDescription + " Invalid SQL returns ok false and the error. suggestions lists filtered or sorted fields that no index of the collection leads with." + " " + ProjectApiRoute.IdentityDescription);
+        Tags("Queries");
         Produces<SqlCheckBody>();
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
-        RequireAuthorization(UserAuthExtensions.PolicyName);
-        Metadata(ListenerMetadata.Management);
+        RequireAuthorization(ApiKeyScopes.DatabasesRead);
+        Metadata(new ProjectManagementRoute(), ListenerMetadata.Management);
     }
 
     /// <inheritdoc />

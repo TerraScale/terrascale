@@ -60,7 +60,8 @@ public sealed class CrossRegionPartitionTests
             var (organization, project, database) = (Guid.NewGuid().ToString("D"), Guid.NewGuid().ToString("D"), Guid.NewGuid().ToString("D"));
             foreach (var primary in members.Where(member => member.Name.EndsWith("-a", StringComparison.Ordinal)))
             {
-                using var registered = await primary.Api!.Client.PostAsync(
+                using var service = primary.Api!.Service(primary.Api.User);
+                using var registered = await service.PostAsync(
                     new Uri("/v1/management/commits", UriKind.Relative),
                     new StringContent(Registration(organization, project, primary.Cell == "gru" ? database : null), Encoding.UTF8, "application/json"));
                 registered.EnsureSuccessStatusCode();
@@ -292,7 +293,7 @@ public sealed class CrossRegionPartitionTests
             {
                 services.AddSingleton(network.Join(Cell, Name));
                 services.AddSingleton<IMemberStore>(store);
-            });
+            }, managementCredential: true);
         }
 
         public int PeerPort => port;

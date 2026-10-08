@@ -1,5 +1,5 @@
 using TerraBase.Configuration;
-using TerraBase.Features.UserAuth;
+using TerraBase.Features.ApiKeys;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
 
@@ -11,17 +11,18 @@ public sealed class BranchManagedDatabaseEndpoint(IManagementService management,
     /// <inheritdoc />
     public override void Configure()
     {
-        Post(ManagementRoute.Database + "/branches");
-        Name("branchManagedDatabase");
+        Post(ProjectApiRoute.Database + "/branches");
+        Name("branchDatabase");
         Summary("Branches (clones) a database");
-        Description("The branch is a new database in the same project holding a consistent copy of the source taken now; later writes to either are independent. name follows the database name rules." + " " + ManagementRoute.IdentityDescription);
-        Tags(ManagementRoute.Tag);
+        Description("The branch is a new database in the same project holding a consistent copy of the source taken now; later writes to either are independent. name follows the database name rules. Sent to the source database's home region; any other answers 421 wrong_region with X-TerraBase-Database-Home." + " " + ProjectApiRoute.IdentityDescription);
+        Tags("Databases");
         Produces<ManagedDatabaseBody>(StatusCodes.Status201Created);
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
         Produces<ErrorBody>(StatusCodes.Status409Conflict);
-        RequireAuthorization(UserAuthExtensions.PolicyName);
-        Metadata(ListenerMetadata.Management);
+        Produces<ErrorBody>(StatusCodes.Status421MisdirectedRequest);
+        RequireAuthorization(ApiKeyScopes.DatabasesWrite);
+        Metadata(new ProjectManagementRoute(), ListenerMetadata.Management);
     }
 
     /// <inheritdoc />
@@ -35,7 +36,7 @@ public sealed class BranchManagedDatabaseEndpoint(IManagementService management,
 
         var result = await management.BranchDatabaseAsync(ManagementRoute.UserId(HttpContext), ManagementRoute.OrganizationId(HttpContext), ManagementRoute.Value(HttpContext, "project"), ManagementRoute.Value(HttpContext, "database"), ManagementRoute.DatabaseName(request), cancellationToken);
         return result.Value is { } value
-            ? TypedResults.Created($"{ManagementRoute.Organizations}/{ManagementRoute.OrganizationId(HttpContext)}/projects/{value.ProjectId}/databases/{value.Id}", ManagedDatabaseBody.From(value, Listeners.RegionOf(HttpContext)))
+            ? TypedResults.Created(ManagementRoute.CreatedDatabasePath(HttpContext, value), ManagedDatabaseBody.From(value, Listeners.RegionOf(HttpContext)))
             : ManagementRoute.Error(result.Error);
     }
 }

@@ -23,8 +23,11 @@ Every response is addressed by `(handle, offset)`. This follows the Electric HTT
 
 `GET /v1/projects/{project}/databases/{database}/collections/{collection}/shape?where=&handle=&offset=&live=&cursor=`
 
-Served on the client listener (TLS) and requires an API key with the `shapes:read` scope.
-OpenAPI tag `Shapes`.
+Served on the client listener (TLS) with `Authorization: Bearer <ts-auth project access JWT>`.
+The token must grant `shapes:read`, its `project_id` must match `{project}`, and any `database`
+claim must match `{database}`. TerraBase validates it against the configured platform issuer's
+JWKS. Legacy `tb_` keys with `shapes:read` remain a hidden compatibility path until COS confirms
+migration. OpenAPI tag `Live`.
 
 | Parameter | Value |
 | --- | --- |
@@ -263,11 +266,12 @@ A dropped collection that was not recreated is `404 unknown_collection`. The cli
 
 ## Tenancy and CDN cache keys
 
-The tenant is the organization; projects are folders of databases inside it (TS-475, decision 0005).
-The endpoint resolves the request's `TenantContext` like every data route: the route's database, in
-the route's project of the API key's organization, and only if the key reaches it. A database that
-does not exist and one the key does not reach both answer `404 unknown_database`, checked right
-after the route values and before the query string, so a key learns nothing about other tenants.
+The endpoint resolves the request's `TenantContext` like every data route: the route's database,
+inside the signed project and its verified storage namespace. Unverified legacy project mappings
+do not grant JWT access (TS-589, decision 0011). A hidden legacy key instead selects its organization
+and reaches only its granted project and database. A database that does not exist and one the
+credential does not reach both answer `404 unknown_database`, checked before the query string,
+so a credential learns nothing about other tenants.
 Everything that names a shape goes through `ShapeRequest.Scope` (organization, project and database
 ids, collection, canonical filter), which keys `shape_id`, `handle` and request collapsing, so no two
 tenants share a shape id, a handle or a collapsed read. The project and database are in the URL path.
@@ -277,8 +281,9 @@ read of the deleted one, including a live poll woken by the change, answers `404
 a restart at `-1` reaches the new database under a new handle.
 
 Origin responses are `private, max-age=0, must-revalidate`: shared caches must not store them,
-and private caches must revalidate before reuse. Deleted keys return `401` and keys whose
-`shapes:read` scope was removed return `403`, including conditional reads of immutable snapshots.
+and private caches must revalidate before reuse. JWT signature, issuer, audience, lifetime and
+project/database scope are checked on each request, including conditional reads of immutable
+snapshots. Deleted legacy keys return `401`; legacy keys without `shapes:read` return `403`.
 `Vary: Authorization` and credential-specific cache keys do not detect revocation or scope changes.
 
 **Deployment gate**: shared CDN caching is unavailable with the current origin headers. A future
@@ -300,8 +305,9 @@ Requested by TS-474; recorded here as the decision.
 
 1. Shapes are addressed by collection and `where` on the collection route, not created through the
    `POST …/shapes` gatekeeper and read at `/v1/shapes/{shape_id}`.
-2. Authorization is the API key scope `shapes:read`, not data-key `shape` grants or edge shape
-   tokens. There is no JWS or JWKS.
+2. Since TS-589, public authorization uses ts-auth project access JWTs with `shapes:read`,
+   validated against the configured issuer's JWKS. Legacy API keys remain a hidden compatibility
+   path. There are no separate data-key `shape` grants or edge shape tokens.
 3. No projection, no server-sent events and no edge Worker.
 4. Current-generation history is never reaped. Dropped generations are removed atomically because
    their handles already require refetch. A migration baseline floor rejects offsets from before

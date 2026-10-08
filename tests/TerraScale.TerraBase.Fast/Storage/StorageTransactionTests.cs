@@ -3,6 +3,7 @@ using System.Text;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Time.Testing;
 using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Engine.Sqlite;
@@ -738,7 +739,9 @@ public sealed class StorageTransactionTests
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         const int Rows = 32;
-        await using var management = await ManagementApi.StartAsync(services: ConfigurePool);
+        // Per-test time isolates the admission assertion from the periodic usage flush.
+        var time = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        await using var management = await ManagementApi.StartAsync(time: time, services: ConfigurePool);
         var server = management.Server;
         using var tenant = await management.CreateTenantAsync("documents:read", "documents:write");
         var client = tenant.Data;

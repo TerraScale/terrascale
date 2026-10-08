@@ -48,7 +48,7 @@ internal sealed class ShapeSubscriptionService(
                 }
 
                 var current = await tenants.RegisteredAsync(request.Database, stop.Token).ConfigureAwait(false) == true
-                    ? await tenants.FindProjectDatabaseAsync(request.Database.ProjectId!,
+                    ? await tenants.FindDatabaseAsync(request.Database.OrganizationId, request.Database.ProjectId!,
                         (string)context.Request.RouteValues["database"]!, stop.Token).ConfigureAwait(false)
                     : null;
                 if (current?.DatabaseId != request.Database.DatabaseId)

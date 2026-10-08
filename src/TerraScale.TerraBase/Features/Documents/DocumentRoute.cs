@@ -5,6 +5,7 @@ using Microsoft.Net.Http.Headers;
 using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
+using TerraBase.Features.UserAuth;
 using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Documents;
@@ -76,6 +77,19 @@ internal static class DocumentRoute
 
     private static async ValueTask<TenantResult> ResolveAsync(HttpContext context, ITenantDirectory tenants, DatabaseName name, CancellationToken cancellationToken)
     {
+        if (context.Features.Get<ProjectAccess>() is { } access)
+        {
+            if ((access.DatabaseName is not null && !string.Equals(access.DatabaseName, name.Value, StringComparison.Ordinal))
+                || await tenants.FindDatabaseAsync(access.OrganizationId, access.ProjectId, name.Value, cancellationToken).ConfigureAwait(false) is not { } database
+                || (access.DatabaseId is not null && !string.Equals(access.DatabaseId, database.DatabaseId, StringComparison.Ordinal)))
+            {
+                return UnknownDatabase;
+            }
+
+            context.Features.Set(database);
+            return database;
+        }
+
         var key = ApiKey.Of(context);
         if (await tenants.FindDatabaseAsync(key.OrganizationId, Project(context), name.Value, cancellationToken).ConfigureAwait(false) is not { } tenant
             || !key.Reaches(tenant))

@@ -1,6 +1,6 @@
 using TerraBase.Engine;
 using TerraBase.Errors;
-using TerraBase.Features.UserAuth;
+using TerraBase.Features.ApiKeys;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
 
@@ -16,16 +16,16 @@ public sealed class GetProjectUsageEndpoint(IUsageService usage, TimeProvider ti
     /// <inheritdoc />
     public override void Configure()
     {
-        Get(ManagementRoute.Project + "/usage");
+        Get(ProjectApiRoute.Project + "/usage");
         Name("getProjectUsage");
         Summary("Reads the usage of a project");
-        Description("Sums the usage of every database of the project and lists each one, in creation order, with its period but no series. " + LimitsDescription + " " + GetDatabaseUsageEndpoint.CountsDescription + " " + ManagementRoute.IdentityDescription);
-        Tags(ManagementRoute.Tag);
+        Description("Sums the usage of every database of the project and lists each one, in creation order, with its period but no series. " + LimitsDescription + " " + GetDatabaseUsageEndpoint.CountsDescription + " " + ProjectApiRoute.IdentityDescription);
+        Tags("Usage");
         Produces<ProjectUsage>();
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
-        RequireAuthorization(UserAuthExtensions.PolicyName);
-        Metadata(ListenerMetadata.Management);
+        RequireAuthorization(ApiKeyScopes.DatabasesRead);
+        Metadata(new ProjectManagementRoute(), ListenerMetadata.Management);
     }
 
     /// <inheritdoc />
@@ -47,7 +47,9 @@ public sealed class GetProjectUsageEndpoint(IUsageService usage, TimeProvider ti
         }
         catch (QueryCapacityException)
         {
-            return TypedResults.BadRequest("query too expensive");
+            return HttpContext.Features.Get<LegacyManagementRoute>() is not null
+                ? TypedResults.BadRequest("query too expensive")
+                : ErrorResponse.From(new Validation("query too expensive", "invalid_query"));
         }
     }
 }

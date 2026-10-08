@@ -6,6 +6,7 @@ using Grpc.Core;
 using Microsoft.AspNetCore.Http.Features;
 using TerraBase.Configuration;
 using TerraBase.Engine;
+using TerraBase.Features.Management;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Replication.V1;
 using TerraBase.Hosting;
@@ -27,8 +28,12 @@ public sealed class ServedByCatalogPrimary
     /// <summary>The metadata.</summary>
     public static ServedByCatalogPrimary WhenWriting { get; } = new();
 
+    /// <summary>Forwards before the handler reads a body or performs an online authority check.</summary>
+    public static ServedByCatalogPrimary BeforeHandling { get; } = new();
+
     /// <summary>Whether a follower forwards every request to <paramref name="endpoint"/>: a Management API endpoint.</summary>
-    internal static bool Always(Endpoint? endpoint) => ReferenceEquals(endpoint?.Metadata.GetMetadata<ListenerMetadata>(), ListenerMetadata.Management);
+    internal static bool Always(Endpoint? endpoint) => ReferenceEquals(endpoint?.Metadata.GetMetadata<ListenerMetadata>(), ListenerMetadata.Management)
+        || ReferenceEquals(endpoint?.Metadata.GetMetadata<ServedByCatalogPrimary>(), BeforeHandling);
 
     /// <summary>Whether the catalog primary serves forwarded requests to <paramref name="endpoint"/>.</summary>
     internal static bool Serves(Endpoint? endpoint) => Always(endpoint) || endpoint?.Metadata.GetMetadata<ServedByCatalogPrimary>() is not null;
@@ -227,7 +232,7 @@ internal sealed partial class CatalogForwarder
         {
             Protocol = ForwardingProtocol.Version,
             Method = context.Request.Method,
-            Path = context.Request.Path.Value ?? "/",
+            Path = context.Features.Get<LegacyManagementRoute>()?.OriginalPath ?? context.Request.Path.Value ?? "/",
             Query = context.Request.QueryString.Value ?? "",
             Body = body.Length > 0 ? UnsafeByteOperations.UnsafeWrap(ApplicationEnvelope.Encode(body)) : ByteString.Empty,
             Region = _options.Region,

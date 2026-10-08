@@ -15,8 +15,28 @@ namespace TerraBase.Fast.Platform;
 
 public sealed class PressureTests
 {
-    private static readonly Uri Pressure = new("/v1/node/pressure", UriKind.Relative);
+    private static readonly Uri Pressure = new("/admin/node/pressure", UriKind.Relative);
     private static readonly Uri Metrics = new("/metrics", UriKind.Relative);
+
+    [Test]
+    [Arguments("/v1/node/pressure")]
+    [Arguments("/v1/node/pressure/")]
+    [Arguments("/V1/NODE/PRESSURE")]
+    [Arguments("/V1/NODE/PRESSURE/")]
+    public async Task Legacy_pressure_aliases_serve_admin_snapshots_and_remain_hidden_from_clients(string path)
+    {
+        using var tls = new ClientTls();
+        await using var server = await TerraBaseTestServer.StartAsync(tls.Apply);
+        using var client = tls.CreateClient(server.ClientAddress!);
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
+        var uri = new Uri(path, UriKind.Relative);
+        using var response = await server.Client.GetAsync(uri, deadline.Token);
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        using var snapshot = await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync(deadline.Token), cancellationToken: deadline.Token);
+        await AssertSnapshotAsync(snapshot.RootElement);
+        using var hidden = await client.GetAsync(uri, deadline.Token);
+        await Assert.That(hidden.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+    }
 
     [Test]
     public async Task Replacing_the_data_directory_with_a_link_reports_unknown_storage()

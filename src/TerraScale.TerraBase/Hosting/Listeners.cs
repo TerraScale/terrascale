@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Connections.Features;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.OpenApi;
 using TerraBase.Configuration;
+using TerraBase.Features.Management;
 using TerraBase.Features.Pressure;
 
 namespace TerraBase.Hosting;
@@ -166,7 +167,6 @@ public static class Listeners
     public static WebApplication UseTerraBaseListeners(this WebApplication app)
     {
         ArgumentNullException.ThrowIfNull(app);
-        app.UseRouting();
         app.Use((context, next) =>
         {
             var arrivedOn = ArrivedOn(context);
@@ -188,6 +188,14 @@ public static class Listeners
             }
 
             var servedBy = context.GetEndpoint()?.Metadata.GetMetadata<ListenerMetadata>()?.Listeners ?? ListenerMetadata.Admin.Listeners;
+            if (arrivedOn == TerraBaseListener.Admin
+                && context.GetEndpoint()?.Metadata.GetMetadata<ProjectManagementRoute>() is not null
+                && context.Features.Get<LegacyManagementRoute>() is null)
+            {
+                context.Response.StatusCode = StatusCodes.Status404NotFound;
+                return Task.CompletedTask;
+            }
+
             if (arrivedOn is not { } listener || !servedBy.Contains(listener))
             {
                 context.Response.StatusCode = StatusCodes.Status404NotFound;

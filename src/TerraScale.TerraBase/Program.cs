@@ -77,6 +77,7 @@ builder.Services.AddTerraScaleEndpoints(endpoints =>
 builder.Services.AddTerraBaseApiReference("v1");
 builder.Services.AddTerraBaseRegionOpenApi();
 builder.Services.AddTerraBaseRequestBodies("v1");
+builder.Services.AddTerraBaseApiExamples("v1");
 builder.Services.AddTerraBaseTelemetry();
 builder.Services.AddTerraBaseMemory(options);
 builder.Services.AddTerraBaseEngine(options);
@@ -106,11 +107,15 @@ catch (TerraBaseConfigurationException error)
 app.UseTerraBaseForwardedRequests();
 app.UseTerraBasePressure();
 app.UseTerraBaseBadRequests();
+app.UseTerraBaseLegacyRoutes();
+app.UseRouting();
 app.UseTerraBaseListeners();
 app.UseTerraBaseQueryShapeAdmission();
 app.UseAuthentication();
+app.UseTerraBaseProjectCheck();
 app.UseAuthorization();
 app.UseTerraBaseCatalogForwarding();
+app.UseTerraBaseProjectCatalog();
 app.UseTerraBaseDatabasePlacement();
 app.MapTerraScaleEndpoints();
 app.MapTerraBaseApiReference();

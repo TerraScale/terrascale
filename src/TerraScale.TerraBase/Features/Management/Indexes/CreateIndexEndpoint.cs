@@ -1,6 +1,6 @@
 using TerraBase.Engine;
 using TerraBase.Errors;
-using TerraBase.Features.UserAuth;
+using TerraBase.Features.ApiKeys;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
 using TerraScale.Endpoints;
@@ -15,18 +15,18 @@ public sealed class CreateIndexEndpoint(IManagementService management, IIndexSer
     /// <inheritdoc />
     public override void Configure()
     {
-        Post(ManagementRoute.Indexes);
+        Post(ProjectApiRoute.Indexes);
         Name("createIndex");
         Summary("Builds a secondary index");
-        Description("collection: a collection name. fields: 1 to 4 distinct dotted member paths (not _id or _rev, which the primary key already orders). name (optional): a lowercase letter, then lowercase letters, digits or _, at most 63 characters; derived from the collection and fields when omitted. The index is built before the response." + " " + ManagementRoute.IdentityDescription);
-        Tags(ManagementRoute.Tag);
+        Description("collection: a collection name. fields: 1 to 4 distinct dotted member paths (not _id or _rev, which the primary key already orders). name (optional): a lowercase letter, then lowercase letters, digits or _, at most 63 characters; derived from the collection and fields when omitted. The index is built before the response." + " " + ProjectApiRoute.IdentityDescription);
+        Tags("Indexes");
         Produces<IndexBody>(StatusCodes.Status201Created);
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
         Produces<ErrorBody>(StatusCodes.Status409Conflict);
         Produces<ErrorBody>(StatusCodes.Status403Forbidden);
-        RequireAuthorization(UserAuthExtensions.PolicyName);
-        Metadata(ListenerMetadata.Management);
+        RequireAuthorization(ApiKeyScopes.DatabasesWrite);
+        Metadata(new ProjectManagementRoute(), ListenerMetadata.Management);
     }
 
     /// <inheritdoc />
@@ -42,7 +42,7 @@ public sealed class CreateIndexEndpoint(IManagementService management, IIndexSer
                 Forbidden error => ErrorResponse.From(error),
                 TenantContext database => await indexes.CreateAsync(database, index, cancellationToken) switch
                 {
-                    IndexBody created => TypedResults.Created($"{ManagementRoute.DatabasePath(database)}/indexes/{index.Name}", created),
+                    IndexBody created => TypedResults.Created($"{ManagementRoute.DatabasePath(HttpContext, database)}/indexes/{index.Name}", created),
                     NotFound error => ErrorResponse.From(error),
                     Conflict error => ErrorResponse.From(error),
                 },

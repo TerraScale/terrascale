@@ -136,7 +136,8 @@ public sealed class CrossRegionTests
     {
         await using var regions = await Regions.StartAsync();
         var project = Guid.NewGuid().ToString("D");
-        using var registered = await regions.GruApi.Client.PostAsync(new Uri("/v1/management/commits", UriKind.Relative), new StringContent(JsonSerializer.Serialize(new
+        using var service = regions.GruApi.Service(regions.GruApi.User);
+        using var registered = await service.PostAsync(new Uri("/v1/management/commits", UriKind.Relative), new StringContent(JsonSerializer.Serialize(new
         {
             id = Guid.NewGuid().ToString("D"),
             ops = new object[] { new { op = "create_project", organization = regions.Organization, id = project, name = "gru-only" } },
@@ -163,6 +164,7 @@ public sealed class CrossRegionTests
         await using var regions = await Regions.StartAsync();
         var (homeApi, otherApi) = home == "gru-1" ? (regions.GruApi, regions.SfoApi) : (regions.SfoApi, regions.GruApi);
         var (homeData, otherData) = home == "gru-1" ? (regions.Gru, regions.Sfo) : (regions.Sfo, regions.Gru);
+        await otherApi.VerifyProjectBindingAsync(regions.Organization, regions.Project);
         var created = await regions.CreateAsync(homeApi, "orders", home);
         await Assert.That(created.GetProperty("homeRegion").GetString()).IsEqualTo(home);
         await Assert.That(created.GetProperty("replicaRegions").GetArrayLength()).IsEqualTo(0);
@@ -220,6 +222,7 @@ public sealed class CrossRegionTests
         });
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         deadline.CancelAfter(TimeSpan.FromSeconds(30));
+        await regions.SfoApi.VerifyProjectBindingAsync(regions.Organization, regions.Project);
         using var seed = await regions.Gru.PutAsJsonAsync(regions.Document(ReplicationDocuments.Id("seed")), new { value = "before" }, deadline.Token);
         seed.EnsureSuccessStatusCode();
         _ = await Regions.EventuallyReadAsync(regions.Sfo, regions.Document(ReplicationDocuments.Id("seed")), "before");
@@ -397,7 +400,7 @@ public sealed class CrossRegionTests
     {
         await using var regions = await Regions.StartAsync();
 
-        // sfo has a database "clash" that was never written; gru then creates and writes its own "clash", local to gru.
+        // Empty databases are advertised too: partition before creating independent databases with the same name.
         await TerraBaseTestServer.EventuallyAsync(async token =>
             await regions.GruApi.Server.MetricAsync("terrabase_wan_members", "region=\"sfo-1\"", token) == 1
             && await regions.SfoApi.Server.MetricAsync("terrabase_wan_members", "region=\"gru-1\"", token) == 1);
@@ -408,9 +411,9 @@ public sealed class CrossRegionTests
             && await regions.SfoApi.Server.MetricAsync("terrabase_wan_members", "region=\"gru-1\"", token) == 0);
         var clash = $"/v1/projects/{regions.Project}/databases/clash";
         using var sfoClash = await regions.Sfo.PutAsync(new Uri(clash, UriKind.Relative), null);
-        sfoClash.EnsureSuccessStatusCode();
+        await Assert.That(sfoClash.StatusCode).IsEqualTo(HttpStatusCode.Created);
         using var gruClash = await regions.Gru.PutAsync(new Uri(clash, UriKind.Relative), null);
-        gruClash.EnsureSuccessStatusCode();
+        await Assert.That(gruClash.StatusCode).IsEqualTo(HttpStatusCode.Created);
         var sfoId = (await sfoClash.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString();
         var gruId = (await gruClash.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString();
         await Assert.That(gruId).IsNotEqualTo(sfoId);
@@ -450,7 +453,8 @@ public sealed class CrossRegionTests
         await using var regions = await Regions.StartAsync();
         // A new organization and project, but the canary's database id.
         var commit = Regions.Registration(Guid.NewGuid().ToString("D"), Guid.NewGuid().ToString("D"), regions.Database, "other");
-        using var taken = await regions.GruApi.Client.PostAsync(new Uri("/v1/management/commits", UriKind.Relative), new StringContent(commit, Encoding.UTF8, "application/json"));
+        using var service = regions.GruApi.Service(regions.GruApi.User);
+        using var taken = await service.PostAsync(new Uri("/v1/management/commits", UriKind.Relative), new StringContent(commit, Encoding.UTF8, "application/json"));
         await Assert.That(taken.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
         var error = (await taken.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("error");
         await Assert.That(error.GetProperty("code").GetString()).IsEqualTo("id_taken");
@@ -478,7 +482,7 @@ public sealed class CrossRegionTests
                 settings["peers"] = $"gru-a=localhost:{portA},gru-b=localhost:{portB}";
                 settings["catalog-primary"] = "gru-a";
                 Regions.Configure(settings, credentials, "gru-1", name);
-            }, services => Regions.Join(services, network, "gru", gruMembers, name));
+            }, services => Regions.Join(services, network, "gru", gruMembers, name), managementCredential: true);
         }
 
         try
@@ -487,11 +491,12 @@ public sealed class CrossRegionTests
             await using var gruB = await StartGruAsync("gru-b", portB);
             await using var sfo = await ManagementApi.StartAsync(
                 settings => Regions.Configure(settings, credentials, "sfo-1", "sfo-a"),
-                services => Regions.Join(services, network, "sfo", new FakeMemberStore(TimeProvider.System)));
+                services => Regions.Join(services, network, "sfo", new FakeMemberStore(TimeProvider.System)), managementCredential: true);
             var (organization, project, database) = (Guid.NewGuid().ToString("D"), Guid.NewGuid().ToString("D"), Guid.NewGuid().ToString("D"));
             foreach (var (api, commit) in new[] { (gruA, Regions.Registration(organization, project, database, "canary", "sfo-1")), (sfo, Regions.Registration(organization, project, null, "canary")) })
             {
-                using var registered = await api.Client.PostAsync(new Uri("/v1/management/commits", UriKind.Relative), new StringContent(commit, Encoding.UTF8, "application/json"));
+                using var service = api.Service(api.User);
+                using var registered = await service.PostAsync(new Uri("/v1/management/commits", UriKind.Relative), new StringContent(commit, Encoding.UTF8, "application/json"));
                 registered.EnsureSuccessStatusCode();
             }
 
@@ -740,7 +745,7 @@ public sealed class CrossRegionTests
                 {
                     Join(services, network, cell, new FakeMemberStore(TimeProvider.System));
                     configureServices?.Invoke(services);
-                });
+                }, managementCredential: true);
 
         // Every document of "items" with its version and body, in id order.
         private async Task<string> ListAsync(HttpClient client, CancellationToken token)
@@ -769,7 +774,8 @@ public sealed class CrossRegionTests
             // The project in both regions; the canary at home in gru with a replica in sfo, which takes it from gru's heads.
             foreach (var (api, commit) in new[] { (GruApi, Registration(Organization, Project, Database, "canary", "sfo-1")), (SfoApi, Registration(Organization, Project, null, "canary")) })
             {
-                using var response = await api.Client.PostAsync(new Uri("/v1/management/commits", UriKind.Relative), new StringContent(commit, Encoding.UTF8, "application/json"));
+                using var service = api.Service(api.User);
+                using var response = await service.PostAsync(new Uri("/v1/management/commits", UriKind.Relative), new StringContent(commit, Encoding.UTF8, "application/json"));
                 response.EnsureSuccessStatusCode();
             }
 

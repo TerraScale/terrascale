@@ -20,7 +20,7 @@ internal sealed partial class ManagementCredentialHandler(
     UrlEncoder encoder,
     TerraBaseOptions terraBase) : AuthenticationHandler<AuthenticationSchemeOptions>(options, logger, encoder)
 {
-    public const string SchemeName = "ManagementCredential";
+    public const string SchemeName = UserAuthExtensions.LegacyServiceScheme;
 
     /// <summary>The acting user, trusted only together with the credential.</summary>
     public const string UserHeader = "X-TerraBase-User-Id";

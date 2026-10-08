@@ -22,6 +22,39 @@ public sealed class QueryShapeApiTests
     private static readonly int[] UnmatchedNumber = [999];
 
     [Test]
+    public async Task Project_JWT_statistics_require_a_verified_binding_and_database_scope_while_legacy_aliases_keep_working()
+    {
+        await using var api = await ManagementApi.StartAsync(managementCredential: true);
+        var database = await api.CreateManagedDatabaseAsync();
+        using var data = await SeedAsync(api, database);
+        await PostAsync(data, Query(database), new { filter = Eq("/n", 1) });
+        var legacy = await ShapesAsync(api.Client, database);
+        await Assert.That(legacy.Length).IsEqualTo(1);
+        using var service = api.Service(api.User);
+        var serviceShapes = await ShapesAsync(service, database);
+        await Assert.That(serviceShapes[0].GetRawText()).IsEqualTo(legacy[0].GetRawText());
+
+        using var project = ProjectClient(api, database.Project, "databases:read");
+        var canonical = ManagementApi.Uri(database.Data + "/query-shapes");
+        using (var unverified = await project.GetAsync(canonical))
+        {
+            await Assert.That(unverified.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+        }
+
+        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
+        var granted = await project.GetFromJsonAsync<JsonElement>(canonical);
+        await Assert.That(granted.GetProperty("items").GetArrayLength()).IsEqualTo(1);
+        await Assert.That(granted.GetProperty("items")[0].GetRawText()).IsEqualTo(legacy[0].GetRawText());
+
+        using var noScope = ProjectClient(api, database.Project, "documents:read");
+        using var forbidden = await noScope.GetAsync(canonical);
+        await Assert.That(forbidden.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
+        using var foreign = ProjectClient(api, new Faker().Random.Guid().ToString(), "databases:read");
+        using var inaccessible = await foreign.GetAsync(canonical);
+        await Assert.That(inaccessible.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+    }
+
+    [Test]
     public async Task Json_shapes_remove_literals_flatten_groups_and_count_cache_hits_without_replaying_scans()
     {
         await using var api = await ManagementApi.StartAsync();
@@ -414,6 +447,13 @@ public sealed class QueryShapeApiTests
         $"{database.Data}/collections/people/query";
 
     private static string Stats(ManagedDatabaseRef database) => database.Path[3..] + "/query-shapes";
+
+    private static HttpClient ProjectClient(ManagementApi api, string project, string scopes) =>
+        api.WithToken(api.Issuer.Mint(new Faker().Random.Guid().ToString(), token =>
+        {
+            token.Claims["project_id"] = project;
+            token.Claims["scope"] = scopes;
+        }));
 
     private static async Task<JsonElement[]> ShapesAsync(HttpClient client, ManagedDatabaseRef database)
     {

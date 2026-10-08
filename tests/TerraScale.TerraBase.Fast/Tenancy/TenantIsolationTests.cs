@@ -5,6 +5,7 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
+using TerraBase.Features.Management;
 using TerraBase.Hosting;
 using TerraBase.Testing;
 
@@ -57,19 +58,24 @@ public sealed class TenantIsolationTests
         using var b = await api.CreateTenantAsync("documents:read", "documents:write", "shapes:read");
         using var aDashboard = api.As(a.User);
         using var bDashboard = api.As(b.User);
-        using var aSubscriptions = api.WithToken(api.Issuer.Mint(a.User, token =>
+        await api.VerifyProjectBindingAsync(a.OrganizationId, a.ProjectId, aDashboard);
+        await api.VerifyProjectBindingAsync(b.OrganizationId, b.ProjectId, bDashboard);
+        HttpClient ProjectClient(Tenant tenant)
         {
-            token.Claims["project_id"] = a.ProjectId;
-            token.Claims["scope"] = "shapes:read";
-        }));
-        using var bSubscriptions = api.WithToken(api.Issuer.Mint(b.User, token =>
-        {
-            token.Claims["project_id"] = b.ProjectId;
-            token.Claims["scope"] = "shapes:read";
-        }));
+            return api.WithToken(api.Issuer.Mint(tenant.User, token =>
+            {
+                token.Claims["project_id"] = tenant.ProjectId;
+                token.Claims["scope"] = "databases:read databases:write documents:read documents:write shapes:read";
+            }));
+        }
+
+        using var aProject = ProjectClient(a);
+        using var bProject = ProjectClient(b);
         // Both have a database "secret" with a document, a pending invitation and an ownership transfer: everything a route can name.
         var aSecret = await SeedAsync(api, a, aDashboard);
         var bSecret = await SeedAsync(api, b, bDashboard);
+        // Canonical management addresses database names: this name exists only in B's project.
+        var bForeign = await CreateDatabaseAsync(b, "foreign");
         var bInvitation = await InviteAsync(b, bDashboard);
         // And the database tooling of the Management API: a project API key, a saved query, an index, a backup and a recommendation.
         var aTooling = await SeedToolingAsync(a, aDashboard, aSecret);
@@ -79,26 +85,28 @@ public sealed class TenantIsolationTests
 
         var routes = ClientRoutes(api.Server);
         // Scalar's page and its embedded assets are static: no tenant data at all.
-        foreach (var (method, pattern) in routes.Where(route => !Addresses(route.Pattern) && !route.Pattern.StartsWith("/scalar", StringComparison.Ordinal)))
+        foreach (var (method, pattern, _) in routes.Where(route => !Addresses(route.Pattern) && !route.Pattern.StartsWith("/scalar", StringComparison.Ordinal)))
         {
             await Assert.That(CallerOnlyRoutes).Contains($"{method} {pattern}");
         }
 
         var addressing = routes.Where(route => Addresses(route.Pattern)).ToList();
-        var management = addressing.Where(route => IsManagement(route.Pattern)).ToList();
+        var management = addressing.Where(route => route.ProjectManagement || IsManagement(route.Pattern)).ToList();
+        var foreignDatabases = management.Where(route => route.Pattern.Contains("{database}", StringComparison.Ordinal)).ToList();
+        await Assert.That(foreignDatabases).IsNotEmpty();
         var withProject = addressing.Where(route => route.Pattern.Contains("{project}", StringComparison.Ordinal)).ToList();
         List<(string Request, HttpStatusCode Status)> answers =
         [
             // A's credentials (its API key, or its member on the dashboard) with B's organization and B's project.
-            .. await SendAsync(addressing, aDashboard, a.Data, aSubscriptions, b.OrganizationId, b.ProjectId, bSecret, b.User, bInvitation, bTooling),
+            .. await SendAsync(addressing, aDashboard, a.Data, aProject, b.OrganizationId, b.ProjectId, bSecret, b.User, bInvitation, bTooling),
             // A's organization, where A is an owner, with B's project.
             .. await SendAsync(management.Where(route => route.Pattern.Contains("{project}", StringComparison.Ordinal)),
-                aDashboard, a.Data, aSubscriptions, a.OrganizationId, b.ProjectId, bSecret, b.User, bInvitation, bTooling),
+                aDashboard, a.Data, aProject, a.OrganizationId, b.ProjectId, bSecret, b.User, bInvitation, bTooling),
             // B's organization with A's project: A's member on B's organization, and B's key (whose organization is B) on A's project.
-            .. await SendAsync(withProject, aDashboard, b.Data, bSubscriptions, b.OrganizationId, a.ProjectId, aSecret, b.User, bInvitation, aTooling),
+            .. await SendAsync(withProject, aDashboard, b.Data, bProject, b.OrganizationId, a.ProjectId, aSecret, b.User, bInvitation, aTooling),
             // A's organization and project with B's database.
-            .. await SendAsync(management.Where(route => route.Pattern.Contains("{database}", StringComparison.Ordinal)),
-                aDashboard, a.Data, aSubscriptions, a.OrganizationId, a.ProjectId, bSecret, b.User, bInvitation, bTooling),
+            .. await SendAsync(foreignDatabases,
+                aDashboard, a.Data, aProject, a.OrganizationId, a.ProjectId, bForeign, b.User, bInvitation, bTooling, databaseName: "foreign"),
         ];
 
         // Routes that address no tenant show A only its own organization.
@@ -244,19 +252,19 @@ public sealed class TenantIsolationTests
         pattern.StartsWith("/v1/management/", StringComparison.Ordinal) ||
         pattern.StartsWith("/management/", StringComparison.Ordinal);
 
-    // Sends each route with its accepted credentials, so the response checks tenancy after authentication.
+    // Project management takes a project JWT, hidden identity routes a dashboard token, and legacy data an API key.
     private static async Task<List<(string Request, HttpStatusCode Status)>> SendAsync(
-        IEnumerable<(string Method, string Pattern)> routes, HttpClient dashboard, HttpClient data, HttpClient subscriptions,
-        string organization, string project, string database, string user, string invitation, Tooling tooling)
+        IEnumerable<(string Method, string Pattern, bool ProjectManagement)> routes, HttpClient dashboard, HttpClient data, HttpClient projectToken,
+        string organization, string project, string database, string user, string invitation, Tooling tooling, string databaseName = "secret")
     {
         var sent = new List<(string Request, HttpStatusCode Status)>();
-        foreach (var (method, pattern) in routes)
+        foreach (var (method, pattern, projectManagement) in routes)
         {
             var path = pattern
                 .Replace("{organization}", organization, StringComparison.Ordinal)
                 .Replace("{project}", project, StringComparison.Ordinal)
-                // Management routes name a database by id, data routes by name.
-                .Replace("{database}", IsManagement(pattern) ? database : "secret", StringComparison.Ordinal)
+                // Legacy management routes name a database by id; canonical management and data use its name.
+                .Replace("{database}", IsManagement(pattern) ? database : databaseName, StringComparison.Ordinal)
                 .Replace("{collection}", "people", StringComparison.Ordinal)
                 .Replace("{id}", DocumentId, StringComparison.Ordinal)
                 .Replace("{user}", user, StringComparison.Ordinal)
@@ -274,6 +282,7 @@ public sealed class TenantIsolationTests
                 // Valid for every route, so only tenancy can refuse it.
                 request.Content = JsonContent.Create(new
                 {
+                    organization,
                     name = "intruder",
                     plan = "enterprise",
                     email = "intruder@example.com",
@@ -289,7 +298,7 @@ public sealed class TenantIsolationTests
                 });
             }
 
-            var client = IsManagement(pattern) ? dashboard : pattern.EndsWith("/subscribe", StringComparison.Ordinal) ? subscriptions : data;
+            var client = projectManagement || pattern.EndsWith("/subscribe", StringComparison.Ordinal) ? projectToken : IsManagement(pattern) ? dashboard : data;
             using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead,
                 TUnit.Core.TestContext.Current!.Execution.CancellationToken);
             sent.Add(($"{method} {path}", response.StatusCode));
@@ -369,13 +378,13 @@ public sealed class TenantIsolationTests
     }
 
     // Every method and route pattern the client listener serves.
-    private static List<(string Method, string Pattern)> ClientRoutes(TerraBaseTestServer server) =>
+    private static List<(string Method, string Pattern, bool ProjectManagement)> ClientRoutes(TerraBaseTestServer server) =>
     [
         .. server.Services.GetRequiredService<EndpointDataSource>().Endpoints
             .OfType<RouteEndpoint>()
             .Where(endpoint => endpoint.Metadata.GetMetadata<ListenerMetadata>()?.Listeners.Contains(TerraBaseListener.Client) == true)
             .SelectMany(endpoint => (endpoint.Metadata.GetMetadata<HttpMethodMetadata>()?.HttpMethods ?? [])
-                .Select(method => (method, endpoint.RoutePattern.RawText!)))
+                .Select(method => (method, endpoint.RoutePattern.RawText!, endpoint.Metadata.GetMetadata<ProjectManagementRoute>() is not null)))
             .Order(),
     ];
 

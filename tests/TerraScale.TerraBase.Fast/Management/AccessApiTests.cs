@@ -11,7 +11,7 @@ public sealed class AccessApiTests
     private const string Accept = "/v1/management/invitations/accept";
     private static readonly Faker Faker = new();
 
-    private static readonly string[] DocumentedPaths =
+    private static readonly string[] LegacyPaths =
     [
         $"{Organizations}/{{organization}}/members",
         $"{Organizations}/{{organization}}/members/{{user}}/role",
@@ -471,7 +471,7 @@ public sealed class AccessApiTests
     }
 
     [Test]
-    public async Task The_access_endpoints_are_documented_in_openapi()
+    public async Task Legacy_access_endpoints_are_hidden_from_public_openapi()
     {
         await using var api = await AccessApi.StartAsync();
 
@@ -479,10 +479,10 @@ public sealed class AccessApiTests
         using var response = await client.GetAsync(Uri("/openapi/v1.json"));
         using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
         var paths = document.RootElement.GetProperty("paths");
-        var missing = DocumentedPaths.Where(path => !paths.TryGetProperty(path, out _)).ToList();
+        var exposed = LegacyPaths.Where(path => paths.TryGetProperty(path, out _)).ToList();
 
         await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(missing).IsEmpty();
+        await Assert.That(exposed).IsEmpty();
     }
 
     private static Uri Uri(string path) => new(path, UriKind.Relative);

@@ -19,6 +19,7 @@ public sealed class SubscriptionLifetimeTests
         var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
         await using var api = await ManagementApi.StartAsync(time: clock);
         var database = await api.CreateManagedDatabaseAsync(new Faker().Random.AlphaNumeric(8).ToLowerInvariant().Insert(0, "db"));
+        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         using var data = await api.CreateClientAsync(database.Organization, ApiKeyScopes.DocumentsWrite);
         await ManagementApi.CreateCollectionAsync(data, database, "items");
         clock.SetUtcNow(DateTimeOffset.UtcNow);
@@ -81,6 +82,7 @@ public sealed class SubscriptionLifetimeTests
     {
         await using var api = await ManagementApi.StartAsync(settings => settings["memory-budget"] = "67108864");
         var database = await api.CreateManagedDatabaseAsync();
+        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         using var data = await api.CreateClientAsync(database.Organization, ApiKeyScopes.DocumentsWrite);
         await ManagementApi.CreateCollectionAsync(data, database, "items");
         using var client = api.WithToken(api.Issuer.Mint(api.User, token =>

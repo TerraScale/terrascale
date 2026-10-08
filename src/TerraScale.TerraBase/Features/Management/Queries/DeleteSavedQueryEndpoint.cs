@@ -1,5 +1,5 @@
 using TerraBase.Errors;
-using TerraBase.Features.UserAuth;
+using TerraBase.Features.ApiKeys;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
 
@@ -11,15 +11,15 @@ public sealed class DeleteSavedQueryEndpoint(IManagementService management, IQue
     /// <inheritdoc />
     public override void Configure()
     {
-        Delete(ManagementRoute.SavedQuery);
+        Delete(ProjectApiRoute.SavedQuery);
         Name("deleteSavedQuery");
         Summary("Deletes a saved query");
-        Description(ManagementRoute.IdentityDescription);
-        Tags(ManagementRoute.Tag);
+        Description(ProjectApiRoute.IdentityDescription);
+        Tags("Queries");
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
         Produces<ErrorBody>(StatusCodes.Status403Forbidden);
-        RequireAuthorization(UserAuthExtensions.PolicyName);
-        Metadata(ListenerMetadata.Management, new ProducesResponseTypeMetadata(StatusCodes.Status204NoContent, typeof(void)));
+        RequireAuthorization(ApiKeyScopes.DatabasesWrite);
+        Metadata(new ProjectManagementRoute(), ListenerMetadata.Management, new ProducesResponseTypeMetadata(StatusCodes.Status204NoContent, typeof(void)));
     }
 
     /// <inheritdoc />

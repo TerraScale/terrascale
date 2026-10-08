@@ -26,6 +26,7 @@ public sealed class CatalogSubscriptionTests
         var faker = new Faker();
         var organization = await primary.CreateOrganizationAsync(faker.Company.CompanyName());
         var project = await primary.CreateProjectAsync(organization, "main");
+        await primary.VerifyProjectBindingAsync(organization, project);
         var database = new TenantContext(organization, PlanTier.Hobby, project, faker.Random.Guid().ToString("D"));
         // The region's catalog primary records a database served elsewhere, as WAN discovery does: no local file.
         await Assert.That(await primary.Server.Services.GetRequiredService<ITenantDirectory>()

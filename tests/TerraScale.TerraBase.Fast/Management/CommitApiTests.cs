@@ -500,13 +500,14 @@ public sealed class CommitApiTests
     [Test]
     public async Task Branches_need_a_source_that_exists_where_the_operation_runs()
     {
-        await using var api = await ManagementApi.StartAsync();
+        await using var api = await ManagementApi.StartAsync(managementCredential: true);
+        using var service = api.Service(api.User);
         var organization = await api.CreateOrganizationAsync(OrganizationName());
         var project = await api.CreateProjectAsync(organization, ProjectName());
         var database = await api.CreateDatabaseAsync(organization, project, "orders");
         var (newOrganization, newProject) = (NewId(), NewId());
 
-        var inNewOrganization = await CommitAsync(api.Client,
+        var inNewOrganization = await CommitAsync(service,
             new { op = "create_organization", id = newOrganization, name = OrganizationName() },
             new { op = "create_project", organization = newOrganization, id = newProject, name = ProjectName() },
             new { op = "branch_database", organization = newOrganization, project = newProject, database, name = "copy" });
@@ -599,8 +600,8 @@ public sealed class CommitApiTests
                 await transaction.CommitAsync(CancellationToken.None);
             }
 
-            await using var upgraded = await ManagementApi.StartAsync(settings => settings["data-directory"] = directory);
-            using var stranger = upgraded.As(User());
+            await using var upgraded = await ManagementApi.StartAsync(settings => settings["data-directory"] = directory, managementCredential: true);
+            using var stranger = upgraded.Service(User());
             // Another user's organization cannot take the existing project's id.
             var created = await CommitAsync(stranger, new { op = "create_organization", name = OrganizationName() });
             var strangerOrganization = Id(created.Value(0));

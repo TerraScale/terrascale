@@ -38,6 +38,11 @@ internal sealed class CatalogPrimaryClient(TerraBaseOptions options, PeerCredent
                 .ConfigureAwait(false);
             return true;
         }
+        catch (RpcException error) when (error.StatusCode == StatusCode.Cancelled && cancellationToken.IsCancellationRequested)
+        {
+            // The host recognizes caller cancellation; the pending batch remains available for the shutdown drain.
+            throw new OperationCanceledException("catalog usage send canceled", error, cancellationToken);
+        }
         catch (RpcException error) when (error.StatusCode == StatusCode.InvalidArgument)
         {
             // The primary validates a whole batch before it adds any of it, so a retry would be refused the same way.

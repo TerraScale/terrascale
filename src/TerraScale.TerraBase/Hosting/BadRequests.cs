@@ -163,6 +163,7 @@ public static partial class BadRequests
     internal static Task WriteAsync(HttpContext context, int status, string code, string? message, int? op)
     {
         context.Response.StatusCode = status;
+        context.Response.Headers.CacheControl = "no-store";
         context.Response.ContentType = "application/json";
         return JsonSerializer.SerializeAsync(
             context.Response.Body, new ErrorBody(new ErrorDetail(code, message, op)), TerraBaseJsonContext.Default.ErrorBody, context.RequestAborted);

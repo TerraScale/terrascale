@@ -1,5 +1,5 @@
 using TerraBase.Errors;
-using TerraBase.Features.UserAuth;
+using TerraBase.Features.ApiKeys;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
 using TerraScale.Endpoints;
@@ -12,15 +12,15 @@ public sealed class DropIndexEndpoint(IManagementService management, IIndexServi
     /// <inheritdoc />
     public override void Configure()
     {
-        Delete(ManagementRoute.Index);
+        Delete(ProjectApiRoute.Index);
         Name("dropIndex");
         Summary("Drops a secondary index");
-        Description(ManagementRoute.IdentityDescription);
-        Tags(ManagementRoute.Tag);
+        Description(ProjectApiRoute.IdentityDescription);
+        Tags("Indexes");
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
         Produces<ErrorBody>(StatusCodes.Status403Forbidden);
-        RequireAuthorization(UserAuthExtensions.PolicyName);
-        Metadata(ListenerMetadata.Management, new ProducesResponseTypeMetadata(StatusCodes.Status204NoContent, typeof(void)));
+        RequireAuthorization(ApiKeyScopes.DatabasesWrite);
+        Metadata(new ProjectManagementRoute(), ListenerMetadata.Management, new ProducesResponseTypeMetadata(StatusCodes.Status204NoContent, typeof(void)));
     }
 
     /// <inheritdoc />

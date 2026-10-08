@@ -1,5 +1,5 @@
 using TerraBase.Errors;
-using TerraBase.Features.UserAuth;
+using TerraBase.Features.ApiKeys;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
 
@@ -11,15 +11,15 @@ public sealed class GetSavedQueryEndpoint(IManagementService management, IQueryS
     /// <inheritdoc />
     public override void Configure()
     {
-        Get(ManagementRoute.SavedQuery);
+        Get(ProjectApiRoute.SavedQuery);
         Name("getSavedQuery");
         Summary("Reads a saved query");
-        Description(ManagementRoute.IdentityDescription);
-        Tags(ManagementRoute.Tag);
+        Description(ProjectApiRoute.IdentityDescription);
+        Tags("Queries");
         Produces<SavedQuery>();
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
-        RequireAuthorization(UserAuthExtensions.PolicyName);
-        Metadata(ListenerMetadata.Management);
+        RequireAuthorization(ApiKeyScopes.DatabasesRead);
+        Metadata(new ProjectManagementRoute(), ListenerMetadata.Management);
     }
 
     /// <inheritdoc />

@@ -16,11 +16,15 @@ and served on the client listener only; the loopback admin listener answers `404
 ## Document contents
 
 - Only operations served on the client listener: data plane (Documents v1, queries, transactions, shape reads),
-  Management and the health probes. Admin-only operations (`/admin/api-keys`, `/v1/node/pressure`) are left out.
-- Security schemes: `ApiKey` (`Authorization: Bearer <tb_ API key>`, with the operation's scope in the
-  requirement) and `TsAuth` (`Authorization: Bearer <ts-auth OIDC access token>`, naming `auth-issuer` when set).
-  Authenticated operations document `401`, and API-key operations `403 forbidden_scope`.
-- Every error response is the `ErrorBody` envelope (`{"error":{"code","message"}}`, see
+  Management and the health probes, with the paths and operation ids in [the route table](api.md). Administrative
+  operations and hidden legacy routes are left out. Scalar organizes tags under Management, Data and System.
+- One security scheme: `TsAuth` (`Authorization: Bearer <ts-auth project access token>`), naming `auth-issuer`
+  when set. As an HTTP bearer scheme, each `security` requirement is `{"TsAuth":[]}`. Required JWT scopes
+  appear in the operation description and the `x-required-scopes` array; every listed scope is required in
+  the token's `scope` claim. Each operation documents `401` and `403 forbidden_scope`. Existing
+  `tb_` keys and membership credentials remain supported through hidden compatibility paths only.
+- Operations have request and response examples; error descriptions list their machine codes. Every error
+  response is the `ErrorBody` envelope (`{"error":{"code","message"}}`, see
   [error handling](error-handling.md)), and every client operation documents the region pin and `421`
   ([region identity](region-identity.md)).
 - `info.version` is the build version; `servers` is the relative `/` (described with the node's region), so

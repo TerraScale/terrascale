@@ -61,7 +61,7 @@ never its value. Port `0` picks a free port.
 | `--client-port` / `TERRABASE_CLIENT_PORT` | unset (listener off) | Client-facing HTTPS listener, 0 to 65535; also serves the [API reference](#api-reference). Requires `client-certificate` and `client-private-key` |
 | `--client-certificate` / `TERRABASE_CLIENT_CERTIFICATE` | unset | PEM certificate file of the client listener. Requires `client-port` and `client-private-key` |
 | `--client-private-key` / `TERRABASE_CLIENT_PRIVATE_KEY` | unset | PEM private key file of `client-certificate`. Requires `client-port` and `client-certificate` |
-| `--auth-issuer` / `TERRABASE_AUTH_ISSUER` | unset (Management API answers `401`) | Issuer (`iss`) of the ts-auth access tokens that authenticate Management API users, e.g. `https://auth.terrascale.tech/terrascale`. Absolute `https` URL without whitespace, user information, query or fragment; compared with `iss` exactly. Requires `auth-audience` and `client-port`. See `docs/management-api.md` |
+| `--auth-issuer` / `TERRABASE_AUTH_ISSUER` | unset (authenticated APIs answer `401`) | Trusted platform issuer (`iss`) of ts-auth project access tokens for all public APIs and legacy Management user tokens, e.g. `https://auth.terrascale.tech/terrascale`. Absolute `https` URL without whitespace, user information, query or fragment; compared with `iss` exactly. Requires `auth-audience` and `client-port`. See `docs/management-api.md` |
 | `--auth-audience` / `TERRABASE_AUTH_AUDIENCE` | unset | Comma-separated accepted audiences (`aud`); a token must name at least one. Each is non-empty, without control characters. Requires `auth-issuer` |
 | `--management-credential-file` / `TERRABASE_MANAGEMENT_CREDENTIAL_FILE` | unset (credential off) | File holding the management service credential: at least 32 characters, surrounding whitespace ignored, only its SHA-256 is kept. Accepted on the loopback admin listener only, with `X-TerraBase-User-Id` naming the acting user, for bootstrap before ts-auth exists. See `docs/management-api.md` |
 | `--management-legacy-owner` / `TERRABASE_MANAGEMENT_LEGACY_OWNER` | unset | ts-auth user id that becomes the owner of organizations from a version 1 catalog when it is migrated. Non-blank, at most 256 characters, no control characters. See `docs/management-api.md` |
@@ -105,6 +105,12 @@ Replication setup, certificates, limits and metrics: [`docs/replication.md`](doc
 
 ## API reference
 
+Public operations follow the project hierarchy in [the route table](docs/api.md). They accept ts-auth project
+access JWTs (`project_id` and scoped permissions), validated against the configured platform issuer's JWKS.
+Customer application tokens from project tenant issuers do not authenticate TerraScale APIs. Existing
+organization routes and `tb_` document keys remain hidden compatibility paths until COS confirms migration;
+this release preserves existing catalog ids, data files and replication identities.
+
 The client listener serves the public API reference without credentials:
 
 - `GET /` redirects (`302`, relative `Location: scalar/`) to the Scalar reference at `/scalar/`.
@@ -126,9 +132,9 @@ and Atlas compatibility.
 
 ## Node pressure
 
-`GET /v1/node/pressure` and pressure metrics are available only on the loopback
-administrative listener. Measurements are cached; I/O-pool and replication
-signals stay unknown, keeping autoscaling gated until #13 and #11 are integrated.
+`GET /admin/node/pressure` and pressure metrics are available only on the loopback
+administrative listener. `/v1/node/pressure` remains a hidden compatibility alias. Measurements are cached;
+I/O-pool and replication signals stay unknown, keeping autoscaling gated until #13 and #11 are integrated.
 See [signal definitions and follow-ups](docs/node-pressure.md).
 
 ## Production replication check

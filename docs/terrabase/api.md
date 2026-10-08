@@ -1,16 +1,17 @@
 # HTTP API route table (TS-589)
 
-This file is the single source of truth for TerraBase's HTTP routes. A route that is not listed here
-must not exist. Change this table in the same pull request as the route.
+This file is the single source of truth for TerraBase's public HTTP routes. Change this table in the same
+pull request as a public route. Hidden legacy routes remain available during the SDK migration described below.
 
-Status, 2026-10-06: this is the target. It follows the service ownership decided by the user on 2026-10-06
+Status, 2026-10-07: the public route table is implemented with hidden compatibility aliases. It follows the
+service ownership decided by the user on 2026-10-06
 (umbrella `AGENTS.md`, "Service ownership"; TS-597):
 
 - **ts-auth owns identity:** users, organizations, projects, memberships, roles, invitations, SSO and API keys.
   An API key is a ts-auth client credential that the SDKs exchange for a short-lived JWT (TS-598).
 - **TerraBase owns data:** databases, collections, documents, transactions, queries, backups, indexes, schema
-  and usage metering. It stores no users, organizations, members, invitations, plans or API keys. Each
-  database belongs to a ts-auth project.
+  and usage metering. Each public database belongs to a ts-auth project. Existing organization-backed catalog
+  records, memberships and keys remain for hidden legacy callers; their data and storage layout are preserved.
 
 ## Conventions
 
@@ -41,7 +42,8 @@ Status, 2026-10-06: this is the target. It follows the service ownership decided
    TerraBase validates each token offline:
    - `typ` is `at+jwt` or `application/at+jwt`, and the token is ES256-signed by a `kid` from the issuer's JWKS;
    - `iss` is exactly the configured `auth-issuer` (`https://gru.auth.terrascale.tech/terrascale` in gru-1);
-     project tenants' issuers are never trusted;
+     project tenants' issuers are never trusted: those customer end-user tokens authenticate customer
+     applications, while a **project access token** for TerraBase uses the trusted platform issuer and carries `project_id`;
    - `aud` includes TerraBase's audience, and `exp` and `nbf` hold with 30 seconds of skew;
    - `project_id` (a lowercase UUID) equals the route's `{project}`. A token for another project, or one without
      `project_id` (organization, sign-in and service tokens), answers `404`, the same answer as a database that
@@ -50,8 +52,13 @@ Status, 2026-10-06: this is the target. It follows the service ownership decided
      `{database}` answers `404`, the project's database list holds only it, and creating another answers `404`;
    - `scope` (space-separated) holds the scope the operation needs, or the route answers `403 forbidden_scope`.
 
-   `org_id` is not used. TerraBase stores no organizations, members or keys. ts-auth maps roles to scopes;
-   TerraBase checks scopes, never roles. `sub` (a user id, or an API key id `tsk_…`) is recorded as the actor.
+   `org_id` is not used by the public API. ts-auth maps roles to scopes; TerraBase checks scopes, never roles
+   on public routes. `sub` (a user id, or an API key id `tsk_…`) is recorded as the actor. Existing legacy projects
+   resolve to their original records only after an explicit binding is verified against ts-auth. Unverified
+   mappings answer `404` for project JWTs, including database creation. An authorized database create enrolls
+   a fresh ts-auth project with a verified binding in an opaque storage namespace without user membership.
+   Each binding is scoped to the exact trusted issuer and storage namespace
+   ([COS decision, 2026-10-07](decisions/0011-project-catalog-trust.md)).
 
    | Scope | Grants |
    | --- | --- |
@@ -61,11 +68,12 @@ Status, 2026-10-06: this is the target. It follows the service ownership decided
    | `documents:write` | Create and drop collections; write documents; transactions |
    | `shapes:read` | Shape reads (Live) |
 
-   There are no `tb_` API keys, no `/admin/api-keys`, no management service credential and no
-   `X-TerraBase-User-Id`.
+   The public contract advertises only project JWTs. Hidden compatibility paths still accept existing `tb_`
+   document keys and membership tokens. `/admin/api-keys`, the loopback management service credential and
+   `X-TerraBase-User-Id` remain available only for existing legacy workflows; they are absent from OpenAPI.
 4. **Listeners.** Every route in the Management, Data and System tables is served on the client listener (TLS).
-   The loopback admin listener serves only the probes, `/metrics` and `/admin/*`, which never appear in the
-   public OpenAPI document.
+   Canonical management routes are client-only. The loopback admin listener retains the probes, `/metrics`,
+   `/admin/*` and hidden legacy management bootstrap paths. Administrative operations never appear in public OpenAPI.
 5. **Groups.** Every public route has exactly one tag. Scalar shows the tags under three `x-tagGroups`:
    **Management**, **Data** and **System**. Group and tag names are the table headings below.
 6. **OpenAPI metadata.** Each operation has the `operationId` from the table, a one-line `summary`, a
@@ -92,11 +100,11 @@ The **Old route** column uses `MP` = `/v1/management/organizations/{organization
 
 ### Databases
 
-This is the only way to create a database.
+This is the public way to create a database. The old data-plane `PUT D` remains hidden for legacy callers.
 
 | Method | Route | operationId | Scope | Old route |
 | --- | --- | --- | --- | --- |
-| POST | `P/databases` | `createDatabase` | `databases:write` | `MP/databases`, and the data-plane `PUT D` (removed) |
+| POST | `P/databases` | `createDatabase` | `databases:write` | `MP/databases`, and hidden legacy data-plane `PUT D` |
 | GET | `P/databases` | `listDatabases` | `databases:read` | `MP/databases` |
 | GET | `D` | `getDatabase` | `databases:read` | `MD` |
 | PATCH | `D` | `updateDatabase` | `databases:write` | `MD` (replica regions, TS-643) |
@@ -175,6 +183,7 @@ routes (TS-581) go in this group and follow these conventions. Both routes take 
 | POST | `C/query` | `queryDocuments` | `documents:read` | unchanged |
 | POST | `D/sql` | `runSql` | `databases:read` | `MD/sql` |
 | POST | `D/sql/check` | `checkSql` | `databases:read` | `MD/sql/check` |
+| GET | `D/query-shapes` | `listQueryShapes` | `databases:read` | `/management/organizations/{organization}/projects/{project}/databases/{database-id}/query-shapes` |
 | POST | `P/saved-queries` | `createSavedQuery` | `databases:write` | `MP/saved-queries` |
 | GET | `P/saved-queries` | `listSavedQueries` | `databases:read` | `MP/saved-queries` |
 | GET | `P/saved-queries/{query}` | `getSavedQuery` | `databases:read` | `MP/saved-queries/{query}` |
@@ -226,10 +235,11 @@ These are not operations in the document ([API reference](api-reference.md)). Un
 | GET | `/admin/node/pressure` | `/v1/node/pressure` | Node pressure ([node pressure](node-pressure.md)) |
 | GET | `/metrics` | unchanged | Prometheus scrape |
 
-## Deleted
+## Hidden legacy identity and dashboard routes
 
-These routes leave TerraBase with no replacement here. Their data lives with the new owner, and TS-602 wipes
-production and re-bootstraps it, so there is no migration code.
+These routes have no public TerraBase replacement. Their ownership moves to the services below. During the
+SDK migration they remain available with their existing authentication and response behavior, but are hidden
+from OpenAPI. This release neither resets production nor changes existing storage identities or files.
 
 | Old routes | New owner |
 | --- | --- |
@@ -246,12 +256,25 @@ production and re-bootstraps it, so there is no migration code.
 
 ## Old routes
 
-There are no aliases. Every consumer changes its credential in the same change: `tb_` keys and
-organization-membership tokens stop working, and TerraBase needs the project claim. So an old path would never
-arrive with a credential that the new server accepts. Production is wiped and re-bootstrapped (TS-602) after
-ts-auth, TerraBase and the dashboard ship.
+Old management database, backup, index, schema, usage, SQL and saved-query paths are hidden aliases. They
+still address databases by catalog id and require their existing organization membership or loopback service
+credential. Canonical routes address database names and require project JWT scopes. Existing `tb_` keys still
+reach document routes and the hidden data-plane database `PUT` under their existing scope and tenant rules.
+The old `/v1/node/pressure` path aliases `/admin/node/pressure` on the administrative listener.
+
+Keep these compatibility paths until COS confirms that the SDKs and production callers have migrated. No
+production wipe, re-foundation or storage reset is part of TS-589. Existing documents, versions, snapshots and
+replication identities retain their original catalog ids and storage files.
 
 ## Migrating a client
+
+For existing legacy data, verify its project binding before switching credentials. The hidden client-only
+`POST /v1/management/organizations/{legacyOrganization}/projects/{project}/binding` takes
+`{"organization":"<ts-auth organization id>"}` and the user's ts-auth **sign-in** token. The same user must own
+the legacy storage organization and be an effective admin of that project in ts-auth; TerraBase checks the
+latter through ts-auth's live management API. Project tokens, `tb_` keys and the loopback credential cannot
+perform this verification. Unverified legacy mappings are never automatically trusted, while non-project-JWT
+legacy callers keep working. See [the binding workflow](management-api.md#verified-project-bindings).
 
 1. **Credential.** Obtain a ts-auth project token with the scopes the calls need: an API key through client
    credentials (`grant_type=client_credentials&project=…`), or a signed-in user's token through token exchange
@@ -261,25 +284,22 @@ ts-auth, TerraBase and the dashboard ship.
 3. **Database names.** Pass the database **name** where Management took the id.
 4. **Moved routes.** Use `D/schema` and `D/schema/{collection}` for the old Management collection list and
    schema. SQL and saved queries keep their paths without the Management prefix.
-5. **Create databases** with `POST P/databases`. The data-plane `PUT` is gone.
+5. **Create databases** with `POST P/databases`. The data-plane `PUT` is a hidden legacy path.
 6. **Data paths** do not change. Only the credential does.
 
 ## Code layout
 
-Folders own the groups. Each group folder has one small static class that sets the tag and the route prefix,
-and its endpoints build their routes from that class.
+The implementation retains the feature slices required by `AGENTS.md`:
 
 ```text
-src/TerraBase/Api/Management/{Databases,Backups,Indexes,Schema,Usage}
-src/TerraBase/Api/Data/{Collections,Documents,Queries,Transactions,Live}
-src/TerraBase/Api/System/{Health,ApiReference}
-src/TerraBase/Api/Admin                  administrative-listener endpoints
-src/TerraBase/Api/Auth                   ts-auth JWT validation: issuers, JWKS, project and scope checks
-src/TerraBase/Engine                     storage interfaces; Engine/Sqlite implements them
-src/TerraBase/Engine/{Catalog,Replication,Memory,ObjectTier,Pressure}
+src/TerraBase/Features/Management/{Backups,Indexes,Schema,Usage,Queries}
+src/TerraBase/Features/Documents
+src/TerraBase/Features/{Health,ApiReference,UserAuth,ApiKeys,Pressure}
+src/TerraBase/Engine
+src/TerraBase/Engine/Sqlite
 ```
 
-- Namespaces follow folders (`TerraBase.Api.Management.Databases`).
-- Code that a whole group shares, such as services, route helpers and models, sits in the group root
-  (`Api/Management`, `Api/Data`).
-- Storage keeps the `Engine/` interfaces and the `Engine/<Implementation>/` layout from `AGENTS.md`.
+`Management/ProjectApiRoute.cs` declares the public management hierarchy. `Management/LegacyRoutes.cs`
+rewrites compatibility paths before endpoint routing and retains their legacy identity for catalog forwarding.
+The public OpenAPI operation tags expose the Management, Data and System groups independently of folders.
+Storage access continues through the `Engine/` interfaces and the existing SQLite implementation.

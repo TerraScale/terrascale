@@ -158,6 +158,7 @@ public sealed class SubscriptionResourceTests
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         deadline.CancelAfter(TimeSpan.FromSeconds(30));
         var database = await api.CreateManagedDatabaseAsync("db" + new Faker().Random.AlphaNumeric(8).ToLowerInvariant());
+        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         using var data = await api.CreateClientAsync(database.Organization, ApiKeyScopes.DocumentsWrite);
         await ManagementApi.CreateCollectionAsync(data, database, "items");
         using var shapes = await api.CreateClientAsync(database.Organization, ApiKeyScopes.ShapesRead);
@@ -283,10 +284,11 @@ public sealed class SubscriptionResourceTests
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         deadline.CancelAfter(TimeSpan.FromSeconds(30));
         var database = await api.CreateManagedDatabaseAsync("db" + new Faker().Random.AlphaNumeric(8).ToLowerInvariant());
+        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         using var data = await api.CreateClientAsync(database.Organization, ApiKeyScopes.DocumentsWrite);
         await ManagementApi.CreateCollectionAsync(data, database, "items");
         var context = await api.Server.Services.GetRequiredService<ITenantDirectory>()
-            .FindProjectDatabaseAsync(database.Project, database.Name, deadline.Token);
+            .FindDatabaseAsync(database.Organization, database.Project, database.Name, deadline.Token);
         var engine = api.Server.Services.GetRequiredService<SqliteStorageEngine>();
         var store = (SqliteDatabaseStore)(await engine.OpenDatabaseAsync(context!, deadline.Token))!;
         using var subscriber = api.WithToken(api.Issuer.Mint(api.User, token =>
@@ -337,10 +339,11 @@ public sealed class SubscriptionResourceTests
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         deadline.CancelAfter(TimeSpan.FromSeconds(30));
         var database = await api.CreateManagedDatabaseAsync("db" + new Faker().Random.AlphaNumeric(8).ToLowerInvariant());
+        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         using var data = await api.CreateClientAsync(database.Organization, ApiKeyScopes.DocumentsWrite);
         await ManagementApi.CreateCollectionAsync(data, database, "items");
         var context = await api.Server.Services.GetRequiredService<ITenantDirectory>()
-            .FindProjectDatabaseAsync(database.Project, database.Name, deadline.Token);
+            .FindDatabaseAsync(database.Organization, database.Project, database.Name, deadline.Token);
         var engine = api.Server.Services.GetRequiredService<SqliteStorageEngine>();
         var store = (SqliteDatabaseStore)(await engine.OpenDatabaseAsync(context!, deadline.Token))!;
 

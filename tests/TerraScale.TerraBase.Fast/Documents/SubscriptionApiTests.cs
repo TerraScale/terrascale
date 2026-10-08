@@ -20,6 +20,7 @@ public sealed class SubscriptionApiTests
         await using var api = await ManagementApi.StartAsync();
         using var deadline = Deadline();
         var database = await api.CreateManagedDatabaseAsync();
+        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         using var data = await api.CreateClientAsync(database.Organization, "documents:write");
         await ManagementApi.CreateCollectionAsync(data, database, Collection);
         var first = NewId();
@@ -67,6 +68,7 @@ public sealed class SubscriptionApiTests
         await using var api = await ManagementApi.StartAsync();
         using var deadline = Deadline();
         var database = await api.CreateManagedDatabaseAsync();
+        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         using var data = await api.CreateClientAsync(database.Organization, "documents:write");
         await ManagementApi.CreateCollectionAsync(data, database, Collection);
         var id = NewId();
@@ -101,6 +103,7 @@ public sealed class SubscriptionApiTests
         await using var api = await ManagementApi.StartAsync();
         using var deadline = Deadline();
         var database = await api.CreateManagedDatabaseAsync();
+        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         using var data = await api.CreateClientAsync(database.Organization, "documents:write");
         await ManagementApi.CreateCollectionAsync(data, database, Collection);
         var selected = NewId();
@@ -126,6 +129,7 @@ public sealed class SubscriptionApiTests
         await using var api = await ManagementApi.StartAsync();
         using var deadline = Deadline();
         var database = await api.CreateManagedDatabaseAsync();
+        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         using var data = await api.CreateClientAsync(database.Organization, "documents:write");
         await ManagementApi.CreateCollectionAsync(data, database, Collection);
         var id = NewId();
@@ -166,6 +170,7 @@ public sealed class SubscriptionApiTests
         await using var api = await ManagementApi.StartAsync();
         using var deadline = Deadline();
         var database = await api.CreateManagedDatabaseAsync();
+        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         using var data = await api.CreateClientAsync(database.Organization, "documents:write");
         await ManagementApi.CreateCollectionAsync(data, database, Collection);
         var ids = Enumerable.Range(0, 2001).Select(_ => NewId()).Order(StringComparer.Ordinal).ToArray();
@@ -227,6 +232,7 @@ public sealed class SubscriptionApiTests
         await using var api = await ManagementApi.StartAsync();
         using var deadline = Deadline();
         var database = await api.CreateManagedDatabaseAsync();
+        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         string?[] credentials =
         [
             null,
@@ -249,6 +255,7 @@ public sealed class SubscriptionApiTests
         await using var api = await ManagementApi.StartAsync();
         using var deadline = Deadline();
         var database = await api.CreateManagedDatabaseAsync();
+        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         var other = await api.CreateManagedDatabaseAsync("other");
         Action<SecurityTokenDescriptor>[] edits =
         [
@@ -274,6 +281,7 @@ public sealed class SubscriptionApiTests
         await using var api = await ManagementApi.StartAsync();
         using var deadline = Deadline();
         var database = await api.CreateManagedDatabaseAsync();
+        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         string?[] scopes = [null, "documents:read", "shapes:read-extra"];
         foreach (var scope in scopes)
         {
@@ -292,7 +300,7 @@ public sealed class SubscriptionApiTests
         }
 
         using var malformed = api.WithToken(Token(api, database, token => token.Claims["scope"] = MalformedScope));
-        await AssertJsonErrorAsync(SubscribeAsync(malformed, Route(database), deadline.Token), HttpStatusCode.Forbidden, "forbidden_scope", deadline.Token);
+        await AssertJsonErrorAsync(SubscribeAsync(malformed, Route(database), deadline.Token), HttpStatusCode.Unauthorized, "invalid_key", deadline.Token);
     }
 
     [Test]
@@ -301,6 +309,7 @@ public sealed class SubscriptionApiTests
         await using var api = await ManagementApi.StartAsync();
         using var deadline = Deadline();
         var database = await api.CreateManagedDatabaseAsync();
+        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         using var client = api.WithToken(Token(api, database));
         string[] queries = ["?offset=0", "?offset=invalid", "?where=not-json", "?where=%7B%7D", "?offset=-1&offset=0"];
         foreach (var query in queries)
@@ -317,6 +326,7 @@ public sealed class SubscriptionApiTests
         await using var api = await ManagementApi.StartAsync();
         using var deadline = Deadline();
         var database = await api.CreateManagedDatabaseAsync();
+        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         using var data = await api.CreateClientAsync(database.Organization, "documents:write");
         await ManagementApi.CreateCollectionAsync(data, database, Collection);
         await PutAsync(data, database, NewId(), "open", deadline.Token);
@@ -347,6 +357,7 @@ public sealed class SubscriptionApiTests
         await using var api = await ManagementApi.StartAsync();
         using var deadline = Deadline();
         var database = await api.CreateManagedDatabaseAsync();
+        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         using var request = new HttpRequestMessage(HttpMethod.Get, ManagementApi.Uri(Route(database)));
         request.Headers.Authorization = new("Bearer", Token(api, database));
         using var response = await api.Server.Client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, deadline.Token);

@@ -23,7 +23,7 @@ internal sealed class UserAuthenticationHandler(
     TerraBaseOptions terraBase,
     IIssuerKeys issuerKeys) : AuthenticationHandler<AuthenticationSchemeOptions>(options, logger, encoder)
 {
-    public const string SchemeName = "TsAuth";
+    public const string SchemeName = UserAuthExtensions.TokenScheme;
 
     /// <summary>Tolerance for clock differences with ts-auth on <c>exp</c> and <c>nbf</c>.</summary>
     public static readonly TimeSpan ClockSkew = TimeSpan.FromSeconds(30);
@@ -91,6 +91,46 @@ internal sealed class UserAuthenticationHandler(
         }
 
         List<Claim> claims = [new(ClaimTypes.NameIdentifier, user)];
+        foreach (var name in new[] { "project_id", "database", "scope" })
+        {
+            if (jwt.TryGetPayloadValue<object>(name, out var claim) && claim is not string)
+            {
+                return AuthenticateResult.Fail("project access claims must be strings");
+            }
+        }
+
+        if (jwt.TryGetPayloadValue<string>("project_id", out var project))
+        {
+            if (!Guid.TryParseExact(project, "D", out var id) || id.ToString("D") != project
+                || jwt.Alg != SecurityAlgorithms.EcdsaSha256 || string.IsNullOrEmpty(jwt.Kid))
+            {
+                return AuthenticateResult.Fail("invalid project access token");
+            }
+
+            claims.Add(new Claim("project_id", project));
+        }
+
+        if (jwt.TryGetPayloadValue<string>("database", out var database))
+        {
+            if (!Engine.DatabaseName.TryParse(database, out _))
+            {
+                return AuthenticateResult.Fail("invalid database claim");
+            }
+
+            claims.Add(new Claim("database", database));
+        }
+
+        if (jwt.TryGetPayloadValue<string>("scope", out var scope))
+        {
+            if (scope.Length > 4096)
+            {
+                return AuthenticateResult.Fail("scope exceeds its size limit");
+            }
+
+            claims.AddRange(scope.Split(' ', StringSplitOptions.RemoveEmptyEntries).Distinct(StringComparer.Ordinal)
+                .Select(value => new Claim("scope", value)));
+        }
+
         if (jwt.TryGetPayloadValue<bool>("email_verified", out var verified) && verified
             && jwt.TryGetPayloadValue<string>(JwtRegisteredClaimNames.Email, out var email) && !string.IsNullOrEmpty(email))
         {
@@ -98,17 +138,8 @@ internal sealed class UserAuthenticationHandler(
         }
 
         var principal = new ClaimsPrincipal(new ClaimsIdentity(claims, SchemeName));
-        var hasDatabase = jwt.TryGetPayloadValue<object>("database", out var database);
-        if (hasDatabase && (database is not string restriction || string.IsNullOrEmpty(restriction)))
-        {
-            return AuthenticateResult.Fail("the database restriction must be a non-empty string");
-        }
-
-        // IdentityModel's string reads coerce arrays/objects; grants must be actual JSON strings.
-        _ = jwt.TryGetPayloadValue<object>("project_id", out var project);
-        _ = jwt.TryGetPayloadValue<object>("scope", out var scope);
         Context.Features.Set(new ProjectToken(
-            project as string, database as string, scope as string,
+            project, database, scope,
             new DateTimeOffset(jwt.ValidTo, TimeSpan.Zero)));
         return AuthenticateResult.Success(new AuthenticationTicket(principal, SchemeName));
     }

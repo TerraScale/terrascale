@@ -1,5 +1,5 @@
 using TerraBase.Errors;
-using TerraBase.Features.UserAuth;
+using TerraBase.Features.ApiKeys;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
 using TerraScale.Endpoints;
@@ -12,18 +12,18 @@ public sealed class RestoreBackupEndpoint(IManagementService management, IManage
     /// <inheritdoc />
     public override void Configure()
     {
-        Post(ManagementRoute.Database + "/backups/{backup}/restore");
+        Post(ProjectApiRoute.Database + "/backups/{backup}/restore");
         Name("restoreBackup");
         Summary("Restores a backup into a new database");
-        Description("Restore never overwrites: it creates a new database in the same project holding the backup's data, with branchedFrom set to the backed-up database. name follows the database name rules; without it the first free of <source>-restore, <source>-restore-2, … is used." + " " + ManagementRoute.IdentityDescription);
-        Tags(ManagementRoute.Tag);
+        Description("Restore never overwrites: it creates a new database in the same project holding the backup's data, with branchedFrom set to the backed-up database. name follows the database name rules; without it the first free of <source>-restore, <source>-restore-2, … is used." + " " + ProjectApiRoute.IdentityDescription);
+        Tags("Backups");
         Produces<ManagedDatabase>(StatusCodes.Status201Created);
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
         Produces<ErrorBody>(StatusCodes.Status409Conflict);
         Produces<ErrorBody>(StatusCodes.Status403Forbidden);
-        RequireAuthorization(UserAuthExtensions.PolicyName);
-        Metadata(ListenerMetadata.Management);
+        RequireAuthorization(ApiKeyScopes.DatabasesWrite);
+        Metadata(new ProjectManagementRoute(), ListenerMetadata.Management);
     }
 
     /// <inheritdoc />
@@ -51,7 +51,7 @@ public sealed class RestoreBackupEndpoint(IManagementService management, IManage
             TenantContext database => await backups.RestoreAsync(
                 ManagementRoute.UserId(HttpContext), organization, database, ManagementRoute.Value(HttpContext, "backup"), name, cancellationToken) switch
             {
-                ManagedDatabase restored => TypedResults.Created($"{ManagementRoute.Organizations}/{organization}/projects/{restored.ProjectId}/databases/{restored.Id}", restored),
+                ManagedDatabase restored => TypedResults.Created(ManagementRoute.CreatedDatabasePath(HttpContext, restored), restored),
                 NotFound error => ErrorResponse.From(error),
                 Conflict error => ErrorResponse.From(error),
                 Forbidden error => ErrorResponse.From(error),

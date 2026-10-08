@@ -11,9 +11,11 @@ if `database` is present, it must equal the database name. Missing or mismatched
 project grants return `404 unknown_database`. The token must grant `shapes:read`
 in its space-separated `scope`, or the route returns `403 forbidden_scope`.
 Stored API keys, cookies and query-string tokens do not authenticate subscriptions.
-JWT grants authorize access; catalog memberships do not. Existing catalog indexes
-resolve the current storage identity; no new project, membership or credential
-records are stored by this feature. Offline validation does not provide immediate
+JWT grants authorize access through a verified project/storage binding; catalog memberships alone
+do not. Unverified legacy mappings return `404 unknown_database`, following the
+[COS verified-binding decision of 2026-10-07](decisions/0011-project-catalog-trust.md).
+This route never enrolls a project or changes its binding. Each feed read rechecks the same verified
+storage namespace instead of following an unverified project index. Offline validation does not provide immediate
 revocation. Delivery stops at signed `exp`, without the authentication clock skew.
 Cleanup waits for an in-progress shared feed worker to stop before releasing its
 memory reservation; this can delay connection closure after expiration.

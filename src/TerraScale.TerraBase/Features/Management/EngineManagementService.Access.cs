@@ -53,7 +53,7 @@ internal sealed partial class EngineManagementService : IAccessService
         string userId, string organizationId, string? after, int limit, CancellationToken cancellationToken) =>
         ReadAsync<ManagementResult<ManagementPage<OrganizationMember>>>(async transaction =>
         {
-            var actor = await AuthorizeAsync(transaction, userId, organizationId, OrganizationRole.Viewer, cancellationToken).ConfigureAwait(false);
+            var actor = await AuthorizeMemberAsync(transaction, userId, organizationId, OrganizationRole.Viewer, cancellationToken).ConfigureAwait(false);
             return actor.Error != ManagementError.None
                 ? actor.Error
                 : await ListAsync(transaction, Members(organizationId), after, limit, TerraBaseJsonContext.Default.OrganizationMember, member => member.UserId, cancellationToken).ConfigureAwait(false);
@@ -63,7 +63,7 @@ internal sealed partial class EngineManagementService : IAccessService
         string userId, string organizationId, string memberId, OrganizationRole role, CancellationToken cancellationToken) =>
         await WriteAsync<ManagementResult<OrganizationMember>>(async transaction =>
         {
-            var actor = await AuthorizeAsync(transaction, userId, organizationId, OrganizationRole.Admin, cancellationToken).ConfigureAwait(false);
+            var actor = await AuthorizeMemberAsync(transaction, userId, organizationId, OrganizationRole.Admin, cancellationToken).ConfigureAwait(false);
             if (actor.Value is null)
             {
                 return actor.Error;
@@ -99,7 +99,7 @@ internal sealed partial class EngineManagementService : IAccessService
         string userId, string organizationId, string memberId, string email, CancellationToken cancellationToken) =>
         await WriteAsync<AddMemberResult>(async transaction =>
         {
-            var actor = await AuthorizeAsync(transaction, userId, organizationId, OrganizationRole.Admin, cancellationToken).ConfigureAwait(false);
+            var actor = await AuthorizeMemberAsync(transaction, userId, organizationId, OrganizationRole.Admin, cancellationToken).ConfigureAwait(false);
             if (actor.Error == ManagementError.Forbidden)
             {
                 return new Forbidden("your role in the organization does not allow this", "forbidden_role");
@@ -125,7 +125,7 @@ internal sealed partial class EngineManagementService : IAccessService
     public async ValueTask<ManagementError> RemoveMemberAsync(string userId, string organizationId, string memberId, CancellationToken cancellationToken) =>
         await WriteAsync(async transaction =>
         {
-            var actor = await AuthorizeAsync(transaction, userId, organizationId, OrganizationRole.Admin, cancellationToken).ConfigureAwait(false);
+            var actor = await AuthorizeMemberAsync(transaction, userId, organizationId, OrganizationRole.Admin, cancellationToken).ConfigureAwait(false);
             if (actor.Value is null)
             {
                 return actor.Error;
@@ -157,7 +157,7 @@ internal sealed partial class EngineManagementService : IAccessService
     public async ValueTask<ManagementError> LeaveAsync(string userId, string organizationId, CancellationToken cancellationToken) =>
         await WriteAsync(async transaction =>
         {
-            var actor = await AuthorizeAsync(transaction, userId, organizationId, OrganizationRole.Viewer, cancellationToken).ConfigureAwait(false);
+            var actor = await AuthorizeMemberAsync(transaction, userId, organizationId, OrganizationRole.Viewer, cancellationToken).ConfigureAwait(false);
             if (actor.Value is null)
             {
                 return actor.Error;
@@ -189,7 +189,7 @@ internal sealed partial class EngineManagementService : IAccessService
         string userId, string organizationId, string id, string email, OrganizationRole role, string tokenHash, string? secretHash, CancellationToken cancellationToken) =>
         WriteAsync<ManagementResult<Invitation>>(async transaction =>
         {
-            var actor = await AuthorizeAsync(transaction, userId, organizationId, OrganizationRole.Admin, cancellationToken).ConfigureAwait(false);
+            var actor = await AuthorizeMemberAsync(transaction, userId, organizationId, OrganizationRole.Admin, cancellationToken).ConfigureAwait(false);
             if (actor.Value is null)
             {
                 return actor.Error;
@@ -229,7 +229,7 @@ internal sealed partial class EngineManagementService : IAccessService
         string userId, string organizationId, string invitationId, string tokenHash, CancellationToken cancellationToken) =>
         WriteAsync<ManagementResult<Invitation>>(async transaction =>
         {
-            var actor = await AuthorizeAsync(transaction, userId, organizationId, OrganizationRole.Admin, cancellationToken).ConfigureAwait(false);
+            var actor = await AuthorizeMemberAsync(transaction, userId, organizationId, OrganizationRole.Admin, cancellationToken).ConfigureAwait(false);
             if (actor.Value is null)
             {
                 return actor.Error;
@@ -277,7 +277,7 @@ internal sealed partial class EngineManagementService : IAccessService
         string userId, string organizationId, string? after, int limit, CancellationToken cancellationToken) =>
         ReadAsync<ManagementResult<ManagementPage<Invitation>>>(async transaction =>
         {
-            var actor = await AuthorizeAsync(transaction, userId, organizationId, OrganizationRole.Admin, cancellationToken).ConfigureAwait(false);
+            var actor = await AuthorizeMemberAsync(transaction, userId, organizationId, OrganizationRole.Admin, cancellationToken).ConfigureAwait(false);
             if (actor.Error != ManagementError.None)
             {
                 return actor.Error;
@@ -299,7 +299,7 @@ internal sealed partial class EngineManagementService : IAccessService
     public async ValueTask<ManagementError> RevokeInvitationAsync(string userId, string organizationId, string invitationId, CancellationToken cancellationToken) =>
         await WriteAsync(async transaction =>
         {
-            var actor = await AuthorizeAsync(transaction, userId, organizationId, OrganizationRole.Admin, cancellationToken).ConfigureAwait(false);
+            var actor = await AuthorizeMemberAsync(transaction, userId, organizationId, OrganizationRole.Admin, cancellationToken).ConfigureAwait(false);
             if (actor.Value is null)
             {
                 return actor.Error;
@@ -419,7 +419,7 @@ internal sealed partial class EngineManagementService : IAccessService
     public ValueTask<ManagementResult<OwnershipTransfer>> GetTransferAsync(string userId, string organizationId, CancellationToken cancellationToken) =>
         ReadAsync<ManagementResult<OwnershipTransfer>>(async transaction =>
         {
-            var actor = await AuthorizeAsync(transaction, userId, organizationId, OrganizationRole.Viewer, cancellationToken).ConfigureAwait(false);
+            var actor = await AuthorizeMemberAsync(transaction, userId, organizationId, OrganizationRole.Viewer, cancellationToken).ConfigureAwait(false);
             if (actor.Error != ManagementError.None)
             {
                 return actor.Error;
@@ -434,7 +434,7 @@ internal sealed partial class EngineManagementService : IAccessService
         string userId, string organizationId, string memberId, CancellationToken cancellationToken) =>
         await WriteAsync<ManagementResult<OwnershipTransfer>>(async transaction =>
         {
-            var actor = await AuthorizeAsync(transaction, userId, organizationId, OrganizationRole.Owner, cancellationToken).ConfigureAwait(false);
+            var actor = await AuthorizeMemberAsync(transaction, userId, organizationId, OrganizationRole.Owner, cancellationToken).ConfigureAwait(false);
             if (actor.Value is null)
             {
                 return actor.Error;
@@ -460,7 +460,7 @@ internal sealed partial class EngineManagementService : IAccessService
     public async ValueTask<ManagementResult<OrganizationMember>> ConfirmTransferAsync(string userId, string organizationId, CancellationToken cancellationToken) =>
         await WriteAsync<ManagementResult<OrganizationMember>>(async transaction =>
         {
-            var actor = await AuthorizeAsync(transaction, userId, organizationId, OrganizationRole.Viewer, cancellationToken).ConfigureAwait(false);
+            var actor = await AuthorizeMemberAsync(transaction, userId, organizationId, OrganizationRole.Viewer, cancellationToken).ConfigureAwait(false);
             if (actor.Value is null)
             {
                 return actor.Error;
@@ -494,7 +494,7 @@ internal sealed partial class EngineManagementService : IAccessService
     public async ValueTask<ManagementError> CancelTransferAsync(string userId, string organizationId, CancellationToken cancellationToken) =>
         await WriteAsync(async transaction =>
         {
-            var actor = await AuthorizeAsync(transaction, userId, organizationId, OrganizationRole.Viewer, cancellationToken).ConfigureAwait(false);
+            var actor = await AuthorizeMemberAsync(transaction, userId, organizationId, OrganizationRole.Viewer, cancellationToken).ConfigureAwait(false);
             if (actor.Value is null)
             {
                 return actor.Error;
@@ -518,7 +518,7 @@ internal sealed partial class EngineManagementService : IAccessService
     public ValueTask<ManagementResult<AuditRetention>> GetAuditRetentionAsync(string userId, string organizationId, CancellationToken cancellationToken) =>
         ReadAsync<ManagementResult<AuditRetention>>(async transaction =>
         {
-            var actor = await AuthorizeAsync(transaction, userId, organizationId, OrganizationRole.Admin, cancellationToken).ConfigureAwait(false);
+            var actor = await AuthorizeMemberAsync(transaction, userId, organizationId, OrganizationRole.Admin, cancellationToken).ConfigureAwait(false);
             return actor.Error != ManagementError.None
                 ? actor.Error
                 : await GetAuditRetentionAsync(transaction, organizationId, cancellationToken).ConfigureAwait(false);
@@ -528,7 +528,7 @@ internal sealed partial class EngineManagementService : IAccessService
         string userId, string organizationId, int days, CancellationToken cancellationToken) =>
         await WriteAsync<ManagementResult<AuditRetention>>(async transaction =>
         {
-            var actor = await AuthorizeAsync(transaction, userId, organizationId, OrganizationRole.Admin, cancellationToken).ConfigureAwait(false);
+            var actor = await AuthorizeMemberAsync(transaction, userId, organizationId, OrganizationRole.Admin, cancellationToken).ConfigureAwait(false);
             if (actor.Value is null)
             {
                 return actor.Error;
@@ -544,7 +544,7 @@ internal sealed partial class EngineManagementService : IAccessService
         string userId, string organizationId, string? after, int limit, CancellationToken cancellationToken) =>
         ReadAsync<ManagementResult<ManagementPage<AuditEvent>>>(async transaction =>
         {
-            var actor = await AuthorizeAsync(transaction, userId, organizationId, OrganizationRole.Admin, cancellationToken).ConfigureAwait(false);
+            var actor = await AuthorizeMemberAsync(transaction, userId, organizationId, OrganizationRole.Admin, cancellationToken).ConfigureAwait(false);
             if (actor.Error != ManagementError.None)
             {
                 return actor.Error;
@@ -558,9 +558,16 @@ internal sealed partial class EngineManagementService : IAccessService
             return new ManagementPage<AuditEvent>([.. events.Where(auditEvent => auditEvent.OccurredAt >= cutoff)], page.HasMore ? page.Documents[^1].Id : null);
         }, cancellationToken);
 
+    // Database operations may use a signed project grant; access operations always require persisted membership.
+    private static ValueTask<ManagementResult<OrganizationMember>> AuthorizeAsync(
+        IStorageTransaction transaction, string userId, string organizationId, OrganizationRole minimum, CancellationToken cancellationToken) =>
+        ProjectActor(userId, organizationId) && minimum <= OrganizationRole.Member
+            ? ValueTask.FromResult<ManagementResult<OrganizationMember>>(new OrganizationMember(userId, OrganizationRole.Member, DateTimeOffset.MinValue))
+            : AuthorizeMemberAsync(transaction, userId, organizationId, minimum, cancellationToken);
+
     // The acting member, or why it may not act: NotFound for a non-member, exactly like a missing organization
     // (members are deleted with their organization), Forbidden for a role below minimum.
-    private static async ValueTask<ManagementResult<OrganizationMember>> AuthorizeAsync(
+    private static async ValueTask<ManagementResult<OrganizationMember>> AuthorizeMemberAsync(
         IStorageTransaction transaction, string userId, string organizationId, OrganizationRole minimum, CancellationToken cancellationToken)
     {
         if (await GetMemberAsync(transaction, organizationId, userId, cancellationToken).ConfigureAwait(false) is not { } actor)

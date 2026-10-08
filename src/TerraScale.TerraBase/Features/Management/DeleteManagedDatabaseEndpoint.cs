@@ -1,5 +1,5 @@
 using TerraBase.Configuration;
-using TerraBase.Features.UserAuth;
+using TerraBase.Features.ApiKeys;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
 
@@ -11,16 +11,16 @@ public sealed class DeleteManagedDatabaseEndpoint(IManagementService management,
     /// <inheritdoc />
     public override void Configure()
     {
-        Delete(ManagementRoute.Database);
-        Name("deleteManagedDatabase");
+        Delete(ProjectApiRoute.Database);
+        Name("deleteDatabase");
         Summary("Deletes a database and its data");
-        Description("Branches of the database are independent copies and are not deleted. A database is deleted in its home region (421 wrong_region elsewhere) once it has no replica regions (409 database_replicated): remove them with PATCH first." + " " + ManagementRoute.IdentityDescription);
-        Tags(ManagementRoute.Tag);
+        Description("Branches of the database are independent copies and are not deleted. A database is deleted in its home region (421 wrong_region elsewhere) once it has no replica regions (409 database_replicated): remove them with PATCH first." + " " + ProjectApiRoute.IdentityDescription);
+        Tags("Databases");
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
         Produces<ErrorBody>(StatusCodes.Status409Conflict);
         Produces<ErrorBody>(StatusCodes.Status421MisdirectedRequest);
-        RequireAuthorization(UserAuthExtensions.PolicyName);
-        Metadata(ListenerMetadata.Management, new DatabaseRegions.PlacementAware(), new ProducesResponseTypeMetadata(StatusCodes.Status204NoContent, typeof(void)));
+        RequireAuthorization(ApiKeyScopes.DatabasesWrite);
+        Metadata(new ProjectManagementRoute(), ListenerMetadata.Management, new DatabaseRegions.PlacementAware(), new ProducesResponseTypeMetadata(StatusCodes.Status204NoContent, typeof(void)));
     }
 
     /// <inheritdoc />

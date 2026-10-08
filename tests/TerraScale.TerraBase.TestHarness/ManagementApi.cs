@@ -16,6 +16,8 @@ public sealed class ManagementApi : IAsyncDisposable
     /// <summary>The management service credential of servers started with one.</summary>
     public const string ServiceCredential = "test-management-service-credential-0123456789";
 
+    private static readonly HttpRequestOptionsKey<(string Organization, string Project)> BindingAuthority = new("test-project-binding-authority");
+
     // Holds the credential file of a server started with the management service credential.
     private readonly string? _credentialDirectory;
 
@@ -141,6 +143,24 @@ public sealed class ManagementApi : IAsyncDisposable
 
     public async Task<string> CreateProjectAsync(string organization, string name, HttpClient? client = null) =>
         await CreateAsync(client, $"/v1/management/organizations/{organization}/projects", name);
+
+    /// <summary>Explicitly proves the sign-in caller's ts-auth project authority and verifies an existing legacy binding.</summary>
+    public async Task VerifyProjectBindingAsync(string organization, string project, HttpClient? client = null)
+    {
+        client ??= Client;
+        if (client.DefaultRequestHeaders.Authorization is { Scheme: "Bearer", Parameter: { } token })
+        {
+            Issuer.GrantProject(token, organization, project);
+        }
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, Uri($"/v1/management/organizations/{organization}/projects/{project}/binding"))
+        {
+            Content = JsonContent.Create(new { organization }),
+        };
+        request.Options.Set(BindingAuthority, (organization, project));
+        using var response = await client.SendAsync(request);
+        response.EnsureSuccessStatusCode();
+    }
 
     public async Task<string> CreateDatabaseAsync(string organization, string project, string name, HttpClient? client = null) =>
         await CreateAsync(client, $"/v1/management/organizations/{organization}/projects/{project}/databases", name);
@@ -317,17 +337,23 @@ public sealed class ManagementApi : IAsyncDisposable
 
     // A fresh token on every request, so a long test never sends an expired one.
     private HttpClient Authorized(Func<string> token) =>
-        new(new BearerToken(token) { InnerHandler = Tls.CreateHandler() })
+        new(new BearerToken(token, Issuer) { InnerHandler = Tls.CreateHandler() })
         {
             BaseAddress = Server.ClientAddress,
             Timeout = Timeout.InfiniteTimeSpan,
         };
 
-    private sealed class BearerToken(Func<string> token) : DelegatingHandler
+    private sealed class BearerToken(Func<string> token, TestIssuer issuer) : DelegatingHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
-            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token());
+            var bearer = token();
+            if (request.Options.TryGetValue(BindingAuthority, out var authority))
+            {
+                issuer.GrantProject(bearer, authority.Organization, authority.Project);
+            }
+
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", bearer);
             return base.SendAsync(request, cancellationToken);
         }
     }

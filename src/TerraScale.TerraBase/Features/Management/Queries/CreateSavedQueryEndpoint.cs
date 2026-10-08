@@ -1,5 +1,5 @@
 using TerraBase.Errors;
-using TerraBase.Features.UserAuth;
+using TerraBase.Features.ApiKeys;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
 
@@ -11,17 +11,17 @@ public sealed class CreateSavedQueryEndpoint(IManagementService management, IQue
     /// <inheritdoc />
     public override void Configure()
     {
-        Post(ManagementRoute.SavedQueries);
+        Post(ProjectApiRoute.SavedQueries);
         Name("createSavedQuery");
         Summary("Saves a query in a project");
-        Description("name: 1 to 128 characters. sql: a statement of the SQL subset (see runSql)." + " " + ManagementRoute.IdentityDescription);
-        Tags(ManagementRoute.Tag);
+        Description("name: 1 to 128 characters. sql: a statement of the SQL subset (see runSql)." + " " + ProjectApiRoute.IdentityDescription);
+        Tags("Queries");
         Produces<SavedQuery>(StatusCodes.Status201Created);
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
         Produces<ErrorBody>(StatusCodes.Status403Forbidden);
-        RequireAuthorization(UserAuthExtensions.PolicyName);
-        Metadata(ListenerMetadata.Management);
+        RequireAuthorization(ApiKeyScopes.DatabasesWrite);
+        Metadata(new ProjectManagementRoute(), ListenerMetadata.Management);
     }
 
     /// <inheritdoc />

@@ -715,12 +715,15 @@ public sealed class DocumentApiTests
     }
 
     [Test]
-    public async Task The_bearer_scheme_name_is_case_insensitive()
+    [Arguments(" ")]
+    [Arguments("  ")]
+    [Arguments(" \t")]
+    public async Task The_bearer_scheme_name_is_case_insensitive_and_keys_allow_padding(string separator)
     {
         await using var api = await DocumentApi.StartAsync();
         var key = await api.Server.IssueAsync(api.Tenant.OrganizationId, "documents:write");
         using var client = api.Management.DataClient();
-        client.DefaultRequestHeaders.TryAddWithoutValidation("Authorization", $"bEaReR {key}");
+        client.DefaultRequestHeaders.TryAddWithoutValidation("Authorization", $"bEaReR{separator}{key}");
 
         using var response = await client.PutAsync(new Uri(api.DatabasePath("cased"), UriKind.Relative), null);
 
@@ -780,7 +783,7 @@ public sealed class DocumentApiTests
         string[] expected =
         [
             "createDatabase", "createCollection", "listCollections", "getCollection", "dropCollection", "getDocument", "putDocument",
-            "createDocument", "patchDocument", "deleteDocument", "listDocuments", "queryDocuments", "transaction",
+            "createDocument", "patchDocument", "deleteDocument", "listDocuments", "queryDocuments", "runTransaction",
         ];
         await Assert.That(expected.Where(operation => !operations.Contains(operation))).IsEmpty();
         var paths = openApi.RootElement.GetProperty("paths");

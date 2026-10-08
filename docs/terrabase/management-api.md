@@ -10,6 +10,11 @@ Sources, read on 2026-10-04: ts-dashboard `internal/` and `web/` (routes under
 `/api/v1/dashboard`, `/api/v1/access` and `/api/v1/admin`), `terrabase-rust/docs/control-plane-v1.md`,
 ts-orchestrator and ts-auth.
 
+TS-589 moves public data management to the [project route table](api.md). The
+organization and membership operations below remain hidden legacy compatibility
+paths; ts-auth owns public identity and projects. COS approved verified migration
+bindings on 2026-10-07 ([decision 0011](decisions/0011-project-catalog-trust.md)).
+
 ## Current state of the dashboard
 
 - ts-dashboard starts only with `TS_DASHBOARD_PRODUCTION_DEMO=1` (`internal/app/app.go:51`).
@@ -52,6 +57,39 @@ exists. TerraBase authorizes every request against the organizations the acting 
 - ts-dashboard calls with the signed-in user's token. A ts-auth client-credentials token (`sub` =
   client id) for an accepted audience acts as a user whose id is that client id: it reaches only
   organizations that id is a member of.
+
+### Verified project bindings
+
+Existing catalog project mappings are storage records, not proof of ts-auth
+authority. Project JWTs receive `404` until a binding for the exact trusted
+issuer and storage organization is verified; database creation does not adopt
+an unverified mapping. Legacy callers without project JWTs keep their existing
+membership/key access and data.
+
+`POST /v1/management/organizations/{legacyOrganization}/projects/{project}/binding`
+is hidden from OpenAPI and served only on the TLS client listener. Send
+`{"organization":"<ts-auth organization id>"}` with the user's ts-auth sign-in
+bearer token. That subject must currently be an owner of the legacy storage
+organization. TerraBase forwards the same token only to
+`{configured issuer origin}/v1/{configured issuer tenant}/organizations/{organization}/projects/{project}`;
+redirects are not followed. ts-auth must answer with the exact project and
+organization IDs and effective `role: "admin"`. Its live management API checks
+membership, sign-in revocation and authentication epoch. Project/API-key tokens,
+document keys and the loopback service credential cannot establish this binding.
+
+TerraBase rechecks legacy ownership inside the catalog transaction and records
+the binding's version, issuer, project, storage organization, ts-auth organization,
+verifying subject and time. Failed verification writes no binding. Subsequent
+project JWTs resolve the verified namespace offline; this action preserves
+database IDs, files and document versions. Fresh JWT enrollment creates an
+opaque namespace and its verified binding atomically, without legacy membership.
+Fresh bindings rely on the signed project claim and leave the ts-auth
+organization unset; project JWTs do not require `org_id`.
+
+This explicit verification replaces automatic JWT reuse of legacy mappings by
+COS's 2026-10-07 decision. Client-chosen project IDs in Management commits now
+require the loopback management service credential; generated-ID legacy creation
+remains available to ordinary members ([commit contract](management-commits.md#management-operations)).
 
 ### Signing keys
 
