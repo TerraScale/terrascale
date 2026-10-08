@@ -233,6 +233,18 @@ silently dropped connection. If a peer reports a prefix beyond the database's ow
 file went back in time, for example a restore from a snapshot), the sender sends nothing for that
 database and keeps logging the failure: new groups would reuse numbers the peer already applied.
 
+### Handoff during a peer outage (TS-679)
+
+The accepting member's persisted `changes` journal holds writes a peer missed, including
+complete transactions and tombstones. Startup discovery replays that backlog after a sender
+restart, so a returning peer can catch up without another client write. The sender's dirty set
+only schedules attempts; it is not the durable copy of pending writes.
+
+This first TS-679 slice tests outage and restart replay through the real listeners. Total
+pending journal storage is not bounded yet, and point reads do not contact peers to repair
+stale state. Those remain subsequent slices; the per-group and in-flight bounds above do not
+bound the disk backlog. Recovery requires the originating member's journal to remain available.
+
 ## Baselines
 
 A node sends the current state of a database as baseline change groups when its log does not cover

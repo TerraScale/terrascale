@@ -173,12 +173,21 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
         }
         catch (Exception startupError)
         {
-            // Failed starts have no caller to dispose them. Keep both the startup and cleanup failures.
+            // Failed starts have no caller to dispose them. Keep startup, callback and cleanup failures.
+            var failures = new List<Exception> { startupError };
             try
             {
                 if (factory is not null)
                 {
-                    failedStartCleanup?.Invoke(factory.BeginCleanupAsync(dataDirectory));
+                    try
+                    {
+                        failedStartCleanup?.Invoke(factory.BeginCleanupAsync(dataDirectory));
+                    }
+                    catch (Exception callbackError)
+                    {
+                        failures.Add(callbackError);
+                    }
+
                     await factory.CleanupAsync(dataDirectory);
                 }
                 else
@@ -189,7 +198,12 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
             }
             catch (Exception cleanupError)
             {
-                throw new AggregateException(startupError, cleanupError).Flatten();
+                failures.Add(cleanupError);
+            }
+
+            if (failures.Count > 1)
+            {
+                throw new AggregateException(failures).Flatten();
             }
 
             throw;
