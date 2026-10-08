@@ -45,7 +45,7 @@ service ownership decided by the user on 2026-10-06
      project tenants' issuers are never trusted: those customer end-user tokens authenticate customer
      applications, while a **project access token** for TerraBase uses the trusted platform issuer and carries `project_id`;
    - `aud` includes TerraBase's audience, and `exp` and `nbf` hold with 30 seconds of skew;
-   - `project_id` (a lowercase UUID) equals the route's `{project}`. A token for another project, or one without
+   - `project_id` (a canonical uppercase ULID) equals the route's `{project}`. A token for another project, or one without
      `project_id` (organization, sign-in and service tokens), answers `404`, the same answer as a database that
      does not exist;
    - with a `database` claim (a key narrowed to one database), only that database is reachable: every other

@@ -161,49 +161,28 @@ public sealed class StorageHistoryTests
     }
 
     [Test]
-    public async Task Upgrading_keeps_system_records_out_of_shape_history()
+    public async Task Restart_keeps_system_records_out_of_shape_history()
     {
-        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
-        var directory = Directory.CreateTempSubdirectory("terrabase-upgrade-").FullName;
+        var directory = Directory.CreateTempSubdirectory("terrabase-system-history-").FullName;
+        var id = EntityIds.New().ToString();
         try
         {
-            // A data directory as a schema-4 build (TS-475) left it: start a server once, then take _system back to
-            // version 4 with a Management-like record in it.
-            await using (await DocumentApi.StartAsync(settings => settings["data-directory"] = directory))
+            await using (var api = await DocumentApi.StartAsync(settings => settings["data-directory"] = directory))
             {
+                var system = await api.Server.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(CancellationToken.None);
+                await using var writer = await system.BeginTransactionAsync(write: true, CancellationToken.None);
+                await writer.PutAsync("invitations", id, "{\"email\":\"someone@example.com\"}"u8.ToArray(), CancellationToken.None);
+                await writer.CommitAsync(CancellationToken.None);
             }
 
-            var path = Path.Combine(directory, "_system.db");
-            await using (var connection = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={path};Pooling=False"))
+            await using (var api = await DocumentApi.StartAsync(settings => settings["data-directory"] = directory))
             {
-                await connection.OpenAsync(deadline.Token);
-                await using var command = connection.CreateCommand();
-                command.CommandText = """
-                    DROP INDEX documents_replication_keys;
-                    DROP TABLE journal_prefixes;
-                    DROP TABLE changes;
-                    DROP TABLE applied;
-                    DROP TABLE replication_state;
-                    DROP TABLE change_log;
-                    DROP TABLE change_log_births;
-                    DROP TABLE change_log_high;
-                    DROP TABLE shape_history;
-                    ALTER TABLE collections DROP COLUMN generation;
-                    INSERT INTO collections VALUES ('invitations', 1);
-                    INSERT INTO documents VALUES ('invitations', 'a', 1, '{"email":"someone@example.com"}');
-                    PRAGMA user_version = 4;
-                    """;
-                await command.ExecuteNonQueryAsync(deadline.Token);
+                var system = await api.Server.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(CancellationToken.None);
+                await using var reader = await system.BeginTransactionAsync(write: false, CancellationToken.None);
+                await Assert.That(await reader.GetAsync("invitations", id, CancellationToken.None)).IsNotNull();
             }
 
-            await using (var api = await DocumentApi.StartAsync(
-                settings => settings["data-directory"] = directory, StorageTransactionTests.ConfigurePool, deadline.Token))
-            {
-                await api.Server.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(deadline.Token);
-            }
-
-            // Migrated to the current schema, but _system's deletes never reach history, so its records are not copied there.
-            await Assert.That(await HistoryRowsAsync(path, deadline.Token)).IsEqualTo(0);
+            await Assert.That(await HistoryRowsAsync(Path.Combine(directory, "_system.db"), CancellationToken.None)).IsEqualTo(0);
         }
         finally
         {
@@ -212,15 +191,13 @@ public sealed class StorageHistoryTests
     }
 
     [Test]
-    public async Task Upgrading_from_schema_5_backfills_births_so_snapshots_keep_their_history()
+    public async Task Restart_preserves_snapshot_births_and_later_history()
     {
-        var directory = Directory.CreateTempSubdirectory("terrabase-upgrade-").FullName;
+        var directory = Directory.CreateTempSubdirectory("terrabase-history-restart-").FullName;
         try
         {
-            // A database as the schema-5 build (#12) left it: history in change_log, no births key.
             var (early, late, revised) = (DocumentApi.NewId(), DocumentApi.NewId(), DocumentApi.NewId());
             TenantContext database;
-            string path;
             long offset;
             await using (var api = await DocumentApi.StartAsync(settings => settings["data-directory"] = directory))
             {
@@ -231,26 +208,6 @@ public sealed class StorageHistoryTests
                 (await api.PutAsync(late, new { status = "later" })).Status.ShouldBe(HttpStatusCode.Created);
                 await api.TransactAsync(new { op = "put", collection = DocumentApi.Collection, id = revised, document = new { status = "later" } });
                 database = await api.TenantOfAsync();
-                path = await api.DatabaseFileAsync();
-            }
-
-            await using (var connection = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={path};Pooling=False"))
-            {
-                await connection.OpenAsync();
-                await using var command = connection.CreateCommand();
-                command.CommandText = """
-                    DROP INDEX documents_replication_keys;
-                    DROP TRIGGER change_log_birth;
-                    DROP TABLE change_log_births;
-                    DROP TABLE change_log_high;
-                    DROP TABLE journal_prefixes;
-                    DROP TABLE changes;
-                    DROP TABLE applied;
-                    DROP TABLE replication_state;
-                    ALTER TABLE change_log DROP COLUMN document_version;
-                    PRAGMA user_version = 5;
-                    """;
-                await command.ExecuteNonQueryAsync();
             }
 
             await using var reopened = await DocumentApi.StartAsync(
@@ -269,7 +226,7 @@ public sealed class StorageHistoryTests
             var atOffset = await reader.SnapshotAsync(query, offset, CancellationToken.None);
             var atHead = await reader.SnapshotAsync(query, await reader.GetOffsetAsync(CancellationToken.None), CancellationToken.None);
 
-            // Backfilled births keep the history before the upgrade; the trigger records writes after it.
+            // Persisted births keep earlier snapshots intact while new writes extend the history.
             await Assert.That(atOffset.Rows.Select(row => row.Document.Id)).IsEquivalentTo([early, revised]);
             await Assert.That(Encoding.UTF8.GetString(atOffset.Rows.Single(row => row.Document.Id == revised).Document.Json.Span)).Contains("at-offset");
             await Assert.That(atHead.Rows.Select(row => row.Document.Id)).IsEquivalentTo([early, revised, late, after]);

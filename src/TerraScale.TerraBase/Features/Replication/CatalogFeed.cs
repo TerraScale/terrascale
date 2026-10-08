@@ -9,7 +9,7 @@ namespace TerraBase.Features.Replication;
 /// <summary>Bounds and timing of <c>CatalogReplication.Follow</c> (docs/decisions/0009).</summary>
 internal static class CatalogProtocol
 {
-    public const uint Version = 1;
+    public const uint Version = 2;
 
     /// <summary>Changes per page; one page is one envelope.</summary>
     public const int MaxPageChanges = 4096;

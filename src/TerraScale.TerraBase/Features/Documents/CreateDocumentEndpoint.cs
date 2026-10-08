@@ -17,7 +17,7 @@ public sealed class CreateDocumentEndpoint(IDocumentService documents, ITenantDi
         Post(DocumentRoute.Collection);
         Name("createDocument");
         Summary("Creates a JSON document with a generated id");
-        Description("The body is a JSON object of at most 1 MiB. Conditional headers use the same strict parser as PUT: malformed headers return 400; If-Match fails with 412 for the generated absent id; If-None-Match: * permits creation. Returns 201 with Location and the new id, a canonical uppercase ULIDv7.");
+        Description("The body is a JSON object of at most 1 MiB. Conditional headers use the same strict parser as PUT: malformed headers return 400; If-Match fails with 412 for the generated absent id; If-None-Match: * permits creation. Returns 201 with Location and the new id, a canonical uppercase ULID.");
         Tags("Documents");
         Metadata(new RequestBodyMetadata(typeof(JsonElement), DocumentRoute.JsonMediaType));
         Produces<WriteBody>(StatusCodes.Status201Created);

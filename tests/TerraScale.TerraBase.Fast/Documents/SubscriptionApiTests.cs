@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using Bogus;
 using Microsoft.IdentityModel.Tokens;
+using TerraBase.Primitives;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Documents;
@@ -365,9 +366,9 @@ public sealed class SubscriptionApiTests
         await Assert.That(response.Content.Headers.ContentType?.MediaType == "text/event-stream").IsFalse();
     }
 
-    private string NewId() => _faker.Random.Guid().ToString("D");
+    private static string NewId() => EntityIds.New().ToString();
 
-    private string Token(ManagementApi api, ManagedDatabaseRef database, Action<SecurityTokenDescriptor>? edit = null) =>
+    private static string Token(ManagementApi api, ManagedDatabaseRef database, Action<SecurityTokenDescriptor>? edit = null) =>
         api.Issuer.Mint(NewId(), token =>
         {
             token.Claims["project_id"] = database.Project;

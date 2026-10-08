@@ -1,5 +1,4 @@
 using System.Net;
-using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
@@ -209,12 +208,12 @@ public sealed class DocumentCacheTests
         await PutAsync(tenant, "shop", "items", "a", "first", deadline.Token);
         await GetAsync(tenant, "shop", "items", "a", deadline.Token);
         var secret = tenant.Data.DefaultRequestHeaders.Authorization!.Parameter!;
-        var hash = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(secret)));
+        var keyId = (await management.Server.Services.GetRequiredService<TerraBase.Features.ApiKeys.IApiKeyStore>().FindAsync(secret, deadline.Token))!.Id;
         var system = await management.Server.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(deadline.Token);
         var transaction = await system.BeginTransactionAsync(write: true, deadline.Token);
         await using (transaction)
         {
-            await transaction.DeleteAsync("api_keys", hash, deadline.Token);
+            await transaction.DeleteAsync("api_keys", keyId, deadline.Token);
             await transaction.CommitAsync(deadline.Token);
         }
 

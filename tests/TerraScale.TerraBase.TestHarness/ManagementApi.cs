@@ -258,7 +258,7 @@ public sealed class ManagementApi : IAsyncDisposable
     {
         var user = EntityIds.New().ToString();
         using var owner = As(user);
-        var organization = await CreateOrganizationAsync("Tenant " + Guid.NewGuid(), owner);
+        var organization = await CreateOrganizationAsync("Tenant " + EntityIds.New().ToString(), owner);
         var project = await CreateProjectAsync(organization, "Main", owner);
         return new Tenant(user, organization, project, DataClient(await Server.IssueAsync(organization, scopes)));
     }

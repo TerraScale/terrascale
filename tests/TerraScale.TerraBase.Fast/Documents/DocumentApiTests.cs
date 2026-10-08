@@ -536,7 +536,7 @@ public sealed class DocumentApiTests
     {
         await using var api = await DocumentApi.StartAsync();
         // A database file from a newer TerraBase: opening it fails on the server side.
-        var path = await api.ReplaceWithOlderFileAsync("future", async file =>
+        var path = await api.ReplaceFileAsync("future", async file =>
         {
             var connection = new Microsoft.Data.Sqlite.SqliteConnection(DocumentApi.ConnectionString(file));
             await using (connection)
@@ -618,8 +618,8 @@ public sealed class DocumentApiTests
         var badName = await api.SendAsync(HttpMethod.Put, $"{api.Project}/databases/Not_Valid");
         var deviceName = await api.SendAsync(HttpMethod.Put, $"{api.Project}/databases/con");
         var trailingNewline = await api.SendAsync(HttpMethod.Put, $"{api.Project}/databases/valid%0A");
-        var notUuid = await api.PutAsync("p1", new { a = 1 });
-        var upperUuid = await api.PutAsync(id.ToUpperInvariant(), new { a = 1 });
+        var suppliedKey = await api.PutAsync("p1", new { a = 1 });
+        var lowercaseKey = await api.PutAsync(id.ToLowerInvariant(), new { a = 1 });
         var notObject = await api.SendAsync(HttpMethod.Put, api.Document(id), JsonArray);
         var notJson = await api.SendRawAsync(HttpMethod.Put, api.Document(id), "{oops", "application/json");
         var duplicate = await api.SendRawAsync(HttpMethod.Put, api.Document(id), """{"a":1,"a":2}""", "application/json");
@@ -652,8 +652,8 @@ public sealed class DocumentApiTests
         await Assert.That((badName.Status, badName.Code)).IsEqualTo((HttpStatusCode.BadRequest, "invalid_request"));
         await Assert.That(deviceName.Status).IsEqualTo(HttpStatusCode.BadRequest);
         await Assert.That(trailingNewline.Status).IsEqualTo(HttpStatusCode.BadRequest);
-        await Assert.That((notUuid.Status, notUuid.Code)).IsEqualTo((HttpStatusCode.BadRequest, "invalid_request"));
-        await Assert.That(upperUuid.Status).IsEqualTo(HttpStatusCode.Created);
+        await Assert.That(suppliedKey.Status).IsEqualTo(HttpStatusCode.Created);
+        await Assert.That(lowercaseKey.Status).IsEqualTo(HttpStatusCode.Created);
         await Assert.That(notObject.Status).IsEqualTo(HttpStatusCode.BadRequest);
         await Assert.That(notJson.Status).IsEqualTo(HttpStatusCode.BadRequest);
         await Assert.That(duplicate.Status).IsEqualTo(HttpStatusCode.BadRequest);

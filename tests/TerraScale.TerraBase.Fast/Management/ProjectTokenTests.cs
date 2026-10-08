@@ -59,11 +59,11 @@ public sealed class ProjectTokenTests
         var faker = new Faker();
         await using var api = await ManagementApi.StartAsync();
         var project = EntityIds.New().ToString();
-        using var client = api.WithToken(Token(api, "tsk_" + EntityIds.New().ToString(), project, AllScopes));
+        using var client = api.WithToken(Token(api, EntityIds.New().ToString(), project, AllScopes));
         var databases = $"/v1/projects/{project}/databases";
         var database = databases + "/main";
         var collection = database + "/collections/people";
-        var document = collection + "/documents/" + faker.Random.Guid();
+        var document = collection + "/documents/" + EntityIds.New();
         var name = faker.Name.FullName();
 
         using var created = await client.PostAsJsonAsync(Uri(databases), new { name = "main" });
@@ -111,7 +111,7 @@ public sealed class ProjectTokenTests
         using var written = await legacy.PutAsJsonAsync(Uri(document), new { name });
         written.EnsureSuccessStatusCode();
 
-        var actor = "tsk_" + EntityIds.New().ToString();
+        var actor = EntityIds.New().ToString();
         using var jwt = api.WithToken(Token(api, actor, database.Project, AllScopes, edit: token => token.Claims["org_id"] = EntityIds.New().ToString()));
         jwt.DefaultRequestHeaders.Add("X-TerraBase-User-Id", api.User);
         using var read = await jwt.GetAsync(Uri(document));

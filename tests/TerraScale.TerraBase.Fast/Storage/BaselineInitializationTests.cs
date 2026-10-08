@@ -124,7 +124,7 @@ public sealed class BaselineInitializationTests
                     }
 
                     initializingStore = store;
-                    var session = engine!.Pool.Rent(store) ?? throw new InvalidOperationException("migration left no idle session");
+                    var session = engine!.Pool.Rent(store) ?? throw new InvalidOperationException("bootstrap left no idle session");
                     try
                     {
                         session.Connection.CreateFunction("hold_baseline", () => { pause.Hold(); return 0; });

@@ -115,7 +115,7 @@ public sealed class CatalogDeletionTests
                 await WriteVersionAsync(engine, "\"99\""u8.ToArray(), token);
                 await TerraBaseTestServer.EventuallyAsync(async probe => (await HelloAsync(client, invoices, probe)).Error is not null);
                 await Assert.That(File.Exists(FileOf(invoices))).IsTrue();
-                await WriteVersionAsync(engine, "\"5\""u8.ToArray(), token);
+                await WriteVersionAsync(engine, "\"6\""u8.ToArray(), token);
                 await TerraBaseTestServer.EventuallyAsync(async probe => (await HelloAsync(client, invoices, probe)).Welcome is not null);
             }
 
@@ -182,7 +182,7 @@ public sealed class CatalogDeletionTests
         [
             Intent(EntityIds.New().ToString(), tampered),
             Intent(deleted.DatabaseId!, deleted with { OrganizationId = "" }),
-            Intent(deleted.DatabaseId!.ToUpperInvariant(), deleted with { DatabaseId = deleted.DatabaseId!.ToUpperInvariant() }),
+            Intent(deleted.DatabaseId!.ToLowerInvariant(), deleted with { DatabaseId = deleted.DatabaseId!.ToLowerInvariant() }),
             Intent(deleted.DatabaseId!, deleted),
             Intent(registered.DatabaseId!, registered),
             new($"projects/{project}/databases", registered.DatabaseId!, 11, JsonSerializer.SerializeToUtf8Bytes(
@@ -190,7 +190,7 @@ public sealed class CatalogDeletionTests
         ];
         await using var fake = await FakePeer.StartCatalogAsync(peers, async (_, responses, context) =>
         {
-            await responses.WriteAsync(new FollowResponse { Welcome = new CatalogWelcome { Protocol = 1, Origin = ByteString.CopyFrom(origin), Head = 0 } });
+            await responses.WriteAsync(new FollowResponse { Welcome = new CatalogWelcome { Protocol = CatalogProtocol.Version, Origin = ByteString.CopyFrom(origin), Head = 0 } });
             await responses.WriteAsync(new FollowResponse { SnapshotBegin = new SnapshotBegin { Sequence = 0, Digest = ByteString.CopyFrom(initial) } });
             await responses.WriteAsync(new FollowResponse { Documents = CatalogProtocol.Page([Version]) });
             await responses.WriteAsync(new FollowResponse { SnapshotEnd = new SnapshotEnd { Sequence = 0, Digest = ByteString.CopyFrom(initial), CommitOffset = 1 } });
@@ -245,7 +245,7 @@ public sealed class CatalogDeletionTests
             if (Interlocked.Increment(ref streams) == 1)
             {
                 // The first stream brings the intent; its cleanup fails, which ends the stream.
-                await responses.WriteAsync(new FollowResponse { Welcome = new CatalogWelcome { Protocol = 1, Origin = ByteString.CopyFrom(origin), Head = 0 } });
+                await responses.WriteAsync(new FollowResponse { Welcome = new CatalogWelcome { Protocol = CatalogProtocol.Version, Origin = ByteString.CopyFrom(origin), Head = 0 } });
                 await responses.WriteAsync(new FollowResponse { SnapshotBegin = new SnapshotBegin { Sequence = 0, Digest = ByteString.CopyFrom(initial) } });
                 await responses.WriteAsync(new FollowResponse { Documents = CatalogProtocol.Page([Version]) });
                 await responses.WriteAsync(new FollowResponse { SnapshotEnd = new SnapshotEnd { Sequence = 0, Digest = ByteString.CopyFrom(initial), CommitOffset = 1 } });
@@ -258,7 +258,7 @@ public sealed class CatalogDeletionTests
             else
             {
                 // Later streams bring nothing new: the follower acts on the intent its catalog still holds before it follows.
-                await responses.WriteAsync(new FollowResponse { Welcome = new CatalogWelcome { Protocol = 1, Origin = ByteString.CopyFrom(origin), Head = 1 } });
+                await responses.WriteAsync(new FollowResponse { Welcome = new CatalogWelcome { Protocol = CatalogProtocol.Version, Origin = ByteString.CopyFrom(origin), Head = 1 } });
                 await responses.WriteAsync(new FollowResponse { Heartbeat = new CatalogHeartbeat { Head = 1 } });
             }
 
@@ -307,7 +307,7 @@ public sealed class CatalogDeletionTests
             // Only the first stream gets the catalog: the restarted follower acts on what its catalog holds, with no stream.
             if (Interlocked.Increment(ref streams) == 1)
             {
-                await responses.WriteAsync(new FollowResponse { Welcome = new CatalogWelcome { Protocol = 1, Origin = ByteString.CopyFrom(origin), Head = 0 } });
+                await responses.WriteAsync(new FollowResponse { Welcome = new CatalogWelcome { Protocol = CatalogProtocol.Version, Origin = ByteString.CopyFrom(origin), Head = 0 } });
                 await responses.WriteAsync(new FollowResponse { SnapshotBegin = new SnapshotBegin { Sequence = 0, Digest = ByteString.CopyFrom(initial) } });
                 await responses.WriteAsync(new FollowResponse { Documents = CatalogProtocol.Page([Version, intent]) });
                 await responses.WriteAsync(new FollowResponse { SnapshotEnd = new SnapshotEnd { Sequence = 0, Digest = ByteString.CopyFrom(initial), CommitOffset = 10 } });
@@ -389,7 +389,7 @@ public sealed class CatalogDeletionTests
     }
 
     // The catalog version document of this build's catalog.
-    private static DocumentChange Version { get; } = new("catalog", "version", 1, "\"5\""u8.ToArray());
+    private static DocumentChange Version { get; } = new("catalog", "version", 1, "\"6\""u8.ToArray());
 
     private static async Task ReadyAsync(TerraBaseTestServer server) =>
         await TerraBaseTestServer.EventuallyAsync(async token =>

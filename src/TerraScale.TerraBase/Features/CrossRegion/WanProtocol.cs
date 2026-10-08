@@ -5,13 +5,13 @@ using TerraBase.Tenancy;
 namespace TerraBase.Features.CrossRegion;
 
 /// <summary>
-/// Version 1 of cross-region replication (<c>wan.proto</c>, <c>docs/cross-region.md</c>): subjects in the cross-link
+/// Version 2 of cross-region replication (<c>wan.proto</c>, <c>docs/cross-region.md</c>): subjects in the cross-link
 /// <c>query</c> family of ts-orchestrator's NATS fabric, and the identities on them.
 /// </summary>
 public static class WanProtocol
 {
     /// <summary>Version of <see cref="WanRequest"/>.</summary>
-    public const uint Version = 1;
+    public const uint Version = 2;
 
     /// <summary>Largest request or reply: NATS's default <c>max_payload</c>, which leafnodes between regions keep.</summary>
     public const int MaxMessageBytes = 1024 * 1024;

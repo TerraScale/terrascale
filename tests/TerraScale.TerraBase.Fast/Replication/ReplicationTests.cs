@@ -1091,15 +1091,12 @@ public sealed class ReplicationTests
     }
 
     [Test]
-    public async Task A_database_upgraded_from_schema_version_1_reaches_the_peer_as_a_baseline()
+    public async Task A_current_format_snapshot_reaches_the_peer_as_a_baseline()
     {
         using var peerTls = new PeerTls();
         using var clientTls = new ClientTls();
-        var data = Directory.CreateTempSubdirectory("terrabase-legacy-").FullName;
+        var data = Directory.CreateTempSubdirectory("terrabase-current-snapshot-").FullName;
         var deepJson = "{\"nested\":" + new string('[', 15) + "0" + new string(']', 15) + "}";
-        var longId = new string('a', 257);
-        const string controlId = "bad\nkey";
-        var skipped = new BaselineAdmissionLogs();
         try
         {
             ReplicationTenant tenant;
@@ -1109,31 +1106,14 @@ public sealed class ReplicationTests
                 settings["data-directory"] = data;
             }))
             {
-                tenant = await ReplicationTenant.CreateAsync(seed, "legacy");
-                await seed.Services.GetRequiredService<IStorageEngine>().DeleteDatabaseAsync(tenant.Database("legacy"), CancellationToken.None);
-                Directory.CreateDirectory(Path.GetDirectoryName(tenant.File(seed, "legacy"))!);
-                // Legacy documents within the shared admission contract migrate and replicate unchanged.
-                await using var connection = new Microsoft.Data.Sqlite.SqliteConnection(DocumentApi.ConnectionString(tenant.File(seed, "legacy")));
-                await connection.OpenAsync();
-                await using var schema = connection.CreateCommand();
-                schema.CommandText = """
-                    CREATE TABLE documents (collection TEXT NOT NULL, id TEXT NOT NULL, version INTEGER NOT NULL, body TEXT NOT NULL, PRIMARY KEY (collection, id)) WITHOUT ROWID;
-                    INSERT INTO documents VALUES ('people', 'old', 3, '{"name":"from version 1"}');
-                    INSERT INTO documents VALUES ('people', 'compat', 4, '{"x":1e307,"y":2}');
-                    INSERT INTO documents VALUES ('people', 'deep', 5, $deep);
-                    INSERT INTO documents VALUES ('people', 'wide', 5, '{"blob":"' || replace(hex(zeroblob(375000)), '00', 'ab') || '"}');
-                    INSERT INTO documents VALUES ('people', 'huge', 1, '{"blob":"' || replace(hex(zeroblob(1572864)), '00', 'ab') || '"}');
-                    INSERT INTO documents VALUES ('people', 'over-document-limit', 1, '{"blob":"' || replace(hex(zeroblob(786432)), '00', 'ab') || '"}');
-                    INSERT INTO documents VALUES ('people', 'duplicate', 1, '{"x":1,"x":2}');
-                    INSERT INTO documents VALUES ('people', $longId, 1, '{}');
-                    INSERT INTO documents VALUES ('people', $controlId, 1, '{}');
-                    INSERT INTO documents VALUES ('BadCollection', 'bad-collection', 1, '{}');
-                    PRAGMA user_version = 1;
-                    """;
-                schema.Parameters.AddWithValue("$deep", deepJson);
-                schema.Parameters.AddWithValue("$longId", longId);
-                schema.Parameters.AddWithValue("$controlId", controlId);
-                await schema.ExecuteNonQueryAsync();
+                tenant = await ReplicationTenant.CreateAsync(seed, "snapshot");
+                await seed.Services.GetRequiredService<IStorageEngine>().DeleteDatabaseAsync(tenant.Database("snapshot"), CancellationToken.None);
+                Directory.CreateDirectory(Path.GetDirectoryName(tenant.File(seed, "snapshot"))!);
+                await DocumentFiles.WriteAsync(tenant.File(seed, "snapshot"),
+                    ("people", "saved", "{\"name\":\"from snapshot\"}"),
+                    ("people", "numeric", "{\"x\":1e307,\"y\":2}"),
+                    ("people", "deep", deepJson),
+                    ("people", "wide", "{\"blob\":\"" + new string('a', 750000) + "\"}"));
             }
 
             await using var receiver = await TerraBaseTestServer.StartAsync(settings =>
@@ -1143,19 +1123,18 @@ public sealed class ReplicationTests
             });
             await tenant.BindAsync(receiver);
             using var reader = clientTls.CreateClient(receiver.ClientAddress!, await tenant.KeyAsync(receiver, "documents:read", "shapes:read"));
-            await using var upgraded = await TerraBaseTestServer.StartAsync(settings =>
+            await using var sender = await TerraBaseTestServer.StartAsync(settings =>
             {
                 peerTls.Apply(settings);
                 clientTls.Apply(settings);
                 settings["data-directory"] = data;
                 settings["peer-addresses"] = receiver.PeerAddress!.ToString();
-            }, services => services.AddSingleton<ILoggerProvider>(skipped));
+            });
 
-            await TerraBaseTestServer.ReplicatedAsync(upgraded);
-            await Assert.That(skipped.Skipped).IsEqualTo(6);
+            await TerraBaseTestServer.ReplicatedAsync(sender);
             using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
-            var database = tenant.Database("legacy");
-            var source = (await upgraded.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(database, deadline.Token))!;
+            var database = tenant.Database("snapshot");
+            var source = (await sender.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(database, deadline.Token))!;
             var target = (await receiver.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(database, deadline.Token))!;
             long baselineHead;
             ReadOnlyMemory<byte> origin;
@@ -1166,35 +1145,25 @@ public sealed class ReplicationTests
                 await Assert.That(baselineHead).IsEqualTo(1);
                 var baseline = (await local.ReadChangesAsync(baselineHead, deadline.Token))!;
                 var decoded = Features.Replication.ChangeGroup.Decode(Features.Replication.ChangeGroup.Encode(baseline));
-                await Assert.That(decoded.Select(change => change.Id)).IsEquivalentTo(["old", "compat", "deep", "wide"]);
+                await Assert.That(decoded.Select(change => change.Id)).IsEquivalentTo(["saved", "numeric", "deep", "wide"]);
                 origin = await local.GetOriginAsync(deadline.Token);
                 await Assert.That(await remote.GetAppliedSequenceAsync(origin, deadline.Token)).IsEqualTo(baselineHead);
-                foreach (var legacyId in new[] { "old", "compat", "deep", "wide" })
+                foreach (var documentId in new[] { "saved", "numeric", "deep", "wide" })
                 {
-                    var original = (await local.GetAsync("people", legacyId, deadline.Token))!;
-                    var replicated = (await remote.GetAsync("people", legacyId, deadline.Token))!;
+                    var original = (await local.GetAsync("people", documentId, deadline.Token))!;
+                    var replicated = (await remote.GetAsync("people", documentId, deadline.Token))!;
                     await Assert.That(replicated.Version).IsEqualTo(original.Version);
                     await Assert.That(replicated.Json.Span.SequenceEqual(original.Json.Span)).IsTrue();
                 }
 
-                foreach (var skippedId in new[] { "huge", "over-document-limit", "duplicate", longId, controlId })
-                {
-                    await Assert.That(await local.GetAsync("people", skippedId, deadline.Token)).IsNotNull();
-                    await Assert.That(await remote.GetAsync("people", skippedId, deadline.Token)).IsNull();
-                }
-
-                await Assert.That(await local.GetAsync("BadCollection", "bad-collection", deadline.Token)).IsNotNull();
-                await Assert.That(await remote.GetAsync("BadCollection", "bad-collection", deadline.Token)).IsNull();
-                await Assert.That((await local.GetAsync("people", "over-document-limit", deadline.Token))!.Json.Length)
-                    .IsBetween(1024 * 1024 + 1, IStorageTransaction.MaxChangeGroupBytes - 1);
                 await Assert.That(System.Text.Encoding.UTF8.GetString((await remote.GetAsync("people", "deep", deadline.Token))!.Json.Span)).IsEqualTo(deepJson);
             }
 
-            using var upgradedReader = clientTls.CreateClient(upgraded.ClientAddress!, await tenant.KeyAsync(upgraded, "documents:read", "shapes:read"));
-            var collection = $"{tenant.Path("legacy")}/collections/people";
+            using var sourceReader = clientTls.CreateClient(sender.ClientAddress!, await tenant.KeyAsync(sender, "documents:read", "shapes:read"));
+            var collection = $"{tenant.Path("snapshot")}/collections/people";
             string[] comparison = ["$id", "deep"];
             string[] projection = ["/nested"];
-            HttpClient[] clients = [upgradedReader, reader];
+            HttpClient[] clients = [sourceReader, reader];
             foreach (var client in clients)
             {
                 var document = await ReadAsync(client, HttpMethod.Get, $"{collection}/documents/deep");
@@ -1215,35 +1184,27 @@ public sealed class ReplicationTests
                     .Single(op => op.GetProperty("id").GetString() == "deep").GetProperty("document").GetRawText()).IsEqualTo(deepJson);
             }
 
-            // An incompatible legacy value must not block a following normal client write.
-            using var writer = clientTls.CreateClient(upgraded.ClientAddress!, await tenant.KeyAsync(upgraded, "documents:write"));
+            // Invalid JSON is refused while a subsequent valid write replicates.
+            using var writer = clientTls.CreateClient(sender.ClientAddress!, await tenant.KeyAsync(sender, "documents:write"));
             using var rejected = await writer.PutAsync(new Uri($"{collection}/documents/{DocumentApi.NewId()}", UriKind.Relative),
                 new StringContent("{\"nested\":" + new string('[', 80) + "0" + new string(']', 80) + "}", System.Text.Encoding.UTF8, "application/json"), deadline.Token);
             await Assert.That(rejected.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
             var next = EntityIds.New().ToString();
-            using var added = await writer.PutAsJsonAsync(new Uri($"{tenant.Path("legacy")}/collections/people/documents/{next}", UriKind.Relative), new { after = "legacy" }, deadline.Token);
+            using var added = await writer.PutAsJsonAsync(new Uri($"{tenant.Path("snapshot")}/collections/people/documents/{next}", UriKind.Relative), new { after = "snapshot" }, deadline.Token);
             added.EnsureSuccessStatusCode();
-            await TerraBaseTestServer.ReplicatedAsync(upgraded);
-            await Assert.That(await VersionAsync(tenant, receiver, "legacy", "people", next)).IsEqualTo(new DocumentVersion(6, Deleted: false));
+            await TerraBaseTestServer.ReplicatedAsync(sender);
+            await Assert.That(await VersionAsync(tenant, receiver, "snapshot", "people", next)).IsEqualTo(new DocumentVersion(2, Deleted: false));
             await using (var local = await source.BeginTransactionAsync(write: false, deadline.Token))
             await using (var remote = await target.BeginTransactionAsync(write: false, deadline.Token))
             {
                 var head = await local.GetLastChangeSequenceAsync(deadline.Token);
                 await Assert.That(head).IsEqualTo(baselineHead + 1);
                 await Assert.That(await remote.GetAppliedSequenceAsync(origin, deadline.Token)).IsEqualTo(head);
-                await Assert.That((await remote.GetAsync("people", next, deadline.Token))!.Json.Span.SequenceEqual("{\"after\":\"legacy\"}"u8)).IsTrue();
+                await Assert.That((await remote.GetAsync("people", next, deadline.Token))!.Json.Span.SequenceEqual("{\"after\":\"snapshot\"}"u8)).IsTrue();
             }
-            using var huge = await upgradedReader.GetAsync(new Uri($"{tenant.Path("legacy")}/collections/people/documents/huge", UriKind.Relative));
+            await Assert.That(await VersionAsync(tenant, receiver, "snapshot", "people", "saved")).IsEqualTo(new DocumentVersion(1, Deleted: false));
 
-            // The oversized document stays readable where it is and is left out of the baseline, not the whole database.
-            await Assert.That(await VersionAsync(tenant, receiver, "legacy", "people", "old")).IsEqualTo(new DocumentVersion(3, Deleted: false));
-            await Assert.That(huge.IsSuccessStatusCode).IsTrue();
-            using var oversized = await upgradedReader.GetAsync(new Uri($"{collection}/documents/over-document-limit", UriKind.Relative), deadline.Token);
-            oversized.EnsureSuccessStatusCode();
-            using var duplicate = await upgradedReader.GetAsync(new Uri($"{collection}/documents/duplicate", UriKind.Relative), deadline.Token);
-            duplicate.EnsureSuccessStatusCode();
-
-            // A shallow patch can remove legacy nesting, after which strict client validation accepts the result.
+            // A shallow patch of the copied value follows normal client admission.
             using var patcher = clientTls.CreateClient(receiver.ClientAddress!, await tenant.KeyAsync(receiver, "documents:write"));
             using var patched = await patcher.PatchAsync(new Uri($"{collection}/documents/deep", UriKind.Relative),
                 new StringContent("{\"nested\":null}", System.Text.Encoding.UTF8, "application/merge-patch+json"), deadline.Token);

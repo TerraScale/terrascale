@@ -30,8 +30,7 @@ namespace TerraBase.Features.Management;
 /// goes through <see cref="GetOrganizationAsync(IStorageTransaction, string, string, CancellationToken)"/> or
 /// <c>AuthorizeAsync</c>, which answer non-members as if the organization did not exist.
 /// <para>
-/// The catalog is versioned by the <c>catalog/version</c> document, and migrated in one transaction before the
-/// Empty catalogs bootstrap version 6. Older catalogs are refused; this closed-beta cutover discards old data.
+/// The catalog is versioned by the <c>catalog/version</c> document. Empty catalogs bootstrap version 6. Older catalogs are refused; this closed-beta cutover discards old data.
 /// </para>
 /// <para>
 /// Each organization is a tenant. Storage is addressed by a <see cref="TenantContext"/> resolved in the same transaction
@@ -57,7 +56,7 @@ internal sealed partial class EngineManagementService(
     // Catalog documents are small; this only bounds a page if one ever is not.
     private const long MaxPageBytes = 1024 * 1024;
 
-    // Documents per page when deleting members or migrating the catalog.
+    // Documents per page when deleting members.
     private const int MemberPage = 100;
 
     private static readonly JsonTypeInfo<string> Id = TerraBaseJsonContext.Default.String;
@@ -799,7 +798,7 @@ internal sealed partial class EngineManagementService(
         IStorageTransaction transaction, string projectId, string databaseId, CancellationToken cancellationToken) =>
         GetAsync(transaction, Databases(projectId), databaseId, TerraBaseJsonContext.Default.ManagedDatabase, cancellationToken);
 
-    /// <summary>Every registered database, for one-time catalog backfills; reads the whole catalog.</summary>
+    /// <summary>Every registered database; reads the whole catalog.</summary>
     internal static async ValueTask<List<DatabaseOwner>> ListDatabasesUncheckedAsync(IStorageTransaction transaction, CancellationToken cancellationToken)
     {
         var owners = new List<DatabaseOwner>();

@@ -6,7 +6,7 @@ import "terrabase/v1/replication.proto";
 
 option csharp_namespace = "TerraBase.Features.CrossRegion.V1";
 
-// Version 1 of cross-region (WAN) replication over NATS request/reply (docs/cross-region.md). A member of one
+// Version 2 of cross-region (WAN) replication over NATS request/reply (docs/cross-region.md). A member of one
 // region pulls the change groups of every origin of another region from the member that originated them, after
 // its own applied prefix. Every request and reply is at most 1 MiB, NATS's default max_payload.
 
@@ -22,14 +22,14 @@ message WanRequest {
 }
 
 message HeadsRequest {
-  // The page starts after this database: its tenant, project and database UUIDs (16 bytes each, RFC order),
+  // The page starts after this database: its tenant, project and database ULIDs (16 bytes each, network byte order),
   // concatenated; empty for the first page.
   bytes after = 1;
 }
 
 // The last change group an origin committed in one database.
 message Head {
-  // Canonical 16-byte UUIDs in RFC byte order.
+  // Canonical 16-byte ULIDs in network byte order.
   bytes tenant_id = 1;
   bytes project_id = 2;
   bytes database_id = 3;

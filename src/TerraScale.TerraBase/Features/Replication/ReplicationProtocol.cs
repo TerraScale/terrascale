@@ -7,9 +7,9 @@ using TerraBase.Tenancy;
 namespace TerraBase.Features.Replication;
 
 /// <summary>
-/// Protocol 1.0 of the <c>Replication.Sync</c> stream between TerraBase nodes. One stream carries the
+/// Protocol 2.0 of the <c>Replication.Sync</c> stream between TerraBase nodes. One stream carries the
 /// change groups of one database from one origin: <c>Hello</c> names its organization, project and database
-/// by their 16 ULID bytes in RFC order, and the origin (its 16 bytes in <c>member_id</c> and <c>member_incarnation</c>);
+/// by their 16 ULID bytes in network order, and the origin (its 16 bytes in <c>member_id</c> and <c>member_incarnation</c>);
 /// <c>Welcome</c> reports the receiver's applied prefix of that origin, and the sender resumes after it.
 /// Every group travels in an LZ4 <see cref="ApplicationEnvelope"/>; gRPC transport compression stays off.
 /// </summary>
@@ -39,7 +39,7 @@ public static class ReplicationProtocol
     /// </summary>
     public const ulong MembershipEpoch = 0;
 
-    private const uint Major = 1;
+    internal const uint Major = 2;
 
     /// <summary>A receiver ends a stream on which nothing arrives for this long.</summary>
     public static TimeSpan IdleTimeout { get; } = TimeSpan.FromSeconds(30);
@@ -142,7 +142,7 @@ public static class ReplicationProtocol
 
     /// <summary>
     /// The database, origin and negotiated limits a valid <paramref name="hello"/> opens, or a reason to refuse it.
-    /// Protocol 1.0 and format 1 must be in the offered ranges; the identity must be a <see cref="Member"/> in
+    /// Protocol 2.0 and format 1 must be in the offered ranges; the identity must be a <see cref="Member"/> in
     /// <see cref="MembershipEpoch"/>; every advertised limit is positive and the result is the minimum of both sides.
     /// </summary>
     internal static StreamErrorCode Accept(Hello hello, out TenantContext database, out ReadOnlyMemory<byte> origin, out TransferLimits limits)

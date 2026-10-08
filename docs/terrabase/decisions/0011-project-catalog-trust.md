@@ -9,9 +9,9 @@ Legacy Management commits allowed ordinary organization members to choose
 `create_project.id`. The resulting global `project_organizations` index records
 storage placement, without proof that ts-auth authorized that organization to
 represent the chosen project. Treating this index as JWT authority lets a legacy
-user register another owner's ts-auth project UUID before its first JWT request.
+user register another owner's ts-auth project ULID before its first JWT request.
 Later JWT database writes could then be read by that legacy user's membership or
-document keys. Equality between project and organization UUIDs proves no
+document keys. Equality between project and organization ULIDs proves no
 authority either, including after a legacy organization is deleted.
 
 ## Decision
@@ -71,4 +71,4 @@ Integration tests must drive the real listeners and cover the chosen-project-ID
 takeover attempt, denial before verification, both ownership checks, failure of
 ts-auth verification, preservation of legacy access and documents, and JWT
 access to the same existing data after verification. Fresh enrollment must remain
-isolated from live and deleted legacy organizations with matching UUIDs.
+isolated from live and deleted legacy organizations with matching identifiers.

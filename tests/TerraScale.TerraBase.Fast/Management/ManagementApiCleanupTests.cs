@@ -1,6 +1,7 @@
 using System.Net;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
+using TerraBase.Primitives;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Management;
@@ -40,7 +41,7 @@ public sealed class ManagementApiCleanupTests
             await Assert.That(File.Exists(tlsSettings["client-certificate"])).IsFalse();
             await Assert.That(File.Exists(tlsSettings["client-private-key"])).IsFalse();
             // The issuer's signing keys were disposed too.
-            await Assert.That(() => api.Issuer.Mint("user")).Throws<ObjectDisposedException>();
+            await Assert.That(() => api.Issuer.Mint(EntityIds.New().ToString())).Throws<ObjectDisposedException>();
         }
         finally
         {

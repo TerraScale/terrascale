@@ -313,7 +313,7 @@ public sealed class DataDirectoryTests
     [Test]
     public async Task The_ownership_probe_fails_instead_of_reading_a_missing_directory_as_owned()
     {
-        var missing = Path.Combine(Path.GetTempPath(), "terrabase-missing-" + Guid.NewGuid());
+        var missing = Path.Combine(Path.GetTempPath(), "terrabase-missing-" + EntityIds.New().ToString());
 
         await Assert.That(() => TerraBaseTestServer.IsDataDirectoryOwned(missing)).Throws<DirectoryNotFoundException>();
     }
@@ -376,7 +376,7 @@ public sealed class DataDirectoryTests
                     break;
                 default:
                     // A layout record this build does not know, from a newer build.
-                    await File.WriteAllBytesAsync(lockFile, [2]);
+                    await File.WriteAllBytesAsync(lockFile, [99]);
                     break;
             }
 

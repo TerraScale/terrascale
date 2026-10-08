@@ -13,7 +13,7 @@ public sealed class StorageFormatTests
     public async Task Old_database_formats_are_refused_without_rewriting_data(int version)
     {
         await using var api = await DocumentApi.StartAsync();
-        var path = await api.ReplaceWithOlderFileAsync("old", async path =>
+        var path = await api.ReplaceFileAsync("old", async path =>
         {
             await using var connection = new SqliteConnection(DocumentApi.ConnectionString(path));
             await connection.OpenAsync();

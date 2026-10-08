@@ -669,8 +669,7 @@ internal sealed partial class SqliteDatabaseStore(
     internal Task ReturnSessionAsync(SqliteSession session) => ReturnAsync(session);
 
     /// <summary>
-    /// When the change log does not cover this database's state (a copy, or an upgrade from version 1 with
-    /// data), appends the current state of every document and tombstone as baseline change groups, one
+    /// When the change log does not cover a copied database's state, appends the current state of every document and tombstone as baseline change groups, one
     /// bounded group per transaction, then marks the log complete. Merging is idempotent, so a baseline
     /// repeated after a crash only costs bytes. Returns the last appended sequence (0 when none) and the
     /// pre-existing states skipped for failing replication admission.
@@ -771,7 +770,7 @@ internal sealed partial class SqliteDatabaseStore(
     }
 
     /// <summary>
-    /// Creates (or adopts a copied) and migrates a new database file at <paramref name="path"/> on an unpooled
+    /// Creates (or adopts a copied) and bootstraps a database file at <paramref name="path"/> on an unpooled
     /// connection, so no handle stays open once this returns and the file can be moved. The caller holds an admission.
     /// </summary>
     /// <remarks>

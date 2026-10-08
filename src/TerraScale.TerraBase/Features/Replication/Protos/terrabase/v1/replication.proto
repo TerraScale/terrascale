@@ -15,12 +15,12 @@ service Replication {
 
 // Stable identity and current certified configuration for one member.
 message PeerIdentity {
-  // Canonical 16-byte UUID in RFC byte order.
+  // Canonical 16-byte ULID in network byte order.
   bytes tenant_id = 1;
-  // Canonical 16-byte UUID in RFC byte order.
+  // Canonical 16-byte ULID in network byte order.
   bytes database_id = 2;
   uint64 shard_id = 3;
-  // Canonical 16-byte UUID in RFC byte order.
+  // Canonical 16-byte ULID in network byte order.
   bytes member_id = 4;
   // 16-byte incarnation; changes when this member's causal history is reset.
   bytes member_incarnation = 5;

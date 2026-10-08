@@ -13,7 +13,7 @@ internal interface ICatalogGuard
 
     /// <summary>
     /// On a catalog follower, checks the replicated catalog version inside the reader's own <paramref name="transaction"/>, since
-    /// replication can bring a version this build does not read (503); nothing on a primary, which checked when it migrated.
+    /// replication can bring a version this build does not read (503); nothing on a primary, which checked during bootstrap.
     /// </summary>
     ValueTask CheckReadAsync(IStorageTransaction transaction, CancellationToken cancellationToken);
 }

@@ -15,6 +15,7 @@ using TerraBase.Engine.Cluster;
 using TerraBase.Features.Management;
 using TerraBase.Features.Memory;
 using TerraBase.Hosting;
+using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
 
@@ -108,7 +109,7 @@ public sealed class ExplainSqlBoundaryTests
         await using var api = await StartAsync();
         var database = await api.CreateManagedDatabaseAsync();
         await api.VerifyProjectBindingAsync(database.Organization, database.Project);
-        using var client = ProjectClient(api, wrongScope ? database.Project : new Faker().Random.Guid().ToString(),
+        using var client = ProjectClient(api, wrongScope ? database.Project : EntityIds.New().ToString(),
             wrongScope ? "documents:read" : "databases:read");
         var reserved = ReservedBytes(api);
         var headers = await SendHeadersOnlyAsync(api, client, database);
@@ -369,7 +370,7 @@ public sealed class ExplainSqlBoundaryTests
             var local = await CreateDatabaseAsync(api);
             // Seed real catalog state from another home, without replacing tenant or query services.
             // The existing local file represents a retained replica after its region leaves placement.
-            var database = catalogOnly ? local with { Id = new Faker().Random.Guid().ToString(), Name = "remote" } : local;
+            var database = catalogOnly ? local with { Id = EntityIds.New().ToString(), Name = "remote" } : local;
             await SeedRemotePlacementAsync(api, database, TUnit.Core.TestContext.Current!.Execution.CancellationToken);
             var file = System.IO.Path.Combine(api.Server.DataDirectory, database.Organization, database.Project, database.Id + ".db");
             await Assert.That(File.Exists(file)).IsEqualTo(!catalogOnly);
@@ -385,7 +386,7 @@ public sealed class ExplainSqlBoundaryTests
 
             foreach (var restricted in new[] { false, true })
             {
-                using var outsider = ProjectClient(api, restricted ? database.Project : new Faker().Random.Guid().ToString(),
+                using var outsider = ProjectClient(api, restricted ? database.Project : EntityIds.New().ToString(),
                     database: restricted ? "other" : null);
                 var hidden = await SendHeadersOnlyAsync(api, outsider, database);
                 await Assert.That(hidden[0]).StartsWith("HTTP/1.1 404 ");
@@ -409,7 +410,7 @@ public sealed class ExplainSqlBoundaryTests
             var hook = new UsageCommitHook();
             await using var api = await StartWanAsync(directory, hook);
             var database = await CreateDatabaseAsync(api);
-            var replacement = database with { Id = new Faker().Random.Guid().ToString() };
+            var replacement = database with { Id = EntityIds.New().ToString() };
             var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
             var engine = api.Server.Services.GetRequiredService<IStorageEngine>();
             await Assert.That(await engine.CreateDatabaseAsync(
@@ -577,7 +578,7 @@ public sealed class ExplainSqlBoundaryTests
                 await Assert.That(plan.GetProperty("indexes")[0].GetString()).IsEqualTo("people_email");
             }
 
-            var replacement = reassignName ? database with { Id = new Faker().Random.Guid().ToString() } : database;
+            var replacement = reassignName ? database with { Id = EntityIds.New().ToString() } : database;
             var reserved = ReservedBytes(api);
             hook.BeforeBegin = async (tenant, cancellationToken) =>
             {

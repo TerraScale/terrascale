@@ -849,7 +849,7 @@ public sealed class DatabaseRecoveryTests
             await Assert.That(branch.StatusCode).IsEqualTo(HttpStatusCode.InternalServerError);
             using var data = api.DataClient(state.ApiKey);
             using var read = await data.GetAsync(Uri(
-                $"/v1/projects/{state.Project}/databases/source/collections/people/documents/{state.Faker.Random.Guid()}"));
+                $"/v1/projects/{state.Project}/databases/source/collections/people/documents/{EntityIds.New()}"));
             await Assert.That(read.StatusCode).IsEqualTo(HttpStatusCode.InternalServerError);
             await Assert.That((await PendingAsync(api)).Documents).IsEmpty();
             await state.AssertUnregisteredAsync(api, owner, destination.DatabaseId!);
@@ -991,16 +991,13 @@ public sealed class DatabaseRecoveryTests
     }
 
     [Test]
-    public async Task Version_three_is_upgraded_before_a_database_create_and_recovers_its_intent()
+    public async Task A_current_catalog_recovers_an_interrupted_database_create_after_restart()
     {
         using var state = new RecoveryData();
         await using (var api = await state.StartAsync())
         {
             await state.SeedAsync(api);
-            var system = await api.Server.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(CancellationToken.None);
-            await using var transaction = await system.BeginTransactionAsync(write: true, CancellationToken.None);
-            await transaction.PutAsync("catalog", "version", Encoding.UTF8.GetBytes("\"3\""), CancellationToken.None);
-            await transaction.CommitAsync(CancellationToken.None);
+
         }
 
         string target;
@@ -1008,15 +1005,15 @@ public sealed class DatabaseRecoveryTests
         {
             if (step == "create.intent")
             {
-                throw new InvalidOperationException("interrupted migrated creation");
+                throw new InvalidOperationException("interrupted creation");
             }
         })))
         {
-            await Assert.That(await CatalogAsync(api, "catalog", "version")).IsEqualTo("\"3\"");
+            await Assert.That(await CatalogAsync(api, "catalog", "version")).IsEqualTo("\"6\"");
             using var owner = api.As(state.User);
             using var created = await owner.PostAsJsonAsync(Uri(state.Databases), new { name = state.TargetName });
             await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.InternalServerError);
-            await Assert.That(await CatalogAsync(api, "catalog", "version")).IsEqualTo("\"5\"");
+            await Assert.That(await CatalogAsync(api, "catalog", "version")).IsEqualTo("\"6\"");
             var pending = await PendingAsync(api);
             await Assert.That(pending.Documents.Count).IsEqualTo(1);
             target = pending.Documents[0].Id;
@@ -1030,7 +1027,7 @@ public sealed class DatabaseRecoveryTests
         await state.AssertUnregisteredAsync(recovered, recoveredOwner, target);
         await state.AssertPreservedAsync(recovered, recoveredOwner);
         await recovered.CreateDatabaseAsync(state.Organization, state.Project, state.TargetName, recoveredOwner);
-        await Assert.That(await CatalogAsync(recovered, "catalog", "version")).IsEqualTo("\"5\"");
+        await Assert.That(await CatalogAsync(recovered, "catalog", "version")).IsEqualTo("\"6\"");
     }
 
     [Test]

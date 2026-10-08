@@ -22,9 +22,9 @@ public static class CatalogRegistration
         var created = DateTimeOffset.UnixEpoch;
         (string Collection, string Id, byte[] Json)[] rows =
         [
-            ("catalog", "version", "\"5\""u8.ToArray()),
+            ("catalog", "version", "\"6\""u8.ToArray()),
             ("organizations", organization, JsonSerializer.SerializeToUtf8Bytes(
-                new Organization(organization, "registered", "test", created, database.Plan), TerraBaseJsonContext.Default.Organization)),
+                new Organization(organization, "registered", EntityIds.New().ToString(), created, database.Plan), TerraBaseJsonContext.Default.Organization)),
             ($"organizations/{organization}/projects", project, JsonSerializer.SerializeToUtf8Bytes(
                 new Project(project, organization, "registered", created), TerraBaseJsonContext.Default.Project)),
             ($"projects/{project}/databases", id, JsonSerializer.SerializeToUtf8Bytes(

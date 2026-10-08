@@ -25,7 +25,7 @@ The plan test runs every statement against both a client database and the `_syst
 Schema v8: `documents (collection, id, version, body)`, `PRIMARY KEY (collection, id)`,
 `WITHOUT ROWID`, where a NULL `body` is a tombstone and `version` is the commit offset of the last
 write; `collections (name PRIMARY KEY, created_at, generation)`, `WITHOUT ROWID`; and the one-row
-`commit_offset (id, value, incarnation)`; the random UUIDv4 incarnation is persisted and renewed
+`commit_offset (id, value, incarnation)`; the ULID incarnation is persisted and renewed
 for newly created/copied databases. The primary keys are clustered B-trees, so every primary-key lookup is covering.
 The partial `documents_live (collection, id) WHERE body IS NOT NULL` index excludes tombstones
 from live listing and query scans. Point reads and tombstone metadata still use the primary key.
@@ -33,7 +33,7 @@ Version 7 adds `changes (sequence, ordinal, collection, id, version, body)` with
 `(sequence, ordinal)` and `applied (origin, sequence)` keyed by origin, both `WITHOUT ROWID`,
 plus the one-row `replication_state (id, complete)`. The existing incarnation is the wire origin.
 Schema v7 also separates the merge version (`change_log.document_version`) from the local
-shape history offset (`change_log.version`); migration preserves every existing history entry.
+shape history offset (`change_log.version`); fresh bootstrap creates the history tables.
 
 The partial `changes_deleted (collection, id, version) WHERE body IS NULL` index retains physical
 delete/drop merge evidence without changing public document/version reads. Incoming puts seek a deletion
@@ -69,11 +69,11 @@ support the shape seeks described below. `_system` has the same schema but retai
 | `LastSequence`, `NextSequence`, `AppendChange`, `ReadChanges` | journal append/send | — | journal primary-key search; insert has no plan rows |
 | `GetApplied`, `SetApplied` | received origin frontier | — | applied primary-key lookup; upsert has no plan rows |
 | `Complete`, `MarkComplete` | baseline state | — | integer-primary-key lookup on `replication_state` |
-| `CountOversizedBaselineKeys` | baseline admission, once on copy/upgrade | — | one metadata-only scan; key values never enter managed memory |
-| `Baseline…First`, `Baseline…After` | bounded baseline, once on copy/upgrade | — | key-order scan under LIMIT, or primary-key continuation range; recorded by the Fast plan test |
+| `CountOversizedBaselineKeys` | baseline admission, once on copy/bootstrap | — | one metadata-only scan; key values never enter managed memory |
+| `Baseline…First`, `Baseline…After` | bounded baseline, once on copy/bootstrap | — | key-order scan under LIMIT, or primary-key continuation range; recorded by the Fast plan test |
 | `ReplicationStateFirst` | first canonical state page for anti-entropy Merkle rebuild/repair | — | `SCAN documents USING COVERING INDEX documents_replication_keys` in key order; seed `SCAN changes USING INDEX changes_replication_deleted`, then distinct retained-deletion key seeks `SEARCH changes USING INDEX changes_replication_deleted (collection=? AND id>?)` / `(collection>?)`; `MERGE (UNION)` consumes both key arms under the 129-key limit; `MATERIALIZE evidence` projects at most 129 metadata rows with `SEARCH documents USING PRIMARY KEY (collection=? AND id=?) LEFT-JOIN` and indexed `(collection=? AND id=?)` deletion-version lookup; two `USE TEMP B-TREE FOR ORDER BY` steps |
 | `ReplicationStateAfter` | continuation canonical state page for anti-entropy Merkle rebuild/repair | — | `SEARCH documents USING COVERING INDEX documents_replication_keys ((collection,id)>(?,?))`; retained-deletion seed and recursive distinct-key seeks use `SEARCH changes USING INDEX changes_replication_deleted (collection=? AND id>?)` / `(collection>?)`; `MERGE (UNION)` consumes both key arms under the 129-key limit; `MATERIALIZE evidence` projects at most 129 metadata rows with `SEARCH documents USING PRIMARY KEY (collection=? AND id=?) LEFT-JOIN` and indexed `(collection=? AND id=?)` deletion-version lookup; two `USE TEMP B-TREE FOR ORDER BY` steps |
-| `PRAGMA user_version`, `PRAGMA journal_mode = WAL`, `CREATE TABLE` | once per database per process (migration) | DDL, no plan | unchanged |
+| `PRAGMA user_version`, `PRAGMA journal_mode = WAL`, `CREATE TABLE` | once per database per process (bootstrap) | DDL, no plan | unchanged |
 | `VACUUM INTO $path` | database copy (Management API), rare | maintenance, `EXPLAIN QUERY PLAN` returns no rows | unchanged; runs on a pooled connection |
 | `CountDocuments`: `SELECT count(*) … WHERE collection = ? AND body IS NOT NULL` | schema inference, query-field records in `_system` (Management API) | — | `SEARCH documents USING PRIMARY KEY (collection=?)`; tests each record header's body type, never loads a body. `documents_live` would not cover the `body` test and would add a lookup per row |
 | `ListCollectionStats` | usage, collection list (Management API) | — | `SCAN collections` in key order, then per collection `SEARCH documents USING PRIMARY KEY (collection=?)` (a `LEFT-JOIN` summing `octet_length(body)`, which reads the size from the record header) |
@@ -148,9 +148,9 @@ failure closes the session instead of pooling it.
 
 | Setting | Value | Why |
 | --- | --- | --- |
-| `journal_mode` | `WAL` | Persistent in the file (set at migration). Readers never block the writer. |
+| `journal_mode` | `WAL` | Persistent in the file (set at bootstrap). Readers never block the writer. |
 | `synchronous` | `NORMAL` | Decision 0003 (`docs/decisions/0003-sqlite-synchronous-normal.md`). A commit no longer waits for an fsync; SQLite syncs the WAL before each checkpoint. Committed transactions, including acknowledged writes, can be lost after a power loss or an OS crash, but not after a process crash, and the file is never corrupted. Accepted for write throughput. Every connection uses it, including the one that creates a database. |
-| `busy_timeout` | 30 s | SQLite's own busy handler (1–100 ms back-off) instead of Microsoft.Data.Sqlite's retry loop, which sleeps 150 ms between attempts: a writer behind a 20 ms write lock waited 150 ms before, 34 ms after. Same 30 s bound as the command timeout. Cancellable session setup, migration, transaction acquisition and journal reads temporarily use 100 ms native busy backoff and the provider retry loop in 1 s slices, checking cancellation between retries and interrupting active VM work, so native busy waits cannot outlast the replication attempt. |
+| `busy_timeout` | 30 s | SQLite's own busy handler (1–100 ms back-off) instead of Microsoft.Data.Sqlite's retry loop, which sleeps 150 ms between attempts: a writer behind a 20 ms write lock waited 150 ms before, 34 ms after. Same 30 s bound as the command timeout. Cancellable session setup, bootstrap, transaction acquisition and journal reads temporarily use 100 ms native busy backoff and the provider retry loop in 1 s slices, checking cancellation between retries and interrupting active VM work, so native busy waits cannot outlast the replication attempt. |
 | `mmap_size` | `memory-budget`, at least 256 MiB | Reads map pages instead of copying them through `read()`: about 5–10 % faster point reads and 25 % faster full listings in the benchmark below. Address space only; pages are the OS page cache, not the heap, so it can be as large as the budget. SQLite caps it at its compile-time maximum (2 GiB by default). |
 | `cache_size` | ¼ of `memory-budget` ÷ `storage-threads`, at least 2 MiB | The page cache holds pages that writes change and pages mmap does not cover. A quarter of the budget, split across the connections that run at once (one per storage thread). Idle pooled connections keep their cache; it grows only with pages actually read. |
 | `soft_heap_limit` | ¼ of `memory-budget` | Process-wide (`sqlite3_soft_heap_limit64`, set once per engine): SQLite frees page cache to keep its whole heap under the page-cache quarter, so idle connections cannot add up past it. Soft: allocations never fail because of it. Another engine in the same process (tests run several) only raises it. |

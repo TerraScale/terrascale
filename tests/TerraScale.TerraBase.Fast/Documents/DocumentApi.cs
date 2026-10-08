@@ -110,10 +110,9 @@ internal sealed class DocumentApi : IAsyncDisposable
 
     /// <summary>
     /// Registers database <paramref name="name"/> in the tenant's project, then has the engine forget its store and
-    /// file and lets <paramref name="write"/> write a file of an older build at its path; the next request opens and
-    /// migrates that file. Returns the path.
+    /// file and lets <paramref name="write"/> write a fixture at its path; the next request opens that file. Returns the path.
     /// </summary>
-    public async Task<string> ReplaceWithOlderFileAsync(string name, Func<string, Task> write)
+    public async Task<string> ReplaceFileAsync(string name, Func<string, Task> write)
     {
         ArgumentNullException.ThrowIfNull(write);
         var created = await SendAsync(HttpMethod.Put, DatabasePath(name));

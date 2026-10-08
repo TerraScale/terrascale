@@ -909,13 +909,15 @@ public sealed class PeerTransportTests
     }
 
     [Test]
-    public async Task Hello_must_include_protocol_1_0_and_a_consistent_identity_and_limits_are_negotiated()
+    public async Task Hello_must_include_protocol_2_0_and_a_consistent_identity_and_limits_are_negotiated()
     {
         using var tls = new PeerTls();
         await using var server = await TerraBaseTestServer.StartAsync(tls.Apply);
 
+        var oldOnly = await FirstResponseAsync(tls, server, hello =>
+            hello.ProtocolVersions = new VersionRange { Minimum = new ProtocolVersion { Major = 1 }, Maximum = new ProtocolVersion { Major = 1 } });
         var newerOnly = await FirstResponseAsync(tls, server, hello =>
-            hello.ProtocolVersions = new VersionRange { Minimum = new ProtocolVersion { Major = 1, Minor = 1 }, Maximum = new ProtocolVersion { Major = 1, Minor = 2 } });
+            hello.ProtocolVersions = new VersionRange { Minimum = new ProtocolVersion { Major = ReplicationProtocol.Major, Minor = 1 }, Maximum = new ProtocolVersion { Major = ReplicationProtocol.Major, Minor = 2 } });
         var otherMember = await FirstResponseAsync(tls, server, hello =>
             hello.LocalIdentity.MemberId = Google.Protobuf.ByteString.CopyFrom(RandomNumberGenerator.GetBytes(16)));
         var noCredit = await FirstResponseAsync(tls, server, hello => hello.Limits.ByteCredit = 0);
@@ -926,6 +928,7 @@ public sealed class PeerTransportTests
             hello.Limits.MaxInFlightBatches = 2;
         });
 
+        await Assert.That(oldOnly.Error.Code).IsEqualTo(StreamErrorCode.StreamErrorIncompatibleVersion);
         await Assert.That(newerOnly.Error.Code).IsEqualTo(StreamErrorCode.StreamErrorIncompatibleVersion);
         await Assert.That(otherMember.Error.Code).IsEqualTo(StreamErrorCode.StreamErrorUnsupportedFormat);
         await Assert.That(noCredit.Error.Code).IsEqualTo(StreamErrorCode.StreamErrorIncompatibleVersion);

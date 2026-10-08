@@ -33,7 +33,7 @@ public sealed class ProjectCatalogEnrollmentTests
             await Assert.That(deleted.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
         }
 
-        using var client = api.WithToken(api.Issuer.Mint("tsk_" + EntityIds.New().ToString(), token =>
+        using var client = api.WithToken(api.Issuer.Mint(EntityIds.New().ToString(), token =>
         {
             token.Claims["project_id"] = project;
             token.Claims["scope"] = "databases:read databases:write documents:read documents:write";
@@ -43,7 +43,7 @@ public sealed class ProjectCatalogEnrollmentTests
         var created = await JsonAsync(client.PostAsJsonAsync(Uri(databases), new { name = "main" }), HttpStatusCode.Created);
         var id = created.GetProperty("id").GetString();
         await JsonAsync(client.PostAsJsonAsync(Uri(database + "/collections"), new { name = "people" }), HttpStatusCode.Created);
-        var document = database + "/collections/people/documents/" + faker.Random.Guid();
+        var document = database + "/collections/people/documents/" + EntityIds.New();
         var name = faker.Name.FullName();
         await JsonAsync(client.PutAsJsonAsync(Uri(document), new { name }), HttpStatusCode.Created);
         await Assert.That((await JsonAsync(client.GetAsync(Uri(document)))).GetProperty("document").GetProperty("name").GetString()).IsEqualTo(name);

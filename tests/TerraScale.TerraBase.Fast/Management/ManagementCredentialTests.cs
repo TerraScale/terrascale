@@ -1,7 +1,6 @@
 using System.Collections.Concurrent;
 using System.Net;
 using System.Text.Json;
-using Bogus;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using TerraBase.Primitives;
@@ -19,7 +18,6 @@ public sealed class ManagementCredentialTests
     private const string UserHeader = "X-TerraBase-User-Id";
     private const string Organizations = "/v1/management/organizations";
 
-    private static readonly Faker Faker = new();
 
     [Test]
     public async Task The_credential_bootstraps_organizations_on_the_admin_listener_before_ts_auth_answers()
@@ -142,7 +140,7 @@ public sealed class ManagementCredentialTests
         await Assert.That(invalidEmail.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
         await Assert.That(await ErrorAsync(invalidEmail)).IsEqualTo(("invalid_request", "email must be one address of at most 254 characters"));
         await Assert.That(invalidUser.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
-        await Assert.That(await ErrorAsync(invalidUser)).IsEqualTo(("invalid_request", "user must be 1 to 256 characters without control characters"));
+        await Assert.That(await ErrorAsync(invalidUser)).IsEqualTo(("invalid_request", "user must be a canonical uppercase ULID"));
         await Assert.That(users).IsEquivalentTo([owner, member]);
     }
 
@@ -153,7 +151,7 @@ public sealed class ManagementCredentialTests
         await using var api = await ManagementApi.StartAsync(settings => settings["management-credential-file"] = credential.Path);
         using var anonymous = api.WithToken(null);
         var organization = $"{Organizations}/{await api.CreateOrganizationAsync("Public")}";
-        var path = $"{organization}/members/{Faker.Random.Guid()}";
+        var path = $"{organization}/members/{EntityIds.New()}";
         var body = new { email = $"{EntityIds.New()}@example.com" };
 
         // The owner's own valid token, and the credential, are both refused there.

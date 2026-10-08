@@ -129,12 +129,12 @@ public sealed class UserAuthTests
         // Within 30 s of that refresh, another unknown key (unpublished, then published) costs no fetch and fails.
         clock.Advance(TsAuthKeys.UnknownKeyInterval - TimeSpan.FromTicks(1));
         var unpublished = api.Issuer.AddKey(SecurityAlgorithms.EcdsaSha256, publish: false);
-        var forged = await SendOnceAsync(api.WithToken(api.Issuer.Mint("user", token => token.SigningCredentials = unpublished)));
+        var forged = await SendOnceAsync(api.WithToken(api.Issuer.Mint(EntityIds.New().ToString(), token => token.SigningCredentials = unpublished)));
         api.Issuer.Rotate();
-        var tooSoon = await SendOnceAsync(api.As("user"));
+        var tooSoon = await SendOnceAsync(api.As(EntityIds.New().ToString()));
         var fetchedWithinInterval = api.Issuer.JwksFetches;
         clock.Advance(TimeSpan.FromTicks(1));
-        var later = await SendOnceAsync(api.As("user"));
+        var later = await SendOnceAsync(api.As(EntityIds.New().ToString()));
 
         await Assert.That(fetchedAtStartup).IsEqualTo(1);
         await Assert.That(rotated).All().Satisfy(status => status.IsEqualTo(HttpStatusCode.OK));
@@ -214,7 +214,7 @@ public sealed class UserAuthTests
         var unknown = api.Issuer.AddKey(SecurityAlgorithms.EcdsaSha256, publish: false);
 
         // The unknown key's refresh fails; the cached keys keep validating and the server stays ready.
-        var refreshFailed = await SendOnceAsync(api.WithToken(api.Issuer.Mint("user", token => token.SigningCredentials = unknown)));
+        var refreshFailed = await SendOnceAsync(api.WithToken(api.Issuer.Mint(EntityIds.New().ToString(), token => token.SigningCredentials = unknown)));
         var cached = await SendOnceAsync(api.As(EntityIds.New().ToString()));
         using var ready = await api.Server.Client.GetAsync(Uri("/readyz"));
 

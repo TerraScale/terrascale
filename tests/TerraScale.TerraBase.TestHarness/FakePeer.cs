@@ -124,7 +124,7 @@ public sealed class FakePeer : IAsyncDisposable
             Welcome = new Welcome
             {
                 LocalIdentity = member,
-                ProtocolVersion = new ProtocolVersion { Major = 1 },
+                ProtocolVersion = new ProtocolVersion { Major = ReplicationProtocol.Major },
                 EventFormatVersion = 1,
                 RecordFormatVersion = 1,
                 MergePolicyVersion = 1,

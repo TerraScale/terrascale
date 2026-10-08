@@ -32,7 +32,7 @@ public sealed class ManagementApiTests
         await Assert.That(organization.GetProperty("name").GetString()).IsEqualTo(name);
         await Assert.That(organization.GetProperty("createdBy").GetString()).IsEqualTo(api.User);
         await Assert.That(organization.GetProperty("plan").GetString()).IsEqualTo("hobby");
-        await Assert.That(Guid.TryParse(id, out _)).IsTrue();
+        await Assert.That(EntityIds.IsValid(id)).IsTrue();
         await Assert.That(read.StatusCode).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(list.RootElement.GetProperty("items").EnumerateArray().Select(item => item.GetProperty("id").GetString()!)).IsEquivalentTo([id]);
         await Assert.That(renamed.StatusCode).IsEqualTo(HttpStatusCode.OK);
@@ -46,7 +46,7 @@ public sealed class ManagementApiTests
     public async Task An_organization_plan_defaults_to_hobby_and_is_set_only_by_owners()
     {
         await using var api = await ManagementApi.StartAsync();
-        using var other = api.As("other-user");
+        using var other = api.As(EntityIds.New().ToString());
         var organization = await api.CreateOrganizationAsync("Acme");
         var plan = $"/v1/management/organizations/{organization}/plan";
 
@@ -79,7 +79,7 @@ public sealed class ManagementApiTests
     public async Task A_user_lists_only_their_organizations_in_pages()
     {
         await using var api = await ManagementApi.StartAsync();
-        using var other = api.As("other-user");
+        using var other = api.As(EntityIds.New().ToString());
         var ids = new List<string>();
         for (var i = 0; i < 3; i++)
         {
@@ -105,7 +105,7 @@ public sealed class ManagementApiTests
     public async Task A_user_switches_between_their_own_organizations()
     {
         await using var api = await ManagementApi.StartAsync();
-        using var other = api.As("other-user");
+        using var other = api.As(EntityIds.New().ToString());
         var first = await api.CreateOrganizationAsync("First");
         var second = await api.CreateOrganizationAsync("Second");
         var foreign = await api.CreateOrganizationAsync("Foreign", other);
@@ -117,7 +117,7 @@ public sealed class ManagementApiTests
         var selected = await api.Client.GetFromJsonAsync<JsonElement>(Uri(current));
         using var otherUserNone = await other.GetAsync(Uri(current));
         using var notMember = await api.Client.PutAsJsonAsync(Uri(current), new { organizationId = foreign });
-        using var unknown = await api.Client.PutAsJsonAsync(Uri(current), new { organizationId = Guid.NewGuid() });
+        using var unknown = await api.Client.PutAsJsonAsync(Uri(current), new { organizationId = EntityIds.New().ToString() });
         using var missing = await api.Client.PutAsJsonAsync(Uri(current), new { });
         (await api.Client.DeleteAsync(Uri($"/v1/management/organizations/{second}"))).Dispose();
         using var afterDelete = await api.Client.GetAsync(Uri(current));
@@ -212,7 +212,7 @@ public sealed class ManagementApiTests
     public async Task Duplicate_names_conflict_ignoring_case_within_the_same_parent()
     {
         await using var api = await ManagementApi.StartAsync();
-        using var otherUser = api.As("other-user");
+        using var otherUser = api.As(EntityIds.New().ToString());
         var acme = await api.CreateOrganizationAsync("Acme");
         var globex = await api.CreateOrganizationAsync("Globex");
         var project = await api.CreateProjectAsync(acme, "Web");
@@ -254,7 +254,7 @@ public sealed class ManagementApiTests
         await using var api = await ManagementApi.StartAsync();
         var organization = await api.CreateOrganizationAsync("Acme");
         var project = await api.CreateProjectAsync(organization, "Web");
-        var unknown = Guid.NewGuid();
+        var unknown = EntityIds.New().ToString();
 
         var statuses = await AllStatusesAsync(api.Client, $"/v1/management/organizations/{unknown}", unknown.ToString(), unknown.ToString());
         statuses.AddRange(await AllStatusesAsync(api.Client, $"/v1/management/organizations/{organization}", unknown.ToString(), unknown.ToString(), Level.Project));
@@ -268,7 +268,7 @@ public sealed class ManagementApiTests
     public async Task Users_cannot_reach_organizations_they_are_not_members_of()
     {
         await using var api = await ManagementApi.StartAsync();
-        using var intruder = api.As("intruder");
+        using var intruder = api.As(EntityIds.New().ToString());
         var organization = await api.CreateOrganizationAsync("Acme");
         var project = await api.CreateProjectAsync(organization, "Web");
         using var created = await api.Client.PostAsJsonAsync(Uri($"/v1/management/organizations/{organization}/projects/{project}/databases"), new { name = "main" });

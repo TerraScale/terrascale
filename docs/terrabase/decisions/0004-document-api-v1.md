@@ -11,15 +11,13 @@ point reads and writes (`GET`/`PUT`/`POST`/`PATCH`/`DELETE …/documents`), list
 (`POST …/collections/{collection}/query`) and transactions (`POST /v1/projects/{project}/databases/{db}/transactions`),
 with `{"error":{"code",…}}` bodies.
 
-- **Schema v4** (`PRAGMA user_version = 4`): migration 1 → 2 adds a `collections` table, tombstones (`body`
-  NULL) and a per-database `commit_offset`. A schema-1 file is migrated on first open; offsets
-  start after its largest version. Migration 2 → 3 adds a partial `(collection, id)` index for
-  live documents, so listings do not walk retained tombstones. Existing schema-1 non-UUID ids
-  remain readable and writable (including recreation by tombstone version); new ids must be UUIDs.
-  Migration 3 → 4 adds a random UUIDv4 database incarnation to the one-row `commit_offset`.
-  It persists across reopen; each newly created or copied database gets a fresh incarnation.
-  `IDatabaseStore.Incarnation` exposes this single persisted value to database-scoped handle consumers and
-  replication; transactions forward the version scope below instead.
+- **Fresh schema v9** (`PRAGMA user_version = 9`): new files bootstrap the complete schema in one transaction.
+  Older nonempty files and newer schemas are refused. There are no upgrades, backfills or legacy ID fallbacks.
+  Collections have a persisted canonical ULID `entity_id`; database incarnations are canonical ULIDs.
+  An incarnation persists across reopen; newly created and copied databases receive fresh incarnations.
+  `IDatabaseStore.Incarnation` exposes this value to database-scoped handle consumers and replication.
+  The ID cutover uses data-directory layout 2 and catalog version 6; deployment discards affected old data.
+  See [the ID contract](../id-contract.md).
 - **Versions** are `tbv1-` and the first 16 bytes of SHA-256 over the database scope, collection, id,
   merge version, deletion state and raw UTF-8 document bytes. The scope of a client database derives from its
   organization, project and database ids, so every replica answers the same version for the same state (TS-574);
@@ -27,11 +25,7 @@ with `{"error":{"code",…}}` bodies.
   Including the state prevents equal-version replication winners from reusing a strong validator. A single writer
   per database never has siblings, so every document is `state:"value"`. The version hashes local metadata rather than the contract’s
   canonical causal-context encoding. This prevents token reuse when a database is deleted and
-  recreated at the same name/offset. Migration to v4 changes existing public version tokens once;
-  clients must re-read them before conditional writes. The state-sensitive validator introduced with
-  replication also invalidates previous tokens once, and so does the member-independent scope; the opaque token
-  format remains unchanged.
-  Older binaries refuse schema v4.
+  recreated at the same name/offset. The closed-beta reset invalidates existing version tokens and credentials. Clients recreate their state and bindings.
 - **Queries** compile to one SQLite statement (`json_type`, `json_extract`, `json_each`), with
   keyset cursors bound to a digest of database, collection, filter, sort and projection. Cursor
   rank/value pairs are validated before they become query parameters. Projection paths are

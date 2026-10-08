@@ -9,10 +9,10 @@ using TerraBase.Testing;
 
 namespace TerraBase.Fast.Storage;
 
-/// <summary>Stable, ordered UUID addresses and explicit collection creation for document fixtures.</summary>
+/// <summary>Stable, ordered ULID addresses and explicit collection creation for document fixtures.</summary>
 internal static class StorageFixture
 {
-    /// <summary>Maps a short ASCII fixture name to an ordered UUID.</summary>
+    /// <summary>Maps a short ASCII fixture name to an ordered ULID.</summary>
     public static string Id(string name)
     {
         ArgumentOutOfRangeException.ThrowIfGreaterThan(Encoding.UTF8.GetByteCount(name), 16);

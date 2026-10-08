@@ -412,6 +412,8 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
                         return new DocumentRejected(failed);
                     }
 
+                    // Validate before normalization so removing identity cannot conceal invalid input.
+                    _ = DocumentJson.Read(put.Json, requireObject: true);
                     var json = EntityPayload.WithoutId(put.Json, put.Id);
                     var version = await transaction.PutAsync(put.Collection, put.Id, json, cancellationToken).ConfigureAwait(false);
                     return new OperationResult(put.Id, version, current is not { Deleted: false }, null,

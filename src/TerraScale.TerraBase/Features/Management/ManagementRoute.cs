@@ -74,7 +74,8 @@ internal static class ManagementRoute
     public static string Value(HttpContext context, string name)
     {
         var id = (string)context.Request.RouteValues[name]!;
-        return name == "index" || EntityIds.IsValid(id) ? id : throw new BadHttpRequestException(name + " must be a canonical uppercase ULID");
+        return name is "index" or "collection" or "databaseName" or "recommendation" || EntityIds.IsValid(id)
+            ? id : throw new BadHttpRequestException(name + " must be a canonical uppercase ULID");
     }
 
     /// <summary>The project addressed by <c>{organization}</c> and <c>{project}</c>; <see langword="null"/> when it does not exist or the acting user is not a member of its organization.</summary>

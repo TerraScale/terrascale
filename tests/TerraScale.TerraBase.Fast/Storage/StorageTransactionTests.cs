@@ -271,7 +271,7 @@ public sealed class StorageTransactionTests
         using var cancelled = new CancellationTokenSource();
         SqliteStorageEngine? engine = null;
         SqliteDatabaseStore? unpublished = null;
-        SqliteSession? migratedSession = null;
+        SqliteSession? bootstrappedSession = null;
         var inserts = 0;
         var inject = true;
         var name = Tenant(EntityIds.New().ToString());
@@ -289,10 +289,10 @@ public sealed class StorageTransactionTests
                     }
 
                     unpublished = store;
-                    migratedSession = engine!.Pool.Rent(store) ?? throw new InvalidOperationException("migration left no idle session");
+                    bootstrappedSession = engine!.Pool.Rent(store) ?? throw new InvalidOperationException("bootstrap left no idle session");
                     try
                     {
-                        migratedSession.Connection.CreateFunction("interrupt_seed", () =>
+                        bootstrappedSession.Connection.CreateFunction("interrupt_seed", () =>
                         {
                             inserts++;
                             if (cancel)
@@ -303,30 +303,20 @@ public sealed class StorageTransactionTests
 
                             throw new InvalidOperationException("seed insertion failed");
                         });
-                        using var trigger = migratedSession.Connection.CreateCommand();
+                        using var trigger = bootstrappedSession.Connection.CreateCommand();
                         trigger.CommandText = "CREATE TEMP TRIGGER interrupt_seed AFTER INSERT ON changes BEGIN SELECT interrupt_seed(); END;";
                         trigger.ExecuteNonQuery();
                     }
                     finally
                     {
-                        store.Return(migratedSession);
+                        store.Return(bootstrappedSession);
                     }
                 });
             return engine;
         }));
         var directory = Directory.CreateDirectory(Path.Combine(server.DataDirectory, name.OrganizationId, name.ProjectId!)).FullName;
         var path = Path.Combine(directory, name.DatabaseId + ".db");
-        await using (var legacy = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = path, Pooling = false }.ToString()))
-        {
-            await legacy.OpenAsync();
-            await using var create = legacy.CreateCommand();
-            create.CommandText = """
-                CREATE TABLE documents (collection TEXT NOT NULL, id TEXT NOT NULL, version INTEGER NOT NULL, body TEXT NOT NULL, PRIMARY KEY (collection, id)) WITHOUT ROWID;
-                INSERT INTO documents VALUES ('items', 'a', 1, '{}'), ('items', 'b', 1, '{}');
-                PRAGMA user_version = 1;
-                """;
-            await create.ExecuteNonQueryAsync();
-        }
+        await DocumentFiles.WriteAsync(path, ("items", StorageFixture.Id("a"), "{}"), ("items", StorageFixture.Id("b"), "{}"));
 
         _ = server.Services.GetRequiredService<IStorageEngine>();
         var idleBefore = engine!.Pool.IdleCount;
@@ -343,7 +333,7 @@ public sealed class StorageTransactionTests
         await Assert.That(unpublished!.IsClosed).IsTrue();
         await Assert.That(unpublished.IdleCount).IsEqualTo(0);
         await Assert.That(engine.Pool.IdleCount).IsEqualTo(idleBefore);
-        await Assert.That(migratedSession!.Connection.State).IsEqualTo(System.Data.ConnectionState.Closed);
+        await Assert.That(bootstrappedSession!.Connection.State).IsEqualTo(System.Data.ConnectionState.Closed);
         // Retrying uses a new store, completes the baseline, and keeps the original documents intact.
         inject = false;
         var retry = await engine.OpenDatabaseAsync(name, CancellationToken.None);
@@ -357,7 +347,7 @@ public sealed class StorageTransactionTests
     {
         await using var server = await TerraBaseTestServer.StartAsync(services: ConfigurePool);
         var (_, store) = await OpenAsync(server);
-        // Creation leaves the migration session idle.
+        // Creation leaves the bootstrap session idle.
         await Assert.That(store.IdleCount).IsEqualTo(1);
 
         var first = await store.BeginTransactionAsync(write: true, CancellationToken.None);
@@ -617,7 +607,7 @@ public sealed class StorageTransactionTests
         (await api.SendAsync(HttpMethod.Put, api.DatabasePath("probe"))).Status.ShouldBe(System.Net.HttpStatusCode.Created);
         var probe = await api.TenantOfAsync("probe");
         var id = DocumentApi.NewId();
-        await api.ReplaceWithOlderFileAsync("db", path => DocumentFiles.WriteAsync(path, ("items", id, "{}")));
+        await api.ReplaceFileAsync("db", path => DocumentFiles.WriteAsync(path, ("items", id, "{}")));
         var engine = api.Server.Services.GetRequiredService<IStorageEngine>();
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         var operations = new List<Task<bool>>(2);

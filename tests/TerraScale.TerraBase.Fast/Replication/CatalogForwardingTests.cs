@@ -42,7 +42,7 @@ public sealed class CatalogForwardingTests
         await ReadyAsync(follower);
 
         var project = EntityIds.New().ToString();
-        var actor = "tsk_" + EntityIds.New().ToString();
+        var actor = EntityIds.New().ToString();
         const string allScopes = "databases:read databases:write documents:read documents:write shapes:read";
         string Token(string target, string? scope)
         {
@@ -118,7 +118,7 @@ public sealed class CatalogForwardingTests
             }
 
             await Assert.That((await data.GetFromJsonAsync<JsonElement>(Relative(collection))).GetProperty("name").GetString()).IsEqualTo("people");
-            var document = collection + "/documents/" + faker.Random.Guid();
+            var document = collection + "/documents/" + EntityIds.New();
             var name = faker.Name.FullName();
             using (var written = await data.PutAsJsonAsync(Relative(document), new { name, count = 1 }))
             {
@@ -378,7 +378,7 @@ public sealed class CatalogForwardingTests
         tampered[^1] ^= 1;
         var invalid = new (string Case, ForwardRequest Request)[]
         {
-            ("protocol", Request("GET", "/", protocol: 2)),
+            ("protocol", Request("GET", "/", protocol: 1)),
             ("region", Request("GET", "/", region: "Not A Region")),
             ("method", Request("GE T", "/")),
             ("path", Request("GET", "v1/management/organizations")),
@@ -420,7 +420,7 @@ public sealed class CatalogForwardingTests
         var calls = 0;
         await using var fake = await FakePeer.StartCatalogAsync(peers, async (_, responses, context) =>
         {
-            await responses.WriteAsync(new FollowResponse { Welcome = new CatalogWelcome { Protocol = 1, Origin = ByteString.CopyFrom(origin), Head = 1 } });
+            await responses.WriteAsync(new FollowResponse { Welcome = new CatalogWelcome { Protocol = CatalogProtocol.Version, Origin = ByteString.CopyFrom(origin), Head = 1 } });
             await responses.WriteAsync(new FollowResponse { SnapshotBegin = new SnapshotBegin { Sequence = 0, Digest = ByteString.CopyFrom(initial) } });
             await WriteGroupAsync(responses, 1, [first], firstDigest);
             await responses.WriteAsync(new FollowResponse { SnapshotEnd = new SnapshotEnd { Sequence = 1, Digest = ByteString.CopyFrom(firstDigest), CommitOffset = 3 } });
@@ -544,7 +544,7 @@ public sealed class CatalogForwardingTests
         var body = Encoding.UTF8.GetBytes(new string('x', 3 * 1024 * 1024));
         await using var fake = await FakePeer.StartCatalogAsync(peers, async (_, responses, context) =>
         {
-            await responses.WriteAsync(new FollowResponse { Welcome = new CatalogWelcome { Protocol = 1, Origin = ByteString.CopyFrom(origin), Head = 0 } });
+            await responses.WriteAsync(new FollowResponse { Welcome = new CatalogWelcome { Protocol = CatalogProtocol.Version, Origin = ByteString.CopyFrom(origin), Head = 0 } });
             await responses.WriteAsync(new FollowResponse { SnapshotBegin = new SnapshotBegin { Sequence = 0, Digest = ByteString.CopyFrom(initial) } });
             await responses.WriteAsync(new FollowResponse { SnapshotEnd = new SnapshotEnd { Sequence = 0, Digest = ByteString.CopyFrom(initial), CommitOffset = 1 } });
             await responses.WriteAsync(new FollowResponse { Heartbeat = new CatalogHeartbeat { Head = 0 } });
@@ -961,7 +961,7 @@ public sealed class CatalogForwardingTests
     private static UsageBatch Batch(
         ByteString epoch, ulong sequence, string organization, string project, string database, long hour, ulong reads, string sender = "test")
     {
-        var batch = new UsageBatch { Protocol = 1, Epoch = epoch, Sequence = sequence, Sender = sender };
+        var batch = new UsageBatch { Protocol = Features.Management.Usage.UsageReceiver.Protocol, Epoch = epoch, Sequence = sequence, Sender = sender };
         batch.Counts.Add(new UsageCount { OrganizationId = organization, ProjectId = project, DatabaseId = database, Hour = hour, Reads = reads });
         return batch;
     }
@@ -1057,7 +1057,7 @@ public sealed class CatalogForwardingTests
 
     // A request a follower of follower-region would forward; length -1 declares the body's own length.
     private static ForwardRequest Request(
-        string method, string path, byte[]? body = null, uint protocol = 1, string query = "", string region = "follower-region", byte[]? envelope = null,
+        string method, string path, byte[]? body = null, uint protocol = ForwardingProtocol.Version, string query = "", string region = "follower-region", byte[]? envelope = null,
         int? length = -1)
     {
         var request = new ForwardRequest { Protocol = protocol, Method = method, Path = path, Query = query, Region = region };

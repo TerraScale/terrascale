@@ -18,26 +18,25 @@ public sealed class CountBoundTests
         await using var api = await ManagementApi.StartAsync();
         using var tenant = await api.CreateTenantAsync("documents:read", "documents:write");
         var client = tenant.Data;
-        // Seed an isolated schema-1 database in the tenant's project, then exercise migration and bounded count through
-        // the listener: register it, have the engine forget its file, and write the schema-1 file in its place.
+        // Seed a current-format snapshot, then exercise bounded count through the real listener.
         using var registered = await client.PutAsync(tenant.Database("count"), null);
         var id = (await registered.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString()!;
         var database = new TenantContext(tenant.OrganizationId, PlanTier.Hobby, tenant.ProjectId, id);
         await api.Server.Services.GetRequiredService<IStorageEngine>().DeleteDatabaseAsync(database, CancellationToken.None);
         var path = Path.Combine(api.Server.DataDirectory, tenant.OrganizationId, tenant.ProjectId, id + ".db");
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        await DocumentFiles.WriteAsync(path);
         await using (var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = path, Pooling = false }.ToString()))
         {
             await connection.OpenAsync();
             await using var command = connection.CreateCommand();
             command.CommandText = """
-                CREATE TABLE documents (collection TEXT NOT NULL, id TEXT NOT NULL, version INTEGER NOT NULL, body TEXT NOT NULL,
-                    PRIMARY KEY (collection, id)) WITHOUT ROWID;
+                INSERT INTO collections VALUES ('items', 0, 1, $collectionId);
                 WITH RECURSIVE rows(n) AS (VALUES(1) UNION ALL SELECT n + 1 FROM rows WHERE n < 100001)
-                INSERT INTO documents SELECT 'items', printf('00000000-0000-7000-8000-%012x', n), 1,
+                INSERT INTO documents SELECT 'items', printf('%026d', n), 1,
                     CASE WHEN n = 100001 THEN $last ELSE '{"n":1}' END FROM rows;
-                PRAGMA user_version = 1;
                 """;
+            command.Parameters.AddWithValue("$collectionId", TerraBase.Primitives.EntityIds.New().ToString());
             command.Parameters.AddWithValue("$last", overflowMatches ? "{\"n\":1}" : "{\"n\":0}");
             await command.ExecuteNonQueryAsync();
         }
@@ -146,7 +145,7 @@ public sealed class CountBoundTests
         // Ids in index order, so the document written last is also the last one count examines.
         static string Id(int index)
         {
-            return $"00000000-0000-7000-8000-{index:D12}";
+            return index.ToString("D26", System.Globalization.CultureInfo.InvariantCulture);
         }
 
         for (var start = 0; start < 100_000; start += 1000)

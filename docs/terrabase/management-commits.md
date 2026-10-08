@@ -32,7 +32,7 @@ credential reaches the space.
                       {"op":"patch","collection":"organizations","id":"5f1c…","merge":{"invites_sent":3}}]}
 ```
 
-- `id` is a lowercase hyphenated UUID the client chooses once per **logical** update and reuses on every
+- `id` is a canonical uppercase ULID the client chooses once per **logical** update and reuses on every
   retry of it (see [Uncertain outcomes](#uncertain-outcomes)).
 - `ops` holds 1 to 1024 operations. An operation with a `collection` member is a
   [document operation](#document-operations); any other is a [Management operation](#management-operations).
@@ -155,16 +155,16 @@ billing document's plan id. A concurrent plan change then fails one of the two c
 ## Management operations
 
 Members are snake_case. Names, emails and roles follow the REST rules in [management-api.md](management-api.md).
-`organization` and `project` are ids; `id` on a create is an optional lowercase hyphenated UUID chosen by the
-client (otherwise a UUIDv7 is generated), which lets later operations and dashboard documents in the same
+`organization` and `project` are ids; `id` on a create is an optional canonical uppercase ULID chosen by the
+client (otherwise a ULID is generated), which lets later operations and dashboard documents in the same
 commit refer to the new resource. **Exception, COS decision 2026-10-07 (TS-589):** a client-chosen
 `create_project.id` requires the loopback management service credential. Ordinary members may still create
 projects without `id`, using generated IDs. A legacy project mapping, including one created by the service,
 is never itself proof of ts-auth authority; JWT access requires a
 [verified project binding](decisions/0011-project-catalog-trust.md).
 A client id already used by any organization, project or database is `409 id_taken`, even one of
-another tenant; a database's id stays taken after the database is deleted. Ids are random UUIDs, so this reveals only that
-a UUID the client already holds is in use. A database id is chosen to register, in another region, a database that region replicates
+another tenant; a database's id stays taken after the database is deleted. Ids are ULIDs, so this reveals only that
+a ULID the client already holds is in use. A database id is chosen to register, in another region, a database that region replicates
 under the same ids ([cross-region replication](cross-region.md#which-databases-replicate)). `home_region` and
 `replica_regions` follow the [region placement](management-api.md#region-placement) rules; inside a commit a
 `wrong_region` failure answers `409` with `error.op`, like the other failures of an operation.

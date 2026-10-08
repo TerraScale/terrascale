@@ -50,7 +50,7 @@ public sealed class QueryShapeApiTests
         using var noScope = ProjectClient(api, database.Project, "documents:read");
         using var forbidden = await noScope.GetAsync(canonical);
         await Assert.That(forbidden.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
-        using var foreign = ProjectClient(api, new Faker().Random.Guid().ToString(), "databases:read");
+        using var foreign = ProjectClient(api, EntityIds.New().ToString(), "databases:read");
         using var inaccessible = await foreign.GetAsync(canonical);
         await Assert.That(inaccessible.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
     }
@@ -450,7 +450,7 @@ public sealed class QueryShapeApiTests
     private static string Stats(ManagedDatabaseRef database) => database.Path[3..] + "/query-shapes";
 
     private static HttpClient ProjectClient(ManagementApi api, string project, string scopes) =>
-        api.WithToken(api.Issuer.Mint(new Faker().Random.Guid().ToString(), token =>
+        api.WithToken(api.Issuer.Mint(EntityIds.New().ToString(), token =>
         {
             token.Claims["project_id"] = project;
             token.Claims["scope"] = scopes;

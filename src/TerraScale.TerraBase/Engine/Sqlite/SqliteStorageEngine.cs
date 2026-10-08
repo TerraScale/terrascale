@@ -36,10 +36,10 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
     internal const string LockFileName = ".terrabase.lock";
     private static readonly string[] Sidecars = ["-wal", "-shm", "-journal"];
 
-    // Opened (and migrated) stores, keyed by tenant and database; a database is migrated once per process.
+    // Opened stores, keyed by tenant and database; a database is bootstrapped once per process.
     private readonly ConcurrentDictionary<(string Organization, string Project, string Database), SqliteDatabaseStore> _stores = new();
 
-    // Coordinates file lifecycle and publication. Migration and baseline batches run independently per database.
+    // Coordinates file lifecycle and publication. Bootstrap and baseline batches run independently per database.
     private readonly SemaphoreSlim _creation = new(1, 1);
     private readonly Dictionary<(string Organization, string Project, string Database), Task<SqliteDatabaseStore>> _initializing = [];
 
@@ -1112,29 +1112,35 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
     }
 
     // Conservatively recognizes collision shapes; case variants never acquire canonical audit/cleanup ownership.
-    private static string? CollisionDatabaseIdFromFileName(string name) => DatabaseIdFromFileName(name.EndsWith(".DB", StringComparison.Ordinal) ? name[..^3].ToUpperInvariant() + ".db" : name.ToUpperInvariant().Replace(".DB-", ".db-", StringComparison.Ordinal).Replace(".CREATING", ".creating", StringComparison.Ordinal));
+    private static string? CollisionDatabaseIdFromFileName(string name) => DatabaseIdFromFileName(name, collision: true);
 
-    private static string? DatabaseIdFromFileName(string name)
+    private static string? DatabaseIdFromFileName(string name, bool collision = false)
     {
+        var comparison = collision ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
         foreach (var sidecar in Sidecars)
         {
-            if (name.EndsWith(sidecar, StringComparison.Ordinal))
+            if (name.EndsWith(sidecar, comparison))
             {
                 name = name[..^sidecar.Length];
                 break;
             }
         }
 
-        if (name.EndsWith(FileExtension, StringComparison.Ordinal))
+        if (name.EndsWith(FileExtension, comparison))
         {
             var database = name[..^FileExtension.Length];
+            database = collision ? database.ToUpperInvariant() : database;
             return IsId(database) ? database : null;
         }
 
-        return name.Split('.') is ["", var id, var nonce, "creating"]
-            && IsId(id) && EntityIds.IsValid(nonce)
-                ? id
-                : null;
+        if (name.Split('.') is not ["", var id, var nonce, var suffix] || !suffix.Equals("creating", comparison))
+        {
+            return null;
+        }
+
+        id = collision ? id.ToUpperInvariant() : id;
+        nonce = collision ? nonce.ToUpperInvariant() : nonce;
+        return IsId(id) && EntityIds.IsValid(nonce) ? id : null;
     }
 
     private static void RejectLink(string path)
@@ -1365,7 +1371,7 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
         var admitted = false;
         try
         {
-            // Held from migration to publication or cleanup, so shutdown drains it and storage-queue bounds it.
+            // Held from bootstrap to publication or cleanup, so shutdown drains it and storage-queue bounds it.
             Io.Admit();
             admitted = true;
             using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _stopping.Token);

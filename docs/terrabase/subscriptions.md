@@ -6,7 +6,7 @@ The database path parameter is its name. This unversioned route is client TLS on
 
 Send `Authorization: Bearer <ts-auth access token>`. TerraBase uses its configured
 issuer and audience, cached JWKS, signature and access-token type validation.
-The signed `project_id` must be a lowercase UUID equal to the route's project;
+The signed `project_id` must be a canonical uppercase ULID equal to the route's project;
 if `database` is present, it must equal the database name. Missing or mismatched
 project grants return `404 unknown_database`. The token must grant `shapes:read`
 in its space-separated `scope`, or the route returns `403 forbidden_scope`.

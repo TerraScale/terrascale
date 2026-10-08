@@ -15,7 +15,7 @@ format and open questions: [0007](decisions/0007-lz4-application-envelope-replic
 - Every write transaction on a client database is captured, whether or not `peer-addresses` is
   set, so the change log has no holes when peers are added, removed or the node restarts. Nothing
   truncates the log.
-- A database missing on the receiver is created under the exact organization, project and database UUIDs in the stream. Display names never address peer storage.
+- A database missing on the receiver is created under the exact organization, project and database ULIDs in the stream. Display names never address peer storage.
 - The persisted incarnation (`IDatabaseStore.Incarnation`) is the origin. Document ETags do not use it: they hash the
   replicated state under the database's organization, project and database ids, so every member answers the same ETag
   for the same state and a version read on one member satisfies `If-Match` on another (TS-574). Schema v8 retains
@@ -269,7 +269,7 @@ A third node adds its address to both lists, for example
 
 One `Replication.Sync` stream carries one database from one origin to one peer.
 
-1. Sender → `Hello`: organization, project and database UUIDs (16 bytes each in RFC order), origin (as both member id and incarnation), protocol 1.0,
+1. Sender → `Hello`: organization, project and database ULIDs (16 bytes each in network byte order), origin (as both member id and incarnation), protocol 2.0,
    format 1, LZ4 codec, limits.
 2. Receiver → `Welcome` with its applied prefix of that origin and the negotiated limits: each the
    minimum of both sides. It refuses an incompatible `Hello` (a range without 1.0, no LZ4, a zero
@@ -287,7 +287,7 @@ One `Replication.Sync` stream carries one database from one origin to one peer.
    protocol, format or codec with a
    non-retryable `STREAM_ERROR_UNSUPPORTED_FORMAT`.
 5. Once every group it has is durably acknowledged, the sender completes the stream. It fails
-   closed on a `Welcome` that is not exactly an answer to its `Hello`: protocol 1.0, event and
+   closed on a `Welcome` that is not exactly an answer to its `Hello`: protocol 2.0, event and
    record format 1, merge policy 1, LZ4, this database in this epoch, and limits equal to the
    minimum of both sides (a peer may lower a limit, never raise one). Before releasing anything,
    an acknowledgment must name the peer from `Welcome`,

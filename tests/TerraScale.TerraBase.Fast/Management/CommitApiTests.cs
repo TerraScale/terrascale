@@ -611,7 +611,7 @@ public sealed class CommitApiTests
     }
 
     [Test]
-    public async Task A_version_four_catalog_is_upgraded_with_its_projects_indexed_so_their_ids_stay_unique()
+    public async Task Project_ids_stay_reserved_across_a_catalog_restart()
     {
         var directory = Directory.CreateTempSubdirectory("terrabase-catalog-").FullName;
         try
@@ -622,27 +622,22 @@ public sealed class CommitApiTests
             {
                 organization = await api.CreateOrganizationAsync(OrganizationName());
                 project = await api.CreateProjectAsync(organization, ProjectName());
-                // A version 4 catalog: no project index yet.
-                var system = await api.Server.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(CancellationToken.None);
-                await using var transaction = await system.BeginTransactionAsync(write: true, CancellationToken.None);
-                await transaction.PutAsync("catalog", "version", Encoding.UTF8.GetBytes("\"4\""), CancellationToken.None);
-                await transaction.DeleteAsync("project_organizations", project, CancellationToken.None);
-                await transaction.CommitAsync(CancellationToken.None);
+
             }
 
-            await using var upgraded = await ManagementApi.StartAsync(settings => settings["data-directory"] = directory, managementCredential: true);
-            using var stranger = upgraded.Service(User());
+            await using var reopened = await ManagementApi.StartAsync(settings => settings["data-directory"] = directory, managementCredential: true);
+            using var stranger = reopened.Service(User());
             // Another user's organization cannot take the existing project's id.
             var created = await CommitAsync(stranger, new { op = "create_organization", name = OrganizationName() });
             var strangerOrganization = Id(created.Value(0));
             var taken = await CommitAsync(stranger, new { op = "create_project", organization = strangerOrganization, id = project, name = ProjectName() });
-            var system2 = await upgraded.Server.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(CancellationToken.None);
+            var system2 = await reopened.Server.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(CancellationToken.None);
             await using var read = await system2.BeginTransactionAsync(write: false, CancellationToken.None);
             var version = await read.GetAsync("catalog", "version", CancellationToken.None);
 
             await Assert.That(created.Status).IsEqualTo(HttpStatusCode.OK);
             await Assert.That((taken.Status, taken.Code, taken.Op)).IsEqualTo((HttpStatusCode.Conflict, "id_taken", (int?)0));
-            await Assert.That(Encoding.UTF8.GetString(version!.Json.Span)).IsEqualTo("\"5\"");
+            await Assert.That(Encoding.UTF8.GetString(version!.Json.Span)).IsEqualTo("\"6\"");
         }
         finally
         {

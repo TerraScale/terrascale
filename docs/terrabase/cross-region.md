@@ -116,7 +116,7 @@ Register an organization and project in another region with a [management commit
 ids they have in the first. Leave out the organization if that region already has it:
 
 ```json
-{"id":"<new uuid>","ops":[
+{"id":"<new ULID>","ops":[
   {"op":"create_organization","id":"<organization id>","name":"<name>"},
   {"op":"create_project","organization":"<organization id>","id":"<project id>","name":"<name>"}]}
 ```

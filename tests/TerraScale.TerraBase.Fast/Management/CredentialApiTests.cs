@@ -1,7 +1,6 @@
 using System.Net;
 using System.Text.Json;
 using Bogus;
-using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Primitives;
 using TerraBase.Testing;
@@ -279,7 +278,7 @@ public sealed class CredentialApiTests
     }
 
     [Test]
-    public async Task Operator_project_keys_stored_before_they_were_listed_are_listed_after_an_upgrade()
+    public async Task Operator_project_keys_remain_listed_and_revocable_after_restart()
     {
         var directory = Directory.CreateTempSubdirectory("terrabase-key-listing-").FullName;
         try
@@ -289,17 +288,10 @@ public sealed class CredentialApiTests
             {
                 user = api.User;
                 var organization = await api.CreateOrganizationAsync(Faker.Company.CompanyName());
-                var project = await api.CreateProjectAsync(organization, "Older keys");
+                var project = await api.CreateProjectAsync(organization, "Persistent keys");
                 path = $"/v1/management/organizations/{organization}/projects/{project}";
                 (id, secret) = await IssueOperatorKeyAsync(api, organization, project);
-                // As an older build left it: only the authentication document, and no backfill marker.
-                await using var catalog = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = Path.Combine(directory, "_system.db"), Pooling = false }.ToString());
-                await catalog.OpenAsync();
-                await using var unlist = catalog.CreateCommand();
-                unlist.CommandText = "DELETE FROM documents WHERE collection IN ($keys, $order) OR (collection = 'catalog' AND id = 'backfill_project_keys_listed');";
-                unlist.Parameters.AddWithValue("$keys", $"projects/{project}/api_keys");
-                unlist.Parameters.AddWithValue("$order", $"projects/{project}/api_key_order");
-                await Assert.That(await unlist.ExecuteNonQueryAsync()).IsEqualTo(3);
+
             }
 
             await using (var api = await ManagementApi.StartAsync(settings => settings["data-directory"] = directory))
@@ -313,8 +305,7 @@ public sealed class CredentialApiTests
                 using var afterRevoke = await client.GetAsync(Uri("/v1/projects/any/databases/main/collections"));
 
                 await Assert.That(item.GetProperty("id").GetString()).IsEqualTo(id);
-                // Only the secret's hash is stored, so its last four characters are unknown.
-                await Assert.That(item.GetProperty("lastFour").GetString()).IsEqualTo("");
+                await Assert.That(item.GetProperty("lastFour").GetString()).IsEqualTo(secret[^4..]);
                 await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
                 await Assert.That(revoked.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
                 await Assert.That(afterRevoke.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);

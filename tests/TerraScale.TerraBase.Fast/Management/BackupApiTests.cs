@@ -108,7 +108,7 @@ public sealed class BackupApiTests
     }
 
     [Test]
-    public async Task A_database_registered_before_backup_enrollment_gets_the_default_schedule()
+    public async Task A_registered_database_keeps_its_default_backup_schedule_after_restart()
     {
         var directory = Directory.CreateTempSubdirectory("terrabase-backup-enrollment-").FullName;
         try
@@ -120,12 +120,7 @@ public sealed class BackupApiTests
                 user = api.User;
                 var database = await api.CreateManagedDatabaseAsync();
                 backups = $"{database.Path}/backups";
-                // As an older build left it: registered, never enrolled, and no backfill marker.
-                await using var catalog = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = Path.Combine(directory, "_system.db"), Pooling = false }.ToString());
-                await catalog.OpenAsync();
-                await using var unenroll = catalog.CreateCommand();
-                unenroll.CommandText = "DELETE FROM documents WHERE collection = 'backed_up_databases' OR (collection = 'catalog' AND id = 'backfill_databases_enrolled');";
-                await Assert.That(await unenroll.ExecuteNonQueryAsync()).IsEqualTo(2);
+
             }
 
             var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 4, 1, 55, 0, TimeSpan.Zero));

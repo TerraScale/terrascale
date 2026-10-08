@@ -53,6 +53,8 @@ internal static class SqliteStatements
 
     public const string GetCollection = "SELECT name, created_at, generation, entity_id FROM collections WHERE name = $collection;";
 
+    public const string AdoptCollectionIdentity = "UPDATE collections SET entity_id = $entityId, created_at = $created WHERE name = $collection;";
+
     // The first page walks the primary key in order and stops at the limit.
     public const string ListCollectionsFirst = "SELECT name, created_at, generation, entity_id FROM collections ORDER BY name LIMIT $limit;";
 

@@ -70,7 +70,7 @@ public sealed class StoragePoolTests
         var system = await engine.OpenSystemDatabaseAsync(deadline.Token);
         var target = source with { DatabaseId = EntityIds.New().ToString() };
         var cold = source with { DatabaseId = EntityIds.New().ToString() };
-        // An unopened file, as an earlier server left it, exercises first-open migration behind the gate.
+        // An unopened file, as an earlier server left it, exercises first-open bootstrap behind the gate.
         await DocumentFiles.WriteAsync(Path.Combine(server.DataDirectory, cold.OrganizationId, cold.ProjectId!, cold.DatabaseId + ".db"));
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var blockerAdmissionHeld = false;

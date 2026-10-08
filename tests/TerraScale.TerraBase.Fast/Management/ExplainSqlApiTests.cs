@@ -3,6 +3,7 @@ using System.Text.Json;
 using Bogus;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
+using TerraBase.Primitives;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Management;
@@ -90,7 +91,7 @@ public sealed class ExplainSqlApiTests
         var database = await api.CreateManagedDatabaseAsync();
         await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         await SeedPeopleAsync(api, database);
-        using var viewer = ProjectClient(api, database.Project, scope: "documents:read  databases:read", database: database.Name, subject: "viewer-" + new Faker().Random.Guid());
+        using var viewer = ProjectClient(api, database.Project, scope: "documents:read  databases:read", database: database.Name, subject: EntityIds.New().ToString());
         using var anonymous = api.WithToken(null);
         using var data = await api.CreateClientAsync(database.Organization, "documents:read");
         const string Sql = "SELECT name FROM people LIMIT 1";
@@ -118,7 +119,7 @@ public sealed class ExplainSqlApiTests
         [
             (null, "databases:read", null, database.Project, HttpStatusCode.NotFound),
             ("not-a-project", "databases:read", null, database.Project, HttpStatusCode.Unauthorized),
-            (new Faker().Random.Guid().ToString(), "databases:read", null, database.Project, HttpStatusCode.NotFound),
+            (EntityIds.New().ToString(), "databases:read", null, database.Project, HttpStatusCode.NotFound),
             ("not-a-project", "databases:read", null, "not-a-project", HttpStatusCode.Unauthorized),
             ("AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA", "databases:read", null, "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA", HttpStatusCode.Unauthorized),
             (database.Project, "databases:read", "other", database.Project, HttpStatusCode.NotFound),

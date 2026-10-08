@@ -1252,6 +1252,12 @@ internal sealed partial class SqliteStorageTransaction(
                 _metadataChanged = true;
                 _collectionsChanged = true;
                 CreateCollection(collection);
+                // Winning metadata also replaces an inferred or concurrently created collection's identity.
+                var identity = Command(SqliteStatements.AdoptCollectionIdentity, collection.Name);
+                identity.Parameters.AddWithValue("$entityId", collection.Id);
+                identity.Parameters.AddWithValue("$created", collection.CreatedAt);
+                identity.ExecuteNonQuery();
+                _collectionsChanged = true;
                 break;
             case IndexDefinition index:
                 DropIndex(index.Name, cancellationToken);

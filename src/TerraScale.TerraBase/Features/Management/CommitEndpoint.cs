@@ -71,7 +71,7 @@ public sealed class CommitEndpoint(IManagementCommits commits) : EndpointWithout
         Name("commit");
         Summary("Applies Management and dashboard document operations atomically");
         Description($$"""
-            {"id":"<uuid>","ops":[…]} with 1 to 1024 operations, all committed in one transaction or none (docs/management-commits.md). An operation with a collection member is a Documents API transaction operation on the dashboard document space; any other is a Management operation (snake_case members): create_organization, rename_organization, set_plan, delete_organization, set_current_organization, create_project, rename_project, delete_project, create_database, branch_database, delete_database, change_role, remove_member, leave, invite, resend_invitation, revoke_invitation, accept_invitation, decline_invitation, start_transfer, confirm_transfer, cancel_transfer, set_audit_retention, fence (compare-and-set of an organization's or the account's version) and limit (databases, members or active_members bound; at most 16). Fences and assertions see the state before the commit, other operations run in order, limits compare the counts after with their bound and fail only when the count grew past it. Failures write nothing and name the operation in error.op. A retry with the same id and byte-identical body answers the recorded response with {{ReplayedHeader}}: true; a different body under a committed id is 409 commit_id_reused. Document operations need the management service credential (403 with a ts-auth token). create_project with a client-chosen id also needs the loopback management service credential (403 with a ts-auth token); omit id for a server-generated project id. accept_invitation and decline_invitation use the access token's verified email (403 without one). {{ManagementRoute.IdentityDescription}}
+            {"id":"<ULID>","ops":[…]} with 1 to 1024 operations, all committed in one transaction or none (docs/management-commits.md). An operation with a collection member is a Documents API transaction operation on the dashboard document space; any other is a Management operation (snake_case members): create_organization, rename_organization, set_plan, delete_organization, set_current_organization, create_project, rename_project, delete_project, create_database, branch_database, delete_database, change_role, remove_member, leave, invite, resend_invitation, revoke_invitation, accept_invitation, decline_invitation, start_transfer, confirm_transfer, cancel_transfer, set_audit_retention, fence (compare-and-set of an organization's or the account's version) and limit (databases, members or active_members bound; at most 16). Fences and assertions see the state before the commit, other operations run in order, limits compare the counts after with their bound and fail only when the count grew past it. Failures write nothing and name the operation in error.op. A retry with the same id and byte-identical body answers the recorded response with {{ReplayedHeader}}: true; a different body under a committed id is 409 commit_id_reused. Document operations need the management service credential (403 with a ts-auth token). create_project with a client-chosen id also needs the loopback management service credential (403 with a ts-auth token); omit id for a server-generated project id. accept_invitation and decline_invitation use the access token's verified email (403 without one). {{ManagementRoute.IdentityDescription}}
             """);
         Tags(ManagementRoute.Tag);
         Metadata(new RequestBodyMetadata(typeof(CommitRequest), DocumentRoute.JsonMediaType));
@@ -138,7 +138,7 @@ public sealed class CommitEndpoint(IManagementCommits commits) : EndpointWithout
         return TypedResults.Bytes(outcome.Body, DocumentRoute.JsonMediaType);
     }
 
-    // {"id":"<uuid>","ops":[…]} exactly, every operation valid; the first invalid one is named by its index.
+    // {"id":"<ULID>","ops":[…]} exactly, every operation valid; the first invalid one is named by its index.
     private static ParsedRequest Parse(JsonElement envelope, bool service)
     {
         if (envelope.ValueKind != JsonValueKind.Object)
@@ -151,7 +151,7 @@ public sealed class CommitEndpoint(IManagementCommits commits) : EndpointWithout
             || !members.TryGetValue("id", out var id) || id.ValueKind != JsonValueKind.String || !IsNewId(id.GetString()!)
             || !members.TryGetValue("ops", out var ops) || ops.ValueKind != JsonValueKind.Array)
         {
-            return new CommitRejected(new Validation("the body is {\"id\":\"<lowercase uuid>\",\"ops\":[…]} with no other member"), Op: null);
+            return new CommitRejected(new Validation("the body is {\"id\":\"<canonical ULID>\",\"ops\":[…]} with no other member"), Op: null);
         }
 
         if (ops.GetArrayLength() is 0 or > MaxOps)

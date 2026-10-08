@@ -111,7 +111,7 @@ public sealed class ProjectBindingTests
         var name = faker.Name.FullName();
         using var written = await legacy.PutAsJsonAsync(Uri(document), new { name });
         await Assert.That(written.StatusCode).IsEqualTo(HttpStatusCode.Created);
-        using var jwt = api.WithToken(ProjectToken(api.Issuer, "tsk_" + EntityIds.New().ToString(), database.Project));
+        using var jwt = api.WithToken(ProjectToken(api.Issuer, EntityIds.New().ToString(), database.Project));
         await InaccessibleAsync(jwt, database);
 
         // A separate ts-auth organization proves the binding does not depend on equal legacy/auth organization IDs.
@@ -323,7 +323,7 @@ public sealed class ProjectBindingTests
             }
 
             await using var restarted = await ManagementApi.StartAsync(settings => settings["data-directory"] = directory, issuer.Route);
-            using var jwt = restarted.WithToken(ProjectToken(issuer, "tsk_" + EntityIds.New().ToString(), database.Project));
+            using var jwt = restarted.WithToken(ProjectToken(issuer, EntityIds.New().ToString(), database.Project));
             if (persisted == "valid")
             {
                 using var read = await jwt.GetAsync(Uri(document));

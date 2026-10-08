@@ -25,7 +25,7 @@ and what a tenant is. Until now the engine and the data API addressed a database
   This supersedes the layout in [0002](0002-sqlite-storage-engine.md).
 - **Tenant context.** `TenantContext(OrganizationId, Plan, ProjectId?, DatabaseId?)` is resolved
   once per request. Every `IStorageEngine` call that addresses a client database (create, open,
-  copy, delete) takes one. Ids must be lowercase hyphenated UUIDs, otherwise the engine throws.
+  copy, delete) takes one. Ids must be canonical uppercase ULIDs, otherwise the engine throws.
   A copy across organizations throws. Connection pools and the open-store cache are keyed by
   (organization, project, database).
 - **Data API.** Routes are `/v1/projects/{project}/databases/{database}/…`, where `{database}` is the
