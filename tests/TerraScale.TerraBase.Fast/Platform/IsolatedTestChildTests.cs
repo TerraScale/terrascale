@@ -9,7 +9,7 @@ public sealed class IsolatedTestChildTests
     [Test]
     [Arguments(false)]
     [Arguments(true)]
-    public async Task Cleanup_bounds_inherited_pipes_and_preserves_the_original_failure(bool hasPrimaryFailure)
+    public async Task Cleanup_bounds_open_pipes_and_preserves_the_original_failure(bool hasPrimaryFailure)
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current!.Execution.CancellationToken);
         deadline.CancelAfter(TimeSpan.FromSeconds(30));
@@ -17,7 +17,6 @@ public sealed class IsolatedTestChildTests
         using var health = await server.Client.GetAsync(new Uri("/healthz", UriKind.Relative), deadline.Token);
         health.EnsureSuccessStatusCode();
 
-        var directory = Directory.CreateTempSubdirectory("terrabase-child-cleanup-");
         using var outputCancellation = new CancellationTokenSource();
         var start = new ProcessStartInfo("bash")
         {
@@ -27,24 +26,34 @@ public sealed class IsolatedTestChildTests
             RedirectStandardError = true,
         };
         start.ArgumentList.Add("-c");
-        start.ArgumentList.Add("""
-            set -e
-            mkfifo "$1"
-            "$BASH" -c 'exec 3<> "$1"; printf "%s\n" "$BASHPID"; IFS= read -r command <&3' pipe-holder "$1" &
-            IFS= read -r command
-            """);
-        start.ArgumentList.Add("cleanup-parent");
-        start.ArgumentList.Add(Path.Combine(directory.FullName, "release.fifo"));
+        start.ArgumentList.Add("IFS= read -r command");
         Process? child = null;
-        Process? descendant = null;
+        Process? pipeHolder = null;
         Task? completed = null;
         Exception? failure = null;
         try
         {
             child = Process.Start(start) ?? throw new InvalidOperationException("The pipe-holder fixture could not start.");
-            // Capture the descendant before allowing its parent to exit, so every failure can clean it up.
-            var pid = await child.StandardOutput.ReadLineAsync(deadline.Token);
-            descendant = Process.GetProcessById(int.Parse(pid!, CultureInfo.InvariantCulture));
+            // Own both processes directly: container PID 1 may never reap an orphaned descendant.
+            var holderStart = new ProcessStartInfo("bash")
+            {
+                UseShellExecute = false,
+                RedirectStandardInput = true,
+                RedirectStandardOutput = true,
+            };
+            holderStart.ArgumentList.Add("-c");
+            holderStart.ArgumentList.Add("""
+                set -e
+                exec 3> "$1" 4> "$2"
+                printf 'ready\n'
+                IFS= read -r command
+                """);
+            holderStart.ArgumentList.Add("pipe-holder");
+            var childPid = child.Id.ToString(CultureInfo.InvariantCulture);
+            holderStart.ArgumentList.Add($"/proc/{childPid}/fd/1");
+            holderStart.ArgumentList.Add($"/proc/{childPid}/fd/2");
+            pipeHolder = Process.Start(holderStart) ?? throw new InvalidOperationException("The pipe holder could not start.");
+            await Assert.That(await pipeHolder.StandardOutput.ReadLineAsync(deadline.Token)).IsEqualTo("ready");
             var stdout = MemoryBudgetTests.ReadChildOutputAsync(child.StandardOutput, outputCancellation.Token);
             var stderr = MemoryBudgetTests.ReadChildOutputAsync(child.StandardError, outputCancellation.Token);
             var exited = child.WaitForExitAsync(outputCancellation.Token);
@@ -52,7 +61,7 @@ public sealed class IsolatedTestChildTests
             await child.StandardInput.WriteLineAsync("exit".AsMemory(), deadline.Token);
             await child.StandardInput.FlushAsync(deadline.Token);
             await exited.WaitAsync(deadline.Token);
-            await Assert.That(descendant.HasExited).IsFalse();
+            await Assert.That(pipeHolder.HasExited).IsFalse();
             await Assert.That(stdout.IsCompleted).IsFalse();
             await Assert.That(stderr.IsCompleted).IsFalse();
 
@@ -75,7 +84,7 @@ public sealed class IsolatedTestChildTests
             await Assert.That(outputCancellation.IsCancellationRequested).IsTrue();
             await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(stdout.IsCompleted && stderr.IsCompleted),
                 timeout: TimeSpan.FromSeconds(5));
-            await Assert.That(descendant.HasExited).IsFalse();
+            await Assert.That(pipeHolder.HasExited).IsFalse();
         }
         catch (Exception error)
         {
@@ -86,7 +95,7 @@ public sealed class IsolatedTestChildTests
         {
             try
             {
-                await Task.WhenAll(KillAndJoinAsync(child), KillAndJoinAsync(descendant), outputCancellation.CancelAsync());
+                await Task.WhenAll(KillAndJoinAsync(child), KillAndJoinAsync(pipeHolder), outputCancellation.CancelAsync());
                 if (completed is not null)
                 {
                     try
@@ -105,16 +114,8 @@ public sealed class IsolatedTestChildTests
             }
             finally
             {
-                descendant?.Dispose();
+                pipeHolder?.Dispose();
                 child?.Dispose();
-                try
-                {
-                    directory.Delete(recursive: true);
-                }
-                catch (Exception error) when (failure is not null)
-                {
-                    failure.Data["DirectoryCleanupFailure"] = error;
-                }
             }
         }
     }
