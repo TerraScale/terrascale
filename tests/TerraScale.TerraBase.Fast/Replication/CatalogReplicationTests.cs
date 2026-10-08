@@ -158,6 +158,8 @@ public sealed class CatalogReplicationTests
             using var seeded = tls.CreateClient(follower.ClientAddress!, tenant.Key);
             await TerraBaseTestServer.EventuallyAsync(async token =>
                 await GetAsync(seeded, tenant, "orders", "kept", token) == HttpStatusCode.NotFound);
+            await TerraBaseTestServer.EventuallyAsync(async token =>
+                await PutAsync(seeded, tenant, "orders", "before-replacement", token) == HttpStatusCode.Created, TimeSpan.FromSeconds(5));
         }
 
         {
@@ -167,6 +169,7 @@ public sealed class CatalogReplicationTests
                 await FailuresAsync(follower, "lineage", token) >= 1);
             await Assert.That(await ReadinessAsync(follower)).IsEqualTo(HttpStatusCode.OK);
             using var data = tls.CreateClient(follower.ClientAddress!, tenant.Key);
+            await Assert.That(await GetAsync(data, tenant, "orders", "before-replacement")).IsEqualTo(HttpStatusCode.OK);
             await Assert.That(await PutAsync(data, tenant, "orders", "kept")).IsEqualTo(HttpStatusCode.Created);
         }
     }
