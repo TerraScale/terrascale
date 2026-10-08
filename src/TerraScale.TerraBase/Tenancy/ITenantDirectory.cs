@@ -7,6 +7,9 @@ namespace TerraBase.Tenancy;
 /// </summary>
 public interface ITenantDirectory
 {
+    /// <summary>Resolves a database by its owning project, after the caller's JWT project grant was checked.</summary>
+    ValueTask<TenantContext?> FindProjectDatabaseAsync(string projectId, string database, CancellationToken cancellationToken);
+
     /// <summary>
     /// The database named <paramref name="database"/> in project <paramref name="projectId"/> of organization
     /// <paramref name="organizationId"/>; <see langword="null"/> when the organization, the project in it or the

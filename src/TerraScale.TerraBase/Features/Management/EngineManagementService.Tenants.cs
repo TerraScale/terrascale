@@ -23,6 +23,14 @@ internal sealed partial class EngineManagementService
     // The same validity for the records the placement check reads on every data request (docs/cross-region.md).
     private readonly ConcurrentDictionary<(string Organization, string Project, string Database), (long Sequence, ManagedDatabase? Record)> _records = new();
 
+    public async ValueTask<TenantContext?> FindProjectDatabaseAsync(string projectId, string database, CancellationToken cancellationToken)
+    {
+        // This index resolves the current storage layout; JWT grants, not catalog memberships, authorize the caller.
+        var organization = await ReadAsync(
+            transaction => GetAsync(transaction, ProjectOrganizations, projectId, Id, cancellationToken), cancellationToken).ConfigureAwait(false);
+        return organization is null ? null : await FindDatabaseAsync(organization, projectId, database, cancellationToken).ConfigureAwait(false);
+    }
+
     public async ValueTask<TenantContext?> FindDatabaseAsync(string organizationId, string projectId, string database, CancellationToken cancellationToken)
     {
         var sequence = (await engine.OpenSystemDatabaseAsync(cancellationToken).ConfigureAwait(false)).CommitSequence;
@@ -291,6 +299,13 @@ internal sealed partial class EngineManagementService
             _ = await UnregisterRecordAsync(transaction, current.Storage, current.Record, token).ConfigureAwait(false);
             return true;
         }, cancellationToken).ConfigureAwait(false);
+    }
+
+    public async ValueTask<ManagedDatabase?> FindProjectDatabaseRecordAsync(string projectId, string name, CancellationToken cancellationToken)
+    {
+        var organization = await ReadAsync(
+            transaction => GetAsync(transaction, ProjectOrganizations, projectId, Id, cancellationToken), cancellationToken).ConfigureAwait(false);
+        return organization is null ? null : await FindDatabaseRecordAsync(organization, projectId, name, cancellationToken).ConfigureAwait(false);
     }
 
     public async ValueTask<ManagedDatabase?> FindDatabaseRecordAsync(string organizationId, string projectId, string name, CancellationToken cancellationToken)

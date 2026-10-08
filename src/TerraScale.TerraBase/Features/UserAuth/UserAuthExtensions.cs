@@ -9,6 +9,9 @@ public static class UserAuthExtensions
     /// <summary>Authorization policy of endpoints that act as a ts-auth user.</summary>
     public const string PolicyName = "user";
 
+    /// <summary>Client subscriptions accept only signed ts-auth access tokens.</summary>
+    public const string SubscriptionPolicy = "subscription";
+
     /// <summary>
     /// Registers <see cref="IIssuerKeys"/> with its background fetch, the <c>TsAuth</c> scheme (client listener), the
     /// <c>ManagementCredential</c> scheme (administrative listener) and the <see cref="PolicyName"/> policy that accepts
@@ -34,6 +37,8 @@ public static class UserAuthExtensions
         services.AddAuthorizationBuilder().AddPolicy(PolicyName, policy => policy
             .AddAuthenticationSchemes(UserAuthenticationHandler.SchemeName, ManagementCredentialHandler.SchemeName)
             .RequireAuthenticatedUser());
+        services.AddAuthorizationBuilder().AddPolicy(SubscriptionPolicy, policy => policy
+            .AddAuthenticationSchemes(UserAuthenticationHandler.SchemeName).RequireAuthenticatedUser());
         return services;
     }
 

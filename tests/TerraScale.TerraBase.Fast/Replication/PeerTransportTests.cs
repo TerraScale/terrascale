@@ -84,7 +84,16 @@ public sealed class PeerTransportTests
             {
                 var call = client.Sync(cancellationToken: stop.Token);
                 calls.Add(call);
-                await call.RequestStream.WriteAsync(hellos[i], stop.Token);
+                try
+                {
+                    await call.RequestStream.WriteAsync(hellos[i], stop.Token);
+                }
+                catch (RpcException error) when (i == ReplicationProtocol.MaxOpenStreams && error.StatusCode == StatusCode.Cancelled)
+                {
+                    // Admission rejection can finish the response before Hello finishes writing.
+                    // The response below must still contain the exact retryable rejection.
+                }
+
                 await Assert.That(await call.ResponseStream.MoveNext(stop.Token)).IsTrue();
                 answers.Add(call.ResponseStream.Current);
                 if (i < ReplicationProtocol.MaxOpenStreams)

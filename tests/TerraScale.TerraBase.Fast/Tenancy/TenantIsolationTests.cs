@@ -57,6 +57,16 @@ public sealed class TenantIsolationTests
         using var b = await api.CreateTenantAsync("documents:read", "documents:write", "shapes:read");
         using var aDashboard = api.As(a.User);
         using var bDashboard = api.As(b.User);
+        using var aSubscriptions = api.WithToken(api.Issuer.Mint(a.User, token =>
+        {
+            token.Claims["project_id"] = a.ProjectId;
+            token.Claims["scope"] = "shapes:read";
+        }));
+        using var bSubscriptions = api.WithToken(api.Issuer.Mint(b.User, token =>
+        {
+            token.Claims["project_id"] = b.ProjectId;
+            token.Claims["scope"] = "shapes:read";
+        }));
         // Both have a database "secret" with a document, a pending invitation and an ownership transfer: everything a route can name.
         var aSecret = await SeedAsync(api, a, aDashboard);
         var bSecret = await SeedAsync(api, b, bDashboard);
@@ -80,15 +90,15 @@ public sealed class TenantIsolationTests
         List<(string Request, HttpStatusCode Status)> answers =
         [
             // A's credentials (its API key, or its member on the dashboard) with B's organization and B's project.
-            .. await SendAsync(addressing, aDashboard, a.Data, b.OrganizationId, b.ProjectId, bSecret, b.User, bInvitation, bTooling),
+            .. await SendAsync(addressing, aDashboard, a.Data, aSubscriptions, b.OrganizationId, b.ProjectId, bSecret, b.User, bInvitation, bTooling),
             // A's organization, where A is an owner, with B's project.
             .. await SendAsync(management.Where(route => route.Pattern.Contains("{project}", StringComparison.Ordinal)),
-                aDashboard, a.Data, a.OrganizationId, b.ProjectId, bSecret, b.User, bInvitation, bTooling),
+                aDashboard, a.Data, aSubscriptions, a.OrganizationId, b.ProjectId, bSecret, b.User, bInvitation, bTooling),
             // B's organization with A's project: A's member on B's organization, and B's key (whose organization is B) on A's project.
-            .. await SendAsync(withProject, aDashboard, b.Data, b.OrganizationId, a.ProjectId, aSecret, b.User, bInvitation, aTooling),
+            .. await SendAsync(withProject, aDashboard, b.Data, bSubscriptions, b.OrganizationId, a.ProjectId, aSecret, b.User, bInvitation, aTooling),
             // A's organization and project with B's database.
             .. await SendAsync(management.Where(route => route.Pattern.Contains("{database}", StringComparison.Ordinal)),
-                aDashboard, a.Data, a.OrganizationId, a.ProjectId, bSecret, b.User, bInvitation, bTooling),
+                aDashboard, a.Data, aSubscriptions, a.OrganizationId, a.ProjectId, bSecret, b.User, bInvitation, bTooling),
         ];
 
         // Routes that address no tenant show A only its own organization.
@@ -234,9 +244,9 @@ public sealed class TenantIsolationTests
         pattern.StartsWith("/v1/management/", StringComparison.Ordinal) ||
         pattern.StartsWith("/management/", StringComparison.Ordinal);
 
-    // Sends each route with these values for its parameters: management routes through dashboard, data routes through data.
+    // Sends each route with its accepted credentials, so the response checks tenancy after authentication.
     private static async Task<List<(string Request, HttpStatusCode Status)>> SendAsync(
-        IEnumerable<(string Method, string Pattern)> routes, HttpClient dashboard, HttpClient data,
+        IEnumerable<(string Method, string Pattern)> routes, HttpClient dashboard, HttpClient data, HttpClient subscriptions,
         string organization, string project, string database, string user, string invitation, Tooling tooling)
     {
         var sent = new List<(string Request, HttpStatusCode Status)>();
@@ -279,7 +289,9 @@ public sealed class TenantIsolationTests
                 });
             }
 
-            using var response = await (IsManagement(pattern) ? dashboard : data).SendAsync(request);
+            var client = IsManagement(pattern) ? dashboard : pattern.EndsWith("/subscribe", StringComparison.Ordinal) ? subscriptions : data;
+            using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead,
+                TUnit.Core.TestContext.Current!.Execution.CancellationToken);
             sent.Add(($"{method} {path}", response.StatusCode));
         }
 

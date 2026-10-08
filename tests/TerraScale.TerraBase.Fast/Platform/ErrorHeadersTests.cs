@@ -54,7 +54,7 @@ public sealed class ErrorHeadersTests
 
     private sealed class CancelledShapes : IShapeService
     {
-        public ValueTask<ShapeReadResult> ReadAsync(ShapeRequest request, CancellationToken cancellationToken)
+        public ValueTask<ShapeReadResult> ReadAsync(ShapeRequest request, CancellationToken cancellationToken, bool drainOnCancellation = false)
         {
             cancellationToken.ThrowIfCancellationRequested();
             return ValueTask.FromCanceled<ShapeReadResult>(new CancellationToken(canceled: true));

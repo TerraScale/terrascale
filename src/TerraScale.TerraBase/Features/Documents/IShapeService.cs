@@ -147,6 +147,11 @@ public readonly union ShapeReadResult(ShapeResult, NotFound, Validation, QuotaEx
 /// </summary>
 public interface IShapeService
 {
-    /// <summary>Reads one snapshot page or log chunk, waiting up to 20 seconds for a commit when live at the head.</summary>
-    ValueTask<ShapeReadResult> ReadAsync(ShapeRequest request, CancellationToken cancellationToken);
+    /// <summary>
+    /// Reads one snapshot page or log chunk, waiting up to 20 seconds for a commit when live at the head.
+    /// When <paramref name="drainOnCancellation"/> is true, the caller retains its admission until a shared worker stops,
+    /// even if another requester still uses that worker.
+    /// Otherwise cancellation returns without awaiting worker cleanup.
+    /// </summary>
+    ValueTask<ShapeReadResult> ReadAsync(ShapeRequest request, CancellationToken cancellationToken, bool drainOnCancellation = false);
 }

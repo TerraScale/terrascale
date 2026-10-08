@@ -64,7 +64,7 @@ internal sealed class ShapeService : IShapeService
         _live = meter.CreateUpDownCounter<long>("terrabase.shape.live.waits", "{flight}", "Live shape reads waiting at the head for a commit.");
     }
 
-    public async ValueTask<ShapeReadResult> ReadAsync(ShapeRequest request, CancellationToken cancellationToken)
+    public async ValueTask<ShapeReadResult> ReadAsync(ShapeRequest request, CancellationToken cancellationToken, bool drainOnCancellation = false)
     {
         var key = string.Join('\0', request.Scope, request.Handle, request.Offset, request.Live);
         Flight? flight;
@@ -107,6 +107,11 @@ internal sealed class ShapeService : IShapeService
         finally
         {
             Leave(key, flight);
+            if (drainOnCancellation && cancellationToken.IsCancellationRequested)
+            {
+                // A budgeted caller retains its admission even when an ordinary shape caller still shares the worker.
+                await flight.Stopped.Task.ConfigureAwait(false);
+            }
             _waiting.Add(-1);
         }
     }
@@ -154,6 +159,8 @@ internal sealed class ShapeService : IShapeService
                 _running--;
                 _active.Add(-1);
             }
+
+            flight.Stopped.SetResult();
         }
     }
 
@@ -475,6 +482,7 @@ internal sealed class ShapeService : IShapeService
 
     private sealed class Flight
     {
+        public TaskCompletionSource Stopped { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource<ShapeReadResult> Result { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         // Never disposed: it has no timer, and a late Cancel must not throw.

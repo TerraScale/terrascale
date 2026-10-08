@@ -98,6 +98,18 @@ internal sealed class UserAuthenticationHandler(
         }
 
         var principal = new ClaimsPrincipal(new ClaimsIdentity(claims, SchemeName));
+        var hasDatabase = jwt.TryGetPayloadValue<object>("database", out var database);
+        if (hasDatabase && (database is not string restriction || string.IsNullOrEmpty(restriction)))
+        {
+            return AuthenticateResult.Fail("the database restriction must be a non-empty string");
+        }
+
+        // IdentityModel's string reads coerce arrays/objects; grants must be actual JSON strings.
+        _ = jwt.TryGetPayloadValue<object>("project_id", out var project);
+        _ = jwt.TryGetPayloadValue<object>("scope", out var scope);
+        Context.Features.Set(new ProjectToken(
+            project as string, database as string, scope as string,
+            new DateTimeOffset(jwt.ValidTo, TimeSpan.Zero)));
         return AuthenticateResult.Success(new AuthenticationTicket(principal, SchemeName));
     }
 

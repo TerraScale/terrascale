@@ -24,6 +24,7 @@ public sealed class ApiReferenceTests
         GET /healthz anonymous
         GET /management/organizations/{organization}/projects/{project}/databases/{database}/query-shapes TsAuth
         GET /management/query-shapes TsAuth
+        GET /projects/{project}/databases/{database}/collections/{collection}/subscribe TsAuth
         GET /readyz anonymous
         GET /v1/management/commits/{id} TsAuth
         GET /v1/management/current-organization TsAuth

@@ -192,6 +192,11 @@ routes (TS-581) go in this group and follow these conventions. Both routes take 
 | Method | Route | operationId | Scope |
 | --- | --- | --- | --- |
 | GET | `C/shape` | `getShape` | `shapes:read` |
+| GET | `/projects/{project}/databases/{database}/collections/{collection}/subscribe` | `subscribeCollection` | `shapes:read` |
+
+TS-690 adds the unversioned SSE subscription route above. It authenticates project-scoped ts-auth JWTs
+and streams the existing shape contract; see [subscriptions](subscriptions.md) for selection, resume,
+expiry and resource bounds. WebSocket delivery and plan entitlements remain subsequent slices.
 
 ## System
 

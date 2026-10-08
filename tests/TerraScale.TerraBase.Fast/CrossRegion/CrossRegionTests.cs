@@ -8,6 +8,7 @@ using Bogus;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine.Cluster;
 using TerraBase.Features.CrossRegion;
+using TerraBase.Features.Documents;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
 
@@ -177,10 +178,142 @@ public sealed class CrossRegionTests
         var record = await otherApi.Client.GetFromJsonAsync<JsonElement>(regions.Management($"databases/{id}"));
         await Assert.That(record.GetProperty("homeRegion").GetString()).IsEqualTo(home);
         await Regions.WrongRegionAsync(otherData.GetAsync(document), home, home);
+        var subscription = new Uri($"/projects/{regions.Project}/databases/orders/collections/items/subscribe", UriKind.Relative);
+        foreach (var (scope, expired, expected) in new[]
+        {
+            ("shapes:read", false, HttpStatusCode.MisdirectedRequest),
+            ("documents:read", false, HttpStatusCode.Forbidden),
+            ("shapes:read", true, HttpStatusCode.Unauthorized),
+        })
+        {
+            using var subscriber = otherApi.WithToken(otherApi.Issuer.Mint(Faker.Random.Guid().ToString("D"), token =>
+            {
+                token.Claims["project_id"] = regions.Project;
+                token.Claims["scope"] = scope;
+                if (expired)
+                {
+                    token.IssuedAt = DateTime.UtcNow.AddMinutes(-1);
+                    token.Expires = DateTime.UtcNow.AddSeconds(-10);
+                }
+            }));
+            using var answer = await subscriber.GetAsync(subscription);
+            await Assert.That(answer.StatusCode).IsEqualTo(expected);
+            await Assert.That(answer.Headers.Contains("X-TerraBase-Database-Home")).IsEqualTo(expected == HttpStatusCode.MisdirectedRequest);
+        }
+
         await Regions.WrongRegionAsync(otherData.PutAsJsonAsync(document, new { value = "elsewhere" }), home, home);
         await Regions.WrongRegionAsync(otherApi.Client.PostAsJsonAsync(regions.Management($"databases/{id}/branches"), new { name = "copy" }), home, home);
         using var read = await homeData.GetAsync(document);
         await Assert.That(read.StatusCode).IsEqualTo(HttpStatusCode.OK);
+    }
+
+    [Test]
+    public async Task A_subscription_stops_when_its_region_is_removed_before_a_live_page_is_delivered()
+    {
+        HeldLivePage? held = null;
+        await using var regions = await Regions.StartAsync(services =>
+        {
+            var registration = services.Single(service => service.ServiceType == typeof(IShapeService));
+            services.Remove(registration);
+            services.AddSingleton<ShapeService>();
+            services.AddSingleton<IShapeService>(provider => held = new HeldLivePage(provider.GetRequiredService<ShapeService>()));
+        });
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
+        deadline.CancelAfter(TimeSpan.FromSeconds(30));
+        using var seed = await regions.Gru.PutAsJsonAsync(regions.Document(ReplicationDocuments.Id("seed")), new { value = "before" }, deadline.Token);
+        seed.EnsureSuccessStatusCode();
+        _ = await Regions.EventuallyReadAsync(regions.Sfo, regions.Document(ReplicationDocuments.Id("seed")), "before");
+        using var subscriber = regions.SfoApi.WithToken(regions.SfoApi.Issuer.Mint(Faker.Random.Guid().ToString("D"), token =>
+        {
+            token.Claims["project_id"] = regions.Project;
+            token.Claims["scope"] = "shapes:read";
+        }));
+        using var response = await subscriber.GetAsync(new Uri(
+            $"/projects/{regions.Project}/databases/canary/collections/items/subscribe", UriKind.Relative),
+            HttpCompletionOption.ResponseHeadersRead, deadline.Token);
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        using var reader = new StreamReader(await response.Content.ReadAsStreamAsync(deadline.Token));
+        var snapshot = await ReadSubscriptionEventAsync(reader, deadline.Token);
+        await Assert.That(snapshot.Type).IsEqualTo("shape");
+        await Assert.That(snapshot.Data).Contains("before");
+        while (true)
+        {
+            using var page = JsonDocument.Parse(snapshot.Data);
+            if (page.RootElement.GetProperty("up_to_date").GetBoolean())
+            {
+                break;
+            }
+
+            snapshot = await ReadSubscriptionEventAsync(reader, deadline.Token);
+            await Assert.That(snapshot.Type).IsEqualTo("shape");
+        }
+
+        try
+        {
+            using var changed = await regions.Gru.PutAsJsonAsync(regions.Document(ReplicationDocuments.Id("seed")), new { value = "after" }, deadline.Token);
+            changed.EnsureSuccessStatusCode();
+            // The real feed completed a live read while sfo was still served; hold its result before delivery.
+            await held!.Ready.Task.WaitAsync(deadline.Token);
+            using var removed = await regions.GruApi.Client.PatchAsJsonAsync(regions.Management($"databases/{regions.Database}"),
+                new { replicaRegions = Array.Empty<string>() }, deadline.Token);
+            removed.EnsureSuccessStatusCode();
+            await TerraBaseTestServer.EventuallyAsync(async token =>
+            {
+                using var answer = await regions.Sfo.GetAsync(regions.Document(ReplicationDocuments.Id("seed")), token);
+                return answer.StatusCode == HttpStatusCode.MisdirectedRequest;
+            });
+            // Removing a replica leaves its local copy intact, so this cannot pass by racing file deletion.
+            var file = Path.Combine(regions.SfoApi.Server.DataDirectory, regions.Organization, regions.Project, regions.Database + ".db");
+            await Assert.That(File.Exists(file)).IsTrue();
+            held.Release.TrySetResult();
+            var terminal = await ReadSubscriptionEventAsync(reader, deadline.Token);
+            await Assert.That(terminal.Type).IsEqualTo("error");
+            using var error = JsonDocument.Parse(terminal.Data);
+            await Assert.That(error.RootElement.GetProperty("error").GetProperty("code").GetString()).IsEqualTo("unknown_database");
+            await Assert.That(await reader.ReadLineAsync(deadline.Token)).IsNull();
+            await Assert.That(File.Exists(file)).IsTrue();
+        }
+        finally
+        {
+            held?.Release.TrySetResult();
+        }
+    }
+
+    private static async Task<(string Type, string Data)> ReadSubscriptionEventAsync(StreamReader reader, CancellationToken cancellationToken)
+    {
+        var type = "";
+        var data = new StringBuilder();
+        while (await reader.ReadLineAsync(cancellationToken) is { Length: > 0 } line)
+        {
+            if (line.StartsWith("event: ", StringComparison.Ordinal))
+            {
+                type = line[7..];
+            }
+            else if (line.StartsWith("data: ", StringComparison.Ordinal))
+            {
+                data.Append(line[6..]).Append('\n');
+            }
+        }
+
+        return (type, data.ToString());
+    }
+
+    private sealed class HeldLivePage(IShapeService inner) : IShapeService
+    {
+        public TaskCompletionSource Ready { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public async ValueTask<ShapeReadResult> ReadAsync(ShapeRequest request, CancellationToken cancellationToken, bool drainOnCancellation = false)
+        {
+            var result = await inner.ReadAsync(request, cancellationToken, drainOnCancellation);
+            if (request.Live)
+            {
+                Ready.TrySetResult();
+                await Release.Task.WaitAsync(cancellationToken);
+            }
+
+            return result;
+        }
     }
 
     [Test]
@@ -493,7 +626,7 @@ public sealed class CrossRegionTests
             await Assert.That(response.Headers.GetValues("X-TerraBase-Database-Regions").Single()).IsEqualTo(regions);
         }
 
-        public static async Task<Regions> StartAsync()
+        public static async Task<Regions> StartAsync(Action<IServiceCollection>? sfoServices = null)
         {
             var network = new FakeRegionNetwork();
             var credentials = Path.Combine(Directory.CreateTempSubdirectory("terrabase-wan-").FullName, "user.creds");
@@ -502,7 +635,7 @@ public sealed class CrossRegionTests
             try
             {
                 gru = await StartRegionAsync(network, credentials, "gru-1", "gru");
-                var regions = new Regions(network, credentials, gru, await StartRegionAsync(network, credentials, "sfo-1", "sfo"));
+                var regions = new Regions(network, credentials, gru, await StartRegionAsync(network, credentials, "sfo-1", "sfo", sfoServices));
                 await regions.RegisterAsync();
                 return regions;
             }
@@ -600,10 +733,14 @@ public sealed class CrossRegionTests
             services.AddSingleton<IMemberStore>(members);
         }
 
-        private static Task<ManagementApi> StartRegionAsync(FakeRegionNetwork network, string credentials, string region, string cell) =>
+        private static Task<ManagementApi> StartRegionAsync(FakeRegionNetwork network, string credentials, string region, string cell, Action<IServiceCollection>? configureServices = null) =>
             ManagementApi.StartAsync(
                 settings => Configure(settings, credentials, region, $"{cell}-member"),
-                services => Join(services, network, cell, new FakeMemberStore(TimeProvider.System)));
+                services =>
+                {
+                    Join(services, network, cell, new FakeMemberStore(TimeProvider.System));
+                    configureServices?.Invoke(services);
+                });
 
         // Every document of "items" with its version and body, in id order.
         private async Task<string> ListAsync(HttpClient client, CancellationToken token)

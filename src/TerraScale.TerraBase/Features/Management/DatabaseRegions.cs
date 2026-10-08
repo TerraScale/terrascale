@@ -1,6 +1,7 @@
 using TerraBase.Configuration;
 using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
+using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
 
 namespace TerraBase.Features.Management;
@@ -94,6 +95,12 @@ public static class DatabaseRegions
             return context.User.Identity?.IsAuthenticated == true
                 ? await management.GetDatabaseAsync(ManagementRoute.UserId(context), organizationId, project, database, context.RequestAborted).ConfigureAwait(false)
                 : null;
+        }
+
+        if (context.Features.Get<ProjectToken>() is { } token && token.Reaches(project, database) && token.Grants(ApiKeyScopes.ShapesRead)
+            && token.ExpiresAt > context.RequestServices.GetRequiredService<TimeProvider>().GetUtcNow())
+        {
+            return await management.FindProjectDatabaseRecordAsync(project, database, context.RequestAborted).ConfigureAwait(false);
         }
 
         return context.Features.Get<ApiKey>() is { } key

@@ -8,5 +8,6 @@ public static class DocumentsExtensions
         services.AddMetrics().AddSingleton<DocumentCache>().AddSingleton<DocumentService>()
             .AddSingleton<IDocumentService>(provider => provider.GetRequiredService<DocumentService>())
             .AddSingleton<ISystemDocumentReader>(provider => provider.GetRequiredService<DocumentService>())
-            .AddSingleton<IShapeService, ShapeService>();
+            .AddSingleton<IShapeService, ShapeService>()
+            .AddSingleton<IShapeSubscriptionService, ShapeSubscriptionService>();
 }

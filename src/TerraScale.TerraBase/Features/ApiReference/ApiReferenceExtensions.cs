@@ -66,7 +66,8 @@ public static class ApiReferenceExtensions
                 }
 
                 var scopes = policies.Where(ApiKeyScopes.All.Contains).ToList();
-                var scheme = scopes.Count > 0 ? ApiKeyScheme : policies.Contains(UserAuthExtensions.PolicyName) ? TsAuthScheme : null;
+                var scheme = scopes.Count > 0 ? ApiKeyScheme
+                    : policies.Contains(UserAuthExtensions.PolicyName) || policies.Contains(UserAuthExtensions.SubscriptionPolicy) ? TsAuthScheme : null;
                 if (scheme is null)
                 {
                     return;
