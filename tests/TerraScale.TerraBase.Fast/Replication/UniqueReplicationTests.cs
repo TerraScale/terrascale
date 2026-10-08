@@ -1,9 +1,11 @@
-using System.Globalization;
 using System.Net;
 using System.Text.Json;
 using Bogus;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
+using TerraBase.Features.Replication;
+using TerraBase.Features.Replication.V1;
+using TerraBase.Tenancy;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Replication;
@@ -25,34 +27,28 @@ public sealed class UniqueReplicationTests
         try
         {
             ReplicationTenant tenant;
-            int firstPort;
-            int secondPort;
             await using (var first = await ManagementApi.StartAsync(settings => { tls.Apply(settings); settings["data-directory"] = firstData; }))
             await using (var second = await ManagementApi.StartAsync(settings => { tls.Apply(settings); settings["data-directory"] = secondData; }))
             {
                 tenant = await ReplicationTenant.CreateAsync(first.Server, ["db", "snapshot"], token);
                 await tenant.BindAsync(second.Server);
-                firstPort = first.Server.PeerAddress!.Port;
-                secondPort = second.Server.PeerAddress!.Port;
                 await SeedAsync(first, tenant, reverse ? low : high, email, token);
                 await SeedAsync(second, tenant, reverse ? high : low, email.ToUpperInvariant(), token);
             }
 
-            await using var a = await ManagementApi.StartAsync(settings =>
-            {
-                tls.Apply(settings);
-                settings["data-directory"] = firstData;
-                settings["peer-port"] = firstPort.ToString(CultureInfo.InvariantCulture);
-                settings["peer-addresses"] = $"https://localhost:{secondPort}";
-            });
             await using var b = await ManagementApi.StartAsync(settings =>
             {
                 tls.Apply(settings);
                 settings["data-directory"] = secondData;
-                settings["peer-port"] = secondPort.ToString(CultureInfo.InvariantCulture);
-                settings["peer-addresses"] = a.Server.PeerAddress!.ToString();
             });
-            await Task.WhenAll(TerraBaseTestServer.ReplicatedAsync(a.Server), TerraBaseTestServer.ReplicatedAsync(b.Server));
+            await using var a = await ManagementApi.StartAsync(settings =>
+            {
+                tls.Apply(settings);
+                settings["data-directory"] = firstData;
+                settings["peer-addresses"] = b.Server.PeerAddress!.ToString();
+            });
+            await ReplayAsync(b.Server, a.Server, tls, tenant.Database("db"), token);
+            await TerraBaseTestServer.ReplicatedAsync(a.Server);
 
             using var firstClient = a.Tls.CreateClient(a.Server.ClientAddress!, await tenant.KeyAsync(a.Server, "documents:read", "documents:write", "shapes:read"));
             using var secondClient = b.Tls.CreateClient(b.Server.ClientAddress!, await tenant.KeyAsync(b.Server, "documents:read", "documents:write", "shapes:read"));
@@ -102,6 +98,35 @@ public sealed class UniqueReplicationTests
         {
             Directory.Delete(firstData, recursive: true);
             Directory.Delete(secondData, recursive: true);
+        }
+    }
+
+    private static async Task ReplayAsync(TerraBaseTestServer source, TerraBaseTestServer target, PeerTls tls, TenantContext database, CancellationToken token)
+    {
+        var store = (await source.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(database, token))!;
+        await using var read = await store.BeginTransactionAsync(write: false, token);
+        var origin = await read.GetOriginAsync(token);
+        var head = await read.GetLastChangeSequenceAsync(token);
+        using var channel = tls.CreateChannel(target.PeerAddress!);
+        var rpc = new Features.Replication.V1.Replication.ReplicationClient(channel);
+        using var call = rpc.Sync(cancellationToken: token);
+        await call.RequestStream.WriteAsync(new SyncRequest { Hello = ReplicationProtocol.CreateHello(database, origin) }, token);
+        await Assert.That(await call.ResponseStream.MoveNext(token)).IsTrue();
+        var frontier = call.ResponseStream.Current.Welcome.Frontiers.Single();
+        await Assert.That(frontier.AppliedSequence).IsEqualTo(0UL);
+        var digest = frontier.JournalDigest.Memory;
+        for (long sequence = 1; sequence <= head; sequence++)
+        {
+            var changes = (await read.ReadChangesAsync(sequence, token))!;
+            await call.RequestStream.WriteAsync(new SyncRequest
+            {
+                CommittedGroup = ReplicationProtocol.CreateBatch(database, origin, sequence, changes, digest),
+            }, token);
+            await Assert.That(await call.ResponseStream.MoveNext(token)).IsTrue();
+            await Assert.That(call.ResponseStream.Current.Durable.DurablePrefix).IsEqualTo((ulong)sequence);
+            await Assert.That(await call.ResponseStream.MoveNext(token)).IsTrue();
+            await Assert.That(call.ResponseStream.Current.Applied.AppliedPrefix).IsEqualTo((ulong)sequence);
+            digest = call.ResponseStream.Current.Applied.JournalDigest.Memory;
         }
     }
 

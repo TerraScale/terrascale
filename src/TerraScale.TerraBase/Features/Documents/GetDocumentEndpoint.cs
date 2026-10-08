@@ -17,7 +17,7 @@ public sealed class GetDocumentEndpoint(IDocumentService documents, ITenantDirec
         Get(DocumentRoute.Document);
         Name("getDocument");
         Summary("Reads a JSON document");
-        Description("Sends the document state as a strong ETag, including the database identity (the same on every member), merge version, JSON and deletion state. Equal-version replicated body changes get distinct validators. If-None-Match with the current version returns 304. A deleted document returns 404 not_found with its tombstone's ETag, so it can be recreated with If-Match.");
+        Description("Sends the document state as a strong ETag, including the database identity (the same on every member), merge version, JSON and deletion state. Equal-version replicated body changes get distinct validators. If-None-Match with the current version returns 304. A deleted document returns 404 not_found with its tombstone's ETag, so it can be recreated with If-Match. A retained loser of a replicated uniqueness conflict returns 409 unique_violation with its source state's ETag.");
         Tags("Documents");
         Produces<DocumentBody>();
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
