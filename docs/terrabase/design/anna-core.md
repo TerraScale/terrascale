@@ -120,10 +120,13 @@ idempotent ([Anna] §III). Mutators are delta-mutators: they return the delta, a
 
 ### Identities and dots
 
-- `ReplicaId` packs region (16 bits), member (32 bits) and **epoch** (16 bits). The member number comes from the
-  member's registration ([§5](#5-membership-ring-and-leases)); the region keeps dots distinct across regions later.
-- **The epoch rises on every unclean start** (no clean-shutdown marker in the data directory), and is written and
-  synced before the member mints a dot. With `synchronous = NORMAL`
+- `ReplicaId` packs region (16 bits), member (32 bits) and **epoch** (16 bits). The member number is drawn at random
+  when a data directory is first used (decision 8); the region keeps dots distinct across regions later and is 0 until
+  then. Both live in `.terrabase.replica` in the data directory (step 4b): a format byte, the member number, the epoch
+  and whether the last process stopped cleanly.
+- **The epoch rises on every unclean start** (the file does not say the last process stopped cleanly), and is written
+  through to disk before the storage engine starts, so before the member can mint a dot. Past epoch 65535 the member
+  takes a new number. A clean stop is recorded only once every store closed without error. With `synchronous = NORMAL`
   ([0003](../decisions/0003-sqlite-synchronous-normal.md)) an OS crash can lose commits a peer already received;
   minting from the recovered state with the same replica id would reuse their dots and silently drop one write
   everywhere (the Riak kv679 class of bug). A new epoch is a new replica, so it cannot.
@@ -209,8 +212,8 @@ applied vector. One file per database stays, so TS-633's WAL tap keeps working u
   over at once.
 - Tests and single-node runs: the static `peers` setting, a fixed member list whose leases never end.
 - `peers` and NATS membership replace `peer-addresses`.
-- The member number is the KV revision of the member's first registration, kept in its data directory; a member that
-  lost its data directory registers again under a new number.
+- The member number lives in the data directory ([§3](#identities-and-dots)); a member that lost its data directory
+  starts again under a new number.
 
 ### 5.2 Ring and placement
 
@@ -427,8 +430,8 @@ each other. Unknown protobuf fields are ignored by older members, so the new sta
 | Sub-step | Contents | Rolls out mixed |
 | --- | --- | --- |
 | 4a | The register encoding (`LatticeEncoding`, `DocumentWrite`); no caller yet | Yes, nothing changes |
-| 4b | Replica identity and clock: a member number, a replica epoch raised on every unclean start, one HLC per member | Yes, stored beside today's state |
-| 4c | Expand: each document row also keeps its encoded register, written by local writes and joined on apply; groups carry registers in a new field; a member converts its files in place on first open | Yes, merge v1 still decides |
+| 4b | Replica identity: a member number and a replica epoch raised on every unclean start, in `.terrabase.replica` | Yes, a new file older builds ignore |
+| 4c | Expand: one HLC per member (observing every applied stamp, advancing at most `max-clock-skew`); each document row also keeps its encoded register, written by local writes and joined on apply; groups carry registers in a new field; a member converts its files in place on first open | Yes, merge v1 still decides |
 | 4d | Switch: the join decides, LWW reads take the register's winner, tokens hash it; dependency vectors gate apply | Only once every member runs 4c |
 | 4e | Contract: delete merge v1, `VersionClock`, `JournalDigest`, baselines, legacy upgrades and `StampingStorageEngine`; one protocol version | Under a deploy freeze, gated by the partition suite |
 
@@ -468,6 +471,10 @@ Decided by the user:
    in-place migration instead of the TS-602 wipe. This replaces decision 1's "without migration code".
 7. 2026-10-08 (COS, pre-1.0 rule): no new v1/v2 names. Version tokens keep their current shape instead of a `tbv2-`
    prefix.
+8. 2026-10-08 (TS-647 step 4b, under COS's delegation): a member number is a random non-zero 32-bit value drawn when a
+   data directory is first used, instead of the membership KV revision of its first registration. It works the same
+   with static `peers` and with NATS. Three members collide with odds of about 1 in 1.4 billion, and a collision stops
+   a stream on the same-dot refusal instead of losing a write.
 
 Open:
 

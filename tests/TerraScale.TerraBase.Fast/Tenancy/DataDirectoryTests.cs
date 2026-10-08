@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Net;
@@ -21,6 +22,7 @@ namespace TerraBase.Fast.Tenancy;
 public sealed class DataDirectoryTests
 {
     private const string LockFileName = ".terrabase.lock";
+    private const string ReplicaFileName = ".terrabase.replica";
     private const string InUse = "data-directory is in use by another TerraBase process; stop it, then start again";
     private const string PreTenancyLayout = "data directory uses the pre-tenancy layout; start with an empty data directory (no automatic migration)";
 
@@ -424,6 +426,115 @@ public sealed class DataDirectoryTests
                 + (Directory.Exists(entry) ? "directory" : Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(entry)))))
             .Order(StringComparer.Ordinal),
     ];
+
+    // TS-647 step 4b (docs/design/anna-core.md, Identities and dots): the member's replica id survives a clean stop, and
+    // every other start raises its epoch before anything can mint a dot, so a member recovered from an OS crash never
+    // mints again a dot its peers may already hold.
+    [Test]
+    public async Task A_clean_restart_keeps_the_replica_id_and_any_other_start_raises_its_epoch()
+    {
+        var dataDirectory = Directory.CreateTempSubdirectory("terrabase-replica-").FullName;
+        try
+        {
+            var (member, epoch) = await ReplicaAsync(dataDirectory);
+            await Assert.That(member).IsNotEqualTo(0d);
+            await Assert.That(epoch).IsEqualTo(0d);
+            await Assert.That(await ReplicaAsync(dataDirectory)).IsEqualTo((member, 0d));
+            for (var crash = 1; crash <= 2; crash++)
+            {
+                // A crash leaves the identity as the start wrote it: still running.
+                var identity = await File.ReadAllBytesAsync(Path.Combine(dataDirectory, ReplicaFileName));
+                await Assert.That(identity[7]).IsEqualTo((byte)1);
+                identity[7] = 0;
+                await File.WriteAllBytesAsync(Path.Combine(dataDirectory, ReplicaFileName), identity);
+                await Assert.That(await ReplicaAsync(dataDirectory)).IsEqualTo((member, (double)crash));
+            }
+
+            await Assert.That(await ReplicaAsync(dataDirectory)).IsEqualTo((member, 2d));
+        }
+        finally
+        {
+            Directory.Delete(dataDirectory, recursive: true);
+        }
+    }
+
+    [Test]
+    public async Task A_member_past_its_last_epoch_takes_a_new_number()
+    {
+        var dataDirectory = Directory.CreateTempSubdirectory("terrabase-replica-").FullName;
+        try
+        {
+            var (member, _) = await ReplicaAsync(dataDirectory);
+            // Format 1, the member, epoch 65535, and still running: an unclean start past the last epoch.
+            var identity = await File.ReadAllBytesAsync(Path.Combine(dataDirectory, ReplicaFileName));
+            identity[5] = 0xff;
+            identity[6] = 0xff;
+            identity[7] = 0;
+            await File.WriteAllBytesAsync(Path.Combine(dataDirectory, ReplicaFileName), identity);
+            var (renumbered, epoch) = await ReplicaAsync(dataDirectory);
+            await Assert.That(renumbered).IsNotEqualTo(member);
+            await Assert.That(renumbered).IsNotEqualTo(0d);
+            await Assert.That(epoch).IsEqualTo(0d);
+        }
+        finally
+        {
+            Directory.Delete(dataDirectory, recursive: true);
+        }
+    }
+
+    [Test]
+    public async Task An_empty_replica_identity_left_by_a_first_start_that_never_finished_is_a_new_member()
+    {
+        var dataDirectory = Directory.CreateTempSubdirectory("terrabase-replica-").FullName;
+        try
+        {
+            await (await TerraBaseTestServer.StartAsync(settings => settings["data-directory"] = dataDirectory)).DisposeAsync();
+            // Killed between creating the file and writing it: nothing could have minted under it.
+            await File.WriteAllBytesAsync(Path.Combine(dataDirectory, ReplicaFileName), []);
+            var (member, epoch) = await ReplicaAsync(dataDirectory);
+            await Assert.That(member).IsNotEqualTo(0d);
+            await Assert.That(epoch).IsEqualTo(0d);
+        }
+        finally
+        {
+            Directory.Delete(dataDirectory, recursive: true);
+        }
+    }
+
+    [Test]
+    [Arguments(new byte[] { 2, 1, 0, 0, 0, 0, 0, 1 })]
+    [Arguments(new byte[] { 1, 1, 0, 0, 0, 0, 0, 2 })]
+    [Arguments(new byte[] { 1, 1, 0, 0, 0, 0, 0 })]
+    public async Task A_replica_identity_this_build_cannot_read_stops_the_start(byte[] identity)
+    {
+        var dataDirectory = Directory.CreateTempSubdirectory("terrabase-replica-").FullName;
+        try
+        {
+            await (await TerraBaseTestServer.StartAsync(settings => settings["data-directory"] = dataDirectory)).DisposeAsync();
+            await File.WriteAllBytesAsync(Path.Combine(dataDirectory, ReplicaFileName), identity);
+            await AssertStartupRefusedAsync(dataDirectory, "data directory has a replica identity this build does not support");
+            // Nothing rewrote it: the operator can still inspect what an unknown build left.
+            await Assert.That((await File.ReadAllBytesAsync(Path.Combine(dataDirectory, ReplicaFileName))).SequenceEqual(identity)).IsTrue();
+        }
+        finally
+        {
+            Directory.Delete(dataDirectory, recursive: true);
+        }
+    }
+
+    // The member number and epoch a server on dataDirectory reports, after which it stops cleanly. While it serves, its
+    // identity is already on disk marked running, as a crash would leave it.
+    private static async Task<(double Member, double Epoch)> ReplicaAsync(string dataDirectory)
+    {
+        await using var server = await TerraBaseTestServer.StartAsync(settings => settings["data-directory"] = dataDirectory);
+        var identity = await File.ReadAllBytesAsync(Path.Combine(dataDirectory, ReplicaFileName));
+        var (member, epoch) = (await server.MetricAsync("terrabase_replica_member"), await server.MetricAsync("terrabase_replica_epoch"));
+        await Assert.That(identity.Length).IsEqualTo(8);
+        await Assert.That(identity[7]).IsEqualTo((byte)0);
+        await Assert.That((double)BinaryPrimitives.ReadUInt32LittleEndian(identity.AsSpan(1))).IsEqualTo(member);
+        await Assert.That((double)BinaryPrimitives.ReadUInt16LittleEndian(identity.AsSpan(5))).IsEqualTo(epoch);
+        return (member, epoch);
+    }
 
     // Runs the real binary on the directory: it must print the message and exit with code 2.
     private static async Task AssertStartupRefusedAsync(string dataDirectory, string message)
