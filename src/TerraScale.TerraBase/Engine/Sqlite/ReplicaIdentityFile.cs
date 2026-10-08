@@ -35,23 +35,26 @@ internal static class ReplicaIdentityFile
         RefuseLink(path);
         var id = New();
 
-        // Empty or a short record of this format: a first start died while creating the file, which grows as it is written.
-        // A record that fails its checksum: a write was torn by a crash. Either way nothing it says can be trusted, and a
-        // new member number reuses no dot. Anything else this build cannot read stops the start.
-        if (File.Exists(path) && File.ReadAllBytes(path) is { Length: > 0 } bytes && !(bytes.Length < Length && bytes[0] == Format))
+        // An empty file: a first start died between creating it and writing it, so nothing minted under it.
+        if (File.Exists(path) && File.ReadAllBytes(path) is { Length: > 0 } bytes)
         {
-            if (bytes.Length != Length)
+            // Every record of this format starts with its format byte, which a torn rewrite cannot change: any other first
+            // byte or a longer record is another build's identity, never overwritten.
+            if (bytes[0] != Format || bytes.Length > Length)
             {
                 throw new TerraBaseConfigurationException(Unsupported);
             }
 
-            if (bytes.AsSpan(Record).SequenceEqual(Checksum(bytes.AsSpan(0, Record))))
+            // A shorter record (a first start died while the file grew) or one that fails its checksum (a crash tore a
+            // rewrite) says nothing that can be trusted; like an empty file, it gives a new member number, which reuses no
+            // dot. Only an intact record is read.
+            if (bytes.Length == Length && bytes.AsSpan(Record).SequenceEqual(Checksum(bytes.AsSpan(0, Record))))
             {
                 var member = BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(1));
                 var epoch = BinaryPrimitives.ReadUInt16LittleEndian(bytes.AsSpan(5));
 
                 // Zero is the empty replica id, which no start mints.
-                if (bytes[0] != Format || bytes[7] is not (Running or Stopped) || member == 0)
+                if (bytes[7] is not (Running or Stopped) || member == 0)
                 {
                     throw new TerraBaseConfigurationException(Unsupported);
                 }

@@ -546,6 +546,7 @@ public sealed class DataDirectoryTests
 
     [Test]
     [Arguments("an unknown format")]
+    [Arguments("an unknown format with another checksum")]
     [Arguments("an unknown state")]
     [Arguments("member zero")]
     [Arguments("a short record of another format")]
@@ -561,6 +562,10 @@ public sealed class DataDirectoryTests
             {
                 case "an unknown format":
                     await WriteReplicaAsync(dataDirectory, 2, [1, 0, 0, 0], [0, 0], running: false);
+                    break;
+                case "an unknown format with another checksum":
+                    // A newer build may checksum differently: still its identity, not a torn record of this format.
+                    await File.WriteAllBytesAsync(path, [2, 1, 0, 0, 0, 0, 0, 1, 0xde, 0xad, 0xbe, 0xef]);
                     break;
                 case "an unknown state":
                     await WriteReplicaAsync(dataDirectory, 1, [1, 0, 0, 0], [0, 0], running: false, state: 2);
