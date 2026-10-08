@@ -39,8 +39,8 @@ internal sealed partial class SqliteStorageTransaction
             return collections;
         }, cancellationToken), cancellationToken);
 
-    public IAsyncEnumerable<StoredDocument> QuerySqlAsync(SqlQuery query, CancellationToken cancellationToken) =>
-        ReadBudgetedAsync(() => QueryCommand(query, "SELECT id, version FROM documents"), cancellationToken, query);
+    public IAsyncEnumerable<StoredDocument> QuerySqlAsync(SqlQuery query, CancellationToken cancellationToken, QueryObservation? observation = null) =>
+        ReadBudgetedAsync(() => QueryCommand(query, "SELECT id, version FROM documents", observation is not null), cancellationToken, query, observation);
 
     public ValueTask<SqlQueryPlan> ExplainSqlAsync(SqlQuery query, CancellationToken cancellationToken) =>
         RunAsync(() => WithQueryBudget(() => ReadSqlPlan(query, cancellationToken), cancellationToken), cancellationToken);
@@ -268,7 +268,7 @@ internal sealed partial class SqliteStorageTransaction
         return new IndexDefinition(name[IndexPrefix.Length..], collection, fields);
     }
 
-    private SqliteCommand QueryCommand(SqlQuery query, string select)
+    private SqliteCommand QueryCommand(SqlQuery query, string select, bool observe = false)
     {
         ArgumentNullException.ThrowIfNull(query);
         if (!DatabaseName.TryParse(query.Collection, out _))
@@ -278,7 +278,9 @@ internal sealed partial class SqliteStorageTransaction
 
         var command = PlainCommand(string.Empty);
         // Tombstones are excluded with the same term the indexes' WHERE carries, so a partial index stays usable.
-        var sql = new StringBuilder(select).Append(CultureInfo.InvariantCulture, $" WHERE collection = '{query.Collection}' AND body IS NOT NULL");
+        // The visit runs before residual rejection, without wrapping predicates that SQLite can use as index constraints.
+        var sql = new StringBuilder(select).Append(CultureInfo.InvariantCulture,
+            $" WHERE collection = '{query.Collection}' AND {(observe ? "tb_query_scan() AND " : "")}body IS NOT NULL");
         if (query.Filter is not null)
         {
             sql.Append(" AND ");

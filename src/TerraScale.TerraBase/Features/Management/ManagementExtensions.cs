@@ -22,6 +22,7 @@ public static class ManagementExtensions
         services.AddSingleton<EngineManagementService>();
         // Commits apply document operations; the document service reaches the catalog back through usage metering.
         services.AddSingleton(provider => new Lazy<IDocumentService>(provider.GetRequiredService<IDocumentService>));
+        services.AddSingleton(provider => new Lazy<IQueryShapeTracker>(provider.GetRequiredService<IQueryShapeTracker>));
         services.AddHostedService(provider => provider.GetRequiredService<EngineManagementService>());
         services.AddSingleton<IManagementService>(provider => provider.GetRequiredService<EngineManagementService>());
         services.AddSingleton<IAccessService>(provider => provider.GetRequiredService<EngineManagementService>());

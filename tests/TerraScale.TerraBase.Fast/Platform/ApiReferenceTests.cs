@@ -22,6 +22,8 @@ public sealed class ApiReferenceTests
         DELETE /v1/projects/{project}/databases/{database}/collections/{collection} ApiKey(documents:write)
         DELETE /v1/projects/{project}/databases/{database}/collections/{collection}/documents/{id} ApiKey(documents:write)
         GET /healthz anonymous
+        GET /management/organizations/{organization}/projects/{project}/databases/{database}/query-shapes TsAuth
+        GET /management/query-shapes TsAuth
         GET /readyz anonymous
         GET /v1/management/commits/{id} TsAuth
         GET /v1/management/current-organization TsAuth

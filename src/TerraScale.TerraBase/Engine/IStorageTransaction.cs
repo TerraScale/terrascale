@@ -139,7 +139,8 @@ public interface IStorageTransaction : IAsyncDisposable
     ValueTask<DocumentPage> ListAsync(string collection, string? afterId, int limit, long maxBytes, CancellationToken cancellationToken);
 
     /// <summary>Runs a query over the live documents of one collection.</summary>
-    ValueTask<QueryPage> QueryAsync(DocumentQuery query, CancellationToken cancellationToken);
+    /// <remarks><paramref name="observation"/> accumulates candidate visits, including sort admission, even when execution fails.</remarks>
+    ValueTask<QueryPage> QueryAsync(DocumentQuery query, CancellationToken cancellationToken, QueryObservation? observation = null);
 
     /// <summary>
     /// Reads a page of the live documents of one collection as they were at commit <paramref name="offset"/>, in id
@@ -175,7 +176,8 @@ public interface IStorageTransaction : IAsyncDisposable
     /// rows (documents and tombstones) in id order. <c>Complete</c> is <see langword="false"/> when the collection holds
     /// more rows, so the count is a lower bound.
     /// </summary>
-    ValueTask<(long Count, bool Complete)> CountAsync(string collection, DocumentFilter? filter, long maxExamined, CancellationToken cancellationToken);
+    /// <remarks><paramref name="observation"/> includes repeated visits in the separate overflow walk.</remarks>
+    ValueTask<(long Count, bool Complete)> CountAsync(string collection, DocumentFilter? filter, long maxExamined, CancellationToken cancellationToken, QueryObservation? observation = null);
 
     /// <summary>Creates a collection, a commit of its own offset; <see langword="false"/> when it already exists.</summary>
     ValueTask<bool> CreateCollectionAsync(CollectionInfo collection, CancellationToken cancellationToken);
@@ -209,7 +211,8 @@ public interface IStorageTransaction : IAsyncDisposable
     /// <paramref name="cancellationToken"/> stops the query even while the engine is still scanning or sorting, with an
     /// <see cref="OperationCanceledException"/>.
     /// </summary>
-    IAsyncEnumerable<StoredDocument> QuerySqlAsync(SqlQuery query, CancellationToken cancellationToken);
+    /// <remarks><paramref name="observation"/> retains candidate visits when the stream is cancelled or disposed early.</remarks>
+    IAsyncEnumerable<StoredDocument> QuerySqlAsync(SqlQuery query, CancellationToken cancellationToken, QueryObservation? observation = null);
 
     /// <summary>Describes how the engine would run <paramref name="query"/>, without running it.</summary>
     ValueTask<SqlQueryPlan> ExplainSqlAsync(SqlQuery query, CancellationToken cancellationToken);

@@ -2,7 +2,9 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using TerraBase.Engine;
 using TerraBase.Errors;
+using TerraBase.Features.Management.Queries;
 using TerraBase.Features.Management.Usage;
+using TerraBase.Features.Memory;
 using TerraBase.Features.Replication;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
@@ -14,7 +16,8 @@ namespace TerraBase.Features.Documents;
 /// A committed client write answers only after <see cref="IReplicationWait"/>, outside its transaction: the database's
 /// writer lock must not wait on the network, and a peer applying this member's groups needs it.
 /// </remarks>
-internal sealed class DocumentService(IStorageEngine engine, TimeProvider time, DocumentCache cache, IUsageMeter usage, IReplicationWait replication)
+internal sealed class DocumentService(IStorageEngine engine, TimeProvider time, DocumentCache cache, IUsageMeter usage, IReplicationWait replication,
+    IQueryShapeTracker shapes, IMemoryBudget memory)
     : IDocumentService, ISystemDocumentReader
 {
     // assert_count examines at most this many documents.
@@ -197,31 +200,59 @@ internal sealed class DocumentService(IStorageEngine engine, TimeProvider time, 
         TenantContext database, DocumentQuery query, long? countLimit, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        // As in GetAsync: the cache keeps pages only, never a refusal.
-        QueryResult? refused = null;
-        var result = await cache.QueryAsync(database, query, countLimit, async () =>
+        string? shape;
+        IMemoryReservation? retained = null;
+        using (var scratch = memory.TryReserve(MemoryLane.Foreground, 64 * 1024))
         {
-            var read = await ReadQueryAsync(database, query, countLimit, cancellationToken).ConfigureAwait(false);
-            if (read is QueryOutcome outcome)
+            shape = scratch is null ? null : QueryShape.Normalize(query);
+            if (shape is not null)
             {
-                return new CachedQuery(outcome.Page, outcome.Count);
+                retained = memory.TryReserve(MemoryLane.Foreground, 32L + 2L * shape.Length);
             }
-
-            refused = read;
-            return null!;
-        }).ConfigureAwait(false);
-        cancellationToken.ThrowIfCancellationRequested();
-        if (refused is { } failure)
-        {
-            return failure;
         }
 
-        usage.RecordRead(database);
-        return new QueryOutcome(result.Page, result.Count);
+        using var reservation = retained;
+        if (reservation is null)
+        {
+            shape = null;
+        }
+        var observation = new QueryObservation();
+        var started = time.GetTimestamp();
+        QueryResult? refused = null;
+        try
+        {
+            // Count each request outside the cache; only a miss fills this request's scan observation.
+            var result = await cache.QueryAsync(database, query, countLimit, async () =>
+            {
+                var read = await ReadQueryAsync(database, query, countLimit, observation, cancellationToken).ConfigureAwait(false);
+                if (read is QueryOutcome outcome)
+                {
+                    return new CachedQuery(outcome.Page, outcome.Count);
+                }
+
+                refused = read;
+                return null!;
+            }).ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
+            if (refused is { } failure)
+            {
+                return failure;
+            }
+
+            usage.RecordRead(database);
+            return new QueryOutcome(result.Page, result.Count);
+        }
+        finally
+        {
+            if (refused is not NotFound)
+            {
+                shapes.Record(database, query.Collection, shape ?? string.Empty, time.GetElapsedTime(started), observation.RowsScanned);
+            }
+        }
     }
 
     private async ValueTask<QueryResult> ReadQueryAsync(
-        TenantContext database, DocumentQuery query, long? countLimit, CancellationToken cancellationToken)
+        TenantContext database, DocumentQuery query, long? countLimit, QueryObservation observation, CancellationToken cancellationToken)
     {
         if (await engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is not { } store)
         {
@@ -236,19 +267,19 @@ internal sealed class DocumentService(IStorageEngine engine, TimeProvider time, 
         var transaction = await store.BeginTransactionAsync(write: false, cancellationToken).ConfigureAwait(false);
         await using (transaction.ConfigureAwait(false))
         {
-            return await QueryAsync(transaction, query, countLimit, cancellationToken).ConfigureAwait(false);
+            return await QueryAsync(transaction, query, countLimit, cancellationToken, observation).ConfigureAwait(false);
         }
     }
 
     public async ValueTask<QueryResult> QueryAsync(
-        IStorageTransaction transaction, DocumentQuery query, long? countLimit, CancellationToken cancellationToken)
+        IStorageTransaction transaction, DocumentQuery query, long? countLimit, CancellationToken cancellationToken, QueryObservation? observation = null)
     {
         ArgumentNullException.ThrowIfNull(query);
         try
         {
-            var page = await transaction.QueryAsync(query, cancellationToken).ConfigureAwait(false);
+            var page = await transaction.QueryAsync(query, cancellationToken, observation).ConfigureAwait(false);
             (long Count, bool Complete)? count = countLimit is { } limit
-                ? await transaction.CountAsync(query.Collection, query.Filter, limit, cancellationToken).ConfigureAwait(false)
+                ? await transaction.CountAsync(query.Collection, query.Filter, limit, cancellationToken, observation).ConfigureAwait(false)
                 : null;
             return new QueryOutcome(page, count);
         }

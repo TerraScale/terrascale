@@ -1,0 +1,45 @@
+using TerraBase.Errors;
+using TerraBase.Features.UserAuth;
+using TerraBase.Hosting;
+using TerraScale.Endpoints;
+
+namespace TerraBase.Features.Management.Queries;
+
+/// <summary><c>GET …/databases/{database}/query-shapes</c>: observed canonical query statistics.</summary>
+public sealed class ListQueryShapesEndpoint(IManagementService management, IQueryShapeTracker tracker) : EndpointWithoutRequest<IResult>
+{
+    /// <inheritdoc />
+    public override void Configure()
+    {
+        Get("/management/organizations/{organization}/projects/{project}/databases/{database}/query-shapes");
+        Name("listQueryShapes");
+        Summary("Lists observed query shapes and workload statistics");
+        Description("At most 128 canonical shapes per database, with literal values removed, including pending observations. " +
+            "Most queried first, then by collection and shape id. Statistics are best-effort; new shapes are dropped when bounds are full. " +
+            "Catalog followers add their local pending observations to replicated statistics; local observations are not forwarded or persisted and are lost on restart. " +
+            ManagementRoute.IdentityDescription);
+        Tags(ManagementRoute.Tag);
+        Produces<QueryShapeListBody>();
+        Produces<ErrorBody>(StatusCodes.Status404NotFound);
+        Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
+        RequireAuthorization(UserAuthExtensions.PolicyName);
+        Metadata(ListenerMetadata.Management);
+    }
+
+    /// <inheritdoc />
+    public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
+        await ManagementRoute.DatabaseAsync(HttpContext, management, cancellationToken) is { } database
+            ? await tracker.ReadAsync(database, cancellationToken) switch
+            {
+                QueryShapeRead read => Retain(read),
+                Unavailable error => ErrorResponse.From(error),
+            }
+            : ErrorResponse.From(new NotFound());
+
+    private QueryShapeRead Retain(QueryShapeRead read)
+    {
+        HttpContext.Response.RegisterForDispose(read);
+        return read;
+    }
+
+}

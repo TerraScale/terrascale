@@ -251,8 +251,8 @@ internal sealed class StampingStorageEngine(IStorageEngine inner, ISystemReplica
         public ValueTask<DocumentPage> ListAsync(string collection, string? afterId, int limit, long maxBytes, CancellationToken cancellationToken) =>
             RunAsync(() => inner.ListAsync(collection, afterId, limit, maxBytes, cancellationToken), cancellationToken);
 
-        public ValueTask<QueryPage> QueryAsync(DocumentQuery query, CancellationToken cancellationToken) =>
-            RunAsync(() => inner.QueryAsync(query, cancellationToken), cancellationToken);
+        public ValueTask<QueryPage> QueryAsync(DocumentQuery query, CancellationToken cancellationToken, QueryObservation? observation = null) =>
+            RunAsync(() => inner.QueryAsync(query, cancellationToken, observation), cancellationToken);
 
         public ValueTask<SnapshotPage> SnapshotAsync(DocumentQuery query, long offset, CancellationToken cancellationToken) =>
             RunAsync(() => inner.SnapshotAsync(query, offset, cancellationToken), cancellationToken);
@@ -284,8 +284,8 @@ internal sealed class StampingStorageEngine(IStorageEngine inner, ISystemReplica
             }
         }
 
-        public ValueTask<(long Count, bool Complete)> CountAsync(string collection, DocumentFilter? filter, long maxExamined, CancellationToken cancellationToken) =>
-            RunAsync(() => inner.CountAsync(collection, filter, maxExamined, cancellationToken), cancellationToken);
+        public ValueTask<(long Count, bool Complete)> CountAsync(string collection, DocumentFilter? filter, long maxExamined, CancellationToken cancellationToken, QueryObservation? observation = null) =>
+            RunAsync(() => inner.CountAsync(collection, filter, maxExamined, cancellationToken, observation), cancellationToken);
 
         public ValueTask<long> CountDocumentsAsync(string collection, CancellationToken cancellationToken) =>
             RunAsync(() => inner.CountDocumentsAsync(collection, cancellationToken), cancellationToken);
@@ -293,12 +293,12 @@ internal sealed class StampingStorageEngine(IStorageEngine inner, ISystemReplica
         public ValueTask<IReadOnlyList<CollectionStats>> ListCollectionStatsAsync(CancellationToken cancellationToken) =>
             RunAsync(() => inner.ListCollectionStatsAsync(cancellationToken), cancellationToken);
 
-        public async IAsyncEnumerable<StoredDocument> QuerySqlAsync(SqlQuery query, [EnumeratorCancellation] CancellationToken cancellationToken)
+        public async IAsyncEnumerable<StoredDocument> QuerySqlAsync(SqlQuery query, [EnumeratorCancellation] CancellationToken cancellationToken, QueryObservation? observation = null)
         {
             await EnterStreamAsync(cancellationToken).ConfigureAwait(false);
             try
             {
-                await foreach (var document in inner.QuerySqlAsync(query, cancellationToken).ConfigureAwait(false))
+                await foreach (var document in inner.QuerySqlAsync(query, cancellationToken, observation).ConfigureAwait(false))
                 {
                     yield return document;
                 }

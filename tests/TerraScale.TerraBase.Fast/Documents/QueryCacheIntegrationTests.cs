@@ -355,8 +355,8 @@ public sealed class QueryCacheIntegrationTests
             inner.ApplyAsync(transaction, operation, cancellationToken);
 
         public ValueTask<QueryResult> QueryAsync(
-            IStorageTransaction transaction, DocumentQuery query, long? countLimit, CancellationToken cancellationToken) =>
-            inner.QueryAsync(transaction, query, countLimit, cancellationToken);
+            IStorageTransaction transaction, DocumentQuery query, long? countLimit, CancellationToken cancellationToken, QueryObservation? observation = null) =>
+            inner.QueryAsync(transaction, query, countLimit, cancellationToken, observation);
     }
 
 }

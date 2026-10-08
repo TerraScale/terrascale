@@ -10,9 +10,12 @@ public static class QueriesExtensions
         "WHERE combines field op literal (=, !=, <>, <, <=, >, >=), field IN (…), field IS [NOT] NULL with AND, OR, NOT and parentheses. " +
         "Literals: single-quoted strings, numbers, TRUE, FALSE. Fields: _id, _rev or dotted member paths.";
 
-    /// <summary>Registers <see cref="IQueryService"/>.</summary>
+    /// <summary>Registers <see cref="IQueryService"/> and the shared <see cref="IQueryShapeTracker"/>.</summary>
     public static IServiceCollection AddTerraBaseManagementQueries(this IServiceCollection services) =>
-        services.AddSingleton<QueryFieldRecorder>().AddSingleton<IQueryService, QueryService>();
+        services.AddSingleton<QueryFieldRecorder>()
+            .AddSingleton<QueryShapeRecorder>()
+            .AddSingleton<IQueryShapeTracker>(provider => provider.GetRequiredService<QueryShapeRecorder>())
+            .AddSingleton<IQueryService, QueryService>();
 
     /// <summary>A saved query with its name trimmed, or the rule it breaks: a display name and SQL of the subset.</summary>
     internal static Valid<SavedQueryRequest> Validate(SavedQueryRequest request) =>

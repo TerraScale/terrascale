@@ -45,6 +45,7 @@ public sealed class TenantIsolationTests
         // The dashboard document space belongs to the dashboard, not to a tenant; API keys never reach it.
         "GET /v1/management/documents/{collection}/{id}",
         "POST /v1/management/documents/{collection}/query",
+        "GET /management/query-shapes",
     ];
 
     [Test]
@@ -229,7 +230,9 @@ public sealed class TenantIsolationTests
     private static bool Addresses(string pattern) =>
         pattern.Contains("{organization}", StringComparison.Ordinal) || pattern.Contains("{project}", StringComparison.Ordinal);
 
-    private static bool IsManagement(string pattern) => pattern.StartsWith("/v1/management/", StringComparison.Ordinal);
+    private static bool IsManagement(string pattern) =>
+        pattern.StartsWith("/v1/management/", StringComparison.Ordinal) ||
+        pattern.StartsWith("/management/", StringComparison.Ordinal);
 
     // Sends each route with these values for its parameters: management routes through dashboard, data routes through data.
     private static async Task<List<(string Request, HttpStatusCode Status)>> SendAsync(

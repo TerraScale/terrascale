@@ -225,15 +225,15 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
             return inner.ListAsync(collection, afterId, limit, maxBytes, cancellationToken);
         }
 
-        public ValueTask<QueryPage> QueryAsync(DocumentQuery query, CancellationToken cancellationToken) => inner.QueryAsync(query, cancellationToken);
-        public ValueTask<(long Count, bool Complete)> CountAsync(string collection, DocumentFilter? filter, long maxExamined, CancellationToken cancellationToken) => inner.CountAsync(collection, filter, maxExamined, cancellationToken);
+        public ValueTask<QueryPage> QueryAsync(DocumentQuery query, CancellationToken cancellationToken, QueryObservation? observation = null) => inner.QueryAsync(query, cancellationToken, observation);
+        public ValueTask<(long Count, bool Complete)> CountAsync(string collection, DocumentFilter? filter, long maxExamined, CancellationToken cancellationToken, QueryObservation? observation = null) => inner.CountAsync(collection, filter, maxExamined, cancellationToken, observation);
         public ValueTask<bool> CreateCollectionAsync(CollectionInfo collection, CancellationToken cancellationToken) => inner.CreateCollectionAsync(collection, cancellationToken);
         public ValueTask<CollectionInfo?> GetCollectionAsync(string name, CancellationToken cancellationToken) => inner.GetCollectionAsync(name, cancellationToken);
         public ValueTask<(IReadOnlyList<CollectionInfo> Collections, bool HasMore)> ListCollectionsAsync(string? afterName, int limit, CancellationToken cancellationToken) => inner.ListCollectionsAsync(afterName, limit, cancellationToken);
         public ValueTask<bool> DropCollectionAsync(string name, CancellationToken cancellationToken) => inner.DropCollectionAsync(name, cancellationToken);
         public ValueTask<long> CountDocumentsAsync(string collection, CancellationToken cancellationToken) => inner.CountDocumentsAsync(collection, cancellationToken);
         public ValueTask<IReadOnlyList<CollectionStats>> ListCollectionStatsAsync(CancellationToken cancellationToken) => inner.ListCollectionStatsAsync(cancellationToken);
-        public IAsyncEnumerable<StoredDocument> QuerySqlAsync(SqlQuery query, CancellationToken cancellationToken) => inner.QuerySqlAsync(query, cancellationToken);
+        public IAsyncEnumerable<StoredDocument> QuerySqlAsync(SqlQuery query, CancellationToken cancellationToken, QueryObservation? observation = null) => inner.QuerySqlAsync(query, cancellationToken, observation);
         public ValueTask<SqlQueryPlan> ExplainSqlAsync(SqlQuery query, CancellationToken cancellationToken) => inner.ExplainSqlAsync(query, cancellationToken);
         public ValueTask<long> DeleteCollectionsAsync(string prefix, CancellationToken cancellationToken) => inner.DeleteCollectionsAsync(prefix, cancellationToken);
         public ValueTask<IReadOnlyList<IndexDefinition>> ListIndexesAsync(CancellationToken cancellationToken) => inner.ListIndexesAsync(cancellationToken);

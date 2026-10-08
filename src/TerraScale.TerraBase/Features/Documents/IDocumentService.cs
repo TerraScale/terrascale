@@ -145,5 +145,6 @@ public interface IDocumentService
     ValueTask<ApplyOutcome> ApplyAsync(IStorageTransaction transaction, DocumentOperation operation, CancellationToken cancellationToken);
 
     /// <summary>Runs a query, and a count as in <see cref="QueryAsync(TenantContext, DocumentQuery, long?, CancellationToken)"/>, in a transaction the caller owns.</summary>
-    ValueTask<QueryResult> QueryAsync(IStorageTransaction transaction, DocumentQuery query, long? countLimit, CancellationToken cancellationToken);
+    ValueTask<QueryResult> QueryAsync(
+        IStorageTransaction transaction, DocumentQuery query, long? countLimit, CancellationToken cancellationToken, QueryObservation? observation = null);
 }

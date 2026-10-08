@@ -7,13 +7,13 @@ using TerraBase.Features.Replication.V1;
 namespace TerraBase.Features.Management.Usage;
 
 /// <summary>
-/// Flushes <see cref="UsageMeter"/> and <see cref="QueryFieldRecorder"/> every 10 seconds and once more on shutdown. A catalog
+/// Flushes <see cref="UsageMeter"/>, <see cref="QueryFieldRecorder"/> and <see cref="QueryShapeRecorder"/> every 10 seconds and once more on shutdown. A catalog
 /// follower writes no catalog: it sends its usage counts to its primary as often instead, and keeps them pending while the
-/// primary does not acknowledge them. Its query field counts stay in memory, bounded by the databases it serves, and are lost
+/// primary does not acknowledge them. Its query field and shape counts stay in bounded memory and are lost
 /// on restart.
 /// </summary>
 internal sealed partial class UsageFlushService(
-    UsageMeter meter, QueryFieldRecorder recorder, TimeProvider time, TerraBaseOptions options, ILogger<UsageFlushService> logger,
+    UsageMeter meter, QueryFieldRecorder recorder, QueryShapeRecorder shapes, TimeProvider time, TerraBaseOptions options, ILogger<UsageFlushService> logger,
     ICatalogPrimaryClient? primary = null) : BackgroundService
 {
     private static readonly TimeSpan Interval = TimeSpan.FromSeconds(10);
@@ -67,7 +67,7 @@ internal sealed partial class UsageFlushService(
         }
     }
 
-    private Func<CancellationToken, ValueTask>[] Flushes => options.CatalogPrimary is null ? [meter.FlushAsync, recorder.FlushAsync] : [SendOnceAsync];
+    private Func<CancellationToken, ValueTask>[] Flushes => options.CatalogPrimary is null ? [meter.FlushAsync, recorder.FlushAsync, shapes.FlushAsync] : [SendOnceAsync];
 
     // A tick sends one bounded batch; a follower's backlog drains a batch per tick.
     private async ValueTask SendOnceAsync(CancellationToken cancellationToken) => await meter.SendAsync(SendAsync, cancellationToken).ConfigureAwait(false);

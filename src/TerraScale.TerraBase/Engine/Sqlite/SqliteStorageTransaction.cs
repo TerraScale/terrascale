@@ -316,23 +316,24 @@ internal sealed partial class SqliteStorageTransaction(
         }, cancellationToken), cancellationToken).ConfigureAwait(false);
     }
 
-    public async ValueTask<QueryPage> QueryAsync(DocumentQuery query, CancellationToken cancellationToken)
+    public async ValueTask<QueryPage> QueryAsync(DocumentQuery query, CancellationToken cancellationToken, QueryObservation? observation = null)
     {
         ArgumentNullException.ThrowIfNull(query);
         return await RunAsync(() => WithQueryBudget(() =>
         {
             if (query.Sort.Count > 0 && !query.Sort[0].Path.IsId)
             {
-                CheckSortBudget(query.Collection, query.MaxBytes, cancellationToken);
+                CheckSortBudget(query.Collection, query.MaxBytes, cancellationToken, observation);
             }
 
-            return ReadQuery(query, cancellationToken);
-        }, cancellationToken), cancellationToken).ConfigureAwait(false);
+            return ReadQuery(query, observation, cancellationToken);
+        }, cancellationToken, observation), cancellationToken).ConfigureAwait(false);
     }
 
     // Runs only inside a pool item: the native progress callback and its removal own this connection.
-    private T WithQueryBudget<T>(Func<T> execute, CancellationToken cancellationToken)
+    private T WithQueryBudget<T>(Func<T> execute, CancellationToken cancellationToken, QueryObservation? observation = null)
     {
+        session.ObserveQueries(observation);
         var budget = StartQueryBudget(cancellationToken);
         try
         {
@@ -352,6 +353,7 @@ internal sealed partial class SqliteStorageTransaction(
         finally
         {
             StopQueryBudget();
+            session.ObserveQueries(null);
         }
     }
 
@@ -407,12 +409,12 @@ internal sealed partial class SqliteStorageTransaction(
     }
 
     // Bound both candidate count and JSON bytes before SQLite retains bodies in its temporary sorter.
-    private void CheckSortBudget(string collection, long maxBytes, CancellationToken cancellationToken)
+    private void CheckSortBudget(string collection, long maxBytes, CancellationToken cancellationToken, QueryObservation? observation = null)
     {
         using var command = Uncached(collection);
-        command.CommandText = """
+        command.CommandText = $"""
             SELECT octet_length(body) FROM documents INDEXED BY documents_live
-            WHERE collection = $collection AND body IS NOT NULL ORDER BY id LIMIT 10001;
+            WHERE collection = $collection AND {(observation is not null ? "tb_query_scan() AND " : "")}body IS NOT NULL ORDER BY id LIMIT 10001;
             """;
         using var reader = command.ExecuteReader();
         long bytes = 0;
@@ -433,11 +435,11 @@ internal sealed partial class SqliteStorageTransaction(
         }
     }
 
-    private QueryPage ReadQuery(DocumentQuery query, CancellationToken cancellationToken)
+    private QueryPage ReadQuery(DocumentQuery query, QueryObservation? observation, CancellationToken cancellationToken)
     {
         // Compiled per request so every new filter shape does not grow the session's command cache.
         using var command = Uncached(query.Collection);
-        command.CommandText = new SqliteQueryCompiler(command.Parameters).Compile(query);
+        command.CommandText = new SqliteQueryCompiler(command.Parameters).Compile(query, observation is not null);
         var rows = new List<QueryRow>();
         long bytes = 0;
         using var reader = command.ExecuteReader();
@@ -473,17 +475,17 @@ internal sealed partial class SqliteStorageTransaction(
     }
 
     public async ValueTask<(long Count, bool Complete)> CountAsync(
-        string collection, DocumentFilter? filter, long maxExamined, CancellationToken cancellationToken)
+        string collection, DocumentFilter? filter, long maxExamined, CancellationToken cancellationToken, QueryObservation? observation = null)
     {
         return await RunAsync(() => WithQueryBudget(() =>
         {
             using var command = Uncached(collection);
-            command.CommandText = new SqliteQueryCompiler(command.Parameters).CompileCount(filter, maxExamined);
+            command.CommandText = new SqliteQueryCompiler(command.Parameters).CompileCount(filter, maxExamined, observation is not null);
             using var reader = command.ExecuteReader();
             cancellationToken.ThrowIfCancellationRequested();
             reader.Read();
             return (reader.GetInt64(1), reader.GetInt64(0) <= maxExamined);
-        }, cancellationToken), cancellationToken).ConfigureAwait(false);
+        }, cancellationToken, observation), cancellationToken).ConfigureAwait(false);
     }
 
     public async ValueTask<SnapshotPage> SnapshotAsync(DocumentQuery query, long offset, CancellationToken cancellationToken)
@@ -602,7 +604,8 @@ internal sealed partial class SqliteStorageTransaction(
         }, cancellationToken);
 
     private async IAsyncEnumerable<StoredDocument> ReadBudgetedAsync(
-        Func<SqliteCommand> createCommand, [EnumeratorCancellation] CancellationToken cancellationToken, SqlQuery? query = null)
+        Func<SqliteCommand> createCommand, [EnumeratorCancellation] CancellationToken cancellationToken, SqlQuery? query = null,
+        QueryObservation? observation = null)
     {
         // The stream owns the operation gate until its reader is closed, including an early consumer break.
         await EnterStreamAsync(cancellationToken).ConfigureAwait(false);
@@ -614,6 +617,7 @@ internal sealed partial class SqliteStorageTransaction(
             await runner.RunAsync(() =>
             {
                 cancellationToken.ThrowIfCancellationRequested();
+                session.ObserveQueries(observation);
                 budget = StartQueryBudget(cancellationToken);
                 command = createCommand();
                 try
@@ -621,7 +625,7 @@ internal sealed partial class SqliteStorageTransaction(
                     if (query is { Order.Count: > 0 }
                         && ReadSqlPlan(query, cancellationToken).Steps.Any(step => step.Contains("TEMP B-TREE", StringComparison.Ordinal)))
                     {
-                        CheckSortBudget(query.Collection, 8 * 1024 * 1024, cancellationToken);
+                        CheckSortBudget(query.Collection, 8 * 1024 * 1024, cancellationToken, observation);
                     }
 
                     reader = command.ExecuteReader();
@@ -710,6 +714,7 @@ internal sealed partial class SqliteStorageTransaction(
                         }
                         finally
                         {
+                            session.ObserveQueries(null);
                             command?.Dispose();
                         }
                     }

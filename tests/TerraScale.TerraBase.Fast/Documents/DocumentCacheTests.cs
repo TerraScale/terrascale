@@ -7,6 +7,7 @@ using TerraBase.Engine;
 using TerraBase.Engine.Sqlite;
 using TerraBase.Fast.Storage;
 using TerraBase.Features.Documents;
+using TerraBase.Features.Management.Queries;
 using TerraBase.Features.Memory;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
@@ -320,6 +321,8 @@ public sealed class DocumentCacheTests
 
             // Authentication also cached an API-key document; disposal must release it synchronously,
             // and the completed storage read must retain no reservation.
+            // Persist the separate query statistics so their pending reservation does not mask a cache leak.
+            await server.Services.GetRequiredService<QueryShapeRecorder>().FlushAsync(operationTimeout.Token);
             var budget = server.Services.GetRequiredService<IMemoryBudget>();
             using var recoveredBudget = budget.TryReserve(MemoryLane.Foreground, Budget);
             await Assert.That(recoveredBudget).IsNotNull();

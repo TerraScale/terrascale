@@ -7,6 +7,7 @@ using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.Documents;
 using TerraBase.Features.Management.Backups;
+using TerraBase.Features.Memory;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
 
@@ -160,10 +161,37 @@ internal sealed partial class EngineManagementService
                 : new NotFound("the document does not exist"),
             cancellationToken);
 
-    public ValueTask<QueryResult> QueryDocumentsAsync(DocumentQuery query, long? countLimit, CancellationToken cancellationToken)
+    public async ValueTask<QueryResult> QueryDocumentsAsync(DocumentQuery query, long? countLimit, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(query);
-        return ReadAsync(transaction => documents.Value.QueryAsync(transaction, query with { Collection = DashboardSpace + query.Collection }, countLimit, cancellationToken), cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
+        string? shape;
+        IMemoryReservation? retained = null;
+        using (var scratch = memory.TryReserve(MemoryLane.Foreground, 64 * 1024))
+        {
+            shape = scratch is null ? null : QueryShape.Normalize(query);
+            if (shape is not null)
+            {
+                retained = memory.TryReserve(MemoryLane.Foreground, 32L + 2L * shape.Length);
+            }
+        }
+
+        using var reservation = retained;
+        if (reservation is null)
+        {
+            shape = null;
+        }
+        var observation = new QueryObservation();
+        var started = time.GetTimestamp();
+        try
+        {
+            return await ReadAsync(transaction => documents.Value.QueryAsync(
+                transaction, query with { Collection = DashboardSpace + query.Collection }, countLimit, cancellationToken, observation), cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            shapes.Value.Record(null, query.Collection, shape ?? string.Empty, time.GetElapsedTime(started), observation.RowsScanned);
+        }
     }
 
     /// <summary>The version of a dashboard document as the commit and read routes report it.</summary>

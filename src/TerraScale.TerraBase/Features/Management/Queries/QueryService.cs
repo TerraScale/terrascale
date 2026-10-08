@@ -4,6 +4,7 @@ using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.Documents;
 using TerraBase.Features.Management.Usage;
+using TerraBase.Features.Memory;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
 using static TerraBase.Features.Management.SystemCatalog;
@@ -14,7 +15,8 @@ namespace TerraBase.Features.Management.Queries;
 /// Statements run on the managed database's storage; usage records and saved queries live in <see cref="SystemCatalog"/>
 /// under the database and project state, so deleting the database or project deletes them.
 /// </remarks>
-internal sealed class QueryService(IStorageEngine engine, SystemCatalog catalog, QueryFieldRecorder recorder, IUsageMeter usage, TimeProvider time) : IQueryService
+internal sealed class QueryService(IStorageEngine engine, SystemCatalog catalog, QueryFieldRecorder recorder, IUsageMeter usage, TimeProvider time,
+    IQueryShapeTracker shapes, IMemoryBudget memory) : IQueryService
 {
     // Bounds the complete serialized response, including rows and the result envelope.
     private const long MaxResultBytes = 8 * 1024 * 1024;
@@ -29,6 +31,25 @@ internal sealed class QueryService(IStorageEngine engine, SystemCatalog catalog,
     {
         ArgumentNullException.ThrowIfNull(database);
         ArgumentNullException.ThrowIfNull(statement);
+        cancellationToken.ThrowIfCancellationRequested();
+        string? shape;
+        IMemoryReservation? retained = null;
+        using (var scratch = memory.TryReserve(MemoryLane.Foreground, 64 * 1024))
+        {
+            shape = scratch is null ? null : QueryShape.Normalize(statement.Query);
+            if (shape is not null)
+            {
+                retained = memory.TryReserve(MemoryLane.Foreground, 32L + 2L * shape.Length);
+            }
+        }
+
+        using var reservation = retained;
+        if (reservation is null)
+        {
+            shape = null;
+        }
+        var observation = new QueryObservation();
+        var started = time.GetTimestamp();
         List<IndexSuggestion> suggestions = [];
         try
         {
@@ -37,7 +58,7 @@ internal sealed class QueryService(IStorageEngine engine, SystemCatalog catalog,
                 async transaction =>
                 {
                     suggestions = Suggest(statement.Query, await transaction.ListIndexesAsync(cancellationToken).ConfigureAwait(false));
-                    return await RowsAsync(transaction, statement, cancellationToken).ConfigureAwait(false);
+                    return await RowsAsync(transaction, statement, observation, cancellationToken).ConfigureAwait(false);
                 },
                 new SqlResultBody(0, false, []),
                 cancellationToken).ConfigureAwait(false);
@@ -53,6 +74,7 @@ internal sealed class QueryService(IStorageEngine engine, SystemCatalog catalog,
         {
             // Also when the work budget stopped the run: those are the statements an index helps most.
             recorder.Record(database, statement.Query.Collection, suggestions.Select(suggestion => suggestion.Field));
+            shapes.Record(database, statement.Query.Collection, shape ?? string.Empty, time.GetElapsedTime(started), observation.RowsScanned);
         }
     }
 
@@ -222,7 +244,8 @@ internal sealed class QueryService(IStorageEngine engine, SystemCatalog catalog,
     // Rows are projected as the engine streams them, so the output budget (not stored sizes) decides truncation, and only
     // one stored document is held besides the rows kept. The engine bounds the work: past it the run fails with a
     // QueryCapacityException, also while SQLite is still scanning or sorting before the first row.
-    private static async ValueTask<SqlResultBody> RowsAsync(IStorageTransaction transaction, SqlStatement statement, CancellationToken cancellationToken)
+    private static async ValueTask<SqlResultBody> RowsAsync(
+        IStorageTransaction transaction, SqlStatement statement, QueryObservation observation, CancellationToken cancellationToken)
     {
         var query = statement.Query;
         var rows = new List<SqlRow>();
@@ -230,7 +253,7 @@ internal sealed class QueryService(IStorageEngine engine, SystemCatalog catalog,
         // are counted separately; serializing the empty result keeps this aligned with the response metadata.
         long bytes = JsonSerializer.SerializeToUtf8Bytes(new SqlResultBody(query.Limit, false, []), TerraBaseJsonContext.Default.SqlResultBody).Length;
         // One document past the limit tells whether the limit cut the rows short.
-        await foreach (var document in transaction.QuerySqlAsync(query with { Limit = query.Limit + 1 }, cancellationToken).ConfigureAwait(false))
+        await foreach (var document in transaction.QuerySqlAsync(query with { Limit = query.Limit + 1 }, cancellationToken, observation).ConfigureAwait(false))
         {
             var separator = rows.Count == 0 ? 0 : 1;
             if (rows.Count == query.Limit || Row(document, query.Collection, statement.Projection, MaxResultBytes - bytes - separator, cancellationToken) is not { } row)

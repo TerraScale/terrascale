@@ -30,7 +30,7 @@ internal sealed class SqliteQueryCompiler(SqliteParameterCollection parameters)
     /// Columns: id, version, JSON byte length, then per sort key its type rank and scalar value.
     /// One extra row beyond the limit tells whether another page exists.
     /// </summary>
-    public string Compile(DocumentQuery query)
+    public string Compile(DocumentQuery query, bool observe = false)
     {
         var keys = new List<(string Expression, bool Descending)>();
         var columns = new StringBuilder();
@@ -46,10 +46,11 @@ internal sealed class SqliteQueryCompiler(SqliteParameterCollection parameters)
             ? $"id {(query.Sort[0].Descending ? "<" : ">")} {Parameter(position.Id)}"
             : After(keys, query.After);
         var sql = new StringBuilder();
+        // Keep the non-deterministic visit before residual predicates; seek constraints still bound the scan.
         sql.Append(CultureInfo.InvariantCulture, $"""
             SELECT * FROM (
                 SELECT id, version, octet_length(body) AS size{columns}
-                FROM documents INDEXED BY documents_live WHERE collection = $collection AND body IS NOT NULL AND {Filter(query.Filter)}
+                FROM documents INDEXED BY documents_live WHERE collection = $collection AND {(observe ? "tb_query_scan() AND " : "")}body IS NOT NULL AND {Filter(query.Filter)}
             ) WHERE {after}
             ORDER BY
             """);
@@ -75,13 +76,13 @@ internal sealed class SqliteQueryCompiler(SqliteParameterCollection parameters)
     /// tombstone test. A separate bounded index scan detects an overflow row without loading its body or
     /// evaluating its filter: only the first <paramref name="maxExamined"/> rows contribute matches.
     /// </summary>
-    public string CompileCount(DocumentFilter? filter, long maxExamined) =>
+    public string CompileCount(DocumentFilter? filter, long maxExamined, bool observe = false) =>
         $"""
         SELECT count(*) + EXISTS (
-            SELECT 1 FROM documents WHERE collection = $collection ORDER BY id LIMIT 1 OFFSET {Parameter(maxExamined)}
+            SELECT 1 FROM documents WHERE collection = $collection {(observe ? "AND tb_query_scan()" : "")} ORDER BY id LIMIT 1 OFFSET {Parameter(maxExamined)}
         ), coalesce(sum(matched), 0) FROM (
             SELECT CASE WHEN body IS NOT NULL THEN {Filter(filter)} ELSE 0 END AS matched
-            FROM documents WHERE collection = $collection ORDER BY id LIMIT {Parameter(maxExamined)}
+            FROM documents WHERE collection = $collection {(observe ? "AND tb_query_scan()" : "")} ORDER BY id LIMIT {Parameter(maxExamined)}
         );
         """;
 

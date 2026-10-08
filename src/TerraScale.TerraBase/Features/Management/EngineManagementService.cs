@@ -6,6 +6,8 @@ using TerraBase.Engine;
 using TerraBase.Features.ApiKeys;
 using TerraBase.Features.Documents;
 using TerraBase.Features.Management.Backups;
+using TerraBase.Features.Management.Queries;
+using TerraBase.Features.Memory;
 using TerraBase.Features.Replication;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
@@ -42,7 +44,7 @@ namespace TerraBase.Features.Management;
 /// </remarks>
 internal sealed partial class EngineManagementService(
     IStorageEngine engine, TimeProvider time, TerraBaseOptions options, ILogger<EngineManagementService> logger, DatabaseLifecycleCheckpoint checkpoint, IMeterFactory meters,
-    Lazy<IDocumentService> documents)
+    Lazy<IDocumentService> documents, Lazy<IQueryShapeTracker> shapes, IMemoryBudget memory)
     : IManagementService, IAccessService, IManagementCommits, ITenantDirectory, IHostedService, ICatalogGuard, ICatalogApplyObserver
 {
     private const string Organizations = "organizations";

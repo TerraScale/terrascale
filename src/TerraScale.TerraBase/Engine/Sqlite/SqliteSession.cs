@@ -15,7 +15,27 @@ internal sealed class SqliteSession(SqliteConnection connection) : IDisposable
     // Keyed by statement text; the statements are constants, so this holds a handful of entries.
     private readonly Dictionary<string, SqliteCommand> _commands = [with(StringComparer.Ordinal)];
 
+    private QueryObservation? _queryObservation;
+    private bool _scanRegistered;
+
     public SqliteConnection Connection => connection;
+
+    // Transactions serialize access to a session. Keep the function registered while pooled, but release the
+    // execution's observation on completion. Non-deterministic prevents SQLite from evaluating it once per query.
+    public void ObserveQueries(QueryObservation? observation)
+    {
+        if (observation is not null && !_scanRegistered)
+        {
+            connection.CreateFunction("tb_query_scan", () =>
+            {
+                _queryObservation?.AddRow();
+                return true;
+            }, isDeterministic: false);
+            _scanRegistered = true;
+        }
+
+        _queryObservation = observation;
+    }
 
     /// <summary>
     /// Per-connection settings, applied once when a connection opens (pooled sessions and the connection that
