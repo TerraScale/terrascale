@@ -15,7 +15,7 @@ internal sealed class CrashableTerraBase : IAsyncDisposable
     private readonly Dictionary<string, string> _settings;
     private readonly string _workingDirectory = Environment.CurrentDirectory;
     private Process? _process;
-    private CancellationTokenSource? _drainStop;
+    private Task<int> _exitCleanup = Task.FromResult(0);
     private Task<string> _stdout = Task.FromResult(string.Empty);
     private Task<string> _stderr = Task.FromResult(string.Empty);
     private bool _disposed;
@@ -51,7 +51,10 @@ internal sealed class CrashableTerraBase : IAsyncDisposable
     public Uri ClientAddress { get; }
     public Uri PeerAddress { get; }
 
-    public static async Task<CrashableTerraBase> StartAsync(IReadOnlyDictionary<string, string> settings, CancellationToken token)
+    // The real exit/pipe owner outlives a bounded cleanup wait or a failed kill.
+    public Task CleanupCompletion => _exitCleanup;
+
+    public static async Task<CrashableTerraBase> StartAsync(IReadOnlyDictionary<string, string> settings, CancellationToken token, Action<Task>? failedStartCleanup = null)
     {
         var server = new CrashableTerraBase(settings);
         try
@@ -61,6 +64,7 @@ internal sealed class CrashableTerraBase : IAsyncDisposable
         }
         catch
         {
+            failedStartCleanup?.Invoke(server.CleanupCompletion);
             await server.DisposeAsync();
             throw;
         }
@@ -96,17 +100,18 @@ internal sealed class CrashableTerraBase : IAsyncDisposable
         {
             // No shell or wrapper: the production child inherits the suite's nice priority.
             _process = Process.Start(start) ?? throw new InvalidOperationException("the TerraBase process did not start");
-            _drainStop = new CancellationTokenSource();
-            _stdout = CaptureAsync(_process.StandardOutput, _drainStop.Token);
-            _stderr = CaptureAsync(_process.StandardError, _drainStop.Token);
+            var drainStop = new CancellationTokenSource();
+            _stdout = CaptureAsync(_process.StandardOutput, drainStop.Token);
+            _stderr = CaptureAsync(_process.StandardError, drainStop.Token);
+            _exitCleanup = CompleteExitAsync(_process, _stdout, _stderr, drainStop);
             using var startup = CancellationTokenSource.CreateLinkedTokenSource(token);
             startup.CancelAfter(StartupTimeout);
             while (true)
             {
                 startup.Token.ThrowIfCancellationRequested();
-                if (_process.HasExited)
+                if (_exitCleanup.IsCompleted)
                 {
-                    throw new InvalidOperationException($"TerraBase exited before readiness with code {_process.ExitCode}");
+                    throw new InvalidOperationException($"TerraBase exited before readiness with code {await _exitCleanup}");
                 }
 
                 using var probe = CancellationTokenSource.CreateLinkedTokenSource(startup.Token);
@@ -114,7 +119,7 @@ internal sealed class CrashableTerraBase : IAsyncDisposable
                 try
                 {
                     using var response = await Client.GetAsync(new Uri("/readyz", UriKind.Relative), HttpCompletionOption.ResponseHeadersRead, probe.Token);
-                    if (response.IsSuccessStatusCode && !_process.HasExited)
+                    if (response.IsSuccessStatusCode && !_exitCleanup.IsCompleted)
                     {
                         startup.Token.ThrowIfCancellationRequested();
                         return;
@@ -148,9 +153,9 @@ internal sealed class CrashableTerraBase : IAsyncDisposable
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         var process = _process ?? throw new InvalidOperationException("TerraBase is not running");
-        if (process.HasExited)
+        if (_exitCleanup.IsCompleted)
         {
-            var exitCode = process.ExitCode;
+            var exitCode = await _exitCleanup;
             await StopAsync();
             throw new InvalidOperationException($"TerraBase exited with code {exitCode} before the requested crash\nstdout:\n{await _stdout}\nstderr:\n{await _stderr}");
         }
@@ -160,12 +165,12 @@ internal sealed class CrashableTerraBase : IAsyncDisposable
             // Success requires an actual abrupt kill, never a graceful stop or an already-exited process.
             process.Kill(entireProcessTree: true);
             using var cleanup = new CancellationTokenSource(CleanupTimeout);
-            await process.WaitForExitAsync(cleanup.Token);
+            var exitCode = await _exitCleanup.WaitAsync(cleanup.Token);
             // Unix reports 128 + SIGKILL (9); Windows TerminateProcess uses -1.
             var killedExitCode = OperatingSystem.IsWindows() ? -1 : 137;
-            if (process.ExitCode != killedExitCode)
+            if (exitCode != killedExitCode)
             {
-                throw new InvalidOperationException($"TerraBase exited with code {process.ExitCode} instead of the forced-kill code {killedExitCode}");
+                throw new InvalidOperationException($"TerraBase exited with code {exitCode} instead of the forced-kill code {killedExitCode}");
             }
         }
         finally
@@ -176,7 +181,7 @@ internal sealed class CrashableTerraBase : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
-        if (_disposed)
+        if (_disposed && _process is null)
         {
             return;
         }
@@ -213,37 +218,39 @@ internal sealed class CrashableTerraBase : IAsyncDisposable
         }
 
         using var cleanup = new CancellationTokenSource(CleanupTimeout);
-        _drainStop?.CancelAfter(CleanupTimeout);
         try
         {
-            if (!process.HasExited)
+            if (!_exitCleanup.IsCompleted)
             {
-                try
-                {
-                    process.Kill(entireProcessTree: true);
-                }
-                catch (InvalidOperationException) when (process.HasExited)
-                {
-                    // The child may exit between the check and the cleanup kill.
-                }
+                process.Kill(entireProcessTree: true);
             }
+        }
+        catch (InvalidOperationException)
+        {
+            // Only the exit owner unbinds this process; join it even before its task publishes completion.
+        }
 
-            await process.WaitForExitAsync(cleanup.Token);
+        await _exitCleanup.WaitAsync(cleanup.Token);
+        _process = null;
+    }
+
+    private static async Task<int> CompleteExitAsync(Process process, Task<string> stdout, Task<string> stderr, CancellationTokenSource drainStop)
+    {
+        // Do not dispose the handle or end pipe ownership before the child actually exits.
+        await process.WaitForExitAsync();
+        var exitCode = process.ExitCode;
+        drainStop.CancelAfter(CleanupTimeout);
+        try
+        {
+            await Task.WhenAll(stdout, stderr);
         }
         finally
         {
-            try
-            {
-                await Task.WhenAll(_stdout, _stderr);
-            }
-            finally
-            {
-                process.Dispose();
-                _process = null;
-                _drainStop?.Dispose();
-                _drainStop = null;
-            }
+            process.Dispose();
+            drainStop.Dispose();
         }
+
+        return exitCode;
     }
 
     private static async Task<string> CaptureAsync(StreamReader reader, CancellationToken token)

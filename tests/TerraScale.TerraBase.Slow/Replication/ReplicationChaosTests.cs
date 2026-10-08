@@ -294,7 +294,7 @@ public sealed class ReplicationChaosTests
                     cluster.Clients.Add(cluster._tls.CreateClient(node.ClientAddress!, await cluster.Tenant.KeyAsync(node, ["documents:read", "documents:write"], token)));
                 }
 
-                cluster.Child = await CrashableTerraBase.StartAsync(childSettings, token);
+                cluster.Child = await CrashableTerraBase.StartAsync(childSettings, token, cluster._failedStarts.Add);
                 cluster.Clients.Add(cluster._tls.CreateClient(cluster.Child.ClientAddress, key));
                 await cluster.ReplicatedAsync(token);
                 return cluster;
@@ -386,7 +386,8 @@ public sealed class ReplicationChaosTests
                 await AttemptAsync(link.DisposeAsync);
             }
 
-            Attempt(() => ReleaseAfterCleanup(Task.WhenAll(_servers.Select(server => server.CleanupCompletion).Concat(_failedStarts)), ReleaseFixtures));
+            Attempt(() => ReleaseAfterCleanup(Task.WhenAll(_servers.Select(server => server.CleanupCompletion).Concat(_failedStarts)
+                .Append(Child?.CleanupCompletion ?? Task.CompletedTask)), ReleaseFixtures));
             if (errors.Count > 0)
             {
                 throw new AggregateException("chaos cluster cleanup failed", errors);
