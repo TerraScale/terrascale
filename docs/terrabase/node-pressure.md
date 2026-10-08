@@ -1,6 +1,6 @@
 # Node pressure (TS-478)
 
-`GET /v1/node/pressure` returns a cached JSON sample on the loopback administrative
+`GET /admin/node/pressure` returns a cached JSON sample on the loopback administrative
 listener, alongside `/metrics`. Both return 404 on client and peer listeners.
 Responses have `Cache-Control: no-store`; fetching never refreshes measurements,
 scans documents/files, or changes `sampled_at`. Concurrent readers share an
@@ -9,10 +9,10 @@ forward; this change adds no public listener or network access.
 
 ## Instance-bound SDK evidence (TS-514)
 
-`GET /admin/node/pressure` serves schema 2 on the same loopback-only listener,
-with `Cache-Control: no-store` and the cached sample's original timestamp. It
-uses the same measured node counters as the diagnostic schema-1 endpoint and
-omits organization rankings: those are not project CPU attribution.
+The single node-pressure endpoint serves schema 2, including measured node
+counters and organization diagnostics under `top_organizations` and
+`top_organizations_by_storage`. It omits project `top_tenants`: organization
+rankings are not project CPU attribution.
 `instance_id` comes only from `--instance-id` / `TERRABASE_INSTANCE_ID`; absent
 configuration is explicit null, never a machine-name substitute. Accepted IDs
 are 1..128 ASCII letters, digits, dots, underscores, colons, pluses and hyphens.
@@ -28,7 +28,7 @@ closes and is neither device IOPS nor mean in-flight device queue depth.
 durably acknowledged by configured peers, saturating at signed 64-bit maximum.
 It is null until journal discovery succeeds, and zero with no destinations.
 It does not measure incoming catch-up or authorize node retirement. These
-three diagnostics are also additive fields on schema 1 and Prometheus.
+three diagnostics are also exported through Prometheus.
 
 Certified member lifecycle, incoming replica catch-up, logical storage, device
 IOPS and mean device queue depth remain unavailable. Their existing unknown
@@ -63,15 +63,15 @@ TS-513 and is not implemented here.
 
 | Fields | Meaning |
 | --- | --- |
-| `schema`, `node`, `region`, `process_id`, `release` | Schema 1; operator node name (machine name by default); configured TS-499 region; random ID for each host/process incarnation; full assembly informational version including build revision. Node identity is descriptive, not membership evidence. |
+| `schema`, `node`, `region`, `process_id`, `release` | Schema 2; operator node name (machine name by default); configured TS-499 region; plain ULID for each host/process incarnation; full assembly informational version including build revision. Node identity is descriptive, not membership evidence. |
 | `sampled_at`, `sample_window_seconds` | UTC sample completion and elapsed monotonic seconds for its counters. CPU and HTTP counters are sampled every second; a delayed sampler reports its actual elapsed interval. |
 | `cpu_util` | Process CPU seconds divided by interval seconds and `Environment.ProcessorCount`, capped at one. Null without a baseline or when process measurement fails. The runtime's effective processor count may round fractional container quotas. |
 | `memory_used_bytes`, `memory_budget_bytes`, `mem_util` | Process resident working set; telemetry budget; used/budget capped at one. Used bytes remain uncapped and can exceed the budget. Process failures yield null used/utilization. This budget is a denominator, not a hard memory-admission guarantee. |
 | `disk_used_bytes`, `disk_free_bytes`, `disk_total_bytes` | Filesystem containing the data directory, including other users of that filesystem. Used = total minus total free. Free includes reserved space; it does not promise all bytes are writable by this process. Failures yield null. |
 | `request_rate`, `p95_latency_ms`, `listeners` | Completed HTTP requests, including errors and admin scrapes, summed across admin/client/peer. Each listener has its rate, p95 and cumulative `requests_total`. gRPC duration covers the whole HTTP stream, not individual frames. An empty interval has zero rate/p95. |
-| `top_tenants` | Up to ten organizations sorted by completed authenticated API-key request rate, descending with UUID tie-breaks. Management service-credential traffic is not attributed to tenants. `plan` is the last plan resolved by a document endpoint during that interval, null when unavailable. `cpu_share` remains null: elapsed request time is not CPU time. |
+| `top_organizations` | Up to ten organizations sorted by completed authenticated API-key request rate, descending with ID tie-breaks. Management service-credential traffic is not attributed to tenants. `plan` is the last plan resolved by a document endpoint during that interval, null when unavailable. `cpu_share` remains null: elapsed request time is not CPU time. |
 | `untracked_tenant_requests` | Count omitted from tenant ranking when more than 4,096 distinct organizations occur in one interval. The fixed tracking table clears each interval; node/listener rates always include all requests. A nonzero value makes the ranking incomplete. |
-| `data_bytes`, `top_tenants_by_storage`, `storage_sampled_at` | Separate cached file-metadata sample every ten seconds, including unopened databases. Physical lengths of tenant `.db`, `.db-wal` and `.db-shm` files, excluding `_system`; top ten by physical bytes with UUID tie-breaks. Samples are non-atomic during writes/deletes/checkpoints and can decrease. Null total/timestamp with an empty ranking before the first complete scan or after failure. No document data is read. |
+| `data_bytes`, `top_organizations_by_storage`, `storage_sampled_at` | Separate cached file-metadata sample every ten seconds, including unopened databases. Physical lengths of tenant `.db`, `.db-wal` and `.db-shm` files, excluding `_system`; top ten by physical bytes with ID tie-breaks. Samples are non-atomic during writes/deletes/checkpoints and can decrease. Null total/timestamp with an empty ranking before the first complete scan or after failure. No document data is read. |
 | `load.connections`, `load.write_qps` | Current open client transport connections, including TLS handshakes; successful changed client-database write commits per interval. Reads, empty transactions, rollbacks, system writes and migrations are excluded from write rate. |
 | `state`, `io_queue_depth`, `disk_iops` | Membership state is `"unknown"`; mean in-flight device I/O and device IOPS are explicit null. The existing SQLite idle-session pool is not an I/O admission queue. |
 | `load.storage_bytes`, `load.replication_lag_seq` | Explicit null. Physical file bytes are not logical document size; local commit offsets are not authenticated peer applied-frontier lag. |
@@ -80,9 +80,9 @@ P95 uses 256 fixed geometric histogram bins rather than retaining requests.
 The bucket upper bound is within 10% of the selected latency (minimum 0.01 ms;
 extreme values saturate the final bin). The request hot path increments counters
 under one short lock, without scans or asynchronous work. Tracking uses a fixed
-number of histogram bins and at most 4,096 UUID keys per one-second interval.
+number of histogram bins and at most 4,096 organization ID keys per one-second interval.
 Storage enumeration retains one organization's running sum and at most ten
-ranked UUIDs. Background work has no queued sampling backlog.
+ranked organization IDs. Background work has no queued sampling backlog.
 
 ## Prometheus
 

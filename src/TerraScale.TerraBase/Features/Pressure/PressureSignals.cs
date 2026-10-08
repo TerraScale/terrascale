@@ -29,7 +29,7 @@ internal sealed partial class PressureSignals : BackgroundService, IPressureSign
     private readonly IReplicationPressure _replication;
     private readonly TimeProvider _time;
     private readonly ILogger<PressureSignals> _logger;
-    private readonly string _processId = Guid.NewGuid().ToString("N");
+    private readonly string _processId = Ulid.NewUlid().ToString();
     private readonly string _release = typeof(ServiceVersion).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "0.0.0";
     private PressureBody _snapshot;
     private StorageSample? _storage;
