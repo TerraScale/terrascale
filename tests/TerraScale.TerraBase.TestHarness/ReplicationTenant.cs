@@ -39,12 +39,19 @@ internal sealed class ReplicationTenant
 
     public Task<string> KeyAsync(TerraBaseTestServer server, params string[] scopes) => server.IssueAsync(OrganizationId, scopes);
 
-    public static async Task<ReplicationTenant> CreateAsync(TerraBaseTestServer seed, params string[] databaseNames)
+    public Task<string> KeyAsync(TerraBaseTestServer server, string[] scopes, CancellationToken cancellationToken) =>
+        server.IssueAsync(OrganizationId, scopes, cancellationToken);
+
+    public static Task<ReplicationTenant> CreateAsync(TerraBaseTestServer seed, params string[] databaseNames) =>
+        CreateAsync(seed, databaseNames, CancellationToken.None);
+
+    public static async Task<ReplicationTenant> CreateAsync(TerraBaseTestServer seed, string[] databaseNames, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(seed);
         ArgumentNullException.ThrowIfNull(databaseNames);
         ArgumentOutOfRangeException.ThrowIfGreaterThan(databaseNames.Length, MaxDatabases);
-        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(
+            TUnit.Core.TestContext.Current!.Execution.CancellationToken, cancellationToken);
         var token = deadline.Token;
         var user = Guid.NewGuid().ToString("D");
         var management = seed.Services.GetRequiredService<IManagementService>();
