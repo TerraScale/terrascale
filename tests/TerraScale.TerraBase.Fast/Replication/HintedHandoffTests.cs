@@ -152,22 +152,40 @@ public sealed class HintedHandoffTests
 
         async Task ReleaseResourcesAsync()
         {
-            using (ownedPeerTls)
-            using (ownedClientTls)
+            var errors = new List<Exception>();
+            foreach (var server in servers)
+            {
+                Observe(server.Client.Dispose);
+            }
+
+            var cleanup = Task.WhenAll(servers.Select(server => server.CleanupCompletion).Concat(failedStarts));
+            try
+            {
+                await cleanup;
+            }
+            catch (Exception error)
+            {
+                errors.Add(cleanup.Exception ?? error);
+            }
+
+            Observe(() => Directory.Delete(senderData, recursive: true));
+            Observe(() => Directory.Delete(receiverData, recursive: true));
+            Observe(() => ownedClientTls?.Dispose());
+            Observe(() => ownedPeerTls?.Dispose());
+            if (errors.Count > 0)
+            {
+                throw new AggregateException(errors).Flatten();
+            }
+
+            void Observe(Action release)
             {
                 try
                 {
-                    foreach (var server in servers)
-                    {
-                        server.Client.Dispose();
-                    }
-
-                    await Task.WhenAll(servers.Select(server => server.CleanupCompletion).Concat(failedStarts));
+                    release();
                 }
-                finally
+                catch (Exception error)
                 {
-                    Directory.Delete(senderData, recursive: true);
-                    Directory.Delete(receiverData, recursive: true);
+                    errors.Add(error);
                 }
             }
         }
