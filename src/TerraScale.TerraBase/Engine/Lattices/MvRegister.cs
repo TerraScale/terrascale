@@ -31,6 +31,17 @@ public sealed record MvRegister<T> : ILattice<MvRegister<T>>
 
     static MvRegister<T> ILattice<MvRegister<T>>.Bottom => new();
 
+    // Rebuilds a decoded register: every value's write is a real event (counters start at 1) of the context that holds it.
+    internal static MvRegister<T> FromParts(ImmutableDictionary<Dot, T> values, CausalContext context)
+    {
+        if (values.Keys.Any(dot => dot.Counter == 0 || !context.Contains(dot)))
+        {
+            throw new InvalidDataException("a register value lies outside its causal context");
+        }
+
+        return new(values, context);
+    }
+
     /// <summary>The current values by dot: one after a sequential history, several after concurrent writes.</summary>
     public ImmutableDictionary<Dot, T> Values { get; }
 
@@ -48,7 +59,8 @@ public sealed record MvRegister<T> : ILattice<MvRegister<T>>
     public MvRegister<T> WriteDelta(ReplicaId replica, T value, CausalContext observed)
     {
         ArgumentNullException.ThrowIfNull(observed);
-        var dot = new Dot(replica, Math.Max(Context.Max(replica), observed.Max(replica)) + 1);
+        // Checked: a counter that wrapped to zero would read as already seen, and its write would vanish on any join.
+        var dot = new Dot(replica, checked(Math.Max(Context.Max(replica), observed.Max(replica)) + 1));
         return new(ImmutableDictionary<Dot, T>.Empty.Add(dot, value), observed.Add(dot));
     }
 

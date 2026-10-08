@@ -32,6 +32,19 @@ public sealed record CausalContext : ILattice<CausalContext>
     /// <summary>The context holding exactly <paramref name="dots"/>.</summary>
     public static CausalContext Of(IEnumerable<Dot> dots) => Compact([], [.. dots]);
 
+    // Rebuilds a decoded context from its canonical parts: prefixes are never zero, and a cloud dot neither lies within
+    // nor extends its replica's prefix. Other parts would make equal sets encode differently.
+    internal static CausalContext FromCanonical(ImmutableDictionary<ReplicaId, ulong> versions, ImmutableHashSet<Dot> cloud)
+    {
+        if (versions.Values.Any(counter => counter == 0)
+            || cloud.Any(dot => dot.Counter == 0 || dot.Counter - 1 <= versions.GetValueOrDefault(dot.Replica)))
+        {
+            throw new InvalidDataException("the causal context is not canonical");
+        }
+
+        return new(versions, cloud);
+    }
+
     /// <summary>Whether <paramref name="dot"/> is in the context.</summary>
     public bool Contains(Dot dot) =>
         dot.Counter <= Versions.GetValueOrDefault(dot.Replica) || (!Cloud.IsEmpty && Cloud.Contains(dot));

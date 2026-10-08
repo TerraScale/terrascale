@@ -360,6 +360,25 @@ public sealed partial class CrossRegionPagingProgressTests
         return new ManagedDatabaseRef(organization, project, record.GetProperty("id").GetString()!, name);
     }
 
+    // Many databases with few catalog commits: at most 16 database operations each, the commit limit.
+    private static async Task<List<ManagedDatabaseRef>> CreatePlacedAsync(
+        ManagementApi api, string organization, string project, IEnumerable<string> names, CancellationToken token)
+    {
+        var databases = new List<ManagedDatabaseRef>();
+        foreach (var batch in names.Select(name => new ManagedDatabaseRef(organization, project, Guid.NewGuid().ToString("D"), name)).Chunk(16))
+        {
+            using var created = await api.Client.PostAsJsonAsync(ManagementApi.Uri("/v1/management/commits"), new
+            {
+                id = Guid.NewGuid().ToString("D"),
+                ops = batch.Select(database => new { op = "create_database", organization, project, name = database.Name, id = database.Id, replica_regions = InSfo }).ToArray(),
+            }, token);
+            await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.OK);
+            databases.AddRange(batch);
+        }
+
+        return databases;
+    }
+
     private static async Task AssertReadAsync(HttpClient client, Uri document, string value, string version, CancellationToken token)
     {
         using var response = await client.GetAsync(document, token);
@@ -411,6 +430,7 @@ public sealed partial class CrossRegionPagingProgressTests
         private readonly List<PageCall> _calls = [];
         private int _activeHeads;
         private int _maxActiveHeads;
+        private readonly System.Collections.Concurrent.ConcurrentDictionary<string, HeadsReply> _snapshots = new(StringComparer.Ordinal);
         private int _cancelledHeads;
         private bool _releasing;
 
@@ -480,6 +500,14 @@ public sealed partial class CrossRegionPagingProgressTests
             set => Volatile.Write(ref field, value);
         }
 
+        // Serves a round's heads pages from one listing of the real member, cut at each cursor, instead of asking it again
+        // for every page: the responder reads every remaining database per request. Only for rounds that change nothing.
+        public bool SnapshotHeads
+        {
+            get => Volatile.Read(ref field);
+            set => Volatile.Write(ref field, value);
+        }
+
         // While set, no member answers a heads request; pulls still reach their members.
         public bool Unanswered
         {
@@ -524,6 +552,7 @@ public sealed partial class CrossRegionPagingProgressTests
 
         public void NextRound()
         {
+            _snapshots.Clear();
             PageRequests.Clear();
             PageReplies.Clear();
             Pulls.Clear();
@@ -556,7 +585,7 @@ public sealed partial class CrossRegionPagingProgressTests
             }
 
             var member = AdvertiseNewcomer ? "gru-new" : "gru-a";
-            var reply = HeadsReply.Parser.ParseFrom((await inner.RequestAsync(WanProtocol.MemberSubject("gru", member), request, cancellationToken)).Span);
+            var reply = await HeadsAsync(WanProtocol.MemberSubject("gru", member), request, ByteString.Empty, cancellationToken);
             reply.Members.Clear();
             reply.Members.Add(member);
             if (Slow && !AdvertiseNewcomer)
@@ -706,7 +735,7 @@ public sealed partial class CrossRegionPagingProgressTests
                 // The silent member holds no databases: once it answers, its whole scan is one empty final page.
                 var reply = SilentMemberAnswers && member == "gru-silent-0"
                     ? new HeadsReply { Member = member }
-                    : HeadsReply.Parser.ParseFrom((await inner.RequestAsync(subject, request, cancellationToken)).Span);
+                    : await HeadsAsync(subject, request, parsed.Heads.After, cancellationToken);
                 reply.Members.Clear();
                 reply.Members.Add(member);
                 if (parsed.Heads.After.Length > 0 && CorruptNextPage is { } corruptPage)
@@ -732,6 +761,27 @@ public sealed partial class CrossRegionPagingProgressTests
 
         public Task ServeAsync(string subject, Func<ReadOnlyMemory<byte>, CancellationToken, ValueTask<byte[]>> answer, CancellationToken cancellationToken) =>
             inner.ServeAsync(subject, answer, cancellationToken);
+
+        private async Task<HeadsReply> HeadsAsync(string subject, ReadOnlyMemory<byte> request, ByteString after, CancellationToken cancellationToken)
+        {
+            if (!SnapshotHeads)
+            {
+                return HeadsReply.Parser.ParseFrom((await inner.RequestAsync(subject, request, cancellationToken)).Span);
+            }
+
+            if (!_snapshots.TryGetValue(subject, out var snapshot))
+            {
+                var everything = new WanRequest { Version = WanProtocol.Version, Heads = new HeadsRequest() }.ToByteArray();
+                snapshot = _snapshots.GetOrAdd(subject, HeadsReply.Parser.ParseFrom((await inner.RequestAsync(subject, everything, cancellationToken)).Span));
+            }
+
+            // The responder's own cut: every head whose 48-byte key follows the cursor, in key order.
+            var reply = snapshot.Clone();
+            reply.Heads.Clear();
+            reply.Heads.AddRange(snapshot.Heads.Where(head =>
+                ((byte[])[.. head.TenantId.Span, .. head.ProjectId.Span, .. head.DatabaseId.Span]).AsSpan().SequenceCompareTo(after.Span) > 0));
+            return reply;
+        }
 
         private void LimitPage(HeadsReply reply)
         {

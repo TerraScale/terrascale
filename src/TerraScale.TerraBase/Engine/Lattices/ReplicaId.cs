@@ -22,4 +22,8 @@ public readonly record struct ReplicaId(ulong Value)
 
     /// <summary>The id of <paramref name="member"/> of <paramref name="region"/> in <paramref name="epoch"/>.</summary>
     public static ReplicaId Of(ushort region, uint member, ushort epoch) => new(((ulong)region << 48) | ((ulong)member << 16) | epoch);
+
+    /// <inheritdoc />
+    // Both halves: ulong's own hash XORs them, so crafted ids would all collide in decoded prefixes.
+    public override int GetHashCode() => HashCode.Combine((uint)Value, (uint)(Value >> 32));
 }

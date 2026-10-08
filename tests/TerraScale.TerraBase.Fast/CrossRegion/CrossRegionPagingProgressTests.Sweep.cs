@@ -201,11 +201,8 @@ public sealed partial class CrossRegionPagingProgressTests
                     registered.EnsureSuccessStatusCode();
                 }
 
-                var databases = new List<ManagedDatabaseRef>();
-                for (var index = 0; index < 103; index++)
-                {
-                    databases.Add(await CreatePlacedAsync(gru, organization, project, "sweep-" + index.ToString(CultureInfo.InvariantCulture), token));
-                }
+                var databases = await CreatePlacedAsync(gru, organization, project,
+                    Enumerable.Range(0, 103).Select(index => "sweep-" + index.ToString(CultureInfo.InvariantCulture)), token);
 
                 // Within one project, canonical UUID text orders like both the catalog and 48-byte WAN cursors.
                 databases.Sort((left, right) => string.CompareOrdinal(left.Id, right.Id));
@@ -251,6 +248,8 @@ public sealed partial class CrossRegionPagingProgressTests
                 var live = databases.Where(database => database != firstPageDeleted && database != nextPageDeleted).ToArray();
                 await Assert.That(live.Length).IsEqualTo(101);
                 bus.Slow = true;
+                // Rounds change nothing at the home member: one listing per round serves all seventeen pages.
+                bus.SnapshotHeads = true;
                 if (malformedPrefix)
                 {
                     bus.MalformedFirstReply = true;

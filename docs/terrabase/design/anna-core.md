@@ -5,10 +5,10 @@
   Statements about the future system are targets, not guarantees; each guarantee is claimed only once its step ships
   with integration evidence.
 - Tickets: TS-634 (umbrella), TS-647 (stage 1), TS-648 (per-core actors), TS-649 (memory tier, hot keys, policy
-  engine, autoscaling), TS-643 (multi-region), TS-650 (SDKs accept `tbv2` tokens).
+  engine, autoscaling), TS-643 (multi-region), TS-650 (SDKs accept `tbv2` tokens, no longer needed: decision 7), TS-677 (go-live).
 - User decisions: 2026-10-06 (scope), 2026-10-07 (replicate inside one region now; one engine, no core switch; the
   simpler route now and full Anna later; [§16](#16-decisions-and-open-questions)).
-- Related: TS-602 (greenfield wipe, the cutover point), TS-606 (deployed benchmark), TS-633 (continuous backup),
+- Related: TS-602 (greenfield wipe, no longer the cutover: decision 6), TS-606 (deployed benchmark), TS-633 (continuous backup),
   TS-565 (node pools), TS-562 (NATS fabric between orchestrators), TS-581 (usage metering).
 
 Sources:
@@ -53,8 +53,9 @@ Anna has two halves:
 `// anna-full (TS-648|TS-649|TS-643): <what full Anna does here>` so stage 2 can find and remove them.
 
 The public HTTP API, collections, SDK calls and the dashboard keep working; the
-[compatibility matrix](#12-api-compatibility-matrix) lists what changes. Production cuts over at the TS-602
-greenfield wipe; there is no data migration code.
+[compatibility matrix](#12-api-compatibility-matrix) lists what changes. Production keeps its data: a one-time
+in-place migration converts each database file when its member first runs the new format
+([§16](#16-decisions-and-open-questions), decision 6).
 
 ### Non-goals
 
@@ -139,10 +140,10 @@ idempotent ([Anna] §III). Mutators are delta-mutators: they return the delta, a
 
 ### Documents
 
-A document is one `MvRegister<DocumentVersion>` keyed by `(database, collection, id)`:
+A document is one `MvRegister<DocumentWrite>` keyed by `(database, collection, id)`:
 
 ```text
-DocumentVersion = (Hlc stamp, Body)        Body = UTF-8 JSON object bytes | Tombstone
+DocumentWrite = (Hlc stamp, Body)        Body = UTF-8 JSON object bytes | Tombstone
 ```
 
 - **LWW write** (the default): replaces every version the writing replica knows. **Causal write** (step 7): replaces
@@ -155,9 +156,14 @@ DocumentVersion = (Hlc stamp, Body)        Body = UTF-8 JSON object bytes | Tomb
 
 ### Encoding
 
-Persisted and sent states use one versioned encoding, independent of .NET layout and endianness: a format byte,
-little-endian fixed-width integers, LEB128 lengths, dots sorted by `(replica, counter)`, so equal states encode to
-equal bytes. It ships with the format flip (step 4).
+Persisted and sent states use one versioned encoding, independent of .NET layout and endianness
+(`Engine/Lattices/LatticeEncoding.cs`, step 4a): a format byte, little-endian fixed-width integers, minimal LEB128
+counts and lengths, replicas and dots sorted by `(replica, counter)`, so equal states encode to equal bytes. A register
+is its format byte, its context's prefixes `(replica, counter)` and cloud dots, then its writes `(dot, stamp, kind,
+[length, body])`. Decoding is a trust boundary: it accepts canonical bytes only (ascending, no duplicates, non-zero
+prefixes, a cloud that neither lies within nor extends its prefix, every write inside the context, minimal lengths, no
+trailing bytes), and bounds every count by the bytes left, so decoding allocates in proportion to its input. Dots and
+replica ids hash both halves of their 64-bit values, so crafted values cannot collide into quadratic lookups.
 
 ## 4. Writes on SQLite
 
@@ -369,7 +375,9 @@ and decisions ([0004](../decisions/0004-document-api-v1.md), [0010](../decisions
 | Usage (TS-581) | follower counts forwarded | `GCounter`s | Same totals once replicas converge |
 | `healthz`, `readyz`, `/metrics`, API reference | unchanged | `readyz` waits until membership joined | Same |
 
-Version tokens become `tbv2-` with the format flip (step 4), once the SDKs accept them (TS-650). SDK operations map
+Version tokens keep their `tbv1-<32 hex>` shape: the hash then covers the register's winning write instead of the
+commit offset. They stay opaque to clients, so SDKs need no change and no new versioned name appears (decision 7).
+SDK operations map
 to these routes as before: `read` → `getDocument`, `query` → `queryDocuments`, `subscription` → `getShape`, `commit`
 → `runTransaction`.
 
@@ -393,7 +401,7 @@ Both suites stay parallel-safe: each test owns its servers, ports, directories a
 
 ## 14. Benchmark gate
 
-A TS-606 run on 1-OCPU A1 nodes beats today's engine on writes, with equal or lower CPU and memory, before the TS-602
+A TS-606 run on 1-OCPU A1 nodes beats today's engine on writes, with equal or lower CPU and memory, before the
 cutover ([§17](#17-benchmark-targets)).
 
 ## 15. Plan
@@ -406,10 +414,23 @@ every push to `main`.
 | 1 | Delete the slice-2 surface (`core`/`actors` settings, `StorageCore`, `AnnaDocumentService`, `AnnaShapeService`, `DocumentActors`, the Development guard). Fix dot minting: epoch in `ReplicaId`, floor-seeded keys, burned dots, the same-dot refusal, no allocations in `CausalContext.Max`/`Compact` on the common path. This document rewritten |
 | 2 | Group commit: per-database writer thread apart from the read pool, one `SAVEPOINT` per client write, collections in memory. Measured with TS-606 |
 | 3 | NATS membership, ring and leases (KV TTL with delete markers); static `peers` for tests; backup shipper by lease (with TS-633), deleting TS-633's interim leases. Then: membership replaces `peer-addresses`; refill after an expired lease; lease checks around owner commits; clock-skew capping |
-| 4 | Format flip at the TS-602 wipe: `MvRegister` state, HLC stamps, epoch replica ids, joins, per-origin streams with dependency vectors, `tbv2` tokens; delete `VersionClock`, `StampingStorageEngine`/`IWriteStamps`, `JournalDigest`, merge v1, baselines and legacy upgrades. Gate: the partition suite. Merges only after TS-650 and a deploy freeze |
+| 4 | Format flip: `MvRegister` state, HLC stamps, epoch replica ids, joins, per-origin streams with dependency vectors; delete `VersionClock`, `StampingStorageEngine`/`IWriteStamps`, `JournalDigest`, merge v1, baselines and legacy upgrades; a one-time in-place migration. Gate: the partition suite. In the sub-steps below |
 | 5 | `_system` as a lattice database on every member; delete the catalog primary; usage `GCounter`s |
 | 6 | Owner CAS and conditional transactions on the primary owner, reservations released by the flush callback; end-to-end tests of commit fences and dashboard sign-in |
 | 7 | Causal consistency per request; interval and tombstone GC on applied vectors |
+
+Step 4 runs as expand, switch, contract, because every merge rolls out to production member by member (the `deploy`
+job, `TS_AUTO_DEPLOY_CELLS`) and peers refuse any other protocol or format version
+(`ReplicationProtocol.Accept`/`Accepts`): until the last sub-step, members of the old and the new build replicate with
+each other. Unknown protobuf fields are ignored by older members, so the new state travels beside today's group.
+
+| Sub-step | Contents | Rolls out mixed |
+| --- | --- | --- |
+| 4a | The register encoding (`LatticeEncoding`, `DocumentWrite`); no caller yet | Yes, nothing changes |
+| 4b | Replica identity and clock: a member number, a replica epoch raised on every unclean start, one HLC per member | Yes, stored beside today's state |
+| 4c | Expand: each document row also keeps its encoded register, written by local writes and joined on apply; groups carry registers in a new field; a member converts its files in place on first open | Yes, merge v1 still decides |
+| 4d | Switch: the join decides, LWW reads take the register's winner, tokens hash it; dependency vectors gate apply | Only once every member runs 4c |
+| 4e | Contract: delete merge v1, `VersionClock`, `JournalDigest`, baselines, legacy upgrades and `StampingStorageEngine`; one protocol version | Under a deploy freeze, gated by the partition suite |
 
 Merged under TS-634: the design (#50), the lattice library (#51), and slice 2 (#53), whose surface step 1 deletes.
 
@@ -435,7 +456,7 @@ This needs no TS-647/648/649 changes. See
 Decided by the user:
 
 1. 2026-10-06: rebuild the core on Anna; keep the public API, collections, SDKs and dashboard; cut over at the TS-602
-   wipe without migration code.
+   wipe without migration code (the migration part is replaced by decision 6).
 2. 2026-10-07: replicate inside one region now, across regions later (TS-643).
 3. 2026-10-07: lattice-law property tests call the library directly, an exception for the lattice library only.
 4. 2026-10-07: membership through NATS (`NATS.Net`); owner operations answer `503` while NATS is unreachable. Static
@@ -443,6 +464,10 @@ Decided by the user:
 5. 2026-10-07 (TS-647): one engine with SQLite as its storage, no core switch, no Turso; the simpler route now and full
    Anna later; conditional transactions keep today's semantics on the primary owner (this replaces the read-atomic
    decision of the same morning).
+6. 2026-10-07 and 2026-10-08 (relayed by COS, TS-677 and TS-634): production keeps its data through a one-time
+   in-place migration instead of the TS-602 wipe. This replaces decision 1's "without migration code".
+7. 2026-10-08 (COS, pre-1.0 rule): no new v1/v2 names. Version tokens keep their current shape instead of a `tbv2-`
+   prefix.
 
 Open:
 
