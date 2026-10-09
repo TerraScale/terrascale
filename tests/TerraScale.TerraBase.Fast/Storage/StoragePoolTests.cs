@@ -125,7 +125,7 @@ public sealed class StoragePoolTests
             await Assert.That(engine.Io.Admitted).IsEqualTo(capacity);
 
             var request = tenant.Data.PutAsJsonAsync(new Uri(
-                $"/v1/projects/{tenant.ProjectId}/databases/source/collections/items/documents/{StorageFixture.Id("busy")}", UriKind.Relative), new { n = 1 }, deadline.Token);
+                $"/v1/projects/{tenant.ProjectId}/databases/source/collections/items/documents/by-key?id={StorageFixture.Id("busy")}", UriKind.Relative), new { n = 1 }, deadline.Token);
             responses.Add(request);
             using var busy = await request;
             await Assert.That(busy.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
@@ -148,7 +148,7 @@ public sealed class StoragePoolTests
             await Assert.That(engine.Io.Admitted).IsEqualTo(0);
             await Assert.That(pressure.IoAdmittedCount).IsEqualTo(0);
             using var healthy = await tenant.Data.PutAsJsonAsync(new Uri(
-                $"/v1/projects/{tenant.ProjectId}/databases/source/collections/items/documents/{StorageFixture.Id("healthy")}", UriKind.Relative), new { n = 2 }, deadline.Token);
+                $"/v1/projects/{tenant.ProjectId}/databases/source/collections/items/documents/by-key?id={StorageFixture.Id("healthy")}", UriKind.Relative), new { n = 2 }, deadline.Token);
             healthy.EnsureSuccessStatusCode();
         }
         catch (Exception error)
@@ -196,7 +196,7 @@ public sealed class StoragePoolTests
         using var created = await client.PutAsync(new Uri($"/v1/projects/{tenant.ProjectId}/databases/busy", UriKind.Relative), null, deadline.Token);
         created.EnsureSuccessStatusCode();
         await StorageFixture.CreateCollectionAsync(tenant, "busy", "items", deadline.Token);
-        var document = new Uri($"/v1/projects/{tenant.ProjectId}/databases/busy/collections/items/documents/{StorageFixture.Id("a")}", UriKind.Relative);
+        var document = new Uri($"/v1/projects/{tenant.ProjectId}/databases/busy/collections/items/documents/by-key?id={StorageFixture.Id("a")}", UriKind.Relative);
         using var written = await client.PutAsJsonAsync(document, new { n = 1 }, deadline.Token);
         await Assert.That(written.StatusCode).IsEqualTo(HttpStatusCode.Created);
         var engine = server.Services.GetRequiredService<SqliteStorageEngine>();
@@ -255,7 +255,7 @@ public sealed class StoragePoolTests
         created.EnsureSuccessStatusCode();
         await StorageFixture.CreateCollectionAsync(tenant, "victim", "items", operationTimeout.Token);
         using var written = await client.PutAsJsonAsync(
-            new Uri($"/v1/projects/{tenant.ProjectId}/databases/victim/collections/items/documents/{StorageFixture.Id("a")}", UriKind.Relative), new { padding = new string('x', 128 * 1024) }, operationTimeout.Token);
+            new Uri($"/v1/projects/{tenant.ProjectId}/databases/victim/collections/items/documents/by-key?id={StorageFixture.Id("a")}", UriKind.Relative), new { padding = new string('x', 128 * 1024) }, operationTimeout.Token);
         written.EnsureSuccessStatusCode();
         var engine = server.Services.GetRequiredService<SqliteStorageEngine>();
         var victim = await tenant.ContextAsync(management.Server, "victim", operationTimeout.Token);
@@ -282,7 +282,7 @@ public sealed class StoragePoolTests
         await Assert.That(await closed.Task.WaitAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken)).IsEqualTo("terrabase-sqlite");
         await Assert.That(File.Exists(wal)).IsFalse();
         // Checkpointed data is available again through the real listener after eviction.
-        using var read = await client.GetAsync(new Uri($"/v1/projects/{tenant.ProjectId}/databases/victim/collections/items/documents/{StorageFixture.Id("a")}", UriKind.Relative), operationTimeout.Token);
+        using var read = await client.GetAsync(new Uri($"/v1/projects/{tenant.ProjectId}/databases/victim/collections/items/documents/by-key?id={StorageFixture.Id("a")}", UriKind.Relative), operationTimeout.Token);
         await Assert.That(read.StatusCode).IsEqualTo(HttpStatusCode.OK);
     }
 
@@ -301,7 +301,7 @@ public sealed class StoragePoolTests
         using var created = await client.PutAsync(new Uri($"/v1/projects/{tenant.ProjectId}/databases/busy", UriKind.Relative), null, deadline.Token);
         created.EnsureSuccessStatusCode();
         await StorageFixture.CreateCollectionAsync(tenant, "busy", "items", deadline.Token);
-        var document = new Uri($"/v1/projects/{tenant.ProjectId}/databases/busy/collections/items/documents/{StorageFixture.Id("a")}", UriKind.Relative);
+        var document = new Uri($"/v1/projects/{tenant.ProjectId}/databases/busy/collections/items/documents/by-key?id={StorageFixture.Id("a")}", UriKind.Relative);
         using var written = await client.PutAsJsonAsync(document, new { n = 1 }, deadline.Token);
         await Assert.That(written.StatusCode).IsEqualTo(HttpStatusCode.Created);
         var engine = server.Services.GetRequiredService<SqliteStorageEngine>();

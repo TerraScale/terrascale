@@ -108,7 +108,7 @@ public sealed class ShapeBudgetTests
         (await client.PostAsJsonAsync(tenant.Database("db", "/collections"), new { name = "items" })).EnsureSuccessStatusCode();
         var transactions = tenant.Database("db", "/transactions");
         const string kept = "7ZZZZZZZZZZZZZZZZZZZZZZZZZ";
-        (await client.PutAsJsonAsync(tenant.Database("db", $"/collections/items/documents/{kept}"), new { n = 1 }))
+        (await client.PutAsJsonAsync(tenant.Database("db", $"/collections/items/documents/by-key?id={kept}"), new { n = 1 }))
             .EnsureSuccessStatusCode();
         using var start = await client.GetAsync(tenant.Database("db", "/collections/items/shape?offset=-1"));
         using var first = await client.GetAsync(start.Headers.Location!);
@@ -142,7 +142,7 @@ public sealed class ShapeBudgetTests
         var transactions = tenant.Database("db", "/transactions");
         // The snapshot's only document orders last, so a replay steps over every later id before reaching it.
         var kept = "7ZZZZZZZZZFZZVZZZZZZZZZZZZ";
-        (await client.PutAsJsonAsync(tenant.Database("db", $"/collections/items/documents/{kept}"), new { n = 1 })).EnsureSuccessStatusCode();
+        (await client.PutAsJsonAsync(tenant.Database("db", $"/collections/items/documents/by-key?id={kept}"), new { n = 1 })).EnsureSuccessStatusCode();
         using var start = await client.GetAsync(tenant.Database("db", "/collections/items/shape?offset=-1"));
         using var first = await client.GetAsync(start.Headers.Location!);
         var firstBody = await first.Content.ReadAsStringAsync();

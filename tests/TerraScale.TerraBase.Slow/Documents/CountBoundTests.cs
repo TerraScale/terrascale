@@ -167,7 +167,7 @@ public sealed class CountBoundTests
         var atLimitFiltered = await CountAsync(matches);
 
         // One document beyond the bound, which the selective filter does not match.
-        (await client.PutAsJsonAsync(tenant.Database("db", $"/collections/items/documents/{Id(100_000)}"), new { n = 2 }))
+        (await client.PutAsJsonAsync(tenant.Database("db", $"/collections/items/documents/by-key?id={Id(100_000)}"), new { n = 2 }))
             .EnsureSuccessStatusCode();
         var (beyondValue, beyondExact) = await CountAsync(null);
         var beyondFiltered = await CountAsync(matches);

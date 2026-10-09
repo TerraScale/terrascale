@@ -454,7 +454,7 @@ public sealed class MemoryBudgetTests
             }
 
             await StorageFixture.CreateCollectionAsync(tenant, "shop", "items");
-            var uri = new Uri($"/v1/projects/{tenant.ProjectId}/databases/shop/collections/items/documents/{StorageFixture.Id("big")}", UriKind.Relative);
+            var uri = new Uri($"/v1/projects/{tenant.ProjectId}/databases/shop/collections/items/documents/by-key?id={StorageFixture.Id("big")}", UriKind.Relative);
             using (var written = await client.PutAsJsonAsync(uri, new { padding = new string('x', Padding) }))
             {
                 written.EnsureSuccessStatusCode();

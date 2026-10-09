@@ -8,13 +8,13 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Documents;
 
-/// <summary><c>PATCH …/documents/{id}</c>: patches an existing JSON document.</summary>
+/// <summary><c>PATCH …/documents/by-key?id=</c>: patches an existing JSON document.</summary>
 public sealed class PatchDocumentEndpoint(IDocumentService documents, ITenantDirectory tenants) : EndpointWithoutRequest<IResult>
 {
     /// <inheritdoc />
     public override void Configure()
     {
-        Patch(DocumentRoute.Collection + "/{id}");
+        Patch(DocumentRoute.Document);
         Name("patchDocument");
         Summary("Patches a JSON document");
         Description("application/merge-patch+json applies an RFC 7396 merge patch (null removes members). application/vnd.terrabase.ops+json applies {\"ops\":[…]} in order: set (creates missing parents), unset, inc (missing is 0, exact decimal arithmetic) and append (creates a missing array); paths are JSON Pointers to object members, at most 256 ops. A target of the wrong type fails with 409 patch_conflict. Optional If-Match. The document must exist (404 not_found).");
@@ -22,6 +22,7 @@ public sealed class PatchDocumentEndpoint(IDocumentService documents, ITenantDir
         Metadata(new RequestBodyMetadata(typeof(JsonElement), DocumentPatch.MergeMediaType));
         Metadata(new RequestBodyMetadata(typeof(PatchOpsRequest), DocumentPatch.OpsMediaType));
         Produces<WriteBody>();
+        Produces<ErrorBody>(StatusCodes.Status400BadRequest);
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
         Produces<ErrorBody>(StatusCodes.Status409Conflict);
         Produces<ErrorBody>(StatusCodes.Status412PreconditionFailed);
@@ -35,7 +36,7 @@ public sealed class PatchDocumentEndpoint(IDocumentService documents, ITenantDir
         {
             Validation error => ErrorResponse.From(error),
             NotFound error => ErrorResponse.From(error),
-            DocumentKey key => (DocumentRoute.CheckParameters(HttpContext), DocumentRoute.CheckIdempotencyKey(HttpContext), ETags.CheckPrecondition(HttpContext)) switch
+            DocumentKey key => (DocumentRoute.CheckParameters(HttpContext, "id"), DocumentRoute.CheckIdempotencyKey(HttpContext), ETags.CheckPrecondition(HttpContext)) switch
             {
                 (Validation error, _, _) => ErrorResponse.From(error),
                 (_, Validation error, _) => ErrorResponse.From(error),

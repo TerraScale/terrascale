@@ -410,7 +410,7 @@ public sealed class ContinuousBackupTests
         member.Services.GetRequiredService<IContinuousBackup>().Status.Files.Single(status => status.File == file);
 
     private static string DocumentPath(ManagedDatabaseRef database, string name, string document) =>
-        $"/v1/projects/{database.Project}/databases/{name}/collections/people/documents/{ManagementApi.DocumentId(document)}";
+        $"/v1/projects/{database.Project}/databases/{name}/collections/people/documents/by-key?id={ManagementApi.DocumentId(document)}";
 
     private static Uri Uri(string path) => ManagementApi.Uri(path);
 }

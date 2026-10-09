@@ -231,7 +231,7 @@ public sealed class SubscriptionAdmissionTests
         await ManagementApi.CreateCollectionAsync(data, database, "items", cancellationToken);
         var text = faker.Lorem.Sentence();
         using var put = await data.PutAsJsonAsync(ManagementApi.Uri(
-            $"{database.Data}/collections/items/documents/{EntityIds.New()}"), new { text }, cancellationToken);
+            $"{database.Data}/collections/items/documents/by-key?id={EntityIds.New()}"), new { text }, cancellationToken);
         put.EnsureSuccessStatusCode();
         // Warm the API-key credential cache before measuring the subscription's memory reservations.
         using var warm = await data.GetAsync(ManagementApi.Uri($"{database.Data}/collections/items/shape?offset=-1"), cancellationToken);

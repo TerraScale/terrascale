@@ -148,7 +148,7 @@ public sealed class CrossRegionTests
             .CreateDatabaseAsync(regions.Organization, project, "private", CancellationToken.None);
         var path = $"/v1/projects/{project}/databases/private";
         (await regions.Gru.PostAsJsonAsync(new Uri($"{path}/collections", UriKind.Relative), new { name = "items" })).EnsureSuccessStatusCode();
-        (await regions.Gru.PutAsJsonAsync(new Uri($"{path}/collections/items/documents/{ReplicationDocuments.Id("secret")}", UriKind.Relative), new { value = "here" }))
+        (await regions.Gru.PutAsJsonAsync(new Uri($"{path}/collections/items/documents/by-key?id={ReplicationDocuments.Id("secret")}", UriKind.Relative), new { value = "here" }))
             .EnsureSuccessStatusCode();
 
         await TerraBaseTestServer.EventuallyAsync(async token =>
@@ -171,7 +171,7 @@ public sealed class CrossRegionTests
         await Assert.That(created.GetProperty("replicaRegions").GetArrayLength()).IsEqualTo(0);
         var path = $"/v1/projects/{regions.Project}/databases/orders";
         (await homeData.PostAsJsonAsync(new Uri($"{path}/collections", UriKind.Relative), new { name = "items" })).EnsureSuccessStatusCode();
-        var document = new Uri($"{path}/collections/items/documents/{ReplicationDocuments.Id("x")}", UriKind.Relative);
+        var document = new Uri($"{path}/collections/items/documents/by-key?id={ReplicationDocuments.Id("x")}", UriKind.Relative);
         (await homeData.PutAsJsonAsync(document, new { value = "here" })).EnsureSuccessStatusCode();
 
         // The other region learns where the database is served, and answers its data requests with that.
@@ -328,8 +328,8 @@ public sealed class CrossRegionTests
         var id = created.GetProperty("id").GetString();
         var path = $"/v1/projects/{regions.Project}/databases/orders";
         (await regions.Gru.PostAsJsonAsync(new Uri($"{path}/collections", UriKind.Relative), new { name = "items" })).EnsureSuccessStatusCode();
-        var fromGru = new Uri($"{path}/collections/items/documents/{ReplicationDocuments.Id("gru")}", UriKind.Relative);
-        var fromSfo = new Uri($"{path}/collections/items/documents/{ReplicationDocuments.Id("sfo")}", UriKind.Relative);
+        var fromGru = new Uri($"{path}/collections/items/documents/by-key?id={ReplicationDocuments.Id("gru")}", UriKind.Relative);
+        var fromSfo = new Uri($"{path}/collections/items/documents/by-key?id={ReplicationDocuments.Id("sfo")}", UriKind.Relative);
         (await regions.Gru.PutAsJsonAsync(fromGru, new { value = "gru" })).EnsureSuccessStatusCode();
         _ = await Regions.EventuallyReadAsync(regions.Sfo, fromGru, "gru");
         (await regions.Sfo.PutAsJsonAsync(fromSfo, new { value = "sfo" })).EnsureSuccessStatusCode();
@@ -512,7 +512,7 @@ public sealed class CrossRegionTests
 
             Uri Document(string id)
             {
-                return new($"/v1/projects/{project}/databases/canary/collections/items/documents/{ReplicationDocuments.Id(id)}", UriKind.Relative);
+                return new($"/v1/projects/{project}/databases/canary/collections/items/documents/by-key?id={ReplicationDocuments.Id(id)}", UriKind.Relative);
             }
 
             (await clientA.PutAsJsonAsync(Document("from-a"), new { value = "a" })).EnsureSuccessStatusCode();
@@ -604,7 +604,7 @@ public sealed class CrossRegionTests
 
         public string Database { get; } = EntityIds.New().ToString();
 
-        public Uri Document(string id) => new($"/v1/projects/{Project}/databases/canary/collections/items/documents/{id}", UriKind.Relative);
+        public Uri Document(string id) => new($"/v1/projects/{Project}/databases/canary/collections/items/documents/by-key?id={id}", UriKind.Relative);
 
         // A Management route under the canary's project.
         public Uri Management(string path) => new($"/v1/management/organizations/{Organization}/projects/{Project}/{path}", UriKind.Relative);

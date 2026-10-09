@@ -63,7 +63,7 @@ public sealed class ProjectTokenTests
         var databases = $"/v1/projects/{project}/databases";
         var database = databases + "/main";
         var collection = database + "/collections/people";
-        var document = collection + "/documents/" + EntityIds.New();
+        var document = collection + "/documents/by-key?id=" + EntityIds.New();
         var name = faker.Name.FullName();
 
         using var created = await client.PostAsJsonAsync(Uri(databases), new { name = "main" });
@@ -91,7 +91,7 @@ public sealed class ProjectTokenTests
             ops = new object[] { new { op = "create", collection = "people", id = transactionId, document = new { name, count = 3 } } },
         });
         await Assert.That(transaction.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That((await client.GetFromJsonAsync<JsonElement>(Uri(collection + "/documents/" + transactionId)))
+        await Assert.That((await client.GetFromJsonAsync<JsonElement>(Uri(collection + "/documents/by-key?id=" + transactionId)))
             .GetProperty("document").GetProperty("count").GetInt32()).IsEqualTo(3);
         await Assert.That(await StatusAsync(client.DeleteAsync(Uri(document)))).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(await StatusAsync(client.GetAsync(Uri(document)))).IsEqualTo(HttpStatusCode.NotFound);
@@ -122,7 +122,7 @@ public sealed class ProjectTokenTests
         await Assert.That(canonical.GetProperty("id").GetString()).IsEqualTo(database.Id);
 
         await Assert.That(await StatusAsync(jwt.PostAsJsonAsync(Uri(database.Data + "/branches"), new { name = "copy" }))).IsEqualTo(HttpStatusCode.Created);
-        var copied = await jwt.GetFromJsonAsync<JsonElement>(Uri($"/v1/projects/{database.Project}/databases/copy/collections/people/documents/{ManagementApi.DocumentId("existing")}"));
+        var copied = await jwt.GetFromJsonAsync<JsonElement>(Uri($"/v1/projects/{database.Project}/databases/copy/collections/people/documents/by-key?id={ManagementApi.DocumentId("existing")}"));
         await Assert.That(copied.GetProperty("document").GetProperty("name").GetString()).IsEqualTo(name);
         var audit = await api.Client.GetFromJsonAsync<JsonElement>(Uri($"/v1/management/organizations/{database.Organization}/audit-events"));
         await Assert.That(audit.GetProperty("items").EnumerateArray().Any(item => item.GetProperty("actor").GetString() == actor)).IsTrue();

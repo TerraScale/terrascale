@@ -25,6 +25,20 @@ internal static class ApiExamples
     public static void Apply(OpenApiOperation operation)
     {
         var id = operation.OperationId;
+        if (id is "getDocument" or "putDocument" or "patchDocument" or "deleteDocument")
+        {
+            operation.Parameters ??= [];
+            operation.Parameters.Add(new OpenApiParameter
+            {
+                Name = "id",
+                In = ParameterLocation.Query,
+                Required = true,
+                Description = "Raw document key, supplied exactly once using UTF-8 query encoding. Decode once; slashes, dot segments and literal percent escapes remain distinct keys. No Unicode normalization. No other query parameters are accepted.",
+                Schema = new OpenApiSchema { Type = JsonSchemaType.String, MinLength = 1, MaxLength = 256 },
+                Example = JsonValue.Create("a/b"),
+            });
+        }
+
         if (operation.RequestBody?.Content is { } request)
         {
             foreach (var (mediaType, media) in request)

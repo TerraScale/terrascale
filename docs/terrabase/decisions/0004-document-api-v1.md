@@ -11,6 +11,11 @@ point reads and writes (`GET`/`PUT`/`POST`/`PATCH`/`DELETE …/documents`), list
 (`POST …/collections/{collection}/query`) and transactions (`POST /v1/projects/{project}/databases/{db}/transactions`),
 with `{"error":{"code",…}}` bodies.
 
+TS-754 carries caller-supplied keys in one UTF-8 query parameter for point operations:
+`GET/PUT/PATCH/DELETE …/documents/by-key?id=<encoded key>`. Keys are decoded exactly once, with no path
+or Unicode normalization. This replaces the path-key routes because Kestrel normalizes dot segments
+and aliases escaped slash spellings before route values are exposed. See [the ID contract](../id-contract.md).
+
 - **Fresh schema v9** (`PRAGMA user_version = 9`): new files bootstrap the complete schema in one transaction.
   Older nonempty files and newer schemas are refused. There are no upgrades, backfills or legacy ID fallbacks.
   Collections have a persisted canonical ULID `entity_id`; database incarnations are canonical ULIDs.

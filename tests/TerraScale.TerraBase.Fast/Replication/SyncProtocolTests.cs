@@ -151,7 +151,7 @@ public sealed class SyncProtocolTests
         }
 
         using var body = new StringContent(json, Encoding.UTF8, "application/json");
-        using var response = await writer.PutAsync(new Uri($"{node.Tenant.Path("json")}/collections/items/documents/{id}", UriKind.Relative), body, deadline.Token);
+        using var response = await writer.PutAsync(new Uri($"{node.Tenant.Path("json")}/collections/items/documents/by-key?id={id}", UriKind.Relative), body, deadline.Token);
         await Assert.That(response.StatusCode).IsEqualTo(scenario switch
         {
             "validBoundary" => HttpStatusCode.Created,
@@ -378,7 +378,7 @@ public sealed class SyncProtocolTests
         await using var read = await store.BeginTransactionAsync(write: false, deadline.Token);
         await Assert.That(await read.GetAppliedSequenceAsync(origin, deadline.Token)).IsEqualTo(0);
         await Assert.That(await read.GetAsync("items", "x", deadline.Token)).IsNull();
-        using var missing = await node.Http.GetAsync(new Uri($"{node.Tenant.Path("vault")}/collections/items/documents/x", UriKind.Relative));
+        using var missing = await node.Http.GetAsync(new Uri($"{node.Tenant.Path("vault")}/collections/items/documents/by-key?id=x", UriKind.Relative));
         await Assert.That(missing.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
         await Assert.That(await node.Server.MetricAsync("terrabase_replication_received_groups_total", "result=\"rejected\"")).IsEqualTo(10);
     }
@@ -488,7 +488,7 @@ public sealed class SyncProtocolTests
             await seed.ExecuteNonQueryAsync(CancellationToken.None);
         }
         using var writer = await node.ClientAsync("documents:write");
-        var document = new Uri($"{node.Tenant.Path("limits")}/collections/docs/documents/max", UriKind.Relative);
+        var document = new Uri($"{node.Tenant.Path("limits")}/collections/docs/documents/by-key?id=max", UriKind.Relative);
 
         using var deleted = await writer.DeleteAsync(document);
         using var replaced = await writer.PutAsJsonAsync(document, new { text = "newer" });

@@ -151,12 +151,12 @@ public sealed class QueryCacheIntegrationTests
         {
             await StorageFixture.CreateCollectionAsync(tenant, "db", "items", deadline.Token);
             using var written = await tenant.Data.PutAsJsonAsync(
-                tenant.Database("db", $"/collections/items/documents/{id}"), new { n = 1, label = tenant.OrganizationId }, deadline.Token);
+                tenant.Database("db", $"/collections/items/documents/by-key?id={id}"), new { n = 1, label = tenant.OrganizationId }, deadline.Token);
             written.EnsureSuccessStatusCode();
         }
 
         using var extra = await second.Data.PutAsJsonAsync(
-            second.Database("db", $"/collections/items/documents/{StorageFixture.Id("extra")}"), new { n = 2, label = "extra" }, deadline.Token);
+            second.Database("db", $"/collections/items/documents/by-key?id={StorageFixture.Id("extra")}"), new { n = 2, label = "extra" }, deadline.Token);
         extra.EnsureSuccessStatusCode();
         var request = new { filter = new { exists = "/n" }, count = true };
         foreach (var tenant in new[] { first, second })

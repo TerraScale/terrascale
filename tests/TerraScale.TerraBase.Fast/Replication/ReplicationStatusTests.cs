@@ -248,7 +248,7 @@ public sealed class ReplicationStatusTests
     {
         var faker = new Faker();
         using var response = await writer.PutAsJsonAsync(
-            new Uri($"{tenant.Path("backlog")}/collections/items/documents/{EntityIds.New()}", UriKind.Relative),
+            new Uri($"{tenant.Path("backlog")}/collections/items/documents/by-key?id={EntityIds.New()}", UriKind.Relative),
             new { value = faker.Lorem.Sentence() }, token);
         response.EnsureSuccessStatusCode();
     }

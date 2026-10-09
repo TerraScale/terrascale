@@ -54,7 +54,7 @@ public sealed class HintedHandoffTests
             var expected = new Dictionary<string, (HttpStatusCode Status, string Version, string? Body)>(StringComparer.Ordinal);
             Uri Document(string id)
             {
-                return new Uri($"{tenant.Path("db")}/collections/items/documents/{id}", UriKind.Relative);
+                return new Uri($"{tenant.Path("db")}/collections/items/documents/by-key?id={id}", UriKind.Relative);
             }
 
             await using (var sender = await StartAsync(Sender))

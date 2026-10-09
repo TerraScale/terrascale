@@ -167,7 +167,7 @@ public sealed class CredentialApiTests
         await Assert.That(await PutAsync(project, otherProject, document)).IsEqualTo(HttpStatusCode.NotFound);
         await Assert.That(await PutAsync(project, foreign, document)).IsEqualTo(HttpStatusCode.NotFound);
         await Assert.That(await GetAsync(project, foreign)).IsEqualTo(HttpStatusCode.NotFound);
-        await Assert.That(await StatusAsync(project.GetAsync(Uri($"/v1/projects/{own.Project}/databases/nowhere/collections/items/documents/{ManagementApi.DocumentId("a")}"))))
+        await Assert.That(await StatusAsync(project.GetAsync(Uri($"/v1/projects/{own.Project}/databases/nowhere/collections/items/documents/by-key?id={ManagementApi.DocumentId("a")}"))))
             .IsEqualTo(HttpStatusCode.NotFound);
         // A project key creates databases only in its project.
         await Assert.That(await StatusAsync(project.PutAsync(Uri($"/v1/projects/{own.Project}/databases/fresh"), null))).IsEqualTo(HttpStatusCode.Created);

@@ -4,7 +4,7 @@
 usage: prod-replication-check [--canary FILE] [--docs N] [--max-lag-seconds S] [--log-minutes M] [--host-exec CMD]
 
 Writes only to the canary database named in FILE: creates, replaces, patches and deletes N fixed documents
-(UUIDv5 ids per host; runs on one host take turns through FILE.lock) of collection "canary" through the API, with If-None-Match and If-Match, and checks that stale
+(caller-supplied keys per host; runs on one host take turns through FILE.lock) of collection "canary" through the API, with If-None-Match and If-Match, and checks that stale
 conditional writes answer 412. Then it reads every document directly from every member and compares status,
 JSON and version (ETag, tombstones included) with what the API answered, until they agree or S seconds pass.
 It also requires each member's admin /metrics (replication durable lag, catalog follower lag,
@@ -36,6 +36,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import urllib.parse
 import uuid
 
 COLLECTION = "canary"
@@ -168,7 +169,7 @@ class Api:
             raise RuntimeError(f"readiness must report ready in {self.region}; received HTTP {status} {body}")
 
     def document(self, id_, method="GET", body=None, headers=None, content_type="application/json"):
-        return self.call(method, f"/{COLLECTION}/documents/{id_}", body, headers, content_type)
+        return self.call(method, f"/{COLLECTION}/documents/by-key?{urllib.parse.urlencode({'id': id_})}", body, headers, content_type)
 
 
 def expect(what, got, *codes):
@@ -422,8 +423,8 @@ def main():
             fail(f"{target}: serving-region observation failed: {error}")
             return 1
     print(f"region {canary['region']}: API and {len(members)} configured members ready", flush=True)
-    # Stable ids, so every run cycles the same documents and the canary does not grow.
-    ids = [str(uuid.uuid5(uuid.NAMESPACE_URL, f"terrabase-prod-replication-check/{socket.gethostname()}/{index}")) for index in range(options.docs)]
+    # Stable caller-supplied keys, so every run cycles the same documents and the canary does not grow.
+    ids = [f"terrabase-prod-replication-check/{socket.gethostname()}/{index}" for index in range(options.docs)]
     run = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime()) + "-" + uuid.uuid4().hex[:8]
     print(f"run {run}: {options.docs} documents in {canary['api']} database {canary['database']}, {len(members)} members", flush=True)
 

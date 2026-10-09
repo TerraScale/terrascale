@@ -118,7 +118,7 @@ public sealed class CatalogForwardingTests
             }
 
             await Assert.That((await data.GetFromJsonAsync<JsonElement>(Relative(collection))).GetProperty("name").GetString()).IsEqualTo("people");
-            var document = collection + "/documents/" + EntityIds.New();
+            var document = collection + "/documents/by-key?id=" + EntityIds.New();
             var name = faker.Name.FullName();
             using (var written = await data.PutAsJsonAsync(Relative(document), new { name, count = 1 }))
             {
@@ -764,14 +764,14 @@ public sealed class CatalogForwardingTests
             var (writes, reads, later) = (faker.Random.Int(1, 4), faker.Random.Int(1, 4), faker.Random.Int(1, 4));
             for (var i = 0; i < writes; i++)
             {
-                (await data.PutAsJsonAsync(Relative($"{orders}/items/documents/{ManagementApi.DocumentId($"d{i}")}"), new { total = i })).EnsureSuccessStatusCode();
+                (await data.PutAsJsonAsync(Relative($"{orders}/items/documents/by-key?id={ManagementApi.DocumentId($"d{i}")}"), new { total = i })).EnsureSuccessStatusCode();
             }
 
             async Task ReadAsync(int count)
             {
                 for (var i = 0; i < count; i++)
                 {
-                    (await data.GetAsync(Relative($"{orders}/items/documents/{ManagementApi.DocumentId("d0")}"))).EnsureSuccessStatusCode();
+                    (await data.GetAsync(Relative($"{orders}/items/documents/by-key?id={ManagementApi.DocumentId("d0")}"))).EnsureSuccessStatusCode();
                 }
             }
 

@@ -113,7 +113,7 @@ public sealed class CrossRegionPartitionTests
                         if (step % 4 == 0)
                         {
                             var id = ReplicationDocuments.Id($"solo-{member.Name}-{step}");
-                            using var response = await client.PutAsJsonAsync(new Uri($"{path}/collections/items/documents/{id}", UriKind.Relative), new { value = tagged });
+                            using var response = await client.PutAsJsonAsync(new Uri($"{path}/collections/items/documents/by-key?id={id}", UriKind.Relative), new { value = tagged });
                             if (response.IsSuccessStatusCode)
                             {
                                 solo[id] = tagged;
@@ -121,12 +121,12 @@ public sealed class CrossRegionPartitionTests
                         }
                         else if (delete)
                         {
-                            using var response = await client.DeleteAsync(new Uri($"{path}/collections/items/documents/{sharedId}", UriKind.Relative));
+                            using var response = await client.DeleteAsync(new Uri($"{path}/collections/items/documents/by-key?id={sharedId}", UriKind.Relative));
                         }
                         else
                         {
                             attempted.GetOrAdd(sharedId, _ => []).Add(tagged);
-                            using var response = await client.PutAsJsonAsync(new Uri($"{path}/collections/items/documents/{sharedId}", UriKind.Relative), new { value = tagged });
+                            using var response = await client.PutAsJsonAsync(new Uri($"{path}/collections/items/documents/by-key?id={sharedId}", UriKind.Relative), new { value = tagged });
                         }
                     }
                     catch (Exception error) when (error is HttpRequestException or ObjectDisposedException or InvalidOperationException or TaskCanceledException)
@@ -174,14 +174,14 @@ public sealed class CrossRegionPartitionTests
             foreach (var (id, value) in solo)
             {
                 // An acknowledged write that nobody else wrote is everywhere.
-                var body = await reader.GetFromJsonAsync<JsonElement>(new Uri($"{path}/collections/items/documents/{id}", UriKind.Relative));
+                var body = await reader.GetFromJsonAsync<JsonElement>(new Uri($"{path}/collections/items/documents/by-key?id={id}", UriKind.Relative));
                 await Assert.That(body.GetProperty("document").GetProperty("value").GetString()).IsEqualTo(value);
             }
 
             foreach (var id in shared)
             {
                 // A shared document is deleted or holds a value one of the writers sent: nothing else, nothing corrupt.
-                using var response = await reader.GetAsync(new Uri($"{path}/collections/items/documents/{id}", UriKind.Relative));
+                using var response = await reader.GetAsync(new Uri($"{path}/collections/items/documents/by-key?id={id}", UriKind.Relative));
                 if (response.StatusCode == HttpStatusCode.OK)
                 {
                     var value = (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("document").GetProperty("value").GetString();
@@ -236,7 +236,7 @@ public sealed class CrossRegionPartitionTests
         var state = new StringBuilder();
         foreach (var id in ids.Order(StringComparer.Ordinal))
         {
-            using var response = await client.GetAsync(new Uri($"{path}/collections/items/documents/{id}", UriKind.Relative), token);
+            using var response = await client.GetAsync(new Uri($"{path}/collections/items/documents/by-key?id={id}", UriKind.Relative), token);
             _ = state.Append(id).Append(' ').Append((int)response.StatusCode).Append(' ').Append(response.Headers.ETag?.Tag).Append(' ')
                 .Append(response.StatusCode == HttpStatusCode.OK ? await response.Content.ReadAsStringAsync(token) : "").Append('\n');
         }

@@ -382,7 +382,7 @@ public sealed class SubscriptionApiTests
     private static string Filter() => "?where=" + Uri.EscapeDataString(Open);
 
     private static Uri Document(ManagedDatabaseRef database, string id) =>
-        ManagementApi.Uri($"{database.Data}/collections/{Collection}/documents/{id}");
+        ManagementApi.Uri($"{database.Data}/collections/{Collection}/documents/by-key?id={id}");
 
     private static CancellationTokenSource Deadline()
     {

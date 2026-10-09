@@ -380,7 +380,7 @@ public sealed class ClockAdmissionTests
     }
 
     private static Uri Document(ReplicationTenant tenant, string id) =>
-        new($"{tenant.Path("db")}/collections/items/documents/{id}", UriKind.Relative);
+        new($"{tenant.Path("db")}/collections/items/documents/by-key?id={id}", UriKind.Relative);
 
     private static async Task<SyncResponse> NextAsync(AsyncDuplexStreamingCall<SyncRequest, SyncResponse> call, CancellationToken token) =>
         await call.ResponseStream.MoveNext(token) ? call.ResponseStream.Current : throw new InvalidOperationException("the Sync stream ended");

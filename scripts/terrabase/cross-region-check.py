@@ -7,7 +7,7 @@ winner with the same version. Exits 0 when every check passed within the lag thr
 
 usage: cross-region-check.py [--canary FILE] [--lag-threshold SECONDS]
 
-Only the canary database is written, always the same documents (UUIDv5 ids) of collection "canary", so it does not
+Only the canary database is written, always the same documents (caller-supplied canary keys) of collection "canary", so it does not
 grow. Use a database of its own: TS-660's in-region check owns its canary database.
 
 FILE (mode 0600, default ~/.config/terrabase/cross-region-canary.json) is JSON:
@@ -26,16 +26,12 @@ import ssl
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
 
 COLLECTION = "canary"
-# Fixed ids: the canary keeps three documents, overwritten every run.
-NAMESPACE = uuid.UUID("6f1d4c1e-6b43-4c55-9d3e-2c0b6e0a7a43")
-
-
-def document_id(name):
-    return str(uuid.uuid5(NAMESPACE, name))
+# Fixed caller-supplied keys: the canary keeps three documents, overwritten every run.
 
 
 class Region:
@@ -62,13 +58,13 @@ class Region:
             return error.code, error.headers.get("ETag"), None
 
     def put(self, name, value):
-        status, etag, _ = self.request("PUT", f"/collections/{COLLECTION}/documents/{document_id(name)}", value)
+        status, etag, _ = self.request("PUT", f"/collections/{COLLECTION}/documents/by-key?{urllib.parse.urlencode({'id': name})}", value)
         if status not in (200, 201):
             raise RuntimeError(f"{self.name}: writing {name} answered {status}")
         return etag
 
     def get(self, name):
-        status, etag, body = self.request("GET", f"/collections/{COLLECTION}/documents/{document_id(name)}")
+        status, etag, body = self.request("GET", f"/collections/{COLLECTION}/documents/by-key?{urllib.parse.urlencode({'id': name})}")
         if status == 404:
             return None, None
         if status != 200:

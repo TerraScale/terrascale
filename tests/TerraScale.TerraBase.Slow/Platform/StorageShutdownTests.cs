@@ -43,7 +43,7 @@ public sealed class StorageShutdownTests
                         using var collection = await http.PostAsJsonAsync(
                             new Uri($"/v1/projects/{project}/databases/{database}/collections", UriKind.Relative), new { name = "items" }, stop.Token);
                         using var put = await http.PutAsJsonAsync(
-                            new Uri($"/v1/projects/{project}/databases/{database}/collections/items/documents/{EntityIds.New()}", UriKind.Relative),
+                            new Uri($"/v1/projects/{project}/databases/{database}/collections/items/documents/by-key?id={EntityIds.New()}", UriKind.Relative),
                             new { title = Faker.Commerce.ProductName() },
                             stop.Token);
                         if (created.IsSuccessStatusCode && collection.IsSuccessStatusCode && put.IsSuccessStatusCode

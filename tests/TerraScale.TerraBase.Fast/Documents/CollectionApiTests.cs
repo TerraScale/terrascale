@@ -39,7 +39,7 @@ public sealed class CollectionApiTests
 
         var id = DocumentApi.NewId();
         // The write must land, or the emptiness check after the drop below proves nothing.
-        (await api.SendAsync(HttpMethod.Put, $"{api.Collections}/beta/documents/{id}", new { a = 1 })).Status.ShouldBe(HttpStatusCode.Created);
+        (await api.SendAsync(HttpMethod.Put, $"{api.Collections}/beta/documents/by-key?id={id}", new { a = 1 })).Status.ShouldBe(HttpStatusCode.Created);
 
         var created = await api.SendAsync(HttpMethod.Post, api.Collections, new { name = "delta" });
         var taken = await api.SendAsync(HttpMethod.Post, api.Collections, new { name = "beta" });
@@ -48,10 +48,10 @@ public sealed class CollectionApiTests
         var second = await api.SendAsync(HttpMethod.Get, $"{api.Collections}?limit=3&cursor={first.Json.GetProperty("next_cursor").GetString()}");
         var dropped = await api.SendAsync(HttpMethod.Delete, $"{api.Collections}/beta");
         var readDropped = await api.SendAsync(HttpMethod.Get, $"{api.Collections}/beta");
-        var writeDropped = await api.SendAsync(HttpMethod.Put, $"{api.Collections}/beta/documents/{id}", new { a = 2 });
+        var writeDropped = await api.SendAsync(HttpMethod.Put, $"{api.Collections}/beta/documents/by-key?id={id}", new { a = 2 });
         var dropAgain = await api.SendAsync(HttpMethod.Delete, $"{api.Collections}/beta");
         (await api.SendAsync(HttpMethod.Post, api.Collections, new { name = "beta" })).Status.ShouldBe(HttpStatusCode.Created);
-        var recreatedIsEmpty = await api.SendAsync(HttpMethod.Get, $"{api.Collections}/beta/documents/{id}");
+        var recreatedIsEmpty = await api.SendAsync(HttpMethod.Get, $"{api.Collections}/beta/documents/by-key?id={id}");
 
         await Assert.That(created.Status).IsEqualTo(HttpStatusCode.Created);
         await Assert.That(created.Location!.OriginalString).IsEqualTo($"{api.Collections}/delta");

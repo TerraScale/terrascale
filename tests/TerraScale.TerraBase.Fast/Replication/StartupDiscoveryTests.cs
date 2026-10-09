@@ -103,5 +103,5 @@ public sealed class StartupDiscoveryTests
     }
 
     private static Uri Document(ReplicationTenant tenant, string name) =>
-        new($"{tenant.Path(name)}/collections/items/documents/{ReplicationDocuments.Id("persisted")}", UriKind.Relative);
+        new($"{tenant.Path(name)}/collections/items/documents/by-key?id={ReplicationDocuments.Id("persisted")}", UriKind.Relative);
 }

@@ -180,17 +180,17 @@ public sealed class ManagementApiTests
         var main = await created.Content.ReadFromJsonAsync<JsonElement>();
         var mainId = main.GetProperty("id").GetString()!;
         (await data.PostAsJsonAsync(Uri($"{dataApi}/main/collections"), new { name = "people" })).EnsureSuccessStatusCode();
-        (await data.PutAsJsonAsync(Uri($"{dataApi}/main/collections/people/documents/{p1}"), person)).EnsureSuccessStatusCode();
+        (await data.PutAsJsonAsync(Uri($"{dataApi}/main/collections/people/documents/by-key?id={p1}"), person)).EnsureSuccessStatusCode();
         using var branched = await api.Client.PostAsJsonAsync(Uri($"{databases}/{mainId}/branches"), new { name = "preview" });
         var branch = await branched.Content.ReadFromJsonAsync<JsonElement>();
-        (await data.PutAsJsonAsync(Uri($"{dataApi}/preview/collections/people/documents/{p2}"), person)).EnsureSuccessStatusCode();
-        using var mainWithoutBranchWrite = await data.GetAsync(Uri($"{dataApi}/main/collections/people/documents/{p2}"));
+        (await data.PutAsJsonAsync(Uri($"{dataApi}/preview/collections/people/documents/by-key?id={p2}"), person)).EnsureSuccessStatusCode();
+        using var mainWithoutBranchWrite = await data.GetAsync(Uri($"{dataApi}/main/collections/people/documents/by-key?id={p2}"));
         using var list = JsonDocument.Parse(await api.Client.GetStringAsync(Uri(databases)));
         using var projectNotEmpty = await api.Client.DeleteAsync(Uri($"/v1/management/organizations/{organization}/projects/{project}"));
         using var deleted = await api.Client.DeleteAsync(Uri($"{databases}/{mainId}"));
         using var gone = await api.Client.GetAsync(Uri($"{databases}/{mainId}"));
-        using var dataGone = await data.GetAsync(Uri($"{dataApi}/main/collections/people/documents/{p1}"));
-        using var branchKeepsCopy = await data.GetAsync(Uri($"{dataApi}/preview/collections/people/documents/{p1}"));
+        using var dataGone = await data.GetAsync(Uri($"{dataApi}/main/collections/people/documents/by-key?id={p1}"));
+        using var branchKeepsCopy = await data.GetAsync(Uri($"{dataApi}/preview/collections/people/documents/by-key?id={p1}"));
 
         await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created);
         await Assert.That(main.GetProperty("name").GetString()).IsEqualTo("main");

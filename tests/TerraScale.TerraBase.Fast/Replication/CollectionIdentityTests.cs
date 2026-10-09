@@ -49,7 +49,7 @@ public sealed class CollectionIdentityTests
         var identity = localCollection.GetProperty("id").GetString()!;
         await Assert.That(EntityIds.IsValid(identity)).IsTrue();
         await Assert.That(remoteCollection.GetProperty("id").GetString()).IsEqualTo(identity);
-        using var read = await target.GetAsync(new Uri(path + "/documents/" + document, UriKind.Relative), token);
+        using var read = await target.GetAsync(new Uri(path + "/documents/by-key?id=" + document, UriKind.Relative), token);
         await Assert.That(read.StatusCode).IsEqualTo(HttpStatusCode.OK);
         await Assert.That((await read.Content.ReadFromJsonAsync<JsonElement>(token)).GetProperty("document").GetProperty("value").GetInt32()).IsEqualTo(1);
         await using var metadata = await store.BeginTransactionAsync(write: false, token);

@@ -256,7 +256,7 @@ public sealed class StorageConstructionTests
         created.EnsureSuccessStatusCode();
         await StorageFixture.CreateCollectionAsync(tenant, "retried", "items", deadline.Token);
         var document = new Uri(
-            $"/v1/projects/{tenant.ProjectId}/databases/retried/collections/items/documents/{StorageFixture.Id("a")}", UriKind.Relative);
+            $"/v1/projects/{tenant.ProjectId}/databases/retried/collections/items/documents/by-key?id={StorageFixture.Id("a")}", UriKind.Relative);
         using var written = await tenant.Data.PutAsJsonAsync(document, new { n = 1 }, deadline.Token);
         written.EnsureSuccessStatusCode();
         using var read = await tenant.Data.GetAsync(document, deadline.Token);

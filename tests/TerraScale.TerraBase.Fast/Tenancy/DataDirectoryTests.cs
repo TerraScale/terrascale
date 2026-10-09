@@ -64,7 +64,7 @@ public sealed class DataDirectoryTests
             {
                 using var tenant = await api.CreateTenantAsync("documents:read", "documents:write");
                 key = await api.Server.IssueAsync(tenant.OrganizationId, "documents:read");
-                document = tenant.Database("main", $"/collections/people/documents/{EntityIds.New()}");
+                document = tenant.Database("main", $"/collections/people/documents/by-key?id={EntityIds.New()}");
                 using var database = await tenant.Data.PutAsync(tenant.Database("main"), null);
                 database.EnsureSuccessStatusCode();
                 using var collection = await tenant.Data.PostAsJsonAsync(tenant.Database("main", "/collections"), new { name = "people" });

@@ -489,7 +489,7 @@ public sealed class PeerTransportTests
                 created.EnsureSuccessStatusCode();
                 using var collection = await client.PostAsJsonAsync(new Uri($"{tenant.Path("outbound-rotation")}/collections", UriKind.Relative), new { name = "items" });
                 collection.EnsureSuccessStatusCode();
-                using var written = await client.PutAsJsonAsync(new Uri($"{tenant.Path("outbound-rotation")}/collections/items/documents/{id}", UriKind.Relative), new { value });
+                using var written = await client.PutAsJsonAsync(new Uri($"{tenant.Path("outbound-rotation")}/collections/items/documents/by-key?id={id}", UriKind.Relative), new { value });
                 written.EnsureSuccessStatusCode();
             }
             await using var peer = await FakePeer.StartAsync(original, async (requests, responses, context) =>

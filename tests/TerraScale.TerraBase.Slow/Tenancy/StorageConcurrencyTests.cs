@@ -33,7 +33,7 @@ public sealed class StorageConcurrencyTests
 
                 var id = (await created.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString();
                 using var collection = await tenant.Data.PostAsJsonAsync(tenant.Database(name, "/collections"), new { name = "c" });
-                using var written = await tenant.Data.PutAsJsonAsync(tenant.Database(name, $"/collections/c/documents/{EntityIds.New()}"), new { round });
+                using var written = await tenant.Data.PutAsJsonAsync(tenant.Database(name, $"/collections/c/documents/by-key?id={EntityIds.New()}"), new { round });
                 using var deleted = await owner.DeleteAsync(new Uri($"{databases}/{id}", UriKind.Relative));
                 if (collection.StatusCode != HttpStatusCode.Created || written.StatusCode != HttpStatusCode.Created
                     || deleted.StatusCode != HttpStatusCode.NoContent)

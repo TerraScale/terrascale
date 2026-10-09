@@ -146,7 +146,7 @@ public sealed class StorageTransactionTests
             }
         }
 
-        using var visible = await client.GetAsync(new Uri($"{tenant.Path("pool")}/collections/items/documents/{id}", UriKind.Relative), token);
+        using var visible = await client.GetAsync(new Uri($"{tenant.Path("pool")}/collections/items/documents/by-key?id={id}", UriKind.Relative), token);
         visible.EnsureSuccessStatusCode();
         await Assert.That(await visible.Content.ReadAsStringAsync(token)).Contains("\"n\":1");
     }
@@ -747,7 +747,7 @@ public sealed class StorageTransactionTests
         for (var i = 0; i < Rows; i++)
         {
             using var written = await client.PutAsJsonAsync(
-                new Uri($"/v1/projects/{tenant.ProjectId}/databases/pool/collections/items/documents/{StorageFixture.Id($"d{i:D3}")}", UriKind.Relative), new { n = i }, deadline.Token);
+                new Uri($"/v1/projects/{tenant.ProjectId}/databases/pool/collections/items/documents/by-key?id={StorageFixture.Id($"d{i:D3}")}", UriKind.Relative), new { n = i }, deadline.Token);
             written.EnsureSuccessStatusCode();
         }
 
@@ -796,7 +796,7 @@ public sealed class StorageTransactionTests
         }
 
         await Assert.That(engine.Io.Admitted).IsEqualTo(0);
-        using var recovered = await client.GetAsync(new Uri($"/v1/projects/{tenant.ProjectId}/databases/pool/collections/items/documents/{StorageFixture.Id("d000")}", UriKind.Relative), deadline.Token);
+        using var recovered = await client.GetAsync(new Uri($"/v1/projects/{tenant.ProjectId}/databases/pool/collections/items/documents/by-key?id={StorageFixture.Id("d000")}", UriKind.Relative), deadline.Token);
         recovered.EnsureSuccessStatusCode();
     }
 

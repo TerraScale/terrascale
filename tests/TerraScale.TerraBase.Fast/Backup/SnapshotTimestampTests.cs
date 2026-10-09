@@ -150,7 +150,7 @@ public sealed class SnapshotTimestampTests
         {
             using var response = await api.Client.PostAsJsonAsync(ManagementApi.Uri(database.Path + "/point-in-time/restore"), new { pointInTime = at, name }, cancellationToken);
             await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Created);
-            var documents = $"/v1/projects/{database.Project}/databases/{name}/collections/people/documents/";
+            var documents = $"/v1/projects/{database.Project}/databases/{name}/collections/people/documents/by-key?id=";
             using var source = await data.GetAsync(ManagementApi.Uri(documents + ManagementApi.DocumentId("source")), cancellationToken);
             source.EnsureSuccessStatusCode();
             await Assert.That((await source.Content.ReadFromJsonAsync<JsonElement>(cancellationToken)).GetProperty("document").GetProperty("text").GetString()).IsEqualTo(expectedSource);

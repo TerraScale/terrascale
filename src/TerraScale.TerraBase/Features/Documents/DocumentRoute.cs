@@ -1,6 +1,9 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.Text;
+using System.Web;
 using Microsoft.AspNetCore.Http.Features;
+using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.Net.Http.Headers;
 using TerraBase.Engine;
 using TerraBase.Errors;
@@ -31,6 +34,11 @@ internal static class DocumentRoute
 
     /// <summary>Base route of one collection's documents.</summary>
     public const string Collection = Collections + "/{collection}/documents";
+
+    /// <summary>Point operations carry the raw document key in one query parameter.</summary>
+    public const string Document = Collection + "/by-key";
+
+    private static readonly UTF8Encoding KeyEncoding = new(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
 
     /// <summary>Largest request body of any other route.</summary>
     public const int MaxRequestBytes = 4 * 1024 * 1024;
@@ -118,7 +126,7 @@ internal static class DocumentRoute
 
     /// <summary>The route's document: malformed collection and id first (400), then the tenant (404).</summary>
     public static async ValueTask<KeyResult> CheckKeyAsync(HttpContext context, ITenantDirectory tenants, CancellationToken cancellationToken) =>
-        (CheckCollectionName(context), CheckDocumentId(context.Request.RouteValues["id"] as string)) switch
+        (CheckCollectionName(context), CheckDocumentParameter(context)) switch
         {
             (Validation error, _) => error,
             (_, Validation error) => error,
@@ -130,6 +138,60 @@ internal static class DocumentRoute
             },
         };
 
+    /// <summary>Decodes one UTF-8 query key exactly once, without path normalization or replacement characters.</summary>
+    public static Valid<string> CheckDocumentParameter(HttpContext context)
+    {
+        string? encoded = null;
+        foreach (var parameter in new QueryStringEnumerable(context.Request.QueryString.Value))
+        {
+            if (!parameter.EncodedName.Span.SequenceEqual("id"))
+            {
+                continue;
+            }
+
+            if (encoded is not null)
+            {
+                return new Validation("id is required exactly once");
+            }
+
+            // A UTF-16 character needs at most three UTF-8 bytes, each query-encoded as three ASCII characters.
+            if (parameter.EncodedValue.Length > 256 * 9)
+            {
+                return new Validation("id must be 1 to 256 characters without control characters");
+            }
+
+            encoded = parameter.EncodedValue.ToString();
+        }
+
+        if (string.IsNullOrEmpty(encoded))
+        {
+            return new Validation("id is required exactly once and must be non-empty");
+        }
+
+        for (var i = 0; i < encoded.Length; i++)
+        {
+            if (encoded[i] > 127 || (encoded[i] == '%' &&
+                (i + 2 >= encoded.Length || !Uri.IsHexDigit(encoded[i + 1]) || !Uri.IsHexDigit(encoded[i + 2]))))
+            {
+                return new Validation("id must use valid UTF-8 query encoding");
+            }
+
+            if (encoded[i] == '%')
+            {
+                i += 2;
+            }
+        }
+
+        try
+        {
+            return CheckDocumentId(KeyEncoding.GetString(HttpUtility.UrlDecodeToBytes(encoded)!));
+        }
+        catch (DecoderFallbackException)
+        {
+            return new Validation("id must use valid UTF-8 query encoding");
+        }
+    }
+
     /// <summary>
     /// A caller-supplied document key, or the length or character rule it breaks.
     /// </summary>
@@ -140,7 +202,7 @@ internal static class DocumentRoute
 
     /// <summary>A document URI built from escaped route values, escaping caller-supplied keys.</summary>
     public static string Location(HttpContext context, DocumentKey key) =>
-        $"/v1/projects/{Uri.EscapeDataString(Project(context))}/databases/{Uri.EscapeDataString(Database(context).Value)}/collections/{Uri.EscapeDataString(key.Collection)}/documents/{Uri.EscapeDataString(key.Id)}";
+        $"/v1/projects/{Uri.EscapeDataString(Project(context))}/databases/{Uri.EscapeDataString(Database(context).Value)}/collections/{Uri.EscapeDataString(key.Collection)}/documents/by-key?id={Uri.EscapeDataString(key.Id)}";
 
     /// <summary>Accepts only the listed query parameters, each at most once and non-empty.</summary>
     public static Valid<IQueryCollection> CheckParameters(HttpContext context, params string[] allowed)

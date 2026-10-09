@@ -38,13 +38,13 @@ public sealed class DocumentApiTests
             (await api.SendAsync(HttpMethod.Put, $"/v1/projects/{EntityIds.New()}/databases/fresh"), HttpStatusCode.NotFound, "unknown_database", UnknownDatabase),
             // The tenant answers before the request's own input: a key learns nothing about other databases.
             (await api.SendRawAsync(
-                HttpMethod.Put, $"{api.Project}/databases/missing/collections/items/documents/{id}?x=1", "{", "text/plain",
+                HttpMethod.Put, $"{api.Project}/databases/missing/collections/items/documents/by-key?id={id}&x=1", "{", "text/plain",
                 request => request.Headers.TryAddWithoutValidation("If-Match", "tag")), HttpStatusCode.NotFound, "unknown_database", UnknownDatabase),
-            (await api.SendAsync(HttpMethod.Get, $"{api.Collections}/Not-Valid/documents/{id}"),
+            (await api.SendAsync(HttpMethod.Get, $"{api.Collections}/Not-Valid/documents/by-key?id={id}"),
                 HttpStatusCode.BadRequest, "invalid_request", "collection must be a lowercase name of at most 63 characters"),
             (await api.SendAsync(HttpMethod.Get, api.Document(new string('x', 257))),
                 HttpStatusCode.BadRequest, "invalid_request", "id must be 1 to 256 characters without control characters"),
-            (await api.SendAsync(HttpMethod.Get, api.Document(id) + "?x=1"), HttpStatusCode.BadRequest, "invalid_request", "this route takes no query parameters"),
+            (await api.SendAsync(HttpMethod.Get, api.Document(id) + "&x=1"), HttpStatusCode.BadRequest, "invalid_request", "query parameters are limited to: id, each once and non-empty"),
             (await api.SendAsync(HttpMethod.Get, api.Documents + "?x=1"),
                 HttpStatusCode.BadRequest, "invalid_request", "query parameters are limited to: limit, cursor, each once and non-empty"),
             (await api.SendAsync(HttpMethod.Get, api.Documents + "?limit=0"), HttpStatusCode.BadRequest, "invalid_request", "limit must be an integer between 1 and 1000"),
@@ -303,8 +303,8 @@ public sealed class DocumentApiTests
         await using var api = await DocumentApi.StartAsync();
         var id = DocumentApi.NewId();
 
-        var noDatabase = await api.SendAsync(HttpMethod.Get, $"{api.Project}/databases/nope/collections/items/documents/{id}");
-        var noCollection = await api.SendAsync(HttpMethod.Put, $"{api.Project}/databases/db/collections/nope/documents/{id}", new { a = 1 });
+        var noDatabase = await api.SendAsync(HttpMethod.Get, $"{api.Project}/databases/nope/collections/items/documents/by-key?id={id}");
+        var noCollection = await api.SendAsync(HttpMethod.Put, $"{api.Project}/databases/db/collections/nope/documents/by-key?id={id}", new { a = 1 });
         var noDocument = await api.GetAsync(id);
         var deleteAbsent = await api.SendAsync(HttpMethod.Delete, api.Document(id));
         var patchAbsent = await api.SendRawAsync(HttpMethod.Patch, api.Document(id), """{"a":1}""", "application/merge-patch+json");
@@ -646,7 +646,7 @@ public sealed class DocumentApiTests
         var encoded = await api.SendRawAsync(
             HttpMethod.Put, api.Document(id), """{"a":1}""", "application/json", request => request.Content!.Headers.ContentEncoding.Add("gzip"));
         var idempotent = await api.PutAsync(id, new { a = 1 }, request => request.Headers.Add("Idempotency-Key", "k1"));
-        var query = await api.SendAsync(HttpMethod.Put, api.Document(id) + "?x=1", new { a = 1 });
+        var query = await api.SendAsync(HttpMethod.Put, api.Document(id) + "&x=1", new { a = 1 });
         var absent = await api.GetAsync(id);
 
         await Assert.That((badName.Status, badName.Code)).IsEqualTo((HttpStatusCode.BadRequest, "invalid_request"));
@@ -790,7 +790,7 @@ public sealed class DocumentApiTests
         await Assert.That(expected.Where(operation => !operations.Contains(operation))).IsEmpty();
         var paths = openApi.RootElement.GetProperty("paths");
         var query = paths.GetProperty("/v1/projects/{project}/databases/{database}/collections/{collection}/query").GetProperty("post");
-        var patch = paths.GetProperty("/v1/projects/{project}/databases/{database}/collections/{collection}/documents/{id}").GetProperty("patch");
+        var patch = paths.GetProperty("/v1/projects/{project}/databases/{database}/collections/{collection}/documents/by-key").GetProperty("patch");
         await Assert.That(query.GetProperty("requestBody").GetProperty("content").TryGetProperty("application/json", out _)).IsTrue();
         await Assert.That(patch.GetProperty("requestBody").GetProperty("content").EnumerateObject().Select(media => media.Name))
             .IsEquivalentTo(["application/merge-patch+json", "application/vnd.terrabase.ops+json"]);

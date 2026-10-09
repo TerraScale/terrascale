@@ -19,6 +19,15 @@ characters. They need not be ULIDs. This applies equally to direct writes and tr
 Names, counters, pagination sequences, secret hashes and query fingerprints are lookup values rather than
 entity IDs; they are not generated entity identities.
 
+Point reads and writes use `GET/PUT/PATCH/DELETE …/documents/by-key?id=<UTF-8 query-encoded key>`.
+Dashboard document reads use `GET /v1/management/documents/{collection}/by-key?id=<encoded key>`.
+The `id` parameter is required exactly once and is the only accepted query parameter. Encode the raw key
+with a standard query encoder and decode it once on the server; do not predecode, normalize Unicode or
+put the key in a path segment. `a/b`, `a%2Fb`, `.`, `%2E`, `..`, `%2E%2E`, `%`, `?`, `#`, plus, space and
+Unicode are addressable as distinct keys. Query `+` denotes a space; a literal plus is `%2B`.
+Invalid percent escapes and invalid UTF-8 are rejected. The old `…/documents/{id}` point routes are removed.
+Listing and generated creation still use `GET/POST …/documents`; creation returns the `by-key` Location.
+
 Fresh storage uses data-directory layout 2, SQL schema 9 and catalog version 6. New files bootstrap the full
 schema atomically. Old nonempty files and unsupported schemas are refused. There are no migrations,
 backfills, dual reads/writes or legacy ID fallbacks. TS-755 extends fresh SQL bootstrap to schema 10 with

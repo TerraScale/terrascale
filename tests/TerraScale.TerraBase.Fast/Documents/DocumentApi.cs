@@ -154,7 +154,7 @@ internal sealed class DocumentApi : IAsyncDisposable
     /// <summary>A new document id.</summary>
     public static string NewId() => EntityIds.New().ToString();
 
-    public string Document(string id) => $"{Documents}/{id}";
+    public string Document(string id) => $"{Documents}/by-key?id={Uri.EscapeDataString(id)}";
 
     /// <summary>A client for the same server and tenant with other scopes.</summary>
     public async Task<HttpClient> ClientWithScopesAsync(params string[] scopes) =>

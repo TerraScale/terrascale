@@ -8,18 +8,19 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Documents;
 
-/// <summary><c>GET …/documents/{id}</c>: reads one JSON document.</summary>
+/// <summary><c>GET …/documents/by-key?id=</c>: reads one JSON document.</summary>
 public sealed class GetDocumentEndpoint(IDocumentService documents, ITenantDirectory tenants) : EndpointWithoutRequest<IResult>
 {
     /// <inheritdoc />
     public override void Configure()
     {
-        Get(DocumentRoute.Collection + "/{id}");
+        Get(DocumentRoute.Document);
         Name("getDocument");
         Summary("Reads a JSON document");
         Description("Sends the document state as a strong ETag, including the database identity (the same on every member), merge version, JSON and deletion state. Equal-version replicated body changes get distinct validators. If-None-Match with the current version returns 304. A deleted document returns 404 not_found with its tombstone's ETag, so it can be recreated with If-Match.");
         Tags("Documents");
         Produces<DocumentBody>();
+        Produces<ErrorBody>(StatusCodes.Status400BadRequest);
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
         RequireAuthorization(ApiKeyScopes.DocumentsRead);
         Metadata(ListenerMetadata.Client);
@@ -31,7 +32,7 @@ public sealed class GetDocumentEndpoint(IDocumentService documents, ITenantDirec
         {
             Validation error => ErrorResponse.From(error),
             NotFound error => ErrorResponse.From(error),
-            DocumentKey key => DocumentRoute.CheckParameters(HttpContext) switch
+            DocumentKey key => DocumentRoute.CheckParameters(HttpContext, "id") switch
             {
                 Validation error => ErrorResponse.From(error),
                 IQueryCollection => await ReadAsync(key, cancellationToken),

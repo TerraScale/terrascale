@@ -272,7 +272,7 @@ Base path: `/v1/management`.
 | `POST` | `/commits` | atomic commit of Management operations and dashboard documents ([management-commits.md](management-commits.md)) |
 | `GET` | `/commits/{id}` | recorded outcome of the acting user's commit; `404` if it never committed |
 | `GET` | `/versions?organization=…` | account and organization versions for fencing commits |
-| `GET` | `/documents/{collection}/{id}` | a document of the dashboard document space |
+| `GET` | `/documents/{collection}/by-key?id={id}` | a document of the dashboard document space; one UTF-8 query-encoded key ([contract](id-contract.md)) |
 | `POST` | `/documents/{collection}/query` | query v1 over the dashboard document space |
 
 Shapes:

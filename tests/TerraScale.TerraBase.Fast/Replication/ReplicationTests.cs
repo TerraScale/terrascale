@@ -87,7 +87,7 @@ public sealed class ReplicationTests
             }
 
             using var client = clientTls.CreateClient(source.ClientAddress!, await tenant.KeyAsync(source, "documents:write"));
-            using var added = await client.PutAsJsonAsync(new Uri($"{tenant.Path("legacy")}/collections/items/documents/{ReplicationDocuments.Id("following")}", UriKind.Relative), new { value = "following" }, deadline.Token);
+            using var added = await client.PutAsJsonAsync(new Uri($"{tenant.Path("legacy")}/collections/items/documents/by-key?id={ReplicationDocuments.Id("following")}", UriKind.Relative), new { value = "following" }, deadline.Token);
             added.EnsureSuccessStatusCode();
             await TerraBaseTestServer.ReplicatedAsync(source);
             var remote = (await receiver.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(tenant.Database("legacy"), deadline.Token))!;
@@ -246,7 +246,7 @@ public sealed class ReplicationTests
         await TerraBaseTestServer.ReplicatedAsync(a, b);
 
         // ts-auth's readiness probe behind a round-robin balancer: read on one member, delete conditionally on the other.
-        var document = new Uri($"{tenant.Path("shop")}/collections/people/documents/{ReplicationDocuments.Id("probe")}", UriKind.Relative);
+        var document = new Uri($"{tenant.Path("shop")}/collections/people/documents/by-key?id={ReplicationDocuments.Id("probe")}", UriKind.Relative);
         using var readA = await clientA.GetAsync(document);
         using var readB = await clientB.GetAsync(document);
         readA.EnsureSuccessStatusCode();
@@ -436,7 +436,7 @@ public sealed class ReplicationTests
         foreach (var database in new[] { "broken", "healthy" })
         {
             await CreateCollectionAsync(tenant, writer, database, database);
-            using var response = await writer.PutAsJsonAsync(new Uri($"{tenant.Path(database)}/collections/{database}/documents/{ReplicationDocuments.Id("d1")}", UriKind.Relative), new { note = Faker.Lorem.Sentence() });
+            using var response = await writer.PutAsJsonAsync(new Uri($"{tenant.Path(database)}/collections/{database}/documents/by-key?id={ReplicationDocuments.Id("d1")}", UriKind.Relative), new { note = Faker.Lorem.Sentence() });
             response.EnsureSuccessStatusCode();
         }
 
@@ -560,7 +560,7 @@ public sealed class ReplicationTests
             var person = new { name = Faker.Name.FullName() + " O'Neil" };
             var body = JsonSerializer.Serialize(person);
             using var content = new StringContent(body, System.Text.Encoding.UTF8, "application/json");
-            using var inserted = await writer.PutAsync(new Uri($"{tenant.Path("main")}/collections/people/documents/{id}", UriKind.Relative), content);
+            using var inserted = await writer.PutAsync(new Uri($"{tenant.Path("main")}/collections/people/documents/by-key?id={id}", UriKind.Relative), content);
             inserted.EnsureSuccessStatusCode();
             var insertedVersion = await VersionAsync(tenant, sender, "main", "people", id);
             var branch = await CreateAsync(dashboard, organization, $"{databases}/{main}/branches", "preview", "id");
@@ -829,7 +829,7 @@ public sealed class ReplicationTests
                 using var writer = clientTls.CreateClient(seed.ClientAddress!, await tenant.KeyAsync(seed, "documents:write"));
                 await CreateCollectionAsync(tenant, writer, "limits", "blobs");
                 using var response = await writer.PutAsJsonAsync(
-                    new Uri($"{tenant.Path("limits")}/collections/blobs/documents/{ReplicationDocuments.Id("b")}", UriKind.Relative),
+                    new Uri($"{tenant.Path("limits")}/collections/blobs/documents/by-key?id={ReplicationDocuments.Id("b")}", UriKind.Relative),
                     new { data = Convert.ToBase64String(Faker.Random.Bytes(1024)) });
                 response.EnsureSuccessStatusCode();
             }
@@ -879,7 +879,7 @@ public sealed class ReplicationTests
                 foreach (var id in Enumerable.Range(0, 4))
                 {
                     using var response = await writer.PutAsJsonAsync(
-                        new Uri($"{tenant.Path("credit")}/collections/blobs/documents/{ReplicationDocuments.Id($"b{id}")}", UriKind.Relative),
+                        new Uri($"{tenant.Path("credit")}/collections/blobs/documents/by-key?id={ReplicationDocuments.Id($"b{id}")}", UriKind.Relative),
                         new { data = Convert.ToBase64String(Faker.Random.Bytes(3 * 1024)) });
                     response.EnsureSuccessStatusCode();
                 }
@@ -1008,7 +1008,7 @@ public sealed class ReplicationTests
                 foreach (var id in Enumerable.Range(0, 4))
                 {
                     using var response = await writer.PutAsJsonAsync(
-                        new Uri($"{tenant.Path("credit")}/collections/blobs/documents/{ReplicationDocuments.Id($"b{id}")}", UriKind.Relative),
+                        new Uri($"{tenant.Path("credit")}/collections/blobs/documents/by-key?id={ReplicationDocuments.Id($"b{id}")}", UriKind.Relative),
                         new { data = Convert.ToBase64String(Faker.Random.Bytes(3 * 1024)) });
                     response.EnsureSuccessStatusCode();
                 }
@@ -1166,7 +1166,7 @@ public sealed class ReplicationTests
             HttpClient[] clients = [sourceReader, reader];
             foreach (var client in clients)
             {
-                var document = await ReadAsync(client, HttpMethod.Get, $"{collection}/documents/deep");
+                var document = await ReadAsync(client, HttpMethod.Get, $"{collection}/documents/by-key?id=deep");
                 await Assert.That(document.GetProperty("document").GetRawText()).IsEqualTo(deepJson);
                 var page = await ReadAsync(client, HttpMethod.Get, $"{collection}/documents");
                 await Assert.That(page.GetProperty("items").EnumerateArray().Single(item => item.GetProperty("id").GetString() == "deep")
@@ -1186,11 +1186,11 @@ public sealed class ReplicationTests
 
             // Invalid JSON is refused while a subsequent valid write replicates.
             using var writer = clientTls.CreateClient(sender.ClientAddress!, await tenant.KeyAsync(sender, "documents:write"));
-            using var rejected = await writer.PutAsync(new Uri($"{collection}/documents/{DocumentApi.NewId()}", UriKind.Relative),
+            using var rejected = await writer.PutAsync(new Uri($"{collection}/documents/by-key?id={DocumentApi.NewId()}", UriKind.Relative),
                 new StringContent("{\"nested\":" + new string('[', 80) + "0" + new string(']', 80) + "}", System.Text.Encoding.UTF8, "application/json"), deadline.Token);
             await Assert.That(rejected.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
             var next = EntityIds.New().ToString();
-            using var added = await writer.PutAsJsonAsync(new Uri($"{tenant.Path("snapshot")}/collections/people/documents/{next}", UriKind.Relative), new { after = "snapshot" }, deadline.Token);
+            using var added = await writer.PutAsJsonAsync(new Uri($"{tenant.Path("snapshot")}/collections/people/documents/by-key?id={next}", UriKind.Relative), new { after = "snapshot" }, deadline.Token);
             added.EnsureSuccessStatusCode();
             await TerraBaseTestServer.ReplicatedAsync(sender);
             await Assert.That(await VersionAsync(tenant, receiver, "snapshot", "people", next)).IsEqualTo(new DocumentVersion(2, Deleted: false));
@@ -1206,10 +1206,10 @@ public sealed class ReplicationTests
 
             // A shallow patch of the copied value follows normal client admission.
             using var patcher = clientTls.CreateClient(receiver.ClientAddress!, await tenant.KeyAsync(receiver, "documents:write"));
-            using var patched = await patcher.PatchAsync(new Uri($"{collection}/documents/deep", UriKind.Relative),
+            using var patched = await patcher.PatchAsync(new Uri($"{collection}/documents/by-key?id=deep", UriKind.Relative),
                 new StringContent("{\"nested\":null}", System.Text.Encoding.UTF8, "application/merge-patch+json"), deadline.Token);
             patched.EnsureSuccessStatusCode();
-            var shallow = await ReadAsync(reader, HttpMethod.Get, $"{collection}/documents/deep");
+            var shallow = await ReadAsync(reader, HttpMethod.Get, $"{collection}/documents/by-key?id=deep");
             await Assert.That(shallow.GetProperty("document").GetRawText()).IsEqualTo("{}");
 
             async Task<JsonElement> ReadAsync(HttpClient client, HttpMethod method, string path, HttpContent? content = null)
@@ -1286,13 +1286,13 @@ public sealed class ReplicationTests
     private static async Task PutAsync(ReplicationTenant tenant, HttpClient client, string id)
     {
         var person = new { name = Faker.Name.FullName(), email = Faker.Internet.Email(), bio = Faker.Lorem.Paragraph() };
-        using var response = await client.PutAsJsonAsync(new Uri($"{tenant.Path("shop")}/collections/people/documents/{ReplicationDocuments.Id(id)}", UriKind.Relative), person);
+        using var response = await client.PutAsJsonAsync(new Uri($"{tenant.Path("shop")}/collections/people/documents/by-key?id={ReplicationDocuments.Id(id)}", UriKind.Relative), person);
         response.EnsureSuccessStatusCode();
     }
 
     private static async Task DeleteAsync(ReplicationTenant tenant, HttpClient client, string id)
     {
-        using var response = await client.DeleteAsync(new Uri($"{tenant.Path("shop")}/collections/people/documents/{ReplicationDocuments.Id(id)}", UriKind.Relative));
+        using var response = await client.DeleteAsync(new Uri($"{tenant.Path("shop")}/collections/people/documents/by-key?id={ReplicationDocuments.Id(id)}", UriKind.Relative));
         response.EnsureSuccessStatusCode();
     }
 
@@ -1313,7 +1313,7 @@ public sealed class ReplicationTests
                 currency = "EUR",
             }),
         };
-        using var response = await client.PutAsJsonAsync(new Uri($"{tenant.Path("orders")}/collections/orders/documents/{ReplicationDocuments.Id(id)}", UriKind.Relative), order);
+        using var response = await client.PutAsJsonAsync(new Uri($"{tenant.Path("orders")}/collections/orders/documents/by-key?id={ReplicationDocuments.Id(id)}", UriKind.Relative), order);
         response.EnsureSuccessStatusCode();
     }
 

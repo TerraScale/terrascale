@@ -849,7 +849,7 @@ public sealed class DatabaseRecoveryTests
             await Assert.That(branch.StatusCode).IsEqualTo(HttpStatusCode.InternalServerError);
             using var data = api.DataClient(state.ApiKey);
             using var read = await data.GetAsync(Uri(
-                $"/v1/projects/{state.Project}/databases/source/collections/people/documents/{EntityIds.New()}"));
+                $"/v1/projects/{state.Project}/databases/source/collections/people/documents/by-key?id={EntityIds.New()}"));
             await Assert.That(read.StatusCode).IsEqualTo(HttpStatusCode.InternalServerError);
             await Assert.That((await PendingAsync(api)).Documents).IsEmpty();
             await state.AssertUnregisteredAsync(api, owner, destination.DatabaseId!);
@@ -1111,7 +1111,7 @@ public sealed class DatabaseRecoveryTests
         using var data = api.DataClient(state.ApiKey);
         var neighborOnly = EntityIds.New().ToString();
         using (var write = await data.PutAsJsonAsync(
-            Uri($"/v1/projects/{state.Project}/databases/neighbor/collections/people/documents/{neighborOnly}"),
+            Uri($"/v1/projects/{state.Project}/databases/neighbor/collections/people/documents/by-key?id={neighborOnly}"),
             new { name = state.Faker.Name.FullName() }))
         {
             write.EnsureSuccessStatusCode();
@@ -1148,7 +1148,7 @@ public sealed class DatabaseRecoveryTests
         }
 
         using var absent = await data.GetAsync(
-            Uri($"/v1/projects/{state.Project}/databases/{state.TargetName}/collections/people/documents/{neighborOnly}"));
+            Uri($"/v1/projects/{state.Project}/databases/{state.TargetName}/collections/people/documents/by-key?id={neighborOnly}"));
         await Assert.That(absent.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
         await state.AssertPreservedAsync(api, owner);
     }
@@ -1953,7 +1953,7 @@ public sealed class DatabaseRecoveryTests
 
         public void Dispose() => System.IO.Directory.Delete(Directory, recursive: true);
 
-        private Uri Document(string database) => Uri($"/v1/projects/{Project}/databases/{database}/collections/people/documents/{DocumentId}");
+        private Uri Document(string database) => Uri($"/v1/projects/{Project}/databases/{database}/collections/people/documents/by-key?id={DocumentId}");
     }
 
     private sealed class CapturedLogs : ILoggerProvider

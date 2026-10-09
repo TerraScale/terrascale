@@ -121,7 +121,7 @@ public sealed class BackupSnapshotReplicationTests
 
             Uri Document(string database, string id)
             {
-                return new($"{tenant.Path(database)}/collections/items/documents/{ReplicationDocuments.Id(id)}", UriKind.Relative);
+                return new($"{tenant.Path(database)}/collections/items/documents/by-key?id={ReplicationDocuments.Id(id)}", UriKind.Relative);
             }
         }
         finally
@@ -166,7 +166,7 @@ public sealed class BackupSnapshotReplicationTests
                 await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created);
             }
 
-            var before = new Uri($"{collection}/items/documents/{EntityIds.New()}", UriKind.Relative);
+            var before = new Uri($"{collection}/items/documents/by-key?id={EntityIds.New()}", UriKind.Relative);
             using (var written = await writer.PutAsJsonAsync(before, new { name = Faker.Name.FullName() }, token))
             {
                 await Assert.That(written.StatusCode).IsEqualTo(HttpStatusCode.Created);
@@ -189,7 +189,7 @@ public sealed class BackupSnapshotReplicationTests
 
             await TerraBaseTestServer.ReplicatedAsync(primary);
 
-            var after = new Uri($"{collection}/items/documents/{EntityIds.New()}", UriKind.Relative);
+            var after = new Uri($"{collection}/items/documents/by-key?id={EntityIds.New()}", UriKind.Relative);
             using (var written = await writer.PutAsJsonAsync(after, new { name = Faker.Name.FullName() }, token))
             {
                 await Assert.That(written.StatusCode).IsEqualTo(HttpStatusCode.Created);

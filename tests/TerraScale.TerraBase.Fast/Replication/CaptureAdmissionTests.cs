@@ -93,7 +93,7 @@ public sealed class CaptureAdmissionTests
         }
 
         var following = EntityIds.New().ToString();
-        using var added = await client.PutAsJsonAsync(new Uri($"{tenant.Path("db")}/collections/items/documents/{following}", UriKind.Relative), new { after = "rejection" }, token);
+        using var added = await client.PutAsJsonAsync(new Uri($"{tenant.Path("db")}/collections/items/documents/by-key?id={following}", UriKind.Relative), new { after = "rejection" }, token);
         added.EnsureSuccessStatusCode();
         await TerraBaseTestServer.ReplicatedAsync(sender);
         await using var local = await source.BeginTransactionAsync(write: false, token);
@@ -106,7 +106,7 @@ public sealed class CaptureAdmissionTests
                 .IsEquivalentTo(group.Select(change => (change.Collection, change.Id, change.Version)));
             foreach (var change in decoded)
             {
-                using var response = await reader.GetAsync(new Uri($"{tenant.Path("db")}/collections/items/documents/{Uri.EscapeDataString(change.Id)}", UriKind.Relative), token);
+                using var response = await reader.GetAsync(new Uri($"{tenant.Path("db")}/collections/items/documents/by-key?id={Uri.EscapeDataString(change.Id)}", UriKind.Relative), token);
                 response.EnsureSuccessStatusCode();
                 using var body = JsonDocument.Parse(await response.Content.ReadAsByteArrayAsync(token));
                 await Assert.That(body.RootElement.GetProperty("document").GetRawText()).IsEqualTo(Encoding.UTF8.GetString(change.Json!.Value.Span));
@@ -149,7 +149,7 @@ public sealed class CaptureAdmissionTests
         var captured = capturedFirst ? early : late;
         var existing = capturedFirst ? late : early;
         var retained = EntityIds.New().ToString();
-        using var seeded = await client.PutAsJsonAsync(new Uri($"{tenant.Path("db")}/collections/items/documents/{existing}", UriKind.Relative), new { value = "old" }, token);
+        using var seeded = await client.PutAsJsonAsync(new Uri($"{tenant.Path("db")}/collections/items/documents/by-key?id={existing}", UriKind.Relative), new { value = "old" }, token);
         seeded.EnsureSuccessStatusCode();
         // Two names (5 bytes), ULIDs (26 bytes) and these bodies fill exactly the 2 MiB capture budget.
         var json = Encoding.UTF8.GetBytes("{\"value\":\"" + new string('x', IStorageTransaction.MaxChangeGroupBytes / 2 - 31 - 12) + "\"}");

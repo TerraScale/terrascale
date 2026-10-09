@@ -186,7 +186,7 @@ public sealed class ManagementApi : IAsyncDisposable
 
     /// <summary>The data API route of document <see cref="DocumentId"/>(<paramref name="name"/>) of a collection of <paramref name="database"/>.</summary>
     public static string DocumentPath(ManagedDatabaseRef database, string collection, string name) =>
-        $"{database.Data}/collections/{collection}/documents/{DocumentId(name)}";
+        $"{database.Data}/collections/{collection}/documents/by-key?id={System.Uri.EscapeDataString(DocumentId(name))}";
 
     /// <summary>Creates <paramref name="collection"/> through the data API, unless it exists.</summary>
     public static async Task CreateCollectionAsync(HttpClient data, ManagedDatabaseRef database, string collection, CancellationToken cancellationToken = default)

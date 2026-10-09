@@ -247,13 +247,13 @@ public sealed class SenderRestoreTests
 
     private static async Task PutAsync(HttpClient writer, string path, string id, string value)
     {
-        using var response = await writer.PutAsJsonAsync(new Uri($"{path}/collections/items/documents/{id}", UriKind.Relative), new { value });
+        using var response = await writer.PutAsJsonAsync(new Uri($"{path}/collections/items/documents/by-key?id={id}", UriKind.Relative), new { value });
         response.EnsureSuccessStatusCode();
     }
 
     private static async Task AssertBodyAsync(HttpClient reader, string path, string id, string expected, CancellationToken token)
     {
-        using var response = await reader.GetAsync(new Uri($"{path}/collections/items/documents/{id}", UriKind.Relative), token);
+        using var response = await reader.GetAsync(new Uri($"{path}/collections/items/documents/by-key?id={id}", UriKind.Relative), token);
         response.EnsureSuccessStatusCode();
         using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync(token));
         await Assert.That(body.RootElement.GetProperty("document").GetProperty("value").GetString()).IsEqualTo(expected);

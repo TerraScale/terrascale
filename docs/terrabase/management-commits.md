@@ -240,7 +240,7 @@ token). Collections follow the
 data API naming rule and exist implicitly; there is nothing to create. The dashboard is trusted with this
 space: it decides which documents a user may touch, while Management operations are still authorized per user.
 
-- `GET /v1/management/documents/{collection}/{id}` reads one document (`ETag` is its version; `404 not_found`).
+- `GET /v1/management/documents/{collection}/by-key?id={id}` reads one document (`ETag` is its version; `404 not_found`). The query key is encoded once as UTF-8; see [the key contract](id-contract.md).
 - `POST /v1/management/documents/{collection}/query` runs a query v1 body (`filter`, `sort`, `project`,
   `limit`, `cursor`, `count`) over the space.
 

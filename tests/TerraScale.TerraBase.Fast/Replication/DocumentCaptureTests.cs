@@ -592,7 +592,7 @@ public sealed class DocumentCaptureTests
     }
 
     private static Uri Document(ReplicationTenant tenant, string id, string database = "captured") =>
-        new($"{tenant.Path(database)}/collections/items/documents/{id}", UriKind.Relative);
+        new($"{tenant.Path(database)}/collections/items/documents/by-key?id={id}", UriKind.Relative);
 
     private static async Task PutAsync(ReplicationTenant tenant, HttpClient writer, string id, string database = "captured")
     {

@@ -45,7 +45,7 @@ public sealed class TenantIsolationTests
         // A token hash names one invitation, as the accept route's token does.
         "POST /v1/management/invitations/lookup",
         // The dashboard document space belongs to the dashboard, not to a tenant; API keys never reach it.
-        "GET /v1/management/documents/{collection}/{id}",
+        "GET /v1/management/documents/{collection}/by-key",
         "POST /v1/management/documents/{collection}/query",
         "GET /management/query-shapes",
     ];
@@ -142,7 +142,7 @@ public sealed class TenantIsolationTests
         // Every client scope, shapes:read included, so each route answers past its scope check.
         using var a = await api.CreateTenantAsync("documents:read", "documents:write", "shapes:read");
         using var b = await api.CreateTenantAsync("documents:read", "documents:write", "shapes:read");
-        var document = $"/collections/people/documents/{DocumentId}";
+        var document = $"/collections/people/documents/by-key?id={DocumentId}";
 
         var aApp = await CreateDatabaseAsync(a, "app");
         var bApp = await CreateDatabaseAsync(b, "app");
@@ -181,7 +181,7 @@ public sealed class TenantIsolationTests
         using var project = api.DataClient(await api.Server.IssueNarrowedAsync(tenant.OrganizationId, tenant.ProjectId, null, "documents:read", "documents:write"));
         using var database = api.DataClient(await api.Server.IssueNarrowedAsync(tenant.OrganizationId, tenant.ProjectId, app, "documents:read", "documents:write"));
         var body = new { value = 1 };
-        var document = $"/collections/c/documents/{DocumentId}";
+        var document = $"/collections/c/documents/by-key?id={DocumentId}";
 
         List<(string Request, HttpStatusCode Expected, HttpStatusCode Actual)> checks =
         [
@@ -286,6 +286,11 @@ public sealed class TenantIsolationTests
                 .Replace("{recommendation}", tooling.Recommendation, StringComparison.Ordinal);
             // A new route parameter needs a value here.
             await Assert.That(path).DoesNotContain("{");
+            if (pattern.EndsWith("/documents/by-key", StringComparison.Ordinal))
+            {
+                path += "?id=" + System.Uri.EscapeDataString(DocumentId);
+            }
+
             using var request = new HttpRequestMessage(new HttpMethod(method), new Uri(path, UriKind.Relative));
             if (method is "POST" or "PUT" or "PATCH")
             {
@@ -321,7 +326,7 @@ public sealed class TenantIsolationTests
     private static async Task<string> SeedAsync(ManagementApi api, Tenant tenant, HttpClient dashboard)
     {
         var id = await CreateDatabaseAsync(tenant, "secret");
-        (await tenant.Data.PutAsJsonAsync(tenant.Database("secret", $"/collections/people/documents/{DocumentId}"), new { owner = tenant.OrganizationId }))
+        (await tenant.Data.PutAsJsonAsync(tenant.Database("secret", $"/collections/people/documents/by-key?id={DocumentId}"), new { owner = tenant.OrganizationId }))
             .EnsureSuccessStatusCode();
         await InviteAsync(tenant, dashboard);
         var nominee = await api.AddMemberAsync(dashboard, tenant.OrganizationId, "member");

@@ -83,7 +83,7 @@ public sealed class BackupApiTests
         await Assert.That(copies).IsEqualTo(3);
         foreach (var restore in restores)
         {
-            using var read = await data.GetAsync(Uri($"/v1/projects/{database.Project}/databases/{restore.GetProperty("name").GetString()}/collections/people/documents/{ManagementApi.DocumentId("saved")}"));
+            using var read = await data.GetAsync(Uri($"/v1/projects/{database.Project}/databases/{restore.GetProperty("name").GetString()}/collections/people/documents/by-key?id={ManagementApi.DocumentId("saved")}"));
             await Assert.That(read.StatusCode).IsEqualTo(HttpStatusCode.OK);
         }
 
@@ -301,8 +301,8 @@ public sealed class BackupApiTests
         using var restored = await api.Client.PostAsJsonAsync(Uri($"{database.Path}/backups/{backupId}/restore"), new { });
         var restore = await restored.Content.ReadFromJsonAsync<JsonElement>();
         var restoreData = $"/v1/projects/{database.Project}/databases/{restore.GetProperty("name").GetString()}/collections/people/documents";
-        using var before = await data.GetAsync(Uri($"{restoreData}/{ManagementApi.DocumentId("before")}"));
-        using var after = await data.GetAsync(Uri($"{restoreData}/{ManagementApi.DocumentId("after")}"));
+        using var before = await data.GetAsync(Uri($"{restoreData}/by-key?id={ManagementApi.DocumentId("before")}"));
+        using var after = await data.GetAsync(Uri($"{restoreData}/by-key?id={ManagementApi.DocumentId("after")}"));
         using var second = await api.Client.PostAsJsonAsync(Uri($"{database.Path}/backups/{backupId}/restore"), new { });
         var secondName = (await second.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("name").GetString();
         using var named = await api.Client.PostAsJsonAsync(Uri($"{database.Path}/backups/{backupId}/restore"), new { name = "recovered" });

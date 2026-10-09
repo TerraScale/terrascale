@@ -73,7 +73,7 @@ public sealed class PeerRegionTests
         using var reader = clientTls.CreateClient(receiver.ClientAddress!, await tenant.KeyAsync(receiver, "documents:read"));
         using var collection = await writer.PostAsJsonAsync(new Uri($"{tenant.Path("regions")}/collections", UriKind.Relative), new { name = "items" });
         collection.EnsureSuccessStatusCode();
-        var path = $"{tenant.Path("regions")}/collections/items/documents/{ReplicationDocuments.Id("regional")}";
+        var path = $"{tenant.Path("regions")}/collections/items/documents/by-key?id={ReplicationDocuments.Id("regional")}";
         using var put = await writer.PutAsJsonAsync(new Uri(path, UriKind.Relative), new { region = "iad-1" });
         put.EnsureSuccessStatusCode();
         await TerraBaseTestServer.ReplicatedAsync(sender);

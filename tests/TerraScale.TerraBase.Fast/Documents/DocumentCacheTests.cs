@@ -30,7 +30,7 @@ public sealed class DocumentCacheTests
         foreach (var id in new[] { "a", "b", "c", "d", "e" })
         {
             using var written = await tenant.Data.PutAsJsonAsync(
-                tenant.Database("clock", $"/collections/items/documents/{StorageFixture.Id(id)}"),
+                tenant.Database("clock", $"/collections/items/documents/by-key?id={StorageFixture.Id(id)}"),
                 new { name = "first", padding }, deadline.Token);
             written.EnsureSuccessStatusCode();
         }
@@ -217,7 +217,7 @@ public sealed class DocumentCacheTests
             await transaction.CommitAsync(deadline.Token);
         }
 
-        using var refused = await tenant.Data.GetAsync(tenant.Database("shop", $"/collections/items/documents/{StorageFixture.Id("a")}"), deadline.Token);
+        using var refused = await tenant.Data.GetAsync(tenant.Database("shop", $"/collections/items/documents/by-key?id={StorageFixture.Id("a")}"), deadline.Token);
         await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
     }
 
@@ -302,7 +302,7 @@ public sealed class DocumentCacheTests
             engine.Pool.Return(store, session);
         }
 
-        var path = $"/v1/projects/{tenant.ProjectId}/databases/closing/collections/items/documents" + (list ? "" : $"/{StorageFixture.Id("a")}");
+        var path = $"/v1/projects/{tenant.ProjectId}/databases/closing/collections/items/documents" + (list ? "" : $"/by-key?id={StorageFixture.Id("a")}");
         var pending = client.GetAsync(new Uri(path, UriKind.Relative), operationTimeout.Token);
         HttpResponseMessage? response = null;
         Exception? primaryFailure = null;
@@ -363,8 +363,8 @@ public sealed class DocumentCacheTests
         var afterWrite = await GetAsync(tenant, "shop", "people", "p1");
         await StorageFixture.ExecuteAsync(file, """UPDATE documents SET body = '{"name":"disk"}';""");
         var cachedAgain = await GetAsync(tenant, "shop", "people", "p1");
-        using var deleted = await client.DeleteAsync(new Uri($"/v1/projects/{tenant.ProjectId}/databases/shop/collections/people/documents/{StorageFixture.Id("p1")}", UriKind.Relative));
-        using var afterDelete = await client.GetAsync(new Uri($"/v1/projects/{tenant.ProjectId}/databases/shop/collections/people/documents/{StorageFixture.Id("p1")}", UriKind.Relative));
+        using var deleted = await client.DeleteAsync(new Uri($"/v1/projects/{tenant.ProjectId}/databases/shop/collections/people/documents/by-key?id={StorageFixture.Id("p1")}", UriKind.Relative));
+        using var afterDelete = await client.GetAsync(new Uri($"/v1/projects/{tenant.ProjectId}/databases/shop/collections/people/documents/by-key?id={StorageFixture.Id("p1")}", UriKind.Relative));
 
         await Assert.That(miss).IsEqualTo((initial, "first"));
         await Assert.That(hit).IsEqualTo((initial, "first"));
@@ -395,7 +395,7 @@ public sealed class DocumentCacheTests
         // A write to another document of the collection invalidates every page of it.
         await PutAsync(tenant, "shop", "items", "c", "first");
         var afterWrite = await ListAsync(tenant, "shop", "items");
-        using var deleted = await client.DeleteAsync(new Uri($"/v1/projects/{tenant.ProjectId}/databases/shop/collections/items/documents/{StorageFixture.Id("b")}", UriKind.Relative));
+        using var deleted = await client.DeleteAsync(new Uri($"/v1/projects/{tenant.ProjectId}/databases/shop/collections/items/documents/by-key?id={StorageFixture.Id("b")}", UriKind.Relative));
         deleted.EnsureSuccessStatusCode();
         var afterDelete = await ListAsync(tenant, "shop", "items");
 
@@ -434,7 +434,7 @@ public sealed class DocumentCacheTests
         // A deleted and recreated database starts empty.
         await engine.DeleteDatabaseAsync(shop, operationTimeout.Token);
         await Assert.That(await engine.CreateDatabaseAsync(shop, operationTimeout.Token)).IsTrue();
-        using var recreated = await client.GetAsync(new Uri($"/v1/projects/{tenant.ProjectId}/databases/shop/collections/people/documents/{StorageFixture.Id("p1")}", UriKind.Relative), operationTimeout.Token);
+        using var recreated = await client.GetAsync(new Uri($"/v1/projects/{tenant.ProjectId}/databases/shop/collections/people/documents/by-key?id={StorageFixture.Id("p1")}", UriKind.Relative), operationTimeout.Token);
         await StorageFixture.CreateCollectionAsync(tenant, "shop", "people", operationTimeout.Token);
         var recreatedPage = await ListAsync(tenant, "shop", "people", operationTimeout.Token);
 
@@ -554,7 +554,7 @@ public sealed class DocumentCacheTests
         for (var i = 0; i < Documents; i++)
         {
             using var written = await client.PutAsJsonAsync(
-                new Uri($"/v1/projects/{tenant.ProjectId}/databases/big/collections/blobs/documents/{StorageFixture.Id($"b{i}")}", UriKind.Relative),
+                new Uri($"/v1/projects/{tenant.ProjectId}/databases/big/collections/blobs/documents/by-key?id={StorageFixture.Id($"b{i}")}", UriKind.Relative),
                 new { name = "first", padding });
             written.EnsureSuccessStatusCode();
         }
@@ -603,7 +603,7 @@ public sealed class DocumentCacheTests
         // Near the 1 MiB tier limit: a rejected oversized entry must preserve this useful entry.
         // Each test warms either a point read or a list page.
         using (var response = await client.PutAsJsonAsync(
-            new Uri($"/v1/projects/{tenant.ProjectId}/databases/oversized/collections/small/documents/{StorageFixture.Id("a")}", UriKind.Relative),
+            new Uri($"/v1/projects/{tenant.ProjectId}/databases/oversized/collections/small/documents/by-key?id={StorageFixture.Id("a")}", UriKind.Relative),
             new { name = "first", padding = new string('x', 1000 * 1024) }))
         {
             response.EnsureSuccessStatusCode();
@@ -615,7 +615,7 @@ public sealed class DocumentCacheTests
         foreach (var id in ids)
         {
             using var response = await client.PutAsJsonAsync(
-                new Uri($"/v1/projects/{tenant.ProjectId}/databases/oversized/collections/large/documents/{StorageFixture.Id(id)}", UriKind.Relative),
+                new Uri($"/v1/projects/{tenant.ProjectId}/databases/oversized/collections/large/documents/by-key?id={StorageFixture.Id(id)}", UriKind.Relative),
                 new { name = "first", padding });
             response.EnsureSuccessStatusCode();
         }
@@ -745,7 +745,7 @@ public sealed class DocumentCacheTests
     {
         var client = tenant.Data;
         using var response = await client.PutAsJsonAsync(
-            new Uri($"/v1/projects/{tenant.ProjectId}/databases/{database}/collections/{collection}/documents/{StorageFixture.Id(id)}", UriKind.Relative), new { name }, cancellationToken);
+            new Uri($"/v1/projects/{tenant.ProjectId}/databases/{database}/collections/{collection}/documents/by-key?id={StorageFixture.Id(id)}", UriKind.Relative), new { name }, cancellationToken);
         return (await response.EnsureSuccessStatusCode().Content.ReadFromJsonAsync<JsonElement>(cancellationToken)).GetProperty("version").GetString()!;
     }
 
@@ -754,7 +754,7 @@ public sealed class DocumentCacheTests
     {
         var client = tenant.Data;
         using var document = JsonDocument.Parse(await client.GetStringAsync(
-            new Uri($"/v1/projects/{tenant.ProjectId}/databases/{database}/collections/{collection}/documents/{StorageFixture.Id(id)}", UriKind.Relative), cancellationToken));
+            new Uri($"/v1/projects/{tenant.ProjectId}/databases/{database}/collections/{collection}/documents/by-key?id={StorageFixture.Id(id)}", UriKind.Relative), cancellationToken));
         return (document.RootElement.GetProperty("version").GetString()!, document.RootElement.GetProperty("document").GetProperty("name").GetString()!);
     }
 

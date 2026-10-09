@@ -96,7 +96,7 @@ public sealed class QueryPlanTests
         var plans = (await created.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>()).GetProperty("id").GetString()!;
         (await tenant.Data.PostAsJsonAsync(tenant.Database("plans", "/collections"), new { name = "items" })).EnsureSuccessStatusCode();
         (await tenant.Data.PutAsJsonAsync(
-            tenant.Database("plans", $"/collections/items/documents/{EntityIds.New()}"),
+            tenant.Database("plans", $"/collections/items/documents/by-key?id={EntityIds.New()}"),
             new { title = Faker.Commerce.ProductName() })).EnsureSuccessStatusCode();
         // Every statement the engine runs must have a recorded plan.
         await Assert.That(SqliteStatements.All.Keys).IsEquivalentTo(Expected.Keys);

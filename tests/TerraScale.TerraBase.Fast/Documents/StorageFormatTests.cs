@@ -22,7 +22,7 @@ public sealed class StorageFormatTests
             await command.ExecuteNonQueryAsync();
         });
 
-        var read = await api.SendAsync(HttpMethod.Get, $"{api.DatabasePath("old")}/collections/items/documents/key");
+        var read = await api.SendAsync(HttpMethod.Get, $"{api.DatabasePath("old")}/collections/items/documents/by-key?id=key");
         await Assert.That(read.Status).IsEqualTo(HttpStatusCode.InternalServerError);
         await using var check = new SqliteConnection(DocumentApi.ConnectionString(path, readOnly: true));
         await check.OpenAsync();

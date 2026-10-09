@@ -141,7 +141,7 @@ public sealed class PointInTimePlanTests
         {
             using var restored = await api.Client.PostAsJsonAsync(Uri(database.Path + "/point-in-time/restore"), new { pointInTime = at, name });
             await Assert.That(restored.StatusCode).IsEqualTo(HttpStatusCode.Created);
-            using var read = await data.GetAsync(Uri($"/v1/projects/{database.Project}/databases/{name}/collections/people/documents/{ManagementApi.DocumentId("source")}"));
+            using var read = await data.GetAsync(Uri($"/v1/projects/{database.Project}/databases/{name}/collections/people/documents/by-key?id={ManagementApi.DocumentId("source")}"));
             await Assert.That((await read.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("document").GetProperty("text").GetString()).IsEqualTo(expected);
         }
     }

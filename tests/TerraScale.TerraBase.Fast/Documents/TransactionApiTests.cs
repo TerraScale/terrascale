@@ -48,7 +48,7 @@ public sealed class TransactionApiTests
             new { op = "assert_count", collection = "items", filter = new { exists = "/a" }, gte = 1, lte = 1 });
         var after = await api.PutAsync(DocumentApi.NewId(), new { a = 2 });
         var results = result.Json.GetProperty("results").EnumerateArray().Skip(1).ToList();
-        var readElsewhere = await api.SendAsync(HttpMethod.Get, $"{api.Project}/databases/db/collections/other/documents/{elsewhere}");
+        var readElsewhere = await api.SendAsync(HttpMethod.Get, $"{api.Project}/databases/db/collections/other/documents/by-key?id={elsewhere}");
         var readCreated = await api.GetAsync(created);
         var readPatched = await api.GetAsync(patched);
         var readMerged = await api.GetAsync(merged);
@@ -117,7 +117,7 @@ public sealed class TransactionApiTests
             new { op = "patch", collection = "items", id = existing, ops = new object?[] { null } });
         var readExisting = await api.GetAsync(existing);
         var readFresh = await api.GetAsync(fresh);
-        var otherFresh = await api.SendAsync(HttpMethod.Get, $"{api.Project}/databases/db/collections/other/documents/{fresh}");
+        var otherFresh = await api.SendAsync(HttpMethod.Get, $"{api.Project}/databases/db/collections/other/documents/by-key?id={fresh}");
 
         await Assert.That((stale.Status, stale.Code, stale.Op)).IsEqualTo((HttpStatusCode.PreconditionFailed, "precondition_failed", 2));
         await Assert.That((exists.Status, exists.Code, exists.Op)).IsEqualTo((HttpStatusCode.PreconditionFailed, "precondition_failed", 1));

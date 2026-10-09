@@ -640,7 +640,7 @@ public sealed class CatalogReplicationTests
     {
         public Uri Database(string name, string path = "") => new($"/v1/projects/{Project}/databases/{name}{path}", UriKind.Relative);
 
-        public Uri Document(string database, string label) => Database(database, $"/collections/items/documents/{ReplicationDocuments.Id(label)}");
+        public Uri Document(string database, string label) => Database(database, $"/collections/items/documents/by-key?id={ReplicationDocuments.Id(label)}");
 
         // An organization with one project and database on a catalog primary, and an API key of the organization.
         public static async Task<CatalogTenant> CreateAsync(TerraBaseTestServer primary, string database)
