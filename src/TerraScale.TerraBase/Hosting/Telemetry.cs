@@ -44,6 +44,26 @@ public static class Telemetry
                     return MetricStreamConfiguration.Drop;
                 }
 
+                // The runtime defines these complete domains; exception types and unknown instruments keep defaults.
+                if (instrument.Meter.Name == "System.Runtime")
+                {
+                    return instrument.Name switch
+                    {
+                        "dotnet.process.memory.working_set" or "dotnet.gc.heap.total_allocated"
+                            or "dotnet.gc.last_collection.memory.committed_size" or "dotnet.gc.pause.time"
+                            or "dotnet.jit.compiled_il.size" or "dotnet.jit.compiled_methods" or "dotnet.jit.compilation.time"
+                            or "dotnet.monitor.lock_contentions" or "dotnet.thread_pool.thread.count"
+                            or "dotnet.thread_pool.work_item.count" or "dotnet.thread_pool.queue.length"
+                            or "dotnet.timer.count" or "dotnet.assembly.count" or "dotnet.process.cpu.count"
+                            => new MetricStreamConfiguration { CardinalityLimit = 1 },
+                        "dotnet.process.cpu.time" => new MetricStreamConfiguration { CardinalityLimit = 2 },
+                        "dotnet.gc.collections" or "dotnet.gc.last_collection.heap.size"
+                            or "dotnet.gc.last_collection.heap.fragmentation.size"
+                            => new MetricStreamConfiguration { CardinalityLimit = 5 },
+                        _ => null,
+                    };
+                }
+
                 if (instrument.Meter.Name != MeterName)
                 {
                     return null;

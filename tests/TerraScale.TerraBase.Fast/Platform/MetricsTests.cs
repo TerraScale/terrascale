@@ -1,4 +1,5 @@
 using System.Diagnostics.Metrics;
+using System.Globalization;
 using System.Net;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Features.Memory;
@@ -35,6 +36,53 @@ public sealed class MetricsTests
             .IsEqualTo("11");
         await Assert.That(Sample(firstMetrics, "terrabase_memory_reserved_bytes")).IsEqualTo("7");
         await Assert.That(Sample(secondMetrics, "terrabase_memory_reserved_bytes")).IsEqualTo("11");
+    }
+
+    [Test]
+    public async Task Runtime_metrics_preserve_their_complete_cpu_and_generation_domains()
+    {
+        await using var server = await TerraBaseTestServer.StartAsync();
+        using var health = await server.Client.GetAsync(new Uri("/healthz", UriKind.Relative));
+        health.EnsureSuccessStatusCode();
+        var metrics = await server.Client.GetStringAsync(new Uri("/metrics", UriKind.Relative),
+            TUnit.Core.TestContext.Current!.Execution.CancellationToken);
+        var lines = metrics.Split('\n');
+        string[] unlabeled =
+        [
+            "dotnet_process_memory_working_set_bytes", "dotnet_gc_heap_total_allocated_bytes_total",
+            "dotnet_gc_last_collection_memory_committed_size_bytes", "dotnet_gc_pause_time_seconds_total",
+            "dotnet_jit_compiled_il_size_bytes_total", "dotnet_jit_compiled_methods_total", "dotnet_jit_compilation_time_seconds_total",
+            "dotnet_monitor_lock_contentions_total", "dotnet_thread_pool_thread_count", "dotnet_thread_pool_work_item_count_total",
+            "dotnet_thread_pool_queue_length", "dotnet_timer_count", "dotnet_assembly_count", "dotnet_process_cpu_count",
+        ];
+        foreach (var name in unlabeled)
+        {
+            var series = lines.Where(line => line.StartsWith(name + "{", StringComparison.Ordinal)).ToArray();
+            await Assert.That(series.Length).IsEqualTo(1);
+            await Assert.That(series[0]).DoesNotContain("otel_metric_overflow");
+        }
+
+        await Assert.That(Sample(metrics, "dotnet_process_cpu_count"))
+            .IsEqualTo(Environment.ProcessorCount.ToString(CultureInfo.InvariantCulture));
+        await Assert.That(lines.Count(line => line.StartsWith("dotnet_process_cpu_time_seconds_total{", StringComparison.Ordinal)))
+            .IsEqualTo(2);
+        foreach (var mode in new[] { "user", "system" })
+        {
+            await Assert.That(Sample(metrics, "dotnet_process_cpu_time_seconds_total", $"cpu_mode=\"{mode}\""))
+                .IsNotNullOrEmpty();
+        }
+
+        var generations = new[] { "gen0", "gen1", "gen2", "loh", "poh" };
+        foreach (var name in new[] { "dotnet_gc_collections_total", "dotnet_gc_last_collection_heap_size_bytes", "dotnet_gc_last_collection_heap_fragmentation_size_bytes" })
+        {
+            var count = name == "dotnet_gc_collections_total" ? GC.MaxGeneration + 1 : Math.Min(GC.GetGCMemoryInfo().GenerationInfo.Length, generations.Length);
+            await Assert.That(lines.Count(line => line.StartsWith(name + "{", StringComparison.Ordinal))).IsEqualTo(count);
+            foreach (var generation in generations.Take(count))
+            {
+                await Assert.That(Sample(metrics, name, $"gc_heap_generation=\"{generation}\""))
+                    .IsNotNullOrEmpty();
+            }
+        }
     }
 
     [Test]
