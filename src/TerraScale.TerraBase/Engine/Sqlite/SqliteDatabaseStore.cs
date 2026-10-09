@@ -32,7 +32,7 @@ internal sealed partial class SqliteDatabaseStore(
         : this(name, path, pool, io, pragmas, null, time, null, committed) { }
 
     /// <summary>On-disk schema version, stored in <c>PRAGMA user_version</c>.</summary>
-    private const int SchemaVersion = 9;
+    private const int SchemaVersion = 10;
 
     // Greenfield bootstrap only: an older on-disk shape must be discarded, never upgraded.
     private const string SchemaSql = $$"""
@@ -846,11 +846,6 @@ internal sealed partial class SqliteDatabaseStore(
         if (version == SchemaVersion)
         {
             return;
-        }
-
-        if (version != 0 || Scalar(connection, null, "SELECT 1 FROM sqlite_schema WHERE type = 'table' LIMIT 1;") is not null)
-        {
-            throw new InvalidOperationException("data-directory contains an old database format; discard the affected data before starting");
         }
 
         Scalar(connection, null, "PRAGMA journal_mode = WAL;");
