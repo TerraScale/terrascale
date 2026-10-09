@@ -94,3 +94,85 @@ jobs:
           TERRABASE_TOKEN: ${{ secrets.ORG_READ_TOKEN }}
           TERRABASE_REQUIRE: "1"
         run: make test-browser E2E_SHARD="${{ matrix.shard }}/$(scripts/e2e-shard-count.sh)"
+
+  deploy:
+    needs: [modules, lint, unit, browser]
+    if: forgejo.event_name == 'push' && forgejo.ref == 'refs/heads/main'
+    runs-on: terrascale-builder
+    timeout-minutes: 10
+    steps:
+      - name: Check out the event revision
+        uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          github-server-url: "https://git.terrascale.tech"
+          ref: ${{ forgejo.sha }}
+          persist-credentials: false
+          # The rollback below checks the previous release's commit history.
+          fetch-depth: 0
+      # Every gate verifies this exact main revision before production changes.
+      # Deployment failure leaves the qualification timestamp intact.
+      - name: Record the qualified main build for the deployment-lag guard
+        shell: bash
+        env:
+          FORGEJO_TOKEN: ${{ forgejo.token }}
+        run: |
+          set -euo pipefail
+          curl -fsS --connect-timeout 10 --max-time 30 -o /dev/null \
+            -H "Authorization: token ${FORGEJO_TOKEN}" -H 'Content-Type: application/json' \
+            --data '{"state":"success","context":"deployment/qualified","description":"Verified main build ready for automatic deployment"}' \
+            "https://git.terrascale.tech/api/v1/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}"
+      - name: Build on Fly and deploy production (one warm machine)
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+          FLY_APP: ts-dashboard
+        run: |
+          set -euo pipefail
+          fly config validate --strict -c fly.toml
+          # The image production runs now, which a failed smoke rolls back to.
+          fly image show -a "$FLY_APP" --json > "${RUNNER_TEMP:-/tmp}/previous-image.json"
+          fly deploy -c fly.toml --remote-only --strategy immediate --ha=false \
+            --build-arg VERSION="$GITHUB_SHA"
+          # One Machine serves production; its state lives in TerraBase.
+          fly scale count 1 -a "$FLY_APP" -c fly.toml --yes
+          machine_id=$(fly machine list -a "$FLY_APP" -q | xargs)
+          fly machine wait "$machine_id" -a "$FLY_APP" --state started --wait-timeout 2m
+          machines_json=$(mktemp)
+          volumes_json=$(mktemp)
+          trap 'rm -f "$machines_json" "$volumes_json"' EXIT
+          fly machine list -a "$FLY_APP" --json > "$machines_json"
+          fly volumes list -a "$FLY_APP" --json > "$volumes_json"
+          node scripts/check-fly-deployment.mjs production "$machines_json" "$volumes_json"
+          curl -fsS --retry 6 --retry-delay 2 --retry-all-errors \
+            --connect-timeout 10 --max-time 20 --retry-max-time 90 \
+            "https://${FLY_APP}.fly.dev/health/ready" | jq -e --arg revision "$GITHUB_SHA" ' .status == "ok" and .version == $revision'
+      # Sign-in happens on the dashboard's own pages (TS-582); see "Sign-in
+      # design (do not revert)" in docs/development.md. A release whose
+      # /login is not the native form, or whose native sign-in is throttled
+      # or broken, fails here and is rolled back, but only to an image that
+      # has working native login: never to one with ts-auth's hosted page.
+      - name: Smoke-test native sign-in, rolling back on failure
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+          FLY_APP: ts-dashboard
+          # ts-dashboard#186: native login (#180) with the throttle fix.
+          NATIVE_LOGIN_SINCE: 9c7d62c3d7a4e0f0fc7265890fdaa28ed72863c8
+        run: |
+          set -euo pipefail
+          if scripts/smoke-native-login.sh https://dash.terrascale.tech; then
+            exit 0
+          fi
+          # shellcheck disable=SC2016 # the single quotes keep JavaScript's ${...}
+          read -r image sha < <(node -e '
+            const [machine] = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+            const labels = JSON.parse(machine?.Labels || "{}");
+            console.log(machine ? `${machine.Registry}/${machine.Repository}@${machine.Digest}` : "-", labels.GH_SHA || "-");
+          ' "${RUNNER_TEMP:-/tmp}/previous-image.json")
+          if [ "$sha" = "-" ] || [ "$sha" = "$GITHUB_SHA" ] || ! git merge-base --is-ancestor "$NATIVE_LOGIN_SINCE" "$sha"; then
+            echo "::error::Production sign-in is broken by $GITHUB_SHA and NOT rolled back: the previous image ($sha) lacks working native login. Fix forward." >&2
+            exit 1
+          fi
+          echo "::error::Production sign-in is broken by $GITHUB_SHA; rolling back to $sha ($image)." >&2
+          fly deploy -c fly.toml --image "$image" --strategy immediate --ha=false
+          fly scale count 1 -a "$FLY_APP" -c fly.toml --yes
+          scripts/smoke-native-login.sh https://dash.terrascale.tech || echo "::error::The rollback to $sha fails the smoke too." >&2
+          exit 1
