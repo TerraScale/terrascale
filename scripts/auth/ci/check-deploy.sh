@@ -140,7 +140,7 @@ deploy() {
 deploy "$pinned" || { cat "$sandbox/log" >&2; fail "the unconditional deployment failed"; }
 expected=(release service-deploy --role app --binary '*' --repository https://git.example/TerraScale/app
 	--commit "$head" --source-checkout . --environment canary --actor ci-release --signing-key-secret secret
-	--vault-id vault --namespace ns --cell GRU --cell SFO)
+	--vault-id vault --namespace ns --region-timeout 30m --poll 5s --cell GRU --cell SFO)
 mapfile -t ran < "$sandbox/ran"
 ((${#ran[@]} == ${#expected[@]})) || fail "ts-orch ran with $(paste -sd' ' "$sandbox/ran")"
 for index in "${!expected[@]}"; do
