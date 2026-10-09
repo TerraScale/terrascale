@@ -18,16 +18,25 @@ The main-only deploy job always runs after publication. Missing configuration
 fails the job instead of silently making deployment optional.
 `scripts/ci/deploy.sh` verifies the ARM64 release binary's SHA-256 sidecar and
 the pinned amd64 `ts-orch` helper, then invokes `release service-deploy`.
-The TS-768 helper publishes to independent regions concurrently. Each region
-retains its own replica ordering, load-balancer drain, readiness/canary gates
-and automatic rollback to the previous admitted release.
+The current pinned helper processes regions sequentially, with a 30-minute
+completion wait per region and five-second polling. The job budget is 120
+minutes: two regional waits, three downloads bounded to 15 minutes each, and
+15 minutes for setup/cleanup. This budget adds no delay to healthy rollouts.
+Independent regional signing and delivery require TS-768's qualified helper
+release and the matching tag/checksum pin. Each region retains its replica
+ordering, load-balancer drain, readiness/canary gates and automatic rollback
+to the previous admitted release.
 
-Required target variables are `TS_AUTO_DEPLOY_CELLS=GRU SFO` and
-`TS_AUTO_DEPLOY_ENVIRONMENT=production`. Set them only when the signed specs
-authorize `terrabase` and the `ci-release` actor in that environment in both
-cells. The scoped service-release OCI user needs the current release-prefix
-grant on both head buckets. `TS_ORCH_RELEASE` and `TS_ORCH_SHA256` pin the helper
-and must change together. Other variables are `TS_OBJECT_NAMESPACE`,
+TS-771 owns the standalone removal of repository deployment switches. Its
+initial script must target GRU and SFO in their currently signed `canary`
+environment. The qualified shared helper will discover every serving region
+and its signed environment automatically. Signed specs must authorize
+`terrabase` and the release actor in each cell. The scoped service-release OCI
+user needs the current release-prefix grant on both head buckets.
+`TS_ORCH_RELEASE` and `TS_ORCH_SHA256` pin the helper and must change together.
+The current pin uses the retired `releases/v1/services` prefix; live acceptance
+requires the qualified helper using `releases/services`.
+Other variables are `TS_OBJECT_NAMESPACE`,
 `TS_RELEASE_VAULT_ID`, `TS_RELEASE_KEY_SECRET`, `TS_RELEASE_ACTOR`,
 `TS_RELEASE_OCI_USER`, `TS_RELEASE_OCI_TENANCY` and `TS_RELEASE_OCI_FINGERPRINT`.
 Required secrets are `ORG_READ_TOKEN` and `TS_RELEASE_OCI_KEY`; private signing
