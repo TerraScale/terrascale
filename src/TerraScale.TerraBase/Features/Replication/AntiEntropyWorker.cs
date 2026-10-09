@@ -100,10 +100,7 @@ internal sealed partial class AntiEntropyWorker(
                             continue;
                         }
 
-                        if (await RepairAsync(client, database, progress, _regions.GetValueOrDefault(address), deadline.Token).ConfigureAwait(false) is { } region)
-                        {
-                            _regions[address] = region;
-                        }
+                        await RepairAsync(client, address, database, progress, deadline.Token).ConfigureAwait(false);
                     }
                     catch (RpcException error) when (error.StatusCode == StatusCode.Aborted && !stoppingToken.IsCancellationRequested)
                     {
@@ -122,9 +119,9 @@ internal sealed partial class AntiEntropyWorker(
         }
     }
 
-    // Returns the peer's region once its digest named it.
-    private async Task<string?> RepairAsync(Alpha.AntiEntropy.AntiEntropyClient client, TenantContext database,
-        CancellationTokenSource progress, string? knownRegion, CancellationToken cancellationToken)
+    // Keeps the peer's region as soon as its digest names it, whether or not the repair that follows succeeds.
+    private async Task RepairAsync(Alpha.AntiEntropy.AntiEntropyClient client, Uri address, TenantContext database,
+        CancellationTokenSource progress, CancellationToken cancellationToken)
     {
         using var reservation = AntiEntropyState.Reserve(memory);
         var identity = new ShardIdentity
@@ -152,7 +149,7 @@ internal sealed partial class AntiEntropyWorker(
         {
             remote = await digestCall.ResponseAsync.ConfigureAwait(false);
         }
-        catch when (knownRegion is not null)
+        catch when (_regions.TryGetValue(address, out var knownRegion))
         {
             // Delivered but unanswered: charged to the region this peer named before, as a replication Hello is.
             Metered(database, knownRegion, identity, sent: true);
@@ -161,6 +158,7 @@ internal sealed partial class AntiEntropyWorker(
 
         // Anti-entropy traffic is metered once the digest names the peer's region, like a replication Hello.
         var peerRegion = remote.Region;
+        _regions[address] = peerRegion;
         Metered(database, peerRegion, identity, sent: true);
         Metered(database, peerRegion, remote, sent: false);
         if (remote.Incarnation.Length != 16 || remote.Origin.Length != 16 || remote.Envelope.Length > 1024
@@ -173,7 +171,7 @@ internal sealed partial class AntiEntropyWorker(
         var ranges = MerkleTree.Mismatches(local, ApplicationEnvelope.Decode(remote.Envelope.Span, MerkleTree.DigestBytes));
         if (ranges == 0)
         {
-            return peerRegion;
+            return;
         }
 
         identity.Incarnation = remote.Incarnation;
@@ -246,8 +244,6 @@ internal sealed partial class AntiEntropyWorker(
             request.AfterCollection = page.AfterCollection;
             request.AfterId = page.AfterId;
         }
-
-        return peerRegion;
     }
 
     // One message on the wire: its encoded bytes plus the five-byte gRPC message prefix.

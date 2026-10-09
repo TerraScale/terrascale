@@ -5,6 +5,7 @@ using System.Text.Json;
 using Bogus;
 using Google.Protobuf;
 using Grpc.Core;
+using Grpc.Core.Interceptors;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
@@ -308,7 +309,7 @@ public sealed class AntiEntropyTests
 
     [Test]
     [Timeout(60_000)]
-    public async Task An_unanswered_digest_is_charged_to_the_region_its_peer_named_before(CancellationToken cancellationToken)
+    public async Task An_unanswered_digest_is_charged_to_the_region_its_peer_named_before_even_in_a_failed_repair(CancellationToken cancellationToken)
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         var token = deadline.Token;
@@ -321,7 +322,12 @@ public sealed class AntiEntropyTests
             peerTls.Apply(settings);
             clientTls.Apply(settings);
             settings["region"] = "gru-1";
-        }, services => services.AddSingleton<TimeProvider>(new FakeTimeProvider(started)));
+        }, services =>
+        {
+            services.AddSingleton<TimeProvider>(new FakeTimeProvider(started));
+            services.AddSingleton<InvalidFirstDigest>();
+            services.AddGrpc(options => options.Interceptors.Add<InvalidFirstDigest>());
+        });
         await using var source = await TerraBaseTestServer.StartAsync(settings =>
         {
             peerTls.Apply(settings);
@@ -344,7 +350,7 @@ public sealed class AntiEntropyTests
             return lifetime.Meters?.GetValueOrDefault(key)?.Count ?? 0;
         }
 
-        // An answered pass names the peer's region.
+        // An answered digest names the peer's region, though the source refuses it and that repair fails.
         clock.Advance(AntiEntropyWorker.ReconcileInterval);
         await TerraBaseTestServer.EventuallyAsync(async _ => await BytesAsync(receiver, "replication_bytes|gru-1|sfo-1|anti_entropy:received")
             == await BytesAsync(source, "replication_bytes|sfo-1|gru-1|anti_entropy:sent") && await BytesAsync(source, "replication_bytes|sfo-1|gru-1|anti_entropy:received") > 0);
@@ -366,6 +372,24 @@ public sealed class AntiEntropyTests
         await clock.PausedAsync(token);
         await Assert.That(await BytesAsync(source, "replication_bytes|sfo-1|gru-1|anti_entropy:sent"))
             .IsEqualTo(await BytesAsync(receiver, "replication_bytes|gru-1|sfo-1|anti_entropy:received"));
+    }
+
+    // Answers the first digest without its applied source, which the requester refuses after reading the region it names.
+    private sealed class InvalidFirstDigest : Interceptor
+    {
+        private int _digests;
+
+        public override async Task<TResponse> UnaryServerHandler<TRequest, TResponse>(
+            TRequest request, ServerCallContext context, UnaryServerMethod<TRequest, TResponse> continuation)
+        {
+            var response = await continuation(request, context);
+            if (response is MerkleDigest digest && Interlocked.Increment(ref _digests) == 1)
+            {
+                digest.AppliedSource = null;
+            }
+
+            return response;
+        }
     }
 
     [Test]
