@@ -266,7 +266,8 @@ internal sealed class UsageAnalytics(IManagementService management, UsageMeter m
     {
         var values = readings.ToArray();
         var requests = values.Where(reading => reading.Dimension.Meter == "requests").ToArray();
-        var histogram = new long[UsageReading.LatencyBounds.Count];
+        // Bins sum saturated readings; Int128 holds any merge without wrapping.
+        var histogram = new Int128[UsageReading.LatencyBounds.Count];
         foreach (var request in requests)
         {
             for (var i = 0; i < histogram.Length; i++)
@@ -306,16 +307,16 @@ internal sealed class UsageAnalytics(IManagementService management, UsageMeter m
         .OrderBy(value => value.SourceRegion, StringComparer.Ordinal).ThenBy(value => value.DestinationRegion, StringComparer.Ordinal)
         .ThenBy(value => value.Kind, StringComparer.Ordinal)];
 
-    private static double? Percentile(long[] histogram, double fraction)
+    private static double? Percentile(Int128[] histogram, double fraction)
     {
-        var count = histogram.Saturated(bin => bin);
+        var count = histogram.Aggregate(Int128.Zero, (total, bin) => total + bin);
         if (count == 0)
         {
             return null;
         }
 
-        var target = (long)Math.Ceiling(count * fraction);
-        long seen = 0;
+        var target = (Int128)Math.Ceiling((double)count * fraction);
+        Int128 seen = 0;
         for (var i = 0; i < histogram.Length; i++)
         {
             seen += histogram[i];

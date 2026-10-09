@@ -55,7 +55,7 @@ Each point contains:
 - `start`, request counts by HTTP method, operation counts (`read`, `put`,
   `patch`, `delete`), and errors (HTTP status 400 or above, or an unhandled error).
 - `latency`: approximate `p50Ms`, `p95Ms`, `p99Ms` from merged fixed histogram
-  bins. Empty request buckets return null percentiles. The highest bin includes
+  bins, summed in 128-bit integers. Empty request buckets return null percentiles. The highest bin includes
   requests above 65,536 ms and reports that boundary.
 - `storageBytes`: the average sampled physical database size, including the
   engine's sidecars; null before any sample. Each node samples once per minute:
@@ -109,8 +109,10 @@ before any stream identified it, cannot be attributed to a region pair.
 Kinds are `delta` (current replication), `anti_entropy` (frontier handshakes, WAN
 discovery and TS-678 Merkle repair: digests, range pages and merges, attributed by
 the regions the caller sends in its shard identity and the peer returns with its
-digest; a validated request counts before the state work that may still reject it,
-and an initiator counts each request before awaiting its response), and `handoff` (peer or WAN journal replay after a failed transfer,
+digest; a request counts once its identity is validated and its database found,
+before the state work that may still reject it; an initiator counts each request
+before awaiting its response, and an unanswered digest goes to the region that
+peer named in its last answer), and `handoff` (peer or WAN journal replay after a failed transfer,
 initial catch-up, or a backlog longer than one 256-group sender turn). A peer
 replay stays `handoff` across turns until a turn ends with the peer at the head. Shared discovery payloads are divided across advertised
 databases, conserving their encoded length. No tenant identifiers are used as

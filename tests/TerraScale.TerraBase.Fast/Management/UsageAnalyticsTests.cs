@@ -581,6 +581,24 @@ public sealed class UsageAnalyticsTests
         var replication = await ReadAsync(client, ManagementApi.Uri($"/projects/{database.Project}/replication?range=1h&region=gru-1"));
         await Assert.That(replication.GetProperty("items")[0].GetProperty("bandwidth").EnumerateArray()
             .All(pair => pair.GetProperty("bytesSent").GetInt64() == long.MaxValue)).IsTrue();
+
+        // Two saturated request readings fill one latency bin past the 64-bit range: percentiles still name that bin.
+        var latency = new long[UsageReading.LatencyBounds.Count];
+        latency[5] = long.MaxValue;
+        var meters = new Dictionary<string, UsageReading>(StringComparer.Ordinal);
+        foreach (var method in new[] { "get", "post" })
+        {
+            var dimension = new UsageDimension("requests", "gru-1", "", method);
+            meters[dimension.Key] = new(dimension, long.MaxValue, 0, latency);
+        }
+
+        var minute = DateTimeOffset.UtcNow.ToUnixTimeSeconds() / 60;
+        var key = new UsageKey(new(database.Organization, database.Project, database.Id), minute / 60, TerraBase.Features.Management.Usage.UsageScope.Minute, (int)(minute % 60));
+        _ = await meter.AcceptAsync("saturated", Guid.NewGuid().ToString(), 1, [KeyValuePair.Create(key, new OpCounts(0, 0, meters))], CancellationToken.None);
+        var saturated = (await ReadAsync(client, analytics)).GetProperty("items")[0].GetProperty("series").EnumerateArray()
+            .Single(point => point.GetProperty("latency").GetProperty("p99Ms").ValueKind == JsonValueKind.Number
+                && point.GetProperty("latency").GetProperty("p50Ms").GetDouble() == UsageReading.LatencyBounds[5]);
+        await Assert.That(saturated.GetProperty("latency").GetProperty("p99Ms").GetDouble()).IsEqualTo(UsageReading.LatencyBounds[5]);
     }
 
     [Test]

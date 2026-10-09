@@ -15,8 +15,8 @@ internal sealed class AntiEntropyService(
 
     public override Task<MerkleDigest> Digest(ShardIdentity request, ServerCallContext context) => ServeAsync(async token =>
     {
-        Received(request, request);
         var store = await state.OpenAsync(request, token).ConfigureAwait(false);
+        Received(request, request);
         ByteString origin;
         JournalProof? applied = null;
         var read = await store.BeginTransactionAsync(write: false, token).ConfigureAwait(false);
@@ -44,22 +44,23 @@ internal sealed class AntiEntropyService(
     public override Task<StatePage> ReadRange(RangeRequest request, ServerCallContext context) => ServeAsync(async token =>
     {
         RequireIncarnation(request.Identity);
-        Received(request.Identity, request);
         var store = await state.OpenAsync(request.Identity, token).ConfigureAwait(false);
+        Received(request.Identity, request);
         return Sent(request.Identity, await state.ReadAsync(store, request, token).ConfigureAwait(false));
     }, context);
 
     public override Task<MergeResult> Merge(StateRequest request, ServerCallContext context) => ServeAsync(async token =>
     {
         RequireIncarnation(request.Identity);
-        Received(request.Identity, request);
         var store = await state.OpenAsync(request.Identity, token).ConfigureAwait(false);
+        Received(request.Identity, request);
         return Sent(request.Identity,
             new MergeResult { RepairedKeys = await state.MergeAsync(store, request.Identity, request.Envelope, token).ConfigureAwait(false) });
     }, context);
 
     // Served traffic, charged to the initiating member's region: each message's encoded bytes plus the gRPC prefix. A request
-    // counts once it is validated, before the state work that may still reject it; its response counts on its own.
+    // counts once OpenAsync validated its identity and found the registered database, before the state work that may still
+    // reject it, so invalid identities never take usage keys; its response counts on its own.
     private void Received(ShardIdentity identity, IMessage request) =>
         usage.RecordReplicationBytes(Database(identity), identity.Region, "anti_entropy", false, request.CalculateSize() + 5L);
 

@@ -20,6 +20,10 @@ internal sealed partial class AntiEntropyWorker(
     internal static readonly TimeSpan ReconcileInterval = TimeSpan.FromSeconds(5);
     internal static readonly TimeSpan ExchangeTimeout = TimeSpan.FromMinutes(15);
 
+    // Each peer address's region from its last answered digest: an unanswered one is still charged there. Rebuilt each pass
+    // from the current addresses, so bounded by the membership.
+    private Dictionary<Uri, string> _regions = [];
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         try
@@ -66,6 +70,16 @@ internal sealed partial class AntiEntropyWorker(
             }
         }
 
+        var regions = new Dictionary<Uri, string>();
+        foreach (var address in addresses)
+        {
+            if (_regions.TryGetValue(address, out var known))
+            {
+                regions[address] = known;
+            }
+        }
+
+        _regions = regions;
         foreach (var address in addresses)
         {
             try
@@ -86,7 +100,10 @@ internal sealed partial class AntiEntropyWorker(
                             continue;
                         }
 
-                        await RepairAsync(client, database, progress, deadline.Token).ConfigureAwait(false);
+                        if (await RepairAsync(client, database, progress, _regions.GetValueOrDefault(address), deadline.Token).ConfigureAwait(false) is { } region)
+                        {
+                            _regions[address] = region;
+                        }
                     }
                     catch (RpcException error) when (error.StatusCode == StatusCode.Aborted && !stoppingToken.IsCancellationRequested)
                     {
@@ -105,8 +122,9 @@ internal sealed partial class AntiEntropyWorker(
         }
     }
 
-    private async Task RepairAsync(Alpha.AntiEntropy.AntiEntropyClient client, TenantContext database,
-        CancellationTokenSource progress, CancellationToken cancellationToken)
+    // Returns the peer's region once its digest named it.
+    private async Task<string?> RepairAsync(Alpha.AntiEntropy.AntiEntropyClient client, TenantContext database,
+        CancellationTokenSource progress, string? knownRegion, CancellationToken cancellationToken)
     {
         using var reservation = AntiEntropyState.Reserve(memory);
         var identity = new ShardIdentity
@@ -129,7 +147,18 @@ internal sealed partial class AntiEntropyWorker(
         var local = await state.DigestAsync(store, cancellationToken).ConfigureAwait(false);
         progress.CancelAfter(AntiEntropyState.DigestTimeout);
         using var digestCall = client.DigestAsync(identity, cancellationToken: cancellationToken);
-        var remote = await digestCall.ResponseAsync.ConfigureAwait(false);
+        MerkleDigest remote;
+        try
+        {
+            remote = await digestCall.ResponseAsync.ConfigureAwait(false);
+        }
+        catch when (knownRegion is not null)
+        {
+            // Delivered but unanswered: charged to the region this peer named before, as a replication Hello is.
+            Metered(database, knownRegion, identity, sent: true);
+            throw;
+        }
+
         // Anti-entropy traffic is metered once the digest names the peer's region, like a replication Hello.
         var peerRegion = remote.Region;
         Metered(database, peerRegion, identity, sent: true);
@@ -144,7 +173,7 @@ internal sealed partial class AntiEntropyWorker(
         var ranges = MerkleTree.Mismatches(local, ApplicationEnvelope.Decode(remote.Envelope.Span, MerkleTree.DigestBytes));
         if (ranges == 0)
         {
-            return;
+            return peerRegion;
         }
 
         identity.Incarnation = remote.Incarnation;
@@ -217,6 +246,8 @@ internal sealed partial class AntiEntropyWorker(
             request.AfterCollection = page.AfterCollection;
             request.AfterId = page.AfterId;
         }
+
+        return peerRegion;
     }
 
     // One message on the wire: its encoded bytes plus the five-byte gRPC message prefix.
