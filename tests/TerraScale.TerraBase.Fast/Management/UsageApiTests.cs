@@ -6,8 +6,10 @@ using Bogus;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
+using TerraBase.Errors;
 using TerraBase.Features.Management;
 using TerraBase.Features.Management.Usage;
+using TerraBase.Features.Replication;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
@@ -237,8 +239,8 @@ public sealed class UsageApiTests
         var tenant = new TenantContext(database.Organization, PlanTier.Hobby, database.Project, database.Id);
         meter.Add(new UsageKey(new DatabaseOwner(database.Organization, database.Project, database.Id), Hour("2026-11-11T11:00:00Z")), new OpCounts(3, 0));
         var sending = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var acknowledge = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-        Task<bool> Send(long sequence, KeyValuePair<UsageKey, OpCounts>[] batch, CancellationToken cancellationToken)
+        var acknowledge = new TaskCompletionSource<AddUsageResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        Task<AddUsageResult> Send(long sequence, KeyValuePair<UsageKey, OpCounts>[] batch, CancellationToken cancellationToken)
         {
             sending.TrySetResult();
             return acknowledge.Task;
@@ -249,7 +251,7 @@ public sealed class UsageApiTests
         await sending.Task.WaitAsync(TimeSpan.FromSeconds(10));
         var (during, _) = await meter.GetAsync(tenant, new UsageWindow(UsageWindow.Hour, Hour("2026-11-11T11:00:00Z"), 1), CancellationToken.None)
             .AsTask().WaitAsync(TimeSpan.FromSeconds(10));
-        acknowledge.SetResult(true);
+        acknowledge.SetResult(new Done());
         await Assert.That(await send.WaitAsync(TimeSpan.FromSeconds(10))).IsTrue();
         var (after, _) = await meter.GetAsync(tenant, new UsageWindow(UsageWindow.Hour, Hour("2026-11-11T11:00:00Z"), 1), CancellationToken.None);
 
@@ -265,10 +267,10 @@ public sealed class UsageApiTests
         var hour = Hour("2026-11-11T11:00:00Z");
         var owners = Enumerable.Range(0, 50).Select(_ => new DatabaseOwner(EntityIds.New().ToString(), EntityIds.New().ToString(), EntityIds.New().ToString())).ToArray();
         long sent = 0;
-        Task<bool> Send(long sequence, KeyValuePair<UsageKey, OpCounts>[] batch, CancellationToken cancellationToken)
+        Task<AddUsageResult> Send(long sequence, KeyValuePair<UsageKey, OpCounts>[] batch, CancellationToken cancellationToken)
         {
             Interlocked.Add(ref sent, batch.Sum(entry => entry.Value.Reads));
-            return Task.FromResult(true);
+            return Task.FromResult<AddUsageResult>(new Done());
         }
 
         // Four writers count while batches keep going out and each acknowledged one empties, and drops, maps.
@@ -419,10 +421,10 @@ public sealed class UsageApiTests
         var owner = new DatabaseOwner(EntityIds.New().ToString(), EntityIds.New().ToString(), EntityIds.New().ToString());
         List<(long Sequence, KeyValuePair<UsageKey, OpCounts>[] Batch)> sent = [];
         var reachable = false;
-        Task<bool> Send(long sequence, KeyValuePair<UsageKey, OpCounts>[] batch, CancellationToken cancellationToken)
+        Task<AddUsageResult> Send(long sequence, KeyValuePair<UsageKey, OpCounts>[] batch, CancellationToken cancellationToken)
         {
             sent.Add((sequence, batch));
-            return reachable ? Task.FromResult(true) : Task.FromException<bool>(new IOException("the primary is away"));
+            return reachable ? Task.FromResult<AddUsageResult>(new Done()) : Task.FromException<AddUsageResult>(new IOException("the primary is away"));
         }
 
         // The primary saved batch 1, but its acknowledgement was lost, and the primary stays out of reach for a day.
@@ -448,11 +450,11 @@ public sealed class UsageApiTests
         var meter = api.Server.Services.GetRequiredService<UsageMeter>();
         var owner = new DatabaseOwner(EntityIds.New().ToString(), EntityIds.New().ToString(), EntityIds.New().ToString());
         List<(long Sequence, KeyValuePair<UsageKey, OpCounts>[] Batch)> sent = [];
-        Task<bool> Send(long sequence, KeyValuePair<UsageKey, OpCounts>[] batch, CancellationToken cancellationToken)
+        Task<AddUsageResult> Send(long sequence, KeyValuePair<UsageKey, OpCounts>[] batch, CancellationToken cancellationToken)
         {
             sent.Add((sequence, batch));
             // The first batch is refused for good, as one whose hours ran ahead of the primary's clock.
-            return Task.FromResult(sent.Count > 1);
+            return Task.FromResult<AddUsageResult>(sent.Count > 1 ? new Done() : new Validation("ahead of the primary's clock"));
         }
 
         meter.Add(new UsageKey(owner, Hour("2026-11-13T00:00:00Z")), new OpCounts(5, 0));
@@ -476,10 +478,10 @@ public sealed class UsageApiTests
         var now = time.GetUtcNow().ToUnixTimeSeconds() / 3600;
         List<(long Sequence, KeyValuePair<UsageKey, OpCounts>[] Batch)> sent = [];
         var fail = true;
-        Task<bool> Send(long sequence, KeyValuePair<UsageKey, OpCounts>[] batch, CancellationToken cancellationToken)
+        Task<AddUsageResult> Send(long sequence, KeyValuePair<UsageKey, OpCounts>[] batch, CancellationToken cancellationToken)
         {
             sent.Add((sequence, batch));
-            return fail ? Task.FromException<bool>(new IOException("the primary is away")) : Task.FromResult(true);
+            return fail ? Task.FromException<AddUsageResult>(new IOException("the primary is away")) : Task.FromResult<AddUsageResult>(new Done());
         }
 
         // The first batch is not acknowledged. Meanwhile 24 hours of a day 40 days ago arrive; the next attempt still folds
@@ -520,7 +522,7 @@ public sealed class UsageApiTests
         }
 
         List<KeyValuePair<UsageKey, OpCounts>[]> sent = [];
-        Task<bool> Send(long sequence, KeyValuePair<UsageKey, OpCounts>[] batch, CancellationToken cancellationToken)
+        Task<AddUsageResult> Send(long sequence, KeyValuePair<UsageKey, OpCounts>[] batch, CancellationToken cancellationToken)
         {
             sent.Add(batch);
             // The keys of this batch keep counting while it is in flight.
@@ -529,7 +531,7 @@ public sealed class UsageApiTests
                 meter.Add(key, new OpCounts(1, 0));
             }
 
-            return Task.FromResult(true);
+            return Task.FromResult<AddUsageResult>(new Done());
         }
 
         await meter.SendAsync(Send, CancellationToken.None);

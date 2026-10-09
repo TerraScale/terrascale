@@ -286,7 +286,7 @@ internal sealed partial class UsageFlushService(
     }
 
     // Counts past MaxCount, which no real hour reaches, are not sent: the primary would refuse the whole batch for good.
-    private Task<bool> SendAsync(long sequence, KeyValuePair<UsageKey, OpCounts>[] batch, CancellationToken cancellationToken)
+    private Task<AddUsageResult> SendAsync(long sequence, KeyValuePair<UsageKey, OpCounts>[] batch, CancellationToken cancellationToken)
     {
         var request = new UsageBatch { Protocol = UsageReceiver.Protocol, Epoch = _epoch, Sequence = (ulong)sequence, Sender = options.NodeName };
         request.Counts.AddRange(batch.Select(entry => new UsageCount

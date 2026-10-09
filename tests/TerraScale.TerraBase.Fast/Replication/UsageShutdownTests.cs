@@ -7,6 +7,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
+using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
 using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Replication;
@@ -100,11 +101,11 @@ public sealed class UsageShutdownTests
     {
         public TaskCompletionSource<(UsageBatch Batch, bool Accepted)> Replied { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        public async Task<bool> AddUsageAsync(UsageBatch batch, CancellationToken cancellationToken)
+        public async Task<AddUsageResult> AddUsageAsync(UsageBatch batch, CancellationToken cancellationToken)
         {
             var request = batch.Clone();
             var accepted = await inner.AddUsageAsync(batch, cancellationToken);
-            Replied.TrySetResult((request, accepted));
+            Replied.TrySetResult((request, accepted is Done));
             return accepted;
         }
 

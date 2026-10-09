@@ -7,6 +7,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
+using TerraBase.Errors;
 using TerraBase.Features.Management;
 using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Replication;
@@ -531,11 +532,11 @@ public sealed class UsageAnalyticsTests
             if (batch.Any(entry => entry.Key.Scope == TerraBase.Features.Management.Usage.UsageScope.Minute || entry.Value.Meters is not null))
             {
                 refused++;
-                return Task.FromResult(false);
+                return Task.FromResult<AddUsageResult>(new Validation("an older primary"));
             }
 
             received.AddRange(batch);
-            return Task.FromResult(true);
+            return Task.FromResult<AddUsageResult>(new Done());
         }, CancellationToken.None))
         {
         }

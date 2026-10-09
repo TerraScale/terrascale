@@ -3,7 +3,9 @@ using System.Diagnostics.Metrics;
 using System.Text.Json;
 using TerraBase.Configuration;
 using TerraBase.Engine;
+using TerraBase.Errors;
 using TerraBase.Features.Memory;
+using TerraBase.Features.Replication;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
@@ -403,13 +405,14 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
 
     /// <summary>
     /// On a catalog follower: hands at most <see cref="MaxBatch"/> pending counts to <paramref name="send"/>, which delivers
-    /// them to the primary under the batch's sequence (one more than the last batch's), and forgets them once it returns:
-    /// <see langword="true"/> when the primary added them, <see langword="false"/> when it refused them for good (they are
-    /// dropped, so they cannot hold back later counts). A batch whose send threw is sent again with the same sequence before
-    /// any other, so the primary, which adds a batch only past the highest sequence it added for this process, never counts
-    /// it twice. Returns whether a batch was sent.
+    /// them to the primary under the batch's sequence (one more than the last batch's), and forgets them once it returns
+    /// <see cref="Done"/> (the primary added them) or <see cref="Validation"/> (it refused them for good; they are dropped, so
+    /// they cannot hold back later counts). A batch whose send threw, or that the primary lacked the capacity to take
+    /// (<see cref="QuotaExceeded"/>), is sent again with the same sequence before any other, so the primary, which adds a
+    /// batch only past the highest sequence it added for this process, never counts it twice. Returns whether a batch was
+    /// sent and forgotten.
     /// </summary>
-    public async ValueTask<bool> SendAsync(Func<long, KeyValuePair<UsageKey, OpCounts>[], CancellationToken, Task<bool>> send, CancellationToken cancellationToken)
+    public async ValueTask<bool> SendAsync(Func<long, KeyValuePair<UsageKey, OpCounts>[], CancellationToken, Task<AddUsageResult>> send, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(send);
         await _send.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -448,15 +451,25 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
 
             // Usage reads go on while the primary answers. If this throws or is cancelled, the batch stays unsent and goes
             // again with its sequence, which the primary adds once.
-            var added = await send(sequence, batch, cancellationToken).ConfigureAwait(false);
+            var result = await send(sequence, batch, cancellationToken).ConfigureAwait(false);
             // Measurements are best effort; read and write totals are not. A primary that refuses the batch, for a measurement
-            // it rejects or a scope it predates, gets the totals alone once, under the same sequence it did not save.
+            // it rejects or a scope it predates, or lacks the memory to read its measurements, gets the totals alone once,
+            // under the same sequence it did not save.
             KeyValuePair<UsageKey, OpCounts>[] totals = [.. batch.Where(entry => entry.Value.Reads != 0 || entry.Value.Writes != 0)
                 .Select(entry => KeyValuePair.Create(entry.Key, entry.Value with { Meters = null }))];
-            if (!added && totals.Length > 0 && (totals.Length < batch.Length || batch.Any(entry => entry.Value.Meters is not null)))
+            if (result is not Done && totals.Length > 0 && (totals.Length < batch.Length || batch.Any(entry => entry.Value.Meters is not null)))
             {
-                _measurementDrops.Add(1);
-                added = await send(sequence, totals, cancellationToken).ConfigureAwait(false);
+                result = await send(sequence, totals, cancellationToken).ConfigureAwait(false);
+                if (result is not QuotaExceeded)
+                {
+                    _measurementDrops.Add(1);
+                }
+            }
+
+            if (result is QuotaExceeded)
+            {
+                // The primary added none of it: the whole batch stays unsent, like one whose send threw.
+                return false;
             }
 
             await _flush.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -475,7 +488,7 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
                 _flush.Release();
             }
 
-            if (!added)
+            if (result is Validation)
             {
                 LogRefused(logger, batch.Length);
             }
