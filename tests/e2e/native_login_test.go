@@ -474,6 +474,53 @@ func TestNativeEmailCodeInputEditing(t *testing.T) {
 	screenshot(t, page, "email-code-error")
 }
 
+func TestNativeEmailCodeTypingCapacity(t *testing.T) {
+	t.Parallel()
+	base, _ := tsAuthDashboard(t)
+	page := rejectingPage(t, base)
+	for _, position := range []int{0, 3, 6} {
+		t.Run(fmt.Sprintf("caret_%d", position), func(t *testing.T) {
+			goTo(t, page, "/login/code")
+			fill(t, page.Locator("#email"), "typing-capacity@example.test")
+			click(t, pageByRole(page, *playwright.AriaRoleButton, "Email me a code"))
+			code := page.Locator("#code")
+			slots := page.Locator(".ts-email-code-slot")
+			fill(t, code, "12345")
+			must(t, code.Press("End"))
+			must(t, code.Press("6"))
+			must(t, expect.Locator(code).ToHaveValue("123456"))
+			must(t, code.Press("Home"))
+			for range position {
+				must(t, code.Press("ArrowRight"))
+			}
+			// A seventh digit must not shift existing digits or clear the undo
+			// transaction that inserted the sixth digit.
+			must(t, code.Press("9"))
+			must(t, expect.Locator(code).ToHaveValue("123456"))
+			must(t, expect.Locator(slots).ToHaveText(strings.Split("123456", "")))
+			must(t, code.Press("ControlOrMeta+z"))
+			must(t, expect.Locator(code).ToHaveValue("12345"))
+			must(t, expect.Locator(slots).ToHaveText([]string{"1", "2", "3", "4", "5", ""}))
+			must(t, code.Press("ControlOrMeta+Shift+z"))
+			must(t, expect.Locator(code).ToHaveValue("123456"))
+
+			// Selecting an existing digit still allows a native replacement,
+			// with its own undo/redo transaction.
+			must(t, code.Press("Home"))
+			must(t, code.Press("ArrowRight"))
+			must(t, code.Press("ArrowRight"))
+			must(t, code.Press("Shift+ArrowRight"))
+			must(t, code.Press("9"))
+			must(t, expect.Locator(code).ToHaveValue("129456"))
+			must(t, code.Press("ControlOrMeta+z"))
+			must(t, expect.Locator(code).ToHaveValue("123456"))
+			must(t, code.Press("ControlOrMeta+Shift+z"))
+			must(t, expect.Locator(code).ToHaveValue("129456"))
+			must(t, expect.Locator(slots).ToHaveText(strings.Split("129456", "")))
+		})
+	}
+}
+
 func TestNativeEmailCodeFormattedDrop(t *testing.T) {
 	t.Parallel()
 	base, _ := tsAuthDashboard(t)

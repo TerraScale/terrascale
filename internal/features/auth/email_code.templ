@@ -51,6 +51,14 @@ if (digits !== el.value) {
 $_emailCode = el.value; $_codeCaret = el.selectionStart; $_codeEnd = el.selectionEnd;
 `
 
+// Reject invalid or over-capacity typing before it changes existing digits or
+// their undo history. Other insertion types still allow autofill and drops.
+const codeBeforeInput = `
+if (evt.inputType !== 'insertText' || evt.isComposing || evt.data == null) return;
+const capacity = Math.max(0, 6 - el.value.length + el.selectionEnd - el.selectionStart);
+if (!/^[0-9]*$/.test(evt.data) || evt.data.length > capacity) evt.preventDefault();
+`
+
 // Intercept formatted or oversized pastes before insertion. insertText keeps
 // the replacement in the browser's undo history; assigning value does not.
 const codePaste = `
@@ -85,6 +93,7 @@ templ emailCodeInput(errorMessage string) {
 				spellcheck="false"
 				data-bind="_emailCode"
 				data-init={ codeInput + "el.parentElement.classList.add('ts-email-code-ready')" }
+				data-on:beforeinput={ codeBeforeInput }
 				data-on:input={ codeInput }
 				data-on:select="$_codeCaret = el.selectionStart; $_codeEnd = el.selectionEnd"
 				data-on:keyup="$_codeCaret = el.selectionStart; $_codeEnd = el.selectionEnd"
