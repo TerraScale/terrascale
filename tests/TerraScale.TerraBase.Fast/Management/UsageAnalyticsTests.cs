@@ -475,6 +475,8 @@ public sealed class UsageAnalyticsTests
         await using var api = await ManagementApi.StartAsync(settings => settings["region"] = "gru-1", hook.Install, clock);
         // Registered databases: a flush keeps only the observations of databases the catalog names.
         var first = await api.CreateManagedDatabaseAsync("db0");
+        // Hobby admission would throttle creating the databases below; the plan does not change sampling.
+        await api.Server.Services.GetRequiredService<IManagementService>().SetPlanAsync(api.User, first.Organization, PlanTier.Enterprise, CancellationToken.None);
         var databases = new List<TenantContext> { new(first.Organization, PlanTier.Hobby, first.Project, first.Id) };
         for (var i = 1; i < 140; i++)
         {

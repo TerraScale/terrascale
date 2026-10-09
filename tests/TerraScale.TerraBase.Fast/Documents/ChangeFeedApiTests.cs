@@ -483,7 +483,7 @@ public sealed class ChangeFeedApiTests
         // Binding verification reserves 4 MiB; leave room for it while refusing the feed's 32 MiB reservation.
         await using var api = await DocumentApi.StartAsync(settings => settings["memory-budget"] = "8388608");
         using var feed = await CreateFeedClientAsync(api);
-        var reserved = await api.Server.MetricAsync("terrabase_memory_reserved_bytes");
+        var reserved = await api.ReservedBytesAsync();
         for (var attempt = 0; attempt < 20; attempt++)
         {
             var busy = await DocumentApi.SendAsync(feed, HttpMethod.Get, Route(api));
@@ -491,7 +491,7 @@ public sealed class ChangeFeedApiTests
         }
 
         await Assert.That(await api.Server.MetricAsync("terrabase_change_feed_active")).IsEqualTo(0);
-        await Assert.That(await api.Server.MetricAsync("terrabase_memory_reserved_bytes")).IsEqualTo(reserved);
+        await Assert.That(await api.ReservedBytesAsync()).IsEqualTo(reserved);
         using var health = await api.Server.Client.GetAsync(new Uri("/healthz", UriKind.Relative));
         await Assert.That(health.StatusCode).IsEqualTo(HttpStatusCode.OK);
     }
@@ -508,14 +508,14 @@ public sealed class ChangeFeedApiTests
         using var feed = await CreateFeedClientAsync(api);
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         deadline.CancelAfter(TimeSpan.FromSeconds(30));
-        var reserved = await api.Server.MetricAsync("terrabase_memory_reserved_bytes", cancellationToken: deadline.Token);
+        var reserved = await api.ReservedBytesAsync(deadline.Token);
         var pending = Task.WhenAll(Enumerable.Range(0, responses).Select(_ => DocumentApi.SendAsync(feed,
             HttpMethod.Get, Route(api), configure: request => request.Headers.Add("X-Change-Feed-Test-Hold", "1"), cancellationToken: deadline.Token)));
         try
         {
             await delivery.Entered.Task.WaitAsync(deadline.Token);
             await Assert.That(await api.Server.MetricAsync("terrabase_change_feed_active", cancellationToken: deadline.Token)).IsEqualTo(responses);
-            await Assert.That(await api.Server.MetricAsync("terrabase_memory_reserved_bytes", cancellationToken: deadline.Token))
+            await Assert.That(await api.ReservedBytesAsync(deadline.Token))
                 .IsEqualTo(reserved + responses * 32L * 1024 * 1024);
             var busy = await DocumentApi.SendAsync(feed, HttpMethod.Get, Route(api), cancellationToken: deadline.Token);
             await Assert.That((busy.Status, busy.Code)).IsEqualTo((HttpStatusCode.TooManyRequests, "change_feed_busy"));
@@ -536,7 +536,7 @@ public sealed class ChangeFeedApiTests
         // A client can finish receiving just before the server's finally returns its reservation.
         await TerraBaseTestServer.EventuallyAsync(async token =>
             await api.Server.MetricAsync("terrabase_change_feed_active", cancellationToken: token) == 0);
-        await Assert.That(await api.Server.MetricAsync("terrabase_memory_reserved_bytes")).IsEqualTo(reserved);
+        await Assert.That(await api.ReservedBytesAsync()).IsEqualTo(reserved);
         await Assert.That((await ReadAsync(api, feed)).Status).IsEqualTo(HttpStatusCode.OK);
     }
 
