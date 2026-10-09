@@ -662,7 +662,9 @@ public sealed class CrossRegionDiscoveryBudgetTests
         finally
         {
             observation?.Phase("cleanup");
-            await SuiteDiagnostics.CleanupAfterBodyAsync(bodyFailure, () => Directory.Delete(directory, recursive: true), sfo, c, direct, shared);
+            await SuiteDiagnostics.CleanupAfterBodyAsync(bodyFailure, () => Directory.Delete(directory, recursive: true),
+                (sfo, sfo?.Server.CleanupCompletion ?? Task.CompletedTask), (c, c?.Server.CleanupCompletion ?? Task.CompletedTask),
+                (direct, direct?.Server.CleanupCompletion ?? Task.CompletedTask), (shared, shared?.Server.CleanupCompletion ?? Task.CompletedTask));
         }
     }
 

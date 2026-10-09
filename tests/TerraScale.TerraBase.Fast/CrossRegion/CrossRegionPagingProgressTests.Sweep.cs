@@ -391,7 +391,8 @@ public sealed partial class CrossRegionPagingProgressTests
         finally
         {
             observation.Phase("cleanup");
-            await SuiteDiagnostics.CleanupAfterBodyAsync(bodyFailure, () => Directory.Delete(directory, recursive: true), sfo, gru);
+            await SuiteDiagnostics.CleanupAfterBodyAsync(bodyFailure, () => Directory.Delete(directory, recursive: true),
+                (sfo, sfo?.Server.CleanupCompletion ?? Task.CompletedTask), (gru, gru?.Server.CleanupCompletion ?? Task.CompletedTask));
         }
     }
 

@@ -1,5 +1,4 @@
 using System.Buffers.Binary;
-using System.Diagnostics;
 using System.Net;
 using System.Numerics;
 using System.Security.Cryptography;
@@ -9,6 +8,7 @@ using Bogus;
 using Google.Protobuf;
 using Grpc.Core;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
 using TerraBase.Engine.Sqlite;
 using TerraBase.Features.Documents;
@@ -196,7 +196,8 @@ public sealed class SyncProtocolTests
     [Arguments(true, false)]
     public async Task Recreating_the_receiver_ends_the_old_stream_without_acknowledging_its_duplicate(bool applyOnStream, bool sendDuplicate)
     {
-        await using var node = await Node.StartAsync("retired");
+        var clock = new IdleClock(applyOnStream ? 6 : 3);
+        await using var node = await Node.StartAsync(clock, "retired");
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         var origin = RandomNumberGenerator.GetBytes(16);
         var change = Put("items", "a", 1);
@@ -205,8 +206,6 @@ public sealed class SyncProtocolTests
             await ApplyAsync(node, "retired", origin, 1, change);
         }
 
-        // The receiver's last idle wait begins after this, so its idle timeout cannot end the stream sooner.
-        var clock = Stopwatch.StartNew();
         using var call = node.Sync();
         var welcome = await HelloAsync(call, node.Tenant.Database("retired"), origin);
         if (applyOnStream)
@@ -220,6 +219,9 @@ public sealed class SyncProtocolTests
             await Assert.That(welcome.Frontiers[0].DurableSequence).IsEqualTo(1UL);
         }
 
+        // Hello/Welcome and, when sent, both ACKs have ended their waits; the next read is idle.
+        await clock.FinalIdle.Task.WaitAsync(deadline.Token);
+        clock.Advance(ReplicationProtocol.IdleTimeout - TimeSpan.FromTicks(1));
         var engine = node.Server.Services.GetRequiredService<IStorageEngine>();
         await Assert.That(await engine.DeleteDatabaseAsync(node.Tenant.Database("retired"), deadline.Token)).IsTrue();
         await engine.CreateDatabaseAsync(node.Tenant.Database("retired"), deadline.Token);
@@ -241,8 +243,8 @@ public sealed class SyncProtocolTests
         await Assert.That(error.Status.Detail).IsEqualTo("the receiving database was deleted; reopen the Sync stream");
         if (!sendDuplicate)
         {
-            // Retirement, not the idle timeout that reports the same status for a deleted database, ended the idle stream.
-            await Assert.That(clock.Elapsed).IsLessThan(ReplicationProtocol.IdleTimeout - TimeSpan.FromSeconds(1));
+            // Frozen one tick before expiry, the idle deadline cannot masquerade as retirement cancellation.
+            await Assert.That(clock.Expirations).IsEqualTo(0);
         }
 
         await Assert.That(await node.ListAsync("retired", "items")).IsEmpty();
@@ -557,6 +559,61 @@ public sealed class SyncProtocolTests
         return ~crc;
     }
 
+    private sealed class IdleClock(int finalWait) : FakeTimeProvider(DateTimeOffset.UtcNow)
+    {
+        private int _armed;
+        private int _expirations;
+
+        public TaskCompletionSource FinalIdle { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public int Expirations => Volatile.Read(ref _expirations);
+
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+        {
+            if (dueTime != Timeout.InfiniteTimeSpan || period != Timeout.InfiniteTimeSpan)
+            {
+                return base.CreateTimer(callback, state, dueTime, period);
+            }
+
+            var idle = 0;
+            var timer = base.CreateTimer(value =>
+            {
+                if (Volatile.Read(ref idle) == 1)
+                {
+                    Interlocked.Increment(ref _expirations);
+                }
+
+                callback(value);
+            }, state, dueTime, period);
+            return new ObservedTimer(timer, () =>
+            {
+                Volatile.Write(ref idle, 1);
+                if (Interlocked.Increment(ref _armed) == finalWait)
+                {
+                    FinalIdle.TrySetResult();
+                }
+            });
+        }
+
+        private sealed class ObservedTimer(ITimer timer, Action armed) : ITimer
+        {
+            public bool Change(TimeSpan dueTime, TimeSpan period)
+            {
+                var changed = timer.Change(dueTime, period);
+                if (changed && dueTime == ReplicationProtocol.IdleTimeout && period == Timeout.InfiniteTimeSpan)
+                {
+                    armed();
+                }
+
+                return changed;
+            }
+
+            public void Dispose() => timer.Dispose();
+
+            public ValueTask DisposeAsync() => timer.DisposeAsync();
+        }
+    }
+
     // One node with its peer and client listeners, a gRPC client and a document API client.
     private sealed class Node : IAsyncDisposable
     {
@@ -580,7 +637,9 @@ public sealed class SyncProtocolTests
 
         public HttpClient Http { get; }
 
-        public static async Task<Node> StartAsync(params string[] databases)
+        public static Task<Node> StartAsync(params string[] databases) => StartAsync(time: null, databases);
+
+        public static async Task<Node> StartAsync(TimeProvider? time, params string[] databases)
         {
             var peerTls = new PeerTls();
             var clientTls = new ClientTls();
@@ -588,6 +647,12 @@ public sealed class SyncProtocolTests
             {
                 peerTls.Apply(settings);
                 clientTls.Apply(settings);
+            }, services =>
+            {
+                if (time is not null)
+                {
+                    services.AddSingleton(time);
+                }
             });
             var tenant = await ReplicationTenant.CreateAsync(server, databases);
             var http = clientTls.CreateClient(server.ClientAddress!, await tenant.KeyAsync(server, "documents:read"));

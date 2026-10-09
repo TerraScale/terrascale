@@ -236,7 +236,7 @@ public sealed class BackupKeySaturationTests
                 {
                     Directory.Delete(directory, recursive: true);
                     Directory.Delete(coldDirectory, recursive: true);
-                }, cold, live);
+                }, (cold, cold?.Server.CleanupCompletion ?? Task.CompletedTask), (live, live?.Server.CleanupCompletion ?? Task.CompletedTask));
             }
             finally
             {

@@ -19,7 +19,7 @@ namespace TerraBase.Features.Replication;
 /// </summary>
 internal sealed partial class ReplicationService(
     IStorageEngine engine, IReplicationJournal journal, ITenantDirectory tenants, ReplicationMetrics metrics, TerraBaseOptions options, ILogger<ReplicationService> logger,
-    DatabaseLifecycleCheckpoint checkpoint, IHostApplicationLifetime application, IUsageMeter usage)
+    DatabaseLifecycleCheckpoint checkpoint, IHostApplicationLifetime application, IUsageMeter usage, TimeProvider time)
     : V1.Replication.ReplicationBase
 {
     // One instance per node (registered as a singleton), so this bounds the node's open streams.
@@ -36,7 +36,7 @@ internal sealed partial class ReplicationService(
         {
             using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(context.CancellationToken, application.ApplicationStopping);
             using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(cancellation.Token);
-            var stream = new Stream(requestStream, responseStream, lifetime, usage);
+            var stream = new Stream(requestStream, responseStream, lifetime, usage, time);
             if (Interlocked.Increment(ref _streams) > ReplicationProtocol.MaxOpenStreams)
             {
                 await stream.SendAsync(Error(StreamErrorCode.StreamErrorResourceExhausted, retryable: true)).ConfigureAwait(false);
@@ -301,7 +301,7 @@ internal sealed partial class ReplicationService(
     // a sender that stops sending, or stops reading so that a response cannot be written, holds no stream slot forever.
     private sealed class Stream(
         IAsyncStreamReader<SyncRequest> requests, IServerStreamWriter<SyncResponse> responses,
-        CancellationTokenSource lifetime, IUsageMeter meter)
+        CancellationTokenSource lifetime, IUsageMeter meter, TimeProvider time)
     {
         public TenantContext? Database { get; set; }
 
@@ -359,7 +359,7 @@ internal sealed partial class ReplicationService(
         private async Task<T> WithinIdleTimeoutAsync<T>(Func<CancellationToken, Task<T>> wait)
         {
             using var operation = new CancellationTokenSource();
-            using var timeout = new CancellationTokenSource();
+            using var timeout = new CancellationTokenSource(Timeout.InfiniteTimeSpan, time);
             var cause = 0;
             void Cancel(int reason)
             {

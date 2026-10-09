@@ -148,6 +148,78 @@ public sealed class HarnessShutdownTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Failure_diagnostics_delete_fixture_directories_only_after_actual_host_and_native_cleanup(bool bodyFails)
+    {
+        var token = TestContext.Current!.Execution.CancellationToken;
+        using var execution = CancellationTokenSource.CreateLinkedTokenSource(token);
+        var directory = Directory.CreateTempSubdirectory("terrabase-diagnostic-cleanup-").FullName;
+        var worker = new HeldBackgroundTask(token);
+        var otherProbe = new ShutdownProbe();
+        var deleted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var bodyFailure = bodyFails ? new IOException("original test body failed") : null;
+        var server = await TerraBaseTestServer.StartAsync(settings =>
+        {
+            settings["data-directory"] = Path.Combine(directory, "first");
+            settings["shutdown-grace-seconds"] = "0";
+        }, services => services.AddSingleton<IHostedService>(_ => worker), cancellationToken: execution.Token);
+        TerraBaseTestServer? other = null;
+        IStorageTransaction? transaction = null;
+        try
+        {
+            other = await TerraBaseTestServer.StartAsync(settings => settings["data-directory"] = Path.Combine(directory, "second"),
+                services => services.AddSingleton<IHostedService>(_ => otherProbe));
+            using var response = await server.Client.GetAsync(new Uri("/healthz", UriKind.Relative), token);
+            await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
+            var engine = server.Services.GetRequiredService<SqliteStorageEngine>();
+            var lifetime = server.Services.GetRequiredService<IHostApplicationLifetime>();
+            var store = await engine.OpenSystemDatabaseAsync(token);
+            transaction = await store.BeginTransactionAsync(write: false, token);
+            await execution.CancelAsync();
+            await worker.Stopping.Task.WaitAsync(token);
+
+            var failure = await Assert.That(async () => await SuiteDiagnostics.CleanupAfterBodyAsync(bodyFailure, () =>
+            {
+                Directory.Delete(directory, recursive: true);
+                deleted.TrySetResult();
+            }, (server, server.CleanupCompletion), (other, other.CleanupCompletion)).WaitAsync(token)).ThrowsException();
+            await Assert.That(bodyFails ? ReferenceEquals(failure, bodyFailure) : failure is OperationCanceledException).IsTrue();
+            await Assert.That(otherProbe.Stops).IsEqualTo(1);
+            await Assert.That(deleted.Task.IsCompleted).IsFalse();
+            await Assert.That(Directory.Exists(directory)).IsTrue();
+            await Assert.That(TerraBaseTestServer.IsDataDirectoryOwned(server.DataDirectory)).IsTrue();
+
+            worker.Release.TrySetResult();
+            await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(lifetime.ApplicationStopped.IsCancellationRequested));
+            await Assert.That(engine.CleanupCompletion.IsCompleted).IsFalse();
+            await Assert.That(deleted.Task.IsCompleted).IsFalse();
+            await Assert.That(Directory.Exists(directory)).IsTrue();
+            await transaction.DisposeAsync();
+            transaction = null;
+            await server.CleanupCompletion.WaitAsync(token);
+            await deleted.Task.WaitAsync(token);
+            await Assert.That(Directory.Exists(directory)).IsFalse();
+        }
+        finally
+        {
+            worker.Release.TrySetResult();
+            if (transaction is not null)
+            {
+                await transaction.DisposeAsync();
+            }
+
+            await Task.WhenAll(server.CleanupCompletion, other?.CleanupCompletion ?? Task.CompletedTask).WaitAsync(token);
+            server.Client.Dispose();
+            other?.Client.Dispose();
+            if (Directory.Exists(directory))
+            {
+                Directory.Delete(directory, recursive: true);
+            }
+        }
+    }
+
+    [Test]
     public async Task Canceling_startup_retains_cleanup_ownership_for_the_host_still_being_started()
     {
         var token = TestContext.Current!.Execution.CancellationToken;

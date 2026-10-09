@@ -52,12 +52,12 @@ public static partial class SuiteDiagnostics
         }
     }
 
-    // Await-using cleanup can replace a body's exception at the test deadline. Attempt every owner, print each
-    // cleanup error separately, then rethrow the original body (or first cleanup error) with its captured stack.
-    internal static async Task CleanupAfterBodyAsync(Exception? bodyFailure, Action finalCleanup, params IAsyncDisposable?[] owners)
+    // Disposal waits can cancel before their owners stop. Retain final cleanup until every actual owner has ended.
+    internal static async Task CleanupAfterBodyAsync(
+        Exception? bodyFailure, Action finalCleanup, params (IAsyncDisposable? Owner, Task Completion)[] owners)
     {
         var failure = bodyFailure is null ? null : ExceptionDispatchInfo.Capture(bodyFailure);
-        foreach (var owner in owners)
+        foreach (var (owner, _) in owners)
         {
             if (owner is null)
             {
@@ -75,14 +75,34 @@ public static partial class SuiteDiagnostics
             }
         }
 
-        try
+        var completion = Task.WhenAll(owners.Select(owner => owner.Completion));
+        if (!completion.IsCompleted)
         {
-            finalCleanup();
+            _ = completion.ContinueWith(task =>
+            {
+                _ = task.Exception;
+                try
+                {
+                    finalCleanup();
+                }
+                catch (Exception error)
+                {
+                    TerraBaseTestServer.ReportCleanupFailure(new AggregateException(error));
+                }
+            }, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
         }
-        catch (Exception error)
+        else
         {
-            TestContext.Current!.OutputWriter.WriteLine($"Test directory cleanup failed: {error}");
-            failure ??= ExceptionDispatchInfo.Capture(error);
+            _ = completion.Exception;
+            try
+            {
+                finalCleanup();
+            }
+            catch (Exception error)
+            {
+                TestContext.Current!.OutputWriter.WriteLine($"Test directory cleanup failed: {error}");
+                failure ??= ExceptionDispatchInfo.Capture(error);
+            }
         }
 
         failure?.Throw();
