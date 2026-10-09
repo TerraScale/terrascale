@@ -26,9 +26,10 @@ internal sealed partial class UsageFlushService(
     // The owner of the last database sampled: each minute samples the next MaxSamplesPerMinute owners in ordinal order after it,
     // wrapping, so every database is sampled in turn whatever order the engine lists them in.
     private string? _cursor;
-    // Databases already sampled in _sampling, so a pass retried after a failure records none of them twice. At most the cap.
+    // Databases already sampled in _samplingMinute, so a pass retried after a failure records none of them twice. At most the cap.
     private readonly HashSet<string> _sampled = [with(StringComparer.Ordinal)];
-    private long _sampling = -1;
+    private long _samplingMinute = -1;
+    private readonly SemaphoreSlim _sampling = new(1, 1);
 
     private static readonly TimeSpan Interval = TimeSpan.FromSeconds(10);
 
@@ -66,17 +67,21 @@ internal sealed partial class UsageFlushService(
         }
     }
 
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    // Storage sampling lists every database, so it runs on its own loop: a slow volume never delays usage delivery.
+    protected override Task ExecuteAsync(CancellationToken stoppingToken) =>
+        Task.WhenAll(LoopAsync(FlushAsync, stoppingToken), LoopAsync(SampleStorageAsync, stoppingToken));
+
+    private async Task LoopAsync(Func<CancellationToken, Task> work, CancellationToken stoppingToken)
     {
         using var timer = new PeriodicTimer(Interval, time);
-        while (await timer.WaitForNextTickAsync(stoppingToken).ConfigureAwait(false))
+        while (await NextTickAsync(timer, stoppingToken).ConfigureAwait(false))
         {
             // The tick resumes this loop on the clock's callback thread. Leave it, as the pressure samplers do (TS-517): a
             // flush reads the clock and the catalog, and a test clock advanced by days would otherwise flush inline.
             await Task.Yield();
             try
             {
-                await FlushAsync(stoppingToken).ConfigureAwait(false);
+                await work(stoppingToken).ConfigureAwait(false);
             }
             // FlushAsync stops catching once shutdown begins, so any send failure would otherwise fault this task and the
             // host's shutdown. StopAsync's drain resends what is still pending and logs what it cannot save.
@@ -87,10 +92,41 @@ internal sealed partial class UsageFlushService(
         }
     }
 
+    // A loop idle at shutdown ends cleanly, like one stopped mid-work.
+    private static async Task<bool> NextTickAsync(PeriodicTimer timer, CancellationToken stoppingToken)
+    {
+        try
+        {
+            return await timer.WaitForNextTickAsync(stoppingToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        {
+            return false;
+        }
+    }
+
+    // One storage sampling pass at a time; a failed one is logged and retried on the next tick.
+    internal async Task SampleStorageAsync(CancellationToken cancellationToken)
+    {
+        await _sampling.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await SampleAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception error) when (!cancellationToken.IsCancellationRequested)
+        {
+            LogFlushFailed(logger, error);
+        }
+        finally
+        {
+            _sampling.Release();
+        }
+    }
+
     // Each flush runs on its own; a failed one keeps its counts pending for the next and never stops the process.
     internal async Task FlushAsync(CancellationToken cancellationToken)
     {
-        foreach (var flush in new Func<CancellationToken, ValueTask>[] { ReportActive, SampleAsync }.Concat(Flushes))
+        foreach (var flush in new Func<CancellationToken, ValueTask>[] { ReportActive, RecordPeers }.Concat(Flushes))
         {
             try
             {
@@ -113,11 +149,11 @@ internal sealed partial class UsageFlushService(
         return ValueTask.CompletedTask;
     }
 
-    private async ValueTask SampleAsync(CancellationToken cancellationToken)
+    private ValueTask RecordPeers(CancellationToken cancellationToken)
     {
         if (!UsageMeter.ValidRegion(options.Region))
         {
-            return;
+            return ValueTask.CompletedTask;
         }
 
         var status = replication.Snapshot();
@@ -133,15 +169,25 @@ internal sealed partial class UsageFlushService(
             }
         }
 
+        return ValueTask.CompletedTask;
+    }
+
+    private async ValueTask SampleAsync(CancellationToken cancellationToken)
+    {
+        if (!UsageMeter.ValidRegion(options.Region))
+        {
+            return;
+        }
+
         var minute = time.GetUtcNow().ToUnixTimeSeconds() / 60;
         if (minute == _sampledMinute)
         {
             return;
         }
 
-        if (minute != _sampling)
+        if (minute != _samplingMinute)
         {
-            _sampling = minute;
+            _samplingMinute = minute;
             _sampled.Clear();
         }
 

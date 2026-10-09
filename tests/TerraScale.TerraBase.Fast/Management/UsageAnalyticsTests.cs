@@ -329,6 +329,20 @@ public sealed class UsageAnalyticsTests
         // Silent past ten minutes, iad-1 counts as removed.
         await Assert.That((await ObserveAsync(TimeSpan.FromMinutes(10))).GetProperty("status").GetString()).IsEqualTo("healthy");
 
+        // A diverged peer goes silent beside a fresh healthy one: its old divergence is not current, so stopped, not diverged.
+        peers.State = new(true, true, 1, 0, [new(0, 0, [synced], "sfo-1"), new(1, 0, [synced with { Diverged = true }], "iad-1")]);
+        await Assert.That((await ObserveAsync(TimeSpan.FromSeconds(10))).GetProperty("status").GetString()).IsEqualTo("diverged");
+        peers.State = new(true, true, 1, 0, [new(0, 0, [synced], "sfo-1")]);
+        JsonElement stale = default;
+        for (var tick = 0; tick < 4; tick++)
+        {
+            stale = await ObserveAsync(TimeSpan.FromSeconds(10));
+        }
+
+        await Assert.That(stale.GetProperty("status").GetString()).IsEqualTo("stopped");
+        await Assert.That(stale.GetProperty("divergence").GetBoolean()).IsFalse();
+        await Assert.That((await ObserveAsync(TimeSpan.FromMinutes(10))).GetProperty("status").GetString()).IsEqualTo("healthy");
+
         // Every peer silent, the last one having diverged: stopped, with neither current lag nor divergence.
         peers.State = new(true, true, 1, 0, [new(0, 0, [synced with { Diverged = true }], "sfo-1")]);
         await Assert.That((await ObserveAsync(TimeSpan.FromSeconds(10))).GetProperty("status").GetString()).IsEqualTo("diverged");
@@ -473,6 +487,7 @@ public sealed class UsageAnalyticsTests
         {
             hook.ReverseDatabases = reverse;
             clock.Advance(TimeSpan.FromMinutes(1));
+            await flush.SampleStorageAsync(CancellationToken.None);
             await flush.FlushAsync(CancellationToken.None);
         }
 

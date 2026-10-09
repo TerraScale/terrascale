@@ -56,11 +56,10 @@ internal sealed partial class WanPuller(
     // diverged (answered Ahead or sent a group conflicting with the applied journal). An origin is kept while its applied
     // prefix is below that target, so neither a round that does not reach it nor a stale lower advertisement can certify its
     // database caught up, and while diverged, until a group from it verifiably extends the applied journal. Entries go with
-    // their database, and an undiverged one unseen for ForgetOrigin. Bounded.
+    // their database, and an undiverged one a complete sweep did not advertise. Bounded.
     private readonly Dictionary<(string Region, string Database), Dictionary<string, OriginState>> _origins = [];
     private int _retainedOrigins;
     private const int MaxOrigins = 4096;
-    private static readonly TimeSpan ForgetOrigin = TimeSpan.FromMinutes(10);
 
     public override Task StartAsync(CancellationToken cancellationToken)
     {
@@ -181,14 +180,14 @@ internal sealed partial class WanPuller(
         }
     }
 
-    private void ForgetUnseen(string region)
+    // Drops undiverged origins a complete sweep, begun at started, never advertised: they are certified gone.
+    private void ForgetUnswept(string region, long started)
     {
         lock (_gate)
         {
             foreach (var (key, origins) in _origins.Where(entry => entry.Key.Region == region).ToList())
             {
-                foreach (var origin in origins.Where(entry => !entry.Value.Diverged && time.GetElapsedTime(entry.Value.Seen) >= ForgetOrigin)
-                    .Select(entry => entry.Key).ToList())
+                foreach (var origin in origins.Where(entry => !entry.Value.Diverged && entry.Value.Seen < started).Select(entry => entry.Key).ToList())
                 {
                     _ = origins.Remove(origin);
                     _retainedOrigins--;
@@ -400,7 +399,12 @@ internal sealed partial class WanPuller(
         }
 
         // Every retained origin of a database counts, also one this round did not reach: a partial sweep certifies nothing.
-        ForgetUnseen(region);
+        // Only a complete sweep certifies an origin gone; an incomplete one keeps every outstanding target, however long it runs.
+        if (complete)
+        {
+            ForgetUnswept(region, discovery.SweepStarted);
+        }
+
         foreach (var (database, observed) in observations)
         {
             // Per origin, its highest target less its latest verified prefix, once: members advertising the same origin, or
@@ -423,6 +427,7 @@ internal sealed partial class WanPuller(
         metrics.Rounded(region, lag, members, unregistered.Count, clashes.Count, caughtUp: complete && !discovery.Lagging, time.GetTimestamp());
         if (sweepEnded)
         {
+            discovery.SweepStarted = time.GetTimestamp();
             discovery.Records = null;
             discovery.Candidates.Clear();
             discovery.Present.Clear();
@@ -852,6 +857,9 @@ internal sealed partial class WanPuller(
         public bool Invalid { get; set; }
 
         public bool CleanupBlocked { get; set; }
+
+        // When the current sweep began; origins it does not see by its complete end were certified absent.
+        public long SweepStarted { get; set; }
     }
 
     // The heads one round holds in memory across every member and page, by count and serialized bytes.

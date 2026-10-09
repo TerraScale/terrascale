@@ -19,14 +19,19 @@ internal sealed record UsageReading(UsageDimension Dimension, long Count, long V
 
     public UsageReading Add(UsageReading other, int sign)
     {
-        var count = Count + sign * other.Count;
-        var value = Value + sign * other.Value;
+        var count = Merge(Count, other.Count, sign);
+        var value = Merge(Value, other.Value, sign);
         var latency = Latency is null && other.Latency is null ? null
-            : Enumerable.Range(0, LatencyBounds.Count).Select(i => (Latency?[i] ?? 0) + sign * (other.Latency?[i] ?? 0)).ToArray();
+            : Enumerable.Range(0, LatencyBounds.Count).Select(i => Merge(Latency?[i] ?? 0, other.Latency?[i] ?? 0, sign)).ToArray();
         var state = sign > 0 && other.State is { } newer && (State is null || newer.ObservedAt >= State.ObservedAt)
             ? newer with { ConvergenceMs = newer.ConvergenceMs ?? State?.ConvergenceMs, LastApplied = newer.LastApplied ?? State?.LastApplied } : State;
         return new(Dimension, count, value, latency, count == 0 && value == 0 ? null : state);
     }
+
+    // Readings are non-negative. Adding saturates at long.MaxValue, so accepted byte aggregates never wrap negative; taking away
+    // an acknowledged snapshot stays exact below saturation (pending always holds at least the snapshot) and never goes below 0.
+    private static long Merge(long left, long right, int sign) =>
+        sign > 0 ? (right > long.MaxValue - left ? long.MaxValue : left + right) : Math.Max(0, left - right);
 
     public static IReadOnlyDictionary<string, UsageReading>? Combine(
         IReadOnlyDictionary<string, UsageReading>? left, IReadOnlyDictionary<string, UsageReading>? right, int sign)

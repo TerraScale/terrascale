@@ -63,7 +63,8 @@ Each point contains:
   so every database is sampled within ceil(databases / 128) minutes whatever
   order the engine lists them in. A database whose size cannot be read loses
   only its own sample, and a pass that fails is retried within the minute
-  without sampling a database twice.
+  without sampling a database twice. Sampling runs on its own loop, so a slow
+  database listing never delays usage delivery.
 - `clientBandwidth` and `replicationBandwidth`, each with `bytesSent` and
   `bytesReceived`. Client bandwidth counts actual HTTP body reads and writes
   after a request resolves an authorized database; it excludes HTTP/TLS headers.
@@ -121,14 +122,16 @@ origin advertised stays its target until the verified applied prefix reaches
 it, so neither a round that does not reach it nor a stale lower advertisement
 can report its database caught up; an ahead answer or journal conflict holds, through later failed or
 unverified pulls, until a group from that origin verifiably extends the applied
-journal. Entries go with their database, and an undiverged one unseen for ten
-minutes. At most 4,096 origins are retained per member; a divergence beyond that
+journal. Entries go with their database, and an undiverged one when a complete
+discovery sweep did not advertise it; an incomplete sweep keeps every outstanding
+target however long it runs. At most 4,096 origins are retained per member; a divergence beyond that
 is reported only in the rounds where it fails, and logged. Health sources
 refresh every ten seconds: each sender's peer observations and each WAN round.
 Every peer observed in the last ten minutes counts. Without any observation from
 the last 30 seconds, status is `stopped` with null lag and divergence. Otherwise
-it is `diverged` if any reports divergence, `stopped` if any has been silent for
-more than 30 seconds, `lagging` with remaining groups, otherwise `healthy`. A WAN
+it is `diverged` if a fresh observation reports divergence (a silent peer's old
+divergence is not current), `stopped` if any has been silent for more than 30
+seconds, `lagging` with remaining groups, otherwise `healthy`. A WAN
 round reports a backlog for any origin it finds behind. A peer silent for ten minutes is
 treated as removed. `lastApplied` is the last newly applied received group; convergence
 is the latest completed observed catch-up in milliseconds.
@@ -163,6 +166,7 @@ not: when the primary refuses a follower batch, for a measurement it rejects or 
 minute scope it predates, the follower resends the totals alone once under the
 same sequence, and the dropped measurements are counted. Byte meters (client and
 replication bandwidth, storage) are bounded only by their 64-bit range, since
-their aggregates outgrow the 10^12 operation-count bound.
+their aggregates outgrow the 10^12 operation-count bound; merging saturates at
+that range instead of wrapping negative.
 There are no migrations or backfills; existing entity-ID generation is owned by
 TS-754, and this slice introduces no ID encoding or compatibility fallback.

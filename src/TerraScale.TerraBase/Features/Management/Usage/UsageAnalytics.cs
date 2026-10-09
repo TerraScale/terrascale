@@ -37,10 +37,14 @@ internal sealed class UsageAnalytics(IManagementService management, UsageMeter m
 
             var (lifetime, series) = await meter.GetObservationsAsync(tenant, window.Usage, cancellationToken, () => CheckDeadline(started), loaded.Filter(region))
                 .ConfigureAwait(false);
+            var buckets = ByRegion(series, started, cancellationToken);
             foreach (var observing in Regions(record, lifetime, region, window, loaded))
             {
-                items.Add(new(record.Id, record.Name, observing, [.. series.Select((point, index) => Point(
-                    window.Usage.Granularity.Start(window.Usage.First + index), Readings(point, observing)))]));
+                items.Add(new(record.Id, record.Name, observing, [.. buckets.Select((point, index) =>
+                {
+                    Check(started, cancellationToken);
+                    return Point(window.Usage.Granularity.Start(window.Usage.First + index), point[observing]);
+                })]));
             }
         }
 
@@ -72,8 +76,10 @@ internal sealed class UsageAnalytics(IManagementService management, UsageMeter m
 
             var (lifetime, series) = await meter.GetObservationsAsync(tenant, window.Usage, cancellationToken, () => CheckDeadline(started), loaded.Filter(region))
                 .ConfigureAwait(false);
+            var buckets = ByRegion(series, started, cancellationToken);
             foreach (var observing in Regions(record, lifetime, region, window, loaded))
             {
+                Check(started, cancellationToken);
                 var readings = Readings(lifetime, observing).ToArray();
                 // Every peer observed within Forget counts; one fresh healthy peer cannot hide a silent or diverged one.
                 var now = time.GetUtcNow();
@@ -82,18 +88,19 @@ internal sealed class UsageAnalytics(IManagementService management, UsageMeter m
                 var recent = health.Where(state => now - state.ObservedAt <= Fresh).ToArray();
                 var applied = readings.Where(reading => reading.Dimension.Meter == "replicated_ops").Select(reading => reading.State?.LastApplied).Max();
                 var lag = recent.Length == 0 ? (double?)null : recent.Max(state => state.LagMs);
-                // Without a fresh observation nothing is current: stopped, with neither lag nor divergence.
-                var diverged = recent.Length == 0 ? (bool?)null : health.Any(state => state.Diverged);
+                // Only fresh observations are current: a silent peer is stopped, not diverged, even beside a fresh one.
+                var diverged = recent.Length == 0 ? (bool?)null : recent.Any(state => state.Diverged);
                 var status = diverged == true ? "diverged" : recent.Length < health.Length || recent.Length == 0 ? "stopped"
                     : recent.Any(state => state.Remaining > 0) ? "lagging" : "healthy";
-                var points = series.Select((point, index) =>
+                var points = buckets.Select((point, index) =>
                 {
-                    var values = Readings(point, observing).ToArray();
+                    Check(started, cancellationToken);
+                    var values = point[observing].ToArray();
                     return new ReplicationPoint(window.Usage.Granularity.Start(window.Usage.First + index),
                         values.Where(reading => reading.Dimension.Meter == "replicated_ops").Sum(reading => reading.Count), Bandwidth(values));
                 }).ToArray();
                 items.Add(new(record.Id, record.Name, observing, status, points.Sum(point => point.ReplicatedOps), lag, diverged,
-                    health.Select(state => state.ConvergenceMs).Max(), applied, Bandwidth(series.SelectMany(point => Readings(point, observing))), points));
+                    health.Select(state => state.ConvergenceMs).Max(), applied, Bandwidth(buckets.SelectMany(point => point[observing])), points));
             }
         }
 
@@ -235,6 +242,21 @@ internal sealed class UsageAnalytics(IManagementService management, UsageMeter m
             // The route answers this like its own deadline: a transient 503, not an invalid query.
             throw new OperationCanceledException("analytics exceeded its execution budget");
         }
+    }
+
+    // Each bucket's readings by observing region, grouped once rather than rescanned per region.
+    private ILookup<string, UsageReading>[] ByRegion(OpCounts[] series, long started, CancellationToken cancellationToken) =>
+        [.. series.Select(point =>
+        {
+            Check(started, cancellationToken);
+            IEnumerable<UsageReading> readings = point.Meters?.Values ?? [];
+            return readings.ToLookup(reading => reading.Dimension.Region, StringComparer.Ordinal);
+        })];
+
+    private void Check(long started, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        CheckDeadline(started);
     }
 
     private static IEnumerable<UsageReading> Readings(OpCounts counts, string region) =>

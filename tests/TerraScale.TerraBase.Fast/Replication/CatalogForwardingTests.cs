@@ -857,6 +857,22 @@ public sealed class CatalogForwardingTests
                 TerraBase.Hosting.TerraBaseJsonContext.Default.OpCounts));
             await Assert.That(await follower.Services.GetRequiredService<CatalogPrimaryClient>().AddUsageAsync(folded, CancellationToken.None)).IsTrue();
 
+            // Two accepted byte readings past half the 64-bit range merge at its saturation, never into negative bandwidth.
+            var sentBytes = new UsageDimension("client_bytes", "gru-1", "", "sent");
+            foreach (var sender in new[] { "large-a", "large-b" })
+            {
+                var large = Batch(ByteString.CopyFrom(Guid.NewGuid().ToByteArray()), 1, organization, project, database, hour, reads: 0, sender: sender);
+                large.Counts[0].Measurements = ByteString.CopyFrom(JsonSerializer.SerializeToUtf8Bytes(
+                    new OpCounts(0, 0, new Dictionary<string, UsageReading> { [sentBytes.Key] = new(sentBytes, (long.MaxValue / 2) + 1) }),
+                    TerraBase.Hosting.TerraBaseJsonContext.Default.OpCounts));
+                await Assert.That(await follower.Services.GetRequiredService<CatalogPrimaryClient>().AddUsageAsync(large, CancellationToken.None)).IsTrue();
+            }
+
+            await primary.Services.GetRequiredService<UsageMeter>().FlushAsync(CancellationToken.None);
+            var (merged, _) = await primary.Services.GetRequiredService<UsageMeter>().GetObservationsAsync(
+                new TenantContext(organization, PlanTier.Hobby, project, database), new UsageWindow(UsageWindow.Hour, hour, 1), CancellationToken.None);
+            await Assert.That(merged.Meters![sentBytes.Key].Count).IsEqualTo(long.MaxValue);
+
             // A clean shutdown sends every pending batch, not only the first 4,096 database hours: here 4,097, one of them this
             // database's. The others belong to a project the primary does not have, which it checks once and drops.
             meter.Add(new UsageKey(new DatabaseOwner(organization, project, database), hour), new OpCounts(1, 0));
