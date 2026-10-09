@@ -46,7 +46,8 @@ support the shape seeks described below. `_system` has the same schema but retai
 
 | Statement | Hot path | Plan before | Plan after |
 | --- | --- | --- | --- |
-| `Get`: `SELECT … WHERE collection = ? AND id = ?` | every document read, every API-key check | `SEARCH documents USING PRIMARY KEY (collection=? AND id=?)` | unchanged |
+| `Get`: `SELECT … WHERE collection = ? AND id = ?` | system document reads, every API-key check | `SEARCH documents USING PRIMARY KEY (collection=? AND id=?)` | unchanged |
+| `UniqueRawDocument` | client document reads, query row materialization and uniqueness reconciliation; source body, version and conflict flag in one statement | — | `SEARCH d USING PRIMARY KEY (collection=? AND id=?)`; `SEARCH c USING PRIMARY KEY (collection=? AND id=?) LEFT-JOIN` |
 | `Version`: `SELECT version, typeof(body) = 'null' …` | write preconditions, delete, assert-absent | — | `SEARCH documents USING PRIMARY KEY (collection=? AND id=?)`; `typeof` reads the record header, not the body |
 | `Put`: `INSERT … ON CONFLICT (collection, id) DO UPDATE SET version = excluded.version, body = …` | every document write | no plan rows (conflict check is a primary-key probe) | unchanged |
 | `Tombstone`: `UPDATE … SET body = NULL …` | document delete (Documents API) | — | `SEARCH documents USING PRIMARY KEY (collection=? AND id=?)` |

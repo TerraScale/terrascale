@@ -10,6 +10,12 @@ internal static class SqliteStatements
     // A tombstone has a NULL body.
     public const string Get = "SELECT version, body FROM documents WHERE collection = $collection AND id = $id;";
 
+    public const string UniqueRawDocument = """
+        SELECT d.version, coalesce(c.body, d.body), c.body IS NOT NULL
+        FROM documents d LEFT JOIN unique_conflicts c ON c.collection = d.collection AND c.id = d.id
+        WHERE d.collection = $collection AND d.id = $id;
+        """;
+
     // typeof() reads the column's type from the record header, not its content: no body is loaded.
     public const string Version = "SELECT version, typeof(body) = 'null' FROM documents WHERE collection = $collection AND id = $id;";
 
@@ -356,6 +362,7 @@ internal static class SqliteStatements
     public static IReadOnlyDictionary<string, string> All { get; } = new Dictionary<string, string>(StringComparer.Ordinal)
     {
         [nameof(Get)] = Get,
+        [nameof(UniqueRawDocument)] = UniqueRawDocument,
         [nameof(ReplicationRetainedBody)] = ReplicationRetainedBody,
         [nameof(ReplicationRetainedBodyBytes)] = ReplicationRetainedBodyBytes,
         [nameof(RestoreReplicationBody)] = RestoreReplicationBody,

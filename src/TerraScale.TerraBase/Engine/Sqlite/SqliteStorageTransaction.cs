@@ -88,11 +88,9 @@ internal sealed partial class SqliteStorageTransaction(
     // Worker-only: query readers fetch bodies after their id/key page has admitted the row.
     private StoredDocument? ReadDocument(string collection, string id)
     {
-        var hidden = Command("SELECT 1 FROM unique_conflicts WHERE collection = $collection AND id = $id;", collection);
-        hidden.Parameters.AddWithValue("$id", id);
-        if (Shaped && hidden.ExecuteScalar() is not null && ReadUniqueDocument(collection, id) is { } conflict)
+        if (Shaped)
         {
-            return conflict;
+            return ReadUniqueDocument(collection, id);
         }
 
         var command = Command(SqliteStatements.Get, collection);
