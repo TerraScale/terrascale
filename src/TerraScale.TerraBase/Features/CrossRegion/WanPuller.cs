@@ -7,6 +7,7 @@ using TerraBase.Features.CrossRegion.V1;
 using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Replication;
 using TerraBase.Features.Replication.V1;
+using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
 

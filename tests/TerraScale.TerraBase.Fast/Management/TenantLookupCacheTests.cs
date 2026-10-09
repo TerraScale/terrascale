@@ -6,6 +6,7 @@ using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
 using TerraBase.Engine.Cluster;
 using TerraBase.Engine.Sqlite;
+using TerraBase.Errors;
 using TerraBase.Fast.Storage;
 using TerraBase.Features.Management;
 using TerraBase.Hosting;
@@ -52,7 +53,7 @@ public sealed class TenantLookupCacheTests
 
             // Negative answers for an id the catalog does not record yet.
             await AssertLookupsAsync(tenants, database, registered: false, token);
-            await Assert.That(await tenants.FindDatabaseAsync(organization, project, name, token)).IsNull();
+            await Assert.That(await tenants.FindDatabaseAsync(organization, project, name, token) is NotFound).IsTrue();
 
             using (var created = await gru.Client.PostAsJsonAsync(ManagementApi.Uri("/v1/management/commits"), new
             {
@@ -63,20 +64,20 @@ public sealed class TenantLookupCacheTests
                 await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.OK);
             }
 
-            var placed = await AssertLookupsAsync(tenants, database, registered: true, token);
-            await Assert.That(placed!.Value.Name).IsEqualTo(name);
-            await Assert.That(placed.Value.Placement.Home).IsEqualTo("gru-1");
-            await Assert.That(placed.Value.Placement.Replicas).IsEquivalentTo(InSfo);
-            await Assert.That((await tenants.FindDatabaseAsync(organization, project, name, token))?.DatabaseId).IsEqualTo(database.DatabaseId);
+            var placed = RequireRecord(await AssertLookupsAsync(tenants, database, registered: true, token));
+            await Assert.That(placed.Name).IsEqualTo(name);
+            await Assert.That(placed.Placement.Home).IsEqualTo("gru-1");
+            await Assert.That(placed.Placement.Replicas).IsEquivalentTo(InSfo);
+            await Assert.That(await tenants.FindDatabaseAsync(organization, project, name, token) is TenantContext found ? found.DatabaseId : null).IsEqualTo(database.DatabaseId);
 
             using (var unplaced = await gru.Client.PatchAsJsonAsync(ManagementApi.Uri($"{path}/{database.DatabaseId}"), new { replicaRegions = Array.Empty<string>() }, token))
             {
                 await Assert.That(unplaced.StatusCode).IsEqualTo(HttpStatusCode.OK);
             }
 
-            var moved = await AssertLookupsAsync(tenants, database, registered: true, token);
-            await Assert.That(moved!.Value.Placement.Replicas).IsEmpty();
-            await Assert.That(moved.Value.Placement.Version).IsGreaterThan(placed.Value.Placement.Version);
+            var moved = RequireRecord(await AssertLookupsAsync(tenants, database, registered: true, token));
+            await Assert.That(moved.Placement.Replicas).IsEmpty();
+            await Assert.That(moved.Placement.Version).IsGreaterThan(placed.Placement.Version);
 
             using (var deleted = await gru.Client.DeleteAsync(ManagementApi.Uri($"{path}/{database.DatabaseId}"), token))
             {
@@ -84,11 +85,11 @@ public sealed class TenantLookupCacheTests
             }
 
             await AssertLookupsAsync(tenants, database, registered: false, token);
-            await Assert.That(await tenants.FindDatabaseAsync(organization, project, name, token)).IsNull();
+            await Assert.That(await tenants.FindDatabaseAsync(organization, project, name, token) is NotFound).IsTrue();
 
             // The name binds a new id; the deleted one stays unknown.
             var recreated = await gru.CreateDatabaseAsync(organization, project, name);
-            await Assert.That((await tenants.FindDatabaseAsync(organization, project, name, token))?.DatabaseId).IsEqualTo(recreated);
+            await Assert.That(await tenants.FindDatabaseAsync(organization, project, name, token) is TenantContext recreatedDatabase ? recreatedDatabase.DatabaseId : null).IsEqualTo(recreated);
             await AssertLookupsAsync(tenants, database, registered: false, token);
             await AssertLookupsAsync(tenants, database with { DatabaseId = recreated }, registered: true, token);
         }
@@ -118,7 +119,7 @@ public sealed class TenantLookupCacheTests
         {
             var registered = tenants.RegisteredAsync(database, token).AsTask();
             await Assert.That(registered.IsCompletedSuccessfully).IsTrue();
-            await Assert.That(await registered).IsTrue();
+            await Assert.That(await registered is bool known && known).IsTrue();
             var placement = tenants.DatabaseRecordAsync(database, token).AsTask();
             await Assert.That(placement.IsCompletedSuccessfully).IsTrue();
             await Assert.That(Describe(await placement)).IsEqualTo(Describe(record));
@@ -157,27 +158,27 @@ public sealed class TenantLookupCacheTests
         var database = new TenantContext(created.Organization, PlanTier.Hobby, created.Project, created.Id);
         var tenants = api.Server.Services.GetRequiredService<ITenantDirectory>();
         var management = api.Server.Services.GetRequiredService<IManagementService>();
-        await Assert.That((await tenants.DatabaseRecordAsync(database, token))!.Value.Placement.Replicas).IsEquivalentTo(replicas);
-        await Assert.That((await management.FindDatabaseRecordAsync(created.Organization, created.Project, created.Name, token))!.Replicas).IsEquivalentTo(replicas);
+        await Assert.That(RequireRecord(await tenants.DatabaseRecordAsync(database, token)).Placement.Replicas).IsEquivalentTo(replicas);
+        await Assert.That(RequireManagedRecord(await management.FindDatabaseRecordAsync(created.Organization, created.Project, created.Name, token)).Replicas).IsEquivalentTo(replicas);
 
         var sqlite = api.Server.Services.GetRequiredService<SqliteStorageEngine>();
-        Task<(string Name, DatabasePlacement Placement)?> placement;
+        Task<DatabaseRecordResult> placement;
         await using (await StorageFixture.HoldWorkerAsync(sqlite, token))
         {
             placement = tenants.DatabaseRecordAsync(database, token).AsTask();
             await Assert.That(placement.IsCompleted).IsFalse();
             await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(sqlite.Io.Queued > 0 && !placement.IsCompleted));
         }
-        await Assert.That((await placement)!.Value.Placement.Replicas).IsEquivalentTo(replicas);
+        await Assert.That(RequireRecord(await placement).Placement.Replicas).IsEquivalentTo(replicas);
 
-        Task<ManagedDatabase?> named;
+        Task<FindDatabaseRecordResult> named;
         await using (await StorageFixture.HoldWorkerAsync(sqlite, token))
         {
             named = management.FindDatabaseRecordAsync(created.Organization, created.Project, created.Name, token).AsTask();
             await Assert.That(named.IsCompleted).IsFalse();
             await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(sqlite.Io.Queued > 0 && !named.IsCompleted));
         }
-        await Assert.That((await named)!.Replicas).IsEquivalentTo(replicas);
+        await Assert.That(RequireManagedRecord(await named).Replicas).IsEquivalentTo(replicas);
         using var current = await api.Client.GetAsync(ManagementApi.Uri(created.Path), token);
         current.EnsureSuccessStatusCode();
         await Assert.That((await current.Content.ReadFromJsonAsync(TerraBaseJsonContext.Default.ManagedDatabase, token))!.Replicas).IsEquivalentTo(replicas);
@@ -219,9 +220,9 @@ public sealed class TenantLookupCacheTests
         }
 
         var management = api.Server.Services.GetRequiredService<IManagementService>();
-        await Assert.That(await management.FindDatabaseRecordAsync(created.Organization, project, name, token)).IsNull();
+        await Assert.That(await management.FindDatabaseRecordAsync(created.Organization, project, name, token) is NotFound).IsTrue();
         var engine = api.Server.Services.GetRequiredService<SqliteStorageEngine>();
-        Task<ManagedDatabase?> lookup;
+        Task<FindDatabaseRecordResult> lookup;
         await using (await StorageFixture.HoldWorkerAsync(engine, token))
         {
             lookup = management.FindDatabaseRecordAsync(created.Organization, project, name, token).AsTask();
@@ -236,23 +237,48 @@ public sealed class TenantLookupCacheTests
             }
         }
 
-        await Assert.That(await lookup).IsNull();
+        await Assert.That(await lookup is NotFound).IsTrue();
         using var current = await client.GetAsync(ManagementApi.Uri(ManagementApi.DocumentPath(missing, "items", "absent")), token);
         await Assert.That(current.StatusCode).IsEqualTo(expected);
     }
 
     // Each lookup twice: the second answers from the cache unless the catalog committed in between.
-    private static async Task<(string Name, DatabasePlacement Placement)?> AssertLookupsAsync(
+    private static async Task<DatabaseRecordResult> AssertLookupsAsync(
         ITenantDirectory tenants, TenantContext database, bool registered, CancellationToken token)
     {
         var record = await tenants.DatabaseRecordAsync(database, token);
-        await Assert.That(record is not null).IsEqualTo(registered);
+        await Assert.That(record is TenantDatabaseRecord).IsEqualTo(registered);
+        await Assert.That(record is NotFound).IsEqualTo(!registered);
         await Assert.That(Describe(await tenants.DatabaseRecordAsync(database, token))).IsEqualTo(Describe(record));
-        await Assert.That(await tenants.RegisteredAsync(database, token)).IsEqualTo(registered);
-        await Assert.That(await tenants.RegisteredAsync(database, token)).IsEqualTo(registered);
+        await Assert.That(await tenants.RegisteredAsync(database, token) switch
+        {
+            bool known => known == registered,
+            Unavailable => false,
+        }).IsTrue();
+        await Assert.That(await tenants.RegisteredAsync(database, token) switch
+        {
+            bool known => known == registered,
+            Unavailable => false,
+        }).IsTrue();
         return record;
     }
 
-    private static string? Describe((string Name, DatabasePlacement Placement)? record) =>
-        record is { } value ? $"{value.Name} {value.Placement.Home} [{string.Join(',', value.Placement.Replicas)}] {value.Placement.Version}" : null;
+    private static string? Describe(DatabaseRecordResult record) => record switch
+    {
+        TenantDatabaseRecord value => $"{value.Name} {value.Placement.Home} [{string.Join(',', value.Placement.Replicas)}] {value.Placement.Version}",
+        NotFound => null,
+        Unavailable => throw new InvalidOperationException("the catalog fixture is unavailable"),
+    };
+
+    private static TenantDatabaseRecord RequireRecord(DatabaseRecordResult record) => record switch
+    {
+        TenantDatabaseRecord value => value,
+        _ => throw new InvalidOperationException("the catalog fixture database was not found"),
+    };
+
+    private static ManagedDatabase RequireManagedRecord(FindDatabaseRecordResult record) => record switch
+    {
+        ManagedDatabase value => value,
+        _ => throw new InvalidOperationException("the catalog fixture database was not found"),
+    };
 }

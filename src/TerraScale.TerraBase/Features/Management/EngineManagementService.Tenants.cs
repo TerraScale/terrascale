@@ -480,11 +480,11 @@ internal sealed partial class EngineManagementService
             return found;
         }
 
-        var record = found is ManagedDatabase database ? database : null;
+        var cachedRecord = found is ManagedDatabase database ? database : null;
         var validKey = EntityIds.IsValid(projectId) && DatabaseName.TryParse(name, out _);
-        if (validKey && (record is null || Admits((record.Name, record.Placement(options.Region)))))
+        if (validKey && (cachedRecord is null || Admits((cachedRecord.Name, cachedRecord.Placement(options.Region)))))
         {
-            Cache(_records, key, sequence, record);
+            Cache(_records, key, sequence, cachedRecord);
         }
         return found;
     }

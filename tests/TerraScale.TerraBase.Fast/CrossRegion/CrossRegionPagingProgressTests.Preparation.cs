@@ -9,6 +9,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
 using TerraBase.Engine.Cluster;
+using TerraBase.Errors;
 using TerraBase.Features.CrossRegion;
 using TerraBase.Features.CrossRegion.V1;
 using TerraBase.Hosting;
@@ -134,21 +135,34 @@ public sealed partial class CrossRegionPagingProgressTests
                 // Its store is prepared and queued behind the held head when this region's catalog or storage changes.
                 var tenants = sfo.Server.Services.GetRequiredService<ITenantDirectory>();
                 var engine = sfo.Server.Services.GetRequiredService<IStorageEngine>();
-                var database = (await tenants.FindDatabaseAsync(changed.Organization, changed.Project, changed.Name, token))!;
+                var database = await tenants.FindDatabaseAsync(changed.Organization, changed.Project, changed.Name, token) switch
+                {
+                    TenantContext found => found,
+                    _ => throw new InvalidOperationException("the prepared database was not found"),
+                };
                 // Preparing it pinned the store it opened and the frontier it read there.
                 var prepared = (await engine.OpenDatabaseAsync(database, token))!.Incarnation;
                 await Assert.That(puller.Holds(prepared)).IsTrue();
                 if (change == "forgotten")
                 {
                     // The reconciliation of a deletion at its home region (WanPuller.ForgetDeletedAsync); no HTTP API forgets a replica.
-                    await Assert.That(await tenants.ForgetDatabaseAsync(database, token)).IsTrue();
+                    await Assert.That(await tenants.ForgetDatabaseAsync(database, token) is DatabaseForgotten { Forgotten: true }).IsTrue();
                 }
                 else if (change == "unplaced")
                 {
                     // A newer placement from its home region without this one, as a later head brings it.
-                    var placement = (await tenants.DatabaseRecordAsync(database, token))!.Value.Placement;
-                    await Assert.That(await tenants.UpdatePlacementAsync(database, new DatabasePlacement(placement.Home, [], placement.Version + 1), token)).IsTrue();
-                    var updated = (await tenants.DatabaseRecordAsync(database, token))!.Value.Placement;
+                    var placement = await tenants.DatabaseRecordAsync(database, token) switch
+                    {
+                        TenantDatabaseRecord found => found.Placement,
+                        _ => throw new InvalidOperationException("the prepared database placement was not found"),
+                    };
+                    await Assert.That(await tenants.UpdatePlacementAsync(database, new DatabasePlacement(placement.Home, [], placement.Version + 1), token)
+                        is PlacementUpdate { Updated: true }).IsTrue();
+                    var updated = await tenants.DatabaseRecordAsync(database, token) switch
+                    {
+                        TenantDatabaseRecord found => found.Placement,
+                        _ => throw new InvalidOperationException("the prepared database placement was not found"),
+                    };
                     await Assert.That(updated.Version).IsEqualTo(placement.Version + 1);
                     await Assert.That(updated.Includes("sfo-1")).IsFalse();
                 }
@@ -158,8 +172,13 @@ public sealed partial class CrossRegionPagingProgressTests
                     await Assert.That(await engine.DeleteDatabaseAsync(database, token)).IsTrue();
                 }
 
-                await Assert.That(await tenants.RegisteredAsync(database, token)).IsEqualTo(change == "dropped");
-                await Assert.That((await tenants.DatabaseRecordAsync(database, token)).HasValue).IsEqualTo(change != "forgotten");
+                await Assert.That(await tenants.RegisteredAsync(database, token) is bool registered && registered == (change == "dropped")).IsTrue();
+                await Assert.That(await tenants.DatabaseRecordAsync(database, token) switch
+                {
+                    TenantDatabaseRecord => change != "forgotten",
+                    NotFound => change == "forgotten",
+                    Unavailable => false,
+                }).IsTrue();
                 await Assert.That(File.Exists(file)).IsEqualTo(change == "unplaced");
                 steps.Release();
                 await clock.PausedAsync(token);
