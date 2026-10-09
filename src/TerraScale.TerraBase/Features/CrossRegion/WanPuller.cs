@@ -1031,10 +1031,15 @@ internal sealed partial class WanPuller(
                 }
 
                 applied = sequence;
+                // Its journal proof extended the applied journal, or matched the head another stream extended it with first (the
+                // journal compares a duplicate's digest only at its head): whatever this origin diverged on is resolved.
+                if (append is JournalApplied || append is JournalUnchanged duplicate && duplicate.Sequence == (long)batch.EventId.Sequence)
+                {
+                    Converged(region, database, origin, sequence);
+                }
+
                 if (append is JournalApplied)
                 {
-                    // Its journal proof extended the applied journal: whatever this origin diverged on is resolved.
-                    Converged(region, database, origin, sequence);
                     usage.RecordReplicatedOperations(database, region, changes.Count);
                 }
                 metrics.Pulled(region, batch.EncodedApplicationBytes);

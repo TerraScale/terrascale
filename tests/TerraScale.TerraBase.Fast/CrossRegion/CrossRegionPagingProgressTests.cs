@@ -548,6 +548,13 @@ public sealed partial class CrossRegionPagingProgressTests
             set => Volatile.Write(ref field, value);
         }
 
+        // Sees each pull reply before the puller does, as another stream that commits its groups first.
+        public Func<PullRequest, ReadOnlyMemory<byte>, CancellationToken, ValueTask>? BeforePullReply
+        {
+            get => Volatile.Read(ref field);
+            set => Volatile.Write(ref field, value);
+        }
+
         // Fails every pull of this database while set.
         public ByteString? FailPullsOf
         {
@@ -674,7 +681,13 @@ public sealed partial class CrossRegionPagingProgressTests
                     return new PullReply { Status = PullReply.Types.Status.UnknownOrigin }.ToByteArray();
                 }
 
-                return await inner.RequestAsync(subject, request, cancellationToken);
+                var reply = await inner.RequestAsync(subject, request, cancellationToken);
+                if (BeforePullReply is { } before)
+                {
+                    await before(pull, reply, cancellationToken);
+                }
+
+                return reply;
             }
 
             if (!Slow)

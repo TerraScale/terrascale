@@ -8,6 +8,8 @@ using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Features.CrossRegion;
 using TerraBase.Features.CrossRegion.V1;
 using TerraBase.Features.Management.Usage;
+using TerraBase.Features.Replication;
+using TerraBase.Features.Replication.V1;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
@@ -623,7 +625,7 @@ public sealed partial class CrossRegionPagingProgressTests
     }
 
     [Test]
-    public async Task Origin_divergence_holds_through_failed_or_unverified_pulls_until_the_journal_extends()
+    public async Task Origin_divergence_holds_through_failed_or_unverified_pulls_until_the_journal_extends_by_any_stream()
     {
         var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         var faker = new Faker();
@@ -696,10 +698,28 @@ public sealed partial class CrossRegionPagingProgressTests
                 await AdvanceSweepRoundAsync(bus, clock, token);
                 await Assert.That(await DivergedAsync()).IsTrue();
 
-                // A pull that extends the applied journal resolves it.
+                // Another stream commits the pulled group first: the pull's duplicate matches the extended head, which resolves it.
                 bus.UnknownOriginOf = null;
+                var journal = sfo.Server.Services.GetRequiredService<IReplicationJournal>();
+                var won = 0;
+                bus.BeforePullReply = async (pull, reply, cancellation) =>
+                {
+                    var groups = PullReply.Parser.ParseFrom(reply.Span).Groups;
+                    var (store, _, _, _) = await journal.OpenAsync(tenant, pull.Origin.Memory, cancellation);
+                    foreach (var group in groups)
+                    {
+                        var changes = ReplicationProtocol.Read(new SyncRequest { CommittedGroup = group }, tenant, pull.Origin.Memory, ReplicationProtocol.Limits);
+                        if (await journal.AppendAsync(store, pull.Origin.Memory, (long)group.EventId.Sequence, changes,
+                            group.PreviousJournalDigest.Memory, group.JournalDigest.Memory, cancellation) is JournalApplied)
+                        {
+                            _ = Interlocked.Increment(ref won);
+                        }
+                    }
+                };
                 await AdvanceSweepRoundAsync(bus, clock, token);
+                bus.BeforePullReply = null;
                 await AssertReadAsync(target, document, value, version, token);
+                await Assert.That(won).IsEqualTo(1);
                 await Assert.That(await DivergedAsync()).IsFalse();
             }
             finally
