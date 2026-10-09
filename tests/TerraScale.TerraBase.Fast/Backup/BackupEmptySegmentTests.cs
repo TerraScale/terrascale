@@ -30,7 +30,7 @@ public sealed class BackupEmptySegmentTests
         var database = await api.CreateManagedDatabaseAsync("main");
         requests.Path = database.Path + "/point-in-time/restore";
         using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
-        await ManagementApi.CreateCollectionAsync(data, database, "items");
+        await ManagementApi.CreateCollectionAsync(data, database, "items", cancellationToken);
         var text = new Faker().Lorem.Sentence(8);
         using var written = await data.PutAsJsonAsync(ManagementApi.Uri(ManagementApi.DocumentPath(database, "items", "before")), new { text }, cancellationToken);
         written.EnsureSuccessStatusCode();

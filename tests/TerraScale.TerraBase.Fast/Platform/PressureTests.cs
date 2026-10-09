@@ -440,9 +440,9 @@ public sealed class PressureTests
         }
 
         await Assert.That(MetricValues(metrics, "terrabase_pressure_info")).IsEquivalentTo([1d]);
-        await Assert.That(MetricValues(metrics, "terrabase_pressure_available").Length).IsEqualTo(11);
+        await Assert.That(MetricValues(metrics, "terrabase_pressure_available").Length).IsEqualTo(13);
         foreach (var signal in new[] { "cpu_util", "mem_util", "disk", "data_bytes", "disk_iops", "io_queue_depth",
-            "io_admitted_count", "connections", "storage_bytes", "replication_lag_seq", "tenant_cpu_share" })
+            "io_admitted_count", "connections", "storage_bytes", "replication_lag_seq", "tenant_cpu_share", "sender_durable_lag_seq", "local_ready" })
         {
             await Assert.That(MetricValues(metrics, "terrabase_pressure_available", $"signal=\"{signal}\"").Length).IsEqualTo(1);
         }

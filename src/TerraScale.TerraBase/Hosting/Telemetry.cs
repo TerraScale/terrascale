@@ -102,6 +102,8 @@ public static class Telemetry
                         or "terrabase_pressure_disk_total_bytes" or "terrabase_pressure_request_rate"
                         or "terrabase_pressure_p95_latency_ms" or "terrabase_pressure_data_bytes"
                         or "terrabase_pressure_write_qps" or "terrabase_pressure_connections"
+                        or "terrabase_pressure_io_admitted_count" or "terrabase_pressure_sender_durable_lag_seq"
+                        or "terrabase_pressure_local_ready"
                         or "terrabase_pressure_sampled_at_seconds" or "terrabase_pressure_storage_sampled_at_seconds"
                         or "terrabase_pressure_sample_window_seconds" or "terrabase_pressure_untracked_tenant_requests"
                         or "terrabase_pressure_info"
@@ -132,7 +134,7 @@ public static class Telemetry
                     "terrabase.query_shapes.dropped" => new MetricStreamConfiguration { CardinalityLimit = 7 },
                     "terrabase_pressure_top_tenant_request_rate" or "terrabase_pressure_top_tenant_storage_bytes"
                         => new MetricStreamConfiguration { CardinalityLimit = 10 },
-                    "terrabase_pressure_available" => new MetricStreamConfiguration { CardinalityLimit = 11 },
+                    "terrabase_pressure_available" => new MetricStreamConfiguration { CardinalityLimit = 13 },
                     _ => null,
                 };
             });

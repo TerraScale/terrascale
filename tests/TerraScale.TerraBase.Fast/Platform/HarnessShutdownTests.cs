@@ -283,7 +283,20 @@ public sealed class HarnessShutdownTests
         }
         finally
         {
+            await execution.CancelAsync();
             release.TrySetResult();
+            if (completion is not null)
+            {
+                try
+                {
+                    await completion.WaitAsync(token);
+                }
+                catch (Exception) when (completion.IsFaulted || completion.IsCanceled)
+                {
+                    // Canceled startup's run failure was already returned to its caller.
+                }
+            }
+
             if (engine is not null)
             {
                 await engine.CleanupCompletion.WaitAsync(token);
@@ -292,6 +305,11 @@ public sealed class HarnessShutdownTests
             if (cleanup is not null)
             {
                 await cleanup.WaitAsync(token);
+            }
+
+            if (certificate is not null && credential is not null)
+            {
+                await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(!File.Exists(certificate) && !File.Exists(credential)));
             }
 
             if (Directory.Exists(directory))

@@ -307,7 +307,7 @@ public sealed partial class CrossRegionPagingProgressTests
         using var source = await gru.CreateClientAsync(organization, "documents:read", "documents:write");
         for (var index = 0; index < databases.Count; index++)
         {
-            await ManagementApi.CreateCollectionAsync(source, databases[index], "items");
+            await ManagementApi.CreateCollectionAsync(source, databases[index], "items", token);
             using var written = await source.PutAsJsonAsync(documents[index], new { value = values[index] }, token);
             await Assert.That(written.StatusCode).IsEqualTo(HttpStatusCode.Created);
             versions[index] = written.Headers.ETag!.Tag;
