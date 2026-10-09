@@ -37,9 +37,14 @@ public sealed record ProjectReplication(string ProjectId, string Range, DateTime
 /// <summary>Reads the usage-owned analytics and replication observations within a verified project-token grant.</summary>
 public interface IUsageAnalytics
 {
-    /// <summary>Reads analytics; database is a catalog id filter, or null for all databases the grant reaches.</summary>
-    ValueTask<ProjectAnalytics?> AnalyticsAsync(ProjectAccess access, AnalyticsWindow window, string? database, string? region, CancellationToken cancellationToken);
+    /// <summary>
+    /// Reads analytics; database is a catalog id filter, or null for all databases the grant reaches. <paramref name="retain"/>
+    /// takes the memory admission of a returned result, to release once the result has been sent.
+    /// </summary>
+    ValueTask<ProjectAnalytics?> AnalyticsAsync(
+        ProjectAccess access, AnalyticsWindow window, string? database, string? region, Action<IDisposable> retain, CancellationToken cancellationToken);
 
-    /// <summary>Reads replication usage and health with the same authorization and filters.</summary>
-    ValueTask<ProjectReplication?> ReplicationAsync(ProjectAccess access, AnalyticsWindow window, string? database, string? region, CancellationToken cancellationToken);
+    /// <summary>Reads replication usage and health with the same authorization, filters and result admission.</summary>
+    ValueTask<ProjectReplication?> ReplicationAsync(
+        ProjectAccess access, AnalyticsWindow window, string? database, string? region, Action<IDisposable> retain, CancellationToken cancellationToken);
 }

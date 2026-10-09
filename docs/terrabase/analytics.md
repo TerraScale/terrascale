@@ -37,7 +37,8 @@ Atlas to read those regions; regions retain independent catalogs and do not
 connect to each other's private peer listeners.
 
 Requests read at most 100 databases and 16,384 database-region buckets (after
-the `region` filter) within five seconds, with memory admission. Invalid
+the `region` filter) within five seconds, with memory admission held until the
+response has been sent. Invalid
 filters/ranges and excessive queries return 400; exceeding the five-second
 execution budget returns 503 `capacity`. Cancellation
 releases request admission.
@@ -58,11 +59,11 @@ Each point contains:
   requests above 65,536 ms and reports that boundary.
 - `storageBytes`: the average sampled physical database size, including the
   engine's sidecars; null before any sample. Each node samples once per minute:
-  the databases whose owner hash falls in that minute's slot (ceil(databases /
-  128) slots), at most 128 per minute. A slot holding more continues on its next
-  visit after the ones it sampled, so every database is sampled in turn. A
-  database whose size cannot be read loses only its own sample, and a pass that
-  fails is retried within the minute without sampling a database twice.
+  the next 128 databases in owner order after the last one sampled, wrapping,
+  so every database is sampled within ceil(databases / 128) minutes whatever
+  order the engine lists them in. A database whose size cannot be read loses
+  only its own sample, and a pass that fails is retried within the minute
+  without sampling a database twice.
 - `clientBandwidth` and `replicationBandwidth`, each with `bytesSent` and
   `bytesReceived`. Client bandwidth counts actual HTTP body reads and writes
   after a request resolves an authorized database; it excludes HTTP/TLS headers.
@@ -114,12 +115,14 @@ plus WAN applied-prefix observations. `lagMs` is the observed backlog's age,
 not network round-trip latency. `divergence` denotes detected journal conflict
 (a verified prefix conflict, an origin's explicit ahead answer, or a group that
 conflicts with the applied journal prefix; malformed or oversized messages are
-failed pulls, not divergence), not a full comparison of document contents. A
-WAN origin's ahead answer or journal conflict holds, through later failed or
-unverified pulls and rounds that do not advertise it, until a group from that
-origin verifiably extends the applied journal or the database is deleted there.
-At most 4,096 diverged origins are retained per member; one beyond that is
-reported diverged only in the rounds where it fails, and logged. Health sources
+failed pulls, not divergence), not a full comparison of document contents. WAN
+health is kept per peer region, database and origin: an origin still behind
+keeps its backlog, so a round that does not reach it cannot report its database
+caught up; an ahead answer or journal conflict holds, through later failed or
+unverified pulls, until a group from that origin verifiably extends the applied
+journal. Entries go with their database, and an undiverged one unseen for ten
+minutes. At most 4,096 origins are retained per member; a divergence beyond that
+is reported only in the rounds where it fails, and logged. Health sources
 refresh every ten seconds: each sender's peer observations and each WAN round.
 Every peer observed in the last ten minutes counts. Without any observation from
 the last 30 seconds, status is `stopped` with null lag and divergence. Otherwise

@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Net;
 using System.Text;
 using System.Text.Json;
@@ -449,6 +450,42 @@ public sealed class UsageAnalyticsTests
         await Assert.That(items[0].GetProperty("region").GetString()).IsEqualTo("gru-1");
         await Assert.That(items[0].GetProperty("series").EnumerateArray()
             .Sum(point => point.GetProperty("requests").TryGetProperty("put", out var puts) ? puts.GetInt64() : 0)).IsGreaterThan(0);
+    }
+
+    [Test]
+    public async Task Storage_sampling_covers_more_databases_than_a_minute_samples_whatever_order_they_list_in()
+    {
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 10, 8, 21, 30, 0, TimeSpan.Zero));
+        var hook = new UsageCommitHook();
+        await using var api = await ManagementApi.StartAsync(settings => settings["region"] = "gru-1", hook.Install, clock);
+        // Registered databases: a flush keeps only the observations of databases the catalog names.
+        var first = await api.CreateManagedDatabaseAsync("db0");
+        var databases = new List<TenantContext> { new(first.Organization, PlanTier.Hobby, first.Project, first.Id) };
+        for (var i = 1; i < 140; i++)
+        {
+            var created = await api.CreateManagedDatabaseAsync(first.Organization, first.Project, "db" + i.ToString(CultureInfo.InvariantCulture));
+            databases.Add(new(created.Organization, PlanTier.Hobby, created.Project, created.Id));
+        }
+
+        // Two minutes sample 2 × 128 databases; the second pass lists them in reverse.
+        var flush = api.Server.Services.GetServices<IHostedService>().OfType<UsageFlushService>().Single();
+        foreach (var reverse in new[] { false, true })
+        {
+            hook.ReverseDatabases = reverse;
+            clock.Advance(TimeSpan.FromMinutes(1));
+            await flush.FlushAsync(CancellationToken.None);
+        }
+
+        var meter = api.Server.Services.GetRequiredService<UsageMeter>();
+        var window = new UsageWindow(UsageWindow.Hour, clock.GetUtcNow().ToUnixTimeSeconds() / 3600, 1);
+        var unsampled = 0;
+        foreach (var database in databases)
+        {
+            var (lifetime, _) = await meter.GetObservationsAsync(database, window, CancellationToken.None);
+            unsampled += lifetime.Meters?.ContainsKey("storage_bytes|gru-1||sample") == true ? 0 : 1;
+        }
+
+        await Assert.That(unsampled).IsEqualTo(0);
     }
 
     [Test]

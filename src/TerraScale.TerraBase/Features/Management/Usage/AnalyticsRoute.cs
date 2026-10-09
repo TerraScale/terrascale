@@ -38,11 +38,11 @@ internal static class AnalyticsRoute
         {
             if (replication)
             {
-                return await analytics.ReplicationAsync(access, window, database, region, bounded.Token).ConfigureAwait(false) is { } result
+                return await analytics.ReplicationAsync(access, window, database, region, context.Response.RegisterForDispose, bounded.Token).ConfigureAwait(false) is { } result
                     ? TypedResults.Ok(result) : ErrorResponse.From(new NotFound());
             }
 
-            return await analytics.AnalyticsAsync(access, window, database, region, bounded.Token).ConfigureAwait(false) is { } series
+            return await analytics.AnalyticsAsync(access, window, database, region, context.Response.RegisterForDispose, bounded.Token).ConfigureAwait(false) is { } series
                 ? TypedResults.Ok(series) : ErrorResponse.From(new NotFound());
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)

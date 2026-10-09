@@ -23,9 +23,9 @@ internal sealed partial class UsageFlushService(
     // Storage is sampled once per minute bucket, so an idle node neither lists databases nor writes usage every tick.
     private const int MaxSamplesPerMinute = 128;
     private long _sampledMinute = -1;
-    private int _slots = 1;
-    // Per slot, how many of its databases the next visit passes over: an overfull slot continues where it stopped.
-    private readonly Dictionary<long, int> _continue = [];
+    // The owner of the last database sampled: each minute samples the next MaxSamplesPerMinute owners in ordinal order after it,
+    // wrapping, so every database is sampled in turn whatever order the engine lists them in.
+    private string? _cursor;
     // Databases already sampled in _sampling, so a pass retried after a failure records none of them twice. At most the cap.
     private readonly HashSet<string> _sampled = [with(StringComparer.Ordinal)];
     private long _sampling = -1;
@@ -90,8 +90,7 @@ internal sealed partial class UsageFlushService(
     // Each flush runs on its own; a failed one keeps its counts pending for the next and never stops the process.
     internal async Task FlushAsync(CancellationToken cancellationToken)
     {
-        meter.ReportActive();
-        foreach (var flush in new Func<CancellationToken, ValueTask>[] { SampleAsync }.Concat(Flushes))
+        foreach (var flush in new Func<CancellationToken, ValueTask>[] { ReportActive, SampleAsync }.Concat(Flushes))
         {
             try
             {
@@ -107,6 +106,12 @@ internal sealed partial class UsageFlushService(
     private Func<CancellationToken, ValueTask>[] Flushes => options.CatalogPrimary is null
         ? [meter.FlushAsync, recorder.FlushAsync, shapes.FlushAsync]
         : [SendOnceAsync, SendShapesOnceAsync];
+
+    private ValueTask ReportActive(CancellationToken cancellationToken)
+    {
+        meter.ReportActive();
+        return ValueTask.CompletedTask;
+    }
 
     private async ValueTask SampleAsync(CancellationToken cancellationToken)
     {
@@ -134,29 +139,30 @@ internal sealed partial class UsageFlushService(
             return;
         }
 
-        // Each minute samples the databases whose owner hash falls in its slot, at most MaxSamplesPerMinute of them. A slot
-        // holding more continues on its next visit after the ones it sampled, so every database is sampled in turn.
         if (minute != _sampling)
         {
             _sampling = minute;
             _sampled.Clear();
         }
 
-        var slots = _slots;
-        var slot = minute % slots;
-        var skip = _continue.GetValueOrDefault(slot);
-        var listed = 0;
-        var matched = 0;
+        // The smallest owners after the cursor, then from the start: two bounded selections over one listing.
+        var after = new SortedDictionary<string, TenantContext>(StringComparer.Ordinal);
+        var wrapped = new SortedDictionary<string, TenantContext>(StringComparer.Ordinal);
         await foreach (var database in engine.ListDatabasesAsync(cancellationToken).ConfigureAwait(false))
         {
-            listed++;
-            if ((uint)HashCode.Combine(database.OrganizationId, database.ProjectId, database.DatabaseId) % slots != slot
-                || matched++ < skip || matched > skip + MaxSamplesPerMinute)
-            {
-                continue;
-            }
-
             var key = $"{database.OrganizationId}/{database.ProjectId}/{database.DatabaseId}";
+            var selection = _cursor is null || string.CompareOrdinal(key, _cursor) > 0 ? after : wrapped;
+            selection[key] = database;
+            if (selection.Count > MaxSamplesPerMinute)
+            {
+                _ = selection.Remove(selection.Keys.Last());
+            }
+        }
+
+        string? last = null;
+        foreach (var (key, database) in after.Concat(wrapped).Take(MaxSamplesPerMinute))
+        {
+            last = key;
             try
             {
                 if (!_sampled.Contains(key) && await engine.GetDatabaseSizeAsync(database, cancellationToken).ConfigureAwait(false) is { } size)
@@ -171,23 +177,9 @@ internal sealed partial class UsageFlushService(
             }
         }
 
-        // Only a complete pass marks its minute sampled; a listing failure leaves it to the next tick.
+        // Only a complete pass marks its minute sampled and moves the cursor; a listing failure leaves both to the next tick.
         _sampledMinute = minute;
-
-        if (matched > skip + MaxSamplesPerMinute)
-        {
-            _continue[slot] = skip + MaxSamplesPerMinute;
-        }
-        else
-        {
-            _ = _continue.Remove(slot);
-        }
-
-        _slots = Math.Max(1, (listed + MaxSamplesPerMinute - 1) / MaxSamplesPerMinute);
-        if (_slots != slots)
-        {
-            _continue.Clear();
-        }
+        _cursor = last ?? _cursor;
     }
 
     // A tick sends one bounded batch; a follower's backlog drains a batch per tick.

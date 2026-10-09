@@ -85,7 +85,15 @@ internal sealed partial class UsageMeter
     {
         foreach (var report in _active.Values)
         {
-            report();
+            // One request's failure must not stop the others' reports or the flushes after them.
+            try
+            {
+                report();
+            }
+            catch (Exception error) when (error is not OperationCanceledException)
+            {
+                LogReportFailed(logger, error);
+            }
         }
     }
 

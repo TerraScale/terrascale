@@ -52,11 +52,13 @@ internal sealed partial class WanPuller(
     private readonly Dictionary<(IDatabaseStore Store, string Origin), long> _applied = [];
     private readonly Dictionary<string, (long At, DatabaseAdoption Why)> _refused = [with(StringComparer.Ordinal)];
     private readonly HashSet<string> _clashes = [with(StringComparer.Ordinal)];
-    // By database, its origins that answered Ahead or sent a group conflicting with the applied journal. An origin stays
-    // diverged until a group from it verifiably extends the applied journal, or the database is deleted here. Bounded.
-    private readonly Dictionary<string, HashSet<string>> _diverged = [with(StringComparer.Ordinal)];
-    private int _divergedOrigins;
-    private const int MaxDivergedOrigins = 4096;
+    // Per peer region, database and origin: groups still to apply and whether it diverged (answered Ahead or sent a group
+    // conflicting with the applied journal). An origin is kept while behind, so a round that does not reach it cannot certify
+    // its database caught up, and while diverged, until a group from it verifiably extends the applied journal. Entries go
+    // with their database, and an undiverged one unseen for ForgetOrigin. Bounded.
+    private readonly Dictionary<(string Region, string Database, string Origin), (long Remaining, bool Diverged, long Seen)> _origins = [];
+    private const int MaxOrigins = 4096;
+    private static readonly TimeSpan ForgetOrigin = TimeSpan.FromMinutes(10);
 
     public override Task StartAsync(CancellationToken cancellationToken)
     {
@@ -80,9 +82,9 @@ internal sealed partial class WanPuller(
             if (store.Tenant is { } tenant)
             {
                 _ = _stores.Remove(Name(tenant));
-                if (_diverged.Remove(Name(tenant), out var origins))
+                foreach (var key in _origins.Keys.Where(key => key.Database == Name(tenant)).ToList())
                 {
-                    _divergedOrigins -= origins.Count;
+                    _ = _origins.Remove(key);
                 }
             }
 
@@ -93,53 +95,75 @@ internal sealed partial class WanPuller(
         }
     }
 
-    private bool Diverged(TenantContext database)
+    private (long Remaining, bool Diverged) Retained(string region, TenantContext database)
     {
         lock (_gate)
         {
-            return _diverged.ContainsKey(Name(database));
+            var (remaining, diverged) = (0L, false);
+            foreach (var ((peer, name, _), state) in _origins)
+            {
+                if (peer == region && name == Name(database))
+                {
+                    (remaining, diverged) = (remaining + Math.Min(state.Remaining, long.MaxValue - remaining), diverged || state.Diverged);
+                }
+            }
+
+            return (remaining, diverged);
         }
     }
 
-    // Whether the diverged origin is retained; false once the bound is reached.
-    private bool Diverge(TenantContext database, ReadOnlyMemory<byte> origin)
+    // Records an origin's state; false when the bound left no room for it.
+    private bool Retain(string region, TenantContext database, ReadOnlyMemory<byte> origin, long? remaining = null, bool diverge = false)
     {
         lock (_gate)
         {
-            var key = Name(database);
-            if (_diverged.TryGetValue(key, out var origins) && origins.Contains(Convert.ToHexString(origin.Span)))
+            var key = (region, Name(database), Convert.ToHexString(origin.Span));
+            var found = _origins.TryGetValue(key, out var state);
+            var next = (Remaining: remaining ?? state.Remaining, Diverged: state.Diverged || diverge, Seen: time.GetTimestamp());
+            if (next.Remaining <= 0 && !next.Diverged)
             {
+                _ = _origins.Remove(key);
                 return true;
             }
 
-            if (_divergedOrigins >= MaxDivergedOrigins)
+            if (!found && _origins.Count >= MaxOrigins)
             {
                 return false;
             }
 
-            if (origins is null)
-            {
-                _diverged[key] = origins = [with(StringComparer.Ordinal)];
-            }
-
-            _ = origins.Add(Convert.ToHexString(origin.Span));
-            _divergedOrigins++;
+            _origins[key] = next;
             return true;
         }
     }
 
-    private void Converged(TenantContext database, ReadOnlyMemory<byte> origin)
+    // A group from the origin verifiably extended the applied journal: whatever it diverged on is resolved.
+    private void Converged(string region, TenantContext database, ReadOnlyMemory<byte> origin)
     {
         lock (_gate)
         {
-            var key = Name(database);
-            if (_diverged.TryGetValue(key, out var origins) && origins.Remove(Convert.ToHexString(origin.Span)))
+            var key = (region, Name(database), Convert.ToHexString(origin.Span));
+            if (_origins.TryGetValue(key, out var state))
             {
-                _divergedOrigins--;
-                if (origins.Count == 0)
+                if (state.Remaining <= 0)
                 {
-                    _ = _diverged.Remove(key);
+                    _ = _origins.Remove(key);
                 }
+                else
+                {
+                    _origins[key] = state with { Diverged = false };
+                }
+            }
+        }
+    }
+
+    private void ForgetUnseen(string region)
+    {
+        lock (_gate)
+        {
+            foreach (var key in _origins.Where(entry => entry.Key.Region == region && !entry.Value.Diverged
+                && time.GetElapsedTime(entry.Value.Seen) >= ForgetOrigin).Select(entry => entry.Key).ToList())
+            {
+                _ = _origins.Remove(key);
             }
         }
     }
@@ -271,7 +295,8 @@ internal sealed partial class WanPuller(
             // Any origin found behind starts the backlog, not only the first member's advertisement.
             if ((long)head.Sequence > applied && behind.Add(database))
             {
-                usage.RecordReplicationState(database, region, (long)head.Sequence - applied, Diverged(database));
+                var (outstanding, divergent) = Retained(region, database);
+                usage.RecordReplicationState(database, region, Math.Max((long)head.Sequence - applied, outstanding), divergent);
             }
             if (applied < (long)head.Sequence)
             {
@@ -288,7 +313,7 @@ internal sealed partial class WanPuller(
                 {
                     failed = true;
                     // A conflict past the bounded set is still reported for this round, and logged.
-                    if (error is OriginAheadException or JournalConflictException && !Diverge(database, origin))
+                    if (error is OriginAheadException or JournalConflictException && !Retain(region, database, origin, diverge: true))
                     {
                         untracked = true;
                         LogDivergenceUntracked(logger, region);
@@ -321,6 +346,8 @@ internal sealed partial class WanPuller(
             }
 
             var remaining = Math.Max(0, (long)head.Sequence - applied);
+            // Best effort past the bound: an untracked backlog only loses retention across rounds.
+            _ = Retain(region, database, origin, remaining);
             if (observations.TryGetValue(database, out var observed))
             {
                 observations[database] = (observed.Remaining + Math.Min(remaining, long.MaxValue - observed.Remaining), observed.Diverged || untracked);
@@ -335,10 +362,12 @@ internal sealed partial class WanPuller(
             }
         }
 
-        // Every retained diverged origin of a database counts, also one not advertised this round.
+        // Every retained origin of a database counts, also one this round did not reach: a partial sweep certifies nothing.
+        ForgetUnseen(region);
         foreach (var (database, observed) in observations)
         {
-            usage.RecordReplicationState(database, region, observed.Remaining, observed.Diverged || Diverged(database));
+            var (outstanding, divergent) = Retained(region, database);
+            usage.RecordReplicationState(database, region, Math.Max(observed.Remaining, outstanding), observed.Diverged || divergent);
         }
 
         discovery.Retry.Clear();
@@ -911,7 +940,7 @@ internal sealed partial class WanPuller(
                 if (newlyApplied)
                 {
                     // Its journal proof extended the applied journal: whatever this origin diverged on is resolved.
-                    Converged(database, origin);
+                    Converged(region, database, origin);
                     usage.RecordReplicatedOperations(database, region, changes.Count);
                 }
                 metrics.Pulled(region, batch.EncodedApplicationBytes);

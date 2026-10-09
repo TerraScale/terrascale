@@ -14,7 +14,7 @@ internal sealed class UsageAnalytics(IManagementService management, UsageMeter m
     private static readonly TimeSpan Forget = TimeSpan.FromMinutes(10);
 
     public async ValueTask<ProjectAnalytics?> AnalyticsAsync(
-        ProjectAccess access, AnalyticsWindow window, string? database, string? region, CancellationToken cancellationToken)
+        ProjectAccess access, AnalyticsWindow window, string? database, string? region, Action<IDisposable> retain, CancellationToken cancellationToken)
     {
         var started = time.GetTimestamp();
         var databases = await DatabasesAsync(access, database, started, cancellationToken).ConfigureAwait(false);
@@ -24,8 +24,7 @@ internal sealed class UsageAnalytics(IManagementService management, UsageMeter m
         }
 
         var (reservation, reserved) = Reserve(databases, window, region);
-        using var held = reservation;
-        using var loaded = new Loaded(memory, reserved);
+        using var loaded = new Loaded(memory, reserved, reservation);
         var items = new List<DatabaseAnalytics>();
         foreach (var record in databases)
         {
@@ -46,11 +45,11 @@ internal sealed class UsageAnalytics(IManagementService management, UsageMeter m
         }
 
         CheckDeadline(started);
-        return new(access.ProjectId, window.Range, window.Usage.From, window.Usage.To, window.Usage.Granularity.Minutes * 60, items);
+        return loaded.HandOff(retain, new ProjectAnalytics(access.ProjectId, window.Range, window.Usage.From, window.Usage.To, window.Usage.Granularity.Minutes * 60, items));
     }
 
     public async ValueTask<ProjectReplication?> ReplicationAsync(
-        ProjectAccess access, AnalyticsWindow window, string? database, string? region, CancellationToken cancellationToken)
+        ProjectAccess access, AnalyticsWindow window, string? database, string? region, Action<IDisposable> retain, CancellationToken cancellationToken)
     {
         var started = time.GetTimestamp();
         var databases = await DatabasesAsync(access, database, started, cancellationToken).ConfigureAwait(false);
@@ -60,8 +59,7 @@ internal sealed class UsageAnalytics(IManagementService management, UsageMeter m
         }
 
         var (reservation, reserved) = Reserve(databases, window, region);
-        using var held = reservation;
-        using var loaded = new Loaded(memory, reserved);
+        using var loaded = new Loaded(memory, reserved, reservation);
         var items = new List<DatabaseReplication>();
         foreach (var record in databases)
         {
@@ -100,7 +98,7 @@ internal sealed class UsageAnalytics(IManagementService management, UsageMeter m
         }
 
         CheckDeadline(started);
-        return new(access.ProjectId, window.Range, window.Usage.From, window.Usage.To, window.Usage.Granularity.Minutes * 60, items);
+        return loaded.HandOff(retain, new ProjectReplication(access.ProjectId, window.Range, window.Usage.From, window.Usage.To, window.Usage.Granularity.Minutes * 60, items));
     }
 
     private async ValueTask<List<ManagedDatabase>?> DatabasesAsync(ProjectAccess access, string? database, long started, CancellationToken cancellationToken)
@@ -157,11 +155,24 @@ internal sealed class UsageAnalytics(IManagementService management, UsageMeter m
     private int Placed(ManagedDatabase record, string? region) =>
         Math.Max(1, record.Regions(options.Region).Count(observing => region is null || observing == region));
 
-    // Memory admitted for the observations a request keeps as it reads them, beyond its output reservation.
-    private sealed class Loaded(IMemoryBudget memory, int reserved) : IDisposable
+    // Memory admitted for a request: its output reservation, extra output items and the observations it keeps. A returned result
+    // hands all of it to the caller, who holds it until the result has been sent; otherwise it is released here.
+    private sealed class Loaded(IMemoryBudget memory, int reserved, IMemoryReservation output) : IDisposable
     {
-        private readonly List<IMemoryReservation> _reservations = [];
+        private readonly List<IMemoryReservation> _reservations = [output];
         private int _points = reserved;
+        private bool _handedOff;
+
+        public T HandOff<T>(Action<IDisposable> retain, T result)
+        {
+            foreach (var reservation in _reservations)
+            {
+                retain(reservation);
+            }
+
+            _handedOff = true;
+            return result;
+        }
 
         // Admits output items beyond those reserved for a database's current placement.
         public void Items(int items, AnalyticsWindow window)
@@ -193,6 +204,11 @@ internal sealed class UsageAnalytics(IManagementService management, UsageMeter m
 
         public void Dispose()
         {
+            if (_handedOff)
+            {
+                return;
+            }
+
             foreach (var reservation in _reservations)
             {
                 reservation.Dispose();

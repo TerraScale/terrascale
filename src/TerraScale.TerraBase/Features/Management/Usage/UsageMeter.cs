@@ -874,6 +874,9 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
         }
     }
 
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Reporting a request's transferred bytes failed; its other requests and the flush go on")]
+    private static partial void LogReportFailed(ILogger logger, Exception error);
+
     [LoggerMessage(Level = LogLevel.Debug, Message = "Dropped operation counts of {Databases} deleted databases")]
     private static partial void LogDropped(ILogger logger, int databases);
 
