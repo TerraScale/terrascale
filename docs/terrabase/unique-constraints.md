@@ -87,7 +87,8 @@ states and declarations even when the dropping origin had never received them.
 
 ## Rollout and follow-up slices
 
-The fresh SQL schema 10 includes uniqueness storage and rejects incompatible files. Coordinate its deployment and
+The fresh SQL schema 11 includes uniqueness storage and rejects incompatible files, including GUID schema 9 and
+ULID schema 10 snapshots before import publication. Coordinate its deployment and
 exact storage reset with TS-754's layout-2 ULID cutover; verify and list the deleted targets in the PR. Bootstrap
 state recreates itself. No migration command is shipped.
 
