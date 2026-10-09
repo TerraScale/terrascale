@@ -8,6 +8,47 @@ import (
 	"testing"
 )
 
+func TestOverviewHeaderStaysCompactAndAligned(t *testing.T) {
+	page := newPage(t)
+	login(t, page, sampleAccount.Email, sampleAccount.Password)
+
+	for _, width := range []int{360, 768, 1024, 1440} {
+		must(t, page.SetViewportSize(width, 900))
+		for _, route := range []routeState{{key: "overview", path: "/"}, {key: "connect", path: "/?tab=connect"}} {
+			t.Run(fmt.Sprintf("%s/%d", route.key, width), func(t *testing.T) {
+				goToOK(t, page, route.path)
+				raw, err := page.Evaluate(`async () => {
+					await document.fonts.ready;
+					const home = document.querySelector('.ts-home');
+					const tabs = home.querySelector('.ts-tabs').getBoundingClientRect();
+					const actions = [...home.querySelectorAll('.ts-page-actions a')].map(el => el.getBoundingClientRect());
+					const problems = [];
+					if (actions.length !== 2 || actions.some(box => !box.width || !box.height))
+						problems.push('both header actions must remain visible');
+					if (tabs.top - home.getBoundingClientRect().top > 12)
+						problems.push('tabs have extra space above them');
+					for (const action of actions) {
+						if (innerWidth >= 1024 && Math.abs(action.top + action.height / 2 - tabs.top - tabs.height / 2) > 3)
+							problems.push('header action is not aligned with the tabs');
+						if (innerWidth >= 1024 && action.left < tabs.right)
+							problems.push('header action overlaps the tabs');
+					}
+					if (actions.length === 2 && Math.abs(actions[0].top - actions[1].top) > 1)
+						problems.push('header actions must share one row');
+					if (document.documentElement.scrollWidth > innerWidth + 1)
+						problems.push('page overflows horizontally');
+					return problems.join('; ');
+				}`)
+				must(t, err)
+				if raw != "" {
+					t.Errorf("%s at %dpx: %s", route.path, width, raw)
+				}
+				viewportScreenshot(t, page, fmt.Sprintf("overview-header/%s-%d", route.key, width))
+			})
+		}
+	}
+}
+
 // Keep the page layout within the actual content column, not just the viewport.
 func TestPageLayoutsFitContentColumn(t *testing.T) {
 	page := newPage(t)
