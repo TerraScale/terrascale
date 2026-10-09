@@ -30,3 +30,25 @@ HDR, per-second JSONL, summary, ramp execution and live cleanup are unimplemente
 A real bounded gru receipt requires those public SDK prerequisites and dedicated
 project-scoped client credentials from OCI Vault. Do not use this table as a
 capacity or latency result.
+
+## Merged Slice 1 runner preflight
+
+Observed at 2026-10-09T06:18:01+00:00 on `delta`, after rebasing onto main `85e757d8`.
+The six checked-in workloads validate against the final merged protocol.
+
+| Workload | Client exit | Results JSONL |
+| --- | --- | --- |
+| point-reads | 1 (`SDK_BLOCKED`) | not created |
+| write-heavy | 1 (`SDK_BLOCKED`) | not created |
+| mixed-70-30 | 1 (`SDK_BLOCKED`) | not created |
+| query | 1 (`SDK_BLOCKED`) | not created |
+| txn | 1 (`SDK_BLOCKED`) | not created |
+| ramp | 1 (`SDK_BLOCKED`) | not created |
+
+The merged runner invoked the .NET launcher for point-reads and exited 1,
+retaining FAILED receipt `01M4FMZEVVFW66DJ6G97TQCRSE` with throughput, latency and
+cluster metrics unavailable and `stored:false`. No client JSONL was created.
+This confirms CLI integration and rejection of an unmeasured run. It is
+not a live benchmark: zero API requests, measured operations or databases.
+Every invocation ran at `nice -n 19`; each client harness had a 10-second
+bound and the runner harness had a 12-second bound.

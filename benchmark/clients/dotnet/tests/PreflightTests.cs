@@ -1,4 +1,5 @@
 using System.Text;
+using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using TerraScale.DotNet;
@@ -14,6 +15,19 @@ public sealed class PreflightTests
          "dataset":{"documents":128,"doc_size_bytes":1024},
          "mix":[{"op":"doc.get","weight":100}],"targets":{"p99_ms":200}}
         """;
+
+    [Test]
+    [Arguments("point-reads")]
+    [Arguments("write-heavy")]
+    [Arguments("mixed-70-30")]
+    [Arguments("query")]
+    [Arguments("txn")]
+    [Arguments("ramp")]
+    public async Task MergedProtocolWorkloadsValidate(string name)
+    {
+        var workload = await Workload.ReadAsync(SharedWorkloadPath(name));
+        await Assert.That(workload.Name).IsEqualTo(name);
+    }
 
     [Test]
     [Arguments("doc.create")]
@@ -272,6 +286,13 @@ public sealed class PreflightTests
     }
 
     private static Workload Parse(string json) => Workload.Parse(Encoding.UTF8.GetBytes(json));
+
+    private static string SharedWorkloadPath(string name, [CallerFilePath] string source = "")
+    {
+        var path = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(source)!, "../../../workloads", name + ".json"));
+        Skip.Unless(File.Exists(path), "Shared-workload integration test requires the source checkout.");
+        return path;
+    }
 
     private static string RampJson(int duration, int step, string concurrency)
     {

@@ -24,8 +24,7 @@ nice -n 19 ./bench-client run \
   --workload ../../workloads/point-reads.json --region gru --out /tmp/dotnet-results.jsonl
 ```
 
-`workloads/` is provided by Slice 1's PR #13 and is not on main yet. Until it
-merges, use a workload file from that branch. Do not substitute a legacy driver.
+The six shared `workloads/` files and Slice 1's runner are merged on main.
 The prepared checkout must remain clean; preparation refuses local changes and
 requires the pinned revision to be an ancestor of official `origin/main`.
 `make build`, `make test` and `make check` prepare a missing checkout before
@@ -48,8 +47,7 @@ distinguish forced timeout termination from an external kill or resource exhaust
 
 ## Shared contract
 
-Validation follows Slice 1's draft
-[docs/protocol.md](https://git.terrascale.tech/TerraScale/ts-benchmark/src/commit/4d001d6c33db45722ab5e66a3ebee61e6d95d949/docs/protocol.md):
+Validation follows the merged [docs/protocol.md](../../docs/protocol.md):
 positive integer percentage weights summing to 100, seven distinct supported
 operations, bounded durations/concurrency/dataset/target and exact increasing
 ramp steps. Unknown, duplicate, missing or incorrectly typed fields and trailing
@@ -93,8 +91,22 @@ database lifecycle and seed validation through those public SDK calls, implement
 the bounded intended-start scheduler/HDR/JSONL/summary/ramp contract, run unit
 and SDK contract tests, then attach a bounded gru live receipt. The current
 preflight does **not** implement any of those measurement/lifecycle components.
-No real benchmark was run and no performance number is claimed. Reconcile with
-Slice 1's final merged protocol and runner before marking this slice complete.
+No real benchmark was run and no performance number is claimed. The final
+protocol also requires per-window step/concurrency/elapsed fields, complete
+workload configuration and compatible dense HDR snapshots in summaries.
+
+The merged runner invokes this launcher through the shared CLI. From the repo
+root, after building both clients/dotnet and the runner:
+
+```sh
+nice -n 19 bin/bench-runner --client "$PWD/clients/dotnet/bench-client" \
+  --workload workloads/point-reads.json --region gru --store=false \
+  --out-dir /tmp/dotnet-runner-preflight
+```
+
+The current preflight returns `SDK_BLOCKED`, so the runner retains a FAILED
+receipt with throughput and latency unavailable. It cannot produce a capacity
+verdict until the SDK and load client prerequisites above are complete.
 
 [GRU-selected preflight evidence](bench/gru-preflight.md) is validation evidence,
 not a deployed benchmark. This PR lands only the preflight after green CI,

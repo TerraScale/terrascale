@@ -1,2 +1,4 @@
 .sdk/
 .sdk.lock
+**/bin/
+**/obj/

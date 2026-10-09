@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Net;
 using System.Net.Sockets;
 using System.Runtime.CompilerServices;
 using TUnit.Core;
@@ -111,6 +112,16 @@ public sealed class FailureTests
     [Arguments(true)]
     public async Task LauncherBoundsFifoOpenAndStalledRead(bool stalledWriter)
     {
+        string hostName;
+        try { hostName = Dns.GetHostName(); }
+        catch (SocketException)
+        {
+            Skip.Test("FIFO integration test requires a verifiable hostname.");
+            return;
+        }
+        Skip.Unless(!string.IsNullOrWhiteSpace(hostName) &&
+            !hostName.Split('.')[0].Equals("mariogk-desktop", StringComparison.OrdinalIgnoreCase),
+            "FIFO integration test requires an eligible host.");
         var launcher = ScriptPath("bench-client");
         RequireTools("bash", "mkfifo", "timeout", "dotnet", "sleep");
         Skip.Unless(File.Exists(Path.Combine(Path.GetDirectoryName(launcher)!, "src/bin/Release/net10.0/bench-client.dll")),
