@@ -115,7 +115,7 @@ type Publisher struct {
 func (p *Publisher) Publish(ctx context.Context, doc Document) (*Report, error) {
 	for _, placement := range doc.Placements {
 		if err := entityid.Check(placement.Project); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("atlas: publish request project ID: %w", err)
 		}
 	}
 	base, err := url.Parse(p.BaseURL)
@@ -170,7 +170,7 @@ func (p *Publisher) Publish(ctx context.Context, doc Document) (*Report, error) 
 	}
 	for _, placement := range report.Placements {
 		if err := entityid.Check(placement.Project); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("atlas: publish response project ID: %w", err)
 		}
 	}
 	return &report, nil

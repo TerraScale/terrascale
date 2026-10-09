@@ -13,6 +13,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -145,3 +147,27 @@ func TestPublishRejectsLocally(t *testing.T) {
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestPublishDistinguishesRequestAndResponseIDErrors(t *testing.T) {
+	var calls atomic.Int64
+	peer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		io.WriteString(w, `{"placements":[{"project":"legacy","result":"updated"}]}`)
+	}))
+	t.Cleanup(peer.Close)
+	publisher := atlas.Publisher{BaseURL: peer.URL, Key: newKey(t)}
+	doc := atlas.Document{Placements: []atlas.Placement{{Project: "legacy"}}}
+	if _, err := publisher.Publish(t.Context(), doc); err == nil || !strings.Contains(err.Error(), "publish request project ID") {
+		t.Fatal("invalid request ID must identify the request stage")
+	}
+	if calls.Load() != 0 {
+		t.Fatal("invalid request ID reached HTTP")
+	}
+	doc.Placements[0].Project = "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+	if _, err := publisher.Publish(t.Context(), doc); err == nil || !strings.Contains(err.Error(), "publish response project ID") {
+		t.Fatal("invalid response ID must identify the response stage")
+	}
+	if calls.Load() != 1 {
+		t.Fatal("expected one accepted publish request")
+	}
+}

@@ -87,7 +87,7 @@ func NewAPIKeySource(cfg APIKeyConfig) (*TokenSource, error) {
 	}
 	if cfg.Project != "" {
 		if err := entityid.Check(cfg.Project); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("tsauth: Project: %w", err)
 		}
 	}
 	endpoint, err := tokenEndpoint(cfg.Issuer)
@@ -115,7 +115,7 @@ func NewExchangeSource(cfg ExchangeConfig) (*TokenSource, error) {
 	}
 	if cfg.Project != "" {
 		if err := entityid.Check(cfg.Project); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("tsauth: Project: %w", err)
 		}
 	}
 	endpoint, err := tokenEndpoint(cfg.Issuer)
@@ -123,7 +123,7 @@ func NewExchangeSource(cfg ExchangeConfig) (*TokenSource, error) {
 		return nil, err
 	}
 	if err := entityid.Check(cfg.Organization); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("tsauth: Organization: %w", err)
 	}
 	return newSource(cfg.HTTPClient, func(ctx context.Context, hc *http.Client) (*tokenResponse, error) {
 		subject, err := cfg.SubjectToken(ctx)

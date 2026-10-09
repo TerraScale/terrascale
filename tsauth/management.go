@@ -541,20 +541,11 @@ func (u *User) do(ctx context.Context, method string, path []string, query url.V
 		return errors.New("tsauth: WithToken needs a sign-in access token without whitespace")
 	}
 	if err := entityid.Path(path); err != nil {
-		return err
+		return fmt.Errorf("tsauth: %s request path: %w", method, err)
 	}
 	if project := query.Get("project_id"); project != "" {
 		if err := entityid.Check(project); err != nil {
-			return err
-		}
-	}
-	if in != nil {
-		body, err := json.Marshal(in)
-		if err != nil {
-			return err
-		}
-		if err := entityid.Body(body); err != nil {
-			return err
+			return fmt.Errorf("tsauth: %s request project_id: %w", method, err)
 		}
 	}
 	target := u.c.base
@@ -578,6 +569,9 @@ func sendJSON(ctx context.Context, hc *http.Client, method, target, authorizatio
 		data, err := json.Marshal(in)
 		if err != nil {
 			return fmt.Errorf("tsauth: encode request: %w", err)
+		}
+		if err := entityid.Body(data); err != nil {
+			return fmt.Errorf("tsauth: %s request body: %w", method, err)
 		}
 		body = bytes.NewReader(data)
 	}
@@ -617,5 +611,8 @@ func sendJSON(ctx context.Context, hc *http.Client, method, target, authorizatio
 	if out != nil && json.Unmarshal(data, out) != nil {
 		return fmt.Errorf("tsauth: %s %s: the response does not match the contract", method, req.URL.Path)
 	}
-	return entityid.Model(out)
+	if err := entityid.Model(out); err != nil {
+		return fmt.Errorf("tsauth: %s %s response: %w", method, req.URL.Path, err)
+	}
+	return nil
 }

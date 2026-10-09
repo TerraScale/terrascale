@@ -12,10 +12,10 @@ import (
 	"github.com/oklog/ulid/v2"
 )
 
-// New generates a canonical ULID using process-wide, concurrency-safe
-// entropy that increases monotonically within a millisecond.
+// Entropy is process-wide and concurrency-safe, increasing within a millisecond.
 var entropy = &ulid.LockedMonotonicReader{MonotonicReader: ulid.Monotonic(rand.Reader, 0)}
 
+// New generates a canonical ULID and panics if ULID generation fails.
 func New() string { return ulid.MustNew(ulid.Now(), entropy).String() }
 
 // Check rejects noncanonical IDs without including input values in errors.
@@ -28,7 +28,7 @@ func Check(id string) error {
 }
 
 // Model checks explicitly tagged fields of SDK protocol models. Raw JSON,
-// maps, timestamps and other untagged scalar values remain application data.
+// map keys, timestamps and untagged scalar values remain application data.
 func Model(model any) error { return checkModel(reflect.ValueOf(model)) }
 
 func checkModel(v reflect.Value) error {
@@ -47,6 +47,9 @@ func checkModel(v reflect.Value) error {
 				continue
 			}
 			if field.Tag.Get("entity") == "payload" {
+				if value.Kind() != reflect.Slice || value.Type().Elem().Kind() != reflect.Uint8 {
+					return fmt.Errorf("%s: entity payload field must be a byte slice", field.Name)
+				}
 				if value.Len() > 0 {
 					if err := Payload(value.Bytes()); err != nil {
 						return err
@@ -68,6 +71,13 @@ func checkModel(v reflect.Value) error {
 					return fmt.Errorf("%s: %w", field.Name, err)
 				}
 			} else if err := checkModel(value); err != nil {
+				return err
+			}
+		}
+	case reflect.Map:
+		iter := v.MapRange()
+		for iter.Next() {
+			if err := checkModel(iter.Value()); err != nil {
 				return err
 			}
 		}
@@ -93,7 +103,7 @@ func Path(path []string) error {
 				continue
 			}
 			if err := Check(path[i]); err != nil {
-				return err
+				return fmt.Errorf("%s ID: %w", path[i-1], err)
 			}
 		}
 	}
@@ -110,7 +120,7 @@ func Body(data []byte) error {
 		if name == "id" || strings.HasSuffix(name, "Id") || strings.HasSuffix(name, "_id") {
 			var id string
 			if json.Unmarshal(raw, &id) != nil || Check(id) != nil {
-				return errors.New("request entity ID must be a canonical uppercase 26-character ULID")
+				return fmt.Errorf("request %s: entity ID must be a canonical uppercase 26-character ULID", name)
 			}
 		}
 	}

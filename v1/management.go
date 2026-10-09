@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -58,10 +59,10 @@ func (m *Management) WithToken(accessToken string) *ManagementUser {
 func (m *Management) As(userID string) *ManagementUser {
 	u := &ManagementUser{c: m.c, header: http.Header{"X-Terrabase-User-Id": {userID}}}
 	if err := checkID(userID); err != nil {
-		u.err = err
+		u.err = fmt.Errorf("terrabase: user ID: %w", err)
 	}
 	if m.c.token == "" {
-		u.err = errors.New("terrabase: As needs Config.Token, the management service credential")
+		u.err = errors.Join(u.err, errors.New("terrabase: As needs Config.Token, the management service credential"))
 	}
 	return u
 }
@@ -304,29 +305,32 @@ func (u *ManagementUser) call(ctx context.Context, method string, path []string,
 		return u.err
 	}
 	if err := entityid.Path(path); err != nil {
-		return err
+		return fmt.Errorf("terrabase: %s management request path: %w", method, err)
 	}
+	var body []byte
 	if in != nil {
-		body, err := json.Marshal(in)
+		var err error
+		body, err = json.Marshal(in)
 		if err != nil {
-			return err
+			return fmt.Errorf("terrabase: encode %s management request: %w", method, err)
 		}
 		if err := entityid.Body(body); err != nil {
-			return err
+			return fmt.Errorf("terrabase: %s management request body: %w", method, err)
 		}
 		if err := entityid.Model(in); err != nil {
-			return err
+			return fmt.Errorf("terrabase: %s management request model: %w", method, err)
 		}
 	}
 	req := request{
 		method:     method,
+		body:       body,
 		path:       append([]string{"v1", "management"}, path...),
 		query:      query,
 		header:     u.header,
 		token:      u.token,
 		replaySafe: method == http.MethodGet,
 	}
-	_, err := u.c.call(ctx, req, in, out)
+	_, err := u.c.call(ctx, req, nil, out)
 	return err
 }
 

@@ -299,6 +299,7 @@ func TestConfigRejection(t *testing.T) {
 	for name, err := range map[string]error{
 		"old key ID":        second(NewAPIKeySource(APIKeyConfig{Key: "tsk_3k9f2m8q1x7v4c6n0b5z_0123456789abcdefghjkmnpqrstvwxyz0123456789abcdefghjk"})),
 		"prefixed project":  second(NewAPIKeySource(APIKeyConfig{Key: testKey, Project: "prj_01ARZ3NDEKTSV4RRFFQ69G5FAV"})),
+		"exchange project":  second(NewExchangeSource(ExchangeConfig{ClientID: "ts-cli", Organization: "01ARZ3NDEKTSV4RRFFQ69G5FA6", Project: "legacy", SubjectToken: subject})),
 		"UUID organization": second(NewExchangeSource(ExchangeConfig{ClientID: "ts-cli", Organization: "0190a6e4-7c3b-7d2e-8f00-0123456789ab", SubjectToken: subject})),
 		"short key":         second(NewAPIKeySource(APIKeyConfig{Key: "tsk_123"})),
 		"tb_ key":           second(NewAPIKeySource(APIKeyConfig{Key: "tb_" + strings.Repeat("a", 43)})),
@@ -313,6 +314,8 @@ func TestConfigRejection(t *testing.T) {
 	} {
 		if err == nil {
 			t.Errorf("%s: no error", name)
+		} else if !strings.HasPrefix(err.Error(), "tsauth:") {
+			t.Errorf("%s: missing error context", name)
 		}
 	}
 	if s, err := NewAPIKeySource(APIKeyConfig{Key: testKey}); err != nil || s == nil {

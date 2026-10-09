@@ -77,7 +77,7 @@ func (t *Tx) addOp(op txOp, pre []Precondition, collection, id string, idRequire
 	}
 	if id != "" || idRequired {
 		if err := ValidateID(id); err != nil {
-			return fail(err)
+			return fail(fmt.Errorf("document ID: %w", err))
 		}
 	}
 	for _, p := range pre {

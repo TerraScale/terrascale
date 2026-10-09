@@ -122,7 +122,7 @@ func TestULIDWritesRejectPayloadIDsBeforeHTTP(t *testing.T) {
 	db := c.Database(testProject, "main")
 	users := db.Collection("users")
 	id := v1.NewID()
-	for _, payload := range []any{map[string]any{"id": id}, json.RawMessage(`{"id":null}`)} {
+	for _, payload := range []any{map[string]any{"id": id}, json.RawMessage(`{"id":null}`), json.RawMessage(`{"i\u0064":null}`)} {
 		if _, err := users.Create(t.Context(), payload); err == nil {
 			t.Fatal("accepted a repeated create ID")
 		}
@@ -135,11 +135,29 @@ func TestULIDWritesRejectPayloadIDsBeforeHTTP(t *testing.T) {
 		if _, err := users.Patch(t.Context(), id, v1.MergePatch(payload)); err == nil {
 			t.Fatal("accepted a repeated merge-patch ID")
 		}
+		root := v1.Ops(v1.Set("", payload))
+		if _, err := users.Patch(t.Context(), id, root); err == nil {
+			t.Fatal("accepted a repeated root-set ID")
+		}
+		if _, err := db.Tx().Patch("users", id, root).Commit(t.Context()); err == nil {
+			t.Fatal("accepted a repeated transaction root-set ID")
+		}
 	}
 	if _, err := users.Patch(t.Context(), id, v1.Ops(v1.Set("/id", id))); err == nil {
 		t.Fatal("accepted an id patch")
 	}
 	if calls.Load() != 0 {
 		t.Fatal("invalid payloads reached HTTP")
+	}
+}
+
+func TestULIDRootSetAcceptsPayloadWithoutDuplicateID(t *testing.T) {
+	users, _, transport := scriptedUsers(t, scripted{status: http.StatusOK, body: `{"id":"01ARZ3NDEKTSV4RRFFQ69G5FAV","version":"opaque"}`})
+	patch := v1.Ops(v1.Set("", map[string]any{"profile": map[string]any{"id": "application data"}}))
+	if _, err := users.Patch(t.Context(), "01ARZ3NDEKTSV4RRFFQ69G5FAV", patch); err != nil {
+		t.Fatal(err)
+	}
+	if len(transport.requests) != 1 {
+		t.Fatal("root replacement without a duplicate ID must reach HTTP")
 	}
 }

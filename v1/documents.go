@@ -36,7 +36,7 @@ func (d *Database) Name() string { return d.name }
 
 func (d *Database) path(extra ...string) ([]string, error) {
 	if err := checkID(d.project); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("terrabase: project ID: %w", err)
 	}
 	if err := checkName("database", d.name); err != nil {
 		return nil, err
@@ -151,7 +151,7 @@ func (col *Collection) path(extra ...string) ([]string, error) {
 
 func (col *Collection) docRequest(method, id string) (request, error) {
 	if err := ValidateID(id); err != nil {
-		return request{}, err
+		return request{}, fmt.Errorf("terrabase: document ID: %w", err)
 	}
 	p, err := col.path("documents", "by-key")
 	return request{method: method, path: p, query: url.Values{"id": {id}}}, err
@@ -408,6 +408,9 @@ func Ops(ops ...PatchOp) Patch {
 		p.err = errors.New("terrabase: Ops needs at least one operation")
 	}
 	for _, op := range ops {
+		if op.op == "set" && op.path == "" && op.err == nil {
+			p.err = errors.Join(p.err, entityid.Payload(op.value))
+		}
 		if op.path == "/id" || strings.HasPrefix(op.path, "/id/") {
 			p.err = errors.Join(p.err, errors.New("document payload must not contain id; use the document key"))
 		}

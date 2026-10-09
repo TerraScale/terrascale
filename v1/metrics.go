@@ -3,6 +3,7 @@ package v1
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -135,11 +136,11 @@ func (u *ManagementUser) metrics(ctx context.Context, project, endpoint string, 
 		return errors.New("terrabase: metrics require WithToken with a ts-auth project access token")
 	}
 	if err := ValidateID(project); err != nil {
-		return err
+		return fmt.Errorf("terrabase: metrics project ID: %w", err)
 	}
 	if opts.DatabaseID != "" {
 		if err := ValidateID(opts.DatabaseID); err != nil {
-			return err
+			return fmt.Errorf("terrabase: metrics database ID: %w", err)
 		}
 	}
 	switch opts.Range {
