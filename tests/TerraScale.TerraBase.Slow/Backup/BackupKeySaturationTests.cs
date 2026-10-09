@@ -29,14 +29,16 @@ public sealed class BackupKeySaturationTests
         var coldDirectory = Directory.CreateTempSubdirectory("terrabase-key-saturation-cold-").FullName;
         var text = new Faker().Lorem.Sentence(8);
         ManagementApi? live = null;
+        var liveCleanup = Task.CompletedTask;
         ManagementApi? cold = null;
+        var coldCleanup = Task.CompletedTask;
         Exception? bodyFailure = null;
         SuiteDiagnostics.StorageObservation? observation = null;
         try
         {
             ManagedDatabaseRef database;
             string user;
-            live = await StartAsync(directory);
+            live = await StartAsync(directory, failedStartCleanup: task => liveCleanup = task);
             {
                 database = await live.CreateManagedDatabaseAsync();
                 user = live.User;
@@ -154,7 +156,7 @@ public sealed class BackupKeySaturationTests
             };
 
             observation.Phase("cold.start");
-            cold = await StartAsync(coldDirectory, pipeline);
+            cold = await StartAsync(coldDirectory, pipeline, task => coldCleanup = task);
             observation.ObserveServer("cold", cold.Server);
             observation.Phase("cold.ship-system");
             var coldBackup = cold.Server.Services.GetRequiredService<IContinuousBackup>();
@@ -236,7 +238,7 @@ public sealed class BackupKeySaturationTests
                 {
                     Directory.Delete(directory, recursive: true);
                     Directory.Delete(coldDirectory, recursive: true);
-                }, (cold, cold?.Server.CleanupCompletion ?? Task.CompletedTask), (live, live?.Server.CleanupCompletion ?? Task.CompletedTask));
+                }, (cold, cold?.CleanupCompletion ?? coldCleanup), (live, live?.CleanupCompletion ?? liveCleanup));
             }
             finally
             {
@@ -244,7 +246,7 @@ public sealed class BackupKeySaturationTests
             }
         }
 
-        async Task<ManagementApi> StartAsync(string dataDirectory, BackupReadObservation? pipeline = null)
+        async Task<ManagementApi> StartAsync(string dataDirectory, BackupReadObservation? pipeline = null, Action<Task>? failedStartCleanup = null)
         {
             var api = await ManagementApi.StartAsync(settings =>
             {
@@ -261,7 +263,7 @@ public sealed class BackupKeySaturationTests
 
                 // Bound captured output from the 65,536-key workload; warnings and errors remain visible.
                 services.AddLogging(logging => logging.AddFilter("System.Net.Http.HttpClient", LogLevel.Warning));
-            }, time);
+            }, time, failedStartCleanup: failedStartCleanup);
             Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
             return api;
         }

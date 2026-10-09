@@ -331,7 +331,7 @@ public sealed partial class CrossRegionPagingProgressTests
     }
 
     private static Task<ManagementApi> StartAsync(
-        FakeRegionNetwork network, string credentials, string region, string cell, string node, IRegionBus? bus = null, ProgressClock? clock = null) =>
+        FakeRegionNetwork network, string credentials, string region, string cell, string node, IRegionBus? bus = null, ProgressClock? clock = null, Action<Task>? failedStartCleanup = null) =>
         ManagementApi.StartAsync(settings =>
         {
             settings["region"] = region;
@@ -351,7 +351,7 @@ public sealed partial class CrossRegionPagingProgressTests
                     provider => ActivatorUtilities.CreateInstance<WanPuller>(provider, clock));
                 services.AddSingleton(provider => ActivatorUtilities.CreateInstance<WanMetrics>(provider, clock));
             }
-        }, managementCredential: true);
+        }, managementCredential: true, failedStartCleanup: failedStartCleanup);
 
     private static async Task<ManagedDatabaseRef> CreatePlacedAsync(ManagementApi api, string organization, string project, string name, CancellationToken token)
     {

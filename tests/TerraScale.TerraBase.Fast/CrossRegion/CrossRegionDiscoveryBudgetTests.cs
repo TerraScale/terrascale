@@ -44,9 +44,13 @@ public sealed class CrossRegionDiscoveryBudgetTests
         using var observation = discovery is "scattered-pages" or "page-overflow" or "transitive"
             ? SuiteDiagnostics.ObserveStorage("wan.discovery." + discovery) : null;
         ManagementApi? shared = null;
+        var sharedCleanup = Task.CompletedTask;
         ManagementApi? direct = null;
+        var directCleanup = Task.CompletedTask;
         ManagementApi? c = null;
+        var cCleanup = Task.CompletedTask;
         ManagementApi? sfo = null;
+        var sfoCleanup = Task.CompletedTask;
         Exception? bodyFailure = null;
         var overflow = discovery == "deferred-overflow";
         var rejected = discovery.StartsWith("scatter-", StringComparison.Ordinal) || discovery == "page-overflow";
@@ -63,17 +67,17 @@ public sealed class CrossRegionDiscoveryBudgetTests
             var sharedMember = discovery == "member-page" ? "gru-b" : "gru-a";
             var directMember = discovery == "member-page" ? "gru-a" : "gru-b";
             observation?.Phase("shared.host.start");
-            shared = await StartAsync(network, credentials, "gru-1", "gru", sharedMember);
+            shared = await StartAsync(network, credentials, "gru-1", "gru", sharedMember, failedStartCleanup: task => sharedCleanup = task);
             observation?.ObserveServer("shared", shared.Server);
             observation?.Phase("direct.host.start");
-            direct = await StartAsync(network, credentials, "gru-1", "gru", directMember);
+            direct = await StartAsync(network, credentials, "gru-1", "gru", directMember, failedStartCleanup: task => directCleanup = task);
             observation?.ObserveServer("direct", direct.Server);
             var a = discovery == "member-page" ? direct : shared;
             observation?.Phase("c.host.start");
-            c = await StartAsync(network, credentials, "gru-1", "gru", "gru-c");
+            c = await StartAsync(network, credentials, "gru-1", "gru", "gru-c", failedStartCleanup: task => cCleanup = task);
             observation?.ObserveServer("c", c.Server);
             observation?.Phase("sfo.host.start");
-            sfo = await StartAsync(network, credentials, "sfo-1", "sfo", "sfo-a", bus, clock);
+            sfo = await StartAsync(network, credentials, "sfo-1", "sfo", "sfo-a", bus, clock, task => sfoCleanup = task);
             observation?.ObserveServer("sfo", sfo.Server);
             try
             {
@@ -663,13 +667,13 @@ public sealed class CrossRegionDiscoveryBudgetTests
         {
             observation?.Phase("cleanup");
             await SuiteDiagnostics.CleanupAfterBodyAsync(bodyFailure, () => Directory.Delete(directory, recursive: true),
-                (sfo, sfo?.Server.CleanupCompletion ?? Task.CompletedTask), (c, c?.Server.CleanupCompletion ?? Task.CompletedTask),
-                (direct, direct?.Server.CleanupCompletion ?? Task.CompletedTask), (shared, shared?.Server.CleanupCompletion ?? Task.CompletedTask));
+                (sfo, sfo?.CleanupCompletion ?? sfoCleanup), (c, c?.CleanupCompletion ?? cCleanup),
+                (direct, direct?.CleanupCompletion ?? directCleanup), (shared, shared?.CleanupCompletion ?? sharedCleanup));
         }
     }
 
     private static Task<ManagementApi> StartAsync(
-        FakeRegionNetwork network, string credentials, string region, string cell, string node, IRegionBus? bus = null, DiscoveryClock? clock = null) =>
+        FakeRegionNetwork network, string credentials, string region, string cell, string node, IRegionBus? bus = null, DiscoveryClock? clock = null, Action<Task>? failedStartCleanup = null) =>
         ManagementApi.StartAsync(settings =>
         {
             settings["region"] = region;
@@ -689,7 +693,7 @@ public sealed class CrossRegionDiscoveryBudgetTests
                     provider => ActivatorUtilities.CreateInstance<WanPuller>(provider, clock));
                 services.AddSingleton(provider => ActivatorUtilities.CreateInstance<WanMetrics>(provider, clock));
             }
-        }, managementCredential: true);
+        }, managementCredential: true, failedStartCleanup: failedStartCleanup);
 
     private static async Task<ManagedDatabaseRef> CreatePlacedAsync(ManagementApi api, string organization, string project, string name, CancellationToken token)
     {

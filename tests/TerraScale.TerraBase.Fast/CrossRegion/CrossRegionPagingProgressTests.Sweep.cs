@@ -178,7 +178,9 @@ public sealed partial class CrossRegionPagingProgressTests
         var elapsed = Stopwatch.StartNew();
         using var observation = SuiteDiagnostics.ObserveStorage("wan.inventory." + malformedPrefix.ToString(CultureInfo.InvariantCulture));
         ManagementApi? gru = null;
+        var gruCleanup = Task.CompletedTask;
         ManagementApi? sfo = null;
+        var sfoCleanup = Task.CompletedTask;
         Exception? bodyFailure = null;
         var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         var output = TUnit.Core.TestContext.Current!.OutputWriter;
@@ -192,10 +194,10 @@ public sealed partial class CrossRegionPagingProgressTests
             var credentials = Path.Combine(directory, "user.creds");
             await File.WriteAllTextAsync(credentials, Credentials, token);
             observation.Phase("gru.host.start");
-            gru = await StartAsync(network, credentials, "gru-1", "gru", "gru-a");
+            gru = await StartAsync(network, credentials, "gru-1", "gru", "gru-a", failedStartCleanup: task => gruCleanup = task);
             observation.ObserveServer("gru", gru.Server);
             observation.Phase("sfo.host.start");
-            sfo = await StartAsync(network, credentials, "sfo-1", "sfo", "sfo-a", bus, clock);
+            sfo = await StartAsync(network, credentials, "sfo-1", "sfo", "sfo-a", bus, clock, task => sfoCleanup = task);
             observation.ObserveServer("sfo", sfo.Server);
             try
             {
@@ -392,7 +394,7 @@ public sealed partial class CrossRegionPagingProgressTests
         {
             observation.Phase("cleanup");
             await SuiteDiagnostics.CleanupAfterBodyAsync(bodyFailure, () => Directory.Delete(directory, recursive: true),
-                (sfo, sfo?.Server.CleanupCompletion ?? Task.CompletedTask), (gru, gru?.Server.CleanupCompletion ?? Task.CompletedTask));
+                (sfo, sfo?.CleanupCompletion ?? sfoCleanup), (gru, gru?.CleanupCompletion ?? gruCleanup));
         }
     }
 

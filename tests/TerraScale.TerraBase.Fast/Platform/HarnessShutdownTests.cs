@@ -220,6 +220,88 @@ public sealed class HarnessShutdownTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Canceled_management_startup_retains_assets_and_fixture_directory_until_actual_cleanup(bool observeCleanup)
+    {
+        var token = TestContext.Current!.Execution.CancellationToken;
+        using var execution = CancellationTokenSource.CreateLinkedTokenSource(token);
+        var directory = Directory.CreateTempSubdirectory("terrabase-management-startup-").FullName;
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var deleted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        SqliteStorageEngine? engine = null;
+        Task? completion = null;
+        Task? cleanup = null;
+        string? certificate = null;
+        string? credential = null;
+        var startup = ManagementApi.StartAsync(settings =>
+        {
+            settings["data-directory"] = directory;
+            certificate = settings["client-certificate"];
+            credential = settings["management-credential-file"];
+        }, services => services.AddSingleton<IHostedService>(provider =>
+        {
+            engine = provider.GetRequiredService<SqliteStorageEngine>();
+            completion = provider.GetRequiredService<ApplicationRunCompletion>().Completion.Task;
+            return new HeldStarting(entered, release, token);
+        }), managementCredential: true, cancellationToken: execution.Token,
+            failedStartCleanup: observeCleanup ? task => cleanup = task : null);
+        try
+        {
+            await entered.Task.WaitAsync(token);
+            await execution.CancelAsync();
+            var startupError = await Assert.That(async () => await startup.WaitAsync(token)).ThrowsException();
+            await Assert.That(completion!.IsCompleted).IsFalse();
+            await Assert.That(File.Exists(certificate)).IsTrue();
+            await Assert.That(File.Exists(credential)).IsTrue();
+            await Assert.That(TerraBaseTestServer.IsDataDirectoryOwned(directory)).IsTrue();
+            if (observeCleanup)
+            {
+                await Assert.That(cleanup is not null).IsTrue();
+                var error = await Assert.That(async () => await SuiteDiagnostics.CleanupAfterBodyAsync(startupError, () =>
+                {
+                    Directory.Delete(directory, recursive: true);
+                    deleted.TrySetResult();
+                }, (null, cleanup!)).WaitAsync(token)).ThrowsException();
+                await Assert.That(ReferenceEquals(error, startupError)).IsTrue();
+                await Assert.That(deleted.Task.IsCompleted).IsFalse();
+                await Assert.That(Directory.Exists(directory)).IsTrue();
+            }
+
+            release.TrySetResult();
+            await Assert.That(async () => await completion.WaitAsync(token)).ThrowsException();
+            await engine!.CleanupCompletion.WaitAsync(token);
+            if (observeCleanup)
+            {
+                await cleanup!.WaitAsync(token);
+                await deleted.Task.WaitAsync(token);
+                await Assert.That(Directory.Exists(directory)).IsFalse();
+            }
+
+            await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(!File.Exists(certificate) && !File.Exists(credential)));
+        }
+        finally
+        {
+            release.TrySetResult();
+            if (engine is not null)
+            {
+                await engine.CleanupCompletion.WaitAsync(token);
+            }
+
+            if (cleanup is not null)
+            {
+                await cleanup.WaitAsync(token);
+            }
+
+            if (Directory.Exists(directory))
+            {
+                Directory.Delete(directory, recursive: true);
+            }
+        }
+    }
+
+    [Test]
     public async Task Canceling_startup_retains_cleanup_ownership_for_the_host_still_being_started()
     {
         var token = TestContext.Current!.Execution.CancellationToken;
