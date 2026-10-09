@@ -12,6 +12,7 @@ using TerraBase.Engine.Cluster;
 using TerraBase.Features.CrossRegion;
 using TerraBase.Features.CrossRegion.V1;
 using TerraBase.Primitives;
+using TerraBase.Features.Replication;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.CrossRegion;
@@ -639,15 +640,15 @@ public sealed partial class CrossRegionPagingProgressTests
             if (Slow && MalformedFirstReply)
             {
                 MalformedFirstReply = false;
-                yield return new byte[] { 0x0a, 0x01 }; // Truncated length-delimited protobuf field, followed by real usable heads.
+                yield return ApplicationEnvelope.Encode((byte[])[0x0a, 0x01]); // Truncated length-delimited protobuf field, followed by real usable heads.
             }
 
-            yield return reply.ToByteArray();
+            yield return WanProtocol.EncodeHeads(reply);
             if (Slow && Scatter is { } scatter)
             {
                 foreach (var extra in scatter())
                 {
-                    yield return extra.ToByteArray();
+                    yield return WanProtocol.EncodeHeads(extra);
                 }
             }
         }
@@ -760,7 +761,7 @@ public sealed partial class CrossRegionPagingProgressTests
                     }
 
                     call.Replied.TrySetResult();
-                    return fabricated.ToByteArray();
+                    return WanProtocol.EncodeHeads(fabricated);
                 }
 
                 // The silent member holds no databases: once it answers, its whole scan is one empty final page.
@@ -782,7 +783,7 @@ public sealed partial class CrossRegionPagingProgressTests
                 }
 
                 call.Replied.TrySetResult();
-                return reply.ToByteArray();
+                return WanProtocol.EncodeHeads(reply);
             }
             finally
             {
@@ -797,13 +798,13 @@ public sealed partial class CrossRegionPagingProgressTests
         {
             if (!SnapshotHeads)
             {
-                return HeadsReply.Parser.ParseFrom((await inner.RequestAsync(subject, request, cancellationToken)).Span);
+                return WanProtocol.DecodeHeads(await inner.RequestAsync(subject, request, cancellationToken));
             }
 
             if (!_snapshots.TryGetValue(subject, out var snapshot))
             {
                 var everything = new WanRequest { Version = WanProtocol.Version, Heads = new HeadsRequest() }.ToByteArray();
-                snapshot = _snapshots.GetOrAdd(subject, HeadsReply.Parser.ParseFrom((await inner.RequestAsync(subject, everything, cancellationToken)).Span));
+                snapshot = _snapshots.GetOrAdd(subject, WanProtocol.DecodeHeads(await inner.RequestAsync(subject, everything, cancellationToken)));
             }
 
             // The responder's own cut: every head whose 48-byte key follows the cursor, in key order.

@@ -1,5 +1,6 @@
 using Google.Protobuf;
 using TerraBase.Features.CrossRegion.V1;
+using TerraBase.Features.Replication;
 using TerraBase.Tenancy;
 
 namespace TerraBase.Features.CrossRegion;
@@ -16,11 +17,43 @@ public static class WanProtocol
     /// <summary>Largest request or reply: NATS's default <c>max_payload</c>, which leafnodes between regions keep.</summary>
     public const int MaxMessageBytes = 1024 * 1024;
 
-    /// <summary>Most heads in one reply, well within <see cref="MaxMessageBytes"/>.</summary>
+    /// <summary>Most heads in one reply; the byte budget can end a page sooner.</summary>
     public const int MaxHeadsPerReply = 4096;
 
     // Room for the reply's framing around its batches.
     internal const int ReplyBudget = MaxMessageBytes - (64 * 1024);
+
+    // Protect the entire inventory, including empty pages and membership, before it can authorize adoption or deletion.
+    internal static byte[] EncodeHeads(HeadsReply reply)
+    {
+        ArgumentNullException.ThrowIfNull(reply);
+        if (reply.CalculateSize() is 0 or > MaxMessageBytes)
+        {
+            throw new InvalidDataException("the decoded heads reply exceeds its size bounds");
+        }
+
+        var envelope = ApplicationEnvelope.Encode(reply.ToByteArray());
+        return envelope.Length <= MaxMessageBytes ? envelope.ToArray()
+            : throw new InvalidDataException("the encoded heads reply exceeds its size bound");
+    }
+
+    internal static HeadsReply DecodeHeads(ReadOnlyMemory<byte> data)
+    {
+        if (data.Length > MaxMessageBytes)
+        {
+            throw new InvalidDataException("the encoded heads reply exceeds its size bound");
+        }
+
+        var decoded = ApplicationEnvelope.Decode(data.Span, MaxMessageBytes);
+        try
+        {
+            return HeadsReply.Parser.ParseFrom(decoded);
+        }
+        catch (InvalidProtocolBufferException error)
+        {
+            throw new InvalidDataException("the heads reply is not valid protobuf", error);
+        }
+    }
 
     /// <summary>The subject every member of <paramref name="cell"/> answers with the first page of its heads.</summary>
     public static string HeadsSubject(string cell) => $"ts.orch.v1.{cell}.query.terrabase-wan.heads";

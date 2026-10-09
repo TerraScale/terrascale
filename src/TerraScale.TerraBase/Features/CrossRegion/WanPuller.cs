@@ -990,18 +990,15 @@ internal sealed partial class WanPuller(
         {
             try
             {
-                var reply = data.Length <= WanProtocol.MaxMessageBytes ? HeadsReply.Parser.ParseFrom(data.Span) : null;
-                if (reply is not null)
-                {
-                    WanUsage.Heads(usage, region, reply, requestBytes == 0 ? first.Length : requestBytes, data.Length, responding: false);
-                }
+                var reply = WanProtocol.DecodeHeads(data);
+                WanUsage.Heads(usage, region, reply, requestBytes == 0 ? first.Length : requestBytes, data.Length, responding: false);
 
                 // The member names the subject of its next requests: it must be a single subject token.
-                return reply is not null && (!reply.More || reply.Heads.Count > 0)
+                return (!reply.More || reply.Heads.Count > 0)
                     && WanProtocol.IsMember(reply.Member) && reply.Heads.Count <= WanProtocol.MaxHeadsPerReply
                     && reply.Members.Count <= MaxMembersPerRound && reply.Members.All(WanProtocol.IsMember) ? reply : null;
             }
-            catch (InvalidProtocolBufferException)
+            catch (InvalidDataException)
             {
                 return null;
             }

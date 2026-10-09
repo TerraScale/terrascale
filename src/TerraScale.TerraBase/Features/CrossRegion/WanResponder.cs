@@ -62,7 +62,7 @@ internal sealed partial class WanResponder(
                 {
                     WanRequest.RequestOneofCase.Heads => await HeadsAsync(request.Heads, data.Length, cancellationToken).ConfigureAwait(false) switch
                     {
-                        HeadsReply reply => reply.ToByteArray(),
+                        HeadsReply reply => WanProtocol.EncodeHeads(reply),
                         Unavailable => [],
                     },
                     WanRequest.RequestOneofCase.Pull => await PullAsync(request.Pull, cancellationToken).ConfigureAwait(false) switch
@@ -119,6 +119,13 @@ internal sealed partial class WanResponder(
         databases.Sort((a, b) => a.Key.AsSpan().SequenceCompareTo(b.Key));
         var reply = new HeadsReply { Member = options.NodeName };
         reply.Members.AddRange((await membership.RefreshAsync(cancellationToken).ConfigureAwait(false)).Members.Select(member => member.Name));
+        // Reserve More's tag and value; the existing 64 KiB framing allowance also covers LZ4 expansion and its header.
+        var bytes = reply.CalculateSize() + 2;
+        if (bytes > WanProtocol.ReplyBudget)
+        {
+            throw new InvalidDataException("the heads membership exceeds its size bound");
+        }
+
         foreach (var (_, database) in databases)
         {
             if (reply.Heads.Count == WanProtocol.MaxHeadsPerReply)
@@ -155,7 +162,7 @@ internal sealed partial class WanResponder(
                 NotFound => null,
                 Unavailable => throw new UnreachableException(),
             };
-            reply.Heads.Add(new Head
+            var entry = new Head
             {
                 TenantId = WanProtocol.Id(database.OrganizationId),
                 ProjectId = WanProtocol.Id(database.ProjectId!),
@@ -166,7 +173,22 @@ internal sealed partial class WanResponder(
                 HomeRegion = record?.Placement.Home ?? "",
                 ReplicaRegions = { record?.Placement.Replicas ?? [] },
                 PlacementVersion = (ulong)(record?.Placement.Version ?? 0),
-            });
+            };
+            var entryBytes = entry.CalculateSize();
+            var framedBytes = 1 + CodedOutputStream.ComputeLengthSize(entryBytes) + entryBytes;
+            if (bytes + framedBytes > WanProtocol.ReplyBudget)
+            {
+                if (reply.Heads.Count == 0)
+                {
+                    throw new InvalidDataException("a head exceeds its reply size bound");
+                }
+
+                reply.More = true;
+                break;
+            }
+
+            reply.Heads.Add(entry);
+            bytes += framedBytes;
         }
 
         WanUsage.Heads(usage, request.Region, reply, requestBytes, reply.CalculateSize(), responding: true);

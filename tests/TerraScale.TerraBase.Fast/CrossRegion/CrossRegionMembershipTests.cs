@@ -2,7 +2,6 @@ using System.Net;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using Bogus;
-using Google.Protobuf;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine.Cluster;
 using TerraBase.Features.CrossRegion;
@@ -196,7 +195,7 @@ public sealed class CrossRegionMembershipTests
             _ = Interlocked.Increment(ref _rounds);
             await foreach (var data in inner.RequestManyAsync(subject, request, cancellationToken))
             {
-                var reply = HeadsReply.Parser.ParseFrom(data.Span);
+                var reply = WanProtocol.DecodeHeads(data);
                 lock (_gate)
                 {
                     _ = _queried.Add(WanProtocol.MemberSubject("gru", reply.Member));
@@ -234,7 +233,7 @@ public sealed class CrossRegionMembershipTests
                 return data;
             }
 
-            var reply = HeadsReply.Parser.ParseFrom(data.Span).Clone();
+            var reply = WanProtocol.DecodeHeads(data).Clone();
             var pagedMember = discovery == "shared-page" ? "gru-a" : discovery == "member-page" ? "gru-b" : null;
             if (reply.Member == pagedMember && reply.Heads.Count > 1)
             {
@@ -267,7 +266,7 @@ public sealed class CrossRegionMembershipTests
                 reply.Members.Add("bad.member");
             }
 
-            return reply.ToByteArray();
+            return WanProtocol.EncodeHeads(reply);
         }
     }
 }

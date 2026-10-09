@@ -15,7 +15,13 @@ Every member of a region **pulls** each other region's change groups:
 
 1. **Heads.** Once a second, a member asks `ts.orch.v1.<cell>.query.terrabase-wan.heads`. A member of that region answers
    with the head of each origin it holds: one origin per database that it wrote to, with the sequence of its last
-   committed change group. More than 4096 heads page through the member's own subject.
+   committed change group. More than 4096 heads, or a page reaching the 960 KiB protobuf reply budget, page through
+   the member's own subject. The whole `HeadsReply` travels in the existing versioned `TBLZ4E01` LZ4 application
+   envelope ([0007](decisions/0007-lz4-application-envelope-replication.md)). Its header, encoded payload and decoded
+   payload checksums are validated before parsing any heads, membership or EOF evidence. A reply that fails integrity
+   validation cannot authorize adoption, placement changes, cursor progress or deletion, even when its UUIDs would still
+   parse as valid protobuf. Encoded and decoded heads replies are each bounded to 1 MiB; the reply budget leaves room
+   for the envelope header and LZ4 expansion.
 
    The answer also lists every member the answering member sees in its cell. ts-orchestrator's interregion link
    imports each cell's `query` subjects as a Singleton service, so a request gets one reply across the link. The asking
@@ -77,8 +83,13 @@ Every member of a region **pulls** each other region's change groups:
 A round that pulled something and is still behind starts the next one at once; otherwise the next one starts a
 second later. Each origin gets at most 16 pull requests per round, so a busy origin does not hold up the others.
 
-The messages are protobuf, `Features/Replication/Protos/terrabase/v1/wan.proto`, version 1. Every request and reply is
-at most 1 MiB, NATS's default `max_payload`, which the leafnode links between regions keep.
+The messages use the protobuf schema `Features/Replication/Protos/terrabase/v1/wan.proto`, with WAN request version 2.
+This is a breaking wire change: version 1 requests and raw protobuf heads replies are rejected, with no fallback or
+migration. Regions must use version 2 to replicate with each other; a version mismatch postpones replication and cannot
+authorize inventory cleanup. The protobuf package and `ts.orch.v1` subjects remain unchanged: that subject version
+belongs to ts-orchestrator's fabric, separately from the WAN request version and application envelope major version 1.
+Pull replies retain their protobuf framing and existing change-group envelopes. Every request and encoded reply is at
+most 1 MiB, NATS's default `max_payload`, which the leafnode links between regions keep.
 
 ### Version tokens across regions
 

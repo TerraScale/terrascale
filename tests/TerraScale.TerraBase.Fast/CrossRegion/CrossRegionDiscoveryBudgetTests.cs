@@ -12,6 +12,7 @@ using TerraBase.Engine.Cluster;
 using TerraBase.Features.CrossRegion;
 using TerraBase.Features.CrossRegion.V1;
 using TerraBase.Primitives;
+using TerraBase.Features.Replication;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.CrossRegion;
@@ -863,7 +864,7 @@ public sealed class CrossRegionDiscoveryBudgetTests
                     // Each accepted partial page owns real A heads; C appears only beyond the first eight replies.
                     for (var index = 0; index < 10; index++)
                     {
-                        var reply = HeadsReply.Parser.ParseFrom(data.Span).Clone();
+                        var reply = WanProtocol.DecodeHeads(data).Clone();
                         reply.Member = "gru-scattered-" + index.ToString(CultureInfo.InvariantCulture);
                         reply.Members.Clear();
                         reply.Members.Add(reply.Member);
@@ -878,7 +879,7 @@ public sealed class CrossRegionDiscoveryBudgetTests
                         }
 
                         reply.More = true;
-                        yield return reply.ToByteArray();
+                        yield return WanProtocol.EncodeHeads(reply);
                         _ = Interlocked.Increment(ref _scatteredReplies);
                     }
                 }
@@ -899,8 +900,8 @@ public sealed class CrossRegionDiscoveryBudgetTests
             ReadOnlyMemory<byte> InvalidReply()
             {
                 return discovery.Contains("-invalid-", StringComparison.Ordinal)
-                    ? new HeadsReply { Member = "invalid.member", Members = { "gru-scatter-leaked" } }.ToByteArray()
-                    : (byte[])[0x80];
+                    ? WanProtocol.EncodeHeads(new HeadsReply { Member = "invalid.member", Members = { "gru-scatter-leaked" } })
+                    : ApplicationEnvelope.Encode((byte[])[0x80]);
             }
         }
 
@@ -962,7 +963,7 @@ public sealed class CrossRegionDiscoveryBudgetTests
                     reply.Members.Add(reply.Member);
                     reply.Members.Add(reply.Member + "-overflow");
                     OverflowReplies.Add(reply);
-                    return reply.ToByteArray();
+                    return WanProtocol.EncodeHeads(reply);
                 }
 
                 if ((discovery is "deferred-hidden" or "deferred-overflow") && Volatile.Read(ref _round) > 0)
@@ -1063,7 +1064,7 @@ public sealed class CrossRegionDiscoveryBudgetTests
                 return data;
             }
 
-            var reply = HeadsReply.Parser.ParseFrom(data.Span).Clone();
+            var reply = WanProtocol.DecodeHeads(data).Clone();
             reply.Members.Clear();
             if (!Faulted)
             {
@@ -1160,7 +1161,7 @@ public sealed class CrossRegionDiscoveryBudgetTests
                 }
             }
 
-            return reply.ToByteArray();
+            return WanProtocol.EncodeHeads(reply);
         }
     }
 }
