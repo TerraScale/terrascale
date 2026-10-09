@@ -421,7 +421,7 @@ internal sealed partial class EngineManagementService
         }
 
         var versions = new Dictionary<string, string>(StringComparer.Ordinal);
-        foreach (var organizationId in named)
+        foreach (var organizationId in named.Distinct(StringComparer.Ordinal))
         {
             if (await GetMemberAsync(transaction, organizationId, userId, cancellationToken).ConfigureAwait(false) is not null)
             {
@@ -874,7 +874,7 @@ internal sealed partial class EngineManagementService
                         return op.Op == "create_database" ? (new TenantContext(organization!.Id, organization.Plan, op.Project), null) : ManagementErrors.NotFound;
                     }
 
-                    if (await OrganizationProjectAsync(transaction, op.Organization!, op.Project!, cancellationToken).ConfigureAwait(false) is not { } tenant)
+                    if (await ProjectTenantAsync(transaction, organization, op.Project!, cancellationToken).ConfigureAwait(false) is not { } tenant)
                     {
                         return ManagementErrors.NotFound;
                     }

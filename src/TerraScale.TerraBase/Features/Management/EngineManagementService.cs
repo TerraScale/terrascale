@@ -904,12 +904,14 @@ internal sealed partial class EngineManagementService(
         var check = await CanAddDatabaseAsync(transaction, project, database.Name, cancellationToken).ConfigureAwait(false);
         if (check is TenantContext tenant)
         {
-            await PutAsync(transaction, DatabaseNames(database.ProjectId), database.Name, database.Id, Id, cancellationToken).ConfigureAwait(false);
-            await PutAsync(transaction, Databases(database.ProjectId), database.Id, database, TerraBaseJsonContext.Default.ManagedDatabase, cancellationToken)
-                .ConfigureAwait(false);
-            // Every database is backed up under its effective policy, the default until one is saved.
-            await PutAsync(transaction, EngineManagedBackupService.BackedUpDatabases, database.Id, DatabaseOwner.Of(tenant with { DatabaseId = database.Id }),
-                TerraBaseJsonContext.Default.DatabaseOwner, cancellationToken).ConfigureAwait(false);
+            // Register the name, record and default backup owner in one native call.
+            await transaction.PutBatchAsync(
+            [
+                (DatabaseNames(database.ProjectId), database.Name, JsonSerializer.SerializeToUtf8Bytes(database.Id, Id)),
+                (Databases(database.ProjectId), database.Id, JsonSerializer.SerializeToUtf8Bytes(database, TerraBaseJsonContext.Default.ManagedDatabase)),
+                (EngineManagedBackupService.BackedUpDatabases, database.Id,
+                    JsonSerializer.SerializeToUtf8Bytes(DatabaseOwner.Of(tenant with { DatabaseId = database.Id }), TerraBaseJsonContext.Default.DatabaseOwner)),
+            ], new (long Version, DocumentVersion? Previous)[3], cancellationToken).ConfigureAwait(false);
             await transaction.DeleteAsync(PendingDatabaseCleanup, database.Id, cancellationToken).ConfigureAwait(false);
             await TouchOrganizationAsync(transaction, tenant.OrganizationId, cancellationToken).ConfigureAwait(false);
         }
