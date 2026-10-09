@@ -69,19 +69,19 @@ func mirror(ctx context.Context, store core.Store, m *v1.ManagementUser, remote 
 			project, ok := org.Projects[rp.ID]
 			if !ok {
 				project = core.Project{
-					ID: rp.ID, OrganizationID: org.ID, Status: "active", CreatedAt: rp.CreatedAt,
+					ID: rp.ID, OrganizationID: org.ID, System: true, Status: "active", CreatedAt: rp.CreatedAt,
 					Databases: map[string]core.Database{}, APIKeys: map[string]core.APIKey{},
 					SavedQueries: map[string]core.SavedQuery{}, SharedResultConfigs: map[string]core.SharedResultConfig{},
 					BackupPolicies: map[string]core.BackupPolicy{},
 				}
 			}
-			project.Name, project.Slug, project.System = rp.Name, slug(rp.Name), true
+			project.Name, project.Slug = rp.Name, slug(rp.Name)
 			for _, rd := range databases[rp.ID] {
 				db, ok := project.Databases[rd.ID]
 				if !ok {
-					db = core.Database{ID: rd.ID, ProjectID: project.ID, Status: "ready", CreatedAt: rd.CreatedAt}
+					db = core.Database{ID: rd.ID, ProjectID: project.ID, System: project.System, Status: "ready", CreatedAt: rd.CreatedAt}
 				}
-				db.Name, db.System = rd.Name, true
+				db.Name = rd.Name
 				project.Databases[rd.ID] = db
 			}
 			org.Projects[rp.ID] = project

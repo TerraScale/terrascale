@@ -42,6 +42,13 @@ type sqlColumn struct {
 	Root bool
 }
 
+func (c sqlColumn) Label() string {
+	if !c.Root && strings.EqualFold(c.Name, "id") {
+		return "payload." + c.Name
+	}
+	return c.Name
+}
+
 type sqlResultRow struct {
 	ID    string
 	Cells []sqlCell
@@ -77,8 +84,11 @@ func newSQLResult(rows []documentView, matched int) sqlResult {
 		}
 		fields[i] = make(map[columnKey]jsontext.Value, len(names))
 		for j, name := range names {
-			if !root && strings.EqualFold(name, "id") {
-				continue
+			if !root && name == "id" {
+				var id string
+				if json.Unmarshal(values[j], &id) == nil && id == row.ID {
+					continue
+				}
 			}
 			key := columnKey{name, root}
 			fields[i][key] = values[j]

@@ -13,7 +13,7 @@ import (
 
 func TestSQLResultShowsOnlyDocumentKeyAsID(t *testing.T) {
 	const key = "01K78000000000000000000001"
-	result := newSQLResult([]documentView{{ID: key, Value: jsontext.Value(`{"id":"payload","ID":"duplicate","name":"Ada","owner_id":"owner","nested":{"id":"nested"}}`)}}, 1)
+	result := newSQLResult([]documentView{{ID: key, Value: jsontext.Value(`{"id":"` + key + `","name":"Ada","owner_id":"owner","nested":{"id":"nested"}}`)}}, 1)
 	if len(result.Rows) != 1 || result.Rows[0].ID != key || len(result.Columns) != 3 {
 		t.Fatalf("document key or columns lost: %+v", result)
 	}
@@ -21,6 +21,25 @@ func TestSQLResultShowsOnlyDocumentKeyAsID(t *testing.T) {
 		if strings.EqualFold(column.Name, "id") {
 			t.Fatalf("payload id became a second column: %+v", result.Columns)
 		}
+	}
+}
+
+func TestSQLResultPreservesPayloadIDFields(t *testing.T) {
+	const key = "01K78000000000000000000001"
+	for _, value := range []string{`"customer-7"`, `42`, `null`, `{"id":"nested"}`} {
+		t.Run(value, func(t *testing.T) {
+			result := newSQLResult([]documentView{
+				{ID: key, Value: jsontext.Value(`{"id":"` + key + `","ID":42}`)},
+				{ID: "01K78000000000000000000002", Value: jsontext.Value(`{"id":` + value + `,"ID":43}`)},
+			}, 2)
+			want := []sqlColumn{{"ID", true, false}, {"id", value == "42", false}}
+			if !slices.Equal(result.Columns, want) || result.Columns[0].Label() != "payload.ID" || result.Columns[1].Label() != "payload.id" {
+				t.Fatalf("payload columns = %+v, want %+v", result.Columns, want)
+			}
+			if result.Rows[0].Cells[0].Text != "42" || result.Rows[0].Cells[1].Kind != "missing" || result.Rows[1].Cells[0].Text != "43" || result.Rows[1].Cells[1] != formatCell(jsontext.Value(value)) {
+				t.Fatalf("payload fields lost or changed: %+v", result.Rows)
+			}
+		})
 	}
 }
 
