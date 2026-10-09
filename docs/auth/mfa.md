@@ -94,19 +94,24 @@ JWTs already accepted offline remain subject to their documented expiry limit.
 Password reset remains available and never disables an active factor.
 
 User sign-in access and identity tokens carry `auth_time`, the server-issued
-time of authentication in Unix seconds. Refresh retains that time, and a
-submitted `auth_time` never changes it. Organization/project exchange and
-machine/API-key tokens omit it. Authentication time alone does not prove
-factor completion or enforce an organization MFA policy.
+time of authentication in Unix seconds. Refresh retains that time;
+organization/project exchange copies the original numeric value from the
+validated sign-in token. A submitted `auth_time` never changes it, and
+machine/API-key tokens omit it. Exchange requires a nonnegative integer and
+rejects missing or malformed times, including fractional or overflowing
+values. It permits the issuer's authentication time to be at most 30 seconds
+ahead of the exchanging replica, preserving that time without clamping it;
+anything further ahead answers `invalid_grant`. Authentication time alone
+does not prove factor completion or enforce an organization MFA policy.
 
-Issuance precedes exchange continuity and mandatory timestamp validation.
-Before deploying that later slice, verify every regional issuer has deployed
-this issuance change and wait one access-token lifetime (currently one hour)
-after the last old issuer stops issuing. Existing exchange authorization
-remains unchanged during that rollout; no authentication time is synthesized.
-The later validation must allow a documented, bounded difference between
-replica clocks while preserving the original claim, and reject times beyond
-that allowance. Cover both independent-clock boundaries in `fast`.
+Issuance in PR #63 precedes exchange continuity and mandatory timestamp
+validation. Before deploying exchange validation, verify every regional
+issuer has deployed PR #63 and every earlier access token has expired on
+every replica. Wait at least one access-token lifetime (currently one hour)
+plus the 30-second clock-skew allowance after the last old issuer stops
+issuing. Record the verified rollout cutoff and earliest deployment time.
+No authentication time is synthesized. Fast tests cover independent clocks
+at and beyond the allowance, as well as original-time continuity after refresh.
 
 Before deploying a release that requires `mfa_credentials`, explicitly
 provision that collection in the existing auth database through the pinned

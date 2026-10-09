@@ -964,8 +964,10 @@ paths:
         grants) are unchanged and described in the served OpenAPI. Tokens are ES256 JWTs with typ at+jwt;
         docs/platform-contract.md section 6.3 lists their claims. Token exchange refuses primary-only sign-in
         tokens for users with active MFA; unavailable or corrupt MFA state answers 503 temporarily_unavailable.
-        Sign-in access and identity tokens carry server-issued auth_time (Unix seconds), preserved through
-        refresh; submitted auth_time is ignored. Organization/project exchange and machine tokens omit it.
+        User tokens preserve server-issued numeric auth_time (Unix seconds) through refresh and exchange;
+        submitted auth_time is ignored. Exchange requires a nonnegative integer no more than 30 seconds ahead
+        of the exchanging replica; missing, malformed, negative or further-ahead values answer invalid_grant.
+        Machine tokens omit auth_time; accepted time is copied unchanged without clamping or renewal.
         Refresh and exchange do not prove MFA completion or renew authentication.
       security:
         - clientBasic: []

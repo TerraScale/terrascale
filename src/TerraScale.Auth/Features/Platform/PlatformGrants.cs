@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authentication;
+using Microsoft.IdentityModel.JsonWebTokens;
 using Microsoft.IdentityModel.Tokens;
 using OpenIddict.Abstractions;
 using OpenIddict.Server.AspNetCore;
@@ -33,6 +34,8 @@ public sealed class PlatformGrants(ApiKeys keys, PlatformDirectory directory, Us
 
     /// <summary>The lifetime of organization and project tokens.</summary>
     public static readonly TimeSpan Lifetime = TimeSpan.FromMinutes(15);
+
+    private static readonly TimeSpan AuthenticationTimeClockSkew = TimeSpan.FromSeconds(30);
 
     /// <summary>Token requests per API key per minute.</summary>
     public const int KeyRequestsPerMinute = 1000;
@@ -88,12 +91,18 @@ public sealed class PlatformGrants(ApiKeys keys, PlatformDirectory directory, Us
         var issuer = OidcIssuer.Issuer(options).AbsoluteUri;
         // Only a sign-in token (its audiences include the issuer) issued to this very client, for a user that still exists
         // and has not signed out everywhere or reset its password since (the token's epoch is still the user's).
+        // Claims flatten arrays, so inspect the scalar payload of the subject JWT OpenIddict already validated.
         if (subject is null || !subject.GetAudiences().Contains(issuer, StringComparer.Ordinal)
             || request.ClientId is not { } clientId || !subject.GetPresenters().Contains(clientId, StringComparer.Ordinal)
             || subject.GetClaim(Claims.Subject) is not { } userId
             || await users.GetAsync(PlatformDirectory.Instance, userId, cancellationToken) is not { } user
             || subject.GetClaim(OidcIssuer.EpochClaim) != user.AuthEpoch.ToString(CultureInfo.InvariantCulture)
             || subject.GetExpirationDate() is not { } expires || expires <= clock.GetUtcNow()
+            || request.SubjectToken is not { } encoded
+            || !new JsonWebToken(encoded).TryGetPayloadValue<object>(Claims.AuthenticationTime, out var rawAuthenticationTime)
+            || rawAuthenticationTime is not (int or long)
+            || !long.TryParse(subject.GetClaim(Claims.AuthenticationTime), NumberStyles.None, CultureInfo.InvariantCulture, out var authenticatedAt)
+            || authenticatedAt > clock.GetUtcNow().Add(AuthenticationTimeClockSkew).ToUnixTimeSeconds()
             || !await mfa.AllowsPrimaryAuthenticationAsync(user, cancellationToken))
         {
             return OidcResults.Forbid(Errors.InvalidGrant, "The subject token is not a live sign-in token of this client.");
@@ -137,7 +146,8 @@ public sealed class PlatformGrants(ApiKeys keys, PlatformDirectory directory, Us
         var lifetime = expires - clock.GetUtcNow();
         var identity = Identity(user.Id, organization, project, requested.IsEmpty ? allowed : requested, lifetime < Lifetime ? lifetime : Lifetime)
             .SetClaim(Claims.Email, user.Email)
-            .SetClaim(Claims.EmailVerified, true);
+            .SetClaim(Claims.EmailVerified, true)
+            .SetClaim(Claims.AuthenticationTime, authenticatedAt);
         return SignIn(identity);
     }
 

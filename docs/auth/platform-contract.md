@@ -285,6 +285,10 @@ to the next exchange. TS-707 refuses primary-only subject tokens for active
 MFA accounts with `invalid_grant`; corrupt or unavailable factor state
 answers `503 temporarily_unavailable`. Machine client credentials and API
 keys remain independent of user MFA.
+Exchange preserves the sign-in token's original numeric `auth_time`. It
+requires a nonnegative integer no more than 30 seconds ahead of the
+exchanging replica; missing, malformed, negative or further-ahead values
+answer `invalid_grant`. Submitted values cannot repair or override it.
 
 ### 6.3 Claims
 
@@ -297,7 +301,7 @@ keys remain independent of user MFA.
 | `exp`, `iat`, `jti` | 1 hour | at most 15 minutes | 15 minutes |
 | `scope` | OpenID scopes (`openid email profile offline_access`) | section 3 scopes | section 3 scopes |
 | `email`, `email_verified` | yes | yes | no |
-| `auth_time` | server-issued Unix seconds at authentication | no | no |
+| `auth_time` | server-issued Unix seconds at authentication | unchanged from the sign-in token | no |
 | `ts_auth_epoch` | the user's authentication epoch | no | no |
 | `org_id` | no | the organization | the key's organization |
 | `project_id` | no | the project, for a project token | the project, for a project token |
@@ -312,9 +316,10 @@ Service client tokens are unchanged: `sub` = `client_id` = the service's id,
 configured audiences, no `scope`, `org_id`, `project_id` or `auth_time`.
 User sign-in access and identity tokens retain the original `auth_time` when
 refreshed; submitted values cannot set or renew it. Organization/project
-exchange does not yet carry authentication time. Refresh and exchange never
-renew authentication or prove MFA completion. The issuance-before-enforcement
-deployment gate for exchange continuity is documented in `docs/mfa.md`.
+exchange preserves the original value, including an accepted clock
+difference; it never replaces it with the receiving replica's time. Refresh
+and exchange never renew authentication or prove MFA completion. The
+issuance-before-enforcement deployment gate is documented in `docs/mfa.md`.
 
 ### 6.4 Rules for TerraBase and other resource servers
 

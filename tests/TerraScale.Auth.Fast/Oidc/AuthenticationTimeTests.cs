@@ -15,7 +15,7 @@ using static TerraScale.Auth.Tests.PlatformCalls;
 
 namespace TerraScale.Auth.Fast.Oidc;
 
-/// <summary>Primary authentication time survives user issuance and refresh; exchange and machine tokens omit it.</summary>
+/// <summary>Primary authentication time survives user issuance, refresh and exchange; machine tokens omit it.</summary>
 [ClassDataSource<TerraBaseFixture>(Shared = SharedType.PerTestSession)]
 public sealed class AuthenticationTimeTests(TerraBaseFixture fixture)
 {
@@ -125,11 +125,15 @@ public sealed class AuthenticationTimeTests(TerraBaseFixture fixture)
     }
 
     [Test]
-    [Arguments(false, false)]
-    [Arguments(false, true)]
-    [Arguments(true, false)]
-    [Arguments(true, true)]
-    public async Task Organization_and_project_exchange_on_a_replica_one_second_behind_accepts_both_issuer_shapes_without_authentication_time(bool projectTarget, bool precedingIssuer)
+    [Arguments(false, 0, true)]
+    [Arguments(false, 1, true)]
+    [Arguments(false, 30, true)]
+    [Arguments(false, 31, false)]
+    [Arguments(true, 0, true)]
+    [Arguments(true, 1, true)]
+    [Arguments(true, 30, true)]
+    [Arguments(true, 31, false)]
+    public async Task Organization_and_project_exchange_preserves_authentication_time_with_bounded_replica_clock_skew(bool projectTarget, int receiverSecondsBehind, bool accepted)
     {
         var clock = new StoreTestClock { UtcNow = DateTimeOffset.UtcNow.AddMinutes(-2) };
         await using var oidc = await StartAsync(clock);
@@ -140,16 +144,7 @@ public sealed class AuthenticationTimeTests(TerraBaseFixture fixture)
         var organization = await oidc.CreateOrganizationAsync(access);
         var project = projectTarget ? await oidc.CreateProjectAsync(access, organization, "Production") : null;
 
-        if (precedingIssuer)
-        {
-            // Retain the real token/authorization ids and store entries; remove only auth_time to match the preceding issuer.
-            var payload = JsonNode.Parse(Base64UrlEncoder.Decode(access.Split('.')[1]))!.AsObject();
-            await Assert.That(payload.Remove("auth_time")).IsTrue();
-            access = await SignPayloadAsync(oidc, payload);
-            await Assert.That((await oidc.ValidateAsync(access, OidcHarness.Issuer)).Subject).IsEqualTo(user.Id);
-        }
-
-        var replicaClock = new StoreTestClock { UtcNow = clock.UtcNow.AddSeconds(-1) };
+        var replicaClock = new StoreTestClock { UtcNow = clock.UtcNow.AddSeconds(-receiverSecondsBehind) };
         await using var replica = await oidc.StartReplicaAsync(values => values["access-token-audiences"] = Audience, clock: replicaClock);
         var target = new Dictionary<string, string> { ["organization"] = organization };
         if (project is not null)
@@ -165,22 +160,149 @@ public sealed class AuthenticationTimeTests(TerraBaseFixture fixture)
             }
 
             using var exchange = await oidc.ExchangeAsync(access, target, replica.Client);
-            await Assert.That(exchange.StatusCode).IsEqualTo(HttpStatusCode.OK);
-            var exchanged = await OidcHarness.JsonAsync(exchange);
-            var exchangedToken = exchanged.GetProperty("access_token").GetString()!;
-            var validated = await oidc.ValidateAsync(exchangedToken, Audience);
-            await Assert.That(validated.Subject).IsEqualTo(user.Id);
-            await Assert.That(validated.GetClaim("org_id").Value).IsEqualTo(organization);
-            await Assert.That(validated.TryGetClaim("project_id", out _)).IsEqualTo(projectTarget);
-            if (project is not null)
+            if (accepted)
             {
-                await Assert.That(validated.GetClaim("project_id").Value).IsEqualTo(project);
+                await Assert.That(exchange.StatusCode).IsEqualTo(HttpStatusCode.OK);
+                await AssertExchangedAuthenticationTimeAsync(oidc, await OidcHarness.JsonAsync(exchange), user.Id, organization, project, authenticatedAt);
+            }
+            else
+            {
+                await AssertInvalidGrantWithoutCredentialsAsync(exchange);
+            }
+        }
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Delayed_refresh_then_organization_and_project_exchange_on_a_replica_preserves_original_authentication_time(bool projectTarget)
+    {
+        var clock = new StoreTestClock { UtcNow = DateTimeOffset.UtcNow.AddMinutes(-2) };
+        await using var oidc = await StartAsync(clock);
+        var authenticatedAt = clock.UtcNow.ToUnixTimeSeconds();
+        var (user, _, tokens) = await oidc.SignInAndRedeemAsync(Email);
+        await AssertUserAuthenticationTimeAsync(oidc, tokens, authenticatedAt);
+        var access = tokens.GetProperty("access_token").GetString()!;
+        var organization = await oidc.CreateOrganizationAsync(access);
+        var project = projectTarget ? await oidc.CreateProjectAsync(access, organization, "Production") : null;
+
+        clock.UtcNow = clock.UtcNow.AddMinutes(1);
+        using var refresh = await oidc.RefreshAsync(tokens.GetProperty("refresh_token").GetString()!);
+        await Assert.That(refresh.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        var refreshed = await OidcHarness.JsonAsync(refresh);
+        await Assert.That(refreshed.GetProperty("refresh_token").GetString()).IsNotEqualTo(tokens.GetProperty("refresh_token").GetString());
+        await AssertUserAuthenticationTimeAsync(oidc, refreshed, authenticatedAt);
+
+        var replicaClock = new StoreTestClock { UtcNow = clock.UtcNow.AddSeconds(10) };
+        await using var replica = await oidc.StartReplicaAsync(values => values["access-token-audiences"] = Audience, clock: replicaClock);
+        var target = new Dictionary<string, string>
+        {
+            ["organization"] = organization,
+            ["auth_time"] = replicaClock.UtcNow.ToUnixTimeSeconds().ToString(CultureInfo.InvariantCulture),
+        };
+        if (project is not null)
+        {
+            target["project"] = project;
+        }
+
+        using var exchange = await oidc.ExchangeAsync(refreshed.GetProperty("access_token").GetString()!, target, replica.Client);
+        await Assert.That(exchange.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await AssertExchangedAuthenticationTimeAsync(oidc, await OidcHarness.JsonAsync(exchange), user.Id, organization, project, authenticatedAt);
+    }
+
+    [Test]
+    [Arguments(false, "original")]
+    [Arguments(false, "zero")]
+    [Arguments(false, "missing")]
+    [Arguments(false, "malformed")]
+    [Arguments(false, "numeric-string")]
+    [Arguments(false, "array")]
+    [Arguments(false, "array-many")]
+    [Arguments(false, "object")]
+    [Arguments(false, "boolean")]
+    [Arguments(false, "null")]
+    [Arguments(false, "negative")]
+    [Arguments(false, "far-future")]
+    [Arguments(false, "fractional")]
+    [Arguments(false, "overflowing")]
+    [Arguments(true, "original")]
+    [Arguments(true, "zero")]
+    [Arguments(true, "missing")]
+    [Arguments(true, "malformed")]
+    [Arguments(true, "numeric-string")]
+    [Arguments(true, "array")]
+    [Arguments(true, "array-many")]
+    [Arguments(true, "object")]
+    [Arguments(true, "boolean")]
+    [Arguments(true, "null")]
+    [Arguments(true, "negative")]
+    [Arguments(true, "far-future")]
+    [Arguments(true, "fractional")]
+    [Arguments(true, "overflowing")]
+    public async Task Exchange_requires_valid_signed_authentication_time_and_submitted_time_cannot_repair_it(bool projectTarget, string authenticationTime)
+    {
+        var clock = new StoreTestClock { UtcNow = DateTimeOffset.UtcNow.AddMinutes(-2) };
+        await using var oidc = await StartAsync(clock);
+        var authenticatedAt = clock.UtcNow.ToUnixTimeSeconds();
+        var (user, _, tokens) = await oidc.SignInAndRedeemAsync(Email);
+        var access = tokens.GetProperty("access_token").GetString()!;
+        var organization = await oidc.CreateOrganizationAsync(access);
+        var project = projectTarget ? await oidc.CreateProjectAsync(access, organization, "Production") : null;
+
+        // Change only auth_time, retaining the real token/authorization ids and their TerraBase entries.
+        var payload = JsonNode.Parse(Base64UrlEncoder.Decode(access.Split('.')[1]))!.AsObject();
+        if (authenticationTime == "missing")
+        {
+            await Assert.That(payload.Remove("auth_time")).IsTrue();
+        }
+        else
+        {
+            payload["auth_time"] = authenticationTime switch
+            {
+                "original" => JsonValue.Create(authenticatedAt),
+                "zero" => JsonValue.Create(0),
+                "malformed" => JsonValue.Create("not-a-time"),
+                "numeric-string" => JsonValue.Create(authenticatedAt.ToString(CultureInfo.InvariantCulture)),
+                "array" => new JsonArray(JsonValue.Create(0)),
+                "array-many" => new JsonArray(JsonValue.Create(0), JsonValue.Create(authenticatedAt)),
+                "object" => new JsonObject { ["time"] = authenticatedAt },
+                "boolean" => JsonValue.Create(true),
+                "null" => null,
+                "negative" => JsonValue.Create(-1),
+                "far-future" => JsonValue.Create(authenticatedAt + 3600),
+                "fractional" => JsonValue.Create(authenticatedAt + 0.5m),
+                "overflowing" => JsonValue.Create(9223372036854775808UL),
+                _ => throw new ArgumentOutOfRangeException(nameof(authenticationTime)),
+            };
+        }
+
+        access = await SignPayloadAsync(oidc, payload);
+        await Assert.That((await oidc.ValidateAsync(access, OidcHarness.Issuer)).Subject).IsEqualTo(user.Id);
+        var replicaClock = new StoreTestClock { UtcNow = clock.UtcNow };
+        await using var replica = await oidc.StartReplicaAsync(values => values["access-token-audiences"] = Audience, clock: replicaClock);
+        var target = new Dictionary<string, string> { ["organization"] = organization };
+        if (project is not null)
+        {
+            target["project"] = project;
+        }
+
+        foreach (var submitTime in new[] { false, true })
+        {
+            if (submitTime)
+            {
+                target["auth_time"] = authenticatedAt.ToString(CultureInfo.InvariantCulture);
             }
 
-            var payload = JsonSerializer.Deserialize<JsonElement>(Base64UrlEncoder.Decode(exchangedToken.Split('.')[1]));
-            await Assert.That(payload.TryGetProperty("auth_time", out _)).IsFalse();
-            await Assert.That(exchanged.TryGetProperty("id_token", out _)).IsFalse();
-            await Assert.That(exchanged.TryGetProperty("refresh_token", out _)).IsFalse();
+            using var exchange = await oidc.ExchangeAsync(access, target, replica.Client);
+            if (authenticationTime is "original" or "zero")
+            {
+                await Assert.That(exchange.StatusCode).IsEqualTo(HttpStatusCode.OK);
+                await AssertExchangedAuthenticationTimeAsync(oidc, await OidcHarness.JsonAsync(exchange), user.Id, organization, project, authenticationTime == "zero" ? 0 : authenticatedAt);
+            }
+            else
+            {
+                await AssertInvalidGrantWithoutCredentialsAsync(exchange);
+            }
         }
     }
 
@@ -246,6 +368,34 @@ public sealed class AuthenticationTimeTests(TerraBaseFixture fixture)
         var time = payload.GetProperty("auth_time");
         await Assert.That(time.ValueKind).IsEqualTo(JsonValueKind.Number);
         await Assert.That(time.GetInt64()).IsEqualTo(expected);
+    }
+
+    private static async Task AssertExchangedAuthenticationTimeAsync(OidcHarness oidc, JsonElement tokens, string userId, string organization, string? project, long authenticatedAt)
+    {
+        var access = tokens.GetProperty("access_token").GetString()!;
+        var validated = await oidc.ValidateAsync(access, Audience);
+        await Assert.That(validated.Subject).IsEqualTo(userId);
+        await Assert.That(validated.GetClaim("org_id").Value).IsEqualTo(organization);
+        await Assert.That(validated.TryGetClaim("project_id", out _)).IsEqualTo(project is not null);
+        if (project is not null)
+        {
+            await Assert.That(validated.GetClaim("project_id").Value).IsEqualTo(project);
+        }
+
+        await AssertNumericAuthenticationTimeAsync(access, authenticatedAt);
+        await Assert.That(tokens.TryGetProperty("id_token", out _)).IsFalse();
+        await Assert.That(tokens.TryGetProperty("refresh_token", out _)).IsFalse();
+    }
+
+    private static async Task AssertInvalidGrantWithoutCredentialsAsync(HttpResponseMessage response)
+    {
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+        await Assert.That(OidcHarness.SessionCookie(response)).IsNull();
+        var tokens = await OidcHarness.JsonAsync(response);
+        await Assert.That(tokens.GetProperty("error").GetString()).IsEqualTo("invalid_grant");
+        await Assert.That(tokens.TryGetProperty("access_token", out _)).IsFalse();
+        await Assert.That(tokens.TryGetProperty("id_token", out _)).IsFalse();
+        await Assert.That(tokens.TryGetProperty("refresh_token", out _)).IsFalse();
     }
 
     private static async Task AssertMachineAuthenticationTimeAbsentAsync(OidcHarness oidc, HttpResponseMessage response, string subject)
