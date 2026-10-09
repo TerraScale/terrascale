@@ -172,7 +172,8 @@ var (
 		}},
 		{Label: "Secure", Items: []core.NavItem{
 			{Label: "API keys", URL: "/api-keys"},
-			{Label: "Authentication", URL: "/auth", Children: core.AuthNavigation()},
+			// Authentication and its child pages are hidden from navigation;
+			// the console routes and endpoints stay available.
 		}},
 		{Label: "Manage", Items: []core.NavItem{
 			{Label: "Usage", URL: "/usage"},

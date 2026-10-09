@@ -22,7 +22,6 @@ templ organizationPageView(page core.Page, data organizationPageData) {
 		}
 		@Tabs(data.Tab)
 		if data.Tab == "organization" {
-			@organizationTools(data.Tab)
 			@ui.Stats("Organization summary") {
 				@ui.Stat("Projects", fmt.Sprint(len(data.Projects)), "Projects in this workspace")
 				@ui.Stat("Members", fmt.Sprint(len(data.Members)), "People with organization access")
@@ -392,9 +391,11 @@ func deletionActionLabel(requested bool) string {
 
 templ Tabs(active string) {
 	@ui.Tabs("Organization sections", []ui.Tab{
-		{Label: "Organization", URL: "/organization", Active: active == "organization" || active == "billing" || active == "audit"},
+		{Label: "Organization", URL: "/organization", Active: active == "organization"},
 		{Label: "Members", URL: "/organization?tab=members", Active: active == "members" || active == "invitations"},
 		{Label: "Projects", URL: "/organization?tab=projects", Active: active == "projects"},
+		{Label: "Billing", URL: "/organization?tab=billing", Active: active == "billing"},
+		{Label: "Audit", URL: "/organization?tab=audit", Active: active == "audit"},
 	})
 }
 
@@ -402,24 +403,10 @@ templ createOrganizationAction() {
 	<a class="ts-btn ts-btn-primary" href="/organization?newOrganization=organization">@icons.Plus(16)<span>Create organization</span></a>
 }
 
-templ organizationTools(active string) {
-	<nav class="ts-row" aria-label="Organization tools">
-		for _, tool := range []ui.Tab{
-			{Label: "Billing", URL: "/organization?tab=billing", Active: active == "billing"},
-			{Label: "Audit", URL: "/organization?tab=audit", Active: active == "audit"},
-		} {
-			<a class="ts-btn ts-btn-secondary ts-btn-sm" href={ templ.SafeURL(tool.URL) } if tool.Active {
-				aria-current="page"
-			}>{ tool.Label }</a>
-		}
-	</nav>
-}
-
 templ organizationBillingView(data organizationPageData, content templ.Component) {
 	<main class="ts-page">
 		@ui.PageHeader(data.Organization.Name)
 		@Tabs("billing")
-		@organizationTools("billing")
 		@content
 	</main>
 }
@@ -428,7 +415,6 @@ templ organizationAuditView(data organizationPageData, content templ.Component) 
 	<main class="ts-page ts-audit-page">
 		@ui.PageHeader(data.Organization.Name)
 		@Tabs("audit")
-		@organizationTools("audit")
 		@content
 	</main>
 }
