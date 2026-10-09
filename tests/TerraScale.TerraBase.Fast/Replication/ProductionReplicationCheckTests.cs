@@ -1,10 +1,14 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.Net;
+using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Bogus;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using TerraBase.Features.Management.Usage;
@@ -28,8 +32,12 @@ public sealed class ProductionReplicationCheckTests
     private static readonly string[] InvalidConfigurations =
     [
         "empty-host", "blank-host", "empty-members", "duplicate-members", "invalid-member", "invalid-hostname", "too-many-members",
-        "zero-lag", "negative-lag", "nan-lag", "infinite-lag",
+        "zero-lag", "negative-lag", "nan-lag", "infinite-lag", "invalid-region", "wrong-region", "unready-member",
+        "redirecting-member",
     ];
+
+    // TerraBaseTestServer's region.
+    private const string Region = "test-region";
 
     // Each test takes a few seconds, but on a loaded CI runner setup alone has taken over 45 s (run 660), so
     // provisioning, readiness and checker runs share one deadline rather than fixed per-step slices. It ends below
@@ -93,10 +101,13 @@ public sealed class ProductionReplicationCheckTests
             var tenant = await ReplicationTenant.CreateAsync(server, [.. databases.Values], token);
             var secret = await tenant.KeyAsync(server, ["documents:read", "documents:write"], token);
             var member = server.ClientAddress!.Authority;
+            using var certificate = tls.LoadServerCertificate();
+            await using var redirector = await RedirectorAsync(certificate, server.ClientAddress!, token);
+            var redirecting = $"localhost:{new Uri(redirector.Urls.Single()).Port}";
             var directory = Directory.CreateTempSubdirectory("terrabase-prod-check-invalid-").FullName;
             try
             {
-                await Task.WhenAll(InvalidConfigurations.Select(fault => ConfigurationAsync(server, tenant, secret, member, databases[fault], directory, fault)));
+                await Task.WhenAll(InvalidConfigurations.Select(fault => ConfigurationAsync(server, tenant, secret, member, redirecting, databases[fault], directory, fault)));
             }
             finally
             {
@@ -118,8 +129,8 @@ public sealed class ProductionReplicationCheckTests
             }
         }
 
-        async Task ConfigurationAsync(TerraBaseTestServer server, ReplicationTenant tenant, string secret, string member, string database,
-            string directory, string fault)
+        async Task ConfigurationAsync(TerraBaseTestServer server, ReplicationTenant tenant, string secret, string member, string redirecting,
+            string database, string directory, string fault)
         {
             string[] members = fault switch
             {
@@ -128,8 +139,11 @@ public sealed class ProductionReplicationCheckTests
                 "invalid-member" => ["localhost:0"],
                 "invalid-hostname" => ["localhost..:9465"],
                 "too-many-members" => [.. Enumerable.Range(1, 101).Select(port => $"localhost:{port}")],
+                "unready-member" => [member, $"localhost:{TerraBaseTestServer.FreePort()}"],
+                "redirecting-member" => [member, redirecting],
                 _ => [member],
             };
+            var region = fault switch { "invalid-region" => "Test_Region", "wrong-region" => "other-region", _ => Region };
             var lag = fault switch
             {
                 "zero-lag" => "0",
@@ -139,11 +153,24 @@ public sealed class ProductionReplicationCheckTests
                 _ => "10",
             };
             var canary = Path.Combine(Directory.CreateDirectory(Path.Combine(directory, fault)).FullName, "canary.json");
-            await WriteCanaryAsync(canary, server, tls, tenant, database, secret, members, token);
+            await WriteCanaryAsync(canary, server, tls, tenant, database, secret, members, region, token);
             var command = fault switch { "empty-host" => string.Empty, "blank-host" => " \t ", _ => "exit 23" };
             var (exitCode, output, error) = await RunCheckerAsync(canary, tls, command, [], token, lag);
             var because = $"configuration {fault}:\n{output}{error}";
-            await Assert.That(exitCode).IsEqualTo(2).Because(because);
+            // A target outside the canary's region, or not ready, fails as an observation, still before any write.
+            var observation = fault switch
+            {
+                "wrong-region" => $"serving-region observation failed: serving region header must name other-region exactly once; received ['{Region}']",
+                "unready-member" => $"{members[^1]}: serving-region observation failed",
+                "redirecting-member" => $"{members[^1]}: serving-region observation failed: readiness must report ready in {Region}; received HTTP 307",
+                _ => null,
+            };
+            await Assert.That(exitCode).IsEqualTo(observation is null ? 2 : 1).Because(because);
+            if (observation is not null)
+            {
+                await Assert.That(output).Contains(observation).Because(because);
+            }
+
             await Assert.That(output).DoesNotContain("OK:").Because(because);
             using var client = tls.CreateClient(server.ClientAddress!, secret);
             using var collection = await client.GetAsync(new Uri($"{tenant.Path(database)}/collections/canary/documents", UriKind.Relative), token);
@@ -153,6 +180,55 @@ public sealed class ProductionReplicationCheckTests
             var page = await response.Content.ReadFromJsonAsync<JsonElement>(token);
             await Assert.That(page.GetProperty("items").GetArrayLength()).IsEqualTo(0).Because(because);
         }
+    }
+
+    // A member in the canary's region that redirects every request, method kept, to the same path on target.
+    private static async Task<WebApplication> RedirectorAsync(X509Certificate2 certificate, Uri target, CancellationToken token)
+    {
+        var builder = WebApplication.CreateSlimBuilder(new WebApplicationOptions { Args = [] });
+        builder.Configuration.Sources.Clear();
+        builder.Logging.ClearProviders();
+        builder.WebHost.ConfigureKestrel(kestrel => kestrel.Listen(IPAddress.Loopback, 0, listen => listen.UseHttps(certificate)));
+        var app = builder.Build();
+        try
+        {
+            app.Run(context =>
+            {
+                context.Response.Headers["X-TerraBase-Region"] = Region;
+                context.Response.Redirect(new Uri(target, $"{context.Request.Path}{context.Request.QueryString}").AbsoluteUri, permanent: false, preserveMethod: true);
+                return Task.CompletedTask;
+            });
+            await app.StartAsync(token);
+            return app;
+        }
+        catch
+        {
+            await app.DisposeAsync();
+            throw;
+        }
+    }
+
+    // The real listener accepts a request without a region pin; on these members every checker request, readiness and
+    // documents alike, must carry exactly one (the listener answers a wrong one with 421).
+    private sealed class RequireCheckerPin : IStartupFilter
+    {
+        public Action<IApplicationBuilder> Configure(Action<IApplicationBuilder> next) => app =>
+        {
+            app.Use((context, nextMiddleware) =>
+            {
+                if (context.Request.Headers.UserAgent.ToString().StartsWith("terrabase-prod-replication-check/", StringComparison.Ordinal)
+                    && context.Request.Headers["X-TerraScale-Region-Pin"].Count != 1)
+                {
+                    // Region-stamped like every client response, so the checker reports this 428 itself.
+                    context.Response.Headers["X-TerraBase-Region"] = Region;
+                    context.Response.StatusCode = StatusCodes.Status428PreconditionRequired;
+                    return Task.CompletedTask;
+                }
+
+                return nextMiddleware(context);
+            });
+            next(app);
+        };
     }
 
     // A wait canceled by the suite timeout leaves a server's cleanup running, after a disposal or a failed start, and
@@ -197,11 +273,12 @@ public sealed class ProductionReplicationCheckTests
     }
 
     private static async Task WriteCanaryAsync(string path, TerraBaseTestServer server, ClientTls tls, ReplicationTenant tenant,
-        string database, string secret, string[] members, CancellationToken token)
+        string database, string secret, string[] members, string region, CancellationToken token)
     {
         var config = new JsonObject
         {
             ["api"] = server.ClientAddress!.ToString(),
+            ["region"] = region,
             ["project"] = tenant.ProjectId,
             ["database"] = database,
             ["secret"] = secret,
@@ -477,6 +554,7 @@ public sealed class ProductionReplicationCheckTests
             static void ConfigureServices(IServiceCollection services, HostLogs logs)
             {
                 services.AddSingleton<ILoggerProvider>(logs);
+                services.AddSingleton<IStartupFilter>(new RequireCheckerPin());
                 // Usage has separate coverage; its periodic catalog writes would move the measured replication heads.
                 foreach (var flush in services.Where(service => service.ImplementationType == typeof(UsageFlushService)).ToList())
                 {
@@ -569,7 +647,7 @@ public sealed class ProductionReplicationCheckTests
             var canary = Path.Combine(scenario, "canary.json");
             if (!repeat)
             {
-                await WriteCanaryAsync(canary, primary, _tls, tenant, database, _secret, members, token);
+                await WriteCanaryAsync(canary, primary, _tls, tenant, database, _secret, members, Region, token);
             }
 
             var samples = Directory.CreateDirectory(Path.Combine(scenario, "samples")).FullName;

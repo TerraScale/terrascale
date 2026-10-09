@@ -29,6 +29,10 @@ public sealed class ClientTls : IDisposable
         File.WriteAllText(Path.Combine(_directory, "client.key"), key.ExportPkcs8PrivateKeyPem());
     }
 
+    /// <summary>This certificate with its private key, for a test's own HTTPS listener; the caller disposes it.</summary>
+    public X509Certificate2 LoadServerCertificate() =>
+        X509Certificate2.CreateFromPemFile(Path.Combine(_directory, "client.pem"), Path.Combine(_directory, "client.key"));
+
     /// <summary>Enables the client listener on an ephemeral port with this certificate.</summary>
     public void Apply(Dictionary<string, string> settings)
     {

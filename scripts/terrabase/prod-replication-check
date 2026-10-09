@@ -9,9 +9,11 @@ conditional writes answer 412. Then it reads every document directly from every 
 JSON and version (ETag, tombstones included) with what the API answered, until they agree or S seconds pass.
 It also requires each member's admin /metrics (replication durable lag, catalog follower lag,
 rejected groups, prefix mismatches) and its last M minutes of logs (replication warnings, corruption).
+The API and every member must be ready in FILE's region before writes; every client request is region-pinned
+and every response must identify that region, including errors; redirects are not followed.
 This is a sampled canary check, not proof of Anna-only service or a continuous production soak.
 
-FILE (mode 0600) is JSON: {"api": "https://gru.api.terrascale.tech", "project": "<project id>",
+FILE (mode 0600) is JSON: {"api": "https://gru.api.terrascale.tech", "region": "gru-1", "project": "<project id>",
 "database": "<database name>", "secret": "tb_...", "members": ["10.251.0.11:9465", ...],
 "member_ca": "<PEM of the member CA>"}. CMD runs a shell script from stdin on a member; {ip} is replaced
 by the member's host, and {member} by its full host:port. CMD must report completion of both metrics and logs;
@@ -85,9 +87,12 @@ def load_canary(path):
         canary = json.load(file)
     if not isinstance(canary, dict):
         raise ValueError("canary file must contain an object")
-    missing = {"api", "project", "database", "secret", "members", "member_ca"} - canary.keys()
+    missing = {"api", "region", "project", "database", "secret", "members", "member_ca"} - canary.keys()
     if missing:
         raise ValueError(f"canary file lacks {', '.join(sorted(missing))}")
+    region = canary["region"]
+    if not isinstance(region, str) or not re.fullmatch(r"[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?", region):
+        raise ValueError("canary region must be a valid region id")
     members = canary["members"]
     if not isinstance(members, list) or not 1 <= len(members) <= 100:
         raise ValueError("canary members must contain 1 to 100 distinct host:port addresses")
@@ -110,33 +115,57 @@ def load_canary(path):
     return canary
 
 
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Answers a redirect as itself (an HTTPError), so every observation comes from the configured target."""
+
+    def redirect_request(self, request, fp, code, msg, headers, newurl):
+        return None
+
+
 class Api:
-    def __init__(self, base, secret, context, project, database):
+    def __init__(self, base, secret, context, project, database, region):
         self.base = base.rstrip("/")
         self.secret = secret
-        self.context = context
+        self.opener = urllib.request.build_opener(NoRedirect, urllib.request.HTTPSHandler(context=context))
+        self.region = region
         self.prefix = f"/v1/projects/{project}/databases/{database}/collections"
 
     def call(self, method, path, body=None, headers=None, content_type="application/json"):
         data = None if body is None else json.dumps(body).encode()
         request = urllib.request.Request(self.base + self.prefix + path, data=data, method=method)
-        request.add_header("Authorization", "Bearer " + self.secret)
-        # The edge refuses Python's default User-Agent (Cloudflare error 1010).
-        request.add_header("User-Agent", "terrabase-prod-replication-check/1")
         if data is not None:
             request.add_header("Content-Type", content_type)
         for name, value in (headers or {}).items():
             request.add_header(name, value)
+        return self.send(request)
+
+    def send(self, request):
+        request.add_header("Authorization", "Bearer " + self.secret)
+        # The edge refuses Python's default User-Agent (Cloudflare error 1010).
+        request.add_header("User-Agent", "terrabase-prod-replication-check/1")
+        request.add_header("X-TerraScale-Region-Pin", self.region)
         try:
-            with urllib.request.urlopen(request, context=self.context, timeout=20) as response:
+            with self.opener.open(request, timeout=20) as response:
+                self.check_region(response.headers)
                 return response.status, (response.headers.get("ETag") or "").strip('"'), json.loads(response.read() or b"null")
         except urllib.error.HTTPError as error:
+            self.check_region(error.headers)
             raw = error.read()
             try:
                 payload = json.loads(raw)
             except ValueError:
                 payload = raw[:200].decode(errors="replace")
             return error.code, (error.headers.get("ETag") or "").strip('"'), payload
+
+    def check_region(self, headers):
+        observed = headers.get_all("X-TerraBase-Region", [])
+        if observed != [self.region]:
+            raise RuntimeError(f"serving region header must name {self.region} exactly once; received {observed}")
+
+    def ready(self):
+        status, _, body = self.send(urllib.request.Request(self.base + "/readyz", method="GET"))
+        if status != 200 or not isinstance(body, dict) or body.get("status") != "ready" or body.get("region") != self.region:
+            raise RuntimeError(f"readiness must report ready in {self.region}; received HTTP {status} {body}")
 
     def document(self, id_, method="GET", body=None, headers=None, content_type="application/json"):
         return self.call(method, f"/{COLLECTION}/documents/{id_}", body, headers, content_type)
@@ -382,9 +411,17 @@ def main():
     else:
         sys.exit(f"another prod-replication-check has held {options.canary}.lock for 3 minutes")
     members = {
-        member: Api(f"https://{member}", canary["secret"], ssl.create_default_context(cadata=canary["member_ca"]), canary["project"], canary["database"])
+        member: Api(f"https://{member}", canary["secret"], ssl.create_default_context(cadata=canary["member_ca"]), canary["project"], canary["database"], canary["region"])
         for member in canary["members"]}
-    api = Api(canary["api"], canary["secret"], ssl.create_default_context(), canary["project"], canary["database"])
+    api = Api(canary["api"], canary["secret"], ssl.create_default_context(), canary["project"], canary["database"], canary["region"])
+    # Verify every configured target before any canary mutation, even if the public API routes elsewhere.
+    for target, client in [(canary["api"], api), *members.items()]:
+        try:
+            client.ready()
+        except (OSError, RuntimeError, ValueError) as error:
+            fail(f"{target}: serving-region observation failed: {error}")
+            return 1
+    print(f"region {canary['region']}: API and {len(members)} configured members ready", flush=True)
     # Stable ids, so every run cycles the same documents and the canary does not grow.
     ids = [str(uuid.uuid5(uuid.NAMESPACE_URL, f"terrabase-prod-replication-check/{socket.gethostname()}/{index}")) for index in range(options.docs)]
     run = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime()) + "-" + uuid.uuid4().hex[:8]
@@ -418,7 +455,7 @@ def main():
             if live != reference:
                 differing = sorted(set(live.items()) ^ set(reference.items()))[:3]
                 fail(f"{member}: lists {len(live)} live documents, {next(iter(listings))} lists {len(reference)}; differing: {differing}")
-    except (OSError, ValueError, KeyError) as error:
+    except (OSError, RuntimeError, ValueError, KeyError) as error:
         fail(f"API {canary['api']}: {error!r}")
 
     try:
