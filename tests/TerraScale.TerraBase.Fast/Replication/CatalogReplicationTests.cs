@@ -153,6 +153,10 @@ public sealed class CatalogReplicationTests
         {
             tenant = await CatalogTenant.CreateAsync(primary, "orders");
             await ReadyAsync(follower);
+            // Readiness can describe an earlier head; prove the tenant key arrived before removing its primary.
+            using var seeded = tls.CreateClient(follower.ClientAddress!, tenant.Key);
+            await TerraBaseTestServer.EventuallyAsync(async token =>
+                await GetAsync(seeded, tenant, "orders", "kept", token) == HttpStatusCode.NotFound);
         }
 
         {
