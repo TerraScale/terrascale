@@ -182,8 +182,8 @@ internal sealed partial class UsageMeter
         }
     }
 
-    internal void RecordStorage(TenantContext database, long bytes) =>
-        Record(database, new(new("storage_bytes", options.Region, "", "sample"), 1, bytes));
+    internal void RecordStorage(TenantContext database, long bytes, DateTimeOffset sampledAt) =>
+        Record(database, new(new("storage_bytes", options.Region, "", "sample"), 1, bytes), sampledAt);
 
     internal static bool ValidRegion(string region) => region is not null && TerraBase.Configuration.TerraBaseOptions.IsRegion(region);
 

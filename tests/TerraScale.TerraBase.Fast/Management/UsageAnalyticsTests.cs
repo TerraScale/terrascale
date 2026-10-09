@@ -505,6 +505,40 @@ public sealed class UsageAnalyticsTests
     }
 
     [Test]
+    public async Task A_storage_pass_that_outlasts_its_minute_samples_each_minute_once()
+    {
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 10, 8, 21, 30, 0, TimeSpan.Zero));
+        var hook = new UsageCommitHook();
+        await using var api = await ManagementApi.StartAsync(settings => settings["region"] = "gru-1", hook.Install, clock);
+        var created = await api.CreateManagedDatabaseAsync();
+        var database = new TenantContext(created.Organization, PlanTier.Hobby, created.Project, created.Id);
+
+        // Sizing the database takes past the end of the minute its pass started in, once.
+        var slow = 1;
+        hook.BeforeSize = (_, _) =>
+        {
+            if (Interlocked.Exchange(ref slow, 0) == 1)
+            {
+                clock.Advance(TimeSpan.FromMinutes(1));
+            }
+
+            return ValueTask.CompletedTask;
+        };
+        clock.Advance(TimeSpan.FromMinutes(1));
+        var started = clock.GetUtcNow().ToUnixTimeSeconds() / 60;
+        var flush = api.Server.Services.GetServices<IHostedService>().OfType<UsageFlushService>().Single();
+        await flush.SampleStorageAsync(CancellationToken.None);
+        await flush.SampleStorageAsync(CancellationToken.None);
+        await flush.FlushAsync(CancellationToken.None);
+
+        // Its sample stays in that minute, so the next minute's pass samples the database again, once.
+        var (_, series) = await api.Server.Services.GetRequiredService<UsageMeter>()
+            .GetObservationsAsync(database, new UsageWindow(UsageWindow.Minute, started, 2), CancellationToken.None);
+        await Assert.That(series.Select(point => point.Meters?.GetValueOrDefault("storage_bytes|gru-1||sample")?.Count ?? 0))
+            .IsEquivalentTo([1L, 1L], TUnit.Assertions.Enums.CollectionOrdering.Matching);
+    }
+
+    [Test]
     public async Task A_primary_refusing_measurements_still_receives_the_read_and_write_totals()
     {
         await using var api = await ManagementApi.StartAsync(settings => settings["region"] = "gru-1");

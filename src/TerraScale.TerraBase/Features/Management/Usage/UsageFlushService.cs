@@ -180,7 +180,9 @@ internal sealed partial class UsageFlushService(
             return;
         }
 
-        var minute = time.GetUtcNow().ToUnixTimeSeconds() / 60;
+        // Every sample of a pass belongs to the minute it started in, however long sizing takes.
+        var sampledAt = time.GetUtcNow();
+        var minute = sampledAt.ToUnixTimeSeconds() / 60;
         if (minute == _sampledMinute)
         {
             return;
@@ -214,7 +216,7 @@ internal sealed partial class UsageFlushService(
             {
                 if (!_sampled.Contains(key) && await engine.GetDatabaseSizeAsync(database, cancellationToken).ConfigureAwait(false) is { } size)
                 {
-                    meter.RecordStorage(database, size);
+                    meter.RecordStorage(database, size, sampledAt);
                     _ = _sampled.Add(key);
                 }
             }
