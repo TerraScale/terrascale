@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased — TS-754
+
+Entity IDs are plain uppercase Crockford ULIDs. `generateId()` uses the maintained
+`ulid` library with monotonic generation; `isValidId()` and `requireId()` validate
+the canonical 26-character, 128-bit form. UUIDs, prefixes, lowercase and legacy
+keys fail validation. Project IDs, document requests/responses, snapshot keys,
+hosted identity DTOs and explicit development storage use this contract.
+
+The document key is the entity ID; document JSON and patches cannot duplicate it
+in a top-level `id` field. The deterministic UUIDv5 `documentIdFor` helper is
+removed. Store natural keys in indexed fields. Local Better Auth generates ULIDs
+and stores the ID only in the record key, reconstructing its adapter view on read.
+
+This is a greenfield cutover: there is no migration, ID rewrite, compatibility
+shim or legacy fallback. Service owners wipe their verified affected stores and
+recreate bootstrap state; this stateless SDK has no production data to delete.
+Release qualification requires the matching immutable C# ULID producer release.
+
 ## Unreleased — TS-592
 
 The project-scoped data client accepts a ts-auth access JWT as `token`, while

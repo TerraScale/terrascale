@@ -6,6 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { test } from "vitest";
+import { qualifyRuntimeDependencies } from "../scripts/npm-runtime-dependencies.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const run = promisify(execFile);
@@ -31,6 +32,8 @@ test("packed SDK independently installs its project-scoped JavaScript and declar
     assert.doesNotMatch(listing, /^package\/(?:test|scripts|contracts|node_modules)\/|\.test\.js$/mu);
     await writeFile(path.join(consumer, "package.json"), JSON.stringify({ type: "module" }));
     await npmRun(["install", "--ignore-scripts", "--no-audit", "--no-fund", tarball, "typescript@5.9.3"], consumer);
+    const manifest = JSON.parse(await readFile(path.join(consumer, "node_modules/@terrascale/sdk/package.json"), "utf8"));
+    await qualifyRuntimeDependencies(consumer, manifest.dependencies);
     await writeFile(path.join(consumer, "caller.ts"), installedCaller);
     await npmRun(["exec", "--", "tsc", "--noEmit", "--strict", "--skipLibCheck", "--target", "ES2023", "--module", "NodeNext", "--moduleResolution", "NodeNext", "caller.ts"], consumer);
     await run(process.execPath, ["caller.ts"], { cwd: consumer });
@@ -45,7 +48,7 @@ test("packed SDK independently installs its project-scoped JavaScript and declar
 
 const installedCaller = `import { createTerraBaseClient, createTerraBaseV1Client, TerraBaseV1Client, ExactDecimal } from "@terrascale/sdk";
 const token = "eyJ0eXAiOiJhdCtqd3QifQ.eyJwcm9qZWN0X2lkIjoicHJvamVjdCJ9.c2lnbmF0dXJl";
-const client = createTerraBaseClient({ project: "project", baseUrl: "http://127.0.0.1:18447", token });
+const client = createTerraBaseClient({ project: "01ARZ3NDEKTSV4RRFFQ69G5FA1", baseUrl: "http://127.0.0.1:18447", token });
 if (!(client instanceof TerraBaseV1Client) || createTerraBaseClient !== createTerraBaseV1Client) throw new Error("Multiple client implementations.");
 const collection = client.database("main").collection("users");
 for (const name of ["get", "put", "create", "patch", "delete", "query"] as const) if (typeof collection[name] !== "function") throw new Error(name);

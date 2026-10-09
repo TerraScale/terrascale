@@ -1,5 +1,5 @@
 import { collections } from "./support/terrabase-v1-fixture.js";
-import { randomUUID } from "node:crypto";
+import { generateId } from "../src/ids.js";
 import { describe, expect, test } from "vitest";
 import { v1Filter } from "../src/index.js";
 import { liveConfigured, liveDatabase } from "./support/terrabase-v1-live.js";
@@ -7,8 +7,8 @@ import { liveConfigured, liveDatabase } from "./support/terrabase-v1-live.js";
 describe.skipIf(!liveConfigured)("real C# queries", () => {
   test("filters, sorting, projection, count, pagination and query-bound cursors", async () => {
     const documents = liveDatabase().collection(collections.queries);
-    const run = randomUUID();
-    const ids = [randomUUID(), randomUUID(), randomUUID()];
+    const run = generateId();
+    const ids = [generateId(), generateId(), generateId()];
     const rows = [
       { run, name: "Ana", age: 31, tags: ["admin"] },
       { run, name: "Bo", age: 25, tags: ["beta"] },
@@ -42,7 +42,7 @@ describe.skipIf(!liveConfigured)("real C# queries", () => {
       expect(matches.items.map(item => item.document.name)).toEqual(["Ana"]);
       const nulls = await documents.query({ filter: v1Filter.and(filter, v1Filter.exists("/nickname")) });
       expect(nulls.items.map(item => item.document.name)).toEqual(["Cy"]);
-      await expect(documents.query({ filter: v1Filter.eq("/run", randomUUID()), cursor: first.nextCursor })).rejects.toMatchObject({ status: 400, code: "invalid_cursor" });
+      await expect(documents.query({ filter: v1Filter.eq("/run", generateId()), cursor: first.nextCursor })).rejects.toMatchObject({ status: 400, code: "invalid_cursor" });
     } finally { for (const id of ids) await documents.delete(id).catch(() => undefined); }
   });
 });

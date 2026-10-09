@@ -19,7 +19,8 @@ export {
   isTerraBaseV1Error,
 } from "./v1/errors.js";
 export { v1Filter } from "./v1/filter.js";
-export { documentIdFor } from "./v1/ids.js";
+export { generateId, isValidId, requireId } from "./ids.js";
+/** @typedef {import("./ids.js").EntityId} EntityId */
 export { ExactDecimal } from "./v1/json.js";
 
 /** @typedef {import("./v1/transport.js").TerraBaseV1ClientConfig} TerraBaseV1ClientConfig */

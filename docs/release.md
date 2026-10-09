@@ -61,8 +61,11 @@ browser journey requires actual service credentials and does not use intercepted
 producer responses.
 
 `qualify-npm-artifact.js` preserves clean-source, reviewed toolchain, installed
-consumer, archive, audit, license, and cryptographic evidence checks. Its report
-retains active producer blockers and cannot mark a release eligible while they
+consumer, archive, audit, license, and cryptographic evidence checks. It
+admits only the pinned runtime dependency `ulid@3.0.2` with its MIT license;
+qualification binds the installed version and exact LICENSE SHA-256, rejects
+unqualified transitive dependencies, and promotion verifies the same evidence.
+Its report retains active producer blockers and cannot mark a release eligible while they
 remain. `promote-npm-candidate.js` requires an admitted build receipt bound to
 source and output bytes and refuses publication with active blockers. The
 required release-E2E check fails before any skip-capable suite until production

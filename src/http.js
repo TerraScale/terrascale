@@ -5,6 +5,7 @@ import {
   TsAuthEndpointDiscovery,
 } from "./ts-auth-discovery.js";
 import { parseDatabaseJson } from "./database-codec.js";
+import { validateTsAuthIds } from "./ts-auth-ids.js";
 /** @import { ResolvedTsAuthRuntimeConfig, TsAuthRuntimeConfig, FetchLike } from "./config.js" */
 /** @import { TerraScaleError, TerraScaleErrorCategory, TerraScaleResult, TerraScaleValidationIssue } from "./result.js" */
 
@@ -227,6 +228,15 @@ export class TsAuthHttp {
                 response.status,
                 response.headers,
               );
+            try {
+              validateTsAuthIds(parsed.value, options.routeName);
+            } catch {
+              return err(options.routeName, {
+                kind: "invalid-response", code: "invalid_response",
+                message: "ts-auth returned a noncanonical entity ID.", status: response.status,
+                requestId: requestIdFrom(response.headers),
+              }, response.status, response.headers);
+            }
             return ok(
               options.routeName,
               response.status,

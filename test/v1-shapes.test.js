@@ -1,5 +1,5 @@
 import { collections } from "./support/terrabase-v1-fixture.js";
-import { randomUUID } from "node:crypto";
+import { generateId } from "../src/ids.js";
 import { describe, expect, test } from "vitest";
 import { v1Filter } from "../src/index.js";
 import { liveConfigured, liveDatabase } from "./support/terrabase-v1-live.js";
@@ -7,8 +7,8 @@ import { liveConfigured, liveDatabase } from "./support/terrabase-v1-live.js";
 describe.skipIf(!liveConfigured)("real C# collection shapes", () => {
   test("immutable snapshot bootstrap, log continuation and filtered deletes", async () => {
     const documents = liveDatabase().collection(collections.shapes);
-    const id = randomUUID();
-    const run = randomUUID();
+    const id = generateId();
+    const run = generateId();
     const where = v1Filter.and(v1Filter.eq("/run", run), v1Filter.eq("/active", true));
     try {
       const written = await documents.put(id, { run, active: true, title: "before" });
@@ -37,8 +37,8 @@ describe.skipIf(!liveConfigured)("real C# collection shapes", () => {
 
   test("shape long-poll wakes on real commits and advances the public cursor", async () => {
     const documents = liveDatabase().collection(collections.shapes);
-    const id = randomUUID();
-    const where = v1Filter.eq("/run", randomUUID());
+    const id = generateId();
+    const where = v1Filter.eq("/run", generateId());
     const snapshot = await documents.shape({ where });
     const head = await documents.shape({ where, handle: snapshot.handle, offset: snapshot.nextOffset });
     const signal = AbortSignal.timeout(10_000);

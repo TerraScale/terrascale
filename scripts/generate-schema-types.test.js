@@ -1,14 +1,14 @@
 import { expect, test } from "vitest";
 import { generateSchemaTypes } from "./generate-schema-types.js";
 import { collection, defineSchema } from "../src/schema.js";
-test("schema codegen emits current native discriminants and UUID identities deterministically", () => {
+test("schema codegen emits native discriminants and ULID identities deterministically", () => {
   const schema = defineSchema([
     collection("items")
       .field(2, "bytes", "bytes", { required: false })
       .field(1, "count", "i64"),
   ]).build();
   const output = generateSchemaTypes(schema);
-  expect(output).toContain("CanonicalUuid");
+  expect(output).toContain("EntityId");
   expect(output).toContain(
     'readonly count: Extract<DatabaseValue, { readonly type: "i64" }>',
   );

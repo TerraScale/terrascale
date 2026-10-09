@@ -2,7 +2,7 @@ import { mkdirSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { dirname, isAbsolute } from "node:path";
 
-const SCHEMA_VERSION = 1;
+const FORMAT_VERSION = 2;
 
 /**
  * A small synchronous JSON record store for Node local adapters.
@@ -55,7 +55,7 @@ export class TerraScaleSqliteStore {
       if (databasePath !== ":memory:") {
         this.#database.exec("PRAGMA journal_mode = WAL;");
       }
-      this.#migrate();
+      this.#initialize();
     } catch (error) {
       this.#database.close();
       this.#closed = true;
@@ -126,6 +126,25 @@ export class TerraScaleSqliteStore {
       )
       .all(namespace, scope);
     return rows.map((row) => /** @type {T} */ (parseJson(row.value, "record")));
+  }
+
+  /**
+   * @template T
+   * @param {string} namespace
+   * @param {string} scope
+   * @returns {readonly { readonly id: string; readonly value: T }[]}
+   */
+  listEntries(namespace, scope) {
+    this.#assertOpen();
+    assertKey(namespace, "namespace");
+    assertKey(scope, "scope");
+    const rows = this.#database
+      .prepare("SELECT id, value FROM records WHERE namespace = ? AND scope = ? ORDER BY id ASC")
+      .all(namespace, scope);
+    return rows.map(row => ({
+      id: String(row.id),
+      value: /** @type {T} */ (parseJson(row.value, "record")),
+    }));
   }
 
   /**
@@ -339,32 +358,18 @@ export class TerraScaleSqliteStore {
   }
 
   /** @returns {void} */
-  #migrate() {
+  #initialize() {
     this.#database.exec("BEGIN IMMEDIATE;");
     try {
-      this.#database.exec(`
-        CREATE TABLE IF NOT EXISTS schema_migrations (
-          version INTEGER NOT NULL PRIMARY KEY,
-          applied_at TEXT NOT NULL
-        ) WITHOUT ROWID;
-      `);
-
-      const row = this.#database
-        .prepare(
-          "SELECT version FROM schema_migrations ORDER BY version DESC LIMIT 1",
-        )
-        .get();
-      const version = row?.version;
-      if (version !== undefined && typeof version !== "number") {
-        throw new Error("Invalid schema migration version.");
-      }
-      if (version !== undefined && version > SCHEMA_VERSION) {
+      const version = this.#database.prepare("PRAGMA user_version").get()?.user_version;
+      const table = this.#database.prepare("SELECT name FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%' LIMIT 1").get();
+      if (version !== FORMAT_VERSION && !(version === 0 && table === undefined)) {
         throw new Error(
-          `Database schema version ${version} is newer than supported version ${SCHEMA_VERSION}.`,
+          `TS-754: unsupported local SQLite format. Stop the local runtime, delete ${this.databasePath} and its -wal/-shm files, then restart with fresh ULID storage.`,
         );
       }
 
-      if (version === undefined) {
+      if (version === 0) {
         this.#database.exec(`
           CREATE TABLE records (
             namespace TEXT NOT NULL,
@@ -379,11 +384,7 @@ export class TerraScaleSqliteStore {
             value TEXT NOT NULL CHECK (json_valid(value) = 1)
           ) WITHOUT ROWID;
         `);
-        this.#database
-          .prepare(
-            "INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)",
-          )
-          .run(SCHEMA_VERSION, new Date().toISOString());
+        this.#database.exec(`PRAGMA user_version = ${FORMAT_VERSION}`);
       }
       this.#database.exec("COMMIT;");
     } catch (error) {
@@ -406,7 +407,7 @@ export class TerraScaleSqliteStore {
         );
       }
     } catch {
-      // Preserve the original work/migration exception. SQLite will normally
+      // Preserve the original operation exception. SQLite will normally
       // have already rolled back a failed transaction automatically.
     }
   }

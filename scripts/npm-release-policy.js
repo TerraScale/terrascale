@@ -10,6 +10,13 @@ export const npmReleasePolicy = Object.freeze({
     "application/vnd.terrascale.candidate-build-receipt.v1+json",
   buildOutputDigestDomain: "terrascale.deploy/candidate-build-output/v1",
   npmTreeDigestDomain: "terrascale/npm-cli-tree/v1",
+  runtimeDependencies: Object.freeze({
+    ulid: Object.freeze({
+      version: "3.0.2",
+      license: "MIT",
+      fileSha256: "e7e94f2db9f81458817ca8eb7420d63ec607272eb4259b39c420339c76414dfe",
+    }),
+  }),
   npm: Object.freeze({
     version: "11.18.0",
     archiveUrl: "https://registry.npmjs.org/npm/-/npm-11.18.0.tgz",

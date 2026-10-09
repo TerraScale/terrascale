@@ -1,3 +1,4 @@
+import { generateId } from "../ids.js";
 /** @import { TerraScaleError, TerraScaleResult } from "../result.js" */
 /** @import { DatabaseResult } from "../database-types.js" */
 
@@ -733,8 +734,7 @@ function normalizeIdempotencyKey(value) {
 
 /** @returns {string} */
 function createIdempotencyKey() {
-  const randomUuid = globalThis.crypto?.randomUUID;
-  return randomUuid === undefined ? `tsm-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}` : randomUuid.call(globalThis.crypto);
+  return generateId();
 }
 
 /** @returns {ReactiveMutationError} */

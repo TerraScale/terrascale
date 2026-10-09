@@ -11,7 +11,7 @@ import {
 /** @import { TsAuthClient } from "./ts-auth.js" */
 
 const user = {
-  id: "usr_1",
+  id: "01ARZ3NDEKTSV4RRFFQ6000011",
   email: "ada@acme.test",
   email_verified: true,
   username: "ada",
@@ -83,6 +83,101 @@ function tsAuthClient(respond, requests, overrides = {}) {
     ...overrides,
   });
 }
+
+test("dead-letter list and replay use the documented two-ULID delivery selector", async () => {
+  const endpoint = "01ARZ3NDEKTSV4RRFFQ6000001";
+  const event = "01ARZ3NDEKTSV4RRFFQ6000002";
+  const entry = { id: `${endpoint}:${event}`, endpoint_id: endpoint, event_id: event, attempts: 3, updated_at: 1 };
+  /** @type {Request[]} */
+  const requests = [];
+  const client = tsAuthClient((_request, index) => index === 0 ? json([entry]) : json({ replayed: true }), requests);
+  const page = await client.webhooks.deadLetter();
+  assert.equal(page.ok, true);
+  if (page.ok) assert.deepEqual(page.value, [entry]);
+  const replay = await client.webhooks.replayDeadLetter(entry.id);
+  assert.equal(replay.ok, true);
+  assert.equal(requests[1]?.method, "POST");
+  assert.equal(new URL(/** @type {Request} */ (requests[1]).url).pathname, `/v1/acme/webhooks/dead-letter/${endpoint}%3A${event}/replay`);
+  for (const invalid of [endpoint, `${endpoint}:event_1`, entry.id.toLowerCase(), `${entry.id}:${event}`])
+    assert.throws(() => client.webhooks.replayDeadLetter(invalid), /ULID/u);
+  assert.equal(requests.length, 2);
+});
+
+test("malformed entity pages return invalid-response while recovery-code pages succeed", async () => {
+  for (const entry of [null, "legacy-id", 1, true, []]) {
+    const client = tsAuthClient(() => json({ data: [entry] }), []);
+    const result = await client.users.list();
+    assert.equal(result.ok, false);
+    if (!result.ok) assert.equal(result.error.kind, "invalid-response");
+  }
+  const client = tsAuthClient(() => json({ data: ["recovery-code"] }), []);
+  const result = await client.users.regenerateRecoveryCodes(user.id, "01ARZ3NDEKTSV4RRFFQ6000001");
+  assert.equal(result.ok, true);
+  if (result.ok) assert.deepEqual(result.value.data, ["recovery-code"]);
+});
+
+test("nullable membership relationships succeed while non-null relationships require IDs", async () => {
+  const id = "01ARZ3NDEKTSV4RRFFQ6000001";
+  for (const related of [null, { id }, {}, { id: id.toLowerCase() }, "legacy-id", []]) {
+    const client = tsAuthClient(request => json(new URL(request.url).pathname.endsWith("/memberships")
+      ? [{ id, organization_id: id, user_id: user.id, role: "member", created_at: 1, user: related }]
+      : [{ id, role: "member", created_at: 1, organization: related }]), []);
+    const organizations = await client.users.organizations(user.id);
+    const memberships = await client.organizations.listMemberships(id);
+    const valid = related === null || (typeof related === "object" && !Array.isArray(related) && Reflect.get(related, "id") === id);
+    assert.equal(organizations.ok, valid);
+    assert.equal(memberships.ok, valid);
+    if (!organizations.ok) assert.equal(organizations.error.kind, "invalid-response");
+    if (!memberships.ok) assert.equal(memberships.error.kind, "invalid-response");
+    if (related === null && organizations.ok && memberships.ok) {
+      assert.equal(organizations.value[0]?.organization, null);
+      assert.equal(memberships.value[0]?.user, null);
+    }
+  }
+});
+
+test("single organization and instance responses without IDs return invalid-response", async () => {
+  for (const body of [{}, null, [], "legacy-id", { id: "org_legacy" }]) {
+    const client = tsAuthClient(() => json(body), []);
+    for (const result of [await client.organizations.get(user.id), await client.instance.get()]) {
+      assert.equal(result.ok, false);
+      if (!result.ok) assert.equal(result.error.kind, "invalid-response");
+    }
+  }
+});
+
+test("enrollment and userinfo reject malformed successful response shapes", async () => {
+  for (const body of [null, "legacy-subject", 1, false, [], [{ id: user.id, org_id: user.id, sub: user.id }], {},
+    { org_id: null, sub: null }, { org_id: "org_legacy", sub: "legacy-subject" }]) {
+    const client = tsAuthClient(() => json(body), []);
+    for (const result of [await client.organizations.enrollDomain("acme.test", { user_id: user.id }),
+      await client.oidc.userinfo("at_test")]) {
+      assert.equal(result.ok, false);
+      if (!result.ok) assert.equal(result.error.kind, "invalid-response");
+    }
+  }
+});
+
+test("missing membership, invitation and audit references return invalid-response", async () => {
+  const membership = { id: user.id, organization_id: user.id, user_id: user.id, role: "member", created_at: 1 };
+  const invitation = { id: user.id, organization_id: user.id, email: "ada@acme.test", role: "member", status: "pending", expires_at: 2, created_at: 1 };
+  const audit = { id: user.id, type: "user.created", data: {}, created_at: 1 };
+  for (const field of ["organization_id", "user_id"]) {
+    const body = Object.fromEntries(Object.entries(membership).filter(([key]) => key !== field));
+    const client = tsAuthClient(() => json(body), []);
+    const result = await client.organizations.createMembership(user.id, { user_id: user.id, role: "member" });
+    assert.equal(result.ok, false);
+    if (!result.ok) assert.equal(result.error.kind, "invalid-response");
+  }
+  const withoutOrganization = Object.fromEntries(Object.entries(invitation).filter(([key]) => key !== "organization_id"));
+  const invitationClient = tsAuthClient(() => json(withoutOrganization), []);
+  const auditClient = tsAuthClient(() => json({ data: [audit] }), []);
+  for (const result of [await invitationClient.organizations.createInvitation(user.id, { email: "ada@acme.test", role: "member" }),
+    await auditClient.auditEvents.list()]) {
+    assert.equal(result.ok, false);
+    if (!result.ok) assert.equal(result.error.kind, "invalid-response");
+  }
+});
 
 describe("ts-auth client", () => {
   test("public auth origin selects a regional endpoint and fails over safe reads", async () => {
@@ -206,7 +301,7 @@ describe("ts-auth client", () => {
     const credentials = {
       issuer,
       audience: "https://api.acme.test/management",
-      introspection_client_id: "resource",
+      introspection_client_id: "01ARZ3NDEKTSV4RRFFQ6000003",
       introspection_secret: "secret",
     };
     const now = Math.floor(Date.now() / 1000);
@@ -214,13 +309,13 @@ describe("ts-auth client", () => {
       active: true,
       token_type: "Bearer",
       iss: issuer,
-      sub: "user",
+      sub: "01ARZ3NDEKTSV4RRFFQ6000001",
       aud: credentials.audience,
-      client_id: "client",
+      client_id: "01ARZ3NDEKTSV4RRFFQ6000002",
       scope: "management:read",
       exp: now + 60,
       iat: now - 10,
-      sid: "session",
+      sid: "01ARZ3NDEKTSV4RRFFQ6000004",
       principal_kind: "user",
     };
     /**
@@ -317,11 +412,11 @@ describe("ts-auth client", () => {
   test("sends exact management routes, bearer, and JSON bodies", async () => {
     /** @type {Request[]} */
     const requests = [];
-    const tsAuth = tsAuthClient(() => json({ data: [user] }), requests);
+    const tsAuth = tsAuthClient((_request, index) => json(index === 1 ? user : { data: [user] }), requests);
 
     const listed = await tsAuth.users.list({
       limit: 100,
-      startingAfter: "usr_1",
+      startingAfter: "01ARZ3NDEKTSV4RRFFQ6000011",
     });
     assert.equal(listed.ok, true);
     assert.equal(
@@ -330,7 +425,7 @@ describe("ts-auth client", () => {
     );
     assert.equal(
       new URL(/** @type {Request} */ (requests[0]).url).search,
-      "?limit=100&starting_after=usr_1",
+      "?limit=100&starting_after=01ARZ3NDEKTSV4RRFFQ6000011",
     );
     assert.equal(/** @type {Request} */ (requests[0]).method, "GET");
     assert.equal(
@@ -345,7 +440,7 @@ describe("ts-auth client", () => {
       /** @type {Request} */ (requests[0]).headers.get("content-type"),
       null,
     );
-    if (listed.ok) assert.equal(listed.value.data[0]?.id, "usr_1");
+    if (listed.ok) assert.equal(listed.value.data[0]?.id, "01ARZ3NDEKTSV4RRFFQ6000011");
 
     const created = await tsAuth.users.create({
       email: "grace@acme.test",
@@ -369,19 +464,19 @@ describe("ts-auth client", () => {
       },
     );
 
-    const revoked = await tsAuth.sessions.revoke("ses_9");
+    const revoked = await tsAuth.sessions.revoke("01ARZ3NDEKTSV4RRFFQ6000010");
     assert.equal(revoked.ok, true);
     assert.equal(
       new URL(/** @type {Request} */ (requests[2]).url).pathname,
-      "/v1/acme/sessions/ses_9/revoke",
+      "/v1/acme/sessions/01ARZ3NDEKTSV4RRFFQ6000010/revoke",
     );
     assert.equal(/** @type {Request} */ (requests[2]).method, "POST");
 
-    const deleted = await tsAuth.apiKeys.delete("key_7");
+    const deleted = await tsAuth.apiKeys.delete("01ARZ3NDEKTSV4RRFFQ6000007");
     assert.equal(deleted.ok, true);
     assert.equal(
       new URL(/** @type {Request} */ (requests[3]).url).pathname,
-      "/v1/acme/api-keys/key_7",
+      "/v1/acme/api-keys/01ARZ3NDEKTSV4RRFFQ6000007",
     );
     assert.equal(/** @type {Request} */ (requests[3]).method, "DELETE");
   });
@@ -397,11 +492,11 @@ describe("ts-auth client", () => {
       .withPassword("new-password-1")
       .withBanned(true)
       .withPublicMetadata({ tier: "pro" });
-    const updated = await tsAuth.users.update("usr_1", patch);
+    const updated = await tsAuth.users.update("01ARZ3NDEKTSV4RRFFQ6000011", patch);
     assert.equal(updated.ok, true);
     assert.equal(
       new URL(/** @type {Request} */ (requests[0]).url).pathname,
-      "/v1/acme/users/usr_1",
+      "/v1/acme/users/01ARZ3NDEKTSV4RRFFQ6000011",
     );
     assert.equal(/** @type {Request} */ (requests[0]).method, "PATCH");
     assert.deepEqual(
@@ -421,11 +516,11 @@ describe("ts-auth client", () => {
     const requests = [];
     const tsAuth = tsAuthClient((request) => {
       const path = new URL(request.url).pathname;
-      if (path === "/v1/acme/users/usr_1/passkeys") {
+      if (path === "/v1/acme/users/01ARZ3NDEKTSV4RRFFQ6000011/passkeys") {
         return json({
           passkeys: [
             {
-              id: "psk_1",
+              id: "01ARZ3NDEKTSV4RRFFQ6000009",
               nickname: "YubiKey",
               algorithm: "ES256",
               createdAt: 1_788_220_800,
@@ -434,11 +529,11 @@ describe("ts-auth client", () => {
           ],
         });
       }
-      if (path === "/v1/acme/users/usr_1/mfa-factors") {
+      if (path === "/v1/acme/users/01ARZ3NDEKTSV4RRFFQ6000011/mfa-factors") {
         return json({
           data: [
             {
-              id: "fac_1",
+              id: "01ARZ3NDEKTSV4RRFFQ6000004",
               type: "totp",
               confirmed: true,
               createdAt: 1_788_220_800,
@@ -449,7 +544,7 @@ describe("ts-auth client", () => {
       if (path === "/v1/acme/organizations") {
         return json([
           {
-            id: "org_1",
+            id: "01ARZ3NDEKTSV4RRFFQ6000008",
             name: "Acme",
             slug: "acme",
             created_at: 1_788_220_800,
@@ -459,11 +554,11 @@ describe("ts-auth client", () => {
       return json({});
     }, requests);
 
-    const passkeys = await tsAuth.users.passkeys("usr_1");
+    const passkeys = await tsAuth.users.passkeys("01ARZ3NDEKTSV4RRFFQ6000011");
     assert.equal(passkeys.ok, true);
     if (passkeys.ok) {
       assert.deepEqual(passkeys.value.passkeys[0], {
-        id: "psk_1",
+        id: "01ARZ3NDEKTSV4RRFFQ6000009",
         nickname: "YubiKey",
         algorithm: "ES256",
         createdAt: 1_788_220_800,
@@ -471,7 +566,7 @@ describe("ts-auth client", () => {
       });
     }
 
-    const factors = await tsAuth.users.mfaFactors("usr_1");
+    const factors = await tsAuth.users.mfaFactors("01ARZ3NDEKTSV4RRFFQ6000011");
     assert.equal(factors.ok, true);
     if (factors.ok)
       assert.equal(factors.value.data[0]?.createdAt, 1_788_220_800);
@@ -480,7 +575,7 @@ describe("ts-auth client", () => {
     assert.equal(organizations.ok, true);
     if (organizations.ok)
       assert.deepEqual(organizations.value, [
-        { id: "org_1", name: "Acme", slug: "acme", created_at: 1_788_220_800 },
+        { id: "01ARZ3NDEKTSV4RRFFQ6000008", name: "Acme", slug: "acme", created_at: 1_788_220_800 },
       ]);
   });
 
@@ -495,7 +590,7 @@ describe("ts-auth client", () => {
         ),
       nestedRequests,
     );
-    const missing = await nested.users.get("usr_missing");
+    const missing = await nested.users.get("01ARZ3NDEKTSV4RRFFQ6000014");
     assert.equal(missing.ok, false);
     if (!missing.ok) {
       assert.equal(missing.status, 404);
@@ -518,7 +613,7 @@ describe("ts-auth client", () => {
         ),
       flatRequests,
     );
-    const token = await flat.oidc.token("clt_1", "cs_wrong", {
+    const token = await flat.oidc.token("01ARZ3NDEKTSV4RRFFQ6000002", "cs_wrong", {
       grant_type: "client_credentials",
       resource: "https://api.example.test/management",
       scope: "management:read",
@@ -570,7 +665,7 @@ describe("ts-auth client", () => {
       if (path === "/v1/acme/api-keys")
         return json(
           {
-            id: "key_1",
+            id: "01ARZ3NDEKTSV4RRFFQ6000006",
             name: "ci",
             api_key: "sk_one_time_bearer",
             scopes: ["users:read"],
@@ -579,14 +674,14 @@ describe("ts-auth client", () => {
         );
       if (path === "/v1/acme/webhooks")
         return json({
-          id: "wh_1",
+          id: "01ARZ3NDEKTSV4RRFFQ6000015",
           url: "https://hooks.acme.test/ts",
           events: ["user.*"],
           signing_secret: "whsec_one_time_signing_secret_32chars",
         });
       if (path === "/v1/acme/directories")
         return json(
-          { id: "dir_1", org_id: null, token: "scim_one_time_token" },
+          { id: "01ARZ3NDEKTSV4RRFFQ6000001", org_id: null, token: "scim_one_time_token" },
           201,
         );
       return json({});
@@ -619,11 +714,11 @@ describe("ts-auth client", () => {
     const pages = [
       {
         data: [
-          { ...user, id: "usr_1" },
-          { ...user, id: "usr_2" },
+          { ...user, id: "01ARZ3NDEKTSV4RRFFQ6000011" },
+          { ...user, id: "01ARZ3NDEKTSV4RRFFQ6000012" },
         ],
       },
-      { data: [{ ...user, id: "usr_3" }] },
+      { data: [{ ...user, id: "01ARZ3NDEKTSV4RRFFQ6000013" }] },
     ];
     const tsAuth = tsAuthClient(
       (_request, index) => json(pages[index] ?? { data: [] }),
@@ -635,7 +730,7 @@ describe("ts-auth client", () => {
     if (all.ok)
       assert.deepEqual(
         all.value.map((u) => u.id),
-        ["usr_1", "usr_2", "usr_3"],
+        ["01ARZ3NDEKTSV4RRFFQ6000011", "01ARZ3NDEKTSV4RRFFQ6000012", "01ARZ3NDEKTSV4RRFFQ6000013"],
       );
     assert.equal(requests.length, 2);
     assert.equal(
@@ -644,7 +739,7 @@ describe("ts-auth client", () => {
     );
     assert.equal(
       new URL(/** @type {Request} */ (requests[1]).url).search,
-      "?limit=2&starting_after=usr_2",
+      "?limit=2&starting_after=01ARZ3NDEKTSV4RRFFQ6000012",
     );
   });
 
@@ -653,7 +748,7 @@ describe("ts-auth client", () => {
     const timestamp = "1758340000";
     const payload = new TextEncoder().encode(
       JSON.stringify({
-        id: "evt_1",
+        id: "01ARZ3NDEKTSV4RRFFQ6000002",
         type: "user.created",
         created_at: Number(timestamp),
         data: {},
@@ -674,7 +769,7 @@ describe("ts-auth client", () => {
         secret,
         timestamp,
         signature,
-        new TextEncoder().encode('{"id":"evt_2"}'),
+        new TextEncoder().encode('{"id":"01ARZ3NDEKTSV4RRFFQ6000003"}'),
       ),
       false,
     );
@@ -753,7 +848,7 @@ describe("ts-auth client", () => {
       fetch,
     });
     assert.throws(
-      () => tsAuth.users.update("usr_1", new TsAuthUserPatch()),
+      () => tsAuth.users.update("01ARZ3NDEKTSV4RRFFQ6000011", new TsAuthUserPatch()),
       /patch is empty/u,
     );
     assert.throws(() => tsAuth.users.list({ limit: 0 }), /between 1 and 100/u);
@@ -768,7 +863,7 @@ describe("ts-auth client", () => {
       if (path === "/acme/oauth/token")
         throw new Error("Token request probe; no provider response.");
       if (path === "/acme/oauth/userinfo")
-        return json({ sub: "usr_1", email: "ada@acme.test" });
+        return json({ sub: "01ARZ3NDEKTSV4RRFFQ6000011", email: "ada@acme.test" });
       if (path === "/acme/oauth/revoke")
         return new Response(null, { status: 200 });
       if (path === "/acme/.well-known/openid-configuration")
@@ -791,7 +886,7 @@ describe("ts-auth client", () => {
       return json({});
     }, requests);
 
-    const token = await tsAuth.oidc.token("clt_1", "cs_1", {
+    const token = await tsAuth.oidc.token("01ARZ3NDEKTSV4RRFFQ6000002", "cs_1", {
       grant_type: "authorization_code",
       code: "c1",
       redirect_uri: "https://app.acme.test/cb",
@@ -812,7 +907,7 @@ describe("ts-auth client", () => {
     );
     assert.equal(
       await /** @type {Request} */ (requests[0]).text(),
-      "client_id=clt_1&client_secret=cs_1&grant_type=authorization_code&code=c1&redirect_uri=https%3A%2F%2Fapp.acme.test%2Fcb&code_verifier=v1",
+      "client_id=01ARZ3NDEKTSV4RRFFQ6000002&client_secret=cs_1&grant_type=authorization_code&code=c1&redirect_uri=https%3A%2F%2Fapp.acme.test%2Fcb&code_verifier=v1",
     );
 
     const discovery = await tsAuth.oidc.discovery();
@@ -842,7 +937,7 @@ describe("ts-auth client", () => {
       null,
     );
 
-    const revoked = await tsAuth.oidc.revoke("clt_1", "cs_1", "at_1");
+    const revoked = await tsAuth.oidc.revoke("01ARZ3NDEKTSV4RRFFQ6000002", "cs_1", "at_1");
     assert.equal(revoked.ok, true);
     assert.equal(
       new URL(/** @type {Request} */ (requests[3]).url).pathname,
@@ -854,12 +949,12 @@ describe("ts-auth client", () => {
     );
     assert.equal(
       await /** @type {Request} */ (requests[3]).text(),
-      "client_id=clt_1&client_secret=cs_1&token=at_1",
+      "client_id=01ARZ3NDEKTSV4RRFFQ6000002&client_secret=cs_1&token=at_1",
     );
 
     const userinfo = await tsAuth.oidc.userinfo("at_1");
     assert.equal(userinfo.ok, true);
-    if (userinfo.ok) assert.equal(userinfo.value.sub, "usr_1");
+    if (userinfo.ok) assert.equal(userinfo.value.sub, "01ARZ3NDEKTSV4RRFFQ6000011");
     assert.equal(
       new URL(/** @type {Request} */ (requests[4]).url).pathname,
       "/acme/oauth/userinfo",
@@ -884,7 +979,7 @@ describe("ts-auth client", () => {
         });
       if (path === "/v1/acme/billing/checkout")
         return json({ checkout_url: "https://checkout.stripe.test/1" });
-      return json({ id: "ins_1", slug: "acme", name: "Acme" });
+      return json({ id: "01ARZ3NDEKTSV4RRFFQ6000005", slug: "acme", name: "Acme" });
     }, requests);
 
     const overview = await tsAuth.billing.get();
@@ -973,12 +1068,12 @@ test("resource requests retain one exact audience and keep no-resource browser i
   ];
   for (const grant of grants)
     assert.equal(
-      (await client.oidc.token("client", "secret", grant)).ok,
+      (await client.oidc.token("01ARZ3NDEKTSV4RRFFQ6000002", "secret", grant)).ok,
       false,
     );
   assert.equal(
     (
-      await client.oidc.deviceAuthorization("client", "secret", {
+      await client.oidc.deviceAuthorization("01ARZ3NDEKTSV4RRFFQ6000002", "secret", {
         resource,
         scope: "management:read",
       })
@@ -998,7 +1093,7 @@ test("resource requests retain one exact audience and keep no-resource browser i
     assert.deepEqual(form.getAll("resource"), browser ? [] : [resource]);
   }
   const authorize = client.oidc.authorizationUrl({
-    client_id: "client",
+    client_id: "01ARZ3NDEKTSV4RRFFQ6000002",
     response_type: "code",
     redirect_uri: "https://app.example.test/callback",
     resource,
@@ -1010,7 +1105,7 @@ test("resource requests retain one exact audience and keep no-resource browser i
   assert.equal(
     client.oidc
       .authorizationUrl({
-        client_id: "client",
+        client_id: "01ARZ3NDEKTSV4RRFFQ6000002",
         response_type: "code",
         redirect_uri: "https://app.example.test/callback",
       })
@@ -1020,7 +1115,7 @@ test("resource requests retain one exact audience and keep no-resource browser i
   assert.equal(requests.length, 7);
 });
 
-test("resource Basic encodes each credential component and never resolves an instance key", async () => {
+test("resource Basic encodes the secret and never resolves an instance key", async () => {
   let instanceKeys = 0;
   /** @type {Request | undefined} */
   let captured;
@@ -1040,7 +1135,7 @@ test("resource Basic encodes each credential component and never resolves an ins
     {
       issuer: "https://issuer.example.test/example",
       audience: "https://api.example.test/management",
-      introspection_client_id: "resource:id +%α",
+      introspection_client_id: "01ARZ3NDEKTSV4RRFFQ6000003",
       introspection_secret: "secret: +%β",
     },
     "opaque-token",
@@ -1054,7 +1149,7 @@ test("resource Basic encodes each credential component and never resolves an ins
     atob(
       /** @type {string} */ (captured.headers.get("authorization")).slice(6),
     ),
-    "resource%3Aid+%2B%25%CE%B1:secret%3A+%2B%25%CE%B2",
+    "01ARZ3NDEKTSV4RRFFQ6000003:secret%3A+%2B%25%CE%B2",
   );
   assert.deepEqual(
     [...new URLSearchParams(await captured.text())],
@@ -1087,7 +1182,7 @@ test("OAuth policy management sends exact snake_case requests and epoch checks",
     redirect_uris: ["https://app.example.test/callback"],
     ...policy,
   });
-  await client.oauthClients.update("client-id", {
+  await client.oauthClients.update("01ARZ3NDEKTSV4RRFFQ69G5FAV", {
     expected_auth_epoch: 1,
     enabled: false,
     rotate_secret: true,
@@ -1095,27 +1190,27 @@ test("OAuth policy management sends exact snake_case requests and epoch checks",
   });
   const resource = {
     audience: /** @type {string} */ (policy.allowed_resource_audiences[0]),
-    allowed_client_ids: ["client"],
+    allowed_client_ids: ["01ARZ3NDEKTSV4RRFFQ6000002"],
     allowed_scopes: policy.allowed_scopes,
     allowed_grant_types: policy.allowed_grant_types,
   };
   await client.oauthResources.create(resource);
   await client.oauthResources.list();
-  await client.oauthResources.update("resource-id", {
+  await client.oauthResources.update("01ARZ3NDEKTSV4RRFFQ69G5FAV", {
     expected_auth_epoch: 2,
     enabled: false,
     rotate_secret: true,
   });
-  await client.oauthResources.revoke("resource-id");
+  await client.oauthResources.revoke("01ARZ3NDEKTSV4RRFFQ69G5FAV");
   assert.deepEqual(
     requests.map((request) => [request.method, new URL(request.url).pathname]),
     [
       ["POST", "/v1/example/oauth-clients"],
-      ["PATCH", "/v1/example/oauth-clients/client-id"],
+      ["PATCH", "/v1/example/oauth-clients/01ARZ3NDEKTSV4RRFFQ69G5FAV"],
       ["POST", "/v1/example/oauth-resources"],
       ["GET", "/v1/example/oauth-resources"],
-      ["PATCH", "/v1/example/oauth-resources/resource-id"],
-      ["DELETE", "/v1/example/oauth-resources/resource-id"],
+      ["PATCH", "/v1/example/oauth-resources/01ARZ3NDEKTSV4RRFFQ69G5FAV"],
+      ["DELETE", "/v1/example/oauth-resources/01ARZ3NDEKTSV4RRFFQ69G5FAV"],
     ],
   );
   for (const request of requests)
@@ -1162,7 +1257,7 @@ test("malformed resource and policy values reject synchronously without fallback
     // Runtime fault injection covers untyped callers as well as the string API.
     assert.throws(
       () =>
-        client.oidc.token("client", "secret", {
+        client.oidc.token("01ARZ3NDEKTSV4RRFFQ6000002", "secret", {
           grant_type: "client_credentials",
           resource: /** @type {string} */ (resource),
           scope: "management:read",
@@ -1172,7 +1267,7 @@ test("malformed resource and policy values reject synchronously without fallback
     assert.throws(
       () =>
         client.oidc.authorizationUrl({
-          client_id: "client",
+          client_id: "01ARZ3NDEKTSV4RRFFQ6000002",
           response_type: "code",
           redirect_uri: "https://app.example.test/callback",
           resource: /** @type {string} */ (resource),
@@ -1182,18 +1277,18 @@ test("malformed resource and policy values reject synchronously without fallback
   }
   assert.throws(
     () =>
-      client.oauthResources.update("id", {
+      client.oauthResources.update("01ARZ3NDEKTSV4RRFFQ69G5FAV", {
         expected_auth_epoch: Number.MAX_SAFE_INTEGER + 1,
       }),
     /exact unsigned/u,
   );
   assert.throws(
-    () => client.oauthClients.update("id", { expected_auth_epoch: -1 }),
+    () => client.oauthClients.update("01ARZ3NDEKTSV4RRFFQ69G5FAV", { expected_auth_epoch: -1 }),
     /exact unsigned/u,
   );
   assert.throws(
     () =>
-      client.oidc.token("client", "secret", {
+      client.oidc.token("01ARZ3NDEKTSV4RRFFQ6000002", "secret", {
         grant_type: "client_credentials",
         resource: "https://api.example.test",
         scope: "read read",
@@ -1250,10 +1345,10 @@ test.skipIf(componentManifestPath === undefined)(
           result = await client.oauthClients.list();
           break;
         case "client-update":
-          result = await client.oauthClients.update("id", {});
+          result = await client.oauthClients.update("01ARZ3NDEKTSV4RRFFQ69G5FAV", {});
           break;
         case "client-update-rotated":
-          result = await client.oauthClients.update("id", {
+          result = await client.oauthClients.update("01ARZ3NDEKTSV4RRFFQ69G5FAV", {
             rotate_secret: true,
           });
           break;
@@ -1269,22 +1364,22 @@ test.skipIf(componentManifestPath === undefined)(
           result = await client.oauthResources.list();
           break;
         case "resource-update":
-          result = await client.oauthResources.update("id", {
+          result = await client.oauthResources.update("01ARZ3NDEKTSV4RRFFQ69G5FAV", {
             expected_auth_epoch: 1,
           });
           break;
         case "resource-update-rotated":
-          result = await client.oauthResources.update("id", {
+          result = await client.oauthResources.update("01ARZ3NDEKTSV4RRFFQ69G5FAV", {
             expected_auth_epoch: 1,
             rotate_secret: true,
           });
           break;
         case "resource-delete":
-          result = await client.oauthResources.revoke("id");
+          result = await client.oauthResources.revoke("01ARZ3NDEKTSV4RRFFQ69G5FAV");
           break;
         case "client-access-introspection":
         case "client-refresh-introspection":
-          result = await client.oidc.introspect("client", "secret", "opaque");
+          result = await client.oidc.introspect("01ARZ3NDEKTSV4RRFFQ6000002", "secret", "opaque");
           break;
         default: {
           const active = wire.body?.active === true;
@@ -1296,7 +1391,7 @@ test.skipIf(componentManifestPath === undefined)(
               audience: active
                 ? wire.body.aud
                 : "https://api.example.test/management",
-              introspection_client_id: "component-replay",
+              introspection_client_id: "01ARZ3NDEKTSV4RRFFQ6000003",
               introspection_secret: "component-replay",
             },
             "opaque",
@@ -1374,7 +1469,7 @@ test.skipIf(componentManifestPath === undefined)(
         const credentials = {
           issuer: "https://wrong.example.test/example",
           audience: "https://wrong.example.test/management",
-          introspection_client_id: "component-replay",
+          introspection_client_id: "01ARZ3NDEKTSV4RRFFQ6000003",
           introspection_secret: "component-replay",
         };
         const pending = client.oidc.introspectResource(credentials, "opaque");
@@ -1393,7 +1488,7 @@ test.skipIf(componentManifestPath === undefined)(
       } else {
         /** @type {{ rotate_secret?: boolean }} */
         const patch = {};
-        const pending = client.oauthClients.update("id", patch);
+        const pending = client.oauthClients.update("01ARZ3NDEKTSV4RRFFQ69G5FAV", patch);
         await started;
         patch.rotate_secret = true;
         deliver(
@@ -1463,14 +1558,14 @@ test.skipIf(supplementManifestPath === undefined)(
       let result;
       switch (record.case) {
         case "browser-code-token":
-          result = await client.oidc.token("client", "secret", {
+          result = await client.oidc.token("01ARZ3NDEKTSV4RRFFQ6000002", "secret", {
             grant_type: "authorization_code",
             code: "component-replay",
             redirect_uri: "https://app.example.test/callback",
           });
           break;
         case "resource-user-code-token":
-          result = await client.oidc.token("client", "secret", {
+          result = await client.oidc.token("01ARZ3NDEKTSV4RRFFQ6000002", "secret", {
             grant_type: "authorization_code",
             code: "component-replay",
             redirect_uri: "https://app.example.test/callback",
@@ -1478,7 +1573,7 @@ test.skipIf(supplementManifestPath === undefined)(
           });
           break;
         case "resource-refresh-narrowed-token":
-          result = await client.oidc.token("client", "secret", {
+          result = await client.oidc.token("01ARZ3NDEKTSV4RRFFQ6000002", "secret", {
             grant_type: "refresh_token",
             refresh_token: "component-replay",
             scope: "openid management:read",
@@ -1487,7 +1582,7 @@ test.skipIf(supplementManifestPath === undefined)(
           assert.equal(Object.hasOwn(wire.body, "id_token"), false);
           break;
         case "resource-service-token":
-          result = await client.oidc.token("client", "secret", {
+          result = await client.oidc.token("01ARZ3NDEKTSV4RRFFQ6000002", "secret", {
             grant_type: "client_credentials",
             scope: "management:read",
             resource: "https://api.example.test/management",
@@ -1496,20 +1591,20 @@ test.skipIf(supplementManifestPath === undefined)(
           assert.equal(Object.hasOwn(wire.body, "refresh_token"), false);
           break;
         case "resource-device-start":
-          result = await client.oidc.deviceAuthorization("client", "secret", {
+          result = await client.oidc.deviceAuthorization("01ARZ3NDEKTSV4RRFFQ6000002", "secret", {
             resource: "https://api.example.test/device-management",
             scope: "openid email",
           });
           break;
         case "resource-device-approved-token":
-          result = await client.oidc.token("client", "secret", {
+          result = await client.oidc.token("01ARZ3NDEKTSV4RRFFQ6000002", "secret", {
             grant_type: "urn:ietf:params:oauth:grant-type:device_code",
             device_code: "component-replay",
             resource: "https://api.example.test/device-management",
           });
           break;
         case "client-access-introspection":
-          result = await client.oidc.introspect("client", "secret", "opaque");
+          result = await client.oidc.introspect("01ARZ3NDEKTSV4RRFFQ6000002", "secret", "opaque");
           break;
         default:
           assert.fail(`Unexpected supplemental case ${record.case}`);

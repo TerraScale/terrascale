@@ -17,7 +17,7 @@ test("named OIDC errors preserve RFC6749 codes and safe response diagnostics", a
         { status: 401, headers: { "x-request-id": "safe-request" } },
       ),
   });
-  const result = await client.oidc.token("id", "secret", {
+  const result = await client.oidc.token("01ARZ3NDEKTSV4RRFFQ69G5FAV", "secret", {
     grant_type: "client_credentials",
     resource: "https://api.example.test/management",
     scope: "management:read",
@@ -124,17 +124,17 @@ test("OAuth schema failures preserve HTTP metadata without retaining secret payl
       },
       {
         routeName: "tsauth.oauthClients.update",
-        invoke: () => client.oauthClients.update("id", { rotate_secret: true }),
+        invoke: () => client.oauthClients.update("01ARZ3NDEKTSV4RRFFQ69G5FAV", { rotate_secret: true }),
       },
       {
         routeName: "tsauth.oauthResources.update",
         invoke: () =>
-          client.oauthResources.update("id", { expected_auth_epoch: 1 }),
+          client.oauthResources.update("01ARZ3NDEKTSV4RRFFQ69G5FAV", { expected_auth_epoch: 1 }),
       },
       {
         routeName: "tsauth.oidc.token",
         invoke: () =>
-          client.oidc.token("id", "secret", {
+          client.oidc.token("01ARZ3NDEKTSV4RRFFQ69G5FAV", "secret", {
             grant_type: "client_credentials",
             resource: "https://api.example.test/management",
             scope: "management:read",

@@ -1,3 +1,5 @@
+import { requireId as requireDatabaseId } from "./ids.js";
+export { requireId as requireDatabaseId } from "./ids.js";
 /**
  * @import {
  *   DatabaseAuthority, DatabaseCommit, DatabaseCommitReceipt, DatabaseCondition, DatabaseEvent,
@@ -19,18 +21,6 @@ const maxI64 = (1n << 63n) - 1n;
 const maximumBodyBytes = 4 * 1024 * 1024;
 const maximumValueBytes = 1024 * 1024;
 const scalarTypes = new Set(["bool", "i64", "utf8", "bytes"]);
-
-/**
- * @param {unknown} value
- * @param {string} [name]
- * @returns {string}
- */
-export function requireDatabaseUuid(value, name = "UUID") {
-  if (typeof value !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u.test(value)) {
-    throw new TypeError(`${name} must be a canonical lowercase UUID.`);
-  }
-  return value;
-}
 
 /**
  * @param {unknown} value
@@ -295,7 +285,7 @@ function observedToWire(entries) {
   let previous = "";
   return array(entries).map(raw => {
     const entry = object(raw, ["replica", "incarnation", "sequence"]);
-    const replica = requireDatabaseUuid(entry.replica, "replica");
+    const replica = requireDatabaseId(entry.replica, "replica");
     const incarnation = hex(entry.incarnation, 16, "incarnation");
     const order = replica + incarnation;
     if (order <= previous) throw new TypeError("Observed origins must be strictly increasing.");
@@ -311,7 +301,7 @@ function observedToWire(entries) {
 function observedFromWire(raw) {
   const entries = array(raw).map(value => {
     const entry = object(value, ["replica", "incarnation", "sequence"]);
-    return { replica: requireDatabaseUuid(entry.replica, "replica"), incarnation: hex(entry.incarnation, 16, "incarnation"), sequence: decimal(entry.sequence, "sequence", true) };
+    return { replica: requireDatabaseId(entry.replica, "replica"), incarnation: hex(entry.incarnation, 16, "incarnation"), sequence: decimal(entry.sequence, "sequence", true) };
   });
   observedToWire(entries);
   return entries;
@@ -324,8 +314,8 @@ function observedFromWire(raw) {
 function eventFromWire(raw) {
   const entry = object(raw, ["database", "shard", "replica", "incarnation", "sequence"]);
   return {
-    database: requireDatabaseUuid(entry.database, "database"), shard: decimal(entry.shard, "shard"),
-    replica: requireDatabaseUuid(entry.replica, "replica"), incarnation: hex(entry.incarnation, 16, "incarnation"),
+    database: requireDatabaseId(entry.database, "database"), shard: decimal(entry.shard, "shard"),
+    replica: requireDatabaseId(entry.replica, "replica"), incarnation: hex(entry.incarnation, 16, "incarnation"),
     sequence: decimal(entry.sequence, "sequence", true),
   };
 }
@@ -430,7 +420,7 @@ function rowsFromWire(raw) {
   let previous = "";
   return array(raw, 128).map(rawRow => {
     const entry = object(rawRow, ["document", "point"]);
-    const document = requireDatabaseUuid(entry.document, "document");
+    const document = requireDatabaseId(entry.document, "document");
     if (document <= previous) throw new TypeError("Query documents must be strictly increasing.");
     previous = document;
     return { document, point: decodeDatabasePoint(entry.point) };
@@ -486,7 +476,7 @@ export function decodeDatabaseSubscription(raw) {
     previous = sequence;
     return { sequence, effects: array(group.effects, 128).map(rawEffect => {
       const effect = object(rawEffect, ["document", "point"]);
-      return { document: requireDatabaseUuid(effect.document, "document"), point: effect.point === null ? null : decodeDatabasePoint(effect.point) };
+      return { document: requireDatabaseId(effect.document, "document"), point: effect.point === null ? null : decodeDatabasePoint(effect.point) };
     }) };
   });
   return { version: 1, phase: "poll", groups, poll_cursor: cursor(entry.poll_cursor) };
@@ -501,7 +491,7 @@ export function encodeDatabaseAuthority(authority) {
   object(authority, ["mode", "generation", "writer"]);
   if (authority.mode !== "single_writer") throw new TypeError("Unsupported authority mode.");
   const writer = object(authority.writer, ["replica", "incarnation"]);
-  return { mode: "single_writer", generation: requireDatabaseU64(authority.generation, "authority generation", true).toString(), writer: { replica: requireDatabaseUuid(writer.replica, "writer"), incarnation: hex(writer.incarnation, 16, "incarnation") } };
+  return { mode: "single_writer", generation: requireDatabaseU64(authority.generation, "authority generation", true).toString(), writer: { replica: requireDatabaseId(writer.replica, "writer"), incarnation: hex(writer.incarnation, 16, "incarnation") } };
 }
 
 /**
@@ -514,7 +504,7 @@ export function decodeDatabaseAuthority(raw) {
   const entry = object(raw, ["mode", "generation", "writer"]);
   if (entry.mode !== "single_writer") throw new TypeError("Unsupported authority mode.");
   const writer = object(entry.writer, ["replica", "incarnation"]);
-  return { mode: "single_writer", generation: decimal(entry.generation, "authority generation", true), writer: { replica: requireDatabaseUuid(writer.replica, "writer"), incarnation: hex(writer.incarnation, 16, "incarnation") } };
+  return { mode: "single_writer", generation: decimal(entry.generation, "authority generation", true), writer: { replica: requireDatabaseId(writer.replica, "writer"), incarnation: hex(writer.incarnation, 16, "incarnation") } };
 }
 
 /**
@@ -569,7 +559,7 @@ function writeToWire(write, authority) {
     : (object(write.value, ["kind", "fields"]), { kind: "live", fields: fieldsToWire(write.value.fields, 1, { nodes: 0 }) });
   if (write.value.kind !== "live" && write.value.kind !== "tombstone") throw new TypeError("Unsupported write kind.");
   if (value.kind === "live") validateNativeDocument(/** @type {readonly Json[]} */ (value.fields));
-  return { collection: requireDatabaseUuid(write.collection, "collection"), document: requireDatabaseUuid(write.document, "document"), schema_generation: requireDatabaseU64(write.schema_generation, "schema generation", true).toString(), schema_digest: hex(write.schema_digest, 32, "schema digest"), condition: conditionToWire(write.condition), observed: observedToWire(write.observed), value };
+  return { collection: requireDatabaseId(write.collection, "collection"), document: requireDatabaseId(write.document, "document"), schema_generation: requireDatabaseU64(write.schema_generation, "schema generation", true).toString(), schema_digest: hex(write.schema_digest, 32, "schema digest"), condition: conditionToWire(write.condition), observed: observedToWire(write.observed), value };
 }
 
 class Bytes {
@@ -603,7 +593,12 @@ class Bytes {
    * @param {string} value
    * @returns {void}
    */
-  uuid(value) { this.hex(value.replaceAll("-", "")); }
+  id(value) {
+    const alphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+    let bits = 0n;
+    for (const char of requireDatabaseId(value)) bits = (bits << 5n) | BigInt(alphabet.indexOf(char));
+    this.hex(bits.toString(16).padStart(32, "0"));
+  }
   /** @returns {Uint8Array} */
   finish() { const bytes = new Uint8Array(this.length); let offset = 0; for (const chunk of this.chunks) { bytes.set(chunk, offset); offset += chunk.length; } return bytes; }
 }
@@ -667,22 +662,22 @@ function validateNativeDocument(fields) {
 function effectBytes(scope, authority, writes) {
   const bytes = new Bytes();
   bytes.put(encoder.encode("TB-DOC-EFFECT-v1\0"));
-  bytes.uuid(requireDatabaseUuid(scope.tenant, "tenant")); bytes.uuid(requireDatabaseUuid(scope.database, "database")); bytes.integer(requireDatabaseU64(scope.shard, "shard"), 8);
+  bytes.id(requireDatabaseId(scope.tenant, "tenant")); bytes.id(requireDatabaseId(scope.database, "database")); bytes.integer(requireDatabaseU64(scope.shard, "shard"), 8);
   const singleWriter = authority.mode === "single_writer";
   bytes.integer(singleWriter ? 1n : 0n, 1);
   if (singleWriter) {
     const writer = object(authority.writer, ["replica", "incarnation"]);
-    bytes.integer(BigInt(/** @type {string} */ (authority.generation)), 8); bytes.uuid(/** @type {string} */ (writer.replica)); bytes.hex(/** @type {string} */ (writer.incarnation));
+    bytes.integer(BigInt(/** @type {string} */ (authority.generation)), 8); bytes.id(/** @type {string} */ (writer.replica)); bytes.hex(/** @type {string} */ (writer.incarnation));
   }
   bytes.integer(BigInt(writes.length), 8);
   for (const write of writes) {
-    bytes.uuid(/** @type {string} */ (write.collection)); bytes.uuid(/** @type {string} */ (write.document)); bytes.integer(BigInt(/** @type {string} */ (write.schema_generation)), 8); bytes.hex(/** @type {string} */ (write.schema_digest));
+    bytes.id(/** @type {string} */ (write.collection)); bytes.id(/** @type {string} */ (write.document)); bytes.integer(BigInt(/** @type {string} */ (write.schema_generation)), 8); bytes.hex(/** @type {string} */ (write.schema_digest));
     const condition = object(write.condition, ["kind"], ["version"]);
     bytes.integer(condition.kind === "none" ? 0n : condition.kind === "absent" ? 1n : 2n, 1);
     if (condition.kind === "version") bytes.hex(/** @type {string} */ (condition.version));
     const observed = array(write.observed);
     bytes.integer(BigInt(observed.length), 8);
-    for (const raw of observed) { const entry = object(raw, ["replica", "incarnation", "sequence"]); bytes.uuid(/** @type {string} */ (entry.replica)); bytes.hex(/** @type {string} */ (entry.incarnation)); bytes.integer(BigInt(/** @type {string} */ (entry.sequence)), 8); }
+    for (const raw of observed) { const entry = object(raw, ["replica", "incarnation", "sequence"]); bytes.id(/** @type {string} */ (entry.replica)); bytes.hex(/** @type {string} */ (entry.incarnation)); bytes.integer(BigInt(/** @type {string} */ (entry.sequence)), 8); }
     const value = object(write.value, ["kind"], ["fields"]);
     bytes.integer(value.kind === "tombstone" ? 0n : 1n, 1);
     if (value.kind === "live") {

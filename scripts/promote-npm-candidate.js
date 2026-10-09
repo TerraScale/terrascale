@@ -25,6 +25,7 @@ import {
 } from "./npm-release-policy.js";
 import { gitTreeDigest, inspectReleaseSource } from "./npm-release-source.js";
 import { parseStrictJson, requireExactKeys } from "./strict-json.js";
+import { requireRuntimeDependencyEvidence } from "./npm-runtime-dependencies.js";
 /** @import { NpmCli } from "./npm-cli-evidence.js" */
 /** @import { NpmContractEvidence } from "./npm-contract-evidence.js" */
 /** @import { ReleaseSource } from "./npm-release-source.js" */
@@ -752,25 +753,7 @@ function verifyQualificationReceipt(context) {
     );
   }
 
-  requireExactKeys(
-    receipt.dependencies,
-    ["count", "packages"],
-    "npm qualification dependencies",
-  );
-  if (
-    receipt.dependencies.count !== 0 ||
-    Object.keys(
-      requireExactKeys(
-        receipt.dependencies.packages,
-        [],
-        "npm production dependency set",
-      ),
-    ).length !== 0
-  ) {
-    throw new Error(
-      "npm qualification receipt contains unqualified production dependencies.",
-    );
-  }
+  requireRuntimeDependencyEvidence(receipt.dependencies, packageJson.dependencies);
   requireExactKeys(
     receipt.license,
     ["declared", "fileSha256"],

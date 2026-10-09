@@ -1,5 +1,7 @@
 import { TsAuthHttp } from "./http.js";
 import { err } from "./result.js";
+import { isValidId, requireId } from "./ids.js";
+import { requireDeadLetterId } from "./ts-auth-ids.js";
 /** @import { TerraScaleResult } from "./result.js" */
 
 /** @typedef {import("./config.js").TsAuthRuntimeConfig} TsAuthRuntimeConfig */
@@ -27,7 +29,7 @@ import { err } from "./result.js";
 
 /**
  * @typedef {{
- *   readonly id: string;
+ *   readonly id: import("./ids.js").EntityId;
  *   readonly email: string | null;
  *   readonly email_verified: boolean;
  *   readonly username: string | null;
@@ -43,7 +45,7 @@ import { err } from "./result.js";
 
 /**
  * @typedef {{
- *   readonly id: string;
+ *   readonly id: import("./ids.js").EntityId;
  *   readonly status: string;
  *   readonly created_at: number; // Unix seconds.
  *   readonly expires_at: number; // Unix seconds.
@@ -55,7 +57,7 @@ import { err } from "./result.js";
 
 /**
  * @typedef {{
- *   readonly id: string;
+ *   readonly id: import("./ids.js").EntityId;
  *   readonly type: string;
  *   readonly confirmed: boolean;
  *   readonly createdAt: number; // Unix seconds.
@@ -64,7 +66,7 @@ import { err } from "./result.js";
 
 /**
  * @typedef {{
- *   readonly id: string;
+ *   readonly id: import("./ids.js").EntityId;
  *   readonly nickname: string | null;
  *   readonly algorithm: string;
  *   readonly createdAt: number; // Unix seconds.
@@ -74,7 +76,7 @@ import { err } from "./result.js";
 
 /**
  * @typedef {{
- *   readonly id: string;
+ *   readonly id: import("./ids.js").EntityId;
  *   readonly name: string;
  *   readonly slug: string;
  *   readonly created_at: number; // Unix seconds.
@@ -83,7 +85,7 @@ import { err } from "./result.js";
 
 /**
  * @typedef {{
- *   readonly id: string;
+ *   readonly id: import("./ids.js").EntityId;
  *   readonly role: string;
  *   readonly created_at: number; // Unix seconds.
  *   readonly organization: TsAuthOrganization | null;
@@ -320,7 +322,7 @@ export class TsAuthUsersClient {
         ...(options.limit === undefined ? {} : { limit: options.limit }),
         ...(options.startingAfter === undefined
           ? {}
-          : { starting_after: options.startingAfter }),
+          : { starting_after: requireId(options.startingAfter, "startingAfter") }),
       },
       ...(options.signal === undefined ? {} : { signal: options.signal }),
     });
@@ -586,7 +588,7 @@ export class TsAuthSessionsClient {
 
 /**
  * @typedef {{
- *   readonly id: string;
+ *   readonly id: import("./ids.js").EntityId;
  *   readonly name: string;
  *   readonly api_key: string; // One-time full sk_ bearer; only the creating call returns it.
  *   readonly scopes: readonly string[];
@@ -595,7 +597,7 @@ export class TsAuthSessionsClient {
 
 /**
  * @typedef {{
- *   readonly id: string;
+ *   readonly id: import("./ids.js").EntityId;
  *   readonly name: string;
  *   readonly scopes: readonly string[];
  *   readonly created_at: number; // Unix seconds.
@@ -674,9 +676,9 @@ export class TsAuthApiKeysClient {
 
 /**
  * @typedef {{
- *   readonly id: string;
- *   readonly organization_id: string;
- *   readonly user_id: string;
+ *   readonly id: import("./ids.js").EntityId;
+ *   readonly organization_id: import("./ids.js").EntityId;
+ *   readonly user_id: import("./ids.js").EntityId;
  *   readonly role: string;
  *   readonly created_at: number; // Unix seconds.
  * }} TsAuthMembership
@@ -685,7 +687,7 @@ export class TsAuthApiKeysClient {
 /**
  * @typedef {TsAuthMembership & {
  *   readonly user: {
- *     readonly id: string;
+ *     readonly id: import("./ids.js").EntityId;
  *     readonly email: string;
  *     readonly name: string;
  *   } | null;
@@ -694,8 +696,8 @@ export class TsAuthApiKeysClient {
 
 /**
  * @typedef {{
- *   readonly id: string;
- *   readonly organization_id: string;
+ *   readonly id: import("./ids.js").EntityId;
+ *   readonly organization_id: import("./ids.js").EntityId;
  *   readonly email: string;
  *   readonly role: string;
  *   readonly status: string;
@@ -706,14 +708,14 @@ export class TsAuthApiKeysClient {
 
 /**
  * @typedef {{
- *   readonly id: string;
- *   readonly organization_id: string;
+ *   readonly id: import("./ids.js").EntityId;
+ *   readonly organization_id: import("./ids.js").EntityId;
  *   readonly domain: string;
  *   readonly created_at: number; // Unix seconds.
  * }} TsAuthOrganizationDomain
  */
 
-/** @typedef {{ readonly org_id: string }} TsAuthDomainEnrollment */
+/** @typedef {{ readonly org_id: import("./ids.js").EntityId }} TsAuthDomainEnrollment */
 
 /**
  * @typedef {{
@@ -730,7 +732,7 @@ export class TsAuthApiKeysClient {
 
 /**
  * @typedef {{
- *   readonly user_id: string;
+ *   readonly user_id: import("./ids.js").EntityId;
  *   readonly role: string;
  * }} TsAuthCreateMembershipRequest
  */
@@ -750,7 +752,7 @@ export class TsAuthApiKeysClient {
 
 /**
  * @typedef {{
- *   readonly user_id: string;
+ *   readonly user_id: import("./ids.js").EntityId;
  * }} TsAuthEnrollRequest
  */
 
@@ -844,7 +846,7 @@ export class TsAuthOrganizationsClient {
    * @returns {Promise<TerraScaleResult<TsAuthMembership>>}
    */
   createMembership(organizationId, request) {
-    requireText(request?.user_id, "user_id");
+    requireId(request?.user_id, "user_id");
     requireText(request?.role, "role");
     return this.#http.request({
       method: "POST",
@@ -982,7 +984,7 @@ export class TsAuthOrganizationsClient {
    * @returns {Promise<TerraScaleResult<TsAuthDomainEnrollment>>}
    */
   enrollDomain(domain, request) {
-    requireText(request?.user_id, "user_id");
+    requireId(request?.user_id, "user_id");
     return this.#http.request({
       method: "POST",
       path: `v1/${this.#slug}/domains/${segment(domain, "domain")}/enroll`,
@@ -1028,8 +1030,8 @@ export class TsAuthOrganizationsClient {
  */
 /**
  * @typedef {{
- *   readonly id: string;
- *   readonly client_id: string;
+ *   readonly id: import("./ids.js").EntityId;
+ *   readonly client_id: import("./ids.js").EntityId;
  *   readonly name: string;
  *   readonly redirect_uris: readonly string[];
  *   readonly post_logout_redirect_uris: readonly string[];
@@ -1146,7 +1148,7 @@ export class TsAuthOauthClientsClient {
 /**
  * @typedef {{
  *   readonly audience: string;
- *   readonly allowed_client_ids: readonly string[];
+ *   readonly allowed_client_ids: readonly import("./ids.js").EntityId[];
  *   readonly allowed_grant_types: readonly TsAuthOauthGrantType[];
  *   readonly allowed_scopes: readonly string[];
  * }} TsAuthCreateOauthResourceRequest
@@ -1154,7 +1156,7 @@ export class TsAuthOauthClientsClient {
 /**
  * @typedef {{
  *   readonly expected_auth_epoch: number;
- *   readonly allowed_client_ids?: readonly string[] | undefined;
+ *   readonly allowed_client_ids?: readonly import("./ids.js").EntityId[] | undefined;
  *   readonly allowed_grant_types?: readonly TsAuthOauthGrantType[] | undefined;
  *   readonly allowed_scopes?: readonly string[] | undefined;
  *   readonly enabled?: boolean | undefined;
@@ -1163,8 +1165,8 @@ export class TsAuthOauthClientsClient {
  */
 /**
  * @typedef {TsAuthCreateOauthResourceRequest & {
- *   readonly id: string;
- *   readonly introspection_client_id: string;
+ *   readonly id: import("./ids.js").EntityId;
+ *   readonly introspection_client_id: import("./ids.js").EntityId;
  *   readonly token_endpoint_auth_method: "client_secret_basic";
  *   readonly auth_epoch: number;
  *   readonly enabled: boolean;
@@ -1265,11 +1267,11 @@ export class TsAuthOauthResourcesClient {
 
 /**
  * @typedef {{
- *   readonly id: string;
+ *   readonly id: import("./ids.js").EntityId;
  *   readonly type: "oidc" | "saml";
  *   readonly name: string;
  *   readonly enabled: boolean;
- *   readonly org_id: string | null;
+ *   readonly org_id: import("./ids.js").EntityId | null;
  *   readonly issuer_url: string | null;
  *   readonly client_id: string | null;
  *   readonly authorization_endpoint: string | null;
@@ -1342,7 +1344,7 @@ export class TsAuthConnectionsClient {
     requireText(request?.name, "name");
     if (request.type === "oidc") {
       requireAbsoluteHttpUrl(request.issuer_url, "issuer_url");
-      requireText(request.client_id, "client_id");
+      requireText(request.client_id, "client_id"); // This client belongs to the external IdP.
       requireText(request.client_secret, "client_secret");
     } else {
       requireText(request.idp_entity_id, "idp_entity_id");
@@ -1399,16 +1401,16 @@ export class TsAuthConnectionsClient {
 
 /**
  * @typedef {{
- *   readonly id: string;
- *   readonly org_id: string | null;
+ *   readonly id: import("./ids.js").EntityId;
+ *   readonly org_id: import("./ids.js").EntityId | null;
  *   readonly token: string; // One-time SCIM bearer; only create and rotate return it.
  * }} TsAuthDirectoryWithToken
  */
 
 /**
  * @typedef {{
- *   readonly id: string;
- *   readonly org_id: string | null;
+ *   readonly id: import("./ids.js").EntityId;
+ *   readonly org_id: import("./ids.js").EntityId | null;
  *   readonly created_at: number; // Unix seconds.
  * }} TsAuthDirectory
  */
@@ -1439,7 +1441,7 @@ export class TsAuthDirectoriesClient {
    * @returns {Promise<TerraScaleResult<TsAuthDirectoryWithToken>>}
    */
   create(request = {}) {
-    if (request.org_id !== undefined) requireText(request.org_id, "org_id");
+    if (request.org_id !== undefined) requireId(request.org_id, "org_id");
     return this.#http.request({
       method: "POST",
       path: `v1/${this.#slug}/directories`,
@@ -1488,7 +1490,7 @@ export class TsAuthDirectoriesClient {
 
 /**
  * @typedef {{
- *   readonly id: string;
+ *   readonly id: import("./ids.js").EntityId;
  *   readonly name: string;
  *   readonly claims: Record<string, string>;
  *   readonly lifetime_seconds: number;
@@ -1600,12 +1602,12 @@ export class TsAuthJwtTemplatesClient {
 
   /**
    * @param {string} name
-   * @param {{ readonly user_id: string }} request
+   * @param {{ readonly user_id: import("./ids.js").EntityId }} request
    * @returns {Promise<TerraScaleResult<TsAuthJwtTokenResponse>>}
    */
   issueToken(name, request) {
     validateJwtTemplateName(name);
-    requireText(request?.user_id, "user_id");
+    requireId(request?.user_id, "user_id");
     return this.#http.request({
       method: "POST",
       path: `v1/${this.#slug}/jwt-templates/${segment(name, "template name")}/tokens`,
@@ -1619,7 +1621,7 @@ export class TsAuthJwtTemplatesClient {
 
 /**
  * @typedef {{
- *   readonly id: string;
+ *   readonly id: import("./ids.js").EntityId;
  *   readonly url: string;
  *   readonly events: readonly string[];
  *   readonly signing_secret: string; // One-time HMAC key for verifying deliveries; only create returns it.
@@ -1628,7 +1630,7 @@ export class TsAuthJwtTemplatesClient {
 
 /**
  * @typedef {{
- *   readonly id: string;
+ *   readonly id: import("./ids.js").EntityId;
  *   readonly url: string;
  *   readonly events: readonly string[];
  *   readonly enabled: boolean;
@@ -1638,9 +1640,9 @@ export class TsAuthJwtTemplatesClient {
 
 /**
  * @typedef {{
- *   readonly id: string; // endpointId:eventId
- *   readonly endpoint_id: string;
- *   readonly event_id: string;
+ *   readonly id: `${import("./ids.js").EntityId}:${import("./ids.js").EntityId}`; // endpointId:eventId delivery selector.
+ *   readonly endpoint_id: import("./ids.js").EntityId;
+ *   readonly event_id: import("./ids.js").EntityId;
  *   readonly attempts: number;
  *   readonly last_error?: string | undefined;
  *   readonly updated_at: number; // Unix seconds.
@@ -1741,7 +1743,7 @@ export class TsAuthWebhooksClient {
   replayDeadLetter(entryId) {
     return this.#http.request({
       method: "POST",
-      path: `v1/${this.#slug}/webhooks/dead-letter/${segment(entryId, "dead-letter id")}/replay`,
+      path: `v1/${this.#slug}/webhooks/dead-letter/${encodeURIComponent(requireDeadLetterId(entryId))}/replay`,
       routeName: "tsauth.webhooks.replayDeadLetter",
     });
   }
@@ -1751,10 +1753,10 @@ export class TsAuthWebhooksClient {
 
 /**
  * @typedef {{
- *   readonly id: string;
- *   readonly instance_id: string;
+ *   readonly id: import("./ids.js").EntityId;
+ *   readonly instance_id: import("./ids.js").EntityId;
  *   readonly type: string;
- *   readonly actor_id?: string | undefined; // Omitted from the wire when null.
+ *   readonly actor_id?: import("./ids.js").EntityId | undefined; // Omitted from the wire when null.
  *   readonly data: Record<string, unknown>;
  *   readonly created_at: number; // Unix seconds.
  *   readonly integrity_version: number;
@@ -1918,7 +1920,7 @@ export class TsAuthBillingClient {
 
 /**
  * @typedef {{
- *   readonly id: string;
+ *   readonly id: import("./ids.js").EntityId;
  *   readonly slug: string;
  *   readonly name: string;
  *   readonly logo_url?: string | null | undefined;
@@ -2033,7 +2035,7 @@ export class TsAuthInstanceClient {
 
 /**
  * @typedef {{
- *   readonly client_id: string;
+ *   readonly client_id: import("./ids.js").EntityId;
  *   readonly redirect_uri: string;
  *   readonly response_type: "code";
  *   readonly scope?: string | undefined;
@@ -2108,20 +2110,20 @@ export class TsAuthInstanceClient {
  *   readonly active: true;
  *   readonly token_type: "Bearer";
  *   readonly iss: string;
- *   readonly sub: string;
+ *   readonly sub: import("./ids.js").EntityId;
  *   readonly aud: string;
- *   readonly client_id: string;
+ *   readonly client_id: import("./ids.js").EntityId;
  *   readonly scope: string;
  *   readonly exp: number;
  *   readonly iat: number;
- *   readonly sid: string | null;
+ *   readonly sid: import("./ids.js").EntityId | null;
  *   readonly principal_kind: "user" | "service";
  * }} TsAuthOidcAccessIntrospection
  */
 /**
  * @typedef {Omit<TsAuthOidcAccessIntrospection, "token_type" | "principal_kind"> & {
  *   readonly token_type: "refresh_token";
- *   readonly family_id: string;
+ *   readonly family_id: import("./ids.js").EntityId;
  * }} TsAuthOidcRefreshIntrospection
  */
 /**
@@ -2132,7 +2134,7 @@ export class TsAuthInstanceClient {
 /**
  * @typedef {Omit<TsAuthOidcAccessIntrospection, "sid" | "principal_kind"> &
  *   (
- *     | { readonly principal_kind: "user"; readonly sid: string }
+ *     | { readonly principal_kind: "user"; readonly sid: import("./ids.js").EntityId }
  *     | { readonly principal_kind: "service"; readonly sid: null }
  *   )} TsAuthOidcResourceAccessIntrospection
  */
@@ -2144,14 +2146,14 @@ export class TsAuthInstanceClient {
  * @typedef {{
  *   readonly issuer: string; // Configured canonical provider issuer, independently trusted by the caller.
  *   readonly audience: string; // Exact registered resource URI; never derived from the response.
- *   readonly introspection_client_id: string;
+ *   readonly introspection_client_id: import("./ids.js").EntityId;
  *   readonly introspection_secret: string;
  * }} TsAuthOidcResourceCredentials
  */
 
 /**
  * @typedef {{
- *   readonly sub: string;
+ *   readonly sub: import("./ids.js").EntityId;
  *   readonly email?: string | undefined;
  *   readonly email_verified?: boolean | undefined;
  *   readonly name?: string | undefined;
@@ -2726,6 +2728,7 @@ const utf8Encoder = new TextEncoder();
  * @returns {string}
  */
 function segment(value, name) {
+  if (name.endsWith(" id")) return requireId(value, name);
   if (
     typeof value !== "string" ||
     value.length === 0 ||
@@ -2840,7 +2843,7 @@ function validateJwtTemplateClaims(claims) {
  */
 function clientCredentialForm(clientId, clientSecret) {
   return new URLSearchParams({
-    client_id: requireText(clientId, "clientId"),
+    client_id: requireId(clientId, "clientId"),
     client_secret: requireText(clientSecret, "clientSecret"),
   });
 }
@@ -3166,7 +3169,7 @@ function validateOauthResourceRequest(request, update) {
   ]);
   if (!update) requireResourceAudience(request.audience);
   for (const [field, accepts] of /** @type {const} */ ([
-    ["allowed_client_ids", oauthText],
+    ["allowed_client_ids", isValidId],
     ["allowed_grant_types", oauthGrant],
     ["allowed_scopes", oauthScopeToken],
   ])) {
@@ -3198,7 +3201,7 @@ function validateAuthorizationRequest(request) {
     "code_challenge_method",
     "prompt",
   ]);
-  requireText(request.client_id, "client_id");
+  requireId(request.client_id, "client_id");
   requireText(request.redirect_uri, "redirect_uri");
   if (request.response_type !== "code")
     throw new TypeError("response_type must be code.");
@@ -3227,7 +3230,8 @@ function validateAuthorizationRequest(request) {
  * @returns {string}
  */
 function resourceBasic(clientId, secret) {
-  if (!oauthText(clientId) || !oauthText(secret))
+  requireId(clientId, "introspection_client_id");
+  if (!oauthText(secret))
     throw new TypeError(
       "Resource introspection credentials must be nonempty well-formed text.",
     );
@@ -3264,7 +3268,7 @@ const clientViewFields = [
 function isOauthClientView(value) {
   return (
     exactOauthFields(value, clientViewFields) &&
-    [value.id, value.client_id, value.name].every(oauthText) &&
+    isValidId(value.id) && isValidId(value.client_id) && oauthText(value.name) &&
     [
       value.redirect_uris,
       value.post_logout_redirect_uris,
@@ -3324,12 +3328,12 @@ const resourceViewFields = [
 function isOauthResourceView(value) {
   return (
     exactOauthFields(value, resourceViewFields) &&
-    oauthText(value.id) &&
+    isValidId(value.id) &&
     validResourceAudience(value.audience) &&
-    oauthStrings(value.allowed_client_ids) &&
+    Array.isArray(value.allowed_client_ids) && value.allowed_client_ids.every(isValidId) &&
     oauthGrantsList(value.allowed_grant_types) &&
     oauthStrings(value.allowed_scopes) &&
-    oauthText(value.introspection_client_id) &&
+    isValidId(value.introspection_client_id) &&
     value.token_endpoint_auth_method === "client_secret_basic" &&
     exactUnsignedInteger(value.auth_epoch) &&
     typeof value.enabled === "boolean" &&
@@ -3442,13 +3446,13 @@ function isAccessIntrospection(value) {
     exactOauthFields(value, [...introspectionFields, "principal_kind"]) &&
     value.active === true &&
     value.token_type === "Bearer" &&
-    [value.iss, value.sub, value.aud, value.client_id].every(oauthText) &&
+    [value.iss, value.aud].every(oauthText) && [value.sub, value.client_id].every(isValidId) &&
     typeof value.scope === "string" &&
     exactUnsignedInteger(value.exp) &&
     exactUnsignedInteger(value.iat) &&
     value.exp > value.iat &&
     ((value.principal_kind === "user" &&
-      (value.sid === null || oauthText(value.sid))) ||
+      (value.sid === null || isValidId(value.sid))) ||
       (value.principal_kind === "service" &&
         value.sid === null &&
         value.sub === value.client_id))
@@ -3462,7 +3466,7 @@ function isResourceAccessIntrospection(value) {
   return (
     isAccessIntrospection(value) &&
     (value.principal_kind === "user"
-      ? oauthText(value.sid)
+      ? isValidId(value.sid)
       : value.sid === null && value.sub === value.client_id)
   );
 }
@@ -3475,14 +3479,12 @@ function isRefreshIntrospection(value) {
     exactOauthFields(value, [...introspectionFields, "family_id"]) &&
     value.active === true &&
     value.token_type === "refresh_token" &&
-    [value.iss, value.sub, value.aud, value.client_id, value.family_id].every(
-      oauthText,
-    ) &&
+    [value.iss, value.aud].every(oauthText) && [value.sub, value.client_id, value.family_id].every(isValidId) &&
     typeof value.scope === "string" &&
     exactUnsignedInteger(value.exp) &&
     exactUnsignedInteger(value.iat) &&
     value.exp > value.iat &&
-    (value.sid === null || oauthText(value.sid))
+    (value.sid === null || isValidId(value.sid))
   );
 }
 /**

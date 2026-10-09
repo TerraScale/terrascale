@@ -1,3 +1,4 @@
+import { isValidId } from "./ids.js";
 /** @deprecated The C# TerraBase has no PostgreSQL listener.
  * Node-only PostgreSQL client for the signed INT8/TEXT point SQL listener. */
 import { lookup } from "node:dns/promises";
@@ -38,8 +39,8 @@ const MAX_INT8 = (1n << 63n) - 1n;
  *   readonly port: number;
  *   readonly tlsServerName: string;
  *   readonly caCertificatePem: string;
- *   readonly database: string;
- *   readonly keyId: string;
+ *   readonly database: import("./ids.js").EntityId;
+ *   readonly keyId: import("./ids.js").EntityId;
  *   readonly password: string;
  *   readonly connectTimeoutMs?: number;
  * }} PostgresConfig
@@ -168,8 +169,8 @@ function configuration(config) {
     !Number.isInteger(timeout) ||
     timeout < 1 ||
     timeout > 10000 ||
-    !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(config.database) ||
-    !canonicalBase64(config.keyId, 16) ||
+    !isValidId(config.database) ||
+    !isValidId(config.keyId) ||
     parts.length !== 3 ||
     parts[0] !== "tbk1" ||
     parts[1] !== config.keyId ||
