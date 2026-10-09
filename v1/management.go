@@ -169,8 +169,8 @@ type SQLResult struct {
 // SQLRow is one selected document: all of it for SELECT *, otherwise one
 // member per selected field.
 type SQLRow struct {
-	ID    string          `json:"id" documentkey:"required"`
-	Value json.RawMessage `json:"value"`
+	ID    string          `json:"id" ulid:"required"`
+	Value json.RawMessage `json:"value" entity:"payload"`
 }
 
 // Index is a secondary index of a database's collection.

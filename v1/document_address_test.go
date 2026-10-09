@@ -11,24 +11,7 @@ import (
 	"terrascale.tech/sdk/v1"
 )
 
-func TestDocumentIDFor(t *testing.T) {
-	id := v1.NewID()
-	if v1.DocumentIDFor("users", id) != id {
-		t.Fatal("canonical entity key changed")
-	}
-	key := v1.DocumentIDFor("users", "ana@example.test")
-	if err := v1.ValidateID(key); err != nil {
-		t.Fatal(err)
-	}
-	if v1.DocumentIDFor("users", "ana@example.test") != key || v1.DocumentIDFor("members", "ana@example.test") == key {
-		t.Fatal("natural address must be stable and collection scoped")
-	}
-	if v1.DocumentIDFor("a\x00b", "c") == v1.DocumentIDFor("a", "b\x00c") {
-		t.Fatal("ambiguous tuple framing")
-	}
-}
-
-func TestCallerDocumentKeysAtHTTPBoundary(t *testing.T) {
+func TestDocumentIDsAtHTTPBoundary(t *testing.T) {
 	const base = "/v1/projects/" + testProject + "/databases/main/collections/users/documents"
 	peer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -72,7 +55,7 @@ func TestCallerDocumentKeysAtHTTPBoundary(t *testing.T) {
 		t.Fatal(err)
 	}
 	db := c.Database(testProject, "main")
-	for _, key := range []string{"ana@example.test", "raw document key", "a/b", "a%2Fb", ".", "%2E", "..", "%2E%2E", "%", "?", "#", "+", " ", "a+b c", "界😀", "doc_01ARZ3NDEKTSV4RRFFQ69G5FAV", "01arz3ndektsv4rrffq69g5fav", "0190a6e4-7c3b-7d2e-8f00-0123456789ab", strings.Repeat("a", 256)} {
+	for _, key := range []string{v1.NewID(), testProject} {
 		doc, err := db.Collection("users").Get(t.Context(), key, v1.IfNoneMatch("previous"))
 		if err != nil || doc.ID != key {
 			t.Fatalf("get caller key %q: %v", key, err)

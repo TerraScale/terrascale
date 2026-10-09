@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -58,7 +57,7 @@ func TestULIDHTTPBoundary(t *testing.T) {
 		}
 	}
 	before := calls.Load()
-	for _, id := range []string{"", strings.Repeat("a", 257), "key\x00", "key\n", string([]byte{0xff})} {
+	for _, id := range []string{"", "doc_01ARZ3NDEKTSV4RRFFQ69G5FAV", "01arz3ndektsv4rrffq69g5fav", "0190a6e4-7c3b-7d2e-8f00-0123456789ab", "81ARZ3NDEKTSV4RRFFQ69G5FAV", "01ARZ3NDEKTSV4RRFFQ69G5FAI", "01ARZ3NDEKTSV4RRFFQ69G5FA", "legacy id"} {
 		if _, err := users.Get(t.Context(), id); err == nil {
 			t.Fatal("accepted an invalid document ID")
 		}
@@ -100,8 +99,8 @@ func TestULIDMalformedHTTPResponses(t *testing.T) {
 	}
 	users := c.Database(testProject, "main").Collection("users")
 	body.Store(`{"id":"01ARZ3NDEKTSV4RRFFQ69G5FAV","version":"opaque","state":"value","document":{"id":"01ARZ3NDEKTSV4RRFFQ69G5FAV"}}`)
-	if _, err := users.Get(t.Context(), "01ARZ3NDEKTSV4RRFFQ69G5FAV"); err != nil {
-		t.Fatalf("document payload data was rejected: %v", err)
+	if _, err := users.Get(t.Context(), "01ARZ3NDEKTSV4RRFFQ69G5FAV"); err == nil {
+		t.Fatal("accepted a repeated payload ID")
 	}
 	body.Store(`{"id":"01arz3ndektsv4rrffq69g5fav","version":"opaque","offset":"1","durability":"local_durable"}`)
 	if _, err := users.Create(t.Context(), map[string]any{"name": "Ana"}); err == nil {
@@ -109,12 +108,11 @@ func TestULIDMalformedHTTPResponses(t *testing.T) {
 	}
 }
 
-func TestDocumentPayloadIDsReachTheProducer(t *testing.T) {
+func TestULIDWritesRejectPayloadIDsBeforeHTTP(t *testing.T) {
 	var calls atomic.Int64
 	peer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
-		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, `{"id":%q,"version":"opaque","offset":"1","results":[{"id":%q,"version":"opaque"}]}`, "01ARZ3NDEKTSV4RRFFQ69G5FAV", "01ARZ3NDEKTSV4RRFFQ69G5FAV")
+		w.WriteHeader(http.StatusInternalServerError)
 	}))
 	t.Cleanup(peer.Close)
 	c, err := v1.New(v1.Config{BaseURL: peer.URL, Token: testToken, MaxRetries: -1})
@@ -125,23 +123,23 @@ func TestDocumentPayloadIDsReachTheProducer(t *testing.T) {
 	users := db.Collection("users")
 	id := v1.NewID()
 	for _, payload := range []any{map[string]any{"id": id}, json.RawMessage(`{"id":null}`)} {
-		if _, err := users.Create(t.Context(), payload); err != nil {
-			t.Fatal(err)
+		if _, err := users.Create(t.Context(), payload); err == nil {
+			t.Fatal("accepted a repeated create ID")
 		}
-		if _, err := users.Put(t.Context(), id, payload); err != nil {
-			t.Fatal(err)
+		if _, err := users.Put(t.Context(), id, payload); err == nil {
+			t.Fatal("accepted a repeated put ID")
 		}
-		if _, err := db.Tx().Put("users", id, payload).Commit(t.Context()); err != nil {
-			t.Fatal(err)
+		if _, err := db.Tx().Put("users", id, payload).Commit(t.Context()); err == nil {
+			t.Fatal("accepted a repeated transaction ID")
 		}
-		if _, err := users.Patch(t.Context(), id, v1.MergePatch(payload)); err != nil {
-			t.Fatal(err)
+		if _, err := users.Patch(t.Context(), id, v1.MergePatch(payload)); err == nil {
+			t.Fatal("accepted a repeated merge-patch ID")
 		}
 	}
-	if _, err := users.Patch(t.Context(), id, v1.Ops(v1.Set("/id", id))); err != nil {
-		t.Fatal(err)
+	if _, err := users.Patch(t.Context(), id, v1.Ops(v1.Set("/id", id))); err == nil {
+		t.Fatal("accepted an id patch")
 	}
-	if calls.Load() != 9 {
-		t.Fatalf("write requests = %d, want 9", calls.Load())
+	if calls.Load() != 0 {
+		t.Fatal("invalid payloads reached HTTP")
 	}
 }

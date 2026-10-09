@@ -200,7 +200,7 @@ type response struct {
 	body   []byte
 }
 
-// url escapes protocol path segments; raw document keys travel in the query.
+// url escapes protocol path segments; document IDs travel in the query.
 func (c *Client) url(ctx context.Context, segments []string, query url.Values) (string, error) {
 	for _, s := range segments {
 		if s == "" || s == "." || s == ".." || strings.Contains(s, "/") {

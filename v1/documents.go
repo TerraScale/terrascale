@@ -9,6 +9,9 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
+
+	"terrascale.tech/sdk/internal/entityid"
 )
 
 // Database is a handle to one database of a project, by name. It performs no I/O.
@@ -147,7 +150,7 @@ func (col *Collection) path(extra ...string) ([]string, error) {
 }
 
 func (col *Collection) docRequest(method, id string) (request, error) {
-	if err := ValidateDocumentKey(id); err != nil {
+	if err := ValidateID(id); err != nil {
 		return request{}, err
 	}
 	p, err := col.path("documents", "by-key")
@@ -317,14 +320,7 @@ func (col *Collection) Create(ctx context.Context, doc any, opts ...WriteOption)
 	if err != nil {
 		return nil, err
 	}
-	res, err := col.write(ctx, request{method: http.MethodPost, path: p, body: body})
-	if err == nil {
-		err = ValidateID(res.ID)
-	}
-	if err != nil {
-		return nil, err
-	}
-	return res, nil
+	return col.write(ctx, request{method: http.MethodPost, path: p, body: body})
 }
 
 // Patch applies a MergePatch or an Ops patch to an existing document.
@@ -386,6 +382,9 @@ func encodeObject(doc any) ([]byte, error) {
 	if t := bytes.TrimLeft(body, " \t\r\n"); len(t) == 0 || t[0] != '{' {
 		return nil, errors.New("terrabase: a document must be a JSON object")
 	}
+	if err := entityid.Payload(body); err != nil {
+		return nil, err
+	}
 	return body, nil
 }
 
@@ -409,6 +408,9 @@ func Ops(ops ...PatchOp) Patch {
 		p.err = errors.New("terrabase: Ops needs at least one operation")
 	}
 	for _, op := range ops {
+		if op.path == "/id" || strings.HasPrefix(op.path, "/id/") {
+			p.err = errors.Join(p.err, errors.New("document payload must not contain id; use the document key"))
+		}
 		p.err = errors.Join(p.err, op.err)
 	}
 	return p
