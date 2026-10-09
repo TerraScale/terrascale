@@ -49,3 +49,174 @@
 .ts-apikeys-secret > .ts-alert-title {
   font-size: var(--ts-fs-md);
 }
+
+/* Credential authorization: select the resource, then a least-privilege preset. */
+dialog.ts-credential-dialog {
+  width: min(40rem, calc(100vw - 2 * var(--ts-s4)));
+}
+
+.ts-credential-form {
+  gap: var(--ts-s6);
+}
+
+/* Keep creation reachable while a short viewport scrolls the permissions. */
+.ts-credential-form > .ts-dialog-footer {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  margin: 0 calc(-1 * var(--ts-s6)) calc(-1 * var(--ts-s6));
+  padding: var(--ts-s4) var(--ts-s6) var(--ts-s6);
+  border-top: 1px solid var(--ts-line);
+  background: var(--ts-surface);
+}
+
+.ts-permissions > legend {
+  margin-bottom: var(--ts-s1);
+  font-size: var(--ts-fs-sm);
+}
+
+.ts-permissions > .ts-hint {
+  margin-bottom: var(--ts-s3);
+}
+
+.ts-permission-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--ts-s3);
+}
+
+.ts-permission-advanced {
+  margin-top: var(--ts-s3);
+}
+
+.ts-permission-advanced > summary {
+  color: var(--ts-ink-2);
+  font-size: var(--ts-fs-sm);
+  cursor: pointer;
+}
+
+.ts-permission-advanced > .ts-permission-option {
+  margin-top: var(--ts-s3);
+}
+
+.ts-permission-option {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--ts-s3);
+  padding: var(--ts-s4);
+  border: 1px solid var(--ts-control-line);
+  border-radius: var(--ts-radius-lg);
+  background: var(--ts-surface-2);
+  cursor: pointer;
+  transition: border-color var(--ts-fast), background var(--ts-fast);
+}
+
+.ts-permission-option:hover {
+  border-color: var(--ts-control-line-hover);
+}
+
+.ts-permission-option:has(input:checked) {
+  border-color: var(--ts-link);
+  background: var(--ts-accent-soft);
+}
+
+.ts-permission-option:has(input:focus-visible) {
+  outline: 2px solid var(--ts-link);
+  outline-offset: 3px;
+}
+
+.ts-permission-option > input {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+  accent-color: var(--ts-accent-fill);
+}
+
+.ts-permission-body {
+  display: grid;
+  align-content: start;
+  gap: var(--ts-s2);
+  min-width: 0;
+}
+
+.ts-permission-heading {
+  display: flex;
+  align-items: center;
+  gap: var(--ts-s2);
+}
+
+.ts-permission-heading > svg {
+  flex: none;
+  color: var(--ts-link);
+}
+
+.ts-permission-heading > strong {
+  font-size: var(--ts-fs-md);
+}
+
+.ts-permission-recommended {
+  justify-self: start;
+  color: var(--ts-link);
+  font-size: var(--ts-fs-xs);
+  font-weight: 600;
+}
+
+.ts-permission-description {
+  color: var(--ts-ink-2);
+  font-size: var(--ts-fs-sm);
+  line-height: 1.6;
+}
+
+.ts-permission-scopes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ts-s1);
+  margin-top: var(--ts-s1);
+}
+
+.ts-permission-scopes > code {
+  max-width: 100%;
+  padding: 2px 6px;
+  border: 1px solid var(--ts-line-strong);
+  border-radius: var(--ts-radius-sm);
+  background: var(--ts-surface);
+  color: var(--ts-ink-2);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.ts-permission-review {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--ts-s3);
+  padding: var(--ts-s4);
+  border: 1px solid var(--ts-line-strong);
+  border-radius: var(--ts-radius-lg);
+  background: var(--ts-surface-2);
+}
+
+.ts-permission-review > svg {
+  flex: none;
+  margin-top: 2px;
+  color: var(--ts-link);
+}
+
+.ts-permission-review > div {
+  display: grid;
+  gap: var(--ts-s1);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.ts-permission-review h3 {
+  color: var(--ts-ink-2);
+  font-size: var(--ts-fs-xs);
+  font-weight: 500;
+}
+
+@media (max-width: 540px) {
+  .ts-permission-options {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

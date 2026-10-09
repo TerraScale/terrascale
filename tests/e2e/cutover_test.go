@@ -81,7 +81,7 @@ func TestCutoverOwnerCreatesAndRevokesAPIKeyThenInvitesMember(t *testing.T) {
 	keyName := uniqueName("cutover-key")
 	createKey := page.Locator(`form[action="/api/v1/dashboard/credentials/key"]`)
 	fill(t, createKey.Locator(`[name="name"]`), keyName)
-	fill(t, createKey.Locator(`[name="scopes"]`), "database:read")
+	must(t, byRole(createKey, *playwright.AriaRoleRadio, "Read only").Check())
 	submitAndExpect(t, page, "/api/v1/dashboard/credentials/key", 200, byRole(createKey, *playwright.AriaRoleButton, "Create key").Click)
 	secret := func() playwright.Locator {
 		return page.Locator(`section[role="status"]`).Filter(playwright.LocatorFilterOptions{HasText: "Secret for " + keyName})
