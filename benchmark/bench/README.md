@@ -1,11 +1,10 @@
-# Benchmark evidence transition (TS-761)
+# Capacity benchmark evidence
 
-Superseded Rust-engine, Firecracker, SQLite/Turso and local acceptance archives
-are being removed under TS-761's authorized greenfield cleanup. The original
-receipts and frozen source snapshots remain accessible in Git history.
+Every measured run has a Markdown table, raw client JSONL and aggregate JSON in
+`<region>/<ULID>/`. Reports also land in `reports/<region>/`.
 
-[PR #13](https://git.terrascale.tech/TerraScale/ts-benchmark/pulls/13) introduces
-the public-SDK regional capacity protocol and runner. Its SDK/lifecycle and live
-run prerequisites remain explicit; these deleted diagnostics do not qualify
-regional capacity. Fresh existing smoke outputs still land in `bench/` until
-that PR replaces the old harness. No measured result is invented or relabelled.
+| Date | Evidence | Status |
+| --- | --- | --- |
+| 2026-10-08 | [SDK and live-run prerequisites](2026-10-08-prerequisites.md) | Blocked; no capacity number claimed |
+
+Unit-test fixtures are temporary files and are never recorded as live runs.

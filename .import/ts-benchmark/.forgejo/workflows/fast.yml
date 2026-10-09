@@ -1,28 +1,20 @@
 name: Fast
-
-# Current C# TerraBase acceptance uses a real pinned release over local HTTPS.
-# Historical SQLite/Turso subjects remain available outside active product CI.
-# Shared runner smoke timings never qualify a performance scoreboard row.
-
 on:
   push:
     branches: [main]
   pull_request:
     branches: [main]
   workflow_dispatch:
-
 concurrency:
   group: ts-benchmark-fast-${{ forgejo.ref }}
   cancel-in-progress: ${{ forgejo.ref != 'refs/heads/main' }}
-
 env:
   CI: "true"
-
 jobs:
-  load-engine:
-    name: Bounded load engine
+  protocol:
+    name: Protocol and runner
     runs-on: terrascale-builder
-    timeout-minutes: 5
+    timeout-minutes: 10
     container:
       image: git.terrascale.tech/terrascale/ts-builder:latest
       options: --memory=2g
@@ -32,40 +24,7 @@ jobs:
         with:
           github-server-url: "https://git.terrascale.tech"
           ref: ${{ forgejo.sha }}
-          path: ts-benchmark
           fetch-depth: 1
           persist-credentials: false
-      - name: Check load scheduling and measurement
-        run: make -C ts-benchmark load-check
-
-  csharp-smoke:
-    name: C# HTTPS acceptance smoke
-    runs-on: terrascale-builder
-    timeout-minutes: 15
-    container:
-      image: git.terrascale.tech/terrascale/ts-builder:latest
-      options: --memory=8g
-    steps:
-      - name: Check out the event revision
-        uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
-        with:
-          github-server-url: "https://git.terrascale.tech"
-          ref: ${{ forgejo.sha }}
-          path: ts-benchmark
-          fetch-depth: 1
-          persist-credentials: false
-
-      - name: Run local C# HTTPS acceptance
-        env:
-          ORG_READ_TOKEN: ${{ secrets.ORG_READ_TOKEN }}
-        run: bash ts-benchmark/scripts/ci/kache.sh make -C ts-benchmark csharp-smoke
-
-      - name: Retain C# acceptance JSON and Markdown evidence
-        if: always()
-        # Forgejo's v3-node20 fork uses the legacy artifact protocol.
-        uses: https://data.forgejo.org/forgejo/upload-artifact@ed48a7bb0c8a9079492c354d37994c413423c83e
-        with:
-          name: csharp-smoke-${{ forgejo.sha }}-${{ forgejo.run_id }}
-          path: ts-benchmark/bench/csharp-smoke/
-          if-no-files-found: error
-          retention-days: 30
+      - name: Validate workload, scheduler and aggregation contracts
+        run: make check

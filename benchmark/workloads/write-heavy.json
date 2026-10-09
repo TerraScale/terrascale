@@ -1,0 +1,27 @@
+{
+  "name": "write-heavy",
+  "duration_s": 60,
+  "warmup_s": 5,
+  "concurrency": 8,
+  "dataset": {
+    "documents": 128,
+    "doc_size_bytes": 1024
+  },
+  "mix": [
+    {
+      "op": "doc.create",
+      "weight": 50
+    },
+    {
+      "op": "doc.update",
+      "weight": 40
+    },
+    {
+      "op": "doc.delete",
+      "weight": 10
+    }
+  ],
+  "targets": {
+    "p99_ms": 200
+  }
+}
