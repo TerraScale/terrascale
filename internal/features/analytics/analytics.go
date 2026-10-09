@@ -55,25 +55,37 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 }
 
 func Load(ctx context.Context, deps core.Deps, p core.Principal, projectID, databaseID, region, rangeKey string) (View, error) {
-	project, scope, err := deps.MetricsSelection(ctx, p, projectID, databaseID, region, rangeKey)
+	project, scope, err := deps.MetricsSelection(ctx, p, projectID, databaseID, "", rangeKey)
 	if err != nil {
 		return View{}, err
 	}
 	v := View{Range: scope.Range, ProjectID: project.ID, DatabaseID: databaseID, Region: region, Empty: "No analytics measurements for these filters."}
 	v.databaseNames = make(map[string]string)
+	regionInProject := false
 	for _, db := range project.Databases {
 		v.databaseNames[db.ID] = db.Name
 		if db.TerraBaseID != "" {
 			v.databaseNames[db.TerraBaseID] = db.Name
 		}
 		v.Databases = append(v.Databases, Option{ID: db.ID, Name: db.Name})
-		v.Regions = append(v.Regions, db.Region)
-		v.Regions = append(v.Regions, db.Regions...)
+		regionInProject = regionInProject || db.Region == region || slices.Contains(db.Regions, region)
+		if databaseID == "" || db.ID == databaseID {
+			v.Regions = append(v.Regions, db.Region)
+			v.Regions = append(v.Regions, db.Regions...)
+		}
 	}
 	slices.SortFunc(v.Databases, func(a, b Option) int { return strings.Compare(a.Name, b.Name) })
 	slices.Sort(v.Regions)
 	v.Regions = slices.Compact(v.Regions)
 	v.Regions = slices.DeleteFunc(v.Regions, func(s string) bool { return s == "" })
+	if region != "" && !slices.Contains(v.Regions, region) {
+		if databaseID == "" || !regionInProject {
+			return View{}, core.Invalid("select a region used by this database or project")
+		}
+		// A native database change can carry a region from the previous selection.
+		region = ""
+	}
+	v.Region, scope.Region = region, region
 	if deps.Metrics == nil {
 		v.Empty = "Analytics measurements are unavailable."
 		return v, nil

@@ -27,7 +27,8 @@ type UsageScope struct {
 
 // UsageBuckets is the granularity and first bucket of a range ending at now:
 // 24 or 168 hours for 24h and 7d (the default), or 30 days for 30d, the
-// current hour or day included.
+// current hour or day included. 1h selects the current UTC hour, not a
+// rolling sixty-minute interval, because this API has hourly/daily buckets.
 func UsageBuckets(rangeKey string, now time.Time) (string, time.Time) {
 	now = now.UTC()
 	switch rangeKey {

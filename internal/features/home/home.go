@@ -68,10 +68,14 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			tab = "connect"
 		}
 		activity := summary.Activity
+		activityLabel := demovisuals.RangeLabel(activity.Range)
+		if activity.Metered && activity.Range == "1h" {
+			activityLabel = "Current UTC hour"
+		}
 		data := pageData{
 			Tab: tab, ProjectName: summary.ProjectName, ActivityRange: activity.Range,
 			ActivityNote: activity.Note, ActivityReads: activity.TotalReads, ActivityWrites: activity.TotalWrites,
-			ActivityChart: charts.NewLine("Reads and writes, "+demovisuals.RangeLabel(activity.Range)+": "+activity.Note,
+			ActivityChart: charts.NewLine("Reads and writes, "+activityLabel+": "+activity.Note,
 				activityTicks(activity), activity.Labels, 180,
 				charts.Series{Name: "Reads", Values: activity.Reads}, charts.Series{Name: "Writes", Values: activity.Writes}),
 			DatabaseCount: summary.DatabaseCount, OrganizationMembers: summary.OrganizationMembers,

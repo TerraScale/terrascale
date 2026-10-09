@@ -133,6 +133,21 @@ func TestUsageShowsMeteredReadsAndWritesSeparately(t *testing.T) {
 	}
 }
 
+func TestUsageNamesTheCurrentHourForHourlyMetering(t *testing.T) {
+	meter := &fakeMeter{reads: 7, writes: 3}
+	_, _, mux := meterFixture(t, meter)
+	response := httptest.NewRecorder()
+	mux.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/usage?range=1h", nil))
+	body := response.Body.String()
+	if response.Code != http.StatusOK || !strings.Contains(body, "Reads and writes, Current UTC hour") || strings.Contains(body, "Last hour") {
+		t.Fatalf("current-hour metering label: status=%d", response.Code)
+	}
+	scope := meter.scopes[len(meter.scopes)-1]
+	if scope.Granularity != "hour" || scope.From.Minute() != 0 || scope.From.Second() != 0 {
+		t.Fatalf("current-hour scope=%+v", scope)
+	}
+}
+
 func TestUsageExplainsUnmeteredScopes(t *testing.T) {
 	meter := &fakeMeter{err: core.ErrNotMetered}
 	service, principal, mux := meterFixture(t, meter)

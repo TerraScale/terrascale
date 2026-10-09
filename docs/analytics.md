@@ -9,6 +9,15 @@ card reports the worst measured p95 in that bucket; percentiles are never summed
 or averaged. Latency lines stay separate per database and region, with gaps for
 missing observations. Latency chart values are microseconds; headline latency is displayed in milliseconds.
 
+Database filters restrict the offered regions to that database. Changing the
+database clears a region carried over from another database in the same project;
+unknown regions and unauthorized database IDs are rejected before provider reads.
+The legacy reads/writes usage API exposes hourly or daily buckets: its `1h`
+selection is the current UTC hour and is labeled accordingly in Usage and the
+measured Overview activity chart. Analytics and replication pass `1h` to their
+own provider APIs for automatic bucketing. Illustrative demo charts retain their
+explicitly labeled rolling sample window.
+
 Usage and database detail share the replication view. Each ordered region pair
 keeps sent and received byte counts. The chart groups sent bytes by direction
 across databases. Total replication bandwidth counts sent bytes once, rather

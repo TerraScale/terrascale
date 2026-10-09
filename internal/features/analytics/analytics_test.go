@@ -3,6 +3,7 @@ package analytics
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -34,10 +35,13 @@ func TestScopeAuthorizationAndProviderIDs(t *testing.T) {
 	p := account.Principal()
 	const databaseID = "01JC9Q8Y5N7P9R3T5V7X9Z2AC"
 	const providerID = "01JC9Q9Y5N7P9R3T5V7X9Z2AC"
+	const otherID = "01JC9QA15N7P9R3T5V7X9Z2AC"
 	err = store.UpdateAs(t.Context(), p, func(a *core.Account) error {
 		org := a.Organizations[p.OrganizationID]
+		org.PlanID = "plan_starter"
 		project := org.Projects[p.ProjectID]
 		project.Databases[databaseID] = core.Database{ID: databaseID, TerraBaseID: providerID, Name: "primary", Region: "GRU", Regions: []string{"GRU", "SFO"}}
+		project.Databases[otherID] = core.Database{ID: otherID, Name: "other", Region: "FRA"}
 		org.Projects[project.ID] = project
 		a.Organizations[org.ID] = org
 		return nil
@@ -58,8 +62,20 @@ func TestScopeAuthorizationAndProviderIDs(t *testing.T) {
 			t.Fatalf("scope=%+v", got)
 		}
 	}
+	view, err := Load(ctx, deps, p, "", otherID, "SFO", "24h")
+	if err != nil || view.Region != "" || !slices.Equal(view.Regions, []string{"FRA"}) || client.scopes[len(client.scopes)-1].Region != "" {
+		t.Fatalf("stale region: view=%+v err=%v", view, err)
+	}
+	view, err = Load(ctx, deps, p, "", databaseID, "GRU", "24h")
+	if err != nil || view.Region != "GRU" || !slices.Equal(view.Regions, []string{"GRU", "SFO"}) {
+		t.Fatalf("selected regions: view=%+v err=%v", view, err)
+	}
+	view, err = Load(ctx, deps, p, "", "", "FRA", "24h")
+	if err != nil || view.Region != "FRA" || !slices.Equal(view.Regions, []string{"FRA", "GRU", "SFO"}) {
+		t.Fatalf("project regions: view=%+v err=%v", view, err)
+	}
 	before := len(client.scopes)
-	for _, filter := range []struct{ db, region string }{{"01JC9QA15N7P9R3T5V7X9Z2AC", ""}, {databaseID, "FRA"}} {
+	for _, filter := range []struct{ db, region string }{{"01JC9QC15N7P9R3T5V7X9Z2AC", ""}, {databaseID, "LHR"}} {
 		if _, err := Load(ctx, deps, p, "", filter.db, filter.region, "24h"); err == nil {
 			t.Fatal("invalid scope accepted")
 		}

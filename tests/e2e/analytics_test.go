@@ -116,6 +116,13 @@ func (c *contractMetrics) RegionHealth(_ context.Context, codes []string) ([]cor
 
 func metricsPage(t *testing.T, client *contractMetrics) playwright.Page {
 	t.Helper()
+	page := watchedPage(t, newContext(t, metricsServer(t, client)))
+	login(t, page, sampleAccount.Email, sampleAccount.Password)
+	return page
+}
+
+func metricsServer(t *testing.T, client *contractMetrics) string {
+	t.Helper()
 	if testing.Short() || os.Getenv("DASHBOARD_E2E_BASE_URL") != "" {
 		t.Skip("requires the in-process contract client")
 	}
@@ -123,9 +130,55 @@ func metricsPage(t *testing.T, client *contractMetrics) playwright.Page {
 	must(t, err)
 	server := httptest.NewServer(application.Handler)
 	t.Cleanup(server.Close)
-	page := watchedPage(t, newContext(t, server.URL))
-	login(t, page, sampleAccount.Email, sampleAccount.Password)
-	return page
+	return server.URL
+}
+
+func TestAnalyticsDatabaseChangesResetStaleRegions(t *testing.T) {
+	for _, javascript := range []bool{true, false} {
+		name := "with-javascript"
+		if !javascript {
+			name = "without-javascript"
+		}
+		t.Run(name, func(t *testing.T) {
+			client := &contractMetrics{}
+			serverURL := metricsServer(t, client)
+			ctx, err := browser.NewContext(playwright.BrowserNewContextOptions{BaseURL: new(serverURL), JavaScriptEnabled: new(javascript)})
+			must(t, err)
+			t.Cleanup(func() { _ = ctx.Close() })
+			page := watchedPage(t, ctx)
+			login(t, page, sampleAccount.Email, sampleAccount.Password)
+			goToOK(t, page, "/databases")
+			click(t, pageByRole(page, *playwright.AriaRoleButton, "New database").First())
+			dialog := pageByRole(page, *playwright.AriaRoleDialog, "New database")
+			fill(t, dialog.Locator("#database-name"), "analytics-gru")
+			selectDatabaseRegions(t, dialog, "GRU")
+			submitAndExpect(t, page, "/api/v1/dashboard/databases", 303, func(...playwright.LocatorClickOptions) error {
+				return byRole(dialog, *playwright.AriaRoleButton, "Create database").Press("Enter")
+			})
+			goToOK(t, page, "/analytics?region=SFO&range=1h")
+			id := requiredAttribute(t, page.Locator(`#analytics-database option`).Filter(playwright.LocatorFilterOptions{HasText: "analytics-gru"}), "value", "GRU database")
+			_, err = page.Locator("#analytics-database").SelectOption(playwright.SelectOptionValues{Values: &[]string{id}})
+			must(t, err)
+			click(t, pageByRole(page, *playwright.AriaRoleButton, "Apply"))
+			must(t, expect.Locator(page.Locator("#analytics-region")).ToHaveValue(""))
+			must(t, expect.Locator(page.Locator(`#analytics-region option[value="SFO"]`)).ToHaveCount(0))
+			must(t, expect.Locator(page.Locator(`#analytics-region option[value="GRU"]`)).ToHaveCount(1))
+			client.mu.Lock()
+			last := client.scopes[len(client.scopes)-1]
+			client.mu.Unlock()
+			if last.DatabaseID != id || last.Region != "" || last.Range != "1h" {
+				t.Fatalf("stale region reached provider: %+v", last)
+			}
+			_, err = page.Locator("#analytics-region").SelectOption(playwright.SelectOptionValues{Values: &[]string{"GRU"}})
+			must(t, err)
+			click(t, pageByRole(page, *playwright.AriaRoleButton, "Apply"))
+			must(t, expect.Locator(page.Locator("#analytics-region")).ToHaveValue("GRU"))
+			_, err = page.Locator("#analytics-database").SelectOption(playwright.SelectOptionValues{Values: &[]string{""}})
+			must(t, err)
+			click(t, pageByRole(page, *playwright.AriaRoleButton, "Apply"))
+			must(t, expect.Locator(page.Locator(`#analytics-region option[value="SFO"]`)).ToHaveCount(1))
+		})
+	}
 }
 
 func TestAnalyticsFiltersAndReplicationAcrossDashboard(t *testing.T) {
