@@ -108,6 +108,25 @@ test("hosted-auth entity pages reject primitives and nested arrays while recover
     expect(() => validateTsAuthIds({ data: [entry] }, "tsauth.users.regenerateRecoveryCodes")).toThrow(TypeError);
 });
 
+test("enrollment and userinfo require an object with their canonical reference ID", () => {
+  for (const { route, field } of [{ route: "tsauth.organizations.enrollDomain", field: "org_id" },
+    { route: "tsauth.oidc.userinfo", field: "sub" }]) {
+    expect(() => validateTsAuthIds({ [field]: id }, route)).not.toThrow();
+    for (const invalid of [...invalidIds, [], [{ id, sub: id, org_id: id }], {}])
+      expect(() => validateTsAuthIds(invalid, route)).toThrow(TypeError);
+    for (const invalid of invalidIds)
+      expect(() => validateTsAuthIds({ [field]: invalid }, route)).toThrow(TypeError);
+  }
+});
+
+test("only connection and directory routes allow a null organization reference", () => {
+  for (const route of ["tsauth.connections.create", "tsauth.connections.update", "tsauth.connections.list",
+    "tsauth.directories.create", "tsauth.directories.rotate", "tsauth.directories.list"])
+    expect(() => validateTsAuthIds({ id, org_id: null }, route)).not.toThrow();
+  for (const route of ["tsauth.users.get", "tsauth.organizations.get", "tsauth.organizations.enrollDomain"])
+    expect(() => validateTsAuthIds({ id, org_id: null }, route)).toThrow(TypeError);
+});
+
 test("single hosted-auth entities require their ID without imposing it on acknowledgments or wrappers", () => {
   for (const route of ["tsauth.organizations.get", "tsauth.organizations.create", "tsauth.organizations.update",
     "tsauth.instance.get", "tsauth.instance.update", "tsauth.apiKeys.create", "tsauth.directories.rotate"])

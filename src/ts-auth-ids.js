@@ -35,8 +35,10 @@ export function requireDeadLetterId(value) {
  * @returns {void}
  */
 export function validateTsAuthIds(value, route, entity = singleEntityRoutes.has(route)) {
-  if (entity && (typeof value !== "object" || value === null || Array.isArray(value)))
-    throw new TypeError("Hosted-auth entity must be an object with a ULID.");
+  const requiredReference = route === "tsauth.oidc.userinfo" ? "sub"
+    : route === "tsauth.organizations.enrollDomain" ? "org_id" : undefined;
+  if ((entity || requiredReference !== undefined) && (typeof value !== "object" || value === null || Array.isArray(value)))
+    throw new TypeError("Hosted-auth response must be an object with its required ULID.");
   if (Array.isArray(value)) {
     if (route === "tsauth.users.regenerateRecoveryCodes") {
       if (!value.every(code => typeof code === "string"))
@@ -47,19 +49,21 @@ export function validateTsAuthIds(value, route, entity = singleEntityRoutes.has(
     return;
   }
   if (typeof value !== "object" || value === null) return;
+  if (requiredReference !== undefined) requireId(Reflect.get(value, requiredReference), requiredReference);
   const deadLetter = route === "tsauth.webhooks.deadLetter";
   if (entity) {
     if (deadLetter) requireDeadLetterId(Reflect.get(value, "id"));
     else requireId(Reflect.get(value, "id"), "entity id");
   }
   const fields = ["id", "user_id", "organization_id", "org_id", "endpoint_id", "event_id", "instance_id", "actor_id"];
+  const nullableOrgId = route.startsWith("tsauth.connections.") || route.startsWith("tsauth.directories.");
   if (/^tsauth\.(oauthClients|oauthResources|oidc)\./u.test(route))
     fields.push("client_id", "introspection_client_id", "sub", "sid", "jti");
   for (const field of fields) {
     if (Object.hasOwn(value, field)) {
       const id = Reflect.get(value, field);
       if (field === "id" && deadLetter) requireDeadLetterId(id);
-      else if (id !== null || !["org_id", "sid"].includes(field)) requireId(id, field);
+      else if (id !== null || !(field === "sid" || (field === "org_id" && nullableOrgId))) requireId(id, field);
     }
   }
   // `data` objects in audit events are customer payloads; only page arrays contain DTOs.
@@ -80,5 +84,4 @@ export function validateTsAuthIds(value, route, entity = singleEntityRoutes.has(
     if (!Array.isArray(ids)) throw new TypeError("allowed_client_ids must be an array of ULIDs.");
     for (const id of ids) requireId(id, "allowed_client_ids");
   }
-  if (route === "tsauth.oidc.userinfo") requireId(Reflect.get(value, "sub"), "subject id");
 }

@@ -146,6 +146,18 @@ test("single organization and instance responses without IDs return invalid-resp
   }
 });
 
+test("enrollment and userinfo reject malformed successful response shapes", async () => {
+  for (const body of [null, "legacy-subject", 1, false, [], [{ id: user.id, org_id: user.id, sub: user.id }], {},
+    { org_id: null, sub: null }, { org_id: "org_legacy", sub: "legacy-subject" }]) {
+    const client = tsAuthClient(() => json(body), []);
+    for (const result of [await client.organizations.enrollDomain("acme.test", { user_id: user.id }),
+      await client.oidc.userinfo("at_test")]) {
+      assert.equal(result.ok, false);
+      if (!result.ok) assert.equal(result.error.kind, "invalid-response");
+    }
+  }
+});
+
 describe("ts-auth client", () => {
   test("public auth origin selects a regional endpoint and fails over safe reads", async () => {
     /** @type {Request[]} */
