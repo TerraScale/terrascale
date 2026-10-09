@@ -41,7 +41,7 @@ internal sealed partial class EngineManagementService
 
     // Request admission must not queue catalog reads behind a noisy query while the catalog is unchanged.
     private readonly Lock _planGate = new();
-    private readonly Dictionary<string, (Guid Incarnation, long Sequence, PlanTier Plan)> _plans = [];
+    private readonly Dictionary<string, (Ulid Incarnation, long Sequence, PlanTier Plan)> _plans = [];
 
     public async ValueTask<TenantContext?> FindDatabaseAsync(string organizationId, string projectId, string database, CancellationToken cancellationToken)
     {

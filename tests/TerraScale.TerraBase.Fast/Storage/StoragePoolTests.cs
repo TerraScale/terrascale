@@ -192,7 +192,7 @@ public sealed class StoragePoolTests
         }, StorageTransactionTests.ConfigurePool, time: new FakeTimeProvider(DateTimeOffset.UtcNow), managementCredential: true);
         var server = management.Server;
         using var tenant = await management.CreateTenantAsync("documents:read", "documents:write");
-        await StorageFixture.SetPlanAsync(management, tenant, PlanTier.Enterprise);
+        await management.SetPlanAsync(tenant.User, tenant.OrganizationId, "enterprise");
         var client = tenant.Data;
         using var created = await client.PutAsync(new Uri($"/v1/projects/{tenant.ProjectId}/databases/busy", UriKind.Relative), null, deadline.Token);
         created.EnsureSuccessStatusCode();
@@ -298,7 +298,7 @@ public sealed class StoragePoolTests
         }, StorageTransactionTests.ConfigurePool, time: new FakeTimeProvider(DateTimeOffset.UtcNow), managementCredential: true);
         var server = management.Server;
         using var tenant = await management.CreateTenantAsync("documents:read", "documents:write");
-        await StorageFixture.SetPlanAsync(management, tenant, PlanTier.Enterprise);
+        await management.SetPlanAsync(tenant.User, tenant.OrganizationId, "enterprise");
         var client = tenant.Data;
         using var created = await client.PutAsync(new Uri($"/v1/projects/{tenant.ProjectId}/databases/busy", UriKind.Relative), null, deadline.Token);
         created.EnsureSuccessStatusCode();

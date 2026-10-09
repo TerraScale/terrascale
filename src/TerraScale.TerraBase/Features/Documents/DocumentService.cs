@@ -19,7 +19,7 @@ namespace TerraBase.Features.Documents;
 /// writer lock must not wait on the network, and a peer applying this member's groups needs it.
 /// </remarks>
 internal sealed partial class DocumentService(IStorageEngine engine, TimeProvider time, DocumentCache cache, IUsageMeter usage, IReplicationWait replication,
-    IQueryShapeTracker shapes, IMemoryBudget memory, IMeterFactory meters)
+    IQueryShapeTracker shapes, IMemoryBudget memory, IMeterFactory meters, IStorageQuota quota)
     : IDocumentService, ISystemDocumentReader
 {
     // assert_count examines at most this many documents.
@@ -352,7 +352,7 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
         var (outcome, offset) = await store.WriteAsync(
             async (transaction, token) =>
             {
-                var (result, change, growthOp) = await ApplyAllAsync(store, transaction, operations, indexErrors, token).ConfigureAwait(false);
+                var (result, change, growthOp) = await ApplyAllAsync(store, transaction, operations, indexErrors, admission.RequiresAccounting, token).ConfigureAwait(false);
                 delta = change;
                 return result is WriteResult && await admission.CheckAsync(delta, token).ConfigureAwait(false) is { } exceeded
                     ? new DocumentRejected(exceeded, indexErrors ? growthOp : null) : result;
@@ -375,7 +375,7 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
 
     // Every operation of one client write; the commit offset is filled in once its batch committed.
     private async ValueTask<(WriteOutcome Outcome, long Delta, int? GrowthOp)> ApplyAllAsync(
-        IDatabaseStore store, IStorageTransaction transaction, IReadOnlyList<DocumentOperation> operations, bool indexErrors,
+        IDatabaseStore store, IStorageTransaction transaction, IReadOnlyList<DocumentOperation> operations, bool indexErrors, bool accountStorage,
         CancellationToken cancellationToken)
     {
         var collections = new HashSet<string>(StringComparer.Ordinal);
@@ -400,15 +400,15 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
                     DeleteOperation delete => delete.Id,
                     _ => null,
                 };
-                var before = id is not null
+                var before = accountStorage && id is not null
                     ? await transaction.GetDocumentBytesAsync(operation.Collection, id, cancellationToken).ConfigureAwait(false) : 0;
                 switch (await ApplyCheckedAsync(store, transaction, operation, collections, cancellationToken).ConfigureAwait(false))
                 {
                     case OperationResult result:
                         results[i] = result;
-                        var after = operation switch
+                        var after = !accountStorage ? 0 : operation switch
                         {
-                            PutOperation put => put.Json.Length,
+                            PutOperation put => await transaction.GetDocumentBytesAsync(put.Collection, put.Id, cancellationToken).ConfigureAwait(false),
                             PatchOperation patch => await transaction.GetDocumentBytesAsync(patch.Collection, patch.Id, cancellationToken).ConfigureAwait(false),
                             _ => 0,
                         };

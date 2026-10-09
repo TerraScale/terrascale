@@ -13,7 +13,7 @@ internal sealed class MemoryBudget : IMemoryBudget
     private readonly long _limit;
     // ponytail: one gate keeps process and tenant accounting atomic; split only after measuring contention.
     private readonly Lock _gate = new();
-    private readonly Dictionary<string, long> _tenants = [];
+    private readonly Dictionary<string, TenantUsage> _tenants = [];
     private long _reserved;
     private int _reservations;
 
@@ -30,6 +30,7 @@ internal sealed class MemoryBudget : IMemoryBudget
         ArgumentOutOfRangeException.ThrowIfNegative(bytes);
         var share = tenant is null ? 1 : QosPolicy.For(tenant.Plan).MemoryShare;
         var tenantLimit = share == 1 ? _limit : (long)(_limit * share);
+        var tenantReservations = Math.Min(MaxReservations - 4096, (int)(MaxReservations * share));
         if (bytes == 0)
         {
             // Zero-byte leases retain no tenant or budget state, even when capacity is exhausted.
@@ -48,12 +49,13 @@ internal sealed class MemoryBudget : IMemoryBudget
                 var known = _tenants.TryGetValue(tenant.OrganizationId, out var reserved);
                 if (tenant.OrganizationId.Length > MaxOrganizationChars
                     || (!known && _tenants.Count == MaxTenants)
-                    || bytes > tenantLimit - reserved)
+                    || reserved.Reservations >= tenantReservations
+                    || bytes > tenantLimit - reserved.Bytes)
                 {
                     return null;
                 }
 
-                _tenants[tenant.OrganizationId] = reserved + bytes;
+                _tenants[tenant.OrganizationId] = new TenantUsage(reserved.Bytes + bytes, reserved.Reservations + 1);
             }
 
             _reserved += bytes;
@@ -81,8 +83,9 @@ internal sealed class MemoryBudget : IMemoryBudget
                 budget._reservations--;
                 if (organization is not null)
                 {
-                    var remaining = budget._tenants[organization] - bytes;
-                    if (remaining == 0)
+                    var current = budget._tenants[organization];
+                    var remaining = new TenantUsage(current.Bytes - bytes, current.Reservations - 1);
+                    if (remaining.Reservations == 0)
                     {
                         budget._tenants.Remove(organization);
                     }
@@ -94,6 +97,8 @@ internal sealed class MemoryBudget : IMemoryBudget
             }
         }
     }
+
+    private readonly record struct TenantUsage(long Bytes, int Reservations);
 
     private sealed class EmptyReservation : IMemoryReservation
     {

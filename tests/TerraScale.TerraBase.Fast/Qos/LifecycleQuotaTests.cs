@@ -5,6 +5,7 @@ using TerraBase.Fast.Documents;
 using TerraBase.Fast.Management;
 using TerraBase.Features.Management;
 using TerraBase.Features.Qos;
+using TerraBase.Primitives;
 using TerraBase.Tenancy;
 
 namespace TerraBase.Fast.Qos;
@@ -20,7 +21,7 @@ public sealed class LifecycleQuotaTests
         var source = await api.TenantOfAsync();
         (await api.SendAsync(HttpMethod.Put, api.DatabasePath("removed"))).Status.ShouldBe(HttpStatusCode.Created);
         (await api.SendAsync(HttpMethod.Post, api.DatabasePath("removed") + "/collections", new { name = "items" })).Status.ShouldBe(HttpStatusCode.Created);
-        (await api.SendAsync(HttpMethod.Put, api.DatabasePath("removed") + "/collections/items/documents/" + DocumentApi.NewId(),
+        (await api.SendAsync(HttpMethod.Put, api.DatabasePath("removed") + "/collections/items/documents/by-key?id=" + DocumentApi.NewId(),
             new { data = new string('x', 13) })).Status.ShouldBe(HttpStatusCode.Created);
         var removed = await api.TenantOfAsync("removed");
         using var owner = api.Management.As(api.Tenant.User);
@@ -138,7 +139,7 @@ public sealed class LifecycleQuotaTests
         using var data = await api.Management.CreateClientAsync(organization, "documents:read", "documents:write");
         var path = $"/v1/projects/{project}/databases/other/collections";
         (await DocumentApi.SendAsync(data, HttpMethod.Post, path, JsonContent.Create(new { name = "items" }))).Status.ShouldBe(HttpStatusCode.Created);
-        (await DocumentApi.SendAsync(data, HttpMethod.Put, path + "/items/documents/" + DocumentApi.NewId(), JsonContent.Create(new { data = "x" })))
+        (await DocumentApi.SendAsync(data, HttpMethod.Put, path + "/items/documents/by-key?id=" + DocumentApi.NewId(), JsonContent.Create(new { data = "x" })))
             .Status.ShouldBe(HttpStatusCode.Created);
         var results = await Task.WhenAll(
             CommitAsync(owner, Branch(first, "one"), Branch(second, "one")),
@@ -158,7 +159,7 @@ public sealed class LifecycleQuotaTests
         using var owner = api.Management.As(api.Tenant.User);
         var body = new
         {
-            id = Guid.NewGuid().ToString(),
+            id = EntityIds.New().ToString(),
             ops = new object[]
             {
                 Branch(database, "replacement"),
@@ -207,7 +208,7 @@ public sealed class LifecycleQuotaTests
         new { op = "branch_database", organization = database.OrganizationId, project = database.ProjectId, database = database.DatabaseId, name };
 
     private static Task<ApiResponse> CommitAsync(HttpClient owner, params object[] ops) => DocumentApi.SendAsync(owner, HttpMethod.Post,
-        "/v1/management/commits", JsonContent.Create(new { id = Guid.NewGuid().ToString(), ops }));
+        "/v1/management/commits", JsonContent.Create(new { id = EntityIds.New().ToString(), ops }));
 
     private static string Managed(TenantContext database) =>
         $"/v1/management/organizations/{database.OrganizationId}/projects/{database.ProjectId}/databases/{database.DatabaseId}";

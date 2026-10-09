@@ -69,14 +69,22 @@ internal sealed partial class SqliteStorageTransaction
             return true;
         }, cancellationToken, mutation: true).AsTask());
 
-    private StoredDocument? ReadUniqueDocument(string collection, string id)
+    private StoredDocument? ReadUniqueDocument(string collection, string id, bool reserveResult = false)
     {
         var command = Command(SqliteStatements.UniqueRawDocument, collection);
         command.Parameters.AddWithValue("$id", id);
         using var reader = command.ExecuteReader();
-        return reader.Read() && !reader.IsDBNull(1)
-            ? new StoredDocument(id, reader.GetInt64(0), reader.GetFieldValue<byte[]>(1), Scope, UniqueConflict: reader.GetBoolean(2))
-            : null;
+        if (!reader.Read() || reader.IsDBNull(1))
+        {
+            return null;
+        }
+
+        if (reserveResult)
+        {
+            ReserveJson(reader.GetInt64(3));
+        }
+
+        return new StoredDocument(id, reader.GetInt64(0), reader.GetFieldValue<byte[]>(1), Scope, UniqueConflict: reader.GetBoolean(2));
     }
 
     // All contenders retain their merged state. Visibility is a deterministic projection of the current keys.

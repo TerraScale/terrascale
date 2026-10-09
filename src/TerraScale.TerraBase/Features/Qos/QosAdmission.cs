@@ -28,7 +28,9 @@ internal sealed class QosAdmission(TimeProvider time, IMeterFactory meters) : IQ
                     foreach (var pair in _lanes.ToArray())
                     {
                         var existing = pair.Value;
-                        if (existing.Active == 0 && time.GetElapsedTime(existing.LastSeen, now) >= TimeSpan.FromMinutes(1))
+                        var existingPolicy = QosPolicy.For(existing.Plan);
+                        var replenished = existing.Tokens + Math.Max(0, time.GetElapsedTime(existing.LastSeen, now).TotalSeconds) * existingPolicy.RequestsPerSecond;
+                        if (existing.Active == 0 && (existingPolicy.RequestsPerSecond == 0 || replenished >= existingPolicy.Burst))
                         {
                             _lanes.Remove(pair.Key);
                         }

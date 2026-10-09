@@ -14,6 +14,8 @@ public sealed class QueryPlanTests
     // the index catalog reads, which scan the small schema table. Repair sorts at most 129 key/metadata rows.
     private static readonly Dictionary<string, string> Expected = new(StringComparer.Ordinal)
     {
+        ["DocumentBytes"] = "SEARCH d USING PRIMARY KEY (collection=? AND id=?) | SEARCH c USING PRIMARY KEY (collection=? AND id=?) LEFT-JOIN",
+        ["StoredDocumentBytes"] = "SCAN collections | CORRELATED SCALAR SUBQUERY 1 | SEARCH d USING PRIMARY KEY (collection=?) | SEARCH c USING PRIMARY KEY (collection=? AND id=?) LEFT-JOIN",
         ["Get"] = "SEARCH documents USING PRIMARY KEY (collection=? AND id=?)",
         ["UniqueRawDocument"] = "SEARCH d USING PRIMARY KEY (collection=? AND id=?) | SEARCH c USING PRIMARY KEY (collection=? AND id=?) LEFT-JOIN",
         ["ReplicationRetainedBody"] = "CO-ROUTINE latest | SEARCH change_log USING INDEX change_log_by_document (collection=? AND generation=? AND id=?) | SCALAR SUBQUERY 1 | SEARCH collections USING PRIMARY KEY (name=?) | SCAN latest | SCALAR SUBQUERY 3 | SEARCH unique_conflicts USING PRIMARY KEY (collection=? AND id=?) | SEARCH d USING PRIMARY KEY (collection=? AND id=?) | CORRELATED SCALAR SUBQUERY 4 | SEARCH changes USING INDEX changes_deleted (collection=? AND id=? AND version>?)",

@@ -7,6 +7,7 @@ using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Fast.Storage;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Qos;
+using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
 
@@ -95,12 +96,12 @@ public sealed class TenantResourceIsolationTests
         {
             for (var i = 0; i < 4096; i++)
             {
-                var tenant = new TenantContext(Guid.NewGuid().ToString(), PlanTier.Hobby);
+                var tenant = new TenantContext(EntityIds.New().ToString(), PlanTier.Hobby);
                 var reservation = budget.TryReserve(MemoryLane.Foreground, 1, tenant);
                 await Assert.That(reservation).IsNotNull();
                 reservations.Add(reservation!);
             }
-            var extra = new TenantContext(Guid.NewGuid().ToString(), PlanTier.Pro);
+            var extra = new TenantContext(EntityIds.New().ToString(), PlanTier.Pro);
             using var refused = budget.TryReserve(MemoryLane.Foreground, 1, extra);
             await Assert.That(refused).IsNull();
             // Zero-byte leases allocate no table slot and remain valid at capacity.
@@ -171,12 +172,12 @@ public sealed class TenantResourceIsolationTests
         {
             using var body = new StringContent($"{{\"name\":\"large\",\"padding\":\"{padding}\"}}", Encoding.UTF8, "application/json");
             using var written = await tenant.Data.PutAsync(
-                tenant.Database("shop", $"/collections/items/documents/{StorageFixture.Id($"b{i}")}"), body);
+                tenant.Database("shop", $"/collections/items/documents/by-key?id={StorageFixture.Id($"b{i}")}"), body);
             written.EnsureSuccessStatusCode();
         }
         for (var i = 0; i < 8; i++)
         {
-            using var warmed = await tenant.Data.GetAsync(tenant.Database("shop", $"/collections/items/documents/{StorageFixture.Id($"b{i}")}"));
+            using var warmed = await tenant.Data.GetAsync(tenant.Database("shop", $"/collections/items/documents/by-key?id={StorageFixture.Id($"b{i}")}"));
             warmed.EnsureSuccessStatusCode();
         }
         var budget = management.Server.Services.GetRequiredService<IMemoryBudget>();
@@ -189,7 +190,7 @@ public sealed class TenantResourceIsolationTests
         using (var changed = commit
             ? await service.PostAsJsonAsync(commits, new
             {
-                id = Guid.NewGuid().ToString(),
+                id = EntityIds.New().ToString(),
                 ops = new[] { new { op = "set_plan", organization = tenant.OrganizationId, plan = "hobby" } },
             })
             : await service.PutAsJsonAsync(planUri, new { plan = "hobby" }))
@@ -200,12 +201,12 @@ public sealed class TenantResourceIsolationTests
         {
             using var renamed = await owner.PostAsJsonAsync(commits, new
             {
-                id = Guid.NewGuid().ToString(),
+                id = EntityIds.New().ToString(),
                 ops = new[] { new { op = "rename_organization", organization = tenant.OrganizationId, name = "Recovered" } },
             });
             await Assert.That(renamed.StatusCode).IsEqualTo(HttpStatusCode.OK);
         }
-        using (var recovered = await tenant.Data.GetAsync(tenant.Database("shop", $"/collections/items/documents/{StorageFixture.Id("b7")}")))
+        using (var recovered = await tenant.Data.GetAsync(tenant.Database("shop", $"/collections/items/documents/by-key?id={StorageFixture.Id("b7")}")))
         {
             recovered.EnsureSuccessStatusCode();
         }
@@ -239,10 +240,10 @@ public sealed class TenantResourceIsolationTests
             await StorageFixture.CreateCollectionAsync(tenant, "shop", "items", deadline.Token);
             using var body = new StringContent($"{{\"name\":\"hot\",\"padding\":\"{padding}\"}}", Encoding.UTF8, "application/json");
             using var written = await tenant.Data.PutAsync(
-                tenant.Database("shop", $"/collections/items/documents/{StorageFixture.Id("hot")}"), body, deadline.Token);
+                tenant.Database("shop", $"/collections/items/documents/by-key?id={StorageFixture.Id("hot")}"), body, deadline.Token);
             written.EnsureSuccessStatusCode();
         }
-        var path = page ? "/collections/items/documents?limit=1" : $"/collections/items/documents/{StorageFixture.Id("hot")}";
+        var path = page ? "/collections/items/documents?limit=1" : $"/collections/items/documents/by-key?id={StorageFixture.Id("hot")}";
         if (warm)
         {
             using var warmed = await hobby.Data.GetAsync(hobby.Database("shop", path), deadline.Token);
@@ -289,11 +290,11 @@ public sealed class TenantResourceIsolationTests
         for (var i = 0; i < 24; i++)
         {
             using var body = new StringContent($"{{\"name\":\"hobby\",\"padding\":\"{padding}\"}}", Encoding.UTF8, "application/json");
-            using var written = await hobby.Data.PutAsync(hobby.Database("shop", $"/collections/items/documents/{StorageFixture.Id($"b{i}")}"), body, deadline.Token);
+            using var written = await hobby.Data.PutAsync(hobby.Database("shop", $"/collections/items/documents/by-key?id={StorageFixture.Id($"b{i}")}"), body, deadline.Token);
             written.EnsureSuccessStatusCode();
         }
         using (var body = new StringContent($"{{\"name\":\"paid\",\"padding\":\"{padding}\"}}", Encoding.UTF8, "application/json"))
-        using (var written = await paid.Data.PutAsync(paid.Database("shop", $"/collections/items/documents/{StorageFixture.Id("hot")}"), body, deadline.Token))
+        using (var written = await paid.Data.PutAsync(paid.Database("shop", $"/collections/items/documents/by-key?id={StorageFixture.Id("hot")}"), body, deadline.Token))
         {
             written.EnsureSuccessStatusCode();
         }
@@ -315,7 +316,7 @@ public sealed class TenantResourceIsolationTests
         {
             using var response = await tenant.Data.GetAsync(tenant.Database("shop", list
                 ? "/collections/items/documents?limit=1"
-                : $"/collections/items/documents/{StorageFixture.Id(id)}"), deadline.Token);
+                : $"/collections/items/documents/by-key?id={StorageFixture.Id(id)}"), deadline.Token);
             response.EnsureSuccessStatusCode();
             var body = await response.Content.ReadFromJsonAsync<JsonElement>(deadline.Token);
             return (list ? body.GetProperty("items")[0] : body).GetProperty("document").GetProperty("name").GetString()!;

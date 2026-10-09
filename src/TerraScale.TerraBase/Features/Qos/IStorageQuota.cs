@@ -34,6 +34,9 @@ public sealed class StorageQuotaLease : IDisposable
         _committed = committed;
     }
 
+    /// <summary>Whether this write needs commercial byte accounting.</summary>
+    public bool RequiresAccounting => _limit != long.MaxValue;
+
     /// <summary>Refuses net growth above the limit; reducing and unchanged writes remain available after a downgrade.</summary>
     public async ValueTask<Failure?> CheckAsync(long delta, CancellationToken cancellationToken)
     {

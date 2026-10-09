@@ -23,7 +23,7 @@ namespace TerraBase.Features.Management;
 public sealed record CommitRequest(string? Id, IReadOnlyList<ManagementOpRequest>? Ops);
 
 /// <summary><c>POST /v1/management/commits</c>: applies Management and dashboard document operations atomically.</summary>
-public sealed class CommitEndpoint(IManagementCommits commits, TimeProvider time) : EndpointWithoutRequest<IResult>
+public sealed class CommitEndpoint(IManagementCommits commits, TimeProvider time, IManagementService management, IQosAdmission qos, IDocumentCacheQuota cacheQuota) : EndpointWithoutRequest<IResult>
 {
     /// <summary>Set on a response answered from the record of an earlier, identical commit.</summary>
     public const string ReplayedHeader = "TerraBase-Commit-Replayed";

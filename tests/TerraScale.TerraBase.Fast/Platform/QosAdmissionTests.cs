@@ -10,6 +10,7 @@ using TerraBase.Fast.Storage;
 using TerraBase.Features.Documents;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Qos;
+using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
 
@@ -152,7 +153,7 @@ public sealed class QosAdmissionTests
             using var request = new HttpRequestMessage(HttpMethod.Post, new Uri("/v1/management/commits", UriKind.Relative));
             request.Content = JsonContent.Create(new
             {
-                id = Guid.NewGuid().ToString(),
+                id = EntityIds.New().ToString(),
                 ops = new[] { new { op = "rename_organization", organization, name = "Still active" } },
             });
             if (hold)
@@ -208,7 +209,7 @@ public sealed class QosAdmissionTests
         using var hobby = await api.CreateTenantAsync("documents:read", "documents:write");
         var database = await hobby.ContextAsync(api.Server, "app");
         await StorageFixture.CreateCollectionAsync(hobby, "app", "items");
-        var uri = hobby.Database("app", $"/collections/items/documents/{StorageFixture.Id("chunked")}");
+        var uri = hobby.Database("app", $"/collections/items/documents/by-key?id={StorageFixture.Id("chunked")}");
         using (var refused = await hobby.Data.PutAsJsonAsync(uri, new { padding = new Faker().Random.String2(100_000, "abcdef") }))
         {
             await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.TooManyRequests);

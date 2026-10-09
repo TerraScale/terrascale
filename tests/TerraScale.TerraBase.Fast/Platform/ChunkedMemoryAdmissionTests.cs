@@ -25,7 +25,7 @@ public sealed class ChunkedMemoryAdmissionTests
         using var tenant = await api.CreateTenantAsync("documents:read", "documents:write");
         var database = await tenant.ContextAsync(api.Server, "app", deadline.Token);
         await StorageFixture.CreateCollectionAsync(tenant, "app", "items", deadline.Token);
-        var uri = tenant.Database("app", $"/collections/items/documents/{StorageFixture.Id("fragmented")}");
+        var uri = tenant.Database("app", $"/collections/items/documents/by-key?id={StorageFixture.Id("fragmented")}");
         var padding = new Faker().Random.String2(BodyBytes - "{\"padding\":\"\"}".Length, "abcdef");
         var json = Encoding.UTF8.GetBytes($"{{\"padding\":\"{padding}\"}}");
         await Assert.That(json.Length).IsEqualTo(BodyBytes);

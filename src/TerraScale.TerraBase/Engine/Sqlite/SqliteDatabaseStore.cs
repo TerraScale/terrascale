@@ -4,6 +4,7 @@ using System.Runtime.CompilerServices;
 using Microsoft.Data.Sqlite;
 using TerraBase.Configuration;
 using TerraBase.Features.Memory;
+using TerraBase.Features.Qos;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
 

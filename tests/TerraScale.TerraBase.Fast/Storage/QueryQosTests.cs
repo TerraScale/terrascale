@@ -23,7 +23,7 @@ public sealed class QueryQosTests
         // Seed the isolated database directly; every observed behavior runs over the real HTTPS listener.
         await ManagementApi.ExecuteStoredAsync(api.Server.DataDirectory, database, """
             WITH RECURSIVE rows(n) AS (VALUES(1) UNION ALL SELECT n + 1 FROM rows WHERE n < 10001)
-            INSERT INTO documents SELECT 'items', printf('00000000-0000-7000-8000-%012x', n), 1, '{"n":1}' FROM rows;
+            INSERT INTO documents SELECT 'items', printf('00000000000000000000%06d', n), 1, '{"n":1}' FROM rows;
             """);
         using var hobby = await QueryAsync();
         await ErrorAssert.ErrorAsync(Task.FromResult(hobby), HttpStatusCode.BadRequest, "invalid_query", "query too expensive");
@@ -40,7 +40,7 @@ public sealed class QueryQosTests
         // The first over-budget candidate has invalid legacy JSON. The guard must reject it before
         // either SQLite JSON predicates or managed materialization reads its body.
         await ManagementApi.ExecuteStoredAsync(api.Server.DataDirectory, database,
-            "UPDATE documents SET body = 'invalid-json' WHERE collection = 'items' AND id = printf('00000000-0000-7000-8000-%012x', 10001);");
+            "UPDATE documents SET body = 'invalid-json' WHERE collection = 'items' AND id = printf('00000000000000000000%06d', 10001);");
         // Change the predicate to avoid a previously cached Pro result.
         using var again = await QueryAsync("absent");
         await ErrorAssert.ErrorAsync(Task.FromResult(again), HttpStatusCode.BadRequest, "invalid_query", "query too expensive");
@@ -84,7 +84,7 @@ public sealed class QueryQosTests
         await ManagementApi.CreateCollectionAsync(data, database, "items");
         await ManagementApi.ExecuteStoredAsync(api.Server.DataDirectory, database, """
             WITH RECURSIVE rows(n) AS (VALUES(1) UNION ALL SELECT n + 1 FROM rows WHERE n < 17)
-            INSERT INTO documents SELECT 'items', printf('00000000-0000-7000-8000-%012x', n), 1, $body FROM rows;
+            INSERT INTO documents SELECT 'items', printf('00000000000000000000%06d', n), 1, $body FROM rows;
             """, ("$body", "{\"pad\":\"" + new string('a', 1024 * 1024 - 10) + "\"}"));
         var query = new { filter = new { exists = "/missing" }, limit = 1 };
         using var hobby = await data.PostAsJsonAsync(ManagementApi.Uri($"{database.Data}/collections/items/query"), query);
@@ -106,7 +106,7 @@ public sealed class QueryQosTests
         await ManagementApi.CreateCollectionAsync(data, database, "items");
         await ManagementApi.ExecuteStoredAsync(api.Server.DataDirectory, database, """
             WITH RECURSIVE rows(n) AS (VALUES(1) UNION ALL SELECT n + 1 FROM rows WHERE n < 10001)
-            INSERT INTO documents SELECT 'items', printf('00000000-0000-7000-8000-%012x', n), 1, '{"n":1}' FROM rows;
+            INSERT INTO documents SELECT 'items', printf('00000000000000000000%06d', n), 1, '{"n":1}' FROM rows;
             """);
         using var counted = await data.PostAsJsonAsync(ManagementApi.Uri($"{database.Data}/collections/items/query"), new { limit = 1, count = true });
         await ErrorAssert.ErrorAsync(Task.FromResult(counted), HttpStatusCode.BadRequest, "invalid_query", "query too expensive");

@@ -93,6 +93,7 @@ internal sealed class SqliteWriteLane(string database, SqliteIoPool io) : Sqlite
             Exception? failure = null;
             try
             {
+                using var scope = io.RestoreContext(context);
                 value = call();
             }
             catch (Exception error)

@@ -5,6 +5,7 @@ using System.Text.Json;
 using Microsoft.Data.Sqlite;
 using SQLitePCL;
 using TerraBase.Features.Memory;
+using TerraBase.Features.Qos;
 using TerraBase.Primitives;
 
 namespace TerraBase.Engine.Sqlite;
@@ -101,7 +102,7 @@ internal sealed partial class SqliteStorageTransaction(
     {
         if (Shaped)
         {
-            return ReadUniqueDocument(collection, id);
+            return ReadUniqueDocument(collection, id, reserveResult: true);
         }
 
         var command = Command(SqliteStatements.Get, collection);
@@ -1751,8 +1752,8 @@ internal sealed partial class SqliteStorageTransaction(
                 cancellationToken.ThrowIfCancellationRequested();
                 RunPendingSavepoint();
                 // Interrupting a mutation rolls back SQLite's entire transaction, including other batch savepoints.
-                // Writes cancel between statements; read-only transactions can interrupt their native calls.
-                using var interrupt = write ? default : cancellationToken.Register(() => raw.sqlite3_interrupt(session.Connection.Handle));
+                // Standalone transactions can interrupt native calls; grouped writes cancel between statements.
+                using var interrupt = write && !ownsAdmission ? default : cancellationToken.Register(() => raw.sqlite3_interrupt(session.Connection.Handle));
                 var result = call();
                 if (mutation)
                 {

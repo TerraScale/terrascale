@@ -8,9 +8,10 @@ using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
 using TerraBase.Fast.Storage;
 using TerraBase.Features.Management;
-using TerraBase.Features.Replication;
 using TerraBase.Features.Replication.V1;
+using TerraBase.Features.Replication;
 using TerraBase.Primitives;
+using TerraBase.Tenancy;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Replication;

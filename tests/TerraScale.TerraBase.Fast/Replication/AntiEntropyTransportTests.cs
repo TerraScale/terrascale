@@ -9,9 +9,11 @@ using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
 using TerraBase.Fast.Documents;
 using TerraBase.Features.Memory;
+using TerraBase.Features.Qos;
 using TerraBase.Features.Replication;
 using TerraBase.Features.Replication.Alpha;
 using TerraBase.Primitives;
+using TerraBase.Tenancy;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Replication;
@@ -172,9 +174,11 @@ public sealed class AntiEntropyTransportTests
         public IEnumerable<ObservedReservation> Reservations => _reservations.Take(Volatile.Read(ref _count)).OfType<ObservedReservation>();
         public int Active => Reservations.Count(reservation => reservation.Disposals == 0);
 
-        public IMemoryReservation? TryReserve(MemoryLane lane, long bytes)
+        public IMemoryReservation? TryReserve(MemoryLane lane, long bytes) => TryReserve(lane, bytes, QosContext.Current);
+
+        public IMemoryReservation? TryReserve(MemoryLane lane, long bytes, TenantContext? tenant)
         {
-            var held = inner.TryReserve(lane, bytes);
+            var held = inner.TryReserve(lane, bytes, tenant);
             if (held is null || lane != MemoryLane.Bulk)
             {
                 return held;

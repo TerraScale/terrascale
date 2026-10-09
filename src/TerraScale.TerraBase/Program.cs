@@ -121,6 +121,7 @@ try
     app.UseRouting();
     app.UseTerraBaseListeners();
     app.UseTerraBaseAntiEntropyResponses();
+    app.UseTerraBaseQosMemory();
     app.UseTerraBaseQueryShapeAdmission();
     app.UseAuthentication();
     app.UseTerraBaseProjectCheck();

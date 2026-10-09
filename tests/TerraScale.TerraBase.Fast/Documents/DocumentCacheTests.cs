@@ -1,11 +1,12 @@
 using System.Diagnostics.Metrics;
 using System.Net;
-using System.Text;
 using System.Text.Json;
+using System.Text;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
-using TerraBase.Engine;
+using TerraBase.Configuration;
 using TerraBase.Engine.Sqlite;
+using TerraBase.Engine;
 using TerraBase.Fast.Storage;
 using TerraBase.Features.Documents;
 using TerraBase.Features.Management.Queries;
@@ -593,6 +594,7 @@ public sealed class DocumentCacheTests
     {
         const long Budget = 4 * 1024 * 1024;
         const int CacheBytes = (int)(Budget / 4);
+        ObservedMemoryBudget? observed = null;
         // Periodic catalog writes can share an invalidation stripe with the cached entry.
         var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
         await using var management = await ManagementApi.StartAsync(settings =>
@@ -600,12 +602,11 @@ public sealed class DocumentCacheTests
             settings["memory-budget"] = Budget.ToString(System.Globalization.CultureInfo.InvariantCulture);
         }, services =>
         {
-            // Observe admission while retaining the real budget's accounting and limits.
-            var registration = services.Single(service => service.ServiceType == typeof(IMemoryBudget));
-            services.Remove(registration);
-            services.AddSingleton<IMemoryBudget>(provider => new ObservedMemoryBudget(
-                (IMemoryBudget)registration.ImplementationFactory!(provider), CacheBytes));
-        }, time: clock);
+            services.AddSingleton<DocumentCache>(provider => new DocumentCache(
+                provider.GetRequiredService<TerraBaseOptions>(),
+                observed = new ObservedMemoryBudget(provider.GetRequiredService<IMemoryBudget>(), CacheBytes),
+                provider.GetRequiredService<IWriteStamps>(), provider.GetRequiredService<IMeterFactory>()));
+        }, time: clock, managementCredential: true);
         var server = management.Server;
         using var tenant = await CreateTenantAsync(management, "oversized");
         using (var service = management.Service(tenant.User))

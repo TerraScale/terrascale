@@ -20,7 +20,7 @@ public sealed class SqliteQosEnterpriseTests
         await ManagementApi.CreateCollectionAsync(data, database, "items");
         await ManagementApi.ExecuteStoredAsync(api.Server.DataDirectory, database, """
             WITH RECURSIVE rows(n) AS (VALUES(1) UNION ALL SELECT n + 1 FROM rows WHERE n < 100001)
-            INSERT INTO documents SELECT 'items', printf('00000000-0000-7000-8000-%012x', n), 1, '{"n":1}' FROM rows;
+            INSERT INTO documents SELECT 'items', printf('00000000000000000000%06d', n), 1, '{"n":1}' FROM rows;
             """);
         var planPath = ManagementApi.Uri($"/v1/management/organizations/{database.Organization}/plan");
         using var upgraded = await plans.PutAsJsonAsync(planPath, new { plan = "pro" });
@@ -49,7 +49,7 @@ public sealed class SqliteQosEnterpriseTests
         await ManagementApi.CreateCollectionAsync(data, database, "items");
         await ManagementApi.ExecuteStoredAsync(api.Server.DataDirectory, database, """
             WITH RECURSIVE rows(n) AS (VALUES(1) UNION ALL SELECT n + 1 FROM rows WHERE n < 10000)
-            INSERT INTO documents SELECT 'items', printf('00000000-0000-7000-8000-%012x', n), 1, '{"n":1}' FROM rows;
+            INSERT INTO documents SELECT 'items', printf('00000000000000000000%06d', n), 1, '{"n":1}' FROM rows;
             """);
         var planPath = ManagementApi.Uri($"/v1/management/organizations/{database.Organization}/plan");
         using var upgraded = await plans.PutAsJsonAsync(planPath, new { plan = "pro" });

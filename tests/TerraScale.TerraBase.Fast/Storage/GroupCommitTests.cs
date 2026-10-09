@@ -33,7 +33,7 @@ public sealed class GroupCommitTests
             services.AddHttpContextAccessor();
             hook.InstallQuota(services);
         }, deadline.Token);
-        await StorageFixture.SetPlanAsync(api.Management, api.Tenant, PlanTier.Enterprise);
+        await api.Management.SetPlanAsync(api.Tenant.User, api.Tenant.OrganizationId, "enterprise");
         var store = await StoreAsync(api);
         var engine = api.Server.Services.GetRequiredService<SqliteStorageEngine>();
         var context = api.Server.Services.GetRequiredService<IHttpContextAccessor>();
@@ -78,7 +78,7 @@ public sealed class GroupCommitTests
         {
             Task<HttpResponseMessage> Put(string id, CancellationToken token)
             {
-                return api.Client.PutAsJsonAsync(new Uri($"{api.Documents}/{id}", UriKind.Relative), new { n = 1 }, token);
+                return api.Client.PutAsJsonAsync(new Uri($"{api.Documents}/by-key?id={id}", UriKind.Relative), new { n = 1 }, token);
             }
 
             var primer = Put(DocumentApi.NewId(), deadline.Token);
@@ -141,7 +141,7 @@ public sealed class GroupCommitTests
     public async Task Writes_queued_together_commit_in_one_transaction_and_failures_roll_back_alone()
     {
         await using var api = await DocumentApi.StartAsync();
-        await StorageFixture.SetPlanAsync(api.Management, api.Tenant, PlanTier.Enterprise);
+        await api.Management.SetPlanAsync(api.Tenant.User, api.Tenant.OrganizationId, "enterprise");
         var existing = DocumentApi.NewId();
         var original = await api.PutAsync(existing, new { n = 0 });
         var store = await StoreAsync(api);
@@ -202,7 +202,7 @@ public sealed class GroupCommitTests
             services.AddKeyedSingleton<TimeProvider>(EngineExtensions.QueryDeadlineClock, clock);
             services.AddSingleton<ILoggerProvider>(logs);
         });
-        await StorageFixture.SetPlanAsync(api.Management, api.Tenant, PlanTier.Enterprise);
+        await api.Management.SetPlanAsync(api.Tenant.User, api.Tenant.OrganizationId, "enterprise");
         var store = await StoreAsync(api);
 
         // A write transaction holds the writer, idle between its calls, while a batch waits past the warning threshold.
@@ -228,7 +228,7 @@ public sealed class GroupCommitTests
     public async Task A_rolled_back_write_restores_what_an_earlier_write_of_its_batch_captured()
     {
         await using var api = await DocumentApi.StartAsync();
-        await StorageFixture.SetPlanAsync(api.Management, api.Tenant, PlanTier.Enterprise);
+        await api.Management.SetPlanAsync(api.Tenant.User, api.Tenant.OrganizationId, "enterprise");
         var existing = DocumentApi.NewId();
         await api.PutAsync(existing, new { n = 0 });
         var store = await StoreAsync(api);
@@ -285,7 +285,7 @@ public sealed class GroupCommitTests
     public async Task A_storage_thread_busy_with_a_long_read_does_not_hold_up_writes()
     {
         await using var api = await DocumentApi.StartAsync(settings => settings["storage-threads"] = "1");
-        await StorageFixture.SetPlanAsync(api.Management, api.Tenant, PlanTier.Enterprise);
+        await api.Management.SetPlanAsync(api.Tenant.User, api.Tenant.OrganizationId, "enterprise");
         await Assert.That((await api.PutAsync(DocumentApi.NewId(), new { n = 0 })).Status).IsEqualTo(HttpStatusCode.Created);
         var engine = api.Server.Services.GetRequiredService<SqliteStorageEngine>();
 

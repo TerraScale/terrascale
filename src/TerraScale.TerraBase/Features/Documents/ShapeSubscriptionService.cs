@@ -161,7 +161,7 @@ internal sealed class ShapeSubscriptionService(
             var body = JsonSerializer.SerializeToUtf8Bytes(new ErrorBody(detail), TerraBaseJsonContext.Default.ErrorBody);
             await EventAsync(context, "error", body, null, cancellationToken).ConfigureAwait(false);
         }
-        catch (Exception error) when (error is IOException || (error is OperationCanceledException && cancellationToken.IsCancellationRequested))
+        catch (Exception error) when (error is IOException or QosMemoryException || (error is OperationCanceledException && cancellationToken.IsCancellationRequested))
         {
             context.Abort();
         }

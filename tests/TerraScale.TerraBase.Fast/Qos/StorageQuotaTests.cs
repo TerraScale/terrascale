@@ -43,7 +43,7 @@ public sealed class StorageQuotaTests
         await IsQuotaAsync(await api.PutAsync(DocumentApi.NewId(), new { n = 2 }));
         var foreground = await api.SendAsync(HttpMethod.Post, api.Query, new { limit = 1 });
         await Assert.That((foreground.Status, foreground.Code)).IsEqualTo((HttpStatusCode.BadRequest, "invalid_query"));
-        (await api.SendAsync(HttpMethod.Delete, $"{api.Collections}/other/documents/{other}")).Status.ShouldBe(HttpStatusCode.OK);
+        (await api.SendAsync(HttpMethod.Delete, $"{api.Collections}/other/documents/by-key?id={other}")).Status.ShouldBe(HttpStatusCode.OK);
         await using (var transaction = await store.BeginTransactionAsync(write: true, CancellationToken.None))
         {
             await transaction.PutAsync("items", original, """{"n":3}"""u8.ToArray(), CancellationToken.None);
@@ -127,14 +127,14 @@ public sealed class StorageQuotaTests
         var project = await api.Management.CreateProjectAsync(api.Tenant.OrganizationId, "Second", owner);
         var other = $"/v1/projects/{project}/databases/other";
         await CreateCollectionAsync(api, other);
-        await IsQuotaAsync(await api.SendAsync(HttpMethod.Put, $"{other}/collections/items/documents/{DocumentApi.NewId()}", new { n = 1 }));
+        await IsQuotaAsync(await api.SendAsync(HttpMethod.Put, $"{other}/collections/items/documents/by-key?id={DocumentApi.NewId()}", new { n = 1 }));
 
         using var unrelated = await api.Management.CreateTenantAsync("documents:read", "documents:write");
         var separate = $"/v1/projects/{unrelated.ProjectId}/databases/other";
         (await DocumentApi.SendAsync(unrelated.Data, HttpMethod.Put, separate)).Status.ShouldBe(HttpStatusCode.Created);
         (await DocumentApi.SendAsync(unrelated.Data, HttpMethod.Post, separate + "/collections", JsonContent.Create(new { name = "items" })))
             .Status.ShouldBe(HttpStatusCode.Created);
-        var allowed = await DocumentApi.SendAsync(unrelated.Data, HttpMethod.Put, separate + "/collections/items/documents/" + DocumentApi.NewId(), JsonContent.Create(full));
+        var allowed = await DocumentApi.SendAsync(unrelated.Data, HttpMethod.Put, separate + "/collections/items/documents/by-key?id=" + DocumentApi.NewId(), JsonContent.Create(full));
         await Assert.That(allowed.Status).IsEqualTo(HttpStatusCode.Created);
     }
 
@@ -145,7 +145,7 @@ public sealed class StorageQuotaTests
         await CreateCollectionAsync(api, api.DatabasePath("second"));
         var firstId = DocumentApi.NewId();
         var secondId = DocumentApi.NewId();
-        var second = api.DatabasePath("second") + "/collections/items/documents/" + secondId;
+        var second = api.DatabasePath("second") + "/collections/items/documents/by-key?id=" + secondId;
         var results = await Task.WhenAll(api.PutAsync(firstId, Data(10)), api.SendAsync(HttpMethod.Put, second, Data(10)));
         await Assert.That(results.Count(result => result.Status == HttpStatusCode.Created)).IsEqualTo(1);
         await IsQuotaAsync(results.Single(result => result.Status != HttpStatusCode.Created));
