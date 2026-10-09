@@ -13,7 +13,6 @@ using TerraScale.Auth.Configuration;
 using TerraScale.Auth.Features.Oidc;
 using TerraScale.Auth.Features.SigningKeys;
 using TerraScale.Auth.Security;
-using TerraScale.Auth.Store;
 using TerraScale.Auth.Tests;
 
 namespace TerraScale.Auth.Fast.Security;

@@ -7,9 +7,7 @@ using System.Text.Json.Nodes;
 using Microsoft.Extensions.DependencyInjection;
 using TerraScale.Auth.Features.Oidc;
 using TerraScale.Auth.Features.SigningKeys;
-using TerraScale.Auth.Store;
 using TerraScale.Auth.Tests;
-using TerraScale.DotNet.TerraBase;
 using TerraScale.DotNet.Testing;
 
 namespace TerraScale.Auth.Fast.Store;

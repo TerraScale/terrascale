@@ -590,16 +590,19 @@ both assets into one directory and verify with
 `sha256sum -c ts-auth-linux-arm64.sha256`; the checksum detects a corrupt or
 mismatched download, it is not a signature.
 
-Then `deploy` (TS-610, `scripts/ci/deploy.sh`) hands that release to
-ts-orchestrator while the repository variable `TS_AUTO_DEPLOY_CELLS` names the
-cells, canary first. `ts-orch release service-deploy` (the ts-orchestrator CI
-build pinned by `TS_ORCH_RELEASE` and its `TS_ORCH_SHA256`) signs a release claim
+Then `deploy` (`scripts/ci/deploy.sh`) automatically hands every green main
+release to ts-orchestrator for GRU and SFO. Deployment has no opt-in switch;
+the script targets both regions and the `canary` environment currently signed
+into their controller configuration. `ts-orch release service-deploy` (the
+ts-orchestrator CI build pinned by `TS_ORCH_RELEASE` and its `TS_ORCH_SHA256`) signs a release claim
 with the scoped release key it reads from OCI Vault, publishes it with the
 binary in each region's head bucket and waits until that region's
 orchestrator reports the replicas serving it; the orchestrator gates the
 rollout on `/healthz` and `/readyz` and rolls a release that never serves
-back, which fails the job before later regions see it. No operator steps
-remain. See ts-orchestrator `docs/continuous-delivery.md`, "Automatic service
+back, which fails the job before later regions see it. The script logs total
+deployment time and preserves the orchestrator's failure status. TS-768 owns
+the follow-up shared region discovery and independent regional rollouts.
+See ts-orchestrator `docs/continuous-delivery.md`, "Automatic service
 releases". `scripts/ci/check-deploy.sh` (in `fast`) runs the script against a
 stub API and ts-orch.
 
