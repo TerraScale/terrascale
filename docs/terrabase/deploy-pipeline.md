@@ -22,9 +22,11 @@ The qualified helper discovers every region from orch's signed-spec topology
 published at Atlas, including regions whose routing health is down or unknown.
 It reads each region's fresh admitted environment, then signs, uploads, publishes
 and waits independently. A failed region cannot block the others. All regions
-share a parallel 30-minute completion wait and five-second polling. The job
-budget is 90 minutes: that wait, three downloads bounded to 15 minutes each, and
-15 minutes for setup/cleanup. This budget adds no delay to healthy rollouts.
+use the helper's completion deadline with five-second polling and no timing
+override. The retained helper defaults to 30 minutes per region; a TS-783 helper
+uses one fixed 20-minute budget across concurrent regions. The existing
+90-minute job budget remains a conservative limit for rollout, three downloads
+bounded to 15 minutes each, and setup/cleanup. It adds no delay to healthy rollouts.
 The retained helper tag and checksum must be qualified together before this
 pipeline is activated. Each region retains its replica
 ordering, load-balancer drain, readiness/canary gates and automatic rollback

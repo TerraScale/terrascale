@@ -35,8 +35,10 @@ Forgejo Actions on the `terrascale-builder` runner (ts-builder image, .NET SDK 1
   ts-orchestrator CI build pinned in the workflow by `TS_ORCH_RELEASE` and its `TS_ORCH_SHA256`) signs a release claim with the scoped release key it
   reads from OCI Vault. Serving regions come from orch's published topology;
   each region's admitted environment comes from its fresh controller report.
-  Regions sign, publish and wait in parallel, with a 30-minute regional deadline
-  and five-second polling. The orchestrator gates each rollout on member health
+  Regions sign, publish and wait in parallel, polling every five seconds with
+  the pinned helper's deadline and no caller timing override. The retained helper
+  defaults to 30 minutes per region; TS-783 helpers use a fixed 20-minute budget
+  across regions. The orchestrator gates each rollout on member health
   and rolls a release that never serves back. Every region finishes independently;
   a failure in any region fails the job after the others finish. No repository
   region list, fixed environment or opt-in switch remains. The job's
