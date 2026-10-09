@@ -8,7 +8,6 @@ using TerraBase.Engine;
 using TerraBase.Engine.Sqlite;
 using TerraBase.Fast.Documents;
 using TerraBase.Fast.Management;
-using TerraBase.Tenancy;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Storage;
