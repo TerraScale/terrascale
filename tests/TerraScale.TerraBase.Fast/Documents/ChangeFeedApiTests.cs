@@ -180,7 +180,7 @@ public sealed class ChangeFeedApiTests
         await Assert.That(HasMore(start)).IsFalse();
         (await api.SendAsync(HttpMethod.Post, api.Collections, new { name = "other" })).Status.ShouldBe(HttpStatusCode.Created);
         var otherDocuments = $"{api.Collections}/other/documents";
-        (await api.SendAsync(HttpMethod.Put, $"{otherDocuments}/{DocumentApi.NewId()}", new { name = new Faker().Name.FirstName() }))
+        (await api.SendAsync(HttpMethod.Put, $"{otherDocuments}/by-key?id={DocumentApi.NewId()}", new { name = new Faker().Name.FirstName() }))
             .Status.ShouldBe(HttpStatusCode.Created);
         var empty = await ReadAsync(api, feed, Token(start));
         await Assert.That(Changes(empty)).IsEmpty();
@@ -190,7 +190,7 @@ public sealed class ChangeFeedApiTests
         var id = DocumentApi.NewId();
         (await api.PutAsync(id, new { name = new Faker().Name.FirstName() })).Status.ShouldBe(HttpStatusCode.Created);
         var completed = await ReadAsync(api, feed, Token(empty));
-        (await api.SendAsync(HttpMethod.Put, $"{otherDocuments}/{DocumentApi.NewId()}", new { name = new Faker().Name.FirstName() }))
+        (await api.SendAsync(HttpMethod.Put, $"{otherDocuments}/by-key?id={DocumentApi.NewId()}", new { name = new Faker().Name.FirstName() }))
             .Status.ShouldBe(HttpStatusCode.Created);
         var atHead = await ReadAsync(api, feed, Token(empty), limit: 1);
         await Assert.That(Changes(atHead).Length).IsEqualTo(1);
