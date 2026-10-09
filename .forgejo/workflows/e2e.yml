@@ -73,10 +73,13 @@ jobs:
   # still serial inside, so together the shards run make test-slow's browser
   # half: every test runs in exactly one shard.
   browser:
+    # Keep race builds and real-server unit tests out of Chromium's CPU budget.
+    needs: [lint, unit]
     runs-on: terrascale-builder
     timeout-minutes: 20
     strategy:
       fail-fast: false
+      max-parallel: 2
       matrix:
         shard: [1, 2, 3, 4]
     steps:
