@@ -156,10 +156,40 @@ database tooling (backups, index recommendations, schema, project usage, SQL che
 invitation lookup and general Management commits. Not served:
 query `explain`, `Idempotency-Key` and the `/v1/dashboard` control plane.
 
+### Replication and analytics (TS-762)
+
+`Analytics` and `Replication` read TerraBase's unversioned project routes using
+a ts-auth **project access token**. Project and database IDs are plain ULIDs.
+The wire shape is provisional until TerraBase's TS-762 OpenAPI lands; see
+[the contract](contracts/replication-analytics.md). Do not merge the SDK PR
+before the TerraBase PR has merged and this contract has been reconciled.
+
+```go
+m, err := tb.NewManagement(tb.Config{BaseURL: origin})
+u := m.WithToken(projectAccessToken)
+opts := tb.MetricsOptions{Range: tb.Range24Hours, DatabaseID: databaseID, Region: "gru"}
+analytics, err := u.Analytics(ctx, projectID, opts)
+replication, err := u.Replication(ctx, projectID, opts)
+// Fetch the next analytics page with the same filters.
+opts.After = analytics.Next // empty means the last page
+```
+
+Each call returns one page; pass `Next` as `MetricsOptions.After` when non-empty.
+TerraBase chooses time buckets for `1h`, `24h`, `7d`, or `30d`. Analytics includes
+requests and operations by type, errors, p50/p95/p99 latency, storage, client
+bandwidth and directed replication bandwidth. Replication reports period ops
+and bytes by region pair, lag, divergence, convergence time, last applied and
+status per database and region. `replication_bytes` is a separate meter from
+client bandwidth; nullable observations distinguish missing data from zero.
+The methods share the client's context cancellation, response bounds, API
+errors and safe-read retries.
+
 ### Tests
 
-Tests of the TerraBase client run against the real TerraBase release, never a
-fake server. The importable `terrascale.tech/sdk/terrabasetest` package is the
+Existing TerraBase integration tests run against the real TerraBase release.
+TS-762's `v1/metrics_test.go` uses `httptest` for the provisional replication and
+analytics contract while the server endpoints are being added in parallel.
+The importable `terrascale.tech/sdk/terrabasetest` package is the
 shared harness for SDK and downstream tests: it pins the release
 by version and SHA-256, downloads it once with `TERRABASE_TOKEN` (read access
 to TerraScale/terrabase) into the user cache directory (or `TERRABASE_CACHE`),
@@ -173,7 +203,7 @@ TerraBase assigns both listener ports. Startup is bounded to
 TERRABASE_TOKEN=… TERRABASE_REQUIRE=1 nice -n 19 go test ./v1/ ./terrabasetest/
 ```
 
-`v1/integration_test.go` exercises every SDK call against it. Its recording
+`v1/integration_test.go` exercises the pinned release's SDK calls. Its recording
 transport checks the real traffic: each request is a route of
 `v1/testdata/openapi.json` (the executable's own `/openapi/v1.json` on the
 client listener; `TERRABASE_REPIN=1` rewrites it) or an admin-listener route,
