@@ -3,6 +3,7 @@ package usage
 import (
 	"fmt"
 	"net/url"
+	"strconv"
 	"strings"
 
 	"terrascale.tech/dashboard/internal/core"
@@ -539,6 +540,7 @@ templ spendingControlsTab(data pageData, csrfToken string) {
 					@spendingPrice("organization-spend-cap", "spendCap", data.OrganizationCap)
 				</div>
 				if data.InternalBill == nil {
+					<input type="hidden" name="initial_paidExcess" value={ strconv.FormatBool(data.PaidExcess) }/>
 					<label class="ts-spending-excess" for="paid-excess">
 						<span class="ts-stack-sm"><strong>Allow usage beyond included plan resources</strong><span class="ts-hint" id="paid-excess-hint">Additional usage is billed according to your plan.</span></span>
 						<input class="ts-switch" id="paid-excess" type="checkbox" role="switch" name="paidExcess" value="true" checked?={ data.PaidExcess } aria-describedby="paid-excess-hint"/>
@@ -615,6 +617,7 @@ templ spendingLimitFields(kind, prefix, id, price string, operations core.Operat
 
 templ spendingPrice(id, name, value string) {
 	{{ field := ui.FieldProps{ID: id, Label: "Price limit (USD)", Hint: "USD per month"} }}
+	<input type="hidden" name={ "initial_" + name } value={ value }/>
 	@ui.Field(field) {
 		<div class="ts-spending-price">
 			<span aria-hidden="true">$</span>
@@ -625,6 +628,7 @@ templ spendingPrice(id, name, value string) {
 
 templ spendingOperation(id, name, label, hint string, value int64) {
 	{{ field := ui.FieldProps{ID: id, Label: label, Hint: hint} }}
+	<input type="hidden" name={ "initial_" + name } value={ operationValue(value) }/>
 	@ui.Field(field) {
 		<input class="ts-input" id={ id } name={ name } inputmode="numeric" pattern="\d+" value={ operationValue(value) } placeholder="No limit" { field.ControlAttrs()... }/>
 	}

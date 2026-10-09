@@ -385,28 +385,31 @@ func spendingHandler(deps core.Deps, service Service) http.HandlerFunc {
 			return
 		}
 		var controls spendingControls
-		organizationCap, hasOrganizationCap, valid := formCap(r.Form, "spendCap")
+		organizationCap, hasOrganizationCap, valid := changedFormCap(r.Form, "spendCap")
 		if !valid {
 			redirect(w, r, "invalid")
 			return
 		}
 		if hasOrganizationCap {
-			paidExcess := r.FormValue("paidExcess") == "true" || r.FormValue("paidExcess") == "on"
-			controls.OrganizationCapCents, controls.PaidExcess = &organizationCap, &paidExcess
+			controls.OrganizationCapCents = &organizationCap
 		}
-		if controls.ProjectCaps, valid = capsFromForm(r.Form, "projCap_"); !valid {
+		if controls.PaidExcess, valid = changedPaidExcess(r.Form); !valid {
 			redirect(w, r, "invalid")
 			return
 		}
-		if controls.DatabaseCaps, valid = capsFromForm(r.Form, "dbCap_"); !valid {
+		if controls.ProjectCaps, valid = changedCapsFromForm(r.Form, "projCap_"); !valid {
 			redirect(w, r, "invalid")
 			return
 		}
-		if controls.ProjectOperations, valid = operationsFromForm(r.Form, "proj"); !valid {
+		if controls.DatabaseCaps, valid = changedCapsFromForm(r.Form, "dbCap_"); !valid {
 			redirect(w, r, "invalid")
 			return
 		}
-		if controls.DatabaseOperations, valid = operationsFromForm(r.Form, "db"); !valid {
+		if controls.ProjectOperations, valid = changedOperationsFromForm(r.Form, "proj"); !valid {
+			redirect(w, r, "invalid")
+			return
+		}
+		if controls.DatabaseOperations, valid = changedOperationsFromForm(r.Form, "db"); !valid {
 			redirect(w, r, "invalid")
 			return
 		}

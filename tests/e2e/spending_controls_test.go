@@ -116,3 +116,76 @@ func TestSpendingControlsResponsiveAndAccessible(t *testing.T) {
 	expectAccessible(t, page, "Spending controls", "")
 	screenshot(t, page, "ts765-spending-controls")
 }
+
+func TestSpendingControlsPreserveConcurrentUpdatesAndIgnoreUntouchedDeletedDatabase(t *testing.T) {
+	page := newPage(t)
+	registerAndOnboard(t, page, newAccount("spending-concurrent"))
+	session := connectMCP(t, createAccessToken(t, page, journeyPassword, "concurrent limits"))
+	var context mcpContext
+	callTool(t, session, "get_context", nil, &context)
+	first := context.Selection.ProjectID
+	name := uniqueName("concurrent-budget")
+	var database struct{ ID string }
+	callTool(t, session, "create_database", map[string]any{"name": name, "region": "GRU"}, &database)
+	var second struct{ ID string }
+	callTool(t, session, "create_project", map[string]any{"name": "Analytics", "region": "SFO"}, &second)
+	goToOK(t, page, "/usage?tab=settings&project="+first)
+
+	// Another session changes hidden resources and untouched categories after
+	// this browser has loaded its initial values.
+	callTool(t, session, "set_spending_controls", map[string]any{
+		"organizationCapCents": 5000, "paidExcess": true,
+		"projectCaps":  []map[string]any{{"id": first, "writeLimit": 77}, {"id": second.ID, "capCents": 3600, "readLimit": 500}},
+		"databaseCaps": []map[string]any{{"id": database.ID, "capCents": 9900, "writeLimit": 44}},
+	}, nil)
+	form := page.Locator("#spending-controls")
+	must(t, form.Locator(`[name="projRead_`+first+`"]`).Fill("1000"))
+	click(t, byRole(form, *playwright.AriaRoleButton, "Save spending controls"))
+	waitForPath(t, page, func(u *url.URL) bool { return u.Query().Get("saved") == "ok" })
+
+	type limits struct{ ReadLimit, WriteLimit int64 }
+	var saved struct {
+		SpendCapCents     int64
+		PaidExcessEnabled bool
+		Projects          []struct {
+			ID              string
+			SpendCapCents   int64
+			OperationLimits limits
+		}
+		Databases []struct {
+			SpendCapCents   int64
+			OperationLimits limits
+		}
+	}
+	callTool(t, session, "get_usage", map[string]any{"projectId": first}, &saved)
+	if saved.SpendCapCents != 5000 || !saved.PaidExcessEnabled || len(saved.Databases) != 1 || saved.Databases[0].SpendCapCents != 9900 || saved.Databases[0].OperationLimits.WriteLimit != 44 {
+		t.Fatalf("saving a project overwrote untouched organization or database settings: %+v", saved)
+	}
+	for _, project := range saved.Projects {
+		if project.ID == first && project.OperationLimits != (limits{1000, 77}) {
+			t.Fatalf("saving reads overwrote concurrent writes: %+v", project)
+		}
+		if project.ID == second.ID && (project.SpendCapCents != 3600 || project.OperationLimits.ReadLimit != 500) {
+			t.Fatalf("saving a project overwrote the hidden project's settings: %+v", project)
+		}
+	}
+
+	// The deleted database's unchanged inputs remain in the hidden DOM, but
+	// must not be included in the update or prevent another project's save.
+	goToOK(t, page, "/usage?tab=settings&project="+first)
+	callTool(t, session, "delete_database", map[string]any{"projectId": first, "databaseId": database.ID, "confirmName": name}, nil)
+	_, err := form.Locator("#spending-project").SelectOption(playwright.SelectOptionValues{Values: &[]string{second.ID}})
+	must(t, err)
+	must(t, form.Locator(`[name="projCap_`+second.ID+`"]`).Fill("40.00"))
+	click(t, byRole(form, *playwright.AriaRoleButton, "Save spending controls"))
+	waitForPath(t, page, func(u *url.URL) bool { return u.Query().Get("saved") == "ok" })
+	callTool(t, session, "get_usage", map[string]any{"projectId": first}, &saved)
+	if len(saved.Databases) != 0 {
+		t.Fatal("the deleted database was restored")
+	}
+	for _, project := range saved.Projects {
+		if project.ID == second.ID && project.SpendCapCents != 4000 {
+			t.Fatalf("an untouched deleted database prevented the save: %+v", project)
+		}
+	}
+}
