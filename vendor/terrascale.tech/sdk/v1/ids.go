@@ -5,10 +5,6 @@ import (
 	"encoding/binary"
 	"fmt"
 	"regexp"
-	"strings"
-	"unicode"
-	"unicode/utf16"
-	"unicode/utf8"
 
 	"github.com/oklog/ulid/v2"
 
@@ -56,8 +52,8 @@ func DocumentIDFor(collection, key string) string {
 // ValidateDocumentKey checks raw key bounds without changing the key.
 // Only generated keys and entity selectors follow the ULID contract.
 func ValidateDocumentKey(id string) error {
-	if id == "" || !utf8.ValidString(id) || len(utf16.Encode([]rune(id))) > 256 || strings.ContainsFunc(id, unicode.IsControl) {
-		return fmt.Errorf("terrabase: document key must be 1 to 256 UTF-16 units without control characters")
+	if err := entityid.DocumentKey(id); err != nil {
+		return fmt.Errorf("terrabase: %w", err)
 	}
 	return nil
 }

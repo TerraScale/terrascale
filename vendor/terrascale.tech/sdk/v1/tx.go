@@ -43,7 +43,7 @@ type TxResult struct {
 // OpResult is the outcome of one transaction op: ID and Version for writes,
 // Asserted for asserts, and Count for AssertCount.
 type OpResult struct {
-	ID       string  `json:"id,omitempty"`
+	ID       string  `json:"id,omitempty" documentkey:"optional"`
 	Version  string  `json:"version,omitempty"`
 	Asserted bool    `json:"asserted,omitempty"`
 	Count    *Uint64 `json:"count,omitempty"`
@@ -199,10 +199,16 @@ func (t *Tx) Commit(ctx context.Context) (*TxResult, error) {
 		return nil, err
 	}
 	for i, op := range t.ops {
+		if op.Op == "assert" || op.Op == "assert_count" {
+			continue
+		}
+		if i >= len(res.Results) {
+			return nil, errors.New("terrabase: transaction response is missing a document key")
+		}
+		if err := ValidateDocumentKey(res.Results[i].ID); err != nil {
+			return nil, fmt.Errorf("terrabase: invalid transaction result %d: %w", i, err)
+		}
 		if op.Op == "create" && op.ID == "" {
-			if i >= len(res.Results) {
-				return nil, errors.New("terrabase: transaction response is missing a generated document key")
-			}
 			if err := ValidateID(res.Results[i].ID); err != nil {
 				return nil, err
 			}

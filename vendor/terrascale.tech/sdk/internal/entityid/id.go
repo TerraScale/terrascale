@@ -8,6 +8,9 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
+	"unicode"
+	"unicode/utf16"
+	"unicode/utf8"
 
 	"github.com/oklog/ulid/v2"
 )
@@ -23,6 +26,14 @@ func Check(id string) error {
 	u, err := ulid.ParseStrict(id)
 	if err != nil || u.String() != id {
 		return errors.New("entity ID must be a canonical uppercase 26-character ULID")
+	}
+	return nil
+}
+
+// DocumentKey checks caller-defined keys without changing their contents.
+func DocumentKey(id string) error {
+	if id == "" || !utf8.ValidString(id) || len(utf16.Encode([]rune(id))) > 256 || strings.ContainsFunc(id, unicode.IsControl) {
+		return errors.New("document key must be 1 to 256 UTF-16 units without control characters")
 	}
 	return nil
 }
@@ -46,7 +57,11 @@ func checkModel(v reflect.Value) error {
 			if !field.IsExported() {
 				continue
 			}
-			if mode := field.Tag.Get("ulid"); mode != "" {
+			mode, check := field.Tag.Get("ulid"), Check
+			if mode == "" {
+				mode, check = field.Tag.Get("documentkey"), DocumentKey
+			}
+			if mode != "" {
 				if value.Kind() == reflect.Pointer {
 					if value.IsNil() {
 						continue
@@ -56,7 +71,7 @@ func checkModel(v reflect.Value) error {
 				if mode == "optional" && value.String() == "" {
 					continue
 				}
-				if err := Check(value.String()); err != nil {
+				if err := check(value.String()); err != nil {
 					return fmt.Errorf("%s: %w", field.Name, err)
 				}
 			} else if err := checkModel(value); err != nil {

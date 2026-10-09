@@ -79,7 +79,7 @@ const (
 
 // Document is a document as returned by GET, queries and shapes.
 type Document struct {
-	ID      string `json:"id"`
+	ID      string `json:"id" documentkey:"required"`
 	Version string `json:"version"`
 	State   State  `json:"state"`
 	// Document is the exact JSON object for state "value".
@@ -112,7 +112,7 @@ func Decode(data []byte, v any) error { return decodeExact(data, v) }
 
 // WriteResult is the response to a document write.
 type WriteResult struct {
-	ID         string     `json:"id"`
+	ID         string     `json:"id" documentkey:"required"`
 	Version    string     `json:"version"`
 	Offset     Uint64     `json:"offset"`
 	Durability Durability `json:"durability"`
