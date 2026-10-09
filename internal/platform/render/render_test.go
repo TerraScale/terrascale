@@ -18,9 +18,9 @@ func TestShellReturnURLIsTheCurrentSection(t *testing.T) {
 		"/?tab=connect&range=24h":              "/",
 		"/databases":                           "/databases",
 		"/databases/db_1/data?collection=a":    "/databases",
-		"/auth":                                "/auth/overview",
+		"/auth":                                "/auth",
 		"/auth/overview":                       "/auth/overview",
-		"/auth/users?q=ada&page=2":             "/auth/users",
+		"/auth/users?q=ada&page=2":             "/auth/users?q=ada&page=2",
 		"/usage?project=prj_1&tab=billing":     "/usage",
 		"/organization?newOrganization=create": "/organization",
 		"/profile?tab=security":                "/profile?tab=security",
@@ -60,7 +60,7 @@ func TestShellNavigationNamesItsCounts(t *testing.T) {
 	}
 	for _, group := range shell.Navigation {
 		for _, item := range group.Items {
-			if item.URL == "/notifications" || item.URL == "/audit" {
+			if item.URL == "/notifications" || item.URL == "/audit" || item.URL == "/auth" || strings.HasPrefix(item.URL, "/auth/") {
 				t.Errorf("%s must not appear in the sidebar navigation", item.URL)
 			}
 			if expected, ok := want[item.URL]; ok {
