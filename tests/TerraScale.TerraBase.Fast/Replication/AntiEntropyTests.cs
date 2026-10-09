@@ -4,6 +4,7 @@ using System.Net;
 using System.Text.Json;
 using Bogus;
 using Google.Protobuf;
+using Grpc.Core;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
@@ -302,6 +303,44 @@ public sealed class AntiEntropyTests
         var returned = await BytesAsync(receiver, "replication_bytes|gru-1|sfo-1|anti_entropy:sent");
         await Assert.That(returned).IsGreaterThan(0);
         await Assert.That(await BytesAsync(source, "replication_bytes|sfo-1|gru-1|anti_entropy:received")).IsEqualTo(returned);
+    }
+
+    [Test]
+    [Timeout(60_000)]
+    public async Task A_rejected_anti_entropy_request_still_counts_its_delivered_bytes(CancellationToken cancellationToken)
+    {
+        using var peerTls = new PeerTls();
+        using var clientTls = new ClientTls();
+        await using var server = await TerraBaseTestServer.StartAsync(settings =>
+        {
+            peerTls.Apply(settings);
+            clientTls.Apply(settings);
+            settings["region"] = "gru-1";
+        });
+        var tenant = await ReplicationTenant.CreateAsync(server, ["repair"], cancellationToken);
+        using var channel = peerTls.CreateChannel(server.PeerAddress!);
+        var client = new AntiEntropy.AntiEntropyClient(channel);
+        var database = tenant.Database("repair");
+        var identity = new ShardIdentity { Organization = tenant.OrganizationId, Project = tenant.ProjectId, Database = database.DatabaseId!, Region = "sfo-1" };
+        var digestBytes = identity.CalculateSize() + 5L;
+        using (var digestCall = client.DigestAsync(identity, cancellationToken: cancellationToken))
+        {
+            identity.Incarnation = (await digestCall.ResponseAsync).Incarnation;
+        }
+
+        // Valid enough to be served, then refused by the repair state: it still crossed the wire.
+        var merge = new StateRequest { Identity = identity, Envelope = ByteString.CopyFrom(ApplicationEnvelope.Encode(ChangeGroup.Encode([])).Span) };
+        using (var mergeCall = client.MergeAsync(merge, cancellationToken: cancellationToken))
+        {
+            var refused = await Assert.ThrowsAsync<RpcException>(async () => await mergeCall.ResponseAsync);
+            await Assert.That(refused!.StatusCode).IsEqualTo(StatusCode.InvalidArgument);
+        }
+
+        var window = new TerraBase.Features.Management.Usage.UsageWindow(
+            TerraBase.Features.Management.Usage.UsageWindow.Hour, DateTimeOffset.UtcNow.ToUnixTimeSeconds() / 3600, 1);
+        var (lifetime, _) = await server.Services.GetRequiredService<TerraBase.Features.Management.Usage.UsageMeter>()
+            .GetObservationsAsync(database, window, cancellationToken);
+        await Assert.That(lifetime.Meters!["replication_bytes|gru-1|sfo-1|anti_entropy:received"].Count).IsEqualTo(digestBytes + merge.CalculateSize() + 5L);
     }
 
     [Test]

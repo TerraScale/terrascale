@@ -97,9 +97,9 @@ internal sealed class UsageAnalytics(IManagementService management, UsageMeter m
                     Check(started, cancellationToken);
                     var values = point[observing].ToArray();
                     return new ReplicationPoint(window.Usage.Granularity.Start(window.Usage.First + index),
-                        values.Where(reading => reading.Dimension.Meter == "replicated_ops").Sum(reading => reading.Count), Bandwidth(values));
+                        values.Where(reading => reading.Dimension.Meter == "replicated_ops").Saturated(reading => reading.Count), Bandwidth(values));
                 }).ToArray();
-                items.Add(new(record.Id, record.Name, observing, status, points.Sum(point => point.ReplicatedOps), lag, diverged,
+                items.Add(new(record.Id, record.Name, observing, status, points.Saturated(point => point.ReplicatedOps), lag, diverged,
                     health.Select(state => state.ConvergenceMs).Max(), applied, Bandwidth(buckets.SelectMany(point => point[observing])), points));
             }
         }
@@ -276,21 +276,21 @@ internal sealed class UsageAnalytics(IManagementService management, UsageMeter m
         }
 
         var storage = values.Where(reading => reading.Dimension.Meter == "storage_bytes").ToArray();
-        var samples = storage.Sum(reading => reading.Count);
-        return new(start, ByKind(requests), ByKind(values.Where(reading => reading.Dimension.Meter == "ops")), requests.Sum(reading => reading.Value),
+        var samples = storage.Saturated(reading => reading.Count);
+        return new(start, ByKind(requests), ByKind(values.Where(reading => reading.Dimension.Meter == "ops")), requests.Saturated(reading => reading.Value),
             new(Percentile(histogram, 0.5), Percentile(histogram, 0.95), Percentile(histogram, 0.99)),
-            samples == 0 ? null : storage.Sum(reading => reading.Value) / samples,
+            samples == 0 ? null : (long)(storage.Aggregate(Int128.Zero, (total, reading) => total + reading.Value) / samples),
             Traffic(values, "client_bytes"), Traffic(values, "replication_bytes"));
     }
 
     private static Dictionary<string, long> ByKind(IEnumerable<UsageReading> readings) =>
-        readings.GroupBy(reading => reading.Dimension.Kind).ToDictionary(group => group.Key, group => group.Sum(reading => reading.Count), StringComparer.Ordinal);
+        readings.GroupBy(reading => reading.Dimension.Kind).ToDictionary(group => group.Key, group => group.Saturated(reading => reading.Count), StringComparer.Ordinal);
 
     private static BandwidthUsage Traffic(IEnumerable<UsageReading> readings, string meter)
     {
         var values = readings.Where(reading => reading.Dimension.Meter == meter).ToArray();
-        return new(values.Where(reading => reading.Dimension.Kind.EndsWith("sent", StringComparison.Ordinal)).Sum(reading => reading.Count),
-            values.Where(reading => reading.Dimension.Kind.EndsWith("received", StringComparison.Ordinal)).Sum(reading => reading.Count));
+        return new(values.Where(reading => reading.Dimension.Kind.EndsWith("sent", StringComparison.Ordinal)).Saturated(reading => reading.Count),
+            values.Where(reading => reading.Dimension.Kind.EndsWith("received", StringComparison.Ordinal)).Saturated(reading => reading.Count));
     }
 
     private static ReplicationBandwidth[] Bandwidth(IEnumerable<UsageReading> readings) =>
@@ -301,14 +301,14 @@ internal sealed class UsageAnalytics(IManagementService management, UsageMeter m
             return (Source: sent ? dimension.Region : dimension.PeerRegion, Destination: sent ? dimension.PeerRegion : dimension.Region,
                 Kind: dimension.Kind.Split(':')[0]);
         }).Select(group => new ReplicationBandwidth(group.Key.Source, group.Key.Destination, group.Key.Kind,
-            group.Where(reading => reading.Dimension.Kind.EndsWith(":sent", StringComparison.Ordinal)).Sum(reading => reading.Count),
-            group.Where(reading => reading.Dimension.Kind.EndsWith(":received", StringComparison.Ordinal)).Sum(reading => reading.Count)))
+            group.Where(reading => reading.Dimension.Kind.EndsWith(":sent", StringComparison.Ordinal)).Saturated(reading => reading.Count),
+            group.Where(reading => reading.Dimension.Kind.EndsWith(":received", StringComparison.Ordinal)).Saturated(reading => reading.Count)))
         .OrderBy(value => value.SourceRegion, StringComparer.Ordinal).ThenBy(value => value.DestinationRegion, StringComparer.Ordinal)
         .ThenBy(value => value.Kind, StringComparer.Ordinal)];
 
     private static double? Percentile(long[] histogram, double fraction)
     {
-        var count = histogram.Sum();
+        var count = histogram.Saturated(bin => bin);
         if (count == 0)
         {
             return null;
@@ -326,5 +326,21 @@ internal sealed class UsageAnalytics(IManagementService management, UsageMeter m
         }
 
         return UsageReading.LatencyBounds[^1];
+    }
+}
+
+// Readings saturate at long.MaxValue when merged; totals across them must not overflow either.
+internal static class SaturatingSum
+{
+    public static long Saturated<T>(this IEnumerable<T> items, Func<T, long> value)
+    {
+        long total = 0;
+        foreach (var item in items)
+        {
+            var next = value(item);
+            total = next > long.MaxValue - total ? long.MaxValue : total + next;
+        }
+
+        return total;
     }
 }

@@ -57,7 +57,7 @@ internal sealed partial class WanPuller(
     // prefix is below that target, so neither a round that does not reach it nor a stale lower advertisement can certify its
     // database caught up, and while diverged, until a group from it verifiably extends the applied journal. Entries go with
     // their database, and an undiverged one a complete sweep did not advertise. Bounded.
-    private readonly Dictionary<(string Region, string Database), Dictionary<string, OriginState>> _origins = [];
+    private readonly Dictionary<(string Region, string Database), RetainedOrigins> _origins = [];
     private int _retainedOrigins;
     private const int MaxOrigins = 4096;
 
@@ -102,7 +102,7 @@ internal sealed partial class WanPuller(
         lock (_gate)
         {
             var (remaining, diverged) = (0L, false);
-            foreach (var state in _origins.GetValueOrDefault((region, Name(database)))?.Values ?? Enumerable.Empty<OriginState>())
+            foreach (var state in (IEnumerable<OriginState>?)_origins.GetValueOrDefault((region, Name(database)))?.Values ?? [])
             {
                 var behind = Math.Max(0, state.Target - state.Applied);
                 (remaining, diverged) = (remaining + Math.Min(behind, long.MaxValue - remaining), diverged || state.Diverged);
@@ -113,7 +113,9 @@ internal sealed partial class WanPuller(
     }
 
     // Records an origin's advertised target, verified applied prefix or divergence; false when the bound left no room for it.
-    private bool Retain(string region, TenantContext database, ReadOnlyMemory<byte> origin, long target = 0, long applied = 0, bool diverge = false)
+    // Advertised marks a fresh discovery advertisement, the only evidence that keeps an origin through a complete sweep.
+    private bool Retain(
+        string region, TenantContext database, ReadOnlyMemory<byte> origin, long target = 0, long applied = 0, bool diverge = false, bool advertised = false)
     {
         lock (_gate)
         {
@@ -121,7 +123,8 @@ internal sealed partial class WanPuller(
             var key = Convert.ToHexString(origin.Span);
             var state = default(OriginState);
             var found = origins?.TryGetValue(key, out state) == true;
-            var next = new OriginState(Math.Max(state.Target, target), Math.Max(state.Applied, applied), state.Diverged || diverge, time.GetTimestamp());
+            var next = new OriginState(Math.Max(state.Target, target), Math.Max(state.Applied, applied), state.Diverged || diverge,
+                advertised ? time.GetTimestamp() : state.Advertised);
             if (next.Applied >= next.Target && !next.Diverged)
             {
                 Drop(region, database, key);
@@ -135,7 +138,7 @@ internal sealed partial class WanPuller(
 
             if (origins is null)
             {
-                _origins[(region, Name(database))] = origins = [with(StringComparer.Ordinal)];
+                _origins[(region, Name(database))] = origins = new RetainedOrigins(database);
             }
 
             _retainedOrigins += found ? 0 : 1;
@@ -180,17 +183,25 @@ internal sealed partial class WanPuller(
         }
     }
 
-    // Drops undiverged origins a complete sweep, begun at started, never advertised: they are certified gone.
-    private void ForgetUnswept(string region, long started)
+    // Drops undiverged origins a complete sweep, begun at started, never freshly advertised: they are certified gone. Returns
+    // the databases that lost one, whose certified state the round then publishes.
+    private List<TenantContext> ForgetUnswept(string region, long started)
     {
         lock (_gate)
         {
+            var affected = new List<TenantContext>();
             foreach (var (key, origins) in _origins.Where(entry => entry.Key.Region == region).ToList())
             {
-                foreach (var origin in origins.Where(entry => !entry.Value.Diverged && entry.Value.Seen < started).Select(entry => entry.Key).ToList())
+                var gone = origins.Where(entry => !entry.Value.Diverged && entry.Value.Advertised < started).Select(entry => entry.Key).ToList();
+                foreach (var origin in gone)
                 {
                     _ = origins.Remove(origin);
                     _retainedOrigins--;
+                }
+
+                if (gone.Count > 0)
+                {
+                    affected.Add(origins.Database);
                 }
 
                 if (origins.Count == 0)
@@ -198,10 +209,17 @@ internal sealed partial class WanPuller(
                     _ = _origins.Remove(key);
                 }
             }
+
+            return affected;
         }
     }
 
-    private readonly record struct OriginState(long Target, long Applied, bool Diverged, long Seen);
+    private readonly record struct OriginState(long Target, long Applied, bool Diverged, long Advertised);
+
+    private sealed class RetainedOrigins(TenantContext database) : Dictionary<string, OriginState>(StringComparer.Ordinal)
+    {
+        public TenantContext Database { get; } = database;
+    }
 
     private async Task RunAsync(string region, string cell, CancellationToken stoppingToken)
     {
@@ -382,7 +400,7 @@ internal sealed partial class WanPuller(
 
             var remaining = Math.Max(0, (long)head.Sequence - applied);
             // Best effort past the bound: an untracked backlog only loses retention across rounds.
-            var tracked = Retain(region, database, origin, target: (long)head.Sequence, applied: applied);
+            var tracked = Retain(region, database, origin, target: (long)head.Sequence, applied: applied, advertised: fresh.Contains(RetryKey(member, head)));
             if (observations.TryGetValue(database, out var observed))
             {
                 observations[database] = (observed.Remaining + Math.Min(remaining, long.MaxValue - observed.Remaining), observed.Diverged || untracked,
@@ -402,7 +420,10 @@ internal sealed partial class WanPuller(
         // Only a complete sweep certifies an origin gone; an incomplete one keeps every outstanding target, however long it runs.
         if (complete)
         {
-            ForgetUnswept(region, discovery.SweepStarted);
+            foreach (var certified in ForgetUnswept(region, discovery.SweepStarted))
+            {
+                _ = observations.TryAdd(certified, (0, false, false));
+            }
         }
 
         foreach (var (database, observed) in observations)

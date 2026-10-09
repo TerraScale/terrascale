@@ -9,6 +9,16 @@ namespace TerraBase.Features.Management.Usage;
 /// <summary>Accounts for completed client requests and actual HTTP body I/O within their authorized database.</summary>
 public static class UsageRequestMetering
 {
+    /// <summary>
+    /// Attributes the request to an authorized database an endpoint resolved itself, without publishing it as the request's
+    /// tenant: its request count, latency and body bytes are metered, and no document operation is.
+    /// </summary>
+    public static void Attribute(HttpContext context, TenantContext database)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        context.Features.Set(new AttributedDatabase(database));
+    }
+
     /// <summary>Wraps body streams before authentication; records only requests that resolve an authorized database.</summary>
     public static WebApplication UseTerraBaseUsage(this WebApplication app)
     {
@@ -149,7 +159,7 @@ public static class UsageRequestMetering
                 return;
             }
 
-            var database = _context.Features.Get<TenantContext>();
+            var database = _context.Features.Get<TenantContext>() ?? _context.Features.Get<AttributedDatabase>()?.Database;
             // databaseName is set only once the project catalog resolved the route's database to its ID.
             if (database is null && _context.Features.Get<ProjectAccess>() is { } access
                 && _context.GetEndpoint()?.Metadata.GetMetadata<ProjectManagementRoute>() is not null
@@ -215,4 +225,6 @@ public static class UsageRequestMetering
         public override Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken) =>
             WriteAsync(buffer.AsMemory(offset, count), cancellationToken).AsTask();
     }
+
+    private sealed record AttributedDatabase(TenantContext Database);
 }

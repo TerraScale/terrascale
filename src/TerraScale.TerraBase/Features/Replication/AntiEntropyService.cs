@@ -15,6 +15,7 @@ internal sealed class AntiEntropyService(
 
     public override Task<MerkleDigest> Digest(ShardIdentity request, ServerCallContext context) => ServeAsync(async token =>
     {
+        Received(request, request);
         var store = await state.OpenAsync(request, token).ConfigureAwait(false);
         ByteString origin;
         JournalProof? applied = null;
@@ -30,7 +31,7 @@ internal sealed class AntiEntropyService(
         }
 
         var digest = await state.DigestAsync(store, token).ConfigureAwait(false);
-        return Metered(request, request, new MerkleDigest
+        return Sent(request, new MerkleDigest
         {
             Incarnation = ByteString.CopyFrom(store.Incarnation.ToByteArray(bigEndian: true)),
             Envelope = ByteString.CopyFrom(ApplicationEnvelope.Encode(digest).Span),
@@ -43,27 +44,34 @@ internal sealed class AntiEntropyService(
     public override Task<StatePage> ReadRange(RangeRequest request, ServerCallContext context) => ServeAsync(async token =>
     {
         RequireIncarnation(request.Identity);
+        Received(request.Identity, request);
         var store = await state.OpenAsync(request.Identity, token).ConfigureAwait(false);
-        return Metered(request.Identity, request, await state.ReadAsync(store, request, token).ConfigureAwait(false));
+        return Sent(request.Identity, await state.ReadAsync(store, request, token).ConfigureAwait(false));
     }, context);
 
     public override Task<MergeResult> Merge(StateRequest request, ServerCallContext context) => ServeAsync(async token =>
     {
         RequireIncarnation(request.Identity);
+        Received(request.Identity, request);
         var store = await state.OpenAsync(request.Identity, token).ConfigureAwait(false);
-        return Metered(request.Identity, request,
+        return Sent(request.Identity,
             new MergeResult { RepairedKeys = await state.MergeAsync(store, request.Identity, request.Envelope, token).ConfigureAwait(false) });
     }, context);
 
-    // A served exchange, charged to the initiating member's region: each message's encoded bytes plus the gRPC prefix.
-    private T Metered<T>(ShardIdentity identity, IMessage received, T response)
+    // Served traffic, charged to the initiating member's region: each message's encoded bytes plus the gRPC prefix. A request
+    // counts once it is validated, before the state work that may still reject it; its response counts on its own.
+    private void Received(ShardIdentity identity, IMessage request) =>
+        usage.RecordReplicationBytes(Database(identity), identity.Region, "anti_entropy", false, request.CalculateSize() + 5L);
+
+    private T Sent<T>(ShardIdentity identity, T response)
         where T : IMessage
     {
-        var database = new TenantContext(identity.Organization, PlanTier.Hobby, identity.Project, identity.Database);
-        usage.RecordReplicationBytes(database, identity.Region, "anti_entropy", false, received.CalculateSize() + 5L);
-        usage.RecordReplicationBytes(database, identity.Region, "anti_entropy", true, response.CalculateSize() + 5L);
+        usage.RecordReplicationBytes(Database(identity), identity.Region, "anti_entropy", true, response.CalculateSize() + 5L);
         return response;
     }
+
+    private static TenantContext Database(ShardIdentity identity) =>
+        new(identity.Organization, PlanTier.Hobby, identity.Project, identity.Database);
 
     private async Task<T> ServeAsync<T>(Func<CancellationToken, Task<T>> work, ServerCallContext context, TimeSpan? budget = null)
     {

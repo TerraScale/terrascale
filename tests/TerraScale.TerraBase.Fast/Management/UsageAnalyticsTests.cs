@@ -547,6 +547,43 @@ public sealed class UsageAnalyticsTests
     }
 
     [Test]
+    public async Task Explain_is_metered_and_near_limit_byte_counters_total_without_overflow()
+    {
+        await using var api = await ManagementApi.StartAsync(settings => settings["region"] = "gru-1");
+        var database = await api.CreateManagedDatabaseAsync();
+        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
+        using var client = ProjectClient(api, database.Project);
+        await ManagementApi.CreateCollectionAsync(client, database, "people");
+        var analytics = ManagementApi.Uri($"/projects/{database.Project}/analytics?range=1h&region=gru-1");
+        async Task<long> PostsAsync()
+        {
+            return (await ReadAsync(client, analytics)).GetProperty("items")[0].GetProperty("series").EnumerateArray()
+                .Sum(point => point.GetProperty("requests").TryGetProperty("post", out var posts) ? posts.GetInt64() : 0);
+        }
+
+        // EXPLAIN resolves its database itself; it is still one metered request of that database.
+        var before = await PostsAsync();
+        using (var explained = await client.PostAsJsonAsync(
+            ManagementApi.Uri($"/projects/{database.Project}/databases/{database.Name}/sql/explain"), new { sql = "SELECT * FROM people LIMIT 1" }))
+        {
+            explained.EnsureSuccessStatusCode();
+        }
+
+        await Assert.That(await PostsAsync()).IsEqualTo(before + 1);
+
+        // Two saturated byte counters of one database total at the 64-bit limit rather than overflowing the response.
+        var meter = api.Server.Services.GetRequiredService<UsageMeter>();
+        var tenant = new TenantContext(database.Organization, PlanTier.Hobby, database.Project, database.Id);
+        meter.RecordReplicationBytes(tenant, "sfo-1", "delta", true, long.MaxValue);
+        meter.RecordReplicationBytes(tenant, "sfo-1", "handoff", true, long.MaxValue);
+        var series = (await ReadAsync(client, analytics)).GetProperty("items")[0].GetProperty("series").EnumerateArray().ToArray();
+        await Assert.That(series.Max(point => point.GetProperty("replicationBandwidth").GetProperty("bytesSent").GetInt64())).IsEqualTo(long.MaxValue);
+        var replication = await ReadAsync(client, ManagementApi.Uri($"/projects/{database.Project}/replication?range=1h&region=gru-1"));
+        await Assert.That(replication.GetProperty("items")[0].GetProperty("bandwidth").EnumerateArray()
+            .All(pair => pair.GetProperty("bytesSent").GetInt64() == long.MaxValue)).IsTrue();
+    }
+
+    [Test]
     public async Task A_request_for_an_unknown_database_name_records_no_measurements()
     {
         await using var api = await ManagementApi.StartAsync(settings => settings["region"] = "gru-1");

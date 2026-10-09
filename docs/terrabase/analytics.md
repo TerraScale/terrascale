@@ -68,6 +68,8 @@ Each point contains:
 - `clientBandwidth` and `replicationBandwidth`, each with `bytesSent` and
   `bytesReceived`. Client bandwidth counts actual HTTP body reads and writes
   after a request resolves an authorized database; it excludes HTTP/TLS headers.
+  Endpoints that resolve their database themselves, such as SQL EXPLAIN, attribute
+  the request to it without counting a document operation.
   A request a catalog follower relays is metered once, by the catalog primary that
   resolves its database (latency there excludes the relay hop); requests naming an
   unknown database record nothing.
@@ -107,14 +109,18 @@ before any stream identified it, cannot be attributed to a region pair.
 Kinds are `delta` (current replication), `anti_entropy` (frontier handshakes, WAN
 discovery and TS-678 Merkle repair: digests, range pages and merges, attributed by
 the regions the caller sends in its shard identity and the peer returns with its
-digest), and `handoff` (peer or WAN journal replay after a failed transfer,
+digest; a validated request counts before the state work that may still reject it,
+and an initiator counts each request before awaiting its response), and `handoff` (peer or WAN journal replay after a failed transfer,
 initial catch-up, or a backlog longer than one 256-group sender turn). A peer
 replay stays `handoff` across turns until a turn ends with the peer at the head. Shared discovery payloads are divided across advertised
 databases, conserving their encoded length. No tenant identifiers are used as
 Prometheus labels; regional/database dimensions live in bounded usage records.
 
 Health builds on TS-681's verified peer prefixes, divergence and catch-up timing,
-plus WAN applied-prefix observations. `lagMs` is the observed backlog's age,
+plus WAN applied-prefix observations. Outbound peer health comes from the sender's
+TS-681 detail snapshot, which holds at most 128 databases per node; databases
+beyond it report inbound and WAN health only, within the 256 pending measurement
+keys per node. `lagMs` is the observed backlog's age,
 not network round-trip latency. `divergence` denotes detected journal conflict
 (a verified prefix conflict, an origin's explicit ahead answer, or a group that
 conflicts with the applied journal prefix; malformed or oversized messages are
@@ -125,8 +131,9 @@ it, so neither a round that does not reach it nor a stale lower advertisement
 can report its database caught up; an ahead answer or journal conflict holds, through later failed or
 unverified pulls, until a group from that origin verifiably extends the applied
 journal. Entries go with their database, and an undiverged one when a complete
-discovery sweep did not advertise it; an incomplete sweep keeps every outstanding
-target however long it runs. At most 4,096 origins are retained per member; a divergence beyond that
+discovery sweep did not freshly advertise it (a failing retry is no
+advertisement); an incomplete sweep keeps every outstanding target however long
+it runs. A database a sweep certifies this way gets its updated health published. At most 4,096 origins are retained per member; a divergence beyond that
 is reported only in the rounds where it fails, and logged. Health sources
 refresh every ten seconds: each sender's peer observations and each WAN round.
 Every peer observed in the last ten minutes counts. Without any observation from
@@ -168,7 +175,7 @@ not: when the primary refuses a follower batch, for a measurement it rejects or 
 minute scope it predates, the follower resends the totals alone once under the
 same sequence, and the dropped measurements are counted. Byte meters (client and
 replication bandwidth, storage) are bounded only by their 64-bit range, since
-their aggregates outgrow the 10^12 operation-count bound; merging saturates at
-that range instead of wrapping negative.
+their aggregates outgrow the 10^12 operation-count bound; merging and every
+analytics total saturate at that range instead of wrapping negative or failing.
 There are no migrations or backfills; existing entity-ID generation is owned by
 TS-754, and this slice introduces no ID encoding or compatibility fallback.

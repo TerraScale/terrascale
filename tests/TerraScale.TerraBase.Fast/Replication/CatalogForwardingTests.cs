@@ -745,7 +745,9 @@ public sealed class CatalogForwardingTests
             (await relayed.GetAsync(Relative($"/v1/projects/{project}/databases/main"))).EnsureSuccessStatusCode();
         }
 
-        // Neither the relaying follower (no resolved database) nor a second observation on the primary may count them.
+        // Neither the relaying follower (no resolved database) nor a second observation on the primary may count them: deliver
+        // whatever the follower metered before reading the primary's totals.
+        await follower.Services.GetServices<IHostedService>().OfType<UsageFlushService>().Single().FlushAsync(CancellationToken.None);
         using var direct = tls.CreateClient(primary.ClientAddress!, token);
         var analytics = await direct.GetFromJsonAsync<JsonElement>(Relative($"/projects/{project}/databases/main/analytics?range=1h&region=gru-1"));
         var gets = analytics.GetProperty("items")[0].GetProperty("series").EnumerateArray()

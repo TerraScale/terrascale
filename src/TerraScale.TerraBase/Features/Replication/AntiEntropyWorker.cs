@@ -132,7 +132,8 @@ internal sealed partial class AntiEntropyWorker(
         var remote = await digestCall.ResponseAsync.ConfigureAwait(false);
         // Anti-entropy traffic is metered once the digest names the peer's region, like a replication Hello.
         var peerRegion = remote.Region;
-        Metered(database, peerRegion, identity, remote);
+        Metered(database, peerRegion, identity, sent: true);
+        Metered(database, peerRegion, remote, sent: false);
         if (remote.Incarnation.Length != 16 || remote.Origin.Length != 16 || remote.Envelope.Length > 1024
             || remote.AppliedSource is not { } applied || !applied.Origin.Equals(identity.Origin)
             || applied.Sequence > long.MaxValue || applied.Digest.Length != JournalDigest.Length)
@@ -171,9 +172,11 @@ internal sealed partial class AntiEntropyWorker(
         while (true)
         {
             progress.CancelAfter(ReplicationProtocol.ProgressTimeout);
+            // A request counts as sent even when its response fails.
+            Metered(database, peerRegion, request, sent: true);
             using var readCall = client.ReadRangeAsync(request, cancellationToken: cancellationToken);
             var page = await readCall.ResponseAsync.ConfigureAwait(false);
-            Metered(database, peerRegion, request, page);
+            Metered(database, peerRegion, page, sent: false);
             CheckPage(page, request);
             if (!page.Envelope.IsEmpty)
             {
@@ -201,8 +204,9 @@ internal sealed partial class AntiEntropyWorker(
             {
                 progress.CancelAfter(ReplicationProtocol.ProgressTimeout);
                 var merge = new StateRequest { Identity = identity, Envelope = page.Envelope };
+                Metered(database, peerRegion, merge, sent: true);
                 using var mergeCall = client.MergeAsync(merge, cancellationToken: cancellationToken);
-                Metered(database, peerRegion, merge, await mergeCall.ResponseAsync.ConfigureAwait(false));
+                Metered(database, peerRegion, await mergeCall.ResponseAsync.ConfigureAwait(false), sent: false);
             }
 
             if (!page.HasMore)
@@ -215,12 +219,9 @@ internal sealed partial class AntiEntropyWorker(
         }
     }
 
-    // A unary exchange on the wire: each message's encoded bytes plus the five-byte gRPC message prefix.
-    private void Metered(TenantContext database, string peerRegion, IMessage sent, IMessage received)
-    {
-        usage.RecordReplicationBytes(database, peerRegion, "anti_entropy", true, sent.CalculateSize() + 5L);
-        usage.RecordReplicationBytes(database, peerRegion, "anti_entropy", false, received.CalculateSize() + 5L);
-    }
+    // One message on the wire: its encoded bytes plus the five-byte gRPC message prefix.
+    private void Metered(TenantContext database, string peerRegion, IMessage message, bool sent) =>
+        usage.RecordReplicationBytes(database, peerRegion, "anti_entropy", sent, message.CalculateSize() + 5L);
 
     private static void CheckPage(StatePage page, RangeRequest request)
     {

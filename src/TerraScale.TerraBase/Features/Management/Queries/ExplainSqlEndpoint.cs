@@ -2,6 +2,7 @@ using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.Documents;
+using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Memory;
 using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
@@ -71,6 +72,8 @@ public sealed class ExplainSqlEndpoint(ITenantDirectory tenants, IQueryService q
             {
                 return DatabaseRegions.WrongRegion(resolved.Placement.Home, resolved.Placement.Regions);
             }
+
+            UsageRequestMetering.Attribute(HttpContext, database);
 
             if (!HttpContext.Request.HasJsonContentType() || HttpContext.Request.Headers.ContainsKey("Content-Encoding"))
             {
