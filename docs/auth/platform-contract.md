@@ -297,6 +297,7 @@ keys remain independent of user MFA.
 | `exp`, `iat`, `jti` | 1 hour | at most 15 minutes | 15 minutes |
 | `scope` | OpenID scopes (`openid email profile offline_access`) | section 3 scopes | section 3 scopes |
 | `email`, `email_verified` | yes | yes | no |
+| `auth_time` | server-issued Unix seconds at authentication | no | no |
 | `ts_auth_epoch` | the user's authentication epoch | no | no |
 | `org_id` | no | the organization | the key's organization |
 | `project_id` | no | the project, for a project token | the project, for a project token |
@@ -308,7 +309,12 @@ keys remain independent of user MFA.
 issuer on sign-in tokens): every resource server checks its own.
 
 Service client tokens are unchanged: `sub` = `client_id` = the service's id,
-configured audiences, no `scope`, `org_id` or `project_id`.
+configured audiences, no `scope`, `org_id`, `project_id` or `auth_time`.
+User sign-in access and identity tokens retain the original `auth_time` when
+refreshed; submitted values cannot set or renew it. Organization/project
+exchange does not yet carry authentication time. Refresh and exchange never
+renew authentication or prove MFA completion. The issuance-before-enforcement
+deployment gate for exchange continuity is documented in `docs/mfa.md`.
 
 ### 6.4 Rules for TerraBase and other resource servers
 

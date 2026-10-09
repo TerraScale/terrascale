@@ -93,6 +93,21 @@ preceded activation, but online checks subsequently reject its old epoch;
 JWTs already accepted offline remain subject to their documented expiry limit.
 Password reset remains available and never disables an active factor.
 
+User sign-in access and identity tokens carry `auth_time`, the server-issued
+time of authentication in Unix seconds. Refresh retains that time, and a
+submitted `auth_time` never changes it. Organization/project exchange and
+machine/API-key tokens omit it. Authentication time alone does not prove
+factor completion or enforce an organization MFA policy.
+
+Issuance precedes exchange continuity and mandatory timestamp validation.
+Before deploying that later slice, verify every regional issuer has deployed
+this issuance change and wait one access-token lifetime (currently one hour)
+after the last old issuer stops issuing. Existing exchange authorization
+remains unchanged during that rollout; no authentication time is synthesized.
+The later validation must allow a documented, bounded difference between
+replica clocks while preserving the original claim, and reject times beyond
+that allowance. Cover both independent-clock boundaries in `fast`.
+
 Before deploying a release that requires `mfa_credentials`, explicitly
 provision that collection in the existing auth database through the pinned
 SDK. `AuthStore.ProvisionAsync` includes it, and `/readyz` requires it. Never
