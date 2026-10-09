@@ -12,7 +12,7 @@ namespace TerraScale.Auth.Fast.Oidc;
 public sealed class AuthThrottleTests(TerraBaseFixture fixture)
 {
     private const string SignIn = $"/ui/{OidcIssuer.Slug}/sign-in";
-    private const string Next = $"/{OidcIssuer.Slug}/oauth/authorize?client_id=ts-dashboard&response_type=code";
+    private const string Next = $"/{OidcIssuer.Slug}/oauth/authorize?client_id=01M4EQ2FRJ8S8B29E8TQVWNW4J&response_type=code";
 
     private static ManualClock Clock() => new(DateTimeOffset.FromUnixTimeSeconds(DateTimeOffset.UtcNow.ToUnixTimeSeconds() / 3600 * 3600));
 

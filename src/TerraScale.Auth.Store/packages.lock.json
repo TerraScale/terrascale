@@ -123,13 +123,19 @@
         "resolved": "10.0.11",
         "contentHash": "SXcz+kF+4Oo9b1+55zntpJFYfwb1jw66ioxptyNOOTDc8g2FHnBFWjZpsWfCvZIhzr0x+4e2trVTs4OKwQfBtw=="
       },
+      "NUlid": {
+        "type": "Transitive",
+        "resolved": "1.7.3",
+        "contentHash": "AXxv7eF+3REXlGLojlN4zXzvesgxiC0/Jq66Qn5L+hhw+NBCK60douGZBI+6ZTAZHRE2xg7AyCEj8cqCKp/U5w=="
+      },
       "terrascale.auth.contracts": {
         "type": "Project"
       },
       "terrascale.dotnet": {
         "type": "Project",
         "dependencies": {
-          "Microsoft.Extensions.Http": "[10.0.11, )"
+          "Microsoft.Extensions.Http": "[10.0.11, )",
+          "NUlid": "[1.7.3, )"
         }
       }
     },

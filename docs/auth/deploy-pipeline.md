@@ -17,17 +17,23 @@ configuration fails visibly instead of skipping the job.
 `scripts/ci/deploy.sh` downloads that release's ARM64 binary, checks its sidecar,
 and verifies the deployment helper against `TS_ORCH_SHA256`. The helper is the
 amd64 orchestrator binary from the pinned `TS_ORCH_RELEASE`; update these two
-variables together. It reads the service release key from OCI Vault, signs a
-cell-scoped claim, and publishes to each cell's regional head bucket. With the
-TS-768 helper, independent regions deploy concurrently. Each cell's native
+variables together. The current helper uses the retired `releases/v1/services`
+prefix; the new qualified helper must use the serving `releases/services` prefix
+before live acceptance. It reads the service release key from OCI Vault, signs a
+cell-scoped claim, and publishes to each cell's regional head bucket. The script
+polls every five seconds with a 30-minute regional deadline.
+Independent regional signing and delivery require TS-768's qualified helper
+release; the current pin still processes regions sequentially. Each cell's native
 service controller drains and updates replicas behind its existing readiness
 and canary gates, and rolls back automatically if the target cannot serve.
 
-Set `TS_AUTO_DEPLOY_CELLS=GRU SFO` and
-`TS_AUTO_DEPLOY_ENVIRONMENT=production` after both signed cell specifications
-authorize that service environment and the `ci-release` actor. The existing
-scoped OCI IAM policy must permit the current service release prefix in both
-head buckets. The remaining variables are `TS_ORCH_RELEASE`, `TS_ORCH_SHA256`,
+Every green main push deploys without a switch. Until the shared region-discovery
+helper is qualified, the script always targets GRU and SFO with their currently
+signed `canary` environment. Both signed cell specifications must authorize the
+service and the release actor. The scoped OCI IAM policy must permit the service
+release prefix in both head buckets. The qualified helper will discover all
+serving cells and their signed environments without per-repository lists.
+Required variables are `TS_ORCH_RELEASE`, `TS_ORCH_SHA256`,
 `TS_OBJECT_NAMESPACE`, `TS_RELEASE_VAULT_ID`, `TS_RELEASE_KEY_SECRET`,
 `TS_RELEASE_ACTOR`, `TS_RELEASE_OCI_USER`, `TS_RELEASE_OCI_TENANCY` and
 `TS_RELEASE_OCI_FINGERPRINT`. Required secrets are `ORG_READ_TOKEN` and

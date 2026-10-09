@@ -15,7 +15,7 @@ namespace TerraScale.Auth.Fast.Oidc;
 public sealed class TokenContractTests(TerraBaseFixture fixture)
 {
     private const string Audience = "https://gru.api.terrascale.tech";
-    private const string ServiceId = "ts-orchestrator";
+    private const string ServiceId = "01M4EQ2FRJ8S8B29E8TQVWNW4K";
     private const string ServiceSecret = "service-test-secret-0123456789abcdefghij";
 
     [Test]
@@ -100,13 +100,13 @@ public sealed class TokenContractTests(TerraBaseFixture fixture)
     [Arguments("access-token-audiences", "https://gru.api.terrascale.tech/#f")]
     // TS-598: the platform issuer as an audience would let organization and project tokens open the management API.
     [Arguments("access-token-audiences", "https://AUTH.test.invalid:443/terrascale")]
-    [Arguments("service-clients", "ts-dashboard:service-test-secret-0123456789abcdefghij")]
+    [Arguments("service-clients", "01M4EQ2FRJ8S8B29E8TQVWNW4J:service-test-secret-0123456789abcdefghij")]
     [Arguments("service-clients", "abcdef01-2345-6789-abcd-ef0123456789:service-test-secret-0123456789abcdefghij")]
     [Arguments("service-clients", "Orchestrator:service-test-secret-0123456789abcdefghij")]
-    [Arguments("service-clients", "ts-orchestrator:short")]
-    [Arguments("service-clients", "ts-orchestrator")]
+    [Arguments("service-clients", "01M4EQ2FRJ8S8B29E8TQVWNW4K:short")]
+    [Arguments("service-clients", "01M4EQ2FRJ8S8B29E8TQVWNW4K")]
     [Arguments("dashboard-redirect-uris", ";")]
-    [Arguments("service-clients", "ts-a:service-test-secret-0123456789abcdefghij;ts-a:service-test-secret-0123456789abcdefghij")]
+    [Arguments("service-clients", "01M4EQ2FRJ8S8B29E8TQVWNW4K:service-test-secret-0123456789abcdefghij;01M4EQ2FRJ8S8B29E8TQVWNW4K:service-test-secret-0123456789abcdefghij")]
     public async Task Invalid_audiences_clients_and_redirect_lists_stop_startup_without_echoing_values(string key, string value)
     {
         var settings = AuthTestServer.DefaultSettings();

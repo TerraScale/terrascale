@@ -35,7 +35,7 @@ env:
   # serializes extraction across jobs.
   NUGET_SCRATCH: /cache/nuget-scratch
   FORGEJO_SHA: ${{ forgejo.sha }}
-  TS_DOTNET_REV: bdea1e8f4926e46367b751d8f633dcec04d760e9
+  TS_DOTNET_REV: a4ff285c051e63e72cb01c4a94173c91da1dd69a
   TS_LIBS_REV: 55b260872f8d4fb1cfa0975576632b4e022e4c91
 
 jobs:
@@ -193,7 +193,6 @@ jobs:
           FORGEJO_REPOSITORY: ${{ forgejo.repository }}
         run: bash scripts/ci/publish-binary.sh
 
-
       # Deployment failure must not erase the time this build became qualified.
       - name: Record the qualified main build for the deployment-lag guard
         if: forgejo.event_name == 'push' && forgejo.ref == 'refs/heads/main'
@@ -206,10 +205,9 @@ jobs:
             -H "Authorization: token ${FORGEJO_TOKEN}" -H 'Content-Type: application/json' \
             --data '{"state":"success","context":"deployment/qualified","description":"Verified main build ready for automatic deployment"}' \
             "https://git.terrascale.tech/api/v1/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}"
-  # TS-610: hand the published release to ts-orchestrator, which rolls it out
-  # to every region, health-gated with automatic rollback. Missing deployment
-  # configuration fails visibly instead of silently skipping a green build;
-  # scripts/ci/deploy.sh lists every input.
+
+  # Every green main push deploys to GRU and SFO through ts-orchestrator.
+  # deploy.sh lists the inputs; deployment has no opt-in switch.
   deploy:
     name: Deploy the release to every region
     needs: [publish-binary]
@@ -230,10 +228,8 @@ jobs:
           RELEASE_TAG: ${{ needs.publish-binary.outputs.tag }}
           ORG_READ_TOKEN: ${{ secrets.ORG_READ_TOKEN }}
           TS_RELEASE_OCI_KEY: ${{ secrets.TS_RELEASE_OCI_KEY }}
-          TS_AUTO_DEPLOY_CELLS: ${{ vars.TS_AUTO_DEPLOY_CELLS }}
           TS_ORCH_RELEASE: ${{ vars.TS_ORCH_RELEASE }}
           TS_ORCH_SHA256: ${{ vars.TS_ORCH_SHA256 }}
-          TS_AUTO_DEPLOY_ENVIRONMENT: ${{ vars.TS_AUTO_DEPLOY_ENVIRONMENT }}
           TS_OBJECT_NAMESPACE: ${{ vars.TS_OBJECT_NAMESPACE }}
           TS_RELEASE_VAULT_ID: ${{ vars.TS_RELEASE_VAULT_ID }}
           TS_RELEASE_KEY_SECRET: ${{ vars.TS_RELEASE_KEY_SECRET }}

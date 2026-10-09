@@ -10,7 +10,6 @@ using TerraScale.Auth.Features.SigningKeys;
 using TerraScale.Auth.Security;
 using TerraScale.Auth.Store;
 using TerraScale.Auth.Tests;
-using TerraScale.DotNet.TerraBase;
 
 namespace TerraScale.Auth.Fast.Oidc;
 

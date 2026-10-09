@@ -59,7 +59,7 @@ public sealed class OidcApplication
 /// <summary>An authorization granted to a client: one per sign-in (collection <c>oidc_authorizations</c>).</summary>
 public sealed class OidcAuthorization
 {
-    /// <summary>Random UUID.</summary>
+    /// <summary>Canonical ULID.</summary>
     public string? Id { get; set; }
 
     /// <summary>The owning instance.</summary>
@@ -99,7 +99,7 @@ public sealed class OidcAuthorization
 /// </summary>
 public sealed class OidcToken
 {
-    /// <summary>Random UUID.</summary>
+    /// <summary>Canonical ULID.</summary>
     public string? Id { get; set; }
 
     /// <summary>The owning instance.</summary>

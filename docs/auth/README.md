@@ -132,7 +132,10 @@ and `ts-libs` checkouts at the revisions pinned in `.forgejo/workflows/ci.yml`.
 They are looked up at `../ts-dotnet` and `../ts-libs`, or under
 `~/Projects/TerraScale/`; pass `-p:TerraScaleRoot=<dir>` or set the
 `TerraScaleRoot` environment variable to use another location. Both workflows
-pin ts-dotnet to SDK merge #24, `bdea1e8f4926e46367b751d8f633dcec04d760e9`.
+pin ts-dotnet to SDK merge #28, `a4ff285c051e63e72cb01c4a94173c91da1dd69a`,
+which supplies the TS-754 ULID generator and canonical validator. The storage
+wire cutover still requires a compatible TerraBase release; this helper pin
+does not change persisted IDs or reset data.
 Storage integration tests require the real SDK-pinned Linux x64 TerraBase
 binary locally and in CI; unavailable prerequisites fail instead of skipping.
 See [the port guide](docs/csharp-port.md) for the binary tag, SHA-256 and
@@ -187,11 +190,11 @@ nice -n 19 dotnet run --project src/TerraScale.Auth
 | `TS_AUTH_TRUSTED_PROXIES` | Optional semicolon-separated list of at most eight exact numeric immediate proxy IPs. Only their rightmost `X-Forwarded-For` entry establishes a client address; requires the documented ingress verification before activation |
 | `TS_AUTH_SMTP_HOST` / `_PORT` / `_USERNAME` / `_PASSWORD` / `_FROM_ADDRESS` | SMTP delivery; host, username, password and from address are all or nothing, port defaults to 587 |
 | `TS_AUTH_SMTP_CHECK_REVOCATION` | `true` (default) or `false`: whether the relay certificate's revocation is checked online; see [Email delivery](#email-delivery-oci) |
-| `TS_AUTH_DASHBOARD_CLIENT_SECRET` | Optional secret of the confidential OIDC client `ts-dashboard`, 32 to 512 characters without whitespace. Required together with the redirect URIs; only OpenIddict's PBKDF2 hash is stored |
+| `TS_AUTH_DASHBOARD_CLIENT_SECRET` | Optional secret of the confidential OIDC client `01M4EQ2FRJ8S8B29E8TQVWNW4J` (display name `ts-dashboard`), 32 to 512 characters without whitespace. Required together with the redirect URIs; only OpenIddict's PBKDF2 hash is stored |
 | `TS_AUTH_DASHBOARD_REDIRECT_URIS` | Semicolon-separated exact callback URIs for `ts-dashboard` (at most 10), e.g. `https://dash.terrascale.tech/auth/callback;http://localhost:5173/auth/callback`. HTTPS, or HTTP only for `localhost` or a loopback IP; no credentials or fragment |
 | `TS_AUTH_DASHBOARD_POST_LOGOUT_REDIRECT_URIS` | Optional semicolon-separated exact post-logout URIs for `ts-dashboard`, with the same rules |
 | `TS_AUTH_ACCESS_TOKEN_AUDIENCES` | Optional semicolon-separated `aud` values put in every access token, kept exactly as written (e.g. `https://gru.api.terrascale.tech`, TerraBase's `auth-audience`); at most 10 absolute HTTPS URIs without credentials, query or fragment |
-| `TS_AUTH_SERVICE_CLIENTS` | Optional semicolon-separated `id:secret` service clients allowed only the client-credentials grant; ids are 3 to 64 lowercase letters, digits or `-`, start with a letter, are not UUIDs or `ts-dashboard`; secrets 32 to 512 characters. Registered at startup like `ts-dashboard` |
+| `TS_AUTH_SERVICE_CLIENTS` | Optional semicolon-separated `id:secret` service clients allowed only the client-credentials grant; ids are canonical uppercase 26-character Crockford ULIDs, distinct from the dashboard client id; secrets 32 to 512 characters. Registered at startup like `ts-dashboard` |
 | `TS_AUTH_INVITATION_URL` | Optional ts-dashboard page that accepts platform invitations (TS-598), e.g. `https://dash.terrascale.tech/invitations/accept`; invitation emails link to it with `?token=`. HTTPS (HTTP only for loopback in Development), no credentials, query or fragment. Unset, no invitation email is sent and the caller delivers the token |
 | `TS_AUTH_SENTRY_DSN` | GlitchTip/Sentry DSN for error reporting; a deployment secret, never committed. Off when unset |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` (or the per-signal `OTEL_EXPORTER_OTLP_*_ENDPOINT`), `OTEL_SERVICE_NAME`, `OTEL_EXPORTER_OTLP_HEADERS` | Standard OpenTelemetry settings; traces, metrics and logs are pushed over OTLP only when an endpoint is set |
@@ -367,7 +370,7 @@ so mail clients must be able to reach it.
 
 `/v1/{slug}/email/*` lets ts-dashboard change the branding and copy of every
 auth email; Scalar documents each operation. Only the `ts-dashboard` client
-may call it, with HTTP Basic credentials (`ts-dashboard` and
+may call it, with HTTP Basic credentials (`01M4EQ2FRJ8S8B29E8TQVWNW4J` and
 `TS_AUTH_DASHBOARD_CLIENT_SECRET`, compared in constant time); the dashboard
 authorizes its own user first and reports them as `actor`. Only the
 `terrascale` instance exists; per-organization branding waits for
@@ -590,16 +593,19 @@ both assets into one directory and verify with
 `sha256sum -c ts-auth-linux-arm64.sha256`; the checksum detects a corrupt or
 mismatched download, it is not a signature.
 
-Then `deploy` (TS-610, `scripts/ci/deploy.sh`) hands that release to
-ts-orchestrator while the repository variable `TS_AUTO_DEPLOY_CELLS` names the
-cells, canary first. `ts-orch release service-deploy` (the ts-orchestrator CI
-build pinned by `TS_ORCH_RELEASE` and its `TS_ORCH_SHA256`) signs a release claim
+Then `deploy` (`scripts/ci/deploy.sh`) automatically hands every green main
+release to ts-orchestrator for GRU and SFO. Deployment has no opt-in switch;
+the script targets both regions and the `canary` environment currently signed
+into their controller configuration. `ts-orch release service-deploy` (the
+ts-orchestrator CI build pinned by `TS_ORCH_RELEASE` and its `TS_ORCH_SHA256`) signs a release claim
 with the scoped release key it reads from OCI Vault, publishes it with the
 binary in each region's head bucket and waits until that region's
 orchestrator reports the replicas serving it; the orchestrator gates the
 rollout on `/healthz` and `/readyz` and rolls a release that never serves
-back, which fails the job before later regions see it. No operator steps
-remain. See ts-orchestrator `docs/continuous-delivery.md`, "Automatic service
+back, which fails the job before later regions see it. The script logs total
+deployment time and preserves the orchestrator's failure status. TS-768 owns
+the follow-up shared region discovery and independent regional rollouts.
+See ts-orchestrator `docs/continuous-delivery.md`, "Automatic service
 releases". `scripts/ci/check-deploy.sh` (in `fast`) runs the script against a
 stub API and ts-orch.
 

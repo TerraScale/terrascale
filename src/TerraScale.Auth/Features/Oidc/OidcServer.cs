@@ -31,7 +31,7 @@ public static class OidcIssuer
     public const string InstanceId = "terrascale";
 
     /// <summary>The client id of the ts-dashboard client registered from <c>TS_AUTH_DASHBOARD_*</c>.</summary>
-    public const string DashboardClientId = "ts-dashboard";
+    public const string DashboardClientId = "01M4EQ2FRJ8S8B29E8TQVWNW4J";
 
     /// <summary>
     /// The user's authentication epoch, in codes, refresh tokens and sign-in access tokens: a grant or a management call

@@ -29,14 +29,14 @@ public sealed partial class EmailApiTests(TerraBaseFixture fixture)
     [Test]
     public async Task Every_endpoint_answers_only_the_dashboard_client()
     {
-        await using var oidc = await OidcHarness.StartAsync(fixture, values => values["service-clients"] = $"svc-reader:{OidcHarness.ClientSecret}");
+        await using var oidc = await OidcHarness.StartAsync(fixture, values => values["service-clients"] = $"01M4EQ2FRJ8S8B29E8TQVWNW4M:{OidcHarness.ClientSecret}");
         (HttpMethod Method, string Path)[] routes =
         [
             (HttpMethod.Get, "/branding"), (HttpMethod.Put, "/branding"), (HttpMethod.Get, "/templates"),
             (HttpMethod.Get, "/templates/sign_in_code/en"), (HttpMethod.Put, "/templates/sign_in_code/en"), (HttpMethod.Post, "/preview"),
             (HttpMethod.Post, "/test"), (HttpMethod.Get, "/versions"), (HttpMethod.Get, "/versions/0"), (HttpMethod.Post, "/versions/0/restore"),
         ];
-        string?[] credentials = [null, Basic("ts-dashboard", "wrong-secret-0123456789abcdef0123456789"), Basic("svc-reader", OidcHarness.ClientSecret), "Bearer " + OidcHarness.ClientSecret, "Basic !!!"];
+        string?[] credentials = [null, Basic("01M4EQ2FRJ8S8B29E8TQVWNW4J", "wrong-secret-0123456789abcdef0123456789"), Basic("01M4EQ2FRJ8S8B29E8TQVWNW4M", OidcHarness.ClientSecret), "Bearer " + OidcHarness.ClientSecret, "Basic !!!"];
         foreach (var (method, path) in routes)
         {
             foreach (var credential in credentials)
@@ -52,7 +52,7 @@ public sealed partial class EmailApiTests(TerraBaseFixture fixture)
         }
 
         // RFC 6749 section 2.3.1: the id and secret are form-urlencoded inside the Basic credential.
-        using var encoded = await SendAsync(oidc, HttpMethod.Get, Base + "/branding", null, Basic("ts%2Ddashboard", Uri.EscapeDataString(OidcHarness.ClientSecret)));
+        using var encoded = await SendAsync(oidc, HttpMethod.Get, Base + "/branding", null, Basic("%30" + TerraScale.Auth.Features.Oidc.OidcIssuer.DashboardClientId[1..], Uri.EscapeDataString(OidcHarness.ClientSecret)));
         await Assert.That(encoded.StatusCode).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(encoded.Headers.CacheControl?.NoStore).IsTrue();
     }
@@ -621,7 +621,7 @@ public sealed partial class EmailApiTests(TerraBaseFixture fixture)
         using var request = new HttpRequestMessage(method, path);
         if (credential is not null)
         {
-            request.Headers.TryAddWithoutValidation("Authorization", credential == "default" ? Basic("ts-dashboard", OidcHarness.ClientSecret) : credential);
+            request.Headers.TryAddWithoutValidation("Authorization", credential == "default" ? Basic("01M4EQ2FRJ8S8B29E8TQVWNW4J", OidcHarness.ClientSecret) : credential);
         }
 
         if (body is not null && method != HttpMethod.Get)

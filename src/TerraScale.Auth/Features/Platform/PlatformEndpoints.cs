@@ -471,7 +471,7 @@ public abstract class PlatformEndpoint(PlatformAuthentication authentication) : 
     /// <summary>A 400 <c>invalid_request</c>.</summary>
     protected static ApiException Invalid(string message) => new(StatusCodes.Status400BadRequest, "invalid_request", message);
 
-    /// <summary>A route id; anything but a lowercase UUID is 404, as for an unknown one.</summary>
+    /// <summary>A route id; anything but a canonical uppercase ULID is 404, as for an unknown one.</summary>
     protected string RouteId(string name) =>
         this.HttpContext.GetRouteValue(name) is string value && PlatformDirectory.IsId(value) ? value : throw PlatformDirectory.NotFound();
 

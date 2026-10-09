@@ -7,6 +7,7 @@ using Microsoft.IdentityModel.Tokens;
 using OpenIddict.Abstractions;
 using TerraScale.Auth.Contracts;
 using TerraScale.Auth.Store;
+using TerraScale.DotNet;
 using TerraScale.DotNet.TerraBase;
 using static OpenIddict.Abstractions.OpenIddictConstants;
 
@@ -24,7 +25,7 @@ public sealed class OidcApplicationStore(AuthStore store, IServiceProvider servi
     public async ValueTask CreateAsync(OidcApplication application, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(application);
-        ArgumentException.ThrowIfNullOrEmpty(application.ClientId);
+        application.ClientId = TerraScaleIds.Validate(application.ClientId);
         (application.Id, application.InstanceId) = (application.ClientId, OidcIssuer.InstanceId);
         application.Version = (await store.CreateAsync(Collection, OidcIssuer.InstanceId, application.ClientId, Serialize(application), cancellationToken).ConfigureAwait(false)).Version;
     }
@@ -50,15 +51,19 @@ public sealed class OidcApplicationStore(AuthStore store, IServiceProvider servi
     /// <inheritdoc />
     public async ValueTask<OidcApplication?> FindByClientIdAsync(string identifier, CancellationToken cancellationToken)
     {
-        if (Platform.ApiKeys.IsKeyId(identifier))
+        if (!TerraScaleIds.IsValid(identifier))
         {
-            // An API key (TS-598) is a client of its own collection; resolved lazily, since ApiKeys reads the store.
+            return null;
+        }
+
+        var document = await store.GetAsync(Collection, OidcIssuer.InstanceId, identifier, cancellationToken).ConfigureAwait(false);
+        if (document is null)
+        {
             var keys = services.GetRequiredService<Platform.ApiKeys>();
             return await keys.FindAsync(identifier, cancellationToken).ConfigureAwait(false) is { } key ? Platform.ApiKeyClients.Describe(key, keys.Digests(key)) : null;
         }
 
-        var document = await store.GetAsync(Collection, OidcIssuer.InstanceId, identifier, cancellationToken).ConfigureAwait(false);
-        var application = document?.Document.Deserialize(OidcJson.Default.OidcApplication);
+        var application = document.Document.Deserialize(OidcJson.Default.OidcApplication);
         if (application is null || application.InstanceId != OidcIssuer.InstanceId || application.ClientId != identifier || application.Id != identifier)
         {
             return null;
@@ -223,7 +228,7 @@ public sealed class OidcAuthorizationStore(AuthStore store) : IOpenIddictAuthori
     public async ValueTask CreateAsync(OidcAuthorization authorization, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(authorization);
-        (authorization.Id, authorization.InstanceId) = (Guid.NewGuid().ToString("D"), OidcIssuer.InstanceId);
+        (authorization.Id, authorization.InstanceId) = (AuthStore.NewId(), OidcIssuer.InstanceId);
         authorization.Version = (await store.CreateAsync(Collection, OidcIssuer.InstanceId, authorization.Id, Serialize(authorization), cancellationToken).ConfigureAwait(false)).Version;
     }
 
@@ -248,6 +253,11 @@ public sealed class OidcAuthorizationStore(AuthStore store) : IOpenIddictAuthori
     /// <inheritdoc />
     public async ValueTask<OidcAuthorization?> FindByIdAsync(string identifier, CancellationToken cancellationToken)
     {
+        if (!TerraScaleIds.IsValid(identifier))
+        {
+            return null;
+        }
+
         var document = await store.GetAsync(Collection, OidcIssuer.InstanceId, identifier, cancellationToken).ConfigureAwait(false);
         return Read(document) is { } authorization && authorization.Id == identifier ? authorization : null;
     }
@@ -404,7 +414,7 @@ public sealed class OidcTokenStore(AuthStore store, IOpenIddictAuthorizationStor
     public async ValueTask CreateAsync(OidcToken token, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(token);
-        (token.Id, token.InstanceId) = (Guid.NewGuid().ToString("D"), OidcIssuer.InstanceId);
+        (token.Id, token.InstanceId) = (AuthStore.NewId(), OidcIssuer.InstanceId);
         if (token.ReferenceId is { } reference)
         {
             token.Version = await store.CreateClaimedAsync(Collection, OidcIssuer.InstanceId, token.Id, Serialize(token), ReferenceKind, reference, cancellationToken).ConfigureAwait(false)
@@ -453,6 +463,11 @@ public sealed class OidcTokenStore(AuthStore store, IOpenIddictAuthorizationStor
     /// <inheritdoc />
     public async ValueTask<OidcToken?> FindByIdAsync(string identifier, CancellationToken cancellationToken)
     {
+        if (!TerraScaleIds.IsValid(identifier))
+        {
+            return null;
+        }
+
         var document = await store.GetAsync(Collection, OidcIssuer.InstanceId, identifier, cancellationToken).ConfigureAwait(false);
         return Read(document) is { } token && token.Id == identifier ? token : null;
     }

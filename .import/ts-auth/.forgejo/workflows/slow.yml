@@ -28,7 +28,7 @@ env:
   # ("Could not find file .../<random>"). Keeping the locks on the shared mount
   # serializes extraction across jobs.
   NUGET_SCRATCH: /cache/nuget-scratch
-  TS_DOTNET_REV: bdea1e8f4926e46367b751d8f633dcec04d760e9
+  TS_DOTNET_REV: a4ff285c051e63e72cb01c4a94173c91da1dd69a
   TS_LIBS_REV: 55b260872f8d4fb1cfa0975576632b4e022e4c91
 
 jobs:

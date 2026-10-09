@@ -2,6 +2,8 @@ using System.Net;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.DependencyInjection;
+using OpenIddict.Abstractions;
+using OpenIddict.Server;
 using TerraScale.Auth.Configuration;
 using TerraScale.Auth.Store;
 using TerraScale.Auth.Tests;
@@ -22,6 +24,58 @@ public sealed partial class ApiKeyTests(TerraBaseFixture fixture)
     private static readonly string[] Browse = ["databases:read", "documents:read"];
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task A_key_revoked_or_expired_after_client_authentication_cannot_become_a_service_client(bool expires)
+    {
+        var clock = new ManualClock(DateTimeOffset.UtcNow);
+        Func<Task>? invalidate = null;
+        string? clientId = null;
+        var invalidated = false;
+        await using var oidc = await OidcHarness.StartAsync(fixture, values => values["access-token-audiences"] = Audience,
+            clock: clock, services: services => services.AddOpenIddict().AddServer(server =>
+                server.AddEventHandler<OpenIddictServerEvents.ValidateTokenRequestContext>(handler => handler
+                    // Client authentication and grant checks finish before the passthrough endpoint runs.
+                    .SetOrder(int.MaxValue)
+                    .UseInlineHandler(async context =>
+                    {
+                        if (context.Request.IsClientCredentialsGrantType() && context.Request.ClientId == clientId && invalidate is not null)
+                        {
+                            await invalidate();
+                            invalidated = true;
+                        }
+                    }))));
+        var (_, token) = await oidc.SignInUserAsync("client-race@example.test");
+        var organization = await oidc.CreateOrganizationAsync(token);
+        var keys = $"{Organizations}/{organization}/api-keys";
+        var created = await oidc.OkAsync(HttpMethod.Post, keys, token,
+            new { name = "race", scopes = ReadOnly, expires_at = clock.GetUtcNow().AddMinutes(5) }, HttpStatusCode.Created);
+        var key = created.GetProperty("key").GetString()!;
+        await Assert.That((await TokenErrorAsync(oidc.ApiKeyTokenAsync(key))).Status).IsEqualTo(200);
+
+        clientId = key[..26];
+        invalidate = async () =>
+        {
+            if (expires)
+            {
+                clock.Advance(TimeSpan.FromMinutes(5));
+            }
+            else
+            {
+                await oidc.OkAsync(HttpMethod.Delete, $"{keys}/{clientId}", token, status: HttpStatusCode.NoContent);
+            }
+        };
+        using var refused = await oidc.ApiKeyTokenAsync(key);
+        var body = await OidcHarness.JsonAsync(refused);
+        await Assert.That(invalidated).IsTrue();
+        await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+        await Assert.That(body.GetProperty("error").GetString()).IsEqualTo("invalid_client");
+        await Assert.That(body.TryGetProperty("access_token", out _)).IsFalse();
+        await Assert.That(body.TryGetProperty("refresh_token", out _)).IsFalse();
+        await Assert.That(body.TryGetProperty("id_token", out _)).IsFalse();
+    }
+
+    [Test]
     public async Task A_project_key_is_shown_once_and_exchanged_for_a_project_token_with_the_contract_claims()
     {
         await using var oidc = await StartAsync();
@@ -35,14 +89,14 @@ public sealed partial class ApiKeyTests(TerraBaseFixture fixture)
         var key = created.GetProperty("key").GetString()!;
         var id = created.GetProperty("api_key").GetProperty("id").GetString()!;
         await Assert.That(KeyString().IsMatch(key)).IsTrue();
-        await Assert.That(key[..24]).IsEqualTo(id);
+        await Assert.That(key[..26]).IsEqualTo(id);
         await Assert.That(created.GetProperty("api_key").GetProperty("project_id").GetString()).IsEqualTo(project);
         await Assert.That(created.GetProperty("api_key").GetProperty("created_by").GetString()).IsEqualTo(alice.Id);
 
         // Never shown again.
         var listed = await oidc.OkAsync(HttpMethod.Get, keys, token);
         await Assert.That(listed.GetProperty("items").GetArrayLength()).IsEqualTo(1);
-        await Assert.That(listed.ToString()).DoesNotContain(key[25..]);
+        await Assert.That(listed.ToString()).DoesNotContain(key[27..]);
         await Assert.That((await oidc.OkAsync(HttpMethod.Get, $"{keys}/{id}", token)).GetProperty("database").GetString()).IsEqualTo("app");
 
         using var exchanged = await oidc.ApiKeyTokenAsync(key);
@@ -120,7 +174,7 @@ public sealed partial class ApiKeyTests(TerraBaseFixture fixture)
 
         // Organization keys and project keys list apart.
         var organizationKeys = (await oidc.OkAsync(HttpMethod.Get, keys, token)).GetProperty("items");
-        await Assert.That(organizationKeys.EnumerateArray().Select(item => item.GetProperty("id").GetString()!).ToArray()).IsEquivalentTo([key[..24]]);
+        await Assert.That(organizationKeys.EnumerateArray().Select(item => item.GetProperty("id").GetString()!).ToArray()).IsEquivalentTo([key[..26]]);
         await Assert.That(organizationKeys[0].GetProperty("project_id").ValueKind).IsEqualTo(JsonValueKind.Null);
         var projectKeys = (await oidc.OkAsync(HttpMethod.Get, $"{Organizations}/{organization}/projects/{project}/api-keys", token)).GetProperty("items");
         await Assert.That(projectKeys.EnumerateArray().Select(item => item.GetProperty("name").GetString()!).ToArray()).IsEquivalentTo(["app"]);
@@ -164,7 +218,7 @@ public sealed partial class ApiKeyTests(TerraBaseFixture fixture)
         await oidc.AddMemberAsync(organization, bob.Id, "viewer");
         await oidc.GrantAsync(staging, dave.Id, "admin");
         var key = (await oidc.OkAsync(HttpMethod.Post, $"{Organizations}/{organization}/projects/{production}/api-keys", token, new { name = "app", scopes = ReadOnly }, HttpStatusCode.Created)).GetProperty("key").GetString()!;
-        var id = key[..24];
+        var id = key[..26];
 
         // A viewer of the key's project, an admin of another project, and the right caller on a route that does not own
         // the key: none reads, rotates or revokes it.
@@ -200,7 +254,7 @@ public sealed partial class ApiKeyTests(TerraBaseFixture fixture)
         var keys = $"{Organizations}/{organization}/projects/{project}/api-keys";
         var created = await oidc.OkAsync(HttpMethod.Post, keys, token, new { name = "backend", scopes = ReadOnly, expires_at = clock.GetUtcNow().AddDays(2) }, HttpStatusCode.Created);
         var first = created.GetProperty("key").GetString()!;
-        var id = first[..24];
+        var id = first[..26];
 
         // A body that is there must be the JSON object, chunked or not: it never silently means "no grace".
         using (var chunked = new HttpRequestMessage(HttpMethod.Post, $"{keys}/{id}/rotate") { Content = new StreamContent(new MemoryStream("previous_secret_ttl=3600"u8.ToArray())) })
@@ -222,7 +276,7 @@ public sealed partial class ApiKeyTests(TerraBaseFixture fixture)
         }
 
         var second = (await oidc.OkAsync(HttpMethod.Post, $"{keys}/{id}/rotate", token)).GetProperty("key").GetString()!;
-        await Assert.That(second[..24]).IsEqualTo(id);
+        await Assert.That(second[..26]).IsEqualTo(id);
         await Assert.That(await TokenErrorAsync(oidc.ApiKeyTokenAsync(first))).IsEqualTo((401, "invalid_client"));
         using (var stale = await replica.Client.SendAsync(KeyTokenRequest(first)))
         {
@@ -265,7 +319,7 @@ public sealed partial class ApiKeyTests(TerraBaseFixture fixture)
         var project = projectKey ? await oidc.CreateProjectAsync(token, organization, "Production") : null;
         var keys = $"{Organizations}/{organization}{(project is null ? string.Empty : $"/projects/{project}")}/api-keys";
         var first = (await oidc.OkAsync(HttpMethod.Post, keys, token, new { name = "backend", scopes = ReadOnly }, HttpStatusCode.Created)).GetProperty("key").GetString()!;
-        var id = first[..24];
+        var id = first[..26];
         var route = $"{keys}/{id}";
         await using var replica = await StartReplicaAsync(oidc, clock);
         await Assert.That((await TokenErrorAsync(replica.Client.SendAsync(KeyTokenRequest(first)))).Status).IsEqualTo(200);
@@ -317,7 +371,7 @@ public sealed partial class ApiKeyTests(TerraBaseFixture fixture)
         {
             var next = await oidc.OkAsync(HttpMethod.Post, $"{route}/rotate", token, body);
             var key = next.GetProperty("key").GetString()!;
-            await Assert.That(key[..24]).IsEqualTo(id);
+            await Assert.That(key[..26]).IsEqualTo(id);
             await Assert.That(next.GetProperty("api_key").GetProperty("previous_secret_expires_at").ValueKind).IsEqualTo(JsonValueKind.Null);
             foreach (var client in new[] { oidc.Client, replica.Client })
             {
@@ -343,7 +397,7 @@ public sealed partial class ApiKeyTests(TerraBaseFixture fixture)
         var project = projectKey ? await oidc.CreateProjectAsync(token, organization, "Production") : null;
         var keys = $"{Organizations}/{organization}{(project is null ? string.Empty : $"/projects/{project}")}/api-keys";
         var original = (await oidc.OkAsync(HttpMethod.Post, keys, token, new { name = "backend", scopes = ReadOnly }, HttpStatusCode.Created)).GetProperty("key").GetString()!;
-        var id = original[..24];
+        var id = original[..26];
         var store = oidc.Server.App.Services.GetRequiredService<AuthStore>();
         var before = (await store.GetAsync(AuthStore.ApiKeyCollection, "terrascale", id))!;
         await using var replica = await StartReplicaAsync(oidc, clock);
@@ -375,7 +429,7 @@ public sealed partial class ApiKeyTests(TerraBaseFixture fixture)
 
         var winner = responses.Single(response => response.Status == HttpStatusCode.OK).Body;
         var key = winner.GetProperty("key").GetString()!;
-        await Assert.That(key[..24]).IsEqualTo(id);
+        await Assert.That(key[..26]).IsEqualTo(id);
         var after = (await store.GetAsync(AuthStore.ApiKeyCollection, "terrascale", id))!;
         await Assert.That(after.Document.GetProperty("previousSecretHash").GetString()).IsEqualTo(before.Document.GetProperty("secretHash").GetString());
         await Assert.That(after.Document.GetProperty("previousSecretExpiresAt").GetDateTimeOffset()).IsEqualTo(clock.GetUtcNow().AddSeconds(60));
@@ -486,7 +540,7 @@ public sealed partial class ApiKeyTests(TerraBaseFixture fixture)
     private static HttpRequestMessage KeyTokenRequest(string key)
     {
         var request = new HttpRequestMessage(HttpMethod.Post, "/terrascale/oauth/token") { Content = new FormUrlEncodedContent(new Dictionary<string, string> { ["grant_type"] = "client_credentials" }) };
-        request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Basic", Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes($"{key[..24]}:{key}")));
+        request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Basic", Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes($"{key[..26]}:{key}")));
         return request;
     }
 
@@ -497,6 +551,6 @@ public sealed partial class ApiKeyTests(TerraBaseFixture fixture)
         return ((int)response.StatusCode, body.TryGetProperty("error", out var error) ? error.GetString() : null);
     }
 
-    [GeneratedRegex("^tsk_[0-9a-hjkmnp-tv-z]{20}_[0-9a-hjkmnp-tv-z]{52}$")]
+    [GeneratedRegex("^[0-7][0-9A-HJKMNP-TV-Z]{25}_[0-9a-hjkmnp-tv-z]{52}$")]
     private static partial Regex KeyString();
 }
