@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.UserAuth;
@@ -10,43 +11,51 @@ internal sealed record ProjectCatalogBinding(
 
 internal sealed partial class EngineManagementService : IProjectCatalog
 {
-    public async ValueTask<string?> ResolveProjectAsync(string projectId, string actor, bool create, CancellationToken cancellationToken)
+    public async ValueTask<ResolveProjectResult> ResolveProjectAsync(string projectId, string actor, bool create, CancellationToken cancellationToken)
     {
         if (options.AuthIssuer is not { } issuer)
         {
-            return null;
+            return ManagementErrors.NotFound;
         }
 
-        var mapping = await ReadAsync(async transaction =>
+        var lookup = await ReadAsync<ProjectMappingResult>(async transaction =>
         {
             var organization = await GetAsync(transaction, ProjectOrganizations, projectId, Id, cancellationToken).ConfigureAwait(false);
-            return (Organization: organization, Verified: organization is not null
+            return new ProjectMapping(organization, organization is not null
                 && await IsProjectBoundAsync(transaction, projectId, organization, cancellationToken).ConfigureAwait(false));
-        }, cancellationToken)
-            .ConfigureAwait(false);
+        }, static error => error, cancellationToken).ConfigureAwait(false);
+        if (lookup is not ProjectMapping mapping)
+        {
+            return lookup switch
+            {
+                Unavailable error => error,
+                ProjectMapping => throw new UnreachableException(),
+            };
+        }
+
         if (mapping.Organization is not null || !create)
         {
-            return mapping.Verified ? mapping.Organization : null;
+            return mapping is { Verified: true, Organization: not null } ? mapping.Organization : ManagementErrors.NotFound;
         }
 
         // Keep layout 1 and catalog 5: these records are storage envelopes, not ts-auth identity or membership.
-        return await WriteAsync<string?>(async transaction =>
+        return await WriteAsync<ResolveProjectResult>(async transaction =>
         {
             if (await GetAsync(transaction, ProjectOrganizations, projectId, Id, cancellationToken).ConfigureAwait(false) is { } existing)
             {
-                return await IsProjectBoundAsync(transaction, projectId, existing, cancellationToken).ConfigureAwait(false) ? existing : null;
+                return await IsProjectBoundAsync(transaction, projectId, existing, cancellationToken).ConfigureAwait(false) ? existing : ManagementErrors.NotFound;
             }
 
             if (await transaction.GetVersionAsync(ProjectOrganizations, projectId, cancellationToken).ConfigureAwait(false) is not null)
             {
-                return null;
+                return ManagementErrors.NotFound;
             }
 
             // Legacy commits let users choose organization ULIDs; equality is not authority over a signed project.
             var namespaceId = NewId();
             if (await transaction.GetVersionAsync(Organizations, namespaceId, cancellationToken).ConfigureAwait(false) is not null)
             {
-                return null;
+                return ManagementErrors.NotFound;
             }
 
             var owner = new Organization(namespaceId, projectId, actor, time.GetUtcNow());
@@ -58,26 +67,35 @@ internal sealed partial class EngineManagementService : IProjectCatalog
                 new ProjectCatalogBinding(1, issuer, owner.Id, null, actor, time.GetUtcNow()), TerraBaseJsonContext.Default.ProjectCatalogBinding, cancellationToken)
                 .ConfigureAwait(false);
             return owner.Id;
-        }, cancellationToken).ConfigureAwait(false);
+        }, static error => error, cancellationToken).ConfigureAwait(false);
     }
 
     public async ValueTask<VerifyProjectBindingResult> VerifyBindingAsync(
         string userId, string organizationId, string projectId, string authorityOrganizationId, string token, CancellationToken cancellationToken)
     {
-        if (options.AuthIssuer is not { } issuer || !await ReadAsync(
-            transaction => CanBindProjectAsync(transaction, userId, organizationId, projectId, cancellationToken), cancellationToken).ConfigureAwait(false))
+        if (options.AuthIssuer is not { } issuer)
         {
-            return new NotFound();
+            return ManagementErrors.NotFound;
         }
 
-        switch (await projectAuthority.IsProjectAdministratorAsync(token, authorityOrganizationId, projectId, cancellationToken).ConfigureAwait(false))
+        var precheck = await ReadAsync<VerifyProjectBindingResult>(async transaction =>
+            await CanBindProjectAsync(transaction, userId, organizationId, projectId, cancellationToken).ConfigureAwait(false)
+                ? new Done() : ManagementErrors.NotFound, static error => error, cancellationToken).ConfigureAwait(false);
+        if (precheck is not Done)
         {
-            case Unavailable unavailable:
-                return unavailable;
-            case false:
-                return new NotFound();
-            case true:
-                break;
+            return precheck;
+        }
+
+        VerifyProjectBindingResult authority = await projectAuthority.IsProjectAdministratorAsync(token, authorityOrganizationId, projectId, cancellationToken)
+            .ConfigureAwait(false) switch
+        {
+            true => new Done(),
+            false => ManagementErrors.NotFound,
+            Unavailable error => error,
+        };
+        if (authority is not Done)
+        {
+            return authority;
         }
 
         // The online authority check holds no storage locks. Recheck storage ownership and mapping in the committing transaction.
@@ -101,8 +119,12 @@ internal sealed partial class EngineManagementService : IProjectCatalog
                 TerraBaseJsonContext.Default.ProjectCatalogBinding, cancellationToken).ConfigureAwait(false);
             await RecordAsync(transaction, organizationId, userId, "project_binding_verified", projectId, detail: null, cancellationToken).ConfigureAwait(false);
             return new Done();
-        }, cancellationToken).ConfigureAwait(false);
+        }, static error => error, cancellationToken).ConfigureAwait(false);
     }
+
+    private sealed record ProjectMapping(string? Organization, bool Verified);
+
+    private readonly union ProjectMappingResult(ProjectMapping, Unavailable);
 
     private static string Bindings(string projectId) => SystemCatalog.ProjectState(projectId) + "binding";
 
@@ -114,7 +136,7 @@ internal sealed partial class EngineManagementService : IProjectCatalog
 
     private static async ValueTask<bool> CanBindProjectAsync(
         IStorageTransaction transaction, string userId, string organizationId, string projectId, CancellationToken cancellationToken) =>
-        (await AuthorizeAsync(transaction, userId, organizationId, OrganizationRole.Owner, cancellationToken).ConfigureAwait(false)).Error == ManagementError.None
+        await AuthorizeMemberAsync(transaction, userId, organizationId, OrganizationRole.Owner, cancellationToken).ConfigureAwait(false) is OrganizationMember
         && await GetAsync(transaction, Projects(organizationId), projectId, TerraBaseJsonContext.Default.Project, cancellationToken).ConfigureAwait(false) is not null
         && await GetAsync(transaction, ProjectOrganizations, projectId, Id, cancellationToken).ConfigureAwait(false) == organizationId;
 

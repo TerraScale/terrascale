@@ -1,21 +1,23 @@
+using System.Diagnostics;
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
 using TerraBase.Engine;
+using TerraBase.Errors;
 using TerraBase.Primitives;
 
 namespace TerraBase.Features.Management;
 
-/// <summary>Brings the management catalog to the version this build supports, or refuses an unsupported one (503).</summary>
+/// <summary>Whether the management catalog may be used: <see cref="Unavailable"/> while it is at a version this build cannot use.</summary>
+internal readonly union CatalogCheck(Done, Unavailable);
+
+/// <summary>Initializes a fresh management catalog, or refuses an unsupported format (503).</summary>
 internal interface ICatalogGuard
 {
-    /// <summary>Bootstraps once per process; throws a 503 <see cref="BadHttpRequestException"/> for a catalog this build cannot use.</summary>
-    ValueTask EnsureCatalogAsync(CancellationToken cancellationToken);
+    /// <summary>Initializes a fresh primary catalog; <see cref="Unavailable"/> for a catalog this build cannot use.</summary>
+    ValueTask<CatalogCheck> EnsureCatalogAsync(CancellationToken cancellationToken);
 
-    /// <summary>
-    /// On a catalog follower, checks the replicated catalog version inside the reader's own <paramref name="transaction"/>, since
-    /// replication can bring a version this build does not read (503); nothing on a primary, which checked during bootstrap.
-    /// </summary>
-    ValueTask CheckReadAsync(IStorageTransaction transaction, CancellationToken cancellationToken);
+    /// <summary>Checks the supported catalog version inside the operation's own read or write transaction.</summary>
+    ValueTask<CatalogCheck> CheckReadAsync(IStorageTransaction transaction, CancellationToken cancellationToken);
 }
 
 /// <summary>
@@ -38,30 +40,59 @@ internal sealed class SystemCatalog(IStorageEngine engine, ICatalogGuard guard)
     /// <summary>Collection prefix for the state of one project.</summary>
     public static string ProjectState(string projectId) => $"projects/{projectId}/";
 
-    /// <summary>Reads a snapshot of the management catalog after <see cref="ICatalogGuard"/> accepted its version.</summary>
-    public async ValueTask<T> ReadAsync<T>(Func<IStorageTransaction, ValueTask<T>> read, CancellationToken cancellationToken)
+    /// <summary>
+    /// Reads a snapshot of the management catalog after <see cref="ICatalogGuard"/> accepted its version; otherwise the
+    /// result is <paramref name="unavailable"/> of the refusal.
+    /// </summary>
+    public async ValueTask<T> ReadAsync<T>(Func<IStorageTransaction, ValueTask<T>> read, Func<Unavailable, T> unavailable, CancellationToken cancellationToken)
     {
-        await guard.EnsureCatalogAsync(cancellationToken).ConfigureAwait(false);
-        return await ReadUncheckedAsync(async transaction =>
+        var accepted = await guard.EnsureCatalogAsync(cancellationToken).ConfigureAwait(false);
+        if (accepted is not Done)
         {
-            await guard.CheckReadAsync(transaction, cancellationToken).ConfigureAwait(false);
-            return await read(transaction).ConfigureAwait(false);
-        }, cancellationToken).ConfigureAwait(false);
+            return accepted switch
+            {
+                Done => throw new UnreachableException(),
+                Unavailable refused => unavailable(refused),
+            };
+        }
+
+        return await ReadUncheckedAsync(async transaction =>
+            await guard.CheckReadAsync(transaction, cancellationToken).ConfigureAwait(false) switch
+            {
+                Done => await read(transaction).ConfigureAwait(false),
+                Unavailable stale => unavailable(stale),
+            }, cancellationToken).ConfigureAwait(false);
     }
 
-    /// <summary>Writes to the management catalog after <see cref="ICatalogGuard"/> accepted its version.</summary>
-    public async ValueTask<T> WriteAsync<T>(Func<IStorageTransaction, ValueTask<T>> write, CancellationToken cancellationToken)
-    {
-        await guard.EnsureCatalogAsync(cancellationToken).ConfigureAwait(false);
-        return await WriteUncheckedAsync(write, cancellationToken).ConfigureAwait(false);
-    }
+    /// <summary>Writes to the management catalog after <see cref="ICatalogGuard"/> accepted its version (see <see cref="ReadAsync"/>).</summary>
+    public async ValueTask<T> WriteAsync<T>(Func<IStorageTransaction, ValueTask<T>> write, Func<Unavailable, T> unavailable, CancellationToken cancellationToken) =>
+        await guard.EnsureCatalogAsync(cancellationToken).ConfigureAwait(false) switch
+        {
+            Done => await WriteUncheckedAsync(async transaction =>
+                await guard.CheckReadAsync(transaction, cancellationToken).ConfigureAwait(false) switch
+                {
+                    Done => await write(transaction).ConfigureAwait(false),
+                    Unavailable refused => unavailable(refused),
+                }, cancellationToken).ConfigureAwait(false),
+            Unavailable refused => unavailable(refused),
+        };
+
+    /// <summary>Whether the management catalog may be used now, for work that checks once before a pass of its own.</summary>
+    public ValueTask<CatalogCheck> CheckAsync(CancellationToken cancellationToken) =>
+        ReadAsync<CatalogCheck>(static _ => ValueTask.FromResult<CatalogCheck>(new Done()), static error => error, cancellationToken);
 
     /// <summary>Writes catalog state with a disk-synced commit before acknowledging a peer batch.</summary>
-    public async ValueTask<T> WriteDurableAsync<T>(Func<IStorageTransaction, ValueTask<T>> write, CancellationToken cancellationToken)
-    {
-        await guard.EnsureCatalogAsync(cancellationToken).ConfigureAwait(false);
-        return await WriteUncheckedAsync(write, cancellationToken, durable: true).ConfigureAwait(false);
-    }
+    public async ValueTask<T> WriteDurableAsync<T>(Func<IStorageTransaction, ValueTask<T>> write, Func<Unavailable, T> unavailable, CancellationToken cancellationToken) =>
+        await guard.EnsureCatalogAsync(cancellationToken).ConfigureAwait(false) switch
+        {
+            Done => await WriteUncheckedAsync(async transaction =>
+                await guard.CheckReadAsync(transaction, cancellationToken).ConfigureAwait(false) switch
+                {
+                    Done => await write(transaction).ConfigureAwait(false),
+                    Unavailable refused => unavailable(refused),
+                }, cancellationToken, durable: true).ConfigureAwait(false),
+            Unavailable refused => unavailable(refused),
+        };
 
     /// <summary>
     /// Reads without the catalog version check, for state that does not depend on the management catalog (operator API

@@ -98,6 +98,18 @@ public sealed record CommitRejected(Failure Error, int? Op);
 /// <summary>The outcome of a commit: its response (applied now or recorded before), or why nothing was written.</summary>
 public readonly union CommitResult(CommitOutcome, CommitRejected);
 
+/// <summary>The recorded commit body, or why it cannot be read.</summary>
+public readonly union GetCommitResult(byte[], NotFound, Unavailable);
+
+/// <summary>The requested versions, or why they cannot be read.</summary>
+public readonly union GetVersionsResult(VersionsBody, NotFound, Unavailable);
+
+/// <summary>A dashboard document, or why it cannot be read.</summary>
+public readonly union GetDashboardDocumentResult(StoredDocument, NotFound, Unavailable);
+
+/// <summary>A dashboard query result, or why it cannot be read.</summary>
+public readonly union QueryDashboardDocumentsResult(QueryOutcome, NotFound, Validation, Unavailable);
+
 /// <summary>
 /// Atomic commits of Management operations and dashboard documents, versions, and reads of the dashboard document
 /// space (docs/management-commits.md). Expected failures are values (docs/error-handling.md).
@@ -113,14 +125,14 @@ public interface IManagementCommits
         string userId, string? email, string commitId, string requestHash, IReadOnlyList<CommitOperation> operations, CancellationToken cancellationToken);
 
     /// <summary>The recorded response of the user's commit, or <see cref="NotFound"/> when there is none within the retention.</summary>
-    ValueTask<Found<byte[]>> GetCommitAsync(string userId, string commitId, CancellationToken cancellationToken);
+    ValueTask<GetCommitResult> GetCommitAsync(string userId, string commitId, CancellationToken cancellationToken);
 
     /// <summary>Reads versions in one snapshot; <see cref="NotFound"/> when the user is not a member of one of the organizations.</summary>
-    ValueTask<Found<VersionsBody>> GetVersionsAsync(string userId, IReadOnlyList<string> organizations, CancellationToken cancellationToken);
+    ValueTask<GetVersionsResult> GetVersionsAsync(string userId, IReadOnlyList<string> organizations, CancellationToken cancellationToken);
 
     /// <summary>Reads a document of the dashboard document space; <see cref="NotFound"/> when it is absent or deleted.</summary>
-    ValueTask<Found<StoredDocument>> GetDocumentAsync(string collection, string id, CancellationToken cancellationToken);
+    ValueTask<GetDashboardDocumentResult> GetDocumentAsync(string collection, string id, CancellationToken cancellationToken);
 
     /// <summary>Queries the dashboard document space, as the Documents API query does.</summary>
-    ValueTask<QueryResult> QueryDocumentsAsync(DocumentQuery query, long? countLimit, CancellationToken cancellationToken);
+    ValueTask<QueryDashboardDocumentsResult> QueryDocumentsAsync(DocumentQuery query, long? countLimit, CancellationToken cancellationToken);
 }

@@ -2,7 +2,9 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Text.Json;
 using Bogus;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.IdentityModel.Tokens;
+using TerraBase.Features.Management;
 using TerraBase.Primitives;
 using TerraBase.Testing;
 
@@ -11,6 +13,72 @@ namespace TerraBase.Fast.Management;
 public sealed class ProjectTokenTests
 {
     private const string AllScopes = "databases:read databases:write documents:read documents:write shapes:read";
+
+    [Test]
+    [Arguments("GET", "")]
+    [Arguments("DELETE", "")]
+    [Arguments("POST", "/branches")]
+    public async Task A_signed_project_database_lookup_failure_after_route_resolution_remains_opaque(string method, string suffix)
+    {
+        var refuseLookup = false;
+        var resolvedRoutes = 0;
+        var refusedLookups = 0;
+        var mutations = 0;
+        await using var api = await ManagementApi.StartAsync(services: services =>
+        {
+            var registration = services.Single(service => service.ServiceType == typeof(IManagementService));
+            services.Remove(registration);
+            services.AddSingleton(provider => UsageApiTests.SlowManagement.Wrap(
+                (IManagementService)registration.ImplementationFactory!(provider),
+                operation =>
+                {
+                    if (!Volatile.Read(ref refuseLookup))
+                    {
+                        return;
+                    }
+
+                    if (operation == nameof(IManagementService.FindDatabaseRecordAsync))
+                    {
+                        Interlocked.Increment(ref resolvedRoutes);
+                    }
+                    if (operation == nameof(IManagementService.GetDatabaseAsync))
+                    {
+                        Interlocked.Increment(ref refusedLookups);
+                    }
+                    if (operation is nameof(IManagementService.DeleteDatabaseAsync) or nameof(IManagementService.BranchDatabaseAsync))
+                    {
+                        Interlocked.Increment(ref mutations);
+                    }
+                },
+                operation => Volatile.Read(ref refuseLookup) && operation == nameof(IManagementService.GetDatabaseAsync)
+                    ? new ValueTask<GetDatabaseResult>(ManagementErrors.NotFound)
+                    : null));
+        });
+        var database = await api.CreateManagedDatabaseAsync("first");
+        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
+        using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
+        await ManagementApi.CreateCollectionAsync(data, database, "people");
+        using var created = await data.PostAsJsonAsync(Uri(database.Data + "/collections/people/documents"), new { name = "Preserved" });
+        created.EnsureSuccessStatusCode();
+        var id = (await created.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString();
+        using var restricted = api.WithToken(Token(api, api.User, database.Project, AllScopes, database: "first"));
+        Volatile.Write(ref refuseLookup, true);
+        using var request = new HttpRequestMessage(new HttpMethod(method), Uri(database.Data + suffix))
+        {
+            Content = method == "POST" ? JsonContent.Create(new { name = "copy" }) : null,
+        };
+        await ErrorAssert.ErrorAsync(restricted.SendAsync(request), HttpStatusCode.NotFound, "unknown_route");
+        await Assert.That(Volatile.Read(ref resolvedRoutes)).IsGreaterThan(0);
+        await Assert.That(Volatile.Read(ref refusedLookups)).IsEqualTo(1);
+        await Assert.That(Volatile.Read(ref mutations)).IsEqualTo(0);
+
+        Volatile.Write(ref refuseLookup, false);
+        var listed = await api.Client.GetFromJsonAsync<JsonElement>(Uri(database.ProjectPath + "/databases"));
+        await Assert.That(listed.GetProperty("items").EnumerateArray().Select(item => item.GetProperty("id").GetString()!))
+            .IsEquivalentTo([database.Id]);
+        var preserved = await data.GetFromJsonAsync<JsonElement>(Uri(database.Data + "/collections/people/documents/by-key?id=" + System.Uri.EscapeDataString(id!)));
+        await Assert.That(preserved.GetProperty("document").GetProperty("name").GetString()).IsEqualTo("Preserved");
+    }
 
     [Test]
     [Arguments("/v1/projects/", "/databases")]
@@ -201,7 +269,7 @@ public sealed class ProjectTokenTests
     }
 
     [Test]
-    public async Task A_database_restricted_JWT_filters_project_list_and_usage_and_cannot_create_branch_or_restore_another_database()
+    public async Task A_database_restricted_JWT_filters_project_list_and_usage_and_cannot_read_delete_create_branch_or_restore_another_database()
     {
         var faker = new Faker();
         await using var api = await ManagementApi.StartAsync();
@@ -230,18 +298,25 @@ public sealed class ProjectTokenTests
         await Assert.That(usage.GetProperty("items").EnumerateArray().Select(item => item.GetProperty("databaseId").GetString()!))
             .IsEquivalentTo([first.Id]);
         await Assert.That(await StatusAsync(restricted.GetAsync(Uri(first.Data)))).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(await StatusAsync(restricted.GetAsync(Uri(second.Data)))).IsEqualTo(HttpStatusCode.NotFound);
+        await ErrorAssert.ErrorAsync(restricted.GetAsync(Uri(second.Data)), HttpStatusCode.NotFound,
+            "unknown_database", "the database does not exist");
+        await ErrorAssert.ErrorAsync(restricted.DeleteAsync(Uri(second.Data)), HttpStatusCode.NotFound,
+            "unknown_database", "the database does not exist");
+        await ErrorAssert.ErrorAsync(restricted.PostAsJsonAsync(Uri(second.Data + "/branches"), new { name = "second-copy" }),
+            HttpStatusCode.NotFound, "unknown_database", "the database does not exist");
         await Assert.That(await StatusAsync(restricted.GetAsync(Uri(ManagementApi.DocumentPath(second, "people", "existing")))))
             .IsEqualTo(HttpStatusCode.NotFound);
         await Assert.That(await StatusAsync(restricted.PostAsJsonAsync(Uri(databases), new { name = "created" }))).IsEqualTo(HttpStatusCode.NotFound);
-        await Assert.That(await StatusAsync(restricted.PostAsJsonAsync(Uri(first.Data + "/branches"), new { name = "branched" })))
-            .IsEqualTo(HttpStatusCode.NotFound);
+        await ErrorAssert.ErrorAsync(restricted.PostAsJsonAsync(Uri(first.Data + "/branches"), new { name = "branched" }),
+            HttpStatusCode.NotFound, "unknown_route");
         await Assert.That(await StatusAsync(restricted.PostAsJsonAsync(Uri(first.Data + $"/backups/{backup}/restore"), new { name = "restored" })))
             .IsEqualTo(HttpStatusCode.NotFound);
 
         using var unrestricted = api.WithToken(Token(api, EntityIds.New().ToString(), first.Project, AllScopes));
         var unchanged = await unrestricted.GetFromJsonAsync<JsonElement>(Uri(databases));
         await Assert.That(unchanged.GetProperty("items").GetArrayLength()).IsEqualTo(2);
+        await Assert.That(unchanged.GetProperty("items").EnumerateArray().Select(item => item.GetProperty("id").GetString()!))
+            .IsEquivalentTo([first.Id, second.Id]);
     }
 
     [Test]

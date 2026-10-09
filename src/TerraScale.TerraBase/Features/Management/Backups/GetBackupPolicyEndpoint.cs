@@ -1,6 +1,7 @@
 using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
 using TerraBase.Hosting;
+using TerraBase.Tenancy;
 using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management.Backups;
@@ -18,13 +19,21 @@ public sealed class GetBackupPolicyEndpoint(IManagementService management, IMana
         Tags("Backups");
         Produces<BackupPolicy>();
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
+        Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
         RequireAuthorization(ApiKeyScopes.DatabasesRead);
         Metadata(new ProjectManagementRoute(), ListenerMetadata.Management);
     }
 
     /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
-        await ManagementRoute.DatabaseAsync(HttpContext, management, cancellationToken) is { } database
-            ? TypedResults.Ok(await backups.GetPolicyAsync(database.DatabaseId!, cancellationToken))
-            : ErrorResponse.From(new NotFound());
+        await ManagementRoute.DatabaseAsync(HttpContext, management, cancellationToken) switch
+        {
+            TenantContext database => await backups.GetPolicyAsync(database.DatabaseId!, cancellationToken) switch
+            {
+                BackupPolicy policy => TypedResults.Ok(policy),
+                Unavailable error => ErrorResponse.From(error),
+            },
+            NotFound => ErrorResponse.From(new NotFound()),
+            Unavailable error => ErrorResponse.From(error),
+        };
 }

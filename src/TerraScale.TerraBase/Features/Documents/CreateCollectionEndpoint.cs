@@ -21,6 +21,7 @@ public sealed class CreateCollectionEndpoint(IDocumentService documents, ITenant
         Metadata(new RequestBodyMetadata(typeof(CreateCollectionRequest), DocumentRoute.JsonMediaType));
         Produces<CollectionBody>(StatusCodes.Status201Created);
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
+        Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
         Produces<ErrorBody>(StatusCodes.Status409Conflict);
         RequireAuthorization(ApiKeyScopes.DocumentsWrite);
         Metadata(ListenerMetadata.Client);
@@ -32,6 +33,7 @@ public sealed class CreateCollectionEndpoint(IDocumentService documents, ITenant
         {
             Validation error => ErrorResponse.From(error),
             NotFound error => ErrorResponse.From(error),
+            Unavailable error => ErrorResponse.From(error),
             TenantContext database => (DocumentRoute.CheckParameters(HttpContext), DocumentRoute.CheckIdempotencyKey(HttpContext)) switch
             {
                 (Validation error, _) => ErrorResponse.From(error),

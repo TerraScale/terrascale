@@ -697,26 +697,32 @@ public sealed class CommitApiTests
         {
             string organization;
             string project;
+            string version;
             await using (var api = await ManagementApi.StartAsync(settings => settings["data-directory"] = directory))
             {
                 organization = await api.CreateOrganizationAsync(OrganizationName());
                 project = await api.CreateProjectAsync(organization, ProjectName());
-
+                var system = await api.Server.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(CancellationToken.None);
+                await using var transaction = await system.BeginTransactionAsync(write: false, CancellationToken.None);
+                var marker = await transaction.GetAsync("catalog", "version", CancellationToken.None);
+                version = Encoding.UTF8.GetString(marker!.Json.Span);
             }
 
-            await using var reopened = await ManagementApi.StartAsync(settings => settings["data-directory"] = directory, managementCredential: true);
-            using var stranger = reopened.Service(User());
+            await using var restarted = await ManagementApi.StartAsync(settings => settings["data-directory"] = directory, managementCredential: true);
+            using var stranger = restarted.Service(User());
             // Another user's organization cannot take the existing project's id.
             var created = await CommitAsync(stranger, new { op = "create_organization", name = OrganizationName() });
             var strangerOrganization = Id(created.Value(0));
             var taken = await CommitAsync(stranger, new { op = "create_project", organization = strangerOrganization, id = project, name = ProjectName() });
-            var system2 = await reopened.Server.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(CancellationToken.None);
+            var system2 = await restarted.Server.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(CancellationToken.None);
             await using var read = await system2.BeginTransactionAsync(write: false, CancellationToken.None);
-            var version = await read.GetAsync("catalog", "version", CancellationToken.None);
+            var markerAfterRestart = await read.GetAsync("catalog", "version", CancellationToken.None);
+            var projectOrganization = await read.GetAsync("project_organizations", project, CancellationToken.None);
 
             await Assert.That(created.Status).IsEqualTo(HttpStatusCode.OK);
             await Assert.That((taken.Status, taken.Code, taken.Op)).IsEqualTo((HttpStatusCode.Conflict, "id_taken", (int?)0));
-            await Assert.That(Encoding.UTF8.GetString(version!.Json.Span)).IsEqualTo("\"6\"");
+            await Assert.That(Encoding.UTF8.GetString(markerAfterRestart!.Json.Span)).IsEqualTo(version);
+            await Assert.That(Encoding.UTF8.GetString(projectOrganization!.Json.Span)).IsEqualTo(JsonSerializer.Serialize(organization));
         }
         finally
         {

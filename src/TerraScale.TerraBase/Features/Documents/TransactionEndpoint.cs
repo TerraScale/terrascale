@@ -45,6 +45,7 @@ public sealed class TransactionEndpoint(IDocumentService documents, IAuthorizati
         {
             Validation error => ErrorResponse.From(error),
             NotFound error => ErrorResponse.From(error),
+            Unavailable error => ErrorResponse.From(error),
             TenantContext database => (DocumentRoute.CheckParameters(HttpContext), DocumentRoute.CheckIdempotencyKey(HttpContext)) switch
             {
                 (Validation error, _) => ErrorResponse.From(error),

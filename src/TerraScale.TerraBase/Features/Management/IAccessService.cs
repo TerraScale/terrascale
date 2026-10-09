@@ -103,28 +103,76 @@ public sealed record AuditRetention(int Days);
 /// <param name="OccurredAt">When it happened.</param>
 public sealed record AuditEvent(string Id, string Actor, string Action, string? Target, string? Detail, DateTimeOffset OccurredAt);
 
+/// <summary>The outcomes of <see cref="IAccessService.ListMembersAsync"/>.</summary>
+public readonly union ListMembersResult(ManagementPage<OrganizationMember>, NotFound, Forbidden, Unavailable);
+
+/// <summary>The outcomes of <see cref="IAccessService.ChangeRoleAsync"/>.</summary>
+public readonly union ChangeRoleResult(OrganizationMember, NotFound, Forbidden, Conflict, Unavailable);
+
 /// <summary>The outcomes of <see cref="IAccessService.AddMemberAsync"/>.</summary>
-public readonly union AddMemberResult(OrganizationMember, NotFound, Forbidden);
+public readonly union AddMemberResult(OrganizationMember, NotFound, Forbidden, Unavailable);
+
+/// <summary>The outcomes of <see cref="IAccessService.RemoveMemberAsync"/>.</summary>
+public readonly union RemoveMemberResult(Done, NotFound, Forbidden, Conflict, Unavailable);
+
+/// <summary>The outcomes of <see cref="IAccessService.LeaveAsync"/>.</summary>
+public readonly union LeaveResult(Done, NotFound, Forbidden, Conflict, Unavailable);
+
+/// <summary>The outcomes of <see cref="IAccessService.InviteAsync"/>.</summary>
+public readonly union InviteResult(CreatedInvitation, NotFound, Forbidden, Conflict, Unavailable);
+
+/// <summary>The outcomes of <see cref="IAccessService.ListInvitationsAsync"/>.</summary>
+public readonly union ListInvitationsResult(ManagementPage<Invitation>, NotFound, Forbidden, Unavailable);
+
+/// <summary>The outcomes of <see cref="IAccessService.RevokeInvitationAsync"/>.</summary>
+public readonly union RevokeInvitationResult(Done, NotFound, Forbidden, Conflict, Unavailable);
+
+/// <summary>The outcomes of <see cref="IAccessService.AcceptInvitationAsync"/>.</summary>
+public readonly union AcceptInvitationResult(OrganizationMember, NotFound, Forbidden, Conflict, Unavailable);
+
+/// <summary>The outcomes of <see cref="IAccessService.FindInvitationAsync"/>.</summary>
+public readonly union FindInvitationResult(FoundInvitation, NotFound, Unavailable);
+
+/// <summary>The outcomes of <see cref="IAccessService.GetTransferAsync"/>.</summary>
+public readonly union GetTransferResult(OwnershipTransfer, NotFound, Forbidden, Unavailable);
+
+/// <summary>The outcomes of <see cref="IAccessService.StartTransferAsync"/>.</summary>
+public readonly union StartTransferResult(OwnershipTransfer, NotFound, Forbidden, Conflict, Unavailable);
+
+/// <summary>The outcomes of <see cref="IAccessService.ConfirmTransferAsync"/>.</summary>
+public readonly union ConfirmTransferResult(OrganizationMember, NotFound, Forbidden, Unavailable);
+
+/// <summary>The outcomes of <see cref="IAccessService.CancelTransferAsync"/>.</summary>
+public readonly union CancelTransferResult(Done, NotFound, Forbidden, Unavailable);
+
+/// <summary>The outcomes of <see cref="IAccessService.GetAuditRetentionAsync"/>.</summary>
+public readonly union GetAuditRetentionResult(AuditRetention, NotFound, Forbidden, Unavailable);
+
+/// <summary>The outcomes of <see cref="IAccessService.SetAuditRetentionAsync"/>.</summary>
+public readonly union SetAuditRetentionResult(AuditRetention, NotFound, Forbidden, Unavailable);
+
+/// <summary>The outcomes of <see cref="IAccessService.ListAuditEventsAsync"/>.</summary>
+public readonly union ListAuditEventsResult(ManagementPage<AuditEvent>, NotFound, Forbidden, Unavailable);
 
 /// <summary>
 /// Members, invitations, ownership transfers and the audit log of organizations.
 /// </summary>
 /// <remarks>
 /// Every method acts as <c>userId</c> and is authorized by that user's role in the organization, in the same
-/// transaction as the change. An organization the user is not a member of is <see cref="ManagementError.NotFound"/>,
-/// as in <see cref="IManagementService"/>; a member whose role is too low gets <see cref="ManagementError.Forbidden"/>.
+/// transaction as the change. An organization the user is not a member of is <see cref="NotFound"/>,
+/// as in <see cref="IManagementService"/>; a member whose role is too low gets <see cref="Forbidden"/>.
 /// </remarks>
 public interface IAccessService
 {
     /// <summary>Lists members in user id order. Needs <see cref="OrganizationRole.Viewer"/>.</summary>
-    ValueTask<ManagementResult<ManagementPage<OrganizationMember>>> ListMembersAsync(
+    ValueTask<ListMembersResult> ListMembersAsync(
         string userId, string organizationId, string? after, int limit, CancellationToken cancellationToken);
 
     /// <summary>
     /// Changes a member's role. Needs <see cref="OrganizationRole.Admin"/>, and <see cref="OrganizationRole.Owner"/>
     /// when the member is or becomes an owner. The last owner cannot be demoted.
     /// </summary>
-    ValueTask<ManagementResult<OrganizationMember>> ChangeRoleAsync(
+    ValueTask<ChangeRoleResult> ChangeRoleAsync(
         string userId, string organizationId, string memberId, OrganizationRole role, CancellationToken cancellationToken);
 
     /// <summary>
@@ -136,50 +184,50 @@ public interface IAccessService
         string userId, string organizationId, string memberId, string email, CancellationToken cancellationToken);
 
     /// <summary>Removes a member, with the same role rules as <see cref="ChangeRoleAsync"/>. The last owner cannot be removed.</summary>
-    ValueTask<ManagementError> RemoveMemberAsync(string userId, string organizationId, string memberId, CancellationToken cancellationToken);
+    ValueTask<RemoveMemberResult> RemoveMemberAsync(string userId, string organizationId, string memberId, CancellationToken cancellationToken);
 
     /// <summary>Removes the acting user from the organization, unless it is the last owner.</summary>
-    ValueTask<ManagementError> LeaveAsync(string userId, string organizationId, CancellationToken cancellationToken);
+    ValueTask<LeaveResult> LeaveAsync(string userId, string organizationId, CancellationToken cancellationToken);
 
     /// <summary>
     /// Invites an email address, replacing an expired invitation for it. Needs <see cref="OrganizationRole.Admin"/>,
     /// and <see cref="OrganizationRole.Owner"/> to invite an owner.
     /// </summary>
-    ValueTask<ManagementResult<CreatedInvitation>> InviteAsync(
+    ValueTask<InviteResult> InviteAsync(
         string userId, string organizationId, string email, OrganizationRole role, CancellationToken cancellationToken);
 
     /// <summary>Lists every invitation with its status, in creation order. Needs <see cref="OrganizationRole.Admin"/>.</summary>
-    ValueTask<ManagementResult<ManagementPage<Invitation>>> ListInvitationsAsync(
+    ValueTask<ListInvitationsResult> ListInvitationsAsync(
         string userId, string organizationId, string? after, int limit, CancellationToken cancellationToken);
 
     /// <summary>Marks a pending invitation revoked. Needs <see cref="OrganizationRole.Admin"/>.</summary>
-    ValueTask<ManagementError> RevokeInvitationAsync(string userId, string organizationId, string invitationId, CancellationToken cancellationToken);
+    ValueTask<RevokeInvitationResult> RevokeInvitationAsync(string userId, string organizationId, string invitationId, CancellationToken cancellationToken);
 
     /// <summary>Makes the user, whose verified email is <paramref name="email"/>, a member through an invitation token.</summary>
-    ValueTask<ManagementResult<OrganizationMember>> AcceptInvitationAsync(string userId, string email, string token, CancellationToken cancellationToken);
+    ValueTask<AcceptInvitationResult> AcceptInvitationAsync(string userId, string email, string token, CancellationToken cancellationToken);
 
     /// <summary>Finds a pending, unexpired invitation by the lowercase hex SHA-256 of its token.</summary>
-    ValueTask<FoundInvitation?> FindInvitationAsync(string tokenHash, CancellationToken cancellationToken);
+    ValueTask<FindInvitationResult> FindInvitationAsync(string tokenHash, CancellationToken cancellationToken);
 
     /// <summary>Reads the pending, unexpired ownership transfer. Needs <see cref="OrganizationRole.Viewer"/>.</summary>
-    ValueTask<ManagementResult<OwnershipTransfer>> GetTransferAsync(string userId, string organizationId, CancellationToken cancellationToken);
+    ValueTask<GetTransferResult> GetTransferAsync(string userId, string organizationId, CancellationToken cancellationToken);
 
     /// <summary>Offers ownership to a member who is not an owner, replacing any pending offer. Needs <see cref="OrganizationRole.Owner"/>.</summary>
-    ValueTask<ManagementResult<OwnershipTransfer>> StartTransferAsync(string userId, string organizationId, string memberId, CancellationToken cancellationToken);
+    ValueTask<StartTransferResult> StartTransferAsync(string userId, string organizationId, string memberId, CancellationToken cancellationToken);
 
     /// <summary>The nominee accepts: it becomes an owner and the owner who started the transfer becomes a member.</summary>
-    ValueTask<ManagementResult<OrganizationMember>> ConfirmTransferAsync(string userId, string organizationId, CancellationToken cancellationToken);
+    ValueTask<ConfirmTransferResult> ConfirmTransferAsync(string userId, string organizationId, CancellationToken cancellationToken);
 
     /// <summary>Cancels the pending transfer. Needs <see cref="OrganizationRole.Owner"/> or to be the nominee.</summary>
-    ValueTask<ManagementError> CancelTransferAsync(string userId, string organizationId, CancellationToken cancellationToken);
+    ValueTask<CancelTransferResult> CancelTransferAsync(string userId, string organizationId, CancellationToken cancellationToken);
 
     /// <summary>Reads the audit retention. Needs <see cref="OrganizationRole.Admin"/>.</summary>
-    ValueTask<ManagementResult<AuditRetention>> GetAuditRetentionAsync(string userId, string organizationId, CancellationToken cancellationToken);
+    ValueTask<GetAuditRetentionResult> GetAuditRetentionAsync(string userId, string organizationId, CancellationToken cancellationToken);
 
     /// <summary>Sets the audit retention (1 to 90 days, validated by the caller). Needs <see cref="OrganizationRole.Admin"/>.</summary>
-    ValueTask<ManagementResult<AuditRetention>> SetAuditRetentionAsync(string userId, string organizationId, int days, CancellationToken cancellationToken);
+    ValueTask<SetAuditRetentionResult> SetAuditRetentionAsync(string userId, string organizationId, int days, CancellationToken cancellationToken);
 
     /// <summary>Lists audit events within the retention, newest first. Needs <see cref="OrganizationRole.Admin"/>.</summary>
-    ValueTask<ManagementResult<ManagementPage<AuditEvent>>> ListAuditEventsAsync(
+    ValueTask<ListAuditEventsResult> ListAuditEventsAsync(
         string userId, string organizationId, string? after, int limit, CancellationToken cancellationToken);
 }

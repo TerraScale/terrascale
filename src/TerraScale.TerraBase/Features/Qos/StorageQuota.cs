@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Microsoft.Extensions.Caching.Memory;
 using TerraBase.Engine;
 using TerraBase.Errors;
@@ -25,24 +26,45 @@ internal sealed class StorageQuota : IStorageQuota, IDisposable
         _limit = limit;
     }
 
-    public async ValueTask<StorageQuotaLease> EnterAsync(TenantContext database, IDatabaseStore store, CancellationToken cancellationToken)
+    public async ValueTask<StorageQuotaEntry> EnterAsync(TenantContext database, IDatabaseStore store, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(database);
         ArgumentNullException.ThrowIfNull(store);
-        if (_limit(await _directory.PlanAsync(database.OrganizationId, cancellationToken).ConfigureAwait(false)) == long.MaxValue)
+        var currentPlan = await _directory.PlanAsync(database.OrganizationId, cancellationToken).ConfigureAwait(false);
+        if (currentPlan is not PlanTier plan)
+        {
+            return currentPlan switch
+            {
+                Unavailable error => error,
+                PlanTier => throw new UnreachableException(),
+            };
+        }
+
+        if (_limit(plan) == long.MaxValue)
         {
             // Enterprise keeps engine group commit: no commercial gate, scan, or speculative cache update.
-            return new StorageQuotaLease(null, long.MaxValue, _ => ValueTask.FromResult(0L), _ => { });
+            return new StorageQuotaLease(null, long.MaxValue, _ => ValueTask.FromResult<StorageQuotaBytesResult>(0L), _ => { });
         }
 
         var gate = _gates[Stripe(database.OrganizationId)];
         await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            var limit = _limit(await _directory.PlanAsync(database.OrganizationId, cancellationToken).ConfigureAwait(false));
+            var checkedPlan = await _directory.PlanAsync(database.OrganizationId, cancellationToken).ConfigureAwait(false);
+            if (checkedPlan is not PlanTier livePlan)
+            {
+                gate.Release();
+                return checkedPlan switch
+                {
+                    Unavailable error => error,
+                    PlanTier => throw new UnreachableException(),
+                };
+            }
+
+            var limit = _limit(livePlan);
             if (limit == long.MaxValue)
             {
-                var unrestricted = new StorageQuotaLease(null, long.MaxValue, _ => ValueTask.FromResult(0L), _ => { });
+                var unrestricted = new StorageQuotaLease(null, long.MaxValue, _ => ValueTask.FromResult<StorageQuotaBytesResult>(0L), _ => { });
                 gate.Release();
                 return unrestricted;
             }
@@ -60,8 +82,21 @@ internal sealed class StorageQuota : IStorageQuota, IDisposable
                 await foreach (var candidate in _engine.ListDatabasesAsync(token).ConfigureAwait(false))
                 {
                     if (candidate.OrganizationId != database.OrganizationId
-                        || candidate.ProjectId == database.ProjectId && candidate.DatabaseId == database.DatabaseId
-                        || await _directory.RegisteredAsync(candidate, token).ConfigureAwait(false) != true)
+                        || candidate.ProjectId == database.ProjectId && candidate.DatabaseId == database.DatabaseId)
+                    {
+                        continue;
+                    }
+
+                    var registered = await _directory.RegisteredAsync(candidate, token).ConfigureAwait(false);
+                    if (registered is not bool known)
+                    {
+                        return registered switch
+                        {
+                            Unavailable error => error,
+                            bool => throw new UnreachableException(),
+                        };
+                    }
+                    if (!known)
                     {
                         continue;
                     }
@@ -90,7 +125,7 @@ internal sealed class StorageQuota : IStorageQuota, IDisposable
         }
     }
 
-    public async ValueTask<StorageQuotaGroupLease> EnterOrganizationsAsync(IReadOnlyList<string> organizationIds, CancellationToken cancellationToken)
+    public async ValueTask<StorageQuotaGroupEntry> EnterOrganizationsAsync(IReadOnlyList<string> organizationIds, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(organizationIds);
         ArgumentOutOfRangeException.ThrowIfGreaterThan(organizationIds.Count, 16);
@@ -107,7 +142,22 @@ internal sealed class StorageQuota : IStorageQuota, IDisposable
             var limits = new Dictionary<string, long>(StringComparer.Ordinal);
             foreach (var organization in organizationIds.Distinct(StringComparer.Ordinal))
             {
-                limits.Add(organization, _limit(await _directory.PlanAsync(organization, cancellationToken).ConfigureAwait(false)));
+                var checkedPlan = await _directory.PlanAsync(organization, cancellationToken).ConfigureAwait(false);
+                if (checkedPlan is not PlanTier plan)
+                {
+                    for (var i = acquired - 1; i >= 0; i--)
+                    {
+                        gates[i].Release();
+                    }
+
+                    return checkedPlan switch
+                    {
+                        Unavailable error => error,
+                        PlanTier => throw new UnreachableException(),
+                    };
+                }
+
+                limits.Add(organization, _limit(plan));
             }
 
             return new StorageQuotaGroupLease(gates, limits, OrganizationUsageAsync);
@@ -132,14 +182,27 @@ internal sealed class StorageQuota : IStorageQuota, IDisposable
 
     private int Stripe(string organizationId) => (int)((uint)StringComparer.Ordinal.GetHashCode(organizationId) % (uint)_gates.Length);
 
-    private async ValueTask<long> OrganizationUsageAsync(string organizationId, CancellationToken cancellationToken)
+    private async ValueTask<StorageQuotaBytesResult> OrganizationUsageAsync(string organizationId, CancellationToken cancellationToken)
     {
         var used = 0L;
         await foreach (var candidate in _engine.ListDatabasesAsync(cancellationToken).ConfigureAwait(false))
         {
-            if (candidate.OrganizationId == organizationId
-                && await _directory.RegisteredAsync(candidate, cancellationToken).ConfigureAwait(false) == true
-                && await _engine.OpenDatabaseAsync(candidate, cancellationToken).ConfigureAwait(false) is { } store)
+            if (candidate.OrganizationId != organizationId)
+            {
+                continue;
+            }
+
+            var registered = await _directory.RegisteredAsync(candidate, cancellationToken).ConfigureAwait(false);
+            if (registered is not bool known)
+            {
+                return registered switch
+                {
+                    Unavailable error => error,
+                    bool => throw new UnreachableException(),
+                };
+            }
+
+            if (known && await _engine.OpenDatabaseAsync(candidate, cancellationToken).ConfigureAwait(false) is { } store)
             {
                 used = checked(used + (await UsageAsync(store, cancellationToken).ConfigureAwait(false)).Bytes);
             }

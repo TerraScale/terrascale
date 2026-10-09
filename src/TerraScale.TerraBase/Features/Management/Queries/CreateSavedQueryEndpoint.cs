@@ -19,6 +19,7 @@ public sealed class CreateSavedQueryEndpoint(IManagementService management, IQue
         Produces<SavedQuery>(StatusCodes.Status201Created);
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
+        Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
         Produces<ErrorBody>(StatusCodes.Status403Forbidden);
         RequireAuthorization(ApiKeyScopes.DatabasesWrite);
         Metadata(new ProjectManagementRoute(), ListenerMetadata.Management);
@@ -35,10 +36,12 @@ public sealed class CreateSavedQueryEndpoint(IManagementService management, IQue
             {
                 NotFound error => ErrorResponse.From(error),
                 Forbidden error => ErrorResponse.From(error),
+                Unavailable error => ErrorResponse.From(error),
                 Project project => await queries.CreateSavedAsync(ManagementRoute.UserId(HttpContext), project, valid.Name!, valid.Sql!, cancellationToken) switch
                 {
                     SavedQuery query => TypedResults.Created($"{ManagementRoute.ProjectPath(HttpContext, project)}/saved-queries/{query.Id}", query),
                     NotFound error => ErrorResponse.From(error),
+                    Unavailable error => ErrorResponse.From(error),
                 },
             },
         };

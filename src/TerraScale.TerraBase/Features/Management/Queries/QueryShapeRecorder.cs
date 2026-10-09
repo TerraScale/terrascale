@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Diagnostics.Metrics;
 using System.Security.Cryptography;
 using System.Text;
@@ -134,33 +135,43 @@ internal sealed partial class QueryShapeRecorder(SystemCatalog catalog, TimeProv
             {
                 return new Unavailable("query shape statistics are at memory capacity; retry later", "capacity");
             }
-            await SettleAsync(cancellationToken).ConfigureAwait(false);
+            if (await SettleAsync(cancellationToken).ConfigureAwait(false) is Unavailable refused)
+            {
+                return refused;
+            }
+
             var owner = Owner(database);
-            var saved = await catalog.ReadAsync(
-                transaction => ReadSavedAsync(transaction, Records(owner.DatabaseId), cancellationToken),
-                cancellationToken).ConfigureAwait(false);
-            if (saved is null)
+            var admitted = reservation;
+            var result = await catalog.ReadAsync<QueryShapeReadResult>(async transaction =>
             {
-                return new Unavailable("unsupported query shape statistics format or record count");
+                var saved = await ReadSavedAsync(transaction, Records(owner.DatabaseId), cancellationToken).ConfigureAwait(false);
+                if (saved is null)
+                {
+                    return new Unavailable("unsupported query shape statistics format or record count");
+                }
+
+                var stats = saved.ToDictionary(stat => Key(stat.Collection, stat.Id), StringComparer.Ordinal);
+                foreach (var pending in options.CatalogPrimary is null ? Snapshot(owner) : [])
+                {
+                    var key = Key(pending.Collection, pending.Id);
+                    if (stats.TryGetValue(key, out var previous))
+                    {
+                        stats[key] = Merge(previous, pending);
+                    }
+                    else if (stats.Count < MaxRecords)
+                    {
+                        stats[key] = pending;
+                    }
+                }
+
+                return new QueryShapeRead(new QueryShapeListBody([.. stats.Values.OrderByDescending(stat => stat.Queries)
+                    .ThenBy(stat => stat.Collection, StringComparer.Ordinal).ThenBy(stat => stat.Id, StringComparer.Ordinal)]), admitted);
+            }, static error => error, cancellationToken).ConfigureAwait(false);
+            if (result is QueryShapeRead)
+            {
+                reservation = null;
             }
 
-            var stats = saved.ToDictionary(stat => Key(stat.Collection, stat.Id), StringComparer.Ordinal);
-            foreach (var pending in options.CatalogPrimary is null ? Snapshot(owner) : [])
-            {
-                var key = Key(pending.Collection, pending.Id);
-                if (stats.TryGetValue(key, out var previous))
-                {
-                    stats[key] = Merge(previous, pending);
-                }
-                else if (stats.Count < MaxRecords)
-                {
-                    stats[key] = pending;
-                }
-            }
-
-            var result = new QueryShapeRead(new QueryShapeListBody([.. stats.Values.OrderByDescending(stat => stat.Queries)
-                .ThenBy(stat => stat.Collection, StringComparer.Ordinal).ThenBy(stat => stat.Id, StringComparer.Ordinal)]), reservation);
-            reservation = null;
             return result;
         }
         finally
@@ -183,7 +194,25 @@ internal sealed partial class QueryShapeRecorder(SystemCatalog catalog, TimeProv
                 }
             }
 
-            await SettleAsync(cancellationToken).ConfigureAwait(false);
+            if (await SettleAsync(cancellationToken).ConfigureAwait(false) is Unavailable)
+            {
+                return;
+            }
+
+            lock (_gate)
+            {
+                if (_pending.Count == 0)
+                {
+                    return;
+                }
+            }
+
+            // Empty flushes never initialize the catalog; refusal retains every observation for retry.
+            if (await catalog.CheckAsync(cancellationToken).ConfigureAwait(false) is Unavailable)
+            {
+                return;
+            }
+
             Taken[] batch;
             lock (_gate)
             {
@@ -195,11 +224,6 @@ internal sealed partial class QueryShapeRecorder(SystemCatalog catalog, TimeProv
                 }
             }
 
-            if (batch.Length == 0)
-            {
-                return;
-            }
-
             var batches = batch.SelectMany(taken => taken.Shapes.Select(shape => (taken.Database, Shape: shape)))
                 .Chunk(MaxFlushShapes)
                 .Select(chunk => chunk.GroupBy(item => item.Database)
@@ -209,7 +233,18 @@ internal sealed partial class QueryShapeRecorder(SystemCatalog catalog, TimeProv
                 var id = EntityIds.New().ToString();
                 try
                 {
-                    var (dropped, unsupported) = await WriteAsync(id, batches[index], cancellationToken).ConfigureAwait(false);
+                    var written = await WriteAsync(id, batches[index], cancellationToken).ConfigureAwait(false);
+                    if (written is not ValueTuple<long, long> saved)
+                    {
+                        foreach (var remaining in batches.Skip(index))
+                        {
+                            Complete(remaining, committed: false);
+                        }
+
+                        return;
+                    }
+
+                    var (dropped, unsupported) = saved;
                     if (dropped > 0)
                     {
                         _dropped.Add(dropped, new KeyValuePair<string, object?>("reason", "persisted_limit"));
@@ -241,14 +276,14 @@ internal sealed partial class QueryShapeRecorder(SystemCatalog catalog, TimeProv
     }
 
     // The marker is saved with all records in one transaction. Disposal can throw after commit, so settle before retrying.
-    private async ValueTask SettleAsync(CancellationToken cancellationToken)
+    private async ValueTask<CatalogCheck> SettleAsync(CancellationToken cancellationToken)
     {
         if (_inDoubt is not { } doubt)
         {
-            return;
+            return new Done();
         }
 
-        var committed = await catalog.ReadAsync(async transaction =>
+        var committed = await catalog.ReadAsync<SettleResult>(async transaction =>
         {
             foreach (var (database, _) in doubt.Batch)
             {
@@ -260,13 +295,24 @@ internal sealed partial class QueryShapeRecorder(SystemCatalog catalog, TimeProv
             }
 
             return false;
-        }, cancellationToken).ConfigureAwait(false);
-        Complete(doubt.Batch, committed);
+        }, static error => error, cancellationToken).ConfigureAwait(false);
+        if (committed is not bool settled)
+        {
+            return committed switch
+            {
+                Unavailable refused => refused,
+                bool => throw new UnreachableException(),
+            };
+        }
+
+        Complete(doubt.Batch, settled);
         _inDoubt = null;
+        return new Done();
     }
 
-    private ValueTask<(long Dropped, long Unsupported)> WriteAsync(string id, Taken[] batch, CancellationToken cancellationToken) =>
-        catalog.WriteAsync(transaction => WriteShapesAsync(transaction, batch, id, cancellationToken), cancellationToken);
+    private ValueTask<FlushResult> WriteAsync(string id, Taken[] batch, CancellationToken cancellationToken) =>
+        catalog.WriteAsync<FlushResult>(async transaction =>
+            await WriteShapesAsync(transaction, batch, id, cancellationToken).ConfigureAwait(false), static error => error, cancellationToken);
 
     private static async ValueTask<(long Dropped, long Unsupported)> WriteShapesAsync(
         IStorageTransaction transaction, Taken[] batch, string? flushId, CancellationToken cancellationToken)
@@ -493,6 +539,9 @@ internal sealed partial class QueryShapeRecorder(SystemCatalog catalog, TimeProv
             _send.Release();
         }
     }
+
+    private readonly union SettleResult(bool, Unavailable);
+    private readonly union FlushResult((long Dropped, long Unsupported), Unavailable);
 
     private readonly record struct Counts(long Queries, double TotalLatencyMs, double MaxLatencyMs, long RowsScanned, DateTimeOffset LastSeenAt);
     private readonly record struct Taken(DatabaseOwner Database, QueryShapeStats[] Shapes);

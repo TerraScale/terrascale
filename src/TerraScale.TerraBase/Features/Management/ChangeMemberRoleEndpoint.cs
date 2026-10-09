@@ -1,3 +1,4 @@
+using TerraBase.Errors;
 using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
@@ -24,14 +25,24 @@ public sealed class ChangeMemberRoleEndpoint(IAccessService access) : Endpoint<R
         Produces<ErrorBody>(StatusCodes.Status403Forbidden);
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
         Produces<ErrorBody>(StatusCodes.Status409Conflict);
+        Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
         RequireAuthorization(UserAuthExtensions.PolicyName);
         Metadata(ListenerMetadata.Management);
     }
 
     /// <inheritdoc />
-    public override async ValueTask<IResult> HandleAsync(RoleRequest request, CancellationToken cancellationToken)
-    {
-        ArgumentNullException.ThrowIfNull(request);
-        return ManagementRoute.Ok(await access.ChangeRoleAsync(ManagementRoute.UserId(HttpContext), ManagementRoute.OrganizationId(HttpContext), ManagementRoute.MemberId(HttpContext), ManagementRoute.Role(request.Role), cancellationToken));
-    }
+    public override async ValueTask<IResult> HandleAsync(RoleRequest request, CancellationToken cancellationToken) =>
+        (ManagementRoute.CheckUserId(ManagementRoute.Value(HttpContext, "user"), "user"), ManagementRoute.CheckRole(request.Role)) switch
+        {
+            (Validation error, _) => ErrorResponse.From(error),
+            (_, Validation error) => ErrorResponse.From(error),
+            (string member, OrganizationRole role) => await access.ChangeRoleAsync(ManagementRoute.UserId(HttpContext), ManagementRoute.OrganizationId(HttpContext), member, role, cancellationToken) switch
+            {
+                OrganizationMember value => TypedResults.Ok(value),
+                NotFound error => ErrorResponse.From(error),
+                Forbidden error => ErrorResponse.From(error),
+                Conflict error => ErrorResponse.From(error),
+                Unavailable error => ErrorResponse.From(error),
+            },
+        };
 }

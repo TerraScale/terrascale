@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Net;
 using System.Text;
 using System.Text.Json;
+using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
 using TerraBase.Engine.Sqlite;
@@ -13,6 +14,85 @@ namespace TerraBase.Fast.Storage;
 
 public sealed class StorageHistoryTests
 {
+    [Test]
+    public async Task A_dropped_collection_has_state_after_its_replication_journal_is_cleared()
+    {
+        var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
+        await using var api = await DocumentApi.StartAsync(cancellationToken: token);
+        var created = await api.SendAsync(HttpMethod.Post, api.Documents, new { n = 1 }, cancellationToken: token);
+        created.Status.ShouldBe(HttpStatusCode.Created);
+        var id = created.Json.GetProperty("id").GetString()!;
+        var path = await api.DatabaseFileAsync();
+        var store = (await api.Server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(
+            await api.TenantOfAsync(cancellationToken: token), token))!;
+        (await api.SendAsync(HttpMethod.Delete, api.Collections + "/" + DocumentApi.Collection, cancellationToken: token))
+            .Status.ShouldBe(HttpStatusCode.OK);
+
+        await StorageFixture.ExecuteAsync(path, "DELETE FROM changes;");
+        await using (var connection = new SqliteConnection(DocumentApi.ConnectionString(path)))
+        {
+            await connection.OpenAsync(token);
+            await using var command = connection.CreateCommand();
+            command.CommandText = "SELECT count(*) FROM change_log WHERE collection = $collection AND body IS NULL;";
+            command.Parameters.AddWithValue("$collection", DocumentApi.Collection);
+            await Assert.That((long)(await command.ExecuteScalarAsync(token))!).IsGreaterThan(0);
+        }
+
+        await using var reader = await store.BeginTransactionAsync(write: false, token);
+        await Assert.That(await reader.GetAsync(DocumentApi.Collection, id, token)).IsNull();
+        await Assert.That(await reader.GetCollectionAsync(DocumentApi.Collection, token)).IsNull();
+        await Assert.That(await reader.HasCollectionStateAsync(DocumentApi.Collection, prefix: false, token)).IsTrue();
+        await Assert.That(await reader.HasCollectionStateAsync("ite", prefix: true, token)).IsTrue();
+        await Assert.That(await reader.HasCollectionStateAsync("item", prefix: false, token)).IsFalse();
+        await Assert.That(await reader.HasCollectionStateAsync("other", prefix: true, token)).IsFalse();
+    }
+
+    [Test]
+    [Arguments("unicode-\uffff", "unicode-\U00010000")]
+    [Arguments("unicode-\ud7ff", "unicode-\ue000")]
+    [Arguments("unicode-\U00010000", "unicode-\U00010001")]
+    [Arguments("unicode-\U0010ffff", "unicode.")]
+    [Arguments("\U0010ffff", "\uffff")]
+    public async Task System_collection_state_prefixes_follow_Unicode_scalar_boundaries(string prefix, string outside)
+    {
+        var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
+        await using var api = await DocumentApi.StartAsync(cancellationToken: token);
+        var system = await api.Server.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(token);
+        var id = Ulid.NewUlid().ToString();
+        await using (var writer = await system.BeginTransactionAsync(write: true, token))
+        {
+            await writer.PutAsync(outside, id, "{}"u8.ToArray(), token);
+            await writer.CommitAsync(token);
+        }
+
+        await using (var reader = await system.BeginTransactionAsync(write: false, token))
+        {
+            await Assert.That(await reader.HasCollectionStateAsync(prefix, prefix: true, token)).IsFalse();
+        }
+
+        await using (var writer = await system.BeginTransactionAsync(write: true, token))
+        {
+            await writer.PutAsync(prefix + "/child", id, "{}"u8.ToArray(), token);
+            await writer.CommitAsync(token);
+        }
+
+        await using (var reader = await system.BeginTransactionAsync(write: false, token))
+        {
+            await Assert.That(await reader.HasCollectionStateAsync(prefix, prefix: false, token)).IsFalse();
+            await Assert.That(await reader.HasCollectionStateAsync(prefix, prefix: true, token)).IsTrue();
+        }
+
+        await using (var writer = await system.BeginTransactionAsync(write: true, token))
+        {
+            await writer.PutAsync(prefix, id, "{}"u8.ToArray(), token);
+            await writer.CommitAsync(token);
+        }
+
+        await using var after = await system.BeginTransactionAsync(write: false, token);
+        await Assert.That(await after.HasCollectionStateAsync(prefix, prefix: false, token)).IsTrue();
+        await Assert.That(await after.HasCollectionStateAsync(prefix, prefix: true, token)).IsTrue();
+    }
+
     [Test]
     [Arguments(false, "complete")]
     [Arguments(true, "complete")]

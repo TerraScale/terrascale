@@ -33,7 +33,9 @@ analyzer-check:
 	cat "$$log"; \
 	test "$$(grep -E 'BuildCheck.cs\([0-9]+,[0-9]+\): error TB0001' "$$log" | sort -u | wc -l)" -eq 15; \
 	for line in 35 36 37 38 39 40 41 42 43 53 54 55 56 65 71; do grep -q "BuildCheck.cs($$line," "$$log"; done; \
-	if grep -v 'error TB0001' "$$log" | grep -q ': error '; then echo 'unexpected compiler error in TB0001 build check' >&2; exit 1; fi
+	test "$$(grep -E 'ExpectedFailures.cs\([0-9]+,[0-9]+\): error RS0030' "$$log" | sort -u | wc -l)" -eq 5; \
+	for line in 8 10 12 14 16; do grep -q "ExpectedFailures.cs($$line," "$$log"; done; \
+	if grep -vE 'error (TB0001|RS0030)' "$$log" | grep -q ': error '; then echo 'unexpected compiler error in analyzer build check' >&2; exit 1; fi
 
 test-fast: build
 	dotnet run --project src/Tests/TerraBase.Fast --configuration $(CONFIGURATION) --no-build

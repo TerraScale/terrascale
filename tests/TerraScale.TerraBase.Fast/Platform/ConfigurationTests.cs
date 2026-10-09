@@ -267,15 +267,4 @@ public sealed class ConfigurationTests
         await Assert.That(error!.Message).Contains("auth-audience must be a comma-separated list of non-empty audiences without control characters");
     }
 
-    [Test]
-    public async Task Invalid_management_legacy_owners_are_rejected()
-    {
-        foreach (var owner in new[] { "bad\u0001owner", "", "   ", new string('o', 257) })
-        {
-            await Assert.That(() => TerraBaseOptions.FromValues(new Dictionary<string, string> { ["management-legacy-owner"] = owner }))
-                .Throws<TerraBaseConfigurationException>();
-        }
-
-        await Assert.That(() => TerraBaseOptions.FromProcess(["--management-legacy-owner=  "])).Throws<TerraBaseConfigurationException>();
-    }
 }

@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using TerraBase.Configuration;
 using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
@@ -25,6 +26,8 @@ public sealed class CreateManagedDatabaseEndpoint(IManagementService management,
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
         Produces<ErrorBody>(StatusCodes.Status409Conflict);
         Produces<ErrorBody>(StatusCodes.Status421MisdirectedRequest);
+        Produces<ErrorBody>(StatusCodes.Status403Forbidden);
+        Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
         RequireAuthorization(ApiKeyScopes.DatabasesWrite);
         Metadata(new ProjectManagementRoute(), ListenerMetadata.Management);
     }
@@ -33,7 +36,15 @@ public sealed class CreateManagedDatabaseEndpoint(IManagementService management,
     public override async ValueTask<IResult> HandleAsync(DatabaseRegionsRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
-        var name = ManagementRoute.DatabaseName(new NameRequest(request.Name));
+        return ManagementRoute.CheckDatabaseName(new NameRequest(request.Name)) switch
+        {
+            Validation error => ErrorResponse.From(error),
+            string name => await CreateAsync(request, name, cancellationToken),
+        };
+    }
+
+    private async ValueTask<IResult> CreateAsync(DatabaseRegionsRequest request, string name, CancellationToken cancellationToken)
+    {
         var home = request.HomeRegion ?? options.Region;
         var replicas = request.ReplicaRegions ?? [];
         if (home != options.Region)
@@ -43,10 +54,17 @@ public sealed class CreateManagedDatabaseEndpoint(IManagementService management,
                 : ErrorResponse.From(new Validation("homeRegion must name a region this deployment replicates with"));
         }
 
-        if (DatabaseRegions.Check(options, home, replicas) is { } invalid)
+        var checkedRegions = DatabaseRegions.Check(options, home, replicas);
+        if (checkedRegions is Validation invalid)
         {
             return ErrorResponse.From(invalid);
         }
+
+        replicas = checkedRegions switch
+        {
+            IReadOnlyList<string> accepted => accepted,
+            Validation => throw new UnreachableException(),
+        };
 
         if (HttpContext.Features.Get<LegacyManagementRoute>() is not null)
         {
@@ -61,9 +79,15 @@ public sealed class CreateManagedDatabaseEndpoint(IManagementService management,
 
         var actor = ManagementRoute.UserId(HttpContext);
         var project = ManagementRoute.Value(HttpContext, "project");
-        if (await catalog.ResolveProjectAsync(project, actor, create: true, cancellationToken).ConfigureAwait(false) is not { } organization)
+        var resolved = await catalog.ResolveProjectAsync(project, actor, create: true, cancellationToken).ConfigureAwait(false);
+        if (resolved is not string organization)
         {
-            return ErrorResponse.From(new NotFound("the database does not exist", "unknown_database"));
+            return resolved switch
+            {
+                NotFound => ErrorResponse.From(new NotFound("the database does not exist", "unknown_database")),
+                Unavailable error => ErrorResponse.From(error),
+                string => throw new UnreachableException(),
+            };
         }
 
         HttpContext.Request.RouteValues["organization"] = organization;
@@ -76,10 +100,14 @@ public sealed class CreateManagedDatabaseEndpoint(IManagementService management,
 
     private async ValueTask<IResult> CreateAsync(string name, IReadOnlyList<string> replicas, CancellationToken cancellationToken)
     {
-        var result = await management.CreateDatabaseAsync(
-            ManagementRoute.UserId(HttpContext), ManagementRoute.OrganizationId(HttpContext), ManagementRoute.Value(HttpContext, "project"), name, cancellationToken, replicas);
-        return result.Value is { } value
-            ? TypedResults.Created(ManagementRoute.CreatedDatabasePath(HttpContext, value), ManagedDatabaseBody.From(value, Listeners.RegionOf(HttpContext)))
-            : ManagementRoute.Error(result.Error);
+        return await management.CreateDatabaseAsync(
+            ManagementRoute.UserId(HttpContext), ManagementRoute.OrganizationId(HttpContext), ManagementRoute.Value(HttpContext, "project"), name, cancellationToken, replicas) switch
+        {
+            ManagedDatabase value => TypedResults.Created(ManagementRoute.CreatedDatabasePath(HttpContext, value), ManagedDatabaseBody.From(value, Listeners.RegionOf(HttpContext))),
+            NotFound error => ManagementRoute.DatabaseNotFound(error),
+            Forbidden error => ErrorResponse.From(error),
+            Conflict error => ErrorResponse.From(error),
+            Unavailable error => ErrorResponse.From(error),
+        };
     }
 }

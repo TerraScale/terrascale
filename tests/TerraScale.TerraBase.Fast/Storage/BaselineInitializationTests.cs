@@ -167,7 +167,7 @@ public sealed class BaselineInitializationTests
         Directory.CreateDirectory(Path.GetDirectoryName(legacyPath)!);
         await DocumentFiles.WriteAsync(legacyPath, ("items", "b", "{}"));
         Task initialization = withIntent
-            ? engine!.CreateDatabaseWithIntentAsync(target, source, static _ => ValueTask.CompletedTask, request.Token).AsTask()
+            ? engine!.CreateDatabaseWithIntentAsync(target, source, static _ => ValueTask.FromResult(true), request.Token).AsTask()
             : copy
                 ? engine!.CopyDatabaseAsync(source!, target, request.Token).AsTask()
                 : engine!.OpenDatabaseAsync(target, request.Token).AsTask();

@@ -1,7 +1,9 @@
+using System.Diagnostics;
 using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
 using TerraBase.Features.Backup;
 using TerraBase.Hosting;
+using TerraBase.Tenancy;
 using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management.Backups;
@@ -36,9 +38,15 @@ public sealed class PlanPointInTimeEndpoint(IManagementService management, IPoin
     public override async ValueTask<IResult> HandleAsync(PointInTimePlanRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
-        if (await ManagementRoute.DatabaseAsync(HttpContext, management, cancellationToken) is not { } database)
+        var found = await ManagementRoute.DatabaseAsync(HttpContext, management, cancellationToken);
+        if (found is not TenantContext database)
         {
-            return ErrorResponse.From(new NotFound());
+            return found switch
+            {
+                NotFound error => ErrorResponse.From(error),
+                Unavailable error => ErrorResponse.From(error),
+                TenantContext => throw new UnreachableException(),
+            };
         }
 
         if (request.PointInTime is not { } at)

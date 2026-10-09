@@ -23,6 +23,7 @@ public sealed class GetChangesEndpoint(IChangeFeedService changes, ITenantDirect
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
         Produces<ErrorBody>(StatusCodes.Status409Conflict);
         Produces<ErrorBody>(StatusCodes.Status429TooManyRequests);
+        Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
         RequireAuthorization(ApiKeyScopes.DocumentsRead);
         Metadata(ListenerMetadata.Client);
     }
@@ -39,6 +40,7 @@ public sealed class GetChangesEndpoint(IChangeFeedService changes, ITenantDirect
         {
             Validation error => ErrorResponse.From(error),
             NotFound error => ErrorResponse.From(error),
+            Unavailable error => ErrorResponse.From(error),
             TenantContext database => (DocumentRoute.CheckCollectionName(HttpContext), DocumentRoute.CheckParameters(HttpContext, "limit", "resume_token")) switch
             {
                 (Validation error, _) => ErrorResponse.From(error),

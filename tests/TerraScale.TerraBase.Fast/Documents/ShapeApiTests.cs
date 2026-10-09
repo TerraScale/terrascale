@@ -656,7 +656,11 @@ public sealed class ShapeApiTests
         var secret = shapes.DefaultRequestHeaders.Authorization!.Parameter!;
         var keys = api.Server.Services.GetRequiredService<IApiKeyStore>();
         var key = await keys.FindAsync(secret, CancellationToken.None)
-            ?? throw new InvalidOperationException("missing test API key");
+            switch
+        {
+            ApiKey found => found,
+            TerraBase.Errors.NotFound => throw new InvalidOperationException("missing test API key"),
+        };
         var engine = api.Server.Services.GetRequiredService<IStorageEngine>();
         var store = await engine.OpenSystemDatabaseAsync(CancellationToken.None);
         await using (var transaction = await store.BeginTransactionAsync(write: true, CancellationToken.None))

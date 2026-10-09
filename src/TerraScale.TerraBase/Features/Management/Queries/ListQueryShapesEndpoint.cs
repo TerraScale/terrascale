@@ -1,6 +1,7 @@
 using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
 using TerraBase.Hosting;
+using TerraBase.Tenancy;
 using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management.Queries;
@@ -28,13 +29,16 @@ public sealed class ListQueryShapesEndpoint(IManagementService management, IQuer
 
     /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
-        await ManagementRoute.DatabaseAsync(HttpContext, management, cancellationToken) is { } database
-            ? await tracker.ReadAsync(database, cancellationToken) switch
+        await ManagementRoute.DatabaseAsync(HttpContext, management, cancellationToken) switch
+        {
+            TenantContext database => await tracker.ReadAsync(database, cancellationToken) switch
             {
                 QueryShapeRead read => Retain(read),
                 Unavailable error => ErrorResponse.From(error),
-            }
-            : ErrorResponse.From(new NotFound());
+            },
+            NotFound error => ErrorResponse.From(error),
+            Unavailable error => ErrorResponse.From(error),
+        };
 
     private QueryShapeRead Retain(QueryShapeRead read)
     {

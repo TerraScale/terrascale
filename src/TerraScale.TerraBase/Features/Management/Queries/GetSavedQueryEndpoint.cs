@@ -18,17 +18,22 @@ public sealed class GetSavedQueryEndpoint(IManagementService management, IQueryS
         Tags("Queries");
         Produces<SavedQuery>();
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
+        Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
         RequireAuthorization(ApiKeyScopes.DatabasesRead);
         Metadata(new ProjectManagementRoute(), ListenerMetadata.Management);
     }
 
     /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
-        await ManagementRoute.ProjectAsync(HttpContext, management, cancellationToken) is not { } project
-            ? ErrorResponse.From(new NotFound())
-            : await queries.GetSavedAsync(project, ManagementRoute.Value(HttpContext, "query"), cancellationToken) switch
+        await ManagementRoute.ProjectAsync(HttpContext, management, cancellationToken) switch
+        {
+            Project project => await queries.GetSavedAsync(project, ManagementRoute.Value(HttpContext, "query"), cancellationToken) switch
             {
                 SavedQuery query => TypedResults.Ok(query),
                 NotFound error => ErrorResponse.From(error),
-            };
+                Unavailable error => ErrorResponse.From(error),
+            },
+            NotFound => ErrorResponse.From(new NotFound()),
+            Unavailable error => ErrorResponse.From(error),
+        };
 }

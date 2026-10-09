@@ -4,6 +4,7 @@ using System.Text.Json.Serialization;
 using Grpc.AspNetCore.Server;
 using Grpc.Core;
 using TerraBase.Configuration;
+using TerraBase.Errors;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Replication;
 using TerraBase.Features.Replication.V1;
@@ -80,9 +81,12 @@ internal sealed class QueryShapeReceiver(TerraBaseOptions options, QueryShapeRec
 
         // The recorder checks ownership and saves the sender watermark and statistics in the same write.
         return await recorder.AcceptAsync(request.Sender, request.Epoch.ToBase64(), (long)request.Sequence, payload, context.CancellationToken)
-            .ConfigureAwait(false) == QueryShapeAccept.Capacity
-            ? throw new RpcException(new Status(StatusCode.ResourceExhausted, "query shape receiver is at capacity"))
-            : new QueryShapesAck();
+            .ConfigureAwait(false) switch
+        {
+            QueryShapeAccept.Capacity => throw new RpcException(new Status(StatusCode.ResourceExhausted, "query shape receiver is at capacity")),
+            QueryShapeAccept => new QueryShapesAck(),
+            Unavailable refused => throw new RpcException(new Status(StatusCode.Unavailable, refused.Message)),
+        };
     }
 
     private static bool Valid(QueryShapeTransfer item) => item is not null

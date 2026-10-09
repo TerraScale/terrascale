@@ -9,6 +9,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- dotnet format runs package analyzers even when RunAnalyzers is false. Compile the
+         intentional RS0030 violations only in the dedicated diagnostic check. -->
+    <Compile Remove="ExpectedFailures.cs" Condition="'$(TB0001BuildCheck)' != 'true'" />
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
     <ProjectReference Condition="'$(TB0001BuildCheck)' == 'true'" Include="../TerraBase.Analyzers/TerraBase.Analyzers.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" PrivateAssets="all" />
   </ItemGroup>
 </Project>

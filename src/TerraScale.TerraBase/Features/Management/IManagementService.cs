@@ -1,3 +1,4 @@
+using TerraBase.Errors;
 using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Management;
@@ -52,79 +53,77 @@ public sealed record ManagedDatabase(
     public DatabasePlacement Placement(string region) => new(Home(region), Replicas, PlacementVersion);
 }
 
-/// <summary>Why a management operation did not succeed.</summary>
-public enum ManagementError
-{
-    /// <summary>Succeeded.</summary>
-    None,
+/// <summary>The created organization, or why not: its name or a client-chosen id is taken.</summary>
+public readonly union CreateOrganizationResult(Organization, Conflict, Unavailable);
 
-    /// <summary>The addressed resource, or one of its parents, does not exist or the user is not a member of its organization.</summary>
-    NotFound,
+/// <summary>A page of the user's organizations.</summary>
+public readonly union ListOrganizationsResult(ManagementPage<Organization>, Unavailable);
 
-    /// <summary>Another resource with the same parent already has the name.</summary>
-    NameTaken,
+/// <summary>An organization of the user.</summary>
+public readonly union GetOrganizationResult(Organization, NotFound, Unavailable);
 
-    /// <summary>The resource still has children; delete them first.</summary>
-    NotEmpty,
+/// <summary>The renamed organization, or why not: the role is too low or the name is taken.</summary>
+public readonly union RenameOrganizationResult(Organization, NotFound, Forbidden, Conflict, Unavailable);
 
-    /// <summary>The acting user is a member, but its role does not allow the operation.</summary>
-    Forbidden,
+/// <summary>The organization with its new plan, or why not.</summary>
+public readonly union SetPlanResult(Organization, NotFound, Forbidden, Unavailable);
 
-    /// <summary>The change would leave the organization without an owner.</summary>
-    LastOwner,
+/// <summary>Whether the organization was deleted: it may still have projects.</summary>
+public readonly union DeleteOrganizationResult(Done, NotFound, Forbidden, Conflict, Unavailable);
 
-    /// <summary>The user is already a member of the organization.</summary>
-    AlreadyMember,
+/// <summary>The organization the user last switched to.</summary>
+public readonly union GetCurrentOrganizationResult(Organization, NotFound, Unavailable);
 
-    /// <summary>An unexpired invitation for the email address is pending.</summary>
-    InvitationPending,
+/// <summary>The organization the user switched to.</summary>
+public readonly union SetCurrentOrganizationResult(Organization, NotFound, Unavailable);
 
-    /// <summary>The member is already an owner.</summary>
-    AlreadyOwner,
+/// <summary>The created project, or why not: its name or a client-chosen id is taken.</summary>
+public readonly union CreateProjectResult(Project, NotFound, Forbidden, Conflict, Unavailable);
 
-    /// <summary>The invitation expired.</summary>
-    Expired,
+/// <summary>A page of an organization's projects.</summary>
+public readonly union ListProjectsResult(ManagementPage<Project>, NotFound, Unavailable);
 
-    /// <summary>A client-chosen id is already used by another resource.</summary>
-    IdTaken,
+/// <summary>A project of one of the user's organizations.</summary>
+public readonly union GetProjectResult(Project, NotFound, Unavailable);
 
-    /// <summary>The invitation is no longer pending: it was accepted, declined or revoked.</summary>
-    InvitationClosed,
+/// <summary>The renamed project, or why not.</summary>
+public readonly union RenameProjectResult(Project, NotFound, Forbidden, Conflict, Unavailable);
 
-    /// <summary>The operation belongs to the database's home region (docs/cross-region.md).</summary>
-    WrongRegion,
+/// <summary>Whether the project was deleted: it may still have databases or API keys.</summary>
+public readonly union DeleteProjectResult(Done, NotFound, Forbidden, Conflict, Unavailable);
 
-    /// <summary>The database still has replica regions.</summary>
-    Replicated,
+/// <summary>The created database, or why not: its name is taken.</summary>
+public readonly union CreateDatabaseResult(ManagedDatabase, NotFound, Forbidden, Conflict, Unavailable);
 
-    /// <summary>Another invitation already has the token hash.</summary>
-    TokenTaken,
+/// <summary>The database with its new placement, or why not: it is managed in another region.</summary>
+public readonly union SetDatabaseRegionsResult(ManagedDatabase, NotFound, Forbidden, Conflict, Unavailable);
 
-    /// <summary>Publishing the copied database would exceed the organization's live JSON quota.</summary>
-    StorageQuota,
+/// <summary>A database as this region records it.</summary>
+public readonly union FindDatabaseRecordResult(ManagedDatabase, NotFound, Unavailable);
 
-    /// <summary>Bounded storage accounting cannot currently measure the staged database.</summary>
-    StorageAccountingBusy,
-}
+/// <summary>A page of a project's databases.</summary>
+public readonly union ListDatabasesResult(ManagementPage<ManagedDatabase>, NotFound, Unavailable);
 
-/// <summary>A value or the reason there is none.</summary>
-/// <typeparam name="T">The value type.</typeparam>
-/// <param name="Value">The value when <paramref name="Error"/> is <see cref="ManagementError.None"/>.</param>
-/// <param name="Error">The failure reason.</param>
-public readonly record struct ManagementResult<T>(T? Value, ManagementError Error)
-{
-    /// <summary>Wraps a failure.</summary>
-    public static implicit operator ManagementResult<T>(ManagementError error)
-    {
-        return new(default, error);
-    }
+/// <summary>A database of one of the user's projects.</summary>
+public readonly union GetDatabaseResult(ManagedDatabase, NotFound, Unavailable);
 
-    /// <summary>Wraps a value.</summary>
-    public static implicit operator ManagementResult<T>(T value)
-    {
-        return new(value, ManagementError.None);
-    }
-}
+/// <summary>The tenant of a database the user reaches.</summary>
+public readonly union DatabaseTenantResult(TenantContext, NotFound, Unavailable);
+
+/// <summary>The tenant of a database the user may change.</summary>
+public readonly union WritableDatabaseTenantResult(TenantContext, NotFound, Forbidden, Unavailable);
+
+/// <summary>A project the user may change.</summary>
+public readonly union WritableProjectResult(Project, NotFound, Forbidden, Unavailable);
+
+/// <summary>Whether the database was deleted: it is managed in another region, or still has replica regions.</summary>
+public readonly union DeleteDatabaseResult(Done, NotFound, Forbidden, Conflict, Unavailable);
+
+/// <summary>The branch, or why not: the name is taken or the source is managed in another region.</summary>
+public readonly union BranchDatabaseResult(ManagedDatabase, NotFound, Forbidden, Conflict, QuotaExceeded, Unavailable);
+
+/// <summary>The copy, or why not: the name is taken.</summary>
+public readonly union CopyDatabaseResult(ManagedDatabase, NotFound, Forbidden, Conflict, QuotaExceeded, Unavailable);
 
 /// <summary>One page of a list in id (creation) order.</summary>
 /// <typeparam name="T">Item type.</typeparam>
@@ -138,115 +137,116 @@ public sealed record ManagementPage<T>(IReadOnlyList<T> Items, string? Next);
 /// </summary>
 /// <remarks>
 /// Every method acts as <c>userId</c> (the ts-auth user id) and authorizes in the same transaction as the
-/// operation: an organization the user is not a member of, and everything under it, is <see cref="ManagementError.NotFound"/>.
+/// operation: an organization the user is not a member of, and everything under it, is <see cref="NotFound"/>. Every operation answers <see cref="Unavailable"/> while the catalog is at a version this
+/// build cannot use.
 /// </remarks>
 public interface IManagementService
 {
     /// <summary>Creates an organization with the user as its first member, an <see cref="OrganizationRole.Owner"/>.</summary>
-    ValueTask<ManagementResult<Organization>> CreateOrganizationAsync(string userId, string name, CancellationToken cancellationToken);
+    ValueTask<CreateOrganizationResult> CreateOrganizationAsync(string userId, string name, CancellationToken cancellationToken);
 
     /// <summary>Lists the user's organizations after <paramref name="after"/>.</summary>
-    ValueTask<ManagementPage<Organization>> ListOrganizationsAsync(string userId, string? after, int limit, CancellationToken cancellationToken);
+    ValueTask<ListOrganizationsResult> ListOrganizationsAsync(string userId, string? after, int limit, CancellationToken cancellationToken);
 
     /// <summary>Reads an organization.</summary>
-    ValueTask<Organization?> GetOrganizationAsync(string userId, string organizationId, CancellationToken cancellationToken);
+    ValueTask<GetOrganizationResult> GetOrganizationAsync(string userId, string organizationId, CancellationToken cancellationToken);
 
     /// <summary>Renames an organization. Needs <see cref="OrganizationRole.Admin"/>.</summary>
-    ValueTask<ManagementResult<Organization>> RenameOrganizationAsync(
+    ValueTask<RenameOrganizationResult> RenameOrganizationAsync(
         string userId, string organizationId, string name, CancellationToken cancellationToken);
 
     /// <summary>Sets the plan of an organization. Needs <see cref="OrganizationRole.Owner"/>.</summary>
-    ValueTask<ManagementResult<Organization>> SetPlanAsync(string userId, string organizationId, PlanTier plan, CancellationToken cancellationToken);
+    ValueTask<SetPlanResult> SetPlanAsync(string userId, string organizationId, PlanTier plan, CancellationToken cancellationToken);
 
     /// <summary>
     /// Deletes an organization that has no projects, with its memberships, invitations, ownership transfer and
     /// audit log. Needs <see cref="OrganizationRole.Owner"/>.
     /// </summary>
-    ValueTask<ManagementError> DeleteOrganizationAsync(string userId, string organizationId, CancellationToken cancellationToken);
+    ValueTask<DeleteOrganizationResult> DeleteOrganizationAsync(string userId, string organizationId, CancellationToken cancellationToken);
 
-    /// <summary>Reads the organization the user last switched to; <see langword="null"/> when none or no longer a member.</summary>
-    ValueTask<Organization?> GetCurrentOrganizationAsync(string userId, CancellationToken cancellationToken);
+    /// <summary>Reads the organization the user last switched to; <see cref="NotFound"/> when none or no longer a member.</summary>
+    ValueTask<GetCurrentOrganizationResult> GetCurrentOrganizationAsync(string userId, CancellationToken cancellationToken);
 
     /// <summary>Switches the user to one of their organizations.</summary>
-    ValueTask<ManagementResult<Organization>> SetCurrentOrganizationAsync(string userId, string organizationId, CancellationToken cancellationToken);
+    ValueTask<SetCurrentOrganizationResult> SetCurrentOrganizationAsync(string userId, string organizationId, CancellationToken cancellationToken);
 
     /// <summary>Creates a project in an organization.</summary>
-    ValueTask<ManagementResult<Project>> CreateProjectAsync(string userId, string organizationId, string name, CancellationToken cancellationToken);
+    ValueTask<CreateProjectResult> CreateProjectAsync(string userId, string organizationId, string name, CancellationToken cancellationToken);
 
-    /// <summary>Lists the projects of an organization; <see langword="null"/> when it does not exist.</summary>
-    ValueTask<ManagementPage<Project>?> ListProjectsAsync(
+    /// <summary>Lists the projects of an organization.</summary>
+    ValueTask<ListProjectsResult> ListProjectsAsync(
         string userId, string organizationId, string? after, int limit, CancellationToken cancellationToken);
 
     /// <summary>Reads a project.</summary>
-    ValueTask<Project?> GetProjectAsync(string userId, string organizationId, string projectId, CancellationToken cancellationToken);
+    ValueTask<GetProjectResult> GetProjectAsync(string userId, string organizationId, string projectId, CancellationToken cancellationToken);
 
     /// <summary>Renames a project.</summary>
-    ValueTask<ManagementResult<Project>> RenameProjectAsync(
+    ValueTask<RenameProjectResult> RenameProjectAsync(
         string userId, string organizationId, string projectId, string name, CancellationToken cancellationToken);
 
     /// <summary>Deletes a project that has no databases, API keys or customer backup destination.</summary>
-    ValueTask<ManagementError> DeleteProjectAsync(string userId, string organizationId, string projectId, CancellationToken cancellationToken);
+    ValueTask<DeleteProjectResult> DeleteProjectAsync(string userId, string organizationId, string projectId, CancellationToken cancellationToken);
 
     /// <summary>Creates an empty database in a project.</summary>
-    ValueTask<ManagementResult<ManagedDatabase>> CreateDatabaseAsync(
+    ValueTask<CreateDatabaseResult> CreateDatabaseAsync(
         string userId, string organizationId, string projectId, string name, CancellationToken cancellationToken, IReadOnlyList<string>? replicaRegions = null);
 
     /// <summary>
-    /// Sets the replica regions of a database whose home is this region (docs/cross-region.md): <c>WrongRegion</c> in any
+    /// Sets the replica regions of a database whose home is this region (docs/cross-region.md): <see cref="ManagementErrors.WrongRegion"/> in any
     /// other region. The caller validated <paramref name="replicaRegions"/>.
     /// </summary>
-    ValueTask<ManagementResult<ManagedDatabase>> SetDatabaseRegionsAsync(
+    ValueTask<SetDatabaseRegionsResult> SetDatabaseRegionsAsync(
         string userId, string organizationId, string projectId, string databaseId, IReadOnlyList<string> replicaRegions, CancellationToken cancellationToken);
 
     /// <summary>
     /// The database named <paramref name="name"/> in a project of an organization, as this region records it, placed here or
     /// not, without a membership check: what a region outside its placement answers with.
     /// </summary>
-    ValueTask<ManagedDatabase?> FindDatabaseRecordAsync(string organizationId, string projectId, string name, CancellationToken cancellationToken);
+    ValueTask<FindDatabaseRecordResult> FindDatabaseRecordAsync(string organizationId, string projectId, string name, CancellationToken cancellationToken);
 
-    /// <summary>Lists the databases of a project; <see langword="null"/> when it does not exist.</summary>
-    ValueTask<ManagementPage<ManagedDatabase>?> ListDatabasesAsync(
+    /// <summary>Lists the databases of a project.</summary>
+    ValueTask<ListDatabasesResult> ListDatabasesAsync(
         string userId, string organizationId, string projectId, string? after, int limit, CancellationToken cancellationToken);
 
     /// <summary>Reads a database.</summary>
-    ValueTask<ManagedDatabase?> GetDatabaseAsync(
+    ValueTask<GetDatabaseResult> GetDatabaseAsync(
         string userId, string organizationId, string projectId, string databaseId, CancellationToken cancellationToken);
 
     /// <summary>
     /// The tenant of a database the user reaches through membership of its organization: organization and plan, project
-    /// and database, resolved in the same catalog read as the membership check; <see langword="null"/> when any is missing.
+    /// and database, resolved in the same catalog read as the membership check; <see cref="NotFound"/> when any is missing.
     /// </summary>
-    ValueTask<TenantContext?> GetDatabaseTenantAsync(
+    ValueTask<DatabaseTenantResult> GetDatabaseTenantAsync(
         string userId, string organizationId, string projectId, string databaseId, CancellationToken cancellationToken);
 
     /// <summary>
-    /// As <see cref="GetDatabaseTenantAsync"/> for a change to the database or its tooling state: <see cref="ManagementError.Forbidden"/>
+    /// As <see cref="GetDatabaseTenantAsync"/> for a change to the database or its tooling state: <see cref="Forbidden"/>
     /// for a <see cref="OrganizationRole.Viewer"/>, which is read-only.
     /// </summary>
-    ValueTask<ManagementResult<TenantContext>> GetWritableDatabaseTenantAsync(
+    ValueTask<WritableDatabaseTenantResult> GetWritableDatabaseTenantAsync(
         string userId, string organizationId, string projectId, string databaseId, CancellationToken cancellationToken);
 
     /// <summary>
-    /// A project whose state the user may change: <see cref="ManagementError.NotFound"/> as for <see cref="GetProjectAsync"/>,
-    /// <see cref="ManagementError.Forbidden"/> for a <see cref="OrganizationRole.Viewer"/>.
+    /// A project whose state the user may change: <see cref="NotFound"/> as for <see cref="GetProjectAsync"/>,
+    /// <see cref="Forbidden"/> for a <see cref="OrganizationRole.Viewer"/>.
     /// </summary>
-    ValueTask<ManagementResult<Project>> GetWritableProjectAsync(string userId, string organizationId, string projectId, CancellationToken cancellationToken);
+    ValueTask<WritableProjectResult> GetWritableProjectAsync(string userId, string organizationId, string projectId, CancellationToken cancellationToken);
 
     /// <summary>
     /// Deletes a database and its data. Its files and the expiry of its backups are owed to the storage sweep from the
     /// catalog commit on, so a failed or interrupted deletion of the files is retried.
     /// </summary>
-    ValueTask<ManagementError> DeleteDatabaseAsync(
+    ValueTask<DeleteDatabaseResult> DeleteDatabaseAsync(
         string userId, string organizationId, string projectId, string databaseId, CancellationToken cancellationToken);
 
     /// <summary>Creates a database in the same project as a snapshot copy of an existing one.</summary>
-    ValueTask<ManagementResult<ManagedDatabase>> BranchDatabaseAsync(
+    ValueTask<BranchDatabaseResult> BranchDatabaseAsync(
         string userId, string organizationId, string projectId, string databaseId, string name, CancellationToken cancellationToken);
 
     /// <summary>
     /// Creates a database in a project as a snapshot copy of the engine database <paramref name="sourceId"/> of the same
-    /// project (for example a backup snapshot); <see cref="ManagementError.NotFound"/> when the project or the source does not exist.
+    /// project (for example a backup snapshot); <see cref="NotFound"/> when the project or the source does not exist.
     /// </summary>
-    ValueTask<ManagementResult<ManagedDatabase>> CopyDatabaseAsync(
+    ValueTask<CopyDatabaseResult> CopyDatabaseAsync(
         string userId, string organizationId, string projectId, string sourceId, string name, string? branchedFrom, CancellationToken cancellationToken);
 }

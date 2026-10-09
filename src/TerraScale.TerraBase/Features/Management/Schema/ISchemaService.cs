@@ -28,6 +28,9 @@ public readonly union ListCollectionsResult(CollectionList, Validation);
 /// <summary>The inferred fields of a collection, that it does not exist, or that inferring them exceeded a budget.</summary>
 public readonly union InferSchemaResult(CollectionSchema, NotFound, Validation);
 
+/// <summary>Collection counts, or why storage cannot be counted.</summary>
+public readonly union CountCollectionsResult(IReadOnlyList<CollectionStats>, NotFound, Validation);
+
 /// <summary>Collection views with inferred fields and declared unique keys.</summary>
 public interface ISchemaService
 {
@@ -35,10 +38,10 @@ public interface ISchemaService
     ValueTask<ListCollectionsResult> ListCollectionsAsync(TenantContext database, CancellationToken cancellationToken);
 
     /// <summary>
-    /// Counts the live documents of each collection and their JSON bytes without reading their bodies; <see langword="null"/>
+    /// Counts the live documents of each collection and their JSON bytes without reading their bodies; <see cref="NotFound"/>
     /// when the storage is missing, also when the database was deleted while the count started.
     /// </summary>
-    ValueTask<IReadOnlyList<CollectionStats>?> CountCollectionsAsync(TenantContext database, CancellationToken cancellationToken);
+    ValueTask<CountCollectionsResult> CountCollectionsAsync(TenantContext database, CancellationToken cancellationToken);
 
     /// <summary>Infers the fields of <paramref name="collection"/>.</summary>
     ValueTask<InferSchemaResult> InferAsync(TenantContext database, string collection, CancellationToken cancellationToken);

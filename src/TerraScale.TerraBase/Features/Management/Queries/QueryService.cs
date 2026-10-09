@@ -107,8 +107,8 @@ internal sealed class QueryService(IStorageEngine engine, SystemCatalog catalog,
         return new SqlCheckBody(true, null, statement.Query.Collection, statement.HasLimit, plan.Steps, plan.Indexes, Suggest(statement.Query, indexes));
     }
 
-    public ValueTask<ManagementPage<SavedQuery>> ListSavedAsync(Project project, string? after, int limit, CancellationToken cancellationToken) =>
-        catalog.ReadAsync(async transaction =>
+    public ValueTask<ListSavedQueriesResult> ListSavedAsync(Project project, string? after, int limit, CancellationToken cancellationToken) =>
+        catalog.ReadAsync<ListSavedQueriesResult>(async transaction =>
         {
             var page = await transaction.ListAsync(SavedQueryOrder(project), after, limit, MaxCatalogPageBytes, cancellationToken).ConfigureAwait(false);
             var queries = new List<SavedQuery>(page.Documents.Count);
@@ -131,11 +131,11 @@ internal sealed class QueryService(IStorageEngine engine, SystemCatalog catalog,
             }
 
             return new ManagementPage<SavedQuery>(queries, next);
-        }, cancellationToken);
+        }, static error => error, cancellationToken);
 
-    public async ValueTask<Found<SavedQuery>> CreateSavedAsync(string userId, Project project, string name, string sql, CancellationToken cancellationToken)
+    public async ValueTask<CreateSavedQueryResult> CreateSavedAsync(string userId, Project project, string name, string sql, CancellationToken cancellationToken)
     {
-        return await catalog.WriteAsync<Found<SavedQuery>>(async transaction =>
+        return await catalog.WriteAsync<CreateSavedQueryResult>(async transaction =>
         {
             if (!await IsWriterProjectAsync(transaction, userId, project, cancellationToken).ConfigureAwait(false))
             {
@@ -150,19 +150,20 @@ internal sealed class QueryService(IStorageEngine engine, SystemCatalog catalog,
             await PutAsync(transaction, SavedQueries(project), query.Id, new SavedQueryEntry(query, order), TerraBaseJsonContext.Default.SavedQueryEntry, cancellationToken).ConfigureAwait(false);
             await PutAsync(transaction, SavedQueryOrder(project), order, query.Id, TerraBaseJsonContext.Default.String, cancellationToken).ConfigureAwait(false);
             return query;
-        }, cancellationToken).ConfigureAwait(false);
+        }, static error => error, cancellationToken).ConfigureAwait(false);
     }
 
-    public async ValueTask<Found<SavedQuery>> GetSavedAsync(Project project, string queryId, CancellationToken cancellationToken) =>
-        await catalog.ReadAsync(
-            transaction => GetAsync(transaction, SavedQueries(project), queryId, TerraBaseJsonContext.Default.SavedQueryEntry, cancellationToken),
-            cancellationToken).ConfigureAwait(false) is { } entry
-            ? entry.Query
-            : new NotFound();
+    public async ValueTask<GetSavedQueryResult> GetSavedAsync(Project project, string queryId, CancellationToken cancellationToken) =>
+        await catalog.ReadAsync<GetSavedQueryResult>(
+            async transaction => await GetAsync(transaction, SavedQueries(project), queryId, TerraBaseJsonContext.Default.SavedQueryEntry, cancellationToken)
+                .ConfigureAwait(false) is { } entry
+                ? entry.Query
+                : new NotFound(),
+            static error => error, cancellationToken).ConfigureAwait(false);
 
-    public async ValueTask<Found<SavedQuery>> UpdateSavedAsync(
+    public async ValueTask<UpdateSavedQueryResult> UpdateSavedAsync(
         string userId, Project project, string queryId, string name, string sql, CancellationToken cancellationToken) =>
-        await catalog.WriteAsync<Found<SavedQuery>>(async transaction =>
+        await catalog.WriteAsync<UpdateSavedQueryResult>(async transaction =>
         {
             if (!await IsWriterProjectAsync(transaction, userId, project, cancellationToken).ConfigureAwait(false)
                 || await MemberEntryAsync(transaction, userId, project, queryId, cancellationToken).ConfigureAwait(false) is not { } entry)
@@ -173,7 +174,7 @@ internal sealed class QueryService(IStorageEngine engine, SystemCatalog catalog,
             var query = entry.Query with { Name = name, Sql = sql, UpdatedAt = time.GetUtcNow() };
             await PutAsync(transaction, SavedQueries(project), query.Id, entry with { Query = query }, TerraBaseJsonContext.Default.SavedQueryEntry, cancellationToken).ConfigureAwait(false);
             return query;
-        }, cancellationToken).ConfigureAwait(false);
+        }, static error => error, cancellationToken).ConfigureAwait(false);
 
     public async ValueTask<DeleteSavedQueryResult> DeleteSavedAsync(string userId, Project project, string queryId, CancellationToken cancellationToken) =>
         await catalog.WriteAsync<DeleteSavedQueryResult>(async transaction =>
@@ -187,7 +188,7 @@ internal sealed class QueryService(IStorageEngine engine, SystemCatalog catalog,
             await transaction.DeleteAsync(SavedQueries(project), queryId, cancellationToken).ConfigureAwait(false);
             await transaction.DeleteAsync(SavedQueryOrder(project), entry.Order, cancellationToken).ConfigureAwait(false);
             return new Done();
-        }, cancellationToken).ConfigureAwait(false);
+        }, static error => error, cancellationToken).ConfigureAwait(false);
 
     /// <summary>Filtered or sorted fields of <paramref name="query"/> that no index of its collection leads with.</summary>
     internal static List<IndexSuggestion> Suggest(SqlQuery query, IReadOnlyList<IndexDefinition> indexes)
@@ -389,7 +390,7 @@ internal sealed class QueryService(IStorageEngine engine, SystemCatalog catalog,
     private static async ValueTask<bool> IsWriterProjectAsync(IStorageTransaction transaction, string userId, Project project, CancellationToken cancellationToken)
     {
         if (!await IsMemberProjectAsync(transaction, userId, project, cancellationToken).ConfigureAwait(false)
-            || await EngineManagementService.WritableAsync(transaction, userId, project.OrganizationId, cancellationToken).ConfigureAwait(false) != ManagementError.None)
+            || await EngineManagementService.WritableAsync(transaction, userId, project.OrganizationId, cancellationToken).ConfigureAwait(false) is not OrganizationMember)
         {
             return false;
         }

@@ -10,6 +10,8 @@ using Grpc.Core;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Time.Testing;
+using TerraBase.Engine;
+using TerraBase.Errors;
 using TerraBase.Fast.Management;
 using TerraBase.Features.Management;
 using TerraBase.Features.Management.Queries;
@@ -102,6 +104,85 @@ public sealed class QueryShapeForwardingTests
                 follower.Services.GetRequiredService<LostShapeAcknowledgement>().Release.TrySetResult();
                 await follower.DisposeAsync();
             }
+        }
+    }
+
+    [Test]
+    public async Task Catalog_refusal_keeps_local_and_forwarded_shapes_until_recovery_without_acknowledging_the_peer_batch()
+    {
+        using var peers = new PeerTls();
+        var time = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        await using var api = await ManagementApi.StartAsync(peers.Apply, services =>
+        {
+            var registration = services.Single(service => service.ServiceType == typeof(ICatalogGuard));
+            services.Remove(registration);
+            services.AddSingleton(provider => new CatalogRefusal((ICatalogGuard)registration.ImplementationFactory!(provider)));
+            services.AddSingleton<ICatalogGuard>(provider => provider.GetRequiredService<CatalogRefusal>());
+        }, time);
+        var database = await api.CreateManagedDatabaseAsync();
+        await SavedShapeAsync(api, database);
+        var key = await api.Server.IssueAsync(database.Organization, "documents:read", "documents:write");
+        await using var follower = await StartFollowerAsync(api, peers, time);
+        using var data = api.Tls.CreateClient(follower.ClientAddress!, key);
+        await TerraBaseTestServer.EventuallyAsync(async token =>
+        {
+            using var response = await data.GetAsync(ManagementApi.Uri(database.Data + "/collections"), token);
+            return response.StatusCode == HttpStatusCode.OK;
+        });
+        await SeedAsync(data, database);
+        await QueryAsync(data, database, 2);
+        using var localData = api.Tls.CreateClient(api.Server.ClientAddress!, key);
+        await QueryAsync(localData, database, 3);
+
+        var refusal = api.Server.Services.GetRequiredService<CatalogRefusal>();
+        var local = api.Server.Services.GetRequiredService<QueryShapeRecorder>();
+        var remote = follower.Services.GetRequiredService<QueryShapeRecorder>();
+        var catalog = api.Server.Services.GetRequiredService<SystemCatalog>();
+        using var channel = peers.CreateChannel(api.Server.PeerAddress!);
+        var client = new CatalogQueryShapes.CatalogQueryShapesClient(channel);
+        var epoch = ByteString.CopyFrom(RandomNumberGenerator.GetBytes(16));
+        var attempted = new List<QueryShapesBatch>();
+        refusal.Refuse = true;
+        try
+        {
+            await local.FlushAsync(CancellationToken.None);
+            using (var unavailable = await api.Client.GetAsync(ManagementApi.Uri(StatsPath(database))))
+            {
+                await Assert.That(unavailable.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+            }
+
+            var error = await Assert.ThrowsAsync<RpcException>(async () => await remote.SendAsync(ForwardAsync, CancellationToken.None));
+            await Assert.That(error!.StatusCode).IsEqualTo(StatusCode.Unavailable);
+            await Assert.That(error.Status.Detail).IsEqualTo("injected catalog refusal");
+            var (persisted, senders) = await catalog.ReadUncheckedAsync(async transaction =>
+            {
+                var saved = await SystemCatalog.ListAllAsync(transaction, SystemCatalog.DatabaseState(database.Id) + "query_shapes",
+                    TerraBaseJsonContext.Default.QueryShapeRecord, CancellationToken.None);
+                return (saved.Single().Stats.Queries, await transaction.CountDocumentsAsync("query_shape_senders", CancellationToken.None));
+            }, CancellationToken.None);
+            await Assert.That(persisted).IsEqualTo(1);
+            await Assert.That(senders).IsEqualTo(0);
+
+            refusal.Refuse = false;
+            await Assert.That(await remote.SendAsync(ForwardAsync, CancellationToken.None)).IsTrue();
+            await Assert.That(attempted.Count).IsEqualTo(2);
+            await Assert.That(attempted[0].ToByteArray().SequenceEqual(attempted[1].ToByteArray())).IsTrue();
+            await local.FlushAsync(CancellationToken.None);
+            await client.AddAsync(attempted[0]);
+            await Assert.That((await ShapesAsync(api.Client, database)).Single().Queries).IsEqualTo(3);
+            await Assert.That(await remote.SendAsync(ForwardAsync, CancellationToken.None)).IsFalse();
+        }
+        finally
+        {
+            refusal.Refuse = false;
+        }
+
+        async Task<bool> ForwardAsync(long sequence, QueryShapeForwardPayload payload, CancellationToken cancellationToken)
+        {
+            var batch = Batch(payload, epoch, (ulong)sequence, "catalog-recovery-test");
+            attempted.Add(batch.Clone());
+            await client.AddAsync(batch, cancellationToken: cancellationToken);
+            return true;
         }
     }
 
@@ -214,7 +295,7 @@ public sealed class QueryShapeForwardingTests
         var id = shape.Collection + ":" + shape.Id;
         var unreadable = Encoding.UTF8.GetBytes("{\"format\":\"future\",\"stats\":[]}");
         await catalog.WriteAsync(async transaction =>
-            await transaction.PutAsync(records, id, unreadable, CancellationToken.None), CancellationToken.None);
+            await transaction.PutAsync(records, id, unreadable, CancellationToken.None), static refused => throw new InvalidOperationException(refused.Message), CancellationToken.None);
         var transfer = Transfer(database, shape);
         var payload = new QueryShapeForwardPayload([
             transfer,
@@ -238,7 +319,7 @@ public sealed class QueryShapeForwardingTests
             var stored = (await transaction.GetAsync(records, id, CancellationToken.None))!.Json.ToArray();
             var gone = await transaction.CountDocumentsAsync(SystemCatalog.DatabaseState(deleted.Id) + "query_shapes", CancellationToken.None);
             return (stored, gone, await transaction.CountDocumentsAsync(records, CancellationToken.None));
-        }, CancellationToken.None);
+        }, static refused => throw new InvalidOperationException(refused.Message), CancellationToken.None);
         await Assert.That(saved.SequenceEqual(unreadable)).IsTrue();
         await Assert.That(removed).IsEqualTo(0);
         await Assert.That(count).IsEqualTo(1);
@@ -447,7 +528,7 @@ public sealed class QueryShapeForwardingTests
             var saved = await SystemCatalog.ListAllAsync(transaction, SystemCatalog.DatabaseState(database.Id) + "query_shapes",
                 TerraBaseJsonContext.Default.QueryShapeRecord, CancellationToken.None);
             return saved.Single().Stats.Queries;
-        }, CancellationToken.None);
+        }, static refused => throw new InvalidOperationException(refused.Message), CancellationToken.None);
 
     private static async Task<QueryShapeStats[]> ShapesAsync(HttpClient client, ManagedDatabaseRef database, CancellationToken cancellationToken = default)
     {
@@ -507,6 +588,23 @@ public sealed class QueryShapeForwardingTests
             }
             return added;
         }
+    }
+
+    private sealed class CatalogRefusal(ICatalogGuard inner) : ICatalogGuard
+    {
+        public bool Refuse
+        {
+            get => Volatile.Read(ref field);
+            set => Volatile.Write(ref field, value);
+        }
+
+        public ValueTask<CatalogCheck> EnsureCatalogAsync(CancellationToken cancellationToken) => Refuse
+            ? ValueTask.FromResult<CatalogCheck>(new Unavailable("injected catalog refusal"))
+            : inner.EnsureCatalogAsync(cancellationToken);
+
+        public ValueTask<CatalogCheck> CheckReadAsync(IStorageTransaction transaction, CancellationToken cancellationToken) => Refuse
+            ? ValueTask.FromResult<CatalogCheck>(new Unavailable("injected catalog refusal"))
+            : inner.CheckReadAsync(transaction, cancellationToken);
     }
 
     private sealed class ReceiveMemory(IMemoryBudget inner) : IMemoryBudget

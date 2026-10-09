@@ -1,6 +1,7 @@
 using System.Net;
 using System.Reflection;
 using System.Runtime.ExceptionServices;
+using System.Text;
 using System.Text.Json;
 using Bogus;
 using Microsoft.Data.Sqlite;
@@ -8,8 +9,10 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Errors;
 using TerraBase.Features.Management;
+using TerraBase.Features.Management.Queries;
 using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Replication;
+using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
@@ -19,6 +22,127 @@ namespace TerraBase.Fast.Management;
 public sealed class UsageApiTests
 {
     private static readonly Faker Faker = new();
+
+    private static UsageAccept Accepted(UsageAcceptResult result) => result switch
+    {
+        UsageAccept accepted => accepted,
+        Unavailable refused => throw new InvalidOperationException(refused.Message),
+    };
+
+    [Test]
+    public async Task Empty_usage_and_query_flushes_leave_the_catalog_uninitialized()
+    {
+        var time = new FakeTimeProvider();
+        var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
+        await using var server = await TerraBaseTestServer.StartAsync(services: services => services.AddSingleton<TimeProvider>(time));
+        using var initialHealth = await server.Client.GetAsync(Uri("/healthz"), token);
+        initialHealth.EnsureSuccessStatusCode();
+        var catalog = Path.Combine(server.DataDirectory, "_system.db");
+        await Assert.That(File.Exists(catalog)).IsFalse();
+
+        await server.Services.GetRequiredService<UsageMeter>().FlushAsync(token);
+        await Assert.That(File.Exists(catalog)).IsFalse();
+        await server.Services.GetRequiredService<QueryFieldRecorder>().FlushAsync(token);
+        await Assert.That(File.Exists(catalog)).IsFalse();
+        await server.Services.GetRequiredService<QueryShapeRecorder>().FlushAsync(token);
+        await Assert.That(File.Exists(catalog)).IsFalse();
+
+        using var finalHealth = await server.Client.GetAsync(Uri("/healthz"), token);
+        finalHealth.EnsureSuccessStatusCode();
+    }
+
+    [Test]
+    public async Task A_refused_sender_load_retries_before_accepting_a_previously_saved_batch()
+    {
+        var time = new FakeTimeProvider();
+        await using var api = await ManagementApi.StartAsync(time: time);
+        await api.CreateManagedDatabaseAsync();
+        var catalog = api.Server.Services.GetRequiredService<SystemCatalog>();
+        await catalog.WriteUncheckedAsync(async transaction =>
+        {
+            await SystemCatalog.PutAsync(transaction, "usage-senders", "node-a",
+                new UsageSender("node-a", [new UsageSenderEpoch("epoch", 1)], time.GetUtcNow()),
+                TerraBaseJsonContext.Default.UsageSender, CancellationToken.None);
+            return 0;
+        }, CancellationToken.None);
+        var supportedVersion = await ReplaceCatalogVersionAsync(catalog, Encoding.UTF8.GetBytes("\"99\""));
+        var meter = api.Server.Services.GetRequiredService<UsageMeter>();
+
+        await Assert.That(await meter.AcceptAsync("node-a", "epoch", 1, [], CancellationToken.None) is Unavailable).IsTrue();
+        await Assert.That(await CountSendersAsync(api.Server.DataDirectory)).IsEqualTo(1);
+        await ReplaceCatalogVersionAsync(catalog, supportedVersion);
+
+        await Assert.That(Accepted(await meter.AcceptAsync("node-a", "epoch", 1, [], CancellationToken.None))).IsEqualTo(UsageAccept.Duplicate);
+        await Assert.That(Accepted(await meter.AcceptAsync("node-b", "epoch", 1, [], CancellationToken.None))).IsEqualTo(UsageAccept.Added);
+        await meter.FlushAsync(CancellationToken.None);
+        await Assert.That(await CountSendersAsync(api.Server.DataDirectory)).IsEqualTo(2);
+    }
+
+    [Test]
+    [Arguments("usage")]
+    [Arguments("fields")]
+    [Arguments("shapes")]
+    public async Task A_catalog_change_between_flush_admission_and_write_keeps_the_batch_for_retry(string kind)
+    {
+        var hook = new UsageCommitHook();
+        await using var api = await ManagementApi.StartAsync(time: new FakeTimeProvider(), services: hook.Install);
+        var database = await api.CreateManagedDatabaseAsync();
+        using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
+        await WriteAsync(data, database, "people", 1);
+        using var query = await api.Client.PostAsJsonAsync(Uri(database.Path + "/sql"), new { sql = "SELECT * FROM people WHERE city = 'x'" });
+        query.EnsureSuccessStatusCode();
+        var catalog = api.Server.Services.GetRequiredService<SystemCatalog>();
+        Func<CancellationToken, ValueTask> flush = kind switch
+        {
+            "usage" => api.Server.Services.GetRequiredService<UsageMeter>().FlushAsync,
+            "fields" => api.Server.Services.GetRequiredService<QueryFieldRecorder>().FlushAsync,
+            "shapes" => api.Server.Services.GetRequiredService<QueryShapeRecorder>().FlushAsync,
+            _ => throw new ArgumentOutOfRangeException(nameof(kind)),
+        };
+
+        using var gate = hook.PauseWrite();
+        var refusedFlush = flush(CancellationToken.None).AsTask();
+        await gate.Entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        var supportedVersion = await ReplaceCatalogVersionAsync(catalog, Encoding.UTF8.GetBytes("\"99\""));
+        gate.Dispose();
+        await refusedFlush.WaitAsync(TimeSpan.FromSeconds(10));
+        await Assert.That(await ReadSavedOpsAsync(api.Server.DataDirectory, database.Id)).IsNull();
+        await Assert.That(await CountSavedQueryFieldsAsync(api.Server.DataDirectory, database.Id)).IsEqualTo(0);
+        var shapesBefore = await catalog.ReadUncheckedAsync(
+            transaction => transaction.CountDocumentsAsync(SystemCatalog.DatabaseState(database.Id) + "query_shapes", CancellationToken.None),
+            CancellationToken.None);
+        await Assert.That(shapesBefore).IsEqualTo(0);
+
+        await ReplaceCatalogVersionAsync(catalog, supportedVersion);
+        await flush(CancellationToken.None);
+        await flush(CancellationToken.None);
+        if (kind == "usage")
+        {
+            await AssertSavedAsync(api, database, reads: 1, writes: 1);
+        }
+        else if (kind == "fields")
+        {
+            var fields = await catalog.ReadUncheckedAsync(transaction => SystemCatalog.ListAllAsync(transaction,
+                QueryFieldUsage.Records(database.Id), TerraBaseJsonContext.Default.QueryFieldUsage, CancellationToken.None), CancellationToken.None);
+            await Assert.That(fields.Count).IsEqualTo(1);
+            await Assert.That(fields[0].Queries).IsEqualTo(1);
+        }
+        else
+        {
+            var shapes = await catalog.ReadUncheckedAsync(transaction => SystemCatalog.ListAllAsync(transaction,
+                SystemCatalog.DatabaseState(database.Id) + "query_shapes", TerraBaseJsonContext.Default.QueryShapeRecord, CancellationToken.None), CancellationToken.None);
+            await Assert.That(shapes.Count).IsEqualTo(1);
+            await Assert.That(shapes[0].Stats.Queries).IsEqualTo(1);
+        }
+    }
+
+    private static ValueTask<byte[]> ReplaceCatalogVersionAsync(SystemCatalog catalog, byte[] version) =>
+        catalog.WriteUncheckedAsync(async transaction =>
+        {
+            var previous = (await transaction.GetAsync("catalog", "version", CancellationToken.None))!.Json.ToArray();
+            await transaction.PutAsync("catalog", "version", version, CancellationToken.None);
+            return previous;
+        }, CancellationToken.None);
 
     [Test]
     public async Task Database_usage_counts_storage_documents_and_operations()
@@ -249,11 +373,19 @@ public sealed class UsageApiTests
         // The primary is slow to answer; a usage read served here does not wait for it, and still sees the batch's counts.
         var send = meter.SendAsync(Send, CancellationToken.None).AsTask();
         await sending.Task.WaitAsync(TimeSpan.FromSeconds(10));
-        var (during, _) = await meter.GetAsync(tenant, new UsageWindow(UsageWindow.Hour, Hour("2026-11-11T11:00:00Z"), 1), CancellationToken.None)
-            .AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+        var during = await meter.GetAsync(tenant, new UsageWindow(UsageWindow.Hour, Hour("2026-11-11T11:00:00Z"), 1), CancellationToken.None)
+            .AsTask().WaitAsync(TimeSpan.FromSeconds(10)) switch
+        {
+            UsageCounts counts => counts.Lifetime,
+            Unavailable => throw new InvalidOperationException("usage counts must remain readable while sending"),
+        };
         acknowledge.SetResult(new Done());
         await Assert.That(await send.WaitAsync(TimeSpan.FromSeconds(10))).IsTrue();
-        var (after, _) = await meter.GetAsync(tenant, new UsageWindow(UsageWindow.Hour, Hour("2026-11-11T11:00:00Z"), 1), CancellationToken.None);
+        var after = await meter.GetAsync(tenant, new UsageWindow(UsageWindow.Hour, Hour("2026-11-11T11:00:00Z"), 1), CancellationToken.None) switch
+        {
+            UsageCounts counts => counts.Lifetime,
+            Unavailable => throw new InvalidOperationException("usage counts must remain readable after sending"),
+        };
 
         await Assert.That(during.Reads).IsEqualTo(3);
         await Assert.That(after.Reads).IsEqualTo(0);
@@ -312,10 +444,10 @@ public sealed class UsageApiTests
                 var meter = api.Server.Services.GetRequiredService<UsageMeter>();
                 for (var i = 0; i < 1024; i++)
                 {
-                    await Assert.That(await meter.AcceptAsync($"node-{i}", "epoch", 1, [], CancellationToken.None)).IsEqualTo(UsageAccept.Added);
+                    await Assert.That(Accepted(await meter.AcceptAsync($"node-{i}", "epoch", 1, [], CancellationToken.None))).IsEqualTo(UsageAccept.Added);
                 }
 
-                await Assert.That(await meter.AcceptAsync("node-new", "epoch", 1, [], CancellationToken.None)).IsEqualTo(UsageAccept.TooManySenders);
+                await Assert.That(Accepted(await meter.AcceptAsync("node-new", "epoch", 1, [], CancellationToken.None))).IsEqualTo(UsageAccept.TooManySenders);
                 await meter.FlushAsync(CancellationToken.None);
                 await Assert.That(await CountSendersAsync(directory)).IsEqualTo(1024);
             }
@@ -324,7 +456,7 @@ public sealed class UsageApiTests
             await using (var api = await ManagementApi.StartAsync(Settings, time: new FakeTimeProvider(Instant("2026-11-09T00:00:00Z"))))
             {
                 var meter = api.Server.Services.GetRequiredService<UsageMeter>();
-                await Assert.That(await meter.AcceptAsync("node-new", "epoch", 1, [], CancellationToken.None)).IsEqualTo(UsageAccept.Added);
+                await Assert.That(Accepted(await meter.AcceptAsync("node-new", "epoch", 1, [], CancellationToken.None))).IsEqualTo(UsageAccept.Added);
                 await meter.FlushAsync(CancellationToken.None);
                 await Assert.That(await CountSendersAsync(directory)).IsEqualTo(1);
             }
@@ -363,8 +495,7 @@ public sealed class UsageApiTests
 
         using var response = await api.Client.GetAsync(Uri(database.ProjectPath + "/usage?from=2026-11-04T00:00:00Z&to=2026-11-11T12:00:00Z"));
 
-        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
-        await Assert.That(await response.Content.ReadFromJsonAsync<string>()).IsEqualTo("query too expensive");
+        await ErrorAssert.ErrorAsync(response, HttpStatusCode.BadRequest, "invalid_query", "query too expensive");
         await Assert.That(pages).IsEqualTo(1);
     }
 
@@ -390,7 +521,7 @@ public sealed class UsageApiTests
 
                 var accepted = await meter.AcceptAsync(sender, "epoch", 1, [], CancellationToken.None);
                 await meter.FlushAsync(CancellationToken.None);
-                return accepted;
+                return Accepted(accepted);
             }
 
             // The primary adds the batch, but its acknowledgement never reaches the follower, which keeps sending it.
@@ -700,8 +831,57 @@ public sealed class UsageApiTests
 
         // The third count starts 4 seconds in and ends 6 seconds in: its usage is not read.
         await Assert.That(two.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(three.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
-        await Assert.That(await three.Content.ReadFromJsonAsync<string>()).IsEqualTo("query too expensive");
+        await ErrorAssert.ErrorAsync(three, HttpStatusCode.BadRequest, "invalid_query", "query too expensive");
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Project_usage_whose_meter_catalog_refusal_outlasts_its_deadline_is_too_expensive(bool pastDeadline)
+    {
+        var time = new FakeTimeProvider();
+        var hook = new UsageCommitHook();
+        await using var api = await ManagementApi.StartAsync(time: time, services: hook.Install);
+        var database = await api.CreateManagedDatabaseAsync();
+        var catalog = api.Server.Services.GetRequiredService<SystemCatalog>();
+        byte[]? supportedVersion = null;
+        var meterLookup = 0;
+        var refusedLookups = 0;
+        // Tenant resolution has finished; the meter's next catalog read sees the unsupported marker.
+        hook.BeforeBegin = async (opened, _) =>
+        {
+            if (opened.DatabaseId == database.Id && supportedVersion is null)
+            {
+                supportedVersion = await ReplaceCatalogVersionAsync(catalog, Encoding.UTF8.GetBytes("\"99\""));
+                Volatile.Write(ref meterLookup, 1);
+            }
+        };
+        hook.AfterGet = (collection, id, _) =>
+        {
+            if (collection == "catalog" && id == "version" && Interlocked.Exchange(ref meterLookup, 0) == 1)
+            {
+                Interlocked.Increment(ref refusedLookups);
+                if (pastDeadline)
+                {
+                    time.Advance(TimeSpan.FromSeconds(6));
+                }
+            }
+
+            return ValueTask.CompletedTask;
+        };
+
+        using var response = await api.Client.GetAsync(Uri(database.ProjectPath + "/usage"));
+
+        await ErrorAssert.ErrorAsync(response,
+            pastDeadline ? HttpStatusCode.BadRequest : HttpStatusCode.ServiceUnavailable,
+            pastDeadline ? "invalid_query" : "unavailable",
+            pastDeadline ? "query too expensive" : "the management catalog has an old or unsupported format; discard the affected data");
+        await Assert.That(refusedLookups).IsEqualTo(1);
+        hook.BeforeBegin = null;
+        hook.AfterGet = null;
+        await ReplaceCatalogVersionAsync(catalog, supportedVersion!);
+        using var recovered = await api.Client.GetAsync(Uri(database.ProjectPath + "/usage"));
+        await Assert.That(recovered.StatusCode).IsEqualTo(HttpStatusCode.OK);
     }
 
     [Test]
@@ -734,8 +914,7 @@ public sealed class UsageApiTests
 
         using var response = await api.Client.GetAsync(Uri(database.ProjectPath + "/usage"));
 
-        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
-        await Assert.That(await response.Content.ReadFromJsonAsync<string>()).IsEqualTo("query too expensive");
+        await ErrorAssert.ErrorAsync(response, HttpStatusCode.BadRequest, "invalid_query", "query too expensive");
         await Assert.That(counts).IsEqualTo(0);
     }
 
@@ -771,15 +950,19 @@ public sealed class UsageApiTests
         await flush.WaitAsync(TimeSpan.FromSeconds(10));
         using var response = await read.WaitAsync(TimeSpan.FromSeconds(10));
 
-        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
-        await Assert.That(await response.Content.ReadFromJsonAsync<string>()).IsEqualTo("query too expensive");
+        await ErrorAssert.ErrorAsync(response, HttpStatusCode.BadRequest, "invalid_query", "query too expensive");
     }
 
     [Test]
-    public async Task Project_usage_whose_last_tenant_lookup_outlasts_its_deadline_and_finds_no_database_is_too_expensive()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Project_usage_whose_last_tenant_lookup_outlasts_its_deadline_is_too_expensive_even_when_the_lookup_fails(bool unavailable)
     {
         var time = new FakeTimeProvider();
-        var vanish = false;
+        var slowLookup = false;
+        DatabaseTenantResult lookupFailure = unavailable
+            ? new Unavailable("the management catalog cannot be read")
+            : new NotFound("the resource does not exist");
         await using var api = await ManagementApi.StartAsync(time: time, services: services =>
         {
             var registration = services.Single(service => service.ServiceType == typeof(IManagementService));
@@ -789,21 +972,22 @@ public sealed class UsageApiTests
                 method =>
                 {
                     // The lookup takes 6 seconds of the request's 5...
-                    if (Volatile.Read(ref vanish) && method == nameof(IManagementService.GetDatabaseTenantAsync))
+                    if (Volatile.Read(ref slowLookup) && method == nameof(IManagementService.GetDatabaseTenantAsync))
                     {
                         time.Advance(TimeSpan.FromSeconds(6));
                     }
                 },
-                // ...and finds the database deleted meanwhile.
-                method => Volatile.Read(ref vanish) && method == nameof(IManagementService.GetDatabaseTenantAsync) ? new ValueTask<TenantContext?>(default(TenantContext)) : null));
+                // ...and returns either a deleted database or an unavailable catalog.
+                method => Volatile.Read(ref slowLookup) && method == nameof(IManagementService.GetDatabaseTenantAsync)
+                    ? new ValueTask<DatabaseTenantResult>(lookupFailure)
+                    : null));
         });
         var database = await api.CreateManagedDatabaseAsync();
-        Volatile.Write(ref vanish, true);
+        Volatile.Write(ref slowLookup, true);
 
         using var response = await api.Client.GetAsync(Uri(database.ProjectPath + "/usage"));
 
-        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
-        await Assert.That(await response.Content.ReadFromJsonAsync<string>()).IsEqualTo("query too expensive");
+        await ErrorAssert.ErrorAsync(response, HttpStatusCode.BadRequest, "invalid_query", "query too expensive");
     }
 
     [Test]
@@ -841,8 +1025,7 @@ public sealed class UsageApiTests
 
         using var response = await api.Client.GetAsync(Uri(database.ProjectPath + "/usage"));
 
-        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
-        await Assert.That(await response.Content.ReadFromJsonAsync<string>()).IsEqualTo("query too expensive");
+        await ErrorAssert.ErrorAsync(response, HttpStatusCode.BadRequest, "invalid_query", "query too expensive");
         await Assert.That(counts).IsEqualTo(0);
     }
 
@@ -868,7 +1051,7 @@ public sealed class UsageApiTests
                 },
                 // The slow listing finds its project deleted meanwhile.
                 method => deleted && Volatile.Read(ref slow) && method == nameof(IManagementService.ListDatabasesAsync)
-                    ? new ValueTask<ManagementPage<ManagedDatabase>?>(default(ManagementPage<ManagedDatabase>))
+                    ? new ValueTask<ListDatabasesResult>(new NotFound("the resource does not exist"))
                     : null));
         });
         var organizationId = await api.CreateOrganizationAsync("Empty");
@@ -877,8 +1060,7 @@ public sealed class UsageApiTests
 
         using var response = await api.Client.GetAsync(Uri($"/v1/management/organizations/{organizationId}/projects/{project}/usage"));
 
-        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
-        await Assert.That(await response.Content.ReadFromJsonAsync<string>()).IsEqualTo("query too expensive");
+        await ErrorAssert.ErrorAsync(response, HttpStatusCode.BadRequest, "invalid_query", "query too expensive");
     }
 
     [Test]
@@ -970,6 +1152,12 @@ public sealed class UsageApiTests
         }
 
         await AssertSavedAsync(api, database, reads: 0, writes: 2);
+        var catalog = api.Server.Services.GetRequiredService<SystemCatalog>();
+        var supportedVersion = await ReplaceCatalogVersionAsync(catalog, Encoding.UTF8.GetBytes("\"99\""));
+        await meter.FlushAsync(CancellationToken.None);
+        var tenant = new TenantContext(database.Organization, PlanTier.Hobby, database.Project, database.Id);
+        await Assert.That(await meter.GetAsync(tenant, new UsageWindow(UsageWindow.Hour, 0, 1), CancellationToken.None) is Unavailable).IsTrue();
+        await ReplaceCatalogVersionAsync(catalog, supportedVersion);
         var usage = await api.Client.GetFromJsonAsync<JsonElement>(Uri(database.Path + "/usage"));
         await WriteAsync(data, database, "people", 1);
         await meter.FlushAsync(CancellationToken.None);

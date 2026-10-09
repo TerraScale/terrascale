@@ -21,6 +21,7 @@ public sealed class GetAutoIndexPolicyEndpoint(IManagementService management, II
         Produces<AutoIndexPolicy>();
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
+        Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
         RequireAuthorization(ApiKeyScopes.DatabasesRead);
         Metadata(new ProjectManagementRoute(), ListenerMetadata.Management);
     }
@@ -35,11 +36,13 @@ public sealed class GetAutoIndexPolicyEndpoint(IManagementService management, II
 
         return await ManagementRoute.DatabaseAsync(HttpContext, management, cancellationToken) switch
         {
-            null => ErrorResponse.From(new NotFound()),
+            NotFound error => ErrorResponse.From(error),
+            Unavailable error => ErrorResponse.From(error),
             TenantContext database => await indexes.GetAutoIndexPolicyAsync(ManagementRoute.UserId(HttpContext), database, collection.Value, cancellationToken) switch
             {
                 AutoIndexPolicy policy => TypedResults.Ok(policy),
                 NotFound error => ErrorResponse.From(error),
+                Unavailable error => ErrorResponse.From(error),
             },
         };
     }

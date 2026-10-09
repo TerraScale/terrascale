@@ -2,6 +2,7 @@ using System.Globalization;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http.Features;
 using TerraBase.Configuration;
+using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
 using TerraBase.Features.Documents;
 using TerraBase.Features.Management;
@@ -64,9 +65,23 @@ public static class QosExtensions
 
     private static async Task AdmitAsync(HttpContext context, RequestDelegate next, IMemoryBudget budget)
     {
-        var tenant = await ResolveTenantAsync(context).ConfigureAwait(false);
+        var resolved = await ResolveTenantAsync(context).ConfigureAwait(false);
 
         context.Features.Get<LookupMemory>()?.Reservation.Dispose();
+        if (resolved is Unavailable error
+            && !(context.RequestServices.GetRequiredService<TerraBaseOptions>().CatalogPrimary is not null
+                && ServedByCatalogPrimary.Always(context.GetEndpoint())))
+        {
+            await ErrorResponse.From(error).ExecuteAsync(context).ConfigureAwait(false);
+            return;
+        }
+
+        // A forward-only route's primary validates identity; its follower may not interpret this snapshot.
+        var tenant = resolved switch
+        {
+            TenantContext known => known,
+            Done or Unavailable => null,
+        };
 
         var retryAfter = 1;
         using var lease = tenant is not null
@@ -126,58 +141,53 @@ public static class QosExtensions
         }
     }
 
-    private static async ValueTask<TenantContext?> ResolveTenantAsync(HttpContext context)
-    {
-        try
-        {
-            TenantContext? tenant = null;
-            if (context.Features.Get<ProjectAccess>() is { } access)
-            {
-                var plan = await context.RequestServices.GetRequiredService<ITenantDirectory>()
-                    .PlanAsync(access.OrganizationId, context.RequestAborted).ConfigureAwait(false);
-                tenant = new TenantContext(access.OrganizationId, plan);
-            }
-            else if (context.Features.Get<ApiKey>() is { } key)
-            {
-                var plan = await context.RequestServices.GetRequiredService<ITenantDirectory>()
-                    .PlanAsync(key.OrganizationId, context.RequestAborted).ConfigureAwait(false);
-                tenant = new TenantContext(key.OrganizationId, plan);
-            }
-            else if (context.User.Identity?.IsAuthenticated == true
-                && (context.Request.RouteValues["organization"] as string
-                    ?? context.Features.Get<LegacyManagementRoute>()?.OrganizationId) is string organizationId)
-            {
-                var organization = await context.RequestServices.GetRequiredService<IManagementService>()
-                    .GetOrganizationAsync(context.User.UserId(), organizationId, context.RequestAborted).ConfigureAwait(false);
-                if (organization is not null)
-                {
-                    tenant = new TenantContext(organization.Id, organization.Plan);
-                }
-            }
-            else if (context.Features.Get<ProjectToken>()?.ProjectId is { } project
-                && context.Request.RouteValues["project"] as string == project)
-            {
-                // First-database creation resolves its project after binding; existing projects still share admission.
-                var organization = await context.RequestServices.GetRequiredService<IProjectCatalog>()
-                    .ResolveProjectAsync(project, context.User.UserId(), create: false, context.RequestAborted).ConfigureAwait(false);
-                if (organization is not null)
-                {
-                    var plan = await context.RequestServices.GetRequiredService<ITenantDirectory>()
-                        .PlanAsync(organization, context.RequestAborted).ConfigureAwait(false);
-                    tenant = new TenantContext(organization, plan);
-                }
-            }
+    private readonly union QosTenant(TenantContext, Done, Unavailable);
 
-            return tenant;
-        }
-        catch (BadHttpRequestException error) when (error.StatusCode == StatusCodes.Status503ServiceUnavailable
-            && context.RequestServices.GetRequiredService<TerraBaseOptions>().CatalogPrimary is not null
-            && ServedByCatalogPrimary.Always(context.GetEndpoint()))
+    private static async ValueTask<QosTenant> ResolveTenantAsync(HttpContext context)
+    {
+        if (context.Features.Get<ProjectAccess>() is { } access)
         {
-            // A forward-only route's primary validates catalog identity; this follower may not interpret its snapshot.
-            return null;
+            return await ResolvePlanAsync(context, access.OrganizationId).ConfigureAwait(false);
         }
+        if (context.Features.Get<ApiKey>() is { } key)
+        {
+            return await ResolvePlanAsync(context, key.OrganizationId).ConfigureAwait(false);
+        }
+        if (context.User.Identity?.IsAuthenticated == true
+            && (context.Request.RouteValues["organization"] as string
+                ?? context.Features.Get<LegacyManagementRoute>()?.OrganizationId) is string organizationId)
+        {
+            return await context.RequestServices.GetRequiredService<IManagementService>()
+                .GetOrganizationAsync(context.User.UserId(), organizationId, context.RequestAborted).ConfigureAwait(false) switch
+            {
+                Organization organization => new TenantContext(organization.Id, organization.Plan),
+                NotFound => new Done(),
+                Unavailable error => error,
+            };
+        }
+        if (context.Features.Get<ProjectToken>()?.ProjectId is { } project
+            && context.Request.RouteValues["project"] as string == project)
+        {
+            // First-database creation resolves its project after binding; existing projects still share admission.
+            return await context.RequestServices.GetRequiredService<IProjectCatalog>()
+                .ResolveProjectAsync(project, context.User.UserId(), create: false, context.RequestAborted).ConfigureAwait(false) switch
+            {
+                string organization => await ResolvePlanAsync(context, organization).ConfigureAwait(false),
+                NotFound => new Done(),
+                Unavailable error => error,
+            };
+        }
+
+        return new Done();
     }
+
+    private static async ValueTask<QosTenant> ResolvePlanAsync(HttpContext context, string organizationId) =>
+        await context.RequestServices.GetRequiredService<ITenantDirectory>()
+            .PlanAsync(organizationId, context.RequestAborted).ConfigureAwait(false) switch
+        {
+            PlanTier plan => new TenantContext(organizationId, plan),
+            Unavailable error => error,
+        };
 
     private sealed record LookupMemory(IMemoryReservation Reservation);
 }

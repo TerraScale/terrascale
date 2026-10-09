@@ -1,6 +1,9 @@
 using System.Net;
+using System.Text;
 using System.Text.Json;
 using Bogus;
+using Microsoft.Extensions.DependencyInjection;
+using TerraBase.Engine;
 using TerraBase.Primitives;
 using TerraBase.Testing;
 
@@ -9,6 +12,7 @@ namespace TerraBase.Fast.Management;
 public sealed class ManagementApiTests
 {
     private static readonly Faker Faker = new();
+    private static readonly string[] ReadScopes = ["documents:read"];
 
     [Test]
     public async Task Organizations_are_created_listed_renamed_and_deleted()
@@ -71,10 +75,10 @@ public sealed class ManagementApiTests
         await Assert.That(read.GetProperty("plan").GetString()).IsEqualTo("enterprise");
         await Assert.That(listed.RootElement.GetProperty("items")[0].GetProperty("plan").GetString()).IsEqualTo("enterprise");
         await Assert.That(nonMember.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
-        await Assert.That(byOwner.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
         // User tokens cannot grant a resource entitlement, regardless of organization role.
-        await Assert.That(byAdmin.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
-        await Assert.That(byMember.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
+        await ErrorAssert.ErrorAsync(byOwner, HttpStatusCode.Forbidden, "forbidden", "plan changes need the management service credential");
+        await ErrorAssert.ErrorAsync(byAdmin, HttpStatusCode.Forbidden, "forbidden", "plan changes need the management service credential");
+        await ErrorAssert.ErrorAsync(byMember, HttpStatusCode.Forbidden, "forbidden", "plan changes need the management service credential");
         await Assert.That(afterRefused.GetProperty("plan").GetString()).IsEqualTo("enterprise");
     }
 
@@ -161,7 +165,7 @@ public sealed class ManagementApiTests
         await Assert.That(renamed.StatusCode).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(read.GetProperty("name").GetString()).IsEqualTo("Staging");
         await Assert.That(underOtherOrganization.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
-        await Assert.That(organizationNotEmpty.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
+        await ErrorAssert.ErrorAsync(organizationNotEmpty, HttpStatusCode.Conflict, "not_empty", "delete what it contains first");
         await Assert.That(deleted.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
         await Assert.That(gone.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
         await Assert.That(organizationEmpty.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
@@ -202,7 +206,7 @@ public sealed class ManagementApiTests
         await Assert.That(branch.GetProperty("branchedFrom").GetString()).IsEqualTo(mainId);
         await Assert.That(mainWithoutBranchWrite.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
         await Assert.That(list.RootElement.GetProperty("items").GetArrayLength()).IsEqualTo(2);
-        await Assert.That(projectNotEmpty.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
+        await ErrorAssert.ErrorAsync(projectNotEmpty, HttpStatusCode.Conflict, "not_empty", "delete what it contains first");
         await Assert.That(deleted.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
         await Assert.That(gone.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
         await Assert.That(dataGone.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
@@ -235,16 +239,16 @@ public sealed class ManagementApiTests
         using var branchDuplicate = await api.Client.PostAsJsonAsync(Uri($"{databases}/{mainId}/branches"), new { name = "main" });
         using var list = JsonDocument.Parse(await api.Client.GetStringAsync(Uri(databases)));
 
-        await Assert.That(organization.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
-        await Assert.That(organizationRename.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
+        await ErrorAssert.ErrorAsync(organization, HttpStatusCode.Conflict, "name_taken", "name is already taken");
+        await ErrorAssert.ErrorAsync(organizationRename, HttpStatusCode.Conflict, "name_taken", "name is already taken");
         await Assert.That(organizationOwnCase.StatusCode).IsEqualTo(HttpStatusCode.OK);
         // Organization names are unique per creator, so they reveal nothing about other tenants.
         await Assert.That(organizationOtherUser.StatusCode).IsEqualTo(HttpStatusCode.Created);
-        await Assert.That(projectDuplicate.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
-        await Assert.That(projectRename.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
+        await ErrorAssert.ErrorAsync(projectDuplicate, HttpStatusCode.Conflict, "name_taken", "name is already taken");
+        await ErrorAssert.ErrorAsync(projectRename, HttpStatusCode.Conflict, "name_taken", "name is already taken");
         await Assert.That(projectElsewhere.StatusCode).IsEqualTo(HttpStatusCode.Created);
-        await Assert.That(databaseDuplicate.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
-        await Assert.That(branchDuplicate.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
+        await ErrorAssert.ErrorAsync(databaseDuplicate, HttpStatusCode.Conflict, "name_taken", "name is already taken");
+        await ErrorAssert.ErrorAsync(branchDuplicate, HttpStatusCode.Conflict, "name_taken", "name is already taken");
         // A rejected create or branch leaves no database behind.
         await Assert.That(list.RootElement.GetProperty("items").GetArrayLength()).IsEqualTo(1);
         // Database files only: an open database also has SQLite -wal and -shm files.
@@ -382,8 +386,8 @@ public sealed class ManagementApiTests
             var before = await ReadSystemDocumentsAsync(directory);
             await using (var api = await ManagementApi.StartAsync(settings => settings["data-directory"] = directory))
             {
-                using var response = await api.Client.GetAsync(Uri("/v1/management/organizations"));
-                await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+                await ErrorAssert.ErrorAsync(api.Client.GetAsync(Uri("/v1/management/organizations")),
+                    HttpStatusCode.ServiceUnavailable, "unavailable", "the management catalog has an old or unsupported format; discard the affected data");
             }
 
             await Assert.That(await ReadSystemDocumentsAsync(directory)).IsEquivalentTo(before);
@@ -394,7 +398,200 @@ public sealed class ManagementApiTests
         }
     }
 
-    // Seeds the real server bootstrap with these catalog documents.
+    [Test]
+    public async Task A_catalog_with_an_unsupported_version_is_refused_and_left_unchanged()
+    {
+        var dataDirectory = Directory.CreateTempSubdirectory("terrabase-future-").FullName;
+        try
+        {
+            var organization = EntityIds.New().ToString();
+            await WriteSystemDocumentsAsync(
+                dataDirectory,
+                ("catalog", "version", JsonSerializer.Serialize("99")),
+                ("organizations", organization, $$"""{"id":"{{organization}}","name":"Acme","createdBy":"alice","createdAt":"2026-10-04T12:00:00+00:00"}"""),
+                ($"organizations/{organization}/members", "alice", JsonSerializer.Serialize("alice")),
+                ("users/alice/organizations", organization, JsonSerializer.Serialize(organization)),
+                ("users/alice/organization_names", "acme", JsonSerializer.Serialize(organization)));
+            var before = await ReadSystemDocumentsAsync(dataDirectory);
+
+            HttpStatusCode list, create;
+            await using (var api = await ManagementApi.StartAsync(settings =>
+            {
+                settings["data-directory"] = dataDirectory;
+            }))
+            {
+                using var mallory = api.As(EntityIds.New().ToString());
+                list = await StatusAsync(mallory.GetAsync(Uri("/v1/management/organizations")));
+                create = await StatusAsync(mallory.PostAsJsonAsync(Uri("/v1/management/organizations"), new { name = "Other" }));
+                const string message = "the management catalog has an old or unsupported format; discard the affected data";
+                await ErrorAssert.ErrorAsync(mallory.GetAsync(Uri("/v1/management/organizations")), HttpStatusCode.ServiceUnavailable, "unavailable", message);
+                await ErrorAssert.ErrorAsync(mallory.GetAsync(Uri($"/v1/management/organizations/{organization}/members")),
+                    HttpStatusCode.ServiceUnavailable, "unavailable", message);
+                await ErrorAssert.ErrorAsync(mallory.PostAsJsonAsync(Uri("/v1/management/organizations"), new { name = "Other" }),
+                    HttpStatusCode.ServiceUnavailable, "unavailable", message);
+                var projectPath = $"/v1/management/organizations/{organization}/projects/{EntityIds.New()}";
+                var databasePath = $"/databases/{EntityIds.New()}";
+                foreach (var suffix in new[] { "/api-keys", databasePath + "/backups", databasePath + "/collections", databasePath + "/indexes", "/saved-queries", databasePath + "/usage" })
+                {
+                    await ErrorAssert.ErrorAsync(mallory.GetAsync(Uri(projectPath + suffix)), HttpStatusCode.ServiceUnavailable, "unavailable", message);
+                }
+
+                await ErrorAssert.ErrorAsync(api.Server.Client.PostAsJsonAsync(Uri("/admin/api-keys"),
+                    new { name = "key", scopes = ReadScopes, organizationId = organization }),
+                    HttpStatusCode.ServiceUnavailable, "unavailable", message);
+                using var commit = await mallory.PostAsJsonAsync(Uri("/v1/management/commits"),
+                    new { id = organization, ops = new[] { new { op = "create_organization", id = organization, name = "Other" } } });
+                await ErrorAssert.ErrorAsync(commit, HttpStatusCode.ServiceUnavailable, "unavailable", message);
+            }
+
+            await Assert.That(list).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+            await Assert.That(create).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+            // Ownership, memberships, name claims and the version marker are exactly as written.
+            await Assert.That(await ReadSystemDocumentsAsync(dataDirectory)).IsEquivalentTo(before);
+        }
+        finally
+        {
+            Directory.Delete(dataDirectory, recursive: true);
+        }
+    }
+
+    [Test]
+    public async Task A_live_catalog_version_change_refuses_reads_and_writes_until_the_supported_version_is_restored()
+    {
+        await using var api = await ManagementApi.StartAsync();
+        var organization = await api.CreateOrganizationAsync("Preserved");
+        var system = await api.Server.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(CancellationToken.None);
+        byte[] supportedVersion;
+        await using (var transaction = await system.BeginTransactionAsync(write: true, CancellationToken.None))
+        {
+            supportedVersion = (await transaction.GetAsync("catalog", "version", CancellationToken.None))!.Json.ToArray();
+            await transaction.PutAsync("catalog", "version", Encoding.UTF8.GetBytes("\"99\""), CancellationToken.None);
+            await transaction.CommitAsync(CancellationToken.None);
+        }
+
+        var before = await ReadSystemDocumentsAsync(api.Server.DataDirectory);
+        const string message = "the management catalog has an old or unsupported format; discard the affected data";
+        await ErrorAssert.ErrorAsync(api.Client.GetAsync(Uri("/v1/management/organizations")),
+            HttpStatusCode.ServiceUnavailable, "unavailable", message);
+        await ErrorAssert.ErrorAsync(api.Client.PatchAsJsonAsync(Uri($"/v1/management/organizations/{organization}"), new { name = "Refused" }),
+            HttpStatusCode.ServiceUnavailable, "unavailable", message);
+        // This endpoint reaches the SystemCatalog write directly, without a separate management-service check.
+        await ErrorAssert.ErrorAsync(api.Server.Client.PostAsJsonAsync(Uri("/admin/api-keys"),
+            new { name = "Refused key", scopes = ReadScopes, organizationId = organization }),
+            HttpStatusCode.ServiceUnavailable, "unavailable", message);
+        await Assert.That(await ReadSystemDocumentsAsync(api.Server.DataDirectory)).IsEquivalentTo(before);
+
+        await using (var transaction = await system.BeginTransactionAsync(write: true, CancellationToken.None))
+        {
+            await transaction.PutAsync("catalog", "version", supportedVersion, CancellationToken.None);
+            await transaction.CommitAsync(CancellationToken.None);
+        }
+
+        using var read = await api.Client.GetAsync(Uri($"/v1/management/organizations/{organization}"));
+        await Assert.That(read.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That((await read.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("name").GetString()).IsEqualTo("Preserved");
+        using var renamed = await api.Client.PatchAsJsonAsync(Uri($"/v1/management/organizations/{organization}"), new { name = "Recovered" });
+        await Assert.That(renamed.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That((await renamed.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("name").GetString()).IsEqualTo("Recovered");
+        using var issued = await api.Server.Client.PostAsJsonAsync(Uri("/admin/api-keys"),
+            new { name = "Recovered key", scopes = ReadScopes, organizationId = organization });
+        await Assert.That(issued.StatusCode).IsEqualTo(HttpStatusCode.Created);
+    }
+
+    [Test]
+    [Arguments("organization-tombstone")]
+    [Arguments("project-binding")]
+    [Arguments("organization-deletion-history")]
+    [Arguments("dashboard_query_shapes")]
+    [Arguments("dashboard_query_shapes_flush")]
+    [Arguments("query_shape_senders")]
+    public async Task Unversioned_management_residuals_are_refused_without_stamping_the_catalog(string residual)
+    {
+        await using var api = await ManagementApi.StartAsync();
+        var system = await api.Server.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(CancellationToken.None);
+        var organization = EntityIds.New().ToString();
+        var id = EntityIds.New().ToString();
+        var collection = residual switch
+        {
+            "organization-tombstone" or "organization-deletion-history" => "organizations",
+            "project-binding" => "project_organizations",
+            _ => residual,
+        };
+        await using (var transaction = await system.BeginTransactionAsync(write: true, CancellationToken.None))
+        {
+            await transaction.PutAsync(collection, id, JsonSerializer.SerializeToUtf8Bytes(organization), CancellationToken.None);
+            if (residual == "organization-tombstone")
+            {
+                await Assert.That(await transaction.TombstoneAsync(collection, id, CancellationToken.None)).IsNotNull();
+            }
+
+            await transaction.CommitAsync(CancellationToken.None);
+        }
+
+        if (residual == "organization-deletion-history")
+        {
+            await using var deleting = await system.BeginTransactionAsync(write: true, CancellationToken.None);
+            await deleting.DeleteAsync(collection, id, CancellationToken.None);
+            await deleting.CommitAsync(CancellationToken.None);
+        }
+
+        DocumentVersion? version;
+        long offset;
+        await using (var transaction = await system.BeginTransactionAsync(write: false, CancellationToken.None))
+        {
+            await Assert.That(await transaction.GetAsync("catalog", "version", CancellationToken.None)).IsNull();
+            await Assert.That((await transaction.ListAsync("organizations", null, 1, 1024, CancellationToken.None)).Documents).IsEmpty();
+            version = await transaction.GetVersionAsync(collection, id, CancellationToken.None);
+            offset = await transaction.GetOffsetAsync(CancellationToken.None);
+        }
+
+        var before = await ReadSystemDocumentsAsync(api.Server.DataDirectory);
+        const string message = "the management catalog has an old or unsupported format; discard the affected data";
+        await ErrorAssert.ErrorAsync(api.Client.GetAsync(Uri("/v1/management/organizations")),
+            HttpStatusCode.ServiceUnavailable, "unavailable", message);
+        await ErrorAssert.ErrorAsync(api.Client.PostAsJsonAsync(Uri("/v1/management/organizations"), new { name = "Refused" }),
+            HttpStatusCode.ServiceUnavailable, "unavailable", message);
+        await Assert.That(await ReadSystemDocumentsAsync(api.Server.DataDirectory)).IsEquivalentTo(before);
+        await using var read = await system.BeginTransactionAsync(write: false, CancellationToken.None);
+        await Assert.That(await read.GetAsync("catalog", "version", CancellationToken.None)).IsNull();
+        await Assert.That(await read.GetVersionAsync(collection, id, CancellationToken.None)).IsEqualTo(version);
+        await Assert.That(await read.GetOffsetAsync(CancellationToken.None)).IsEqualTo(offset);
+    }
+
+    [Test]
+    public async Task Operator_only_system_documents_allow_fresh_catalog_initialization()
+    {
+        await using var api = await ManagementApi.StartAsync();
+        var system = await api.Server.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(CancellationToken.None);
+        var id = EntityIds.New().ToString();
+        var key = JsonSerializer.SerializeToUtf8Bytes(new
+        {
+            id,
+            name = "Operator key",
+            scopes = ReadScopes,
+            organizationId = EntityIds.New().ToString(),
+        });
+        await using (var transaction = await system.BeginTransactionAsync(write: true, CancellationToken.None))
+        {
+            await Assert.That(await transaction.GetAsync("catalog", "version", CancellationToken.None)).IsNull();
+            await transaction.PutAsync("api_keys", id, key, CancellationToken.None);
+            await transaction.CommitAsync(CancellationToken.None);
+        }
+
+        using var listed = await api.Client.GetAsync(Uri("/v1/management/organizations"));
+        await Assert.That(listed.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That((await listed.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("items").GetArrayLength()).IsEqualTo(0);
+        var organization = await api.CreateOrganizationAsync("Fresh");
+        using var read = await api.Client.GetAsync(Uri($"/v1/management/organizations/{organization}"));
+        await Assert.That(read.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await using var transactionAfterInitialization = await system.BeginTransactionAsync(write: false, CancellationToken.None);
+        await Assert.That(await transactionAfterInitialization.GetAsync("catalog", "version", CancellationToken.None)).IsNotNull();
+        var preserved = await transactionAfterInitialization.GetAsync("api_keys", id, CancellationToken.None);
+        await Assert.That(preserved).IsNotNull();
+        await Assert.That(preserved!.Json.Span.SequenceEqual(key)).IsTrue();
+    }
+
+    // Seeds current-format system documents after real-server bootstrap.
     // In a data directory a server of this build already started on: an unprepared directory with files is refused.
     private static async Task WriteSystemDocumentsAsync(string dataDirectory, params (string Collection, string Id, string Body)[] documents)
     {
@@ -439,7 +636,9 @@ public sealed class ManagementApiTests
         var statuses = new List<HttpStatusCode>();
         foreach (var (level, send) in requests.Where(request => request.Level >= from))
         {
-            statuses.Add(await StatusAsync(send()));
+            using var response = await send();
+            statuses.Add(response.StatusCode);
+            await ErrorAssert.ErrorAsync(response, HttpStatusCode.NotFound, "not_found", "the resource does not exist");
         }
 
         return statuses;

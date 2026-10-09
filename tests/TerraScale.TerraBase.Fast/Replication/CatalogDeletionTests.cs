@@ -4,6 +4,7 @@ using System.Text.Json;
 using Google.Protobuf;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
+using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
 using TerraBase.Features.Management;
 using TerraBase.Features.Replication;
@@ -64,11 +65,27 @@ public sealed class CatalogDeletionTests
             });
             var user = EntityIds.New().ToString();
             var management = primary.Services.GetRequiredService<IManagementService>();
-            var organization = (await management.CreateOrganizationAsync(user, "Deletes", token)).Value!;
-            var project = (await management.CreateProjectAsync(user, organization.Id, "main", token)).Value!;
+            var organization = await management.CreateOrganizationAsync(user, "Deletes", token) switch
+            {
+                Organization value => value,
+                _ => throw new InvalidOperationException("the catalog fixture was not created"),
+            };
+            var project = await management.CreateProjectAsync(user, organization.Id, "main", token) switch
+            {
+                Project value => value,
+                _ => throw new InvalidOperationException("the catalog fixture was not created"),
+            };
             var directory = primary.Services.GetRequiredService<ITenantDirectory>();
-            var orders = (await directory.CreateDatabaseAsync(organization.Id, project.Id, "orders", token))!.Value.Database;
-            var invoices = (await directory.CreateDatabaseAsync(organization.Id, project.Id, "invoices", token))!.Value.Database;
+            var orders = await directory.CreateDatabaseAsync(organization.Id, project.Id, "orders", token) switch
+            {
+                ProvisionedDatabase value => value.Database,
+                _ => throw new InvalidOperationException("the catalog fixture database was not created"),
+            };
+            var invoices = await directory.CreateDatabaseAsync(organization.Id, project.Id, "invoices", token) switch
+            {
+                ProvisionedDatabase value => value.Database,
+                _ => throw new InvalidOperationException("the catalog fixture database was not created"),
+            };
             var key = await primary.IssueAsync(organization.Id, Scopes);
             string FileOf(TenantContext database)
             {
@@ -97,7 +114,7 @@ public sealed class CatalogDeletionTests
                 Volatile.Write(ref paused, orders.DatabaseId);
                 var racing = HelloAsync(client, orders, token);
                 await reached.WaitAsync(token);
-                await Assert.That(await management.DeleteDatabaseAsync(user, organization.Id, project.Id, orders.DatabaseId!, token)).IsEqualTo(ManagementError.None);
+                await Assert.That(await management.DeleteDatabaseAsync(user, organization.Id, project.Id, orders.DatabaseId!, token) is Done).IsTrue();
                 await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(!File.Exists(FileOf(orders))));
                 release.Release();
                 var raced = await racing;
@@ -114,9 +131,18 @@ public sealed class CatalogDeletionTests
                 var engine = primary.Services.GetRequiredService<IStorageEngine>();
                 await WriteVersionAsync(engine, "\"99\""u8.ToArray(), token);
                 await TerraBaseTestServer.EventuallyAsync(async probe => (await HelloAsync(client, invoices, probe)).Error is not null);
+                var followerTenants = follower.Services.GetRequiredService<ITenantDirectory>();
+                await Assert.That(await followerTenants.RegisteredAsync(invoices, token) is Unavailable).IsTrue();
+                await Assert.That(await followerTenants.ReplicatesAsync(invoices, token) is Unavailable).IsTrue();
+                await Assert.That(await followerTenants.DatabaseRecordAsync(invoices, token) is Unavailable).IsTrue();
+                await Assert.That(await followerTenants.PlanAsync(invoices.OrganizationId, token) is Unavailable).IsTrue();
                 await Assert.That(File.Exists(FileOf(invoices))).IsTrue();
                 await WriteVersionAsync(engine, "\"6\""u8.ToArray(), token);
                 await TerraBaseTestServer.EventuallyAsync(async probe => (await HelloAsync(client, invoices, probe)).Welcome is not null);
+                await Assert.That(await followerTenants.RegisteredAsync(invoices, token) is bool registered && registered).IsTrue();
+                await Assert.That(await followerTenants.ReplicatesAsync(invoices, token) is bool replicates && replicates).IsTrue();
+                await Assert.That(await followerTenants.DatabaseRecordAsync(invoices, token) is TenantDatabaseRecord { Name: "invoices" }).IsTrue();
+                await Assert.That(await followerTenants.PlanAsync(EntityIds.New().ToString(), token) is PlanTier.Hobby).IsTrue();
             }
 
             using (var data = tls.CreateClient(follower.ClientAddress!, key))
@@ -130,7 +156,7 @@ public sealed class CatalogDeletionTests
             // Deleted while the follower is down: its file goes once it caught up; a file of no database is kept and counted.
             await follower.DisposeAsync();
             follower = null;
-            await Assert.That(await management.DeleteDatabaseAsync(user, organization.Id, project.Id, invoices.DatabaseId!, token)).IsEqualTo(ManagementError.None);
+            await Assert.That(await management.DeleteDatabaseAsync(user, organization.Id, project.Id, invoices.DatabaseId!, token) is Done).IsTrue();
             var unknown = Path.Combine(followerDirectory, organization.Id, project.Id, EntityIds.New() + ".db");
             File.Copy(FileOf(invoices), unknown);
             follower = await StartFollowerAsync();

@@ -1,4 +1,6 @@
+using System.Diagnostics;
 using TerraBase.Engine;
+using TerraBase.Errors;
 using TerraBase.Features.Management.Schema;
 using TerraBase.Tenancy;
 
@@ -27,26 +29,58 @@ internal sealed class UsageService(IStorageEngine engine, IManagementService man
         }
     }
 
-    public ValueTask<DatabaseUsage?> GetDatabaseUsageAsync(TenantContext database, UsageWindow window, CancellationToken cancellationToken) =>
-        DatabaseAsync(database, window, budget: null, cancellationToken);
+    private static readonly Validation QueryTooExpensive = new("query too expensive", "invalid_query");
+
+    public async ValueTask<DatabaseUsageResult> GetDatabaseUsageAsync(TenantContext database, UsageWindow window, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await DatabaseAsync(database, window, budget: null, cancellationToken).ConfigureAwait(false);
+        }
+        catch (QueryCapacityException)
+        {
+            return QueryTooExpensive;
+        }
+    }
 
     // Within a project request, each step (the size lookup, the count, waiting for a flush) can end past
     // the deadline: then no further step starts, and the request answers too expensive.
-    private async ValueTask<DatabaseUsage?> DatabaseAsync(TenantContext database, UsageWindow window, Budget? budget, CancellationToken cancellationToken)
+    private async ValueTask<DatabaseUsageResult> DatabaseAsync(TenantContext database, UsageWindow window, Budget? budget, CancellationToken cancellationToken)
     {
         Action? proceed = budget is null ? null : () => ThrowPastDeadline(budget.Started);
 
         // Membership was checked before; a database deleted since has no size or no storage to count.
         var bytes = await engine.GetDatabaseSizeAsync(database, cancellationToken).ConfigureAwait(false);
         proceed?.Invoke();
-        var collections = bytes is null ? null : await schema.CountCollectionsAsync(database, cancellationToken).ConfigureAwait(false);
-        proceed?.Invoke();
-        if (bytes is not { } size || collections is null)
+        if (bytes is not { } size)
         {
-            return null;
+            return new NotFound();
         }
 
-        var (lifetime, buckets) = await meter.GetAsync(database, window, cancellationToken, proceed).ConfigureAwait(false);
+        var counted = await schema.CountCollectionsAsync(database, cancellationToken).ConfigureAwait(false);
+        proceed?.Invoke();
+        if (counted is not IReadOnlyList<CollectionStats> collections)
+        {
+            return counted switch
+            {
+                NotFound error => error,
+                Validation error => error,
+                IReadOnlyList<CollectionStats> => throw new UnreachableException(),
+            };
+        }
+
+        var counts = await meter.GetAsync(database, window, cancellationToken, proceed).ConfigureAwait(false);
+        proceed?.Invoke();
+        if (counts is not UsageCounts saved)
+        {
+            return counts switch
+            {
+                Unavailable error => error,
+                UsageCounts => throw new UnreachableException(),
+            };
+        }
+
+        var (lifetime, buckets) = saved;
         var series = buckets.Select((counts, index) => new UsagePoint(window.Granularity.Start(window.First + index), counts.Reads, counts.Writes)).ToArray();
         return new DatabaseUsage(
             database.DatabaseId!, size, collections.Sum(collection => collection.Bytes), collections.Count, collections.Sum(collection => collection.Documents),
@@ -55,17 +89,27 @@ internal sealed class UsageService(IStorageEngine engine, IManagementService man
 
     // The request is bounded as a whole: every database is listed (and the request refused past MaxDatabases) before any
     // count, and after Deadline no further catalog read or count starts (one already running ends within its own budget).
-    public async ValueTask<ProjectUsage?> GetProjectUsageAsync(
+    public async ValueTask<ProjectUsageResult> GetProjectUsageAsync(
         string userId, string organizationId, string projectId, UsageWindow window, CancellationToken cancellationToken)
     {
-        var budget = new Budget(time.GetTimestamp());
-        return await ListDatabasesAsync(userId, organizationId, projectId, budget, cancellationToken).ConfigureAwait(false) is { } databases
-            ? await ProjectAsync(userId, organizationId, projectId, databases, window, budget, cancellationToken).ConfigureAwait(false)
-            : null;
+        try
+        {
+            var budget = new Budget(time.GetTimestamp());
+            return await ListDatabasesAsync(userId, organizationId, projectId, budget, cancellationToken).ConfigureAwait(false) switch
+            {
+                List<ManagedDatabase> databases => await ProjectAsync(userId, organizationId, projectId, databases, window, budget, cancellationToken).ConfigureAwait(false),
+                NotFound error => error,
+                Unavailable error => error,
+            };
+        }
+        catch (QueryCapacityException)
+        {
+            return QueryTooExpensive;
+        }
     }
 
-    // Lists every database of a project, counting them toward MaxDatabases; null when the project does not exist.
-    private async ValueTask<List<ManagedDatabase>?> ListDatabasesAsync(
+    // Lists every database of a project, counting them toward MaxDatabases.
+    private async ValueTask<ProjectDatabases> ListDatabasesAsync(
         string userId, string organizationId, string projectId, Budget budget, CancellationToken cancellationToken)
     {
         var databases = new List<ManagedDatabase>();
@@ -73,12 +117,17 @@ internal sealed class UsageService(IStorageEngine engine, IManagementService man
         do
         {
             ThrowPastDeadline(budget.Started);
-            var page = await management.ListDatabasesAsync(userId, organizationId, projectId, after, PageSize, cancellationToken).ConfigureAwait(false);
+            var listed = await management.ListDatabasesAsync(userId, organizationId, projectId, after, PageSize, cancellationToken).ConfigureAwait(false);
             // Also after the call, whatever it found: a slow last page leaves no count to check it before.
             ThrowPastDeadline(budget.Started);
-            if (page is null)
+            if (listed is not ManagementPage<ManagedDatabase> page)
             {
-                return null;
+                return listed switch
+                {
+                    NotFound error => error,
+                    Unavailable error => error,
+                    ManagementPage<ManagedDatabase> => throw new UnreachableException(),
+                };
             }
 
             databases.AddRange(page.Items);
@@ -90,7 +139,7 @@ internal sealed class UsageService(IStorageEngine engine, IManagementService man
         return databases;
     }
 
-    private async ValueTask<ProjectUsage> ProjectAsync(
+    private async ValueTask<ProjectUsageResult> ProjectAsync(
         string userId, string organizationId, string projectId, List<ManagedDatabase> databases, UsageWindow window, Budget budget,
         CancellationToken cancellationToken)
     {
@@ -100,13 +149,33 @@ internal sealed class UsageService(IStorageEngine engine, IManagementService man
             ThrowPastDeadline(budget.Started);
             // Each database's tenant comes from its own membership-checked read; one deleted meanwhile is left out. The
             // read can itself outlast the deadline, so it is checked again before the count starts.
-            if (await management.GetDatabaseTenantAsync(userId, organizationId, projectId, database.Id, cancellationToken).ConfigureAwait(false) is { } tenant)
+            var found = await management.GetDatabaseTenantAsync(userId, organizationId, projectId, database.Id, cancellationToken).ConfigureAwait(false);
+            ThrowPastDeadline(budget.Started);
+            if (found is Unavailable unavailable)
             {
-                ThrowPastDeadline(budget.Started);
-                if (await DatabaseAsync(tenant, window, budget, cancellationToken).ConfigureAwait(false) is { } usage)
+                return unavailable;
+            }
+
+            if (found is TenantContext tenant)
+            {
+                // A database deleted meanwhile (NotFound) is left out.
+                var read = await DatabaseAsync(tenant, window, budget, cancellationToken).ConfigureAwait(false);
+                if (read is NotFound)
                 {
-                    items.Add(usage);
+                    continue;
                 }
+
+                if (read is not DatabaseUsage usage)
+                {
+                    return read switch
+                    {
+                        Validation error => error,
+                        Unavailable error => error,
+                        DatabaseUsage or NotFound => throw new UnreachableException(),
+                    };
+                }
+
+                items.Add(usage);
             }
         }
 
@@ -156,4 +225,7 @@ internal sealed class UsageService(IStorageEngine engine, IManagementService man
 
         public int Listed { get; set; }
     }
+
+    // Every database of a project, or why they cannot be listed.
+    private readonly union ProjectDatabases(List<ManagedDatabase>, NotFound, Unavailable);
 }

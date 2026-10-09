@@ -1,6 +1,7 @@
 using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
 using TerraBase.Hosting;
+using TerraBase.Tenancy;
 using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management.Indexes;
@@ -18,13 +19,21 @@ public sealed class ListIndexRecommendationsEndpoint(IManagementService manageme
         Tags("Indexes");
         Produces<IndexRecommendationListBody>();
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
+        Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
         RequireAuthorization(ApiKeyScopes.DatabasesRead);
         Metadata(new ProjectManagementRoute(), ListenerMetadata.Management);
     }
 
     /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
-        await ManagementRoute.DatabaseAsync(HttpContext, management, cancellationToken) is { } database
-            ? TypedResults.Ok(await indexes.RecommendAsync(database, cancellationToken))
-            : ErrorResponse.From(new NotFound());
+        await ManagementRoute.DatabaseAsync(HttpContext, management, cancellationToken) switch
+        {
+            TenantContext database => await indexes.RecommendAsync(database, cancellationToken) switch
+            {
+                IndexRecommendationListBody recommendations => TypedResults.Ok(recommendations),
+                Unavailable error => ErrorResponse.From(error),
+            },
+            NotFound => ErrorResponse.From(new NotFound()),
+            Unavailable error => ErrorResponse.From(error),
+        };
 }

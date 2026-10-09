@@ -21,6 +21,7 @@ public sealed class GetVersionsEndpoint(IManagementCommits commits) : EndpointWi
         Produces<VersionsBody>();
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
+        Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
         RequireAuthorization(UserAuthExtensions.PolicyName);
         Metadata(ListenerMetadata.Management);
     }
@@ -47,6 +48,7 @@ public sealed class GetVersionsEndpoint(IManagementCommits commits) : EndpointWi
         {
             VersionsBody versions => TypedResults.Ok(versions),
             NotFound error => ErrorResponse.From(error),
+            Unavailable error => ErrorResponse.From(error),
         };
     }
 }

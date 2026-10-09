@@ -1,4 +1,3 @@
-using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
 using TerraBase.Hosting;
@@ -24,6 +23,7 @@ public sealed class GetProjectUsageEndpoint(IUsageService usage, TimeProvider ti
         Produces<ProjectUsage>();
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
+        Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
         RequireAuthorization(ApiKeyScopes.DatabasesRead);
         Metadata(new ProjectManagementRoute(), ListenerMetadata.Management);
     }
@@ -36,20 +36,13 @@ public sealed class GetProjectUsageEndpoint(IUsageService usage, TimeProvider ti
             UsageWindow window => await ReadAsync(window, cancellationToken),
         };
 
-    private async ValueTask<IResult> ReadAsync(UsageWindow window, CancellationToken cancellationToken)
-    {
-        try
+    private async ValueTask<IResult> ReadAsync(UsageWindow window, CancellationToken cancellationToken) =>
+        await usage.GetProjectUsageAsync(
+            ManagementRoute.UserId(HttpContext), ManagementRoute.OrganizationId(HttpContext), ManagementRoute.Value(HttpContext, "project"), window, cancellationToken) switch
         {
-            return await usage.GetProjectUsageAsync(
-                ManagementRoute.UserId(HttpContext), ManagementRoute.OrganizationId(HttpContext), ManagementRoute.Value(HttpContext, "project"), window, cancellationToken) is { } project
-                ? TypedResults.Ok(project)
-                : TypedResults.NotFound();
-        }
-        catch (QueryCapacityException)
-        {
-            return HttpContext.Features.Get<LegacyManagementRoute>() is not null
-                ? TypedResults.BadRequest("query too expensive")
-                : ErrorResponse.From(new Validation("query too expensive", "invalid_query"));
-        }
-    }
+            ProjectUsage project => TypedResults.Ok(project),
+            NotFound error => ErrorResponse.From(error),
+            Validation error => ErrorResponse.From(error),
+            Unavailable error => ErrorResponse.From(error),
+        };
 }

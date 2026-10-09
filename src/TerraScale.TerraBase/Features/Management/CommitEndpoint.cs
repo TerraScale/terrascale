@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text.Json;
@@ -83,6 +82,9 @@ public sealed class CommitEndpoint(IManagementCommits commits, TimeProvider time
         Produces<ErrorBody>(StatusCodes.Status409Conflict);
         Produces<ErrorBody>(StatusCodes.Status412PreconditionFailed);
         Produces<ErrorBody>(StatusCodes.Status413PayloadTooLarge);
+        Produces<ErrorBody>(StatusCodes.Status415UnsupportedMediaType);
+        Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
+        Produces<ErrorBody>(StatusCodes.Status429TooManyRequests);
         RequireAuthorization(UserAuthExtensions.PolicyName);
         Metadata(ListenerMetadata.Management);
     }
@@ -112,26 +114,34 @@ public sealed class CommitEndpoint(IManagementCommits commits, TimeProvider time
 
         using (envelope)
         {
-            switch (Parse(envelope.RootElement, HttpContext.User.IsManagementService(), time))
+            return Parse(envelope.RootElement, HttpContext.User.IsManagementService(), time) switch
             {
-                case CommitRejected rejected:
-                    return ErrorResponse.From(rejected.Error, rejected.Op);
-                case ParsedCommit commit:
-                    return await ApplyAsync(userId, commit, body, cancellationToken);
-                default:
-                    throw new UnreachableException();
-            }
+                CommitRejected rejected => ErrorResponse.From(rejected.Error, rejected.Op),
+                ParsedCommit commit => await ApplyAsync(userId, body, commit, cancellationToken),
+            };
         }
     }
 
-    private async ValueTask<IResult> ApplyAsync(string userId, ParsedCommit commit, byte[] body, CancellationToken cancellationToken)
+    private async ValueTask<IResult> ApplyAsync(string userId, byte[] body, ParsedCommit commit, CancellationToken cancellationToken)
     {
         Tenancy.TenantContext? charged = null;
         // Attribute every existing organization named by this multi-organization route after membership validation.
         foreach (var id in commit.Operations.OfType<ManagementCommitOperation>().Select(op => op.Request.Organization)
             .Where(id => id is not null).Distinct(StringComparer.Ordinal))
         {
-            if (await management.GetOrganizationAsync(userId, id!, cancellationToken).ConfigureAwait(false) is not { } organization)
+            var found = await management.GetOrganizationAsync(userId, id!, cancellationToken).ConfigureAwait(false);
+            if (found is Unavailable refused)
+            {
+                return ErrorResponse.From(refused);
+            }
+
+            var organization = found switch
+            {
+                Organization value => value,
+                NotFound => null,
+                Unavailable => throw new System.Diagnostics.UnreachableException(),
+            };
+            if (organization is null)
             {
                 continue;
             }
@@ -158,14 +168,21 @@ public sealed class CommitEndpoint(IManagementCommits commits, TimeProvider time
             QosContext.ReserveResult(body.LongLength * 3);
         }
 
-        var email = HttpContext.User.VerifiedEmail() is { } verified ? ManagementRoute.Email(verified) : null;
-        return await commits.CommitAsync(userId, email, commit.Id, Convert.ToHexStringLower(SHA256.HashData(body)), commit.Operations, cancellationToken) switch
+        return HttpContext.User.VerifiedEmail() is { } verified
+            ? ManagementRoute.CheckEmail(verified) switch
+            {
+                Validation error => ErrorResponse.From(error),
+                string email => await SubmitAsync(userId, email, body, commit, cancellationToken),
+            }
+            : await SubmitAsync(userId, email: null, body, commit, cancellationToken);
+    }
+
+    private async ValueTask<IResult> SubmitAsync(string userId, string? email, byte[] body, ParsedCommit commit, CancellationToken cancellationToken) =>
+        await commits.CommitAsync(userId, email, commit.Id, Convert.ToHexStringLower(SHA256.HashData(body)), commit.Operations, cancellationToken) switch
         {
             CommitOutcome outcome => Respond(outcome),
             CommitRejected rejected => ErrorResponse.From(rejected.Error, rejected.Op),
-            _ => throw new UnreachableException(),
         };
-    }
 
     private FileContentHttpResult Respond(CommitOutcome outcome)
     {
@@ -203,63 +220,60 @@ public sealed class CommitEndpoint(IManagementCommits commits, TimeProvider time
         var (assertCounts, databaseOps, limits) = (0, 0, 0);
         foreach (var (json, i) in ops.EnumerateArray().Select((json, i) => (json, i)))
         {
-            CommitOperation operation;
-            switch (Operation(json, time))
+            var operation = Operation(json, time) switch
             {
-                case Validation error:
-                    return new CommitRejected(error, i);
-                case DocumentCommitOperation document:
-                    operation = document;
-                    break;
-                case ManagementCommitOperation management:
-                    operation = management;
-                    break;
-                default:
-                    throw new UnreachableException();
-            }
-
-            Failure? failure = operation switch
-            {
-                // The dashboard document space is the dashboard's, not any signed-in user's.
-                DocumentCommitOperation when !service => new Forbidden("document operations need the management service credential"),
-                ManagementCommitOperation { Request.Op: "set_plan" } when !service =>
-                    new Forbidden("plan changes need the management service credential"),
-                ManagementCommitOperation { Request: { Op: "create_project", Id: not null } } when !service =>
-                    new Forbidden("client-chosen project ids need the management service credential"),
-                DocumentCommitOperation { Operation: AssertCountOperation } when ++assertCounts > MaxAssertCounts =>
-                    new Validation("a commit has at most 16 assert_count operations"),
-                DocumentCommitOperation { Operation: var document } when TransactionEndpoint.Target(document) is { } target && !targets.Add(target) =>
-                    new Validation("two operations target the same document"),
-                ManagementCommitOperation { Request.Op: "create_database" or "branch_database" or "delete_database" } when ++databaseOps > MaxDatabaseOps =>
-                    new Validation("a commit has at most 16 database operations"),
-                ManagementCommitOperation { Request.Op: "limit" } when ++limits > MaxLimits => new Validation("a commit has at most 16 limit operations"),
-                _ => null,
+                Validation error => new BoundedOperation(error),
+                DocumentCommitOperation document => new BoundedOperation(document),
+                ManagementCommitOperation management => new BoundedOperation(management),
             };
-            if (failure is { } rejected)
+            var checkedOperation = operation switch
             {
-                return new CommitRejected(rejected, i);
+                Validation error => new BoundedOperation(error),
+                Forbidden error => new BoundedOperation(error),
+                CommitOperation valid => CheckBounds(valid, service, targets, ref assertCounts, ref databaseOps, ref limits),
+            };
+            var checkedResult = checkedOperation switch
+            {
+                Validation error => new ParsedOperation(new CommitRejected(error, i)),
+                Forbidden error => new ParsedOperation(new CommitRejected(error, i)),
+                CommitOperation valid => new ParsedOperation(valid),
+            };
+            if (checkedResult is CommitRejected rejected)
+            {
+                return rejected;
             }
 
-            operations.Add(operation);
+            operations.Add(checkedResult switch
+            {
+                CommitOperation valid => valid,
+                CommitRejected => throw new System.Diagnostics.UnreachableException(),
+            });
         }
 
         return new ParsedCommit(id.GetString()!, operations);
     }
 
-    // One operation; the Management validators still throw (docs/error-handling.md), so their errors are read here.
-    private static ValidOperation Operation(JsonElement json, TimeProvider time)
-    {
-        try
+    private static BoundedOperation CheckBounds(
+        CommitOperation operation, bool service, HashSet<(string, string)> targets, ref int assertCounts, ref int databaseOps, ref int limits) =>
+        operation switch
         {
-            return Unchecked(json, time);
-        }
-        catch (BadHttpRequestException error)
-        {
-            return new Validation(error.Message);
-        }
-    }
+            DocumentCommitOperation when !service => new Forbidden("document operations need the management service credential"),
+            ManagementCommitOperation { Request.Op: "set_plan" } when !service =>
+                new Forbidden("plan changes need the management service credential"),
+            ManagementCommitOperation { Request: { Op: "create_project", Id: not null } } when !service =>
+                new Forbidden("client-chosen project ids need the management service credential"),
+            DocumentCommitOperation { Operation: AssertCountOperation } when ++assertCounts > MaxAssertCounts =>
+                new Validation("a commit has at most 16 assert_count operations"),
+            DocumentCommitOperation { Operation: var document } when TransactionEndpoint.Target(document) is { } target && !targets.Add(target) =>
+                new Validation("two operations target the same document"),
+            ManagementCommitOperation { Request.Op: "create_database" or "branch_database" or "delete_database" } when ++databaseOps > MaxDatabaseOps =>
+                new Validation("a commit has at most 16 database operations"),
+            ManagementCommitOperation { Request.Op: "limit" } when ++limits > MaxLimits => new Validation("a commit has at most 16 limit operations"),
+            _ => operation,
+        };
 
-    private static ValidOperation Unchecked(JsonElement json, TimeProvider time)
+    // One validated document or Management operation.
+    private static ValidOperation Operation(JsonElement json, TimeProvider time)
     {
         if (json.ValueKind != JsonValueKind.Object)
         {
@@ -301,11 +315,19 @@ public sealed class CommitEndpoint(IManagementCommits commits, TimeProvider time
             return new Validation("the operation's members are invalid");
         }
 
-        return Invalid(op) is { } error ? error : new ManagementCommitOperation(Normalize(op));
+        return CheckMembers(op) switch
+        {
+            Validation error => error,
+            ManagementOpRequest valid => Normalize(valid) switch
+            {
+                Validation error => error,
+                ManagementOpRequest normalized => new ManagementCommitOperation(normalized),
+            },
+        };
     }
 
     // The rule a Management operation breaks, beyond those the REST validators in Normalize check.
-    private static Validation? Invalid(ManagementOpRequest op) =>
+    private static Valid<ManagementOpRequest> CheckMembers(ManagementOpRequest op) =>
         op.Op == "fence" && (op.Organization is null) == (op.Account != true) ? new Validation("a fence names either an organization or account: true")
         : op.Op == "limit" && new[] { op.Databases, op.Members, op.ActiveMembers }.Count(bound => bound is not null) != 1
             ? new Validation("a limit bounds exactly one of databases, members or active_members")
@@ -323,24 +345,30 @@ public sealed class CommitEndpoint(IManagementCommits commits, TimeProvider time
         : op.Databases is < 0 or > MaxLimit ? new Validation("databases must be between 0 and 1000000")
         : op.Members is < 0 or > MaxLimit ? new Validation("members must be between 0 and 1000000")
         : op.ActiveMembers is < 0 or > MaxLimit ? new Validation("active_members must be between 0 and 1000000")
-        : null;
+        : op;
 
     // Validates the remaining members as the REST routes do and returns them trimmed.
-    private static ManagementOpRequest Normalize(ManagementOpRequest op) => op with
-    {
-        User = op.User is null ? null : ManagementRoute.ValidUserId(op.User, "user"),
-        Name = op.Name is null ? null
-            : op.Op is "create_database" or "branch_database" ? ManagementRoute.DatabaseName(new NameRequest(op.Name)) : ManagementRoute.DisplayName(new NameRequest(op.Name)),
-        Plan = op.Plan is null ? null : Plan(op.Plan),
-        Role = op.Role is null ? null : ManagementRoute.Role(op.Role),
-        Email = op.Email is null ? null : ManagementRoute.Email(op.Email),
-    };
-
-    private static string Plan(string plan)
-    {
-        _ = ManagementRoute.Plan(new PlanRequest(plan));
-        return plan;
-    }
+    private static Valid<ManagementOpRequest> Normalize(ManagementOpRequest op) =>
+        (op.User is null ? new Valid<string>(string.Empty) : ManagementRoute.CheckUserId(op.User, "user"),
+        op.Name is null ? new Valid<string>(string.Empty)
+            : op.Op is "create_database" or "branch_database" ? ManagementRoute.CheckDatabaseName(new NameRequest(op.Name)) : ManagementRoute.CheckDisplayName(new NameRequest(op.Name)),
+        op.Plan is null ? new Valid<TerraBase.Tenancy.PlanTier>(TerraBase.Tenancy.PlanTier.Hobby) : ManagementRoute.CheckPlan(new PlanRequest(op.Plan)),
+        op.Role is null ? new Valid<OrganizationRole>(OrganizationRole.Member) : ManagementRoute.CheckRole(op.Role),
+        op.Email is null ? new Valid<string>(string.Empty) : ManagementRoute.CheckEmail(op.Email)) switch
+        {
+            (Validation error, _, _, _, _) => error,
+            (_, Validation error, _, _, _) => error,
+            (_, _, Validation error, _, _) => error,
+            (_, _, _, Validation error, _) => error,
+            (_, _, _, _, Validation error) => error,
+            (string user, string name, TerraBase.Tenancy.PlanTier, OrganizationRole role, string email) => op with
+            {
+                User = op.User is null ? null : user,
+                Name = op.Name is null ? null : name,
+                Role = op.Role is null ? null : role,
+                Email = op.Email is null ? null : email,
+            },
+        };
 
     // Resource ids are opaque here, as in route segments: an unknown one is simply not found.
     private static bool IsIdentifier(string? id) => id is null || EntityIds.IsValid(id);
@@ -358,3 +386,9 @@ internal readonly union ParsedRequest(ParsedCommit, CommitRejected);
 
 /// <summary>One commit operation read from the request, or the input rule it breaks.</summary>
 internal readonly union ValidOperation(DocumentCommitOperation, ManagementCommitOperation, Validation);
+
+/// <summary>A commit operation within the batch bounds, or why it cannot run.</summary>
+internal readonly union BoundedOperation(CommitOperation, Validation, Forbidden);
+
+/// <summary>A checked commit operation, or its rejection with the failing index.</summary>
+internal readonly union ParsedOperation(CommitOperation, CommitRejected);

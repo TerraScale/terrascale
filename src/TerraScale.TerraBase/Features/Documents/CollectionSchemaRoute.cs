@@ -14,6 +14,7 @@ internal static class CollectionSchemaRoute
         {
             Validation error => ErrorResponse.From(error),
             NotFound error => ErrorResponse.From(error),
+            Unavailable error => ErrorResponse.From(error),
             TenantContext database => (DocumentRoute.CheckCollectionName(context), DocumentRoute.CheckParameters(context)) switch
             {
                 (Validation error, _) => ErrorResponse.From(error),

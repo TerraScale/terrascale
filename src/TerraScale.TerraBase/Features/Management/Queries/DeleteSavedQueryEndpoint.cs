@@ -17,6 +17,7 @@ public sealed class DeleteSavedQueryEndpoint(IManagementService management, IQue
         Description(ProjectApiRoute.IdentityDescription);
         Tags("Queries");
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
+        Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
         Produces<ErrorBody>(StatusCodes.Status403Forbidden);
         RequireAuthorization(ApiKeyScopes.DatabasesWrite);
         Metadata(new ProjectManagementRoute(), ListenerMetadata.Management, new ProducesResponseTypeMetadata(StatusCodes.Status204NoContent, typeof(void)));
@@ -28,10 +29,12 @@ public sealed class DeleteSavedQueryEndpoint(IManagementService management, IQue
         {
             NotFound error => ErrorResponse.From(error),
             Forbidden error => ErrorResponse.From(error),
+            Unavailable error => ErrorResponse.From(error),
             Project project => await queries.DeleteSavedAsync(ManagementRoute.UserId(HttpContext), project, ManagementRoute.Value(HttpContext, "query"), cancellationToken) switch
             {
                 Done => TypedResults.NoContent(),
                 NotFound error => ErrorResponse.From(error),
+                Unavailable error => ErrorResponse.From(error),
             },
         };
 }

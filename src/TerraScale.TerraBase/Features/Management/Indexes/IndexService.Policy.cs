@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using TerraBase.Errors;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
@@ -10,9 +11,9 @@ internal sealed partial class IndexService
     // Only opt-outs are stored: both the count and bytes per record (a validated collection name) are bounded.
     internal const int MaxAutoIndexOptOuts = 1000;
 
-    public ValueTask<Found<AutoIndexPolicy>> GetAutoIndexPolicyAsync(
+    public ValueTask<GetAutoIndexPolicyResult> GetAutoIndexPolicyAsync(
         string userId, TenantContext database, string collection, CancellationToken cancellationToken) =>
-        catalog.ReadAsync<Found<AutoIndexPolicy>>(async transaction =>
+        catalog.ReadAsync<GetAutoIndexPolicyResult>(async transaction =>
         {
             if (await EngineManagementService.GetDatabaseAsync(
                 transaction, userId, database.OrganizationId, database.ProjectId!, database.DatabaseId!, cancellationToken).ConfigureAwait(false) is null)
@@ -22,7 +23,7 @@ internal sealed partial class IndexService
 
             return await GetAsync(transaction, AutoIndexPolicies(database.DatabaseId!), collection, TerraBaseJsonContext.Default.AutoIndexPolicy, cancellationToken).ConfigureAwait(false)
                 ?? new AutoIndexPolicy(collection, true);
-        }, cancellationToken);
+        }, static error => error, cancellationToken);
 
     public ValueTask<SetAutoIndexPolicyResult> SetAutoIndexPolicyAsync(
         string userId, TenantContext database, string collection, bool enabled, CancellationToken cancellationToken) =>
@@ -34,14 +35,15 @@ internal sealed partial class IndexService
                 return new NotFound();
             }
 
-            switch (await EngineManagementService.WritableAsync(transaction, userId, database.OrganizationId, cancellationToken).ConfigureAwait(false))
+            var access = await EngineManagementService.WritableAsync(transaction, userId, database.OrganizationId, cancellationToken).ConfigureAwait(false);
+            if (access is not OrganizationMember)
             {
-                case ManagementError.None:
-                    break;
-                case ManagementError.Forbidden:
-                    return ManagementErrors.RoleTooLow;
-                default:
-                    return new NotFound();
+                return access switch
+                {
+                    Forbidden => ManagementErrors.RoleTooLow,
+                    NotFound => new NotFound(),
+                    OrganizationMember => throw new UnreachableException(),
+                };
             }
 
             var records = AutoIndexPolicies(database.DatabaseId!);
@@ -70,7 +72,7 @@ internal sealed partial class IndexService
             }
 
             return policy;
-        }, cancellationToken);
+        }, static error => error, cancellationToken);
 
     private static string AutoIndexPolicies(string databaseId) => DatabaseState(databaseId) + "auto_index_policies";
 }

@@ -19,6 +19,7 @@ public sealed class RevokeProjectApiKeyEndpoint(IApiKeyStore keys) : EndpointWit
         Tags(ManagementRoute.Tag);
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
         Produces<ErrorBody>(StatusCodes.Status403Forbidden);
+        Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
         RequireAuthorization(UserAuthExtensions.PolicyName);
         Metadata(ListenerMetadata.Management, new ProducesResponseTypeMetadata(StatusCodes.Status204NoContent, typeof(void)));
     }
@@ -31,5 +32,6 @@ public sealed class RevokeProjectApiKeyEndpoint(IApiKeyStore keys) : EndpointWit
             Done => TypedResults.NoContent(),
             NotFound error => ErrorResponse.From(error),
             Forbidden error => ErrorResponse.From(error),
+            Unavailable error => ErrorResponse.From(error),
         };
 }

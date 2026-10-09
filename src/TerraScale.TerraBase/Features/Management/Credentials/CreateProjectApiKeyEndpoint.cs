@@ -29,6 +29,7 @@ public sealed class CreateProjectApiKeyEndpoint(IApiKeyStore keys) : Endpoint<Cr
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
         Produces<ErrorBody>(StatusCodes.Status403Forbidden);
+        Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
         RequireAuthorization(UserAuthExtensions.PolicyName);
         Metadata(ListenerMetadata.Management);
     }
@@ -49,6 +50,7 @@ public sealed class CreateProjectApiKeyEndpoint(IApiKeyStore keys) : Endpoint<Cr
                     $"{ManagementRoute.Organizations}/{organization}/projects/{created.Key.ProjectId}/api-keys/{created.Key.Id}", created),
                 NotFound error => ErrorResponse.From(error),
                 Forbidden error => ErrorResponse.From(error),
+                Unavailable error => ErrorResponse.From(error),
             },
         };
     }

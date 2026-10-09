@@ -249,8 +249,8 @@ public sealed class CatalogForwardingTests
             }
 
             // The primary wrote all of it, and serves the follower's Management reads.
-            await Assert.That(await primary.Services.GetRequiredService<IManagementService>().GetOrganizationAsync(user, organization, CancellationToken.None))
-                .IsNotNull();
+            await Assert.That((await primary.Services.GetRequiredService<IManagementService>().GetOrganizationAsync(user, organization, CancellationToken.None)).Value)
+                .IsTypeOf<Organization>();
             using (var read = await dashboard.GetAsync(Relative($"/v1/management/organizations/{organization}")))
             {
                 await Assert.That(read.StatusCode).IsEqualTo(HttpStatusCode.OK);
@@ -330,9 +330,21 @@ public sealed class CatalogForwardingTests
         });
         var user = EntityIds.New().ToString();
         var management = primary.Services.GetRequiredService<IManagementService>();
-        var organization = (await management.CreateOrganizationAsync(user, "Forwarded", CancellationToken.None)).Value!;
-        var project = (await management.CreateProjectAsync(user, organization.Id, "main", CancellationToken.None)).Value!;
-        _ = (await management.CreateDatabaseAsync(user, organization.Id, project.Id, "orders", CancellationToken.None)).Value!;
+        var organization = await management.CreateOrganizationAsync(user, "Forwarded", CancellationToken.None) switch
+        {
+            Organization value => value,
+            _ => throw new InvalidOperationException("the catalog fixture was not created"),
+        };
+        var project = await management.CreateProjectAsync(user, organization.Id, "main", CancellationToken.None) switch
+        {
+            Project value => value,
+            _ => throw new InvalidOperationException("the catalog fixture was not created"),
+        };
+        _ = await management.CreateDatabaseAsync(user, organization.Id, project.Id, "orders", CancellationToken.None) switch
+        {
+            ManagedDatabase value => value,
+            _ => throw new InvalidOperationException("the catalog fixture was not created"),
+        };
         var key = await primary.IssueAsync(organization.Id, Scopes);
         using var channel = peers.CreateChannel(primary.PeerAddress!);
         var client = new CatalogForwarding.CatalogForwardingClient(channel);
@@ -899,14 +911,25 @@ public sealed class CatalogForwardingTests
             var local = follower.Services.GetRequiredService<UsageMeter>();
             var tenant = new TenantContext(organization, PlanTier.Hobby, project, database);
             var thisHour = new UsageWindow(UsageWindow.Hour, time.GetUtcNow().ToUnixTimeSeconds() / 3600, 1);
-            await TerraBaseTestServer.EventuallyAsync(async token => (await local.GetAsync(tenant, thisHour, token)).Lifetime.Reads >= reads);
-            await Assert.That((await local.GetAsync(tenant, thisHour, CancellationToken.None)).Lifetime).IsEqualTo(new OpCounts(reads, writes));
+            await TerraBaseTestServer.EventuallyAsync(async token => await local.GetAsync(tenant, thisHour, token) switch
+            {
+                UsageCounts counts => counts.Lifetime.Reads >= reads,
+                Unavailable => false,
+                null => throw new InvalidOperationException("the usage result has no case"),
+            });
+            var replicatedCounts = await local.GetAsync(tenant, thisHour, CancellationToken.None) switch
+            {
+                UsageCounts counts => counts.Lifetime,
+                Unavailable => throw new InvalidOperationException("the replicated usage catalog was unavailable"),
+                null => throw new InvalidOperationException("the usage result has no case"),
+            };
+            await Assert.That(replicatedCounts).IsEqualTo(new OpCounts(reads, writes));
 
             // A usage read served by the follower itself settles nothing of the unacknowledged batch. More reads arrive; the
             // next flush sends that batch again with its sequence, which the primary adds once, and the one after the new reads.
             var hour = time.GetUtcNow().ToUnixTimeSeconds() / 3600;
             var meter = follower.Services.GetRequiredService<UsageMeter>();
-            await meter.GetAsync(new TenantContext(organization, PlanTier.Hobby, project, database), new UsageWindow(UsageWindow.Hour, hour, 1), CancellationToken.None);
+            _ = await meter.GetAsync(new TenantContext(organization, PlanTier.Hobby, project, database), new UsageWindow(UsageWindow.Hour, hour, 1), CancellationToken.None);
             await ReadAsync(later);
             await flush.FlushAsync(CancellationToken.None);
             await flush.FlushAsync(CancellationToken.None);

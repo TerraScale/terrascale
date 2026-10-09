@@ -30,6 +30,7 @@ public sealed class GetSubscriptionEndpoint(ITenantDirectory tenants, IShapeSubs
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
         Produces<ErrorBody>(StatusCodes.Status409Conflict);
         Produces<ErrorBody>(StatusCodes.Status429TooManyRequests);
+        Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
         RequireAuthorization(UserAuthExtensions.SubscriptionPolicy);
         Metadata(ListenerMetadata.Client);
     }
@@ -66,6 +67,7 @@ public sealed class GetSubscriptionEndpoint(ITenantDirectory tenants, IShapeSubs
         {
             (Validation error, _, _) => ErrorResponse.From(error),
             (NotFound error, _, _) => ErrorResponse.From(error),
+            (Unavailable error, _, _) => ErrorResponse.From(error),
             (_, Validation error, _) => ErrorResponse.From(error),
             (_, _, Validation error) => ErrorResponse.From(error),
             (TenantContext database, string collection, IQueryCollection query) =>

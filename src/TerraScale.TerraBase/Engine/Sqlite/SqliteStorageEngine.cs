@@ -369,7 +369,7 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
     }
 
     public async ValueTask<bool> CreateDatabaseWithIntentAsync(
-        TenantContext database, TenantContext? source, Func<CancellationToken, ValueTask> recordIntent, CancellationToken cancellationToken)
+        TenantContext database, TenantContext? source, Func<CancellationToken, ValueTask<bool>> recordIntent, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(recordIntent);
         var (key, path) = Locate(database);
@@ -423,11 +423,11 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
             }
 
             ReserveIntent(key);
-            await Io.WithAdmissionAsync(async () =>
+            if (!await Io.WithAdmissionAsync(() => recordIntent(cancellationToken)).ConfigureAwait(false))
             {
-                await recordIntent(cancellationToken).ConfigureAwait(false);
-                return true;
-            }).ConfigureAwait(false);
+                _pendingIntents.Remove(key);
+                return false;
+            }
             if (store is not null)
             {
                 _ = Locate(source!);

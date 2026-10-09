@@ -1,3 +1,4 @@
+using TerraBase.Errors;
 using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
@@ -19,6 +20,7 @@ public sealed class SetAuditRetentionEndpoint(IAccessService access) : Endpoint<
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
         Produces<ErrorBody>(StatusCodes.Status403Forbidden);
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
+        Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
         RequireAuthorization(UserAuthExtensions.PolicyName);
         Metadata(ListenerMetadata.Management);
     }
@@ -29,9 +31,15 @@ public sealed class SetAuditRetentionEndpoint(IAccessService access) : Endpoint<
         ArgumentNullException.ThrowIfNull(request);
         if (request.Days is < 1 or > 90)
         {
-            return TypedResults.BadRequest("days must be an integer between 1 and 90");
+            return ErrorResponse.From(new Validation("days must be an integer between 1 and 90"));
         }
 
-        return ManagementRoute.Ok(await access.SetAuditRetentionAsync(ManagementRoute.UserId(HttpContext), ManagementRoute.OrganizationId(HttpContext), request.Days, cancellationToken));
+        return await access.SetAuditRetentionAsync(ManagementRoute.UserId(HttpContext), ManagementRoute.OrganizationId(HttpContext), request.Days, cancellationToken) switch
+        {
+            AuditRetention value => TypedResults.Ok(value),
+            NotFound error => ErrorResponse.From(error),
+            Forbidden error => ErrorResponse.From(error),
+            Unavailable error => ErrorResponse.From(error),
+        };
     }
 }

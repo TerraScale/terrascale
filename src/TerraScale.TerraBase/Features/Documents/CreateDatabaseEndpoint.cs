@@ -27,6 +27,8 @@ public sealed class CreateDatabaseEndpoint(ITenantDirectory tenants) : EndpointW
         Tags("Documents");
         Produces<DatabaseBody>(StatusCodes.Status201Created);
         Produces<DatabaseBody>();
+        Produces<ErrorBody>(StatusCodes.Status404NotFound);
+        Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
         RequireAuthorization(ApiKeyScopes.DocumentsWrite);
         Metadata(ListenerMetadata.Client, ServedByCatalogPrimary.WhenWriting);
     }
@@ -56,17 +58,22 @@ public sealed class CreateDatabaseEndpoint(ITenantDirectory tenants) : EndpointW
                 TenantContext own => TypedResults.Ok(Body(own, name.Value)),
                 Validation error => ErrorResponse.From(error),
                 NotFound error => ErrorResponse.From(error),
+                Unavailable error => ErrorResponse.From(error),
             };
         }
 
-        if ((key.ProjectId is not null && !string.Equals(key.ProjectId, project, StringComparison.Ordinal))
-            || await tenants.CreateDatabaseAsync(key.OrganizationId, project, name.Value, cancellationToken) is not ({ } database, var created))
+        if (key.ProjectId is not null && !string.Equals(key.ProjectId, project, StringComparison.Ordinal))
         {
             return ErrorResponse.From(DocumentRoute.UnknownDatabase);
         }
 
-        var body = Body(database, name.Value);
-        return created ? TypedResults.Created($"/v1/projects/{project}/databases/{name}", body) : TypedResults.Ok(body);
+        return await tenants.CreateDatabaseAsync(key.OrganizationId, project, name.Value, cancellationToken) switch
+        {
+            ProvisionedDatabase { Created: true } created => TypedResults.Created($"/v1/projects/{project}/databases/{name}", Body(created.Database, name.Value)),
+            ProvisionedDatabase existing => TypedResults.Ok(Body(existing.Database, name.Value)),
+            NotFound => ErrorResponse.From(DocumentRoute.UnknownDatabase),
+            Unavailable error => ErrorResponse.From(error),
+        };
     }
 
     private static DatabaseBody Body(TenantContext database, string name) => new(database.DatabaseId!, database.ProjectId!, name);

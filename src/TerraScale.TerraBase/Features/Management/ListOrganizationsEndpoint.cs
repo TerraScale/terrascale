@@ -1,3 +1,4 @@
+using TerraBase.Errors;
 using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
@@ -16,14 +17,21 @@ public sealed class ListOrganizationsEndpoint(IManagementService management) : E
         Description(ManagementRoute.PageDescription + " " + ManagementRoute.IdentityDescription);
         Tags(ManagementRoute.Tag);
         Produces<ManagementPage<Organization>>();
+        Produces<ErrorBody>(StatusCodes.Status400BadRequest);
+        Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
         RequireAuthorization(UserAuthExtensions.PolicyName);
         Metadata(ListenerMetadata.Management);
     }
 
     /// <inheritdoc />
-    public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
-    {
-        var (after, limit) = ManagementRoute.Page(HttpContext);
-        return TypedResults.Ok(await management.ListOrganizationsAsync(ManagementRoute.UserId(HttpContext), after, limit, cancellationToken));
-    }
+    public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
+        ManagementRoute.CheckPage(HttpContext) switch
+        {
+            Validation error => ErrorResponse.From(error),
+            PageQuery page => await management.ListOrganizationsAsync(ManagementRoute.UserId(HttpContext), page.After, page.Limit, cancellationToken) switch
+            {
+                ManagementPage<Organization> value => TypedResults.Ok(value),
+                Unavailable error => ErrorResponse.From(error),
+            },
+        };
 }

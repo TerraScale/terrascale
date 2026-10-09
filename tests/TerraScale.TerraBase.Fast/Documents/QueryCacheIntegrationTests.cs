@@ -49,8 +49,12 @@ public sealed class QueryCacheIntegrationTests
         var service = api.Server.Services.GetRequiredService<IDocumentService>();
         var database = await api.TenantOfAsync();
         var system = api.Server.Services.GetRequiredService<ISystemDocumentReader>();
-        var keyId = (await api.Server.Services.GetRequiredService<TerraBase.Features.ApiKeys.IApiKeyStore>().FindAsync(
-            api.Client.DefaultRequestHeaders.Authorization!.Parameter!, CancellationToken.None))!.Id;
+        var keyId = await api.Server.Services.GetRequiredService<TerraBase.Features.ApiKeys.IApiKeyStore>().FindAsync(
+            api.Client.DefaultRequestHeaders.Authorization!.Parameter!, CancellationToken.None) switch
+        {
+            TerraBase.Features.ApiKeys.ApiKey key => key.Id,
+            NotFound => throw new InvalidOperationException("The test API key must exist."),
+        };
         if (kind == "system")
         {
             // Rewriting the real key invalidates its warmed auth entry, exercising first admission too.

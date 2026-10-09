@@ -33,6 +33,8 @@ public sealed class QueryPlanTests
         ["Incarnation"] = "SEARCH commit_offset USING INTEGER PRIMARY KEY (rowid=?)",
         ["RenewIncarnation"] = "SEARCH commit_offset USING INTEGER PRIMARY KEY (rowid=?)",
         ["CreateCollection"] = "",
+        ["HasCollectionState"] = "SCAN CONSTANT ROW | SCALAR SUBQUERY 1 | SEARCH documents USING PRIMARY KEY (collection>? AND collection<?) | SCALAR SUBQUERY 2 | SEARCH collections USING PRIMARY KEY (name>? AND name<?) | SCALAR SUBQUERY 3 | SEARCH changes USING INDEX changes_deleted (collection>? AND collection<?) | SCALAR SUBQUERY 4 | SEARCH change_log USING COVERING INDEX change_log_by_offset (collection>? AND collection<?)",
+        ["HasCollectionStateFrom"] = "SCAN CONSTANT ROW | SCALAR SUBQUERY 1 | SEARCH documents USING PRIMARY KEY (collection>?) | SCALAR SUBQUERY 2 | SEARCH collections USING PRIMARY KEY (name>?) | SCALAR SUBQUERY 3 | SEARCH changes USING INDEX changes_deleted (collection>?) | SCALAR SUBQUERY 4 | SEARCH change_log USING COVERING INDEX change_log_by_offset (collection>?)",
         ["GetCollection"] = "SEARCH collections USING PRIMARY KEY (name=?)",
         ["ListCollectionsFirst"] = "SCAN collections",
         ["ListCollectionsAfter"] = "SEARCH collections USING PRIMARY KEY (name>?)",

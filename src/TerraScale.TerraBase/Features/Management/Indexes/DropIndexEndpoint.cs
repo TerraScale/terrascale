@@ -18,6 +18,7 @@ public sealed class DropIndexEndpoint(IManagementService management, IIndexServi
         Description(ProjectApiRoute.IdentityDescription);
         Tags("Indexes");
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
+        Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
         Produces<ErrorBody>(StatusCodes.Status403Forbidden);
         RequireAuthorization(ApiKeyScopes.DatabasesWrite);
         Metadata(new ProjectManagementRoute(), ListenerMetadata.Management, new ProducesResponseTypeMetadata(StatusCodes.Status204NoContent, typeof(void)));
@@ -29,6 +30,7 @@ public sealed class DropIndexEndpoint(IManagementService management, IIndexServi
         {
             NotFound error => ErrorResponse.From(error),
             Forbidden error => ErrorResponse.From(error),
+            Unavailable error => ErrorResponse.From(error),
             TenantContext database => await indexes.DropAsync(database, ManagementRoute.Value(HttpContext, "index"), cancellationToken) switch
             {
                 Done => TypedResults.NoContent(),

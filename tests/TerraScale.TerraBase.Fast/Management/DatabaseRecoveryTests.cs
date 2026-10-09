@@ -6,8 +6,10 @@ using System.Text.Json;
 using Bogus;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Time.Testing;
 using TerraBase.Configuration;
 using TerraBase.Engine;
+using TerraBase.Errors;
 using TerraBase.Features.Management;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
@@ -403,9 +405,14 @@ public sealed class DatabaseRecoveryTests
                 InvalidOperationException? observed = null;
                 try
                 {
-                    _ = route == "cancelled-create"
-                        ? await management.CreateDatabaseAsync(state.User, state.Organization, state.Project, state.TargetName, cancellation.Token)
-                        : await management.DeleteDatabaseAsync(state.User, state.Organization, state.Project, target, CancellationToken.None);
+                    if (route == "cancelled-create")
+                    {
+                        _ = await management.CreateDatabaseAsync(state.User, state.Organization, state.Project, state.TargetName, cancellation.Token);
+                    }
+                    else
+                    {
+                        _ = await management.DeleteDatabaseAsync(state.User, state.Organization, state.Project, target, CancellationToken.None);
+                    }
                 }
                 catch (InvalidOperationException exception)
                 {
@@ -991,16 +998,16 @@ public sealed class DatabaseRecoveryTests
     }
 
     [Test]
-    public async Task A_current_catalog_recovers_an_interrupted_database_create_after_restart()
+    public async Task An_unsupported_catalog_preserves_an_interrupted_creation_and_refuses_new_creations()
     {
         using var state = new RecoveryData();
         await using (var api = await state.StartAsync())
         {
             await state.SeedAsync(api);
-
         }
 
         string target;
+        string intent;
         await using (var api = await state.StartAsync(services => services.AddSingleton<DatabaseLifecycleCheckpoint>((step, _) =>
         {
             if (step == "create.intent")
@@ -1017,8 +1024,36 @@ public sealed class DatabaseRecoveryTests
             var pending = await PendingAsync(api);
             await Assert.That(pending.Documents.Count).IsEqualTo(1);
             target = pending.Documents[0].Id;
+            intent = Encoding.UTF8.GetString(pending.Documents[0].Json.Span);
         }
 
+        var systemPath = System.IO.Path.Combine(state.Directory, "_system.db");
+        await DocumentFiles.UpdateAsync(systemPath, ("catalog", "version", "\"3\""));
+        var catalog = await DocumentFiles.ReadAsync(systemPath);
+        var source = await File.ReadAllBytesAsync(state.Path(state.Source));
+        var neighbor = await File.ReadAllBytesAsync(state.Path(state.Neighbor));
+        for (var restart = 0; restart < 2; restart++)
+        {
+            await using (var api = await state.StartAsync())
+            {
+                using var owner = api.As(state.User);
+                await ErrorAssert.ErrorAsync(owner.PostAsJsonAsync(Uri(state.Databases), new { name = state.TargetName }),
+                    HttpStatusCode.ServiceUnavailable, "unavailable", "the management catalog has an old or unsupported format; discard the affected data");
+                var pending = await PendingAsync(api);
+                await Assert.That(pending.Documents.Count).IsEqualTo(1);
+                await Assert.That(pending.Documents[0].Id).IsEqualTo(target);
+                await Assert.That(Encoding.UTF8.GetString(pending.Documents[0].Json.Span)).IsEqualTo(intent);
+                await Assert.That(await CatalogAsync(api, "catalog", "version")).IsEqualTo("\"3\"");
+                await AssertReadyAsync(api);
+            }
+
+            await Assert.That(await DocumentFiles.ReadAsync(systemPath)).IsEquivalentTo(catalog);
+            await Assert.That((await File.ReadAllBytesAsync(state.Path(state.Source))).SequenceEqual(source)).IsTrue();
+            await Assert.That((await File.ReadAllBytesAsync(state.Path(state.Neighbor))).SequenceEqual(neighbor)).IsTrue();
+            await Assert.That(File.Exists(state.Path(target))).IsFalse();
+        }
+
+        await DocumentFiles.UpdateAsync(systemPath, ("catalog", "version", "\"6\""));
         await using var recovered = await state.StartAsync();
         using var recoveredOwner = recovered.As(state.User);
         await Assert.That((await PendingAsync(recovered)).Documents).IsEmpty();
@@ -1201,11 +1236,16 @@ public sealed class DatabaseRecoveryTests
                 var management = api.Server.Services.GetRequiredService<IManagementService>();
                 await Assert.That(async () =>
                 {
-                    _ = route == "branch"
-                        ? await management.BranchDatabaseAsync(
-                            state.User, state.Organization, state.Project, state.Source, state.TargetName, cancellation.Token)
-                        : await management.CreateDatabaseAsync(
+                    if (route == "branch")
+                    {
+                        _ = await management.BranchDatabaseAsync(
+                            state.User, state.Organization, state.Project, state.Source, state.TargetName, cancellation.Token);
+                    }
+                    else
+                    {
+                        _ = await management.CreateDatabaseAsync(
                             state.User, state.Organization, state.Project, state.TargetName, cancellation.Token);
+                    }
                 }).Throws<OperationCanceledException>();
             }
             else
@@ -1789,6 +1829,348 @@ public sealed class DatabaseRecoveryTests
         await state.AssertFilesGoneAsync(target);
         await state.AssertUnregisteredAsync(api, owner, target);
         await state.AssertPreservedAsync(api, owner);
+    }
+
+    [Test]
+    [Arguments("management")]
+    [Arguments("forget")]
+    public async Task A_catalog_change_after_delete_resolution_is_unavailable_and_preserves_the_database(string route)
+    {
+        using var state = new RecoveryData();
+        var hook = new UsageCommitHook();
+        var reached = new TaskCompletionSource<UsageCommitHook.Gate>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var armed = false;
+        await using var api = await state.StartAsync(services =>
+        {
+            hook.Install(services);
+            services.AddSingleton<TimeProvider>(new FakeTimeProvider(DateTimeOffset.UtcNow));
+            services.AddSingleton<DatabaseLifecycleCheckpoint>((step, _) =>
+            {
+                if (armed && step == "delete.recording")
+                {
+                    armed = false;
+                    reached.TrySetResult(hook.PauseWrite());
+                }
+            });
+        });
+        await state.SeedAsync(api);
+        using var owner = api.As(state.User);
+        var target = await api.CreateDatabaseAsync(state.Organization, state.Project, state.TargetName, owner);
+        using var data = api.DataClient(state.ApiKey);
+        await state.WriteDocumentAsync(data, state.TargetName);
+        var storage = new TenantContext(state.Organization, PlanTier.Hobby, state.Project, target);
+        var system = await api.Server.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(CancellationToken.None);
+        var tenants = api.Server.Services.GetRequiredService<ITenantDirectory>();
+        if (route == "forget")
+        {
+            // WAN deletion forgets a local copy whose home region is elsewhere.
+            await using var transaction = await system.BeginTransactionAsync(write: true, CancellationToken.None);
+            var document = await transaction.GetAsync($"projects/{state.Project}/databases", target, CancellationToken.None);
+            var database = EntityPayload.Read(document!, TerraBaseJsonContext.Default.ManagedDatabase)!;
+            var localRegion = api.Server.Services.GetRequiredService<TerraBaseOptions>().Region;
+            await transaction.PutAsync($"projects/{state.Project}/databases", target,
+                EntityPayload.WithoutId(JsonSerializer.SerializeToUtf8Bytes(database with { HomeRegion = "elsewhere", ReplicaRegions = [localRegion] },
+                    TerraBaseJsonContext.Default.ManagedDatabase), target, nested: true), CancellationToken.None);
+            await transaction.CommitAsync(CancellationToken.None);
+        }
+
+        armed = true;
+        var deleting = route == "management" ? owner.DeleteAsync(Uri(state.Databases + "/" + target)) : null;
+        var forgetting = route == "forget" ? tenants.ForgetDatabaseAsync(storage, CancellationToken.None).AsTask() : null;
+        using var gate = await reached.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await gate.Entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        byte[] supportedVersion;
+        await using (var transaction = await system.BeginTransactionAsync(write: true, CancellationToken.None))
+        {
+            supportedVersion = (await transaction.GetAsync("catalog", "version", CancellationToken.None))!.Json.ToArray();
+            await transaction.PutAsync("catalog", "version", Encoding.UTF8.GetBytes("\"99\""), CancellationToken.None);
+            await transaction.CommitAsync(CancellationToken.None);
+        }
+
+        var catalog = await DocumentFiles.ReadAsync(System.IO.Path.Combine(state.Directory, "_system.db"));
+        var bytes = await File.ReadAllBytesAsync(state.Path(target));
+        gate.Dispose();
+        if (deleting is not null)
+        {
+            using var refused = await deleting.WaitAsync(TimeSpan.FromSeconds(10));
+            await ErrorAssert.ErrorAsync(refused, HttpStatusCode.ServiceUnavailable, "unavailable",
+                "the management catalog has an old or unsupported format; discard the affected data");
+        }
+        else
+        {
+            await Assert.That(await forgetting!.WaitAsync(TimeSpan.FromSeconds(10)) is Unavailable).IsTrue();
+        }
+
+        await Assert.That((await PendingAsync(api)).Documents).IsEmpty();
+        await Assert.That((await File.ReadAllBytesAsync(state.Path(target))).SequenceEqual(bytes)).IsTrue();
+        await Assert.That(await DocumentFiles.ReadAsync(System.IO.Path.Combine(state.Directory, "_system.db"))).IsEquivalentTo(catalog);
+        await using (var transaction = await system.BeginTransactionAsync(write: true, CancellationToken.None))
+        {
+            await transaction.PutAsync("catalog", "version", supportedVersion, CancellationToken.None);
+            await transaction.CommitAsync(CancellationToken.None);
+        }
+
+        await state.AssertDocumentAsync(data, state.TargetName);
+        if (route == "management")
+        {
+            using var deleted = await owner.DeleteAsync(Uri(state.Databases + "/" + target));
+            await Assert.That(deleted.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
+        }
+        else
+        {
+            await Assert.That(await tenants.ForgetDatabaseAsync(storage, CancellationToken.None) is DatabaseForgotten { Forgotten: true }).IsTrue();
+        }
+
+        await Assert.That((await PendingAsync(api)).Documents).IsEmpty();
+        await state.AssertFilesGoneAsync(target);
+        await state.AssertUnregisteredAsync(api, owner, target);
+        await state.AssertPreservedAsync(api, owner);
+    }
+
+    [Test]
+    public async Task A_catalog_refusal_after_file_publication_preserves_creation_ownership_until_recovery()
+    {
+        using var state = new RecoveryData();
+        var hook = new UsageCommitHook();
+        var reached = new TaskCompletionSource<(TenantContext Storage, UsageCommitHook.Gate Gate)>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var armed = false;
+        string target;
+        string intent;
+        byte[] supportedVersion;
+        byte[] projectJson;
+        var systemPath = System.IO.Path.Combine(state.Directory, "_system.db");
+        List<string> catalog;
+        await using (var api = await state.StartAsync(services =>
+        {
+            hook.Install(services);
+            services.AddSingleton<TimeProvider>(new FakeTimeProvider(DateTimeOffset.UtcNow));
+            services.AddSingleton<DatabaseLifecycleCheckpoint>((step, storage) =>
+            {
+                if (armed && step == "create.files")
+                {
+                    armed = false;
+                    reached.TrySetResult((storage, hook.PauseWrite()));
+                }
+            });
+        }))
+        {
+            await state.SeedAsync(api);
+            using var owner = api.As(state.User);
+            armed = true;
+            var creating = owner.PostAsJsonAsync(Uri(state.Databases), new { name = state.TargetName });
+            var stopped = await reached.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            using var gate = stopped.Gate;
+            await gate.Entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            target = stopped.Storage.DatabaseId!;
+            var system = await api.Server.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(CancellationToken.None);
+            await using (var transaction = await system.BeginTransactionAsync(write: true, CancellationToken.None))
+            {
+                supportedVersion = (await transaction.GetAsync("catalog", "version", CancellationToken.None))!.Json.ToArray();
+                projectJson = (await transaction.GetAsync($"organizations/{state.Organization}/projects", state.Project, CancellationToken.None))!.Json.ToArray();
+                await transaction.PutAsync("catalog", "version", Encoding.UTF8.GetBytes("\"99\""), CancellationToken.None);
+                // Registration must refuse before trying to deserialize an unknown catalog representation.
+                await transaction.PutAsync($"organizations/{state.Organization}/projects", state.Project,
+                    Encoding.UTF8.GetBytes("{\"createdAt\":{\"unixNanos\":\"1\"}}"), CancellationToken.None);
+                await transaction.CommitAsync(CancellationToken.None);
+            }
+
+            var pending = await PendingAsync(api);
+            await Assert.That(pending.Documents.Count).IsEqualTo(1);
+            await Assert.That(pending.Documents[0].Id).IsEqualTo(target);
+            intent = Encoding.UTF8.GetString(pending.Documents[0].Json.Span);
+            var bytes = await File.ReadAllBytesAsync(state.Path(target));
+            catalog = await DocumentFiles.ReadAsync(systemPath);
+            gate.Dispose();
+            using var refused = await creating.WaitAsync(TimeSpan.FromSeconds(10));
+            await ErrorAssert.ErrorAsync(refused, HttpStatusCode.ServiceUnavailable, "unavailable",
+                "the management catalog has an old or unsupported format; discard the affected data");
+            await Assert.That(await CatalogAsync(api, "pending_database_cleanup", target)).IsEqualTo(intent);
+            await Assert.That(await CatalogAsync(api, $"projects/{state.Project}/databases", target)).IsNull();
+            await Assert.That((await File.ReadAllBytesAsync(state.Path(target))).SequenceEqual(bytes)).IsTrue();
+            await Assert.That(await DocumentFiles.ReadAsync(systemPath)).IsEquivalentTo(catalog);
+        }
+
+        var preserved = await File.ReadAllBytesAsync(state.Path(target));
+        await using (var unavailable = await state.StartAsync())
+        {
+            using var owner = unavailable.As(state.User);
+            await ErrorAssert.ErrorAsync(owner.GetAsync(Uri(state.Databases)), HttpStatusCode.ServiceUnavailable, "unavailable",
+                "the management catalog has an old or unsupported format; discard the affected data");
+            await Assert.That(await CatalogAsync(unavailable, "pending_database_cleanup", target)).IsEqualTo(intent);
+            await Assert.That((await File.ReadAllBytesAsync(state.Path(target))).SequenceEqual(preserved)).IsTrue();
+            await Assert.That(await DocumentFiles.ReadAsync(systemPath)).IsEquivalentTo(catalog);
+            await AssertReadyAsync(unavailable);
+        }
+
+        await DocumentFiles.UpdateAsync(systemPath,
+            ("catalog", "version", Encoding.UTF8.GetString(supportedVersion)),
+            ($"organizations/{state.Organization}/projects", state.Project, Encoding.UTF8.GetString(projectJson)));
+        await using var recovered = await state.StartAsync();
+        using var recoveredOwner = recovered.As(state.User);
+        await Assert.That((await PendingAsync(recovered)).Documents).IsEmpty();
+        await state.AssertFilesGoneAsync(target);
+        await state.AssertUnregisteredAsync(recovered, recoveredOwner, target);
+        await state.AssertPreservedAsync(recovered, recoveredOwner);
+        await AssertReadyAsync(recovered);
+        await recovered.CreateDatabaseAsync(state.Organization, state.Project, state.TargetName, recoveredOwner);
+    }
+
+    [Test]
+    [Arguments("management")]
+    [Arguments("commit")]
+    public async Task A_catalog_refusal_before_creation_intent_leaves_no_owned_files_or_catalog_changes(string route)
+    {
+        using var state = new RecoveryData();
+        var hook = new UsageCommitHook();
+        var reached = new TaskCompletionSource<(TenantContext Storage, UsageCommitHook.Gate Gate)>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var armed = false;
+        await using var api = await state.StartAsync(services =>
+        {
+            hook.Install(services);
+            services.AddSingleton<TimeProvider>(new FakeTimeProvider(DateTimeOffset.UtcNow));
+            services.AddSingleton<DatabaseLifecycleCheckpoint>((step, storage) =>
+            {
+                if (armed && step == "create.prepare")
+                {
+                    armed = false;
+                    reached.TrySetResult((storage, hook.PauseWrite()));
+                }
+            });
+        });
+        await state.SeedAsync(api);
+        using var owner = api.As(state.User);
+        armed = true;
+        var creating = CreateAsync();
+        var stopped = await reached.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        using var gate = stopped.Gate;
+        await gate.Entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        var target = stopped.Storage.DatabaseId!;
+        var system = await api.Server.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(CancellationToken.None);
+        byte[] supportedVersion;
+        await using (var transaction = await system.BeginTransactionAsync(write: true, CancellationToken.None))
+        {
+            supportedVersion = (await transaction.GetAsync("catalog", "version", CancellationToken.None))!.Json.ToArray();
+            await transaction.PutAsync("catalog", "version", Encoding.UTF8.GetBytes("\"99\""), CancellationToken.None);
+            await transaction.CommitAsync(CancellationToken.None);
+        }
+
+        var catalog = await DocumentFiles.ReadAsync(System.IO.Path.Combine(state.Directory, "_system.db"));
+        await Assert.That((await PendingAsync(api)).Documents).IsEmpty();
+        await state.AssertFilesGoneAsync(target);
+        gate.Dispose();
+        using var refused = await creating.WaitAsync(TimeSpan.FromSeconds(10));
+        await ErrorAssert.ErrorAsync(refused, HttpStatusCode.ServiceUnavailable, "unavailable",
+            "the management catalog has an old or unsupported format; discard the affected data");
+        await Assert.That((await PendingAsync(api)).Documents).IsEmpty();
+        await state.AssertFilesGoneAsync(target);
+        await Assert.That(await DocumentFiles.ReadAsync(System.IO.Path.Combine(state.Directory, "_system.db"))).IsEquivalentTo(catalog);
+        await using (var transaction = await system.BeginTransactionAsync(write: true, CancellationToken.None))
+        {
+            await transaction.PutAsync("catalog", "version", supportedVersion, CancellationToken.None);
+            await transaction.CommitAsync(CancellationToken.None);
+        }
+
+        using var retried = await CreateAsync();
+        await Assert.That(retried.StatusCode).IsEqualTo(route == "commit" ? HttpStatusCode.OK : HttpStatusCode.Created);
+        var body = await retried.Content.ReadFromJsonAsync<JsonElement>();
+        var replacement = (route == "commit" ? body.GetProperty("results")[0].GetProperty("value") : body).GetProperty("id").GetString()!;
+        await Assert.That(File.Exists(state.Path(replacement))).IsTrue();
+        await Assert.That((await PendingAsync(api)).Documents).IsEmpty();
+        using var data = api.DataClient(state.ApiKey);
+        await state.WriteDocumentAsync(data, state.TargetName);
+        await state.AssertUnregisteredAsync(api, owner, target, replacement);
+        await state.AssertPreservedAsync(api, owner);
+
+        Task<HttpResponseMessage> CreateAsync()
+        {
+            return route == "commit"
+            ? owner.PostAsJsonAsync(Uri("/v1/management/commits"), new
+            {
+                id = state.Organization,
+                ops = new[] { new { op = "create_database", organization = state.Organization, project = state.Project, name = state.TargetName } },
+            })
+            : owner.PostAsJsonAsync(Uri(state.Databases), new { name = state.TargetName });
+        }
+    }
+
+    [Test]
+    public async Task A_catalog_refusal_while_clearing_deletion_retains_the_intent_until_supported_restart()
+    {
+        using var state = new RecoveryData();
+        var hook = new UsageCommitHook();
+        var reached = new TaskCompletionSource<UsageCommitHook.Gate>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var armed = false;
+        string target;
+        string intent;
+        byte[] supportedVersion;
+        List<string> catalog;
+        var systemPath = System.IO.Path.Combine(state.Directory, "_system.db");
+        await using (var api = await state.StartAsync(services =>
+        {
+            hook.Install(services);
+            services.AddSingleton<TimeProvider>(new FakeTimeProvider(DateTimeOffset.UtcNow));
+            services.AddSingleton<DatabaseLifecycleCheckpoint>((step, _) =>
+            {
+                if (armed && step == "cleanup.clearing")
+                {
+                    armed = false;
+                    reached.TrySetResult(hook.PauseWrite());
+                }
+            });
+        }))
+        {
+            await state.SeedAsync(api);
+            using var owner = api.As(state.User);
+            target = await api.CreateDatabaseAsync(state.Organization, state.Project, state.TargetName, owner);
+            using var data = api.DataClient(state.ApiKey);
+            await state.WriteDocumentAsync(data, state.TargetName);
+            armed = true;
+            var deleting = owner.DeleteAsync(Uri(state.Databases + "/" + target));
+            using var gate = await reached.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            await gate.Entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            await state.AssertFilesGoneAsync(target);
+            var system = await api.Server.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(CancellationToken.None);
+            await using (var transaction = await system.BeginTransactionAsync(write: true, CancellationToken.None))
+            {
+                supportedVersion = (await transaction.GetAsync("catalog", "version", CancellationToken.None))!.Json.ToArray();
+                await transaction.PutAsync("catalog", "version", Encoding.UTF8.GetBytes("\"99\""), CancellationToken.None);
+                await transaction.CommitAsync(CancellationToken.None);
+            }
+
+            var pending = await PendingAsync(api);
+            await Assert.That(pending.Documents.Count).IsEqualTo(1);
+            await Assert.That(pending.Documents[0].Id).IsEqualTo(target);
+            intent = Encoding.UTF8.GetString(pending.Documents[0].Json.Span);
+            catalog = await DocumentFiles.ReadAsync(systemPath);
+            gate.Dispose();
+            using var refused = await deleting.WaitAsync(TimeSpan.FromSeconds(10));
+            await ErrorAssert.ErrorAsync(refused, HttpStatusCode.ServiceUnavailable, "unavailable",
+                "the management catalog has an old or unsupported format; discard the affected data");
+            await Assert.That(await CatalogAsync(api, "pending_database_cleanup", target)).IsEqualTo(intent);
+            await Assert.That(await DocumentFiles.ReadAsync(systemPath)).IsEquivalentTo(catalog);
+            await state.AssertFilesGoneAsync(target);
+        }
+
+        await using (var unavailable = await state.StartAsync())
+        {
+            using var owner = unavailable.As(state.User);
+            await ErrorAssert.ErrorAsync(owner.GetAsync(Uri(state.Databases)), HttpStatusCode.ServiceUnavailable, "unavailable",
+                "the management catalog has an old or unsupported format; discard the affected data");
+            await Assert.That(await CatalogAsync(unavailable, "pending_database_cleanup", target)).IsEqualTo(intent);
+            await Assert.That(await DocumentFiles.ReadAsync(systemPath)).IsEquivalentTo(catalog);
+            await state.AssertFilesGoneAsync(target);
+            await AssertReadyAsync(unavailable);
+        }
+
+        await DocumentFiles.UpdateAsync(systemPath, ("catalog", "version", Encoding.UTF8.GetString(supportedVersion)));
+        await using var recovered = await state.StartAsync();
+        using var recoveredOwner = recovered.As(state.User);
+        await Assert.That((await PendingAsync(recovered)).Documents).IsEmpty();
+        await state.AssertFilesGoneAsync(target);
+        await state.AssertUnregisteredAsync(recovered, recoveredOwner, target);
+        await state.AssertPreservedAsync(recovered, recoveredOwner);
+        await AssertReadyAsync(recovered);
+        await recovered.CreateDatabaseAsync(state.Organization, state.Project, state.TargetName, recoveredOwner);
     }
 
     private static Uri Uri(string path) => new(path, UriKind.Relative);

@@ -22,57 +22,8 @@ public sealed record ErrorDetail(
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Handle = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<ValidationDetail>? Details = null);
 
-/// <summary>A request that fails with an API error; answered by <see cref="BadRequests"/>.</summary>
-public sealed class ApiException : Exception
-{
-    /// <summary>Creates an error.</summary>
-    public ApiException(int statusCode, string code, string? message = null)
-        : base(message ?? code)
-    {
-        StatusCode = statusCode;
-        Code = code;
-        Detail = message;
-    }
-
-    /// <summary>Creates an <c>invalid_request</c> error.</summary>
-    public ApiException()
-        : this(StatusCodes.Status400BadRequest, "invalid_request")
-    {
-    }
-
-    /// <summary>Creates an <c>invalid_request</c> error.</summary>
-    public ApiException(string message)
-        : this(StatusCodes.Status400BadRequest, "invalid_request", message)
-    {
-    }
-
-    /// <summary>Creates an <c>invalid_request</c> error.</summary>
-    public ApiException(string message, Exception innerException)
-        : base(message, innerException)
-    {
-        StatusCode = StatusCodes.Status400BadRequest;
-        Code = "invalid_request";
-        Detail = message;
-    }
-
-    /// <summary>HTTP status.</summary>
-    public int StatusCode { get; }
-
-    /// <summary>Error code.</summary>
-    public string Code { get; }
-
-    /// <summary>Optional message.</summary>
-    public string? Detail { get; }
-
-    /// <summary>Index of the failing transaction operation, when the request was a transaction.</summary>
-    public int? Op { get; set; }
-
-    /// <summary>Version sent as the error's <c>ETag</c>, such as a deleted document's tombstone.</summary>
-    public string? ETag { get; init; }
-}
-
 /// <summary>
-/// Answers <see cref="ApiException"/> and <see cref="BadHttpRequestException"/> with an
+/// Answers framework <see cref="BadHttpRequestException"/> with an
 /// <see cref="ErrorBody"/> instead of logging them as server errors, logs any other exception and
 /// answers it with <c>500 internal_error</c>, and gives every other error status without a body
 /// (authentication, authorization, unknown routes) an <see cref="ErrorBody"/> too.
@@ -96,11 +47,6 @@ public static partial class BadRequests
             try
             {
                 await next(context).ConfigureAwait(false);
-            }
-            catch (ApiException error) when (!context.Response.HasStarted)
-            {
-                Replace(context.Response, error.ETag);
-                await WriteAsync(context, error.StatusCode, error.Code, error.Detail, error.Op).ConfigureAwait(false);
             }
             catch (BadHttpRequestException error) when (!context.Response.HasStarted)
             {
@@ -152,16 +98,11 @@ public static partial class BadRequests
         _ => "invalid_request",
     };
 
-    // An endpoint may have prepared a success response (a shape's cache policy, validators, framing)
-    // before it threw: clear it, and never let a cache keep the error.
-    private static void Replace(HttpResponse response, string? etag = null)
+    // A framework or I/O failure may follow prepared success headers; never let a cache keep the error.
+    private static void Replace(HttpResponse response)
     {
         response.Clear();
         response.Headers.CacheControl = "no-store";
-        if (etag is not null)
-        {
-            response.Headers.ETag = $"\"{etag}\"";
-        }
     }
 
     internal static Task WriteAsync(HttpContext context, int status, string code, string? message, int? op, IReadOnlyList<ValidationDetail>? details = null)

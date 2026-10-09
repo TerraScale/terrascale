@@ -220,6 +220,9 @@ public interface IStorageTransaction : IAsyncDisposable
     /// <remarks><paramref name="observation"/> includes repeated visits in the separate overflow walk.</remarks>
     ValueTask<(long Count, bool Complete)> CountAsync(string collection, DocumentFilter? filter, long maxExamined, CancellationToken cancellationToken, QueryObservation? observation = null);
 
+    /// <summary>Whether a collection (or name prefix) has documents, tombstones, collection metadata or retained replication deletions or shape history.</summary>
+    ValueTask<bool> HasCollectionStateAsync(string name, bool prefix, CancellationToken cancellationToken);
+
     /// <summary>Creates a collection, a commit of its own offset; <see langword="false"/> when it already exists.</summary>
     ValueTask<bool> CreateCollectionAsync(CollectionInfo collection, CancellationToken cancellationToken);
 

@@ -30,6 +30,10 @@ public sealed class QueryDashboardDocumentsEndpoint(IManagementCommits commits) 
         Produces<DocumentPageBody>();
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
         Produces<ErrorBody>(StatusCodes.Status403Forbidden);
+        Produces<ErrorBody>(StatusCodes.Status404NotFound);
+        Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
+        Produces<ErrorBody>(StatusCodes.Status413PayloadTooLarge);
+        Produces<ErrorBody>(StatusCodes.Status415UnsupportedMediaType);
         RequireAuthorization(UserAuthExtensions.PolicyName);
         Metadata(ListenerMetadata.Management);
     }
@@ -78,6 +82,7 @@ public sealed class QueryDashboardDocumentsEndpoint(IManagementCommits commits) 
             cancellationToken) switch
         {
             NotFound error => ErrorResponse.From(error),
+            Unavailable error => ErrorResponse.From(error),
             Validation error => ErrorResponse.From(error),
             QueryOutcome outcome => Page(collection, body, query, outcome, cancellationToken),
         };

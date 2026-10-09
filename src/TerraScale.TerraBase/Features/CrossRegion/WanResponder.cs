@@ -1,7 +1,9 @@
+using System.Diagnostics;
 using Google.Protobuf;
 using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Engine.Cluster;
+using TerraBase.Errors;
 using TerraBase.Features.CrossRegion.V1;
 using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Replication;
@@ -58,8 +60,16 @@ internal sealed partial class WanResponder(
             var result = request?.Version != WanProtocol.Version ? new PullReply { Status = PullReply.Types.Status.Invalid }.ToByteArray()
                 : request.RequestCase switch
                 {
-                    WanRequest.RequestOneofCase.Heads => (await HeadsAsync(request.Heads, data.Length, cancellationToken).ConfigureAwait(false)).ToByteArray(),
-                    WanRequest.RequestOneofCase.Pull => (await PullAsync(request.Pull, cancellationToken).ConfigureAwait(false)).ToByteArray(),
+                    WanRequest.RequestOneofCase.Heads => await HeadsAsync(request.Heads, data.Length, cancellationToken).ConfigureAwait(false) switch
+                    {
+                        HeadsReply reply => reply.ToByteArray(),
+                        Unavailable => [],
+                    },
+                    WanRequest.RequestOneofCase.Pull => await PullAsync(request.Pull, cancellationToken).ConfigureAwait(false) switch
+                    {
+                        PullReply reply => reply.ToByteArray(),
+                        Unavailable => [],
+                    },
                     _ => new PullReply { Status = PullReply.Types.Status.Invalid }.ToByteArray(),
                 };
             if (request?.Pull is { } pull && WanProtocol.Database(pull.TenantId, pull.ProjectId, pull.DatabaseId) is { } database)
@@ -80,8 +90,21 @@ internal sealed partial class WanResponder(
         }
     }
 
-    private async ValueTask<HeadsReply> HeadsAsync(HeadsRequest request, int requestBytes, CancellationToken cancellationToken)
+    private readonly union WanHeadsResult(HeadsReply, Unavailable);
+    private readonly union WanPullResult(PullReply, Unavailable);
+
+    private async ValueTask<WanHeadsResult> HeadsAsync(HeadsRequest request, int requestBytes, CancellationToken cancellationToken)
     {
+        var catalog = await tenants.CheckCatalogAsync(cancellationToken).ConfigureAwait(false);
+        if (catalog is not Done)
+        {
+            return catalog switch
+            {
+                Unavailable error => error,
+                Done => throw new UnreachableException(),
+            };
+        }
+
         // ponytail: lists and reads every database per request; track heads from commits once members hold thousands.
         var databases = new List<(byte[] Key, TenantContext Database)>();
         await foreach (var database in engine.ListDatabasesAsync(cancellationToken).ConfigureAwait(false))
@@ -119,7 +142,19 @@ internal sealed partial class WanResponder(
             }
 
             // Every database, written to or not, so other regions learn its placement as soon as it is created.
-            var record = await tenants.DatabaseRecordAsync(database, cancellationToken).ConfigureAwait(false);
+            var found = await tenants.DatabaseRecordAsync(database, cancellationToken).ConfigureAwait(false);
+            if (found is Unavailable error)
+            {
+                // An unreadable catalog must not publish a complete inventory that implies databases were deleted.
+                return error;
+            }
+
+            var record = found switch
+            {
+                TenantDatabaseRecord known => known,
+                NotFound => null,
+                Unavailable => throw new UnreachableException(),
+            };
             reply.Heads.Add(new Head
             {
                 TenantId = WanProtocol.Id(database.OrganizationId),
@@ -138,7 +173,7 @@ internal sealed partial class WanResponder(
         return reply;
     }
 
-    private async ValueTask<PullReply> PullAsync(PullRequest request, CancellationToken cancellationToken)
+    private async ValueTask<WanPullResult> PullAsync(PullRequest request, CancellationToken cancellationToken)
     {
         if (WanProtocol.Database(request.TenantId, request.ProjectId, request.DatabaseId) is not { } database
             || request.Origin.Length != 16 || request.After > long.MaxValue)
@@ -152,7 +187,18 @@ internal sealed partial class WanResponder(
         }
 
         // A database's data goes only to the regions its placement names (docs/cross-region.md).
-        if ((await tenants.DatabaseRecordAsync(database, cancellationToken).ConfigureAwait(false))?.Placement.Includes(request.Region) != true)
+        var found = await tenants.DatabaseRecordAsync(database, cancellationToken).ConfigureAwait(false);
+        if (found is not TenantDatabaseRecord record)
+        {
+            return found switch
+            {
+                NotFound => new PullReply { Status = PullReply.Types.Status.NotPlaced },
+                Unavailable error => error,
+                TenantDatabaseRecord => throw new UnreachableException(),
+            };
+        }
+
+        if (!record.Placement.Includes(request.Region))
         {
             return new PullReply { Status = PullReply.Types.Status.NotPlaced };
         }

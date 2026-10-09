@@ -20,6 +20,7 @@ public sealed class ListProjectApiKeysEndpoint(IApiKeyStore keys) : EndpointWith
         Produces<ManagementPage<ProjectApiKey>>();
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
+        Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
         RequireAuthorization(UserAuthExtensions.PolicyName);
         Metadata(ListenerMetadata.Management);
     }
@@ -34,6 +35,7 @@ public sealed class ListProjectApiKeysEndpoint(IApiKeyStore keys) : EndpointWith
             {
                 ManagementPage<ProjectApiKey> listed => TypedResults.Ok(listed),
                 NotFound error => ErrorResponse.From(error),
+                Unavailable error => ErrorResponse.From(error),
             },
         };
 }

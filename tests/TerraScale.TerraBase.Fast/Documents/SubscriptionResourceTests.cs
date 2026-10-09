@@ -287,8 +287,9 @@ public sealed class SubscriptionResourceTests
         await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         using var data = await api.CreateClientAsync(database.Organization, ApiKeyScopes.DocumentsWrite);
         await ManagementApi.CreateCollectionAsync(data, database, "items");
-        var context = await api.Server.Services.GetRequiredService<ITenantDirectory>()
+        var found = await api.Server.Services.GetRequiredService<ITenantDirectory>()
             .FindDatabaseAsync(database.Organization, database.Project, database.Name, deadline.Token);
+        var context = found is TenantContext resolved ? resolved : throw new InvalidOperationException("the seeded database must resolve");
         var engine = api.Server.Services.GetRequiredService<SqliteStorageEngine>();
         var store = (SqliteDatabaseStore)(await engine.OpenDatabaseAsync(context!, deadline.Token))!;
         using var subscriber = api.WithToken(api.Issuer.Mint(api.User, token =>
@@ -342,8 +343,9 @@ public sealed class SubscriptionResourceTests
         await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         using var data = await api.CreateClientAsync(database.Organization, ApiKeyScopes.DocumentsWrite);
         await ManagementApi.CreateCollectionAsync(data, database, "items");
-        var context = await api.Server.Services.GetRequiredService<ITenantDirectory>()
+        var found = await api.Server.Services.GetRequiredService<ITenantDirectory>()
             .FindDatabaseAsync(database.Organization, database.Project, database.Name, deadline.Token);
+        var context = found is TenantContext resolved ? resolved : throw new InvalidOperationException("the seeded database must resolve");
         var engine = api.Server.Services.GetRequiredService<SqliteStorageEngine>();
         var store = (SqliteDatabaseStore)(await engine.OpenDatabaseAsync(context!, deadline.Token))!;
 

@@ -23,13 +23,16 @@ public sealed record PointInTimePlan(RestoreWindow Window, DateTimeOffset PointI
 public readonly union PointInTimePlanResult(PointInTimePlan, NotFound, Validation, Unavailable);
 
 /// <summary>A completed restore, or why its requested time could not be restored.</summary>
-public readonly union PointInTimeRestoreResult(Done, NotFound, Validation);
+public readonly union PointInTimeRestoreResult(Done, NotFound, Validation, Unavailable);
+
+/// <summary>A restore window, no backup, or an unreadable plan.</summary>
+public readonly union RestoreWindowResult(RestoreWindow, NotFound, Unavailable);
 
 /// <summary>Point-in-time restore from continuous backup (TS-633).</summary>
 public interface IPointInTimeRestore
 {
-    /// <summary>The restore window of <paramref name="database"/>; <see langword="null"/> when no backup remains within its plan's retention window.</summary>
-    Task<RestoreWindow?> GetWindowAsync(TenantContext database, CancellationToken cancellationToken, string destination = BackupDestinationNames.Platform);
+    /// <summary>The restore window, <see cref="NotFound"/> when no backup remains within its plan's retention window, or <see cref="Unavailable"/> when its plan cannot be read.</summary>
+    Task<RestoreWindowResult> GetWindowAsync(TenantContext database, CancellationToken cancellationToken, string destination = BackupDestinationNames.Platform);
 
     /// <summary>Reads bounded backup metadata without downloading, decrypting or importing any backup.</summary>
     Task<PointInTimePlanResult> PlanAsync(TenantContext database, DateTimeOffset at, CancellationToken cancellationToken, string destination = BackupDestinationNames.Platform);
@@ -75,7 +78,16 @@ internal sealed class PointInTimeRestore(
                 return new NotFound("continuous backup holds nothing of this database");
             }
 
-            var earliest = await EarliestAsync(database, first.At, now, deadline.Token).ConfigureAwait(false);
+            var retained = await EarliestAsync(database, first.At, now, deadline.Token).ConfigureAwait(false);
+            if (retained is not DateTimeOffset earliest)
+            {
+                return retained switch
+                {
+                    Unavailable error => error,
+                    DateTimeOffset => throw new System.Diagnostics.UnreachableException(),
+                };
+            }
+
             var remaining = MaxPlanItems - snapshots.Scanned;
             var latest = destination == BackupDestinationNames.Platform ? shipper.LastShipped(database, last.Generation) : null;
             SegmentScan? segments = null;
@@ -129,13 +141,13 @@ internal sealed class PointInTimeRestore(
         }
     }
 
-    public async Task<RestoreWindow?> GetWindowAsync(TenantContext database, CancellationToken cancellationToken, string destination = BackupDestinationNames.Platform)
+    public async Task<RestoreWindowResult> GetWindowAsync(TenantContext database, CancellationToken cancellationToken, string destination = BackupDestinationNames.Platform)
     {
         var now = time.GetUtcNow();
         using var backup = await targets.RestoreAsync(database, destination, cancellationToken).ConfigureAwait(false);
         if (backup is null)
         {
-            return null;
+            return new NotFound();
         }
 
         var file = BackupLayout.File(database);
@@ -143,11 +155,11 @@ internal sealed class PointInTimeRestore(
         return await WindowAsync(database, file, snapshots, now, backup, destination, cancellationToken).ConfigureAwait(false);
     }
 
-    private async Task<RestoreWindow?> WindowAsync(TenantContext database, string file, SnapshotScan? snapshots, DateTimeOffset now, BackupTarget backup, string destination, CancellationToken cancellationToken)
+    private async Task<RestoreWindowResult> WindowAsync(TenantContext database, string file, SnapshotScan? snapshots, DateTimeOffset now, BackupTarget backup, string destination, CancellationToken cancellationToken)
     {
         if (snapshots?.First is not { } first || snapshots.Last is not { } last)
         {
-            return null;
+            return new NotFound();
         }
 
         // The shipper knows its own progress; otherwise the newest segment after the newest snapshot tells.
@@ -165,9 +177,18 @@ internal sealed class PointInTimeRestore(
             }
         }
 
-        var earliest = await EarliestAsync(database, first.At, now, cancellationToken).ConfigureAwait(false);
+        var retained = await EarliestAsync(database, first.At, now, cancellationToken).ConfigureAwait(false);
+        if (retained is not DateTimeOffset earliest)
+        {
+            return retained switch
+            {
+                Unavailable error => error,
+                DateTimeOffset => throw new System.Diagnostics.UnreachableException(),
+            };
+        }
+
         latest = latest > last.At ? latest : last.At;
-        return earliest <= latest ? new(earliest, latest) : null;
+        return earliest <= latest ? new RestoreWindow(earliest, latest) : new NotFound();
     }
 
     public async Task<PointInTimeRestoreResult> RestoreAsync(TenantContext source, DateTimeOffset at, TenantContext target, CancellationToken cancellationToken, string destination = BackupDestinationNames.Platform)
@@ -187,9 +208,15 @@ internal sealed class PointInTimeRestore(
             return new NotFound("continuous backup holds nothing of this database");
         }
 
-        if (await WindowAsync(source, file, snapshots, now, backup, destination, cancellationToken).ConfigureAwait(false) is not { } window)
+        var found = await WindowAsync(source, file, snapshots, now, backup, destination, cancellationToken).ConfigureAwait(false);
+        if (found is not RestoreWindow window)
         {
-            return new NotFound("continuous backup holds nothing of this database within its plan's retention window");
+            return found switch
+            {
+                NotFound => new NotFound("continuous backup holds nothing of this database within its plan's retention window"),
+                Unavailable error => error,
+                RestoreWindow => throw new System.Diagnostics.UnreachableException(),
+            };
         }
 
         if (at < window.Earliest || at > window.Latest)
@@ -216,11 +243,17 @@ internal sealed class PointInTimeRestore(
 
     private static Unavailable PlanLimit() => new("the point-in-time plan metadata scan exceeds 10000 objects", "pitr_plan_limit");
 
-    private async Task<DateTimeOffset> EarliestAsync(TenantContext database, DateTimeOffset snapshotAt, DateTimeOffset now, CancellationToken cancellationToken)
+    private readonly union EarliestResult(DateTimeOffset, Unavailable);
+
+    private async Task<EarliestResult> EarliestAsync(TenantContext database, DateTimeOffset snapshotAt, DateTimeOffset now, CancellationToken cancellationToken)
     {
         // The plan's window, not the bucket's: retention keeps a predecessor snapshot, and object lock may keep more.
-        var floor = now - TimeSpan.FromDays(settings.RetentionDays[await tenants.PlanAsync(database.OrganizationId, cancellationToken).ConfigureAwait(false)]);
-        return snapshotAt > floor ? snapshotAt : floor;
+        return await tenants.PlanAsync(database.OrganizationId, cancellationToken).ConfigureAwait(false) switch
+        {
+            PlanTier tier => snapshotAt > now - TimeSpan.FromDays(settings.RetentionDays[tier])
+                ? snapshotAt : now - TimeSpan.FromDays(settings.RetentionDays[tier]),
+            Unavailable error => error,
+        };
     }
 
     // Scan raw objects so malformed metadata also consumes the preview budget. Both restore and preview select here.

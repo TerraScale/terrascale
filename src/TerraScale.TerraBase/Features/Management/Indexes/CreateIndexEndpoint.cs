@@ -23,6 +23,7 @@ public sealed class CreateIndexEndpoint(IManagementService management, IIndexSer
         Produces<IndexBody>(StatusCodes.Status201Created);
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
+        Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
         Produces<ErrorBody>(StatusCodes.Status409Conflict);
         Produces<ErrorBody>(StatusCodes.Status403Forbidden);
         RequireAuthorization(ApiKeyScopes.DatabasesWrite);
@@ -40,6 +41,7 @@ public sealed class CreateIndexEndpoint(IManagementService management, IIndexSer
             {
                 NotFound error => ErrorResponse.From(error),
                 Forbidden error => ErrorResponse.From(error),
+                Unavailable error => ErrorResponse.From(error),
                 TenantContext database => await indexes.CreateAsync(database, index, cancellationToken) switch
                 {
                     IndexBody created => TypedResults.Created($"{ManagementRoute.DatabasePath(HttpContext, database)}/indexes/{index.Name}", created),

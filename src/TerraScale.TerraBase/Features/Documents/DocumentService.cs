@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Diagnostics.Metrics;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -95,7 +96,17 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
         }
 
         CollectionInfo collection;
-        using (await quota.EnterAsync(database, store, cancellationToken).ConfigureAwait(false))
+        var entered = await quota.EnterAsync(database, store, cancellationToken).ConfigureAwait(false);
+        if (entered is not StorageQuotaLease admission)
+        {
+            return entered switch
+            {
+                Unavailable error => error,
+                StorageQuotaLease => throw new UnreachableException(),
+            };
+        }
+
+        using (admission)
         {
             var transaction = await store.BeginTransactionAsync(write: true, cancellationToken).ConfigureAwait(false);
             await using (transaction.ConfigureAwait(false))
@@ -347,15 +358,34 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
             return new DocumentRejected(DocumentRoute.UnknownDatabase);
         }
 
-        using var admission = await quota.EnterAsync(database, store, cancellationToken).ConfigureAwait(false);
+        var entered = await quota.EnterAsync(database, store, cancellationToken).ConfigureAwait(false);
+        if (entered is not StorageQuotaLease admission)
+        {
+            return entered switch
+            {
+                Unavailable error => new DocumentRejected(error),
+                StorageQuotaLease => throw new UnreachableException(),
+            };
+        }
+
+        using var lease = admission;
         var delta = 0L;
         var (outcome, offset) = await store.WriteAsync(
             async (transaction, token) =>
             {
                 var (result, change, growthOp) = await ApplyAllAsync(store, transaction, operations, indexErrors, admission.RequiresAccounting, token).ConfigureAwait(false);
                 delta = change;
-                return result is WriteResult && await admission.CheckAsync(delta, token).ConfigureAwait(false) is { } exceeded
-                    ? new DocumentRejected(exceeded, indexErrors ? growthOp : null) : result;
+                if (result is not WriteResult)
+                {
+                    return result;
+                }
+
+                return await admission.CheckAsync(delta, token).ConfigureAwait(false) switch
+                {
+                    Done => result,
+                    QuotaExceeded error => new DocumentRejected(error, indexErrors ? growthOp : null),
+                    Unavailable error => new DocumentRejected(error, indexErrors ? growthOp : null),
+                };
             }, outcome => outcome is WriteResult, cancellationToken)
             .ConfigureAwait(false);
         if (outcome is not WriteResult written)

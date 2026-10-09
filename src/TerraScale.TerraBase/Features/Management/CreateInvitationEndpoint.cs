@@ -1,3 +1,4 @@
+using TerraBase.Errors;
 using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
@@ -25,17 +26,24 @@ public sealed class CreateInvitationEndpoint(IAccessService access) : Endpoint<I
         Produces<ErrorBody>(StatusCodes.Status403Forbidden);
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
         Produces<ErrorBody>(StatusCodes.Status409Conflict);
+        Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
         RequireAuthorization(UserAuthExtensions.PolicyName);
         Metadata(ListenerMetadata.Management);
     }
 
     /// <inheritdoc />
-    public override async ValueTask<IResult> HandleAsync(InvitationRequest request, CancellationToken cancellationToken)
-    {
-        ArgumentNullException.ThrowIfNull(request);
-        var result = await access.InviteAsync(ManagementRoute.UserId(HttpContext), ManagementRoute.OrganizationId(HttpContext), ManagementRoute.Email(request.Email), ManagementRoute.Role(request.Role ?? OrganizationRole.Member), cancellationToken);
-        return result.Value is { } value
-            ? TypedResults.Created($"{HttpContext.Request.Path}/{value.Invitation.Id}", value)
-            : ManagementRoute.Error(result.Error);
-    }
+    public override async ValueTask<IResult> HandleAsync(InvitationRequest request, CancellationToken cancellationToken) =>
+        (ManagementRoute.CheckEmail(request.Email), ManagementRoute.CheckRole(request.Role ?? OrganizationRole.Member)) switch
+        {
+            (Validation error, _) => ErrorResponse.From(error),
+            (_, Validation error) => ErrorResponse.From(error),
+            (string email, OrganizationRole role) => await access.InviteAsync(ManagementRoute.UserId(HttpContext), ManagementRoute.OrganizationId(HttpContext), email, role, cancellationToken) switch
+            {
+                CreatedInvitation value => TypedResults.Created($"{HttpContext.Request.Path}/{value.Invitation.Id}", value),
+                NotFound error => ErrorResponse.From(error),
+                Forbidden error => ErrorResponse.From(error),
+                Conflict error => ErrorResponse.From(error),
+                Unavailable error => ErrorResponse.From(error),
+            },
+        };
 }

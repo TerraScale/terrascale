@@ -23,6 +23,7 @@ public sealed class GetDocumentEndpoint(IDocumentService documents, ITenantDirec
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
         Produces<ErrorBody>(StatusCodes.Status409Conflict);
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
+        Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
         RequireAuthorization(ApiKeyScopes.DocumentsRead);
         Metadata(ListenerMetadata.Client);
     }
@@ -33,6 +34,7 @@ public sealed class GetDocumentEndpoint(IDocumentService documents, ITenantDirec
         {
             Validation error => ErrorResponse.From(error),
             NotFound error => ErrorResponse.From(error),
+            Unavailable error => ErrorResponse.From(error),
             DocumentKey key => DocumentRoute.CheckParameters(HttpContext, "id") switch
             {
                 Validation error => ErrorResponse.From(error),

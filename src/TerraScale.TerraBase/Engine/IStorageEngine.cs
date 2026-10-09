@@ -52,17 +52,19 @@ public interface IStorageEngine : IAsyncDisposable
     /// Creates a database, optionally copying <paramref name="source"/> within the same organization, after recording
     /// creation ownership. Throws <see cref="IOException"/> before invoking <paramref name="recordIntent"/> when the
     /// destination contains a database file, sidecars or private creation artifacts, including directories and case variants.
-    /// Returns false only when the source is missing. The destination check, callback and file publication are
+    /// Returns false when the source is missing or the callback refuses creation. A refused callback releases the
+    /// new reservation without creating files. The destination check, callback and file publication are
     /// serialized with engine lifecycle operations. Per-database initialization is registered before releasing that
     /// lock, then awaited outside it. A reservation blocks competing creation until
     /// <see cref="CompleteDatabaseIntentAsync"/> is called after registration or cleanup commits, including after failure.
     /// </summary>
     /// <remarks>
     /// The callback may only persist ownership through an already opened system store; it must not create or open tenant
-    /// storage or otherwise reenter engine lifecycle operations. It is not invoked when the source is missing.
+    /// storage or otherwise reenter engine lifecycle operations. It returns true after recording ownership, or false
+    /// without recording ownership to refuse creation. It is not invoked when the source is missing.
     /// </remarks>
     ValueTask<bool> CreateDatabaseWithIntentAsync(
-        TenantContext database, TenantContext? source, Func<CancellationToken, ValueTask> recordIntent, CancellationToken cancellationToken);
+        TenantContext database, TenantContext? source, Func<CancellationToken, ValueTask<bool>> recordIntent, CancellationToken cancellationToken);
 
     /// <summary>Releases a lifecycle reservation after its cleanup intent was cleared or registration committed.</summary>
     ValueTask CompleteDatabaseIntentAsync(TenantContext database, CancellationToken cancellationToken);

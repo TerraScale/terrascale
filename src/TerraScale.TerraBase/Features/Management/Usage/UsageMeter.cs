@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Diagnostics.Metrics;
 using System.Text.Json;
 using TerraBase.Configuration;
@@ -75,6 +76,9 @@ internal enum UsageAccept
     TooManySenders,
 }
 
+/// <summary>Whether a follower batch was accepted, or why the catalog cannot be read now.</summary>
+internal readonly union UsageAcceptResult(UsageAccept, Unavailable);
+
 /// <summary>Which buckets counts belong in.</summary>
 internal enum UsageScope
 {
@@ -104,6 +108,14 @@ internal readonly record struct UsageKey(DatabaseOwner Database, long Hour, Usag
 
     public long Bucket(UsageGranularity granularity) => (Hour * 60 + Minute) / granularity.Minutes;
 }
+
+/// <summary>Usage counts of a database: the lifetime totals and one entry per bucket of the window read.</summary>
+/// <param name="Lifetime">The lifetime totals.</param>
+/// <param name="Series">One entry per bucket.</param>
+internal sealed record UsageCounts(OpCounts Lifetime, OpCounts[] Series);
+
+/// <summary>Usage counts, or why they cannot be read now.</summary>
+internal readonly union UsageCountsResult(UsageCounts, Unavailable);
 
 /// <summary>
 /// Counts operations in memory per database (organization, project and database: the request's tenant) and UTC hour, and
@@ -178,7 +190,7 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
 
     // Retired senders whose saved state no flush deleted yet.
     private readonly HashSet<string> _retiredSenders = [with(StringComparer.Ordinal)];
-    private Task? _sendersLoaded;
+    private Task<CatalogCheck>? _sendersLoaded;
 
     // Makes a flush (catalog commit plus removal from memory) atomic for readers, so totals never count twice or miss.
     private readonly SemaphoreSlim _flush = new(1, 1);
@@ -247,11 +259,14 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
     /// On a catalog primary: adds a follower's batch unless its sequence is at or below the highest added for its sender's
     /// epoch (a retry, or an attempt that arrived late), also before this process started, once a flush saved it.
     /// </summary>
-    public async ValueTask<UsageAccept> AcceptAsync(
+    public async ValueTask<UsageAcceptResult> AcceptAsync(
         string sender, string epoch, long sequence, IReadOnlyList<KeyValuePair<UsageKey, OpCounts>> counts, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(counts);
-        await LoadSendersAsync().WaitAsync(cancellationToken).ConfigureAwait(false);
+        if (await LoadSendersAsync(cancellationToken).ConfigureAwait(false) is Unavailable refused)
+        {
+            return refused;
+        }
         lock (_accept)
         {
             var now = time.GetUtcNow();
@@ -309,7 +324,7 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
     /// <paramref name="proceed"/>, when set, runs before each catalog read (once a flush let this read in, after settling one
     /// in doubt, and before each page of the series) and throws to start none.
     /// </summary>
-    public async ValueTask<(OpCounts Lifetime, OpCounts[] Series)> GetAsync(
+    public async ValueTask<UsageCountsResult> GetAsync(
         TenantContext database, UsageWindow window, CancellationToken cancellationToken, Action? proceed = null)
     {
         return await ReadAsync(database, window, meters: false, filter: null, proceed, cancellationToken).ConfigureAwait(false);
@@ -319,12 +334,12 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
     /// Like <see cref="GetAsync"/>, with regional meters. <paramref name="filter"/>, when set, keeps only its dimensions of
     /// each entry as it is read and admits memory for what it keeps.
     /// </summary>
-    public async ValueTask<(OpCounts Lifetime, OpCounts[] Series)> GetObservationsAsync(
+    public async ValueTask<UsageCountsResult> GetObservationsAsync(
         TenantContext database, UsageWindow window, CancellationToken cancellationToken, Action? proceed = null, ObservationFilter? filter = null) =>
         await ReadAsync(database, window, meters: true, filter, proceed, cancellationToken).ConfigureAwait(false);
 
     // Counts-only reads skip every entry's meters as it is read, so usage totals retain no analytics observations.
-    private async ValueTask<(OpCounts Lifetime, OpCounts[] Series)> ReadAsync(
+    private async ValueTask<UsageCountsResult> ReadAsync(
         TenantContext database, UsageWindow window, bool meters, ObservationFilter? filter, Action? proceed, CancellationToken cancellationToken)
     {
 
@@ -352,15 +367,28 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
             proceed?.Invoke();
             if (_inDoubt is not null)
             {
-                await SettleAsync(cancellationToken).ConfigureAwait(false);
+                if (await SettleAsync(cancellationToken).ConfigureAwait(false) is Unavailable refused)
+                {
+                    return refused;
+                }
                 proceed?.Invoke();
             }
 
-            var (lifetime, series) = await catalog.ReadAsync(
-                async transaction => (
-                    await transaction.GetAsync(UsageCollection(owner.DatabaseId), Ops, cancellationToken).ConfigureAwait(false) is { } saved ? Parse(saved) : OpCounts.Zero,
+            var read = await catalog.ReadAsync<UsageCountsResult>(
+                async transaction => new UsageCounts(
+                    await transaction.GetAsync(UsageCollection(owner.DatabaseId), Ops, cancellationToken).ConfigureAwait(false) is { } document ? Parse(document) : OpCounts.Zero,
                     await ReadSeriesAsync(transaction, owner.DatabaseId, window, Parse, proceed, cancellationToken).ConfigureAwait(false)),
-                cancellationToken).ConfigureAwait(false);
+                static error => error, cancellationToken).ConfigureAwait(false);
+            if (read is not UsageCounts saved)
+            {
+                return read switch
+                {
+                    Unavailable error => error,
+                    UsageCounts => throw new UnreachableException(),
+                };
+            }
+
+            var (lifetime, series) = saved;
             // A follower's own counts reach these totals once the primary saved them and they replicated here; adding the
             // ones still pending could count a batch twice, the primary having saved it before its acknowledgement came.
             foreach (var (key, entry) in options.CatalogPrimary is null && _pending.TryGetValue(owner, out var pending) ? pending : [])
@@ -380,7 +408,7 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
                 series[i] = OpCounts.Zero;
             }
 
-            return (lifetime, series);
+            return new UsageCounts(lifetime, series);
         }
         finally
         {
@@ -504,7 +532,10 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
     private async ValueTask FlushLockedAsync(CancellationToken cancellationToken)
     {
         Compact();
-        await SettleAsync(cancellationToken).ConfigureAwait(false);
+        if (await SettleAsync(cancellationToken).ConfigureAwait(false) is Unavailable)
+        {
+            return;
+        }
         KeyValuePair<UsageKey, OpCounts>[] batch;
         UsageSender[] senders;
         string[] retired;
@@ -521,11 +552,23 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
             return;
         }
 
+        // Empty flushes never initialize the catalog. Accept it before saving a nonempty batch.
+        if (await catalog.CheckAsync(cancellationToken).ConfigureAwait(false) is Unavailable)
+        {
+            return;
+        }
+
         var id = EntityIds.New().ToString();
         int dropped;
         try
         {
-            dropped = await WriteAsync(id, batch, senders, retired, cancellationToken).ConfigureAwait(false);
+            var written = await WriteAsync(id, batch, senders, retired, cancellationToken).ConfigureAwait(false);
+            if (written is not int saved)
+            {
+                return;
+            }
+
+            dropped = saved;
         }
         catch
         {
@@ -562,14 +605,15 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
 
     // Decides a flush that threw: it committed if any database it saved holds its id (one transaction saves all or none),
     // and then its counts leave memory; otherwise they stay pending for the next flush. A failed read leaves it in doubt.
-    private async ValueTask SettleAsync(CancellationToken cancellationToken)
+    // Only a flush on the primary, which accepted the catalog first, leaves one in doubt.
+    private async ValueTask<CatalogCheck> SettleAsync(CancellationToken cancellationToken)
     {
         if (_inDoubt is not { } doubt)
         {
-            return;
+            return new Done();
         }
 
-        var committed = await catalog.ReadAsync(async transaction =>
+        var committed = await catalog.ReadAsync<SettleResult>(async transaction =>
         {
             foreach (var database in doubt.Batch.Select(entry => entry.Key.Database.DatabaseId).Distinct())
             {
@@ -581,8 +625,17 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
             }
 
             return false;
-        }, cancellationToken).ConfigureAwait(false);
-        if (committed)
+        }, static error => error, cancellationToken).ConfigureAwait(false);
+        if (committed is not bool settled)
+        {
+            return committed switch
+            {
+                Unavailable refused => refused,
+                bool => throw new UnreachableException(),
+            };
+        }
+
+        if (settled)
         {
             foreach (var (key, counts) in doubt.Batch)
             {
@@ -591,14 +644,15 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
         }
 
         _inDoubt = null;
+        return new Done();
     }
 
     // Returns how many databases of the batch no longer exist.
-    private ValueTask<int> WriteAsync(
+    private ValueTask<FlushResult> WriteAsync(
         string id, KeyValuePair<UsageKey, OpCounts>[] batch, UsageSender[] senders, string[] retired, CancellationToken cancellationToken)
     {
         var minute = CurrentMinute();
-        return catalog.WriteAsync(async transaction =>
+        return catalog.WriteAsync<FlushResult>(async transaction =>
         {
             foreach (var sender in senders)
             {
@@ -646,7 +700,7 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
             }
 
             return dropped;
-        }, cancellationToken);
+        }, static error => error, cancellationToken);
     }
 
     private static async ValueTask AddAsync(IStorageTransaction transaction, string collection, string id, OpCounts counts, CancellationToken cancellationToken)
@@ -788,8 +842,9 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
     }
 
     // Loads what earlier processes saved of each sender once; a failed load is tried again by the next batch.
-    private Task LoadSendersAsync()
+    private async ValueTask<CatalogCheck> LoadSendersAsync(CancellationToken cancellationToken)
     {
+        Task<CatalogCheck> loading;
         lock (_accept)
         {
             if (_sendersLoaded is null or { IsFaulted: true } or { IsCanceled: true })
@@ -797,14 +852,37 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
                 _sendersLoaded = LoadAsync();
             }
 
-            return _sendersLoaded;
+            loading = _sendersLoaded;
         }
 
-        async Task LoadAsync()
+        var result = await loading.WaitAsync(cancellationToken).ConfigureAwait(false);
+        if (result is Unavailable)
         {
-            var saved = await catalog.ReadAsync(
-                transaction => ListAllAsync(transaction, Senders, TerraBaseJsonContext.Default.UsageSender, CancellationToken.None),
-                CancellationToken.None).ConfigureAwait(false);
+            lock (_accept)
+            {
+                if (ReferenceEquals(_sendersLoaded, loading))
+                {
+                    _sendersLoaded = null;
+                }
+            }
+        }
+
+        return result;
+
+        async Task<CatalogCheck> LoadAsync()
+        {
+            var read = await catalog.ReadAsync<SendersResult>(
+                async transaction => await ListAllAsync(transaction, Senders, TerraBaseJsonContext.Default.UsageSender, CancellationToken.None).ConfigureAwait(false),
+                static error => error, CancellationToken.None).ConfigureAwait(false);
+            if (read is not List<UsageSender> saved)
+            {
+                return read switch
+                {
+                    Unavailable refused => refused,
+                    List<UsageSender> => throw new UnreachableException(),
+                };
+            }
+
             lock (_accept)
             {
                 foreach (var sender in saved)
@@ -812,8 +890,14 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
                     _senders.TryAdd(sender.Sender, sender);
                 }
             }
+
+            return new Done();
         }
     }
+
+    private readonly union SettleResult(bool, Unavailable);
+    private readonly union FlushResult(int, Unavailable);
+    private readonly union SendersResult(List<UsageSender>, Unavailable);
 
     // proceed runs before each page, so a read that ends past a request's deadline starts no further one.
     private static OpCounts Strip(OpCounts counts, bool meters) => meters || counts.Meters is null ? counts : counts with { Meters = null };

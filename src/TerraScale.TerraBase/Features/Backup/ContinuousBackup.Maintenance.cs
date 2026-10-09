@@ -1,5 +1,7 @@
+using System.Diagnostics;
 using System.Text.Json;
 using TerraBase.Engine;
+using TerraBase.Errors;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
 
@@ -46,10 +48,27 @@ internal sealed partial class ContinuousBackup
     private async Task RetainAsync(ShippedFile file, CancellationToken cancellationToken)
     {
         var now = _time.GetUtcNow();
+        if (file.Database is null)
+        {
+            file.RetentionDays = _settings.RetentionDays.Values.Max();
+        }
+        else
+        {
+            var plan = await _tenants.PlanAsync(file.Database.OrganizationId, cancellationToken).ConfigureAwait(false);
+            if (plan is not PlanTier tier)
+            {
+                _ = plan switch
+                {
+                    Unavailable => new Done(), // Do not expire data or advance the retention retry timestamp.
+                    PlanTier => throw new UnreachableException(),
+                };
+                return;
+            }
+
+            file.RetentionDays = _settings.RetentionDays[tier];
+        }
+
         file.RetainedAt = now;
-        file.RetentionDays = file.Database is null
-            ? _settings.RetentionDays.Values.Max()
-            : _settings.RetentionDays[await _tenants.PlanAsync(file.Database.OrganizationId, cancellationToken).ConfigureAwait(false)];
         var cutoff = now - TimeSpan.FromDays(file.RetentionDays) - RetentionGrace;
         long size = 0;
         var measure = now - file.SizedAt >= SizeInterval;

@@ -1,7 +1,7 @@
-using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
 using TerraBase.Hosting;
+using TerraBase.Tenancy;
 using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management.Usage;
@@ -28,6 +28,7 @@ public sealed class GetDatabaseUsageEndpoint(IManagementService management, IUsa
         Produces<DatabaseUsage>();
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
+        Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
         RequireAuthorization(ApiKeyScopes.DatabasesRead);
         Metadata(new ProjectManagementRoute(), ListenerMetadata.Management);
     }
@@ -40,20 +41,17 @@ public sealed class GetDatabaseUsageEndpoint(IManagementService management, IUsa
             UsageWindow window => await ReadAsync(window, cancellationToken),
         };
 
-    private async ValueTask<IResult> ReadAsync(UsageWindow window, CancellationToken cancellationToken)
-    {
-        try
+    private async ValueTask<IResult> ReadAsync(UsageWindow window, CancellationToken cancellationToken) =>
+        await ManagementRoute.DatabaseAsync(HttpContext, management, cancellationToken) switch
         {
-            return await ManagementRoute.DatabaseAsync(HttpContext, management, cancellationToken) is { } database
-                && await usage.GetDatabaseUsageAsync(database, window, cancellationToken) is { } result
-                ? TypedResults.Ok(result)
-                : TypedResults.NotFound();
-        }
-        catch (QueryCapacityException)
-        {
-            return HttpContext.Features.Get<LegacyManagementRoute>() is not null
-                ? TypedResults.BadRequest("query too expensive")
-                : ErrorResponse.From(new Validation("query too expensive", "invalid_query"));
-        }
-    }
+            TenantContext database => await usage.GetDatabaseUsageAsync(database, window, cancellationToken) switch
+            {
+                DatabaseUsage result => TypedResults.Ok(result),
+                NotFound error => ErrorResponse.From(error),
+                Validation error => ErrorResponse.From(error),
+                Unavailable error => ErrorResponse.From(error),
+            },
+            NotFound error => ErrorResponse.From(error),
+            Unavailable error => ErrorResponse.From(error),
+        };
 }

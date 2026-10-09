@@ -32,11 +32,17 @@ public sealed record BackupPolicyRequest(string? FullBackupCron, int? RetentionD
 /// <param name="Name">The new database's name; the first free of <c>&lt;source&gt;-restore</c>, <c>-restore-2</c>, … without it.</param>
 public sealed record PointInTimeRestoreRequest(DateTimeOffset? PointInTime, string? Name, string? Destination = null);
 
+/// <summary>A page of a database's backups.</summary>
+public readonly union ListBackupsResult(ManagementPage<DatabaseBackup>, Unavailable);
+
 /// <summary>A completed backup, or that its database is gone or out of the user's reach.</summary>
-public readonly union CreateBackupResult(DatabaseBackup, NotFound);
+public readonly union CreateBackupResult(DatabaseBackup, NotFound, Unavailable);
+
+/// <summary>A database's backup policy.</summary>
+public readonly union GetBackupPolicyResult(BackupPolicy, Unavailable);
 
 /// <summary>The saved policy, or why it was not saved.</summary>
-public readonly union SetBackupPolicyResult(BackupPolicy, NotFound, Forbidden);
+public readonly union SetBackupPolicyResult(BackupPolicy, NotFound, Forbidden, Unavailable);
 
 /// <summary>The database a backup was restored into, or why it was not restored; a taken name is a conflict.</summary>
 public readonly union RestoreBackupResult(ManagedDatabase, NotFound, Conflict, Forbidden, Validation, QuotaExceeded, Unavailable);
@@ -45,13 +51,13 @@ public readonly union RestoreBackupResult(ManagedDatabase, NotFound, Conflict, F
 public interface IManagedBackupService
 {
     /// <summary>Lists the registered backups of a database, oldest first; the cursor is opaque.</summary>
-    ValueTask<ManagementPage<DatabaseBackup>> ListBackupsAsync(string organizationId, string databaseId, string? after, int limit, CancellationToken cancellationToken);
+    ValueTask<ListBackupsResult> ListBackupsAsync(string organizationId, string databaseId, string? after, int limit, CancellationToken cancellationToken);
 
     /// <summary>Takes a backup of <paramref name="database"/> now.</summary>
     ValueTask<CreateBackupResult> CreateBackupAsync(string userId, string organizationId, TenantContext database, CancellationToken cancellationToken);
 
     /// <summary>Reads the policy of a database, or the default policy when none was saved.</summary>
-    ValueTask<BackupPolicy> GetPolicyAsync(string databaseId, CancellationToken cancellationToken);
+    ValueTask<GetBackupPolicyResult> GetPolicyAsync(string databaseId, CancellationToken cancellationToken);
 
     /// <summary>Saves the policy of a database; the values are validated by the caller.</summary>
     ValueTask<SetBackupPolicyResult> SetPolicyAsync(
@@ -71,6 +77,9 @@ public interface IManagedBackupService
     ValueTask<RestoreBackupResult> RestorePointInTimeAsync(
         string userId, string organizationId, TenantContext database, DateTimeOffset at, string? name, CancellationToken cancellationToken, string destination = BackupDestinationNames.Platform);
 
-    /// <summary>One scheduler pass: a page of the storage sweep, retention, then the scheduled backups that are due.</summary>
+    /// <summary>
+    /// One scheduler pass: a page of the storage sweep, retention, then the scheduled backups that are due; none while the
+    /// catalog is at a version this build cannot use.
+    /// </summary>
     ValueTask RunScheduleAsync(CancellationToken cancellationToken);
 }

@@ -4,6 +4,7 @@ using System.Text.Json;
 using Bogus;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
+using TerraBase.Features.Management;
 using TerraBase.Primitives;
 using TerraBase.Testing;
 
@@ -14,6 +15,48 @@ public sealed class SchemaApiTests
     private const string BadCollection = "collection must be a lowercase name of at most 63 characters";
 
     private static readonly Faker Faker = new();
+
+    [Test]
+    public async Task Unique_schema_declaration_propagates_catalog_refusal_after_route_resolution()
+    {
+        var refuse = false;
+        var lookups = 0;
+        await using var api = await ManagementApi.StartAsync(services: services =>
+        {
+            var registration = services.Single(service => service.ServiceType == typeof(IManagementService));
+            services.Remove(registration);
+            services.AddSingleton(provider => UsageApiTests.SlowManagement.Wrap(
+                (IManagementService)registration.ImplementationFactory!(provider), _ => { },
+                operation =>
+                {
+                    if (Volatile.Read(ref refuse) && operation == nameof(IManagementService.GetWritableDatabaseTenantAsync))
+                    {
+                        Interlocked.Increment(ref lookups);
+                        return new ValueTask<WritableDatabaseTenantResult>(ManagementErrors.CatalogUnsupported);
+                    }
+
+                    return null;
+                }));
+        });
+        var database = await api.CreateManagedDatabaseAsync();
+        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
+        using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
+        await ManagementApi.CreateCollectionAsync(data, database, "people");
+        using var signed = api.WithToken(api.Issuer.Mint(api.User, token =>
+        {
+            token.Claims!["project_id"] = database.Project;
+            token.Claims!["scope"] = "databases:write";
+        }));
+        var path = Uri(database.Data + "/schema/people");
+        var declaration = new { fields = new[] { new { name = "email", unique = true } } };
+        Volatile.Write(ref refuse, true);
+        await ErrorAssert.ErrorAsync(signed.PutAsJsonAsync(path, declaration), HttpStatusCode.ServiceUnavailable,
+            "unavailable", "the management catalog has an old or unsupported format; discard the affected data");
+        await Assert.That(Volatile.Read(ref lookups)).IsEqualTo(1);
+        Volatile.Write(ref refuse, false);
+        using var recovered = await signed.PutAsJsonAsync(path, declaration);
+        recovered.EnsureSuccessStatusCode();
+    }
 
     [Test]
     public async Task Collections_are_listed_with_document_counts_and_bytes()

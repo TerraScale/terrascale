@@ -1,3 +1,4 @@
+using TerraBase.Errors;
 using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
@@ -17,13 +18,17 @@ public sealed class GetProjectEndpoint(IManagementService management) : Endpoint
         Tags(ManagementRoute.Tag);
         Produces<Project>();
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
+        Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
         RequireAuthorization(UserAuthExtensions.PolicyName);
         Metadata(ListenerMetadata.Management);
     }
 
     /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
-        await management.GetProjectAsync(ManagementRoute.UserId(HttpContext), ManagementRoute.OrganizationId(HttpContext), ManagementRoute.Value(HttpContext, "project"), cancellationToken) is { } project
-            ? TypedResults.Ok(project)
-            : TypedResults.NotFound();
+        await management.GetProjectAsync(ManagementRoute.UserId(HttpContext), ManagementRoute.OrganizationId(HttpContext), ManagementRoute.Value(HttpContext, "project"), cancellationToken) switch
+        {
+            Project value => TypedResults.Ok(value),
+            NotFound error => ErrorResponse.From(error),
+            Unavailable error => ErrorResponse.From(error),
+        };
 }

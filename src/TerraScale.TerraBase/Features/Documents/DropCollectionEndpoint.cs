@@ -30,6 +30,7 @@ public sealed class DropCollectionEndpoint(IDocumentService documents, ITenantDi
         {
             Validation error => ErrorResponse.From(error),
             NotFound error => ErrorResponse.From(error),
+            Unavailable error => ErrorResponse.From(error),
             TenantContext database => (
                 DocumentRoute.CheckCollectionName(HttpContext), DocumentRoute.CheckParameters(HttpContext), DocumentRoute.CheckIdempotencyKey(HttpContext)) switch
             {
