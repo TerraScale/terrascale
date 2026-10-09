@@ -63,7 +63,8 @@ Each point contains:
   so every database is sampled within ceil(databases / 128) minutes whatever
   order the engine lists them in. A database whose size cannot be read loses
   only its own sample, and a pass that fails is retried within the minute
-  without sampling a database twice. Sampling runs on its own loop, so a slow
+  without sampling a database twice. Every sample of a pass belongs to the
+  minute the pass started in, however long sizing takes. Sampling runs on its own loop, so a slow
   database listing never delays usage delivery.
 - `clientBandwidth` and `replicationBandwidth`, each with `bytesSent` and
   `bytesReceived`. Client bandwidth counts actual HTTP body reads and writes
@@ -112,7 +113,7 @@ the regions the caller sends in its shard identity and the peer returns with its
 digest; a request counts once its identity is validated and its database found,
 before the state work that may still reject it; an initiator counts each request
 before awaiting its response, and an unanswered digest goes to the region that
-peer named in its last answer), and `handoff` (peer or WAN journal replay after a failed transfer,
+peer named in its last answered digest, whether or not that repair then succeeded), and `handoff` (peer or WAN journal replay after a failed transfer,
 initial catch-up, or a backlog longer than one 256-group sender turn). A peer
 replay stays `handoff` across turns until a turn ends with the peer at the head. Shared discovery payloads are divided across advertised
 databases, conserving their encoded length. No tenant identifiers are used as
@@ -132,7 +133,8 @@ origin advertised stays its target until the verified applied prefix reaches
 it, so neither a round that does not reach it nor a stale lower advertisement
 can report its database caught up; an ahead answer or journal conflict holds, through later failed or
 unverified pulls, until a group from that origin verifiably extends the applied
-journal. Entries go with their database, and an undiverged one when a complete
+journal, or matches the journal head when another stream committed that group first
+(an older duplicate is not compared, so it resolves nothing). Entries go with their database, and an undiverged one when a complete
 discovery sweep did not freshly advertise it (a failing retry is no
 advertisement); an incomplete sweep keeps every outstanding target however long
 it runs. A database a sweep certifies this way gets its updated health published. At most 4,096 origins are retained per member; a divergence beyond that
@@ -174,8 +176,10 @@ counted. A follower batch carries at most 1 MiB of measurement JSON,
 Deploying this format is a whole-fleet cutover (verify, wipe, deploy, re-bootstrap),
 never a rolling mix. Measurements are best effort while read and write totals are
 not: when the primary refuses a follower batch, for a measurement it rejects or a
-minute scope it predates, the follower resends the totals alone once under the
-same sequence, and the dropped measurements are counted. Byte meters (client and
+minute scope it predates, or lacks the memory to read its measurements, the follower
+resends the totals alone once under the same sequence, and the dropped measurements
+are counted. A batch whose totals the primary still has no capacity for stays unsent
+and goes again with its sequence. Byte meters (client and
 replication bandwidth, storage) are bounded only by their 64-bit range, since
 their aggregates outgrow the 10^12 operation-count bound; merging and every
 analytics total saturate at that range instead of wrapping negative or failing.
