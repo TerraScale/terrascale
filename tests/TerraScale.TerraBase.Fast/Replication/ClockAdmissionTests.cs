@@ -8,6 +8,7 @@ using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
 using TerraBase.Features.Replication;
 using TerraBase.Features.Replication.V1;
+using TerraBase.Primitives;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Replication;
@@ -38,7 +39,7 @@ public sealed class ClockAdmissionTests
         var token = deadline.Token;
         using var collection = await client.PostAsJsonAsync(new Uri($"{tenant.Path("db")}/collections", UriKind.Relative), new { name = "items" }, token);
         collection.EnsureSuccessStatusCode();
-        var id = Guid.CreateVersion7().ToString("D");
+        var id = EntityIds.New().ToString();
         var value = new Faker().Lorem.Word();
         using var original = await client.PutAsJsonAsync(Document(tenant, id), new { value }, token);
         original.EnsureSuccessStatusCode();
@@ -79,7 +80,7 @@ public sealed class ClockAdmissionTests
             "nearMax" => VersionClock.MaxVersion + 1,
             _ => head + VersionClock.MaxAdvance + 1,
         };
-        var addedId = Guid.CreateVersion7().ToString("D");
+        var addedId = EntityIds.New().ToString();
         DocumentChange[] changes =
         [
             new("new_collection", addedId, scenario == "chain" ? head + VersionClock.MaxAdvance : head + 1, "{}"u8.ToArray()),
@@ -116,7 +117,7 @@ public sealed class ClockAdmissionTests
         }
 
         // Rejection cannot poison even an unrelated key in this same database.
-        var followingId = Guid.CreateVersion7().ToString("D");
+        var followingId = EntityIds.New().ToString();
         using var following = await client.PutAsJsonAsync(Document(tenant, followingId), new { value }, token);
         await Assert.That(following.StatusCode).IsEqualTo(HttpStatusCode.Created);
         await using var final = await store.BeginTransactionAsync(write: false, token);
@@ -144,7 +145,7 @@ public sealed class ClockAdmissionTests
             head = await read.GetOffsetAsync(token);
         }
 
-        var id = Guid.CreateVersion7().ToString("D");
+        var id = EntityIds.New().ToString();
         await using (var write = await store.BeginTransactionAsync(write: true, token))
         {
             await write.SetAppliedSequenceAsync(origin, 1, token);
@@ -198,7 +199,7 @@ public sealed class ClockAdmissionTests
         var target = (await receiver.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(tenant.Database("db"), token))!;
         await SetClockAsync(tenant.File(sender, "db"), VersionClock.MaxVersion - 1, token);
         await SetClockAsync(tenant.File(receiver, "db"), VersionClock.MaxVersion - VersionClock.MaxAdvance, token);
-        var id = Guid.CreateVersion7().ToString("D");
+        var id = EntityIds.New().ToString();
         var value = new Faker().Lorem.Word();
         using var last = await client.PutAsJsonAsync(Document(tenant, id), new { value }, token);
         await Assert.That(last.StatusCode).IsEqualTo(HttpStatusCode.Created);
@@ -215,7 +216,7 @@ public sealed class ClockAdmissionTests
             await Assert.That(await remote.GetOffsetAsync(token)).IsEqualTo(VersionClock.MaxVersion);
         }
 
-        using var refused = await client.PutAsJsonAsync(Document(tenant, Guid.CreateVersion7().ToString("D")), new { value }, token);
+        using var refused = await client.PutAsJsonAsync(Document(tenant, EntityIds.New().ToString()), new { value }, token);
         await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
         await using var final = await source.BeginTransactionAsync(write: false, token);
         await Assert.That(await final.GetOffsetAsync(token)).IsEqualTo(VersionClock.MaxVersion);
@@ -232,7 +233,7 @@ public sealed class ClockAdmissionTests
         using var client = clientTls.CreateClient(server.ClientAddress!, await tenant.KeyAsync(server, "documents:read", "documents:write"));
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         var token = deadline.Token;
-        var id = Guid.CreateVersion7().ToString("D");
+        var id = EntityIds.New().ToString();
         using var collection = await client.PostAsJsonAsync(new Uri($"{tenant.Path("db")}/collections", UriKind.Relative), new { name = "items" }, token);
         collection.EnsureSuccessStatusCode();
         using var created = await client.PutAsJsonAsync(Document(tenant, id), new { value = "a" }, token);
@@ -278,13 +279,13 @@ public sealed class ClockAdmissionTests
             await Assert.That(history.All(row => row.Version == VersionClock.MaxVersion)).IsTrue();
         }
 
-        using var refused = await client.PutAsJsonAsync(Document(tenant, Guid.CreateVersion7().ToString("D")), new { value = "local" }, token);
+        using var refused = await client.PutAsJsonAsync(Document(tenant, EntityIds.New().ToString()), new { value = "local" }, token);
         await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
         using var deleted = await client.GetAsync(Document(tenant, id), token);
         await Assert.That(deleted.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
 
         await SetClockAsync(tenant.File(server, "db"), long.MaxValue, token);
-        var overflowId = Guid.CreateVersion7().ToString("D");
+        var overflowId = EntityIds.New().ToString();
         await using (var write = await store.BeginTransactionAsync(write: true, token))
         {
             await Assert.That(await write.ApplyAsync(new DocumentChange("items", overflowId, VersionClock.MaxVersion, "{}"u8.ToArray()), token)).IsTrue();
@@ -314,7 +315,7 @@ public sealed class ClockAdmissionTests
         var token = deadline.Token;
         using var collection = await client.PostAsJsonAsync(new Uri($"{tenant.Path("db")}/collections", UriKind.Relative), new { name = "items" }, token);
         collection.EnsureSuccessStatusCode();
-        var id = Guid.CreateVersion7().ToString("D");
+        var id = EntityIds.New().ToString();
         using var written = await client.PutAsJsonAsync(Document(tenant, id), new { value = new Faker().Lorem.Word() }, token);
         written.EnsureSuccessStatusCode();
         var store = (await server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(tenant.Database("db"), token))!;
@@ -379,7 +380,7 @@ public sealed class ClockAdmissionTests
     }
 
     private static Uri Document(ReplicationTenant tenant, string id) =>
-        new($"{tenant.Path("db")}/collections/items/documents/{id}", UriKind.Relative);
+        new($"{tenant.Path("db")}/collections/items/documents/by-key?id={id}", UriKind.Relative);
 
     private static async Task<SyncResponse> NextAsync(AsyncDuplexStreamingCall<SyncRequest, SyncResponse> call, CancellationToken token) =>
         await call.ResponseStream.MoveNext(token) ? call.ResponseStream.Current : throw new InvalidOperationException("the Sync stream ended");

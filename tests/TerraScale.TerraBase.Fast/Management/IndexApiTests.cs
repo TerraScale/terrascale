@@ -4,6 +4,7 @@ using Bogus;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Features.Management.Queries;
+using TerraBase.Primitives;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Management;
@@ -106,7 +107,7 @@ public sealed class IndexApiTests
         await using var api = await ManagementApi.StartAsync();
         var database = await api.CreateManagedDatabaseAsync();
         var indexes = $"{database.Path}/indexes";
-        var unknown = $"{database.ProjectPath}/databases/{Guid.NewGuid()}";
+        var unknown = $"{database.ProjectPath}/databases/{EntityIds.New()}";
         using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
         await ManagementApi.CreateCollectionAsync(data, database, "people");
         (await data.PutAsJsonAsync(Uri(ManagementApi.DocumentPath(database, "people", "p1")), new { email = Faker.Internet.Email(), name = Faker.Name.FullName() }))

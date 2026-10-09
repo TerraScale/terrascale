@@ -49,15 +49,15 @@ public sealed class QueryCacheIntegrationTests
         var service = api.Server.Services.GetRequiredService<IDocumentService>();
         var database = await api.TenantOfAsync();
         var system = api.Server.Services.GetRequiredService<ISystemDocumentReader>();
-        var hash = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(
-            System.Text.Encoding.UTF8.GetBytes(api.Client.DefaultRequestHeaders.Authorization!.Parameter!)));
+        var keyId = (await api.Server.Services.GetRequiredService<TerraBase.Features.ApiKeys.IApiKeyStore>().FindAsync(
+            api.Client.DefaultRequestHeaders.Authorization!.Parameter!, CancellationToken.None))!.Id;
         if (kind == "system")
         {
             // Rewriting the real key invalidates its warmed auth entry, exercising first admission too.
             var store = await api.Server.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(CancellationToken.None);
             await using var transaction = await store.BeginTransactionAsync(write: true, CancellationToken.None);
-            var key = (await transaction.GetAsync("api_keys", hash, CancellationToken.None))!;
-            await transaction.PutAsync("api_keys", hash, key.Json, CancellationToken.None);
+            var key = (await transaction.GetAsync("api_keys", keyId, CancellationToken.None))!;
+            await transaction.PutAsync("api_keys", keyId, key.Json, CancellationToken.None);
             await transaction.CommitAsync(CancellationToken.None);
         }
 
@@ -88,7 +88,7 @@ public sealed class QueryCacheIntegrationTests
             }
             if (kind == "system")
             {
-                return (await system.GetSystemAsync("api_keys", hash, CancellationToken.None))!;
+                return (await system.GetSystemAsync("api_keys", keyId, CancellationToken.None))!;
             }
             var query = new DocumentQuery("items", null,
                 kind == "query" ? [new SortKey(new DocumentPath(["n"]), false)] : [], null, 50, 8 * 1024 * 1024);
@@ -151,12 +151,12 @@ public sealed class QueryCacheIntegrationTests
         {
             await StorageFixture.CreateCollectionAsync(tenant, "db", "items", deadline.Token);
             using var written = await tenant.Data.PutAsJsonAsync(
-                tenant.Database("db", $"/collections/items/documents/{id}"), new { n = 1, label = tenant.OrganizationId }, deadline.Token);
+                tenant.Database("db", $"/collections/items/documents/by-key?id={id}"), new { n = 1, label = tenant.OrganizationId }, deadline.Token);
             written.EnsureSuccessStatusCode();
         }
 
         using var extra = await second.Data.PutAsJsonAsync(
-            second.Database("db", $"/collections/items/documents/{StorageFixture.Id("extra")}"), new { n = 2, label = "extra" }, deadline.Token);
+            second.Database("db", $"/collections/items/documents/by-key?id={StorageFixture.Id("extra")}"), new { n = 2, label = "extra" }, deadline.Token);
         extra.EnsureSuccessStatusCode();
         var request = new { filter = new { exists = "/n" }, count = true };
         foreach (var tenant in new[] { first, second })

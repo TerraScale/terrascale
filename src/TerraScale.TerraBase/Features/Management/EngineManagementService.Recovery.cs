@@ -5,6 +5,7 @@ using System.Text.Json;
 using TerraBase.Engine;
 using TerraBase.Features.Management.Backups;
 using TerraBase.Hosting;
+using TerraBase.Primitives;
 using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Management;
@@ -25,9 +26,9 @@ internal sealed partial class EngineManagementService
             return;
         }
 
-        // Older catalogs contain no intents. Keep their existing lazy migration/503 behavior.
+        // Only the current catalog owns cleanup intents; older formats are refused.
         var (hasCatalog, version) = await CatalogStateAsync(cancellationToken).ConfigureAwait(false);
-        if (version is IntentCatalogVersion or CatalogVersion)
+        if (version == CatalogVersion)
         {
             while (true)
             {
@@ -180,14 +181,14 @@ internal sealed partial class EngineManagementService
     // Counts and logs files without a registered database; they are preserved for operator recovery.
     private async ValueTask AuditFilesAsync(bool hasCatalog, string? version, CancellationToken cancellationToken)
     {
-        // ponytail: one page of fixed-size UUID keys bounds items/bytes; partition the scan if interleaved files defeat reuse.
+        // ponytail: one page of fixed-size ULID keys bounds items/bytes; partition the scan if interleaved files defeat reuse.
         var registrations = new Dictionary<(string Organization, string Project, string Database), bool>();
         foreach (var file in engine.EnumerateDatabaseFiles(cancellationToken))
         {
             cancellationToken.ThrowIfCancellationRequested();
             var registered = false;
             // Future catalogs may change row schemas; preserve their files without interpreting those rows.
-            if (hasCatalog && version is null or MembershipCatalogVersion or "3" or IntentCatalogVersion or CatalogVersion
+            if (hasCatalog && version == CatalogVersion
                 && file.Database is { } database)
             {
                 var key = (database.OrganizationId, database.ProjectId!, database.DatabaseId!);
@@ -272,9 +273,9 @@ internal sealed partial class EngineManagementService
         }
     }
 
-    // The engine's tenant ids: lowercase hyphenated UUIDs.
+    // The engine's tenant ids: canonical uppercase ULIDs.
     private static bool IsId([NotNullWhen(true)] string? id) =>
-        Guid.TryParseExact(id, "D", out var guid) && string.Equals(guid.ToString(), id, StringComparison.Ordinal);
+        EntityIds.IsValid(id);
 
     [LoggerMessage(Level = LogLevel.Error, Message = "A replicated database cleanup intent is invalid; nothing was deleted for it")]
     private static partial void LogInvalidReplicatedIntent(ILogger logger, Exception? error);

@@ -10,6 +10,7 @@ using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Features.Management;
 using TerraBase.Hosting;
+using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
 
@@ -518,7 +519,7 @@ public sealed class DatabaseRecoveryTests
     public async Task Unknown_files_are_preserved_byte_for_byte_logged_and_counted()
     {
         using var state = new RecoveryData();
-        var unregistered = state.Faker.Random.Guid().ToString();
+        var unregistered = EntityIds.New().ToString();
         await using (var api = await state.StartAsync())
         {
             await state.SeedAsync(api);
@@ -531,9 +532,9 @@ public sealed class DatabaseRecoveryTests
         {
             state.Path(unregistered),
             // Matching ids under another organization do not make this copy registered.
-            System.IO.Path.Combine(state.Directory, state.Faker.Random.Guid().ToString(), state.Project, state.Source + ".db"),
+            System.IO.Path.Combine(state.Directory, EntityIds.New().ToString(), state.Project, state.Source + ".db"),
             System.IO.Path.Combine(state.Directory, state.Organization, state.Project, "operator-notes.txt"),
-            state.Path(state.Faker.Random.Guid().ToString()) + "-wal",
+            state.Path(EntityIds.New().ToString()) + "-wal",
             System.IO.Path.Combine(state.Directory, state.Organization, state.Project, ".unrecognized.creating"),
             System.IO.Path.Combine(state.Directory, state.Organization, "other", "nested", "archive.db"),
             System.IO.Path.Combine(state.Directory, "operator-notes.txt"),
@@ -555,11 +556,11 @@ public sealed class DatabaseRecoveryTests
 
         var directories = new[]
         {
-            state.Path(state.Faker.Random.Guid().ToString()),
-            state.Path(state.Faker.Random.Guid().ToString()) + "-wal",
+            state.Path(EntityIds.New().ToString()),
+            state.Path(EntityIds.New().ToString()) + "-wal",
             System.IO.Path.Combine(state.Directory, state.Organization, state.Project,
                 // A registered id still cannot make an artifact directory registered storage.
-                $".{state.Source}.{state.Faker.Random.Guid():N}.creating"),
+                $".{state.Source}.{EntityIds.New()}.creating"),
         };
         foreach (var directory in directories)
         {
@@ -623,12 +624,12 @@ public sealed class DatabaseRecoveryTests
         // Seed only while the initializing host is stopped; management has not created a system store.
         var directory = systemPath + suffix;
         System.IO.Directory.CreateDirectory(directory);
-        var organizationDirectory = System.IO.Path.Combine(state.Directory, state.Faker.Random.Guid().ToString());
+        var organizationDirectory = System.IO.Path.Combine(state.Directory, EntityIds.New().ToString());
         var ordinaryDirectories = new[]
         {
             System.IO.Path.Combine(state.Directory, "operator-empty"),
             organizationDirectory,
-            System.IO.Path.Combine(organizationDirectory, state.Faker.Random.Guid().ToString()),
+            System.IO.Path.Combine(organizationDirectory, EntityIds.New().ToString()),
         };
         foreach (var ordinary in ordinaryDirectories)
         {
@@ -831,7 +832,7 @@ public sealed class DatabaseRecoveryTests
             await AssertUnknownCountAsync(api, 1);
             var engine = api.Server.Services.GetRequiredService<IStorageEngine>();
             var source = new TenantContext(state.Organization, PlanTier.Hobby, state.Project, state.Source);
-            var destination = source with { DatabaseId = state.Faker.Random.Guid().ToString() };
+            var destination = source with { DatabaseId = EntityIds.New().ToString() };
             await Assert.That(async () =>
             {
                 _ = await engine.OpenDatabaseAsync(source, CancellationToken.None);
@@ -848,7 +849,7 @@ public sealed class DatabaseRecoveryTests
             await Assert.That(branch.StatusCode).IsEqualTo(HttpStatusCode.InternalServerError);
             using var data = api.DataClient(state.ApiKey);
             using var read = await data.GetAsync(Uri(
-                $"/v1/projects/{state.Project}/databases/source/collections/people/documents/{state.Faker.Random.Guid()}"));
+                $"/v1/projects/{state.Project}/databases/source/collections/people/documents/by-key?id={EntityIds.New()}"));
             await Assert.That(read.StatusCode).IsEqualTo(HttpStatusCode.InternalServerError);
             await Assert.That((await PendingAsync(api)).Documents).IsEmpty();
             await state.AssertUnregisteredAsync(api, owner, destination.DatabaseId!);
@@ -990,16 +991,13 @@ public sealed class DatabaseRecoveryTests
     }
 
     [Test]
-    public async Task Version_three_is_upgraded_before_a_database_create_and_recovers_its_intent()
+    public async Task A_current_catalog_recovers_an_interrupted_database_create_after_restart()
     {
         using var state = new RecoveryData();
         await using (var api = await state.StartAsync())
         {
             await state.SeedAsync(api);
-            var system = await api.Server.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(CancellationToken.None);
-            await using var transaction = await system.BeginTransactionAsync(write: true, CancellationToken.None);
-            await transaction.PutAsync("catalog", "version", Encoding.UTF8.GetBytes("\"3\""), CancellationToken.None);
-            await transaction.CommitAsync(CancellationToken.None);
+
         }
 
         string target;
@@ -1007,15 +1005,15 @@ public sealed class DatabaseRecoveryTests
         {
             if (step == "create.intent")
             {
-                throw new InvalidOperationException("interrupted migrated creation");
+                throw new InvalidOperationException("interrupted creation");
             }
         })))
         {
-            await Assert.That(await CatalogAsync(api, "catalog", "version")).IsEqualTo("\"3\"");
+            await Assert.That(await CatalogAsync(api, "catalog", "version")).IsEqualTo("\"6\"");
             using var owner = api.As(state.User);
             using var created = await owner.PostAsJsonAsync(Uri(state.Databases), new { name = state.TargetName });
             await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.InternalServerError);
-            await Assert.That(await CatalogAsync(api, "catalog", "version")).IsEqualTo("\"5\"");
+            await Assert.That(await CatalogAsync(api, "catalog", "version")).IsEqualTo("\"6\"");
             var pending = await PendingAsync(api);
             await Assert.That(pending.Documents.Count).IsEqualTo(1);
             target = pending.Documents[0].Id;
@@ -1029,7 +1027,7 @@ public sealed class DatabaseRecoveryTests
         await state.AssertUnregisteredAsync(recovered, recoveredOwner, target);
         await state.AssertPreservedAsync(recovered, recoveredOwner);
         await recovered.CreateDatabaseAsync(state.Organization, state.Project, state.TargetName, recoveredOwner);
-        await Assert.That(await CatalogAsync(recovered, "catalog", "version")).IsEqualTo("\"5\"");
+        await Assert.That(await CatalogAsync(recovered, "catalog", "version")).IsEqualTo("\"6\"");
     }
 
     [Test]
@@ -1111,9 +1109,9 @@ public sealed class DatabaseRecoveryTests
         engine = api.Server.Services.GetRequiredService<IStorageEngine>();
         using var owner = api.As(state.User);
         using var data = api.DataClient(state.ApiKey);
-        var neighborOnly = state.Faker.Random.Guid().ToString();
+        var neighborOnly = EntityIds.New().ToString();
         using (var write = await data.PutAsJsonAsync(
-            Uri($"/v1/projects/{state.Project}/databases/neighbor/collections/people/documents/{neighborOnly}"),
+            Uri($"/v1/projects/{state.Project}/databases/neighbor/collections/people/documents/by-key?id={neighborOnly}"),
             new { name = state.Faker.Name.FullName() }))
         {
             write.EnsureSuccessStatusCode();
@@ -1150,7 +1148,7 @@ public sealed class DatabaseRecoveryTests
         }
 
         using var absent = await data.GetAsync(
-            Uri($"/v1/projects/{state.Project}/databases/{state.TargetName}/collections/people/documents/{neighborOnly}"));
+            Uri($"/v1/projects/{state.Project}/databases/{state.TargetName}/collections/people/documents/by-key?id={neighborOnly}"));
         await Assert.That(absent.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
         await state.AssertPreservedAsync(api, owner);
     }
@@ -1271,7 +1269,7 @@ public sealed class DatabaseRecoveryTests
     public async Task Startup_checks_each_database_registration_once_and_reports_every_unknown_artifact()
     {
         using var state = new RecoveryData();
-        var target = state.Faker.Random.Guid().ToString();
+        var target = EntityIds.New().ToString();
         TenantContext storage;
         await using (var api = await state.StartAsync())
         {
@@ -1335,7 +1333,7 @@ public sealed class DatabaseRecoveryTests
             await state.SeedAsync(api);
         }
 
-        var target = state.Faker.Random.Guid().ToString();
+        var target = EntityIds.New().ToString();
         var options = new TerraBaseOptions { AdminPort = 0, DataDirectory = state.Directory, MemoryBudget = 64 * 1024 * 1024, StorageThreads = 1, StorageQueue = 16 };
         var services = new ServiceCollection();
         services.AddSingleton(options);
@@ -1392,9 +1390,9 @@ public sealed class DatabaseRecoveryTests
                     "database-uppercase-extension" => System.IO.Path.ChangeExtension(state.Path(target), ".DB"),
                     "sidecar-uppercase-suffix" => state.Path(target) + "-WAL",
                     "temporary-uppercase" or "temporary-uppercase-directory" => System.IO.Path.Combine(state.Directory, storage.OrganizationId, storage.ProjectId!,
-                        $".{target}.{state.Faker.Random.Guid():N}.creating".ToUpperInvariant()),
+                        $".{target}.{EntityIds.New()}.creating".ToUpperInvariant()),
                     "temporary" or "temporary-directory" => System.IO.Path.Combine(state.Directory, storage.OrganizationId, storage.ProjectId!,
-                        $".{target}.{state.Faker.Random.Guid():N}.creating"),
+                        $".{target}.{EntityIds.New()}.creating"),
                     _ => state.Path(target),
                 };
                 System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(path)!);
@@ -1486,7 +1484,7 @@ public sealed class DatabaseRecoveryTests
                     : external.Directory;
                 System.IO.Directory.CreateDirectory(directory);
                 var target = System.IO.Path.Combine(directory, storage.DatabaseId + ".db");
-                var temporary = System.IO.Path.Combine(directory, $".{storage.DatabaseId}.{state.Faker.Random.Guid():N}.creating");
+                var temporary = System.IO.Path.Combine(directory, $".{storage.DatabaseId}.{EntityIds.New()}.creating");
                 // An existing mapped main file would mask the initialization gap on create/copy.
                 var main = route == "delete" ? target : System.IO.Path.Combine(directory, "operator-archive", storage.DatabaseId + ".db");
                 System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(main)!);
@@ -1855,9 +1853,9 @@ public sealed class DatabaseRecoveryTests
 
         public RecoveryData()
         {
-            User = Faker.Random.Guid().ToString();
+            User = EntityIds.New().ToString();
             TargetName = "target_" + Faker.Random.AlphaNumeric(8).ToLowerInvariant();
-            DocumentId = Faker.Random.Guid().ToString();
+            DocumentId = EntityIds.New().ToString();
             Person = Faker.Name.FullName();
         }
 
@@ -1930,7 +1928,7 @@ public sealed class DatabaseRecoveryTests
         {
             var path = Path(database);
             System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(path)!);
-            var temporary = System.IO.Path.Combine(System.IO.Path.GetDirectoryName(path)!, $".{database}.{Faker.Random.Guid():N}.creating");
+            var temporary = System.IO.Path.Combine(System.IO.Path.GetDirectoryName(path)!, $".{database}.{EntityIds.New()}.creating");
             foreach (var suffix in Sidecars.Prepend(string.Empty))
             {
                 await File.WriteAllBytesAsync(temporary + suffix, Faker.Random.Bytes(31));
@@ -1955,7 +1953,7 @@ public sealed class DatabaseRecoveryTests
 
         public void Dispose() => System.IO.Directory.Delete(Directory, recursive: true);
 
-        private Uri Document(string database) => Uri($"/v1/projects/{Project}/databases/{database}/collections/people/documents/{DocumentId}");
+        private Uri Document(string database) => Uri($"/v1/projects/{Project}/databases/{database}/collections/people/documents/by-key?id={DocumentId}");
     }
 
     private sealed class CapturedLogs : ILoggerProvider

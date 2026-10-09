@@ -17,7 +17,7 @@ service CatalogReplication {
 }
 
 message FollowRequest {
-  // Catalog protocol version: 1.
+  // Catalog protocol version: 2.
   uint32 protocol = 1;
   // Accepted payload codecs; must include PAYLOAD_CODEC_LZ4_BLOCK_V1.
   repeated PayloadCodec codecs = 2;
@@ -105,7 +105,7 @@ service CatalogForwarding {
 }
 
 message ForwardRequest {
-  // Forwarding protocol version: 1.
+  // Forwarding protocol version: 2.
   uint32 protocol = 1;
   string method = 2;
   // The request path as the follower's server decoded it, and the raw query string ("" or "?…").

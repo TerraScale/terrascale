@@ -204,7 +204,7 @@ public sealed class GetShapeEndpoint(IShapeService shapes, ITenantDirectory tena
         var canonical = Encoding.UTF8.GetString(buffer.WrittenSpan);
         // The relaxed encoder still escapes some Unicode. Check the encoded target, reserving
         // the longest snapshot continuation and 64 bytes for the request line: the longest head
-        // and the base64url of the longest stored id (1024 UTF-8 bytes, legacy ids included).
+        // and the base64url of the longest stored id (1024 UTF-8 bytes, caller-supplied keys included).
         // A live log position with cursor is shorter than this snapshot offset.
         var resume = Location(canonical, "h1-0000000000000000", $"snap.{long.MaxValue}.{LongestEncodedId}");
         return resume.Length > (8 * 1024) - 64

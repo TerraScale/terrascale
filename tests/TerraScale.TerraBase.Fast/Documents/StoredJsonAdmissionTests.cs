@@ -27,7 +27,7 @@ public sealed class StoredJsonAdmissionTests
         var json = nested ? """{"a":{"b":1,"b":2}}""" : """{"a":1,"a":2}""";
         var original = await api.PutAsync(id, nested ? new { a = (object)new { b = 1 } } : new { a = (object)1 });
         original.Status.ShouldBe(HttpStatusCode.Created);
-        var origin = Guid.NewGuid().ToByteArray(bigEndian: true);
+        var origin = EntityIds.New().ToByteArray();
         using var channel = tls.CreateChannel(api.Server.PeerAddress!);
         using var call = new Features.Replication.V1.Replication.ReplicationClient(channel).Sync(cancellationToken: TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         await call.RequestStream.WriteAsync(new SyncRequest { Hello = ReplicationProtocol.CreateHello(tenant, origin) });

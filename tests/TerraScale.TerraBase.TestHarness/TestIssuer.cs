@@ -13,6 +13,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.IdentityModel.JsonWebTokens;
 using Microsoft.IdentityModel.Tokens;
+using TerraBase.Primitives;
 
 namespace TerraBase.Testing;
 
@@ -127,7 +128,7 @@ public sealed class TestIssuer : IDisposable
     /// </summary>
     public SigningCredentials AddKey(string algorithm, bool publish = true)
     {
-        var kid = Guid.NewGuid().ToString("N");
+        var kid = EntityIds.New().ToString();
         SecurityKey key;
         JsonObject jwk;
         if (algorithm == SecurityAlgorithms.HmacSha256)

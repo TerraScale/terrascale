@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text.Json;
+using TerraBase.Primitives;
 using TerraBase.Testing;
 
 namespace TerraBase.Slow.Documents;
@@ -106,17 +107,17 @@ public sealed class ShapeBudgetTests
         (await client.PutAsync(tenant.Database("db"), null)).EnsureSuccessStatusCode();
         (await client.PostAsJsonAsync(tenant.Database("db", "/collections"), new { name = "items" })).EnsureSuccessStatusCode();
         var transactions = tenant.Database("db", "/transactions");
-        var kept = Guid.CreateVersion7().ToString();
-        (await client.PutAsJsonAsync(tenant.Database("db", $"/collections/items/documents/{kept}"), new { n = 1 }))
+        const string kept = "7ZZZZZZZZZZZZZZZZZZZZZZZZZ";
+        (await client.PutAsJsonAsync(tenant.Database("db", $"/collections/items/documents/by-key?id={kept}"), new { n = 1 }))
             .EnsureSuccessStatusCode();
         using var start = await client.GetAsync(tenant.Database("db", "/collections/items/shape?offset=-1"));
         using var first = await client.GetAsync(start.Headers.Location!);
         var firstBody = await first.Content.ReadAsStringAsync();
 
-        // More new ids than one page examines, written after S, many of them ordering before the kept document.
+        // More new ids than one page examines, written after S, all ordering before the kept document.
         for (var batch = 0; batch < 11; batch++)
         {
-            var ops = Enumerable.Range(0, 1000).Select(_ => new { op = "put", collection = "items", id = Guid.NewGuid().ToString(), document = new { n = 2 } });
+            var ops = Enumerable.Range(0, 1000).Select(_ => new { op = "put", collection = "items", id = EntityIds.New().ToString(), document = new { n = 2 } });
             (await client.PostAsJsonAsync(transactions, new { ops })).EnsureSuccessStatusCode();
         }
 
@@ -140,15 +141,15 @@ public sealed class ShapeBudgetTests
         (await client.PostAsJsonAsync(tenant.Database("db", "/collections"), new { name = "items" })).EnsureSuccessStatusCode();
         var transactions = tenant.Database("db", "/transactions");
         // The snapshot's only document orders last, so a replay steps over every later id before reaching it.
-        var kept = "ffffffff-ffff-7fff-bfff-ffffffffffff";
-        (await client.PutAsJsonAsync(tenant.Database("db", $"/collections/items/documents/{kept}"), new { n = 1 })).EnsureSuccessStatusCode();
+        var kept = "7ZZZZZZZZZFZZVZZZZZZZZZZZZ";
+        (await client.PutAsJsonAsync(tenant.Database("db", $"/collections/items/documents/by-key?id={kept}"), new { n = 1 })).EnsureSuccessStatusCode();
         using var start = await client.GetAsync(tenant.Database("db", "/collections/items/shape?offset=-1"));
         using var first = await client.GetAsync(start.Headers.Location!);
         var firstBody = await first.Content.ReadAsStringAsync();
 
         for (var batch = 0; batch < 200; batch++)
         {
-            var ops = Enumerable.Range(0, 1000).Select(_ => new { op = "put", collection = "items", id = Guid.NewGuid().ToString(), document = new { n = 2 } });
+            var ops = Enumerable.Range(0, 1000).Select(_ => new { op = "put", collection = "items", id = EntityIds.New().ToString(), document = new { n = 2 } });
             (await client.PostAsJsonAsync(transactions, new { ops })).EnsureSuccessStatusCode();
         }
 
@@ -185,7 +186,7 @@ public sealed class ShapeBudgetTests
         using var first = await client.GetAsync(start.Headers.Location!);
         var firstBody = await first.Content.ReadAsStringAsync();
 
-        // Server-generated ids are UUIDv7: 200000 later ones all sort after the snapshot's only id, four times
+        // Server-generated ids are monotonic ULIDs: 200000 later ones all sort after the snapshot's only id, four times
         // the per-page skip bound.
         for (var batch = 0; batch < 200; batch++)
         {

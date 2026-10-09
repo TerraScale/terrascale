@@ -121,7 +121,7 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
             return await inner.CreateDatabaseWithIntentAsync(database, source, recordIntent, cancellationToken);
         }
 
-        public async ValueTask<bool> DeleteDatabaseAsync(TenantContext database, CancellationToken cancellationToken, bool retainIntentOwnership = false, Guid? incarnation = null)
+        public async ValueTask<bool> DeleteDatabaseAsync(TenantContext database, CancellationToken cancellationToken, bool retainIntentOwnership = false, Ulid? incarnation = null)
         {
             if (hook.BeforeDelete is { } beforeDelete)
             {
@@ -170,10 +170,12 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
 
     private sealed class Store(IDatabaseStore inner, UsageCommitHook hook) : IDatabaseStore
     {
-        public Guid Incarnation => inner.Incarnation;
+        public Ulid Incarnation => inner.Incarnation;
         public TenantContext? Tenant => inner.Tenant;
         public bool IsClosed => inner.IsClosed;
         public long CommitSequence => inner.CommitSequence;
+
+
         public Task WaitForCommitAsync(long sequence, CancellationToken cancellationToken) => inner.WaitForCommitAsync(sequence, cancellationToken);
         public async ValueTask<IStorageTransaction> BeginDurableTransactionAsync(CancellationToken cancellationToken)
         {
@@ -199,10 +201,12 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
 
     private sealed class Opened(IDatabaseStore inner, TenantContext database, UsageCommitHook hook) : IDatabaseStore
     {
-        public Guid Incarnation => inner.Incarnation;
+        public Ulid Incarnation => inner.Incarnation;
         public TenantContext? Tenant => inner.Tenant;
         public bool IsClosed => inner.IsClosed;
         public long CommitSequence => inner.CommitSequence;
+
+
         public Task WaitForCommitAsync(long sequence, CancellationToken cancellationToken) => inner.WaitForCommitAsync(sequence, cancellationToken);
         public ValueTask<IStorageTransaction> BeginDurableTransactionAsync(CancellationToken cancellationToken) => inner.BeginDurableTransactionAsync(cancellationToken);
 

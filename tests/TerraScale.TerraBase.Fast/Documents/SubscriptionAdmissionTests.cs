@@ -11,6 +11,7 @@ using TerraBase.Features.ApiKeys;
 using TerraBase.Features.Documents;
 using TerraBase.Features.Management.Usage;
 using TerraBase.Hosting;
+using TerraBase.Primitives;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Documents;
@@ -230,7 +231,7 @@ public sealed class SubscriptionAdmissionTests
         await ManagementApi.CreateCollectionAsync(data, database, "items", cancellationToken);
         var text = faker.Lorem.Sentence();
         using var put = await data.PutAsJsonAsync(ManagementApi.Uri(
-            $"{database.Data}/collections/items/documents/{faker.Random.Guid():D}"), new { text }, cancellationToken);
+            $"{database.Data}/collections/items/documents/by-key?id={EntityIds.New()}"), new { text }, cancellationToken);
         put.EnsureSuccessStatusCode();
         // Warm the API-key credential cache before measuring the subscription's memory reservations.
         using var warm = await data.GetAsync(ManagementApi.Uri($"{database.Data}/collections/items/shape?offset=-1"), cancellationToken);

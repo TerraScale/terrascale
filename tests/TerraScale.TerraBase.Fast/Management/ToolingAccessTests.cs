@@ -1,4 +1,5 @@
 using System.Net;
+using TerraBase.Primitives;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Management;
@@ -10,7 +11,7 @@ public sealed class ToolingAccessTests
     {
         await using var api = await ManagementApi.StartAsync();
         var database = await api.CreateManagedDatabaseAsync();
-        using var outsider = api.As(Guid.NewGuid().ToString());
+        using var outsider = api.As(EntityIds.New().ToString());
         var d = database.Path;
         var p = database.ProjectPath;
         (HttpMethod Method, string Path, string? Body)[] routes =
@@ -19,7 +20,7 @@ public sealed class ToolingAccessTests
             (HttpMethod.Post, $"{d}/backups", null),
             (HttpMethod.Get, $"{d}/backup-policy", null),
             (HttpMethod.Put, $"{d}/backup-policy", """{"fullBackupCron":null,"retentionDays":7,"disabled":false}"""),
-            (HttpMethod.Post, $"{d}/backups/{Guid.NewGuid()}/restore", "{}"),
+            (HttpMethod.Post, $"{d}/backups/{EntityIds.New()}/restore", "{}"),
             (HttpMethod.Get, $"{d}/collections", null),
             (HttpMethod.Get, $"{d}/collections/people/schema", null),
             (HttpMethod.Get, $"{d}/indexes", null),
@@ -33,12 +34,12 @@ public sealed class ToolingAccessTests
             (HttpMethod.Get, $"{p}/usage", null),
             (HttpMethod.Get, $"{p}/saved-queries", null),
             (HttpMethod.Post, $"{p}/saved-queries", """{"name":"All","sql":"SELECT * FROM people"}"""),
-            (HttpMethod.Get, $"{p}/saved-queries/{Guid.NewGuid()}", null),
-            (HttpMethod.Put, $"{p}/saved-queries/{Guid.NewGuid()}", """{"name":"All","sql":"SELECT * FROM people"}"""),
-            (HttpMethod.Delete, $"{p}/saved-queries/{Guid.NewGuid()}", null),
+            (HttpMethod.Get, $"{p}/saved-queries/{EntityIds.New()}", null),
+            (HttpMethod.Put, $"{p}/saved-queries/{EntityIds.New()}", """{"name":"All","sql":"SELECT * FROM people"}"""),
+            (HttpMethod.Delete, $"{p}/saved-queries/{EntityIds.New()}", null),
             (HttpMethod.Get, $"{p}/api-keys", null),
             (HttpMethod.Post, $"{p}/api-keys", """{"name":"ci","scopes":["documents:read"]}"""),
-            (HttpMethod.Delete, $"{p}/api-keys/{Guid.NewGuid()}", null),
+            (HttpMethod.Delete, $"{p}/api-keys/{EntityIds.New()}", null),
         ];
 
         foreach (var (method, path, body) in routes)

@@ -3,6 +3,7 @@ using System.Net.Http.Headers;
 using System.Text.Json;
 using TerraBase.Fast.Documents;
 using TerraBase.Hosting;
+using TerraBase.Primitives;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Platform;
@@ -15,7 +16,7 @@ public sealed class ApiReferenceTests
         DELETE /projects/{project}/databases/{database}/collections/{collection}/schema TsAuth(documents:write) deleteDeclaredCollectionSchema Collections
         DELETE /v1/projects/{project}/databases/{database} TsAuth(databases:write) deleteDatabase Databases
         DELETE /v1/projects/{project}/databases/{database}/collections/{collection} TsAuth(documents:write) dropCollection Collections
-        DELETE /v1/projects/{project}/databases/{database}/collections/{collection}/documents/{id} TsAuth(documents:write) deleteDocument Documents
+        DELETE /v1/projects/{project}/databases/{database}/collections/{collection}/documents/by-key TsAuth(documents:write) deleteDocument Documents
         DELETE /v1/projects/{project}/databases/{database}/indexes/{index} TsAuth(databases:write) dropIndex Indexes
         DELETE /v1/projects/{project}/saved-queries/{query} TsAuth(databases:write) deleteSavedQuery Queries
         GET /healthz anonymous healthz Health
@@ -31,7 +32,7 @@ public sealed class ApiReferenceTests
         GET /v1/projects/{project}/databases/{database}/collections TsAuth(documents:read) listCollections Collections
         GET /v1/projects/{project}/databases/{database}/collections/{collection} TsAuth(documents:read) getCollection Collections
         GET /v1/projects/{project}/databases/{database}/collections/{collection}/documents TsAuth(documents:read) listDocuments Documents
-        GET /v1/projects/{project}/databases/{database}/collections/{collection}/documents/{id} TsAuth(documents:read) getDocument Documents
+        GET /v1/projects/{project}/databases/{database}/collections/{collection}/documents/by-key TsAuth(documents:read) getDocument Documents
         GET /v1/projects/{project}/databases/{database}/collections/{collection}/shape TsAuth(shapes:read) getShape Live
         GET /v1/projects/{project}/databases/{database}/index-recommendations TsAuth(databases:read) listIndexRecommendations Indexes
         GET /v1/projects/{project}/databases/{database}/indexes TsAuth(databases:read) listIndexes Indexes
@@ -43,7 +44,7 @@ public sealed class ApiReferenceTests
         GET /v1/projects/{project}/saved-queries/{query} TsAuth(databases:read) getSavedQuery Queries
         GET /v1/projects/{project}/usage TsAuth(databases:read) getProjectUsage Usage
         PATCH /v1/projects/{project}/databases/{database} TsAuth(databases:write) updateDatabase Databases
-        PATCH /v1/projects/{project}/databases/{database}/collections/{collection}/documents/{id} TsAuth(documents:write) patchDocument Documents
+        PATCH /v1/projects/{project}/databases/{database}/collections/{collection}/documents/by-key TsAuth(documents:write) patchDocument Documents
         POST /projects/{project}/databases/{database}/sql/explain TsAuth(databases:read) explainSql Queries
         POST /v1/projects/{project}/databases TsAuth(databases:write) createDatabase Databases
         POST /v1/projects/{project}/databases/{database}/backups TsAuth(databases:write) createBackup Backups
@@ -62,7 +63,7 @@ public sealed class ApiReferenceTests
         PUT /projects/{project}/databases/{database}/auto-index/{collection} TsAuth(databases:write) setAutoIndexPolicy Indexes
         PUT /projects/{project}/databases/{database}/collections/{collection}/schema TsAuth(documents:write) putDeclaredCollectionSchema Collections
         PUT /v1/projects/{project}/databases/{database}/backup-policy TsAuth(databases:write) setBackupPolicy Backups
-        PUT /v1/projects/{project}/databases/{database}/collections/{collection}/documents/{id} TsAuth(documents:write) putDocument Documents
+        PUT /v1/projects/{project}/databases/{database}/collections/{collection}/documents/by-key TsAuth(documents:write) putDocument Documents
         PUT /v1/projects/{project}/saved-queries/{query} TsAuth(databases:write) updateSavedQuery Queries
         """;
 
@@ -172,9 +173,28 @@ public sealed class ApiReferenceTests
                 }
             }
 
+            if (operation.GetProperty("operationId").GetString() is "getDocument" or "putDocument" or "patchDocument" or "deleteDocument")
+            {
+                var key = operation.GetProperty("parameters").EnumerateArray().Single(parameter => parameter.GetProperty("name").GetString() == "id");
+                await Assert.That(key.GetProperty("in").GetString()).IsEqualTo("query");
+                await Assert.That(key.GetProperty("required").GetBoolean()).IsTrue();
+                await Assert.That(key.GetProperty("schema").GetProperty("type").GetString()).IsEqualTo("string");
+                await Assert.That(key.GetProperty("schema").GetProperty("maxLength").GetInt32()).IsEqualTo(256);
+                await Assert.That(key.GetProperty("example").GetString()).IsEqualTo("a/b");
+                await Assert.That(responses.Any(status => status.Name == "400")).IsTrue();
+            }
+
             if (operation.GetProperty("operationId").GetString() is "getDatabaseUsage" or "getProjectUsage")
             {
                 await Assert.That(operation.GetProperty("responses").GetProperty("400").GetProperty("description").GetString()).Contains("invalid_query");
+            }
+
+            if (operation.GetProperty("operationId").GetString() is "createDatabase" or "branchDatabase" or "restoreBackup"
+                or "createBackup" or "createSavedQuery" or "createCollection" or "createDocument")
+            {
+                var success = responses.First(status => status.Name.StartsWith('2')).Value;
+                var example = success.GetProperty("content").GetProperty("application/json").GetProperty("example");
+                await Assert.That(EntityIds.IsValid(example.GetProperty("id").GetString())).IsTrue().Because(line);
             }
 
             // Every operation documents a success, and every error status the error envelope (or the readiness body).

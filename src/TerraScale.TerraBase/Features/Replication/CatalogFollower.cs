@@ -77,7 +77,7 @@ internal sealed partial class CatalogFollower : BackgroundService, ICatalogReadi
     private int _connected;
     private long _applied;
     private long _head;
-    private Progress _progress = new(Guid.Empty, 0);
+    private Progress _progress = new(Ulid.Empty, 0);
 
     public CatalogFollower(
         ISystemReplication system, PeerCredentials credentials, TerraBaseOptions options, ILogger<CatalogFollower> logger, TimeProvider time, IMeterFactory meters,
@@ -106,7 +106,7 @@ internal sealed partial class CatalogFollower : BackgroundService, ICatalogReadi
     /// <see cref="WaitAppliedAsync"/> can end before it times out.
     /// </summary>
     public bool Follows(ReadOnlyMemory<byte> origin) =>
-        Volatile.Read(ref _connected) == 1 && Volatile.Read(ref _progress).Origin == new Guid(origin.Span);
+        Volatile.Read(ref _connected) == 1 && Volatile.Read(ref _progress).Origin == new Ulid(origin.Span);
 
     /// <summary>
     /// Completes once this follower applied group <paramref name="sequence"/> of the journal of <paramref name="origin"/>
@@ -114,7 +114,7 @@ internal sealed partial class CatalogFollower : BackgroundService, ICatalogReadi
     /// </summary>
     public async Task WaitAppliedAsync(ReadOnlyMemory<byte> origin, long sequence, CancellationToken cancellationToken)
     {
-        var journal = new Guid(origin.Span);
+        var journal = new Ulid(origin.Span);
         while (Volatile.Read(ref _progress) is var progress && (progress.Origin != journal || progress.Sequence < sequence))
         {
             await progress.Next.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -279,7 +279,7 @@ internal sealed partial class CatalogFollower : BackgroundService, ICatalogReadi
     private void Applied(JournalPosition position)
     {
         Interlocked.Exchange(ref _applied, position.Sequence);
-        var journal = new Guid(position.Origin.Span);
+        var journal = new Ulid(position.Origin.Span);
         if (Volatile.Read(ref _progress) is var current && (current.Origin != journal || current.Sequence != position.Sequence))
         {
             Interlocked.Exchange(ref _progress, new Progress(journal, position.Sequence)).Next.TrySetResult();
@@ -457,9 +457,9 @@ internal sealed partial class CatalogFollower : BackgroundService, ICatalogReadi
     }
 
     // An applied journal position; Next completes when a later one replaces it.
-    private sealed class Progress(Guid origin, long sequence)
+    private sealed class Progress(Ulid origin, long sequence)
     {
-        public Guid Origin { get; } = origin;
+        public Ulid Origin { get; } = origin;
 
         public long Sequence { get; } = sequence;
 

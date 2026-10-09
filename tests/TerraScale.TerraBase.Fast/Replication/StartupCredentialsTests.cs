@@ -5,6 +5,7 @@ using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Configuration;
 using TerraBase.Features.Replication;
 using TerraBase.Features.Replication.V1;
+using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
 
@@ -21,7 +22,7 @@ public sealed class StartupCredentialsTests
             peer.Apply(settings);
             File.AppendAllText(settings["peer-certificate"], "\n" + File.ReadAllText(settings["peer-client-ca"]));
         });
-        var database = await server.RegisterAsync(new TenantContext(Guid.NewGuid().ToString(), PlanTier.Hobby, Guid.NewGuid().ToString(), Guid.NewGuid().ToString()));
+        var database = await server.RegisterAsync(new TenantContext(EntityIds.New().ToString(), PlanTier.Hobby, EntityIds.New().ToString(), EntityIds.New().ToString()));
         await WelcomeAsync(peer, server.PeerAddress!, ReplicationProtocol.CreateHello(database, RandomNumberGenerator.GetBytes(16)));
     }
 
@@ -116,7 +117,7 @@ public sealed class StartupCredentialsTests
             }
         });
         var fake = new Faker();
-        var database = await server.RegisterAsync(new TenantContext(fake.Random.Guid().ToString("D"), PlanTier.Hobby, fake.Random.Guid().ToString("D"), fake.Random.Guid().ToString("D")));
+        var database = await server.RegisterAsync(new TenantContext(EntityIds.New().ToString(), PlanTier.Hobby, EntityIds.New().ToString(), EntityIds.New().ToString()));
         var hello = ReplicationProtocol.CreateHello(database, RandomNumberGenerator.GetBytes(16));
 
         // The files remain incomplete through startup and retries on two fresh TLS connections.

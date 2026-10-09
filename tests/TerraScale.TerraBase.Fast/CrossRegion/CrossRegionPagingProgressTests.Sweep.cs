@@ -6,6 +6,7 @@ using Bogus;
 using Google.Protobuf;
 using TerraBase.Features.CrossRegion;
 using TerraBase.Features.CrossRegion.V1;
+using TerraBase.Primitives;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.CrossRegion;
@@ -31,8 +32,8 @@ public sealed partial class CrossRegionPagingProgressTests
             await using var sfo = await StartAsync(network, credentials, "sfo-1", "sfo", "sfo-a", bus, clock);
             try
             {
-                var organization = Guid.NewGuid().ToString("D");
-                var project = Guid.NewGuid().ToString("D");
+                var organization = EntityIds.New().ToString();
+                var project = EntityIds.New().ToString();
                 var organizationName = faker.Company.CompanyName();
                 var projectName = faker.Random.AlphaNumeric(12);
                 foreach (var api in new[] { gru, sfo })
@@ -40,7 +41,7 @@ public sealed partial class CrossRegionPagingProgressTests
                     using var service = api.Service(api.User);
                     using var registered = await service.PostAsJsonAsync(ManagementApi.Uri("/v1/management/commits"), new
                     {
-                        id = Guid.NewGuid().ToString("D"),
+                        id = EntityIds.New().ToString(),
                         ops = new object[]
                         {
                             new { op = "create_organization", id = organization, name = organizationName },
@@ -185,8 +186,8 @@ public sealed partial class CrossRegionPagingProgressTests
             await using var sfo = await StartAsync(network, credentials, "sfo-1", "sfo", "sfo-a", bus, clock);
             try
             {
-                var organization = Guid.NewGuid().ToString("D");
-                var project = Guid.NewGuid().ToString("D");
+                var organization = EntityIds.New().ToString();
+                var project = EntityIds.New().ToString();
                 var organizationName = faker.Company.CompanyName();
                 var projectName = faker.Random.AlphaNumeric(12);
                 output.WriteLine("paging inventory: registering organization and project on both servers");
@@ -195,7 +196,7 @@ public sealed partial class CrossRegionPagingProgressTests
                     using var service = api.Service(api.User);
                     using var registered = await service.PostAsJsonAsync(ManagementApi.Uri("/v1/management/commits"), new
                     {
-                        id = Guid.NewGuid().ToString("D"),
+                        id = EntityIds.New().ToString(),
                         ops = new object[]
                         {
                             new { op = "create_organization", id = organization, name = organizationName },
@@ -209,7 +210,7 @@ public sealed partial class CrossRegionPagingProgressTests
                 var databases = await CreatePlacedAsync(gru, organization, project,
                     Enumerable.Range(0, 103).Select(index => "sweep-" + index.ToString(CultureInfo.InvariantCulture)), token);
 
-                // Within one project, canonical UUID text orders like both the catalog and 48-byte WAN cursors.
+                // Within one project, canonical ULID text orders like both the catalog and 48-byte WAN cursors.
                 databases.Sort((left, right) => string.CompareOrdinal(left.Id, right.Id));
                 var firstPageDeleted = databases[1];
                 var nextPageDeleted = databases[^2];
@@ -371,14 +372,14 @@ public sealed partial class CrossRegionPagingProgressTests
             await using var sfo = await StartAsync(network, credentials, "sfo-1", "sfo", "sfo-a", bus, clock);
             try
             {
-                var organization = Guid.NewGuid().ToString("D");
-                var project = Guid.NewGuid().ToString("D");
+                var organization = EntityIds.New().ToString();
+                var project = EntityIds.New().ToString();
                 foreach (var api in new[] { gru, sfo })
                 {
                     using var service = api.Service(api.User);
                     using var registered = await service.PostAsJsonAsync(ManagementApi.Uri("/v1/management/commits"), new
                     {
-                        id = Guid.NewGuid().ToString("D"),
+                        id = EntityIds.New().ToString(),
                         ops = new object[]
                         {
                             new { op = "create_organization", id = organization, name = faker.Company.CompanyName() },
@@ -510,14 +511,14 @@ public sealed partial class CrossRegionPagingProgressTests
             await using var sfo = await StartAsync(network, credentials, "sfo-1", "sfo", "sfo-a", bus, clock);
             try
             {
-                var organization = Guid.NewGuid().ToString("D");
-                var project = Guid.NewGuid().ToString("D");
+                var organization = EntityIds.New().ToString();
+                var project = EntityIds.New().ToString();
                 foreach (var api in new[] { gru, sfo })
                 {
                     using var service = api.Service(api.User);
                     using var registered = await service.PostAsJsonAsync(ManagementApi.Uri("/v1/management/commits"), new
                     {
-                        id = Guid.NewGuid().ToString("D"),
+                        id = EntityIds.New().ToString(),
                         ops = new object[]
                         {
                             new { op = "create_organization", id = organization, name = faker.Company.CompanyName() },
@@ -635,14 +636,14 @@ public sealed partial class CrossRegionPagingProgressTests
             await using var sfo = await StartAsync(network, credentials, "sfo-1", "sfo", "sfo-a", bus, clock);
             try
             {
-                var organization = Guid.NewGuid().ToString("D");
-                var project = Guid.NewGuid().ToString("D");
+                var organization = EntityIds.New().ToString();
+                var project = EntityIds.New().ToString();
                 foreach (var api in new[] { gru, sfo })
                 {
                     using var service = api.Service(api.User);
                     using var registered = await service.PostAsJsonAsync(ManagementApi.Uri("/v1/management/commits"), new
                     {
-                        id = Guid.NewGuid().ToString("D"),
+                        id = EntityIds.New().ToString(),
                         ops = new object[]
                         {
                             new { op = "create_organization", id = organization, name = faker.Company.CompanyName() },
@@ -720,14 +721,14 @@ public sealed partial class CrossRegionPagingProgressTests
             await using var sfo = await StartAsync(network, credentials, "sfo-1", "sfo", "sfo-a", bus, clock);
             try
             {
-                var organization = Guid.NewGuid().ToString("D");
-                var project = Guid.NewGuid().ToString("D");
+                var organization = EntityIds.New().ToString();
+                var project = EntityIds.New().ToString();
                 foreach (var api in new[] { gru, sfo })
                 {
                     using var service = api.Service(api.User);
                     using var registered = await service.PostAsJsonAsync(ManagementApi.Uri("/v1/management/commits"), new
                     {
-                        id = Guid.NewGuid().ToString("D"),
+                        id = EntityIds.New().ToString(),
                         ops = new object[]
                         {
                             new { op = "create_organization", id = organization, name = faker.Company.CompanyName() },
@@ -813,14 +814,14 @@ public sealed partial class CrossRegionPagingProgressTests
             await using var sfo = await StartAsync(network, credentials, "sfo-1", "sfo", "sfo-a", bus, clock);
             try
             {
-                var organization = Guid.NewGuid().ToString("D");
-                var project = Guid.NewGuid().ToString("D");
+                var organization = EntityIds.New().ToString();
+                var project = EntityIds.New().ToString();
                 foreach (var api in new[] { gru, sfo })
                 {
                     using var service = api.Service(api.User);
                     using var registered = await service.PostAsJsonAsync(ManagementApi.Uri("/v1/management/commits"), new
                     {
-                        id = Guid.NewGuid().ToString("D"),
+                        id = EntityIds.New().ToString(),
                         ops = new object[]
                         {
                             new { op = "create_organization", id = organization, name = faker.Company.CompanyName() },
@@ -912,7 +913,7 @@ public sealed partial class CrossRegionPagingProgressTests
                 bus.Begin.TrySetResult();
                 await clock.PausedAsync(token);
                 string[] large = ["gru-large-1", "gru-large-2"];
-                var tenant = ByteString.CopyFrom(Guid.NewGuid().ToByteArray());
+                var tenant = ByteString.CopyFrom(EntityIds.New().ToByteArray());
                 bus.Answer = (member, after) => Array.IndexOf(large, member) is var which and >= 0 ? LargePage(tenant, which, member, after, advertise: true) : null;
                 bus.Slow = true;
                 HashSet<string> advertised = [with(StringComparer.Ordinal)];
@@ -974,7 +975,7 @@ public sealed partial class CrossRegionPagingProgressTests
                 await clock.PausedAsync(token);
                 // Twenty members scatter about 1 MB first pages every round: about 20 MB against the round's 16 MiB.
                 var wide = Enumerable.Range(0, 20).Select(index => "gru-wide-" + index.ToString(CultureInfo.InvariantCulture)).ToArray();
-                var tenant = ByteString.CopyFrom(Guid.NewGuid().ToByteArray());
+                var tenant = ByteString.CopyFrom(EntityIds.New().ToByteArray());
                 bus.Scatter = () => wide.Select((member, which) => LargePage(tenant, which, member, ByteString.Empty));
                 bus.Answer = (member, after) => Array.IndexOf(wide, member) is var which and >= 0 ? LargePage(tenant, which, member, after) : null;
                 bus.Slow = true;
@@ -1029,14 +1030,14 @@ public sealed partial class CrossRegionPagingProgressTests
             await using var sfo = await StartAsync(network, credentials, "sfo-1", "sfo", "sfo-a", bus, clock);
             try
             {
-                var organization = Guid.NewGuid().ToString("D");
-                var project = Guid.NewGuid().ToString("D");
+                var organization = EntityIds.New().ToString();
+                var project = EntityIds.New().ToString();
                 foreach (var api in new[] { gru, sfo })
                 {
                     using var service = api.Service(api.User);
                     using var registered = await service.PostAsJsonAsync(ManagementApi.Uri("/v1/management/commits"), new
                     {
-                        id = Guid.NewGuid().ToString("D"),
+                        id = EntityIds.New().ToString(),
                         ops = new object[]
                         {
                             new { op = "create_organization", id = organization, name = faker.Company.CompanyName() },
@@ -1126,14 +1127,14 @@ public sealed partial class CrossRegionPagingProgressTests
             await using var sfo = await StartAsync(network, credentials, "sfo-1", "sfo", "sfo-a", bus, clock);
             try
             {
-                var organization = Guid.NewGuid().ToString("D");
-                var project = Guid.NewGuid().ToString("D");
+                var organization = EntityIds.New().ToString();
+                var project = EntityIds.New().ToString();
                 foreach (var api in new[] { gru, sfo })
                 {
                     using var service = api.Service(api.User);
                     using var registered = await service.PostAsJsonAsync(ManagementApi.Uri("/v1/management/commits"), new
                     {
-                        id = Guid.NewGuid().ToString("D"),
+                        id = EntityIds.New().ToString(),
                         ops = new object[]
                         {
                             new { op = "create_organization", id = organization, name = faker.Company.CompanyName() },
@@ -1316,14 +1317,14 @@ public sealed partial class CrossRegionPagingProgressTests
             await using var sfo = await StartAsync(network, credentials, "sfo-1", "sfo", "sfo-a", bus, clock);
             try
             {
-                var organization = Guid.NewGuid().ToString("D");
-                var project = Guid.NewGuid().ToString("D");
+                var organization = EntityIds.New().ToString();
+                var project = EntityIds.New().ToString();
                 foreach (var api in new[] { gru, sfo })
                 {
                     using var service = api.Service(api.User);
                     using var registered = await service.PostAsJsonAsync(ManagementApi.Uri("/v1/management/commits"), new
                     {
-                        id = Guid.NewGuid().ToString("D"),
+                        id = EntityIds.New().ToString(),
                         ops = new object[]
                         {
                             new { op = "create_organization", id = organization, name = faker.Company.CompanyName() },

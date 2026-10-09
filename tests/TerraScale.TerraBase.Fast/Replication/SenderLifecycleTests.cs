@@ -9,6 +9,7 @@ using TerraBase.Engine;
 using TerraBase.Fast.Storage;
 using TerraBase.Features.Replication;
 using TerraBase.Features.Replication.V1;
+using TerraBase.Primitives;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Replication;
@@ -124,7 +125,7 @@ public sealed class SenderLifecycleTests
                         welcome.Welcome.Frontiers[0].DurableSequence = ulong.MaxValue;
                         break;
                     case "origin":
-                        welcome.Welcome.Frontiers[0].Origin.ReplicaId = ByteString.CopyFrom(Guid.NewGuid().ToByteArray(bigEndian: true));
+                        welcome.Welcome.Frontiers[0].Origin.ReplicaId = ByteString.CopyFrom(EntityIds.New().ToByteArray());
                         break;
                     case "identity":
                         welcome.Welcome.LocalIdentity.MemberId = ByteString.Empty;
@@ -229,11 +230,11 @@ public sealed class SenderLifecycleTests
             collection.EnsureSuccessStatusCode();
         }
 
-        using var broken = await writer.PutAsJsonAsync(new Uri($"{tenant.Path("broken")}/collections/items/documents/{ReplicationDocuments.Id("b")}", UriKind.Relative), new { value = "broken" });
+        using var broken = await writer.PutAsJsonAsync(new Uri($"{tenant.Path("broken")}/collections/items/documents/by-key?id={ReplicationDocuments.Id("b")}", UriKind.Relative), new { value = "broken" });
         broken.EnsureSuccessStatusCode();
         await clock.Scheduled.Task.WaitAsync(TimeSpan.FromSeconds(30));
         // The retry timer is deliberately held. A fresh healthy commit must wake the peer worker itself.
-        using var healthy = await writer.PutAsJsonAsync(new Uri($"{tenant.Path("healthy")}/collections/items/documents/{ReplicationDocuments.Id("h")}", UriKind.Relative), new { value = "healthy" });
+        using var healthy = await writer.PutAsJsonAsync(new Uri($"{tenant.Path("healthy")}/collections/items/documents/by-key?id={ReplicationDocuments.Id("h")}", UriKind.Relative), new { value = "healthy" });
         healthy.EnsureSuccessStatusCode();
         await received.Task.WaitAsync(TimeSpan.FromSeconds(30));
         await TerraBaseTestServer.EventuallyAsync(async token =>
@@ -305,7 +306,7 @@ public sealed class SenderLifecycleTests
         await TerraBaseTestServer.ReplicatedAsync(sender);
         foreach (var id in new[] { "a", "b" })
         {
-            using var response = await reader.GetAsync(new Uri($"{tenant.Path("backlog")}/collections/items/documents/{ReplicationDocuments.Id(id)}", UriKind.Relative), deadline.Token);
+            using var response = await reader.GetAsync(new Uri($"{tenant.Path("backlog")}/collections/items/documents/by-key?id={ReplicationDocuments.Id(id)}", UriKind.Relative), deadline.Token);
             response.EnsureSuccessStatusCode();
             using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync(deadline.Token));
             await Assert.That(body.RootElement.GetProperty("document").GetProperty("value").GetString()).IsEqualTo(id);
@@ -694,7 +695,7 @@ public sealed class SenderLifecycleTests
 
     private static async Task PutAsync(ReplicationTenant tenant, HttpClient client, string id, CancellationToken cancellationToken = default)
     {
-        using var response = await client.PutAsJsonAsync(new Uri($"{tenant.Path("backlog")}/collections/items/documents/{ReplicationDocuments.Id(id)}", UriKind.Relative), new { value = id }, cancellationToken);
+        using var response = await client.PutAsJsonAsync(new Uri($"{tenant.Path("backlog")}/collections/items/documents/by-key?id={ReplicationDocuments.Id(id)}", UriKind.Relative), new { value = id }, cancellationToken);
         response.EnsureSuccessStatusCode();
     }
 }

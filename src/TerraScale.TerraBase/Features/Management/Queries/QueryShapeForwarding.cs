@@ -8,6 +8,7 @@ using TerraBase.Features.Memory;
 using TerraBase.Features.Replication;
 using TerraBase.Features.Replication.V1;
 using TerraBase.Hosting;
+using TerraBase.Primitives;
 
 namespace TerraBase.Features.Management.Queries;
 
@@ -90,7 +91,7 @@ internal sealed class QueryShapeReceiver(TerraBaseOptions options, QueryShapeRec
         && item.Stats is { } stats && QueryShapeRecorder.Valid(stats, $"{stats.Collection}:{stats.Id}");
 
     private static bool ValidId(string id) => id is { Length: > 0 and <= 128 }
-        && Guid.TryParseExact(id, "D", out var parsed) && parsed.ToString("D") == id;
+        && EntityIds.IsValid(id);
 
     // Read tokens without a JSON DOM so a hostile list or unknown property cannot allocate a large
     // token tree. Check duplicate/case-insensitive items properties before materializing any DTO list.

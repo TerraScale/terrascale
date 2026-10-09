@@ -18,6 +18,7 @@ using TerraBase.Configuration;
 using TerraBase.Fast.Storage;
 using TerraBase.Features.Replication;
 using TerraBase.Features.Replication.V1;
+using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
 
@@ -469,7 +470,7 @@ public sealed class PeerTransportTests
         var rotatedClient = false;
         var documentConnection = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
         var value = new Faker().Random.AlphaNumeric(32);
-        var id = Guid.CreateVersion7().ToString("D");
+        var id = EntityIds.New().ToString();
         var directory = Directory.CreateTempSubdirectory("terrabase-outbound-rotation-").FullName;
         try
         {
@@ -488,7 +489,7 @@ public sealed class PeerTransportTests
                 created.EnsureSuccessStatusCode();
                 using var collection = await client.PostAsJsonAsync(new Uri($"{tenant.Path("outbound-rotation")}/collections", UriKind.Relative), new { name = "items" });
                 collection.EnsureSuccessStatusCode();
-                using var written = await client.PutAsJsonAsync(new Uri($"{tenant.Path("outbound-rotation")}/collections/items/documents/{id}", UriKind.Relative), new { value });
+                using var written = await client.PutAsJsonAsync(new Uri($"{tenant.Path("outbound-rotation")}/collections/items/documents/by-key?id={id}", UriKind.Relative), new { value });
                 written.EnsureSuccessStatusCode();
             }
             await using var peer = await FakePeer.StartAsync(original, async (requests, responses, context) =>
@@ -813,7 +814,7 @@ public sealed class PeerTransportTests
         issuer.Start(1);
         var issuerUrl = $"http://127.0.0.1:{((IPEndPoint)issuer.LocalEndpoint).Port}/issuer.cer";
         using var issuerKey = ECDsa.Create(ECCurve.NamedCurves.nistP256);
-        var authorityRequest = new CertificateRequest($"CN={Guid.NewGuid():N}", issuerKey, HashAlgorithmName.SHA256);
+        var authorityRequest = new CertificateRequest($"CN={EntityIds.New()}", issuerKey, HashAlgorithmName.SHA256);
         authorityRequest.CertificateExtensions.Add(new X509BasicConstraintsExtension(true, false, 0, true));
         authorityRequest.CertificateExtensions.Add(new X509KeyUsageExtension(X509KeyUsageFlags.KeyCertSign, true));
         using var authority = authorityRequest.CreateSelfSigned(DateTimeOffset.UtcNow.AddMinutes(-5), DateTimeOffset.UtcNow.AddDays(1));
@@ -908,13 +909,15 @@ public sealed class PeerTransportTests
     }
 
     [Test]
-    public async Task Hello_must_include_protocol_1_0_and_a_consistent_identity_and_limits_are_negotiated()
+    public async Task Hello_must_include_protocol_2_0_and_a_consistent_identity_and_limits_are_negotiated()
     {
         using var tls = new PeerTls();
         await using var server = await TerraBaseTestServer.StartAsync(tls.Apply);
 
+        var oldOnly = await FirstResponseAsync(tls, server, hello =>
+            hello.ProtocolVersions = new VersionRange { Minimum = new ProtocolVersion { Major = 1 }, Maximum = new ProtocolVersion { Major = 1 } });
         var newerOnly = await FirstResponseAsync(tls, server, hello =>
-            hello.ProtocolVersions = new VersionRange { Minimum = new ProtocolVersion { Major = 1, Minor = 1 }, Maximum = new ProtocolVersion { Major = 1, Minor = 2 } });
+            hello.ProtocolVersions = new VersionRange { Minimum = new ProtocolVersion { Major = ReplicationProtocol.Major, Minor = 1 }, Maximum = new ProtocolVersion { Major = ReplicationProtocol.Major, Minor = 2 } });
         var otherMember = await FirstResponseAsync(tls, server, hello =>
             hello.LocalIdentity.MemberId = Google.Protobuf.ByteString.CopyFrom(RandomNumberGenerator.GetBytes(16)));
         var noCredit = await FirstResponseAsync(tls, server, hello => hello.Limits.ByteCredit = 0);
@@ -925,6 +928,7 @@ public sealed class PeerTransportTests
             hello.Limits.MaxInFlightBatches = 2;
         });
 
+        await Assert.That(oldOnly.Error.Code).IsEqualTo(StreamErrorCode.StreamErrorIncompatibleVersion);
         await Assert.That(newerOnly.Error.Code).IsEqualTo(StreamErrorCode.StreamErrorIncompatibleVersion);
         await Assert.That(otherMember.Error.Code).IsEqualTo(StreamErrorCode.StreamErrorUnsupportedFormat);
         await Assert.That(noCredit.Error.Code).IsEqualTo(StreamErrorCode.StreamErrorIncompatibleVersion);
@@ -939,7 +943,7 @@ public sealed class PeerTransportTests
     [Arguments("tenant", true)]
     [Arguments("project", false)]
     [Arguments("project", true)]
-    public async Task Hello_refuses_missing_or_malformed_tenant_and_project_UUIDs(string field, bool malformed)
+    public async Task Hello_refuses_missing_or_malformed_tenant_and_project_ULIDs(string field, bool malformed)
     {
         using var tls = new PeerTls();
         await using var server = await TerraBaseTestServer.StartAsync(tls.Apply);
@@ -1248,5 +1252,5 @@ public sealed class PeerTransportTests
     }
 
     private static TenantContext Database() =>
-        new(Guid.NewGuid().ToString("D"), PlanTier.Hobby, Guid.NewGuid().ToString("D"), Guid.NewGuid().ToString("D"));
+        new(EntityIds.New().ToString(), PlanTier.Hobby, EntityIds.New().ToString(), EntityIds.New().ToString());
 }

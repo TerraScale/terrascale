@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Net.Mail;
 using TerraBase.Errors;
 using TerraBase.Features.UserAuth;
+using TerraBase.Primitives;
 using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Management;
@@ -66,12 +67,18 @@ internal static class ManagementRoute
     public const string PageDescription = "Query: after (exclusive cursor from the previous page's next), limit (1 to 100, default 20). Items are in creation order.";
 
     private const int MaxDisplayNameLength = 128;
-    private const int MaxUserIdLength = 256;
     private const int MaxEmailLength = 254;
     private const int DefaultLimit = 20;
     private const int MaxLimit = 100;
 
-    public static string Value(HttpContext context, string name) => (string)context.Request.RouteValues[name]!;
+    public static string Value(HttpContext context, string name)
+    {
+        var id = RawValue(context, name);
+        return name is "index" or "collection" or "databaseName" or "recommendation" || EntityIds.IsValid(id)
+            ? id : throw new BadHttpRequestException(name + " must be a canonical uppercase ULID");
+    }
+
+    public static string RawValue(HttpContext context, string name) => (string)context.Request.RouteValues[name]!;
 
     /// <summary>The project addressed by <c>{organization}</c> and <c>{project}</c>; <see langword="null"/> when it does not exist or the acting user is not a member of its organization.</summary>
     public static ValueTask<Project?> ProjectAsync(HttpContext context, IManagementService management, CancellationToken cancellationToken) =>
@@ -145,8 +152,8 @@ internal static class ManagementRoute
 
     /// <summary>A user id from a route or body, or the rule it breaks.</summary>
     public static Valid<string> CheckUserId(string? user, string field) =>
-        string.IsNullOrEmpty(user) || user.Length > MaxUserIdLength || user.Any(char.IsControl)
-            ? new Validation($"{field} must be 1 to 256 characters without control characters")
+        !EntityIds.IsValid(user)
+            ? new Validation($"{field} must be a canonical uppercase ULID")
             : user;
 
     /// <summary>Validates one email address and returns it trimmed.</summary>

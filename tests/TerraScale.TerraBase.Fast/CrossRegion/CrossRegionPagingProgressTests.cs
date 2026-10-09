@@ -11,6 +11,7 @@ using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine.Cluster;
 using TerraBase.Features.CrossRegion;
 using TerraBase.Features.CrossRegion.V1;
+using TerraBase.Primitives;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.CrossRegion;
@@ -41,15 +42,15 @@ public sealed partial class CrossRegionPagingProgressTests
             await using var sfo = await StartAsync(network, credentials, "sfo-1", "sfo", "sfo-a", bus, clock);
             try
             {
-                var organization = Guid.NewGuid().ToString("D");
-                var project = Guid.NewGuid().ToString("D");
-                var newcomerProject = Guid.NewGuid().ToString("D");
+                var organization = EntityIds.New().ToString();
+                var project = EntityIds.New().ToString();
+                var newcomerProject = EntityIds.New().ToString();
                 foreach (var api in new[] { a, newcomer, sfo })
                 {
                     using var service = api.Service(api.User);
                     using var registered = await service.PostAsJsonAsync(ManagementApi.Uri("/v1/management/commits"), new
                     {
-                        id = Guid.NewGuid().ToString("D"),
+                        id = EntityIds.New().ToString(),
                         ops = new object[]
                         {
                             new { op = "create_organization", id = organization, name = faker.Company.CompanyName() },
@@ -62,7 +63,7 @@ public sealed partial class CrossRegionPagingProgressTests
                 using var sfoService = sfo.Service(sfo.User);
                 using (var registered = await sfoService.PostAsJsonAsync(ManagementApi.Uri("/v1/management/commits"), new
                 {
-                    id = Guid.NewGuid().ToString("D"),
+                    id = EntityIds.New().ToString(),
                     ops = new[] { new { op = "create_project", organization, id = newcomerProject, name = faker.Random.AlphaNumeric(12) } },
                 }, token))
                 {
@@ -75,7 +76,7 @@ public sealed partial class CrossRegionPagingProgressTests
                     databases.Add(await CreatePlacedAsync(a, organization, project, "page-" + index.ToString(CultureInfo.InvariantCulture), token));
                 }
 
-                // Protocol cursors use big-endian UUIDs, which order like their text within one project.
+                // Protocol cursors use big-endian ULIDs, which order like their text within one project.
                 databases.Sort((left, right) => string.CompareOrdinal(left.Id, right.Id));
                 var prefix = databases[0];
                 var tail = fullMembership ? await CreatePlacedAsync(newcomer, organization, newcomerProject, "new-member", token) : databases[^1];
@@ -367,12 +368,12 @@ public sealed partial class CrossRegionPagingProgressTests
     {
         var output = TUnit.Core.TestContext.Current!.OutputWriter;
         var databases = new List<ManagedDatabaseRef>();
-        foreach (var batch in names.Select(name => new ManagedDatabaseRef(organization, project, Guid.NewGuid().ToString("D"), name)).Chunk(16))
+        foreach (var batch in names.Select(name => new ManagedDatabaseRef(organization, project, EntityIds.New().ToString(), name)).Chunk(16))
         {
             output.WriteLine($"paging inventory: seed batch starts after {databases.Count} databases, adding {batch.Length}");
             using var created = await api.Client.PostAsJsonAsync(ManagementApi.Uri("/v1/management/commits"), new
             {
-                id = Guid.NewGuid().ToString("D"),
+                id = EntityIds.New().ToString(),
                 ops = batch.Select(database => new { op = "create_database", organization, project, name = database.Name, id = database.Id, replica_regions = InSfo }).ToArray(),
             }, token);
             await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.OK);

@@ -92,7 +92,7 @@ public sealed record ListenerPressure(
     [property: JsonPropertyName("requests_total")] long RequestsTotal);
 
 /// <summary>One organization's request rate. CPU attribution is unavailable.</summary>
-/// <param name="Org">Organization ID from an authenticated API key.</param>
+/// <param name="Org">Organization ULID from an authenticated API key.</param>
 /// <param name="RequestRate">Completed requests per second.</param>
 /// <param name="Plan">Last plan resolved by an endpoint in this interval, or null when unresolved.</param>
 public sealed record TenantPressure(
@@ -105,7 +105,7 @@ public sealed record TenantPressure(
 }
 
 /// <summary>Physical storage of one organization.</summary>
-/// <param name="Org">Organization ID.</param>
+/// <param name="Org">Organization ULID.</param>
 /// <param name="Bytes">SQLite file and sidecar bytes, not logical document size.</param>
 public sealed record TenantStoragePressure(
     [property: JsonPropertyName("org")] string Org,

@@ -69,9 +69,9 @@ TS-513 and is not implemented here.
 | `memory_used_bytes`, `memory_budget_bytes`, `mem_util` | Process resident working set; telemetry budget; used/budget capped at one. Used bytes remain uncapped and can exceed the budget. Process failures yield null used/utilization. This budget is a denominator, not a hard memory-admission guarantee. |
 | `disk_used_bytes`, `disk_free_bytes`, `disk_total_bytes` | Filesystem containing the data directory, including other users of that filesystem. Used = total minus total free. Free includes reserved space; it does not promise all bytes are writable by this process. Failures yield null. |
 | `request_rate`, `p95_latency_ms`, `listeners` | Completed HTTP requests, including errors and admin scrapes, summed across admin/client/peer. Each listener has its rate, p95 and cumulative `requests_total`. gRPC duration covers the whole HTTP stream, not individual frames. An empty interval has zero rate/p95. |
-| `top_organizations` | Up to ten organizations sorted by completed authenticated API-key request rate, descending with ID tie-breaks. Management service-credential traffic is not attributed to tenants. `plan` is the last plan resolved by a document endpoint during that interval, null when unavailable. `cpu_share` remains null: elapsed request time is not CPU time. |
+| `top_organizations` | Up to ten organizations sorted by completed authenticated API-key request rate, descending with ULID tie-breaks. Management service-credential traffic is not attributed to tenants. `plan` is the last plan resolved by a document endpoint during that interval, null when unavailable. `cpu_share` remains null: elapsed request time is not CPU time. |
 | `untracked_tenant_requests` | Count omitted from tenant ranking when more than 4,096 distinct organizations occur in one interval. The fixed tracking table clears each interval; node/listener rates always include all requests. A nonzero value makes the ranking incomplete. |
-| `data_bytes`, `top_organizations_by_storage`, `storage_sampled_at` | Separate cached file-metadata sample every ten seconds, including unopened databases. Physical lengths of tenant `.db`, `.db-wal` and `.db-shm` files, excluding `_system`; top ten by physical bytes with ID tie-breaks. Samples are non-atomic during writes/deletes/checkpoints and can decrease. Null total/timestamp with an empty ranking before the first complete scan or after failure. No document data is read. |
+| `data_bytes`, `top_organizations_by_storage`, `storage_sampled_at` | Separate cached file-metadata sample every ten seconds, including unopened databases. Physical lengths of tenant `.db`, `.db-wal` and `.db-shm` files, excluding `_system`; top ten by physical bytes with ULID tie-breaks. Samples are non-atomic during writes/deletes/checkpoints and can decrease. Null total/timestamp with an empty ranking before the first complete scan or after failure. No document data is read. |
 | `load.connections`, `load.write_qps` | Current open client transport connections, including TLS handshakes; successful changed client-database write commits per interval. Reads, empty transactions, rollbacks, system writes and migrations are excluded from write rate. |
 | `state`, `io_queue_depth`, `disk_iops` | Membership state is `"unknown"`; mean in-flight device I/O and device IOPS are explicit null. The existing SQLite idle-session pool is not an I/O admission queue. |
 | `load.storage_bytes`, `load.replication_lag_seq` | Explicit null. Physical file bytes are not logical document size; local commit offsets are not authenticated peer applied-frontier lag. |
@@ -80,9 +80,9 @@ P95 uses 256 fixed geometric histogram bins rather than retaining requests.
 The bucket upper bound is within 10% of the selected latency (minimum 0.01 ms;
 extreme values saturate the final bin). The request hot path increments counters
 under one short lock, without scans or asynchronous work. Tracking uses a fixed
-number of histogram bins and at most 4,096 organization ID keys per one-second interval.
+number of histogram bins and at most 4,096 organization ULID keys per one-second interval.
 Storage enumeration retains one organization's running sum and at most ten
-ranked organization IDs. Background work has no queued sampling backlog.
+ranked organization ULIDs. Background work has no queued sampling backlog.
 
 ## Prometheus
 

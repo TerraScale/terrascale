@@ -10,6 +10,7 @@ using TerraBase.Features.ApiKeys;
 using TerraBase.Features.Management;
 using TerraBase.Features.Replication;
 using TerraBase.Features.Replication.V1;
+using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
 
@@ -157,6 +158,8 @@ public sealed class CatalogReplicationTests
             using var seeded = tls.CreateClient(follower.ClientAddress!, tenant.Key);
             await TerraBaseTestServer.EventuallyAsync(async token =>
                 await GetAsync(seeded, tenant, "orders", "kept", token) == HttpStatusCode.NotFound);
+            await TerraBaseTestServer.EventuallyAsync(async token =>
+                await PutAsync(seeded, tenant, "orders", "before-replacement", token) == HttpStatusCode.Created, TimeSpan.FromSeconds(5));
         }
 
         {
@@ -166,6 +169,7 @@ public sealed class CatalogReplicationTests
                 await FailuresAsync(follower, "lineage", token) >= 1);
             await Assert.That(await ReadinessAsync(follower)).IsEqualTo(HttpStatusCode.OK);
             using var data = tls.CreateClient(follower.ClientAddress!, tenant.Key);
+            await Assert.That(await GetAsync(data, tenant, "orders", "before-replacement")).IsEqualTo(HttpStatusCode.OK);
             await Assert.That(await PutAsync(data, tenant, "orders", "kept")).IsEqualTo(HttpStatusCode.Created);
         }
     }
@@ -304,7 +308,7 @@ public sealed class CatalogReplicationTests
         var forged = new DocumentChange("catalog_test", "forged", 8, Encoding.UTF8.GetBytes("\"forged\""));
         await using var fake = await FakePeer.StartCatalogAsync(peers, async (request, responses, context) =>
         {
-            await responses.WriteAsync(new FollowResponse { Welcome = new CatalogWelcome { Protocol = 1, Origin = ByteString.CopyFrom(origin), Head = 2 } });
+            await responses.WriteAsync(new FollowResponse { Welcome = new CatalogWelcome { Protocol = CatalogProtocol.Version, Origin = ByteString.CopyFrom(origin), Head = 2 } });
             // A reconnecting follower, which adopted this origin, resumes after the honest group as from a real primary.
             if (!request.Origin.Span.SequenceEqual(origin))
             {
@@ -375,7 +379,7 @@ public sealed class CatalogReplicationTests
             if (!request.Origin.Span.SequenceEqual(origin))
             {
                 // First stream: a snapshot through group 1, the head, then the stream breaks once the test saw it ready.
-                await responses.WriteAsync(new FollowResponse { Welcome = new CatalogWelcome { Protocol = 1, Origin = ByteString.CopyFrom(origin), Head = 1 } });
+                await responses.WriteAsync(new FollowResponse { Welcome = new CatalogWelcome { Protocol = CatalogProtocol.Version, Origin = ByteString.CopyFrom(origin), Head = 1 } });
                 await responses.WriteAsync(new FollowResponse { SnapshotBegin = new SnapshotBegin { Sequence = 0, Digest = ByteString.CopyFrom(initial) } });
                 await WriteGroupAsync(responses, 1, [first], firstDigest);
                 await responses.WriteAsync(new FollowResponse { SnapshotEnd = new SnapshotEnd { Sequence = 1, Digest = ByteString.CopyFrom(firstDigest), CommitOffset = 3 } });
@@ -385,7 +389,7 @@ public sealed class CatalogReplicationTests
             }
 
             // The reconnected follower learns of group 2 before receiving it.
-            await responses.WriteAsync(new FollowResponse { Welcome = new CatalogWelcome { Protocol = 1, Origin = ByteString.CopyFrom(origin), Head = 2 } });
+            await responses.WriteAsync(new FollowResponse { Welcome = new CatalogWelcome { Protocol = CatalogProtocol.Version, Origin = ByteString.CopyFrom(origin), Head = 2 } });
             await deliver.Task.WaitAsync(context.CancellationToken);
             await WriteGroupAsync(responses, 2, [second], JournalDigest.Compute(origin, 2, firstDigest, [second]));
             await responses.WriteAsync(new FollowResponse { Heartbeat = new CatalogHeartbeat { Head = 2 } });
@@ -416,11 +420,11 @@ public sealed class CatalogReplicationTests
         var client = new CatalogReplication.CatalogReplicationClient(channel);
 
         var refused = await Assert.ThrowsAsync<RpcException>(async () =>
-            await FramesAsync(client, new FollowRequest { Protocol = 2, Codecs = { PayloadCodec.Lz4BlockV1 } }, 1));
+            await FramesAsync(client, new FollowRequest { Protocol = 1, Codecs = { PayloadCodec.Lz4BlockV1 } }, 1));
         await Assert.That(refused!.StatusCode).IsEqualTo(StatusCode.InvalidArgument);
 
         // A new follower gets a snapshot that ends at the primary's head.
-        var snapshot = await FramesAsync(client, new FollowRequest { Protocol = 1, Codecs = { PayloadCodec.Lz4BlockV1 } },
+        var snapshot = await FramesAsync(client, new FollowRequest { Protocol = CatalogProtocol.Version, Codecs = { PayloadCodec.Lz4BlockV1 } },
             stop: frame => frame.FrameCase == FollowResponse.FrameOneofCase.Heartbeat);
         var welcome = snapshot[0].Welcome;
         var end = snapshot.Single(frame => frame.FrameCase == FollowResponse.FrameOneofCase.SnapshotEnd).SnapshotEnd;
@@ -446,7 +450,7 @@ public sealed class CatalogReplicationTests
         });
         using var followerChannel = peers.CreateChannel(follower.PeerAddress!);
         var notPrimary = await Assert.ThrowsAsync<RpcException>(async () =>
-            await FramesAsync(new CatalogReplication.CatalogReplicationClient(followerChannel), new FollowRequest { Protocol = 1, Codecs = { PayloadCodec.Lz4BlockV1 } }, 1));
+            await FramesAsync(new CatalogReplication.CatalogReplicationClient(followerChannel), new FollowRequest { Protocol = CatalogProtocol.Version, Codecs = { PayloadCodec.Lz4BlockV1 } }, 1));
         await Assert.That(notPrimary!.StatusCode).IsEqualTo(StatusCode.FailedPrecondition);
     }
 
@@ -610,7 +614,7 @@ public sealed class CatalogReplicationTests
     }
 
     private static FollowRequest Frontier(ByteString origin, ulong sequence, ByteString digest) =>
-        new() { Protocol = 1, Codecs = { PayloadCodec.Lz4BlockV1 }, Origin = origin, Sequence = sequence, Digest = digest };
+        new() { Protocol = CatalogProtocol.Version, Codecs = { PayloadCodec.Lz4BlockV1 }, Origin = origin, Sequence = sequence, Digest = digest };
 
     // Reads frames until count of them arrived or stop holds for one after the first (always Welcome), within 30 seconds, then
     // ends the stream.
@@ -636,15 +640,15 @@ public sealed class CatalogReplicationTests
     {
         public Uri Database(string name, string path = "") => new($"/v1/projects/{Project}/databases/{name}{path}", UriKind.Relative);
 
-        public Uri Document(string database, string label) => Database(database, $"/collections/items/documents/{ReplicationDocuments.Id(label)}");
+        public Uri Document(string database, string label) => Database(database, $"/collections/items/documents/by-key?id={ReplicationDocuments.Id(label)}");
 
         // An organization with one project and database on a catalog primary, and an API key of the organization.
         public static async Task<CatalogTenant> CreateAsync(TerraBaseTestServer primary, string database)
         {
             using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
-            var user = Guid.NewGuid().ToString();
+            var user = EntityIds.New().ToString();
             var management = primary.Services.GetRequiredService<IManagementService>();
-            var organization = (await management.CreateOrganizationAsync(user, $"Org {Guid.NewGuid():N}", deadline.Token)).Value
+            var organization = (await management.CreateOrganizationAsync(user, $"Org {EntityIds.New()}", deadline.Token)).Value
                 ?? throw new InvalidOperationException("the primary did not create the organization");
             var project = (await management.CreateProjectAsync(user, organization.Id, "main", deadline.Token)).Value
                 ?? throw new InvalidOperationException("the primary did not create the project");

@@ -7,6 +7,7 @@ using TerraBase.Engine;
 using TerraBase.Features.Health;
 using TerraBase.Features.Replication;
 using TerraBase.Hosting;
+using TerraBase.Primitives;
 using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Pressure;
@@ -29,7 +30,7 @@ internal sealed partial class PressureSignals : BackgroundService, IPressureSign
     private readonly IReplicationPressure _replication;
     private readonly TimeProvider _time;
     private readonly ILogger<PressureSignals> _logger;
-    private readonly string _processId = Ulid.NewUlid().ToString();
+    private readonly string _processId = EntityIds.New().ToString();
     private readonly string _release = typeof(ServiceVersion).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "0.0.0";
     private PressureBody _snapshot;
     private StorageSample? _storage;
@@ -78,7 +79,7 @@ internal sealed partial class PressureSignals : BackgroundService, IPressureSign
         {
             _totals[index]++;
             _latencies[index][bucket]++;
-            if (organization is null || !Guid.TryParseExact(organization, "D", out _))
+            if (organization is null || !EntityIds.IsValid(organization))
             {
                 return;
             }

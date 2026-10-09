@@ -7,6 +7,7 @@ using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine.Cluster;
 using TerraBase.Features.CrossRegion;
 using TerraBase.Features.CrossRegion.V1;
+using TerraBase.Primitives;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.CrossRegion;
@@ -49,8 +50,8 @@ public sealed class CrossRegionMembershipTests
                 _ = await paged.CreateManagedDatabaseAsync(seed.Organization, seed.Project, "page-two");
             }
 
-            var organization = Guid.NewGuid().ToString("D");
-            var project = Guid.NewGuid().ToString("D");
+            var organization = EntityIds.New().ToString();
+            var project = EntityIds.New().ToString();
             var organizationName = faker.Company.CompanyName();
             var projectName = faker.Random.AlphaNumeric(12);
             foreach (var api in new[] { c, sfo })
@@ -58,7 +59,7 @@ public sealed class CrossRegionMembershipTests
                 using var service = api.Service(api.User);
                 using var registered = await service.PostAsJsonAsync(ManagementApi.Uri("/v1/management/commits"), new
                 {
-                    id = Guid.NewGuid().ToString("D"),
+                    id = EntityIds.New().ToString(),
                     ops = new object[]
                     {
                         new { op = "create_organization", id = organization, name = organizationName },

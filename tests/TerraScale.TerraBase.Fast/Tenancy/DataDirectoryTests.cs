@@ -11,6 +11,7 @@ using Microsoft.Extensions.Logging;
 using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Engine.Sqlite;
+using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
 
@@ -63,7 +64,7 @@ public sealed class DataDirectoryTests
             {
                 using var tenant = await api.CreateTenantAsync("documents:read", "documents:write");
                 key = await api.Server.IssueAsync(tenant.OrganizationId, "documents:read");
-                document = tenant.Database("main", $"/collections/people/documents/{Guid.CreateVersion7()}");
+                document = tenant.Database("main", $"/collections/people/documents/by-key?id={EntityIds.New()}");
                 using var database = await tenant.Data.PutAsync(tenant.Database("main"), null);
                 database.EnsureSuccessStatusCode();
                 using var collection = await tenant.Data.PostAsJsonAsync(tenant.Database("main", "/collections"), new { name = "people" });
@@ -111,7 +112,7 @@ public sealed class DataDirectoryTests
         try
         {
             var engine = server.Services.GetRequiredService<IStorageEngine>();
-            var database = new TenantContext(Guid.NewGuid().ToString(), PlanTier.Hobby, Guid.NewGuid().ToString(), Guid.NewGuid().ToString());
+            var database = new TenantContext(EntityIds.New().ToString(), PlanTier.Hobby, EntityIds.New().ToString(), EntityIds.New().ToString());
             await engine.CreateDatabaseAsync(database, CancellationToken.None);
             var store = (await engine.OpenDatabaseAsync(database, CancellationToken.None))!;
             await using var transaction = await store.BeginTransactionAsync(write: true, CancellationToken.None);
@@ -156,7 +157,7 @@ public sealed class DataDirectoryTests
             settings => settings["shutdown-grace-seconds"] = "0",
             services => services.AddSingleton<ILoggerProvider>(logs));
         var engine = server.Services.GetRequiredService<IStorageEngine>();
-        var database = new TenantContext(Guid.NewGuid().ToString(), PlanTier.Hobby, Guid.NewGuid().ToString(), Guid.NewGuid().ToString());
+        var database = new TenantContext(EntityIds.New().ToString(), PlanTier.Hobby, EntityIds.New().ToString(), EntityIds.New().ToString());
         await engine.CreateDatabaseAsync(database, CancellationToken.None);
         var store = (await engine.OpenDatabaseAsync(database, CancellationToken.None))!;
         await using var transaction = await store.BeginTransactionAsync(write: true, CancellationToken.None);
@@ -180,11 +181,11 @@ public sealed class DataDirectoryTests
     {
         await using var server = await TerraBaseTestServer.StartAsync(settings => settings["shutdown-grace-seconds"] = "1");
         var engine = server.Services.GetRequiredService<SqliteStorageEngine>();
-        var project = new TenantContext(Guid.NewGuid().ToString(), PlanTier.Hobby, Guid.NewGuid().ToString());
+        var project = new TenantContext(EntityIds.New().ToString(), PlanTier.Hobby, EntityIds.New().ToString());
         // More databases than the pool keeps idle connections for: returning the later sessions evicts earlier ones.
         for (var i = 0; i < engine.Pool.MaxIdle + 8; i++)
         {
-            var database = project with { DatabaseId = Guid.NewGuid().ToString() };
+            var database = project with { DatabaseId = EntityIds.New().ToString() };
             await engine.CreateDatabaseAsync(database, CancellationToken.None);
             var store = (await engine.OpenDatabaseAsync(database, CancellationToken.None))!;
             await (await store.BeginTransactionAsync(write: false, CancellationToken.None)).DisposeAsync();
@@ -213,7 +214,7 @@ public sealed class DataDirectoryTests
         try
         {
             var engine = server.Services.GetRequiredService<SqliteStorageEngine>();
-            var database = new TenantContext(Guid.NewGuid().ToString(), PlanTier.Hobby, Guid.NewGuid().ToString(), Guid.NewGuid().ToString());
+            var database = new TenantContext(EntityIds.New().ToString(), PlanTier.Hobby, EntityIds.New().ToString(), EntityIds.New().ToString());
             await engine.CreateDatabaseAsync(database, CancellationToken.None);
             var path = Path.Combine(server.DataDirectory, database.OrganizationId, database.ProjectId!, database.DatabaseId + ".db");
             // Stores the engine does not track, one session each (so no per-database cap applies), closed by the pool's own
@@ -312,7 +313,7 @@ public sealed class DataDirectoryTests
     [Test]
     public async Task The_ownership_probe_fails_instead_of_reading_a_missing_directory_as_owned()
     {
-        var missing = Path.Combine(Path.GetTempPath(), "terrabase-missing-" + Guid.NewGuid());
+        var missing = Path.Combine(Path.GetTempPath(), "terrabase-missing-" + EntityIds.New().ToString());
 
         await Assert.That(() => TerraBaseTestServer.IsDataDirectoryOwned(missing)).Throws<DirectoryNotFoundException>();
     }
@@ -375,7 +376,7 @@ public sealed class DataDirectoryTests
                     break;
                 default:
                     // A layout record this build does not know, from a newer build.
-                    await File.WriteAllBytesAsync(lockFile, [2]);
+                    await File.WriteAllBytesAsync(lockFile, [99]);
                     break;
             }
 

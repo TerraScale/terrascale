@@ -125,7 +125,7 @@ public interface IStorageEngine : IAsyncDisposable
     /// When set, deletes only that incarnation, checked under the lifecycle lock: nothing when no open store of it holds the
     /// database (another incarnation replaced it, or it is gone).
     /// </param>
-    ValueTask<bool> DeleteDatabaseAsync(TenantContext database, CancellationToken cancellationToken, bool retainIntentOwnership = false, Guid? incarnation = null);
+    ValueTask<bool> DeleteDatabaseAsync(TenantContext database, CancellationToken cancellationToken, bool retainIntentOwnership = false, Ulid? incarnation = null);
 
     /// <summary>
     /// Streams files and directory-shaped database artifacts, excluding exact root system and ownership files and without

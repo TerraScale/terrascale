@@ -1,7 +1,7 @@
 using System.Net;
 using System.Text.Json;
 using Bogus;
-using Microsoft.Data.Sqlite;
+using TerraBase.Primitives;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Management;
@@ -32,7 +32,7 @@ public sealed class ManagementApiTests
         await Assert.That(organization.GetProperty("name").GetString()).IsEqualTo(name);
         await Assert.That(organization.GetProperty("createdBy").GetString()).IsEqualTo(api.User);
         await Assert.That(organization.GetProperty("plan").GetString()).IsEqualTo("hobby");
-        await Assert.That(Guid.TryParse(id, out _)).IsTrue();
+        await Assert.That(EntityIds.IsValid(id)).IsTrue();
         await Assert.That(read.StatusCode).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(list.RootElement.GetProperty("items").EnumerateArray().Select(item => item.GetProperty("id").GetString()!)).IsEquivalentTo([id]);
         await Assert.That(renamed.StatusCode).IsEqualTo(HttpStatusCode.OK);
@@ -46,7 +46,7 @@ public sealed class ManagementApiTests
     public async Task An_organization_plan_defaults_to_hobby_and_is_set_only_by_owners()
     {
         await using var api = await ManagementApi.StartAsync();
-        using var other = api.As("other-user");
+        using var other = api.As(EntityIds.New().ToString());
         var organization = await api.CreateOrganizationAsync("Acme");
         var plan = $"/v1/management/organizations/{organization}/plan";
 
@@ -79,7 +79,7 @@ public sealed class ManagementApiTests
     public async Task A_user_lists_only_their_organizations_in_pages()
     {
         await using var api = await ManagementApi.StartAsync();
-        using var other = api.As("other-user");
+        using var other = api.As(EntityIds.New().ToString());
         var ids = new List<string>();
         for (var i = 0; i < 3; i++)
         {
@@ -105,7 +105,7 @@ public sealed class ManagementApiTests
     public async Task A_user_switches_between_their_own_organizations()
     {
         await using var api = await ManagementApi.StartAsync();
-        using var other = api.As("other-user");
+        using var other = api.As(EntityIds.New().ToString());
         var first = await api.CreateOrganizationAsync("First");
         var second = await api.CreateOrganizationAsync("Second");
         var foreign = await api.CreateOrganizationAsync("Foreign", other);
@@ -117,7 +117,7 @@ public sealed class ManagementApiTests
         var selected = await api.Client.GetFromJsonAsync<JsonElement>(Uri(current));
         using var otherUserNone = await other.GetAsync(Uri(current));
         using var notMember = await api.Client.PutAsJsonAsync(Uri(current), new { organizationId = foreign });
-        using var unknown = await api.Client.PutAsJsonAsync(Uri(current), new { organizationId = Guid.NewGuid() });
+        using var unknown = await api.Client.PutAsJsonAsync(Uri(current), new { organizationId = EntityIds.New().ToString() });
         using var missing = await api.Client.PutAsJsonAsync(Uri(current), new { });
         (await api.Client.DeleteAsync(Uri($"/v1/management/organizations/{second}"))).Dispose();
         using var afterDelete = await api.Client.GetAsync(Uri(current));
@@ -174,23 +174,23 @@ public sealed class ManagementApiTests
         var databases = $"/v1/management/organizations/{organization}/projects/{project}/databases";
         var dataApi = $"/v1/projects/{project}/databases";
         var person = new { name = Faker.Name.FullName() };
-        var (p1, p2) = (Guid.CreateVersion7().ToString(), Guid.CreateVersion7().ToString());
+        var (p1, p2) = (EntityIds.New().ToString(), EntityIds.New().ToString());
 
         using var created = await api.Client.PostAsJsonAsync(Uri(databases), new { name = "main" });
         var main = await created.Content.ReadFromJsonAsync<JsonElement>();
         var mainId = main.GetProperty("id").GetString()!;
         (await data.PostAsJsonAsync(Uri($"{dataApi}/main/collections"), new { name = "people" })).EnsureSuccessStatusCode();
-        (await data.PutAsJsonAsync(Uri($"{dataApi}/main/collections/people/documents/{p1}"), person)).EnsureSuccessStatusCode();
+        (await data.PutAsJsonAsync(Uri($"{dataApi}/main/collections/people/documents/by-key?id={p1}"), person)).EnsureSuccessStatusCode();
         using var branched = await api.Client.PostAsJsonAsync(Uri($"{databases}/{mainId}/branches"), new { name = "preview" });
         var branch = await branched.Content.ReadFromJsonAsync<JsonElement>();
-        (await data.PutAsJsonAsync(Uri($"{dataApi}/preview/collections/people/documents/{p2}"), person)).EnsureSuccessStatusCode();
-        using var mainWithoutBranchWrite = await data.GetAsync(Uri($"{dataApi}/main/collections/people/documents/{p2}"));
+        (await data.PutAsJsonAsync(Uri($"{dataApi}/preview/collections/people/documents/by-key?id={p2}"), person)).EnsureSuccessStatusCode();
+        using var mainWithoutBranchWrite = await data.GetAsync(Uri($"{dataApi}/main/collections/people/documents/by-key?id={p2}"));
         using var list = JsonDocument.Parse(await api.Client.GetStringAsync(Uri(databases)));
         using var projectNotEmpty = await api.Client.DeleteAsync(Uri($"/v1/management/organizations/{organization}/projects/{project}"));
         using var deleted = await api.Client.DeleteAsync(Uri($"{databases}/{mainId}"));
         using var gone = await api.Client.GetAsync(Uri($"{databases}/{mainId}"));
-        using var dataGone = await data.GetAsync(Uri($"{dataApi}/main/collections/people/documents/{p1}"));
-        using var branchKeepsCopy = await data.GetAsync(Uri($"{dataApi}/preview/collections/people/documents/{p1}"));
+        using var dataGone = await data.GetAsync(Uri($"{dataApi}/main/collections/people/documents/by-key?id={p1}"));
+        using var branchKeepsCopy = await data.GetAsync(Uri($"{dataApi}/preview/collections/people/documents/by-key?id={p1}"));
 
         await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created);
         await Assert.That(main.GetProperty("name").GetString()).IsEqualTo("main");
@@ -212,7 +212,7 @@ public sealed class ManagementApiTests
     public async Task Duplicate_names_conflict_ignoring_case_within_the_same_parent()
     {
         await using var api = await ManagementApi.StartAsync();
-        using var otherUser = api.As("other-user");
+        using var otherUser = api.As(EntityIds.New().ToString());
         var acme = await api.CreateOrganizationAsync("Acme");
         var globex = await api.CreateOrganizationAsync("Globex");
         var project = await api.CreateProjectAsync(acme, "Web");
@@ -254,7 +254,7 @@ public sealed class ManagementApiTests
         await using var api = await ManagementApi.StartAsync();
         var organization = await api.CreateOrganizationAsync("Acme");
         var project = await api.CreateProjectAsync(organization, "Web");
-        var unknown = Guid.NewGuid();
+        var unknown = EntityIds.New().ToString();
 
         var statuses = await AllStatusesAsync(api.Client, $"/v1/management/organizations/{unknown}", unknown.ToString(), unknown.ToString());
         statuses.AddRange(await AllStatusesAsync(api.Client, $"/v1/management/organizations/{organization}", unknown.ToString(), unknown.ToString(), Level.Project));
@@ -268,7 +268,7 @@ public sealed class ManagementApiTests
     public async Task Users_cannot_reach_organizations_they_are_not_members_of()
     {
         await using var api = await ManagementApi.StartAsync();
-        using var intruder = api.As("intruder");
+        using var intruder = api.As(EntityIds.New().ToString());
         var organization = await api.CreateOrganizationAsync("Acme");
         var project = await api.CreateProjectAsync(organization, "Web");
         using var created = await api.Client.PostAsJsonAsync(Uri($"/v1/management/organizations/{organization}/projects/{project}/databases"), new { name = "main" });
@@ -342,7 +342,7 @@ public sealed class ManagementApiTests
         using var notAToken = await garbage.GetAsync(Uri("/v1/management/organizations"));
         using var withApiKey = await apiKey.GetAsync(Uri("/v1/management/organizations"));
         using var onAdmin = await api.Server.Client.SendAsync(adminRequest);
-        using var noDocumentAccess = await api.Client.PutAsync(Uri($"/v1/projects/{Guid.NewGuid()}/databases/x"), null);
+        using var noDocumentAccess = await api.Client.PutAsync(Uri($"/v1/projects/{EntityIds.New()}/databases/x"), null);
 
         await Assert.That(noToken.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
         await Assert.That(notAToken.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
@@ -359,7 +359,7 @@ public sealed class ManagementApiTests
         using var tls = new ClientTls();
         using var issuer = new TestIssuer();
         await using var server = await TerraBaseTestServer.StartAsync(tls.Apply, issuer.Route);
-        using var client = tls.CreateClient(server.ClientAddress!, issuer.Mint(Faker.Random.Guid().ToString()));
+        using var client = tls.CreateClient(server.ClientAddress!, issuer.Mint(EntityIds.New().ToString()));
 
         using var response = await client.GetAsync(Uri("/v1/management/organizations"));
 
@@ -367,163 +367,31 @@ public sealed class ManagementApiTests
     }
 
     [Test]
-    public async Task A_catalog_from_before_membership_is_migrated_to_the_configured_owner()
+    [Arguments("2")]
+    [Arguments("5")]
+    [Arguments("99")]
+    public async Task Noncurrent_catalog_versions_are_refused_and_left_unchanged(string version)
     {
-        var dataDirectory = Directory.CreateTempSubdirectory("terrabase-legacy-").FullName;
+        var directory = Directory.CreateTempSubdirectory("terrabase-catalog-format-").FullName;
         try
         {
-            var (organization, project) = await WriteVersionOneCatalogAsync(dataDirectory);
-            const string owner = "legacy-owner";
-
-            HttpStatusCode unmigrated;
-            await using (var api = await ManagementApi.StartAsync(settings => settings["data-directory"] = dataDirectory))
+            await WriteSystemDocumentsAsync(directory, ("catalog", "version", JsonSerializer.Serialize(version)));
+            var before = await ReadSystemDocumentsAsync(directory);
+            await using (var api = await ManagementApi.StartAsync(settings => settings["data-directory"] = directory))
             {
                 using var response = await api.Client.GetAsync(Uri("/v1/management/organizations"));
-                unmigrated = response.StatusCode;
+                await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
             }
 
-            HttpStatusCode ownerProject, outsider;
-            string[] owned;
-            await using (var api = await ManagementApi.StartAsync(settings =>
-            {
-                settings["data-directory"] = dataDirectory;
-                settings["management-legacy-owner"] = owner;
-            }))
-            {
-                using var ownerClient = api.As(owner);
-                using var outsiderClient = api.As("someone-else");
-                using var list = JsonDocument.Parse(await ownerClient.GetStringAsync(Uri("/v1/management/organizations")));
-                owned = [.. list.RootElement.GetProperty("items").EnumerateArray().Select(item => item.GetProperty("createdBy").GetString()!)];
-                ownerProject = await StatusAsync(ownerClient.GetAsync(Uri($"/v1/management/organizations/{organization}/projects/{project}")));
-                outsider = await StatusAsync(outsiderClient.GetAsync(Uri($"/v1/management/organizations/{organization}")));
-                // The global name claim moved to the owner's own index.
-                await Assert.That(await StatusAsync(ownerClient.PostAsJsonAsync(Uri("/v1/management/organizations"), new { name = "ACME" })))
-                    .IsEqualTo(HttpStatusCode.Conflict);
-                await Assert.That(await StatusAsync(outsiderClient.PostAsJsonAsync(Uri("/v1/management/organizations"), new { name = "Acme" })))
-                    .IsEqualTo(HttpStatusCode.Created);
-            }
-
-            // The migration is recorded: later starts need no setting.
-            HttpStatusCode afterRestart;
-            await using (var api = await ManagementApi.StartAsync(settings => settings["data-directory"] = dataDirectory))
-            {
-                using var ownerClient = api.As(owner);
-                afterRestart = await StatusAsync(ownerClient.GetAsync(Uri($"/v1/management/organizations/{organization}")));
-            }
-
-            await Assert.That(unmigrated).IsEqualTo(HttpStatusCode.ServiceUnavailable);
-            await Assert.That(owned).IsEquivalentTo([owner]);
-            await Assert.That(ownerProject).IsEqualTo(HttpStatusCode.OK);
-            await Assert.That(outsider).IsEqualTo(HttpStatusCode.NotFound);
-            await Assert.That(afterRestart).IsEqualTo(HttpStatusCode.OK);
+            await Assert.That(await ReadSystemDocumentsAsync(directory)).IsEquivalentTo(before);
         }
         finally
         {
-            SqliteConnection.ClearAllPools();
-            Directory.Delete(dataDirectory, recursive: true);
+            Directory.Delete(directory, recursive: true);
         }
     }
 
-    [Test]
-    public async Task A_catalog_from_before_roles_makes_its_members_owners()
-    {
-        var dataDirectory = Directory.CreateTempSubdirectory("terrabase-roles-").FullName;
-        try
-        {
-            var organization = Guid.CreateVersion7().ToString();
-            await WriteSystemDocumentsAsync(
-                dataDirectory,
-                ("catalog", "version", JsonSerializer.Serialize("2")),
-                ("organizations", organization, $$"""{"id":"{{organization}}","name":"Acme","createdBy":"alice","createdAt":"2026-10-04T12:00:00+00:00"}"""),
-                ($"organizations/{organization}/members", "alice", JsonSerializer.Serialize("alice")),
-                ("users/alice/organizations", organization, JsonSerializer.Serialize(organization)),
-                ("users/alice/organization_names", "acme", JsonSerializer.Serialize(organization)));
-
-            string[] members;
-            HttpStatusCode invited, read;
-            await using (var api = await ManagementApi.StartAsync(settings => settings["data-directory"] = dataDirectory))
-            {
-                using var alice = api.As("alice");
-                var page = await alice.GetFromJsonAsync<JsonElement>(Uri($"/v1/management/organizations/{organization}/members"));
-                members = [.. page.GetProperty("items").EnumerateArray().Select(member => $"{member.GetProperty("userId").GetString()}={member.GetProperty("role").GetString()}")];
-                // Owner rights work: only an admin or owner may invite.
-                invited = await StatusAsync(alice.PostAsJsonAsync(Uri($"/v1/management/organizations/{organization}/invitations"), new { email = Faker.Internet.Email() }));
-                read = await StatusAsync(alice.GetAsync(Uri($"/v1/management/organizations/{organization}")));
-            }
-
-            SqliteConnection.ClearAllPools();
-            await Assert.That(members).IsEquivalentTo(["alice=owner"]);
-            await Assert.That(invited).IsEqualTo(HttpStatusCode.Created);
-            await Assert.That(read).IsEqualTo(HttpStatusCode.OK);
-            await Assert.That((await ReadSystemDocumentsAsync(dataDirectory)).Where(line => line.StartsWith("catalog|version|", StringComparison.Ordinal)))
-                .IsEquivalentTo([$"catalog|version|{JsonSerializer.Serialize("5")}"]);
-        }
-        finally
-        {
-            SqliteConnection.ClearAllPools();
-            Directory.Delete(dataDirectory, recursive: true);
-        }
-    }
-
-    [Test]
-    public async Task A_catalog_with_an_unsupported_version_is_refused_and_left_unchanged()
-    {
-        var dataDirectory = Directory.CreateTempSubdirectory("terrabase-future-").FullName;
-        try
-        {
-            var organization = Guid.CreateVersion7().ToString();
-            await WriteSystemDocumentsAsync(
-                dataDirectory,
-                ("catalog", "version", JsonSerializer.Serialize("99")),
-                ("organizations", organization, $$"""{"id":"{{organization}}","name":"Acme","createdBy":"alice","createdAt":"2026-10-04T12:00:00+00:00"}"""),
-                ($"organizations/{organization}/members", "alice", JsonSerializer.Serialize("alice")),
-                ("users/alice/organizations", organization, JsonSerializer.Serialize(organization)),
-                ("users/alice/organization_names", "acme", JsonSerializer.Serialize(organization)));
-            var before = await ReadSystemDocumentsAsync(dataDirectory);
-
-            HttpStatusCode list, create;
-            await using (var api = await ManagementApi.StartAsync(settings =>
-            {
-                settings["data-directory"] = dataDirectory;
-                settings["management-legacy-owner"] = "mallory";
-            }))
-            {
-                using var mallory = api.As("mallory");
-                list = await StatusAsync(mallory.GetAsync(Uri("/v1/management/organizations")));
-                create = await StatusAsync(mallory.PostAsJsonAsync(Uri("/v1/management/organizations"), new { name = "Other" }));
-            }
-
-            SqliteConnection.ClearAllPools();
-            await Assert.That(list).IsEqualTo(HttpStatusCode.ServiceUnavailable);
-            await Assert.That(create).IsEqualTo(HttpStatusCode.ServiceUnavailable);
-            // Ownership, memberships, name claims and the version marker are exactly as written.
-            await Assert.That(await ReadSystemDocumentsAsync(dataDirectory)).IsEquivalentTo(before);
-        }
-        finally
-        {
-            SqliteConnection.ClearAllPools();
-            Directory.Delete(dataDirectory, recursive: true);
-        }
-    }
-
-    private static Uri Uri(string path) => new(path, UriKind.Relative);
-
-    // The _system database exactly as the first Management release wrote it: no members, no catalog version.
-    private static async Task<(string Organization, string Project)> WriteVersionOneCatalogAsync(string dataDirectory)
-    {
-        var organization = Guid.CreateVersion7().ToString();
-        var project = Guid.CreateVersion7().ToString();
-        await WriteSystemDocumentsAsync(
-            dataDirectory,
-            ("organizations", organization, $$"""{"id":"{{organization}}","name":"Acme","createdAt":"2026-10-04T12:00:00+00:00"}"""),
-            ("organization_names", "acme", JsonSerializer.Serialize(organization)),
-            ($"organizations/{organization}/projects", project,
-                $$"""{"id":"{{project}}","organizationId":"{{organization}}","name":"Web","createdAt":"2026-10-04T12:00:00+00:00"}"""),
-            ($"organizations/{organization}/project_names", "web", JsonSerializer.Serialize(project)));
-        return (organization, project);
-    }
-
-    // Writes a schema-version-1 _system database holding exactly these documents.
+    // Seeds the real server bootstrap with these catalog documents.
     // In a data directory a server of this build already started on: an unprepared directory with files is refused.
     private static async Task WriteSystemDocumentsAsync(string dataDirectory, params (string Collection, string Id, string Body)[] documents)
     {
@@ -573,6 +441,8 @@ public sealed class ManagementApiTests
 
         return statuses;
     }
+
+    private static Uri Uri(string path) => new(path, UriKind.Relative);
 
     private enum Level
     {

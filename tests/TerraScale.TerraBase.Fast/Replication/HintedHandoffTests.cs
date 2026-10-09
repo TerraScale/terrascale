@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Net;
 using Bogus;
+using TerraBase.Primitives;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Replication;
@@ -45,15 +46,15 @@ public sealed class HintedHandoffTests
 
             ReplicationTenant tenant;
             string senderKey, receiverKey;
-            var updated = faker.Random.Guid().ToString("D");
-            var deleted = faker.Random.Guid().ToString("D");
-            var first = faker.Random.Guid().ToString("D");
-            var second = faker.Random.Guid().ToString("D");
-            var single = faker.Random.Guid().ToString("D");
+            var updated = EntityIds.New().ToString();
+            var deleted = EntityIds.New().ToString();
+            var first = EntityIds.New().ToString();
+            var second = EntityIds.New().ToString();
+            var single = EntityIds.New().ToString();
             var expected = new Dictionary<string, (HttpStatusCode Status, string Version, string? Body)>(StringComparer.Ordinal);
             Uri Document(string id)
             {
-                return new Uri($"{tenant.Path("db")}/collections/items/documents/{id}", UriKind.Relative);
+                return new Uri($"{tenant.Path("db")}/collections/items/documents/by-key?id={id}", UriKind.Relative);
             }
 
             await using (var sender = await StartAsync(Sender))

@@ -5,6 +5,7 @@ using Bogus;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
 using TerraBase.Features.Documents;
+using TerraBase.Primitives;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Documents;
@@ -34,16 +35,16 @@ public sealed class DocumentApiTests
             (await api.SendAsync(HttpMethod.Get, $"{api.Project}/databases/Not-Valid/collections"), HttpStatusCode.BadRequest, "invalid_request", BadDatabase),
             (await api.SendAsync(HttpMethod.Put, $"{api.Project}/databases/Not-Valid"), HttpStatusCode.BadRequest, "invalid_request", BadDatabase),
             (await api.SendAsync(HttpMethod.Get, $"{api.Project}/databases/missing/collections"), HttpStatusCode.NotFound, "unknown_database", UnknownDatabase),
-            (await api.SendAsync(HttpMethod.Put, $"/v1/projects/{Guid.NewGuid()}/databases/fresh"), HttpStatusCode.NotFound, "unknown_database", UnknownDatabase),
+            (await api.SendAsync(HttpMethod.Put, $"/v1/projects/{EntityIds.New()}/databases/fresh"), HttpStatusCode.NotFound, "unknown_database", UnknownDatabase),
             // The tenant answers before the request's own input: a key learns nothing about other databases.
             (await api.SendRawAsync(
-                HttpMethod.Put, $"{api.Project}/databases/missing/collections/items/documents/{id}?x=1", "{", "text/plain",
+                HttpMethod.Put, $"{api.Project}/databases/missing/collections/items/documents/by-key?id={id}&x=1", "{", "text/plain",
                 request => request.Headers.TryAddWithoutValidation("If-Match", "tag")), HttpStatusCode.NotFound, "unknown_database", UnknownDatabase),
-            (await api.SendAsync(HttpMethod.Get, $"{api.Collections}/Not-Valid/documents/{id}"),
+            (await api.SendAsync(HttpMethod.Get, $"{api.Collections}/Not-Valid/documents/by-key?id={id}"),
                 HttpStatusCode.BadRequest, "invalid_request", "collection must be a lowercase name of at most 63 characters"),
             (await api.SendAsync(HttpMethod.Get, api.Document(new string('x', 257))),
                 HttpStatusCode.BadRequest, "invalid_request", "id must be 1 to 256 characters without control characters"),
-            (await api.SendAsync(HttpMethod.Get, api.Document(id) + "?x=1"), HttpStatusCode.BadRequest, "invalid_request", "this route takes no query parameters"),
+            (await api.SendAsync(HttpMethod.Get, api.Document(id) + "&x=1"), HttpStatusCode.BadRequest, "invalid_request", "query parameters are limited to: id, each once and non-empty"),
             (await api.SendAsync(HttpMethod.Get, api.Documents + "?x=1"),
                 HttpStatusCode.BadRequest, "invalid_request", "query parameters are limited to: limit, cursor, each once and non-empty"),
             (await api.SendAsync(HttpMethod.Get, api.Documents + "?limit=0"), HttpStatusCode.BadRequest, "invalid_request", "limit must be an integer between 1 and 1000"),
@@ -107,11 +108,11 @@ public sealed class DocumentApiTests
         // Database deletion has no Documents endpoint; it goes through the Management API.
         var engine = api.Server.Services.GetRequiredService<IStorageEngine>();
         var store = (await engine.OpenDatabaseAsync(await api.TenantOfAsync(), CancellationToken.None))!;
-        await Assert.That(store.Incarnation.Version).IsEqualTo(4);
+        await Assert.That(EntityIds.IsValid(store.Incarnation.ToString())).IsTrue();
         await api.DeleteDatabaseAsync();
         (await api.SendAsync(HttpMethod.Put, api.DatabasePath())).Status.ShouldBe(HttpStatusCode.Created);
         var recreatedStore = (await engine.OpenDatabaseAsync(await api.TenantOfAsync(), CancellationToken.None))!;
-        await Assert.That(recreatedStore.Incarnation.Version).IsEqualTo(4);
+        await Assert.That(EntityIds.IsValid(recreatedStore.Incarnation.ToString())).IsTrue();
         await Assert.That(recreatedStore.Incarnation).IsNotEqualTo(store.Incarnation);
         (await api.SendAsync(HttpMethod.Post, api.Collections, new { name = "items" })).Status.ShouldBe(HttpStatusCode.Created);
         var recreated = await api.PutAsync(id, new { n = 2 });
@@ -289,8 +290,8 @@ public sealed class DocumentApiTests
         var read = await api.SendAsync(HttpMethod.Get, created.Location!.OriginalString);
 
         await Assert.That(created.Status).IsEqualTo(HttpStatusCode.Created);
-        await Assert.That(Guid.Parse(id).Version).IsEqualTo(7);
-        await Assert.That(id).IsEqualTo(id.ToLowerInvariant());
+        await Assert.That(EntityIds.IsValid(id)).IsTrue();
+        await Assert.That(id).IsEqualTo(id.ToUpperInvariant());
         await Assert.That(created.Location.OriginalString).IsEqualTo(api.Document(id));
         await Assert.That(read.Status).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(read.Version).IsEqualTo(created.Version);
@@ -302,8 +303,8 @@ public sealed class DocumentApiTests
         await using var api = await DocumentApi.StartAsync();
         var id = DocumentApi.NewId();
 
-        var noDatabase = await api.SendAsync(HttpMethod.Get, $"{api.Project}/databases/nope/collections/items/documents/{id}");
-        var noCollection = await api.SendAsync(HttpMethod.Put, $"{api.Project}/databases/db/collections/nope/documents/{id}", new { a = 1 });
+        var noDatabase = await api.SendAsync(HttpMethod.Get, $"{api.Project}/databases/nope/collections/items/documents/by-key?id={id}");
+        var noCollection = await api.SendAsync(HttpMethod.Put, $"{api.Project}/databases/db/collections/nope/documents/by-key?id={id}", new { a = 1 });
         var noDocument = await api.GetAsync(id);
         var deleteAbsent = await api.SendAsync(HttpMethod.Delete, api.Document(id));
         var patchAbsent = await api.SendRawAsync(HttpMethod.Patch, api.Document(id), """{"a":1}""", "application/merge-patch+json");
@@ -535,7 +536,7 @@ public sealed class DocumentApiTests
     {
         await using var api = await DocumentApi.StartAsync();
         // A database file from a newer TerraBase: opening it fails on the server side.
-        var path = await api.ReplaceWithOlderFileAsync("future", async file =>
+        var path = await api.ReplaceFileAsync("future", async file =>
         {
             var connection = new Microsoft.Data.Sqlite.SqliteConnection(DocumentApi.ConnectionString(file));
             await using (connection)
@@ -617,8 +618,8 @@ public sealed class DocumentApiTests
         var badName = await api.SendAsync(HttpMethod.Put, $"{api.Project}/databases/Not_Valid");
         var deviceName = await api.SendAsync(HttpMethod.Put, $"{api.Project}/databases/con");
         var trailingNewline = await api.SendAsync(HttpMethod.Put, $"{api.Project}/databases/valid%0A");
-        var notUuid = await api.PutAsync("p1", new { a = 1 });
-        var upperUuid = await api.PutAsync(id.ToUpperInvariant(), new { a = 1 });
+        var suppliedKey = await api.PutAsync("p1", new { a = 1 });
+        var lowercaseKey = await api.PutAsync(id.ToLowerInvariant(), new { a = 1 });
         var notObject = await api.SendAsync(HttpMethod.Put, api.Document(id), JsonArray);
         var notJson = await api.SendRawAsync(HttpMethod.Put, api.Document(id), "{oops", "application/json");
         var duplicate = await api.SendRawAsync(HttpMethod.Put, api.Document(id), """{"a":1,"a":2}""", "application/json");
@@ -645,14 +646,14 @@ public sealed class DocumentApiTests
         var encoded = await api.SendRawAsync(
             HttpMethod.Put, api.Document(id), """{"a":1}""", "application/json", request => request.Content!.Headers.ContentEncoding.Add("gzip"));
         var idempotent = await api.PutAsync(id, new { a = 1 }, request => request.Headers.Add("Idempotency-Key", "k1"));
-        var query = await api.SendAsync(HttpMethod.Put, api.Document(id) + "?x=1", new { a = 1 });
+        var query = await api.SendAsync(HttpMethod.Put, api.Document(id) + "&x=1", new { a = 1 });
         var absent = await api.GetAsync(id);
 
         await Assert.That((badName.Status, badName.Code)).IsEqualTo((HttpStatusCode.BadRequest, "invalid_request"));
         await Assert.That(deviceName.Status).IsEqualTo(HttpStatusCode.BadRequest);
         await Assert.That(trailingNewline.Status).IsEqualTo(HttpStatusCode.BadRequest);
-        await Assert.That((notUuid.Status, notUuid.Code)).IsEqualTo((HttpStatusCode.BadRequest, "invalid_request"));
-        await Assert.That(upperUuid.Status).IsEqualTo(HttpStatusCode.BadRequest);
+        await Assert.That(suppliedKey.Status).IsEqualTo(HttpStatusCode.Created);
+        await Assert.That(lowercaseKey.Status).IsEqualTo(HttpStatusCode.Created);
         await Assert.That(notObject.Status).IsEqualTo(HttpStatusCode.BadRequest);
         await Assert.That(notJson.Status).IsEqualTo(HttpStatusCode.BadRequest);
         await Assert.That(duplicate.Status).IsEqualTo(HttpStatusCode.BadRequest);
@@ -676,7 +677,7 @@ public sealed class DocumentApiTests
         await Assert.That(encoded.Status).IsEqualTo(HttpStatusCode.UnsupportedMediaType);
         await Assert.That(idempotent.Status).IsEqualTo(HttpStatusCode.BadRequest);
         await Assert.That(query.Status).IsEqualTo(HttpStatusCode.BadRequest);
-        // Only the valid 16-level document was stored.
+        // The valid document and the two valid supplied keys were stored.
         await Assert.That(absent.Status).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(absent.Version).IsEqualTo(deepest.Version);
     }
@@ -789,7 +790,7 @@ public sealed class DocumentApiTests
         await Assert.That(expected.Where(operation => !operations.Contains(operation))).IsEmpty();
         var paths = openApi.RootElement.GetProperty("paths");
         var query = paths.GetProperty("/v1/projects/{project}/databases/{database}/collections/{collection}/query").GetProperty("post");
-        var patch = paths.GetProperty("/v1/projects/{project}/databases/{database}/collections/{collection}/documents/{id}").GetProperty("patch");
+        var patch = paths.GetProperty("/v1/projects/{project}/databases/{database}/collections/{collection}/documents/by-key").GetProperty("patch");
         await Assert.That(query.GetProperty("requestBody").GetProperty("content").TryGetProperty("application/json", out _)).IsTrue();
         await Assert.That(patch.GetProperty("requestBody").GetProperty("content").EnumerateObject().Select(media => media.Name))
             .IsEquivalentTo(["application/merge-patch+json", "application/vnd.terrabase.ops+json"]);

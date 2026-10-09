@@ -5,6 +5,7 @@ using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
 using TerraBase.Features.Replication;
 using TerraBase.Features.Replication.V1;
+using TerraBase.Primitives;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Replication;
@@ -137,7 +138,7 @@ public sealed class ResponseLimitTests
                 using var writer = clientTls.CreateClient(seed.ClientAddress!, await tenant.KeyAsync(seed, "documents:write"));
                 using var collection = await writer.PostAsJsonAsync(new Uri($"{tenant.Path("db")}/collections", UriKind.Relative), new { name = "items" });
                 collection.EnsureSuccessStatusCode();
-                using var written = await writer.PutAsJsonAsync(new Uri($"{tenant.Path("db")}/collections/items/documents/{Guid.CreateVersion7()}", UriKind.Relative), new { value = "seed" });
+                using var written = await writer.PutAsJsonAsync(new Uri($"{tenant.Path("db")}/collections/items/documents/by-key?id={EntityIds.New()}", UriKind.Relative), new { value = "seed" });
                 written.EnsureSuccessStatusCode();
                 var store = (await seed.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(tenant.Database("db"), CancellationToken.None))!;
                 await using var read = await store.BeginTransactionAsync(write: false, CancellationToken.None);

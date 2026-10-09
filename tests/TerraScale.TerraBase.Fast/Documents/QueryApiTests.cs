@@ -189,11 +189,11 @@ public sealed class QueryApiTests
     // Ids sort A < B < C < D < E.
     private static readonly Dictionary<string, string> Ids = new()
     {
-        ["A"] = "00000000-0000-7000-8000-00000000000a",
-        ["B"] = "00000000-0000-7000-8000-00000000000b",
-        ["C"] = "00000000-0000-7000-8000-00000000000c",
-        ["D"] = "00000000-0000-7000-8000-00000000000d",
-        ["E"] = "00000000-0000-7000-8000-00000000000e",
+        ["A"] = "0000000000E00800000000000A",
+        ["B"] = "0000000000E00800000000000B",
+        ["C"] = "0000000000E00800000000000C",
+        ["D"] = "0000000000E00800000000000D",
+        ["E"] = "0000000000E00800000000000E",
     };
 
     // Mixed types on purpose: C.n is a string, C.tags a string, C.nested a scalar, E has no n.
@@ -220,7 +220,7 @@ public sealed class QueryApiTests
         ("""{"eq":["/tags","x"]}""", "C"),
         ("""{"eq":["/0","zero"]}""", "E"),
         ("""{"eq":["/a~1b/~0c",true]}""", "D"),
-        ("""{"eq":["$id","00000000-0000-7000-8000-00000000000b"]}""", "B"),
+        ("""{"eq":["$id","0000000000E00800000000000B"]}""", "B"),
         ("""{"ne":["/n",1]}""", "BCDE"),
         ("""{"gt":["/n",2]}""", "BD"),
         ("""{"gte":["/n",2.5]}""", "BD"),
@@ -232,7 +232,7 @@ public sealed class QueryApiTests
         ("""{"gt":["/n","1"]}""", "C"),
         ("""{"in":["/s",["apple","cherry","zzz"]]}""", "AC"),
         ("""{"in":["/n",[1,"10"]]}""", "AC"),
-        ("""{"in":["$id",["00000000-0000-7000-8000-00000000000a","00000000-0000-7000-8000-00000000000e"]]}""", "AE"),
+        ("""{"in":["$id",["0000000000E00800000000000A","0000000000E00800000000000E"]]}""", "AE"),
         ("""{"nin":["/s",["apple","banana"]]}""", "CDE"),
         ("""{"exists":"/nul"}""", "A"),
         ("""{"exists":"/n"}""", "ABCD"),
@@ -289,7 +289,7 @@ public sealed class QueryApiTests
 
         var result = await api.SendRawAsync(
             HttpMethod.Post, api.Query,
-            """{"filter":{"in":["$id",["00000000-0000-7000-8000-00000000000a","00000000-0000-7000-8000-00000000000c"]]},"project":["/s","/nested/depth/x","/missing","$id"]}""",
+            """{"filter":{"in":["$id",["0000000000E00800000000000A","0000000000E00800000000000C"]]},"project":["/s","/nested/depth/x","/missing","$id"]}""",
             "application/json");
         var documents = result.Json.GetProperty("items").EnumerateArray().Select(item => item.GetProperty("document").GetRawText()).ToList();
 

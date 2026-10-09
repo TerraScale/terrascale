@@ -1,12 +1,12 @@
 using System.Diagnostics.Metrics;
 using System.Net;
-using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Bogus;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
+using TerraBase.Engine.Sqlite;
 using TerraBase.Fast.Management;
 using TerraBase.Features.ApiKeys;
 using TerraBase.Features.Documents;
@@ -653,7 +653,6 @@ public sealed class ShapeApiTests
         var keys = api.Server.Services.GetRequiredService<IApiKeyStore>();
         var key = await keys.FindAsync(secret, CancellationToken.None)
             ?? throw new InvalidOperationException("missing test API key");
-        var hash = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(secret)));
         var engine = api.Server.Services.GetRequiredService<IStorageEngine>();
         var store = await engine.OpenSystemDatabaseAsync(CancellationToken.None);
         await using (var transaction = await store.BeginTransactionAsync(write: true, CancellationToken.None))
@@ -661,11 +660,11 @@ public sealed class ShapeApiTests
             if (removeScope)
             {
                 var changed = key with { Scopes = [ApiKeyScopes.DocumentsRead] };
-                await transaction.PutAsync("api_keys", hash, JsonSerializer.SerializeToUtf8Bytes(changed, TerraBaseJsonContext.Default.ApiKey), CancellationToken.None);
+                await transaction.PutAsync("api_keys", key.Id, JsonSerializer.SerializeToUtf8Bytes(changed, TerraBaseJsonContext.Default.ApiKey), CancellationToken.None);
             }
             else
             {
-                await transaction.DeleteAsync("api_keys", hash, CancellationToken.None);
+                await transaction.DeleteAsync("api_keys", key.Id, CancellationToken.None);
             }
 
             await transaction.CommitAsync(CancellationToken.None);
@@ -1056,11 +1055,11 @@ public sealed class ShapeApiTests
     }
 
     [Test]
-    public async Task A_snapshot_page_boundary_at_a_legacy_id_resumes()
+    public async Task A_snapshot_page_boundary_at_a_supplied_key_resumes()
     {
         await using var api = await DocumentApi.StartAsync();
         using var shapes = await api.ClientWithScopesAsync(ApiKeyScopes.ShapesRead);
-        // Schema-1 databases keep non-UUID ids; no listener writes one, so store them through the engine.
+        // Caller-supplied keys need only satisfy the document-key bounds.
         string[] ids = ["Customer-1@Legacy+Tag?#.x", "Customer-2/../é"];
         var padding = new string('x', 700 * 1024);
         var store = await StoreAsync(api);
@@ -1081,7 +1080,7 @@ public sealed class ShapeApiTests
         using var second = await GetAsync(shapes, $"{api.Shape}?handle={Header(start, "TB-Shape-Handle")}&offset={next}");
         var secondPage = await JsonAsync(second);
 
-        // Each 700 KiB document fills a page; the second page resumes after the legacy id.
+        // Each 700 KiB document fills a page; the second page resumes after the supplied key.
         await Assert.That(Ops(firstPage)).IsEquivalentTo([$"upsert {ids[0]}"]);
         await Assert.That(next).IsEqualTo($"snap.{firstPage.GetProperty("changes")[0].GetProperty("offset").GetString()}.{Base64Url(ids[0])}");
         await Assert.That(second.StatusCode).IsEqualTo(HttpStatusCode.OK);
@@ -1118,29 +1117,29 @@ public sealed class ShapeApiTests
     }
 
     [Test]
-    public async Task The_longest_accepted_filter_still_resumes_after_a_1024_byte_legacy_id()
+    public async Task The_longest_accepted_filter_resumes_after_a_maximum_length_supplied_key()
     {
         await using var api = await DocumentApi.StartAsync();
         using var shapes = await api.ClientWithScopesAsync(ApiKeyScopes.ShapesRead);
-        // Legacy ids may exceed today's write contract; each 700 KiB document fills a page.
+        // Storage admits 1024-byte supplied keys; each 700 KiB document fills a page.
         string[] ids = [new string('a', 1024), new string('b', 1024)];
         var padding = new string('x', 700 * 1024);
-        await api.ReplaceWithOlderFileAsync(DocumentApi.Database, async path =>
+        var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
+        var engine = api.Server.Services.GetRequiredService<SqliteStorageEngine>();
+        var database = await api.TenantOfAsync();
+        // An uncaptured engine writer preserves the storage byte limit independently of the client's character bound.
+        using var store = new SqliteDatabaseStore(database.DatabaseId!, await api.DatabaseFileAsync(), engine.Pool, engine.Io,
+            "PRAGMA cache_size = -64; PRAGMA busy_timeout = 30000;", database, TimeProvider.System, changesCommitted: null, committed: null);
+        await using (var write = await store.BeginTransactionAsync(write: true, token))
         {
-            await using var connection = new SqliteConnection(DocumentApi.ConnectionString(path));
-            await connection.OpenAsync();
-            await using var schema = connection.CreateCommand();
-            schema.CommandText = """
-                CREATE TABLE documents (collection TEXT NOT NULL, id TEXT NOT NULL, version INTEGER NOT NULL, body TEXT NOT NULL,
-                    PRIMARY KEY (collection, id)) WITHOUT ROWID;
-                INSERT INTO documents VALUES ('items', $first, 1, $body), ('items', $second, 1, $body);
-                PRAGMA user_version = 1;
-                """;
-            schema.Parameters.AddWithValue("$first", ids[0]);
-            schema.Parameters.AddWithValue("$second", ids[1]);
-            schema.Parameters.AddWithValue("$body", $$"""{"padding":"{{padding}}"}""");
-            await schema.ExecuteNonQueryAsync();
-        });
+            var json = Encoding.UTF8.GetBytes($$"""{"padding":"{{padding}}"}""");
+            foreach (var id in ids)
+            {
+                await write.PutAsync(DocumentApi.Collection, id, json, token);
+            }
+
+            await write.CommitAsync(token);
+        }
 
         static string Where(int length)
         {
@@ -1189,7 +1188,7 @@ public sealed class ShapeApiTests
 
         // A document first written after S, ordering before the kept one, with 50000 revisions: walking them
         // would exhaust the query budget; the step skips the id by its first entry.
-        await WriteHistoryAsync(api, "00000000-0000-7000-8000-000000000000");
+        await WriteHistoryAsync(api, "0000000000E008000000000000");
 
         using var replay = await GetAsync(shapes, start.Headers.Location!.OriginalString);
 
@@ -1204,7 +1203,7 @@ public sealed class ShapeApiTests
         using var shapes = await api.ClientWithScopesAsync(ApiKeyScopes.ShapesRead);
         // Three pages of two documents each: 700 KiB bodies fill a page with one, so pages are one document.
         var padding = new string('x', 700 * 1024);
-        string[] ids = ["00000000-0000-7000-8000-000000000010", "00000000-0000-7000-8000-000000000020", "00000000-0000-7000-8000-000000000030"];
+        string[] ids = ["0000000000E00800000000000G", "0000000000E008000000000010", "0000000000E00800000000001G"];
         foreach (var id in ids)
         {
             await api.SendRawAsync(HttpMethod.Put, api.Document(id), $$"""{"padding":"{{padding}}"}""", "application/json");
@@ -1231,7 +1230,7 @@ public sealed class ShapeApiTests
         var before = await PagesAsync();
         // (a) ids first written after the offset, ordering before, between and after the snapshot's ids;
         // (b) the snapshot's own documents rewritten and deleted.
-        foreach (var later in new[] { "00000000-0000-7000-8000-000000000005", "00000000-0000-7000-8000-000000000015", "00000000-0000-7000-8000-000000000035" })
+        foreach (var later in new[] { "0000000000E008000000000005", "0000000000E00800000000000N", "0000000000E00800000000001N" })
         {
             await api.SendRawAsync(HttpMethod.Put, api.Document(later), $$"""{"padding":"{{padding}}"}""", "application/json");
         }

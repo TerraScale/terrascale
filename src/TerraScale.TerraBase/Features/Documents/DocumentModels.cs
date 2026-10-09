@@ -34,7 +34,8 @@ public sealed record DocumentPageBody(
 /// <summary>A collection.</summary>
 /// <param name="Name">Collection name.</param>
 /// <param name="CreatedAt">Creation time, decimal Unix milliseconds.</param>
-public sealed record CollectionBody(string Name, [property: JsonPropertyName("created_at")] string CreatedAt);
+/// <param name="Id">Canonical uppercase ULID; the collection name remains its route selector.</param>
+public sealed record CollectionBody(string Name, [property: JsonPropertyName("created_at")] string CreatedAt, string Id);
 
 /// <summary>One page of collections.</summary>
 /// <param name="Items">Collections in name order.</param>

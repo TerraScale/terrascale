@@ -1,13 +1,13 @@
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
-using Bogus;
 using Grpc.Net.Client;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using TerraBase.Configuration;
 using TerraBase.Features.Replication;
 using TerraBase.Features.Replication.V1;
+using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
 
@@ -198,8 +198,7 @@ public sealed class CredentialReloadTests
 
     private static async Task<Hello> HelloAsync(TerraBaseTestServer server)
     {
-        var fake = new Faker();
-        var database = await server.RegisterAsync(new TenantContext(fake.Random.Guid().ToString("D"), PlanTier.Hobby, fake.Random.Guid().ToString("D"), fake.Random.Guid().ToString("D")));
+        var database = await server.RegisterAsync(new TenantContext(EntityIds.New().ToString(), PlanTier.Hobby, EntityIds.New().ToString(), EntityIds.New().ToString()));
         return ReplicationProtocol.CreateHello(database, RandomNumberGenerator.GetBytes(16));
     }
 

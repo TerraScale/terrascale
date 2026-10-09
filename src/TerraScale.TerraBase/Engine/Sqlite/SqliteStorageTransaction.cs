@@ -234,12 +234,9 @@ internal sealed partial class SqliteStorageTransaction(
             return;
         }
 
-        // Engine callers may omit collection creation; its fresh generation keeps their history.
-        var create = Command(SqliteStatements.CreateCollection, collection);
-        create.Parameters.AddWithValue("$created", DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+        // An implicit collection carries the same captured identity metadata as an explicit creation.
         cancellationToken.ThrowIfCancellationRequested();
-        create.ExecuteNonQuery();
-        _collectionsChanged = true;
+        CreateCollection(new CollectionInfo(collection, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()));
         if (Append() != 1)
         {
             throw new InvalidOperationException("a document write needs its collection's metadata for shape history");
@@ -743,13 +740,7 @@ internal sealed partial class SqliteStorageTransaction(
         return await RunAsync(() =>
         {
             ThrowIfReadOnly();
-            if (!CreateCollection(collection))
-            {
-                return false;
-            }
-
-            WriteMetadata(DocumentChange.Collections, collection.Name, string.Create(CultureInfo.InvariantCulture, $$"""{"created_at":{{collection.CreatedAt}}}"""));
-            return true;
+            return CreateCollection(collection);
         }, cancellationToken, mutation: true).ConfigureAwait(false);
     }
 
@@ -776,8 +767,15 @@ internal sealed partial class SqliteStorageTransaction(
 
     private bool CreateCollection(CollectionInfo collection)
     {
+        collection = collection with { Id = collection.Id.Length == 0 ? EntityIds.New().ToString() : collection.Id };
+        if (!EntityIds.IsValid(collection.Id))
+        {
+            throw new ArgumentException("a collection id must be a canonical uppercase ULID", nameof(collection));
+        }
+
         var command = Command(SqliteStatements.CreateCollection, collection.Name);
         command.Parameters.AddWithValue("$created", collection.CreatedAt);
+        command.Parameters.AddWithValue("$entityId", collection.Id);
         if (command.ExecuteNonQuery() == 0)
         {
             return false;
@@ -792,6 +790,7 @@ internal sealed partial class SqliteStorageTransaction(
             Offset();
         }
 
+        WriteMetadata(DocumentChange.Collections, collection.Name, string.Create(CultureInfo.InvariantCulture, $$"""{"created_at":{{collection.CreatedAt}},"entity_id":"{{collection.Id}}"}"""));
         return true;
     }
 
@@ -800,7 +799,7 @@ internal sealed partial class SqliteStorageTransaction(
         return await RunAsync(() =>
         {
             using var reader = Command(SqliteStatements.GetCollection, name).ExecuteReader();
-            return reader.Read() ? new CollectionInfo(reader.GetString(0), reader.GetInt64(1), reader.GetInt64(2)) : null;
+            return reader.Read() ? new CollectionInfo(reader.GetString(0), reader.GetInt64(1), reader.GetInt64(2), reader.GetString(3)) : null;
         }, cancellationToken).ConfigureAwait(false);
     }
 
@@ -831,7 +830,7 @@ internal sealed partial class SqliteStorageTransaction(
                     return (collections, true);
                 }
 
-                collections.Add(new CollectionInfo(reader.GetString(0), reader.GetInt64(1), reader.GetInt64(2)));
+                collections.Add(new CollectionInfo(reader.GetString(0), reader.GetInt64(1), reader.GetInt64(2), reader.GetString(3)));
             }
 
             return (collections, false);
@@ -1075,7 +1074,7 @@ internal sealed partial class SqliteStorageTransaction(
     public ValueTask<ReadOnlyMemory<byte>> GetOriginAsync(CancellationToken cancellationToken) =>
         RunAsync<ReadOnlyMemory<byte>>(() => GetOrigin(), cancellationToken, retry: true);
 
-    private byte[] GetOrigin() => (byte[])Command(SqliteStatements.Origin).ExecuteScalar()!;
+    private byte[] GetOrigin() => Ulid.Parse((string)Command(SqliteStatements.Origin).ExecuteScalar()!).ToByteArray();
 
     public ValueTask<long> GetLastChangeSequenceAsync(CancellationToken cancellationToken) =>
         RunAsync(LastSequence, cancellationToken, retry: true);
@@ -1249,6 +1248,12 @@ internal sealed partial class SqliteStorageTransaction(
                 _metadataChanged = true;
                 _collectionsChanged = true;
                 CreateCollection(collection);
+                // Winning metadata also replaces an inferred or concurrently created collection's identity.
+                var identity = Command(SqliteStatements.AdoptCollectionIdentity, collection.Name);
+                identity.Parameters.AddWithValue("$entityId", collection.Id);
+                identity.Parameters.AddWithValue("$created", collection.CreatedAt);
+                identity.ExecuteNonQuery();
+                _collectionsChanged = true;
                 break;
             case IndexDefinition index:
                 DropIndex(index.Name, cancellationToken);
@@ -1282,7 +1287,10 @@ internal sealed partial class SqliteStorageTransaction(
                     throw new InvalidDataException("replicated metadata contains an invalid collection schema");
                 }
 
-                return new CollectionInfo(name, root.GetProperty("created_at").GetInt64());
+                var id = root.GetProperty("entity_id").GetString();
+                return EntityIds.IsValid(id)
+                    ? new CollectionInfo(name, root.GetProperty("created_at").GetInt64(), Id: id)
+                    : throw new InvalidDataException("invalid collection entity id");
             }
 
             var fields = root.GetProperty("fields").EnumerateArray()

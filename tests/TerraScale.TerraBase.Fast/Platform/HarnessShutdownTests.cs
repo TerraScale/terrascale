@@ -7,6 +7,7 @@ using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Engine.Sqlite;
 using TerraBase.Hosting;
+using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
 
@@ -49,7 +50,7 @@ public sealed class HarnessShutdownTests
         var directory = server.DataDirectory;
         var engine = server.Services.GetRequiredService<SqliteStorageEngine>();
         var lifetime = server.Services.GetRequiredService<IHostApplicationLifetime>();
-        var database = new TenantContext(Guid.NewGuid().ToString(), PlanTier.Hobby, Guid.NewGuid().ToString(), Guid.NewGuid().ToString());
+        var database = new TenantContext(EntityIds.New().ToString(), PlanTier.Hobby, EntityIds.New().ToString(), EntityIds.New().ToString());
         var token = TestContext.Current!.Execution.CancellationToken;
         await engine.CreateDatabaseAsync(database, token);
         var store = (await engine.OpenDatabaseAsync(database, token))!;

@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Authentication;
 using Microsoft.Extensions.Options;
 using TerraBase.Configuration;
 using TerraBase.Hosting;
+using TerraBase.Primitives;
 
 namespace TerraBase.Features.UserAuth;
 
@@ -24,8 +25,6 @@ internal sealed partial class ManagementCredentialHandler(
 
     /// <summary>The acting user, trusted only together with the credential.</summary>
     public const string UserHeader = "X-TerraBase-User-Id";
-
-    private const int MaxUserIdLength = 256;
 
     protected override Task<AuthenticateResult> HandleAuthenticateAsync()
     {
@@ -48,9 +47,9 @@ internal sealed partial class ManagementCredentialHandler(
 
         var values = Request.Headers[UserHeader];
         var user = values.Count == 1 ? values[0] : null;
-        if (string.IsNullOrEmpty(user) || user.Length > MaxUserIdLength || user.Any(char.IsControl))
+        if (!EntityIds.IsValid(user))
         {
-            return Task.FromResult(AuthenticateResult.Fail(UserHeader + " must be one value of 1 to 256 characters without control characters"));
+            return Task.FromResult(AuthenticateResult.Fail(UserHeader + " must be one canonical uppercase ULID"));
         }
 
         // The audit trail of the credential: who it acted as and what it did, never the secret.

@@ -7,13 +7,13 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management;
 
-/// <summary><c>GET /v1/management/documents/{collection}/{id}</c>: reads a document of the dashboard document space.</summary>
+/// <summary><c>GET /v1/management/documents/{collection}/by-key?id=</c>: reads a dashboard document.</summary>
 public sealed class GetDashboardDocumentEndpoint(IManagementCommits commits) : EndpointWithoutRequest<IResult>
 {
     /// <inheritdoc />
     public override void Configure()
     {
-        Get(ManagementRoute.Documents + "/{id}");
+        Get(ManagementRoute.Documents + "/by-key");
         Name("getDashboardDocument");
         Summary("Reads a dashboard document");
         Description($"A document of the dashboard document space, written only by commits (docs/management-commits.md); the ETag is its version for if_match. 404 not_found when absent or deleted. Management service credential only (loopback administrative listener): a ts-auth user token gets 403.");
@@ -34,11 +34,12 @@ public sealed class GetDashboardDocumentEndpoint(IManagementCommits commits) : E
             return ErrorResponse.From(new Forbidden("the dashboard document space needs the management service credential"));
         }
 
-        return (DocumentRoute.CheckCollectionName(HttpContext), DocumentRoute.CheckDocumentId(ManagementRoute.Value(HttpContext, "id"))) switch
+        return (DocumentRoute.CheckCollectionName(HttpContext), DocumentRoute.CheckDocumentParameter(HttpContext), DocumentRoute.CheckParameters(HttpContext, "id")) switch
         {
-            (Validation error, _) => ErrorResponse.From(error),
-            (_, Validation error) => ErrorResponse.From(error),
-            (string collection, string id) => await ReadAsync(collection, id, cancellationToken),
+            (Validation error, _, _) => ErrorResponse.From(error),
+            (_, Validation error, _) => ErrorResponse.From(error),
+            (_, _, Validation error) => ErrorResponse.From(error),
+            (string collection, string id, _) => await ReadAsync(collection, id, cancellationToken),
         };
     }
 

@@ -7,13 +7,13 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Documents;
 
-/// <summary><c>PUT …/documents/{id}</c>: inserts or replaces a JSON document.</summary>
+/// <summary><c>PUT …/documents/by-key?id=</c>: inserts or replaces a JSON document.</summary>
 public sealed class PutDocumentEndpoint(IDocumentService documents, ITenantDirectory tenants) : EndpointWithoutRequest<IResult>
 {
     /// <inheritdoc />
     public override void Configure()
     {
-        Put(DocumentRoute.Collection + "/{id}");
+        Put(DocumentRoute.Document);
         Name("putDocument");
         Summary("Inserts or replaces a JSON document");
         Description("The body is the complete document: a JSON object of at most 1 MiB, 16 levels and 4096 values. Optional If-Match (current version or *) or If-None-Match: * (absent or deleted). Returns 201 when the document was absent or deleted, 200 otherwise; a failed precondition returns 412 precondition_failed.");
@@ -21,6 +21,7 @@ public sealed class PutDocumentEndpoint(IDocumentService documents, ITenantDirec
         Metadata(new RequestBodyMetadata(typeof(JsonElement), DocumentRoute.JsonMediaType));
         Produces<WriteBody>(StatusCodes.Status201Created);
         Produces<WriteBody>();
+        Produces<ErrorBody>(StatusCodes.Status400BadRequest);
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
         Produces<ErrorBody>(StatusCodes.Status412PreconditionFailed);
         RequireAuthorization(ApiKeyScopes.DocumentsWrite);
@@ -33,7 +34,7 @@ public sealed class PutDocumentEndpoint(IDocumentService documents, ITenantDirec
         {
             Validation error => ErrorResponse.From(error),
             NotFound error => ErrorResponse.From(error),
-            DocumentKey key => (DocumentRoute.CheckParameters(HttpContext), DocumentRoute.CheckIdempotencyKey(HttpContext), ETags.CheckPrecondition(HttpContext)) switch
+            DocumentKey key => (DocumentRoute.CheckParameters(HttpContext, "id"), DocumentRoute.CheckIdempotencyKey(HttpContext), ETags.CheckPrecondition(HttpContext)) switch
             {
                 (Validation error, _, _) => ErrorResponse.From(error),
                 (_, Validation error, _) => ErrorResponse.From(error),

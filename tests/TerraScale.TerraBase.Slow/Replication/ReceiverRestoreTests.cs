@@ -96,7 +96,7 @@ public sealed class ReceiverRestoreTests
             using var reader = clientTls.CreateClient(receiver.ClientAddress!, await tenant.KeyAsync(receiver, "documents:read"));
             foreach (var id in new[] { "a", "b" })
             {
-                using var response = await reader.GetAsync(new Uri($"{path}/collections/items/documents/{ReplicationDocuments.Id(id)}", UriKind.Relative), deadline.Token);
+                using var response = await reader.GetAsync(new Uri($"{path}/collections/items/documents/by-key?id={ReplicationDocuments.Id(id)}", UriKind.Relative), deadline.Token);
                 response.EnsureSuccessStatusCode();
                 using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync(deadline.Token));
                 await Assert.That(body.RootElement.GetProperty("document").GetProperty("value").GetString()).IsEqualTo(id);
@@ -121,7 +121,7 @@ public sealed class ReceiverRestoreTests
 
     private static async Task PutAsync(HttpClient writer, string path, string id)
     {
-        using var response = await writer.PutAsJsonAsync(new Uri($"{path}/collections/items/documents/{ReplicationDocuments.Id(id)}", UriKind.Relative), new { value = id });
+        using var response = await writer.PutAsJsonAsync(new Uri($"{path}/collections/items/documents/by-key?id={ReplicationDocuments.Id(id)}", UriKind.Relative), new { value = id });
         response.EnsureSuccessStatusCode();
     }
 }

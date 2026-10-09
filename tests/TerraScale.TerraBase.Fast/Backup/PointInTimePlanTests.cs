@@ -8,6 +8,7 @@ using Bogus;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Features.Backup;
+using TerraBase.Primitives;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Backup;
@@ -40,7 +41,7 @@ public sealed class PointInTimePlanTests
             using var insufficient = ProjectClient(database.Project, "documents:read");
             using var forbidden = await insufficient.PostAsJsonAsync(route, new { pointInTime = at });
             await Assert.That(forbidden.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
-            using var otherProject = ProjectClient(Guid.NewGuid().ToString(), "databases:read");
+            using var otherProject = ProjectClient(EntityIds.New().ToString(), "databases:read");
             using var hiddenProject = await otherProject.PostAsJsonAsync(route, new { });
             await Assert.That(hiddenProject.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
             using var restricted = ProjectClient(database.Project, "databases:read", "another");
@@ -140,7 +141,7 @@ public sealed class PointInTimePlanTests
         {
             using var restored = await api.Client.PostAsJsonAsync(Uri(database.Path + "/point-in-time/restore"), new { pointInTime = at, name });
             await Assert.That(restored.StatusCode).IsEqualTo(HttpStatusCode.Created);
-            using var read = await data.GetAsync(Uri($"/v1/projects/{database.Project}/databases/{name}/collections/people/documents/{ManagementApi.DocumentId("source")}"));
+            using var read = await data.GetAsync(Uri($"/v1/projects/{database.Project}/databases/{name}/collections/people/documents/by-key?id={ManagementApi.DocumentId("source")}"));
             await Assert.That((await read.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("document").GetProperty("text").GetString()).IsEqualTo(expected);
         }
     }
@@ -153,7 +154,7 @@ public sealed class PointInTimePlanTests
         await using var api = await ManagementApi.StartAsync(oci.Configure, oci.Route, time);
         var database = await api.CreateManagedDatabaseAsync();
         using var viewer = api.As(await api.AddMemberAsync(api.Client, database.Organization, "viewer"));
-        using var outsider = api.As(Guid.NewGuid().ToString());
+        using var outsider = api.As(EntityIds.New().ToString());
         var backup = api.Server.Services.GetRequiredService<IContinuousBackup>();
         time.Advance(TimeSpan.FromSeconds(10));
         await backup.RunOnceAsync(CancellationToken.None);

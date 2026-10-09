@@ -29,7 +29,7 @@ public sealed class CollectionSchemaReplicationTests
         using var clientB = tls.CreateClient(b.ClientAddress!, await tenant.KeyAsync(b, "documents:read", "documents:write"));
         var collection = $"{tenant.Path("shop")}/collections/items";
         var schema = $"/projects/{tenant.ProjectId}/databases/shop/collections/items/schema";
-        var document = $"{collection}/documents/{DocumentApi.NewId()}";
+        var document = $"{collection}/documents/by-key?id={DocumentApi.NewId()}";
         var body = new { count = new Faker().Random.Int(1, 100) };
         var created = await DocumentApi.SendAsync(clientA, HttpMethod.Post, $"{tenant.Path("shop")}/collections",
             JsonContent.Create(new { name = "items" }), cancellationToken: token);
@@ -57,7 +57,7 @@ public sealed class CollectionSchemaReplicationTests
         await Assert.That(replicated.Json.GetProperty("document").GetProperty("count").GetInt32()).IsEqualTo(body.count);
 
         // An attachment at the value ceiling must fit its replicated metadata envelope too.
-        var values = string.Join(',', Enumerable.Repeat("0", 4091));
+        var values = string.Join(',', Enumerable.Repeat("0", 4090));
         var maximum = $$"""{"examples":[{{values}}]}""";
         var maximumAttached = await DocumentApi.SendAsync(clientA, HttpMethod.Put, schema,
             new StringContent(maximum, Encoding.UTF8, "application/json"), cancellationToken: token);
@@ -65,7 +65,7 @@ public sealed class CollectionSchemaReplicationTests
         await TerraBaseTestServer.ReplicatedAsync(a, b);
         var maximumRead = await DocumentApi.SendAsync(clientB, HttpMethod.Get, schema, cancellationToken: token);
         await Assert.That(maximumRead.Status).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(maximumRead.Json.GetProperty("schema").GetProperty("examples").GetArrayLength()).IsEqualTo(4091);
+        await Assert.That(maximumRead.Json.GetProperty("schema").GetProperty("examples").GetArrayLength()).IsEqualTo(4090);
     }
 
     [Test]
@@ -146,7 +146,7 @@ public sealed class CollectionSchemaReplicationTests
         using var writer = tls.CreateClient(source.ClientAddress!, await tenant.KeyAsync(source, "documents:read", "documents:write"));
         using var reader = tls.CreateClient(receiver.ClientAddress!, await tenant.KeyAsync(receiver, "documents:read", "documents:write"));
         var schema = $"/projects/{tenant.ProjectId}/databases/shop/collections/items/schema";
-        var document = $"{tenant.Path("shop")}/collections/items/documents/{DocumentApi.NewId()}";
+        var document = $"{tenant.Path("shop")}/collections/items/documents/by-key?id={DocumentApi.NewId()}";
         var created = await DocumentApi.SendAsync(writer, HttpMethod.Post, $"{tenant.Path("shop")}/collections",
             JsonContent.Create(new { name = "items" }), cancellationToken: token);
         await Assert.That(created.Status).IsEqualTo(HttpStatusCode.Created);

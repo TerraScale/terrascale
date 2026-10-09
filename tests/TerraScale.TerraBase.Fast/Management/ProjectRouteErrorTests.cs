@@ -3,6 +3,7 @@ using System.Text.Json;
 using Bogus;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
+using TerraBase.Primitives;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Management;
@@ -58,7 +59,7 @@ public sealed class ProjectRouteErrorTests
     }
 
     private static HttpClient ProjectClient(ManagementApi api, string project, string? database = null) =>
-        api.WithToken(api.Issuer.Mint(new Faker().Random.Guid().ToString(), token =>
+        api.WithToken(api.Issuer.Mint(EntityIds.New().ToString(), token =>
         {
             token.Claims["project_id"] = project;
             token.Claims["scope"] = "databases:read databases:write documents:read documents:write";

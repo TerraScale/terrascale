@@ -7,6 +7,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
 using TerraBase.Features.Management.Backups;
+using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
 
@@ -82,7 +83,7 @@ public sealed class BackupApiTests
         await Assert.That(copies).IsEqualTo(3);
         foreach (var restore in restores)
         {
-            using var read = await data.GetAsync(Uri($"/v1/projects/{database.Project}/databases/{restore.GetProperty("name").GetString()}/collections/people/documents/{ManagementApi.DocumentId("saved")}"));
+            using var read = await data.GetAsync(Uri($"/v1/projects/{database.Project}/databases/{restore.GetProperty("name").GetString()}/collections/people/documents/by-key?id={ManagementApi.DocumentId("saved")}"));
             await Assert.That(read.StatusCode).IsEqualTo(HttpStatusCode.OK);
         }
 
@@ -107,7 +108,7 @@ public sealed class BackupApiTests
     }
 
     [Test]
-    public async Task A_database_registered_before_backup_enrollment_gets_the_default_schedule()
+    public async Task A_registered_database_keeps_its_default_backup_schedule_after_restart()
     {
         var directory = Directory.CreateTempSubdirectory("terrabase-backup-enrollment-").FullName;
         try
@@ -119,12 +120,7 @@ public sealed class BackupApiTests
                 user = api.User;
                 var database = await api.CreateManagedDatabaseAsync();
                 backups = $"{database.Path}/backups";
-                // As an older build left it: registered, never enrolled, and no backfill marker.
-                await using var catalog = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = Path.Combine(directory, "_system.db"), Pooling = false }.ToString());
-                await catalog.OpenAsync();
-                await using var unenroll = catalog.CreateCommand();
-                unenroll.CommandText = "DELETE FROM documents WHERE collection = 'backed_up_databases' OR (collection = 'catalog' AND id = 'backfill_databases_enrolled');";
-                await Assert.That(await unenroll.ExecuteNonQueryAsync()).IsEqualTo(2);
+
             }
 
             var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 4, 1, 55, 0, TimeSpan.Zero));
@@ -166,7 +162,7 @@ public sealed class BackupApiTests
             }
 
             // A copy no backup or database tracks, beside the snapshot.
-            File.Copy(snapshot, Path.Combine(Path.GetDirectoryName(snapshot)!, Guid.NewGuid() + ".db"));
+            File.Copy(snapshot, Path.Combine(Path.GetDirectoryName(snapshot)!, EntityIds.New() + ".db"));
             await using (var api = await ManagementApi.StartAsync(settings => settings["data-directory"] = directory))
             {
                 using var owner = api.As(user);
@@ -305,14 +301,14 @@ public sealed class BackupApiTests
         using var restored = await api.Client.PostAsJsonAsync(Uri($"{database.Path}/backups/{backupId}/restore"), new { });
         var restore = await restored.Content.ReadFromJsonAsync<JsonElement>();
         var restoreData = $"/v1/projects/{database.Project}/databases/{restore.GetProperty("name").GetString()}/collections/people/documents";
-        using var before = await data.GetAsync(Uri($"{restoreData}/{ManagementApi.DocumentId("before")}"));
-        using var after = await data.GetAsync(Uri($"{restoreData}/{ManagementApi.DocumentId("after")}"));
+        using var before = await data.GetAsync(Uri($"{restoreData}/by-key?id={ManagementApi.DocumentId("before")}"));
+        using var after = await data.GetAsync(Uri($"{restoreData}/by-key?id={ManagementApi.DocumentId("after")}"));
         using var second = await api.Client.PostAsJsonAsync(Uri($"{database.Path}/backups/{backupId}/restore"), new { });
         var secondName = (await second.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("name").GetString();
         using var named = await api.Client.PostAsJsonAsync(Uri($"{database.Path}/backups/{backupId}/restore"), new { name = "recovered" });
         using var duplicate = await api.Client.PostAsJsonAsync(Uri($"{database.Path}/backups/{backupId}/restore"), new { name = "main-restore" });
         using var invalid = await api.Client.PostAsJsonAsync(Uri($"{database.Path}/backups/{backupId}/restore"), new { name = "Not Valid" });
-        using var unknown = await api.Client.PostAsJsonAsync(Uri($"{database.Path}/backups/{Guid.NewGuid()}/restore"), new { });
+        using var unknown = await api.Client.PostAsJsonAsync(Uri($"{database.Path}/backups/{EntityIds.New()}/restore"), new { });
         using var databases = JsonDocument.Parse(await api.Client.GetStringAsync(Uri($"{database.ProjectPath}/databases")));
 
         var item = list.RootElement.GetProperty("items").EnumerateArray().Single();
@@ -350,7 +346,7 @@ public sealed class BackupApiTests
         var database = await api.CreateManagedDatabaseAsync("main");
         using var created = await api.Client.PostAsync(Uri($"{database.Path}/backups"), content: null);
         var backup = $"{database.Path}/backups/{(await created.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString()}";
-        var unknown = $"{database.ProjectPath}/databases/{Guid.NewGuid()}";
+        var unknown = $"{database.ProjectPath}/databases/{EntityIds.New()}";
         using var viewer = api.As(await api.AddMemberAsync(api.Client, database.Organization, "viewer"));
 
         await ErrorAssert.ErrorAsync(
@@ -366,8 +362,8 @@ public sealed class BackupApiTests
         await ErrorAssert.ErrorAsync(api.Client.PostAsJsonAsync(Uri($"{backup}/restore"), new { name = "Not Valid" }), HttpStatusCode.BadRequest, "invalid_request", BadName);
         await ErrorAssert.ErrorAsync(api.Client.PostAsJsonAsync(Uri($"{backup}/restore"), new { name = "main" }), HttpStatusCode.Conflict, "name_taken", "name is already taken");
         await ErrorAssert.ErrorAsync(
-            api.Client.PostAsJsonAsync(Uri($"{database.Path}/backups/{Guid.NewGuid()}/restore"), new { }), HttpStatusCode.NotFound, "not_found");
-        await ErrorAssert.ErrorAsync(api.Client.PostAsJsonAsync(Uri($"{unknown}/backups/{Guid.NewGuid()}/restore"), new { }), HttpStatusCode.NotFound, "not_found");
+            api.Client.PostAsJsonAsync(Uri($"{database.Path}/backups/{EntityIds.New()}/restore"), new { }), HttpStatusCode.NotFound, "not_found");
+        await ErrorAssert.ErrorAsync(api.Client.PostAsJsonAsync(Uri($"{unknown}/backups/{EntityIds.New()}/restore"), new { }), HttpStatusCode.NotFound, "not_found");
         await ErrorAssert.ErrorAsync(viewer.PutAsJsonAsync(Uri($"{database.Path}/backup-policy"), new { retentionDays = 7 }), HttpStatusCode.Forbidden, "forbidden_role", RoleTooLow);
         await ErrorAssert.ErrorAsync(viewer.PostAsync(Uri($"{database.Path}/backups"), content: null), HttpStatusCode.Forbidden, "forbidden_role", RoleTooLow);
         await ErrorAssert.ErrorAsync(viewer.PostAsJsonAsync(Uri($"{backup}/restore"), new { }), HttpStatusCode.Forbidden, "forbidden_role", RoleTooLow);
@@ -478,13 +474,13 @@ public sealed class BackupApiTests
 
         // What a process that stopped mid-snapshot leaves behind: a snapshotting record of another run, its sweep entry
         // and snapshot files, including private temporary files and orphaned sidecars.
-        var abandoned = Guid.CreateVersion7().ToString();
+        var abandoned = EntityIds.New().ToString();
         var snapshot = SnapshotPath(api, database, abandoned);
         File.Copy(SnapshotFiles(api, database).Single(file => file.EndsWith(".db", StringComparison.Ordinal)), snapshot);
         var directory = ProjectDirectory(api, database);
-        var temporary = Path.Combine(directory, $".{abandoned}.{Guid.NewGuid():N}.creating");
-        var orphan = Path.Combine(directory, $".{abandoned}.{Guid.NewGuid():N}.creating");
-        var unrelated = Path.Combine(directory, $".{abandoned}-other.{Guid.NewGuid():N}.creating");
+        var temporary = Path.Combine(directory, $".{abandoned}.{EntityIds.New()}.creating");
+        var orphan = Path.Combine(directory, $".{abandoned}.{EntityIds.New()}.creating");
+        var unrelated = Path.Combine(directory, $".{abandoned}-other.{EntityIds.New()}.creating");
         foreach (var file in new[] { temporary, temporary + "-wal", temporary + "-shm", temporary + "-journal", orphan + "-wal", unrelated, unrelated + "-wal" })
         {
             await File.WriteAllTextAsync(file, "abandoned");
@@ -644,7 +640,7 @@ public sealed class BackupApiTests
     {
         await using var api = await ManagementApi.StartAsync();
         var database = await api.CreateManagedDatabaseAsync();
-        var unknown = Guid.NewGuid().ToString();
+        var unknown = EntityIds.New().ToString();
         string[] paths =
         [
             $"/v1/management/organizations/{unknown}/projects/{database.Project}/databases/{database.Id}",
@@ -864,7 +860,7 @@ public sealed class BackupApiTests
             }
         }
 
-        // Ids are UUIDv7: a later millisecond sorts the healthy database after every failing one. No scheduler tick yet.
+        // Ids are ULIDs: a later millisecond sorts the healthy database after every failing one. No scheduler tick yet.
         time.Advance(TimeSpan.FromMilliseconds(1));
         var healthy = await api.CreateManagedDatabaseAsync(organization, project, "healthy");
         (await api.Client.PutAsJsonAsync(Uri($"{healthy.Path}/backup-policy"), new { fullBackupCron = "* * * * *", retentionDays = 35 })).EnsureSuccessStatusCode();

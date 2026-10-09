@@ -3,6 +3,7 @@ using Grpc.Core;
 using TerraBase.Engine;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Replication.Alpha;
+using TerraBase.Primitives;
 using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Replication;
@@ -25,9 +26,9 @@ internal sealed class AntiEntropyState(IStorageEngine engine, ITenantDirectory t
     {
         ArgumentNullException.ThrowIfNull(identity);
         if (identity.Shard != 0 || identity.Revision != 0
-            || !Guid.TryParseExact(identity.Organization, "D", out _)
-            || !Guid.TryParseExact(identity.Project, "D", out _)
-            || !Guid.TryParseExact(identity.Database, "D", out _)
+            || !EntityIds.IsValid(identity.Organization)
+            || !EntityIds.IsValid(identity.Project)
+            || !EntityIds.IsValid(identity.Database)
             || identity.Incarnation.Length is not (0 or 16) || identity.Origin.Length is not (0 or 16))
         {
             throw new RpcException(new Status(StatusCode.InvalidArgument, "invalid anti-entropy shard identity"));
@@ -41,7 +42,7 @@ internal sealed class AntiEntropyState(IStorageEngine engine, ITenantDirectory t
             throw new RpcException(new Status(StatusCode.NotFound, "the repair database is not registered"));
         }
 
-        if (!identity.Incarnation.IsEmpty && store.Incarnation != new Guid(identity.Incarnation.Span, bigEndian: true))
+        if (!identity.Incarnation.IsEmpty && store.Incarnation != new Ulid(identity.Incarnation.Span))
         {
             throw new RpcException(new Status(StatusCode.FailedPrecondition, "the repair database was replaced"));
         }
@@ -175,7 +176,7 @@ internal sealed class AntiEntropyState(IStorageEngine engine, ITenantDirectory t
     internal static IMemoryReservation Reserve(IMemoryBudget memory) => memory.TryReserve(MemoryLane.Bulk, WorkingBytes)
         ?? throw new RpcException(new Status(StatusCode.ResourceExhausted, "anti-entropy memory admission refused"));
 
-    // Scan cursors may identify excluded legacy keys, while transferred states must satisfy HasValidKey.
+    // Scan cursors may identify excluded keys, while transferred states must satisfy HasValidKey.
     internal static bool ValidCursor(string collection, string id) => collection.Length <= 63 && id.Length <= 1024
         && System.Text.Encoding.UTF8.GetByteCount(collection) <= 63 && System.Text.Encoding.UTF8.GetByteCount(id) <= 1024;
 }

@@ -29,7 +29,6 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
     private static readonly NotFound UnknownCollection = new("the collection does not exist", "unknown_collection");
     private static readonly NotFound DocumentMissing = new("the document does not exist", "not_found");
     private static readonly Conflict CollectionExists = new("the collection already exists", "name_taken");
-    private static readonly Validation NewIdRule = new("a new id must be a lowercase hyphenated UUID");
     private static readonly Validation TooExpensive = new("query too expensive", "invalid_query");
     private static readonly Validation SortBudget = new("the query exceeds the sort budget", "sort_requires_index");
     private static readonly Validation AssertRequiresIndex = new("assert_count examines at most 10000 documents", "assert_requires_index");
@@ -44,7 +43,7 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
             return DocumentRoute.UnknownDatabase;
         }
 
-        var collection = new CollectionInfo(name, time.GetUtcNow().ToUnixTimeMilliseconds());
+        var collection = new CollectionInfo(name, time.GetUtcNow().ToUnixTimeMilliseconds(), Id: EntityIds.New(time).ToString());
         await using (transaction.ConfigureAwait(false))
         {
             if (!await transaction.CreateCollectionAsync(collection, cancellationToken).ConfigureAwait(false))
@@ -182,11 +181,6 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
         var transaction = await store.BeginTransactionAsync(write: false, cancellationToken).ConfigureAwait(false);
         await using (transaction.ConfigureAwait(false))
         {
-            if (await AddressAsync(transaction, key.Collection, key.Id, cancellationToken).ConfigureAwait(false) is { } invalid)
-            {
-                return invalid;
-            }
-
             // A deleted document comes back as its tombstone, without a body, so its 404 can carry its version.
             if (await transaction.GetAsync(key.Collection, key.Id, cancellationToken).ConfigureAwait(false) is { } document)
             {
@@ -408,19 +402,6 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
     private static async ValueTask<ApplyOutcome> ApplyOperationAsync(
         IStorageTransaction transaction, DocumentOperation operation, CancellationToken cancellationToken)
     {
-        var id = operation switch
-        {
-            PutOperation put => put.Id,
-            PatchOperation patch => patch.Id,
-            DeleteOperation delete => delete.Id,
-            AssertOperation assert => assert.Id,
-            _ => null,
-        };
-        if (id is not null && await AddressAsync(transaction, operation.Collection, id, cancellationToken).ConfigureAwait(false) is { } invalid)
-        {
-            return new DocumentRejected(invalid);
-        }
-
         switch (operation)
         {
             case PutOperation put:
@@ -431,9 +412,12 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
                         return new DocumentRejected(failed);
                     }
 
-                    var version = await transaction.PutAsync(put.Collection, put.Id, put.Json, cancellationToken).ConfigureAwait(false);
+                    // Validate before normalization so removing identity cannot conceal invalid input.
+                    _ = DocumentJson.Read(put.Json, requireObject: true);
+                    var json = EntityPayload.WithoutId(put.Json, put.Id);
+                    var version = await transaction.PutAsync(put.Collection, put.Id, json, cancellationToken).ConfigureAwait(false);
                     return new OperationResult(put.Id, version, current is not { Deleted: false }, null,
-                        ETags.Version(transaction.Scope, put.Collection, put.Id, version, put.Json));
+                        ETags.Version(transaction.Scope, put.Collection, put.Id, version, json));
                 }
 
             case PatchOperation patch:
@@ -458,9 +442,10 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
                             return new DocumentRejected(error);
                     }
 
-                    // Existing legacy documents use the stored depth bound; the strict client limits still
-                    // apply to the patched result.
-                    var json = JsonSerializer.SerializeToUtf8Bytes(document, TerraBaseJsonContext.Default.JsonObject);
+                    // Validate the complete patched result before removing duplicate identity.
+                    var patched = JsonSerializer.SerializeToUtf8Bytes(document, TerraBaseJsonContext.Default.JsonObject);
+                    _ = DocumentJson.Read(patched, requireObject: true);
+                    var json = EntityPayload.WithoutId(patched, patch.Id);
                     var version = await transaction.PutAsync(patch.Collection, patch.Id, json, cancellationToken).ConfigureAwait(false);
                     return new OperationResult(patch.Id, version, false, null,
                         ETags.Version(transaction.Scope, patch.Collection, patch.Id, version, json));
@@ -535,12 +520,6 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
         }
     }
 
-    // Preserve schema-1 identities, including tombstones recreated by version, without admitting new legacy ids.
-    private static async ValueTask<Validation?> AddressAsync(
-        IStorageTransaction transaction, string collection, string id, CancellationToken cancellationToken) =>
-        !DocumentRoute.IsUuid(id) && await transaction.GetVersionAsync(collection, id, cancellationToken).ConfigureAwait(false) is null
-            ? NewIdRule
-            : null;
 
     // The precondition failure, or null when it holds.
     private static async ValueTask<PreconditionFailed?> CheckAsync(

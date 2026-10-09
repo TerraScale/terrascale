@@ -1,5 +1,6 @@
 using Bogus;
 using TerraBase.Engine.Sqlite;
+using TerraBase.Primitives;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Documents;
@@ -95,7 +96,7 @@ public sealed class QueryPlanTests
         var plans = (await created.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>()).GetProperty("id").GetString()!;
         (await tenant.Data.PostAsJsonAsync(tenant.Database("plans", "/collections"), new { name = "items" })).EnsureSuccessStatusCode();
         (await tenant.Data.PutAsJsonAsync(
-            tenant.Database("plans", $"/collections/items/documents/{Guid.CreateVersion7()}"),
+            tenant.Database("plans", $"/collections/items/documents/by-key?id={EntityIds.New()}"),
             new { title = Faker.Commerce.ProductName() })).EnsureSuccessStatusCode();
         // Every statement the engine runs must have a recorded plan.
         await Assert.That(SqliteStatements.All.Keys).IsEquivalentTo(Expected.Keys);
@@ -124,7 +125,7 @@ public sealed class QueryPlanTests
             .Status.ShouldBe(System.Net.HttpStatusCode.OK);
         (await api.TransactAsync([.. ids.Select(id => new { op = "delete", collection = "items", id })]))
             .Status.ShouldBe(System.Net.HttpStatusCode.OK);
-        var live = "ffffffff-ffff-7fff-8fff-ffffffffffff";
+        var live = "7ZZZZZZZZZFZZRZZZZZZZZZZZZ";
         (await api.PutAsync(live, new { n = 2 })).Status.ShouldBe(System.Net.HttpStatusCode.Created);
         var listed = await api.SendAsync(HttpMethod.Get, api.Documents + "?limit=1");
         var queried = await api.QueryAsync(new { limit = 1 });

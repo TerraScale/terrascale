@@ -6,7 +6,9 @@ using System.Text.Json;
 using Bogus;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
+using TerraBase.Primitives;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Management;
@@ -24,6 +26,39 @@ public sealed class CommitApiTests
     private static readonly string[] StatusField = ["status"];
 
     [Test]
+    public async Task Commit_document_creates_use_the_application_clock_for_monotonic_ULIDs()
+    {
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 10, 8, 12, 0, 0, TimeSpan.Zero));
+        await using var api = await ManagementApi.StartAsync(time: clock, managementCredential: true);
+        using var service = api.Service(api.User);
+        var ids = new List<string>();
+        for (var i = 0; i < 2; i++)
+        {
+            var commit = await CommitAsync(service,
+                new { op = "create", collection = "notes", document = new { value = i * 2 } },
+                new { op = "create", collection = "notes", document = new { value = (i * 2) + 1 } });
+            await Assert.That(commit.Status).IsEqualTo(HttpStatusCode.OK);
+            for (var j = 0; j < 2; j++)
+            {
+                var id = commit.Result(j).GetProperty("id").GetString()!;
+                await Assert.That(EntityIds.IsValid(id)).IsTrue();
+                await Assert.That(Ulid.Parse(id).Time).IsEqualTo(clock.GetUtcNow());
+                var read = await GetAsync(service, $"{Documents}/notes/by-key?id={System.Uri.EscapeDataString(id)}");
+                await Assert.That(read.Status).IsEqualTo(HttpStatusCode.OK);
+                await Assert.That(read.Json.GetProperty("id").GetString()).IsEqualTo(id);
+                await Assert.That(read.Json.GetProperty("document").GetProperty("value").GetInt32()).IsEqualTo((i * 2) + j);
+                await Assert.That(read.ETag).IsEqualTo(Version(commit, j));
+                ids.Add(id);
+            }
+        }
+
+        for (var i = 1; i < ids.Count; i++)
+        {
+            await Assert.That(string.CompareOrdinal(ids[i - 1], ids[i])).IsLessThan(0);
+        }
+    }
+
+    [Test]
     public async Task A_commit_creates_an_organization_a_project_and_a_document_naming_both()
     {
         await using var api = await ManagementApi.StartAsync(managementCredential: true);
@@ -39,7 +74,7 @@ public sealed class CommitApiTests
         var readOrganization = await GetAsync(service, $"{Organizations}/{organization}");
         var readProject = await GetAsync(service, $"{Organizations}/{organization}/projects/{project}");
         var members = await GetAsync(service, $"{Organizations}/{organization}/members");
-        var readDocument = await GetAsync(service, $"{Documents}/workspaces/{document}");
+        var readDocument = await GetAsync(service, $"{Documents}/workspaces/by-key?id={System.Uri.EscapeDataString(document)}");
         var queried = await PostAsync(service, $"{Documents}/workspaces/query", new { filter = new { eq = new object[] { "/project", project } } });
         var versions = await GetAsync(service, $"{Versions}?organization={organization}");
 
@@ -65,6 +100,50 @@ public sealed class CommitApiTests
         await Assert.That(OrganizationVersion(versions.Json, organization)).IsEqualTo(OrganizationVersion(commit.Json.GetProperty("versions"), organization));
         await Assert.That(versions.Json.GetProperty("account").GetString())
             .IsEqualTo(commit.Json.GetProperty("versions").GetProperty("account").GetString());
+    }
+
+    [Test]
+    [Arguments("settings")]
+    [Arguments("doc_existing")]
+    [Arguments("00112233-4455-6677-8899-aabbccddeeff")]
+    public async Task Dashboard_documents_keep_caller_supplied_keys_in_commits_and_reads(string key)
+    {
+        await using var api = await ManagementApi.StartAsync(managementCredential: true);
+        using var service = api.Service(api.User);
+        var written = await CommitAsync(service, new { op = "put", collection = "settings", id = key, document = new { value = 1 } });
+        await Assert.That(written.Status).IsEqualTo(HttpStatusCode.OK);
+        var read = await GetAsync(service, $"/v1/management/documents/settings/by-key?id={System.Uri.EscapeDataString(key)}");
+        await Assert.That(read.Status).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(read.Json.GetProperty("id").GetString()).IsEqualTo(key);
+        await Assert.That(read.Json.GetProperty("document").GetProperty("value").GetInt32()).IsEqualTo(1);
+        await Assert.That(read.ETag).IsEqualTo(Version(written, 0));
+    }
+
+    [Test]
+    public async Task Dashboard_query_key_reads_preserve_raw_key_identity_without_path_aliases()
+    {
+        await using var api = await ManagementApi.StartAsync(managementCredential: true);
+        using var service = api.Service(api.User);
+        string[] keys = ["a/b", "a%2Fb", ".", "%2E", "..", "%2E%2E", "%", "?", "#", "+", " ", "雪😀", "é", "e\u0301"];
+        var written = await CommitAsync(service, [.. keys.Select(key => (object)new { op = "put", collection = "settings", id = key, document = new { value = key } })]);
+        await Assert.That(written.Status).IsEqualTo(HttpStatusCode.OK);
+        for (var i = 0; i < keys.Length; i++)
+        {
+            var read = await GetAsync(service, $"{Documents}/settings/by-key?id={System.Uri.EscapeDataString(keys[i])}");
+            await Assert.That(read.Status).IsEqualTo(HttpStatusCode.OK);
+            await Assert.That(read.Json.GetProperty("id").GetString()).IsEqualTo(keys[i]);
+            await Assert.That(read.Json.GetProperty("document").GetProperty("value").GetString()).IsEqualTo(keys[i]);
+            await Assert.That(read.ETag).IsEqualTo(Version(written, i));
+        }
+
+        var missing = await GetAsync(service, $"{Documents}/settings/by-key");
+        var duplicate = await GetAsync(service, $"{Documents}/settings/by-key?id=a%2Fb&id=a%252Fb");
+        var unknown = await GetAsync(service, $"{Documents}/settings/by-key?id=a%2Fb&x=1");
+        await Assert.That(missing.Status).IsEqualTo(HttpStatusCode.BadRequest);
+        await Assert.That(duplicate.Status).IsEqualTo(HttpStatusCode.BadRequest);
+        await Assert.That(unknown.Status).IsEqualTo(HttpStatusCode.BadRequest);
+        var oldRoute = await GetAsync(service, $"{Documents}/settings/{NewId()}");
+        await Assert.That(oldRoute.Status).IsEqualTo(HttpStatusCode.NotFound);
     }
 
     [Test]
@@ -98,8 +177,8 @@ public sealed class CommitApiTests
             new { op = "put", collection = "notes", id = existing, document = new { n = 4 }, if_match = staleDocument });
         var failedFence = await CommitAsync(service, rename, put, new { op = "fence", organization, version = staleOrganization });
         var projectAfter = await GetAsync(service, $"{Organizations}/{organization}/projects/{project}");
-        var addedAfter = await GetAsync(service, $"{Documents}/notes/{added}");
-        var existingAfter = await GetAsync(service, $"{Documents}/notes/{existing}");
+        var addedAfter = await GetAsync(service, $"{Documents}/notes/by-key?id={System.Uri.EscapeDataString(added)}");
+        var existingAfter = await GetAsync(service, $"{Documents}/notes/by-key?id={System.Uri.EscapeDataString(existing)}");
         var versionAfter = await VersionAsync(service, organization);
         // The same update with current preconditions commits.
         var committed = await CommitAsync(service,
@@ -108,7 +187,7 @@ public sealed class CommitApiTests
             put,
             new { op = "put", collection = "notes", id = existing, document = new { n = 4 }, if_match = Version(updated, 0) });
         var projectCommitted = await GetAsync(service, $"{Organizations}/{organization}/projects/{project}");
-        var addedCommitted = await GetAsync(service, $"{Documents}/notes/{added}");
+        var addedCommitted = await GetAsync(service, $"{Documents}/notes/by-key?id={System.Uri.EscapeDataString(added)}");
 
         await Assert.That((failedDocument.Status, failedDocument.Code, failedDocument.Op)).IsEqualTo((HttpStatusCode.PreconditionFailed, "precondition_failed", 3));
         await Assert.That((failedFence.Status, failedFence.Code, failedFence.Op)).IsEqualTo((HttpStatusCode.PreconditionFailed, "precondition_failed", 2));
@@ -135,8 +214,8 @@ public sealed class CommitApiTests
         var grown = await CommitAsync(service,
             new { op = "create", collection = "notes", id = added, document = new { n = 1 } },
             new { op = "patch", collection = "notes", id = existing, merge = new { b = half } });
-        var addedAfter = await GetAsync(service, $"{Documents}/notes/{added}");
-        var existingAfter = await GetAsync(service, $"{Documents}/notes/{existing}");
+        var addedAfter = await GetAsync(service, $"{Documents}/notes/by-key?id={System.Uri.EscapeDataString(added)}");
+        var existingAfter = await GetAsync(service, $"{Documents}/notes/by-key?id={System.Uri.EscapeDataString(existing)}");
 
         await Assert.That(seeded.Status).IsEqualTo(HttpStatusCode.OK);
         await Assert.That((grown.Status, grown.Code, grown.Message, grown.Op))
@@ -160,7 +239,7 @@ public sealed class CommitApiTests
         var write = new { op = "put", collection = "workspaces", id = document, document = new { organization, title = "b" }, if_match = Version(created, 0) };
 
         var fenced = await CommitAsync(service, new { op = "fence", organization, version = loaded }, write);
-        var unchanged = await GetAsync(service, $"{Documents}/workspaces/{document}");
+        var unchanged = await GetAsync(service, $"{Documents}/workspaces/by-key?id={System.Uri.EscapeDataString(document)}");
         var retried = await CommitAsync(service, new { op = "fence", organization, version = moved }, write);
         var advanced = await VersionAsync(service, organization);
 
@@ -189,7 +268,7 @@ public sealed class CommitApiTests
         var replies = await Task.WhenAll(documents.Select(id => CommitAsync(service,
             new { op = "fence", organization, version },
             new { op = "create", collection = "notes", id, document = new { writer = id } })));
-        var reads = await Task.WhenAll(documents.Select(id => GetAsync(service, $"{Documents}/notes/{id}")));
+        var reads = await Task.WhenAll(documents.Select(id => GetAsync(service, $"{Documents}/notes/by-key?id={System.Uri.EscapeDataString(id)}")));
         var winners = Enumerable.Range(0, documents.Count).Where(index => replies[index].Status == HttpStatusCode.OK).ToList();
         var stored = Enumerable.Range(0, documents.Count).Where(index => reads[index].Status == HttpStatusCode.OK).ToList();
 
@@ -218,7 +297,7 @@ public sealed class CommitApiTests
         var foreign = await GetAsync(stranger, $"{Commits}/{id}");
         var reused = await SendAsync(service, Body(id, new { op = "create", collection = "notes", id = NewId(), document = new { n = 1 } }));
         var invitations = await GetAsync(service, $"{Organizations}/{organization}/invitations");
-        var read = await GetAsync(service, $"{Documents}/notes/{document}");
+        var read = await GetAsync(service, $"{Documents}/notes/by-key?id={System.Uri.EscapeDataString(document)}");
 
         var failedId = NewId();
         var failing = Body(failedId, new { op = "create", collection = "notes", id = document, document = new { n = 2 } });
@@ -610,7 +689,7 @@ public sealed class CommitApiTests
     }
 
     [Test]
-    public async Task A_version_four_catalog_is_upgraded_with_its_projects_indexed_so_their_ids_stay_unique()
+    public async Task Project_ids_stay_reserved_across_a_catalog_restart()
     {
         var directory = Directory.CreateTempSubdirectory("terrabase-catalog-").FullName;
         try
@@ -621,27 +700,22 @@ public sealed class CommitApiTests
             {
                 organization = await api.CreateOrganizationAsync(OrganizationName());
                 project = await api.CreateProjectAsync(organization, ProjectName());
-                // A version 4 catalog: no project index yet.
-                var system = await api.Server.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(CancellationToken.None);
-                await using var transaction = await system.BeginTransactionAsync(write: true, CancellationToken.None);
-                await transaction.PutAsync("catalog", "version", Encoding.UTF8.GetBytes("\"4\""), CancellationToken.None);
-                await transaction.DeleteAsync("project_organizations", project, CancellationToken.None);
-                await transaction.CommitAsync(CancellationToken.None);
+
             }
 
-            await using var upgraded = await ManagementApi.StartAsync(settings => settings["data-directory"] = directory, managementCredential: true);
-            using var stranger = upgraded.Service(User());
+            await using var reopened = await ManagementApi.StartAsync(settings => settings["data-directory"] = directory, managementCredential: true);
+            using var stranger = reopened.Service(User());
             // Another user's organization cannot take the existing project's id.
             var created = await CommitAsync(stranger, new { op = "create_organization", name = OrganizationName() });
             var strangerOrganization = Id(created.Value(0));
             var taken = await CommitAsync(stranger, new { op = "create_project", organization = strangerOrganization, id = project, name = ProjectName() });
-            var system2 = await upgraded.Server.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(CancellationToken.None);
+            var system2 = await reopened.Server.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(CancellationToken.None);
             await using var read = await system2.BeginTransactionAsync(write: false, CancellationToken.None);
             var version = await read.GetAsync("catalog", "version", CancellationToken.None);
 
             await Assert.That(created.Status).IsEqualTo(HttpStatusCode.OK);
             await Assert.That((taken.Status, taken.Code, taken.Op)).IsEqualTo((HttpStatusCode.Conflict, "id_taken", (int?)0));
-            await Assert.That(Encoding.UTF8.GetString(version!.Json.Span)).IsEqualTo("\"5\"");
+            await Assert.That(Encoding.UTF8.GetString(version!.Json.Span)).IsEqualTo("\"6\"");
         }
         finally
         {
@@ -652,9 +726,9 @@ public sealed class CommitApiTests
 
     private static Uri Uri(string path) => new(path, UriKind.Relative);
 
-    private static string NewId() => Guid.CreateVersion7().ToString();
+    private static string NewId() => EntityIds.New().ToString();
 
-    private static string User() => Faker.Random.Guid().ToString();
+    private static string User() => EntityIds.New().ToString();
 
     // The suffix keeps two addresses of one test from colliding by chance.
     private static string Email() => Faker.Internet.Email(uniqueSuffix: Faker.Random.AlphaNumeric(6));

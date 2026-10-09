@@ -7,6 +7,7 @@ using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.Backup;
 using TerraBase.Hosting;
+using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using static TerraBase.Features.Management.SystemCatalog;
 
@@ -173,7 +174,7 @@ internal sealed partial class EngineManagedBackupService(
             return new NotFound();
         }
 
-        var staging = database with { DatabaseId = Guid.NewGuid().ToString() };
+        var staging = database with { DatabaseId = EntityIds.New().ToString() };
         try
         {
             return await pointInTime.RestoreAsync(database, at, staging, cancellationToken).ConfigureAwait(false) switch
@@ -651,7 +652,7 @@ internal sealed partial class EngineManagedBackupService(
     {
         var now = time.GetUtcNow();
         return new BackupRecord(
-            Guid.CreateVersion7(now).ToString(), database.OrganizationId, database.ProjectId, database.DatabaseId, BackupState.Pending, trigger, now, null, 0, null);
+            EntityIds.New(time).ToString(), database.OrganizationId, database.ProjectId, database.DatabaseId, BackupState.Pending, trigger, now, null, 0, null);
     }
 
     private static async ValueTask<BackupRecord?> OldestRegisteredAsync(IStorageTransaction transaction, DatabaseOwner owner, CancellationToken cancellationToken)

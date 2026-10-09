@@ -4,6 +4,7 @@ using System.Text.Json;
 using Bogus;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine.Cluster;
+using TerraBase.Primitives;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.CrossRegion;
@@ -30,8 +31,8 @@ public sealed class CrossRegionDeletionTests
             var gruMembers = new FakeMemberStore(TimeProvider.System);
             var sfoMembers = new FakeMemberStore(TimeProvider.System);
             await using var gru = await StartRegionAsync(network, credentials, "gru-1", "gru", gruDirectory, gruMembers);
-            var organization = Guid.NewGuid().ToString("D");
-            var project = Guid.NewGuid().ToString("D");
+            var organization = EntityIds.New().ToString();
+            var project = EntityIds.New().ToString();
             var organizationName = faker.Company.CompanyName();
             var projectName = faker.Random.AlphaNumeric(12);
             string[] inSfo = ["sfo-1"];
@@ -155,7 +156,7 @@ public sealed class CrossRegionDeletionTests
     {
         using var body = new StringContent(JsonSerializer.Serialize(new
         {
-            id = Guid.NewGuid().ToString("D"),
+            id = EntityIds.New().ToString(),
             ops = new object[]
             {
                 new { op = "create_organization", id = organization, name = organizationName },

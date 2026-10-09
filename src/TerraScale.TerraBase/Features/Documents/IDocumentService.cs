@@ -8,7 +8,7 @@ namespace TerraBase.Features.Documents;
 /// <summary>Addresses one document.</summary>
 /// <param name="Database">Owning database.</param>
 /// <param name="Collection">Collection name (same rules as database names).</param>
-/// <param name="Id">Document id: a lowercase hyphenated UUID, or an existing schema-1 legacy id.</param>
+/// <param name="Id">Document id: a generated canonical uppercase ULID or a caller-supplied key.</param>
 public sealed record DocumentKey(TenantContext Database, string Collection, string Id);
 
 /// <summary>Write preconditions (see <c>ETags</c>).</summary>
@@ -90,7 +90,7 @@ public sealed record NeverWritten;
 
 /// <summary>
 /// A document or its tombstone; that it was never written; an unknown database or collection; or an address that is
-/// neither a UUID nor an existing legacy id.
+/// outside the caller-supplied key bounds.
 /// </summary>
 public readonly union DocumentRead(StoredDocument, NeverWritten, NotFound, Validation);
 

@@ -1,4 +1,5 @@
 using System.Net;
+using TerraBase.Primitives;
 using TerraBase.Testing;
 
 namespace TerraBase.Slow.Management;
@@ -18,7 +19,7 @@ public sealed class UserAuthTests
                 TestIssuer.Configure(settings);
             },
             issuer.Route);
-        using var client = tls.CreateClient(server.ClientAddress!, issuer.Mint(Guid.NewGuid().ToString()));
+        using var client = tls.CreateClient(server.ClientAddress!, issuer.Mint(EntityIds.New().ToString()));
         var rejected = await StatusAsync(client, "/v1/management/organizations");
         var notReady = await StatusAsync(server.Client, "/readyz");
 

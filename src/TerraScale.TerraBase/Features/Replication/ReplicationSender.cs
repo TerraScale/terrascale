@@ -49,7 +49,7 @@ internal sealed partial class ReplicationSender(
     // ponytail: one signal wakes every waiting write; per-database signals if many concurrent writers wake each other.
     private TaskCompletionSource _progress = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-    private readonly record struct DatabaseIncarnation(string Organization, string Project, string Database, Guid Origin)
+    private readonly record struct DatabaseIncarnation(string Organization, string Project, string Database, Ulid Origin)
     {
         public TenantContext Tenant => new(Organization, PlanTier.Hobby, Project, Database);
     }
@@ -402,7 +402,7 @@ internal sealed partial class ReplicationSender(
         var opening = await NextAsync(call, progress.Token).ConfigureAwait(false);
         var welcome = opening.Welcome
             ?? throw new InvalidDataException("the peer did not answer Hello with Welcome");
-        // Fail closed on anything but what Hello offered: protocol 1.0, format and merge policy 1, LZ4, this
+        // Fail closed on anything but what Hello offered: protocol 2.0, format and merge policy 1, LZ4, this
         // database in this epoch, and the minimum of both sides' limits, which both sides then enforce.
         if (!ReplicationProtocol.Accepts(welcome, database))
         {
@@ -412,7 +412,7 @@ internal sealed partial class ReplicationSender(
         var limits = welcome.Limits;
         CheckResponse(opening, limits);
         var peerMember = welcome.LocalIdentity;
-        var receiverIncarnation = new Guid(peerMember.MemberIncarnation.Span, bigEndian: true);
+        var receiverIncarnation = new Ulid(peerMember.MemberIncarnation.Span);
 
         progress.CancelAfter(ReplicationProtocol.ProgressTimeout);
 
@@ -836,7 +836,7 @@ internal sealed partial class ReplicationSender(
         // Only the latest receiving incarnation is retained; Welcome retires its predecessor's prefix.
         // LastVerified survives handshakes and slot promotion; Prefix/Receiver remain trusted only after validation.
         // Unresolved conflicts are retained here even when the database has no observation slot.
-        private readonly Dictionary<DatabaseIncarnation, (Guid? Receiver, long Prefix, long LastVerified, bool Diverged)> _acknowledged = [];
+        private readonly Dictionary<DatabaseIncarnation, (Ulid? Receiver, long Prefix, long LastVerified, bool Diverged)> _acknowledged = [];
 
         public int Number => number;
 
@@ -906,7 +906,7 @@ internal sealed partial class ReplicationSender(
             }
         }
 
-        public void Welcomed(DatabaseIncarnation database, Guid receiver, long prefix)
+        public void Welcomed(DatabaseIncarnation database, Ulid receiver, long prefix)
         {
             lock (state)
             {
@@ -930,7 +930,7 @@ internal sealed partial class ReplicationSender(
             }
         }
 
-        public void Acknowledged(DatabaseIncarnation database, Guid receiver, long prefix)
+        public void Acknowledged(DatabaseIncarnation database, Ulid receiver, long prefix)
         {
             lock (state)
             {

@@ -2,6 +2,7 @@ using System.Text;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Internal;
 using TerraBase.Configuration;
+using TerraBase.Primitives;
 
 namespace TerraBase.Features.Backup;
 
@@ -69,7 +70,7 @@ internal sealed class DataKeys(IObjectStore store, IMasterKey master, TimeProvid
             {
                 var (generated, wrapped) = await master.GenerateDataKeyAsync(cancellationToken).ConfigureAwait(false);
                 key = generated;
-                id = Ulid.NewUlid(time.GetUtcNow()).ToString();
+                id = EntityIds.New(time).ToString();
                 using var content = new MemoryStream(Encoding.ASCII.GetBytes(wrapped));
                 await store.PutAsync(BackupLayout.Key(scope, id), content, cancellationToken).ConfigureAwait(false);
             }

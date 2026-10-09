@@ -67,5 +67,5 @@ public sealed class CreateCollectionEndpoint(IDocumentService documents, ITenant
         Unavailable error => ErrorResponse.From(error),
     };
 
-    internal static CollectionBody Body(CollectionInfo collection) => new(collection.Name, DocumentRoute.Decimal(collection.CreatedAt));
+    internal static CollectionBody Body(CollectionInfo collection) => new(collection.Name, DocumentRoute.Decimal(collection.CreatedAt), collection.Id);
 }

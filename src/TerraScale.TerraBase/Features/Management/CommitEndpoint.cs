@@ -8,12 +8,13 @@ using TerraBase.Errors;
 using TerraBase.Features.Documents;
 using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
+using TerraBase.Primitives;
 using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management;
 
 /// <summary>A commit: its id and operations (docs/management-commits.md). Its schema documents the request; the endpoint reads it itself.</summary>
-/// <param name="Id">Client-chosen lowercase UUID, the same on every retry of one logical update.</param>
+/// <param name="Id">Client-chosen canonical uppercase ULID, the same on every retry of one logical update.</param>
 /// <param name="Ops">
 /// 1 to 1024 operations: Management operations as described here, and document operations, which have a <c>collection</c>
 /// member and the members of a Documents API transaction operation (<see cref="TransactionOpRequest"/>).
@@ -21,7 +22,7 @@ namespace TerraBase.Features.Management;
 public sealed record CommitRequest(string? Id, IReadOnlyList<ManagementOpRequest>? Ops);
 
 /// <summary><c>POST /v1/management/commits</c>: applies Management and dashboard document operations atomically.</summary>
-public sealed class CommitEndpoint(IManagementCommits commits) : EndpointWithoutRequest<IResult>
+public sealed class CommitEndpoint(IManagementCommits commits, TimeProvider time) : EndpointWithoutRequest<IResult>
 {
     /// <summary>Set on a response answered from the record of an earlier, identical commit.</summary>
     public const string ReplayedHeader = "TerraBase-Commit-Replayed";
@@ -70,7 +71,7 @@ public sealed class CommitEndpoint(IManagementCommits commits) : EndpointWithout
         Name("commit");
         Summary("Applies Management and dashboard document operations atomically");
         Description($$"""
-            {"id":"<uuid>","ops":[…]} with 1 to 1024 operations, all committed in one transaction or none (docs/management-commits.md). An operation with a collection member is a Documents API transaction operation on the dashboard document space; any other is a Management operation (snake_case members): create_organization, rename_organization, set_plan, delete_organization, set_current_organization, create_project, rename_project, delete_project, create_database, branch_database, delete_database, change_role, remove_member, leave, invite, resend_invitation, revoke_invitation, accept_invitation, decline_invitation, start_transfer, confirm_transfer, cancel_transfer, set_audit_retention, fence (compare-and-set of an organization's or the account's version) and limit (databases, members or active_members bound; at most 16). Fences and assertions see the state before the commit, other operations run in order, limits compare the counts after with their bound and fail only when the count grew past it. Failures write nothing and name the operation in error.op. A retry with the same id and byte-identical body answers the recorded response with {{ReplayedHeader}}: true; a different body under a committed id is 409 commit_id_reused. Document operations need the management service credential (403 with a ts-auth token). create_project with a client-chosen id also needs the loopback management service credential (403 with a ts-auth token); omit id for a server-generated project id. accept_invitation and decline_invitation use the access token's verified email (403 without one). {{ManagementRoute.IdentityDescription}}
+            {"id":"<ULID>","ops":[…]} with 1 to 1024 operations, all committed in one transaction or none (docs/management-commits.md). An operation with a collection member is a Documents API transaction operation on the dashboard document space; any other is a Management operation (snake_case members): create_organization, rename_organization, set_plan, delete_organization, set_current_organization, create_project, rename_project, delete_project, create_database, branch_database, delete_database, change_role, remove_member, leave, invite, resend_invitation, revoke_invitation, accept_invitation, decline_invitation, start_transfer, confirm_transfer, cancel_transfer, set_audit_retention, fence (compare-and-set of an organization's or the account's version) and limit (databases, members or active_members bound; at most 16). Fences and assertions see the state before the commit, other operations run in order, limits compare the counts after with their bound and fail only when the count grew past it. Failures write nothing and name the operation in error.op. A retry with the same id and byte-identical body answers the recorded response with {{ReplayedHeader}}: true; a different body under a committed id is 409 commit_id_reused. Document operations need the management service credential (403 with a ts-auth token). create_project with a client-chosen id also needs the loopback management service credential (403 with a ts-auth token); omit id for a server-generated project id. accept_invitation and decline_invitation use the access token's verified email (403 without one). {{ManagementRoute.IdentityDescription}}
             """);
         Tags(ManagementRoute.Tag);
         Metadata(new RequestBodyMetadata(typeof(CommitRequest), DocumentRoute.JsonMediaType));
@@ -110,7 +111,7 @@ public sealed class CommitEndpoint(IManagementCommits commits) : EndpointWithout
 
         using (envelope)
         {
-            switch (Parse(envelope.RootElement, HttpContext.User.IsManagementService()))
+            switch (Parse(envelope.RootElement, HttpContext.User.IsManagementService(), time))
             {
                 case CommitRejected rejected:
                     return ErrorResponse.From(rejected.Error, rejected.Op);
@@ -137,8 +138,8 @@ public sealed class CommitEndpoint(IManagementCommits commits) : EndpointWithout
         return TypedResults.Bytes(outcome.Body, DocumentRoute.JsonMediaType);
     }
 
-    // {"id":"<uuid>","ops":[…]} exactly, every operation valid; the first invalid one is named by its index.
-    private static ParsedRequest Parse(JsonElement envelope, bool service)
+    // {"id":"<ULID>","ops":[…]} exactly, every operation valid; the first invalid one is named by its index.
+    private static ParsedRequest Parse(JsonElement envelope, bool service, TimeProvider time)
     {
         if (envelope.ValueKind != JsonValueKind.Object)
         {
@@ -150,7 +151,7 @@ public sealed class CommitEndpoint(IManagementCommits commits) : EndpointWithout
             || !members.TryGetValue("id", out var id) || id.ValueKind != JsonValueKind.String || !IsNewId(id.GetString()!)
             || !members.TryGetValue("ops", out var ops) || ops.ValueKind != JsonValueKind.Array)
         {
-            return new CommitRejected(new Validation("the body is {\"id\":\"<lowercase uuid>\",\"ops\":[…]} with no other member"), Op: null);
+            return new CommitRejected(new Validation("the body is {\"id\":\"<canonical ULID>\",\"ops\":[…]} with no other member"), Op: null);
         }
 
         if (ops.GetArrayLength() is 0 or > MaxOps)
@@ -164,7 +165,7 @@ public sealed class CommitEndpoint(IManagementCommits commits) : EndpointWithout
         foreach (var (json, i) in ops.EnumerateArray().Select((json, i) => (json, i)))
         {
             CommitOperation operation;
-            switch (Operation(json))
+            switch (Operation(json, time))
             {
                 case Validation error:
                     return new CommitRejected(error, i);
@@ -205,11 +206,11 @@ public sealed class CommitEndpoint(IManagementCommits commits) : EndpointWithout
     }
 
     // One operation; the Management validators still throw (docs/error-handling.md), so their errors are read here.
-    private static ValidOperation Operation(JsonElement json)
+    private static ValidOperation Operation(JsonElement json, TimeProvider time)
     {
         try
         {
-            return Unchecked(json);
+            return Unchecked(json, time);
         }
         catch (BadHttpRequestException error)
         {
@@ -217,7 +218,7 @@ public sealed class CommitEndpoint(IManagementCommits commits) : EndpointWithout
         }
     }
 
-    private static ValidOperation Unchecked(JsonElement json)
+    private static ValidOperation Unchecked(JsonElement json, TimeProvider time)
     {
         if (json.ValueKind != JsonValueKind.Object)
         {
@@ -226,7 +227,7 @@ public sealed class CommitEndpoint(IManagementCommits commits) : EndpointWithout
 
         if (json.TryGetProperty("collection", out _))
         {
-            return TransactionEndpoint.CheckOperation(json) switch
+            return TransactionEndpoint.CheckOperation(json, time) switch
             {
                 Validation error => error,
                 DocumentOperation operation => new DocumentCommitOperation(operation),
@@ -271,7 +272,7 @@ public sealed class CommitEndpoint(IManagementCommits commits) : EndpointWithout
         : !IsIdentifier(op.Project) ? new Validation("project must be an id")
         : !IsIdentifier(op.Database) ? new Validation("database must be an id")
         : !IsIdentifier(op.Invitation) ? new Validation("invitation must be an id")
-        : op.Id is { } id && !IsNewId(id) ? new Validation("id must be a lowercase hyphenated UUID")
+        : op.Id is { } id && !IsNewId(id) ? new Validation("id must be a canonical uppercase ULID")
         : op.HomeRegion is { } home && !TerraBaseOptions.IsRegion(home) ? new Validation("home_region must be a region id")
         : op.ReplicaRegions?.Any(region => region is null || !TerraBaseOptions.IsRegion(region)) == true ? new Validation("replica_regions must be region ids")
         : op.TokenHash is { } hash && !(hash.Length == 64 && hash.All(char.IsAsciiHexDigitLower)) ? new Validation("token_hash must be 64 lowercase hex characters")
@@ -301,9 +302,9 @@ public sealed class CommitEndpoint(IManagementCommits commits) : EndpointWithout
     }
 
     // Resource ids are opaque here, as in route segments: an unknown one is simply not found.
-    private static bool IsIdentifier(string? id) => id is null || (id.Length is > 0 and <= 64 && !id.Any(char.IsControl));
+    private static bool IsIdentifier(string? id) => id is null || EntityIds.IsValid(id);
 
-    private static bool IsNewId(string id) => Guid.TryParseExact(id, "D", out var parsed) && parsed.ToString("D") == id;
+    private static bool IsNewId(string id) => EntityIds.IsValid(id);
 }
 
 /// <summary>A commit request read and validated: its id and operations.</summary>

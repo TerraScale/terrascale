@@ -84,7 +84,7 @@ public sealed class StorageBeginCancellationTests
 
                 // A real HTTPS request takes the admission just released while the read thread stays busy.
                 healthy = client.GetAsync(
-                    new Uri($"/v1/projects/{tenant.ProjectId}/databases/idle/collections/items/documents/{StorageFixture.Id("missing")}", UriKind.Relative), deadline.Token);
+                    new Uri($"/v1/projects/{tenant.ProjectId}/databases/idle/collections/items/documents/by-key?id={StorageFixture.Id("missing")}", UriKind.Relative), deadline.Token);
                 requests.Add(healthy);
                 await WaitUntilAsync(() => engine.Io.Admitted == 1 && engine.Io.Queued == 1, deadline.Token);
                 await Assert.That(healthy.IsCompleted).IsFalse();

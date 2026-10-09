@@ -58,7 +58,7 @@ public sealed class AntiEntropyProgressTests
                 }
 
                 using var created = await writer.PutAsJsonAsync(
-                    new Uri($"{tenant.Path("repair")}/collections/items/documents/{id}", UriKind.Relative), new { name }, token);
+                    new Uri($"{tenant.Path("repair")}/collections/items/documents/by-key?id={id}", UriKind.Relative), new { name }, token);
                 created.EnsureSuccessStatusCode();
                 await TerraBaseTestServer.ReplicatedAsync(seed);
 
@@ -112,7 +112,7 @@ public sealed class AntiEntropyProgressTests
                 await Assert.That(await StatesAsync(tenant.File(receiver, "repair"), token)).IsEquivalentTo(expected);
                 await Assert.That(await FrontiersAsync(tenant.File(receiver, "repair"), token)).IsEquivalentTo(receiverFrontiers[index]);
                 using var reader = clientTls.CreateClient(receiver.ClientAddress!, await tenant.KeyAsync(receiver, ["documents:read"], token));
-                using var read = await reader.GetAsync(new Uri($"{tenant.Path("repair")}/collections/items/documents/{id}", UriKind.Relative), token);
+                using var read = await reader.GetAsync(new Uri($"{tenant.Path("repair")}/collections/items/documents/by-key?id={id}", UriKind.Relative), token);
                 await Assert.That(read.StatusCode).IsEqualTo(HttpStatusCode.OK);
                 using var body = JsonDocument.Parse(await read.Content.ReadAsStringAsync(token));
                 await Assert.That(body.RootElement.GetProperty("document").GetProperty("name").GetString()).IsEqualTo(name);
@@ -203,7 +203,7 @@ public sealed class AntiEntropyProgressTests
         {
             using var collection = await writer.PostAsJsonAsync(new Uri($"{tenant.Path(database)}/collections", UriKind.Relative), new { name = "items" }, token);
             collection.EnsureSuccessStatusCode();
-            using var document = await writer.PutAsJsonAsync(new Uri($"{tenant.Path(database)}/collections/items/documents/{id}", UriKind.Relative), new { name }, token);
+            using var document = await writer.PutAsJsonAsync(new Uri($"{tenant.Path(database)}/collections/items/documents/by-key?id={id}", UriKind.Relative), new { name }, token);
             document.EnsureSuccessStatusCode();
         }
 
@@ -362,7 +362,7 @@ public sealed class AntiEntropyProgressTests
         using var reader = clientTls.CreateClient(receiver.ClientAddress!, await tenant.KeyAsync(receiver, ["documents:read"], token));
         foreach (var id in new[] { ids[0], ids[^1] })
         {
-            using var read = await reader.GetAsync(new Uri($"{tenant.Path("repair")}/collections/items/documents/{id}", UriKind.Relative), token);
+            using var read = await reader.GetAsync(new Uri($"{tenant.Path("repair")}/collections/items/documents/by-key?id={id}", UriKind.Relative), token);
             await Assert.That(read.StatusCode).IsEqualTo(HttpStatusCode.OK);
             using var body = JsonDocument.Parse(await read.Content.ReadAsStringAsync(token));
             await Assert.That(body.RootElement.GetProperty("document").GetProperty("name").GetString()).IsEqualTo(name);

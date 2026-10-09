@@ -11,6 +11,7 @@ using TerraBase.Features.Memory;
 using TerraBase.Features.Replication;
 using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
+using TerraBase.Primitives;
 using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Management;
@@ -29,14 +30,7 @@ namespace TerraBase.Features.Management;
 /// goes through <see cref="GetOrganizationAsync(IStorageTransaction, string, string, CancellationToken)"/> or
 /// <c>AuthorizeAsync</c>, which answer non-members as if the organization did not exist.
 /// <para>
-/// The catalog is versioned by the <c>catalog/version</c> document, and migrated in one transaction before the
-/// first operation of the process. Version 1 (no document) predates membership: its organizations have no
-/// members and globally unique names, and every organization is assigned to
-/// <see cref="TerraBaseOptions.ManagementLegacyOwner"/> as its owner; without that setting the API answers 503.
-/// Version 2 stored members without roles; they all become owners. Version 3 upgrades to version 4, which
-/// records pending database cleanup intents. Version 5 adds the viewer role, invitation history and token hashes,
-/// organization and account versions, commit records and the global project index, which the upgrade from 4 fills.
-/// Any other version is unsupported: the API answers 503 and the catalog is left unchanged.
+/// The catalog is versioned by the <c>catalog/version</c> document. Empty catalogs bootstrap version 6. Older catalogs are refused; this closed-beta cutover discards old data.
 /// </para>
 /// <para>
 /// Each organization is a tenant. Storage is addressed by a <see cref="TenantContext"/> resolved in the same transaction
@@ -53,20 +47,8 @@ internal sealed partial class EngineManagementService(
     private const string Catalog = "catalog";
     private const string CatalogVersionId = "version";
 
-    // Markers of the one-time backfills (BackfillAsync), in the catalog collection.
-    private const string DatabasesEnrolled = "backfill_databases_enrolled";
-    private const string ProjectKeysListed = "backfill_project_keys_listed";
-    private const string CatalogVersion = "5";
-
-    // Version 4 added database cleanup intents; version 5 needs only the project index filled.
-    private const string IntentCatalogVersion = "4";
+    private const string CatalogVersion = "6";
     private const string PendingDatabaseCleanup = "pending_database_cleanup";
-
-    // Version 2 added membership; its member documents hold only the user id.
-    private const string MembershipCatalogVersion = "2";
-
-    // Version 1 kept one global name index.
-    private const string LegacyOrganizationNames = "organization_names";
 
     // Global: project id to its organization id, so a client-chosen project id is unique across organizations.
     private const string ProjectOrganizations = "project_organizations";
@@ -74,7 +56,7 @@ internal sealed partial class EngineManagementService(
     // Catalog documents are small; this only bounds a page if one ever is not.
     private const long MaxPageBytes = 1024 * 1024;
 
-    // Documents per page when deleting members or migrating the catalog.
+    // Documents per page when deleting members.
     private const int MemberPage = 100;
 
     private static readonly JsonTypeInfo<string> Id = TerraBaseJsonContext.Default.String;
@@ -816,7 +798,7 @@ internal sealed partial class EngineManagementService(
         IStorageTransaction transaction, string projectId, string databaseId, CancellationToken cancellationToken) =>
         GetAsync(transaction, Databases(projectId), databaseId, TerraBaseJsonContext.Default.ManagedDatabase, cancellationToken);
 
-    /// <summary>Every registered database, for one-time catalog backfills; reads the whole catalog.</summary>
+    /// <summary>Every registered database; reads the whole catalog.</summary>
     internal static async ValueTask<List<DatabaseOwner>> ListDatabasesUncheckedAsync(IStorageTransaction transaction, CancellationToken cancellationToken)
     {
         var owners = new List<DatabaseOwner>();
@@ -886,7 +868,7 @@ internal sealed partial class EngineManagementService(
         IStorageTransaction transaction, string collection, string? after, int limit, JsonTypeInfo<T> type, Func<T, string> id, CancellationToken cancellationToken)
     {
         var page = await transaction.ListAsync(collection, after, limit, MaxPageBytes, cancellationToken).ConfigureAwait(false);
-        var items = page.Documents.Select(document => JsonSerializer.Deserialize(document.Json.Span, type)!).ToList();
+        var items = page.Documents.Select(document => EntityPayload.Read(document, type)!).ToList();
         return new ManagementPage<T>(items, page.HasMore ? id(items[^1]) : null);
     }
 
@@ -895,12 +877,12 @@ internal sealed partial class EngineManagementService(
         where T : class
     {
         var document = await transaction.GetAsync(collection, id, cancellationToken).ConfigureAwait(false);
-        return document is null ? null : JsonSerializer.Deserialize(document.Json.Span, type);
+        return document is null ? null : EntityPayload.Read(document, type);
     }
 
     private static async ValueTask PutAsync<T>(
         IStorageTransaction transaction, string collection, string id, T value, JsonTypeInfo<T> type, CancellationToken cancellationToken) =>
-        await transaction.PutAsync(collection, id, JsonSerializer.SerializeToUtf8Bytes(value, type), cancellationToken).ConfigureAwait(false);
+        await transaction.PutAsync(collection, id, EntityPayload.WithoutId(JsonSerializer.SerializeToUtf8Bytes(value, type), id, nested: true), cancellationToken).ConfigureAwait(false);
 
     // Reads see a snapshot; inside a commit, the commit's transaction.
     private async ValueTask<T> ReadAsync<T>(Func<IStorageTransaction, ValueTask<T>> read, CancellationToken cancellationToken)
@@ -981,12 +963,12 @@ internal sealed partial class EngineManagementService(
 
         if (options.CatalogPrimary is not null)
         {
-            // A follower migrates nothing: the primary's migration and backfills replicate. Each read checks the version in its
+            // A follower receives the primary's clean catalog. Each read checks the version in its
             // own transaction (CheckReadAsync); a write is refused before it reads anything.
             return;
         }
 
-        var migrated = await WriteCatalogAsync(async transaction =>
+        await WriteCatalogAsync(async transaction =>
         {
             var version = await GetAsync(transaction, Catalog, CatalogVersionId, Id, cancellationToken).ConfigureAwait(false);
             if (version == CatalogVersion)
@@ -994,109 +976,17 @@ internal sealed partial class EngineManagementService(
                 return 0;
             }
 
-            if (version is "3" or IntentCatalogVersion)
+            if (version is not null || await AnyAsync(transaction, Organizations, cancellationToken).ConfigureAwait(false))
             {
-                await IndexProjectsAsync(transaction, cancellationToken).ConfigureAwait(false);
-                await PutAsync(transaction, Catalog, CatalogVersionId, CatalogVersion, Id, cancellationToken).ConfigureAwait(false);
-                return 0;
-            }
-
-            if (version == MembershipCatalogVersion)
-            {
-                // Version 2 could only make an organization's creator (or the legacy owner) a member.
-                foreach (var organization in await ListAllAsync(transaction, Organizations, TerraBaseJsonContext.Default.Organization, cancellationToken)
-                    .ConfigureAwait(false))
-                {
-                    foreach (var member in await ListAllAsync(transaction, Members(organization.Id), Id, cancellationToken).ConfigureAwait(false))
-                    {
-                        await PutMemberAsync(transaction, organization.Id, new OrganizationMember(member, OrganizationRole.Owner, organization.CreatedAt), cancellationToken)
-                            .ConfigureAwait(false);
-                    }
-                }
-
-                await IndexProjectsAsync(transaction, cancellationToken).ConfigureAwait(false);
-                await PutAsync(transaction, Catalog, CatalogVersionId, CatalogVersion, Id, cancellationToken).ConfigureAwait(false);
-                return 0;
-            }
-
-            if (version is not null)
-            {
-                // Never migrate, or downgrade, a catalog this build does not know.
                 LogUnsupportedCatalog(logger);
                 throw new BadHttpRequestException(
-                    "the management catalog has a version this build does not support", StatusCodes.Status503ServiceUnavailable);
+                    "the management catalog has an old or unsupported format; discard the affected data", StatusCodes.Status503ServiceUnavailable);
             }
 
-            var legacy = await ListAllAsync(transaction, Organizations, TerraBaseJsonContext.Default.Organization, cancellationToken).ConfigureAwait(false);
-            if (legacy.Count > 0 && options.ManagementLegacyOwner is not { } owner)
-            {
-                LogLegacyCatalog(logger, legacy.Count);
-                throw new BadHttpRequestException(
-                    "the management catalog predates membership; set management-legacy-owner to assign its organizations",
-                    StatusCodes.Status503ServiceUnavailable);
-            }
-
-            foreach (var organization in legacy)
-            {
-                // Version 1 names were globally unique, so they cannot collide in the owner's new index.
-                var owned = organization with { CreatedBy = options.ManagementLegacyOwner! };
-                await transaction.DeleteAsync(LegacyOrganizationNames, Key(owned.Name), cancellationToken).ConfigureAwait(false);
-                await PutAsync(transaction, OrganizationNames(owned.CreatedBy), Key(owned.Name), owned.Id, Id, cancellationToken).ConfigureAwait(false);
-                await PutAsync(transaction, Organizations, owned.Id, owned, TerraBaseJsonContext.Default.Organization, cancellationToken).ConfigureAwait(false);
-                await PutMemberAsync(transaction, owned.Id, new OrganizationMember(owned.CreatedBy, OrganizationRole.Owner, owned.CreatedAt), cancellationToken)
-                    .ConfigureAwait(false);
-            }
-
-            await IndexProjectsAsync(transaction, cancellationToken).ConfigureAwait(false);
             await PutAsync(transaction, Catalog, CatalogVersionId, CatalogVersion, Id, cancellationToken).ConfigureAwait(false);
-            return legacy.Count;
-        }, cancellationToken).ConfigureAwait(false);
-        if (migrated > 0)
-        {
-            LogLegacyCatalogMigrated(logger, migrated);
-        }
-
-        await BackfillAsync(cancellationToken).ConfigureAwait(false);
-        _catalogCurrent = true;
-    }
-
-    // State that builds before this one did not keep, filled in once per catalog; each step records its marker in the
-    // same write. ponytail: each step is one write over every database or key, once; page them if catalogs that old grow large.
-    private ValueTask<int> BackfillAsync(CancellationToken cancellationToken) =>
-        WriteCatalogAsync(async transaction =>
-        {
-            // Every database is backed up under its effective policy; registration enrolls it with the scheduler.
-            if (await GetAsync(transaction, Catalog, DatabasesEnrolled, Id, cancellationToken).ConfigureAwait(false) is null)
-            {
-                foreach (var owner in await ListDatabasesUncheckedAsync(transaction, cancellationToken).ConfigureAwait(false))
-                {
-                    await PutAsync(transaction, EngineManagedBackupService.BackedUpDatabases, owner.DatabaseId, owner, TerraBaseJsonContext.Default.DatabaseOwner, cancellationToken)
-                        .ConfigureAwait(false);
-                }
-
-                await PutAsync(transaction, Catalog, DatabasesEnrolled, DatabasesEnrolled, Id, cancellationToken).ConfigureAwait(false);
-            }
-
-            // Every project key is listed with its project, whichever route issued it.
-            if (await GetAsync(transaction, Catalog, ProjectKeysListed, Id, cancellationToken).ConfigureAwait(false) is null)
-            {
-                await EngineApiKeyStore.ListUnlistedProjectKeysAsync(transaction, time.GetUtcNow(), cancellationToken).ConfigureAwait(false);
-                await PutAsync(transaction, Catalog, ProjectKeysListed, ProjectKeysListed, Id, cancellationToken).ConfigureAwait(false);
-            }
-
             return 0;
-        }, cancellationToken);
-
-    // Fills the global project index from every organization's projects (catalogs before version 5 have none).
-    private static async ValueTask IndexProjectsAsync(IStorageTransaction transaction, CancellationToken cancellationToken)
-    {
-        foreach (var organization in await ListAllAsync(transaction, Organizations, TerraBaseJsonContext.Default.Organization, cancellationToken).ConfigureAwait(false))
-        {
-            foreach (var project in await ListAllAsync(transaction, Projects(organization.Id), TerraBaseJsonContext.Default.Project, cancellationToken).ConfigureAwait(false))
-            {
-                await PutAsync(transaction, ProjectOrganizations, project.Id, organization.Id, Id, cancellationToken).ConfigureAwait(false);
-            }
-        }
+        }, cancellationToken).ConfigureAwait(false);
+        _catalogCurrent = true;
     }
 
     private static async ValueTask<List<T>> ListAllAsync<T>(
@@ -1108,7 +998,7 @@ internal sealed partial class EngineManagementService(
         do
         {
             page = await transaction.ListAsync(collection, after, MemberPage, MaxPageBytes, cancellationToken).ConfigureAwait(false);
-            items.AddRange(page.Documents.Select(document => JsonSerializer.Deserialize(document.Json.Span, type)!));
+            items.AddRange(page.Documents.Select(document => EntityPayload.Read(document, type)!));
             after = page.Documents.Count > 0 ? page.Documents[^1].Id : after;
         }
         while (page.HasMore);
@@ -1116,17 +1006,10 @@ internal sealed partial class EngineManagementService(
         return items;
     }
 
-    // Counts only: organization ids and user ids stay out of the logs.
-    [LoggerMessage(Level = LogLevel.Error, Message = "The management catalog holds {Count} organizations from before membership; set management-legacy-owner to migrate it")]
-    private static partial void LogLegacyCatalog(ILogger logger, int count);
-
-    [LoggerMessage(Level = LogLevel.Error, Message = "The management catalog has a version this build does not support; it was left unchanged")]
+    [LoggerMessage(Level = LogLevel.Error, Message = "The management catalog has a format this build does not support; discard the affected data")]
     private static partial void LogUnsupportedCatalog(ILogger logger);
 
-    [LoggerMessage(Level = LogLevel.Information, Message = "Migrated the management catalog: assigned {Count} organizations to management-legacy-owner")]
-    private static partial void LogLegacyCatalogMigrated(ILogger logger, int count);
-
-    private string NewId() => Guid.CreateVersion7(time.GetUtcNow()).ToString();
+    private string NewId() => EntityIds.New(time).ToString();
 
     private static string Key(string name) => name.ToLowerInvariant();
 

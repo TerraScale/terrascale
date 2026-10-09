@@ -4,6 +4,7 @@ using System.Text.Json;
 using Bogus;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
+using TerraBase.Primitives;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Management;
@@ -280,8 +281,8 @@ public sealed class SchemaApiTests
         using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
         await PutAsync(data, database, "emptied", "x", new { name = Faker.Name.FullName() });
         (await data.DeleteAsync(Uri(ManagementApi.DocumentPath(database, "emptied", "x")))).EnsureSuccessStatusCode();
-        var unknownDatabase = $"{database.ProjectPath}/databases/{Guid.NewGuid()}";
-        var unknownProject = $"/v1/management/organizations/{database.Organization}/projects/{Guid.NewGuid()}/databases/{database.Id}";
+        var unknownDatabase = $"{database.ProjectPath}/databases/{EntityIds.New()}";
+        var unknownProject = $"/v1/management/organizations/{database.Organization}/projects/{EntityIds.New()}/databases/{database.Id}";
 
         using var emptiedCollection = await api.Client.GetAsync(Uri(database.Path + "/collections/emptied/schema"));
 

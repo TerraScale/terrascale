@@ -4,6 +4,7 @@ using System.Runtime.CompilerServices;
 using Microsoft.Data.Sqlite;
 using TerraBase.Configuration;
 using TerraBase.Features.Memory;
+using TerraBase.Primitives;
 using TerraBase.Tenancy;
 
 namespace TerraBase.Engine.Sqlite;
@@ -31,97 +32,39 @@ internal sealed partial class SqliteDatabaseStore(
         : this(name, path, pool, io, pragmas, null, time, null, committed) { }
 
     /// <summary>On-disk schema version, stored in <c>PRAGMA user_version</c>.</summary>
-    private const int SchemaVersion = 9;
+    private const int SchemaVersion = 10;
 
-    // Migrations[n] moves user_version n to n + 1.
-    private static readonly string[] Migrations =
-    [
-        """
-        CREATE TABLE IF NOT EXISTS documents (
-            collection TEXT NOT NULL,
-            id TEXT NOT NULL,
-            version INTEGER NOT NULL,
-            body TEXT NOT NULL,
+    // Greenfield bootstrap only: an older on-disk shape must be discarded, never upgraded.
+    private const string SchemaSql = $$"""
+        CREATE TABLE documents (
+            collection TEXT NOT NULL, id TEXT NOT NULL, version INTEGER NOT NULL, body TEXT,
             PRIMARY KEY (collection, id)
         ) WITHOUT ROWID;
-        """,
-        // Version 2: explicit collections, tombstones (body NULL) and a per-database commit offset.
-        // A document's version becomes the offset of its last write; offsets continue after every
-        // version 1 counter so no document ever sees a version again.
-        """
-        CREATE TABLE collections (name TEXT PRIMARY KEY, created_at INTEGER NOT NULL) WITHOUT ROWID;
-        CREATE TABLE commit_offset (id INTEGER PRIMARY KEY CHECK (id = 1), value INTEGER NOT NULL);
-        CREATE TABLE documents_v2 (
-            collection TEXT NOT NULL,
-            id TEXT NOT NULL,
-            version INTEGER NOT NULL,
-            body TEXT,
-            PRIMARY KEY (collection, id)
+        CREATE INDEX documents_live ON documents (collection, id) WHERE body IS NOT NULL;
+        CREATE TABLE collections (
+            name TEXT PRIMARY KEY, created_at INTEGER NOT NULL, generation INTEGER NOT NULL,
+            entity_id TEXT NOT NULL CHECK (length(entity_id) = 26)
         ) WITHOUT ROWID;
-        INSERT INTO documents_v2 (collection, id, version, body) SELECT collection, id, version, body FROM documents;
-        DROP TABLE documents;
-        ALTER TABLE documents_v2 RENAME TO documents;
-        INSERT INTO collections (name, created_at) SELECT DISTINCT collection, CAST(unixepoch('subsec') * 1000 AS INTEGER) FROM documents;
-        INSERT INTO commit_offset (id, value) SELECT 1, coalesce(max(version), 0) FROM documents;
-        """,
-        // Version 3 also upgrades databases opened by an earlier build of the document API.
-        "CREATE INDEX documents_live ON documents (collection, id) WHERE body IS NOT NULL;",
-        // Version 4: offsets can restart after database recreation; versions also need a persisted incarnation.
-        """
-        ALTER TABLE commit_offset ADD COLUMN incarnation TEXT NOT NULL DEFAULT '';
-        """,
-        // Version 5: shape history. Every write is retained in change_log so shape snapshots at an
-        // offset and closed log chunks never change (docs/shape-reads.md). Collections get a random
-        // generation per creation. Existing files start history at their head, with their current
-        // rows as the baseline: older offsets are below the floor and answer 409 must_refetch.
-        """
-        ALTER TABLE collections ADD COLUMN generation INTEGER NOT NULL DEFAULT 0;
-        UPDATE collections SET generation = random();
+        CREATE TABLE commit_offset (
+            id INTEGER PRIMARY KEY CHECK (id = 1), value INTEGER NOT NULL, incarnation TEXT NOT NULL
+        );
+        INSERT INTO commit_offset (id, value, incarnation) VALUES (1, 0, '');
         CREATE TABLE shape_history (id INTEGER PRIMARY KEY CHECK (id = 1), floor INTEGER NOT NULL);
-        INSERT INTO shape_history (id, floor) SELECT 1, value FROM commit_offset;
+        INSERT INTO shape_history (id, floor) VALUES (1, 0);
         CREATE TABLE change_log (
-            sequence INTEGER PRIMARY KEY,
-            collection TEXT NOT NULL,
-            generation INTEGER NOT NULL,
-            id TEXT NOT NULL,
-            version INTEGER NOT NULL,
-            body TEXT
+            sequence INTEGER PRIMARY KEY, collection TEXT NOT NULL, generation INTEGER NOT NULL,
+            id TEXT NOT NULL, version INTEGER NOT NULL, body TEXT, document_version INTEGER NOT NULL
         );
         CREATE INDEX change_log_by_offset ON change_log (collection, generation, version, sequence);
         CREATE INDEX change_log_by_document ON change_log (collection, generation, id, version, sequence);
-        INSERT INTO collections (name, created_at, generation)
-            SELECT collection, CAST(unixepoch('subsec') * 1000 AS INTEGER), random() FROM documents
-            WHERE collection NOT IN (SELECT name FROM collections) GROUP BY collection;
-        """,
-        // Version 6: each document's first write per collection generation, so a snapshot finds the ids that
-        // existed at its offset without reading the revisions of later ones, and the generation's highest id
-        // over time (a new row each time a new id sorts above every earlier one), so a snapshot stops at the
-        // highest id at its offset and never walks ids appended later, such as UUIDv7s. Existing history is
-        // backfilled with each id's earliest retained version; the trigger keeps every later write. Offsets
-        // grow in commit order, so the highest id at an offset is that of its latest row at or before it.
-        """
         CREATE TABLE change_log_births (
-            collection TEXT NOT NULL,
-            generation INTEGER NOT NULL,
-            id TEXT NOT NULL,
-            version INTEGER NOT NULL,
+            collection TEXT NOT NULL, generation INTEGER NOT NULL, id TEXT NOT NULL, version INTEGER NOT NULL,
             PRIMARY KEY (collection, generation, id, version)
         ) WITHOUT ROWID;
-        INSERT INTO change_log_births (collection, generation, id, version)
-            SELECT collection, generation, id, min(version) FROM change_log GROUP BY collection, generation, id;
         CREATE TABLE change_log_high (
-            collection TEXT NOT NULL,
-            generation INTEGER NOT NULL,
-            version INTEGER NOT NULL,
-            id TEXT NOT NULL,
+            collection TEXT NOT NULL, generation INTEGER NOT NULL, version INTEGER NOT NULL, id TEXT NOT NULL,
             PRIMARY KEY (collection, generation, version, id)
         ) WITHOUT ROWID;
-        INSERT INTO change_log_high (collection, generation, version, id)
-            SELECT collection, generation, version, id FROM (
-                SELECT collection, generation, version, id,
-                    max(id) OVER (PARTITION BY collection, generation ORDER BY version, id ROWS UNBOUNDED PRECEDING) AS high
-                FROM change_log_births)
-            WHERE id = high;
         CREATE TRIGGER change_log_birth AFTER INSERT ON change_log
         WHEN NOT EXISTS (
             SELECT 1 FROM change_log_births b WHERE b.collection = NEW.collection AND b.generation = NEW.generation AND b.id = NEW.id)
@@ -133,50 +76,24 @@ internal sealed partial class SqliteDatabaseStore(
                     SELECT h.id FROM change_log_high h WHERE h.collection = NEW.collection AND h.generation = NEW.generation
                     ORDER BY h.version DESC, h.id DESC LIMIT 1), '');
         END;
-        """,
-        // Version 7: capture and applied frontiers use the existing incarnation in commit_offset.
-        """
-        ALTER TABLE change_log ADD COLUMN document_version INTEGER NOT NULL DEFAULT 0;
-        UPDATE change_log SET document_version = version;
         CREATE TABLE changes (
-            sequence INTEGER NOT NULL,
-            ordinal INTEGER NOT NULL,
-            collection TEXT NOT NULL,
-            id TEXT NOT NULL,
-            version INTEGER NOT NULL,
-            body TEXT,
-            PRIMARY KEY (sequence, ordinal)
+            sequence INTEGER NOT NULL, ordinal INTEGER NOT NULL, collection TEXT NOT NULL, id TEXT NOT NULL,
+            version INTEGER NOT NULL, body TEXT, PRIMARY KEY (sequence, ordinal)
         ) WITHOUT ROWID;
         CREATE INDEX changes_deleted ON changes (collection, id, version) WHERE body IS NULL;
         CREATE TABLE replication_state (id INTEGER PRIMARY KEY CHECK (id = 1), complete INTEGER NOT NULL);
-        INSERT INTO replication_state (id, complete) SELECT 1, NOT EXISTS (SELECT 1 FROM documents);
-        CREATE TABLE applied (origin BLOB PRIMARY KEY, sequence INTEGER NOT NULL) WITHOUT ROWID;
-        """,
-        // Version 8: a sequence alone cannot identify a prefix after snapshot restoration and replacement writes.
-        // Legacy applied prefixes have no content proof: replay them rather than trusting an ambiguous acknowledgment.
-        """
-        CREATE TABLE journal_prefixes (
-            sequence INTEGER PRIMARY KEY CHECK (sequence > 0),
-            digest BLOB NOT NULL CHECK (length(digest) = 32)
+        INSERT INTO replication_state (id, complete) VALUES (1, 1);
+        CREATE TABLE applied (
+            origin BLOB PRIMARY KEY, sequence INTEGER NOT NULL,
+            digest BLOB CHECK (digest IS NULL OR length(digest) = 32)
         ) WITHOUT ROWID;
-        ALTER TABLE applied ADD COLUMN digest BLOB CHECK (digest IS NULL OR length(digest) = 32);
-        DELETE FROM applied;
-        """,
-        // Version 9: repair seeks only cursor-sized keys, even behind excluded legacy prefixes.
-        $$"""
+        CREATE TABLE journal_prefixes (
+            sequence INTEGER PRIMARY KEY CHECK (sequence > 0), digest BLOB NOT NULL CHECK (length(digest) = 32)
+        ) WITHOUT ROWID;
         CREATE INDEX documents_replication_keys ON documents (collection, id)
             WHERE {{SqliteStatements.BoundedReplicationKeys}};
         CREATE INDEX changes_replication_deleted ON changes (collection, id, version)
             WHERE body IS NULL AND {{SqliteStatements.BoundedReplicationKeys}};
-        """,
-    ];
-
-    // Version 5's history baseline, for client databases only: _system keeps no shape history, so its
-    // existing records (invitations, audit events) must not be copied where its deletes never reach.
-    private const string ShapeBaseline = """
-        INSERT INTO change_log (collection, generation, id, version, body)
-            SELECT d.collection, c.generation, d.id, d.version, d.body FROM documents d JOIN collections c ON c.name = d.collection
-            ORDER BY d.version, d.collection, d.id;
         """;
 
     private readonly string _connectionString = new SqliteConnectionStringBuilder
@@ -241,12 +158,12 @@ internal sealed partial class SqliteDatabaseStore(
     internal SqliteWriteLane WriteLane { get; } = new(name);
 
     // Boxed so a catalog follower can adopt its primary's incarnation without torn reads.
-    private volatile StrongBox<Guid> _incarnation = new(Guid.Empty);
+    private volatile StrongBox<Ulid> _incarnation = new(Ulid.Empty);
 
-    public Guid Incarnation => _incarnation.Value;
+    public Ulid Incarnation => _incarnation.Value;
 
     /// <summary>Publishes the incarnation a catalog follower's committed snapshot adopted (docs/decisions/0009).</summary>
-    internal void AdoptIncarnation(Guid incarnation) => _incarnation = new(incarnation);
+    internal void AdoptIncarnation(Ulid incarnation) => _incarnation = new(incarnation);
 
     public TenantContext? Tenant { get; } = tenant;
 
@@ -255,7 +172,7 @@ internal sealed partial class SqliteDatabaseStore(
     private readonly Guid? _scope = tenant?.VersionScope();
 
     /// <summary>The <see cref="IStorageTransaction.Scope"/> of this database's transactions.</summary>
-    internal Guid Scope => _scope ?? Incarnation;
+    internal Guid Scope => _scope ?? Incarnation.ToGuid();
 
     /// <summary>Set once the database is deleted or the engine shuts down; guarded by <see cref="SqliteSessionPool"/>.</summary>
     internal bool Closed
@@ -752,8 +669,7 @@ internal sealed partial class SqliteDatabaseStore(
     internal Task ReturnSessionAsync(SqliteSession session) => ReturnAsync(session);
 
     /// <summary>
-    /// When the change log does not cover this database's state (a copy, or an upgrade from version 1 with
-    /// data), appends the current state of every document and tombstone as baseline change groups, one
+    /// When the change log does not cover a copied database's state, appends the current state of every document and tombstone as baseline change groups, one
     /// bounded group per transaction, then marks the log complete. Merging is idempotent, so a baseline
     /// repeated after a crash only costs bytes. Returns the last appended sequence (0 when none) and the
     /// pre-existing states skipped for failing replication admission.
@@ -854,7 +770,7 @@ internal sealed partial class SqliteDatabaseStore(
     }
 
     /// <summary>
-    /// Creates (or adopts a copied) and migrates a new database file at <paramref name="path"/> on an unpooled
+    /// Creates (or adopts a copied) and bootstraps a database file at <paramref name="path"/> on an unpooled
     /// connection, so no handle stays open once this returns and the file can be moved. The caller holds an admission.
     /// </summary>
     /// <remarks>
@@ -864,7 +780,7 @@ internal sealed partial class SqliteDatabaseStore(
     /// creation behind them (TS-647).
     /// </remarks>
     internal static Task InitializeAsync(
-        string name, string path, SqliteIoPool io, string pragmas, string? afterMigration, CancellationToken cancellationToken) =>
+        string name, string path, SqliteIoPool io, string pragmas, string? afterBootstrap, CancellationToken cancellationToken) =>
         io.RunAsync(() =>
         {
             var connectionString = new SqliteConnectionStringBuilder
@@ -876,16 +792,16 @@ internal sealed partial class SqliteDatabaseStore(
             using (var connection = new SqliteConnection(connectionString))
             {
                 connection.Open();
-                // A copy made by VACUUM INTO may already be current, so set WAL here and not only in a migration.
+                // A copy made by VACUUM INTO may already be current, so set WAL here and not only during bootstrap.
                 // The creating connection uses the same settings as every pooled one, except that it does not sync.
                 Scalar(connection, null, pragmas + "PRAGMA synchronous = OFF; PRAGMA journal_mode = WAL;");
-                Migrate(name, connection, cancellationToken);
+                Bootstrap(name, connection, cancellationToken);
                 // Publish a fresh identity and prepare the copied baseline atomically, on this file only.
                 using var transaction = connection.BeginTransaction(deferred: false);
                 RenewIncarnation(connection, transaction);
-                if (afterMigration is not null)
+                if (afterBootstrap is not null)
                 {
-                    Scalar(connection, transaction, afterMigration);
+                    Scalar(connection, transaction, afterBootstrap);
                 }
 
                 cancellationToken.ThrowIfCancellationRequested();
@@ -900,18 +816,18 @@ internal sealed partial class SqliteDatabaseStore(
         }, cancellationToken);
 
     // The caller holds an admission.
-    internal async Task MigrateAsync(CancellationToken cancellationToken)
+    internal async Task BootstrapAsync(CancellationToken cancellationToken)
     {
         var session = await RentAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             await session.ExecuteAsync(io, () =>
             {
-                // A migration is atomic and rolls back before a lock error leaves this scope.
-                Migrate(name, session.Connection, cancellationToken);
-                _incarnation = new(Guid.ParseExact(
+                // Bootstrap is atomic and rolls back before a lock error leaves this scope.
+                Bootstrap(name, session.Connection, cancellationToken);
+                _incarnation = new(Ulid.Parse(
                     (string)(Scalar(session.Connection, null, SqliteStatements.Incarnation)
-                        ?? throw new InvalidOperationException("database incarnation is missing")), "N"));
+                        ?? throw new InvalidOperationException("database incarnation is missing"))));
                 return true;
             }, cancellationToken).ConfigureAwait(false);
         }
@@ -924,81 +840,33 @@ internal sealed partial class SqliteDatabaseStore(
         await ReturnAsync(session).ConfigureAwait(false);
     }
 
-    private static void Migrate(string name, SqliteConnection connection, CancellationToken cancellationToken)
+    private static void Bootstrap(string name, SqliteConnection connection, CancellationToken cancellationToken)
     {
-        if (Version(name, connection, transaction: null) == SchemaVersion)
+        var version = Version(name, connection, transaction: null);
+        if (version == SchemaVersion)
         {
             return;
         }
 
-        // journal_mode cannot change inside a transaction; it is persistent and idempotent.
         Scalar(connection, null, "PRAGMA journal_mode = WAL;");
         using var transaction = connection.BeginTransaction(deferred: false);
-        // Another process or caller may have migrated while this one waited for the lock.
-        var version = Version(name, connection, transaction);
-        for (; version < SchemaVersion; version++)
+        // A concurrent initializer can finish while this connection waits for the writer lock.
+        version = Version(name, connection, transaction);
+        if (version == SchemaVersion)
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            Scalar(connection, transaction, Migrations[version] + $"PRAGMA user_version = {version + 1};");
-            if (version == 3)
-            {
-                RenewIncarnation(connection, transaction);
-            }
+            return;
+        }
 
-            if (version == 4 && name != SqliteStorageEngine.SystemName)
-            {
-                Scalar(connection, transaction, ShapeBaseline);
-            }
-
-            if (version == 7)
-            {
-                BackfillJournalDigests(connection, transaction, cancellationToken);
-            }
+        if (version != 0 || Scalar(connection, transaction, "SELECT 1 FROM sqlite_schema WHERE type = 'table' LIMIT 1;") is not null)
+        {
+            throw new InvalidOperationException("data-directory contains an old database format; discard the affected data before starting");
         }
 
         cancellationToken.ThrowIfCancellationRequested();
+        Scalar(connection, transaction, SchemaSql + $"PRAGMA user_version = {SchemaVersion};");
+        RenewIncarnation(connection, transaction);
+        cancellationToken.ThrowIfCancellationRequested();
         transaction.Commit();
-    }
-
-    // The migration retains at most one 1024-item/2-MiB group, never the whole journal. The prefix chain
-    // and user_version publish together, so interruption cannot leave a partially trusted journal.
-    private static void BackfillJournalDigests(SqliteConnection connection, SqliteTransaction transaction, CancellationToken cancellationToken)
-    {
-        var origin = (byte[])(Scalar(connection, transaction, SqliteStatements.Origin)
-            ?? throw new InvalidDataException("the journal origin is missing"));
-        var previous = JournalDigest.Initial(origin);
-        var head = (long)Scalar(connection, transaction, SqliteStatements.LastSequence)!;
-        using var read = connection.CreateCommand();
-        using var append = connection.CreateCommand();
-        read.Transaction = append.Transaction = transaction;
-        read.CommandText = SqliteStatements.ReadChanges;
-        read.Parameters.AddWithValue("$sequence", 0L);
-        read.Parameters.AddWithValue("$limit", IStorageTransaction.MaxChangeGroupChanges + 1);
-        read.Parameters.AddWithValue("$maxBytes", IStorageTransaction.MaxChangeGroupBytes);
-        append.CommandText = SqliteStatements.AppendChangeDigest;
-        append.Parameters.AddWithValue("$sequence", 0L);
-        append.Parameters.AddWithValue("$digest", previous);
-        for (var sequence = 1L; sequence <= head;)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            read.Parameters["$sequence"].Value = sequence;
-            var changes = SqliteStorageTransaction.ReadChanges(read);
-            if (changes.Count == 0)
-            {
-                throw new InvalidDataException("the captured journal is not contiguous");
-            }
-
-            previous = JournalDigest.Compute(origin, sequence, previous, changes);
-            append.Parameters["$sequence"].Value = sequence;
-            append.Parameters["$digest"].Value = previous;
-            append.ExecuteNonQuery();
-            if (sequence == head)
-            {
-                break;
-            }
-
-            sequence++;
-        }
     }
 
     // Returns the schema version; throws for a newer, unsupported schema.
@@ -1012,13 +880,13 @@ internal sealed partial class SqliteDatabaseStore(
             : version;
     }
 
-    // Called only from the worker that owns this connection, including during migration and copying.
+    // Called only from the worker that owns this connection, including during bootstrap and copying.
     private static void RenewIncarnation(SqliteConnection connection, SqliteTransaction? transaction)
     {
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = SqliteStatements.RenewIncarnation;
-        command.Parameters.AddWithValue("$incarnation", Guid.NewGuid().ToString("N"));
+        command.Parameters.AddWithValue("$incarnation", EntityIds.New().ToString());
         command.ExecuteNonQuery();
     }
 

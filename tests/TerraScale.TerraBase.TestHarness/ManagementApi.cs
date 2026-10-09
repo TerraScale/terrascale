@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
+using TerraBase.Primitives;
 
 namespace TerraBase.Testing;
 
@@ -83,7 +84,7 @@ public sealed class ManagementApi : IAsyncDisposable
                 services?.Invoke(collection);
             });
             // Startup waited for the issuer's keys, so tokens work from the first request.
-            return new ManagementApi(server, tls, issuer, Guid.NewGuid().ToString(), credentialDirectory);
+            return new ManagementApi(server, tls, issuer, EntityIds.New().ToString(), credentialDirectory);
         }
         catch
         {
@@ -168,7 +169,7 @@ public sealed class ManagementApi : IAsyncDisposable
     /// <summary>Creates an organization, a project and a database in it, as <see cref="User"/>.</summary>
     public async Task<ManagedDatabaseRef> CreateManagedDatabaseAsync(string name = "main")
     {
-        var organization = await CreateOrganizationAsync("Org " + Guid.NewGuid().ToString("N"));
+        var organization = await CreateOrganizationAsync("Org " + EntityIds.New().ToString());
         var project = await CreateProjectAsync(organization, "Project");
         return await CreateManagedDatabaseAsync(organization, project, name);
     }
@@ -177,35 +178,15 @@ public sealed class ManagementApi : IAsyncDisposable
     public async Task<ManagedDatabaseRef> CreateManagedDatabaseAsync(string organization, string project, string name) =>
         new(organization, project, await CreateDatabaseAsync(organization, project, name), name);
 
-    /// <summary>
-    /// A document id for a readable test name of at most 15 ASCII characters: a lowercase hyphenated UUID that holds the
-    /// name's bytes, so ids sort like their names (the data API admits only UUIDs as new ids).
-    /// </summary>
-    public static string DocumentId(string name)
-    {
-        var hex = Convert.ToHexStringLower(Encoding.ASCII.GetBytes(name));
-        // NUL pads the id, so a name holding one would collide with the same name without it.
-        if (hex.Length > 30 || !Ascii.IsValid(name) || name.Contains('\0', StringComparison.Ordinal))
-        {
-            throw new ArgumentException("a test document name is at most 15 ASCII characters other than NUL", nameof(name));
-        }
+    /// <summary>A caller-supplied document key, ordered by its readable fixture name.</summary>
+    public static string DocumentId(string name) => name;
 
-        hex = hex.PadRight(30, '0');
-        // Version and variant digits sit at the same places in every id, so they never change the order.
-        return $"{hex[..8]}-{hex[8..12]}-7{hex[12..15]}-8{hex[15..18]}-{hex[18..]}";
-    }
-
-    /// <summary>The name <see cref="DocumentId"/> made <paramref name="id"/> from.</summary>
-    public static string DocumentName(string id)
-    {
-        var hex = id.Replace("-", "", StringComparison.Ordinal);
-        var bytes = Convert.FromHexString(hex[..12] + hex[13..16] + hex[17..]);
-        return Encoding.ASCII.GetString(bytes).TrimEnd('\0');
-    }
+    /// <summary>The fixture name is its document key.</summary>
+    public static string DocumentName(string id) => id;
 
     /// <summary>The data API route of document <see cref="DocumentId"/>(<paramref name="name"/>) of a collection of <paramref name="database"/>.</summary>
     public static string DocumentPath(ManagedDatabaseRef database, string collection, string name) =>
-        $"{database.Data}/collections/{collection}/documents/{DocumentId(name)}";
+        $"{database.Data}/collections/{collection}/documents/by-key?id={System.Uri.EscapeDataString(DocumentId(name))}";
 
     /// <summary>Creates <paramref name="collection"/> through the data API, unless it exists.</summary>
     public static async Task CreateCollectionAsync(HttpClient data, ManagedDatabaseRef database, string collection, CancellationToken cancellationToken = default)
@@ -275,9 +256,9 @@ public sealed class ManagementApi : IAsyncDisposable
     /// </summary>
     public async Task<Tenant> CreateTenantAsync(params string[] scopes)
     {
-        var user = Guid.NewGuid().ToString();
+        var user = EntityIds.New().ToString();
         using var owner = As(user);
-        var organization = await CreateOrganizationAsync("Tenant " + Guid.NewGuid(), owner);
+        var organization = await CreateOrganizationAsync("Tenant " + EntityIds.New().ToString(), owner);
         var project = await CreateProjectAsync(organization, "Main", owner);
         return new Tenant(user, organization, project, DataClient(await Server.IssueAsync(organization, scopes)));
     }
@@ -286,8 +267,8 @@ public sealed class ManagementApi : IAsyncDisposable
     public async Task<string> AddMemberAsync(HttpClient inviter, string organization, string role)
     {
         ArgumentNullException.ThrowIfNull(inviter);
-        var user = Guid.NewGuid().ToString();
-        var email = $"{Guid.NewGuid():N}@example.com";
+        var user = EntityIds.New().ToString();
+        var email = $"{EntityIds.New()}@example.com";
         using var invited = await inviter.PostAsJsonAsync(
             new Uri($"/v1/management/organizations/{organization}/invitations", UriKind.Relative), new { email, role });
         invited.EnsureSuccessStatusCode();

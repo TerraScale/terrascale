@@ -7,6 +7,7 @@ using Bogus;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Hosting;
+using TerraBase.Primitives;
 using TerraBase.Testing;
 
 namespace TerraBase.Slow.Management;
@@ -330,21 +331,21 @@ public sealed class CommitConcurrencyTests
         var written = await CommitAsync(service, new { op = "create", collection = "workspaces", id = document, document = new { organization, note = Faker.Lorem.Sentence() } });
         using var data = api.DataClient(await api.Server.IssueAsync(organization, "documents:read", "documents:write"));
 
-        var dashboard = await GetAsync(service, $"{Documents}/workspaces/{document}");
+        var dashboard = await GetAsync(service, $"{Documents}/workspaces/by-key?id={System.Uri.EscapeDataString(document)}");
         List<HttpStatusCode> withKey =
         [
-            await StatusAsync(data.GetAsync(Uri($"{Documents}/workspaces/{document}"))),
+            await StatusAsync(data.GetAsync(Uri($"{Documents}/workspaces/by-key?id={System.Uri.EscapeDataString(document)}"))),
             await StatusAsync(data.PostAsJsonAsync(Uri($"{Documents}/workspaces/query"), new { limit = 10 })),
             await StatusAsync(data.PostAsJsonAsync(Uri(Commits), new { id = NewId(), ops = new object[] { new { op = "delete", collection = "workspaces", id = document } } })),
             await StatusAsync(data.GetAsync(Uri($"{Commits}/{written.Id}"))),
         ];
         // A signed-in user's own ts-auth token reaches Management, but never the dashboard's documents.
-        var userRead = await GetAsync(api.Client, $"{Documents}/workspaces/{document}");
+        var userRead = await GetAsync(api.Client, $"{Documents}/workspaces/by-key?id={System.Uri.EscapeDataString(document)}");
         using var userQuery = await api.Client.PostAsJsonAsync(Uri($"{Documents}/workspaces/query"), new { limit = 10 });
         var userWrite = await CommitAsync(api.Client,
             new { op = "rename_organization", organization, name = OrganizationName() },
             new { op = "delete", collection = "workspaces", id = document });
-        var after = await GetAsync(service, $"{Documents}/workspaces/{document}");
+        var after = await GetAsync(service, $"{Documents}/workspaces/by-key?id={System.Uri.EscapeDataString(document)}");
 
         await Assert.That(written.Status).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(dashboard.Status).IsEqualTo(HttpStatusCode.OK);
@@ -360,9 +361,9 @@ public sealed class CommitConcurrencyTests
 
     private static Uri Uri(string path) => new(path, UriKind.Relative);
 
-    private static string NewId() => Guid.CreateVersion7().ToString();
+    private static string NewId() => EntityIds.New().ToString();
 
-    private static string User() => Faker.Random.Guid().ToString();
+    private static string User() => EntityIds.New().ToString();
 
     // The suffix keeps two addresses of one test from colliding by chance.
     private static string Email() => Faker.Internet.Email(uniqueSuffix: Faker.Random.AlphaNumeric(6));
