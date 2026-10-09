@@ -120,10 +120,31 @@ test("single hosted-auth entities require their ID without imposing it on acknow
 
 test("conflict siblings obey the same key/payload separation as the winning document", () => {
   const base = { id, version: "opaque", state: "conflict", document: { name: "winner" } };
-  const siblings = [{ version: "other", document: { name: "sibling", metadata: { id: "customer-key" } }, future: true }];
+  const siblings = [
+    { deleted: false, version: "other", document: { name: "sibling", metadata: { id: "customer-key" } }, future: true },
+    { deleted: true, event: { replica: "replica", incarnation: "incarnation", sequence: "14" } },
+  ];
   expect(decodeDocument({ ...base, siblings }).siblings).toEqual(siblings);
+  for (const deleted of [false, undefined, "true"])
+    expect(() => decodeDocument({ ...base, siblings: [{ deleted: /** @type {any} */ (deleted) }] })).toThrow(TypeError);
   for (const body of [{ id: "legacy" }, { id }, null, []])
-    expect(() => decodeDocument({ ...base, siblings: [{ version: "other", document: /** @type {any} */ (body) }] })).toThrow(TypeError);
+    for (const deleted of [false, true])
+      expect(() => decodeDocument({ ...base, siblings: [{ deleted, document: /** @type {any} */ (body) }] })).toThrow(TypeError);
+});
+
+test("wrapped OAuth responses validate entity and reference ULIDs", () => {
+  for (const route of ["tsauth.oauthClients.create", "tsauth.oauthClients.update", "tsauth.oauthResources.create", "tsauth.oauthResources.update"]) {
+    const field = route.startsWith("tsauth.oauthClients.") ? "client" : "resource";
+    const reference = field === "client" ? "client_id" : "introspection_client_id";
+    const entity = { id, [reference]: id, public_metadata: { id: "customer-key" } };
+    expect(() => validateTsAuthIds({ [field]: entity }, route)).not.toThrow();
+    for (const invalid of invalidIds) {
+      expect(() => validateTsAuthIds({ [field]: { ...entity, id: invalid } }, route)).toThrow(TypeError);
+      expect(() => validateTsAuthIds({ [field]: { ...entity, [reference]: invalid } }, route)).toThrow(TypeError);
+    }
+    for (const malformed of [null, [], {}, "legacy-id"])
+      expect(() => validateTsAuthIds({ [field]: malformed }, route)).toThrow(TypeError);
+  }
 });
 
 test("dead-letter selectors contain exactly two canonical ULID entity references", () => {

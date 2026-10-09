@@ -39,7 +39,9 @@ test("installed dependency qualification verifies license bytes and refuses tran
     await assert.rejects(qualifyRuntimeDependencies(consumer, pins), /unqualified fileSha256/u);
     await writeFile(path.join(dependency, "LICENSE"), license);
     for (const change of [{ version: "3.0.1" }, { license: "ISC" }, { name: "unexpected" },
-      { dependencies: { unexpected: "1.0.0" } }, { optionalDependencies: { unexpected: "1.0.0" } }]) {
+      { dependencies: { unexpected: "1.0.0" } }, { optionalDependencies: { unexpected: "1.0.0" } },
+      { peerDependencies: { unexpected: "1.0.0" } },
+      { peerDependencies: { unexpected: "1.0.0" }, peerDependenciesMeta: { unexpected: { optional: true } } }]) {
       await writeFile(path.join(dependency, "package.json"), JSON.stringify({ ...originalManifest, ...change }));
       await assert.rejects(qualifyRuntimeDependencies(consumer, pins), /unqualified/u);
     }

@@ -55,7 +55,8 @@ export async function qualifyRuntimeDependencies(consumer, dependencies) {
     const manifestPath = resolve.resolve(`${name}/package.json`);
     const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
     if (manifest.name !== name || Object.keys(manifest.dependencies ?? {}).length !== 0 ||
-        Object.keys(manifest.optionalDependencies ?? {}).length !== 0)
+        Object.keys(manifest.optionalDependencies ?? {}).length !== 0 ||
+        Object.keys(manifest.peerDependencies ?? {}).length !== 0)
       throw new Error(`Runtime dependency ${name} has unqualified transitive dependencies or identity.`);
     const license = await readFile(path.join(path.dirname(manifestPath), "LICENSE"));
     packages[name] = {

@@ -12,7 +12,7 @@ import { isJsonObject } from "./json.js";
  * @property {string} version
  * @property {"value" | "conflict" | (string & {})} state
  * @property {JsonObject} document
- * @property {readonly JsonValue[]} [siblings] Every live version, on a causal read with several.
+ * @property {readonly JsonValue[]} [siblings] Live versions and tombstones on a causal conflict.
  */
 
 /**
@@ -106,7 +106,10 @@ export function decodeDocument(value) {
   const document = documentObject(raw.document);
   if (raw.siblings === undefined) return Object.freeze({ id, version, state, document });
   const siblings = array(raw.siblings, "document siblings");
-  for (const sibling of siblings) documentObject(object(sibling, "document sibling").document);
+  for (const sibling of siblings) {
+    const entry = object(sibling, "document sibling");
+    if (entry.deleted !== true || entry.document !== undefined) documentObject(entry.document);
+  }
   return Object.freeze({ id, version, state, document, siblings: Object.freeze(siblings) });
 }
 

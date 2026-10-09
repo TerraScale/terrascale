@@ -71,6 +71,10 @@ export function validateTsAuthIds(value, route, entity = singleEntityRoutes.has(
     if (Object.hasOwn(value, field) && Reflect.get(value, field) !== null)
       validateTsAuthIds(Reflect.get(value, field), route, true);
   }
+  const oauthEntity = route.startsWith("tsauth.oauthClients.") ? "client"
+    : route.startsWith("tsauth.oauthResources.") ? "resource" : undefined;
+  if (oauthEntity !== undefined && Object.hasOwn(value, oauthEntity))
+    validateTsAuthIds(Reflect.get(value, oauthEntity), route, true);
   if (Object.hasOwn(value, "allowed_client_ids")) {
     const ids = Reflect.get(value, "allowed_client_ids");
     if (!Array.isArray(ids)) throw new TypeError("allowed_client_ids must be an array of ULIDs.");
