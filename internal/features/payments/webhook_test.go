@@ -16,6 +16,7 @@ import (
 	"terrascale.tech/dashboard/internal/core/memstore"
 	"terrascale.tech/dashboard/internal/features/payments"
 	"terrascale.tech/dashboard/internal/features/subscriptions"
+	"terrascale.tech/dashboard/internal/platform/csrf"
 	"terrascale.tech/dashboard/internal/platform/terrabasetest"
 	"terrascale.tech/sdk/v1"
 
@@ -186,6 +187,11 @@ type testEvent struct {
 
 func (fixture billingFixture) deliver(t *testing.T, event testEvent, secret string) *httptest.ResponseRecorder {
 	t.Helper()
+	return fixture.deliverTo(t, payments.WebhookPath, fixture.mux, event, secret)
+}
+
+func (fixture billingFixture) deliverTo(t *testing.T, path string, handler http.Handler, event testEvent, secret string) *httptest.ResponseRecorder {
+	t.Helper()
 	object := map[string]any{"id": "obj_" + event.ID, "customer": cmp.Or(event.Customer, "cus_test")}
 	if event.NoCustomer {
 		delete(object, "customer")
@@ -199,10 +205,10 @@ func (fixture billingFixture) deliver(t *testing.T, event testEvent, secret stri
 		t.Fatal(err)
 	}
 	signed := webhook.GenerateTestSignedPayload(&webhook.UnsignedPayload{Payload: payload, Secret: secret})
-	request := httptest.NewRequest(http.MethodPost, payments.WebhookPath, bytes.NewReader(payload))
+	request := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(payload))
 	request.Header.Set("Stripe-Signature", signed.Header)
 	response := httptest.NewRecorder()
-	fixture.mux.ServeHTTP(response, request)
+	handler.ServeHTTP(response, request)
 	return response
 }
 
@@ -458,5 +464,26 @@ func TestWebhookRedeliversAfterProjectionError(t *testing.T) {
 	}
 	if org.Billing.Revision != 2 || fixture.provider.fetches != 2 || org.PlanID != plan.ID || org.Billing.CheckoutID != "" || org.CheckoutSessions["cs_test"].Status != "complete" || len(org.Billing.Invoices) != 1 {
 		t.Fatalf("redelivery did not converge billing and checkout: %#v", org.Billing)
+	}
+}
+
+func TestWebhookRoutesVerifySignaturesThroughCSRF(t *testing.T) {
+	for _, path := range []string{payments.WebhookPath, payments.LegacyWebhookPath} {
+		t.Run(path, func(t *testing.T) {
+			for _, secret := range []string{testWebhookSecret, "whsec_wrong"} {
+				t.Run(secret, func(t *testing.T) {
+					fixture := newBillingFixture(t)
+					handler := csrf.New(fixtureSessions{}, csrf.Options{}).Protect(fixture.mux)
+					response := fixture.deliverTo(t, path, handler, testEvent{ID: "evt_route", Type: "invoice.paid"}, secret)
+					wantStatus, wantFetches := http.StatusOK, 1
+					if secret != testWebhookSecret {
+						wantStatus, wantFetches = http.StatusBadRequest, 0
+					}
+					if response.Code != wantStatus || fixture.provider.fetches != wantFetches {
+						t.Fatalf("webhook = %d, fetches = %d; want %d, %d", response.Code, fixture.provider.fetches, wantStatus, wantFetches)
+					}
+				})
+			}
+		})
 	}
 }

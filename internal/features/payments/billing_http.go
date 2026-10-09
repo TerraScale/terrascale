@@ -88,7 +88,9 @@ func Mount(mux *http.ServeMux, deps core.Deps, flow BillingFlow, billing *Stripe
 		}
 		http.Redirect(w, r, location, http.StatusSeeOther)
 	})
-	mux.HandleFunc("POST "+WebhookPath, handleWebhook(flow, billing))
+	handler := handleWebhook(flow, billing)
+	mux.HandleFunc("POST "+WebhookPath, handler)
+	mux.HandleFunc("POST "+LegacyWebhookPath, handler)
 }
 
 func billingForm(w http.ResponseWriter, r *http.Request) bool {

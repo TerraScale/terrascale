@@ -47,3 +47,29 @@ func TestProtectBoundsTheFormItParses(t *testing.T) {
 		})
 	}
 }
+
+func TestWebhookExceptionIsLimitedToExactPOSTRoutes(t *testing.T) {
+	for _, path := range []string{"/api/v1/billing/stripe/webhook", "/api/auth/stripe/webhook"} {
+		for _, tc := range []struct {
+			method, path string
+			status       int
+		}{
+			{http.MethodPost, path, http.StatusNoContent},
+			{http.MethodPut, path, http.StatusForbidden},
+			{http.MethodDelete, path, http.StatusForbidden},
+			{http.MethodPost, path + "/", http.StatusForbidden},
+			{http.MethodPost, path + "/other", http.StatusForbidden},
+		} {
+			t.Run(tc.method+" "+tc.path, func(t *testing.T) {
+				handler := New(noSessions{}, Options{}).Protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					w.WriteHeader(http.StatusNoContent)
+				}))
+				response := httptest.NewRecorder()
+				handler.ServeHTTP(response, httptest.NewRequest(tc.method, tc.path, nil))
+				if response.Code != tc.status {
+					t.Fatalf("status = %d, want %d", response.Code, tc.status)
+				}
+			})
+		}
+	}
+}
