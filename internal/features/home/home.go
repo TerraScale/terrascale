@@ -23,6 +23,7 @@ type pageData struct {
 	Tab                       string
 	ProjectName               string
 	ActivityRange             string
+	ActivitySample            bool
 	ActivityNote              string
 	ActivityChart             charts.LineData
 	ActivityReads             int64
@@ -68,16 +69,10 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			tab = "connect"
 		}
 		activity := summary.Activity
-		activityLabel := demovisuals.RangeLabel(activity.Range)
-		if activity.Metered && activity.Range == "1h" {
-			activityLabel = "Current UTC hour"
-		}
 		data := pageData{
 			Tab: tab, ProjectName: summary.ProjectName, ActivityRange: activity.Range,
-			ActivityNote: activity.Note, ActivityReads: activity.TotalReads, ActivityWrites: activity.TotalWrites,
-			ActivityChart: charts.NewLine("Reads and writes, "+activityLabel+": "+activity.Note,
-				activityTicks(activity), activity.Labels, 180,
-				charts.Series{Name: "Reads", Values: activity.Reads}, charts.Series{Name: "Writes", Values: activity.Writes}),
+			ActivitySample: activity.Sample, ActivityNote: activity.Note, ActivityReads: activity.TotalReads, ActivityWrites: activity.TotalWrites,
+			ActivityChart: activityChart(activity),
 			DatabaseCount: summary.DatabaseCount, OrganizationMembers: summary.OrganizationMembers,
 			UnreadNotifications: summary.UnreadNotifications, TotalNotifications: summary.TotalNotifications,
 			ActiveCredentials: summary.ActiveCredentials,
@@ -132,11 +127,31 @@ func writeError(w http.ResponseWriter, err error) {
 	}
 }
 
-// activityTicks labels a sample chart's axis by distance from now; measured
-// buckets keep their own timestamps.
+// activityTicks labels the range by distance from now. Exact measured bucket
+// timestamps remain available in the point tooltips.
 func activityTicks(activity activity) []string {
-	if activity.Metered {
-		return nil
-	}
 	return demovisuals.TickLabels(activity.Range)
+}
+
+// activityChart presents read and write counts as operations on the overview.
+// The service retains the separate series for usage details and MCP clients.
+func activityChart(activity activity) charts.LineData {
+	label := "Operations"
+	if activity.Sample {
+		label = "Sample operations"
+	}
+	var operations []int64
+	if len(activity.Reads) == len(activity.Writes) {
+		operations = make([]int64, len(activity.Reads))
+		for i := range operations {
+			operations[i] = activity.Reads[i] + activity.Writes[i]
+		}
+	}
+	series := []charts.Series{{Name: label, Values: operations}}
+	rangeLabel := demovisuals.RangeLabel(activity.Range)
+	if activity.Metered && activity.Range == "1h" {
+		rangeLabel = "Current UTC hour"
+	}
+	return charts.NewLine(label+", "+rangeLabel+": "+activity.Note,
+		activityTicks(activity), activity.Labels, 180, series...)
 }
