@@ -673,7 +673,11 @@ func (s Service) WriteDocument(ctx context.Context, p core.Principal, databaseID
 	if !slices.Contains(documentOperations, operation) {
 		return documentWrite{}, core.Invalid("operation must be create, replace, patch, or delete")
 	}
-	id = strings.TrimSpace(id)
+	if id != "" {
+		if err := v1.ValidateDocumentKey(id); err != nil {
+			return documentWrite{}, core.Invalid("Document IDs must be 1 to 256 characters without control characters.")
+		}
+	}
 	// TerraBase names a new document itself.
 	if operation == "create" && id == "" && s.deps.LocalResources() {
 		id = core.NewID()

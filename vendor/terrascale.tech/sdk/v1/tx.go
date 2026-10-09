@@ -76,7 +76,7 @@ func (t *Tx) addOp(op txOp, pre []Precondition, collection, id string, idRequire
 		return fail(err)
 	}
 	if id != "" || idRequired {
-		if err := checkDocumentKey(id); err != nil {
+		if err := ValidateDocumentKey(id); err != nil {
 			return fail(err)
 		}
 	}

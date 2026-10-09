@@ -82,8 +82,10 @@ queries. Mutations return uncertain outcomes without a replay: use
 what to do. A transport failure matches that code and retains its original
 cause; a server response retains its `*tb.APIError`. Other writes and
 `500 internal_error` are never retried. Set `Config.MaxRetries` to change the
-budget. Path segments containing `/` fail locally: TerraBase would match an
-escaped `%2F` literally.
+budget. Point document operations use `/documents/by-key?id=…`, with the raw
+key query-encoded once. Keys never enter path segments and are never pre-decoded.
+Listing and generated creation use GET and POST `/documents`, respectively.
+The old `/documents/{id}` point routes are removed.
 
 Transactions apply up to 1024 ops atomically; failures name the op index:
 

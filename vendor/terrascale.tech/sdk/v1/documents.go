@@ -146,11 +146,12 @@ func (col *Collection) path(extra ...string) ([]string, error) {
 	return col.db.path(append([]string{"collections", col.name}, extra...)...)
 }
 
-func (col *Collection) docPath(id string) ([]string, error) {
-	if err := checkDocumentKey(id); err != nil {
-		return nil, err
+func (col *Collection) docRequest(method, id string) (request, error) {
+	if err := ValidateDocumentKey(id); err != nil {
+		return request{}, err
 	}
-	return col.path("documents", id)
+	p, err := col.path("documents", "by-key")
+	return request{method: method, path: p, query: url.Values{"id": {id}}}, err
 }
 
 // Info reads the collection; a missing one fails with ErrUnknownCollection.
@@ -256,7 +257,7 @@ func IfNoneMatch(version string) ReadOption {
 // ErrNotFound; for a deleted document the *APIError's ETag holds the
 // tombstone version for IfMatch.
 func (col *Collection) Get(ctx context.Context, id string, opts ...ReadOption) (*Document, error) {
-	p, err := col.docPath(id)
+	req, err := col.docRequest(http.MethodGet, id)
 	if err != nil {
 		return nil, err
 	}
@@ -264,7 +265,7 @@ func (col *Collection) Get(ctx context.Context, id string, opts ...ReadOption) (
 	for _, o := range opts {
 		o(&rc)
 	}
-	req := request{method: http.MethodGet, path: p, replaySafe: true}
+	req.replaySafe = true
 	if rc.ifNoneMatch != "" {
 		if err := checkVersion(rc.ifNoneMatch); err != nil {
 			return nil, err
@@ -282,7 +283,7 @@ func (col *Collection) Get(ctx context.Context, id string, opts ...ReadOption) (
 // conditional writes; only IfMatch writes are retried.
 // Created reports a 201 (the document did not exist).
 func (col *Collection) Put(ctx context.Context, id string, doc any, opts ...WriteOption) (*WriteResult, error) {
-	p, err := col.docPath(id)
+	req, err := col.docRequest(http.MethodPut, id)
 	if err != nil {
 		return nil, err
 	}
@@ -294,7 +295,8 @@ func (col *Collection) Put(ctx context.Context, id string, doc any, opts ...Writ
 	if err != nil {
 		return nil, err
 	}
-	return col.write(ctx, request{method: http.MethodPut, path: p, body: body, header: w.header(), replaySafe: w.ifMatch != ""})
+	req.body, req.header, req.replaySafe = body, w.header(), w.ifMatch != ""
+	return col.write(ctx, req)
 }
 
 // Create stores a new document under a server-generated ULID. It is never
@@ -327,7 +329,7 @@ func (col *Collection) Create(ctx context.Context, doc any, opts ...WriteOption)
 
 // Patch applies a MergePatch or an Ops patch to an existing document.
 func (col *Collection) Patch(ctx context.Context, id string, patch Patch, opts ...WriteOption) (*WriteResult, error) {
-	p, err := col.docPath(id)
+	req, err := col.docRequest(http.MethodPatch, id)
 	if err != nil {
 		return nil, err
 	}
@@ -342,12 +344,13 @@ func (col *Collection) Patch(ctx context.Context, id string, patch Patch, opts .
 	if err != nil {
 		return nil, err
 	}
-	return col.write(ctx, request{method: http.MethodPatch, path: p, body: body, contentType: contentType, header: w.header(), replaySafe: w.ifMatch != ""})
+	req.body, req.contentType, req.header, req.replaySafe = body, contentType, w.header(), w.ifMatch != ""
+	return col.write(ctx, req)
 }
 
 // Delete tombstones a document. The result's Version is the tombstone's.
 func (col *Collection) Delete(ctx context.Context, id string, opts ...WriteOption) (*WriteResult, error) {
-	p, err := col.docPath(id)
+	req, err := col.docRequest(http.MethodDelete, id)
 	if err != nil {
 		return nil, err
 	}
@@ -358,7 +361,8 @@ func (col *Collection) Delete(ctx context.Context, id string, opts ...WriteOptio
 	if w.ifNoneMatchAny {
 		return nil, errors.New("terrabase: Delete does not take IfNoneMatchAny")
 	}
-	return col.write(ctx, request{method: http.MethodDelete, path: p, header: w.header(), replaySafe: w.ifMatch != ""})
+	req.header, req.replaySafe = w.header(), w.ifMatch != ""
+	return col.write(ctx, req)
 }
 
 func (col *Collection) write(ctx context.Context, req request) (*WriteResult, error) {

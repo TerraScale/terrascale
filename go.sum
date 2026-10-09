@@ -1,7 +1,7 @@
 cloud.google.com/go/compute/metadata v0.3.0 h1:Tz+eQXMEqDIKRsmY3cHTL6FVaynIjX2QxYC4trgAKZc=
 cloud.google.com/go/compute/metadata v0.3.0/go.mod h1:zFmK7XCadkQkj6TtorcaGlCW1hT1fIilQDwofLpJ20k=
-git.terrascale.tech/TerraScale/ts-go v0.0.0-20261008233510-acca0b35811d h1:KL7j3357avSI55sF0CxAWSNW3CUUG62khCaFjf33g0I=
-git.terrascale.tech/TerraScale/ts-go v0.0.0-20261008233510-acca0b35811d/go.mod h1:wnG+Zg7VZSpDcSGm5B7j5QJ+DrpP1+bDUVfa0EIrc5I=
+git.terrascale.tech/TerraScale/ts-go v0.0.0-20261009010856-7f635e3a5838 h1:DnIv8s5csL5QXNpBy80U9kG9Tr4rhTWEtvG0F+sXTbk=
+git.terrascale.tech/TerraScale/ts-go v0.0.0-20261009010856-7f635e3a5838/go.mod h1:wnG+Zg7VZSpDcSGm5B7j5QJ+DrpP1+bDUVfa0EIrc5I=
 github.com/CAFxX/httpcompression v0.0.9 h1:0ue2X8dOLEpxTm8tt+OdHcgA+gbDge0OqFQWGKSqgrg=
 github.com/CAFxX/httpcompression v0.0.9/go.mod h1:XX8oPZA+4IDcfZ0A71Hz0mZsv/YJOgYygkFhizVPilM=
 github.com/a-h/parse v0.0.0-20250122154542-74294addb73e h1:HjVbSQHy+dnlS6C3XajZ69NYAb5jbGNfHanvm1+iYlo=

@@ -150,6 +150,23 @@ func TestDataDocumentFormsKeepInputOnErrorAndConfirmDeletes(t *testing.T) {
 
 	add("", `{"total": 3}`, 303)
 	must(t, expect.Locator(table.Locator(".ts-data-doc-id")).ToHaveText(regexp.MustCompile(`^[0-9A-HJKMNP-TV-Z]{26}$`)))
+
+	// Form submission must preserve the key, including its surrounding spaces.
+	id = " " + uniqueName("raw") + " +/ %?#😀 "
+	add(id, `{"total": 4}`, 303)
+	goToOK(t, page, documentsPath+"&edit="+url.QueryEscape(id))
+	editor = page.Locator("#edit-document")
+	visible(t, editor)
+	must(t, expect.Locator(editor.Locator(`input[name="id"]`)).ToHaveValue(id))
+	codeEditor(t, page, "document-json")
+	fill(t, editor.Locator("#document-json"), `{"total": 5}`)
+	submitAndExpect(t, page, "/api/v1/dashboard/data/documents", 303, byRole(editor, *playwright.AriaRoleButton, "Save document").Click)
+	goToOK(t, page, documentsPath+"&delete="+url.QueryEscape(id))
+	confirm = page.Locator("#delete-document")
+	visible(t, confirm)
+	must(t, expect.Locator(confirm.Locator(`input[name="id"]`)).ToHaveValue(id))
+	submitAndExpect(t, page, "/api/v1/dashboard/data/documents", 303, byRole(confirm, *playwright.AriaRoleButton, "Delete document").Click)
+	must(t, expect.Locator(table.Locator(".ts-data-doc-id")).ToHaveCount(1))
 }
 
 func TestDataDocumentsListCollectionsAndCreateOne(t *testing.T) {

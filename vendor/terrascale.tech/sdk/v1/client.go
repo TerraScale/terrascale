@@ -200,9 +200,7 @@ type response struct {
 	body   []byte
 }
 
-// url escapes each segment. A segment may not contain a slash: TerraBase
-// would match an escaped %2F literally, so "a/b" could address a different
-// id such as "a%2Fb".
+// url escapes protocol path segments; raw document keys travel in the query.
 func (c *Client) url(ctx context.Context, segments []string, query url.Values) (string, error) {
 	for _, s := range segments {
 		if s == "" || s == "." || s == ".." || strings.Contains(s, "/") {

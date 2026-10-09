@@ -53,7 +53,7 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			return
 		}
 		collection, operation := strings.TrimSpace(r.FormValue("collection")), strings.TrimSpace(r.FormValue("operation"))
-		submittedID := strings.TrimSpace(r.FormValue("id"))
+		submittedID := r.FormValue("id")
 		body := []byte(r.FormValue("document"))
 		// failed shows the error in the form the post came from, refilled.
 		failed := func(status int, message string) {
@@ -68,10 +68,6 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 		}
 		if !validCollection(collection) {
 			failed(http.StatusBadRequest, "Enter a collection name without slashes or line breaks.")
-			return
-		}
-		if len(submittedID) > 256 {
-			failed(http.StatusBadRequest, "Document IDs are at most 256 characters.")
 			return
 		}
 		id := submittedID
