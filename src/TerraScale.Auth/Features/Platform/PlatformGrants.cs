@@ -34,6 +34,8 @@ public sealed class PlatformGrants(ApiKeys keys, PlatformDirectory directory, Us
     /// <summary>The lifetime of organization and project tokens.</summary>
     public static readonly TimeSpan Lifetime = TimeSpan.FromMinutes(15);
 
+    private static readonly TimeSpan AuthenticationTimeClockSkew = TimeSpan.FromSeconds(30);
+
     /// <summary>Token requests per API key per minute.</summary>
     public const int KeyRequestsPerMinute = 1000;
 
@@ -94,6 +96,8 @@ public sealed class PlatformGrants(ApiKeys keys, PlatformDirectory directory, Us
             || await users.GetAsync(PlatformDirectory.Instance, userId, cancellationToken) is not { } user
             || subject.GetClaim(OidcIssuer.EpochClaim) != user.AuthEpoch.ToString(CultureInfo.InvariantCulture)
             || subject.GetExpirationDate() is not { } expires || expires <= clock.GetUtcNow()
+            || !long.TryParse(subject.GetClaim(Claims.AuthenticationTime), NumberStyles.None, CultureInfo.InvariantCulture, out var authenticatedAt)
+            || authenticatedAt > clock.GetUtcNow().Add(AuthenticationTimeClockSkew).ToUnixTimeSeconds()
             || !await mfa.AllowsPrimaryAuthenticationAsync(user, cancellationToken))
         {
             return OidcResults.Forbid(Errors.InvalidGrant, "The subject token is not a live sign-in token of this client.");
@@ -137,7 +141,8 @@ public sealed class PlatformGrants(ApiKeys keys, PlatformDirectory directory, Us
         var lifetime = expires - clock.GetUtcNow();
         var identity = Identity(user.Id, organization, project, requested.IsEmpty ? allowed : requested, lifetime < Lifetime ? lifetime : Lifetime)
             .SetClaim(Claims.Email, user.Email)
-            .SetClaim(Claims.EmailVerified, true);
+            .SetClaim(Claims.EmailVerified, true)
+            .SetClaim(Claims.AuthenticationTime, authenticatedAt);
         return SignIn(identity);
     }
 
