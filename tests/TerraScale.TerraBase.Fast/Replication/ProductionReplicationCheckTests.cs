@@ -11,7 +11,9 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using TerraBase.Features.Management;
 using TerraBase.Features.Management.Usage;
+using TerraBase.Tenancy;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Replication;
@@ -99,6 +101,7 @@ public sealed class ProductionReplicationCheckTests
             var faker = new Faker();
             var databases = InvalidConfigurations.ToDictionary(fault => fault, _ => "check-" + faker.Random.AlphaNumeric(8).ToLowerInvariant());
             var tenant = await ReplicationTenant.CreateAsync(server, [.. databases.Values], token);
+            await server.Services.GetRequiredService<IManagementService>().SetPlanAsync(tenant.UserId, tenant.OrganizationId, PlanTier.Enterprise, token);
             var secret = await tenant.KeyAsync(server, ["documents:read", "documents:write"], token);
             var member = server.ClientAddress!.Authority;
             using var certificate = tls.LoadServerCertificate();

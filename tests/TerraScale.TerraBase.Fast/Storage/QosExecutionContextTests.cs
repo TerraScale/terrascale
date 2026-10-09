@@ -23,6 +23,22 @@ public sealed class QosExecutionContextTests
             services.AddSingleton(provider => new ContextProbe((IMemoryBudget)registration.ImplementationFactory!(provider)));
             services.AddSingleton<IMemoryBudget>(provider => provider.GetRequiredService<ContextProbe>());
             services.AddSingleton<IStartupFilter, RequestMarker>();
+            var engine = services.Single(service => service.ServiceType == typeof(SqliteStorageEngine));
+            services.Remove(engine);
+            services.AddSingleton(provider =>
+            {
+                var startupProbe = provider.GetRequiredService<ContextProbe>();
+                var previous = startupProbe.Marker.Value;
+                startupProbe.Marker.Value = new RequestState();
+                try
+                {
+                    return (SqliteStorageEngine)engine.ImplementationFactory!(provider);
+                }
+                finally
+                {
+                    startupProbe.Marker.Value = previous;
+                }
+            });
         });
         var probe = api.Server.Services.GetRequiredService<ContextProbe>();
         probe.Io = api.Server.Services.GetRequiredService<SqliteStorageEngine>().Io;

@@ -133,7 +133,17 @@ internal sealed class SqliteIoPool : SqliteRunner, IAsyncDisposable
                 worker.Name = "terrabase-sqlite";
                 _threads[i] = exited.Task;
                 workers[i] = worker;
-                worker.Start();
+                if (ExecutionContext.IsFlowSuppressed())
+                {
+                    worker.Start();
+                }
+                else
+                {
+                    using (ExecutionContext.SuppressFlow())
+                    {
+                        worker.Start();
+                    }
+                }
                 started++;
             }
         }

@@ -803,6 +803,7 @@ public sealed class ShapeApiTests
     public async Task A_log_chunk_stops_before_the_commit_that_would_pass_1_MiB_of_serialized_body()
     {
         await using var api = await DocumentApi.StartAsync();
+        await api.Management.SetPlanAsync(api.Tenant.User, api.Tenant.OrganizationId, "enterprise");
         using var shapes = await api.ClientWithScopesAsync("shapes:read");
         var (handle, head) = await SnapshotAsync(shapes, $"{api.Shape}?offset=-1");
         // Characters a serializer would escape six-fold, sent and stored literally.

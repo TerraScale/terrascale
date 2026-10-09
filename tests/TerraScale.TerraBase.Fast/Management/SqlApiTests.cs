@@ -488,8 +488,9 @@ public sealed class SqlApiTests
     [Test]
     public async Task Small_projections_of_documents_larger_in_total_than_the_budget_return_every_row()
     {
-        await using var api = await ManagementApi.StartAsync();
+        await using var api = await ManagementApi.StartAsync(managementCredential: true);
         var database = await api.CreateManagedDatabaseAsync();
+        await api.SetPlanAsync(api.User, database.Organization, "enterprise");
         using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
         // Ten bodies of about 0.95 MiB pass 8 MiB together; their ids alone are a few hundred bytes.
         var body = $$"""{"padding":"{{new string('x', 1_000_000)}}"}""";

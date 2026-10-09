@@ -686,6 +686,7 @@ public sealed class DocumentApiTests
     public async Task Concurrent_creates_report_exactly_one_creation()
     {
         await using var api = await DocumentApi.StartAsync();
+        await api.Management.SetPlanAsync(api.Tenant.User, api.Tenant.OrganizationId, "enterprise");
 
         var statuses = await Task.WhenAll(Enumerable.Range(0, 16).Select(async _ =>
         {
@@ -704,6 +705,7 @@ public sealed class DocumentApiTests
     public async Task Concurrent_writes_all_commit_and_read_back_at_their_versions()
     {
         await using var api = await DocumentApi.StartAsync();
+        await api.Management.SetPlanAsync(api.Tenant.User, api.Tenant.OrganizationId, "enterprise");
         var ids = Enumerable.Range(0, 16).Select(_ => DocumentApi.NewId()).ToArray();
 
         // Group commit may put several of them in one transaction, which then share its offset.
