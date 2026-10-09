@@ -1,3 +1,4 @@
+using TerraBase.Errors;
 using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
@@ -24,6 +25,7 @@ public sealed class AcceptInvitationEndpoint(IAccessService access) : Endpoint<A
         Produces<ErrorBody>(StatusCodes.Status403Forbidden);
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
         Produces<ErrorBody>(StatusCodes.Status409Conflict);
+        Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
         RequireAuthorization(UserAuthExtensions.PolicyName);
         Metadata(ListenerMetadata.Management);
     }
@@ -34,15 +36,26 @@ public sealed class AcceptInvitationEndpoint(IAccessService access) : Endpoint<A
         ArgumentNullException.ThrowIfNull(request);
         if (string.IsNullOrEmpty(request.Token))
         {
-            return TypedResults.BadRequest("token is required");
+            return ErrorResponse.From(new Validation("token is required"));
         }
 
         // The email comes from the verified token, never from the body: the caller may be the user itself.
         if (HttpContext.User.VerifiedEmail() is not { } email)
         {
-            return TypedResults.Json("the access token has no verified email", statusCode: StatusCodes.Status403Forbidden);
+            return ErrorResponse.From(new Forbidden("the access token has no verified email"));
         }
 
-        return ManagementRoute.Ok(await access.AcceptInvitationAsync(ManagementRoute.UserId(HttpContext), ManagementRoute.Email(email), request.Token, cancellationToken));
+        return ManagementRoute.CheckEmail(email) switch
+        {
+            Validation error => ErrorResponse.From(error),
+            string valid => await access.AcceptInvitationAsync(ManagementRoute.UserId(HttpContext), valid, request.Token, cancellationToken) switch
+            {
+                OrganizationMember value => TypedResults.Ok(value),
+                NotFound error => ErrorResponse.From(error),
+                Forbidden error => ErrorResponse.From(error),
+                Conflict error => ErrorResponse.From(error),
+                Unavailable error => ErrorResponse.From(error),
+            },
+        };
     }
 }

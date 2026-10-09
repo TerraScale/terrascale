@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
@@ -42,9 +43,18 @@ internal sealed partial class IndexService(IStorageEngine engine, QueryFieldReco
     /// A database keeps at most <see cref="QueryFieldUsage.MaxRecords"/> usage records, so this reads a bounded set. Counts
     /// not saved yet are added from memory; reading never writes to the catalog.
     /// </remarks>
-    public async ValueTask<IndexRecommendationListBody> RecommendAsync(TenantContext database, CancellationToken cancellationToken)
+    public async ValueTask<RecommendIndexesResult> RecommendAsync(TenantContext database, CancellationToken cancellationToken)
     {
-        var usages = await UsagesAsync(database, cancellationToken).ConfigureAwait(false);
+        var read = await UsagesAsync(database, cancellationToken).ConfigureAwait(false);
+        if (read is not List<QueryFieldUsage> usages)
+        {
+            return read switch
+            {
+                Unavailable error => error,
+                List<QueryFieldUsage> => throw new UnreachableException(),
+            };
+        }
+
         var leading = (await ListIndexesAsync(database, cancellationToken).ConfigureAwait(false))
             .Select(index => (index.Collection, index.Fields[0].Path))
             .ToHashSet();
@@ -62,8 +72,17 @@ internal sealed partial class IndexService(IStorageEngine engine, QueryFieldReco
 
     public async ValueTask<ApplyIndexRecommendationResult> ApplyAsync(TenantContext database, string recommendationId, CancellationToken cancellationToken)
     {
-        var usage = (await UsagesAsync(database, cancellationToken).ConfigureAwait(false))
-            .FirstOrDefault(usage => QueryFieldUsage.Key(usage.Collection, usage.Field) == recommendationId);
+        var read = await UsagesAsync(database, cancellationToken).ConfigureAwait(false);
+        if (read is not List<QueryFieldUsage> usages)
+        {
+            return read switch
+            {
+                Unavailable error => error,
+                List<QueryFieldUsage> => throw new UnreachableException(),
+            };
+        }
+
+        var usage = usages.FirstOrDefault(usage => QueryFieldUsage.Key(usage.Collection, usage.Field) == recommendationId);
         if (usage is null || !DocumentField.TryParse(usage.Field, out var field))
         {
             return new NotFound();
@@ -136,7 +155,7 @@ internal sealed partial class IndexService(IStorageEngine engine, QueryFieldReco
     }
 
     // The saved usage records of a database with the counts not saved yet; reading never writes to the catalog.
-    private ValueTask<List<QueryFieldUsage>> UsagesAsync(TenantContext database, CancellationToken cancellationToken) =>
+    private ValueTask<QueryFieldUsagesResult> UsagesAsync(TenantContext database, CancellationToken cancellationToken) =>
         recorder.ReadAsync(database, cancellationToken);
 
     // The index of the usage's collection whose first key is the usage's field.

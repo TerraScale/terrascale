@@ -23,6 +23,7 @@ public sealed class LookupInvitationEndpoint(IAccessService access) : Endpoint<L
         Produces<FoundInvitation>();
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
+        Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
         RequireAuthorization(UserAuthExtensions.PolicyName);
         Metadata(ListenerMetadata.Management);
     }
@@ -37,8 +38,11 @@ public sealed class LookupInvitationEndpoint(IAccessService access) : Endpoint<L
             return ErrorResponse.From(new Validation("tokenHash must be 64 lowercase hex characters"));
         }
 
-        return await access.FindInvitationAsync(hash, cancellationToken) is { } found
-            ? TypedResults.Ok(found)
-            : ErrorResponse.From(new NotFound("no pending invitation has this token"));
+        return await access.FindInvitationAsync(hash, cancellationToken) switch
+        {
+            FoundInvitation value => TypedResults.Ok(value),
+            NotFound error => ErrorResponse.From(error),
+            Unavailable error => ErrorResponse.From(error),
+        };
     }
 }

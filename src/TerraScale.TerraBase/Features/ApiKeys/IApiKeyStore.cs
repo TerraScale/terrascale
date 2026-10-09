@@ -78,26 +78,37 @@ public sealed record ProjectApiKey(
 /// <param name="Secret">The bearer secret for <c>Authorization: Bearer</c>.</param>
 public sealed record CreatedProjectApiKey(ProjectApiKey Key, string Secret);
 
+/// <summary>A newly issued key with its secret, which is never retrievable again.</summary>
+/// <param name="Key">The key.</param>
+/// <param name="Secret">The bearer secret.</param>
+public sealed record IssuedApiKey(ApiKey Key, string Secret);
+
+/// <summary>An issued key, or why it was not issued: its scope does not exist.</summary>
+public readonly union CreateApiKeyResult(IssuedApiKey, NotFound, Unavailable);
+
 /// <summary>An issued project key with its secret, or why it was not issued.</summary>
-public readonly union CreateProjectKeyResult(CreatedProjectApiKey, NotFound, Forbidden);
+public readonly union CreateProjectKeyResult(CreatedProjectApiKey, NotFound, Forbidden, Unavailable);
+
+/// <summary>A page of a project's keys.</summary>
+public readonly union ListProjectKeysResult(ManagementPage<ProjectApiKey>, NotFound, Unavailable);
 
 /// <summary>A revoked project key, or why it was not revoked.</summary>
-public readonly union RevokeProjectKeyResult(Done, NotFound, Forbidden);
+public readonly union RevokeProjectKeyResult(Done, NotFound, Forbidden, Unavailable);
 
 /// <summary>Issues and verifies scoped API keys. Only a hash of each secret is stored.</summary>
 public interface IApiKeyStore
 {
     /// <summary>
     /// Issues a key for an organization, optionally narrowed to one of its projects and one database of that project,
-    /// and returns it with its secret, which is never retrievable again; <see langword="null"/> when that scope does not
+    /// and returns it with its secret, which is never retrievable again; <see cref="NotFound"/> when that scope does not
     /// exist, checked in the issuing write. A key narrowed to a project is listed with the project's keys, as if
     /// <see cref="CreateProjectKeyAsync"/> had issued it.
     /// </summary>
-    ValueTask<(ApiKey Key, string Secret)?> CreateAsync(
+    ValueTask<CreateApiKeyResult> CreateAsync(
         string name, IReadOnlyList<string> scopes, string organizationId, string? projectId, string? databaseId, CancellationToken cancellationToken);
 
-    /// <summary>Finds the key for a presented secret; <see langword="null"/> when unknown or stored before tenancy.</summary>
-    ValueTask<ApiKey?> FindAsync(string secret, CancellationToken cancellationToken);
+    /// <summary>Finds the key for a presented secret; <see cref="NotFound"/> when unknown or stored before tenancy.</summary>
+    ValueTask<Found<ApiKey>> FindAsync(string secret, CancellationToken cancellationToken);
 
     /// <summary>
     /// Issues a key of a project for the acting user, optionally narrowed to one of its databases; not found when the user
@@ -108,7 +119,7 @@ public interface IApiKeyStore
         string userId, string organizationId, string projectId, string name, IReadOnlyList<string> scopes, string? databaseId, CancellationToken cancellationToken);
 
     /// <summary>Lists the keys of a project in creation order.</summary>
-    ValueTask<Found<ManagementPage<ProjectApiKey>>> ListProjectKeysAsync(
+    ValueTask<ListProjectKeysResult> ListProjectKeysAsync(
         string userId, string organizationId, string projectId, string? after, int limit, CancellationToken cancellationToken);
 
     /// <summary>Revokes a key of a project; it stops authenticating immediately. Forbidden for a viewer.</summary>

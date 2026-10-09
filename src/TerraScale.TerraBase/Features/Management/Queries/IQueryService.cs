@@ -72,7 +72,19 @@ public readonly union RunSqlResult(SqlResultBody, Validation);
 public readonly union CheckSqlResult(SqlCheckBody, NotFound, Validation);
 
 /// <summary>A deleted saved query, or that it (or its project) does not exist for the user.</summary>
-public readonly union DeleteSavedQueryResult(Done, NotFound);
+public readonly union DeleteSavedQueryResult(Done, NotFound, Unavailable);
+
+/// <summary>A page of a project's saved queries.</summary>
+public readonly union ListSavedQueriesResult(ManagementPage<SavedQuery>, Unavailable);
+
+/// <summary>A created saved query, or why it could not be created.</summary>
+public readonly union CreateSavedQueryResult(SavedQuery, NotFound, Unavailable);
+
+/// <summary>A saved query, or why it could not be read.</summary>
+public readonly union GetSavedQueryResult(SavedQuery, NotFound, Unavailable);
+
+/// <summary>An updated saved query, or why it could not be updated.</summary>
+public readonly union UpdateSavedQueryResult(SavedQuery, NotFound, Unavailable);
 
 /// <summary>Runs and checks dashboard SQL against managed databases, and keeps saved queries.</summary>
 public interface IQueryService
@@ -84,16 +96,16 @@ public interface IQueryService
     ValueTask<CheckSqlResult> CheckAsync(TenantContext database, SqlStatement statement, CancellationToken cancellationToken);
 
     /// <summary>Lists the saved queries of a project in creation order.</summary>
-    ValueTask<ManagementPage<SavedQuery>> ListSavedAsync(Project project, string? after, int limit, CancellationToken cancellationToken);
+    ValueTask<ListSavedQueriesResult> ListSavedAsync(Project project, string? after, int limit, CancellationToken cancellationToken);
 
     /// <summary>Saves a query in a project; not found when the user can no longer change the project.</summary>
-    ValueTask<Found<SavedQuery>> CreateSavedAsync(string userId, Project project, string name, string sql, CancellationToken cancellationToken);
+    ValueTask<CreateSavedQueryResult> CreateSavedAsync(string userId, Project project, string name, string sql, CancellationToken cancellationToken);
 
     /// <summary>Reads a saved query.</summary>
-    ValueTask<Found<SavedQuery>> GetSavedAsync(Project project, string queryId, CancellationToken cancellationToken);
+    ValueTask<GetSavedQueryResult> GetSavedAsync(Project project, string queryId, CancellationToken cancellationToken);
 
     /// <summary>Replaces the name and SQL of a saved query.</summary>
-    ValueTask<Found<SavedQuery>> UpdateSavedAsync(string userId, Project project, string queryId, string name, string sql, CancellationToken cancellationToken);
+    ValueTask<UpdateSavedQueryResult> UpdateSavedAsync(string userId, Project project, string queryId, string name, string sql, CancellationToken cancellationToken);
 
     /// <summary>Deletes a saved query.</summary>
     ValueTask<DeleteSavedQueryResult> DeleteSavedAsync(string userId, Project project, string queryId, CancellationToken cancellationToken);

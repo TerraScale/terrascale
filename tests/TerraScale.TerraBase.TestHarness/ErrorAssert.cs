@@ -11,6 +11,13 @@ public static class ErrorAssert
     {
         ArgumentNullException.ThrowIfNull(sending);
         using var response = await sending;
+        await ErrorAsync(response, status, code, message);
+    }
+
+    /// <summary>Asserts an error response owned by the caller.</summary>
+    public static async Task ErrorAsync(HttpResponseMessage response, HttpStatusCode status, string code, string? message = null)
+    {
+        ArgumentNullException.ThrowIfNull(response);
         var request = $"{response.RequestMessage?.Method} {response.RequestMessage?.RequestUri}";
         var contentType = response.Content.Headers.ContentType?.MediaType;
         var text = await response.Content.ReadAsStringAsync();

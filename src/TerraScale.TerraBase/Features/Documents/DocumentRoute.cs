@@ -14,11 +14,14 @@ using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Documents;
 
-/// <summary>The request's tenant, or why it has none: a malformed database name, or a database the key does not reach.</summary>
-internal readonly union TenantResult(TenantContext, Validation, NotFound);
+/// <summary>
+/// The request's tenant, or why it has none: a malformed database name, a database the key does not reach, or a catalog
+/// this build cannot use.
+/// </summary>
+internal readonly union TenantResult(TenantContext, Validation, NotFound, Unavailable);
 
 /// <summary>The addressed document, or why the address is refused.</summary>
-internal readonly union KeyResult(DocumentKey, Validation, NotFound);
+internal readonly union KeyResult(DocumentKey, Validation, NotFound, Unavailable);
 
 /// <summary>A request body, or why it is refused.</summary>
 internal readonly union BodyResult(byte[], Validation, PayloadTooLarge, UnsupportedMediaType);
@@ -93,11 +96,20 @@ internal static class DocumentRoute
 
         if (context.Features.Get<ProjectAccess>() is { } access)
         {
-            if ((access.DatabaseName is not null && !string.Equals(access.DatabaseName, name.Value, StringComparison.Ordinal))
-                || await tenants.FindDatabaseAsync(access.OrganizationId, access.ProjectId, name.Value, cancellationToken).ConfigureAwait(false) is not { } database
-                || (access.DatabaseId is not null && !string.Equals(access.DatabaseId, database.DatabaseId, StringComparison.Ordinal)))
+            if (access.DatabaseName is not null && !string.Equals(access.DatabaseName, name.Value, StringComparison.Ordinal))
             {
                 return UnknownDatabase;
+            }
+
+            var resolved = await tenants.FindDatabaseAsync(access.OrganizationId, access.ProjectId, name.Value, cancellationToken).ConfigureAwait(false);
+            if (resolved is not TenantContext database
+                || (access.DatabaseId is not null && !string.Equals(access.DatabaseId, database.DatabaseId, StringComparison.Ordinal)))
+            {
+                return resolved switch
+                {
+                    Unavailable error => error,
+                    TenantContext or NotFound => UnknownDatabase,
+                };
             }
 
             context.Features.Set(database);
@@ -105,10 +117,14 @@ internal static class DocumentRoute
         }
 
         var key = ApiKey.Of(context);
-        if (await tenants.FindDatabaseAsync(key.OrganizationId, Project(context), name.Value, cancellationToken).ConfigureAwait(false) is not { } tenant
-            || !key.Reaches(tenant))
+        var found = await tenants.FindDatabaseAsync(key.OrganizationId, Project(context), name.Value, cancellationToken).ConfigureAwait(false);
+        if (found is not TenantContext tenant || !key.Reaches(tenant))
         {
-            return UnknownDatabase;
+            return found switch
+            {
+                Unavailable error => error,
+                TenantContext or NotFound => UnknownDatabase,
+            };
         }
 
         context.Features.Set(tenant);
@@ -135,6 +151,7 @@ internal static class DocumentRoute
                 TenantContext tenant => new DocumentKey(tenant, collection, id),
                 Validation error => error,
                 NotFound error => error,
+                Unavailable error => error,
             },
         };
 

@@ -1,6 +1,8 @@
+using System.Diagnostics;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using TerraBase.Engine;
+using TerraBase.Errors;
 using TerraBase.Features.Memory;
 using TerraBase.Hosting;
 using static TerraBase.Features.Management.SystemCatalog;
@@ -13,6 +15,8 @@ internal enum QueryShapeAccept
     Duplicate,
     Capacity,
 }
+
+internal readonly union QueryShapeAcceptResult(QueryShapeAccept, Unavailable);
 
 // A watermark and its statistics commit together. Unknown marker formats are never overwritten.
 internal sealed record QueryShapeSenderRecord(
@@ -174,7 +178,7 @@ internal sealed partial class QueryShapeRecorder
     }
 
     // The caller validates and admits the entire decoded batch before entering this persistence operation.
-    internal async ValueTask<QueryShapeAccept> AcceptAsync(
+    internal async ValueTask<QueryShapeAcceptResult> AcceptAsync(
         string sender, string epoch, long sequence, QueryShapeForwardPayload payload, CancellationToken cancellationToken)
     {
         await _flush.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -189,8 +193,12 @@ internal sealed partial class QueryShapeRecorder
             }
 
             // A remote write cannot obscure an earlier local commit whose disposal threw.
-            await SettleAsync(cancellationToken).ConfigureAwait(false);
-            var (accepted, dropped, unsupported) = await catalog.WriteDurableAsync(async transaction =>
+            if (await SettleAsync(cancellationToken).ConfigureAwait(false) is Unavailable refused)
+            {
+                return refused;
+            }
+
+            var written = await catalog.WriteDurableAsync<AcceptWriteResult>(async transaction =>
             {
                 var key = SenderKey(sender, epoch);
                 var document = await transaction.GetAsync(Senders, key, cancellationToken).ConfigureAwait(false);
@@ -217,7 +225,17 @@ internal sealed partial class QueryShapeRecorder
                 await PutAsync(transaction, Senders, key, new QueryShapeSenderRecord(Format, sender, epoch, sequence, now),
                     TerraBaseJsonContext.Default.QueryShapeSenderRecord, cancellationToken).ConfigureAwait(false);
                 return (QueryShapeAccept.Accepted, atCapacity, unreadable);
-            }, cancellationToken).ConfigureAwait(false);
+            }, static error => error, cancellationToken).ConfigureAwait(false);
+            if (written is not ValueTuple<QueryShapeAccept, long, long> saved)
+            {
+                return written switch
+                {
+                    Unavailable unavailable => unavailable,
+                    ValueTuple<QueryShapeAccept, long, long> => throw new UnreachableException(),
+                };
+            }
+
+            var (accepted, dropped, unsupported) = saved;
             if (dropped > 0)
             {
                 _dropped.Add(dropped, new KeyValuePair<string, object?>("reason", "persisted_limit"));
@@ -295,5 +313,7 @@ internal sealed partial class QueryShapeRecorder
     }
 
     private static string SenderKey(string sender, string epoch) => sender + ":" + epoch;
+    private readonly union AcceptWriteResult((QueryShapeAccept Accepted, long Dropped, long Unsupported), Unavailable);
+
     private sealed record Outgoing(long Sequence, QueryShapeForwardPayload Payload, Taken[] Batch);
 }

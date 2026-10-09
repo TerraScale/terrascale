@@ -285,7 +285,7 @@ public sealed class CatalogReplicationTests
                 await FailuresAsync(member, "lineage", token) >= 1);
             await Assert.That(await ReadinessAsync(member)).IsEqualTo(HttpStatusCode.ServiceUnavailable);
             await Assert.That(await member.Services.GetRequiredService<ITenantDirectory>()
-                .FindDatabaseAsync(own.Organization, own.Project, "orders", CancellationToken.None)).IsNotNull();
+                .FindDatabaseAsync(own.Organization, own.Project, "orders", CancellationToken.None) is TenantContext).IsTrue();
         }
         finally
         {
@@ -648,12 +648,21 @@ public sealed class CatalogReplicationTests
             using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
             var user = EntityIds.New().ToString();
             var management = primary.Services.GetRequiredService<IManagementService>();
-            var organization = (await management.CreateOrganizationAsync(user, $"Org {EntityIds.New()}", deadline.Token)).Value
-                ?? throw new InvalidOperationException("the primary did not create the organization");
-            var project = (await management.CreateProjectAsync(user, organization.Id, "main", deadline.Token)).Value
-                ?? throw new InvalidOperationException("the primary did not create the project");
-            _ = (await management.CreateDatabaseAsync(user, organization.Id, project.Id, database, deadline.Token)).Value
-                ?? throw new InvalidOperationException("the primary did not create the database");
+            var organization = await management.CreateOrganizationAsync(user, $"Org {EntityIds.New()}", deadline.Token) switch
+            {
+                Organization value => value,
+                _ => throw new InvalidOperationException("the primary did not create the organization"),
+            };
+            var project = await management.CreateProjectAsync(user, organization.Id, "main", deadline.Token) switch
+            {
+                Project value => value,
+                _ => throw new InvalidOperationException("the primary did not create the project"),
+            };
+            _ = await management.CreateDatabaseAsync(user, organization.Id, project.Id, database, deadline.Token) switch
+            {
+                ManagedDatabase value => value,
+                _ => throw new InvalidOperationException("the primary did not create the database"),
+            };
             return new CatalogTenant(user, organization.Id, project.Id, await primary.IssueAsync(organization.Id, Scopes));
         }
     }

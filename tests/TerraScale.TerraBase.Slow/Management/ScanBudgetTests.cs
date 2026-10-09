@@ -54,8 +54,7 @@ public sealed class ScanBudgetTests
 
         await Assert.That(hundred.StatusCode).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(usage.GetProperty("databases").GetInt64()).IsEqualTo(100);
-        await Assert.That(more.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
-        await Assert.That(await more.Content.ReadFromJsonAsync<string>()).IsEqualTo("query too expensive");
+        await ErrorAssert.ErrorAsync(more, HttpStatusCode.BadRequest, "invalid_query", "query too expensive");
     }
 
     // Requests run one at a time here, so the next one on this database takes the pooled session the rejected one

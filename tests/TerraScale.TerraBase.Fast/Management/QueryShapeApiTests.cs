@@ -320,7 +320,7 @@ public sealed class QueryShapeApiTests
             }
             await transaction.PutAsync(collection, key, Encoding.UTF8.GetBytes(json), CancellationToken.None);
             return json;
-        }, CancellationToken.None);
+        }, static refused => throw new InvalidOperationException(refused.Message), CancellationToken.None);
 
         for (var i = 0; i < 2; i++)
         {
@@ -337,7 +337,7 @@ public sealed class QueryShapeApiTests
                 var healthySaved = await SystemCatalog.ListAllAsync(transaction, SystemCatalog.DatabaseState(healthy.Id) + "query_shapes",
                     TerraBaseJsonContext.Default.QueryShapeRecord, CancellationToken.None);
                 return (affectedSaved, healthySaved);
-            }, CancellationToken.None);
+            }, static refused => throw new InvalidOperationException(refused.Message), CancellationToken.None);
             await Assert.That(affectedRecords.Select(record => record.GetRawText())).Contains(original);
             await Assert.That(affectedRecords.Single(record => record.GetRawText() != original)
                 .GetProperty("stats").GetProperty("queries").GetInt64()).IsEqualTo(i + 1);

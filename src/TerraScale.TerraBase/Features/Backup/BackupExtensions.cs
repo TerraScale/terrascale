@@ -59,7 +59,7 @@ public static class BackupExtensions
 
         public Task RunOnceAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 
-        public Task<RestoreWindow?> GetWindowAsync(TenantContext database, CancellationToken cancellationToken, string destination = BackupDestinationNames.Platform) => Task.FromResult<RestoreWindow?>(null);
+        public Task<RestoreWindowResult> GetWindowAsync(TenantContext database, CancellationToken cancellationToken, string destination = BackupDestinationNames.Platform) => Task.FromResult<RestoreWindowResult>(new NotFound());
 
         public Task<PointInTimePlanResult> PlanAsync(TenantContext database, DateTimeOffset at, CancellationToken cancellationToken, string destination = BackupDestinationNames.Platform) =>
             Task.FromResult<PointInTimePlanResult>(new NotFound("continuous backup holds nothing of this database"));

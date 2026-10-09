@@ -21,6 +21,9 @@ public sealed class UpdateManagedDatabaseEndpoint(IManagementService management,
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
         Produces<ErrorBody>(StatusCodes.Status421MisdirectedRequest);
+        Produces<ErrorBody>(StatusCodes.Status403Forbidden);
+        Produces<ErrorBody>(StatusCodes.Status409Conflict);
+        Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
         RequireAuthorization(ApiKeyScopes.DatabasesWrite);
         Metadata(new ProjectManagementRoute(), ListenerMetadata.Management, new DatabaseRegions.PlacementAware());
     }
@@ -29,28 +32,40 @@ public sealed class UpdateManagedDatabaseEndpoint(IManagementService management,
     public override async ValueTask<IResult> HandleAsync(DatabaseRegionsRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
-        var (user, organization, project, id) = (ManagementRoute.UserId(HttpContext), ManagementRoute.OrganizationId(HttpContext), ManagementRoute.Value(HttpContext, "project"), ManagementRoute.Value(HttpContext, "database"));
-        if (await management.GetDatabaseAsync(user, organization, project, id, cancellationToken) is not { } database)
+        return await management.GetDatabaseAsync(
+            ManagementRoute.UserId(HttpContext), ManagementRoute.OrganizationId(HttpContext), ManagementRoute.Value(HttpContext, "project"),
+            ManagementRoute.Value(HttpContext, "database"), cancellationToken) switch
         {
-            return ManagementRoute.Error(ManagementError.NotFound);
-        }
+            NotFound error => ManagementRoute.DatabaseNotFound(error),
+            Unavailable error => ErrorResponse.From(error),
+            ManagedDatabase database => await UpdateAsync(request, database, cancellationToken),
+        };
+    }
 
+    private async ValueTask<IResult> UpdateAsync(DatabaseRegionsRequest request, ManagedDatabase database, CancellationToken cancellationToken)
+    {
+        var (user, organization, project, id) = (ManagementRoute.UserId(HttpContext), ManagementRoute.OrganizationId(HttpContext), ManagementRoute.Value(HttpContext, "project"), ManagementRoute.Value(HttpContext, "database"));
         var home = database.Home(options.Region);
         if (home != options.Region)
         {
             return DatabaseRegions.WrongRegion(home, database.Regions(options.Region));
         }
 
-        var invalid = request.Name is not null ? new Validation("a database cannot be renamed")
+        Valid<IReadOnlyList<string>> checkedRegions = request.Name is not null ? new Validation("a database cannot be renamed")
             : request.HomeRegion is { } requested && requested != home ? new Validation("homeRegion cannot change")
             : request.ReplicaRegions is not { } replicas ? new Validation("replicaRegions is required")
             : DatabaseRegions.Check(options, home, replicas);
-        if (invalid is not null)
+        return checkedRegions switch
         {
-            return ErrorResponse.From(invalid);
-        }
-
-        var result = await management.SetDatabaseRegionsAsync(user, organization, project, id, request.ReplicaRegions!, cancellationToken);
-        return result.Value is { } value ? TypedResults.Ok(ManagedDatabaseBody.From(value, options.Region)) : ManagementRoute.Error(result.Error);
+            Validation error => ErrorResponse.From(error),
+            IReadOnlyList<string> accepted => await management.SetDatabaseRegionsAsync(user, organization, project, id, accepted, cancellationToken) switch
+            {
+                ManagedDatabase value => TypedResults.Ok(ManagedDatabaseBody.From(value, options.Region)),
+                NotFound error => ManagementRoute.DatabaseNotFound(error),
+                Forbidden error => ErrorResponse.From(error),
+                Conflict error => ErrorResponse.From(error),
+                Unavailable error => ErrorResponse.From(error),
+            },
+        };
     }
 }

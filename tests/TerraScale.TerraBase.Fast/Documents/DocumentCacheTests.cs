@@ -1,12 +1,13 @@
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Time.Testing;
 using System.Diagnostics.Metrics;
 using System.Net;
 using System.Text.Json;
 using System.Text;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Time.Testing;
 using TerraBase.Configuration;
 using TerraBase.Engine.Sqlite;
 using TerraBase.Engine;
+using TerraBase.Errors;
 using TerraBase.Fast.Storage;
 using TerraBase.Features.Documents;
 using TerraBase.Features.Management.Queries;
@@ -212,7 +213,11 @@ public sealed class DocumentCacheTests
         await PutAsync(tenant, "shop", "items", "a", "first", deadline.Token);
         await GetAsync(tenant, "shop", "items", "a", deadline.Token);
         var secret = tenant.Data.DefaultRequestHeaders.Authorization!.Parameter!;
-        var keyId = (await management.Server.Services.GetRequiredService<TerraBase.Features.ApiKeys.IApiKeyStore>().FindAsync(secret, deadline.Token))!.Id;
+        var keyId = await management.Server.Services.GetRequiredService<TerraBase.Features.ApiKeys.IApiKeyStore>().FindAsync(secret, deadline.Token) switch
+        {
+            TerraBase.Features.ApiKeys.ApiKey key => key.Id,
+            NotFound => throw new InvalidOperationException("The test API key must exist."),
+        };
         var system = await management.Server.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(deadline.Token);
         var transaction = await system.BeginTransactionAsync(write: true, deadline.Token);
         await using (transaction)

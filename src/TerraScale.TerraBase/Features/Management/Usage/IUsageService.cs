@@ -1,3 +1,4 @@
+using TerraBase.Errors;
 using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Management.Usage;
@@ -44,12 +45,18 @@ public sealed record ProjectUsage(
     string ProjectId, long Databases, long StorageBytes, long LogicalBytes, long Documents, long Reads, long Writes, UsagePeriod Period,
     IReadOnlyList<UsagePoint> Series, IReadOnlyList<DatabaseUsage> Items);
 
+/// <summary>The usage of a database, or why there is none.</summary>
+public readonly union DatabaseUsageResult(DatabaseUsage, NotFound, Validation, Unavailable);
+
+/// <summary>The usage of a project, or why there is none.</summary>
+public readonly union ProjectUsageResult(ProjectUsage, NotFound, Validation, Unavailable);
+
 /// <summary>Storage and operation usage of managed databases.</summary>
 public interface IUsageService
 {
-    /// <summary>Reads the usage of <paramref name="database"/>; <see langword="null"/> when it was deleted meanwhile.</summary>
-    ValueTask<DatabaseUsage?> GetDatabaseUsageAsync(TenantContext database, UsageWindow window, CancellationToken cancellationToken);
+    /// <summary>Reads the usage of <paramref name="database"/>; <see cref="NotFound"/> when it was deleted meanwhile.</summary>
+    ValueTask<DatabaseUsageResult> GetDatabaseUsageAsync(TenantContext database, UsageWindow window, CancellationToken cancellationToken);
 
-    /// <summary>Sums the usage of every database of a project; <see langword="null"/> when the project does not exist.</summary>
-    ValueTask<ProjectUsage?> GetProjectUsageAsync(string userId, string organizationId, string projectId, UsageWindow window, CancellationToken cancellationToken);
+    /// <summary>Sums the usage of every database of a project; <see cref="NotFound"/> when the project does not exist.</summary>
+    ValueTask<ProjectUsageResult> GetProjectUsageAsync(string userId, string organizationId, string projectId, UsageWindow window, CancellationToken cancellationToken);
 }

@@ -23,6 +23,7 @@ public sealed class PutCollectionSchemaEndpoint(IManagementService management, I
         Produces<ErrorBody>(StatusCodes.Status403Forbidden);
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
         Produces<ErrorBody>(StatusCodes.Status409Conflict);
+        Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
         RequireAuthorization(ApiKeyScopes.DatabasesWrite);
         Metadata(new ProjectManagementRoute(), ListenerMetadata.Management);
     }
@@ -40,6 +41,7 @@ public sealed class PutCollectionSchemaEndpoint(IManagementService management, I
         {
             NotFound error => ErrorResponse.From(error),
             Forbidden error => ErrorResponse.From(error),
+            Unavailable error => ErrorResponse.From(error),
             TenantContext database => await schema.DeclareAsync(database, collection.Value, request, cancellationToken) switch
             {
                 UniqueSchema declared => TypedResults.Ok(declared),

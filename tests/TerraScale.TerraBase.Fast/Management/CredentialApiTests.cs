@@ -284,15 +284,14 @@ public sealed class CredentialApiTests
         var directory = Directory.CreateTempSubdirectory("terrabase-key-listing-").FullName;
         try
         {
-            string user, path, id, secret;
+            string user, project, path, id, secret;
             await using (var api = await ManagementApi.StartAsync(settings => settings["data-directory"] = directory))
             {
                 user = api.User;
                 var organization = await api.CreateOrganizationAsync(Faker.Company.CompanyName());
-                var project = await api.CreateProjectAsync(organization, "Persistent keys");
+                project = await api.CreateProjectAsync(organization, "Operator keys");
                 path = $"/v1/management/organizations/{organization}/projects/{project}";
                 (id, secret) = await IssueOperatorKeyAsync(api, organization, project);
-
             }
 
             await using (var api = await ManagementApi.StartAsync(settings => settings["data-directory"] = directory))
@@ -303,13 +302,15 @@ public sealed class CredentialApiTests
                 using var refused = await owner.DeleteAsync(Uri(path));
                 using var revoked = await owner.DeleteAsync(Uri($"{path}/api-keys/{id}"));
                 using var client = api.DataClient(secret);
-                using var afterRevoke = await client.GetAsync(Uri("/v1/projects/any/databases/main/collections"));
+                using var afterRevoke = await client.GetAsync(Uri($"/v1/projects/{project}/databases/main/collections"));
+                using var deleted = await owner.DeleteAsync(Uri(path));
 
                 await Assert.That(item.GetProperty("id").GetString()).IsEqualTo(id);
                 await Assert.That(item.GetProperty("lastFour").GetString()).IsEqualTo(secret[^4..]);
                 await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
                 await Assert.That(revoked.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
                 await Assert.That(afterRevoke.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+                await Assert.That(deleted.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
             }
         }
         finally

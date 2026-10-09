@@ -1,6 +1,7 @@
 using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
 using TerraBase.Hosting;
+using TerraBase.Tenancy;
 using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management.Schema;
@@ -19,17 +20,21 @@ public sealed class ListCollectionsEndpoint(IManagementService management, ISche
         Produces<CollectionList>();
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
+        Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
         RequireAuthorization(ApiKeyScopes.DatabasesRead);
         Metadata(new ProjectManagementRoute(), ListenerMetadata.Management);
     }
 
     /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
-        await ManagementRoute.DatabaseAsync(HttpContext, management, cancellationToken) is not { } database
-            ? ErrorResponse.From(new NotFound())
-            : await schema.ListCollectionsAsync(database, cancellationToken) switch
+        await ManagementRoute.DatabaseAsync(HttpContext, management, cancellationToken) switch
+        {
+            TenantContext database => await schema.ListCollectionsAsync(database, cancellationToken) switch
             {
                 CollectionList collections => TypedResults.Ok(collections),
                 Validation error => ErrorResponse.From(error),
-            };
+            },
+            NotFound => ErrorResponse.From(new NotFound()),
+            Unavailable error => ErrorResponse.From(error),
+        };
 }

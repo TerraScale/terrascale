@@ -2,6 +2,7 @@ using System.Net;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
+using TerraBase.Errors;
 using TerraBase.Features.Management.Queries;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
@@ -34,7 +35,11 @@ public sealed class RecommendationSnapshotTests
 
         gate.Dispose();
         await flush.WaitAsync(TimeSpan.FromSeconds(10));
-        var usages = await snapshot.WaitAsync(TimeSpan.FromSeconds(10));
+        var usages = await snapshot.WaitAsync(TimeSpan.FromSeconds(10)) switch
+        {
+            List<QueryFieldUsage> values => values,
+            Unavailable => throw new InvalidOperationException("the query usage catalog was unavailable"),
+        };
         await Assert.That(usages.Single().Queries).IsEqualTo(2);
         // Apply may win the race with the list and remove the recommendation by covering the field.
         var items = (await read).GetProperty("items");
@@ -46,7 +51,12 @@ public sealed class RecommendationSnapshotTests
         using var applied = await apply;
         await Assert.That(applied.StatusCode).IsEqualTo(HttpStatusCode.Created);
         await recorder.FlushAsync(CancellationToken.None);
-        await Assert.That((await recorder.ReadAsync(tenant, CancellationToken.None)).Single().Queries).IsEqualTo(2);
+        var saved = await recorder.ReadAsync(tenant, CancellationToken.None) switch
+        {
+            List<QueryFieldUsage> values => values,
+            Unavailable => throw new InvalidOperationException("the query usage catalog was unavailable"),
+        };
+        await Assert.That(saved.Single().Queries).IsEqualTo(2);
     }
 
     [Test]
@@ -76,6 +86,11 @@ public sealed class RecommendationSnapshotTests
 
         await Assert.That(recommendations.GetProperty("items")[0].GetProperty("queries").GetInt64()).IsEqualTo(1);
         // Nothing is pending after the second flush: this is what the catalog saved.
-        await Assert.That((await recorder.ReadAsync(tenant, CancellationToken.None)).Single().Queries).IsEqualTo(2);
+        var saved = await recorder.ReadAsync(tenant, CancellationToken.None) switch
+        {
+            List<QueryFieldUsage> values => values,
+            Unavailable => throw new InvalidOperationException("the query usage catalog was unavailable"),
+        };
+        await Assert.That(saved.Single().Queries).IsEqualTo(2);
     }
 }

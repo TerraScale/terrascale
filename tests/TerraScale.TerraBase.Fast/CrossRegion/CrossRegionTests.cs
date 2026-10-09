@@ -6,7 +6,9 @@ using System.Text;
 using System.Text.Json;
 using Bogus;
 using Microsoft.Extensions.DependencyInjection;
+using TerraBase.Engine;
 using TerraBase.Engine.Cluster;
+using TerraBase.Errors;
 using TerraBase.Features.CrossRegion;
 using TerraBase.Features.Documents;
 using TerraBase.Primitives;
@@ -141,6 +143,62 @@ public sealed class CrossRegionTests
     }
 
     [Test]
+    public async Task An_unavailable_catalog_keeps_a_remote_copy_and_retries_its_deletion_when_readable()
+    {
+        await using var regions = await Regions.StartAsync();
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
+        var token = deadline.Token;
+        var created = await regions.CreateAsync(regions.GruApi, "orders", "gru-1", "sfo-1");
+        var id = created.GetProperty("id").GetString()!;
+        var collection = new Uri($"/v1/projects/{regions.Project}/databases/orders/collections/items", UriKind.Relative);
+        (await regions.Gru.PostAsJsonAsync(new Uri($"/v1/projects/{regions.Project}/databases/orders/collections", UriKind.Relative), new { name = "items" }, token))
+            .EnsureSuccessStatusCode();
+        await TerraBaseTestServer.EventuallyAsync(async probe => (await regions.Sfo.GetAsync(collection, probe)).StatusCode == HttpStatusCode.OK);
+        var file = Path.Combine(regions.SfoApi.Server.DataDirectory, regions.Organization, regions.Project, id + ".db");
+        await Assert.That(File.Exists(file)).IsTrue();
+
+        // Only its home deletes. The replica still owns its record/file when its catalog becomes unreadable.
+        (await regions.GruApi.Client.PatchAsJsonAsync(regions.Management($"databases/{id}"), new { replicaRegions = Array.Empty<string>() }, token))
+            .EnsureSuccessStatusCode();
+        await TerraBaseTestServer.EventuallyAsync(async probe => (await regions.Sfo.GetAsync(collection, probe)).StatusCode == HttpStatusCode.MisdirectedRequest);
+        var supportedVersion = await WriteCatalogVersionAsync(regions.SfoApi.Server, "\"99\""u8.ToArray(), token);
+        var tenants = regions.SfoApi.Server.Services.GetRequiredService<ITenantDirectory>();
+        // An unknown catalog cannot stand in for a successful, empty durable deletion scan.
+        await Assert.That(await tenants.ReadDatabaseRecordsAsync("gru-1", after: null, token) is Unavailable).IsTrue();
+        var failures = await Regions.CountAsync(regions.SfoApi.Server, "terrabase_wan_failures_total", "reason=\"pull\"", token);
+        (await regions.GruApi.Client.DeleteAsync(regions.Management($"databases/{id}"), token)).EnsureSuccessStatusCode();
+        await TerraBaseTestServer.EventuallyAsync(async probe =>
+            await Regions.CountAsync(regions.SfoApi.Server, "terrabase_wan_failures_total", "reason=\"pull\"", probe) > failures + 2);
+        await Assert.That(File.Exists(file)).IsTrue();
+        await Assert.That(await tenants.DatabaseRecordAsync(new TenantContext(regions.Organization, PlanTier.Hobby, regions.Project, id), token) is Unavailable).IsTrue();
+
+        await WriteCatalogVersionAsync(regions.SfoApi.Server, supportedVersion, token);
+        await TerraBaseTestServer.EventuallyAsync(async probe =>
+            (await regions.SfoApi.Client.GetAsync(regions.Management($"databases/{id}"), probe)).StatusCode == HttpStatusCode.NotFound && !File.Exists(file));
+        var recovered = await tenants.ReadDatabaseRecordsAsync("gru-1", after: null, token) switch
+        {
+            TenantDatabasePage page => page,
+            Unavailable => throw new InvalidOperationException("the recovered catalog refused its deletion scan"),
+        };
+        await Assert.That(recovered.Databases.Any(database => database.DatabaseId == id)).IsFalse();
+        await Assert.That(recovered.Databases.Any(database => database.DatabaseId == regions.Database)).IsTrue();
+        // The surviving database still replicates normally after recovery.
+        var document = regions.Document(ReplicationDocuments.Id("after-catalog-recovery"));
+        (await regions.Gru.PutAsJsonAsync(document, new { value = "recovered" }, token)).EnsureSuccessStatusCode();
+        _ = await Regions.EventuallyReadAsync(regions.Sfo, document, "recovered");
+    }
+
+    private static async Task<byte[]> WriteCatalogVersionAsync(TerraBaseTestServer server, byte[] version, CancellationToken cancellationToken)
+    {
+        var system = await server.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(cancellationToken);
+        await using var write = await system.BeginTransactionAsync(write: true, cancellationToken);
+        var previous = (await write.GetAsync("catalog", "version", cancellationToken))!.Json.ToArray();
+        await write.PutAsync("catalog", "version", version, cancellationToken);
+        await write.CommitAsync(cancellationToken);
+        return previous;
+    }
+
+    [Test]
     public async Task Partitioned_regions_keep_serving_their_writes_and_converge_after_heal()
     {
         await using var regions = await Regions.StartAsync();
@@ -232,7 +290,11 @@ public sealed class CrossRegionTests
 
         await TerraBaseTestServer.EventuallyAsync(async token =>
             await regions.SfoApi.Server.MetricAsync("terrabase_wan_unregistered", "region=\"gru-1\"", token) == 1);
-        var database = created!.Value.Database;
+        var database = created switch
+        {
+            ProvisionedDatabase value => value.Database,
+            _ => throw new InvalidOperationException("the private fixture database was not created"),
+        };
         await Assert.That(File.Exists(Path.Combine(regions.SfoApi.Server.DataDirectory, database.OrganizationId, database.ProjectId!, database.DatabaseId + ".db"))).IsFalse();
     }
 

@@ -1,3 +1,4 @@
+using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
@@ -17,16 +18,22 @@ public sealed class ListManagedDatabasesEndpoint(IManagementService management) 
         Tags("Databases");
         Produces<ManagementPage<ManagedDatabaseBody>>();
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
+        Produces<ErrorBody>(StatusCodes.Status400BadRequest);
+        Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
         RequireAuthorization(ApiKeyScopes.DatabasesRead);
         Metadata(new ProjectManagementRoute(), ListenerMetadata.Management);
     }
 
     /// <inheritdoc />
-    public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
-    {
-        var (after, limit) = ManagementRoute.Page(HttpContext);
-        return await management.ListDatabasesAsync(ManagementRoute.UserId(HttpContext), ManagementRoute.OrganizationId(HttpContext), ManagementRoute.Value(HttpContext, "project"), after, limit, cancellationToken) is { } page
-            ? TypedResults.Ok(new ManagementPage<ManagedDatabaseBody>(page.Items.Select(database => ManagedDatabaseBody.From(database, Listeners.RegionOf(HttpContext))).ToArray(), page.Next))
-            : TypedResults.NotFound();
-    }
+    public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
+        ManagementRoute.CheckPage(HttpContext) switch
+        {
+            Validation error => ErrorResponse.From(error),
+            PageQuery page => await management.ListDatabasesAsync(ManagementRoute.UserId(HttpContext), ManagementRoute.OrganizationId(HttpContext), ManagementRoute.Value(HttpContext, "project"), page.After, page.Limit, cancellationToken) switch
+            {
+                ManagementPage<ManagedDatabase> value => TypedResults.Ok(new ManagementPage<ManagedDatabaseBody>([.. value.Items.Select(database => ManagedDatabaseBody.From(database, Listeners.RegionOf(HttpContext)))], value.Next)),
+                NotFound error => ErrorResponse.From(error),
+                Unavailable error => ErrorResponse.From(error),
+            },
+        };
 }

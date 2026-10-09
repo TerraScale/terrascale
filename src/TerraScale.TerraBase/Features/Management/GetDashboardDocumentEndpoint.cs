@@ -22,6 +22,7 @@ public sealed class GetDashboardDocumentEndpoint(IManagementCommits commits) : E
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
         Produces<ErrorBody>(StatusCodes.Status403Forbidden);
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
+        Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
         RequireAuthorization(UserAuthExtensions.PolicyName);
         Metadata(ListenerMetadata.Management);
     }
@@ -43,13 +44,16 @@ public sealed class GetDashboardDocumentEndpoint(IManagementCommits commits) : E
         };
     }
 
-    private async ValueTask<IResult> ReadAsync(string collection, string id, CancellationToken cancellationToken)
-    {
-        if (await commits.GetDocumentAsync(collection, id, cancellationToken) is not StoredDocument document)
+    private async ValueTask<IResult> ReadAsync(string collection, string id, CancellationToken cancellationToken) =>
+        await commits.GetDocumentAsync(collection, id, cancellationToken) switch
         {
-            return ErrorResponse.From(new NotFound("the document does not exist"));
-        }
+            NotFound error => ErrorResponse.From(error),
+            Unavailable error => ErrorResponse.From(error),
+            StoredDocument document => Respond(collection, document, cancellationToken),
+        };
 
+    private Microsoft.AspNetCore.Http.HttpResults.Ok<DocumentBody> Respond(string collection, StoredDocument document, CancellationToken cancellationToken)
+    {
         var body = GetDocumentEndpoint.Body(collection, document, cancellationToken: cancellationToken) with
         {
             Version = EngineManagementService.DocumentVersion(document, collection),

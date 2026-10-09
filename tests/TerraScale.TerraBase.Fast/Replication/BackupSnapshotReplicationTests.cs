@@ -4,6 +4,7 @@ using System.Text.Json;
 using Bogus;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Configuration;
+using TerraBase.Errors;
 using TerraBase.Fast.Management;
 using TerraBase.Features.ApiKeys;
 using TerraBase.Features.Management;
@@ -154,9 +155,22 @@ public sealed class BackupSnapshotReplicationTests
             var (primary, follower) = a.Services.GetRequiredService<TerraBaseOptions>().CatalogPrimary is null ? (a, b) : (b, a);
             var user = EntityIds.New().ToString();
             var management = primary.Services.GetRequiredService<IManagementService>();
-            var organization = (await management.CreateOrganizationAsync(user, "backups", token)).Value!;
-            var project = (await management.CreateProjectAsync(user, organization.Id, "main", token)).Value!;
-            var database = (await primary.Services.GetRequiredService<ITenantDirectory>().CreateDatabaseAsync(organization.Id, project.Id, "orders", token))!.Value.Database;
+            var organization = await management.CreateOrganizationAsync(user, "backups", token) switch
+            {
+                Organization value => value,
+                _ => throw new InvalidOperationException("the backup fixture was not created"),
+            };
+            var project = await management.CreateProjectAsync(user, organization.Id, "main", token) switch
+            {
+                Project value => value,
+                _ => throw new InvalidOperationException("the backup fixture was not created"),
+            };
+            var database = await primary.Services.GetRequiredService<ITenantDirectory>().CreateDatabaseAsync(organization.Id, project.Id, "orders", token) switch
+            {
+                ProvisionedDatabase value => value.Database,
+                NotFound => throw new InvalidOperationException("the backup database fixture was not created"),
+                Unavailable => throw new InvalidOperationException("the backup database catalog was unavailable"),
+            };
             var key = await primary.IssueAsync(organization.Id, Scopes);
             using var writer = tls.CreateClient(primary.ClientAddress!, key);
             using var reader = tls.CreateClient(follower.ClientAddress!, key);

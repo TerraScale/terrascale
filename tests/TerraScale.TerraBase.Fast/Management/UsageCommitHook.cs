@@ -93,7 +93,7 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
 
     private sealed class Quota(StorageQuota inner, UsageCommitHook hook) : IStorageQuota, IDisposable
     {
-        public async ValueTask<StorageQuotaLease> EnterAsync(TenantContext database, IDatabaseStore store, CancellationToken cancellationToken)
+        public async ValueTask<StorageQuotaEntry> EnterAsync(TenantContext database, IDatabaseStore store, CancellationToken cancellationToken)
         {
             if (hook.BeforeDocumentQuota is { } before)
             {
@@ -103,7 +103,7 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
             return await inner.EnterAsync(database, store, cancellationToken);
         }
 
-        public async ValueTask<StorageQuotaGroupLease> EnterOrganizationsAsync(IReadOnlyList<string> organizationIds, CancellationToken cancellationToken)
+        public async ValueTask<StorageQuotaGroupEntry> EnterOrganizationsAsync(IReadOnlyList<string> organizationIds, CancellationToken cancellationToken)
         {
             if (hook.BeforeQuota is { } before)
             {
@@ -172,7 +172,7 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
 
         // Restores and branches copy their source here.
         public async ValueTask<bool> CreateDatabaseWithIntentAsync(
-            TenantContext database, TenantContext? source, Func<CancellationToken, ValueTask> recordIntent, CancellationToken cancellationToken)
+            TenantContext database, TenantContext? source, Func<CancellationToken, ValueTask<bool>> recordIntent, CancellationToken cancellationToken)
         {
             if (source is not null && hook.BeforeCopy is { } beforeCopy)
             {
@@ -349,6 +349,8 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
         public ValueTask<CollectionInfo?> GetCollectionAsync(string name, CancellationToken cancellationToken) => inner.GetCollectionAsync(name, cancellationToken);
         public ValueTask<JsonElement?> GetCollectionSchemaAsync(string name, CancellationToken cancellationToken) => inner.GetCollectionSchemaAsync(name, cancellationToken);
         public ValueTask<bool> SetCollectionSchemaAsync(string name, JsonElement? schema, CancellationToken cancellationToken) => inner.SetCollectionSchemaAsync(name, schema, cancellationToken);
+
+        public ValueTask<bool> HasCollectionStateAsync(string name, bool prefix, CancellationToken cancellationToken) => inner.HasCollectionStateAsync(name, prefix, cancellationToken);
         public ValueTask<(IReadOnlyList<CollectionInfo> Collections, bool HasMore)> ListCollectionsAsync(string? afterName, int limit, CancellationToken cancellationToken) => inner.ListCollectionsAsync(afterName, limit, cancellationToken);
         public ValueTask<bool> DropCollectionAsync(string name, CancellationToken cancellationToken) => inner.DropCollectionAsync(name, cancellationToken);
         public ValueTask<long> CountDocumentsAsync(string collection, CancellationToken cancellationToken) => inner.CountDocumentsAsync(collection, cancellationToken);

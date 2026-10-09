@@ -20,20 +20,6 @@
     <Error Condition="'@(_NewtonsoftPackage)' != ''" Text="Newtonsoft packages are banned in TerraBase ('@(_NewtonsoftPackage->Distinct())'). Use System.Text.Json; remove the package or the dependency that brings it in." />
   </Target>
 
-  <!-- Expected failures are union values, never exceptions (docs/error-handling.md). The build fails when code
-       constructs ApiException or BadHttpRequestException (the exceptions that carry expected failures to an HTTP
-       status) outside the files below, which still do until their feature is converted. Each conversion removes
-       its entry; the last one moves both constructors to BannedSymbols.txt and deletes this target. -->
-  <PropertyGroup>
-    <ExpectedFailureExceptionFiles>[/\\]Features[/\\]Management[/\\](ManagementRoute|EngineManagementService)\.cs$</ExpectedFailureExceptionFiles>
-  </PropertyGroup>
-  <Target Name="BanExpectedFailureExceptions" BeforeTargets="CoreCompile">
-    <ItemGroup>
-      <_ExpectedFailureException Include="@(Compile)" Condition="!$([System.Text.RegularExpressions.Regex]::IsMatch('%(Compile.FullPath)', '$(ExpectedFailureExceptionFiles)')) and $([System.Text.RegularExpressions.Regex]::IsMatch($([System.IO.File]::ReadAllText('%(Compile.FullPath)')), 'new\s+(global::)?([\w.]+\.)?(ApiException|BadHttpRequestException)\b'))" />
-    </ItemGroup>
-    <Error Condition="'@(_ExpectedFailureException)' != ''" Text="Expected failures are returned as union cases (NotFound, Conflict, Validation, ...) and mapped by ErrorResponse.From, not thrown; see docs/error-handling.md. Constructs ApiException or BadHttpRequestException: @(_ExpectedFailureException->'%(Identity)', ', ')" />
-  </Target>
-
   <!-- Integration suites (Fast and Slow): TUnit executables driving the real server. -->
   <PropertyGroup Condition="'$(IsTestProject)' == 'true'">
     <IsPackable>false</IsPackable>

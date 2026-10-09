@@ -199,15 +199,15 @@ public sealed class QueryShapeForwardingLifetimeTests
                         record, TerraBaseJsonContext.Default.QueryShapeSenderRecord, CancellationToken.None);
                 }
                 return true;
-            }, CancellationToken.None);
+            }, static refused => throw new InvalidOperationException(refused.Message), CancellationToken.None);
         }
     }
 
     private static async Task<long> SenderCountAsync(SystemCatalog catalog) => await catalog.ReadAsync(
-        transaction => transaction.CountDocumentsAsync("query_shape_senders", CancellationToken.None), CancellationToken.None);
+        transaction => transaction.CountDocumentsAsync("query_shape_senders", CancellationToken.None), static refused => throw new InvalidOperationException(refused.Message), CancellationToken.None);
 
     private static async Task<byte[]?> SenderBytesAsync(SystemCatalog catalog, QueryShapesBatch batch) => await catalog.ReadAsync(async transaction =>
-        (await transaction.GetAsync("query_shape_senders", batch.Sender + ":" + batch.Epoch.ToBase64(), CancellationToken.None))?.Json.ToArray(),
+        (await transaction.GetAsync("query_shape_senders", batch.Sender + ":" + batch.Epoch.ToBase64(), CancellationToken.None))?.Json.ToArray(), static refused => throw new InvalidOperationException(refused.Message),
         CancellationToken.None);
 
     private static async Task RefusedAsync(CatalogQueryShapes.CatalogQueryShapesClient client, QueryShapesBatch batch, StatusCode expected)

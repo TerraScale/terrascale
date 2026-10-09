@@ -3,8 +3,10 @@ using System.Text.Json;
 using Bogus;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
+using TerraBase.Errors;
 using TerraBase.Features.Management.Indexes;
 using TerraBase.Hosting;
+using TerraBase.Tenancy;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Management;
@@ -29,6 +31,59 @@ public sealed class AutoIndexPolicyTests
         await SetPolicyAsync(api, database, collection, true);
         await GetPolicyAsync(api, database, collection, true);
         await SetPolicyAsync(api, database, collection, true);
+    }
+
+    [Test]
+    public async Task An_unreadable_catalog_refuses_policy_reads_and_writes_without_losing_saved_opt_outs()
+    {
+        var token = TestContext.Current!.Execution.CancellationToken;
+        await using var api = await ManagementApi.StartAsync();
+        var database = await api.CreateManagedDatabaseAsync();
+        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
+        await SetPolicyAsync(api, database, "people", false);
+        using var client = PolicyClient(api, database);
+        var tenant = new TenantContext(database.Organization, PlanTier.Hobby, database.Project, database.Id);
+        var indexes = api.Server.Services.GetRequiredService<IIndexService>();
+        var store = await api.Server.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(token);
+        var records = $"databases/{database.Id}/auto_index_policies";
+        byte[] version;
+        byte[] policy;
+        await using (var transaction = await store.BeginTransactionAsync(write: false, token))
+        {
+            version = (await transaction.GetAsync("catalog", "version", token))!.Json.ToArray();
+            policy = (await transaction.GetAsync(records, "people", token))!.Json.ToArray();
+        }
+
+        await WriteVersionAsync("\"99\""u8.ToArray());
+        await Assert.That(await indexes.GetAutoIndexPolicyAsync(api.User, tenant, "people", token) is Unavailable).IsTrue();
+        await ErrorAssert.ErrorAsync(client.GetAsync(PolicyUri(database, "people"), token), HttpStatusCode.ServiceUnavailable,
+            "unavailable", "the management catalog has an old or unsupported format; discard the affected data");
+        foreach (var enabled in new[] { false, true })
+        {
+            await Assert.That(await indexes.SetAutoIndexPolicyAsync(api.User, tenant, "people", enabled, token) is Unavailable).IsTrue();
+            await ErrorAssert.ErrorAsync(client.PutAsJsonAsync(PolicyUri(database, "people"), new { enabled }, token),
+                HttpStatusCode.ServiceUnavailable, "unavailable", "the management catalog has an old or unsupported format; discard the affected data");
+        }
+
+        await using (var transaction = await store.BeginTransactionAsync(write: false, token))
+        {
+            var saved = await transaction.GetAsync(records, "people", token);
+            await Assert.That(saved!.Json.Span.SequenceEqual(policy)).IsTrue();
+            await Assert.That(await transaction.CountDocumentsAsync(records, token)).IsEqualTo(1);
+        }
+
+        await WriteVersionAsync(version);
+        await GetPolicyAsync(api, database, "people", false);
+        await SetPolicyAsync(api, database, "people", true);
+        await GetPolicyAsync(api, database, "people", true);
+        await Assert.That(await CountOptOutsAsync(api, database)).IsEqualTo(0);
+
+        async Task WriteVersionAsync(byte[] value)
+        {
+            await using var transaction = await store.BeginTransactionAsync(write: true, token);
+            await transaction.PutAsync("catalog", "version", value, token);
+            await transaction.CommitAsync(token);
+        }
     }
 
     [Test]

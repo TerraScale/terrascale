@@ -20,6 +20,7 @@ public sealed class CreateBackupEndpoint(IManagementService management, IManaged
         Produces<DatabaseBackup>(StatusCodes.Status201Created);
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
         Produces<ErrorBody>(StatusCodes.Status403Forbidden);
+        Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
         RequireAuthorization(ApiKeyScopes.DatabasesWrite);
         Metadata(new ProjectManagementRoute(), ListenerMetadata.Management);
     }
@@ -30,10 +31,12 @@ public sealed class CreateBackupEndpoint(IManagementService management, IManaged
         {
             NotFound error => ErrorResponse.From(error),
             Forbidden error => ErrorResponse.From(error),
+            Unavailable error => ErrorResponse.From(error),
             TenantContext database => await backups.CreateBackupAsync(ManagementRoute.UserId(HttpContext), ManagementRoute.OrganizationId(HttpContext), database, cancellationToken) switch
             {
                 DatabaseBackup backup => TypedResults.Created($"{ManagementRoute.DatabasePath(HttpContext, database)}/backups/{backup.Id}", backup),
                 NotFound error => ErrorResponse.From(error),
+                Unavailable error => ErrorResponse.From(error),
             },
         };
 }

@@ -52,13 +52,25 @@ internal sealed class ShapeSubscriptionService(
 
                 // A flushed event releases its flight reference before the next live wait, rather than at disconnect.
                 using var results = QosContext.Enter(request.Database, memory);
-                var current = await tenants.RegisteredAsync(request.Database, stop.Token).ConfigureAwait(false) == true
-                    ? await tenants.FindDatabaseAsync(request.Database.OrganizationId, request.Database.ProjectId!,
-                        (string)context.Request.RouteValues["database"]!, stop.Token).ConfigureAwait(false)
-                    : null;
-                if (current is not { } database || database.DatabaseId != request.Database.DatabaseId)
+                var registered = await tenants.RegisteredAsync(request.Database, stop.Token).ConfigureAwait(false);
+                if (registered is not true)
                 {
-                    return await FailAsync(context, DocumentRoute.UnknownDatabase, stop.Token).ConfigureAwait(false);
+                    return registered switch
+                    {
+                        bool => await FailAsync(context, DocumentRoute.UnknownDatabase, stop.Token).ConfigureAwait(false),
+                        Unavailable error => await FailAsync(context, error, stop.Token).ConfigureAwait(false),
+                    };
+                }
+
+                var current = await tenants.FindDatabaseAsync(request.Database.OrganizationId, request.Database.ProjectId!,
+                    (string)context.Request.RouteValues["database"]!, stop.Token).ConfigureAwait(false);
+                if (current is not TenantContext database || database.DatabaseId != request.Database.DatabaseId)
+                {
+                    return current switch
+                    {
+                        TenantContext or NotFound => await FailAsync(context, DocumentRoute.UnknownDatabase, stop.Token).ConfigureAwait(false),
+                        Unavailable error => await FailAsync(context, error, stop.Token).ConfigureAwait(false),
+                    };
                 }
 
                 using var tenant = QosContext.Enter(database);
@@ -81,9 +93,14 @@ internal sealed class ShapeSubscriptionService(
                 }
 
                 // Placement can change during a live wait; do not deliver a page read under the old placement.
-                if (await tenants.RegisteredAsync(request.Database, stop.Token).ConfigureAwait(false) != true)
+                var stillRegistered = await tenants.RegisteredAsync(request.Database, stop.Token).ConfigureAwait(false);
+                if (stillRegistered is not true)
                 {
-                    return await FailAsync(context, DocumentRoute.UnknownDatabase, stop.Token).ConfigureAwait(false);
+                    return stillRegistered switch
+                    {
+                        bool => await FailAsync(context, DocumentRoute.UnknownDatabase, stop.Token).ConfigureAwait(false),
+                        Unavailable error => await FailAsync(context, error, stop.Token).ConfigureAwait(false),
+                    };
                 }
 
                 usage.RecordRead(request.Database);

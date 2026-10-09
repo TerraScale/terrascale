@@ -50,6 +50,7 @@ public sealed class RestoreBackupEndpoint(IManagementService management, IManage
         {
             NotFound error => ErrorResponse.From(error),
             Forbidden error => ErrorResponse.From(error),
+            Unavailable error => ErrorResponse.From(error),
             TenantContext database => await backups.RestoreAsync(
                 ManagementRoute.UserId(HttpContext), organization, database, ManagementRoute.Value(HttpContext, "backup"), name, cancellationToken) switch
             {

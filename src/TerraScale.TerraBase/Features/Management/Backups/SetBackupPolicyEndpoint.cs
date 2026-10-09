@@ -24,6 +24,7 @@ public sealed class SetBackupPolicyEndpoint(IManagementService management, IMana
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
         Produces<ErrorBody>(StatusCodes.Status403Forbidden);
+        Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
         RequireAuthorization(ApiKeyScopes.DatabasesWrite);
         Metadata(new ProjectManagementRoute(), ListenerMetadata.Management);
     }
@@ -47,12 +48,14 @@ public sealed class SetBackupPolicyEndpoint(IManagementService management, IMana
         {
             NotFound error => ErrorResponse.From(error),
             Forbidden error => ErrorResponse.From(error),
+            Unavailable error => ErrorResponse.From(error),
             TenantContext database => await backups.SetPolicyAsync(
                 ManagementRoute.UserId(HttpContext), ManagementRoute.OrganizationId(HttpContext), database, cron, retentionDays, request.Disabled ?? false, cancellationToken) switch
             {
                 BackupPolicy policy => TypedResults.Ok(policy),
                 NotFound error => ErrorResponse.From(error),
                 Forbidden error => ErrorResponse.From(error),
+                Unavailable error => ErrorResponse.From(error),
             },
         };
     }

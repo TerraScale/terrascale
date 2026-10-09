@@ -4,6 +4,7 @@ using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
 using TerraBase.Features.Backup;
 using TerraBase.Hosting;
+using TerraBase.Tenancy;
 using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management.Backups;
@@ -42,9 +43,15 @@ public sealed class GetRestoreWindowEndpoint(IManagementService management, IPoi
     /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
-        if (await ManagementRoute.DatabaseAsync(HttpContext, management, cancellationToken) is not { } database)
+        var resolved = await ManagementRoute.DatabaseAsync(HttpContext, management, cancellationToken);
+        if (resolved is not TenantContext database)
         {
-            return ErrorResponse.From(new NotFound());
+            return resolved switch
+            {
+                NotFound error => ErrorResponse.From(error),
+                Unavailable error => ErrorResponse.From(error),
+                TenantContext => throw new System.Diagnostics.UnreachableException(),
+            };
         }
 
         try
@@ -52,8 +59,12 @@ public sealed class GetRestoreWindowEndpoint(IManagementService management, IPoi
             return BackupDestinationRoute.Source(HttpContext.Request.Query["destination"]) switch
             {
                 Validation error => ErrorResponse.From(error),
-                string source => await restore.GetWindowAsync(database, cancellationToken, source) is { } window
-                    ? TypedResults.Ok(window) : ErrorResponse.From(new NotFound()),
+                string source => await restore.GetWindowAsync(database, cancellationToken, source) switch
+                {
+                    RestoreWindow window => TypedResults.Ok(window),
+                    NotFound error => ErrorResponse.From(error),
+                    Unavailable error => ErrorResponse.From(error),
+                },
             };
         }
         catch (InvalidDataException)

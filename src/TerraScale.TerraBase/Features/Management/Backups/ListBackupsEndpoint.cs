@@ -1,6 +1,7 @@
 using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
 using TerraBase.Hosting;
+using TerraBase.Tenancy;
 using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management.Backups;
@@ -19,6 +20,7 @@ public sealed class ListBackupsEndpoint(IManagementService management, IManagedB
         Produces<ManagementPage<DatabaseBackup>>();
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
+        Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
         RequireAuthorization(ApiKeyScopes.DatabasesRead);
         Metadata(new ProjectManagementRoute(), ListenerMetadata.Management);
     }
@@ -28,8 +30,15 @@ public sealed class ListBackupsEndpoint(IManagementService management, IManagedB
         ManagementRoute.CheckPage(HttpContext) switch
         {
             Validation error => ErrorResponse.From(error),
-            PageQuery page => await ManagementRoute.DatabaseAsync(HttpContext, management, cancellationToken) is { } database
-                ? TypedResults.Ok(await backups.ListBackupsAsync(database.OrganizationId, database.DatabaseId!, page.After, page.Limit, cancellationToken))
-                : ErrorResponse.From(new NotFound()),
+            PageQuery page => await ManagementRoute.DatabaseAsync(HttpContext, management, cancellationToken) switch
+            {
+                TenantContext database => await backups.ListBackupsAsync(database.OrganizationId, database.DatabaseId!, page.After, page.Limit, cancellationToken) switch
+                {
+                    ManagementPage<DatabaseBackup> backupPage => TypedResults.Ok(backupPage),
+                    Unavailable error => ErrorResponse.From(error),
+                },
+                NotFound => ErrorResponse.From(new NotFound()),
+                Unavailable error => ErrorResponse.From(error),
+            },
         };
 }

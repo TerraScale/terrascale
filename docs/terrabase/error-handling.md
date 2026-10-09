@@ -63,11 +63,13 @@ To validate several inputs, switch over a tuple: `(Validation error, _) => …, 
    `make analyzer-check` compiles the native-union fixture in `src/TerraBase.Analyzers.BuildCheck` and
    checks the expected diagnostics for direct, awaited, configured, nullable, constrained-generic and derived-task
    results; assigned values and explicit `_ =` statements are negative controls.
-3. **Throwing expected failures:** the `BanExpectedFailureExceptions` target in `Directory.Build.targets` fails
-   the build when code constructs `ApiException` or `BadHttpRequestException` outside the files that still do so
-   (listed in `ExpectedFailureExceptionFiles`). Its pattern matches `new ApiException(`, not a target-typed `new(…)`
-   returned as one: write the type out in the files that still construct it. The final conversion replaces the target
-   with `BannedSymbols.txt`, which sees every form.
+3. **Throwing expected failures:** `BannedSymbols.txt` forbids every constructor overload of
+   `BadHttpRequestException` through RS0030, including aliases and target-typed `new(...)`. The obsolete
+   `ApiException` type and its middleware bridge are removed; that type is banned too. The migration
+   allowlist and regex build target are gone. Framework-created `BadHttpRequestException` values are still
+   caught at the HTTP boundary and mapped to the error envelope. `make analyzer-check` also verifies
+   RS0030 for all four overloads through an alias and for target-typed construction; catching the framework
+   type is its negative control.
 
 Exceptions remain for bugs and broken invariants (`InvalidOperationException`, `ArgumentOutOfRangeException`,
 `UnreachableException`), for startup configuration errors (`TerraBaseConfigurationException`, exit code 2), and
@@ -80,36 +82,42 @@ malformed JSON body, with `400 invalid_request`.
 1. Give each operation its own union. Return cases instead of throwing, and instead of error enums or `null`.
 2. Make validators return `Valid<T>`. Make endpoints switch, and send every failure through `ErrorResponse.From`.
    Declare `Produces<ErrorBody>(status)`.
-3. Remove the folder's files from `ExpectedFailureExceptionFiles`. After the last one, move both constructors to
-   `BannedSymbols.txt` and delete the target.
+3. Keep the constructor bans in `BannedSymbols.txt`; expected failures must never use an exception bridge.
 4. Cover every failure branch in the Fast suite (status, `error.code`, `error.message`), as
    `ManagementErrorTests` does.
 
 ## Checklist
 
-`throw new` counts in `src/TerraBase`, excluding generated `obj/` code: 298 (TS-538 recounted them
-after TS-463, TS-464, TS-521, TS-473, TS-561, TS-574 and the Documents conversion, plus TS-581's three; TS-518's figure of 127 predates them). "Expected" counts the
-`ApiException`/`BadHttpRequestException` constructions that `BanExpectedFailureExceptions` matches. The other throws
-in each row are invariants or configuration errors to review during the conversion.
+`throw new` counts in `src/TerraBase`, excluding generated `obj/` code: 456 (TS-538).
+"Expected" counts constructions of `ApiException`/`BadHttpRequestException`; none remain and the compiler bans
+their construction. Internal parser aborts, I/O and gRPC boundary exceptions, startup configuration failures and
+invariant checks remain as described below.
 
 | Folder | `throw new` | Expected | State |
 |--------|------------:|---------:|-------|
-| `Features/Management` (orgs, projects) | 0 | 0 | **Not converted on `main`.** TS-518's reference conversion (commit `84b6ebd`) was lost when it was rebased onto TS-463; its endpoints still go through `ManagementRoute.Error` and the throwing validators. |
+| `Features/Management` (orgs, projects) | 0 | 0 | **Converted** (TS-538): each operation returns its native union; validators return `Valid<T>` and endpoints map failures through `ErrorResponse.From`. |
 | `Features/Management` commits, versions, dashboard documents (TS-521) | 0 | 0 | **Converted**: `CommitResult(CommitOutcome, CommitRejected)` carries the failing operation's index to `ErrorResponse.From(error, op)`; a document operation's `DocumentRejected` becomes an `OperationFailed` with the same `Failure` |
-| `Features/Management/Schema` | 0 | 0 | **Converted** (TS-538) |
+| `Features/Management/Schema` | 0 | 0 | **Converted** (TS-538): schema inference and collection counts return native unions; engine capacity is converted at the storage call |
 | `Features/Management/Credentials` | 0 | 0 | **Converted** (TS-538): `IApiKeyStore` project-key operations return unions; a viewer's change is `ManagementErrors.RoleTooLow` (`403 forbidden_role`) |
-| `Features/Management/Backups` | 2 | 0 | **Converted** (TS-538): create, policy and restore return unions; `ManagementRoute.CheckWritableDatabaseAsync` and `ManagementErrors.NameTaken` (`409 name_taken`) are shared. The two throws are invariants |
-| `Features/Management/Indexes` | 0 | 0 | **Converted** (TS-538): `IndexErrors.Exists` (`409 index_exists`) and `IndexErrors.DefaultNameTaken` (`409 name_taken`) |
-| `Features/Management/Queries` | 32 | 0 | **Converted** (TS-538): `SqlSubset.Parse` returns `Valid<SqlStatement>`; run and check return `invalid_query` past the engine read budget. Kept: 31 `FormatException` aborts inside the SQL subset translator, which `Parse` catches with the parser's own `ParserException`, so none leaves `SqlSubset`; one invariant |
-| `Features/Management` root (access, databases, catalog, recovery, commit invariants) | 24 | 7 | `ManagementError`/`ManagementResult` and throwing validators remain. The catalog version guard in `EnsureCatalogAsync` still throws `503 unavailable` under every operation, orgs and projects included; it becomes an `Unavailable` case when access and databases convert. |
-| `Features/Management/Usage` | 5 | 0 | Review: `QueryCapacityException` thrown and caught inside the folder; `RpcException` answers of the peer `CatalogUsage` service |
+| `Features/Management/Backups` | 5 | 0 | **Converted** (TS-538): create, policy and restore return unions; `ManagementRoute.CheckWritableDatabaseAsync` and `ManagementErrors.NameTaken` (`409 name_taken`) are shared. The five throws are invariants |
+| `Features/Management/Indexes` | 2 | 0 | **Converted** (TS-538): `IndexErrors.Exists` (`409 index_exists`) and `IndexErrors.DefaultNameTaken` (`409 name_taken`) |
+| `Features/Management/Queries` | 43 | 0 | **Converted** (TS-538): `SqlSubset.Parse` returns `Valid<SqlStatement>`; run and check return `invalid_query` past the engine read budget. Kept: 30 `FormatException` aborts inside the SQL subset translator, which `Parse` catches with the parser's own `ParserException`, so none leaves `SqlSubset`; eleven invariants and two gRPC boundary failures |
+| `Features/Management` root (access, databases, catalog, recovery, commit invariants) | 61 | 0 | **Converted** (TS-538): membership, invitations, ownership, audit and database operations return native unions. Catalog guards return `Unavailable` for unsupported formats and populated catalogs without a format marker; callers propagate that case through HTTP, commits and peer boundaries. `ManagementError`, `ManagementResult` and throwing validators are removed. Remaining throws protect invariants. |
+| `Features/Management/Usage` | 10 | 0 | **Converted** (TS-538): usage reads carry `Validation` and `Unavailable`; capacity failures are caught inside the service and use `400 invalid_query` and peer failures use gRPC status. Remaining throws are local budget aborts, boundary failures and invariants |
 | `Features/Documents` shapes (`GetShapeEndpoint`, `ShapeService`) | 1 | 0 | **Converted** (TS-538): `ShapeReadResult(ShapeResult, NotFound, Validation, QuotaExceeded)`; a collapsed read shares its union result, and only unexpected failures travel as exceptions. `must_refetch` stays a 409 result with the current handle. One invariant |
 | `Features/Documents` request edge (`DocumentRoute`, `RequestJson`, `ETags`, `DocumentPatch` parsing, the document, collection and database endpoints) | 2 | 0 | **Converted** (TS-538): `Check…` helpers return `TenantResult`, `KeyResult`, `BodyResult`, `Valid<T>`, `NotModifiedResult` and `VersionCheck`, and `DocumentPatch.CheckMerge`/`CheckOps` return `Valid<DocumentPatch>`; endpoints switch over them. The `DocumentRoute.Throwable` bridge and its throwing wrappers are gone. Kept: `RequestJson`'s internal `JsonException` for a null list element, which its own reader catches, and one invariant |
 | `Features/Documents/QueryParser` | 3 | 0 | **Converted** (TS-538): `CheckParse`, `CheckFilter`, `CheckCursor` and `CheckPosition` return `Valid<T>`. As in `SqlSubset`, the recursive filter translation rejects a node with a `FormatException` that only those entry points catch, each answering with its own code, so none leaves the class; `Position` keeps its own `FormatException` to fall through to `invalid_cursor` |
 | `Features/Documents` service, transactions and patch application (`DocumentService`, `TransactionEndpoint`, `DocumentPatch.Apply`, `DocumentCache`) | 4 | 0 | **Converted** (TS-538): `IDocumentService` returns `CollectionResult`, `Found<CollectionPage>`, `DocumentRead`, `QueryResult`, `WriteOutcome` and `ApplyOutcome`; a failed write is `DocumentRejected(Failure, Op)`, which a transaction answers with `error.op`. `DocumentPatch.Apply` returns `PatchOutcome(Done, Validation, Conflict)`. Engine capacity, write-limit and document-validation exceptions are caught where the service calls the engine. Four invariants |
-| `Features/Replication` | 87 | 0 | Keep (TS-464): peer gRPC boundary only, no HTTP failures. `RpcException` status for peers, `InvalidDataException` for a protocol violation that ends the stream, and invariants |
-| `Features/ApiKeys` | 2 | 0 | Review: request validation returns `TypedResults.BadRequest`; the throws are invariants |
-| `Features/UserAuth` | 2 | 0 | Review |
-| `Engine` | 85 | 0 | Review: `QueryCapacityException`, `StorageWriteLimitException` and `FormatException` cross into Documents |
-| `Configuration` | 33 | 0 | Keep: startup configuration errors, exit code 2 |
+| `Features/Replication` | 93 | 0 | **Converted** (TS-538): eligibility failures propagate as unions; unknown registration retains files and replication progress. Kept at the peer gRPC boundary (TS-464): `RpcException` status for peers, `InvalidDataException` for a protocol violation that ends the stream, and invariants |
+| `Features/ApiKeys` | 4 | 0 | **Converted** (TS-538): authentication lookup, issue and project-key operations return native unions; request validation uses `ErrorResponse.From`. Remaining throws are invariants |
+| `Features/UserAuth` | 5 | 0 | **Converted** (TS-538): refresh returns cached signing keys or `Unavailable`; framework authentication results remain at the authentication boundary |
+| `Engine` | 108 | 0 | Keep: I/O, capacity and validation exceptions are converted where feature services call the engine; other throws protect engine invariants |
+| `Configuration` | 54 | 0 | Keep: startup configuration errors, exit code 2 |
 | `Program.cs` | 1 | 0 | Keep: startup configuration error |
+| `Features/Documents` subscriptions | 2 | 0 | **Converted** (TS-538): unreadable catalogs return 503 before streaming or a terminal `unavailable` SSE event; two resource ownership invariants remain |
+| `Hosting` | 1 | 0 | Keep: URI construction invariant |
+| `Features/Backup` | 24 | 0 | **Converted** (TS-538): restore windows return unions and unknown plans skip retention; remaining exceptions are backup I/O, protocol validation and invariants |
+| `Features/CrossRegion` | 25 | 0 | **Converted** (TS-538): adoption, placement and WAN results use unions; unavailable catalogs keep deletion retries pending. Remaining exceptions are peer protocol, I/O and invariants |
+| `Primitives` | 8 | 0 | Keep: invariant and resource ownership checks |
+
+`Tenancy/ITenantDirectory` also uses native unions: an unreadable catalog is `Unavailable`, never a negative registration, an empty inventory or a Hobby plan. Known missing organizations retain their documented Hobby default.

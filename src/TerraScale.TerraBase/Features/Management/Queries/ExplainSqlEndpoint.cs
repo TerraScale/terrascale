@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Errors;
@@ -62,9 +63,15 @@ public sealed class ExplainSqlEndpoint(ITenantDirectory tenants, IQueryService q
         using var upload = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token);
         try
         {
-            if (await tenants.ResolveProjectDatabaseAsync(project!, name!, upload.Token) is not { } resolved)
+            var found = await tenants.ResolveProjectDatabaseAsync(project!, name!, upload.Token);
+            if (found is not ResolvedProjectDatabase resolved)
             {
-                return ErrorResponse.From(new NotFound());
+                return found switch
+                {
+                    NotFound => ErrorResponse.From(new NotFound()),
+                    Unavailable error => ErrorResponse.From(error),
+                    ResolvedProjectDatabase => throw new UnreachableException(),
+                };
             }
 
             var database = resolved.Database;
@@ -151,9 +158,14 @@ public sealed class ExplainSqlEndpoint(ITenantDirectory tenants, IQueryService q
             return afterInitialization;
         }
 
-        if (!initialized)
+        if (initialized is not Done)
         {
-            return ErrorResponse.From(new NotFound());
+            return initialized switch
+            {
+                NotFound => ErrorResponse.From(new NotFound()),
+                Unavailable error => ErrorResponse.From(error),
+                Done => throw new UnreachableException(),
+            };
         }
 
         var check = await queries.CheckAsync(database, statement, cancellationToken);
@@ -172,8 +184,18 @@ public sealed class ExplainSqlEndpoint(ITenantDirectory tenants, IQueryService q
 
     private async ValueTask<IResult?> CheckCurrentAsync(TenantContext database, string name, CancellationToken cancellationToken)
     {
-        if (await tenants.ResolveProjectDatabaseAsync(database.ProjectId!, name, cancellationToken) is not { } current
-            || current.Database.OrganizationId != database.OrganizationId || current.Database.ProjectId != database.ProjectId
+        var found = await tenants.ResolveProjectDatabaseAsync(database.ProjectId!, name, cancellationToken);
+        if (found is not ResolvedProjectDatabase current)
+        {
+            return found switch
+            {
+                NotFound => ErrorResponse.From(new NotFound()),
+                Unavailable error => ErrorResponse.From(error),
+                ResolvedProjectDatabase => throw new UnreachableException(),
+            };
+        }
+
+        if (current.Database.OrganizationId != database.OrganizationId || current.Database.ProjectId != database.ProjectId
             || current.Database.DatabaseId != database.DatabaseId)
         {
             return ErrorResponse.From(new NotFound());

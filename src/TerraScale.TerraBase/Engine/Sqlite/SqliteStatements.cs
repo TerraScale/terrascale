@@ -73,6 +73,20 @@ internal static class SqliteStatements
         ON CONFLICT (name) DO NOTHING;
         """;
 
+    public const string HasCollectionState = """
+        SELECT EXISTS(SELECT 1 FROM documents WHERE collection >= $from AND collection < $to)
+            OR EXISTS(SELECT 1 FROM collections WHERE name >= $from AND name < $to)
+            OR EXISTS(SELECT 1 FROM changes WHERE collection >= $from AND collection < $to AND body IS NULL)
+            OR EXISTS(SELECT 1 FROM change_log INDEXED BY change_log_by_offset WHERE collection >= $from AND collection < $to);
+        """;
+
+    public const string HasCollectionStateFrom = """
+        SELECT EXISTS(SELECT 1 FROM documents WHERE collection >= $from)
+            OR EXISTS(SELECT 1 FROM collections WHERE name >= $from)
+            OR EXISTS(SELECT 1 FROM changes WHERE collection >= $from AND body IS NULL)
+            OR EXISTS(SELECT 1 FROM change_log INDEXED BY change_log_by_offset WHERE collection >= $from);
+        """;
+
     public const string GetCollection = "SELECT name, created_at, generation, entity_id FROM collections WHERE name = $collection;";
 
     public const string AdoptCollectionIdentity = "UPDATE collections SET entity_id = $entityId, created_at = $created WHERE name = $collection;";
@@ -395,6 +409,8 @@ internal static class SqliteStatements
         [nameof(Incarnation)] = Incarnation,
         [nameof(RenewIncarnation)] = RenewIncarnation,
         [nameof(CreateCollection)] = CreateCollection,
+        [nameof(HasCollectionState)] = HasCollectionState,
+        [nameof(HasCollectionStateFrom)] = HasCollectionStateFrom,
         [nameof(GetCollection)] = GetCollection,
         [nameof(ListCollectionsFirst)] = ListCollectionsFirst,
         [nameof(ListCollectionsAfter)] = ListCollectionsAfter,

@@ -104,7 +104,11 @@ internal sealed partial class ReplicationService(
         // checking again: an incarnation other than the one before the check was made after it, and goes too once the catalog
         // confirms the database is unregistered; the engine deletes only that incarnation, never one that replaced it.
         var before = (await engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false))?.Incarnation;
-        if (await tenants.RegisteredAsync(database, cancellationToken).ConfigureAwait(false) is not true)
+        if (await tenants.RegisteredAsync(database, cancellationToken).ConfigureAwait(false) switch
+        {
+            bool registered => !registered,
+            Unavailable => true, // Refuse the stream; UNKNOWN never authorizes deletion.
+        })
         {
             await stream.SendAsync(Error(StreamErrorCode.StreamErrorUnauthorized, retryable: true)).ConfigureAwait(false);
             return;
@@ -113,9 +117,15 @@ internal sealed partial class ReplicationService(
         checkpoint("replication.registered", database);
         // The receiving database's own origin identifies this node on the stream, in Welcome and in every acknowledgment.
         var (store, receiver, applied, digest) = await journal.OpenAsync(database, origin, cancellationToken).ConfigureAwait(false);
-        if (await tenants.RegisteredAsync(database, cancellationToken).ConfigureAwait(false) is var registered && registered is not true)
+        var registration = await tenants.RegisteredAsync(database, cancellationToken).ConfigureAwait(false);
+        var (accept, deleteIncarnation) = registration switch
         {
-            if (registered is false && before != store.Incarnation)
+            bool registered => (registered, !registered),
+            Unavailable => (false, false),
+        };
+        if (!accept)
+        {
+            if (deleteIncarnation && before != store.Incarnation)
             {
                 _ = await engine.DeleteDatabaseAsync(database, cancellationToken, incarnation: store.Incarnation).ConfigureAwait(false);
             }

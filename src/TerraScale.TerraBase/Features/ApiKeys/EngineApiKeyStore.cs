@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -32,31 +33,30 @@ internal sealed class EngineApiKeyStore(SystemCatalog catalog, TimeProvider time
 
     private static string ProjectKeyOrder(string projectId) => ProjectState(projectId) + "api_key_order";
 
-    public async ValueTask<(ApiKey Key, string Secret)?> CreateAsync(
+    public async ValueTask<CreateApiKeyResult> CreateAsync(
         string name, IReadOnlyList<string> scopes, string organizationId, string? projectId, string? databaseId, CancellationToken cancellationToken)
     {
         var secret = NewSecret();
         // Checked against the catalog version, like the existence check the endpoint made before: a key's scope and a
         // project key's list entries are management state.
-        var key = await catalog.WriteAsync(async transaction =>
+        return await catalog.WriteAsync<CreateApiKeyResult>(async transaction =>
             await EngineManagementService.ScopeExistsUncheckedAsync(transaction, organizationId, projectId, databaseId, cancellationToken).ConfigureAwait(false)
-                ? (await StoreAsync(transaction, secret, name, scopes, organizationId, projectId, databaseId, cancellationToken).ConfigureAwait(false)).Key
-                : null,
-            cancellationToken).ConfigureAwait(false);
-        return key is null ? null : (key, secret);
+                ? new IssuedApiKey((await StoreAsync(transaction, secret, name, scopes, organizationId, projectId, databaseId, cancellationToken).ConfigureAwait(false)).Key, secret)
+                : new NotFound(),
+            static error => error, cancellationToken).ConfigureAwait(false);
     }
 
-    public async ValueTask<ApiKey?> FindAsync(string secret, CancellationToken cancellationToken)
+    public async ValueTask<Found<ApiKey>> FindAsync(string secret, CancellationToken cancellationToken)
     {
         if (!secret.StartsWith(SecretPrefix, StringComparison.Ordinal))
         {
-            return null;
+            return new NotFound();
         }
 
         var lookup = await documents.GetSystemAsync(Hashes, Hash(secret), cancellationToken).ConfigureAwait(false);
         if (lookup is null)
         {
-            return null;
+            return new NotFound();
         }
 
         var id = JsonSerializer.Deserialize(lookup.Json.Span, TerraBaseJsonContext.Default.String);
@@ -66,7 +66,10 @@ internal sealed class EngineApiKeyStore(SystemCatalog catalog, TimeProvider time
         }
 
         var document = await documents.GetSystemAsync(Collection, id, cancellationToken).ConfigureAwait(false);
-        return document is null ? null : EntityPayload.Read(document, TerraBaseJsonContext.Default.ApiKey);
+        // A key without a tenant scope authenticates nothing; data-plane reads never initialize the catalog.
+        return document is null || EntityPayload.Read(document, TerraBaseJsonContext.Default.ApiKey) is not { OrganizationId: not null } key
+            ? new NotFound()
+            : key;
     }
 
     public async ValueTask<CreateProjectKeyResult> CreateProjectKeyAsync(
@@ -84,25 +87,26 @@ internal sealed class EngineApiKeyStore(SystemCatalog catalog, TimeProvider time
             }
 
             // Keys are project state: a viewer cannot issue them, and issuing one changes the organization.
-            switch (await EngineManagementService.WritableAsync(transaction, userId, organizationId, cancellationToken).ConfigureAwait(false))
+            var access = await EngineManagementService.WritableAsync(transaction, userId, organizationId, cancellationToken).ConfigureAwait(false);
+            if (access is not OrganizationMember)
             {
-                case ManagementError.None:
-                    break;
-                case ManagementError.Forbidden:
-                    return ManagementErrors.RoleTooLow;
-                default:
-                    return new NotFound();
+                return access switch
+                {
+                    Forbidden => ManagementErrors.RoleTooLow,
+                    NotFound => new NotFound(),
+                    OrganizationMember => throw new UnreachableException(),
+                };
             }
 
             await EngineManagementService.TouchOrganizationAsync(transaction, organizationId, cancellationToken).ConfigureAwait(false);
             var (_, listed) = await StoreAsync(transaction, secret, name, scopes, organizationId, projectId, databaseId, cancellationToken).ConfigureAwait(false);
             return new CreatedProjectApiKey(listed!, secret);
-        }, cancellationToken).ConfigureAwait(false);
+        }, static error => error, cancellationToken).ConfigureAwait(false);
     }
 
-    public ValueTask<Found<ManagementPage<ProjectApiKey>>> ListProjectKeysAsync(
+    public ValueTask<ListProjectKeysResult> ListProjectKeysAsync(
         string userId, string organizationId, string projectId, string? after, int limit, CancellationToken cancellationToken) =>
-        catalog.ReadAsync<Found<ManagementPage<ProjectApiKey>>>(async transaction =>
+        catalog.ReadAsync<ListProjectKeysResult>(async transaction =>
         {
             if (await EngineManagementService.GetProjectAsync(transaction, userId, organizationId, projectId, cancellationToken).ConfigureAwait(false) is null)
             {
@@ -120,7 +124,7 @@ internal sealed class EngineApiKeyStore(SystemCatalog catalog, TimeProvider time
             }
 
             return new ManagementPage<ProjectApiKey>(keys, page.HasMore ? page.Documents[^1].Id : null);
-        }, cancellationToken);
+        }, static error => error, cancellationToken);
 
     public async ValueTask<RevokeProjectKeyResult> RevokeProjectKeyAsync(string userId, string organizationId, string projectId, string keyId, CancellationToken cancellationToken) =>
         await catalog.WriteAsync<RevokeProjectKeyResult>(async transaction =>
@@ -131,14 +135,15 @@ internal sealed class EngineApiKeyStore(SystemCatalog catalog, TimeProvider time
                 return new NotFound();
             }
 
-            switch (await EngineManagementService.WritableAsync(transaction, userId, organizationId, cancellationToken).ConfigureAwait(false))
+            var access = await EngineManagementService.WritableAsync(transaction, userId, organizationId, cancellationToken).ConfigureAwait(false);
+            if (access is not OrganizationMember)
             {
-                case ManagementError.None:
-                    break;
-                case ManagementError.Forbidden:
-                    return ManagementErrors.RoleTooLow;
-                default:
-                    return new NotFound();
+                return access switch
+                {
+                    Forbidden => ManagementErrors.RoleTooLow,
+                    NotFound => new NotFound(),
+                    OrganizationMember => throw new UnreachableException(),
+                };
             }
 
             await EngineManagementService.TouchOrganizationAsync(transaction, organizationId, cancellationToken).ConfigureAwait(false);
@@ -147,7 +152,7 @@ internal sealed class EngineApiKeyStore(SystemCatalog catalog, TimeProvider time
             await transaction.DeleteAsync(ProjectKeys(projectId), keyId, cancellationToken).ConfigureAwait(false);
             await transaction.DeleteAsync(ProjectKeyOrder(projectId), entry.Order, cancellationToken).ConfigureAwait(false);
             return new Done();
-        }, cancellationToken).ConfigureAwait(false);
+        }, static error => error, cancellationToken).ConfigureAwait(false);
 
     // Stores a key's authentication document. A project key, whichever route issued it, is also listed: it can be listed
     // and revoked through its project, and keeps the project from being deleted.

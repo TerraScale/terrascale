@@ -52,7 +52,7 @@ internal sealed class StampingStorageEngine(IStorageEngine inner, ISystemReplica
         inner.ListDatabasesAsync(cancellationToken);
 
     public ValueTask<bool> CreateDatabaseWithIntentAsync(
-        TenantContext database, TenantContext? source, Func<CancellationToken, ValueTask> recordIntent, CancellationToken cancellationToken) =>
+        TenantContext database, TenantContext? source, Func<CancellationToken, ValueTask<bool>> recordIntent, CancellationToken cancellationToken) =>
         inner.CreateDatabaseWithIntentAsync(database, source, recordIntent, cancellationToken);
 
     public ValueTask CompleteDatabaseIntentAsync(TenantContext database, CancellationToken cancellationToken) =>
@@ -359,6 +359,9 @@ internal sealed class StampingStorageEngine(IStorageEngine inner, ISystemReplica
 
         public ValueTask<bool> SetCollectionSchemaAsync(string name, JsonElement? schema, CancellationToken cancellationToken) =>
             WriteCollectionAsync(() => inner.SetCollectionSchemaAsync(name, schema, cancellationToken), cancellationToken);
+
+        public ValueTask<bool> HasCollectionStateAsync(string name, bool prefix, CancellationToken cancellationToken) =>
+            RunAsync(() => inner.HasCollectionStateAsync(name, prefix, cancellationToken), cancellationToken);
 
         public ValueTask<(IReadOnlyList<CollectionInfo> Collections, bool HasMore)> ListCollectionsAsync(
             string? afterName, int limit, CancellationToken cancellationToken) =>

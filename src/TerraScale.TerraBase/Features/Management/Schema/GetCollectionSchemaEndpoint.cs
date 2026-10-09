@@ -2,6 +2,7 @@ using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
 using TerraBase.Hosting;
+using TerraBase.Tenancy;
 using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management.Schema;
@@ -20,6 +21,7 @@ public sealed class GetCollectionSchemaEndpoint(IManagementService management, I
         Produces<CollectionSchema>();
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
+        Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
         RequireAuthorization(ApiKeyScopes.DatabasesRead);
         Metadata(new ProjectManagementRoute(), ListenerMetadata.Management);
     }
@@ -32,13 +34,16 @@ public sealed class GetCollectionSchemaEndpoint(IManagementService management, I
             return ErrorResponse.From(new Validation("collection must be a lowercase name of at most 63 characters"));
         }
 
-        return await ManagementRoute.DatabaseAsync(HttpContext, management, cancellationToken) is not { } database
-            ? ErrorResponse.From(new NotFound())
-            : await schema.InferAsync(database, collection.Value, cancellationToken) switch
+        return await ManagementRoute.DatabaseAsync(HttpContext, management, cancellationToken) switch
+        {
+            TenantContext database => await schema.InferAsync(database, collection.Value, cancellationToken) switch
             {
                 CollectionSchema inferred => TypedResults.Ok(inferred),
                 NotFound error => ErrorResponse.From(error),
                 Validation error => ErrorResponse.From(error),
-            };
+            },
+            NotFound => ErrorResponse.From(new NotFound()),
+            Unavailable error => ErrorResponse.From(error),
+        };
     }
 }

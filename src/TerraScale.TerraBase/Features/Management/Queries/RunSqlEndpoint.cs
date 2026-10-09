@@ -1,6 +1,8 @@
+using System.Diagnostics;
 using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
 using TerraBase.Hosting;
+using TerraBase.Tenancy;
 using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management.Queries;
@@ -21,6 +23,7 @@ public sealed class RunSqlEndpoint(IManagementService management, IQueryService 
         Produces<SqlResultBody>();
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
+        Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
         RequireAuthorization(ApiKeyScopes.DatabasesRead);
         Metadata(new ProjectManagementRoute(), ListenerMetadata.Management);
     }
@@ -29,9 +32,15 @@ public sealed class RunSqlEndpoint(IManagementService management, IQueryService 
     public override async ValueTask<IResult> HandleAsync(SqlRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
-        if (await ManagementRoute.DatabaseAsync(HttpContext, management, cancellationToken) is not { } database)
+        var found = await ManagementRoute.DatabaseAsync(HttpContext, management, cancellationToken);
+        if (found is not TenantContext database)
         {
-            return ErrorResponse.From(new NotFound());
+            return found switch
+            {
+                NotFound => ErrorResponse.From(new NotFound()),
+                Unavailable error => ErrorResponse.From(error),
+                TenantContext => throw new UnreachableException(),
+            };
         }
 
         return SqlSubset.Parse(request.Sql) switch

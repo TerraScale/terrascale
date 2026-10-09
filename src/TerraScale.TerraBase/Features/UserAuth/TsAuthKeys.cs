@@ -2,6 +2,7 @@ using System.Diagnostics.Metrics;
 using Microsoft.IdentityModel.Protocols.OpenIdConnect;
 using Microsoft.IdentityModel.Tokens;
 using TerraBase.Configuration;
+using TerraBase.Errors;
 using TerraBase.Hosting;
 
 namespace TerraBase.Features.UserAuth;
@@ -62,7 +63,7 @@ internal sealed partial class TsAuthKeys : BackgroundService, IIssuerKeys
     public IReadOnlyList<SecurityKey>? Keys => Volatile.Read(ref _keys);
 
     /// <inheritdoc />
-    public async ValueTask<IReadOnlyList<SecurityKey>?> RefreshAsync(CancellationToken cancellationToken)
+    public async ValueTask<RefreshIssuerKeysResult> RefreshAsync(CancellationToken cancellationToken)
     {
         Task<IReadOnlyList<SecurityKey>?> fetch;
         lock (_gate)
@@ -72,7 +73,7 @@ internal sealed partial class TsAuthKeys : BackgroundService, IIssuerKeys
                 var now = _time.GetUtcNow();
                 if (_issuer is null || (_lastUnknownKeyRefresh is { } last && now - last < UnknownKeyInterval))
                 {
-                    return Keys;
+                    return Keys is { } cached ? cached : new Unavailable("ts-auth signing keys are not loaded");
                 }
 
                 _lastUnknownKeyRefresh = now;
@@ -83,7 +84,8 @@ internal sealed partial class TsAuthKeys : BackgroundService, IIssuerKeys
             fetch = _fetch;
         }
 
-        return await fetch.WaitAsync(cancellationToken).ConfigureAwait(false);
+        var keys = await fetch.WaitAsync(cancellationToken).ConfigureAwait(false);
+        return keys is not null ? keys : new Unavailable("ts-auth signing keys are not loaded");
     }
 
     public override async Task StartAsync(CancellationToken cancellationToken)

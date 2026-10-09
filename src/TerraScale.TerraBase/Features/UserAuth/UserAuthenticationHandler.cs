@@ -65,9 +65,9 @@ internal sealed class UserAuthenticationHandler(
         {
             // A key ts-auth rotated in after the last fetch: one rate-limited refresh, then one more attempt.
             var refreshed = await issuerKeys.RefreshAsync(Context.RequestAborted).ConfigureAwait(false);
-            if (refreshed is not null && !ReferenceEquals(refreshed, keys))
+            if (refreshed is IReadOnlyList<SecurityKey> refreshedKeys && !ReferenceEquals(refreshedKeys, keys))
             {
-                result = await Tokens.ValidateTokenAsync(token, Parameters(refreshed)).ConfigureAwait(false);
+                result = await Tokens.ValidateTokenAsync(token, Parameters(refreshedKeys)).ConfigureAwait(false);
             }
         }
 

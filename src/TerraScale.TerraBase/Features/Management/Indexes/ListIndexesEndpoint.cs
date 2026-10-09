@@ -2,6 +2,7 @@ using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
 using TerraBase.Hosting;
+using TerraBase.Tenancy;
 using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management.Indexes;
@@ -20,6 +21,7 @@ public sealed class ListIndexesEndpoint(IManagementService management, IIndexSer
         Produces<IndexListBody>();
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
+        Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
         RequireAuthorization(ApiKeyScopes.DatabasesRead);
         Metadata(new ProjectManagementRoute(), ListenerMetadata.Management);
     }
@@ -38,8 +40,11 @@ public sealed class ListIndexesEndpoint(IManagementService management, IIndexSer
             collection = name.Value;
         }
 
-        return await ManagementRoute.DatabaseAsync(HttpContext, management, cancellationToken) is { } database
-            ? TypedResults.Ok(await indexes.ListAsync(database, collection, cancellationToken))
-            : ErrorResponse.From(new NotFound());
+        return await ManagementRoute.DatabaseAsync(HttpContext, management, cancellationToken) switch
+        {
+            TenantContext database => TypedResults.Ok(await indexes.ListAsync(database, collection, cancellationToken)),
+            NotFound => ErrorResponse.From(new NotFound()),
+            Unavailable error => ErrorResponse.From(error),
+        };
     }
 }

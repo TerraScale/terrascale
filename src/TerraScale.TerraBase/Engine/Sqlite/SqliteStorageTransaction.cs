@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Globalization;
 using System.Runtime.CompilerServices;
 using System.Text;
@@ -887,6 +888,41 @@ internal sealed partial class SqliteStorageTransaction(
             using var reader = Command(SqliteStatements.GetCollection, name).ExecuteReader();
             return reader.Read() ? new CollectionInfo(reader.GetString(0), reader.GetInt64(1), reader.GetInt64(2), reader.GetString(3)) : null;
         }, cancellationToken).ConfigureAwait(false);
+    }
+
+    public ValueTask<bool> HasCollectionStateAsync(string name, bool prefix, CancellationToken cancellationToken) =>
+        RunAsync(() =>
+        {
+            ArgumentException.ThrowIfNullOrEmpty(name);
+            var through = prefix ? PrefixSuccessor(name) : name + '\0';
+            var command = session.Command(through is null ? SqliteStatements.HasCollectionStateFrom : SqliteStatements.HasCollectionState, transaction);
+            command.Parameters.AddWithValue("$from", name);
+            if (through is not null)
+            {
+                command.Parameters.AddWithValue("$to", through);
+            }
+            return (long)command.ExecuteScalar()! != 0;
+        }, cancellationToken);
+
+    private static string? PrefixSuccessor(string name)
+    {
+        var length = name.Length;
+        while (length > 0)
+        {
+            if (Rune.DecodeLastFromUtf16(name.AsSpan(0, length), out var rune, out var consumed) != OperationStatus.Done)
+            {
+                throw new ArgumentException("Collection prefixes must contain valid Unicode scalar values.", nameof(name));
+            }
+
+            length -= consumed;
+            if (rune.Value < 0x10ffff)
+            {
+                var next = rune.Value == 0xd7ff ? 0xe000 : rune.Value + 1;
+                return name[..length] + new Rune(next).ToString();
+            }
+        }
+
+        return null;
     }
 
     public async ValueTask<(IReadOnlyList<CollectionInfo> Collections, bool HasMore)> ListCollectionsAsync(

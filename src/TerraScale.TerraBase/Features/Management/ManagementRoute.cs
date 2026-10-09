@@ -16,10 +16,10 @@ public sealed record NameRequest(string? Name);
 public sealed record PlanRequest(string? Plan);
 
 /// <summary>A database the acting user may change, or why not.</summary>
-public readonly union WritableDatabase(TenantContext, NotFound, Forbidden);
+public readonly union WritableDatabase(TenantContext, NotFound, Forbidden, Unavailable);
 
 /// <summary>A project the acting user may change, or why not.</summary>
-public readonly union WritableProject(Project, NotFound, Forbidden);
+public readonly union WritableProject(Project, NotFound, Forbidden, Unavailable);
 
 /// <summary>A page request.</summary>
 /// <param name="After">Exclusive cursor from the previous page's <c>next</c>.</param>
@@ -29,6 +29,8 @@ internal sealed record PageQuery(string? After, int Limit);
 /// <summary>Routes, validation and error mapping shared by the management endpoints.</summary>
 internal static class ManagementRoute
 {
+    internal readonly union RouteIdCheck(Done, Validation);
+
     public const string Tag = "Management";
     public const string Prefix = "/v1/management";
     public const string Organizations = Prefix + "/organizations";
@@ -71,51 +73,63 @@ internal static class ManagementRoute
     private const int DefaultLimit = 20;
     private const int MaxLimit = 100;
 
-    public static string Value(HttpContext context, string name)
+    public static RouteIdCheck CheckRouteIds(HttpContext context)
     {
-        var id = RawValue(context, name);
-        return name is "index" or "collection" or "databaseName" or "recommendation" || EntityIds.IsValid(id)
-            ? id : throw new BadHttpRequestException(name + " must be a canonical uppercase ULID");
+        foreach (var (name, value) in context.Request.RouteValues)
+        {
+            if (name is not ("index" or "collection" or "databaseName" or "recommendation")
+                && !EntityIds.IsValid(value as string))
+            {
+                return new Validation(name + " must be a canonical uppercase ULID");
+            }
+        }
+
+        return new Done();
     }
 
-    public static string RawValue(HttpContext context, string name) => (string)context.Request.RouteValues[name]!;
+    public static string Value(HttpContext context, string name) => (string)context.Request.RouteValues[name]!;
 
-    /// <summary>The project addressed by <c>{organization}</c> and <c>{project}</c>; <see langword="null"/> when it does not exist or the acting user is not a member of its organization.</summary>
-    public static ValueTask<Project?> ProjectAsync(HttpContext context, IManagementService management, CancellationToken cancellationToken) =>
-        management.GetProjectAsync(UserId(context), OrganizationId(context), Value(context, "project"), cancellationToken);
+    /// <summary>The addressed project, or why it cannot be read.</summary>
+    public static async ValueTask<GetProjectResult> ProjectAsync(HttpContext context, IManagementService management, CancellationToken cancellationToken) =>
+        await management.GetProjectAsync(UserId(context), OrganizationId(context), Value(context, "project"), cancellationToken).ConfigureAwait(false) switch
+        {
+            Project project => project,
+            NotFound => new NotFound(),
+            Unavailable error => error,
+        };
 
-    /// <summary>
-    /// The tenant of the database addressed by <c>{organization}</c>, <c>{project}</c> and <c>{database}</c>, resolved with
-    /// the membership check; <see langword="null"/> when it does not exist or the acting user is not a member of its organization.
-    /// </summary>
-    public static ValueTask<TenantContext?> DatabaseAsync(HttpContext context, IManagementService management, CancellationToken cancellationToken) =>
-        management.GetDatabaseTenantAsync(UserId(context), OrganizationId(context), Value(context, "project"), Value(context, "database"), cancellationToken);
+    /// <summary>The addressed database's tenant, resolved with membership, or why it cannot be read.</summary>
+    public static async ValueTask<DatabaseTenantResult> DatabaseAsync(HttpContext context, IManagementService management, CancellationToken cancellationToken) =>
+        await management.GetDatabaseTenantAsync(UserId(context), OrganizationId(context), Value(context, "project"), Value(context, "database"), cancellationToken).ConfigureAwait(false) switch
+        {
+            TenantContext database => database,
+            NotFound => new NotFound(),
+            Unavailable error => error,
+        };
 
-    /// <summary>As <see cref="DatabaseAsync"/> for a change: a viewer, which is read-only, gets <see cref="ManagementError.Forbidden"/>.</summary>
-    public static ValueTask<ManagementResult<TenantContext>> WritableDatabaseAsync(HttpContext context, IManagementService management, CancellationToken cancellationToken) =>
-        management.GetWritableDatabaseTenantAsync(UserId(context), OrganizationId(context), Value(context, "project"), Value(context, "database"), cancellationToken);
-
-    /// <summary>As <see cref="WritableDatabaseAsync"/>, as a union: a viewer gets <see cref="ManagementErrors.RoleTooLow"/>.</summary>
+    /// <summary>The database the acting user may change; a viewer gets <see cref="ManagementErrors.RoleTooLow"/>.</summary>
     public static async ValueTask<WritableDatabase> CheckWritableDatabaseAsync(HttpContext context, IManagementService management, CancellationToken cancellationToken) =>
-        await WritableDatabaseAsync(context, management, cancellationToken).ConfigureAwait(false) switch
+        await management.GetWritableDatabaseTenantAsync(UserId(context), OrganizationId(context), Value(context, "project"), Value(context, "database"), cancellationToken).ConfigureAwait(false) switch
         {
-            { Value: { } database } => database,
-            { Error: ManagementError.Forbidden } => ManagementErrors.RoleTooLow,
-            _ => new NotFound(),
+            TenantContext database => database,
+            NotFound => new NotFound(),
+            Forbidden => ManagementErrors.RoleTooLow,
+            Unavailable error => error,
         };
 
-    /// <summary>As <see cref="WritableProjectAsync"/>, as a union: a viewer gets <see cref="ManagementErrors.RoleTooLow"/>.</summary>
+    /// <summary>The project the acting user may change; a viewer gets <see cref="ManagementErrors.RoleTooLow"/>.</summary>
     public static async ValueTask<WritableProject> CheckWritableProjectAsync(HttpContext context, IManagementService management, CancellationToken cancellationToken) =>
-        await WritableProjectAsync(context, management, cancellationToken).ConfigureAwait(false) switch
+        await management.GetWritableProjectAsync(UserId(context), OrganizationId(context), Value(context, "project"), cancellationToken).ConfigureAwait(false) switch
         {
-            { Value: { } project } => project,
-            { Error: ManagementError.Forbidden } => ManagementErrors.RoleTooLow,
-            _ => new NotFound(),
+            Project project => project,
+            NotFound => new NotFound(),
+            Forbidden => ManagementErrors.RoleTooLow,
+            Unavailable error => error,
         };
 
-    /// <summary>As <see cref="ProjectAsync"/> for a change: a viewer, which is read-only, gets <see cref="ManagementError.Forbidden"/>.</summary>
-    public static ValueTask<ManagementResult<Project>> WritableProjectAsync(HttpContext context, IManagementService management, CancellationToken cancellationToken) =>
-        management.GetWritableProjectAsync(UserId(context), OrganizationId(context), Value(context, "project"), cancellationToken);
+    // Signed project requests retain their opaque route failure without exposing catalog membership.
+    public static IResult DatabaseNotFound(NotFound error) =>
+        ErrorResponse.From(ProjectAccess.Current is not null ? new NotFound(Code: "unknown_route") : error);
 
     /// <summary>The canonical path of a project, from route values: request paths may differ in case or end in a slash.</summary>
     public static string ProjectPath(HttpContext context, Project project) =>
@@ -144,20 +158,11 @@ internal static class ManagementRoute
     /// <summary>The route's organization. Membership, checked by the service, decides whether the user reaches it.</summary>
     public static string OrganizationId(HttpContext context) => Value(context, "organization");
 
-    /// <summary>The member addressed by the <c>{user}</c> route value.</summary>
-    public static string MemberId(HttpContext context) => ValidUserId(Value(context, "user"), "user");
-
-    /// <summary>Validates a user id from a route or body.</summary>
-    public static string ValidUserId(string? user, string field) => OrThrow(CheckUserId(user, field));
-
     /// <summary>A user id from a route or body, or the rule it breaks.</summary>
     public static Valid<string> CheckUserId(string? user, string field) =>
         !EntityIds.IsValid(user)
             ? new Validation($"{field} must be a canonical uppercase ULID")
             : user;
-
-    /// <summary>Validates one email address and returns it trimmed.</summary>
-    public static string Email(string? email) => OrThrow(CheckEmail(email));
 
     /// <summary>One email address, trimmed, or the rule it breaks.</summary>
     public static Valid<string> CheckEmail(string? email)
@@ -168,27 +173,11 @@ internal static class ManagementRoute
             : new Validation("email must be one address of at most 254 characters");
     }
 
-    // Callers not converted to unions yet (docs/error-handling.md) still throw; BadRequests answers the same 400.
-    private static string OrThrow(Valid<string> value) => value switch
-    {
-        string valid => valid,
-        Validation error => throw new BadHttpRequestException(error.Message),
-    };
-
-    private static PageQuery OrThrow(Valid<PageQuery> value) => value switch
-    {
-        PageQuery valid => valid,
-        Validation error => throw new BadHttpRequestException(error.Message),
-    };
-
-    /// <summary>Validates a role. The enum converter also reads numbers, so undefined values are rejected here.</summary>
-    public static OrganizationRole Role(OrganizationRole? role) =>
+    /// <summary>A defined role, or the rule it breaks.</summary>
+    public static Valid<OrganizationRole> CheckRole(OrganizationRole? role) =>
         role is { } value && Enum.IsDefined(value)
             ? value
-            : throw new BadHttpRequestException("role must be owner, admin, member or viewer");
-
-    /// <summary>Validates an organization or project name and returns it trimmed.</summary>
-    public static string DisplayName(NameRequest request) => OrThrow(CheckDisplayName(request));
+            : new Validation("role must be owner, admin, member or viewer");
 
     /// <summary>An organization, project or key name, trimmed, or the rule it breaks.</summary>
     public static Valid<string> CheckDisplayName(NameRequest request)
@@ -199,27 +188,19 @@ internal static class ManagementRoute
             : name;
     }
 
-    public static PlanTier Plan(PlanRequest request) => request.Plan switch
+    public static Valid<PlanTier> CheckPlan(PlanRequest request) => request.Plan switch
     {
         "hobby" => PlanTier.Hobby,
         "pro" => PlanTier.Pro,
         "enterprise" => PlanTier.Enterprise,
-        _ => throw new BadHttpRequestException("plan must be hobby, pro or enterprise"),
+        _ => new Validation("plan must be hobby, pro or enterprise"),
     };
-
-    public static string DatabaseName(NameRequest request) => OrThrow(CheckDatabaseName(request));
 
     /// <summary>A database name, or the rule it breaks.</summary>
     public static Valid<string> CheckDatabaseName(NameRequest request) =>
         Engine.DatabaseName.TryParse(request.Name, out var name)
             ? name.Value
             : new Validation("name must be a lowercase database name of at most 63 characters");
-
-    public static (string? After, int Limit) Page(HttpContext context)
-    {
-        var page = OrThrow(CheckPage(context));
-        return (page.After, page.Limit);
-    }
 
     /// <summary>The <c>after</c> and <c>limit</c> query parameters, or the rule they break.</summary>
     public static Valid<PageQuery> CheckPage(HttpContext context)
@@ -235,34 +216,4 @@ internal static class ManagementRoute
         return new PageQuery(query.TryGetValue("after", out var after) ? after.ToString() : null, limit);
     }
 
-    public static IResult Error(ManagementError error) => error switch
-    {
-        ManagementError.NotFound => ProjectAccess.Current is not null
-            ? ErrorResponse.From(new NotFound(Code: "unknown_route"))
-            : TypedResults.NotFound(),
-        ManagementError.NameTaken => ProjectAccess.Current is not null
-            ? ErrorResponse.From(ManagementErrors.NameTaken)
-            : TypedResults.Conflict("name is already taken"),
-        ManagementError.NotEmpty => TypedResults.Conflict("delete what it contains first"),
-        ManagementError.Forbidden => ProjectAccess.Current is not null
-            ? ErrorResponse.From(ManagementErrors.RoleTooLow)
-            : TypedResults.Json("your role in the organization does not allow this", statusCode: StatusCodes.Status403Forbidden),
-        ManagementError.LastOwner => TypedResults.Conflict("the organization must keep an owner"),
-        ManagementError.AlreadyMember => TypedResults.Conflict("the user is already a member"),
-        ManagementError.InvitationPending => TypedResults.Conflict("an invitation for this email is pending"),
-        ManagementError.AlreadyOwner => TypedResults.Conflict("the member is already an owner"),
-        ManagementError.Expired => TypedResults.Conflict("the invitation expired"),
-        ManagementError.IdTaken => TypedResults.Conflict("the id is already taken"),
-        ManagementError.InvitationClosed => TypedResults.Conflict("the invitation is no longer pending"),
-        ManagementError.TokenTaken => TypedResults.Conflict("another invitation has this token"),
-        ManagementError.WrongRegion => ErrorResponse.From(new Conflict("the database is managed in its home region", "wrong_region")),
-        ManagementError.Replicated => ErrorResponse.From(new Conflict("remove the database's replica regions first", "database_replicated")),
-        ManagementError.StorageQuota => ErrorResponse.From(new QuotaExceeded("the organization storage quota would be exceeded", "storage_quota")),
-        ManagementError.StorageAccountingBusy => ErrorResponse.From(new Unavailable("storage accounting is at capacity; retry later", "storage_accounting_busy")),
-        _ => throw new ArgumentOutOfRangeException(nameof(error)),
-    };
-
-    public static IResult Ok<T>(ManagementResult<T> result) => result.Error == ManagementError.None ? TypedResults.Ok(result.Value) : Error(result.Error);
-
-    public static IResult NoContent(ManagementError error) => error == ManagementError.None ? TypedResults.NoContent() : Error(error);
 }

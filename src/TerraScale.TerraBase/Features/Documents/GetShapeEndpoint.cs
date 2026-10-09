@@ -35,6 +35,7 @@ public sealed class GetShapeEndpoint(IShapeService shapes, ITenantDirectory tena
         Produces<ShapeBody>();
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
+        Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
         Produces<ErrorBody>(StatusCodes.Status409Conflict);
         Produces<ErrorBody>(StatusCodes.Status414UriTooLong);
         Produces<ErrorBody>(StatusCodes.Status429TooManyRequests);
@@ -56,6 +57,7 @@ public sealed class GetShapeEndpoint(IShapeService shapes, ITenantDirectory tena
             {
                 Validation error => ErrorResponse.From(error),
                 NotFound error => ErrorResponse.From(error),
+                Unavailable error => ErrorResponse.From(error),
                 TenantContext database => DocumentRoute.CheckParameters(HttpContext, "where", "handle", "offset", "live", "cursor") switch
                 {
                     Validation error => ErrorResponse.From(error),

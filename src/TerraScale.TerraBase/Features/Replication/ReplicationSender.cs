@@ -4,6 +4,7 @@ using Grpc.Core;
 using Grpc.Net.Client;
 using TerraBase.Configuration;
 using TerraBase.Engine;
+using TerraBase.Errors;
 using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Replication.V1;
 using TerraBase.Tenancy;
@@ -264,8 +265,18 @@ internal sealed partial class ReplicationSender(
                 try
                 {
                     // ponytail: one catalog read per database per pass; list the replicated databases once if catalogs grow large.
-                    if (await tenants.ReplicatesAsync(database, discovery.Token).ConfigureAwait(false) is false
-                        || await engine.OpenDatabaseAsync(database, discovery.Token).ConfigureAwait(false) is not { } store)
+                    var eligibility = await tenants.ReplicatesAsync(database, discovery.Token).ConfigureAwait(false);
+                    if (eligibility is Unavailable)
+                    {
+                        complete = false;
+                        continue;
+                    }
+
+                    if (!(eligibility switch
+                    {
+                        bool replicates => replicates,
+                        Unavailable => throw new System.Diagnostics.UnreachableException(),
+                    }) || await engine.OpenDatabaseAsync(database, discovery.Token).ConfigureAwait(false) is not { } store)
                     {
                         continue;
                     }
@@ -345,7 +356,19 @@ internal sealed partial class ReplicationSender(
                     // A new attempt must re-prove cached progress, even if credentials or the connection fail.
                     peer.Unverified(database);
                     peer.Refresh(credentials.Capture());
-                    var more = await SyncAsync(peer, new V1.Replication.ReplicationClient(peer.Channel), database, stoppingToken).ConfigureAwait(false);
+                    var turn = await SyncAsync(peer, new V1.Replication.ReplicationClient(peer.Channel), database, stoppingToken).ConfigureAwait(false);
+                    if (turn is Unavailable)
+                    {
+                        _ = peer.Retry(database);
+                        Progressed();
+                        continue;
+                    }
+
+                    var more = turn switch
+                    {
+                        bool remaining => remaining,
+                        Unavailable => throw new System.Diagnostics.UnreachableException(),
+                    };
                     peer.Succeeded(database);
                     if (more)
                     {
@@ -369,7 +392,9 @@ internal sealed partial class ReplicationSender(
     }
 
     // Returns whether the turn ended with groups possibly left to send.
-    private async Task<bool> SyncAsync(Peer peer, V1.Replication.ReplicationClient client, DatabaseIncarnation identity, CancellationToken stoppingToken)
+    private readonly union ReplicationTurn(bool, Unavailable);
+
+    private async Task<ReplicationTurn> SyncAsync(Peer peer, V1.Replication.ReplicationClient client, DatabaseIncarnation identity, CancellationToken stoppingToken)
     {
         // Include local snapshot/proof acquisition in the attempt budget, not only network waits.
         using var progress = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
@@ -378,7 +403,17 @@ internal sealed partial class ReplicationSender(
         // Peers refuse a database their catalog does not register, so send none of a database that is neither registered nor being
         // created (backup snapshots and restore staging are primary-local storage): its groups would count as lag forever.
         // Check before opening the file too: a queued commit must not reopen an ineligible snapshot or staging database.
-        if (await tenants.ReplicatesAsync(database, progress.Token).ConfigureAwait(false) is false)
+        var eligibility = await tenants.ReplicatesAsync(database, progress.Token).ConfigureAwait(false);
+        if (eligibility is not bool replicates)
+        {
+            return eligibility switch
+            {
+                Unavailable error => error,
+                bool => throw new System.Diagnostics.UnreachableException(),
+            };
+        }
+
+        if (!replicates)
         {
             Drop(identity);
             Progressed();

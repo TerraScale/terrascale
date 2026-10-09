@@ -57,6 +57,11 @@ internal sealed partial class EngineManagementService
     /// <summary>The databases a commit created files for, or why it stopped before its transaction.</summary>
     private readonly union PreparedDatabases(Dictionary<int, AddedDatabase>, CommitRejected);
 
+    // The authorized project and optional branch source before database files are prepared.
+    private readonly union PreparedDatabaseTarget((TenantContext Tenant, ManagedDatabase? Source), NotFound, Forbidden, Conflict, Unavailable);
+
+    private readonly union RecordedCommit(CommitRecord, NotFound, Unavailable);
+
     // The transaction of the commit running on this async flow, if any.
     private static readonly AsyncLocal<IStorageTransaction?> CommitTransaction = new();
 
@@ -73,21 +78,54 @@ internal sealed partial class EngineManagementService
         string userId, string? email, string commitId, string requestHash, IReadOnlyList<CommitOperation> operations, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(operations);
-        await EnsureCatalogAsync(cancellationToken).ConfigureAwait(false);
-        if (await ReadCatalogAsync(transaction => RecordedAsync(transaction, userId, commitId, cancellationToken), cancellationToken).ConfigureAwait(false) is { } recorded)
+        var replay = await ReadAsync<RecordedCommit>(async transaction =>
+            await RecordedAsync(transaction, userId, commitId, cancellationToken).ConfigureAwait(false) switch
+            {
+                CommitRecord recorded => recorded,
+                NotFound error => error,
+            }, static error => error, cancellationToken).ConfigureAwait(false);
+        if (replay is not NotFound)
         {
-            return Replay(recorded, requestHash);
+            return replay switch
+            {
+                CommitRecord recorded => Replay(recorded, requestHash),
+                Unavailable error => new CommitRejected(error, Op: null),
+                NotFound => throw new UnreachableException(),
+            };
         }
 
         string[] organizations = [.. operations.OfType<ManagementCommitOperation>()
             .Where(operation => operation.Request.Op == "branch_database")
             .Select(operation => operation.Request.Organization!).Distinct(StringComparer.Ordinal)];
-        using var admission = await quota.Value.EnterOrganizationsAsync(organizations, cancellationToken).ConfigureAwait(false);
-        // A duplicate may have committed while these gates were queued, even deleting its own branch source.
-        if (organizations.Length > 0
-            && await ReadCatalogAsync(transaction => RecordedAsync(transaction, userId, commitId, cancellationToken), cancellationToken).ConfigureAwait(false) is { } afterAdmission)
+        var entered = await quota.Value.EnterOrganizationsAsync(organizations, cancellationToken).ConfigureAwait(false);
+        if (entered is not StorageQuotaGroupLease granted)
         {
-            return Replay(afterAdmission, requestHash);
+            return entered switch
+            {
+                Unavailable error => new CommitRejected(error, Op: null),
+                StorageQuotaGroupLease => throw new UnreachableException(),
+            };
+        }
+
+        using var admission = granted;
+        // A duplicate may have committed while these gates were queued, even deleting its own branch source.
+        if (organizations.Length > 0)
+        {
+            var afterAdmission = await ReadAsync<RecordedCommit>(async transaction =>
+                await RecordedAsync(transaction, userId, commitId, cancellationToken).ConfigureAwait(false) switch
+                {
+                    CommitRecord recorded => recorded,
+                    NotFound error => error,
+                }, static error => error, cancellationToken).ConfigureAwait(false);
+            if (afterAdmission is not NotFound)
+            {
+                return afterAdmission switch
+                {
+                    CommitRecord recorded => Replay(recorded, requestHash),
+                    Unavailable error => new CommitRejected(error, Op: null),
+                    NotFound => throw new UnreachableException(),
+                };
+            }
         }
 
         var prepared = await PrepareDatabasesAsync(userId, operations, cancellationToken).ConfigureAwait(false);
@@ -139,12 +177,12 @@ internal sealed partial class EngineManagementService
             }
         }
 
-        // The intents are committed: a failure here leaves them for the next start.
+        // The recorded outcome is durable; unavailable cleanup keeps its intent for the next supported start.
         if (committed)
         {
             foreach (var storage in deleted)
             {
-                await FinishDatabaseCleanupAsync(storage, CancellationToken.None).ConfigureAwait(false);
+                _ = await FinishDatabaseCleanupAsync(storage, CancellationToken.None).ConfigureAwait(false);
             }
         }
 
@@ -179,8 +217,13 @@ internal sealed partial class EngineManagementService
                 continue;
             }
 
-            if (await GetDatabaseAsync(userId, request.Organization!, request.Project!, request.Database!, cancellationToken).ConfigureAwait(false) is { } database
-                && PlacementError(database, options.Region) == ManagementError.None)
+            var found = await GetDatabaseAsync(userId, request.Organization!, request.Project!, request.Database!, cancellationToken).ConfigureAwait(false);
+            if (found is Unavailable refused)
+            {
+                return new CommitRejected(refused, growth[request.Organization!].Op);
+            }
+
+            if (found is ManagedDatabase database && CheckDeletionPlacement(database, options.Region) is Done)
             {
                 var bytes = await quota.Value.ReadBytesAsync(new TenantContext(request.Organization!, PlanTier.Hobby, request.Project, request.Database), cancellationToken)
                     .ConfigureAwait(false);
@@ -191,24 +234,31 @@ internal sealed partial class EngineManagementService
 
         foreach (var (organization, (bytes, i)) in growth)
         {
-            if (await admission.CheckAsync(organization, bytes, cancellationToken).ConfigureAwait(false) is { } exceeded)
+            var check = await admission.CheckAsync(organization, bytes, cancellationToken).ConfigureAwait(false);
+            if (check is not Done)
             {
-                return new CommitRejected(exceeded, i);
+                return check switch
+                {
+                    QuotaExceeded error => new CommitRejected(error, i),
+                    Unavailable error => new CommitRejected(error, i),
+                    Done => throw new UnreachableException(),
+                };
             }
         }
 
         return null;
     }
 
-    public ValueTask<Found<byte[]>> GetCommitAsync(string userId, string commitId, CancellationToken cancellationToken) =>
-        ReadAsync<Found<byte[]>>(async transaction =>
-            await RecordedAsync(transaction, userId, commitId, cancellationToken).ConfigureAwait(false) is { } recorded
-                ? Encoding.UTF8.GetBytes(recorded.Body)
-                : new NotFound("no committed commit has this id"),
-            cancellationToken);
+    public ValueTask<GetCommitResult> GetCommitAsync(string userId, string commitId, CancellationToken cancellationToken) =>
+        ReadAsync<GetCommitResult>(async transaction =>
+            await RecordedAsync(transaction, userId, commitId, cancellationToken).ConfigureAwait(false) switch
+            {
+                CommitRecord recorded => Encoding.UTF8.GetBytes(recorded.Body),
+                NotFound error => error,
+            }, static error => error, cancellationToken);
 
-    public ValueTask<Found<VersionsBody>> GetVersionsAsync(string userId, IReadOnlyList<string> organizations, CancellationToken cancellationToken) =>
-        ReadAsync<Found<VersionsBody>>(async transaction =>
+    public ValueTask<GetVersionsResult> GetVersionsAsync(string userId, IReadOnlyList<string> organizations, CancellationToken cancellationToken) =>
+        ReadAsync<GetVersionsResult>(async transaction =>
         {
             ArgumentNullException.ThrowIfNull(organizations);
             var versions = new Dictionary<string, string>(StringComparer.Ordinal);
@@ -216,23 +266,23 @@ internal sealed partial class EngineManagementService
             {
                 if (await GetMemberAsync(transaction, organizationId, userId, cancellationToken).ConfigureAwait(false) is null)
                 {
-                    return new NotFound(Message(ManagementError.NotFound));
+                    return ManagementErrors.NotFound;
                 }
 
                 versions[organizationId] = await VersionAsync(transaction, OrganizationVersions, organizationId, cancellationToken).ConfigureAwait(false);
             }
 
             return new VersionsBody(await VersionAsync(transaction, AccountVersions, userId, cancellationToken).ConfigureAwait(false), versions);
-        }, cancellationToken);
+        }, static error => error, cancellationToken);
 
-    public ValueTask<Found<StoredDocument>> GetDocumentAsync(string collection, string id, CancellationToken cancellationToken) =>
-        ReadAsync<Found<StoredDocument>>(async transaction =>
+    public ValueTask<GetDashboardDocumentResult> GetDocumentAsync(string collection, string id, CancellationToken cancellationToken) =>
+        ReadAsync<GetDashboardDocumentResult>(async transaction =>
             await transaction.GetAsync(DashboardSpace + collection, id, cancellationToken).ConfigureAwait(false) is { } document
                 ? document
                 : new NotFound("the document does not exist"),
-            cancellationToken);
+            static error => error, cancellationToken);
 
-    public async ValueTask<QueryResult> QueryDocumentsAsync(DocumentQuery query, long? countLimit, CancellationToken cancellationToken)
+    public async ValueTask<QueryDashboardDocumentsResult> QueryDocumentsAsync(DocumentQuery query, long? countLimit, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(query);
         cancellationToken.ThrowIfCancellationRequested();
@@ -256,8 +306,13 @@ internal sealed partial class EngineManagementService
         var started = time.GetTimestamp();
         try
         {
-            return await ReadAsync(transaction => documents.Value.QueryAsync(
-                transaction, query with { Collection = DashboardSpace + query.Collection }, countLimit, cancellationToken, observation), cancellationToken).ConfigureAwait(false);
+            return await ReadAsync<QueryDashboardDocumentsResult>(async transaction =>
+                await documents.Value.QueryAsync(transaction, query with { Collection = DashboardSpace + query.Collection }, countLimit, cancellationToken, observation).ConfigureAwait(false) switch
+                {
+                    QueryOutcome outcome => outcome,
+                    NotFound error => error,
+                    Validation error => error,
+                }, static error => error, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -285,10 +340,20 @@ internal sealed partial class EngineManagementService
         IStorageTransaction transaction, string userId, string? email, string commitId, string requestHash, IReadOnlyList<CommitOperation> operations,
         IReadOnlyDictionary<int, AddedDatabase> created, List<TenantContext> deleted, CancellationToken cancellationToken)
     {
-        // Duplicates serialize on the write transaction: only the first applies.
-        if (await RecordedAsync(transaction, userId, commitId, cancellationToken).ConfigureAwait(false) is { } recorded)
+        if (await CheckReadAsync(transaction, cancellationToken).ConfigureAwait(false) is Unavailable refused)
         {
-            return Replay(recorded, requestHash);
+            return new CommitRejected(refused, Op: null);
+        }
+
+        // Duplicates serialize on the write transaction: only the first applies.
+        var existing = await RecordedAsync(transaction, userId, commitId, cancellationToken).ConfigureAwait(false);
+        if (existing is not NotFound)
+        {
+            return existing switch
+            {
+                CommitRecord recorded => Replay(recorded, requestHash),
+                NotFound => throw new UnreachableException(),
+            };
         }
 
         CommitTransaction.Value = transaction;
@@ -319,14 +384,16 @@ internal sealed partial class EngineManagementService
                         .ConfigureAwait(false),
                     _ => throw new ArgumentOutOfRangeException(nameof(operations)),
                 };
-                switch (step)
+                if (step is not CommitResultBody result)
                 {
-                    case OperationFailed failed:
-                        return new CommitRejected(failed.Error, i);
-                    case CommitResultBody result:
-                        results[i] = result;
-                        break;
+                    return step switch
+                    {
+                        OperationFailed failed => new CommitRejected(failed.Error, i),
+                        CommitResultBody => throw new UnreachableException(),
+                    };
                 }
+
+                results[i] = result;
 
                 if (operation is ManagementCommitOperation { Request.Organization: { } organizationId })
                 {
@@ -341,7 +408,7 @@ internal sealed partial class EngineManagementService
             var limit = ((ManagementCommitOperation)operations[i]).Request;
             if (!member && await GetMemberAsync(transaction, limit.Organization!, userId, cancellationToken).ConfigureAwait(false) is null)
             {
-                return new CommitRejected(new NotFound(Message(ManagementError.NotFound)), i);
+                return new CommitRejected(ManagementErrors.NotFound, i);
             }
 
             var after = await CountAsync(transaction, limit, cancellationToken).ConfigureAwait(false);
@@ -391,10 +458,18 @@ internal sealed partial class EngineManagementService
         CancellationToken cancellationToken)
     {
         var (collection, id) = fence.Account == true ? (AccountVersions, userId) : (OrganizationVersions, fence.Organization!);
-        if (fence.Account != true
-            && (await AuthorizeAsync(transaction, userId, id, OrganizationRole.Viewer, cancellationToken).ConfigureAwait(false)).Error is var error and not ManagementError.None)
+        if (fence.Account != true)
         {
-            return Failed(error);
+            var actor = await AuthorizeAsync(transaction, userId, id, OrganizationRole.Viewer, cancellationToken).ConfigureAwait(false);
+            if (actor is not OrganizationMember)
+            {
+                return actor switch
+                {
+                    NotFound error => new OperationFailed(error),
+                    Forbidden error => new OperationFailed(error),
+                    OrganizationMember => throw new UnreachableException(),
+                };
+            }
         }
 
         if (!fenced.TryGetValue((collection, id), out var original))
@@ -471,29 +546,74 @@ internal sealed partial class EngineManagementService
         {
             case "create_organization":
                 {
-                    var result = await CreateOrganizationAsync(userId, op.Id ?? NewId(), op.Name!, cancellationToken).ConfigureAwait(false);
-                    if (result.Value is { } createdOrganization)
+                    return await CreateOrganizationAsync(userId, op.Id ?? NewId(), op.Name!, cancellationToken).ConfigureAwait(false) switch
                     {
-                        named.Add(createdOrganization.Id);
-                    }
-
-                    return Body(result, TerraBaseJsonContext.Default.Organization);
+                        Organization createdOrganization => NamedOrganization(createdOrganization, named),
+                        Conflict error => new OperationFailed(error),
+                        Unavailable error => new OperationFailed(error),
+                    };
                 }
 
             case "rename_organization":
-                return Body(await RenameOrganizationAsync(userId, organization, op.Name!, cancellationToken).ConfigureAwait(false), TerraBaseJsonContext.Default.Organization);
+                return await RenameOrganizationAsync(userId, organization, op.Name!, cancellationToken).ConfigureAwait(false) switch
+                {
+                    Organization value => Body(value, TerraBaseJsonContext.Default.Organization),
+                    NotFound error => new OperationFailed(error),
+                    Forbidden error => new OperationFailed(error),
+                    Conflict error => new OperationFailed(error),
+                    Unavailable error => new OperationFailed(error),
+                };
             case "set_plan":
-                return Body(await SetPlanAsync(userId, organization, Plan(op.Plan!), cancellationToken).ConfigureAwait(false), TerraBaseJsonContext.Default.Organization);
+                return await SetPlanAsync(userId, organization, Plan(op.Plan!), cancellationToken).ConfigureAwait(false) switch
+                {
+                    Organization value => Body(value, TerraBaseJsonContext.Default.Organization),
+                    NotFound error => new OperationFailed(error),
+                    Forbidden error => new OperationFailed(error),
+                    Unavailable error => new OperationFailed(error),
+                };
             case "delete_organization":
-                return Done(await DeleteOrganizationAsync(userId, organization, cancellationToken).ConfigureAwait(false));
+                return await DeleteOrganizationAsync(userId, organization, cancellationToken).ConfigureAwait(false) switch
+                {
+                    Done => new CommitResultBody(),
+                    NotFound error => new OperationFailed(error),
+                    Forbidden error => new OperationFailed(error),
+                    Conflict error => new OperationFailed(error),
+                    Unavailable error => new OperationFailed(error),
+                };
             case "set_current_organization":
-                return Body(await SetCurrentOrganizationAsync(userId, organization, cancellationToken).ConfigureAwait(false), TerraBaseJsonContext.Default.Organization);
+                return await SetCurrentOrganizationAsync(userId, organization, cancellationToken).ConfigureAwait(false) switch
+                {
+                    Organization value => Body(value, TerraBaseJsonContext.Default.Organization),
+                    NotFound error => new OperationFailed(error),
+                    Unavailable error => new OperationFailed(error),
+                };
             case "create_project":
-                return Body(await CreateProjectAsync(userId, organization, op.Id ?? NewId(), op.Name!, cancellationToken).ConfigureAwait(false), TerraBaseJsonContext.Default.Project);
+                return await CreateProjectAsync(userId, organization, op.Id ?? NewId(), op.Name!, cancellationToken).ConfigureAwait(false) switch
+                {
+                    Project value => Body(value, TerraBaseJsonContext.Default.Project),
+                    NotFound error => new OperationFailed(error),
+                    Forbidden error => new OperationFailed(error),
+                    Conflict error => new OperationFailed(error),
+                    Unavailable error => new OperationFailed(error),
+                };
             case "rename_project":
-                return Body(await RenameProjectAsync(userId, organization, op.Project!, op.Name!, cancellationToken).ConfigureAwait(false), TerraBaseJsonContext.Default.Project);
+                return await RenameProjectAsync(userId, organization, op.Project!, op.Name!, cancellationToken).ConfigureAwait(false) switch
+                {
+                    Project value => Body(value, TerraBaseJsonContext.Default.Project),
+                    NotFound error => new OperationFailed(error),
+                    Forbidden error => new OperationFailed(error),
+                    Conflict error => new OperationFailed(error),
+                    Unavailable error => new OperationFailed(error),
+                };
             case "delete_project":
-                return Done(await DeleteProjectAsync(userId, organization, op.Project!, cancellationToken).ConfigureAwait(false));
+                return await DeleteProjectAsync(userId, organization, op.Project!, cancellationToken).ConfigureAwait(false) switch
+                {
+                    Done => new CommitResultBody(),
+                    NotFound error => new OperationFailed(error),
+                    Forbidden error => new OperationFailed(error),
+                    Conflict error => new OperationFailed(error),
+                    Unavailable error => new OperationFailed(error),
+                };
             case "create_database" or "branch_database":
                 {
                     var added = created!;
@@ -501,61 +621,108 @@ internal sealed partial class EngineManagementService
                     if (added.Database.BranchedFrom is { } source
                         && await transaction.GetVersionAsync(Databases(op.Project!), source, cancellationToken).ConfigureAwait(false) is not { Deleted: false })
                     {
-                        return Failed(ManagementError.NotFound);
+                        return new OperationFailed(ManagementErrors.NotFound);
                     }
 
                     if (op.Id is not null
                         && await transaction.GetVersionAsync(EngineManagedBackupService.BackedUpDatabases, added.Database.Id, cancellationToken).ConfigureAwait(false) is not null)
                     {
-                        return Failed(ManagementError.IdTaken);
+                        return new OperationFailed(ManagementErrors.IdTaken);
                     }
 
                     var registered = await RegisterDatabaseAsync(
                         transaction, project => MemberProjectAsync(project, userId, organization, op.Project!, cancellationToken), added.Database, cancellationToken).ConfigureAwait(false);
-                    return registered == ManagementError.None
-                        ? Body(ManagedDatabaseBody.From(added.Database, options.Region), TerraBaseJsonContext.Default.ManagedDatabaseBody)
-                        : Failed(registered);
+                    return registered switch
+                    {
+                        TenantContext => Body(ManagedDatabaseBody.From(added.Database, options.Region), TerraBaseJsonContext.Default.ManagedDatabaseBody),
+                        NotFound error => new OperationFailed(error),
+                        Forbidden error => new OperationFailed(error),
+                        Conflict error => new OperationFailed(error),
+                    };
                 }
 
             case "set_database_regions":
                 {
-                    if (DatabaseRegions.Check(options, options.Region, op.ReplicaRegions!) is { } invalid)
+                    if (DatabaseRegions.Check(options, options.Region, op.ReplicaRegions!) is Validation invalid)
                     {
                         return new OperationFailed(invalid);
                     }
 
-                    var placed = await SetDatabaseRegionsAsync(transaction, userId, organization, op.Project!, op.Database!, op.ReplicaRegions!, cancellationToken).ConfigureAwait(false);
-                    return placed.Error == ManagementError.None
-                        ? Body(ManagedDatabaseBody.From(placed.Value!, options.Region), TerraBaseJsonContext.Default.ManagedDatabaseBody)
-                        : Failed(placed.Error);
+                    return await SetDatabaseRegionsAsync(transaction, userId, organization, op.Project!, op.Database!, op.ReplicaRegions!, cancellationToken).ConfigureAwait(false) switch
+                    {
+                        ManagedDatabase value => Body(ManagedDatabaseBody.From(value, options.Region), TerraBaseJsonContext.Default.ManagedDatabaseBody),
+                        NotFound error => new OperationFailed(error),
+                        Forbidden error => new OperationFailed(error),
+                        Conflict error => new OperationFailed(error),
+                        Unavailable error => new OperationFailed(error),
+                    };
                 }
 
             case "delete_database":
                 {
-                    var unregistered = await UnregisterDatabaseAsync(transaction, userId, organization, op.Project!, op.Database!, options.Region, cancellationToken).ConfigureAwait(false);
-                    if (unregistered.Value is not { } storage)
+                    return await UnregisterDatabaseAsync(transaction, userId, organization, op.Project!, op.Database!, options.Region, cancellationToken).ConfigureAwait(false) switch
                     {
-                        return Failed(unregistered.Error);
-                    }
-
-                    deleted.Add(storage);
-                    return new CommitResultBody();
+                        TenantContext storage => DeletedDatabase(storage, deleted),
+                        NotFound error => new OperationFailed(error),
+                        Forbidden error => new OperationFailed(error),
+                        Conflict error => new OperationFailed(error),
+                    };
                 }
 
             case "change_role":
-                return Body(await ChangeRoleAsync(userId, organization, op.User!, op.Role!.Value, cancellationToken).ConfigureAwait(false), TerraBaseJsonContext.Default.OrganizationMember);
+                return await ChangeRoleAsync(userId, organization, op.User!, op.Role!.Value, cancellationToken).ConfigureAwait(false) switch
+                {
+                    OrganizationMember value => Body(value, TerraBaseJsonContext.Default.OrganizationMember),
+                    NotFound error => new OperationFailed(error),
+                    Forbidden error => new OperationFailed(error),
+                    Conflict error => new OperationFailed(error),
+                    Unavailable error => new OperationFailed(error),
+                };
             case "remove_member":
-                return Done(await RemoveMemberAsync(userId, organization, op.User!, cancellationToken).ConfigureAwait(false));
+                return await RemoveMemberAsync(userId, organization, op.User!, cancellationToken).ConfigureAwait(false) switch
+                {
+                    Done => new CommitResultBody(),
+                    NotFound error => new OperationFailed(error),
+                    Forbidden error => new OperationFailed(error),
+                    Conflict error => new OperationFailed(error),
+                    Unavailable error => new OperationFailed(error),
+                };
             case "leave":
-                return Done(await LeaveAsync(userId, organization, cancellationToken).ConfigureAwait(false));
+                return await LeaveAsync(userId, organization, cancellationToken).ConfigureAwait(false) switch
+                {
+                    Done => new CommitResultBody(),
+                    NotFound error => new OperationFailed(error),
+                    Forbidden error => new OperationFailed(error),
+                    Conflict error => new OperationFailed(error),
+                    Unavailable error => new OperationFailed(error),
+                };
             case "invite":
-                return Body(
-                    await InviteAsync(userId, organization, NewId(), op.Email!, op.Role ?? OrganizationRole.Member, op.TokenHash!, secretHash: null, cancellationToken).ConfigureAwait(false),
-                    TerraBaseJsonContext.Default.Invitation);
+                return await InviteAsync(userId, organization, NewId(), op.Email!, op.Role ?? OrganizationRole.Member, op.TokenHash!, secretHash: null, cancellationToken).ConfigureAwait(false) switch
+                {
+                    Invitation value => Body(value, TerraBaseJsonContext.Default.Invitation),
+                    NotFound error => new OperationFailed(error),
+                    Forbidden error => new OperationFailed(error),
+                    Conflict error => new OperationFailed(error),
+                    Unavailable error => new OperationFailed(error),
+                };
             case "resend_invitation":
-                return Body(await ResendInvitationAsync(userId, organization, op.Invitation!, op.TokenHash!, cancellationToken).ConfigureAwait(false), TerraBaseJsonContext.Default.Invitation);
+                return await ResendInvitationAsync(userId, organization, op.Invitation!, op.TokenHash!, cancellationToken).ConfigureAwait(false) switch
+                {
+                    Invitation value => Body(value, TerraBaseJsonContext.Default.Invitation),
+                    NotFound error => new OperationFailed(error),
+                    Forbidden error => new OperationFailed(error),
+                    Conflict error => new OperationFailed(error),
+                    Unavailable error => new OperationFailed(error),
+                };
             case "revoke_invitation":
-                return Done(await RevokeInvitationAsync(userId, organization, op.Invitation!, cancellationToken).ConfigureAwait(false));
+                return await RevokeInvitationAsync(userId, organization, op.Invitation!, cancellationToken).ConfigureAwait(false) switch
+                {
+                    Done => new CommitResultBody(),
+                    NotFound error => new OperationFailed(error),
+                    Forbidden error => new OperationFailed(error),
+                    Conflict error => new OperationFailed(error),
+                    Unavailable error => new OperationFailed(error),
+                };
             case "accept_invitation":
                 {
                     // Redeeming proves the invitee by the access token's verified email, never by the request body.
@@ -564,30 +731,81 @@ internal sealed partial class EngineManagementService
                         return new OperationFailed(new Forbidden("the access token has no verified email"));
                     }
 
-                    var result = await AcceptInvitationByHashAsync(userId, email, op.TokenHash!, cancellationToken).ConfigureAwait(false);
-                    if (result.Value is { } membership)
+                    return await AcceptInvitationByHashAsync(userId, email, op.TokenHash!, cancellationToken).ConfigureAwait(false) switch
                     {
-                        named.Add(membership.OrganizationId);
-                    }
-
-                    return Body(result, TerraBaseJsonContext.Default.Membership);
+                        Membership membership => NamedMembership(membership, named),
+                        NotFound error => new OperationFailed(error),
+                        Forbidden error => new OperationFailed(error),
+                        Conflict error => new OperationFailed(error),
+                        Unavailable error => new OperationFailed(error),
+                    };
                 }
 
             case "decline_invitation":
                 return email is null
                     ? new OperationFailed(new Forbidden("the access token has no verified email"))
-                    : Body(await DeclineInvitationAsync(userId, email, op.TokenHash!, cancellationToken).ConfigureAwait(false), TerraBaseJsonContext.Default.Invitation);
+                    : await DeclineInvitationAsync(userId, email, op.TokenHash!, cancellationToken).ConfigureAwait(false) switch
+                    {
+                        Invitation value => Body(value, TerraBaseJsonContext.Default.Invitation),
+                        NotFound error => new OperationFailed(error),
+                        Forbidden error => new OperationFailed(error),
+                        Conflict error => new OperationFailed(error),
+                        Unavailable error => new OperationFailed(error),
+                    };
             case "start_transfer":
-                return Body(await StartTransferAsync(userId, organization, op.User!, cancellationToken).ConfigureAwait(false), TerraBaseJsonContext.Default.OwnershipTransfer);
+                return await StartTransferAsync(userId, organization, op.User!, cancellationToken).ConfigureAwait(false) switch
+                {
+                    OwnershipTransfer value => Body(value, TerraBaseJsonContext.Default.OwnershipTransfer),
+                    NotFound error => new OperationFailed(error),
+                    Forbidden error => new OperationFailed(error),
+                    Conflict error => new OperationFailed(error),
+                    Unavailable error => new OperationFailed(error),
+                };
             case "confirm_transfer":
-                return Body(await ConfirmTransferAsync(userId, organization, cancellationToken).ConfigureAwait(false), TerraBaseJsonContext.Default.OrganizationMember);
+                return await ConfirmTransferAsync(userId, organization, cancellationToken).ConfigureAwait(false) switch
+                {
+                    OrganizationMember value => Body(value, TerraBaseJsonContext.Default.OrganizationMember),
+                    NotFound error => new OperationFailed(error),
+                    Forbidden error => new OperationFailed(error),
+                    Unavailable error => new OperationFailed(error),
+                };
             case "cancel_transfer":
-                return Done(await CancelTransferAsync(userId, organization, cancellationToken).ConfigureAwait(false));
+                return await CancelTransferAsync(userId, organization, cancellationToken).ConfigureAwait(false) switch
+                {
+                    Done => new CommitResultBody(),
+                    NotFound error => new OperationFailed(error),
+                    Forbidden error => new OperationFailed(error),
+                    Unavailable error => new OperationFailed(error),
+                };
             case "set_audit_retention":
-                return Body(await SetAuditRetentionAsync(userId, organization, op.Days!.Value, cancellationToken).ConfigureAwait(false), TerraBaseJsonContext.Default.AuditRetention);
+                return await SetAuditRetentionAsync(userId, organization, op.Days!.Value, cancellationToken).ConfigureAwait(false) switch
+                {
+                    AuditRetention value => Body(value, TerraBaseJsonContext.Default.AuditRetention),
+                    NotFound error => new OperationFailed(error),
+                    Forbidden error => new OperationFailed(error),
+                    Unavailable error => new OperationFailed(error),
+                };
             default:
                 throw new ArgumentOutOfRangeException(nameof(op), op.Op, "unknown operation");
         }
+    }
+
+    private static CommitStep NamedOrganization(Organization organization, List<string> named)
+    {
+        named.Add(organization.Id);
+        return Body(organization, TerraBaseJsonContext.Default.Organization);
+    }
+
+    private static CommitStep NamedMembership(Membership membership, List<string> named)
+    {
+        named.Add(membership.OrganizationId);
+        return Body(membership, TerraBaseJsonContext.Default.Membership);
+    }
+
+    private static CommitStep DeletedDatabase(TenantContext storage, List<TenantContext> deleted)
+    {
+        deleted.Add(storage);
+        return new CommitResultBody();
     }
 
     // The plan of a set_plan operation, validated by the endpoint.
@@ -619,38 +837,46 @@ internal sealed partial class EngineManagementService
                 var createsProject = earlier.Any(create => create is { Op: "create_project" } && create.Id == op.Project);
                 // Earlier operations that can make the user a member, or raise a viewer, before this one runs.
                 var mayGrant = earlier.Any(grant => grant is { Op: "accept_invitation" } || (grant is { Op: "confirm_transfer" } && grant.Organization == op.Organization));
-                var target = await ReadAsync<ManagementResult<(TenantContext Tenant, ManagedDatabase? Source)>>(async transaction =>
+                var target = await ReadAsync<PreparedDatabaseTarget>(async transaction =>
                 {
                     // A chosen id registers a database another region holds under the same ids (docs/cross-region.md).
                     if (op.Id is { } id && (prepared.Values.Any(added => added.Database.Id == id)
                         || await transaction.GetVersionAsync(EngineManagedBackupService.BackedUpDatabases, id, cancellationToken).ConfigureAwait(false) is not null))
                     {
-                        return ManagementError.IdTaken;
+                        return ManagementErrors.IdTaken;
                     }
 
                     var organization = await GetAsync(transaction, Organizations, op.Organization!, TerraBaseJsonContext.Default.Organization, cancellationToken).ConfigureAwait(false);
                     if (organization is null && createsOrganization)
                     {
                         // A new organization has no database to branch.
-                        return op.Op == "create_database" ? (new TenantContext(op.Organization!, PlanTier.Hobby, op.Project), null) : ManagementError.NotFound;
+                        return op.Op == "create_database" ? (new TenantContext(op.Organization!, PlanTier.Hobby, op.Project), null) : ManagementErrors.NotFound;
                     }
 
                     // The transaction authorizes again, after the earlier operations; this only keeps files away from users
                     // who cannot become writers in this commit.
-                    var writer = await AuthorizeAsync(transaction, userId, op.Organization!, OrganizationRole.Member, cancellationToken).ConfigureAwait(false);
-                    if (writer.Error != ManagementError.None && !(mayGrant && organization is not null))
+                    if (!(mayGrant && organization is not null))
                     {
-                        return writer.Error;
+                        var actor = await AuthorizeAsync(transaction, userId, op.Organization!, OrganizationRole.Member, cancellationToken).ConfigureAwait(false);
+                        if (actor is not OrganizationMember)
+                        {
+                            return actor switch
+                            {
+                                NotFound error => error,
+                                Forbidden error => error,
+                                OrganizationMember => throw new UnreachableException(),
+                            };
+                        }
                     }
 
                     if (createsProject && await transaction.GetVersionAsync(ProjectOrganizations, op.Project!, cancellationToken).ConfigureAwait(false) is null)
                     {
-                        return op.Op == "create_database" ? (new TenantContext(organization!.Id, organization.Plan, op.Project), null) : ManagementError.NotFound;
+                        return op.Op == "create_database" ? (new TenantContext(organization!.Id, organization.Plan, op.Project), null) : ManagementErrors.NotFound;
                     }
 
                     if (await OrganizationProjectAsync(transaction, op.Organization!, op.Project!, cancellationToken).ConfigureAwait(false) is not { } tenant)
                     {
-                        return ManagementError.NotFound;
+                        return ManagementErrors.NotFound;
                     }
 
                     if (op.Op == "create_database")
@@ -660,24 +886,32 @@ internal sealed partial class EngineManagementService
 
                     // A branch copies the home region's file and lives there only (docs/cross-region.md).
                     return await GetAsync(transaction, Databases(op.Project!), op.Database!, TerraBaseJsonContext.Default.ManagedDatabase, cancellationToken).ConfigureAwait(false) is not { } source
-                        ? ManagementError.NotFound
-                        : source.Home(options.Region) != options.Region ? ManagementError.WrongRegion
+                        ? ManagementErrors.NotFound
+                        : source.Home(options.Region) != options.Region ? ManagementErrors.WrongRegion
                         : (tenant, source);
-                }, cancellationToken).ConfigureAwait(false);
-                if (target.Error != ManagementError.None)
+                }, static error => error, cancellationToken).ConfigureAwait(false);
+                if (target is not ValueTuple<TenantContext, ManagedDatabase?> resolved)
                 {
-                    return await AbandonAsync(prepared, new CommitRejected(Failure(target.Error), i)).ConfigureAwait(false);
+                    var rejected = target switch
+                    {
+                        NotFound error => new CommitRejected(error, i),
+                        Forbidden error => new CommitRejected(error, i),
+                        Conflict error => new CommitRejected(error, i),
+                        Unavailable error => new CommitRejected(error, i),
+                        ValueTuple<TenantContext, ManagedDatabase?> => throw new UnreachableException(),
+                    };
+                    return await AbandonAsync(prepared, rejected).ConfigureAwait(false);
                 }
 
-                var (project, source) = target.Value;
+                var (project, source) = resolved;
                 // A database is created in its home region, the one the commit is sent to (docs/cross-region.md).
                 var replicas = op.ReplicaRegions ?? [];
                 if ((op.HomeRegion ?? options.Region) != options.Region)
                 {
-                    return await AbandonAsync(prepared, new CommitRejected(Failure(ManagementError.WrongRegion), i)).ConfigureAwait(false);
+                    return await AbandonAsync(prepared, new CommitRejected(ManagementErrors.WrongRegion, i)).ConfigureAwait(false);
                 }
 
-                if (DatabaseRegions.Check(options, options.Region, replicas) is { } invalid)
+                if (DatabaseRegions.Check(options, options.Region, replicas) is Validation invalid)
                 {
                     return await AbandonAsync(prepared, new CommitRejected(invalid, i)).ConfigureAwait(false);
                 }
@@ -685,9 +919,15 @@ internal sealed partial class EngineManagementService
                 var database = new ManagedDatabase(
                     op.Id ?? NewId(), op.Project!, op.Name!, source?.Id, time.GetUtcNow(), options.Region, replicas.Count == 0 ? null : [.. replicas], 1);
                 var storage = project with { DatabaseId = database.Id };
-                if (!await PrepareDatabaseAsync(storage, source is null ? null : project with { DatabaseId = source.Id }, cancellationToken).ConfigureAwait(false))
+                var preparation = await PrepareDatabaseAsync(storage, source is null ? null : project with { DatabaseId = source.Id }, cancellationToken).ConfigureAwait(false);
+                if (preparation is not bool created || !created)
                 {
-                    return await AbandonAsync(prepared, new CommitRejected(Failure(ManagementError.NotFound), i)).ConfigureAwait(false);
+                    var failure = preparation switch
+                    {
+                        bool => new CommitRejected(ManagementErrors.NotFound, i),
+                        Unavailable error => new CommitRejected(error, i),
+                    };
+                    return await AbandonAsync(prepared, failure).ConfigureAwait(false);
                 }
 
                 prepared[i] = new AddedDatabase(database, storage);
@@ -718,11 +958,11 @@ internal sealed partial class EngineManagementService
     }
 
     // The user's record of a commit within the retention.
-    private async ValueTask<CommitRecord?> RecordedAsync(IStorageTransaction transaction, string userId, string commitId, CancellationToken cancellationToken) =>
+    private async ValueTask<Found<CommitRecord>> RecordedAsync(IStorageTransaction transaction, string userId, string commitId, CancellationToken cancellationToken) =>
         await GetAsync(transaction, Commits(userId), commitId, TerraBaseJsonContext.Default.CommitRecord, cancellationToken).ConfigureAwait(false) is { } recorded
         && recorded.CommittedAt > time.GetUtcNow() - CommitRetention
             ? recorded
-            : null;
+            : new NotFound("no committed commit has this id");
 
     private static CommitResult Replay(CommitRecord recorded, string requestHash) =>
         Matches(recorded.RequestHash, requestHash)
@@ -763,61 +1003,6 @@ internal sealed partial class EngineManagementService
     private static CommitResultBody Counted(long count) => new(Asserted: true, Count: count.ToString(CultureInfo.InvariantCulture));
 
     private static CommitStep Body<T>(T value, JsonTypeInfo<T> type) => new CommitResultBody(Value: JsonSerializer.SerializeToElement(value, type));
-
-    private static CommitStep Body<T>(ManagementResult<T> result, JsonTypeInfo<T> type) =>
-        result.Error == ManagementError.None ? Body(result.Value!, type) : Failed(result.Error);
-
-    private static CommitStep Done(ManagementError error) => error == ManagementError.None ? new CommitResultBody() : Failed(error);
-
-    private static CommitStep Failed(ManagementError error) => new OperationFailed(Failure(error));
-
-    /// <summary>A Management failure as the failure kind it stands for, with its code.</summary>
-    internal static Failure Failure(ManagementError error) => error switch
-    {
-        ManagementError.NotFound => new NotFound(Message(error)),
-        ManagementError.Forbidden => new Forbidden(Message(error)),
-        ManagementError.StorageQuota => new QuotaExceeded("the organization storage quota would be exceeded", "storage_quota"),
-        ManagementError.StorageAccountingBusy => StorageQuota.AccountingUnavailable,
-        _ => new Conflict(Message(error), Code(error)),
-    };
-
-    private static string Code(ManagementError error) => error switch
-    {
-        ManagementError.NotFound => "not_found",
-        ManagementError.NameTaken => "name_taken",
-        ManagementError.NotEmpty => "not_empty",
-        ManagementError.Forbidden => "forbidden",
-        ManagementError.LastOwner => "last_owner",
-        ManagementError.AlreadyMember => "already_member",
-        ManagementError.InvitationPending => "invitation_pending",
-        ManagementError.AlreadyOwner => "already_owner",
-        ManagementError.Expired => "expired",
-        ManagementError.IdTaken => "id_taken",
-        ManagementError.InvitationClosed => "invitation_closed",
-        ManagementError.TokenTaken => "token_taken",
-        ManagementError.WrongRegion => "wrong_region",
-        ManagementError.Replicated => "database_replicated",
-        _ => throw new ArgumentOutOfRangeException(nameof(error)),
-    };
-
-    private static string Message(ManagementError error) => error switch
-    {
-        ManagementError.NotFound => "the resource does not exist",
-        ManagementError.NameTaken => "name is already taken",
-        ManagementError.NotEmpty => "delete what it contains first",
-        ManagementError.Forbidden => "your role in the organization does not allow this",
-        ManagementError.LastOwner => "the organization must keep an owner",
-        ManagementError.AlreadyMember => "the user is already a member",
-        ManagementError.InvitationPending => "an invitation for this email is pending",
-        ManagementError.AlreadyOwner => "the member is already an owner",
-        ManagementError.Expired => "the invitation expired",
-        ManagementError.IdTaken => "the id is already taken",
-        ManagementError.InvitationClosed => "the invitation is no longer pending",
-        ManagementError.TokenTaken => "another invitation has this token",
-        ManagementError.WrongRegion => "the database is managed in another region: send it to its home region",
-        ManagementError.Replicated => "remove the database's replica regions first",
-        _ => throw new ArgumentOutOfRangeException(nameof(error)),
-    };
 
     private static string Commits(string userId) => $"users/{userId}/commits";
 }

@@ -1,6 +1,8 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Text.Json;
 using TerraBase.Engine;
+using TerraBase.Errors;
 using TerraBase.Features.Management.Backups;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
@@ -13,20 +15,24 @@ namespace TerraBase.Features.Management;
 /// </summary>
 internal sealed partial class EngineManagementService
 {
-    public ValueTask<(TenantContext Database, DatabasePlacement Placement)?> ResolveProjectDatabaseAsync(string projectId, string database, CancellationToken cancellationToken) =>
-        ReadAsync<(TenantContext, DatabasePlacement)?>(async transaction =>
+    public ValueTask<ResolveProjectDatabaseResult> ResolveProjectDatabaseAsync(string projectId, string database, CancellationToken cancellationToken) =>
+        ReadAsync<ResolveProjectDatabaseResult>(async transaction =>
             await GetAsync(transaction, ProjectOrganizations, projectId, Id, cancellationToken).ConfigureAwait(false) is { } organizationId
                 && await IsProjectBoundAsync(transaction, projectId, organizationId, cancellationToken).ConfigureAwait(false)
                 && await FindDatabaseAsync(transaction, organizationId, projectId, database, cancellationToken).ConfigureAwait(false) is { } tenant
                 && await GetAsync(transaction, Databases(projectId), tenant.DatabaseId!, TerraBaseJsonContext.Default.ManagedDatabase, cancellationToken)
                     .ConfigureAwait(false) is { } record && record.Id == tenant.DatabaseId && record.ProjectId == projectId && record.Name == database
-                    ? (tenant, record.Placement(options.Region))
-                    : null,
-            cancellationToken);
+                    ? new ResolvedProjectDatabase(tenant, record.Placement(options.Region))
+                    : ManagementErrors.NotFound,
+            static error => error, cancellationToken);
 
-    public async ValueTask<bool> EnsureLocalDatabaseAsync(TenantContext database, CancellationToken cancellationToken) =>
-        await RegisteredAsync(database, cancellationToken).ConfigureAwait(false) is true
-            && await InitializeFollowerAsync(database, cancellationToken).ConfigureAwait(false);
+    public async ValueTask<EnsureLocalDatabaseResult> EnsureLocalDatabaseAsync(TenantContext database, CancellationToken cancellationToken) =>
+        await RegisteredAsync(database, cancellationToken).ConfigureAwait(false) switch
+        {
+            true => await InitializeFollowerAsync(database, cancellationToken).ConfigureAwait(false),
+            false => ManagementErrors.NotFound,
+            Unavailable error => error,
+        };
 
     // Bounded by count; each entry holds three ids of at most a few hundred bytes.
     private const int MaxCachedTenants = 4096;
@@ -43,7 +49,7 @@ internal sealed partial class EngineManagementService
     private readonly Lock _planGate = new();
     private readonly Dictionary<string, (Ulid Incarnation, long Sequence, PlanTier Plan)> _plans = [];
 
-    public async ValueTask<TenantContext?> FindDatabaseAsync(string organizationId, string projectId, string database, CancellationToken cancellationToken)
+    public async ValueTask<FindDatabaseResult> FindDatabaseAsync(string organizationId, string projectId, string database, CancellationToken cancellationToken)
     {
         var sequence = (await engine.OpenSystemDatabaseAsync(cancellationToken).ConfigureAwait(false)).CommitSequence;
         var key = (organizationId, projectId, database);
@@ -53,84 +59,117 @@ internal sealed partial class EngineManagementService
         }
 
         var found = await FindUncachedAsync(organizationId, projectId, database, cancellationToken).ConfigureAwait(false);
-        if (found is not null)
+        if (found is TenantContext tenant)
         {
             if (_tenants.Count >= MaxCachedTenants)
             {
                 _tenants.Clear();
             }
 
-            _tenants[key] = (sequence, found);
+            _tenants[key] = (sequence, tenant);
         }
 
         return found;
     }
 
-    private async ValueTask<TenantContext?> FindUncachedAsync(string organizationId, string projectId, string database, CancellationToken cancellationToken)
+    private async ValueTask<FindDatabaseResult> FindUncachedAsync(string organizationId, string projectId, string database, CancellationToken cancellationToken)
     {
-        var tenant = await ReadAsync(transaction => FindDatabaseAsync(transaction, organizationId, projectId, database, cancellationToken), cancellationToken)
-            .ConfigureAwait(false);
-        return tenant is not null && await InitializeFollowerAsync(tenant, cancellationToken).ConfigureAwait(false) ? tenant : null;
+        var found = await ReadAsync<FindDatabaseResult>(
+            async transaction => await FindDatabaseAsync(transaction, organizationId, projectId, database, cancellationToken).ConfigureAwait(false) is { } tenant
+                ? tenant
+                : ManagementErrors.NotFound,
+            static error => error, cancellationToken).ConfigureAwait(false);
+        return found switch
+        {
+            TenantContext tenant => await InitializeFollowerAsync(tenant, cancellationToken).ConfigureAwait(false) switch
+            {
+                Done => tenant,
+                NotFound error => error,
+                Unavailable error => error,
+            },
+            NotFound error => error,
+            Unavailable error => error,
+        };
     }
 
-    private async ValueTask<bool> InitializeFollowerAsync(TenantContext tenant, CancellationToken cancellationToken)
+    private async ValueTask<EnsureLocalDatabaseResult> InitializeFollowerAsync(TenantContext tenant, CancellationToken cancellationToken)
     {
-        // A follower serves a database the replicated catalog registers before any of its documents arrived: an empty
-        // local file, which replication then fills like any other (docs/decisions/0009).
-        // A deletion it applies meanwhile could miss the new file: one this call created is checked again, and deleted with it
-        // once the catalog, at a version this build reads, no longer registers the database.
+        // A follower serves a registered database before its first documents arrive. Recheck a file created here
+        // after initialization: a concurrent deletion may have applied before the file existed.
         if (options.CatalogPrimary is not null && await engine.OpenDatabaseAsync(tenant, cancellationToken).ConfigureAwait(false) is null
-            && await engine.CreateDatabaseAsync(tenant, cancellationToken).ConfigureAwait(false)
-            && await RegisteredAsync(tenant, cancellationToken).ConfigureAwait(false) is false)
+            && await engine.CreateDatabaseAsync(tenant, cancellationToken).ConfigureAwait(false))
         {
-            if (await engine.OpenDatabaseAsync(tenant, cancellationToken).ConfigureAwait(false) is { } created)
+            var registration = await RegisteredAsync(tenant, cancellationToken).ConfigureAwait(false);
+            if (registration is not bool registered)
             {
-                _ = await engine.DeleteDatabaseAsync(tenant, cancellationToken, incarnation: created.Incarnation).ConfigureAwait(false);
+                return registration switch
+                {
+                    Unavailable error => error,
+                    bool => throw new UnreachableException(),
+                };
             }
 
-            return false;
+            if (!registered)
+            {
+                if (await engine.OpenDatabaseAsync(tenant, cancellationToken).ConfigureAwait(false) is { } created)
+                {
+                    _ = await engine.DeleteDatabaseAsync(tenant, cancellationToken, incarnation: created.Incarnation).ConfigureAwait(false);
+                }
+
+                return ManagementErrors.NotFound;
+            }
         }
 
-        return true;
+        return new Done();
     }
 
-    public async ValueTask<(TenantContext Database, bool Created)?> CreateDatabaseAsync(
-        string organizationId, string projectId, string database, CancellationToken cancellationToken)
+    public async ValueTask<ProvisionDatabaseResult> CreateDatabaseAsync(string organizationId, string projectId, string database, CancellationToken cancellationToken)
     {
-        var added = await AddDatabaseAsync(
+        return await AddDatabaseAsync(
             async transaction => await OrganizationProjectAsync(transaction, organizationId, projectId, cancellationToken).ConfigureAwait(false) is { } tenant
                 ? tenant
-                : ManagementError.NotFound,
+                : ManagementErrors.NotFound,
             database, sourceId: null, branchedFrom: null, cancellationToken)
-            .ConfigureAwait(false);
-        if (added.Value is { } value)
+            .ConfigureAwait(false) switch
         {
-            return (value.Tenant, true);
-        }
-
-        // The name is taken: the database exists, unless it was deleted again meanwhile.
-        return added.Error == ManagementError.NameTaken
-            && await FindDatabaseAsync(organizationId, projectId, database, cancellationToken).ConfigureAwait(false) is { } existing
-            ? (existing, false)
-            : null;
+            AddedDatabase added => new ProvisionedDatabase(added.Tenant, Created: true),
+            QuotaExceeded => throw new UnreachableException(),
+            // The name is taken: the database exists, unless it was deleted again meanwhile.
+            Conflict error when error == ManagementErrors.NameTaken => await FindDatabaseAsync(organizationId, projectId, database, cancellationToken).ConfigureAwait(false) switch
+            {
+                TenantContext existing => new ProvisionedDatabase(existing, Created: false),
+                NotFound missing => missing,
+                Unavailable unavailable => unavailable,
+            },
+            Unavailable error => error,
+            NotFound or Forbidden or Conflict => ManagementErrors.NotFound,
+        };
     }
 
-    public ValueTask<(string Name, DatabasePlacement Placement)?> DatabaseRecordAsync(TenantContext database, CancellationToken cancellationToken)
+    public ValueTask<DatabaseRecordResult> DatabaseRecordAsync(TenantContext database, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(database);
         return database.ProjectId is null || database.DatabaseId is null
-            ? ValueTask.FromResult<(string, DatabasePlacement)?>(null)
-            : ReadCatalogAsync<(string, DatabasePlacement)?>(async transaction =>
-                await GetAsync(transaction, Databases(database.ProjectId), database.DatabaseId, TerraBaseJsonContext.Default.ManagedDatabase, cancellationToken)
-                    .ConfigureAwait(false) is { } record
-                    ? (record.Name, record.Placement(options.Region))
-                    : null,
-                cancellationToken);
+            ? ValueTask.FromResult<DatabaseRecordResult>(ManagementErrors.NotFound)
+            : ReadAsync<DatabaseRecordResult>(async transaction =>
+                !Interprets(await GetAsync(transaction, Catalog, CatalogVersionId, Id, cancellationToken).ConfigureAwait(false))
+                    ? UnreadableCatalog
+                    : await GetAsync(transaction, Databases(database.ProjectId), database.DatabaseId, TerraBaseJsonContext.Default.ManagedDatabase, cancellationToken)
+                        .ConfigureAwait(false) is { } record
+                        ? new TenantDatabaseRecord(record.Name, record.Placement(options.Region))
+                        : ManagementErrors.NotFound,
+                static error => error, cancellationToken);
     }
 
-    public ValueTask<TenantDatabasePage> ReadDatabaseRecordsAsync(string homeRegion, TenantContext? after, CancellationToken cancellationToken) =>
-        ReadAsync(async transaction =>
+    public ValueTask<ReadDatabaseRecordsResult> ReadDatabaseRecordsAsync(string homeRegion, TenantContext? after, CancellationToken cancellationToken) =>
+        ReadAsync<ReadDatabaseRecordsResult>(async transaction =>
         {
+            // Check this snapshot before decoding records, even if the primary accepted an earlier version.
+            if (!Interprets(await GetAsync(transaction, Catalog, CatalogVersionId, Id, cancellationToken).ConfigureAwait(false)))
+            {
+                return UnreadableCatalog;
+            }
+
             // At most 100 identities, each with three ULIDs: under 22 KiB of character data. Storage scan pages are
             // separately bounded to 100 documents and 1 MiB. Release the reader before WAN requests or cleanup writes.
             var records = new List<TenantContext>(MemberPage);
@@ -186,78 +225,99 @@ internal sealed partial class EngineManagementService
 
                 return false;
             }
-        }, cancellationToken);
+        }, static error => error, cancellationToken);
 
-    public async ValueTask<DatabaseAdoption> AdoptDatabaseAsync(TenantContext database, string name, DatabasePlacement placement, CancellationToken cancellationToken)
+    public async ValueTask<AdoptDatabaseResult> AdoptDatabaseAsync(TenantContext database, string name, DatabasePlacement placement, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(database);
         ArgumentNullException.ThrowIfNull(placement);
         if (database.ProjectId is null || database.DatabaseId is null || !DatabaseName.TryParse(name, out _))
         {
-            return DatabaseAdoption.NotReplicated;
+            return ManagementErrors.NotFound;
         }
 
         // Every database id this catalog ever registered keeps its entry, deleted ones as tombstones.
-        if (await ReadAsync(async transaction => await transaction.GetVersionAsync(EngineManagedBackupService.BackedUpDatabases, database.DatabaseId, cancellationToken)
-            .ConfigureAwait(false), cancellationToken).ConfigureAwait(false) is not null)
+        var history = await ReadAsync<AdoptDatabaseResult>(
+            async transaction => !Interprets(await GetAsync(transaction, Catalog, CatalogVersionId, Id, cancellationToken).ConfigureAwait(false))
+                ? UnreadableCatalog
+                : await transaction.GetVersionAsync(EngineManagedBackupService.BackedUpDatabases, database.DatabaseId, cancellationToken)
+                    .ConfigureAwait(false) is null ? new Done() : CatalogDatabaseDeleted,
+            static error => error, cancellationToken).ConfigureAwait(false);
+        if (history is not Done)
         {
-            return DatabaseAdoption.Deleted;
+            return history switch
+            {
+                Conflict error => error,
+                NotFound error => error,
+                Unavailable error => error,
+                Done => throw new UnreachableException(),
+            };
         }
 
-        async ValueTask<ManagementResult<TenantContext>> project(IStorageTransaction transaction)
+        async ValueTask<ProjectTenant> project(IStorageTransaction transaction)
         {
             return await OrganizationProjectAsync(transaction, database.OrganizationId, database.ProjectId!, cancellationToken).ConfigureAwait(false) is { } tenant
                 ? tenant
-                : ManagementError.NotFound;
+                : ManagementErrors.NotFound;
         }
 
-        ManagementError error;
         if (placement.Includes(options.Region))
         {
-            error = (await AddDatabaseAsync(project, name, sourceId: null, branchedFrom: null, cancellationToken, id: database.DatabaseId, placement: placement)
-                .ConfigureAwait(false)).Error;
-        }
-        else
-        {
-            // Placed elsewhere: only the record, no file and no backups, so requests here can be told where it is served.
-            var record = new ManagedDatabase(
-                database.DatabaseId, database.ProjectId, name, null, time.GetUtcNow(), placement.Home, placement.Replicas.Count == 0 ? null : [.. placement.Replicas], placement.Version);
-            error = await WriteAsync(async transaction =>
+            return await AddDatabaseAsync(project, name, sourceId: null, branchedFrom: null, cancellationToken, id: database.DatabaseId, placement: placement)
+                .ConfigureAwait(false) switch
             {
-                var check = await CanAddDatabaseAsync(transaction, project, name, cancellationToken).ConfigureAwait(false);
-                if (check.Value is { } tenant)
-                {
-                    await PutAsync(transaction, DatabaseNames(database.ProjectId), name, database.DatabaseId, Id, cancellationToken).ConfigureAwait(false);
-                    await PutAsync(transaction, Databases(database.ProjectId), database.DatabaseId, record, TerraBaseJsonContext.Default.ManagedDatabase, cancellationToken)
-                        .ConfigureAwait(false);
-                    await TouchOrganizationAsync(transaction, tenant.OrganizationId, cancellationToken).ConfigureAwait(false);
-                }
-
-                return check.Error;
-            }, cancellationToken).ConfigureAwait(false);
+                AddedDatabase => new Done(),
+                QuotaExceeded => throw new UnreachableException(),
+                Conflict error when error == ManagementErrors.NameTaken => error,
+                Unavailable error => error,
+                NotFound or Forbidden or Conflict => ManagementErrors.NotFound,
+            };
         }
 
-        return error == ManagementError.None ? DatabaseAdoption.Registered
-            : error == ManagementError.NameTaken ? DatabaseAdoption.NameTaken
-            : DatabaseAdoption.NotReplicated;
+        // Placed elsewhere: only the record, no file and no backups, so requests here can be told where it is served.
+        var record = new ManagedDatabase(
+            database.DatabaseId, database.ProjectId, name, null, time.GetUtcNow(), placement.Home, placement.Replicas.Count == 0 ? null : [.. placement.Replicas], placement.Version);
+        return await WriteAsync<AdoptDatabaseResult>(async transaction =>
+        {
+            var check = await CanAddDatabaseAsync(transaction, project, name, cancellationToken).ConfigureAwait(false);
+            if (check is TenantContext tenant)
+            {
+                await PutAsync(transaction, DatabaseNames(database.ProjectId), name, database.DatabaseId, Id, cancellationToken).ConfigureAwait(false);
+                await PutAsync(transaction, Databases(database.ProjectId), database.DatabaseId, record, TerraBaseJsonContext.Default.ManagedDatabase, cancellationToken)
+                    .ConfigureAwait(false);
+                await TouchOrganizationAsync(transaction, tenant.OrganizationId, cancellationToken).ConfigureAwait(false);
+            }
+
+            return check switch
+            {
+                TenantContext => new Done(),
+                Conflict error when error == ManagementErrors.NameTaken => error,
+                NotFound or Forbidden or Conflict => ManagementErrors.NotFound,
+            };
+        }, static error => error, cancellationToken).ConfigureAwait(false);
     }
 
-    public async ValueTask<bool> UpdatePlacementAsync(TenantContext database, DatabasePlacement placement, CancellationToken cancellationToken)
+    public async ValueTask<UpdatePlacementResult> UpdatePlacementAsync(TenantContext database, DatabasePlacement placement, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(database);
         ArgumentNullException.ThrowIfNull(placement);
         if (database.ProjectId is null || database.DatabaseId is null)
         {
-            return false;
+            return new PlacementUpdate(Updated: false);
         }
 
-        return await WriteAsync(async transaction =>
+        return await WriteAsync<UpdatePlacementResult>(async transaction =>
         {
+            if (!Interprets(await GetAsync(transaction, Catalog, CatalogVersionId, Id, cancellationToken).ConfigureAwait(false)))
+            {
+                return UnreadableCatalog;
+            }
+
             if (await GetAsync(transaction, Databases(database.ProjectId), database.DatabaseId, TerraBaseJsonContext.Default.ManagedDatabase, cancellationToken)
                 .ConfigureAwait(false) is not { } record || placement.Version <= record.PlacementVersion || record.Home(options.Region) == options.Region)
             {
                 // The home region decides its databases' placement; nothing older replaces a newer one.
-                return false;
+                return new PlacementUpdate(Updated: false);
             }
 
             await PutAsync(transaction, Databases(database.ProjectId), database.DatabaseId, record with
@@ -278,16 +338,16 @@ internal sealed partial class EngineManagementService
             }
 
             await TouchOrganizationAsync(transaction, database.OrganizationId, cancellationToken).ConfigureAwait(false);
-            return true;
-        }, cancellationToken).ConfigureAwait(false);
+            return new PlacementUpdate(Updated: true);
+        }, static error => error, cancellationToken).ConfigureAwait(false);
     }
 
-    public async ValueTask<bool> ForgetDatabaseAsync(TenantContext database, CancellationToken cancellationToken)
+    public async ValueTask<ForgetDatabaseResult> ForgetDatabaseAsync(TenantContext database, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(database);
         if (database.ProjectId is null || database.DatabaseId is null)
         {
-            return false;
+            return new DatabaseForgotten(Forgotten: false);
         }
 
         // Never a database at home here: only its home region deletes it.
@@ -301,13 +361,31 @@ internal sealed partial class EngineManagementService
                     : null;
         }
 
-        if (await ReadAsync(ElsewhereAsync, cancellationToken).ConfigureAwait(false) is not { } target)
+        // A catalog this build cannot use forgets nothing.
+        var found = await ReadAsync<ForgetTargetCheck>(async transaction =>
+            !Interprets(await GetAsync(transaction, Catalog, CatalogVersionId, Id, cancellationToken).ConfigureAwait(false))
+                ? UnreadableCatalog
+                : await ElsewhereAsync(transaction).ConfigureAwait(false) is { } elsewhere ? new ForgetTarget(elsewhere.Storage) : ManagementErrors.NotFound,
+            static error => error, cancellationToken).ConfigureAwait(false);
+        if (found is not ForgetTarget target)
         {
-            return false;
+            return found switch
+            {
+                NotFound => new DatabaseForgotten(Forgotten: false),
+                Unavailable error => error,
+                ForgetTarget => throw new UnreachableException(),
+            };
         }
 
-        return await DeleteRecordedAsync(target.Storage, async (transaction, token) =>
+        ForgetDatabaseResult disposition = new DatabaseForgotten(Forgotten: false);
+        var deleted = await DeleteRecordedAsync(target.Storage, async (transaction, token) =>
         {
+            if (!Interprets(await GetAsync(transaction, Catalog, CatalogVersionId, Id, token).ConfigureAwait(false)))
+            {
+                disposition = UnreadableCatalog;
+                return false; // The engine callback declines recording the deletion intent.
+            }
+
             if (await ElsewhereAsync(transaction).ConfigureAwait(false) is not { } current)
             {
                 return false;
@@ -316,32 +394,46 @@ internal sealed partial class EngineManagementService
             _ = await UnregisterRecordAsync(transaction, current.Storage, current.Record, token).ConfigureAwait(false);
             return true;
         }, cancellationToken).ConfigureAwait(false);
+        return deleted switch
+        {
+            bool forgotten => forgotten ? new DatabaseForgotten(Forgotten: true) : disposition,
+            Unavailable refused => refused,
+        };
     }
 
-    public async ValueTask<ManagedDatabase?> FindDatabaseRecordAsync(string organizationId, string projectId, string name, CancellationToken cancellationToken)
+    private sealed record ForgetTarget(TenantContext Storage);
+    private readonly union ForgetTargetCheck(ForgetTarget, NotFound, Unavailable);
+
+    public async ValueTask<FindDatabaseRecordResult> FindDatabaseRecordAsync(string organizationId, string projectId, string name, CancellationToken cancellationToken)
     {
         var sequence = (await engine.OpenSystemDatabaseAsync(cancellationToken).ConfigureAwait(false)).CommitSequence;
         var key = (organizationId, projectId, name);
         if (_records.TryGetValue(key, out var cached) && cached.Sequence == sequence)
         {
-            return cached.Record;
+            return cached.Record is { } known ? known : ManagementErrors.NotFound;
         }
 
-        var record = await ReadAsync(async transaction =>
+        var found = await ReadAsync<FindDatabaseRecordResult>(async transaction =>
             await FindDatabaseAsync(transaction, organizationId, projectId, name, cancellationToken).ConfigureAwait(false) is { } tenant
-                ? await GetAsync(transaction, Databases(projectId), tenant.DatabaseId!, TerraBaseJsonContext.Default.ManagedDatabase, cancellationToken).ConfigureAwait(false)
-                : null,
-            cancellationToken).ConfigureAwait(false);
+            && await GetAsync(transaction, Databases(projectId), tenant.DatabaseId!, TerraBaseJsonContext.Default.ManagedDatabase, cancellationToken).ConfigureAwait(false) is { } record
+                ? record
+                : ManagementErrors.NotFound,
+            static error => error, cancellationToken).ConfigureAwait(false);
+        if (found is Unavailable)
+        {
+            return found;
+        }
+
         if (_records.Count >= MaxCachedTenants)
         {
             _records.Clear();
         }
 
-        _records[key] = (sequence, record);
-        return record;
+        _records[key] = (sequence, found is ManagedDatabase database ? database : null);
+        return found;
     }
 
-    public async ValueTask<PlanTier> PlanAsync(string organizationId, CancellationToken cancellationToken)
+    public async ValueTask<TenantPlanResult> PlanAsync(string organizationId, CancellationToken cancellationToken)
     {
         var store = await engine.OpenSystemDatabaseAsync(cancellationToken).ConfigureAwait(false);
         var incarnation = store.Incarnation;
@@ -354,12 +446,12 @@ internal sealed partial class EngineManagementService
             }
         }
 
-        var plan = await ReadCatalogAsync(async transaction =>
+        var result = await ReadAsync<TenantPlanResult>(async transaction =>
             Interprets(await GetAsync(transaction, Catalog, CatalogVersionId, Id, cancellationToken).ConfigureAwait(false))
                 ? await PlanUncheckedAsync(transaction, organizationId, cancellationToken).ConfigureAwait(false)
-                : PlanTier.Hobby,
-            cancellationToken).ConfigureAwait(false);
-        if (store.Incarnation == incarnation && store.CommitSequence == sequence)
+                : UnreadableCatalog,
+            static error => error, cancellationToken).ConfigureAwait(false);
+        if (result is PlanTier plan && store.Incarnation == incarnation && store.CommitSequence == sequence)
         {
             lock (_planGate)
             {
@@ -372,39 +464,50 @@ internal sealed partial class EngineManagementService
             }
         }
 
-        return plan;
+        return result;
     }
 
-    public ValueTask<bool?> RegisteredAsync(TenantContext database, CancellationToken cancellationToken)
+    public ValueTask<TenantCatalogResult> CheckCatalogAsync(CancellationToken cancellationToken) =>
+        ReadAsync<TenantCatalogResult>(async transaction =>
+            Interprets(await GetAsync(transaction, Catalog, CatalogVersionId, Id, cancellationToken).ConfigureAwait(false))
+                ? new Done() : UnreadableCatalog,
+            static error => error, cancellationToken);
+
+    public ValueTask<RegisteredDatabaseResult> RegisteredAsync(TenantContext database, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(database);
         return database.ProjectId is null || database.DatabaseId is null
-            ? ValueTask.FromResult<bool?>(false)
-            : ReadCatalogAsync<bool?>(async transaction =>
+            ? ValueTask.FromResult<RegisteredDatabaseResult>(false)
+            : ReadAsync<RegisteredDatabaseResult>(async transaction =>
                 !Interprets(await GetAsync(transaction, Catalog, CatalogVersionId, Id, cancellationToken).ConfigureAwait(false))
-                    ? null
+                    ? UnreadableCatalog
                     : await ScopeExistsUncheckedAsync(transaction, database.OrganizationId, database.ProjectId, database.DatabaseId, cancellationToken).ConfigureAwait(false)
                         && (options.Wan is null
                             || (await GetAsync(transaction, Databases(database.ProjectId), database.DatabaseId, TerraBaseJsonContext.Default.ManagedDatabase, cancellationToken)
                                 .ConfigureAwait(false))?.PlacedIn(options.Region) == true),
-                cancellationToken);
+                static error => error, cancellationToken);
     }
 
-    public ValueTask<bool?> ReplicatesAsync(TenantContext database, CancellationToken cancellationToken)
+    public ValueTask<ReplicatesDatabaseResult> ReplicatesAsync(TenantContext database, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(database);
         return database.ProjectId is null || database.DatabaseId is null
-            ? ValueTask.FromResult<bool?>(false)
-            : ReadCatalogAsync<bool?>(async transaction =>
+            ? ValueTask.FromResult<ReplicatesDatabaseResult>(false)
+            : ReadAsync<ReplicatesDatabaseResult>(async transaction =>
                 !Interprets(await GetAsync(transaction, Catalog, CatalogVersionId, Id, cancellationToken).ConfigureAwait(false))
-                    ? null
+                    ? UnreadableCatalog
                     : await ScopeExistsUncheckedAsync(transaction, database.OrganizationId, database.ProjectId, database.DatabaseId, cancellationToken).ConfigureAwait(false)
                         || await GetAsync(transaction, PendingDatabaseCleanup, database.DatabaseId, TerraBaseJsonContext.Default.TenantContext, cancellationToken)
                             .ConfigureAwait(false) is not null,
-                cancellationToken);
+                static error => error, cancellationToken);
     }
 
-    // Only current registrations are interpreted; old catalog shapes are refused.
+    private Unavailable UnreadableCatalog => options.CatalogPrimary is null
+        ? ManagementErrors.CatalogUnsupported : ManagementErrors.ReplicatedCatalogUnsupported;
+
+    private static readonly Conflict CatalogDatabaseDeleted = new("a database deleted here is not brought back", "database_deleted");
+
+    // Unsupported catalogs are never interpreted or migrated.
     private static bool Interprets(string? version) => version == CatalogVersion;
 
     /// <summary>

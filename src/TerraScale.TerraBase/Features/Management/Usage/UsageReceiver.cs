@@ -1,6 +1,8 @@
+using System.Diagnostics;
 using System.Text.Json;
 using Grpc.Core;
 using TerraBase.Configuration;
+using TerraBase.Errors;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Replication.V1;
 using TerraBase.Hosting;
@@ -49,7 +51,7 @@ internal sealed class UsageReceiver(TerraBaseOptions options, UsageMeter meter, 
         // bounded by the databases that exist, whatever ids a batch carries. Each project is checked once (two point reads),
         // then each database of an existing one (one).
         var owners = request.Counts.Select(count => new DatabaseOwner(count.OrganizationId, count.ProjectId, count.DatabaseId)).ToHashSet();
-        var known = await catalog.ReadAsync(async transaction =>
+        var read = await catalog.ReadAsync<KnownOwners>(async transaction =>
         {
             var found = new HashSet<DatabaseOwner>();
             foreach (var project in owners.GroupBy(owner => (owner.OrganizationId, owner.ProjectId)))
@@ -71,7 +73,17 @@ internal sealed class UsageReceiver(TerraBaseOptions options, UsageMeter meter, 
             }
 
             return found;
-        }, context.CancellationToken).ConfigureAwait(false);
+        }, static error => error, context.CancellationToken).ConfigureAwait(false);
+        if (read is not HashSet<DatabaseOwner> known)
+        {
+            // The peer retries the batch later, as for any unavailable primary.
+            throw read switch
+            {
+                Unavailable error => new RpcException(new Status(StatusCode.Unavailable, error.Message)),
+                HashSet<DatabaseOwner> => new UnreachableException(),
+            };
+        }
+
         var counts = request.Counts
             .Select(count => KeyValuePair.Create(
                 new UsageKey(new DatabaseOwner(count.OrganizationId, count.ProjectId, count.DatabaseId), count.Hour, (UsageScope)count.Scope, (int)count.Minute),
@@ -79,9 +91,13 @@ internal sealed class UsageReceiver(TerraBaseOptions options, UsageMeter meter, 
             .Where(entry => known.Contains(entry.Key.Database))
             .ToList();
         return await meter.AcceptAsync(request.Sender, request.Epoch.ToBase64(), (long)request.Sequence, counts, context.CancellationToken)
-            .ConfigureAwait(false) == UsageAccept.TooManySenders
-            ? throw new RpcException(new Status(StatusCode.ResourceExhausted, "too many usage senders"))
-            : new UsageAck();
+            .ConfigureAwait(false) switch
+        {
+            UsageAccept accepted => accepted == UsageAccept.TooManySenders
+                ? throw new RpcException(new Status(StatusCode.ResourceExhausted, "too many usage senders"))
+                : new UsageAck(),
+            Unavailable refused => throw new RpcException(new Status(StatusCode.Unavailable, refused.Message)),
+        };
     }
 
     // Ids are those of the catalog the follower replicates; a flush drops the counts of a database it does not name. Counts
@@ -136,4 +152,7 @@ internal sealed class UsageReceiver(TerraBaseOptions options, UsageMeter meter, 
             return false;
         }
     }
+
+    // The databases of a batch that this catalog names, or why it cannot tell.
+    private readonly union KnownOwners(HashSet<DatabaseOwner>, Unavailable);
 }

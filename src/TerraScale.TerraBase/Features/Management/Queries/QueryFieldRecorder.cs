@@ -1,9 +1,14 @@
+using System.Diagnostics;
+using TerraBase.Errors;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using static TerraBase.Features.Management.SystemCatalog;
 
 namespace TerraBase.Features.Management.Queries;
+
+/// <summary>The query field usage records of a database, with the counts not saved yet.</summary>
+internal readonly union QueryFieldUsagesResult(List<QueryFieldUsage>, Unavailable);
 
 /// <summary>
 /// Counts the fields SQL runs used without an index in memory and saves them to the catalog in one write per flush, with
@@ -63,16 +68,21 @@ internal sealed class QueryFieldRecorder(SystemCatalog catalog, TimeProvider tim
     /// The saved usage records of a database with its pending counts added, without writing: a field not saved yet is
     /// added (in name order) while the database has room under <see cref="QueryFieldUsage.MaxRecords"/>, as a flush would.
     /// </summary>
-    public async ValueTask<List<QueryFieldUsage>> ReadAsync(TenantContext database, CancellationToken cancellationToken)
+    public async ValueTask<QueryFieldUsagesResult> ReadAsync(TenantContext database, CancellationToken cancellationToken)
     {
         await _flush.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            await SettleAsync(cancellationToken).ConfigureAwait(false);
-            var saved = await catalog.ReadAsync(
-                transaction => ListAllAsync(transaction, QueryFieldUsage.Records(database.DatabaseId!), TerraBaseJsonContext.Default.QueryFieldUsage, cancellationToken),
-                cancellationToken).ConfigureAwait(false);
-            return WithPending(database, saved);
+            if (await SettleAsync(cancellationToken).ConfigureAwait(false) is Unavailable refused)
+            {
+                return refused;
+            }
+
+            return await catalog.ReadAsync<QueryFieldUsagesResult>(
+                async transaction => WithPending(
+                    database,
+                    await ListAllAsync(transaction, QueryFieldUsage.Records(database.DatabaseId!), TerraBaseJsonContext.Default.QueryFieldUsage, cancellationToken).ConfigureAwait(false)),
+                static error => error, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -100,12 +110,16 @@ internal sealed class QueryFieldRecorder(SystemCatalog catalog, TimeProvider tim
         return [.. usages.Values];
     }
 
+    /// <summary>Saves the pending counts; on the catalog primary only, and nothing while the catalog cannot be used.</summary>
     public async ValueTask FlushAsync(CancellationToken cancellationToken)
     {
         await _flush.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            await SettleAsync(cancellationToken).ConfigureAwait(false);
+            if (await SettleAsync(cancellationToken).ConfigureAwait(false) is Unavailable)
+            {
+                return;
+            }
             Taken[] batch;
             lock (_gate)
             {
@@ -117,10 +131,19 @@ internal sealed class QueryFieldRecorder(SystemCatalog catalog, TimeProvider tim
                 return;
             }
 
+            // Empty flushes never initialize the catalog. Accept it before saving a nonempty batch.
+            if (await catalog.CheckAsync(cancellationToken).ConfigureAwait(false) is Unavailable)
+            {
+                return;
+            }
+
             var id = EntityIds.New().ToString();
             try
             {
-                await WriteAsync(id, batch, cancellationToken).ConfigureAwait(false);
+                if (await WriteAsync(id, batch, cancellationToken).ConfigureAwait(false) is Unavailable)
+                {
+                    return;
+                }
             }
             catch
             {
@@ -138,15 +161,16 @@ internal sealed class QueryFieldRecorder(SystemCatalog catalog, TimeProvider tim
     }
 
     // Decides a flush that threw: it committed if any database it saved holds its id (one transaction saves all or none),
-    // and then its counts leave memory; otherwise they stay pending for the next flush. A failed read leaves it in doubt.
-    private async ValueTask SettleAsync(CancellationToken cancellationToken)
+    // and then its counts leave memory; otherwise they stay pending for the next flush. A failed read leaves it in doubt, as
+    // does a catalog that cannot be used.
+    private async ValueTask<CatalogCheck> SettleAsync(CancellationToken cancellationToken)
     {
         if (_inDoubt is not { } doubt)
         {
-            return;
+            return new Done();
         }
 
-        var committed = await catalog.ReadAsync(async transaction =>
+        var committed = await catalog.ReadAsync<SettleResult>(async transaction =>
         {
             foreach (var (database, _) in doubt.Batch)
             {
@@ -158,17 +182,27 @@ internal sealed class QueryFieldRecorder(SystemCatalog catalog, TimeProvider tim
             }
 
             return false;
-        }, cancellationToken).ConfigureAwait(false);
-        if (committed)
+        }, static error => error, cancellationToken).ConfigureAwait(false);
+        if (committed is not bool settled)
+        {
+            return committed switch
+            {
+                Unavailable refused => refused,
+                bool => throw new UnreachableException(),
+            };
+        }
+
+        if (settled)
         {
             Remove(doubt.Batch);
         }
 
         _inDoubt = null;
+        return new Done();
     }
 
-    private ValueTask<int> WriteAsync(string id, Taken[] batch, CancellationToken cancellationToken) =>
-        catalog.WriteAsync(async transaction =>
+    private ValueTask<CatalogCheck> WriteAsync(string id, Taken[] batch, CancellationToken cancellationToken) =>
+        catalog.WriteAsync<CatalogCheck>(async transaction =>
         {
             foreach (var (database, fields) in batch)
             {
@@ -199,8 +233,8 @@ internal sealed class QueryFieldRecorder(SystemCatalog catalog, TimeProvider tim
                 await PutAsync(transaction, Flushes(database.DatabaseId), LastFlush, id, TerraBaseJsonContext.Default.String, cancellationToken).ConfigureAwait(false);
             }
 
-            return 0;
-        }, cancellationToken);
+            return new Done();
+        }, static error => error, cancellationToken);
 
     private void Remove(Taken[] batch)
     {
@@ -235,6 +269,9 @@ internal sealed class QueryFieldRecorder(SystemCatalog catalog, TimeProvider tim
     private static string Flushes(string databaseId) => SystemCatalog.DatabaseState(databaseId) + "query_fields_flush";
 
     public void Dispose() => _flush.Dispose();
+
+    // Whether an in-doubt flush committed, or why it cannot be told now.
+    private readonly union SettleResult(bool, Unavailable);
 
     // A database's pending counts in name order, so which new fields fill the last places under the cap does not
     // depend on hashing. Takes _gate, which is re-entrant.

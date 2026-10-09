@@ -131,6 +131,7 @@ try
     app.UseTerraBaseCatalogForwarding();
     app.UseTerraBaseProjectCatalog();
     app.UseTerraBaseDatabasePlacement();
+    app.UseTerraBaseManagementRouteValidation();
     app.MapTerraScaleEndpoints();
     app.MapTerraBaseApiReference();
     app.MapTerraBaseMetrics();

@@ -1,4 +1,5 @@
 using TerraBase.Configuration;
+using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
@@ -20,6 +21,8 @@ public sealed class BranchManagedDatabaseEndpoint(IManagementService management,
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
         Produces<ErrorBody>(StatusCodes.Status409Conflict);
+        Produces<ErrorBody>(StatusCodes.Status403Forbidden);
+        Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
         Produces<ErrorBody>(StatusCodes.Status421MisdirectedRequest);
         Produces<ErrorBody>(StatusCodes.Status429TooManyRequests);
         Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
@@ -31,14 +34,30 @@ public sealed class BranchManagedDatabaseEndpoint(IManagementService management,
     public override async ValueTask<IResult> HandleAsync(NameRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
-        if (await DatabaseRegions.ElsewhereAsync(HttpContext, management, options.Region) is { } elsewhere)
+        var placement = await DatabaseRegions.ElsewhereAsync(HttpContext, management, options.Region);
+        if (placement is not Done)
         {
-            return elsewhere;
+            return placement switch
+            {
+                Done => throw new System.Diagnostics.UnreachableException(),
+                DatabaseRegions.Misdirected elsewhere => elsewhere,
+                NotFound error => ManagementRoute.DatabaseNotFound(error),
+                Unavailable error => ErrorResponse.From(error),
+            };
         }
 
-        var result = await management.BranchDatabaseAsync(ManagementRoute.UserId(HttpContext), ManagementRoute.OrganizationId(HttpContext), ManagementRoute.Value(HttpContext, "project"), ManagementRoute.Value(HttpContext, "database"), ManagementRoute.DatabaseName(request), cancellationToken);
-        return result.Value is { } value
-            ? TypedResults.Created(ManagementRoute.CreatedDatabasePath(HttpContext, value), ManagedDatabaseBody.From(value, Listeners.RegionOf(HttpContext)))
-            : ManagementRoute.Error(result.Error);
+        return ManagementRoute.CheckDatabaseName(request) switch
+        {
+            Validation error => ErrorResponse.From(error),
+            string name => await management.BranchDatabaseAsync(ManagementRoute.UserId(HttpContext), ManagementRoute.OrganizationId(HttpContext), ManagementRoute.Value(HttpContext, "project"), ManagementRoute.Value(HttpContext, "database"), name, cancellationToken) switch
+            {
+                ManagedDatabase value => TypedResults.Created(ManagementRoute.CreatedDatabasePath(HttpContext, value), ManagedDatabaseBody.From(value, Listeners.RegionOf(HttpContext))),
+                NotFound error => ManagementRoute.DatabaseNotFound(error),
+                Forbidden error => ErrorResponse.From(error),
+                Conflict error => ErrorResponse.From(error),
+                QuotaExceeded error => ErrorResponse.From(error),
+                Unavailable error => ErrorResponse.From(error),
+            },
+        };
     }
 }

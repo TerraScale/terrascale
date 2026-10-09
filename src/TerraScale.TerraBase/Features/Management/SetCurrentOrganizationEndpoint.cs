@@ -1,3 +1,4 @@
+using TerraBase.Errors;
 using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
@@ -22,6 +23,7 @@ public sealed class SetCurrentOrganizationEndpoint(IManagementService management
         Produces<Organization>();
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
+        Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
         RequireAuthorization(UserAuthExtensions.PolicyName);
         Metadata(ListenerMetadata.Management);
     }
@@ -32,9 +34,14 @@ public sealed class SetCurrentOrganizationEndpoint(IManagementService management
         ArgumentNullException.ThrowIfNull(request);
         if (string.IsNullOrEmpty(request.OrganizationId))
         {
-            return TypedResults.BadRequest("organizationId is required");
+            return ErrorResponse.From(new Validation("organizationId is required"));
         }
 
-        return ManagementRoute.Ok(await management.SetCurrentOrganizationAsync(ManagementRoute.UserId(HttpContext), request.OrganizationId, cancellationToken));
+        return await management.SetCurrentOrganizationAsync(ManagementRoute.UserId(HttpContext), request.OrganizationId, cancellationToken) switch
+        {
+            Organization value => TypedResults.Ok(value),
+            NotFound error => ErrorResponse.From(error),
+            Unavailable error => ErrorResponse.From(error),
+        };
     }
 }

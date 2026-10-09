@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
@@ -62,9 +63,9 @@ internal sealed partial class EngineManagedBackupService(
 
     public static BackupPolicy DefaultPolicy { get; } = new("0 2 * * *", 7, false, null);
 
-    public ValueTask<ManagementPage<DatabaseBackup>> ListBackupsAsync(
+    public ValueTask<ListBackupsResult> ListBackupsAsync(
         string organizationId, string databaseId, string? after, int limit, CancellationToken cancellationToken) =>
-        catalog.ReadAsync(async transaction =>
+        catalog.ReadAsync<ListBackupsResult>(async transaction =>
         {
             var page = await transaction.ListAsync(BackupCatalog.List(organizationId, databaseId), after, limit, MaxPageBytes, cancellationToken).ConfigureAwait(false);
             var backups = new List<DatabaseBackup>(page.Documents.Count);
@@ -77,7 +78,7 @@ internal sealed partial class EngineManagedBackupService(
             }
 
             return new ManagementPage<DatabaseBackup>(backups, page.HasMore ? page.Documents[^1].Id : null);
-        }, cancellationToken);
+        }, static error => error, cancellationToken);
 
     public async ValueTask<CreateBackupResult> CreateBackupAsync(
         string userId, string organizationId, TenantContext database, CancellationToken cancellationToken)
@@ -86,17 +87,21 @@ internal sealed partial class EngineManagedBackupService(
         _inFlight.TryAdd(record.Id, 0);
         try
         {
-            var recorded = await catalog.WriteAsync(async transaction =>
+            return await catalog.WriteAsync<RecordPendingResult>(async transaction =>
             {
                 if (await EngineManagementService.GetDatabaseAsync(transaction, userId, organizationId, database.ProjectId!, database.DatabaseId!, cancellationToken).ConfigureAwait(false) is null)
                 {
-                    return false;
+                    return new NotFound();
                 }
 
                 await RecordPendingAsync(transaction, record, cancellationToken).ConfigureAwait(false);
-                return true;
-            }, cancellationToken).ConfigureAwait(false);
-            return recorded ? await SnapshotAsync(userId, record, cancellationToken).ConfigureAwait(false) : new NotFound();
+                return new Done();
+            }, static error => error, cancellationToken).ConfigureAwait(false) switch
+            {
+                Done => await SnapshotAsync(userId, record, cancellationToken).ConfigureAwait(false),
+                NotFound error => error,
+                Unavailable error => error,
+            };
         }
         finally
         {
@@ -104,8 +109,10 @@ internal sealed partial class EngineManagedBackupService(
         }
     }
 
-    public async ValueTask<BackupPolicy> GetPolicyAsync(string databaseId, CancellationToken cancellationToken) =>
-        await catalog.ReadAsync(transaction => GetPolicyAsync(transaction, databaseId, cancellationToken), cancellationToken).ConfigureAwait(false);
+    public async ValueTask<GetBackupPolicyResult> GetPolicyAsync(string databaseId, CancellationToken cancellationToken) =>
+        await catalog.ReadAsync<GetBackupPolicyResult>(
+            async transaction => await GetPolicyAsync(transaction, databaseId, cancellationToken).ConfigureAwait(false), static error => error, cancellationToken)
+            .ConfigureAwait(false);
 
     public async ValueTask<SetBackupPolicyResult> SetPolicyAsync(
         string userId, string organizationId, TenantContext database, string? fullBackupCron, int retentionDays, bool disabled, CancellationToken cancellationToken)
@@ -120,21 +127,22 @@ internal sealed partial class EngineManagedBackupService(
             }
 
             // A backup policy is project state of the organization: a viewer cannot set it, and setting it changes the organization.
-            switch (await EngineManagementService.WritableAsync(transaction, userId, organizationId, cancellationToken).ConfigureAwait(false))
+            var access = await EngineManagementService.WritableAsync(transaction, userId, organizationId, cancellationToken).ConfigureAwait(false);
+            if (access is not OrganizationMember)
             {
-                case ManagementError.None:
-                    break;
-                case ManagementError.Forbidden:
-                    return ManagementErrors.RoleTooLow;
-                default:
-                    return new NotFound();
+                return access switch
+                {
+                    Forbidden => ManagementErrors.RoleTooLow,
+                    NotFound => new NotFound(),
+                    OrganizationMember => throw new UnreachableException(),
+                };
             }
 
             await EngineManagementService.TouchOrganizationAsync(transaction, organizationId, cancellationToken).ConfigureAwait(false);
             await PutAsync(transaction, BackupCatalog.Policy(owner.DatabaseId), CurrentPolicy, policy, TerraBaseJsonContext.Default.BackupPolicy, cancellationToken).ConfigureAwait(false);
             await PutAsync(transaction, BackedUpDatabases, owner.DatabaseId, owner, TerraBaseJsonContext.Default.DatabaseOwner, cancellationToken).ConfigureAwait(false);
             return policy;
-        }, cancellationToken).ConfigureAwait(false);
+        }, static error => error, cancellationToken).ConfigureAwait(false);
     }
 
     /// <remarks>
@@ -145,17 +153,20 @@ internal sealed partial class EngineManagedBackupService(
         string userId, string organizationId, TenantContext database, string backupId, string? name, CancellationToken cancellationToken)
     {
         var owner = DatabaseOwner.Of(database);
-        var (record, source) = await catalog.ReadAsync(async transaction => (
-            await GetRecordAsync(transaction, organizationId, backupId, cancellationToken).ConfigureAwait(false),
-            await EngineManagementService.GetDatabaseAsync(transaction, userId, organizationId, owner.ProjectId, owner.DatabaseId, cancellationToken).ConfigureAwait(false)),
-            cancellationToken).ConfigureAwait(false);
-        if (record is not { State: BackupState.Registered } || record.DatabaseId != owner.DatabaseId || source is null)
-        {
-            return new NotFound();
-        }
-
         // The snapshot is an engine database of the backed-up database's project, which the restore copies within.
-        return await CopyRestoredAsync(userId, organizationId, owner, source.Name, record.Id, name, cancellationToken).ConfigureAwait(false);
+        return await catalog.ReadAsync<RestoreSourceResult>(async transaction =>
+                await GetRecordAsync(transaction, organizationId, backupId, cancellationToken).ConfigureAwait(false) is { State: BackupState.Registered } record
+                && record.DatabaseId == owner.DatabaseId
+                && await EngineManagementService.GetDatabaseAsync(transaction, userId, organizationId, owner.ProjectId, owner.DatabaseId, cancellationToken)
+                    .ConfigureAwait(false) is { } source
+                    ? new RestoreSource(source.Name, record.Id)
+                    : new NotFound(),
+                static error => error, cancellationToken).ConfigureAwait(false) switch
+        {
+            RestoreSource source => await CopyRestoredAsync(userId, organizationId, owner, source.Name, source.StorageId, name, cancellationToken).ConfigureAwait(false),
+            NotFound error => error,
+            Unavailable error => error,
+        };
     }
 
     /// <remarks>
@@ -166,12 +177,18 @@ internal sealed partial class EngineManagedBackupService(
         string userId, string organizationId, TenantContext database, DateTimeOffset at, string? name, CancellationToken cancellationToken, string destination = BackupDestinationNames.Platform)
     {
         var owner = DatabaseOwner.Of(database);
-        var source = await catalog.ReadAsync(
-            transaction => EngineManagementService.GetDatabaseAsync(transaction, userId, organizationId, owner.ProjectId, owner.DatabaseId, cancellationToken),
-            cancellationToken).ConfigureAwait(false);
-        if (source is null)
+        var found = await catalog.ReadAsync<GetDatabaseResult>(
+            async transaction => await EngineManagementService.GetDatabaseAsync(transaction, userId, organizationId, owner.ProjectId, owner.DatabaseId, cancellationToken)
+                .ConfigureAwait(false) is { } database ? database : new NotFound(),
+            static error => error, cancellationToken).ConfigureAwait(false);
+        if (found is not ManagedDatabase source)
         {
-            return new NotFound();
+            return found switch
+            {
+                NotFound error => error,
+                Unavailable error => error,
+                ManagedDatabase => throw new UnreachableException(),
+            };
         }
 
         var staging = database with { DatabaseId = EntityIds.New().ToString() };
@@ -182,6 +199,7 @@ internal sealed partial class EngineManagedBackupService(
                 Done => await CopyRestoredAsync(userId, organizationId, owner, source.Name, staging.DatabaseId!, name, cancellationToken).ConfigureAwait(false),
                 NotFound error => error,
                 Validation error => error,
+                Unavailable error => error,
             };
         }
         finally
@@ -205,7 +223,7 @@ internal sealed partial class EngineManagedBackupService(
             var suffix = attempt == 1 ? "-restore" : "-restore-" + attempt.ToString(CultureInfo.InvariantCulture);
             var candidate = sourceName[..Math.Min(sourceName.Length, MaxDatabaseNameLength - suffix.Length)] + suffix;
             var result = await management.CopyDatabaseAsync(userId, organizationId, owner.ProjectId, storageId, candidate, owner.DatabaseId, cancellationToken).ConfigureAwait(false);
-            if (result.Error != ManagementError.NameTaken)
+            if (result is not Conflict taken || taken != ManagementErrors.NameTaken)
             {
                 return Restored(result);
             }
@@ -215,19 +233,27 @@ internal sealed partial class EngineManagedBackupService(
     }
 
     // Preserve copied-database failures, including storage admission, on the restore route.
-    private static RestoreBackupResult Restored(ManagementResult<ManagedDatabase> copied) => copied switch
+    private static RestoreBackupResult Restored(CopyDatabaseResult copied) => copied switch
     {
-        { Value: { } database } => database,
-        { Error: ManagementError.NameTaken } => ManagementErrors.NameTaken,
-        { Error: ManagementError.Forbidden } => ManagementErrors.RoleTooLow,
-        { Error: ManagementError.StorageQuota } => new QuotaExceeded("the organization storage quota would be exceeded", "storage_quota"),
-        { Error: ManagementError.StorageAccountingBusy } => new Unavailable("storage accounting is at capacity; retry later", "storage_accounting_busy"),
-        _ => new NotFound(),
+        ManagedDatabase database => database,
+        Conflict error => error,
+        Forbidden => ManagementErrors.RoleTooLow,
+        NotFound => new NotFound(),
+        QuotaExceeded error => error,
+        Unavailable error => error,
     };
 
     public async ValueTask RunScheduleAsync(CancellationToken cancellationToken)
     {
-        await SweepAsync(cancellationToken).ConfigureAwait(false);
+        if (await catalog.CheckAsync(cancellationToken).ConfigureAwait(false) is Unavailable)
+        {
+            return;
+        }
+
+        if (await SweepAsync(cancellationToken).ConfigureAwait(false) is Unavailable)
+        {
+            return;
+        }
 
         // Retention for every database, a page at a time, keeping only the best candidates in turn order.
         var now = time.GetUtcNow();
@@ -235,14 +261,25 @@ internal sealed partial class EngineManagedBackupService(
         string? after = null;
         do
         {
-            var page = await catalog.ReadAsync(
-                transaction => ListAsync(transaction, BackedUpDatabases, after, PageSize, TerraBaseJsonContext.Default.DatabaseOwner, owner => owner.DatabaseId, cancellationToken),
-                cancellationToken).ConfigureAwait(false);
+            var listed = await catalog.ReadAsync<CatalogResult<ManagementPage<DatabaseOwner>>>(
+                async transaction => await ListAsync(transaction, BackedUpDatabases, after, PageSize, TerraBaseJsonContext.Default.DatabaseOwner, owner => owner.DatabaseId, cancellationToken)
+                    .ConfigureAwait(false),
+                static error => error, cancellationToken).ConfigureAwait(false);
+            if (listed is not ManagementPage<DatabaseOwner> page)
+            {
+                return;
+            }
             foreach (var owner in page.Items)
             {
                 try
                 {
-                    if (await ExpireAndTurnAsync(owner, now, cancellationToken).ConfigureAwait(false) is { } turn)
+                    var selected = await ExpireAndTurnAsync(owner, now, cancellationToken).ConfigureAwait(false);
+                    if (selected is Unavailable)
+                    {
+                        return;
+                    }
+
+                    if (selected is BackupTurn turn)
                     {
                         due.Add((turn.Turn, turn.Failed, owner));
                     }
@@ -267,7 +304,7 @@ internal sealed partial class EngineManagedBackupService(
         var records = new List<BackupRecord>(due.Count);
         try
         {
-            await catalog.WriteAsync(async transaction =>
+            var pending = await catalog.WriteAsync<CatalogCheck>(async transaction =>
             {
                 foreach (var (_, _, owner) in due)
                 {
@@ -290,8 +327,12 @@ internal sealed partial class EngineManagedBackupService(
                     }
                 }
 
-                return true;
-            }, cancellationToken).ConfigureAwait(false);
+                return new Done();
+            }, static error => error, cancellationToken).ConfigureAwait(false);
+            if (pending is Unavailable)
+            {
+                return;
+            }
 
             foreach (var record in records)
             {
@@ -321,26 +362,26 @@ internal sealed partial class EngineManagedBackupService(
     // database still exists. Every scheduled attempt ends in exactly one schedule update: success or failure.
     private async ValueTask<CreateBackupResult> SnapshotAsync(string? userId, BackupRecord record, CancellationToken cancellationToken)
     {
-        TenantContext? source;
+        SnapshotSourceResult found;
         try
         {
-            source = await catalog.WriteAsync(async transaction =>
+            found = await catalog.WriteAsync<SnapshotSourceResult>(async transaction =>
             {
                 if (await GetRecordAsync(transaction, record.OrganizationId, record.Id, cancellationToken).ConfigureAwait(false) is not { State: BackupState.Pending } current)
                 {
                     // Expired meanwhile (its database was deleted).
-                    return null;
+                    return new NotFound();
                 }
 
                 if (await GetDatabaseAsync(transaction, userId, current, cancellationToken).ConfigureAwait(false) is not { } database)
                 {
                     await ExpireAsync(transaction, current, cancellationToken).ConfigureAwait(false);
-                    return null;
+                    return new NotFound();
                 }
 
                 await PutRecordAsync(transaction, current with { State = BackupState.Snapshotting }, cancellationToken).ConfigureAwait(false);
                 return database;
-            }, cancellationToken).ConfigureAwait(false);
+            }, static error => error, cancellationToken).ConfigureAwait(false);
         }
         catch
         {
@@ -348,13 +389,18 @@ internal sealed partial class EngineManagedBackupService(
             throw;
         }
 
-        if (source is null)
+        if (found is Unavailable refused)
         {
-            await SweepBackupAsync(record.OrganizationId, record.Id).ConfigureAwait(false);
+            return refused;
+        }
+
+        if (found is not TenantContext source)
+        {
+            _ = await SweepBackupAsync(record.OrganizationId, record.Id).ConfigureAwait(false);
             return new NotFound();
         }
 
-        BackupRecord? registered;
+        RegisteredSnapshotResult registered;
         try
         {
             // False: the source's files are gone although the catalog still names it. That is a failed attempt too.
@@ -367,7 +413,9 @@ internal sealed partial class EngineManagedBackupService(
             }
 
             var size = await engine.GetDatabaseSizeAsync(snapshot, cancellationToken).ConfigureAwait(false) ?? 0;
-            registered = await catalog.WriteAsync(transaction => RegisterAsync(transaction, userId, record, size, cancellationToken), cancellationToken).ConfigureAwait(false);
+            registered = await catalog.WriteAsync<RegisteredSnapshotResult>(
+                async transaction => await RegisterAsync(transaction, userId, record, size, cancellationToken).ConfigureAwait(false) is { } completed ? completed : new NotFound(),
+                static error => error, cancellationToken).ConfigureAwait(false);
         }
         catch
         {
@@ -375,14 +423,19 @@ internal sealed partial class EngineManagedBackupService(
             throw;
         }
 
-        if (registered is null)
+        if (registered is Unavailable unavailable)
+        {
+            return unavailable;
+        }
+
+        if (registered is not BackupRecord ready)
         {
             // The database went away during the copy: the snapshot was expired with it.
-            await SweepBackupAsync(record.OrganizationId, record.Id).ConfigureAwait(false);
+            _ = await SweepBackupAsync(record.OrganizationId, record.Id).ConfigureAwait(false);
             return new NotFound();
         }
 
-        return registered.ToBackup();
+        return ready.ToBackup();
     }
 
     private async ValueTask<BackupRecord?> RegisterAsync(IStorageTransaction transaction, string? userId, BackupRecord record, long size, CancellationToken cancellationToken)
@@ -426,7 +479,7 @@ internal sealed partial class EngineManagedBackupService(
     {
         try
         {
-            await catalog.WriteAsync(async transaction =>
+            var settled = await catalog.WriteAsync<CatalogCheck>(async transaction =>
             {
                 if (await GetRecordAsync(transaction, record.OrganizationId, record.Id, CancellationToken.None).ConfigureAwait(false) is { State: BackupState.Pending or BackupState.Snapshotting } current)
                 {
@@ -444,8 +497,12 @@ internal sealed partial class EngineManagedBackupService(
                         .ConfigureAwait(false);
                 }
 
-                return true;
-            }, CancellationToken.None).ConfigureAwait(false);
+                return new Done();
+            }, static error => error, CancellationToken.None).ConfigureAwait(false);
+            if (settled is Unavailable)
+            {
+                return;
+            }
         }
         catch (Exception error)
         {
@@ -454,26 +511,36 @@ internal sealed partial class EngineManagedBackupService(
             return;
         }
 
-        await SweepBackupAsync(record.OrganizationId, record.Id).ConfigureAwait(false);
+        _ = await SweepBackupAsync(record.OrganizationId, record.Id).ConfigureAwait(false);
     }
 
     // Retention, decided and applied in one write transaction that re-reads the policy, so a policy saved meanwhile is
     // the one applied. A read first checks whether anything can have expired, so most passes write nothing. Returns the
     // database's turn when its scheduled backup is due: the cron occurrence it is due since or, when a scheduled attempt
     // failed after that, the failed attempt.
-    private async ValueTask<(DateTimeOffset Turn, bool Failed)?> ExpireAndTurnAsync(DatabaseOwner owner, DateTimeOffset now, CancellationToken cancellationToken)
+    private async ValueTask<BackupTurnResult> ExpireAndTurnAsync(DatabaseOwner owner, DateTimeOffset now, CancellationToken cancellationToken)
     {
-        var (database, policy, schedule, oldest) = await catalog.ReadAsync(
-            async transaction => (
+        var selected = await catalog.ReadAsync<CatalogResult<RetentionState>>(
+            async transaction => new RetentionState(
                 await EngineManagementService.DatabaseUncheckedAsync(transaction, owner.ProjectId, owner.DatabaseId, cancellationToken).ConfigureAwait(false),
                 await GetPolicyAsync(transaction, owner.DatabaseId, cancellationToken).ConfigureAwait(false),
                 await GetAsync(transaction, BackupCatalog.Schedule(owner.DatabaseId), LastSchedule, TerraBaseJsonContext.Default.BackupSchedule, cancellationToken).ConfigureAwait(false),
                 await OldestRegisteredAsync(transaction, owner, cancellationToken).ConfigureAwait(false)),
-            cancellationToken).ConfigureAwait(false);
+            static error => error, cancellationToken).ConfigureAwait(false);
+        if (selected is not RetentionState state)
+        {
+            return selected switch
+            {
+                Unavailable error => error,
+                RetentionState => throw new UnreachableException(),
+            };
+        }
+
+        var (database, policy, schedule, oldest) = state;
 
         if (oldest?.CompletedAt is { } completed && completed < now.AddDays(-policy.RetentionDays))
         {
-            var expired = await catalog.WriteAsync(async transaction =>
+            var retained = await catalog.WriteAsync<CatalogResult<List<BackupRecord>>>(async transaction =>
             {
                 var current = await GetPolicyAsync(transaction, owner.DatabaseId, cancellationToken).ConfigureAwait(false);
                 var cutoff = time.GetUtcNow().AddDays(-current.RetentionDays);
@@ -493,27 +560,46 @@ internal sealed partial class EngineManagedBackupService(
                 }
 
                 return expired;
-            }, cancellationToken).ConfigureAwait(false);
+            }, static error => error, cancellationToken).ConfigureAwait(false);
+            if (retained is not List<BackupRecord> expired)
+            {
+                return retained switch
+                {
+                    Unavailable error => error,
+                    List<BackupRecord> => throw new UnreachableException(),
+                };
+            }
 
             foreach (var record in expired)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                await SweepBackupAsync(record.OrganizationId, record.Id).ConfigureAwait(false);
+                if (await SweepBackupAsync(record.OrganizationId, record.Id).ConfigureAwait(false) is Unavailable refused)
+                {
+                    return refused;
+                }
             }
         }
 
-        return database is null || DueSince(policy, schedule, database.CreatedAt, now) is not { } since ? null
-            : schedule?.LastFailedAt is { } failedAt && failedAt >= since ? (failedAt, true)
-            : (since, false);
+        return database is null || DueSince(policy, schedule, database.CreatedAt, now) is not { } since ? new NotFound()
+            : schedule?.LastFailedAt is { } failedAt && failedAt >= since ? new BackupTurn(failedAt, true)
+            : new BackupTurn(since, false);
     }
 
     // One page of the storage sweep, from where the last pass stopped.
-    private async ValueTask SweepAsync(CancellationToken cancellationToken)
+    private async ValueTask<CatalogCheck> SweepAsync(CancellationToken cancellationToken)
     {
-        var page = await catalog.ReadAsync(
-            transaction => StorageSweep.ListAsync(transaction, _sweepCursor, PageSize, cancellationToken),
-            cancellationToken).ConfigureAwait(false);
-        _sweepCursor = page.Next;
+        var listed = await catalog.ReadAsync<CatalogResult<ManagementPage<SweepEntry>>>(
+            async transaction => await StorageSweep.ListAsync(transaction, _sweepCursor, PageSize, cancellationToken).ConfigureAwait(false),
+            static error => error, cancellationToken).ConfigureAwait(false);
+        if (listed is not ManagementPage<SweepEntry> page)
+        {
+            return listed switch
+            {
+                Unavailable error => error,
+                ManagementPage<SweepEntry> => throw new UnreachableException(),
+            };
+        }
+
         foreach (var entry in page.Items)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -522,10 +608,18 @@ internal sealed partial class EngineManagedBackupService(
                 switch (entry.Kind)
                 {
                     case StorageSweep.Backup:
-                        await SweepBackupAsync(entry.OrganizationId, entry.Id).ConfigureAwait(false);
+                        if (await SweepBackupAsync(entry.OrganizationId, entry.Id).ConfigureAwait(false) is Unavailable backupRefused)
+                        {
+                            return backupRefused;
+                        }
+
                         break;
                     case StorageSweep.DatabaseBackups:
-                        await ExpireDatabaseBackupsAsync(entry, cancellationToken).ConfigureAwait(false);
+                        if (await ExpireDatabaseBackupsAsync(entry, cancellationToken).ConfigureAwait(false) is Unavailable databaseRefused)
+                        {
+                            return databaseRefused;
+                        }
+
                         break;
                     default:
                         throw new InvalidOperationException("unknown storage sweep entry");
@@ -536,12 +630,15 @@ internal sealed partial class EngineManagedBackupService(
                 LogSweepFailed(logger, entry.Kind, entry.Id, error);
             }
         }
+
+        _sweepCursor = page.Next;
+        return new Done();
     }
 
     // Expires one page of a deleted database's registered backups; the entry goes once none are left.
-    private async ValueTask ExpireDatabaseBackupsAsync(SweepEntry entry, CancellationToken cancellationToken)
+    private async ValueTask<CatalogCheck> ExpireDatabaseBackupsAsync(SweepEntry entry, CancellationToken cancellationToken)
     {
-        var expired = await catalog.WriteAsync(async transaction =>
+        var expiring = await catalog.WriteAsync<CatalogResult<List<BackupRecord>>>(async transaction =>
         {
             var page = await transaction.ListAsync(BackupCatalog.List(entry.OrganizationId, entry.Id), afterId: null, PageSize, MaxPageBytes, cancellationToken).ConfigureAwait(false);
             var expired = new List<BackupRecord>(page.Documents.Count);
@@ -560,22 +657,35 @@ internal sealed partial class EngineManagedBackupService(
             }
 
             return expired;
-        }, cancellationToken).ConfigureAwait(false);
+        }, static error => error, cancellationToken).ConfigureAwait(false);
+        if (expiring is not List<BackupRecord> expired)
+        {
+            return expiring switch
+            {
+                Unavailable error => error,
+                List<BackupRecord> => throw new UnreachableException(),
+            };
+        }
 
         foreach (var record in expired)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            await SweepBackupAsync(record.OrganizationId, record.Id).ConfigureAwait(false);
+            if (await SweepBackupAsync(record.OrganizationId, record.Id).ConfigureAwait(false) is Unavailable refused)
+            {
+                return refused;
+            }
         }
+
+        return new Done();
     }
 
     // Drives one backup to deleted when the catalog says its snapshot is unreferenced: expiring, or pending or
     // snapshotting with no attempt in flight (abandoned). An attempt in flight is left alone. The record and its entry go
     // only after the files are confirmed gone.
-    private async ValueTask SweepBackupAsync(string organizationId, string backupId)
+    private async ValueTask<CatalogCheck> SweepBackupAsync(string organizationId, string backupId)
     {
         var entry = new SweepEntry(StorageSweep.Backup, organizationId, backupId);
-        var (record, plan) = await catalog.WriteAsync<(BackupRecord? Record, PlanTier Plan)>(async transaction =>
+        var selected = await catalog.WriteAsync<CatalogResult<SweepBackupState>>(async transaction =>
         {
             var plan = await EngineManagementService.PlanUncheckedAsync(transaction, organizationId, CancellationToken.None).ConfigureAwait(false);
             var record = await GetRecordAsync(transaction, organizationId, backupId, CancellationToken.None).ConfigureAwait(false);
@@ -584,9 +694,9 @@ internal sealed partial class EngineManagedBackupService(
                 case null or BackupState.Registered:
                     // Nothing (left) to sweep: deleted already, or registered after all.
                     await StorageSweep.RemoveAsync(transaction, entry, CancellationToken.None).ConfigureAwait(false);
-                    return (null, plan);
+                    return new SweepBackupState(null, plan);
                 case BackupState.Pending or BackupState.Snapshotting when _inFlight.ContainsKey(record.Id):
-                    return (null, plan);
+                    return new SweepBackupState(null, plan);
                 case BackupState.Pending or BackupState.Snapshotting:
                     // Its exact failure time is unknown; use the attempt's start, so recovery never overwrites a
                     // newer scheduled success or failure. Persist the result with the recovery transition.
@@ -606,18 +716,28 @@ internal sealed partial class EngineManagedBackupService(
 
                     record = record with { State = BackupState.Expiring };
                     await PutRecordAsync(transaction, record, CancellationToken.None).ConfigureAwait(false);
-                    return (record, plan);
+                    return new SweepBackupState(record, plan);
                 default:
-                    return (record, plan);
+                    return new SweepBackupState(record, plan);
             }
-        }, CancellationToken.None).ConfigureAwait(false);
+        }, static error => error, CancellationToken.None).ConfigureAwait(false);
+        if (selected is not SweepBackupState state)
+        {
+            return selected switch
+            {
+                Unavailable error => error,
+                SweepBackupState => throw new UnreachableException(),
+            };
+        }
+
+        var (record, plan) = state;
 
         if (record is null || !await StorageSweep.DeleteFilesAsync(engine, record.Storage(plan), logger).ConfigureAwait(false))
         {
-            return;
+            return new Done();
         }
 
-        await catalog.WriteAsync(async transaction =>
+        return await catalog.WriteAsync<CatalogCheck>(async transaction =>
         {
             if (await GetRecordAsync(transaction, organizationId, backupId, CancellationToken.None).ConfigureAwait(false) is { State: BackupState.Expiring })
             {
@@ -625,8 +745,8 @@ internal sealed partial class EngineManagedBackupService(
                 await StorageSweep.RemoveAsync(transaction, entry, CancellationToken.None).ConfigureAwait(false);
             }
 
-            return true;
-        }, CancellationToken.None).ConfigureAwait(false);
+            return new Done();
+        }, static error => error, CancellationToken.None).ConfigureAwait(false);
     }
 
     // → expiring: unlisted (and out of the retention index) if it was listed, and owed to the sweep (the entry may
@@ -710,4 +830,27 @@ internal sealed partial class EngineManagedBackupService(
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Storage sweep of {Kind} {Id} failed; it is retried on a later pass")]
     private static partial void LogSweepFailed(ILogger logger, string kind, string id, Exception error);
+
+    // A pending backup recorded, or why not.
+    private readonly union RecordPendingResult(Done, NotFound, Unavailable);
+
+    private readonly union CatalogResult<T>(T, Unavailable);
+
+    private readonly union SnapshotSourceResult(TenantContext, NotFound, Unavailable);
+
+    private readonly union RegisteredSnapshotResult(BackupRecord, NotFound, Unavailable);
+
+    private sealed record RetentionState(ManagedDatabase? Database, BackupPolicy Policy, BackupSchedule? Schedule, BackupRecord? Oldest);
+
+    private sealed record BackupTurn(DateTimeOffset Turn, bool Failed);
+
+    private readonly union BackupTurnResult(BackupTurn, NotFound, Unavailable);
+
+    private sealed record SweepBackupState(BackupRecord? Record, PlanTier Plan);
+
+    // The name of the database a backup restores and the engine database holding the backup.
+    private sealed record RestoreSource(string Name, string StorageId);
+
+    // What a restore copies, or why there is nothing to restore.
+    private readonly union RestoreSourceResult(RestoreSource, NotFound, Unavailable);
 }

@@ -49,7 +49,10 @@ public readonly union CreateIndexResult(IndexBody, NotFound, Conflict);
 public readonly union DropIndexResult(Done, NotFound);
 
 /// <summary>The applied or already existing index, or why the recommendation was not applied.</summary>
-public readonly union ApplyIndexRecommendationResult(AppliedIndexRecommendation, NotFound, Conflict);
+public readonly union ApplyIndexRecommendationResult(AppliedIndexRecommendation, NotFound, Conflict, Unavailable);
+
+/// <summary>The recommendations for a database, or why they cannot be read now.</summary>
+public readonly union RecommendIndexesResult(IndexRecommendationListBody, Unavailable);
 
 /// <summary>Index failures with their stable codes.</summary>
 internal static class IndexErrors
@@ -65,7 +68,7 @@ internal static class IndexErrors
 public interface IIndexService
 {
     /// <summary>Reads a collection's automatic index policy; enabled unless explicitly opted out.</summary>
-    ValueTask<Found<AutoIndexPolicy>> GetAutoIndexPolicyAsync(string userId, TenantContext database, string collection, CancellationToken cancellationToken);
+    ValueTask<GetAutoIndexPolicyResult> GetAutoIndexPolicyAsync(string userId, TenantContext database, string collection, CancellationToken cancellationToken);
 
     /// <summary>Sets a collection's automatic index policy, rechecking membership and write permission atomically.</summary>
     ValueTask<SetAutoIndexPolicyResult> SetAutoIndexPolicyAsync(string userId, TenantContext database, string collection, bool enabled, CancellationToken cancellationToken);
@@ -80,7 +83,7 @@ public interface IIndexService
     ValueTask<DropIndexResult> DropAsync(TenantContext database, string name, CancellationToken cancellationToken);
 
     /// <summary>Recommends single-field indexes for fields queries used without one.</summary>
-    ValueTask<IndexRecommendationListBody> RecommendAsync(TenantContext database, CancellationToken cancellationToken);
+    ValueTask<RecommendIndexesResult> RecommendAsync(TenantContext database, CancellationToken cancellationToken);
 
     /// <summary>Creates the index a recommendation describes; not found for an unknown recommendation.</summary>
     ValueTask<ApplyIndexRecommendationResult> ApplyAsync(TenantContext database, string recommendationId, CancellationToken cancellationToken);

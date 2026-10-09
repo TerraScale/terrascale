@@ -99,26 +99,26 @@ public sealed class AccessApiTests
         await Assert.That(invitation.GetProperty("invitedBy").GetString()).IsEqualTo(ownerId);
         await Assert.That(invitation.GetProperty("expiresAt").GetDateTimeOffset() - invitation.GetProperty("createdAt").GetDateTimeOffset())
             .IsEqualTo(TimeSpan.FromDays(7));
-        await Assert.That(duplicate.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
+        await ErrorAssert.ErrorAsync(duplicate, HttpStatusCode.Conflict, "invitation_pending", "an invitation for this email is pending");
         await Assert.That(defaultRole.StatusCode).IsEqualTo(HttpStatusCode.Created);
         await Assert.That(revoked.GetProperty("invitation").GetProperty("role").GetString()).IsEqualTo("member");
         await Assert.That(pendingIds).IsEquivalentTo([id, revokedId]);
         await Assert.That(pendingIds[0]).IsEqualTo(id);
-        await Assert.That(wrongEmail.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
-        await Assert.That(unverified.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
-        await Assert.That(noEmail.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
-        await Assert.That(forged.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+        await ErrorAssert.ErrorAsync(wrongEmail, HttpStatusCode.Forbidden, "forbidden", "your role in the organization does not allow this");
+        await ErrorAssert.ErrorAsync(unverified, HttpStatusCode.Forbidden, "forbidden", "the access token has no verified email");
+        await ErrorAssert.ErrorAsync(noEmail, HttpStatusCode.Forbidden, "forbidden", "the access token has no verified email");
+        await ErrorAssert.ErrorAsync(forged, HttpStatusCode.NotFound, "not_found", "the resource does not exist");
         await Assert.That(accepted.StatusCode).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(member.GetProperty("userId").GetString()).IsEqualTo(inviteeId);
         await Assert.That(member.GetProperty("role").GetString()).IsEqualTo("admin");
         // An accepted invitation stays in the history, closed: its token cannot be used again.
-        await Assert.That(acceptedAgain.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
+        await ErrorAssert.ErrorAsync(acceptedAgain, HttpStatusCode.Conflict, "invitation_closed", "the invitation is no longer pending");
         await Assert.That(Strings(afterAccept, "id")).IsEquivalentTo([id, revokedId]);
         await Assert.That(Strings(afterAccept, "status")).IsEquivalentTo(["accepted", "pending"]);
         await Assert.That(revoke.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
-        await Assert.That(revokeUnknown.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
-        await Assert.That(acceptRevoked.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
-        await Assert.That(alreadyMember.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
+        await ErrorAssert.ErrorAsync(revokeUnknown, HttpStatusCode.NotFound, "not_found", "the resource does not exist");
+        await ErrorAssert.ErrorAsync(acceptRevoked, HttpStatusCode.Conflict, "invitation_closed", "the invitation is no longer pending");
+        await ErrorAssert.ErrorAsync(alreadyMember, HttpStatusCode.Conflict, "already_member", "the user is already a member");
     }
 
     [Test]
@@ -170,8 +170,8 @@ public sealed class AccessApiTests
         await Assert.That(adminInvitesAdmin.StatusCode).IsEqualTo(HttpStatusCode.Created);
         await Assert.That(adminRemovesMember.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
         // 404, not 403: a non-member cannot even confirm that the organization exists.
-        await Assert.That(notMember.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
-        await Assert.That(unknownOrganization.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+        await ErrorAssert.ErrorAsync(notMember, HttpStatusCode.NotFound, "not_found", "the resource does not exist");
+        await ErrorAssert.ErrorAsync(unknownOrganization, HttpStatusCode.NotFound, "not_found", "the resource does not exist");
         // The denied requests changed nothing.
         await Assert.That(Roles(page)).IsEquivalentTo([$"{ownerId}=owner", $"{coOwnerId}=owner", $"{adminId}=admin", $"{memberId}=member"]);
     }
@@ -198,14 +198,14 @@ public sealed class AccessApiTests
         using var leaveSoleAgain = await second.PostAsync(Uri($"{org}/leave"), null);
         var page = await second.GetFromJsonAsync<JsonElement>(Uri($"{org}/members"));
 
-        await Assert.That(demoteSole.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
-        await Assert.That(leaveSole.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
-        await Assert.That(removeSole.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
+        await ErrorAssert.ErrorAsync(demoteSole, HttpStatusCode.Conflict, "last_owner", "the organization must keep an owner");
+        await ErrorAssert.ErrorAsync(leaveSole, HttpStatusCode.Conflict, "last_owner", "the organization must keep an owner");
+        await ErrorAssert.ErrorAsync(removeSole, HttpStatusCode.Conflict, "last_owner", "the organization must keep an owner");
         await Assert.That(memberLeaves.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
         await Assert.That(promoted.StatusCode).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(firstLeaves.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
-        await Assert.That(afterLeaving.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
-        await Assert.That(leaveSoleAgain.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
+        await ErrorAssert.ErrorAsync(afterLeaving, HttpStatusCode.NotFound, "not_found", "the resource does not exist");
+        await ErrorAssert.ErrorAsync(leaveSoleAgain, HttpStatusCode.Conflict, "last_owner", "the organization must keep an owner");
         await Assert.That(Roles(page)).IsEquivalentTo([$"{secondId}=owner"]);
     }
 
@@ -246,33 +246,33 @@ public sealed class AccessApiTests
         using var cancelledAgain = await admin.DeleteAsync(transfer);
         using var confirmedNone = await admin.PostAsync(confirm, null);
 
-        await Assert.That(none.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
-        await Assert.That(toSelf.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
-        await Assert.That(toOwner.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
-        await Assert.That(toStranger.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
-        await Assert.That(byAdmin.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
+        await ErrorAssert.ErrorAsync(none, HttpStatusCode.NotFound, "not_found", "the resource does not exist");
+        await ErrorAssert.ErrorAsync(toSelf, HttpStatusCode.Conflict, "already_owner", "the member is already an owner");
+        await ErrorAssert.ErrorAsync(toOwner, HttpStatusCode.Conflict, "already_owner", "the member is already an owner");
+        await ErrorAssert.ErrorAsync(toStranger, HttpStatusCode.NotFound, "not_found", "the resource does not exist");
+        await ErrorAssert.ErrorAsync(byAdmin, HttpStatusCode.Forbidden, "forbidden", "your role in the organization does not allow this");
         await Assert.That(started.StatusCode).IsEqualTo(HttpStatusCode.Created);
         await Assert.That(started.Headers.Location!.ToString()).IsEqualTo($"{org}/ownership-transfer");
         await Assert.That(offer.GetProperty("fromUserId").GetString()).IsEqualTo(ownerId);
         await Assert.That(offer.GetProperty("toUserId").GetString()).IsEqualTo(nomineeId);
         await Assert.That(offer.GetProperty("expiresAt").GetDateTimeOffset()).IsGreaterThan(offer.GetProperty("createdAt").GetDateTimeOffset());
         await Assert.That(pending.GetProperty("toUserId").GetString()).IsEqualTo(nomineeId);
-        await Assert.That(confirmedByAdmin.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
-        await Assert.That(cancelledByAdmin.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
+        await ErrorAssert.ErrorAsync(confirmedByAdmin, HttpStatusCode.Forbidden, "forbidden", "your role in the organization does not allow this");
+        await ErrorAssert.ErrorAsync(cancelledByAdmin, HttpStatusCode.Forbidden, "forbidden", "your role in the organization does not allow this");
         await Assert.That(confirmed.StatusCode).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(newOwner.GetProperty("userId").GetString()).IsEqualTo(nomineeId);
         await Assert.That(newOwner.GetProperty("role").GetString()).IsEqualTo("owner");
-        await Assert.That(afterConfirm.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+        await ErrorAssert.ErrorAsync(afterConfirm, HttpStatusCode.NotFound, "not_found", "the resource does not exist");
         // The owner who started the transfer stepped down; the other owner is untouched.
         await Assert.That(Roles(members)).IsEquivalentTo([$"{ownerId}=member", $"{coOwnerId}=owner", $"{nomineeId}=owner", $"{adminId}=admin"]);
-        await Assert.That(byFormerOwner.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
+        await ErrorAssert.ErrorAsync(byFormerOwner, HttpStatusCode.Forbidden, "forbidden", "your role in the organization does not allow this");
         await Assert.That(offered.StatusCode).IsEqualTo(HttpStatusCode.Created);
         await Assert.That(replaced.StatusCode).IsEqualTo(HttpStatusCode.Created);
         await Assert.That(replacement.GetProperty("fromUserId").GetString()).IsEqualTo(nomineeId);
         await Assert.That(replacement.GetProperty("toUserId").GetString()).IsEqualTo(adminId);
         await Assert.That(cancelledByNominee.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
-        await Assert.That(cancelledAgain.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
-        await Assert.That(confirmedNone.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+        await ErrorAssert.ErrorAsync(cancelledAgain, HttpStatusCode.NotFound, "not_found", "the resource does not exist");
+        await ErrorAssert.ErrorAsync(confirmedNone, HttpStatusCode.NotFound, "not_found", "the resource does not exist");
     }
 
     [Test]

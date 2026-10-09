@@ -123,20 +123,21 @@ public sealed class BackupApiTests
         var directory = Directory.CreateTempSubdirectory("terrabase-backup-enrollment-").FullName;
         try
         {
-            string user, backups;
+            string user, backups, policyPath;
             await using (var api = await ManagementApi.StartAsync(
                 settings => settings["data-directory"] = directory, time: new FakeTimeProvider(new DateTimeOffset(2026, 10, 4, 1, 50, 0, TimeSpan.Zero))))
             {
                 user = api.User;
                 var database = await api.CreateManagedDatabaseAsync();
                 backups = $"{database.Path}/backups";
-
+                policyPath = $"{database.Path}/backup-policy";
             }
 
             var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 4, 1, 55, 0, TimeSpan.Zero));
             await using (var api = await ManagementApi.StartAsync(settings => settings["data-directory"] = directory, time: time))
             {
                 using var owner = api.As(user);
+                var policy = await owner.GetFromJsonAsync<JsonElement>(Uri(policyPath));
                 JsonElement[] items = [];
                 await WaitAsync(time, async () =>
                 {
@@ -145,7 +146,10 @@ public sealed class BackupApiTests
                     return items.Length > 0;
                 });
 
+                await Assert.That(policy.GetProperty("fullBackupCron").GetString()).IsEqualTo("0 2 * * *");
+                await Assert.That(policy.GetProperty("updatedAt").ValueKind).IsEqualTo(JsonValueKind.Null);
                 await Assert.That(items.Single().GetProperty("trigger").GetString()).IsEqualTo("scheduled");
+                await Assert.That(items.Single().GetProperty("createdAt").GetDateTimeOffset()).IsGreaterThanOrEqualTo(new DateTimeOffset(2026, 10, 4, 2, 0, 0, TimeSpan.Zero));
             }
         }
         finally

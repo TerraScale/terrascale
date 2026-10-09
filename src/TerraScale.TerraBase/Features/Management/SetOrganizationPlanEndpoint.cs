@@ -20,20 +20,32 @@ public sealed class SetOrganizationPlanEndpoint(IManagementService management) :
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
         Produces<ErrorBody>(StatusCodes.Status403Forbidden);
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
+        Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
         RequireAuthorization(UserAuthExtensions.PolicyName);
         Metadata(ListenerMetadata.Management);
     }
 
     /// <inheritdoc />
-    public override async ValueTask<IResult> HandleAsync(PlanRequest request, CancellationToken cancellationToken)
+    public override async ValueTask<IResult> HandleAsync(PlanRequest request, CancellationToken cancellationToken) =>
+        ManagementRoute.CheckPlan(request) switch
+        {
+            Validation error => ErrorResponse.From(error),
+            TerraBase.Tenancy.PlanTier plan => await SetPlanAsync(plan, cancellationToken),
+        };
+
+    private async ValueTask<IResult> SetPlanAsync(TerraBase.Tenancy.PlanTier plan, CancellationToken cancellationToken)
     {
-        ArgumentNullException.ThrowIfNull(request);
-        var plan = ManagementRoute.Plan(request);
         var user = ManagementRoute.UserId(HttpContext);
         var organization = ManagementRoute.OrganizationId(HttpContext);
-        if (await management.GetOrganizationAsync(user, organization, cancellationToken).ConfigureAwait(false) is null)
+        var found = await management.GetOrganizationAsync(user, organization, cancellationToken).ConfigureAwait(false);
+        if (found is not Organization)
         {
-            return ManagementRoute.Error(ManagementError.NotFound);
+            return found switch
+            {
+                NotFound error => ErrorResponse.From(error),
+                Unavailable error => ErrorResponse.From(error),
+                Organization => throw new System.Diagnostics.UnreachableException(),
+            };
         }
 
         if (!HttpContext.User.IsManagementService())
@@ -41,6 +53,12 @@ public sealed class SetOrganizationPlanEndpoint(IManagementService management) :
             return ErrorResponse.From(new Forbidden("plan changes need the management service credential"));
         }
 
-        return ManagementRoute.Ok(await management.SetPlanAsync(user, organization, plan, cancellationToken));
+        return await management.SetPlanAsync(user, organization, plan, cancellationToken).ConfigureAwait(false) switch
+        {
+            Organization value => TypedResults.Ok(value),
+            NotFound error => ErrorResponse.From(error),
+            Forbidden error => ErrorResponse.From(error),
+            Unavailable error => ErrorResponse.From(error),
+        };
     }
 }

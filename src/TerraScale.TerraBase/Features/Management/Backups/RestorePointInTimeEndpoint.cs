@@ -39,6 +39,7 @@ public sealed class RestorePointInTimeEndpoint(IManagementService management, IM
         {
             NotFound error => ErrorResponse.From(error),
             Forbidden error => ErrorResponse.From(error),
+            Unavailable error => ErrorResponse.From(error),
             TenantContext database => await RestoreAsync(database, request, cancellationToken),
         };
     }

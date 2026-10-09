@@ -20,6 +20,7 @@ public sealed class ListDocumentsEndpoint(IDocumentService documents, ITenantDir
         Tags("Documents");
         Produces<DocumentPageBody>();
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
+        Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
         RequireAuthorization(ApiKeyScopes.DocumentsRead);
         Metadata(ListenerMetadata.Client);
     }
@@ -30,6 +31,7 @@ public sealed class ListDocumentsEndpoint(IDocumentService documents, ITenantDir
         {
             Validation error => ErrorResponse.From(error),
             NotFound error => ErrorResponse.From(error),
+            Unavailable error => ErrorResponse.From(error),
             TenantContext database => (DocumentRoute.CheckCollectionName(HttpContext), DocumentRoute.CheckParameters(HttpContext, "limit", "cursor")) switch
             {
                 (Validation error, _) => ErrorResponse.From(error),

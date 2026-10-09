@@ -8,6 +8,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
 using TerraBase.Engine.Cluster;
+using TerraBase.Errors;
 using TerraBase.Features.Backup;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
@@ -302,6 +303,74 @@ public sealed class ContinuousBackupTests
         await Assert.That(hobbyRecord.GetProperty("lastDrill").GetProperty("passed").GetBoolean()).IsTrue();
         await Assert.That(hobbyRecord.GetProperty("sizeBytes").GetInt64()).IsGreaterThan(0);
         await Assert.That(status.LastDrill!.Passed).IsTrue();
+    }
+
+    [Test]
+    public async Task An_unavailable_plan_preserves_backup_history_and_retention_retries_after_recovery()
+    {
+        using var oci = new FakeOci();
+        var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 7, 12, 0, 0, TimeSpan.Zero));
+        await using var api = await ManagementApi.StartAsync(oci.Configure, oci.Route, time, managementCredential: true);
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
+        var token = deadline.Token;
+        var backup = api.Server.Services.GetRequiredService<IContinuousBackup>();
+        var database = await api.CreateManagedDatabaseAsync("main");
+        using var service = api.Service(api.User);
+        (await service.PutAsJsonAsync(Uri($"/v1/management/organizations/{database.Organization}/plan"), new { plan = "pro" }, token))
+            .EnsureSuccessStatusCode();
+        time.Advance(TimeSpan.FromSeconds(10));
+        await backup.RunOnceAsync(token);
+        for (var day = 0; day < 2; day++)
+        {
+            time.Advance(TimeSpan.FromDays(1) + TimeSpan.FromSeconds(1));
+            await backup.RunOnceAsync(token);
+        }
+
+        var prefix = File(database) + "/snapshots/";
+        var snapshots = oci.Objects.Keys.Where(key => key.StartsWith(prefix, StringComparison.Ordinal)).Order(StringComparer.Ordinal).ToArray();
+        await Assert.That(snapshots.Length).IsEqualTo(3);
+        var tenants = api.Server.Services.GetRequiredService<ITenantDirectory>();
+        var found = await tenants.FindDatabaseAsync(database.Organization, database.Project, database.Name, token);
+        var source = found is TenantContext tenant ? tenant : throw new InvalidOperationException("the seeded database must resolve");
+        var restore = api.Server.Services.GetRequiredService<IPointInTimeRestore>();
+        var target = source with { DatabaseId = Ulid.NewUlid().ToString() };
+        var targetFile = Path.Combine(api.Server.DataDirectory, target.OrganizationId, target.ProjectId!, target.DatabaseId + ".db");
+        await Assert.That(System.IO.File.Exists(targetFile)).IsFalse();
+        var supportedVersion = await WriteCatalogVersionAsync(api.Server, "\"99\""u8.ToArray(), token);
+        time.Advance(TimeSpan.FromDays(8));
+        await backup.RunOnceAsync(token);
+        await Assert.That(snapshots.All(oci.Objects.ContainsKey)).IsTrue();
+        await Assert.That(await tenants.PlanAsync(source.OrganizationId, token) is Unavailable).IsTrue();
+        await Assert.That(await restore.GetWindowAsync(source, token) is Unavailable).IsTrue();
+        await Assert.That(await restore.PlanAsync(source, time.GetUtcNow(), token) is Unavailable).IsTrue();
+        await Assert.That(await restore.RestoreAsync(source, time.GetUtcNow(), target, token) is Unavailable).IsTrue();
+        await Assert.That(System.IO.File.Exists(targetFile)).IsFalse();
+        await ErrorAssert.ErrorAsync(api.Client.GetAsync(Uri($"{database.Path}/point-in-time"), token),
+            HttpStatusCode.ServiceUnavailable, "unavailable", "the management catalog has an old or unsupported format; discard the affected data");
+        await ErrorAssert.ErrorAsync(api.Client.PostAsJsonAsync(Uri($"{database.Path}/point-in-time/restore"), new { pointInTime = time.GetUtcNow() }, token),
+            HttpStatusCode.ServiceUnavailable, "unavailable", "the management catalog has an old or unsupported format; discard the affected data");
+
+        await WriteCatalogVersionAsync(api.Server, supportedVersion, token);
+        time.Advance(TimeSpan.FromSeconds(1));
+        await backup.RunOnceAsync(token);
+        // With the real seven-day Pro window restored, only the newest snapshot before the window is retained.
+        await Assert.That(oci.Objects.ContainsKey(snapshots[0])).IsFalse();
+        await Assert.That(oci.Objects.ContainsKey(snapshots[1])).IsFalse();
+        await Assert.That(oci.Objects.ContainsKey(snapshots[2])).IsTrue();
+        using var recovered = await api.Client.GetAsync(Uri($"{database.Path}/point-in-time"), token);
+        await Assert.That(recovered.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        var window = await recovered.Content.ReadFromJsonAsync<JsonElement>(token);
+        await Assert.That(window.GetProperty("earliest").GetDateTimeOffset()).IsEqualTo(time.GetUtcNow() - TimeSpan.FromDays(7));
+    }
+
+    private static async Task<byte[]> WriteCatalogVersionAsync(TerraBaseTestServer server, byte[] version, CancellationToken cancellationToken)
+    {
+        var system = await server.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(cancellationToken);
+        await using var write = await system.BeginTransactionAsync(write: true, cancellationToken);
+        var previous = (await write.GetAsync("catalog", "version", cancellationToken))!.Json.ToArray();
+        await write.PutAsync("catalog", "version", version, cancellationToken);
+        await write.CommitAsync(cancellationToken);
+        return previous;
     }
 
     [Test]

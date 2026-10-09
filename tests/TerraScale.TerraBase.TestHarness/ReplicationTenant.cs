@@ -56,16 +56,25 @@ internal sealed class ReplicationTenant
         var token = deadline.Token;
         var user = EntityIds.New().ToString();
         var management = seed.Services.GetRequiredService<IManagementService>();
-        var organization = (await management.CreateOrganizationAsync(user, "replication", token)).Value
-            ?? throw new InvalidOperationException("could not create the replication organization");
-        var project = (await management.CreateProjectAsync(user, organization.Id, "replication", token)).Value
-            ?? throw new InvalidOperationException("could not create the replication project");
+        var organization = await management.CreateOrganizationAsync(user, "replication", token) switch
+        {
+            Organization value => value,
+            _ => throw new InvalidOperationException("could not create the replication organization"),
+        };
+        var project = await management.CreateProjectAsync(user, organization.Id, "replication", token) switch
+        {
+            Project value => value,
+            _ => throw new InvalidOperationException("could not create the replication project"),
+        };
         var directory = seed.Services.GetRequiredService<ITenantDirectory>();
         var databases = new Dictionary<string, TenantContext>(StringComparer.Ordinal);
         foreach (var name in databaseNames)
         {
-            var created = await directory.CreateDatabaseAsync(organization.Id, project.Id, name, token)
-                ?? throw new InvalidOperationException("could not create the replication database");
+            var created = await directory.CreateDatabaseAsync(organization.Id, project.Id, name, token) switch
+            {
+                ProvisionedDatabase value => value,
+                _ => throw new InvalidOperationException("could not create the replication database"),
+            };
             databases.Add(name, created.Database);
         }
 
@@ -112,8 +121,11 @@ internal sealed class ReplicationTenant
         ArgumentOutOfRangeException.ThrowIfGreaterThan(_databases.Count + 1, MaxDatabases);
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         var database = await seed.Services.GetRequiredService<ITenantDirectory>()
-            .FindDatabaseAsync(OrganizationId, ProjectId, name, deadline.Token)
-            ?? throw new InvalidOperationException("the replication fixture database does not exist");
+            .FindDatabaseAsync(OrganizationId, ProjectId, name, deadline.Token) switch
+        {
+            TenantContext value => value,
+            _ => throw new InvalidOperationException("the replication fixture database does not exist"),
+        };
         var store = await seed.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(deadline.Token);
         await using var read = await store.BeginTransactionAsync(write: false, deadline.Token);
         var collection = $"projects/{ProjectId}/databases";

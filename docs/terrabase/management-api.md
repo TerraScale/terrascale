@@ -189,7 +189,7 @@ does not make an older catalog compatible.
   the intent is cleared, including when only sidecars remain. Remove `.db`, `-wal`, `-shm`, `-journal`
   and private creation files for that database, then remove the intent. Filesystem failures leave the
   intent available for recovery.
-- **Startup:** replay all version 4 and 5 intents before any listener serves requests. Replay is idempotent,
+- **Startup:** replay all current-format intents before any listener serves requests. Replay is idempotent,
   including when only sidecars remain. A replay error stops startup; the intent stays for the next
   start. An intent conflicting with a registered database stops startup without deleting its data.
 - **Unknown files:** preserve files without a catalog registration and log each path. A backup snapshot
@@ -209,8 +209,8 @@ a hostile process with filesystem write access. The ownership lock coordinates T
 processes, not arbitrary filesystem writers; deployment permissions provide that boundary.
 
 This covers TerraBase process crashes. SQLite still uses `synchronous = NORMAL` (decision 0003),
-so it does not add a power-loss or operating-system-crash durability guarantee. Older catalogs keep
-existing migration and `503` behavior; they contain no version 4 intents and are never swept.
+so it does not add a power-loss or operating-system-crash durability guarantee. Older catalogs return
+`503` and are never migrated or swept.
 Unsupported catalog versions are audited without interpreting tenant rows; their files are preserved,
 logged and counted as unknown while management requests keep returning `503`.
 

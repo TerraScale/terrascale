@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
@@ -24,6 +25,27 @@ internal sealed record StoredInvitation(Invitation Invitation, string? SecretHas
 /// <param name="InvitationId">The invitation.</param>
 internal sealed record InvitationToken(string OrganizationId, string InvitationId);
 
+/// <summary>The acting membership or why it cannot act in the supplied transaction.</summary>
+internal readonly union AuthorizedOrganization(OrganizationMember, NotFound, Forbidden);
+
+/// <summary>The outcomes of creating an invitation with a preselected token hash.</summary>
+internal readonly union CreateInvitationResult(Invitation, NotFound, Forbidden, Conflict, Unavailable);
+
+/// <summary>The outcomes of renewing an invitation's token and expiry.</summary>
+internal readonly union ResendInvitationResult(Invitation, NotFound, Forbidden, Conflict, Unavailable);
+
+/// <summary>The outcomes of accepting an invitation by token hash.</summary>
+internal readonly union AcceptInvitationByHashResult(Membership, NotFound, Forbidden, Conflict, Unavailable);
+
+/// <summary>The outcomes of declining an invitation by token hash.</summary>
+internal readonly union DeclineInvitationResult(Invitation, NotFound, Forbidden, Conflict, Unavailable);
+
+/// <summary>The outcomes of accepting an already verified invitation in the supplied transaction.</summary>
+internal readonly union AcceptedInvitation(Membership, NotFound, Forbidden, Conflict);
+
+/// <summary>Whether an invitation's recipient can redeem it.</summary>
+internal readonly union RedeemInvitationResult(Done, Forbidden, Conflict);
+
 /// <summary>
 /// The access part of the catalog. Members are keyed by user id; an <c>owners</c> index holds the owners so the
 /// last-owner rule needs no scan. Every authorization check runs in the transaction that makes the change.
@@ -49,39 +71,47 @@ internal sealed partial class EngineManagementService : IAccessService
     private static readonly TimeSpan InvitationLifetime = TimeSpan.FromDays(7);
     private static readonly TimeSpan TransferLifetime = TimeSpan.FromDays(7);
 
-    public ValueTask<ManagementResult<ManagementPage<OrganizationMember>>> ListMembersAsync(
+    public ValueTask<ListMembersResult> ListMembersAsync(
         string userId, string organizationId, string? after, int limit, CancellationToken cancellationToken) =>
-        ReadAsync<ManagementResult<ManagementPage<OrganizationMember>>>(async transaction =>
+        ReadAsync<ListMembersResult>(async transaction =>
         {
             var actor = await AuthorizeMemberAsync(transaction, userId, organizationId, OrganizationRole.Viewer, cancellationToken).ConfigureAwait(false);
-            return actor.Error != ManagementError.None
-                ? actor.Error
-                : await ListAsync(transaction, Members(organizationId), after, limit, TerraBaseJsonContext.Default.OrganizationMember, member => member.UserId, cancellationToken).ConfigureAwait(false);
-        }, cancellationToken);
+            return actor switch
+            {
+                NotFound error => error,
+                Forbidden error => error,
+                OrganizationMember => await ListAsync(transaction, Members(organizationId), after, limit, TerraBaseJsonContext.Default.OrganizationMember, member => member.UserId, cancellationToken).ConfigureAwait(false),
+            };
+        }, static error => error, cancellationToken);
 
-    public async ValueTask<ManagementResult<OrganizationMember>> ChangeRoleAsync(
+    public async ValueTask<ChangeRoleResult> ChangeRoleAsync(
         string userId, string organizationId, string memberId, OrganizationRole role, CancellationToken cancellationToken) =>
-        await WriteAsync<ManagementResult<OrganizationMember>>(async transaction =>
+        await WriteAsync<ChangeRoleResult>(async transaction =>
         {
             var actor = await AuthorizeMemberAsync(transaction, userId, organizationId, OrganizationRole.Admin, cancellationToken).ConfigureAwait(false);
-            if (actor.Value is null)
+            if (actor is not OrganizationMember actingMember)
             {
-                return actor.Error;
+                return actor switch
+                {
+                    NotFound error => error,
+                    Forbidden error => error,
+                    OrganizationMember => throw new UnreachableException(),
+                };
             }
 
             if (await GetMemberAsync(transaction, organizationId, memberId, cancellationToken).ConfigureAwait(false) is not { } member)
             {
-                return ManagementError.NotFound;
+                return ManagementErrors.NotFound;
             }
 
-            if ((member.Role == OrganizationRole.Owner || role == OrganizationRole.Owner) && actor.Value.Role != OrganizationRole.Owner)
+            if ((member.Role == OrganizationRole.Owner || role == OrganizationRole.Owner) && actingMember.Role != OrganizationRole.Owner)
             {
-                return ManagementError.Forbidden;
+                return ManagementErrors.Forbidden;
             }
 
             if (member.Role == OrganizationRole.Owner && role != OrganizationRole.Owner && await IsLastOwnerAsync(transaction, organizationId, cancellationToken).ConfigureAwait(false))
             {
-                return ManagementError.LastOwner;
+                return ManagementErrors.LastOwner;
             }
 
             if (member.Role == role)
@@ -93,21 +123,21 @@ internal sealed partial class EngineManagementService : IAccessService
             await PutMemberAsync(transaction, organizationId, member, cancellationToken).ConfigureAwait(false);
             await RecordAsync(transaction, organizationId, userId, "member.role_changed", memberId, RoleName(role), cancellationToken).ConfigureAwait(false);
             return member;
-        }, cancellationToken).ConfigureAwait(false);
+        }, static error => error, cancellationToken).ConfigureAwait(false);
 
     public async ValueTask<AddMemberResult> AddMemberAsync(
         string userId, string organizationId, string memberId, string email, CancellationToken cancellationToken) =>
         await WriteAsync<AddMemberResult>(async transaction =>
         {
             var actor = await AuthorizeMemberAsync(transaction, userId, organizationId, OrganizationRole.Admin, cancellationToken).ConfigureAwait(false);
-            if (actor.Error == ManagementError.Forbidden)
+            if (actor is not OrganizationMember)
             {
-                return new Forbidden("your role in the organization does not allow this", "forbidden_role");
-            }
-
-            if (actor.Value is null)
-            {
-                return new NotFound();
+                return actor switch
+                {
+                    NotFound => new NotFound(),
+                    Forbidden => ManagementErrors.RoleTooLow,
+                    OrganizationMember => throw new UnreachableException(),
+                };
             }
 
             // Idempotent: an existing membership keeps its role and is not recorded again.
@@ -120,60 +150,70 @@ internal sealed partial class EngineManagementService : IAccessService
             await PutMemberAsync(transaction, organizationId, member, cancellationToken).ConfigureAwait(false);
             await RecordAsync(transaction, organizationId, userId, "member.added", memberId, email, cancellationToken).ConfigureAwait(false);
             return member;
-        }, cancellationToken).ConfigureAwait(false);
+        }, static error => error, cancellationToken).ConfigureAwait(false);
 
-    public async ValueTask<ManagementError> RemoveMemberAsync(string userId, string organizationId, string memberId, CancellationToken cancellationToken) =>
-        await WriteAsync(async transaction =>
+    public async ValueTask<RemoveMemberResult> RemoveMemberAsync(string userId, string organizationId, string memberId, CancellationToken cancellationToken) =>
+        await WriteAsync<RemoveMemberResult>(async transaction =>
         {
             var actor = await AuthorizeMemberAsync(transaction, userId, organizationId, OrganizationRole.Admin, cancellationToken).ConfigureAwait(false);
-            if (actor.Value is null)
+            if (actor is not OrganizationMember actingMember)
             {
-                return actor.Error;
+                return actor switch
+                {
+                    NotFound error => error,
+                    Forbidden error => error,
+                    OrganizationMember => throw new UnreachableException(),
+                };
             }
 
             if (await GetMemberAsync(transaction, organizationId, memberId, cancellationToken).ConfigureAwait(false) is not { } member)
             {
-                return ManagementError.NotFound;
+                return ManagementErrors.NotFound;
             }
 
             if (member.Role == OrganizationRole.Owner)
             {
-                if (actor.Value.Role != OrganizationRole.Owner)
+                if (actingMember.Role != OrganizationRole.Owner)
                 {
-                    return ManagementError.Forbidden;
+                    return ManagementErrors.Forbidden;
                 }
 
                 if (await IsLastOwnerAsync(transaction, organizationId, cancellationToken).ConfigureAwait(false))
                 {
-                    return ManagementError.LastOwner;
+                    return ManagementErrors.LastOwner;
                 }
             }
 
             await DeleteMemberAsync(transaction, organizationId, memberId, cancellationToken).ConfigureAwait(false);
             await RecordAsync(transaction, organizationId, userId, "member.removed", memberId, null, cancellationToken).ConfigureAwait(false);
-            return ManagementError.None;
-        }, cancellationToken).ConfigureAwait(false);
+            return new Done();
+        }, static error => error, cancellationToken).ConfigureAwait(false);
 
-    public async ValueTask<ManagementError> LeaveAsync(string userId, string organizationId, CancellationToken cancellationToken) =>
-        await WriteAsync(async transaction =>
+    public async ValueTask<LeaveResult> LeaveAsync(string userId, string organizationId, CancellationToken cancellationToken) =>
+        await WriteAsync<LeaveResult>(async transaction =>
         {
             var actor = await AuthorizeMemberAsync(transaction, userId, organizationId, OrganizationRole.Viewer, cancellationToken).ConfigureAwait(false);
-            if (actor.Value is null)
+            if (actor is not OrganizationMember actingMember)
             {
-                return actor.Error;
+                return actor switch
+                {
+                    NotFound error => error,
+                    Forbidden error => error,
+                    OrganizationMember => throw new UnreachableException(),
+                };
             }
 
-            if (actor.Value.Role == OrganizationRole.Owner && await IsLastOwnerAsync(transaction, organizationId, cancellationToken).ConfigureAwait(false))
+            if (actingMember.Role == OrganizationRole.Owner && await IsLastOwnerAsync(transaction, organizationId, cancellationToken).ConfigureAwait(false))
             {
-                return ManagementError.LastOwner;
+                return ManagementErrors.LastOwner;
             }
 
             await DeleteMemberAsync(transaction, organizationId, userId, cancellationToken).ConfigureAwait(false);
             await RecordAsync(transaction, organizationId, userId, "member.left", null, null, cancellationToken).ConfigureAwait(false);
-            return ManagementError.None;
-        }, cancellationToken).ConfigureAwait(false);
+            return new Done();
+        }, static error => error, cancellationToken).ConfigureAwait(false);
 
-    public async ValueTask<ManagementResult<CreatedInvitation>> InviteAsync(
+    public async ValueTask<InviteResult> InviteAsync(
         string userId, string organizationId, string email, OrganizationRole role, CancellationToken cancellationToken)
     {
         var secret = Base64Url(RandomNumberGenerator.GetBytes(32));
@@ -181,35 +221,47 @@ internal sealed partial class EngineManagementService : IAccessService
         // The token names its invitation, so accepting it needs no global token index.
         var token = $"{organizationId}.{id}.{secret}";
         var created = await InviteAsync(userId, organizationId, id, email, role, Hash(token), Hash(secret), cancellationToken).ConfigureAwait(false);
-        return created.Value is { } invitation ? new CreatedInvitation(invitation, token) : created.Error;
+        return created switch
+        {
+            Invitation invitation => new CreatedInvitation(invitation, token),
+            NotFound error => error,
+            Forbidden error => error,
+            Conflict error => error,
+            Unavailable error => error,
+        };
     }
 
     // Creates a pending invitation whose token has tokenHash; secretHash is set only for tokens TerraBase issued.
-    private ValueTask<ManagementResult<Invitation>> InviteAsync(
+    private ValueTask<CreateInvitationResult> InviteAsync(
         string userId, string organizationId, string id, string email, OrganizationRole role, string tokenHash, string? secretHash, CancellationToken cancellationToken) =>
-        WriteAsync<ManagementResult<Invitation>>(async transaction =>
+        WriteAsync<CreateInvitationResult>(async transaction =>
         {
             var actor = await AuthorizeMemberAsync(transaction, userId, organizationId, OrganizationRole.Admin, cancellationToken).ConfigureAwait(false);
-            if (actor.Value is null)
+            if (actor is not OrganizationMember actingMember)
             {
-                return actor.Error;
+                return actor switch
+                {
+                    NotFound error => error,
+                    Forbidden error => error,
+                    OrganizationMember => throw new UnreachableException(),
+                };
             }
 
-            if (role == OrganizationRole.Owner && actor.Value.Role != OrganizationRole.Owner)
+            if (role == OrganizationRole.Owner && actingMember.Role != OrganizationRole.Owner)
             {
-                return ManagementError.Forbidden;
+                return ManagementErrors.Forbidden;
             }
 
             var now = time.GetUtcNow();
             if (await PendingInvitationAsync(transaction, organizationId, email, cancellationToken).ConfigureAwait(false) is { } pending
                 && pending.Invitation.ExpiresAt > now)
             {
-                return ManagementError.InvitationPending;
+                return ManagementErrors.InvitationPending;
             }
 
             if (await transaction.GetAsync(InvitationTokens, tokenHash, cancellationToken).ConfigureAwait(false) is not null)
             {
-                return ManagementError.TokenTaken;
+                return ManagementErrors.TokenTaken;
             }
 
             // An expired invitation for the email stays in the history; the new one takes its email slot.
@@ -222,44 +274,49 @@ internal sealed partial class EngineManagementService : IAccessService
             await ReserveTokenAsync(transaction, organizationId, invitation.Id, tokenHash, cancellationToken).ConfigureAwait(false);
             await RecordAsync(transaction, organizationId, userId, "invitation.created", email, RoleName(role), cancellationToken).ConfigureAwait(false);
             return invitation;
-        }, cancellationToken);
+        }, static error => error, cancellationToken);
 
     // Gives a pending invitation, expired or not, a new token, creation time and expiry; the old token stops working.
-    private ValueTask<ManagementResult<Invitation>> ResendInvitationAsync(
+    private ValueTask<ResendInvitationResult> ResendInvitationAsync(
         string userId, string organizationId, string invitationId, string tokenHash, CancellationToken cancellationToken) =>
-        WriteAsync<ManagementResult<Invitation>>(async transaction =>
+        WriteAsync<ResendInvitationResult>(async transaction =>
         {
             var actor = await AuthorizeMemberAsync(transaction, userId, organizationId, OrganizationRole.Admin, cancellationToken).ConfigureAwait(false);
-            if (actor.Value is null)
+            if (actor is not OrganizationMember actingMember)
             {
-                return actor.Error;
+                return actor switch
+                {
+                    NotFound error => error,
+                    Forbidden error => error,
+                    OrganizationMember => throw new UnreachableException(),
+                };
             }
 
             if (await GetAsync(transaction, Invitations(organizationId), invitationId, TerraBaseJsonContext.Default.StoredInvitation, cancellationToken).ConfigureAwait(false) is not { } stored)
             {
-                return ManagementError.NotFound;
+                return ManagementErrors.NotFound;
             }
 
             // Renewing an owner invitation hands out ownership, which only owners may offer.
-            if (stored.Invitation.Role == OrganizationRole.Owner && actor.Value.Role != OrganizationRole.Owner)
+            if (stored.Invitation.Role == OrganizationRole.Owner && actingMember.Role != OrganizationRole.Owner)
             {
-                return ManagementError.Forbidden;
+                return ManagementErrors.Forbidden;
             }
 
             if (stored.Invitation.Status != InvitationStatus.Pending)
             {
-                return ManagementError.InvitationClosed;
+                return ManagementErrors.InvitationClosed;
             }
 
             // A newer invitation for the email took its slot after it expired.
             if (await GetAsync(transaction, InvitationEmails(organizationId), Key(stored.Invitation.Email), Id, cancellationToken).ConfigureAwait(false) != invitationId)
             {
-                return ManagementError.InvitationPending;
+                return ManagementErrors.InvitationPending;
             }
 
             if (await transaction.GetAsync(InvitationTokens, tokenHash, cancellationToken).ConfigureAwait(false) is not null)
             {
-                return ManagementError.TokenTaken;
+                return ManagementErrors.TokenTaken;
             }
 
             var now = time.GetUtcNow();
@@ -271,16 +328,21 @@ internal sealed partial class EngineManagementService : IAccessService
             await ReserveTokenAsync(transaction, organizationId, invitationId, tokenHash, cancellationToken).ConfigureAwait(false);
             await RecordAsync(transaction, organizationId, userId, "invitation.resent", invitation.Email, RoleName(invitation.Role), cancellationToken).ConfigureAwait(false);
             return invitation;
-        }, cancellationToken);
+        }, static error => error, cancellationToken);
 
-    public ValueTask<ManagementResult<ManagementPage<Invitation>>> ListInvitationsAsync(
+    public ValueTask<ListInvitationsResult> ListInvitationsAsync(
         string userId, string organizationId, string? after, int limit, CancellationToken cancellationToken) =>
-        ReadAsync<ManagementResult<ManagementPage<Invitation>>>(async transaction =>
+        ReadAsync<ListInvitationsResult>(async transaction =>
         {
             var actor = await AuthorizeMemberAsync(transaction, userId, organizationId, OrganizationRole.Admin, cancellationToken).ConfigureAwait(false);
-            if (actor.Error != ManagementError.None)
+            if (actor is not OrganizationMember)
             {
-                return actor.Error;
+                return actor switch
+                {
+                    NotFound error => error,
+                    Forbidden error => error,
+                    OrganizationMember => throw new UnreachableException(),
+                };
             }
 
             var page = await transaction.ListAsync(InvitationOrder(organizationId), after, limit, MaxPageBytes, cancellationToken).ConfigureAwait(false);
@@ -294,102 +356,136 @@ internal sealed partial class EngineManagementService : IAccessService
             }
 
             return new ManagementPage<Invitation>(invitations, page.HasMore ? page.Documents[^1].Id : null);
-        }, cancellationToken);
+        }, static error => error, cancellationToken);
 
-    public async ValueTask<ManagementError> RevokeInvitationAsync(string userId, string organizationId, string invitationId, CancellationToken cancellationToken) =>
-        await WriteAsync(async transaction =>
+    public async ValueTask<RevokeInvitationResult> RevokeInvitationAsync(string userId, string organizationId, string invitationId, CancellationToken cancellationToken) =>
+        await WriteAsync<RevokeInvitationResult>(async transaction =>
         {
             var actor = await AuthorizeMemberAsync(transaction, userId, organizationId, OrganizationRole.Admin, cancellationToken).ConfigureAwait(false);
-            if (actor.Value is null)
+            if (actor is not OrganizationMember)
             {
-                return actor.Error;
+                return actor switch
+                {
+                    NotFound error => error,
+                    Forbidden error => error,
+                    OrganizationMember => throw new UnreachableException(),
+                };
             }
 
             if (await GetAsync(transaction, Invitations(organizationId), invitationId, TerraBaseJsonContext.Default.StoredInvitation, cancellationToken).ConfigureAwait(false) is not { } stored)
             {
-                return ManagementError.NotFound;
+                return ManagementErrors.NotFound;
             }
 
             if (stored.Invitation.Status != InvitationStatus.Pending)
             {
-                return ManagementError.InvitationClosed;
+                return ManagementErrors.InvitationClosed;
             }
 
             await CloseInvitationAsync(transaction, organizationId, stored, InvitationStatus.Revoked, cancellationToken).ConfigureAwait(false);
             await RecordAsync(transaction, organizationId, userId, "invitation.revoked", stored.Invitation.Email, null, cancellationToken).ConfigureAwait(false);
-            return ManagementError.None;
-        }, cancellationToken).ConfigureAwait(false);
+            return new Done();
+        }, static error => error, cancellationToken).ConfigureAwait(false);
 
-    public async ValueTask<ManagementResult<OrganizationMember>> AcceptInvitationAsync(string userId, string email, string token, CancellationToken cancellationToken)
+    public async ValueTask<AcceptInvitationResult> AcceptInvitationAsync(string userId, string email, string token, CancellationToken cancellationToken)
     {
         if (token.Split('.') is not [var organizationId, var invitationId, var secret])
         {
-            return ManagementError.NotFound;
+            return ManagementErrors.NotFound;
         }
 
-        var accepted = await WriteAsync<ManagementResult<Membership>>(async transaction =>
+        var accepted = await WriteAsync<AcceptInvitationByHashResult>(async transaction =>
             await GetAsync(transaction, Invitations(organizationId), invitationId, TerraBaseJsonContext.Default.StoredInvitation, cancellationToken).ConfigureAwait(false) is { SecretHash: { } secretHash } stored
             && Matches(secretHash, Hash(secret))
-                ? await AcceptAsync(transaction, userId, email, organizationId, stored, cancellationToken).ConfigureAwait(false)
-                : ManagementError.NotFound,
-            cancellationToken).ConfigureAwait(false);
-        return accepted.Value is { } membership ? membership.Member : accepted.Error;
+                ? await AcceptAsync(transaction, userId, email, organizationId, stored, cancellationToken).ConfigureAwait(false) switch
+                {
+                    Membership membership => membership,
+                    NotFound error => error,
+                    Forbidden error => error,
+                    Conflict error => error,
+                }
+                : ManagementErrors.NotFound,
+            static error => error, cancellationToken).ConfigureAwait(false);
+        return accepted switch
+        {
+            Membership membership => membership.Member,
+            NotFound error => error,
+            Forbidden error => error,
+            Conflict error => error,
+            Unavailable error => error,
+        };
     }
 
-    public ValueTask<FoundInvitation?> FindInvitationAsync(string tokenHash, CancellationToken cancellationToken) =>
-        ReadAsync<FoundInvitation?>(async transaction =>
+    public ValueTask<FindInvitationResult> FindInvitationAsync(string tokenHash, CancellationToken cancellationToken) =>
+        ReadAsync<FindInvitationResult>(async transaction =>
             await TokenInvitationAsync(transaction, tokenHash, cancellationToken).ConfigureAwait(false) is (var organizationId, var stored)
             && stored.Invitation.Status == InvitationStatus.Pending
             && stored.Invitation.ExpiresAt > time.GetUtcNow()
             && await GetAsync(transaction, Organizations, organizationId, TerraBaseJsonContext.Default.Organization, cancellationToken).ConfigureAwait(false) is { } organization
                 ? new FoundInvitation(new OrganizationIdentity(organization.Id, organization.Name), stored.Invitation)
-                : null,
-            cancellationToken);
+                : new NotFound("no pending invitation has this token"),
+            static error => error, cancellationToken);
 
-    private ValueTask<ManagementResult<Membership>> AcceptInvitationByHashAsync(string userId, string email, string tokenHash, CancellationToken cancellationToken) =>
-        WriteAsync<ManagementResult<Membership>>(async transaction =>
+    private ValueTask<AcceptInvitationByHashResult> AcceptInvitationByHashAsync(string userId, string email, string tokenHash, CancellationToken cancellationToken) =>
+        WriteAsync<AcceptInvitationByHashResult>(async transaction =>
             await TokenInvitationAsync(transaction, tokenHash, cancellationToken).ConfigureAwait(false) is (var organizationId, var stored)
-                ? await AcceptAsync(transaction, userId, email, organizationId, stored, cancellationToken).ConfigureAwait(false)
-                : ManagementError.NotFound,
-            cancellationToken);
+                ? await AcceptAsync(transaction, userId, email, organizationId, stored, cancellationToken).ConfigureAwait(false) switch
+                {
+                    Membership membership => membership,
+                    NotFound error => error,
+                    Forbidden error => error,
+                    Conflict error => error,
+                }
+                : ManagementErrors.NotFound,
+            static error => error, cancellationToken);
 
-    private ValueTask<ManagementResult<Invitation>> DeclineInvitationAsync(string userId, string email, string tokenHash, CancellationToken cancellationToken) =>
-        WriteAsync<ManagementResult<Invitation>>(async transaction =>
+    private ValueTask<DeclineInvitationResult> DeclineInvitationAsync(string userId, string email, string tokenHash, CancellationToken cancellationToken) =>
+        WriteAsync<DeclineInvitationResult>(async transaction =>
         {
             if (await TokenInvitationAsync(transaction, tokenHash, cancellationToken).ConfigureAwait(false) is not (var organizationId, var stored))
             {
-                return ManagementError.NotFound;
+                return ManagementErrors.NotFound;
             }
 
             var check = Redeemable(stored.Invitation, email);
-            if (check != ManagementError.None)
+            if (check is not Done)
             {
-                return check;
+                return check switch
+                {
+                    Forbidden error => error,
+                    Conflict error => error,
+                    Done => throw new UnreachableException(),
+                };
             }
 
             var invitation = await CloseInvitationAsync(transaction, organizationId, stored, InvitationStatus.Declined, cancellationToken).ConfigureAwait(false);
             await RecordAsync(transaction, organizationId, userId, "invitation.declined", invitation.Email, null, cancellationToken).ConfigureAwait(false);
             return invitation;
-        }, cancellationToken);
+        }, static error => error, cancellationToken);
 
     // Makes the user a member through a pending invitation whose token was already verified.
-    private async ValueTask<ManagementResult<Membership>> AcceptAsync(
+    private async ValueTask<AcceptedInvitation> AcceptAsync(
         IStorageTransaction transaction, string userId, string email, string organizationId, StoredInvitation stored, CancellationToken cancellationToken)
     {
         if (await GetAsync(transaction, Organizations, organizationId, TerraBaseJsonContext.Default.Organization, cancellationToken).ConfigureAwait(false) is null)
         {
-            return ManagementError.NotFound;
+            return ManagementErrors.NotFound;
         }
 
         var check = Redeemable(stored.Invitation, email);
-        if (check != ManagementError.None)
+        if (check is not Done)
         {
-            return check;
+            return check switch
+            {
+                Forbidden error => error,
+                Conflict error => error,
+                Done => throw new UnreachableException(),
+            };
         }
 
         if (await GetMemberAsync(transaction, organizationId, userId, cancellationToken).ConfigureAwait(false) is not null)
         {
-            return ManagementError.AlreadyMember;
+            return ManagementErrors.AlreadyMember;
         }
 
         var invitation = stored.Invitation;
@@ -401,11 +497,11 @@ internal sealed partial class EngineManagementService : IAccessService
     }
 
     // Whether the holder of an invitation's token, whose verified email is email, may still accept or decline it.
-    private ManagementError Redeemable(Invitation invitation, string email) =>
-        invitation.Status != InvitationStatus.Pending ? ManagementError.InvitationClosed
-        : !string.Equals(invitation.Email, email, StringComparison.OrdinalIgnoreCase) ? ManagementError.Forbidden
-        : invitation.ExpiresAt <= time.GetUtcNow() ? ManagementError.Expired
-        : ManagementError.None;
+    private RedeemInvitationResult Redeemable(Invitation invitation, string email) =>
+        invitation.Status != InvitationStatus.Pending ? ManagementErrors.InvitationClosed
+        : !string.Equals(invitation.Email, email, StringComparison.OrdinalIgnoreCase) ? ManagementErrors.Forbidden
+        : invitation.ExpiresAt <= time.GetUtcNow() ? ManagementErrors.Expired
+        : new Done();
 
     // The invitation a token hash names, with its organization, when the hash matches it.
     private static async ValueTask<(string OrganizationId, StoredInvitation Stored)?> TokenInvitationAsync(
@@ -416,38 +512,48 @@ internal sealed partial class EngineManagementService : IAccessService
             ? (entry.OrganizationId, invitation)
             : null;
 
-    public ValueTask<ManagementResult<OwnershipTransfer>> GetTransferAsync(string userId, string organizationId, CancellationToken cancellationToken) =>
-        ReadAsync<ManagementResult<OwnershipTransfer>>(async transaction =>
+    public ValueTask<GetTransferResult> GetTransferAsync(string userId, string organizationId, CancellationToken cancellationToken) =>
+        ReadAsync<GetTransferResult>(async transaction =>
         {
             var actor = await AuthorizeMemberAsync(transaction, userId, organizationId, OrganizationRole.Viewer, cancellationToken).ConfigureAwait(false);
-            if (actor.Error != ManagementError.None)
+            if (actor is not OrganizationMember)
             {
-                return actor.Error;
+                return actor switch
+                {
+                    NotFound error => error,
+                    Forbidden error => error,
+                    OrganizationMember => throw new UnreachableException(),
+                };
             }
 
             return await GetTransferAsync(transaction, organizationId, cancellationToken).ConfigureAwait(false) is { } transfer
                 ? transfer
-                : ManagementError.NotFound;
-        }, cancellationToken);
+                : ManagementErrors.NotFound;
+        }, static error => error, cancellationToken);
 
-    public async ValueTask<ManagementResult<OwnershipTransfer>> StartTransferAsync(
+    public async ValueTask<StartTransferResult> StartTransferAsync(
         string userId, string organizationId, string memberId, CancellationToken cancellationToken) =>
-        await WriteAsync<ManagementResult<OwnershipTransfer>>(async transaction =>
+        await WriteAsync<StartTransferResult>(async transaction =>
         {
             var actor = await AuthorizeMemberAsync(transaction, userId, organizationId, OrganizationRole.Owner, cancellationToken).ConfigureAwait(false);
-            if (actor.Value is null)
+            if (actor is not OrganizationMember)
             {
-                return actor.Error;
+                return actor switch
+                {
+                    NotFound error => error,
+                    Forbidden error => error,
+                    OrganizationMember => throw new UnreachableException(),
+                };
             }
 
             if (await GetMemberAsync(transaction, organizationId, memberId, cancellationToken).ConfigureAwait(false) is not { } member)
             {
-                return ManagementError.NotFound;
+                return ManagementErrors.NotFound;
             }
 
             if (member.Role == OrganizationRole.Owner)
             {
-                return ManagementError.AlreadyOwner;
+                return ManagementErrors.AlreadyOwner;
             }
 
             var now = time.GetUtcNow();
@@ -455,99 +561,122 @@ internal sealed partial class EngineManagementService : IAccessService
             await PutAsync(transaction, State(organizationId), OwnershipTransfers, transfer, TerraBaseJsonContext.Default.OwnershipTransfer, cancellationToken).ConfigureAwait(false);
             await RecordAsync(transaction, organizationId, userId, "ownership.transfer_started", memberId, null, cancellationToken).ConfigureAwait(false);
             return transfer;
-        }, cancellationToken).ConfigureAwait(false);
+        }, static error => error, cancellationToken).ConfigureAwait(false);
 
-    public async ValueTask<ManagementResult<OrganizationMember>> ConfirmTransferAsync(string userId, string organizationId, CancellationToken cancellationToken) =>
-        await WriteAsync<ManagementResult<OrganizationMember>>(async transaction =>
+    public async ValueTask<ConfirmTransferResult> ConfirmTransferAsync(string userId, string organizationId, CancellationToken cancellationToken) =>
+        await WriteAsync<ConfirmTransferResult>(async transaction =>
         {
             var actor = await AuthorizeMemberAsync(transaction, userId, organizationId, OrganizationRole.Viewer, cancellationToken).ConfigureAwait(false);
-            if (actor.Value is null)
+            if (actor is not OrganizationMember actingMember)
             {
-                return actor.Error;
+                return actor switch
+                {
+                    NotFound error => error,
+                    Forbidden error => error,
+                    OrganizationMember => throw new UnreachableException(),
+                };
             }
 
             if (await GetTransferAsync(transaction, organizationId, cancellationToken).ConfigureAwait(false) is not { } transfer)
             {
-                return ManagementError.NotFound;
+                return ManagementErrors.NotFound;
             }
 
             if (transfer.ToUserId != userId)
             {
-                return ManagementError.Forbidden;
+                return ManagementErrors.Forbidden;
             }
 
             // The offer lapses when the owner who made it is no longer an owner (losing the role already dropped it).
             if (await GetMemberAsync(transaction, organizationId, transfer.FromUserId, cancellationToken).ConfigureAwait(false) is not { Role: OrganizationRole.Owner } starter)
             {
-                return ManagementError.NotFound;
+                return ManagementErrors.NotFound;
             }
 
             await transaction.DeleteAsync(State(organizationId), OwnershipTransfers, cancellationToken).ConfigureAwait(false);
 
-            var owner = actor.Value with { Role = OrganizationRole.Owner };
+            var owner = actingMember with { Role = OrganizationRole.Owner };
             await PutMemberAsync(transaction, organizationId, owner, cancellationToken).ConfigureAwait(false);
             await PutMemberAsync(transaction, organizationId, starter with { Role = OrganizationRole.Member }, cancellationToken).ConfigureAwait(false);
             await RecordAsync(transaction, organizationId, userId, "ownership.transfer_confirmed", starter.UserId, null, cancellationToken).ConfigureAwait(false);
             return owner;
-        }, cancellationToken).ConfigureAwait(false);
+        }, static error => error, cancellationToken).ConfigureAwait(false);
 
-    public async ValueTask<ManagementError> CancelTransferAsync(string userId, string organizationId, CancellationToken cancellationToken) =>
-        await WriteAsync(async transaction =>
+    public async ValueTask<CancelTransferResult> CancelTransferAsync(string userId, string organizationId, CancellationToken cancellationToken) =>
+        await WriteAsync<CancelTransferResult>(async transaction =>
         {
             var actor = await AuthorizeMemberAsync(transaction, userId, organizationId, OrganizationRole.Viewer, cancellationToken).ConfigureAwait(false);
-            if (actor.Value is null)
+            if (actor is not OrganizationMember actingMember)
             {
-                return actor.Error;
+                return actor switch
+                {
+                    NotFound error => error,
+                    Forbidden error => error,
+                    OrganizationMember => throw new UnreachableException(),
+                };
             }
 
             if (await GetTransferAsync(transaction, organizationId, cancellationToken).ConfigureAwait(false) is not { } transfer)
             {
-                return ManagementError.NotFound;
+                return ManagementErrors.NotFound;
             }
 
-            if (actor.Value.Role != OrganizationRole.Owner && transfer.ToUserId != userId)
+            if (actingMember.Role != OrganizationRole.Owner && transfer.ToUserId != userId)
             {
-                return ManagementError.Forbidden;
+                return ManagementErrors.Forbidden;
             }
 
             await transaction.DeleteAsync(State(organizationId), OwnershipTransfers, cancellationToken).ConfigureAwait(false);
             await RecordAsync(transaction, organizationId, userId, "ownership.transfer_cancelled", transfer.ToUserId, null, cancellationToken).ConfigureAwait(false);
-            return ManagementError.None;
-        }, cancellationToken).ConfigureAwait(false);
+            return new Done();
+        }, static error => error, cancellationToken).ConfigureAwait(false);
 
-    public ValueTask<ManagementResult<AuditRetention>> GetAuditRetentionAsync(string userId, string organizationId, CancellationToken cancellationToken) =>
-        ReadAsync<ManagementResult<AuditRetention>>(async transaction =>
+    public ValueTask<GetAuditRetentionResult> GetAuditRetentionAsync(string userId, string organizationId, CancellationToken cancellationToken) =>
+        ReadAsync<GetAuditRetentionResult>(async transaction =>
         {
             var actor = await AuthorizeMemberAsync(transaction, userId, organizationId, OrganizationRole.Admin, cancellationToken).ConfigureAwait(false);
-            return actor.Error != ManagementError.None
-                ? actor.Error
-                : await GetAuditRetentionAsync(transaction, organizationId, cancellationToken).ConfigureAwait(false);
-        }, cancellationToken);
-
-    public async ValueTask<ManagementResult<AuditRetention>> SetAuditRetentionAsync(
-        string userId, string organizationId, int days, CancellationToken cancellationToken) =>
-        await WriteAsync<ManagementResult<AuditRetention>>(async transaction =>
-        {
-            var actor = await AuthorizeMemberAsync(transaction, userId, organizationId, OrganizationRole.Admin, cancellationToken).ConfigureAwait(false);
-            if (actor.Value is null)
+            return actor switch
             {
-                return actor.Error;
+                NotFound error => error,
+                Forbidden error => error,
+                OrganizationMember => await GetAuditRetentionAsync(transaction, organizationId, cancellationToken).ConfigureAwait(false),
+            };
+        }, static error => error, cancellationToken);
+
+    public async ValueTask<SetAuditRetentionResult> SetAuditRetentionAsync(
+        string userId, string organizationId, int days, CancellationToken cancellationToken) =>
+        await WriteAsync<SetAuditRetentionResult>(async transaction =>
+        {
+            var actor = await AuthorizeMemberAsync(transaction, userId, organizationId, OrganizationRole.Admin, cancellationToken).ConfigureAwait(false);
+            if (actor is not OrganizationMember)
+            {
+                return actor switch
+                {
+                    NotFound error => error,
+                    Forbidden error => error,
+                    OrganizationMember => throw new UnreachableException(),
+                };
             }
 
             var retention = new AuditRetention(days);
             await PutAsync(transaction, State(organizationId), AuditRetentions, retention, TerraBaseJsonContext.Default.AuditRetention, cancellationToken).ConfigureAwait(false);
             await RecordAsync(transaction, organizationId, userId, "settings.audit_retention_updated", null, days.ToString(CultureInfo.InvariantCulture), cancellationToken).ConfigureAwait(false);
             return retention;
-        }, cancellationToken).ConfigureAwait(false);
+        }, static error => error, cancellationToken).ConfigureAwait(false);
 
-    public ValueTask<ManagementResult<ManagementPage<AuditEvent>>> ListAuditEventsAsync(
+    public ValueTask<ListAuditEventsResult> ListAuditEventsAsync(
         string userId, string organizationId, string? after, int limit, CancellationToken cancellationToken) =>
-        ReadAsync<ManagementResult<ManagementPage<AuditEvent>>>(async transaction =>
+        ReadAsync<ListAuditEventsResult>(async transaction =>
         {
             var actor = await AuthorizeMemberAsync(transaction, userId, organizationId, OrganizationRole.Admin, cancellationToken).ConfigureAwait(false);
-            if (actor.Error != ManagementError.None)
+            if (actor is not OrganizationMember)
             {
-                return actor.Error;
+                return actor switch
+                {
+                    NotFound error => error,
+                    Forbidden error => error,
+                    OrganizationMember => throw new UnreachableException(),
+                };
             }
 
             // The order follows the sequence, and a clock step back can put an older occurredAt after a newer one,
@@ -562,26 +691,26 @@ internal sealed partial class EngineManagementService : IAccessService
                     .ConfigureAwait(false) ?? throw new InvalidDataException("audit order names a missing event"));
             }
             return new ManagementPage<AuditEvent>([.. events.Where(auditEvent => auditEvent.OccurredAt >= cutoff)], page.HasMore ? page.Documents[^1].Id : null);
-        }, cancellationToken);
+        }, static error => error, cancellationToken);
 
     // Database operations may use a signed project grant; access operations always require persisted membership.
-    private static ValueTask<ManagementResult<OrganizationMember>> AuthorizeAsync(
+    private static ValueTask<AuthorizedOrganization> AuthorizeAsync(
         IStorageTransaction transaction, string userId, string organizationId, OrganizationRole minimum, CancellationToken cancellationToken) =>
         ProjectActor(userId, organizationId) && minimum <= OrganizationRole.Member
-            ? ValueTask.FromResult<ManagementResult<OrganizationMember>>(new OrganizationMember(userId, OrganizationRole.Member, DateTimeOffset.MinValue))
+            ? ValueTask.FromResult<AuthorizedOrganization>(new OrganizationMember(userId, OrganizationRole.Member, DateTimeOffset.MinValue))
             : AuthorizeMemberAsync(transaction, userId, organizationId, minimum, cancellationToken);
 
     // The acting member, or why it may not act: NotFound for a non-member, exactly like a missing organization
     // (members are deleted with their organization), Forbidden for a role below minimum.
-    private static async ValueTask<ManagementResult<OrganizationMember>> AuthorizeMemberAsync(
+    private static async ValueTask<AuthorizedOrganization> AuthorizeMemberAsync(
         IStorageTransaction transaction, string userId, string organizationId, OrganizationRole minimum, CancellationToken cancellationToken)
     {
         if (await GetMemberAsync(transaction, organizationId, userId, cancellationToken).ConfigureAwait(false) is not { } actor)
         {
-            return ManagementError.NotFound;
+            return ManagementErrors.NotFound;
         }
 
-        return actor.Role >= minimum ? actor : ManagementError.Forbidden;
+        return actor.Role >= minimum ? actor : ManagementErrors.Forbidden;
     }
 
     private static ValueTask<OrganizationMember?> GetMemberAsync(

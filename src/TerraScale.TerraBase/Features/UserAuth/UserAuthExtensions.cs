@@ -1,6 +1,8 @@
+using System.Diagnostics;
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authentication;
 using TerraBase.Engine;
+using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
 using TerraBase.Features.Management;
 using TerraBase.Hosting;
@@ -156,16 +158,37 @@ public static class UserAuthExtensions
 
             var actor = jwt.FindFirst(ClaimTypes.NameIdentifier)!.Value;
             var catalog = context.RequestServices.GetRequiredService<IProjectCatalog>();
-            if (await catalog.ResolveProjectAsync(project, actor, create: false, context.RequestAborted).ConfigureAwait(false) is not { } organization)
+            var resolved = await catalog.ResolveProjectAsync(project, actor, create: false, context.RequestAborted).ConfigureAwait(false);
+            if (resolved is not string organization)
             {
-                await BadRequests.WriteAsync(context, 404, "unknown_database", "the database does not exist", op: null).ConfigureAwait(false);
+                await (resolved switch
+                {
+                    NotFound => ErrorResponse.From(new NotFound("the database does not exist", "unknown_database")),
+                    Unavailable error => ErrorResponse.From(error),
+                    string => throw new UnreachableException(),
+                }).ExecuteAsync(context).ConfigureAwait(false);
                 return;
             }
 
             var management = context.RequestServices.GetRequiredService<IManagementService>();
             var restricted = jwt.FindFirst("database")?.Value;
-            var restrictedId = restricted is null ? null
-                : (await management.FindDatabaseRecordAsync(organization, project, restricted, context.RequestAborted).ConfigureAwait(false))?.Id;
+            string? restrictedId = null;
+            if (restricted is not null)
+            {
+                var restriction = await management.FindDatabaseRecordAsync(organization, project, restricted, context.RequestAborted).ConfigureAwait(false);
+                if (restriction is Unavailable unavailable)
+                {
+                    await ErrorResponse.From(unavailable).ExecuteAsync(context).ConfigureAwait(false);
+                    return;
+                }
+
+                restrictedId = restriction switch
+                {
+                    ManagedDatabase record => record.Id,
+                    NotFound => null,
+                    Unavailable => throw new UnreachableException(),
+                };
+            }
             var grant = new ProjectAccess(actor, project, organization, restricted, restrictedId);
             context.Features.Set(grant);
 
@@ -174,10 +197,21 @@ public static class UserAuthExtensions
                 context.Request.RouteValues["organization"] = organization;
                 if (context.Request.RouteValues["database"] is string name)
                 {
-                    if (!DatabaseName.TryParse(name, out _) || await management.FindDatabaseRecordAsync(organization, project, name, context.RequestAborted)
-                        .ConfigureAwait(false) is not { } record)
+                    if (!DatabaseName.TryParse(name, out _))
                     {
                         await BadRequests.WriteAsync(context, 404, "unknown_database", "the database does not exist", op: null).ConfigureAwait(false);
+                        return;
+                    }
+
+                    var found = await management.FindDatabaseRecordAsync(organization, project, name, context.RequestAborted).ConfigureAwait(false);
+                    if (found is not ManagedDatabase record)
+                    {
+                        await (found switch
+                        {
+                            NotFound => ErrorResponse.From(new NotFound("the database does not exist", "unknown_database")),
+                            Unavailable error => ErrorResponse.From(error),
+                            ManagedDatabase => throw new UnreachableException(),
+                        }).ExecuteAsync(context).ConfigureAwait(false);
                         return;
                     }
 

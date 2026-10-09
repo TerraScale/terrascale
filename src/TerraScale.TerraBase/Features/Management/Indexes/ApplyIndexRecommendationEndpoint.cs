@@ -20,6 +20,7 @@ public sealed class ApplyIndexRecommendationEndpoint(IManagementService manageme
         Produces<AppliedIndexRecommendation>(StatusCodes.Status201Created);
         Produces<AppliedIndexRecommendation>();
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
+        Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
         Produces<ErrorBody>(StatusCodes.Status409Conflict);
         Produces<ErrorBody>(StatusCodes.Status403Forbidden);
         RequireAuthorization(ApiKeyScopes.DatabasesWrite);
@@ -32,6 +33,7 @@ public sealed class ApplyIndexRecommendationEndpoint(IManagementService manageme
         {
             NotFound error => ErrorResponse.From(error),
             Forbidden error => ErrorResponse.From(error),
+            Unavailable error => ErrorResponse.From(error),
             TenantContext database => await indexes.ApplyAsync(database, ManagementRoute.Value(HttpContext, "recommendation"), cancellationToken) switch
             {
                 AppliedIndexRecommendation { Status: "applied" } applied =>
@@ -39,6 +41,7 @@ public sealed class ApplyIndexRecommendationEndpoint(IManagementService manageme
                 AppliedIndexRecommendation existing => TypedResults.Ok(existing),
                 NotFound error => ErrorResponse.From(error),
                 Conflict error => ErrorResponse.From(error),
+                Unavailable error => ErrorResponse.From(error),
             },
         };
 }

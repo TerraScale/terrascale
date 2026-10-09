@@ -230,10 +230,10 @@ public sealed class LifecycleQuotaTests
     // Integration fault injection: preserve real admission and catalog publication, fail only staged accounting.
     private sealed class FailedAccountingQuota(StorageQuota inner) : IStorageQuota, IDisposable
     {
-        public ValueTask<StorageQuotaLease> EnterAsync(TenantContext database, IDatabaseStore store, CancellationToken cancellationToken) =>
+        public ValueTask<StorageQuotaEntry> EnterAsync(TenantContext database, IDatabaseStore store, CancellationToken cancellationToken) =>
             inner.EnterAsync(database, store, cancellationToken);
 
-        public ValueTask<StorageQuotaGroupLease> EnterOrganizationsAsync(IReadOnlyList<string> organizationIds, CancellationToken cancellationToken) =>
+        public ValueTask<StorageQuotaGroupEntry> EnterOrganizationsAsync(IReadOnlyList<string> organizationIds, CancellationToken cancellationToken) =>
             inner.EnterOrganizationsAsync(organizationIds, cancellationToken);
 
         public ValueTask<long> ReadBytesAsync(TenantContext database, CancellationToken cancellationToken) =>

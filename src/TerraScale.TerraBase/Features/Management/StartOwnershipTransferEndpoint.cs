@@ -1,3 +1,4 @@
+using TerraBase.Errors;
 using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
@@ -24,17 +25,23 @@ public sealed class StartOwnershipTransferEndpoint(IAccessService access) : Endp
         Produces<ErrorBody>(StatusCodes.Status403Forbidden);
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
         Produces<ErrorBody>(StatusCodes.Status409Conflict);
+        Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
         RequireAuthorization(UserAuthExtensions.PolicyName);
         Metadata(ListenerMetadata.Management);
     }
 
     /// <inheritdoc />
-    public override async ValueTask<IResult> HandleAsync(TransferRequest request, CancellationToken cancellationToken)
-    {
-        ArgumentNullException.ThrowIfNull(request);
-        var result = await access.StartTransferAsync(ManagementRoute.UserId(HttpContext), ManagementRoute.OrganizationId(HttpContext), ManagementRoute.ValidUserId(request.UserId, "userId"), cancellationToken);
-        return result.Value is { } value
-            ? TypedResults.Created(HttpContext.Request.Path.Value, value)
-            : ManagementRoute.Error(result.Error);
-    }
+    public override async ValueTask<IResult> HandleAsync(TransferRequest request, CancellationToken cancellationToken) =>
+        ManagementRoute.CheckUserId(request.UserId, "userId") switch
+        {
+            Validation error => ErrorResponse.From(error),
+            string member => await access.StartTransferAsync(ManagementRoute.UserId(HttpContext), ManagementRoute.OrganizationId(HttpContext), member, cancellationToken) switch
+            {
+                OwnershipTransfer value => TypedResults.Created(HttpContext.Request.Path.Value, value),
+                NotFound error => ErrorResponse.From(error),
+                Forbidden error => ErrorResponse.From(error),
+                Conflict error => ErrorResponse.From(error),
+                Unavailable error => ErrorResponse.From(error),
+            },
+        };
 }

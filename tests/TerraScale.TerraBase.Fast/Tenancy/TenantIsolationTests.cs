@@ -224,6 +224,8 @@ public sealed class TenantIsolationTests
         {
             using var response = await api.Server.Client.PostAsJsonAsync(new Uri("/admin/api-keys", UriKind.Relative), request);
             issued.Add(response.StatusCode);
+            await ErrorAssert.ErrorAsync(response, HttpStatusCode.BadRequest, "invalid_request",
+                "organizationId must name an organization, projectId one of its projects and databaseId (only with projectId) one of that project's databases");
         }
 
         using var narrowed = await api.Server.Client.PostAsJsonAsync(

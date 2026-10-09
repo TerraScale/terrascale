@@ -22,6 +22,42 @@ public sealed class StoragePoolTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task A_refused_creation_intent_leaves_no_artifacts_or_reservation(bool copy)
+    {
+        var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
+        await using var management = await ManagementApi.StartAsync();
+        using var tenant = await management.CreateTenantAsync("documents:read", "documents:write");
+        var source = await tenant.ContextAsync(management.Server, "source", token);
+        var target = await tenant.ContextAsync(management.Server, "target", token);
+        var engine = management.Server.Services.GetRequiredService<IStorageEngine>();
+        await Assert.That(await engine.DeleteDatabaseAsync(target, token)).IsTrue();
+        var directory = Path.Combine(management.Server.DataDirectory, tenant.OrganizationId, tenant.ProjectId);
+        var before = Directory.GetFiles(directory);
+        var intents = 0;
+        await Assert.That(await engine.CreateDatabaseWithIntentAsync(target, copy ? source : null, _ =>
+        {
+            intents++;
+            return ValueTask.FromResult(false);
+        }, token)).IsFalse();
+        await Assert.That(intents).IsEqualTo(1);
+        await Assert.That(Directory.GetFiles(directory)).IsEquivalentTo(before);
+        await Assert.That(await engine.OpenDatabaseAsync(target, token)).IsNull();
+
+        await Assert.That(await engine.CreateDatabaseWithIntentAsync(target, copy ? source : null, _ =>
+        {
+            intents++;
+            return ValueTask.FromResult(true);
+        }, token)).IsTrue();
+        await Assert.That(intents).IsEqualTo(2);
+        await engine.CompleteDatabaseIntentAsync(target, token);
+        await Assert.That(await engine.OpenDatabaseAsync(target, token)).IsNotNull();
+        using var restored = await tenant.Data.GetAsync(tenant.Database("target") + "/collections", token);
+        restored.EnsureSuccessStatusCode();
+    }
+
+    [Test]
     public async Task Lifecycle_intents_reuse_the_maintenance_slot_with_a_one_slot_queue()
     {
         await using var management = await ManagementApi.StartAsync(settings =>
@@ -109,7 +145,7 @@ public sealed class StoragePoolTests
                 token => engine.CopyDatabaseAsync(source, cold, token).AsTask(),
                 token => engine.DeleteDatabaseAsync(cold, token).AsTask(),
                 token => engine.OpenDatabaseAsync(cold, token).AsTask(),
-                token => engine.CreateDatabaseWithIntentAsync(cold, null, _ => ValueTask.CompletedTask, token).AsTask(),
+                token => engine.CreateDatabaseWithIntentAsync(cold, null, _ => ValueTask.FromResult(true), token).AsTask(),
                 token => engine.RecordDatabaseDeleteIntentAsync(cold, _ => ValueTask.FromResult(true), token).AsTask(),
                 token => engine.CompleteDatabaseIntentAsync(cold, token).AsTask(),
             ];

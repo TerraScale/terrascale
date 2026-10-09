@@ -22,6 +22,7 @@ public sealed class SetAutoIndexPolicyEndpoint(IManagementService management, II
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
         Produces<ErrorBody>(StatusCodes.Status403Forbidden);
+        Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
         RequireAuthorization(ApiKeyScopes.DatabasesWrite);
         Metadata(new ProjectManagementRoute(), ListenerMetadata.Management);
     }
@@ -44,12 +45,14 @@ public sealed class SetAutoIndexPolicyEndpoint(IManagementService management, II
         {
             NotFound error => ErrorResponse.From(error),
             Forbidden error => ErrorResponse.From(error),
+            Unavailable error => ErrorResponse.From(error),
             TenantContext database => await indexes.SetAutoIndexPolicyAsync(ManagementRoute.UserId(HttpContext), database, collection.Value, enabled, cancellationToken) switch
             {
                 AutoIndexPolicy policy => TypedResults.Ok(policy),
                 NotFound error => ErrorResponse.From(error),
                 Forbidden error => ErrorResponse.From(error),
                 Validation error => ErrorResponse.From(error),
+                Unavailable error => ErrorResponse.From(error),
             },
         };
     }

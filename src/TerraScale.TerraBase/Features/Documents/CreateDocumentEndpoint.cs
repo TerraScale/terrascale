@@ -24,6 +24,7 @@ public sealed class CreateDocumentEndpoint(IDocumentService documents, ITenantDi
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
         Produces<ErrorBody>(StatusCodes.Status409Conflict);
+        Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
         Produces<ErrorBody>(StatusCodes.Status412PreconditionFailed);
         RequireAuthorization(ApiKeyScopes.DocumentsWrite);
         Metadata(ListenerMetadata.Client);
@@ -35,6 +36,7 @@ public sealed class CreateDocumentEndpoint(IDocumentService documents, ITenantDi
         {
             Validation error => ErrorResponse.From(error),
             NotFound error => ErrorResponse.From(error),
+            Unavailable error => ErrorResponse.From(error),
             TenantContext database => (
                 DocumentRoute.CheckCollectionName(HttpContext),
                 DocumentRoute.CheckParameters(HttpContext),
