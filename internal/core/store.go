@@ -36,6 +36,7 @@ var ErrUnavailable = errors.New("store unavailable")
 //   - Values returned are isolated copies the caller may keep and modify.
 //   - The mutate and read callbacks of the aggregate methods (Update,
 //     UpdateAs, UpdateAsWithPlan, UpdateAccountAsAdmin, UpdateOrganization,
+//     UpsertPlanAndUpdateOrganizationAs,
 //     ViewAs) are pure functions of the aggregate they receive and of values
 //     the caller captured before the call. They must not call the Store,
 //     perform I/O, or keep references to their argument, and a mutate
@@ -117,6 +118,11 @@ type Store interface {
 	// UpsertPlanAs creates or replaces a plan; plan keys never change and
 	// never collide with another plan's ID or key.
 	UpsertPlanAs(ctx context.Context, p Principal, plan Plan) error
+	// UpsertPlanAndUpdateOrganizationAs atomically creates or replaces a plan
+	// and mutates the current organization for an authorized platform admin.
+	// Plan keys follow UpsertPlanAs's rules; a failed mutation saves neither.
+	// Internal billing belongs to at most one organization.
+	UpsertPlanAndUpdateOrganizationAs(ctx context.Context, p Principal, organizationID string, plan Plan, mutate func(*Organization) error) error
 	// DeletePlanAs deletes a plan no organization or open checkout uses.
 	DeletePlanAs(ctx context.Context, p Principal, planID string) error
 

@@ -47,6 +47,7 @@ templ subscriptionsContent(csrfToken string, data subscriptionsPage) {
 			}
 			@changeNotice(csrfToken, data)
 		}
+		if !data.Internal {
 		<section class="ts-billing-plans" aria-labelledby="available-plans-title">
 			<header class="ts-billing-plans-head">
 				<div>
@@ -74,6 +75,7 @@ templ subscriptionsContent(csrfToken string, data subscriptionsPage) {
 				</div>
 			}
 		</section>
+		}
 	</section>
 }
 

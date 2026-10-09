@@ -119,7 +119,7 @@ func selectedPlan(ctx context.Context, store core.Store, key, interval string) (
 	if err != nil && !errors.Is(err, core.ErrNotFound) {
 		return core.Plan{}, err
 	}
-	if err != nil || !plan.Visible || plan.PriceCents <= 0 || (interval == IntervalAnnual && plan.AnnualPriceCents <= 0) {
+	if err != nil || strings.EqualFold(strings.TrimSpace(plan.Key), "internal") || !plan.Visible || plan.PriceCents <= 0 || (interval == IntervalAnnual && plan.AnnualPriceCents <= 0) {
 		return core.Plan{}, unavailable
 	}
 	return plan, nil

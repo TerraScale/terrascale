@@ -39,7 +39,8 @@ to TerraBase through ts-go only.
   request cannot leave the record behind the provider. Handlers report
   `ErrUnavailable` as 503.
 - Aggregate callbacks (`Update`, `UpdateAs`, `UpdateAsWithPlan`,
-  `UpdateAccountAsAdmin`, `UpdateOrganization`, `ViewAs`) are pure functions
+  `UpdateAccountAsAdmin`, `UpdateOrganization`,
+  `UpsertPlanAndUpdateOrganizationAs`, `ViewAs`) are pure functions
   of the aggregate they receive. They may run more than once, and they never
   call the store or do I/O. Every feature callback was checked for this when
   ctx was threaded through.
@@ -529,3 +530,8 @@ way. The dashboard keeps no list of them:
   services change their data. Editing them needs TerraBase to accept ts-auth
   project tokens on the data plane (TS-589), plus a confirmation and an audit
   entry here.
+
+Internal billing configuration uses `UpsertPlanAndUpdateOrganizationAs`: the
+plan catalog and target organization commit in the same TerraBase transaction.
+Callback rejection or a rejected database commit publishes neither change.
+An uncertain commit may have applied both changes; it never applies only one.

@@ -24,11 +24,16 @@ const shutdownTimeout = 10 * time.Second
 
 func main() {
 	if len(os.Args) > 1 {
-		if os.Args[1] != "grant-platform-admin" {
+		command, ok := map[string]func([]string) error{
+			"report-internal-billing":    reportInternalBilling,
+			"grant-platform-admin":       grantPlatformAdmin,
+			"configure-internal-billing": configureInternalBilling,
+		}[os.Args[1]]
+		if !ok {
 			fmt.Fprintf(os.Stderr, "unknown command %q\n", os.Args[1])
 			os.Exit(1)
 		}
-		if err := grantPlatformAdmin(os.Args[2:]); err != nil {
+		if err := command(os.Args[2:]); err != nil {
 			fmt.Fprintln(os.Stderr, os.Args[1]+":", err)
 			os.Exit(1)
 		}

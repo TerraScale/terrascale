@@ -123,6 +123,7 @@ type invoicePage struct {
 }
 
 type pageData struct {
+	InternalBill          *internalBill
 	OrganizationBilling   bool
 	Tab                   string
 	Projects              []projectRow
@@ -250,7 +251,7 @@ func pageHandler(deps core.Deps, billing *payments.Stripe, wrap func(core.Page, 
 		}
 		ctx := r.Context()
 		token := ""
-		if tab == "overview" {
+		if tab == "overview" || org.Billing.Internal {
 			token = core.UserToken(r.Context())
 		}
 		data, err := buildPage(ctx, service, p, token, org, project, tab, databaseFilter, r.URL.Query().Get("range"))
@@ -270,7 +271,7 @@ func pageHandler(deps core.Deps, billing *payments.Stripe, wrap func(core.Page, 
 			r.URL.Query().Get("page"),
 			now,
 		)
-		data.CanManageBilling = org.OwnerUserID == p.UserID
+		data.CanManageBilling = org.OwnerUserID == p.UserID && !org.Billing.Internal
 		data.Personal = org.Kind == "personal"
 		data.Demo = deps.Demo
 		data.BillingPlanKey = org.Billing.PlanKey
@@ -624,7 +625,7 @@ func buildPage(ctx context.Context, service Service, p core.Principal, token str
 	slices.SortFunc(databaseOptions, func(a, b databaseOption) int { return strings.Compare(a.Name, b.Name) })
 	data := pageData{
 		Tab: tab, Projects: projects, DatabaseOptions: databaseOptions, Databases: databases, SelectedProject: project.ID,
-		SelectedDatabase: databaseFilter, OrganizationCap: dollars(report.SpendCapCents),
+		SelectedDatabase: databaseFilter, OrganizationCap: dollars(report.SpendCapCents), InternalBill: report.InternalBill,
 		PaidExcess: report.PaidExcessEnabled, EffectiveCap: capLabel(report.ProjectEffectiveCapCents),
 		PlanName: report.PlanName, PlanUsageNote: report.PlanUsageNote, AllowanceError: report.AllowanceError, BillingStatus: org.BillingStatus, BillingRenewal: org.BillingRenewal,
 		BillingSummary:  summarizeBilling(org.Billing.Invoices, time.Now().UTC()),

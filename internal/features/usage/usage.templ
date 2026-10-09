@@ -107,6 +107,9 @@ templ invoiceFilters(data pageData) {
 }
 
 templ overviewTab(data pageData) {
+	if data.InternalBill != nil {
+		@internalBillCard(data.InternalBill)
+	}
 	@ui.Card(ui.CardProps{ID: "usage-allowance", Title: "Plan allowance", Description: "Use of the " + data.PlanName + " plan this month"}) {
 		if data.AllowanceError != "" {
 			@ui.Alert("warning", "", data.AllowanceError)
@@ -270,6 +273,9 @@ templ historyTotals(data pageData) {
 }
 
 templ billingTab(data pageData, csrfToken string) {
+	if data.InternalBill != nil {
+		@internalBillCard(data.InternalBill)
+	}
 	@ui.Card(ui.CardProps{ID: "billing-invoice-summary", Title: "Invoice summary", Description: "Invoice information reported for this organization", Actions: billingSummaryActions(data)}) {
 		<dl class="ts-stats ts-usage-billing-kpis ts-stats-compact">
 			<div class="ts-stat">
@@ -384,7 +390,9 @@ templ billingTab(data pageData, csrfToken string) {
 }
 
 templ billingActions(data pageData) {
-	if data.CanManageBilling {
+	if data.InternalBill != nil {
+		<p class="ts-meta">Internal billing reports usage without Stripe charges.</p>
+	} else if data.CanManageBilling {
 		<button class="ts-btn ts-btn-primary" type="button" command="show-modal" commandfor="change-billing-plan">
 			if data.BillingSubscription {
 				Change plan
@@ -500,6 +508,9 @@ func billingChangeAction(data pageData) string {
 }
 
 templ spendingControlsTab(data pageData, csrfToken string) {
+	if data.InternalBill != nil {
+		@ui.Alert("info", "Report-only spending cap", "Internal caps only report alerts. They never charge Stripe, restrict writes or suspend services.")
+	}
 	@ui.Card(ui.CardProps{ID: "spending-controls", Title: "Spending controls", Description: "The tightest configured limit applies to each database."}) {
 		if data.CanManage {
 			<form class="ts-form" method="post" action="/api/v1/dashboard/usage/spending-controls">
@@ -509,7 +520,9 @@ templ spendingControlsTab(data pageData, csrfToken string) {
 						@capInput("organization-spend-cap", "spendCap", data.OrganizationCap)
 					}
 				</div>
+				if data.InternalBill == nil {
 				<label class="ts-check"><input class="ts-checkbox" type="checkbox" name="paidExcess" value="true" checked?={ data.PaidExcess }/><span>Allow usage beyond included plan resources</span></label>
+			}
 				<div class="ts-card-section">
 					<h3 class="ts-section-title">Project caps</h3>
 					<div class="ts-form-grid ts-usage-caps">
@@ -615,5 +628,27 @@ templ organizationBillingContent(data pageData, csrfToken string, plans templ.Co
 templ billingSummaryActions(data pageData) {
 	if !data.OrganizationBilling {
 		@billingActions(data)
+	}
+}
+
+
+templ internalBillCard(bill *internalBill) {
+	@ui.Card(ui.CardProps{ID: "internal-bill", Title: "Internal computed bill", Description: "Report-only estimate from every project's UTC month-to-date usage. Reads are free. Storage uses the current logical size for a full month, not historical byte-seconds. No Stripe charges."}) {
+		if !bill.Available {
+			@ui.Alert("warning", "Internal bill unavailable", bill.Error)
+		} else {
+			<dl class="ts-kv">
+				<div><dt>Period</dt><dd>{ bill.PeriodStart.Format("Jan 2, 2006") } – { bill.PeriodEnd.Format("Jan 2, 2006") } (UTC)</dd></div>
+				<div><dt>Base plan</dt><dd>{ priceUSD(bill.BaseCents) }</dd></div>
+				<div><dt>Reads / writes</dt><dd>{ fmt.Sprint(bill.Reads) } / { fmt.Sprint(bill.Writes) }</dd></div>
+				<div><dt>Write overage</dt><dd>{ priceUSD(bill.WriteCents) } ({ priceUSD(bill.WriteRateCents) } per million beyond the allowance)</dd></div>
+				<div><dt>Storage estimate</dt><dd>{ priceUSD(bill.StorageCents) } ({ priceUSD(bill.StorageRateCents) } per GiB-month beyond the allowance)</dd></div>
+				<div><dt>Total estimate</dt><dd>{ priceUSD(bill.TotalCents) }</dd></div>
+				<div><dt>Organization cap</dt><dd>{ capLabel(bill.SpendCapCents) } · report only; services remain active</dd></div>
+			</dl>
+			if bill.CapReached {
+				@ui.Alert("warning", "Report-only spending cap reached", bill.Alert)
+			}
+		}
 	}
 }

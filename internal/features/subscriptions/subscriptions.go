@@ -35,6 +35,7 @@ type planView struct {
 }
 
 type subscriptionsPage struct {
+	Internal         bool
 	OrganizationName string
 	PlanName         string
 	Summary          string
@@ -197,7 +198,7 @@ func billingPage(ctx context.Context, store core.Store, principal core.Principal
 	hasSubscription := org.Billing.SubscriptionID != "" && org.Billing.Status != "canceled" && org.Billing.Status != "incomplete_expired"
 	// Billing routes accept changes only from the owner of an active
 	// organization.
-	owner := org.OwnerUserID == principal.UserID && org.Status == "active" && !org.Archived && !org.DeletionRequested
+	owner := !org.Billing.Internal && org.OwnerUserID == principal.UserID && org.Status == "active" && !org.Archived && !org.DeletionRequested
 	data := subscriptionsPage{
 		OrganizationName: org.Name,
 		PlanName:         cmp.Or(view.Plan.Name, "Free"),
@@ -215,6 +216,12 @@ func billingPage(ctx context.Context, store core.Store, principal core.Principal
 		Change:           change,
 		Interval:         interval,
 		Plans:            make([]planView, 0, len(view.Plans)),
+	}
+	if org.Billing.Internal {
+		data.Internal = true
+		data.Summary = "Internal reporting only. No Stripe charges; spending caps never suspend services."
+		data.Plans = nil
+		return data, nil
 	}
 	if data.AwaitingPayment {
 		data.PlanName, data.Summary = "No plan", org.Name+" has no active plan."

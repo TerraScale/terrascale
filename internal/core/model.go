@@ -267,6 +267,8 @@ type Notification struct {
 	// URL is the dashboard page where the reader can act on it, if any.
 	URL       string
 	CreatedAt time.Time
+	// BillingMonth identifies the UTC usage month (YYYY-MM) for billing alerts.
+	BillingMonth string
 }
 
 // VisibleTo reports whether n belongs to the principal's selected
@@ -341,6 +343,8 @@ type APIKey struct {
 }
 
 type Billing struct {
+	// Internal marks TerraScale's report-only billing; spend caps never suspend it.
+	Internal          bool
 	CustomerID        string
 	SubscriptionID    string
 	TrialUsed         bool
@@ -412,6 +416,9 @@ type Plan struct {
 	StorageLabel       string
 	MaxDatabases       int
 	MaxMembers         int
+	// Internal estimate rates for writes and storage; reads are free.
+	WriteCentsPerMillion    int64
+	StorageCentsPerGiBMonth int64
 }
 
 // Sessions keep opaque bearer values inside the implementation; callers only

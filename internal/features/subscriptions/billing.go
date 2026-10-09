@@ -155,7 +155,7 @@ func (service BillingService) availablePlans(ctx context.Context) ([]core.Plan, 
 		return nil, err
 	}
 	plans = slices.DeleteFunc(plans, func(plan core.Plan) bool {
-		return !plan.Visible || plan.PriceCents <= 0 || normalizePlanKey(plan.Key) == ""
+		return isInternalPlan(plan) || !plan.Visible || plan.PriceCents <= 0 || normalizePlanKey(plan.Key) == ""
 	})
 	slices.SortFunc(plans, func(left, right core.Plan) int {
 		return cmp.Or(cmp.Compare(left.PriceCents, right.PriceCents), strings.Compare(normalizePlanKey(left.Key), normalizePlanKey(right.Key)))
@@ -187,7 +187,7 @@ func (service BillingService) BeginDemoCheckout(ctx context.Context, principal c
 			return err
 		}
 		organization, ok := account.Organizations[principal.OrganizationID]
-		if !ok || organization.OwnerUserID != principal.UserID || organization.Status != "active" || organization.Archived || organization.DeletionRequested {
+		if !ok || organization.OwnerUserID != principal.UserID || organization.Billing.Internal || organization.Status != "active" || organization.Archived || organization.DeletionRequested {
 			return ErrBillingOwnerRequired
 		}
 		if organization.Billing.SubscriptionID != "" && organization.Billing.Status != "canceled" && organization.Billing.Status != "incomplete_expired" {
@@ -259,7 +259,7 @@ func (service BillingService) CompleteDemoCheckout(ctx context.Context, principa
 	var returnTo string
 	mutate := func(account *core.Account, plan core.Plan) error {
 		organization, ok := account.Organizations[principal.OrganizationID]
-		if !ok || organization.OwnerUserID != principal.UserID || organization.Archived || organization.DeletionRequested {
+		if !ok || organization.OwnerUserID != principal.UserID || organization.Billing.Internal || organization.Archived || organization.DeletionRequested {
 			return ErrBillingOwnerRequired
 		}
 		session, ok := organization.CheckoutSessions[sessionID]
@@ -275,7 +275,7 @@ func (service BillingService) CompleteDemoCheckout(ctx context.Context, principa
 			organization.Billing.CheckoutID = ""
 			organization.Billing.ReturnPath = ""
 		} else {
-			if plan.ID != session.PlanID || plan.PriceCents <= 0 || (session.Interval == intervalAnnual && plan.AnnualPriceCents <= 0) {
+			if isInternalPlan(plan) || plan.ID != session.PlanID || plan.PriceCents <= 0 || (session.Interval == intervalAnnual && plan.AnnualPriceCents <= 0) {
 				return ErrPlanUnavailable
 			}
 			session.Status = checkoutDone
@@ -324,7 +324,7 @@ func (service BillingService) RecordCustomer(ctx context.Context, principal core
 	var customerID string
 	err := service.store.UpdateAs(ctx, principal, func(account *core.Account) error {
 		organization, ok := account.Organizations[principal.OrganizationID]
-		if !ok || organization.OwnerUserID != principal.UserID || organization.Archived || organization.DeletionRequested {
+		if !ok || organization.OwnerUserID != principal.UserID || organization.Billing.Internal || organization.Archived || organization.DeletionRequested {
 			return ErrBillingOwnerRequired
 		}
 		if organization.Billing.CustomerID == "" {
@@ -362,7 +362,7 @@ func (service BillingService) RecordExternalCheckout(ctx context.Context, princi
 			return err
 		}
 		organization, ok := account.Organizations[principal.OrganizationID]
-		if !ok || organization.OwnerUserID != principal.UserID || organization.Status != "active" || organization.Archived || organization.DeletionRequested {
+		if !ok || organization.OwnerUserID != principal.UserID || organization.Billing.Internal || organization.Status != "active" || organization.Archived || organization.DeletionRequested {
 			return ErrBillingOwnerRequired
 		}
 		if organization.Billing.CustomerID == "" {
@@ -397,7 +397,7 @@ func (service BillingService) RecordExternalCheckout(ctx context.Context, princi
 func (service BillingService) ExpireExternalCheckout(ctx context.Context, principal core.Principal, sessionID string) error {
 	return service.store.UpdateAs(ctx, principal, func(account *core.Account) error {
 		organization, ok := account.Organizations[principal.OrganizationID]
-		if !ok || organization.OwnerUserID != principal.UserID || organization.Archived || organization.DeletionRequested {
+		if !ok || organization.OwnerUserID != principal.UserID || organization.Billing.Internal || organization.Archived || organization.DeletionRequested {
 			return ErrBillingOwnerRequired
 		}
 		if organization.Billing.CheckoutID != sessionID {
@@ -459,6 +459,9 @@ func (service BillingService) PendingCheckoutID(ctx context.Context, organizatio
 // projected one is ignored.
 func (service BillingService) ProjectCustomerState(ctx context.Context, state payments.CustomerState, checkout *payments.CheckoutSession) error {
 	return service.store.UpdateOrganization(ctx, state.OrganizationID, func(organization *core.Organization, plans map[string]core.Plan) error {
+		if organization.Billing.Internal {
+			return core.ErrForbidden
+		}
 		switch organization.Billing.CustomerID {
 		case state.CustomerID:
 		case "":
@@ -499,8 +502,8 @@ func projectSubscription(organization *core.Organization, state payments.Custome
 		organization.BillingStatus = "billing_required"
 	case entitled:
 		plan, ok := plans[state.PlanKey]
-		if !ok {
-			return fmt.Errorf("%w: subscription plan %q no longer exists", ErrPlanUnavailable, state.PlanKey)
+		if !ok || isInternalPlan(plan) {
+			return fmt.Errorf("%w: subscription plan %q is unavailable", ErrPlanUnavailable, state.PlanKey)
 		}
 		organization.PlanID = plan.ID
 		billing.PlanKey = state.PlanKey
@@ -614,17 +617,24 @@ func (service BillingService) planCandidate(ctx context.Context, planKey, interv
 	if err != nil {
 		return "", "", err
 	}
+	if isInternalPlan(plan) {
+		return "", "", ErrPlanUnavailable
+	}
 	return plan.ID, planKey, nil
 }
 
 func validatePlanSelection(plan core.Plan, planKey, interval string) error {
-	if plan.ID == "" || normalizePlanKey(plan.Key) != planKey || !plan.Visible || plan.PriceCents <= 0 {
+	if isInternalPlan(plan) || plan.ID == "" || normalizePlanKey(plan.Key) != planKey || !plan.Visible || plan.PriceCents <= 0 {
 		return ErrPlanUnavailable
 	}
 	if interval == intervalAnnual && plan.AnnualPriceCents <= 0 {
 		return ErrPlanUnavailable
 	}
 	return nil
+}
+
+func isInternalPlan(plan core.Plan) bool {
+	return normalizePlanKey(plan.Key) == "internal"
 }
 
 func normalizePlanKey(value string) string {

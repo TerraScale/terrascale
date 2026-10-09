@@ -33,6 +33,8 @@ func Run(t *testing.T, newStore func(*testing.T) core.Store) {
 		{"ConcurrentAggregateUpdates", TestConcurrentAggregateUpdates},
 		{"ProviderIdentityUniqueness", TestProviderIdentityUniqueness},
 		{"PlanCatalogAndExternalReferences", TestPlanCatalogAndExternalReferences},
+		{"UpsertPlanAndUpdateOrganizationAuthorization", TestUpsertPlanAndUpdateOrganizationAuthorization},
+		{"UpsertPlanAndUpdateOrganizationRollback", TestUpsertPlanAndUpdateOrganizationRollback},
 		{"ScopeGuardAndMembershipRemoval", TestScopeGuardAndMembershipRemoval},
 		{"SubjectIdentity", TestSubjectIdentity},
 		{"SubjectLinksOnce", TestSubjectLinksOnce},

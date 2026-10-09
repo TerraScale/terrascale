@@ -46,6 +46,10 @@ func (m *fakeMeter) Usage(_ context.Context, token string, scope core.UsageScope
 		return core.Usage{}, m.scopeErr
 	}
 	database := core.Usage{DatabaseID: m.databaseID, LogicalBytes: m.logicalBytes, Documents: 2, Period: core.UsagePeriod{Reads: m.reads, Writes: m.writes}}
+	if scope.DatabaseID != "" {
+		database.Series = []core.UsagePoint{{Start: scope.From, Reads: m.reads - 1, Writes: m.writes}, {Start: scope.From.Add(time.Hour), Reads: 1}}
+		return database, nil
+	}
 	return core.Usage{
 		Period: database.Period, LogicalBytes: cmp.Or(m.projectBytes, m.logicalBytes), Items: []core.Usage{database},
 		Series: []core.UsagePoint{{Start: scope.From, Reads: m.reads - 1, Writes: m.writes}, {Start: scope.From.Add(time.Hour), Reads: 1}},
@@ -322,6 +326,65 @@ func TestUsageIncompleteOrganizationNeverReportsPartialAllowances(t *testing.T) 
 			}
 			if failure.err != core.ErrNotMetered && report.AllowanceError == "" {
 				t.Error("monthly usage failure has no allowance error")
+			}
+		})
+	}
+}
+
+// Usage requests TerraBase IDs while keeping dashboard IDs in the report.
+func TestUsageMapsProjectAndDatabaseIDs(t *testing.T) {
+	for _, projectID := range []string{"", core.NewULID()} {
+		t.Run(cmp.Or(projectID, "derived"), func(t *testing.T) {
+			meter := &fakeMeter{reads: 7, writes: 3, logicalBytes: 2048}
+			service, principal, _ := meterFixture(t, meter)
+			dashboardID := meter.databaseID
+			meter.databaseID = core.NewULID()
+			originalProjectID := principal.ProjectID
+			if err := service.deps.Store.UpdateAs(t.Context(), principal, func(a *core.Account) error {
+				org := a.Organizations[principal.OrganizationID]
+				project := org.Projects[originalProjectID]
+				if projectID != "" {
+					delete(org.Projects, project.ID)
+					project.ID = projectID
+				}
+				database := project.Databases[dashboardID]
+				database.ProjectID, database.TerraBaseID = project.ID, meter.databaseID
+				project.Databases[dashboardID] = database
+				org.Projects[project.ID] = project
+				a.Organizations[org.ID] = org
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			principal.ProjectID = cmp.Or(projectID, originalProjectID)
+			orgID, mappedProjectID := (core.Project{ID: principal.ProjectID}).TerraBaseIDs(principal.OrganizationID)
+			for _, filter := range []string{"", dashboardID} {
+				meter.scopes = nil
+				report, err := service.Usage(t.Context(), principal, "user-token", filter, "24h")
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(meter.scopes) != 2 {
+					t.Fatalf("scopes = %+v", meter.scopes)
+				}
+				for _, scope := range meter.scopes {
+					if scope.OrganizationID != orgID || scope.ProjectID != mappedProjectID {
+						t.Fatalf("scope uses dashboard project IDs: %+v", scope)
+					}
+				}
+				wantDatabaseID := ""
+				if filter != "" {
+					wantDatabaseID = meter.databaseID
+				}
+				if meter.scopes[0].DatabaseID != "" || meter.scopes[1].DatabaseID != wantDatabaseID {
+					t.Fatalf("database scopes = %+v", meter.scopes)
+				}
+				if report.ProjectID != principal.ProjectID || report.DatabaseID != filter || len(report.Databases) != 1 {
+					t.Fatalf("report lost dashboard IDs: %+v", report)
+				}
+				if row := report.Databases[0]; row.ID != dashboardID || !row.Metered || row.Reads != 7 || row.Writes != 3 || row.Documents != 2 || row.LogicalBytes != 2048 {
+					t.Fatalf("mapped database row = %+v", row)
+				}
 			}
 		})
 	}

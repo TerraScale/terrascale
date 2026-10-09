@@ -80,6 +80,9 @@ func (s Service) owner(ctx context.Context, p core.Principal) (core.Account, cor
 	if err != nil {
 		return core.Account{}, core.Organization{}, err
 	}
+	if organization.Billing.Internal {
+		return core.Account{}, core.Organization{}, fmt.Errorf("%w: internal billing is report-only", core.ErrForbidden)
+	}
 	if organization.OwnerUserID != p.UserID || organization.Archived || organization.DeletionRequested {
 		return core.Account{}, core.Organization{}, fmt.Errorf("%w: only the organization owner can change billing", core.ErrForbidden)
 	}

@@ -227,6 +227,16 @@ func (s *Store) UpsertPlanAs(ctx context.Context, p core.Principal, plan core.Pl
 	return s.writeCore(ctx, coreLoad{accounts: []string{p.AccountID}}, coreWrite{catalog: true}, func(m *memstore.Store) error { return m.UpsertPlanAs(ctx, p, plan) })
 }
 
+func (s *Store) UpsertPlanAndUpdateOrganizationAs(ctx context.Context, p core.Principal, organizationID string, plan core.Plan, mutate func(*core.Organization) error) error {
+	if organizationID == "" || mutate == nil || plan.ID == coreCatalogID || plan.Key == coreCatalogID {
+		return core.ErrInvalid
+	}
+	// Guard every organization and the catalog so singleton checks rerun after competing commits.
+	return s.writeCore(ctx, coreLoad{accounts: []string{p.AccountID}, organizations: []string{organizationID}, allOrganizations: true}, coreWrite{catalog: true}, func(m *memstore.Store) error {
+		return m.UpsertPlanAndUpdateOrganizationAs(ctx, p, organizationID, plan, mutate)
+	})
+}
+
 func (s *Store) DeletePlanAs(ctx context.Context, p core.Principal, planID string) error {
 	return s.writeCore(ctx, coreLoad{accounts: []string{p.AccountID}, allOrganizations: true}, coreWrite{catalog: true, deletePlan: planID}, func(m *memstore.Store) error { return m.DeletePlanAs(ctx, p, planID) })
 }

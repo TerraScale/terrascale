@@ -416,6 +416,10 @@ func (s Service) SavePlan(ctx context.Context, principal core.Principal, plan co
 		existing := plans[index]
 		plan.MaxDatabases, plan.MaxMembers = existing.MaxDatabases, existing.MaxMembers
 		plan.OperationsPerMonth, plan.StorageLabel = existing.OperationsPerMonth, existing.StorageLabel
+		plan.WriteCentsPerMillion, plan.StorageCentsPerGiBMonth = existing.WriteCentsPerMillion, existing.StorageCentsPerGiBMonth
+	}
+	if plan.Key == "internal" {
+		plan.Visible = false
 	}
 	for _, existing := range plans {
 		if existing.ID != plan.ID && strings.EqualFold(existing.Key, plan.Key) {
@@ -440,6 +444,9 @@ func (s Service) SetPlanVisibility(ctx context.Context, principal core.Principal
 	}
 	for _, plan := range plans {
 		if plan.ID == planID {
+			if visible && plan.Key == "internal" {
+				return core.Invalid("the reserved internal plan must stay hidden")
+			}
 			plan.Visible = visible
 			return s.store.UpsertPlanAs(ctx, principal, plan)
 		}

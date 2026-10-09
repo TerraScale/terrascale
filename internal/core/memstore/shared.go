@@ -187,6 +187,17 @@ func (s *Store) UpsertPlanAs(_ context.Context, p core.Principal, plan core.Plan
 	if err := s.requirePlatformAdminLocked(p); err != nil {
 		return err
 	}
+	if err := s.validatePlanLocked(plan); err != nil {
+		return err
+	}
+	s.plans[plan.ID] = plan
+	return nil
+}
+
+func (s *Store) validatePlanLocked(plan core.Plan) error {
+	if plan.ID == "" || plan.Key == "" || plan.PriceCents < 0 || plan.AnnualPriceCents < 0 {
+		return core.ErrInvalid
+	}
 	// Keys identify provider prices and pending checkouts. Keep each plan's key
 	// stable and avoid ambiguous ID/key lookups across the catalog.
 	for existingID, existing := range s.plans {
@@ -200,7 +211,51 @@ func (s *Store) UpsertPlanAs(_ context.Context, p core.Principal, plan core.Plan
 			return core.ErrConflict
 		}
 	}
+	return nil
+}
+
+func (s *Store) UpsertPlanAndUpdateOrganizationAs(_ context.Context, p core.Principal, organizationID string, plan core.Plan, mutate func(*core.Organization) error) error {
+	if organizationID == "" || mutate == nil {
+		return core.ErrInvalid
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	a, ok := s.accounts[p.AccountID]
+	if !ok {
+		return core.ErrNotFound
+	}
+	if err := core.AuthorizeAccount(s.viewLocked(a), p); err != nil {
+		return err
+	}
+	if err := s.requirePlatformAdminLocked(p); err != nil {
+		return err
+	}
+	if err := s.validatePlanLocked(plan); err != nil {
+		return err
+	}
+	current, ok := s.organizations[organizationID]
+	if !ok {
+		return core.ErrNotFound
+	}
+	next := core.CloneOrganization(current)
+	if err := mutate(&next); err != nil {
+		return err
+	}
+	if next.ID != current.ID {
+		return core.ErrInvalid
+	}
+	if next.Billing.Internal {
+		for id, org := range s.organizations {
+			if id != organizationID && org.Billing.Internal {
+				return core.ErrConflict
+			}
+		}
+	}
+	if !s.providerUniqueLocked(organizationID, next) {
+		return core.ErrConflict
+	}
 	s.plans[plan.ID] = plan
+	s.organizations[organizationID] = core.CloneOrganization(next)
 	return nil
 }
 

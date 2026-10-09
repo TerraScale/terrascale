@@ -78,6 +78,7 @@ type allowanceUsage struct {
 // the selected project's database usage. TerraBase meters reads, writes and
 // storage; the dashboard only reads them.
 type usageReport struct {
+	InternalBill             *internalBill    `json:"internalBill,omitempty"`
 	OrganizationID           string           `json:"organizationId"`
 	ProjectID                string           `json:"projectId"`
 	DatabaseID               string           `json:"databaseId,omitempty"`
@@ -240,6 +241,9 @@ func (s Service) report(ctx context.Context, p core.Principal, token string, org
 	}
 	report.PlanUsageNote = "Reads and writes count separately: each read is one read and each write one write. The month runs on UTC."
 	report.AllowanceError = metered.monthError
+	if org.Billing.Internal {
+		report.InternalBill = computeInternalBill(plan, report, metered.month)
+	}
 	if !metered.monthMeasured && metered.monthError == "" {
 		report.PlanUsageNote = "This month's reads and writes aren't metered here, so their utilization is unavailable."
 	}
@@ -368,7 +372,7 @@ func (s Service) meter(ctx context.Context, token string, org core.Organization,
 		result.organizationBytes = organization.LogicalBytes
 		for i, row := range report.Projects {
 			if item, ok := findUsage(organization.Items, func(u core.Usage) string { return u.ProjectID }, row.ID); ok {
-				report.Projects[i].LogicalBytes = item.LogicalBytes
+				report.Projects[i].LogicalBytes, report.Projects[i].Unavailable = item.LogicalBytes, false
 			}
 		}
 	case errors.Is(err, core.ErrNotMetered):
@@ -402,7 +406,7 @@ func (s Service) meter(ctx context.Context, token string, org core.Organization,
 	}
 	for i, row := range report.Databases {
 		if item, ok := findUsage(items, func(u core.Usage) string { return u.DatabaseID }, terraBaseID(row.ID)); ok {
-			report.Databases[i].Metered = true
+			report.Databases[i].Metered, report.Databases[i].Unavailable = true, false
 			report.Databases[i].Documents, report.Databases[i].LogicalBytes = item.Documents, item.LogicalBytes
 			report.Databases[i].Reads, report.Databases[i].Writes = item.Period.Reads, item.Period.Writes
 		}
@@ -424,6 +428,15 @@ func (s Service) organizationUsage(ctx context.Context, token string, org core.O
 		usage, err := s.deps.Usage.Usage(ctx, token, core.UsageScope{OrganizationID: orgID, ProjectID: projectID, Granularity: "day", From: from})
 		if err != nil {
 			return core.Usage{}, err
+		}
+		if org.Billing.Internal {
+			period := usage.Period
+			if !period.From.Equal(from) || !period.To.After(from) || period.To.After(from.AddDate(0, 1, 0)) {
+				return core.Usage{}, fmt.Errorf("%w: invalid internal billing period", core.ErrUnavailable)
+			}
+			if period.To.After(total.Period.To) {
+				total.Period.To = period.To
+			}
 		}
 		if usage.Period.Reads < 0 || usage.Period.Writes < 0 || usage.LogicalBytes < 0 ||
 			usage.Period.Reads > math.MaxInt64-total.Period.Reads || usage.Period.Writes > math.MaxInt64-total.Period.Writes || usage.LogicalBytes > math.MaxInt64-total.LogicalBytes {
@@ -489,7 +502,7 @@ func (s Service) SetSpendingControls(ctx context.Context, p core.Principal, cont
 		if controls.OrganizationCapCents != nil {
 			org.Billing.SpendCapCents = *controls.OrganizationCapCents
 		}
-		if controls.PaidExcess != nil {
+		if controls.PaidExcess != nil && !org.Billing.Internal {
 			org.Billing.PaidExcessEnabled = *controls.PaidExcess
 		}
 		for projectID, cap := range controls.ProjectCaps {
