@@ -29,6 +29,7 @@ public sealed class FailureTests
         var launcher = ScriptPath("bench-client");
         RequireTools("bash", "timeout");
         var directory = Directory.CreateTempSubdirectory("dotnet-killed-");
+        Process? process = null;
         try
         {
             var fakeDotnet = Path.Combine(directory.FullName, "dotnet");
@@ -41,15 +42,24 @@ public sealed class FailureTests
                 RedirectStandardError = true,
             };
             start.Environment["PATH"] = directory.FullName + Path.PathSeparator + Environment.GetEnvironmentVariable("PATH");
-            using var process = Process.Start(start)!;
+            process = Process.Start(start)!;
             var output = process.StandardOutput.ReadToEndAsync();
             var error = process.StandardError.ReadToEndAsync();
             await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
             await Assert.That(process.ExitCode).IsEqualTo(137);
-            await Assert.That(await error).IsEqualTo("PREFLIGHT_FAILED: Preflight process was killed; resource exhaustion or forced termination may have occurred.\n");
-            await Assert.That(await output).IsEqualTo("");
+            await Assert.That(await error.WaitAsync(TimeSpan.FromSeconds(2))).IsEqualTo("PREFLIGHT_FAILED: Preflight process was killed; resource exhaustion or forced termination may have occurred.\n");
+            await Assert.That(await output.WaitAsync(TimeSpan.FromSeconds(2))).IsEqualTo("");
         }
-        finally { directory.Delete(recursive: true); }
+        finally
+        {
+            if (process is not null)
+            {
+                if (!process.HasExited) process.Kill(entireProcessTree: true);
+                await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5));
+                process.Dispose();
+            }
+            directory.Delete(recursive: true);
+        }
     }
 
     [Test]
