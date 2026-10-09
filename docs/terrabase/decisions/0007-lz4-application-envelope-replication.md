@@ -123,7 +123,7 @@ become operationally relevant.
   an invalid batch.
 - Before releasing anything, the sender checks every `DurableAck`: the acknowledging peer from
   `Welcome`, the epoch, its database and origin, and a prefix between the last one and the last
-  group sent. It fails closed on a `Welcome` that selects anything but protocol 1.0, format and
+  group sent. It fails closed on a `Welcome` that selects anything but protocol 2.0, format and
   merge policy 1 and LZ4, or whose limits are not exactly the minimum of both sides.
 - One limit check (`ReplicationProtocol.CheckLimits`) runs on the sender before it writes a batch
   and on the receiver before it decodes one: gRPC message size, encoded and decoded bytes, changes

@@ -64,7 +64,7 @@ internal sealed partial class CatalogFeed(
 
         if (request.Protocol != CatalogProtocol.Version || !request.Codecs.Contains(PayloadCodec.Lz4BlockV1))
         {
-            throw new RpcException(new Status(StatusCode.InvalidArgument, "the follower needs catalog protocol 1 with the LZ4 envelope"));
+            throw new RpcException(new Status(StatusCode.InvalidArgument, "the follower needs catalog protocol 2 with the LZ4 envelope"));
         }
 
         try

@@ -402,7 +402,7 @@ internal sealed partial class ReplicationSender(
         var opening = await NextAsync(call, progress.Token).ConfigureAwait(false);
         var welcome = opening.Welcome
             ?? throw new InvalidDataException("the peer did not answer Hello with Welcome");
-        // Fail closed on anything but what Hello offered: protocol 1.0, format and merge policy 1, LZ4, this
+        // Fail closed on anything but what Hello offered: protocol 2.0, format and merge policy 1, LZ4, this
         // database in this epoch, and the minimum of both sides' limits, which both sides then enforce.
         if (!ReplicationProtocol.Accepts(welcome, database))
         {
