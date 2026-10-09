@@ -21,7 +21,9 @@ variables together. The current helper uses the retired `releases/v1/services`
 prefix; the new qualified helper must use the serving `releases/services` prefix
 before live acceptance. It reads the service release key from OCI Vault, signs a
 cell-scoped claim, and publishes to each cell's regional head bucket. The script
-polls every five seconds with a 30-minute regional deadline.
+polls every five seconds and uses the pinned helper's deadline without a timing
+override. The current sequential helper defaults to 30 minutes per region;
+TS-783 helpers use one fixed 20-minute budget across concurrent regions.
 The deployment job allows 120 minutes for two regional waits, three downloads
 of up to 15 minutes each, and 15 minutes for setup/cleanup. This budget adds no
 delay to healthy rollouts.
