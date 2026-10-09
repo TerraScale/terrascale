@@ -17,8 +17,8 @@ import (
 func TestDatabaseFilterKeepsFullSelectedName(t *testing.T) {
 	name := "production-orders-primary-north-america-very-long-name"
 	data := pageData{
-		listFilters: listFilters{DatabaseID: "db_long"},
-		Databases:   []databaseChoice{{ID: "db_long", Name: name}},
+		listFilters: listFilters{DatabaseID: "1XWADXKQ90Y51GFKA6WTWK64FT"},
+		Databases:   []databaseChoice{{ID: "1XWADXKQ90Y51GFKA6WTWK64FT", Name: name}},
 	}
 	var html strings.Builder
 	if err := apiKeysFilters(data).Render(t.Context(), &html); err != nil {
@@ -53,14 +53,14 @@ func TestRotateReturnsTheRotatedKey(t *testing.T) {
 }
 
 func TestRedirectPageError(t *testing.T) {
-	form := url.Values{"name": {"ci-deploy"}, "scopes": {"database:read"}, "databaseId": {"db_gone"}}
+	form := url.Values{"name": {"ci-deploy"}, "scopes": {"database:read"}, "databaseId": {"5M9HQK3SHZJNB4SF7HKQKKEE46"}}
 	for _, tc := range []struct {
 		name, create string
 		err          error
 		reopen       string
 		draft        url.Values
 	}{
-		{name: "invalid input reopens its dialog with the input", create: "m2m", err: core.ErrInvalid, reopen: "m2m", draft: url.Values{"draftName": {"ci-deploy"}, "draftScopes": {"database:read"}, "draftDatabaseId": {"db_gone"}}},
+		{name: "invalid input reopens its dialog with the input", create: "m2m", err: core.ErrInvalid, reopen: "m2m", draft: url.Values{"draftName": {"ci-deploy"}, "draftScopes": {"database:read"}, "draftDatabaseId": {"5M9HQK3SHZJNB4SF7HKQKKEE46"}}},
 		{name: "a missing database reopens it without the database", create: "key", err: errUnknownDatabase, reopen: "key", draft: url.Values{"draftName": {"ci-deploy"}, "draftScopes": {"database:read"}, "draftDatabaseId": nil}},
 		{name: "a project gone mid-request does not blame the database", create: "key", err: core.ErrNotFound, draft: url.Values{"draftName": nil}},
 		{name: "an unexpected failure does not reopen", create: "key", err: core.ErrConflict, draft: url.Values{"draftName": nil}},
@@ -117,8 +117,8 @@ func TestCreateDialogKeepsTheDraft(t *testing.T) {
 	data := pageData{
 		CanManage: true,
 		Create:    "key",
-		Draft:     draft{Name: "ci-deploy", Scopes: "database:admin", DatabaseID: "db_orders"},
-		Databases: []databaseChoice{{ID: "db_orders", Name: "orders"}, {ID: "db_users", Name: "users"}},
+		Draft:     draft{Name: "ci-deploy", Scopes: "database:admin", DatabaseID: "16KDJ28DR0XG7QGWEZ4VJ9Z1VX"},
+		Databases: []databaseChoice{{ID: "16KDJ28DR0XG7QGWEZ4VJ9Z1VX", Name: "orders"}, {ID: "51ZVM7GAJHERHSP6VTQCFHMDVJ", Name: "users"}},
 		Error:     "Enter a name.",
 	}
 	var body strings.Builder
@@ -126,7 +126,7 @@ func TestCreateDialogKeepsTheDraft(t *testing.T) {
 		t.Fatal(err)
 	}
 	html := body.String()
-	for _, want := range []string{`id="key-name" name="name" value="ci-deploy"`, `id="key-scopes" name="scopes" value="database:admin"`, `<option value="db_orders" selected>`} {
+	for _, want := range []string{`id="key-name" name="name" value="ci-deploy"`, `id="key-scopes" name="scopes" value="database:admin"`, `<option value="16KDJ28DR0XG7QGWEZ4VJ9Z1VX" selected>`} {
 		if !strings.Contains(html, want) {
 			t.Errorf("the reopened dialog is missing %s", want)
 		}
@@ -137,8 +137,8 @@ func TestCreateDialogKeepsTheDraft(t *testing.T) {
 }
 
 func TestListFiltersWith(t *testing.T) {
-	filters := readFilters(url.Values{"kind": {"m2m"}, "status": {"bogus"}, "databaseId": {"db_orders"}, "q": {" deploy "}})
-	if got, want := filters.with("/api-keys"), "/api-keys?databaseId=db_orders&kind=m2m&q=deploy"; got != want {
+	filters := readFilters(url.Values{"kind": {"m2m"}, "status": {"bogus"}, "databaseId": {"16KDJ28DR0XG7QGWEZ4VJ9Z1VX"}, "q": {" deploy "}})
+	if got, want := filters.with("/api-keys"), "/api-keys?databaseId=16KDJ28DR0XG7QGWEZ4VJ9Z1VX&kind=m2m&q=deploy"; got != want {
 		t.Errorf("with = %q, want %q", got, want)
 	}
 	if got := (listFilters{}).with("/api-keys"); got != "/api-keys" {

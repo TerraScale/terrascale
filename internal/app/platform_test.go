@@ -116,7 +116,7 @@ func (tenant *tsAuthTenant) token(t *testing.T, subject, organization string, ch
 func TestPlatformHosts(t *testing.T) {
 	t.Run("memory", func(t *testing.T) {
 		// The demo owner, whose ts-auth user the first token links by email.
-		testPlatformHosts(t, config.Config{Demo: true}, "mario", demoAccountEmail, demoLabsOrganizationID, "prj_01JC9Q6W3M5N7P9R2T4V6X8ZA")
+		testPlatformHosts(t, config.Config{Demo: true}, "mario", demoAccountEmail, demoLabsOrganizationID, "1X1TETYPPH2APBVN5WGY9D3S3G")
 	})
 	t.Run("terrabase", func(t *testing.T) {
 		if testing.Short() {
@@ -237,7 +237,7 @@ func testPlatformHosts(t *testing.T, cfg config.Config, subject, address, organi
 		PlanKey        string `json:"planKey"`
 		CanManage      bool   `json:"canManage"`
 	}
-	decode(call(http.MethodGet, organizationURL+"/billing?projectId=prj_elsewhere", organizationToken, ""), http.StatusOK, &summary)
+	decode(call(http.MethodGet, organizationURL+"/billing?projectId=5299JP06PA9EX1JHSVH324RE4N", organizationToken, ""), http.StatusOK, &summary)
 	if summary.OrganizationID != organization || summary.PlanKey == "" || !summary.CanManage {
 		t.Fatalf("billing = %+v", summary)
 	}
@@ -280,9 +280,9 @@ func testPlatformHosts(t *testing.T, cfg config.Config, subject, address, organi
 		status                            int
 		code                              string
 	}{
-		{"another organization", http.MethodGet, base + "/v1/organizations/org_someone_else/billing", organizationToken, "", http.StatusNotFound, "not_found"},
-		{"an organization the user is not in", http.MethodGet, base + "/v1/organizations/org_someone_else/billing",
-			tenant.token(t, subject, "org_someone_else", email), "", http.StatusNotFound, "not_found"},
+		{"another organization", http.MethodGet, base + "/v1/organizations/4WJ8BVG2S39MAC13PJH64WTWSE_else/billing", organizationToken, "", http.StatusNotFound, "not_found"},
+		{"an organization the user is not in", http.MethodGet, base + "/v1/organizations/4WJ8BVG2S39MAC13PJH64WTWSE_else/billing",
+			tenant.token(t, subject, "4WJ8BVG2S39MAC13PJH64WTWSE_else", email), "", http.StatusNotFound, "not_found"},
 		{"an organization route with a project token", http.MethodPut, organizationURL + "/spending-controls", projectToken, `{"organizationCapCents":1}`, http.StatusNotFound, "not_found"},
 		{"organization usage with a project token", http.MethodGet, organizationURL + "/usage", projectToken, "", http.StatusNotFound, "not_found"},
 		{"a missing scope", http.MethodPut, organizationURL + "/spending-controls",

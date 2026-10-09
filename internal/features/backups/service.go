@@ -173,7 +173,7 @@ func (s Service) Create(ctx context.Context, p core.Principal, databaseID string
 			return core.ErrNotFound
 		}
 		created = core.Backup{
-			ID: core.NewID("bkp"), DatabaseID: db.ID, Status: "ready", CreatedAt: time.Now().UTC(),
+			ID: core.NewID(), DatabaseID: db.ID, Status: "ready", CreatedAt: time.Now().UTC(),
 			Documents: core.CloneDocuments(current.Documents), Schemas: core.CloneSchemas(current.Schemas), Indexes: core.CloneIndexes(current.Indexes),
 		}
 		for _, docs := range current.Documents {
@@ -238,7 +238,7 @@ func (s Service) Restore(ctx context.Context, p core.Principal, databaseID strin
 	if name != "" && !core.ValidDatabaseName(name) {
 		return restoreResult{}, errRestoreName
 	}
-	target := core.Database{ID: core.NewID("db"), ProjectID: p.ProjectID, Region: db.Region, Regions: slices.Clone(db.Regions), Status: "ready", CreatedAt: time.Now().UTC()}
+	target := core.Database{ID: core.NewID(), ProjectID: p.ProjectID, Region: db.Region, Regions: slices.Clone(db.Regions), Status: "ready", CreatedAt: time.Now().UTC()}
 	err = s.update(ctx, p, core.Organization.CanProvisionResources, func(a *core.Account, project *core.Project) error {
 		current, ok := project.Databases[db.ID]
 		if !ok {

@@ -5,22 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"regexp"
 	"strings"
 
 	"terrascale.tech/sdk/v1"
 )
 
-// terraBaseID matches the lowercase UUIDs TerraBase gives its resources.
-// Dashboard records use prefixed IDs (db_…) instead.
-var terraBaseID = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
-
-// SystemDatabase reports whether a database record mirrors a TerraBase
-// database by its TerraBase ID: a database of a TerraScale service, which a
-// platform admin's sign-in mirrored. Its contents live in
-// TerraBase, never in the record. A database a user created keeps its
-// dashboard ID and records TerraBase's in TerraBaseID.
-func SystemDatabase(db Database) bool { return terraBaseID.MatchString(db.ID) }
+// SystemDatabase identifies service-owned databases mirrored for admin inspection.
+func SystemDatabase(db Database) bool { return db.System }
 
 // ErrSystemReadOnly refuses changes to a system database: TerraBase lets the
 // dashboard read them with a ts-auth token, and their services own them.

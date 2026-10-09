@@ -36,7 +36,7 @@ func TestInternalBillingPages(t *testing.T) {
 			if state == "commercial" {
 				if err := deps.Store.UpdateAs(t.Context(), principal, func(account *core.Account) error {
 					org := account.Organizations[principal.OrganizationID]
-					org.PlanID = "plan_business"
+					org.PlanID = "09XCWRH05BWWBADSBPTPDMFA7D"
 					org.Billing = core.Billing{PlanKey: "business", Interval: "monthly", Status: "active", CustomerID: "cus_ui", SubscriptionID: "sub_ui"}
 					account.Organizations[org.ID] = org
 					return nil

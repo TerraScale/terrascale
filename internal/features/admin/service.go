@@ -407,7 +407,7 @@ func (s Service) SavePlan(ctx context.Context, principal core.Principal, plan co
 		return core.Plan{}, err
 	}
 	if plan.ID == "" {
-		plan.ID = core.NewID("plan")
+		plan.ID = core.NewID()
 	} else {
 		index := slices.IndexFunc(plans, func(existing core.Plan) bool { return existing.ID == plan.ID })
 		if index < 0 {

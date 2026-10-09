@@ -17,7 +17,7 @@ func TestDocumentsLiveInTerraBase(t *testing.T) {
 	d := dashboardtest.Start(t)
 	ctx := d.WithToken(t.Context())
 	// A phase-1 record (TS-472): in the dashboard, never used in TerraBase.
-	db := core.Database{ID: core.NewID("db"), ProjectID: d.Principal.ProjectID, Name: "shop", Region: "GRU", Status: "ready"}
+	db := core.Database{ID: core.NewID(), ProjectID: d.Principal.ProjectID, Name: "shop", Region: "GRU", Status: "ready"}
 	err := d.Deps.Store.UpdateAs(ctx, d.Principal, func(a *core.Account) error {
 		a.Organizations[d.Principal.OrganizationID].Projects[d.Principal.ProjectID].Databases[db.ID] = db
 		return nil
@@ -34,6 +34,9 @@ func TestDocumentsLiveInTerraBase(t *testing.T) {
 	created, err := service.WriteDocument(ctx, d.Principal, db.ID, "items", "create", "", []byte(`{"name":"lamp","price":30}`))
 	if err != nil {
 		t.Fatal(err)
+	}
+	if !core.ValidID(created.ID) {
+		t.Fatalf("dashboard create returned a non-ULID key %q", created.ID)
 	}
 	org, proj, _ := d.TerraBase(t)
 	key, err := d.Management().CreateProjectAPIKey(ctx, org, proj, v1.ProjectAPIKeyRequest{Name: "app", Scopes: []string{"documents:read", "documents:write"}})
@@ -57,8 +60,15 @@ func TestDocumentsLiveInTerraBase(t *testing.T) {
 	if doc, err := api.Get(ctx, fromAPI.ID); err != nil || !strings.Contains(string(doc.Document), `"price":180`) {
 		t.Fatalf("API read after the dashboard's patch = %+v, %v", doc, err)
 	}
-	if _, err := service.WriteDocument(ctx, d.Principal, db.ID, "items", "create", "not-a-uuid", []byte(`{}`)); !errors.Is(err, core.ErrInvalid) {
-		t.Fatalf("an ID TerraBase refuses = %v, want invalid input", err)
+	raw, err := service.WriteDocument(ctx, d.Principal, db.ID, "items", "create", "natural-document-key", []byte(`{"name":"raw"}`))
+	if err != nil || raw.ID != "natural-document-key" {
+		t.Fatalf("caller-supplied document key = %+v, %v", raw, err)
+	}
+	if _, err := service.WriteDocument(ctx, d.Principal, db.ID, "items", "delete", raw.ID, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.WriteDocument(ctx, d.Principal, db.ID, "items", "create", "bad\x00key", []byte(`{}`)); err == nil {
+		t.Fatal("accepted a document key containing a control character")
 	}
 
 	if names, err := service.Collections(ctx, d.Principal, db.ID); err != nil || strings.Join(names, ",") != "items" {
@@ -84,7 +94,7 @@ func TestDocumentsLiveInTerraBase(t *testing.T) {
 	if err := service.SetSchema(ctx, d.Principal, db.ID, "items", []byte(`{"name":"items"}`)); !errors.Is(err, errNoSchemas) {
 		t.Fatalf("schema = %v, want refused outside the demo", err)
 	}
-	if stored := d.Project(t).Databases[db.ID]; stored.TerraBaseID == "" || len(stored.Documents)+len(stored.Indexes)+len(stored.Schemas) != 0 {
+	if stored := d.Project(t).Databases[db.ID]; stored.ID == "" || len(stored.Documents)+len(stored.Indexes)+len(stored.Schemas) != 0 {
 		t.Fatalf("record = %+v; want TerraBase's ID and no local contents", stored)
 	}
 }

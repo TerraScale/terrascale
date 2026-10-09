@@ -29,7 +29,7 @@ func Database(t testing.TB, s *Server, name string) (db *v1.Database, key string
 	if err != nil {
 		t.Fatal(err)
 	}
-	u := m.WithToken(s.Token(t, "test-"+rand.Text(), ""))
+	u := m.WithToken(s.Token(t, core.NewID(), ""))
 	org, err := u.CreateOrganization(t.Context(), "Fixture "+rand.Text())
 	if err != nil {
 		t.Fatal(err)
@@ -71,7 +71,8 @@ func SystemDatabase(t testing.TB, s *Server, store core.Store) System {
 		t.Fatal(err)
 	}
 	email := "admin-" + strings.ToLower(rand.Text()) + "@example.test"
-	token := s.Token(t, "user-"+rand.Text(), email)
+	userID := core.NewID()
+	token := s.Token(t, userID, email)
 	u := m.WithToken(token)
 	org, err := u.CreateOrganization(ctx, "terrascale "+rand.Text())
 	if err != nil {
@@ -89,17 +90,17 @@ func SystemDatabase(t testing.TB, s *Server, store core.Store) System {
 	if err != nil {
 		t.Fatal(err)
 	}
-	account, err := store.CreateAccount(ctx, core.User{Name: "Admin", Email: email, PasswordHash: "unused", PlatformAdmin: true})
+	account, err := store.CreateAccount(ctx, core.User{ID: userID, Name: "Admin", Email: email, PasswordHash: "unused", PlatformAdmin: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	db := core.Database{ID: managed.ID, ProjectID: project.ID, Name: managed.Name, Status: "ready", CreatedAt: managed.CreatedAt}
+	db := core.Database{System: true, ID: managed.ID, ProjectID: project.ID, Name: managed.Name, Status: "ready", CreatedAt: managed.CreatedAt}
 	err = store.Update(ctx, account.ID, func(a *core.Account) error {
 		a.Organizations[org.ID] = core.Organization{
 			ID: org.ID, Name: org.Name, Kind: "business", Status: "active", OwnerUserID: a.User.ID, CreatedAt: org.CreatedAt,
 			Members: map[string]core.Member{a.User.ID: {UserID: a.User.ID, Email: a.User.Email, Name: a.User.Name, Role: "owner", Status: "active", CreatedAt: org.CreatedAt}},
 			Projects: map[string]core.Project{project.ID: {
-				ID: project.ID, OrganizationID: org.ID, Name: project.Name, Status: "active", CreatedAt: project.CreatedAt,
+				ID: project.ID, System: true, OrganizationID: org.ID, Name: project.Name, Status: "active", CreatedAt: project.CreatedAt,
 				Databases: map[string]core.Database{db.ID: db}, APIKeys: map[string]core.APIKey{}, SavedQueries: map[string]core.SavedQuery{},
 				SharedResultConfigs: map[string]core.SharedResultConfig{}, BackupPolicies: map[string]core.BackupPolicy{},
 			}},

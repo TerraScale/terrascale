@@ -10,6 +10,7 @@ require (
 	github.com/google/jsonschema-go v0.4.3
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/mxschmitt/playwright-go v0.6201.1
+	github.com/oklog/ulid/v2 v2.1.2
 	github.com/starfederation/datastar-go v1.2.2
 	github.com/stripe/stripe-go/v86 v86.4.2
 	golang.org/x/net v0.57.0
@@ -50,4 +51,4 @@ tool github.com/a-h/templ/cmd/templ
 
 // The SDK declares this vanity module path, which does not yet serve go-import
 // metadata. Resolve the pinned source through its public Forgejo repository.
-replace terrascale.tech/sdk => git.terrascale.tech/TerraScale/ts-go v0.0.0-20261007203632-9135698aeaf6
+replace terrascale.tech/sdk => git.terrascale.tech/TerraScale/ts-go v0.0.0-20261009024544-81eb9eeec5bd

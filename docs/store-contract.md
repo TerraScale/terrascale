@@ -16,7 +16,7 @@ The CSRF key is configuration, not state: `TS_DASHBOARD_CSRF_SECRET` (at least
 
 This document describes the TerraBase adapter
 (`internal/adapters/terrabase`). Persistence uses Documents v1, including the
-current compatibility records for organizations, memberships, projects and
+current domain records for organizations, memberships, projects and
 databases. ts-auth owns identity; retiring these dashboard records remains
 part of [the TS-599 platform cutover](platform-cutover.md). This document lists
 what each interface promises, which invariants `memstore` enforces today with
@@ -97,12 +97,27 @@ organization serialize exactly as they do under the memstore lock.
   limits: `MaxDatabases` is at most 100 and `MaxMembers` at most 100. A larger
   cascade needs a tombstone on the root and a background reaper.
 
-**Document IDs.** TerraBase document IDs must be lowercase UUIDs. Dashboard
-IDs (`usr_…`, `acct_…`, `org_…`, `prj_…`, `db_…`, `pat_…`, `inv_…`, `key_…`)
-are not, so each document's ID is the SDK's
-`uuidv5(uuidv5(NAMESPACE_URL, "terrabase:collection:" + name), dashboardID)`,
-and the dashboard ID is kept in the body (`/id`). Natural-key IDs below use the
-same helper with the named key.
+**Document IDs (TS-754).** Dashboard-generated entity IDs are canonical uppercase,
+unprefixed 26-character ULIDs. The document key is the persisted entity ID;
+record payloads omit their own root ID and hydrate it from the key on load.
+`DocumentIDFor(collection, key)` preserves canonical entity IDs and derives
+collection-scoped deterministic ULID addresses for natural/composite keys.
+Reference fields retain the referenced entity IDs. Caller-defined user document
+keys follow the producer's bounds-only contract and use `/documents/by-key?id=`;
+matching root payload `id` is omitted, while unrelated application fields remain.
+
+**Greenfield activation.** The backend owner must reset the affected TerraBase
+state before deploying this shape: dashboard aggregates and references, plans,
+token/uniqueness claims, sessions, device grants, throttle records, backup headers
+and contents, tenant data and the corresponding management bindings and active
+backups. Old records are deleted together, never migrated, backfilled or read
+through a compatibility path. This PR performs no production deletion; exact
+fleet targets and binding recreation belong to the coordinated backend rollout.
+`TS_DASHBOARD_DEPLOY_PAUSED=1` keeps activation separate from source merge.
+Startup creates the fresh selected database and collections, then atomically
+seeds the plan catalog. Later startups preserve that new catalog intentionally.
+Reset/restart also requires qualified consumers and approved, implemented and
+qualified exclusive admission for security-sensitive claims.
 
 **Encoding.**
 - Times are RFC 3339 strings.
@@ -116,9 +131,8 @@ same helper with the named key.
 history, schema, indexes, recommendations, builds, backups and API keys in its
 records. Outside it, every database lives in TerraBase (TS-671, see
 [User databases](#user-databases-ts-671)); its record keeps only the name,
-placement, status and `TerraBaseID`. Records written by phase 1 (TS-472) may
-still carry embedded payloads; nothing reads them, and the TS-602 wipe removes
-them.
+placement and status under the producer-assigned database ID. Retired records
+with embedded simulated payloads are deleted by the coordinated reset.
 
 **Current v1 capabilities.** There is no native unique-constraint, case-folding,
 index or TTL configuration endpoint. The following table states the logical
@@ -147,23 +161,23 @@ are in bold.
 
 | Collection | ID | Logical uniqueness / query / expiry fields |
 |---|---|---|
-| `users` | uuidv5(account ID) | unique `lower(/email)`; **index `/created_at` (admin list)**; **prefix search on `lower(/email)`, `lower(/name)`** |
-| `access_tokens` | uuidv5(`/token_hash`) | unique `/token_hash`; index `/user_id`; TTL `/expires_at`; cap of 25 per user, see invariant 4 |
-| `sessions` | uuidv5(token digest) | unique hash (the ID); TTL `/expires_at`; **index (`/account_id`, `/user_id`)** |
-| `device_grants` | uuidv5(device code digest) | **unique `/user_code_hash`**; **index `/client_key`**; TTL `/expires_at` (10m) |
-| `login_throttle` | uuidv5(bucket key) | TTL `/due` |
-| `organizations` | uuidv5(org ID) | unique (`/owner_user_id`, `/slug`); **index `/plan_id`**; root of the org aggregate (`/rev`, **`/db_count`**, **`/active_members`**) |
-| `memberships` | uuidv5(org ID + ":" + user ID) | **index (`/user_id`, `/status`)**; **index (`/org_id`, `/status`)** |
-| `invitations` | uuidv5(invitation ID) | unique `/token_hash`; pending unique through a deterministic ID; **index `/org_id`**; TTL **`/purge_at`** |
-| `projects` | uuidv5(project ID) | unique (`/org_id`, `/name`); `/db_count`; **index `/org_id`** |
-| `databases` | uuidv5(database ID) | unique (`/project_id`, `/name`); **index `/org_id`** |
-| `api_keys` | uuidv5(key ID) | **index `/project_id`** |
-| `billing` | uuidv5(org ID) | unique `/customer_id`, unique `/subscription_id` |
-| `checkout_sessions` | uuidv5(session ID) | TTL **`/purge_at`**; **index (`/plan_id`, `/status`)**; **index `/org_id`** |
-| `plans` | uuidv5(plan ID) | unique `/key`; **catalog lock document, see invariant 9** |
-| `notifications` | uuidv5(notification ID) | index (`/user_id`, `/read`, `/created_at` desc) |
-| `audit_events` | uuidv5(event ID) | index (`/org_id`, `/created_at` desc); TTL `/purge_at` (retention) |
-| `admin_actions` | UUIDv7 | **index `/recorded_at`** |
+| `users` | account ULID | unique `lower(/email)`; **index `/created_at` (admin list)**; **prefix search on `lower(/email)`, `lower(/name)`** |
+| `access_tokens` | token ULID | unique `/token_hash`; index `/user_id`; TTL `/expires_at`; cap of 25 per user, see invariant 4 |
+| `sessions` | derived token-digest ULID | unique hash (the ID); TTL `/expires_at`; **index (`/account_id`, `/user_id`)** |
+| `device_grants` | derived device-code ULID | **unique `/user_code_hash`**; **index `/client_key`**; TTL `/expires_at` (10m) |
+| `login_throttle` | derived bucket ULID | TTL `/due` |
+| `organizations` | organization ULID | unique (`/owner_user_id`, `/slug`); **index `/plan_id`**; root of the org aggregate (`/rev`, **`/db_count`**, **`/active_members`**) |
+| `memberships` | derived membership ULID | **index (`/user_id`, `/status`)**; **index (`/org_id`, `/status`)** |
+| `invitations` | invitation ULID | unique `/token_hash`; pending unique through a deterministic ID; **index `/org_id`**; TTL **`/purge_at`** |
+| `projects` | project ULID | unique (`/org_id`, `/name`); `/db_count`; **index `/org_id`** |
+| `databases` | database ULID | unique (`/project_id`, `/name`); **index `/org_id`** |
+| `api_keys` | API-key ULID | **index `/project_id`** |
+| `billing` | organization ULID | unique `/customer_id`, unique `/subscription_id` |
+| `checkout_sessions` | derived checkout-session ULID | TTL **`/purge_at`**; **index (`/plan_id`, `/status`)**; **index `/org_id`** |
+| `plans` | plan ULID | unique `/key`; **catalog lock document, see invariant 9** |
+| `notifications` | notification ULID | index (`/user_id`, `/read`, `/created_at` desc) |
+| `audit_events` | event ULID | index (`/org_id`, `/created_at` desc); TTL `/purge_at` (retention) |
+| `admin_actions` | a generated ULID | **index `/recorded_at`** |
 
 Project sub-records have no collection in the plan. They are saved queries,
 shared result configurations, backup policies and the ts-auth instance
@@ -200,7 +214,7 @@ does it on TerraBase v1.
 4. **Access tokens** (`byAccessToken` index; at most `MaxAccessTokens` (25) live
    tokens; a credential change ends every token).
    - *Resolve:* `AccessTokenPrincipal` is a point `GET` of
-     `uuidv5(token_hash)`, then the user document.
+     the token-hash claim, then the token ULID and user document.
    - *Expiry:* expired tokens are rejected on resolve and pruned on the next issue,
      matching `memstore`. Physical deletion is separate maintenance.
    - *Cap:* the plan says "counter plus `assert`". That does not work with
@@ -283,13 +297,13 @@ does it on TerraBase v1.
 12. **Invitations by token** (`FindInvitation`, `AcceptInvitation` and
     `DeclineInvitation` scan every invitation of every organization).
     - *v1:* the unique `/token_hash`, so each call is one point lookup
-      (`query eq /token_hash`, or ID = uuidv5(token hash)).
+      through the token-hash claim followed by the invitation ULID.
     - *Accept* is one transaction: patch the invitation (`if_match`), create
       the membership (`if_none_match:"*"`), patch the org root (`if_match`,
       `active_members`), patch the user's selection (`if_match`) and `assert`
       the plan.
     - *Pending uniqueness* per (organization, email) uses the plan's
-      deterministic ID: a pending-slot document `uuidv5(org ID + ":" + email)`
+      deterministic ID: a pending-slot document with a collection-scoped derived ULID
       created with `if_none_match:"*"` and deleted when the invitation leaves
       `pending`.
     - *TTL:* `memstore` never deletes invitations. Expiry is a time check, and
@@ -343,7 +357,7 @@ does it on TerraBase v1.
       background job must rewrite them if that is required.
 
 20. **Admin action log** (`RecordPlatformAdminAction` appends).
-    - *v1:* `create` with UUIDv7. Read with sort `/recorded_at`.
+    - *v1:* `create` with a generated ULID. Read with sort `/recorded_at`.
 
 21. **Unique ts-auth subject** (`bySubject` index; `FindBySubject`).
     `User.AuthSubject` is unique when non-empty. It is set once, from empty to
@@ -408,7 +422,7 @@ does it on TerraBase v1.
     adapter may drop it in favor of the per-client cap and TTL.
 
 - **`throttle.Store`** (`Reserve`, `Refund`, `Reset`):
-  - Each GCRA bucket is a document `uuidv5(bucket key)` with TTL `/due`.
+  - Each GCRA bucket is a document `derived bucket ULID` with TTL `/due`.
   - `Reserve` reads both buckets (client and account) and commits one
     transaction with `if_match` (or `if_none_match:"*"`) on each, retrying on
     412.
@@ -444,11 +458,9 @@ TerraBase, placed in the regions the user chose (TS-669), reached through
 ts-go only (`internal/core/dataplane.go`).
 
 - **IDs.** A dashboard project's TerraBase organization and project IDs are
-  name-based UUIDs derived from the dashboard's IDs
-  (`Project.TerraBaseIDs`), so every region and every retry agrees on them
-  and nothing records them. A project mirrored from TerraBase (TS-611) keeps
-  its own. A database keeps its dashboard ID and records TerraBase's in
-  `Database.TerraBaseID`.
+  the same canonical ULIDs (`Project.TerraBaseIDs`), so regions and retries
+  share the same identity. A mirrored project keeps the producer's ULID.
+  `Database.ID` is the producer-created database ULID; there is no second ID.
 - **Regions.** Each region's TerraBase comes from ts-atlas discovery
   (`Region.API`). Before a region holds a database or a key of the project,
   the dashboard registers the organization and project there as the signed-in
@@ -458,9 +470,8 @@ ts-go only (`internal/core/dataplane.go`).
   regions, branch and delete go through the home region's Management API with
   the user's ts-auth access token. The plan limit, the name and the role are
   checked before TerraBase is asked; a database a refused commit left behind
-  is found again by name. A record without `TerraBaseID` (phase 1, TS-472) is
-  created in TerraBase, in its recorded regions, on first use
-  (`Deps.Ensure`).
+  is found again by name. Retired database records are deleted before activation; there is no lazy
+  conversion or simulated-data fallback.
 - **Contents.** Collections, documents and queries go through the Documents
   API of the database's home region with the project's data key there
   (`Project.DataKeys`, one per region, issued on first use and hidden from
@@ -497,11 +508,13 @@ way. The dashboard keeps no list of them:
   dashboard account; a missing email returns `core.ErrNotFound` and never
   creates an identity. A new service's database appears at the admin's next
   sign-in. A failed mirror is logged and never blocks the sign-in; nothing is
-  ever removed. This compatibility inventory remains until the full TS-599
-  cutover, along with the local platform admin grant until ts-auth serves
+  ever removed. The inventory reflects current management records, with ownership
+  tracked explicitly. The local platform admin grant remains until ts-auth serves
   `platform_admin`.
-- A database record with a TerraBase UUID ID is a **system database**
-  (`core.SystemDatabase`); dashboard records use prefixed IDs (`db_…`).
+- Service ownership is explicit (`Project.System`, `Database.System`), never
+  inferred from ID syntax. Newly imported service projects are system-owned;
+  their databases inherit the flag. Repeated mirroring preserves existing
+  classification so dashboard-owned data remains writable and unmasked.
 - Its contents are never the record's: the Databases page, the database
   overview, the Documents sub-navigation, the grid, list and editor, the SQL
   console and the Usage page read TerraBase Management through ts-go

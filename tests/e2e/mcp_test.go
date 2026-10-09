@@ -82,7 +82,7 @@ func TestMCPDatabaseLifecycleThroughAccessToken(t *testing.T) {
 	if message := callToolError(t, session, "create_database", map[string]any{"name": "Not Valid"}); !strings.Contains(message, "lowercase") {
 		t.Errorf("invalid create_database error = %q, want the naming rule", message)
 	}
-	if message := callToolError(t, session, "list_databases", map[string]any{"organizationId": "org_missing"}); !strings.Contains(message, "not found") {
+	if message := callToolError(t, session, "list_databases", map[string]any{"organizationId": "0KPGXVWJAA7H40TP8ZG9A31DZS"}); !strings.Contains(message, "not found") {
 		t.Errorf("foreign organization scope error = %q, want not found", message)
 	}
 	if message := callToolError(t, session, "delete_database", map[string]any{"databaseId": created.ID, "confirmName": "wrong"}); !strings.Contains(message, "confirm") {

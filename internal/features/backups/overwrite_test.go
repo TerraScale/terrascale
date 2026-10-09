@@ -20,8 +20,8 @@ func TestOverwriteRestoresTheBackupAfterTheNameIsConfirmed(t *testing.T) {
 		if err := store.UpdateAs(t.Context(), p, func(a *core.Account) error {
 			org := a.Organizations[p.OrganizationID]
 			project := org.Projects[p.ProjectID]
-			db := project.Databases["db_orders"]
-			db.ID, db.ProjectID, db.Name, db.Status = "db_orders", project.ID, "orders", "ready"
+			db := project.Databases["16KDJ28DR0XG7QGWEZ4VJ9Z1VX"]
+			db.ID, db.ProjectID, db.Name, db.Status = "16KDJ28DR0XG7QGWEZ4VJ9Z1VX", project.ID, "orders", "ready"
 			db.Documents = map[string]map[string][]byte{"orders": {"o1": []byte(body)}}
 			project.Databases[db.ID] = db
 			org.Projects[project.ID] = project
@@ -37,27 +37,27 @@ func TestOverwriteRestoresTheBackupAfterTheNameIsConfirmed(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		return string(snapshot.Organizations[p.OrganizationID].Projects[p.ProjectID].Databases["db_orders"].Documents["orders"]["o1"])
+		return string(snapshot.Organizations[p.OrganizationID].Projects[p.ProjectID].Databases["16KDJ28DR0XG7QGWEZ4VJ9Z1VX"].Documents["orders"]["o1"])
 	}
 
 	service := NewService(core.Deps{Store: store, Demo: true})
 	setDocument(`{"total":1}`)
-	backup, err := service.Create(t.Context(), p, "db_orders")
+	backup, err := service.Create(t.Context(), p, "16KDJ28DR0XG7QGWEZ4VJ9Z1VX")
 	if err != nil {
 		t.Fatal(err)
 	}
 	setDocument(`{"total":2}`)
 
-	if _, err := service.Overwrite(t.Context(), p, "db_orders", backup.ID, "order"); !errors.Is(err, errConfirmName) {
+	if _, err := service.Overwrite(t.Context(), p, "16KDJ28DR0XG7QGWEZ4VJ9Z1VX", backup.ID, "order"); !errors.Is(err, errConfirmName) {
 		t.Fatalf("overwrite with the wrong name = %v, want errConfirmName", err)
 	}
 	if got := document(); got != `{"total":2}` {
 		t.Fatalf("after a refused overwrite the document is %s, want it unchanged", got)
 	}
-	if _, err := service.Overwrite(t.Context(), p, "db_orders", "bkp_missing", "orders"); !errors.Is(err, errBackupMissing) {
+	if _, err := service.Overwrite(t.Context(), p, "16KDJ28DR0XG7QGWEZ4VJ9Z1VX", "0CKNEYH9FDDFD7NWQ6NQRGQA91", "orders"); !errors.Is(err, errBackupMissing) {
 		t.Fatalf("overwrite from a missing backup = %v, want errBackupMissing", err)
 	}
-	if _, err := service.Overwrite(t.Context(), p, "db_orders", backup.ID, "orders"); err != nil {
+	if _, err := service.Overwrite(t.Context(), p, "16KDJ28DR0XG7QGWEZ4VJ9Z1VX", backup.ID, "orders"); err != nil {
 		t.Fatal(err)
 	}
 	if got := document(); got != `{"total":1}` {

@@ -31,8 +31,8 @@ func TestStripeProviderCreateCustomerRetries(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			request := CustomerRequest{
 				Email:          "retry@example.test",
-				OrganizationID: core.NewULID(),
-				IdempotencyKey: core.NewULID(),
+				OrganizationID: core.NewID(),
+				IdempotencyKey: core.NewID(),
 			}
 			const customerID = "cus_retry_test"
 			var calls atomic.Int64

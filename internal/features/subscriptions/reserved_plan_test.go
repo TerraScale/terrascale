@@ -13,7 +13,7 @@ import (
 
 func TestCustomerCannotSelectReservedInternalPlan(t *testing.T) {
 	for _, tc := range []struct{ name, id, key string }{
-		{"reserved key", core.NewULID(), "internal"},
+		{"reserved key", core.NewID(), "internal"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			store := memstore.New()
@@ -97,7 +97,7 @@ func TestCustomerCannotCompleteReservedInternalPlanCheckout(t *testing.T) {
 	}
 	principal := customer.Principal()
 	session := core.CheckoutSession{
-		ID: core.NewULID(), OrganizationID: principal.OrganizationID, OwnerUserID: principal.UserID, PlanID: plan.ID,
+		ID: core.NewID(), OrganizationID: principal.OrganizationID, OwnerUserID: principal.UserID, PlanID: plan.ID,
 		Interval: intervalMonthly, ReturnPath: "/billing", Status: checkoutOpen, Demo: true, ExpiresAt: time.Now().Add(time.Hour),
 	}
 	if err := store.UpdateAs(t.Context(), principal, func(account *core.Account) error {

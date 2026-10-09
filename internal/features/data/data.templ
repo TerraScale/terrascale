@@ -259,9 +259,9 @@ templ documentGrid(page core.Page, d pageData) {
 					@sortHeading(d, "", "id", false)
 					for _, column := range d.Grid.Columns {
 						if !sortable(column) {
-							<th scope="col" class={ templ.KV("ts-num", column.Numeric) }>{ column.Name }</th>
+							<th scope="col" class={ templ.KV("ts-num", column.Numeric) }>{ column.Label() }</th>
 						} else {
-							@sortHeading(d, column.Name, column.Name, column.Numeric)
+							@sortHeading(d, column.Name, column.Label(), column.Numeric)
 						}
 					}
 					<th class="ts-table-actions"><span class="ts-sr-only">Actions</span></th>
@@ -631,7 +631,7 @@ templ sqlResultView(r sqlResult) {
 							<tr>
 								<th scope="col">id</th>
 								for _, column := range r.Columns {
-									<th scope="col" class={ templ.KV("ts-num", column.Numeric) }>{ column.Name }</th>
+									<th scope="col" class={ templ.KV("ts-num", column.Numeric) }>{ column.Label() }</th>
 								}
 							</tr>
 						</thead>

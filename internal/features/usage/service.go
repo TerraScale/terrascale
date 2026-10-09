@@ -1,7 +1,6 @@
 package usage
 
 import (
-	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -361,7 +360,7 @@ func (s Service) meter(ctx context.Context, token string, org core.Organization,
 	}
 	orgID, projectID := project.TerraBaseIDs(org.ID)
 	terraBaseID := func(databaseID string) string {
-		return cmp.Or(project.Databases[databaseID].TerraBaseID, databaseID)
+		return project.Databases[databaseID].ID
 	}
 	now := time.Now().UTC()
 	monthStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)

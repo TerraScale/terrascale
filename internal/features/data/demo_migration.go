@@ -13,17 +13,17 @@ type demoIndexMigration struct {
 }
 
 func marioIndexMigration(account core.Account, principal core.Principal, database core.Database, collection string) *demoIndexMigration {
-	if principal.UserID != "usr_01JC9Q7T4N8Y2M3P5R7V9X1ZAB" ||
+	if principal.UserID != "7CVZQJY80VY06TJG7VP8TQ44DM" ||
 		account.User.ID != principal.UserID || account.User.Email != "mario@terrascale.tech" ||
-		principal.OrganizationID != "org_01JC9Q5V2N4P6T8R0X2Z4B6D8" ||
-		principal.ProjectID != "prj_01JC9Q6W3M5N7P9R2T4V6X8ZA" ||
-		database.ID != "db_01JC9Q8Y5N7P9R3T5V7X9Z2AC" ||
+		principal.OrganizationID != "7N1PZ3BD9WCGBVV4V50V508NRX" ||
+		principal.ProjectID != "1X1TETYPPH2APBVN5WGY9D3S3G" ||
+		database.ID != "0Z793APJ2ECFW2F7P6J9F2RKVY" ||
 		database.ProjectID != principal.ProjectID || database.Name != "core-primary" ||
 		collection != "orders" {
 		return nil
 	}
 	return &demoIndexMigration{
 		State: "running", Completed: 8_640, Total: 12_480, Percent: 69,
-		Watermark: "doc_01JC9XQ1T3V5X7Z9B2D4F7HJ2",
+		Watermark: "3GH7W4YYGHPZTKFTPXC4QRX5XE",
 	}
 }

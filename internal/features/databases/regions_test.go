@@ -14,7 +14,7 @@ import (
 func regionService(t *testing.T) (Service, core.Principal) {
 	t.Helper()
 	store := memstore.New()
-	account, err := store.CreateAccount(t.Context(), core.User{Name: "Owner", Email: core.NewID("regions") + "@example.test", PasswordHash: "unused"})
+	account, err := store.CreateAccount(t.Context(), core.User{Name: "Owner", Email: core.NewID() + "@example.test", PasswordHash: "unused"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,7 +68,7 @@ func TestDatabasePlacementIsGRUSFOOrBothFromDiscovery(t *testing.T) {
 	if _, err := service.SetRegions(t.Context(), p, db.ID); !errors.Is(err, core.ErrInvalid) {
 		t.Fatalf("set no regions = %v, want invalid", err)
 	}
-	if _, err := service.SetRegions(t.Context(), p, "db_missing", "GRU"); !errors.Is(err, core.ErrNotFound) {
+	if _, err := service.SetRegions(t.Context(), p, "7CWZH5HEGFV2Z8DWE3144TJQSS", "GRU"); !errors.Is(err, core.ErrNotFound) {
 		t.Fatalf("set regions of a missing database = %v, want not found", err)
 	}
 

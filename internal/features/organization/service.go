@@ -109,10 +109,10 @@ func (s Service) CreateBusiness(ctx context.Context, p core.Principal, name stri
 		}
 
 		now := s.now()
-		id := core.NewID("org")
+		id := core.NewID()
 		result = core.Organization{
 			ID: id, Name: name, Kind: kindBusiness, Slug: slug(name), Status: statusActive,
-			OwnerUserID: p.UserID, PlanID: "plan_starter", BillingStatus: "billing_required",
+			OwnerUserID: p.UserID, PlanID: core.StarterPlanID, BillingStatus: "billing_required",
 			Projects: make(map[string]core.Project),
 			Members: map[string]core.Member{
 				p.UserID: {UserID: p.UserID, Email: a.User.Email, Name: a.User.Name, Role: roleOwner, Status: statusActive, CreatedAt: now},
@@ -204,7 +204,7 @@ func (s Service) CreateProject(ctx context.Context, p core.Principal, name, regi
 		}
 		now := s.now()
 		result = core.Project{
-			ID: core.NewID("prj"), OrganizationID: org.ID, Name: name, Region: primary,
+			ID: core.NewID(), OrganizationID: org.ID, Name: name, Region: primary,
 			BackupRegion: backup, Regions: validatedRegions, Slug: projectSlug, Status: statusActive,
 			Databases: make(map[string]core.Database), APIKeys: make(map[string]core.APIKey),
 			SharedResultConfigs: make(map[string]core.SharedResultConfig), CreatedAt: now,
@@ -388,7 +388,7 @@ func (s Service) CreateInvitation(ctx context.Context, p core.Principal, email, 
 	token := newToken()
 	digest := sha256.Sum256([]byte(token))
 	invitation := core.Invitation{
-		ID: core.NewID("inv"), Email: email, Role: role, Status: statusPending,
+		ID: core.NewID(), Email: email, Role: role, Status: statusPending,
 		TokenHash: hex.EncodeToString(digest[:]), ExpiresAt: s.now().Add(7 * 24 * time.Hour), CreatedAt: s.now(),
 	}
 	// The plan is read in the mutation's transaction so the member limit is

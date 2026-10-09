@@ -17,8 +17,8 @@ func renderContent(t *testing.T, d pageData) string {
 
 func renderPage(t *testing.T, d pageData) string {
 	t.Helper()
-	d.Databases = []databaseChoice{{ID: "db_1", Name: "primary"}}
-	d.Configs = []core.SharedResultConfig{{ID: "cfg_1", DatabaseID: "db_1", Name: "orders_view", Query: "SELECT * FROM orders", Transport: "http", Status: "paused"}}
+	d.Databases = []databaseChoice{{ID: "19T9WF6BRDZ1HTM3X1C9G1V4YJ", Name: "primary"}}
+	d.Configs = []core.SharedResultConfig{{ID: "0R9Z7Y4E5S790WPJF1AQ0D23HM", DatabaseID: "19T9WF6BRDZ1HTM3X1C9G1V4YJ", Name: "orders_view", Query: "SELECT * FROM orders", Transport: "http", Status: "paused"}}
 	var out bytes.Buffer
 	if err := subscriptionsContent(core.Page{CSRFToken: "token"}, d).Render(context.Background(), &out); err != nil {
 		t.Fatal(err)
@@ -38,7 +38,7 @@ func TestReadersSeeConfigurationsWithoutControls(t *testing.T) {
 	}
 
 	writer := renderContent(t, pageData{CanWrite: true})
-	for _, control := range []string{"/api/v1/dashboard/subscriptions/attach", "Resume orders_view", `commandfor="detach-cfg_1"`, `<dialog id="detach-cfg_1"`} {
+	for _, control := range []string{"/api/v1/dashboard/subscriptions/attach", "Resume orders_view", `commandfor="detach-0R9Z7Y4E5S790WPJF1AQ0D23HM"`, `<dialog id="detach-0R9Z7Y4E5S790WPJF1AQ0D23HM"`} {
 		if !strings.Contains(writer, control) {
 			t.Errorf("a writer is not offered %q", control)
 		}
@@ -49,8 +49,8 @@ func TestReadersSeeConfigurationsWithoutControls(t *testing.T) {
 }
 
 func TestRefusedConfigurationKeepsTheForm(t *testing.T) {
-	page := renderContent(t, pageData{CanWrite: true, FormError: "Choose HTTP + CDN or WebSocket delivery.", Form: configForm{DatabaseID: "db_1", Name: "draft", Query: "SELECT * FROM orders LIMIT 5", Transport: "websocket"}})
-	for _, want := range []string{"Choose HTTP + CDN or WebSocket delivery.", `value="draft"`, "SELECT * FROM orders LIMIT 5", `<option value="websocket" selected`, `<option value="db_1" selected`} {
+	page := renderContent(t, pageData{CanWrite: true, FormError: "Choose HTTP + CDN or WebSocket delivery.", Form: configForm{DatabaseID: "19T9WF6BRDZ1HTM3X1C9G1V4YJ", Name: "draft", Query: "SELECT * FROM orders LIMIT 5", Transport: "websocket"}})
+	for _, want := range []string{"Choose HTTP + CDN or WebSocket delivery.", `value="draft"`, "SELECT * FROM orders LIMIT 5", `<option value="websocket" selected`, `<option value="19T9WF6BRDZ1HTM3X1C9G1V4YJ" selected`} {
 		if !strings.Contains(page, want) {
 			t.Errorf("the refused form lacks %q", want)
 		}

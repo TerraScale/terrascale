@@ -39,8 +39,8 @@ func TestLiveCheckoutGatesOnlyPaidPlansWithoutSubscription(t *testing.T) {
 		planID string
 		status int
 	}{
-		{name: "free personal organization", planID: "plan_free", status: http.StatusSeeOther},
-		{name: "paid plan outside Stripe", planID: "plan_pro", status: http.StatusConflict},
+		{name: "free personal organization", planID: "3BN8V1JQWTB3R3NSZ26SERTHWT", status: http.StatusSeeOther},
+		{name: "paid plan outside Stripe", planID: "7CNW2H87JE68ATZX224CV2G625", status: http.StatusConflict},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			store := memstore.New()

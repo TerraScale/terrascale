@@ -22,8 +22,8 @@ func joinedMember(t *testing.T, store core.Store) (member core.Account, owner co
 	digest := sha256.Sum256([]byte("invitation-token"))
 	if err := store.UpdateAs(ctx, owner, func(a *core.Account) error {
 		org := a.Organizations[owner.OrganizationID]
-		org.Invitations["inv_member"] = core.Invitation{
-			ID: "inv_member", Email: "member@example.test", Role: "member", Status: "pending",
+		org.Invitations["5WBKW9DRD8VRG71FZSCX8D37T4"] = core.Invitation{
+			ID: "5WBKW9DRD8VRG71FZSCX8D37T4", Email: "member@example.test", Role: "member", Status: "pending",
 			TokenHash: hex.EncodeToString(digest[:]), ExpiresAt: time.Now().Add(time.Hour),
 		}
 		a.Organizations[org.ID] = org

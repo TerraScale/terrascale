@@ -58,7 +58,7 @@ func TestMCPBillingCheckoutPlanChangesAndPortal(t *testing.T) {
 
 	var checkout struct{ CheckoutURL string }
 	callTool(t, session, "create_checkout", map[string]any{"plan": "starter", "interval": "monthly"}, &checkout)
-	if !strings.HasPrefix(checkout.CheckoutURL, "/checkout/cs_local_") {
+	if !entityPath(checkout.CheckoutURL, "/checkout/") {
 		t.Fatalf("checkout URL = %q, want the local demo checkout page", checkout.CheckoutURL)
 	}
 	billing = getMCPBilling(t, session)

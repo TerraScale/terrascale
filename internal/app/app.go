@@ -100,7 +100,17 @@ func New(cfg config.Config) (*Application, error) {
 		// The meter calls the Management API on TERRABASE_URL's client
 		// listener: it alone accepts the user's ts-auth token.
 		meter = terrabase.Meter{BaseURL: cfg.TerraBaseURL, Client: cfg.TerraBaseHTTPClient}
-		store = terrabase.New(db)
+		if _, err := db.Create(ctx); err != nil {
+			return nil, err
+		}
+		persistent := terrabase.New(db)
+		if err := terrabase.EnsureCollections(ctx, db); err != nil {
+			return nil, err
+		}
+		if err := persistent.SeedPlans(ctx); err != nil {
+			return nil, err
+		}
+		store = persistent
 		sessionStore = terrabase.NewSessions(db)
 		throttleStore = terrabase.NewThrottle(db)
 		grants = terrabase.NewDeviceGrants(db)
@@ -316,7 +326,7 @@ func seedDemoAccount(ctx context.Context, store core.Store) error {
 		return err
 	}
 	account, err := store.CreateAccount(ctx, core.User{
-		ID: "usr_01JC9Q7T4N8Y2M3P5R7V9X1ZAB", Name: "Mario Kraus",
+		ID: "7CVZQJY80VY06TJG7VP8TQ44DM", Name: "Mario Kraus",
 		Email: demoAccountEmail, PasswordHash: hash, Role: "owner", PlatformAdmin: true,
 	})
 	if err != nil {

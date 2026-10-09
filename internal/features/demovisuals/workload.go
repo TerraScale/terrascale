@@ -11,8 +11,8 @@ import (
 )
 
 const (
-	MarioOrganizationID = "org_01JC9Q5V2N4P6T8R0X2Z4B6D8"
-	MarioUserID         = "usr_01JC9Q7T4N8Y2M3P5R7V9X1ZAB"
+	MarioOrganizationID = "7N1PZ3BD9WCGBVV4V50V508NRX"
+	MarioUserID         = "7CVZQJY80VY06TJG7VP8TQ44DM"
 )
 
 const (

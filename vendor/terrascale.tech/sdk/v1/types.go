@@ -79,7 +79,7 @@ const (
 
 // Document is a document as returned by GET, queries and shapes.
 type Document struct {
-	ID      string `json:"id"`
+	ID      string `json:"id" documentkey:"required"`
 	Version string `json:"version"`
 	State   State  `json:"state"`
 	// Document is the exact JSON object for state "value".
@@ -98,10 +98,10 @@ type Sibling struct {
 	Document json.RawMessage `json:"document,omitempty"`
 }
 
-// Event identifies the write that produced a sibling: Replica is a lowercase
-// hyphenated UUID and Incarnation is 32 lowercase hex characters.
+// Event identifies the write that produced a sibling: Replica is a ULID
+// and Incarnation is an opaque 32-character lowercase hex epoch token.
 type Event struct {
-	Replica     string `json:"replica"`
+	Replica     string `json:"replica" ulid:"required"`
 	Incarnation string `json:"incarnation"`
 	Sequence    Uint64 `json:"sequence"`
 }
@@ -112,7 +112,7 @@ func Decode(data []byte, v any) error { return decodeExact(data, v) }
 
 // WriteResult is the response to a document write.
 type WriteResult struct {
-	ID         string     `json:"id"`
+	ID         string     `json:"id" documentkey:"required"`
 	Version    string     `json:"version"`
 	Offset     Uint64     `json:"offset"`
 	Durability Durability `json:"durability"`

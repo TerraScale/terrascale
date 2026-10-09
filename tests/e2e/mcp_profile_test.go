@@ -164,7 +164,7 @@ func TestMCPProfileToolsReadAndUpdateTheSignedInUser(t *testing.T) {
 	if message := callToolError(t, session, "set_language", map[string]any{"locale": "fr"}); !strings.Contains(message, "available language") {
 		t.Errorf("unsupported language error = %q", message)
 	}
-	if message := callToolError(t, session, "revoke_access_token", map[string]any{"tokenId": "pat_missing"}); !strings.Contains(message, "not found") {
+	if message := callToolError(t, session, "revoke_access_token", map[string]any{"tokenId": "34NASCCT3J041BRM5YKNZQ0FWB"}); !strings.Contains(message, "not found") {
 		t.Errorf("unknown token revoke error = %q", message)
 	}
 	var listed struct{ AccessTokens []struct{ ID string } }

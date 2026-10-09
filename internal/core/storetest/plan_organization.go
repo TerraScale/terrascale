@@ -18,7 +18,7 @@ func TestUpsertPlanAndUpdateOrganizationAuthorization(t *testing.T, s core.Store
 	}), nil)
 	badScope := member.Principal()
 	badScope.OrganizationID = admin.ActiveOrganizationID
-	plan := core.Plan{ID: core.NewULID(), Key: "atomic", PriceCents: 100}
+	plan := core.Plan{ID: core.NewID(), Key: "atomic", PriceCents: 100}
 	for _, tc := range []struct {
 		name string
 		p    core.Principal
@@ -27,7 +27,7 @@ func TestUpsertPlanAndUpdateOrganizationAuthorization(t *testing.T, s core.Store
 		{"member", member.Principal(), core.ErrForbidden},
 		{"stale admin", stale, core.ErrUnauthorized},
 		{"invalid scope", badScope, core.ErrForbidden},
-		{"missing account", core.Principal{AccountID: core.NewULID()}, core.ErrNotFound},
+		{"missing account", core.Principal{AccountID: core.NewID()}, core.ErrNotFound},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			called := false
@@ -50,7 +50,7 @@ func TestUpsertPlanAndUpdateOrganizationRollback(t *testing.T, s core.Store) {
 	want(t, err, nil)
 	target := account(t, s, "target@example.test")
 	p, orgID := admin.Principal(), target.ActiveOrganizationID
-	plan := core.Plan{ID: core.NewULID(), Key: "atomic", PriceCents: 100, WriteCentsPerMillion: 10, OperationsPerMonth: 1000}
+	plan := core.Plan{ID: core.NewID(), Key: "atomic", PriceCents: 100, WriteCentsPerMillion: 10, OperationsPerMonth: 1000}
 	want(t, s.UpsertPlanAndUpdateOrganizationAs(ctx, p, orgID, plan, func(org *core.Organization) error {
 		org.PlanID = plan.ID
 		org.Billing.Internal, org.Billing.PaidExcessEnabled, org.Billing.SpendCapCents = true, true, 1000
@@ -103,9 +103,9 @@ func TestUpsertPlanAndUpdateOrganizationRollback(t *testing.T, s core.Store) {
 		})
 	}
 	for _, invalid := range []core.Plan{
-		{ID: plan.ID, Key: "changed"}, {ID: core.NewULID(), Key: plan.Key},
-		{ID: plan.Key, Key: "another"}, {ID: core.NewULID(), Key: plan.ID},
-		{ID: core.NewULID(), Key: "invalid", PriceCents: -1},
+		{ID: plan.ID, Key: "changed"}, {ID: core.NewID(), Key: plan.Key},
+		{ID: plan.Key, Key: "another"}, {ID: core.NewID(), Key: plan.ID},
+		{ID: core.NewID(), Key: "invalid", PriceCents: -1},
 	} {
 		wantErr := core.ErrConflict
 		if invalid.PriceCents < 0 {
@@ -116,9 +116,9 @@ func TestUpsertPlanAndUpdateOrganizationRollback(t *testing.T, s core.Store) {
 			return nil
 		}), wantErr)
 	}
-	newPlan := core.Plan{ID: core.NewULID(), Key: "new-atomic"}
+	newPlan := core.Plan{ID: core.NewID(), Key: "new-atomic"}
 	want(t, s.UpsertPlanAndUpdateOrganizationAs(ctx, p, orgID, newPlan, func(*core.Organization) error { return core.ErrConflict }), core.ErrConflict)
-	want(t, s.UpsertPlanAndUpdateOrganizationAs(ctx, p, core.NewULID(), newPlan, func(*core.Organization) error { return nil }), core.ErrNotFound)
+	want(t, s.UpsertPlanAndUpdateOrganizationAs(ctx, p, core.NewID(), newPlan, func(*core.Organization) error { return nil }), core.ErrNotFound)
 	want(t, s.UpsertPlanAndUpdateOrganizationAs(ctx, p, orgID, newPlan, nil), core.ErrInvalid)
 	_, err = s.Plan(ctx, newPlan.ID)
 	want(t, err, core.ErrNotFound)

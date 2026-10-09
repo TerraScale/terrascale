@@ -14,6 +14,8 @@ import (
 	"strings"
 	"time"
 	"unicode"
+
+	"terrascale.tech/sdk/internal/entityid"
 )
 
 // Client calls ts-auth's platform management API (contract sections 2-7):
@@ -80,16 +82,16 @@ const (
 // Organization is an organization; Role is the caller's role, empty for a
 // collaborator on some of its projects.
 type Organization struct {
-	ID        string    `json:"id"`
+	ID        string    `json:"id" ulid:"required"`
 	Name      string    `json:"name"`
-	CreatedBy string    `json:"created_by"`
+	CreatedBy string    `json:"created_by" ulid:"required"`
 	CreatedAt time.Time `json:"created_at"`
 	Role      Role      `json:"role"`
 }
 
 // Member is a member of an organization.
 type Member struct {
-	UserID   string    `json:"user_id"`
+	UserID   string    `json:"user_id" ulid:"required"`
 	Email    string    `json:"email"`
 	Role     Role      `json:"role"`
 	JoinedAt time.Time `json:"joined_at"`
@@ -98,18 +100,18 @@ type Member struct {
 // Project is a project; Issuer is its own tenant, for its end users, and
 // Role the caller's effective project role.
 type Project struct {
-	ID             string    `json:"id"`
-	OrganizationID string    `json:"organization_id"`
+	ID             string    `json:"id" ulid:"required"`
+	OrganizationID string    `json:"organization_id" ulid:"required"`
 	Name           string    `json:"name"`
 	Issuer         string    `json:"issuer"`
-	CreatedBy      string    `json:"created_by"`
+	CreatedBy      string    `json:"created_by" ulid:"required"`
 	CreatedAt      time.Time `json:"created_at"`
 	Role           Role      `json:"role"`
 }
 
 // ProjectMember is an explicit role on one project.
 type ProjectMember struct {
-	UserID    string    `json:"user_id"`
+	UserID    string    `json:"user_id" ulid:"required"`
 	Email     string    `json:"email"`
 	Role      Role      `json:"role"`
 	GrantedAt time.Time `json:"granted_at"`
@@ -130,11 +132,11 @@ const (
 // Invitation invites an email to the organization or, with ProjectID, to
 // one project.
 type Invitation struct {
-	ID        string           `json:"id"`
+	ID        string           `json:"id" ulid:"required"`
 	Email     string           `json:"email"`
 	Role      Role             `json:"role"`
-	ProjectID string           `json:"project_id"`
-	InvitedBy string           `json:"invited_by"`
+	ProjectID string           `json:"project_id" ulid:"optional"`
+	InvitedBy string           `json:"invited_by" ulid:"required"`
 	CreatedAt time.Time        `json:"created_at"`
 	ExpiresAt time.Time        `json:"expires_at"`
 	Status    InvitationStatus `json:"status"`
@@ -149,7 +151,7 @@ type CreatedInvitation struct {
 
 // IDName is an id with its display name.
 type IDName struct {
-	ID   string `json:"id"`
+	ID   string `json:"id" ulid:"required"`
 	Name string `json:"name"`
 }
 
@@ -164,15 +166,15 @@ type InvitationLookup struct {
 
 // AcceptedInvitation is the membership or project grant an invitation gave.
 type AcceptedInvitation struct {
-	OrganizationID string `json:"organization_id"`
-	ProjectID      string `json:"project_id"`
+	OrganizationID string `json:"organization_id" ulid:"required"`
+	ProjectID      string `json:"project_id" ulid:"optional"`
 	Role           Role   `json:"role"`
 }
 
 // OwnershipTransfer is an organization's pending ownership transfer.
 type OwnershipTransfer struct {
-	FromUserID string    `json:"from_user_id"`
-	ToUserID   string    `json:"to_user_id"`
+	FromUserID string    `json:"from_user_id" ulid:"required"`
+	ToUserID   string    `json:"to_user_id" ulid:"required"`
 	CreatedAt  time.Time `json:"created_at"`
 	ExpiresAt  time.Time `json:"expires_at"`
 }
@@ -180,13 +182,13 @@ type OwnershipTransfer struct {
 // APIKey is an organization key (empty ProjectID) or a project key, without
 // its secret.
 type APIKey struct {
-	ID             string     `json:"id"`
+	ID             string     `json:"id" ulid:"required"`
 	Name           string     `json:"name"`
-	OrganizationID string     `json:"organization_id"`
-	ProjectID      string     `json:"project_id"`
+	OrganizationID string     `json:"organization_id" ulid:"required"`
+	ProjectID      string     `json:"project_id" ulid:"optional"`
 	Database       string     `json:"database"`
 	Scopes         []string   `json:"scopes"`
-	CreatedBy      string     `json:"created_by"`
+	CreatedBy      string     `json:"created_by" ulid:"required"`
 	CreatedAt      time.Time  `json:"created_at"`
 	ExpiresAt      *time.Time `json:"expires_at"`
 	// PreviousSecretExpiresAt is until when the secret before the last
@@ -213,8 +215,8 @@ type APIKeyRequest struct {
 
 // AuditEvent is one recorded change, newest first.
 type AuditEvent struct {
-	ID         string    `json:"id"`
-	Actor      string    `json:"actor"`
+	ID         string    `json:"id" ulid:"required"`
+	Actor      string    `json:"actor" ulid:"required"`
 	Action     string    `json:"action"`
 	Target     string    `json:"target"`
 	Detail     string    `json:"detail"`
@@ -325,7 +327,7 @@ func (u *User) CreateInvitation(ctx context.Context, org, project, email string,
 	body := struct {
 		Email     string  `json:"email"`
 		Role      Role    `json:"role"`
-		ProjectID *string `json:"project_id,omitempty"`
+		ProjectID *string `json:"project_id,omitempty" ulid:"optional"`
 	}{Email: email, Role: role}
 	if project != "" {
 		body.ProjectID = &project
@@ -538,6 +540,23 @@ func (u *User) do(ctx context.Context, method string, path []string, query url.V
 	if u.token == "" || strings.ContainsFunc(u.token, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) {
 		return errors.New("tsauth: WithToken needs a sign-in access token without whitespace")
 	}
+	if err := entityid.Path(path); err != nil {
+		return err
+	}
+	if project := query.Get("project_id"); project != "" {
+		if err := entityid.Check(project); err != nil {
+			return err
+		}
+	}
+	if in != nil {
+		body, err := json.Marshal(in)
+		if err != nil {
+			return err
+		}
+		if err := entityid.Body(body); err != nil {
+			return err
+		}
+	}
 	target := u.c.base
 	for _, s := range path {
 		if s == "" || s == "." || s == ".." || strings.Contains(s, "/") {
@@ -598,5 +617,5 @@ func sendJSON(ctx context.Context, hc *http.Client, method, target, authorizatio
 	if out != nil && json.Unmarshal(data, out) != nil {
 		return fmt.Errorf("tsauth: %s %s: the response does not match the contract", method, req.URL.Path)
 	}
-	return nil
+	return entityid.Model(out)
 }

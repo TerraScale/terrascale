@@ -16,6 +16,12 @@ import (
 
 const sessionCookie = "ts_dashboard_session"
 
+var entityIDPattern = regexp.MustCompile(`^[0-7][0-9A-HJKMNP-TV-Z]{25}$`)
+
+func entityPath(path, prefix string) bool {
+	return strings.HasPrefix(path, prefix) && entityIDPattern.MatchString(strings.TrimPrefix(path, prefix))
+}
+
 type credentials struct {
 	Email, Password, DisplayName string
 }

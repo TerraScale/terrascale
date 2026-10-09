@@ -55,11 +55,11 @@ func TestMCPAdminToolsAreListedOnlyForPlatformAdministrators(t *testing.T) {
 	}
 
 	if message := callToolError(t, session, "admin_record_estate_action", map[string]any{
-		"action": "reboot", "targetId": "db_x", "reason": "not an allowed action",
+		"action": "reboot", "targetId": "4YRZN87C3F8TYQGHKHQH4EMZ8Q", "reason": "not an allowed action",
 	}); !strings.Contains(message, "action must be one of") {
 		t.Errorf("invalid estate action error = %q, want the allowed actions", message)
 	}
-	target := uniqueName("db_mcp")
+	target := uniqueName("0Q1XYVEDXTJYJJFXSYB3EKANCC")
 	callTool(t, session, "admin_record_estate_action", map[string]any{"action": "flag", "targetId": target, "reason": "MCP e2e check"}, nil)
 	var estate struct {
 		Actions []struct{ Action, Target, Reason string }

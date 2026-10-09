@@ -3,13 +3,14 @@ package core
 import (
 	"context"
 	"crypto/rand"
-	"encoding/base32"
-	"encoding/hex"
 	"errors"
 	"maps"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/oklog/ulid/v2"
 )
 
 // ErrUnavailable wraps a failure of the backing database itself, such as a
@@ -178,26 +179,16 @@ func Can(ctx context.Context, s Store, p Principal, allow func(Organization, str
 	return err
 }
 
-func NewID(prefix string) string {
-	var b [16]byte
-	rand.Read(b[:])
-	return prefix + "_" + hex.EncodeToString(b[:])
-}
+var canonicalID = regexp.MustCompile(`^[0-7][0-9A-HJKMNP-TV-Z]{25}$`)
 
-// NewULID returns a Crockford base32 ID with a 48-bit millisecond timestamp
-// and 80 bits of cryptographic randomness.
-func NewULID() string {
-	const alphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
-	var timestamp [10]byte
-	ms := uint64(time.Now().UnixMilli())
-	for i := len(timestamp) - 1; i >= 0; i-- {
-		timestamp[i] = alphabet[ms&31]
-		ms >>= 5
-	}
-	var entropy [10]byte
-	rand.Read(entropy[:])
-	return string(timestamp[:]) + base32.NewEncoding(alphabet).EncodeToString(entropy[:])
-}
+func ValidID(id string) bool { return canonicalID.MatchString(id) }
+
+var idEntropy = &ulid.LockedMonotonicReader{MonotonicReader: ulid.Monotonic(rand.Reader, 0)}
+
+// NewID returns a cryptographic ULID, monotonic within the same millisecond.
+func NewID() string { return newIDAt(ulid.Timestamp(time.Now())) }
+
+func newIDAt(ms uint64) string { return ulid.MustNew(ms, idEntropy).String() }
 
 // NewAccount builds the account Store.CreateAccount registers: the user with
 // a Personal organization, its default Personal project, and both selected.
@@ -207,7 +198,7 @@ func NewAccount(user User) (Account, error) {
 		return Account{}, ErrInvalid
 	}
 	if user.ID == "" {
-		user.ID = NewID("usr")
+		user.ID = NewID()
 	}
 	if user.CreatedAt.IsZero() {
 		user.CreatedAt = time.Now().UTC()
@@ -216,15 +207,15 @@ func NewAccount(user User) (Account, error) {
 		user.Role = "owner"
 	}
 	org := Organization{
-		ID: NewID("org"), Name: "Personal", Kind: "personal", Status: "active",
-		OwnerUserID: user.ID, PlanID: "plan_free", BillingStatus: "active",
+		ID: NewID(), Name: "Personal", Kind: "personal", Status: "active",
+		OwnerUserID: user.ID, PlanID: FreePlanID, BillingStatus: "active",
 		Projects: make(map[string]Project), Members: map[string]Member{
 			user.ID: {UserID: user.ID, Email: user.Email, Name: user.Name, Role: "owner", Status: "active", CreatedAt: time.Now().UTC()},
 		}, Invitations: make(map[string]Invitation), CheckoutSessions: make(map[string]CheckoutSession),
 		CreatedAt: time.Now().UTC(),
 	}
 	project := Project{
-		ID: NewID("prj"), OrganizationID: org.ID, Name: "Personal", Region: "GRU",
+		ID: NewID(), OrganizationID: org.ID, Name: "Personal", Region: "GRU",
 		Regions: []string{"GRU"}, Status: "active", IsDefault: true,
 		Databases: make(map[string]Database), APIKeys: make(map[string]APIKey),
 		SavedQueries: make(map[string]SavedQuery), SharedResultConfigs: make(map[string]SharedResultConfig),
@@ -233,21 +224,29 @@ func NewAccount(user User) (Account, error) {
 	}
 	org.Projects[project.ID] = project
 	return Account{
-		ID: NewID("acct"), User: user, Organizations: map[string]Organization{org.ID: org},
+		ID: NewID(), User: user, Organizations: map[string]Organization{org.ID: org},
 		ActiveOrganizationID: org.ID, ActiveProjectID: project.ID,
 		OnboardingStep: "payment-method", CreatedAt: time.Now().UTC(),
 	}, nil
 }
+
+// Seeded plan identities are shared by account creation and billing.
+const (
+	FreePlanID     = "3BN8V1JQWTB3R3NSZ26SERTHWT"
+	StarterPlanID  = "443RCMMF70MNP6S1QMT230NF99"
+	ProPlanID      = "7CNW2H87JE68ATZX224CV2G625"
+	BusinessPlanID = "09XCWRH05BWWBADSBPTPDMFA7D"
+)
 
 // DefaultPlans is the catalog a new store starts with. Free's limits are
 // the public Hobby plan's (terrascale.tech/pricing.json). StorageMiB counts
 // a label's GB as a GiB, so utilization never runs out before the label.
 func DefaultPlans() []Plan {
 	return []Plan{
-		{ID: "plan_free", Key: "free", Name: "Free", Visible: true, MaxDatabases: 1, OperationsPerMonth: 100_000, StorageMiB: 103, StorageLabel: "0.1 GB-region storage"},
-		{ID: "plan_starter", Key: "starter", Name: "Starter", PriceCents: 500, AnnualPriceCents: 5000, TrialDays: 30, Visible: true, MaxDatabases: 5, MaxMembers: 5, OperationsPerMonth: 1_000_000, StorageMiB: 5 << 10, StorageLabel: "5 GB-region storage"},
-		{ID: "plan_pro", Key: "pro", Name: "Pro", PriceCents: 5000, AnnualPriceCents: 50000, TrialDays: 30, Visible: true, MaxDatabases: 25, MaxMembers: 25, OperationsPerMonth: 100_000_000, StorageMiB: 25 << 10, StorageLabel: "25 GB-region storage"},
-		{ID: "plan_business", Key: "business", Name: "Business", PriceCents: 9900, AnnualPriceCents: 99000, TrialDays: 30, Visible: true, MaxDatabases: 100, MaxMembers: 100, OperationsPerMonth: 50_000_000, StorageMiB: 5 << 20, StorageLabel: "5 TB-region storage"},
+		{ID: FreePlanID, Key: "free", Name: "Free", Visible: true, MaxDatabases: 1, OperationsPerMonth: 100_000, StorageMiB: 103, StorageLabel: "0.1 GB-region storage"},
+		{ID: StarterPlanID, Key: "starter", Name: "Starter", PriceCents: 500, AnnualPriceCents: 5000, TrialDays: 30, Visible: true, MaxDatabases: 5, MaxMembers: 5, OperationsPerMonth: 1_000_000, StorageMiB: 5 << 10, StorageLabel: "5 GB-region storage"},
+		{ID: ProPlanID, Key: "pro", Name: "Pro", PriceCents: 5000, AnnualPriceCents: 50000, TrialDays: 30, Visible: true, MaxDatabases: 25, MaxMembers: 25, OperationsPerMonth: 100_000_000, StorageMiB: 25 << 10, StorageLabel: "25 GB-region storage"},
+		{ID: BusinessPlanID, Key: "business", Name: "Business", PriceCents: 9900, AnnualPriceCents: 99000, TrialDays: 30, Visible: true, MaxDatabases: 100, MaxMembers: 100, OperationsPerMonth: 50_000_000, StorageMiB: 5 << 20, StorageLabel: "5 TB-region storage"},
 	}
 }
 

@@ -47,11 +47,11 @@ func TestLegacyAccessRedirect(t *testing.T) {
 
 func teamOrganization(invitations ...core.Invitation) core.Organization {
 	org := core.Organization{
-		ID: "org_1", Name: "Acme", OwnerUserID: "usr_owner",
+		ID: "1MZ7GT1142NZMAQXJE73TYTFZW", Name: "Acme", OwnerUserID: "36W5Q3XPHDVYZ1GYK1WJ2S4RKK",
 		Members: map[string]core.Member{
-			"usr_owner":  {UserID: "usr_owner", Role: "owner", Status: "active"},
-			"usr_admin":  {UserID: "usr_admin", Role: "admin", Status: "active"},
-			"usr_member": {UserID: "usr_member", Role: "member", Status: "active"},
+			"36W5Q3XPHDVYZ1GYK1WJ2S4RKK": {UserID: "36W5Q3XPHDVYZ1GYK1WJ2S4RKK", Role: "owner", Status: "active"},
+			"21YDES3QSMXC1HQKX9PXCZ2PY0": {UserID: "21YDES3QSMXC1HQKX9PXCZ2PY0", Role: "admin", Status: "active"},
+			"3815H39Y2X0TANA4N0YVSSWWH3": {UserID: "3815H39Y2X0TANA4N0YVSSWWH3", Role: "member", Status: "active"},
 		},
 		Invitations: make(map[string]core.Invitation),
 	}
@@ -63,16 +63,16 @@ func teamOrganization(invitations ...core.Invitation) core.Organization {
 
 func teamPage(org core.Organization, query string) pageData {
 	values, _ := url.ParseQuery(query)
-	p := core.Principal{UserID: "usr_owner", OrganizationID: org.ID}
+	p := core.Principal{UserID: "36W5Q3XPHDVYZ1GYK1WJ2S4RKK", OrganizationID: org.ID}
 	return buildPageData(core.Account{}, org, p, values, "", "", testNow)
 }
 
 func TestInvitationsPastExpiryAreExpired(t *testing.T) {
 	org := teamOrganization(
-		core.Invitation{ID: "inv_open", Email: "open@example.test", Role: "member", Status: "pending", ExpiresAt: testNow.Add(time.Hour)},
-		core.Invitation{ID: "inv_lapsed", Email: "lapsed@example.test", Role: "viewer", Status: "pending", ExpiresAt: testNow.Add(-time.Hour)},
-		core.Invitation{ID: "inv_forever", Email: "forever@example.test", Role: "member", Status: "pending"},
-		core.Invitation{ID: "inv_revoked", Email: "revoked@example.test", Role: "member", Status: "revoked", ExpiresAt: testNow.Add(time.Hour)},
+		core.Invitation{ID: "6EP4659GS4RHPHP5SK6D0FM91A", Email: "open@example.test", Role: "member", Status: "pending", ExpiresAt: testNow.Add(time.Hour)},
+		core.Invitation{ID: "7GBHH6VYX41N72BV3RHEQ2YB5P", Email: "lapsed@example.test", Role: "viewer", Status: "pending", ExpiresAt: testNow.Add(-time.Hour)},
+		core.Invitation{ID: "7T0XH2NMJKAD2M2TNCBR531NJD", Email: "forever@example.test", Role: "member", Status: "pending"},
+		core.Invitation{ID: "5SBRH9FRXEX17CDYQD2ET8ZJ5D", Email: "revoked@example.test", Role: "member", Status: "revoked", ExpiresAt: testNow.Add(time.Hour)},
 	)
 	data := teamPage(org, "tab=invitations")
 	if data.PendingInviteCount != 2 {
@@ -115,7 +115,7 @@ func TestMembersPageKeepsBothListsAndTheirPagination(t *testing.T) {
 		org.Members[id] = core.Member{UserID: id, Email: email, Name: id, Role: "member", Status: "active"}
 		org.Invitations[id] = core.Invitation{ID: id, Email: email, Role: "viewer", Status: "pending"}
 	}
-	p := core.Principal{UserID: "usr_owner", OrganizationID: org.ID}
+	p := core.Principal{UserID: "36W5Q3XPHDVYZ1GYK1WJ2S4RKK", OrganizationID: org.ID}
 	for _, tc := range []struct {
 		tab                  string
 		members, invitations int
@@ -153,8 +153,8 @@ func TestRoleSharesCountAdmins(t *testing.T) {
 	if total != 3 {
 		t.Errorf("role shares cover %d members, want all 3", total)
 	}
-	if members := teamPage(teamOrganization(), "tab=members&role=admin").Members; len(members) != 1 || members[0].ID != "usr_admin" {
-		t.Errorf("admin filter = %+v, want only usr_admin", members)
+	if members := teamPage(teamOrganization(), "tab=members&role=admin").Members; len(members) != 1 || members[0].ID != "21YDES3QSMXC1HQKX9PXCZ2PY0" {
+		t.Errorf("admin filter = %+v, want only 21YDES3QSMXC1HQKX9PXCZ2PY0", members)
 	}
 }
 

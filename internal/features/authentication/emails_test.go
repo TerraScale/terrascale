@@ -149,7 +149,7 @@ func TestEmailsNeverMixesConfigurationVersions(t *testing.T) {
 
 func TestEmailTenantNeverComesFromAProjectSlug(t *testing.T) {
 	backend := NewEmailBackend("https://gru.auth.terrascale.tech/terrascale", "ts-dashboard", "secret", false)
-	project := core.Project{ID: "prj_1", Slug: "terrascale"}
+	project := core.Project{ID: "6T3ANS9YMBPBSRGZE2158QZ7VM", Slug: "terrascale"}
 	if got := backend.Tenant(project, false); got != "" {
 		t.Errorf("customer project named terrascale edits instance %q, want none", got)
 	}
@@ -205,7 +205,7 @@ func TestTSAuthEmailClientFollowsTheEmailAPI(t *testing.T) {
 	}))
 	defer server.Close()
 	backend := NewEmailBackend(server.URL+"/terrascale", "ts-dashboard", "s+cret:", false)
-	ctx, actor := t.Context(), emailActor{ID: "usr_1", Email: "admin@example.test"}
+	ctx, actor := t.Context(), emailActor{ID: "4535YKH20T3JR5H77D86GA0KDS", Email: "admin@example.test"}
 
 	document, err := backend.Branding(ctx, "terrascale")
 	if err != nil || document.Version != 7 || document.Branding.BrandName != "TerraScale" || document.Defaults.Theme != "auto" {
@@ -225,9 +225,9 @@ func TestTSAuthEmailClientFollowsTheEmailAPI(t *testing.T) {
 	}
 	want := []call{
 		{"GET", "/v1/terrascale/email/branding", "", ""},
-		{"PUT", "/v1/terrascale/email/branding", "", `{"expected_version":7,"actor":{"id":"usr_1","email":"admin@example.test"},"branding":{"brand_name":"Acme","logo_url":"https://acme.test/logo.png","logo_width":120,"logo_height":32}}`},
-		{"PUT", "/v1/terrascale/email/templates/sign_in_code/pt-BR", "", `{"expected_version":8,"actor":{"id":"usr_1","email":"admin@example.test"},"fields":{"subject":"Oi"}}`},
-		{"PUT", "/v1/terrascale/email/templates/sign_in_code/pt-BR", "", `{"expected_version":9,"actor":{"id":"usr_1","email":"admin@example.test"},"fields":{}}`},
+		{"PUT", "/v1/terrascale/email/branding", "", `{"expected_version":7,"actor":{"id":"4535YKH20T3JR5H77D86GA0KDS","email":"admin@example.test"},"branding":{"brand_name":"Acme","logo_url":"https://acme.test/logo.png","logo_width":120,"logo_height":32}}`},
+		{"PUT", "/v1/terrascale/email/templates/sign_in_code/pt-BR", "", `{"expected_version":8,"actor":{"id":"4535YKH20T3JR5H77D86GA0KDS","email":"admin@example.test"},"fields":{"subject":"Oi"}}`},
+		{"PUT", "/v1/terrascale/email/templates/sign_in_code/pt-BR", "", `{"expected_version":9,"actor":{"id":"4535YKH20T3JR5H77D86GA0KDS","email":"admin@example.test"},"fields":{}}`},
 		{"POST", "/v1/terrascale/email/preview", "", `{"kind":"sign_in_code","locale":"en","color_scheme":"dark"}`},
 	}
 	if !slices.Equal(calls, want) {
