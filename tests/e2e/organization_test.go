@@ -13,7 +13,7 @@ func TestOrganizationSectionsKeepTheirActions(t *testing.T) {
 	login(t, page, sampleAccount.Email, sampleAccount.Password)
 	goToOK(t, page, "/organization")
 	tabs := pageByRole(page, *playwright.AriaRoleNavigation, "Organization sections")
-	must(t, expect.Locator(tabs.Locator("a")).ToHaveText([]string{"Organization", "Members", "Projects"}))
+	must(t, expect.Locator(tabs.Locator("a")).ToHaveText([]string{"Organization", "Members", "Projects", "Billing", "Audit"}))
 	must(t, expect.Locator(tabs.Locator("[aria-current=page]")).ToHaveText("Organization"))
 	visible(t, page.Locator("#organization-details"))
 	visible(t, page.Locator("#organization-ownership"))
