@@ -95,9 +95,10 @@ This preparation slice does **not** authorize cutover. Runtime hardening must
 be reviewed and delivered first: verify that demo configuration cannot contact
 Stripe without changing the serving app's TerraBase persistence; replace
 wall-clock projection ordering with ordering tied to conditional state saves;
-return retryable failures for missing billing collections; and bound persistence
-HTTP requests. Exercise those paths against TerraBase before approval. The
-existing duplicate-event tests alone do not establish those guarantees.
+and bound persistence HTTP requests. Missing billing collections or databases
+now return retryable webhook failures. Exercise these paths against TerraBase
+before approval. The existing duplicate-event tests alone do not establish
+those guarantees.
 
 1. Complete [`stripe-sandbox-dsh207.md`](stripe-sandbox-dsh207.md), including
    signed deliveries, duplicate/out-of-order events, failed-payment recovery,

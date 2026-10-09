@@ -2,9 +2,11 @@ package payments
 
 import (
 	"errors"
+	"net/http"
 	"reflect"
 	"terrascale.tech/dashboard/internal/core"
 	"terrascale.tech/dashboard/internal/platform/terrabasetest"
+	"terrascale.tech/sdk/v1"
 	"testing"
 	"time"
 )
@@ -22,6 +24,82 @@ func realBillingStore(t *testing.T) *terraBaseStateStore {
 		}
 	}
 	return newTerraBaseStateStore(db)
+}
+
+func TestTerraBaseStateStoreReadersDistinguishMissingDocumentsFromStorageErrors(t *testing.T) {
+	if testing.Short() {
+		t.Skip("starts pinned TerraBase release")
+	}
+	server := terrabasetest.Start(t)
+	for _, test := range []struct {
+		name string
+		code v1.ErrorCode
+	}{
+		{"missing_document", v1.ErrNotFound},
+		{"missing_collection", v1.ErrUnknownCollection},
+		{"missing_database", v1.ErrUnknownDatabase},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			db, key := terrabasetest.Database(t, server, "dashboard")
+			switch test.code {
+			case v1.ErrNotFound:
+				for _, collection := range []string{customersCollection, organizationsCollection} {
+					if _, err := db.CreateCollection(t.Context(), collection); err != nil {
+						t.Fatal(err)
+					}
+				}
+			case v1.ErrUnknownDatabase:
+				client, err := v1.New(v1.Config{BaseURL: server.URL, Token: key, HTTPClient: server.Client})
+				if err != nil {
+					t.Fatal(err)
+				}
+				db = client.Database(db.Project(), "missing")
+			}
+			store := newTerraBaseStateStore(db)
+			for _, reader := range []struct {
+				name string
+				read func(*testing.T) error
+			}{
+				{"CustomerFor", func(t *testing.T) error {
+					customer, found, err := store.CustomerFor(t.Context(), core.NewULID())
+					if customer != "" || found {
+						t.Errorf("CustomerFor = %q, %v; want empty, false", customer, found)
+					}
+					return err
+				}},
+				{"OrganizationFor", func(t *testing.T) error {
+					organization, found, err := store.OrganizationFor(t.Context(), "cus_missing")
+					if organization != "" || found {
+						t.Errorf("OrganizationFor = %q, %v; want empty, false", organization, found)
+					}
+					return err
+				}},
+				{"Load", func(t *testing.T) error {
+					state, version, err := store.Load(t.Context(), "cus_missing")
+					if !reflect.DeepEqual(state, CustomerState{}) || version != "" {
+						t.Errorf("Load = %#v, %q; want empty state and version", state, version)
+					}
+					return err
+				}},
+			} {
+				t.Run(reader.name, func(t *testing.T) {
+					err := reader.read(t)
+					if test.code == v1.ErrNotFound {
+						if err != nil {
+							t.Fatalf("missing document = %v; want no error", err)
+						}
+						return
+					}
+					if !errors.Is(err, core.ErrUnavailable) || !errors.Is(err, test.code) {
+						t.Fatalf("storage error = %v; want ErrUnavailable wrapping %s", err, test.code)
+					}
+					if apiError, ok := errors.AsType[*v1.APIError](err); !ok || apiError.Status != http.StatusNotFound {
+						t.Fatalf("storage error = %v; want the TerraBase HTTP 404", err)
+					}
+				})
+			}
+		})
+	}
 }
 
 func TestTerraBaseStateStoreBindsEachCustomerOnce(t *testing.T) {

@@ -133,7 +133,7 @@ func (store *terraBaseStateStore) Save(ctx context.Context, state CustomerState,
 
 func (store *terraBaseStateStore) get(ctx context.Context, collection, id string, target any) (bool, string, error) {
 	document, err := store.db.Collection(collection).Get(ctx, billingID(collection, id))
-	if apiError, ok := errors.AsType[*v1.APIError](err); ok && apiError.Status == http.StatusNotFound {
+	if errors.Is(err, v1.ErrNotFound) {
 		return false, "", nil
 	}
 	if err != nil {

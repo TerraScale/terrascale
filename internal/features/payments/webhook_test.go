@@ -16,6 +16,8 @@ import (
 	"terrascale.tech/dashboard/internal/core/memstore"
 	"terrascale.tech/dashboard/internal/features/payments"
 	"terrascale.tech/dashboard/internal/features/subscriptions"
+	"terrascale.tech/dashboard/internal/platform/terrabasetest"
+	"terrascale.tech/sdk/v1"
 
 	stripe "github.com/stripe/stripe-go/v86"
 	"github.com/stripe/stripe-go/v86/webhook"
@@ -262,6 +264,57 @@ func TestWebhookSkipsUnboundAndUntrackedEvents(t *testing.T) {
 	}
 	if fixture.provider.fetches != 0 || fixture.organization(t).Billing.CheckoutID != "cs_test" {
 		t.Fatalf("skipped events read Stripe %d times or changed billing", fixture.provider.fetches)
+	}
+}
+
+func TestWebhookTerraBaseDistinguishesMissingCustomerFromStorageErrors(t *testing.T) {
+	if testing.Short() {
+		t.Skip("starts pinned TerraBase release")
+	}
+	server := terrabasetest.Start(t)
+	for _, test := range []struct {
+		name   string
+		status int
+	}{
+		{"missing_document", http.StatusOK},
+		{"missing_collection", http.StatusInternalServerError},
+		{"missing_database", http.StatusInternalServerError},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			db, key := terrabasetest.Database(t, server, "dashboard")
+			switch test.name {
+			case "missing_document":
+				for _, collection := range []string{"stripe_customers", "stripe_organizations"} {
+					if _, err := db.CreateCollection(t.Context(), collection); err != nil {
+						t.Fatal(err)
+					}
+				}
+			case "missing_database":
+				client, err := v1.New(v1.Config{BaseURL: server.URL, Token: key, HTTPClient: server.Client})
+				if err != nil {
+					t.Fatal(err)
+				}
+				db = client.Database(db.Project(), "missing")
+			}
+			fixture := newBillingFixture(t)
+			before := fixture.organization(t)
+			fixture.state = payments.NewTerraBaseStateStoreForTest(db)
+			fixture.billing = payments.NewStripeForTest(testConfig, fixture.provider, fixture.state)
+			fixture.mux = http.NewServeMux()
+			payments.Mount(fixture.mux, core.Deps{Store: fixture.store, Sessions: fixtureSessions{principal: fixture.principal}}, fixture.service, fixture.billing)
+			for range 2 {
+				response := fixture.deliver(t, testEvent{ID: "evt_storage", Type: "invoice.paid", Customer: "cus_missing"}, testWebhookSecret)
+				if response.Code != test.status {
+					t.Errorf("webhook = %d %s; want %d", response.Code, response.Body, test.status)
+				}
+			}
+			if fixture.provider.fetches != 0 {
+				t.Errorf("webhook read Stripe %d times; want 0", fixture.provider.fetches)
+			}
+			if !reflect.DeepEqual(before, fixture.organization(t)) {
+				t.Error("webhook changed organization billing")
+			}
+		})
 	}
 }
 

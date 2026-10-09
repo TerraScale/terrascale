@@ -45,11 +45,10 @@ TerraBase.
 | `stripe_customers` | Stripe customer ID | `organizationId` (unique) and the synced `CustomerState` |
 
 The collections belong to the dashboard's provisioned TerraBase database.
-`payments.New` requires that database handle. State read/write errors normally
-trigger webhook retries, but the current adapter treats all HTTP `404` responses
-as missing documents, including missing collections. That case can acknowledge
-a delivery without syncing it. Fix and test this limitation before passing the
-runtime hardening gate in [`stripe-live-cutover.md`](stripe-live-cutover.md).
+`payments.New` requires that database handle. A missing customer document is an
+unbound customer; its webhook returns `200` without contacting Stripe. State
+read/write errors, including missing collections or databases, return a retryable
+webhook failure instead of acknowledging an unsynced delivery.
 
 ## Modes
 
