@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Net;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Bogus;
@@ -33,13 +34,13 @@ public sealed class CustomerBackupListingBoundaryTests
         var snapshotAt = time.GetUtcNow();
         var boundarySnapshotAt = snapshotAt.AddSeconds(1);
         var boundarySnapshot = MultibyteKey(snapshots, SnapshotName(boundarySnapshotAt, parts[1], parts[2]), scalar, keyBytes);
-        oci.SeedObject(customer: true, boundarySnapshot, snapshot.Value);
+        await ResealAsync(oci, snapshot, boundarySnapshot, cancellationToken);
         await PutAsync(data, database, "after", text, cancellationToken);
         await ShipAsync(api, time, cancellationToken);
         var segments = file + "/wal/" + parts[1] + "/";
         var segment = oci.CustomerObjects.Single(item => item.Key.StartsWith(segments, StringComparison.Ordinal));
         var boundarySegment = MultibyteKey(segments, segment.Key.Split('/')[^1], scalar, keyBytes);
-        oci.SeedObject(customer: true, boundarySegment, segment.Value);
+        await ResealAsync(oci, segment, boundarySegment, cancellationToken);
         foreach (var key in new[] { boundarySnapshot, boundarySegment })
         {
             await Assert.That(Encoding.UTF8.GetByteCount(key)).IsEqualTo(keyBytes);
@@ -334,6 +335,28 @@ public sealed class CustomerBackupListingBoundaryTests
         var remaining = keyBytes - Encoding.UTF8.GetByteCount(prefix + "/" + filename);
         var scalarBytes = Encoding.UTF8.GetByteCount(scalar);
         return prefix + string.Concat(Enumerable.Repeat(scalar, remaining / scalarBytes)) + new string('x', remaining % scalarBytes) + "/" + filename;
+    }
+
+    private static async Task ResealAsync(FakeOci oci, KeyValuePair<string, byte[]> original, string renamed, CancellationToken cancellationToken)
+    {
+        var keyId = Encoding.ASCII.GetString(original.Value, 4, 26);
+        var parts = original.Key.Split('/');
+        var wrapped = Encoding.ASCII.GetString(oci.CustomerObjects[BackupLayout.Key(parts[1] + "/" + parts[2], keyId)]);
+        var key = Convert.FromBase64String(wrapped["wrapped:".Length..]);
+        try
+        {
+            using var encrypted = new MemoryStream(original.Value);
+            using var plain = new MemoryStream();
+            await BackupObject.ReadAsync(encrypted, plain, original.Key, _ => Task.FromResult(key), cancellationToken);
+            plain.Position = 0;
+            using var output = new MemoryStream();
+            await BackupObject.WriteAsync(plain, output, renamed, keyId, key, cancellationToken);
+            oci.SeedObject(customer: true, renamed, output.ToArray());
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(key);
+        }
     }
 
     private static async Task ShipAsync(ManagementApi api, FakeTimeProvider time, CancellationToken cancellationToken)

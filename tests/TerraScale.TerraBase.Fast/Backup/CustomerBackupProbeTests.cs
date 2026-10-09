@@ -2,6 +2,7 @@ using System.Net;
 using System.Text;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Testing;
@@ -98,7 +99,9 @@ public sealed class CustomerBackupProbeTests
             }
             else
             {
-                await Assert.That(request.Error is OperationCanceledException canceled && canceled.CancellationToken == body.ReadToken).IsTrue();
+                await Assert.That(request.RequestToken.IsCancellationRequested).IsTrue();
+                await Assert.That(request.Error).IsNull();
+                await Assert.That(request.ResponseStatus).IsEqualTo(StatusCodes.Status499ClientClosedRequest);
             }
 
             await Assert.That(Volatile.Read(ref deletes)).IsEqualTo(1);
@@ -303,6 +306,8 @@ public sealed class CustomerBackupProbeTests
     {
         public TaskCompletionSource Completed { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public Exception? Error { get; private set; }
+        public CancellationToken RequestToken { get; private set; }
+        public int ResponseStatus { get; private set; }
 
         public Action<IApplicationBuilder> Configure(Action<IApplicationBuilder> next) => app =>
         {
@@ -314,6 +319,7 @@ public sealed class CustomerBackupProbeTests
                     return;
                 }
 
+                RequestToken = context.RequestAborted;
                 try
                 {
                     await continuation();
@@ -325,6 +331,7 @@ public sealed class CustomerBackupProbeTests
                 }
                 finally
                 {
+                    ResponseStatus = context.Response.StatusCode;
                     Completed.TrySetResult();
                 }
             });

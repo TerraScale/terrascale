@@ -221,10 +221,12 @@ internal sealed class BackupSecretLifecycle(
         var page = await catalog.ReadAsync(transaction =>
             transaction.QueryAsync(new(Collection, known ? KnownIdFilter : UnknownIdFilter, [], known ? _knownAfter : _unknownAfter,
                 BatchSize, BatchSize * MaxRecordBytes), cancellationToken), cancellationToken).ConfigureAwait(false);
-        foreach (var row in page.Rows)
+        for (var index = 0; index < page.Rows.Count; index++)
         {
+            var row = page.Rows[index];
             var document = row.Document;
-            var after = new QueryPosition(row.Keys, document.Id);
+            // Wrap the consumed last row before provider I/O can exhaust this phase's deadline.
+            var after = !page.HasMore && index == page.Rows.Count - 1 ? null : new QueryPosition(row.Keys, document.Id);
             if (known)
             {
                 _knownAfter = after;

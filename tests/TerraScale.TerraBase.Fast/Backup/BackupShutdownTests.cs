@@ -79,6 +79,7 @@ public sealed class BackupShutdownTests
             await PutAsync(healthyData, healthy, "before", text, token);
             time.Advance(TimeSpan.FromSeconds(10));
             await backup.RunOnceAsync(token);
+            await backup.RunOnceAsync(token);
             await Assert.That(backup.Status.Files.Count).IsEqualTo(customers + 2);
             await Assert.That(backup.Status.Files.All(file => file.Generation is not null && file.LastDrill is not null)).IsTrue();
             var snapshot = backup.Status.Files.Single(file => file.File == File(healthy));
