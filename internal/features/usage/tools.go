@@ -14,8 +14,9 @@ type usageInput struct {
 }
 
 type capChange struct {
+	operationLimitChange
 	ID       string `json:"id" jsonschema:"Project or database ID in the organization."`
-	CapCents int64  `json:"capCents" jsonschema:"Monthly spend cap in US cents; 0 removes the cap."`
+	CapCents *int64 `json:"capCents,omitempty" jsonschema:"Monthly spend cap in US cents; 0 removes the cap. Omit to leave it unchanged."`
 }
 
 type spendingControlsInput struct {
@@ -42,21 +43,26 @@ func mountTools(tools *core.Tools, service Service) {
 		Name: "set_spending_controls", Title: "Set spending controls", Idempotent: true,
 		Route:       "PUT /v1/organizations/{organizationId}/spending-controls",
 		RouteScope:  "billing:write",
-		Description: "Set monthly spend caps for the organization, its projects, and its databases, and whether usage above the plan allowance is billed. Requires an owner or admin role.",
+		Description: "Set monthly spend caps for the organization, its projects, and its databases, read/write/replication limits for projects and databases, and whether usage above the plan allowance is billed. Requires an owner or admin role.",
 	}, func(ctx context.Context, p core.Principal, in spendingControlsInput) (usageReport, error) {
 		controls := spendingControls{
 			OrganizationCapCents: in.OrganizationCapCents, PaidExcess: in.PaidExcess,
 			ProjectCaps: make(map[string]int64, len(in.ProjectCaps)), DatabaseCaps: make(map[string]int64, len(in.DatabaseCaps)),
+			ProjectOperations: make(map[string]operationLimitChange), DatabaseOperations: make(map[string]operationLimitChange),
 		}
 		addCaps := func(target map[string]int64, caps []capChange, kind string) error {
+			seen := make(map[string]bool, len(caps))
 			for _, cap := range caps {
 				if strings.TrimSpace(cap.ID) == "" {
 					return core.Invalid(kind + " id is required")
 				}
-				if _, duplicate := target[cap.ID]; duplicate {
+				if seen[cap.ID] {
 					return core.Invalid("duplicate " + kind + " cap for " + cap.ID)
 				}
-				target[cap.ID] = cap.CapCents
+				seen[cap.ID] = true
+				if cap.CapCents != nil {
+					target[cap.ID] = *cap.CapCents
+				}
 			}
 			return nil
 		}
@@ -65,6 +71,12 @@ func mountTools(tools *core.Tools, service Service) {
 		}
 		if err := addCaps(controls.DatabaseCaps, in.DatabaseCaps, "database"); err != nil {
 			return usageReport{}, err
+		}
+		for _, cap := range in.ProjectCaps {
+			controls.ProjectOperations[cap.ID] = cap.operationLimitChange
+		}
+		for _, cap := range in.DatabaseCaps {
+			controls.DatabaseOperations[cap.ID] = cap.operationLimitChange
 		}
 		if err := service.SetSpendingControls(ctx, p, controls); err != nil {
 			return usageReport{}, err

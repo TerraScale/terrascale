@@ -97,6 +97,222 @@
   color: var(--ts-ink);
 }
 
-.ts-usage-caps {
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr));
+/* Spending controls: flat sections with a consistent category grid. */
+.ts-spending-notice {
+  align-self: end;
+  width: min(100%, 400px);
+}
+
+.ts-spending-notice[hidden] {
+  display: none;
+}
+
+.ts-spending-notice > .ts-alert {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--ts-s1) var(--ts-s3);
+  background: var(--ts-surface);
+}
+
+.ts-spending-notice .ts-alert-title,
+.ts-spending-notice .ts-alert-body {
+  grid-column: 1;
+}
+
+.ts-spending-notice .ts-icon-btn {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+}
+
+.ts-spending-heading,
+.ts-spending-actions,
+.ts-spending-database-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ts-s4);
+}
+
+.ts-spending-title {
+  font-size: var(--ts-fs-xl);
+  font-weight: 600;
+}
+
+.ts-spending-form {
+  display: grid;
+  gap: var(--ts-s8);
+}
+
+.ts-spending-form > .ts-card {
+  display: grid;
+  grid-template-columns: minmax(160px, 220px) minmax(0, 1fr);
+  align-items: start;
+  gap: var(--ts-s8);
+  padding-block-start: var(--ts-s6);
+  border-block-start: 1px solid var(--ts-line);
+}
+
+.ts-spending-form .ts-card-head {
+  align-items: start;
+}
+
+.ts-spending-form .ts-card-heading {
+  gap: var(--ts-s2);
+}
+
+.ts-spending-fields,
+.ts-spending-project,
+.ts-spending-databases {
+  display: grid;
+  min-width: 0;
+  gap: var(--ts-s4);
+}
+
+/* Keep server-rendered hidden projects hidden before Datastar initializes. */
+.ts-spending-project[hidden],
+.ts-spending-databases[hidden] {
+  display: none;
+}
+
+.ts-spending-fields {
+  padding: 0;
+  border: 0;
+}
+
+.ts-spending-fields:disabled .ts-input {
+  cursor: not-allowed;
+}
+
+.ts-spending-identity {
+  display: flex;
+  align-items: center;
+  gap: var(--ts-s2);
+  min-width: 0;
+}
+
+.ts-spending-identity > svg {
+  flex: none;
+  color: var(--ts-ink-3);
+}
+
+.ts-spending-organization-price {
+  max-width: 320px;
+}
+
+.ts-spending-limit-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--ts-s4);
+}
+
+.ts-spending-limit-grid .ts-field {
+  min-width: 0;
+}
+
+.ts-spending-price,
+.ts-spending-select {
+  position: relative;
+  min-width: 0;
+}
+
+.ts-spending-price > span,
+.ts-spending-select > svg {
+  position: absolute;
+  inset-inline-start: var(--ts-s3);
+  top: 50%;
+  transform: translateY(-50%);
+  pointer-events: none;
+  color: var(--ts-ink-3);
+}
+
+.ts-spending-price > .ts-input,
+.ts-spending-select > .ts-select {
+  padding-inline-start: var(--ts-s8);
+}
+
+.ts-spending-select {
+  max-width: 400px;
+}
+
+.ts-spending-select > .ts-select {
+  width: 100%;
+  padding-inline-start: var(--ts-s10);
+}
+
+.ts-spending-excess {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ts-s6);
+  padding-block-start: var(--ts-s4);
+  border-block-start: 1px solid var(--ts-line);
+  cursor: pointer;
+}
+
+.ts-spending-excess > input {
+  appearance: none;
+  position: relative;
+  flex: none;
+  width: 40px;
+  height: 24px;
+  border: 1px solid var(--ts-control-line);
+  border-radius: var(--ts-radius-pill);
+  background: var(--ts-surface-3);
+  cursor: pointer;
+}
+
+.ts-spending-excess > input::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 16px;
+  height: 16px;
+  border-radius: var(--ts-radius-pill);
+  background: var(--ts-ink-2);
+  transition: transform var(--ts-fast) var(--ts-ease);
+}
+
+.ts-spending-excess > input:checked {
+  border-color: var(--ts-accent);
+  background: var(--ts-accent-fill);
+}
+
+.ts-spending-excess > input:checked::after {
+  transform: translateX(16px);
+  background: var(--ts-on-accent);
+}
+
+.ts-spending-database + .ts-spending-database {
+  padding-block-start: var(--ts-s5);
+  border-block-start: 1px solid var(--ts-line);
+}
+
+.ts-spending-actions {
+  padding-block-start: var(--ts-s5);
+  border-block-start: 1px solid var(--ts-line);
+}
+
+@container page (width < 1100px) {
+  .ts-spending-limit-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@container page (width < 768px) {
+  .ts-spending-form > .ts-card {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--ts-s4);
+  }
+}
+
+@container page (width < 400px) {
+  .ts-spending-limit-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ts-spending-actions > .ts-btn {
+    width: 100%;
+  }
 }

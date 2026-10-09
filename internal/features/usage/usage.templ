@@ -5,6 +5,7 @@ import (
 	"net/url"
 	"strings"
 
+	"terrascale.tech/dashboard/internal/core"
 	"terrascale.tech/dashboard/internal/ui"
 	"terrascale.tech/dashboard/internal/ui/aria"
 	"terrascale.tech/dashboard/internal/ui/charts"
@@ -26,10 +27,14 @@ templ usageView(data pageData, csrfToken string) {
 			}
 		</div>
 		if data.Saved == "ok" {
-			@ui.Alert("success", "", "Spending controls saved.")
+			<div class="ts-spending-notice" data-signals="{spendingSaved: true}" data-attr:hidden="!$spendingSaved">
+				@ui.Alert("success", "Changes saved", "Spending controls saved.") {
+					<button class="ts-icon-btn" type="button" aria-label="Dismiss save confirmation" data-on:click="$spendingSaved = false">@icons.X(16)</button>
+				}
+			</div>
 		}
 		if data.Saved == "invalid" {
-			@ui.Alert("danger", "", "Enter a non-negative dollar amount with at most two decimal places.")
+			@ui.Alert("danger", "", "Enter a non-negative dollar amount with at most two decimal places, and whole numbers for operation limits.")
 		}
 		if data.BillingNotice != "" {
 			@ui.Alert("info", "", data.BillingNotice)
@@ -508,51 +513,121 @@ func billingChangeAction(data pageData) string {
 }
 
 templ spendingControlsTab(data pageData, csrfToken string) {
+	<div class="ts-spending-heading">
+		<div class="ts-stack-sm">
+			<h2 class="ts-spending-title">Spending controls</h2>
+			<p class="ts-meta">Manage monthly budgets and operation limits across your organization.</p>
+		</div>
+		@ui.Badge("info", data.PlanName + " plan")
+	</div>
 	if data.InternalBill != nil {
 		@ui.Alert("info", "Report-only spending cap", "Internal caps only report alerts. They never charge Stripe, restrict writes or suspend services.")
 	}
-	@ui.Card(ui.CardProps{ID: "spending-controls", Title: "Spending controls", Description: "The tightest configured limit applies to each database."}) {
-		if data.CanManage {
-			<form class="ts-form" method="post" action="/api/v1/dashboard/usage/spending-controls">
-				<input type="hidden" name="_csrf" value={ csrfToken }/>
-				<div class="ts-form-grid ts-usage-caps">
-					@ui.Field(ui.FieldProps{ID: "organization-spend-cap", Label: "Monthly organization spending cap in USD"}) {
-						@capInput("organization-spend-cap", "spendCap", data.OrganizationCap)
-					}
+	if !data.CanManage {
+		@ui.Alert("info", "View-only access", "Only organization owners and admins can change spending controls.")
+	}
+	<form id="spending-controls" class="ts-spending-form" method="post" action="/api/v1/dashboard/usage/spending-controls" data-submit-once data-signals={ spendingSignals(data.SelectedProject) } data-on:invalid__capture="$spendingProject = el.querySelector('input:invalid')?.closest('[data-project-id]')?.dataset.projectId || $spendingProject">
+		<input type="hidden" name="_csrf" value={ csrfToken }/>
+		@ui.Card(ui.CardProps{ID: "organization-controls", Title: "Organization", Description: "Set the monthly budget shared by all projects and databases."}) {
+			<fieldset class="ts-spending-fields" disabled?={ !data.CanManage }>
+				<legend class="ts-sr-only">Organization spending limits</legend>
+				<div class="ts-spending-identity">
+					@icons.Building2(20)
+					<strong class="ts-break">{ data.OrganizationName }</strong>
+				</div>
+				<div class="ts-spending-organization-price">
+					@spendingPrice("organization-spend-cap", "spendCap", data.OrganizationCap)
 				</div>
 				if data.InternalBill == nil {
-				<label class="ts-check"><input class="ts-checkbox" type="checkbox" name="paidExcess" value="true" checked?={ data.PaidExcess }/><span>Allow usage beyond included plan resources</span></label>
-			}
-				<div class="ts-card-section">
-					<h3 class="ts-section-title">Project caps</h3>
-					<div class="ts-form-grid ts-usage-caps">
-						for _, project := range data.Projects {
-							@ui.Field(ui.FieldProps{ID: "project-spend-cap-" + project.ID, Label: project.Name + " project cap in USD", Hint: "Effective: " + project.Effective}) {
-								@capInput("project-spend-cap-"+project.ID, "projCap_"+project.ID, project.SpendCap)
-							}
-						}
-					</div>
-				</div>
-				<div class="ts-card-section">
-					<h3 class="ts-section-title">Database caps</h3>
-					<div class="ts-form-grid ts-usage-caps">
-						for _, database := range data.Databases {
-							@ui.Field(ui.FieldProps{ID: "database-spend-cap-" + database.ID, Label: database.Name + " database cap in USD", Hint: "Effective: " + database.Effective}) {
-								@capInput("database-spend-cap-"+database.ID, "dbCap_"+database.ID, database.SpendCap)
-							}
-						}
-					</div>
-				</div>
-				<div class="ts-form-actions"><button class="ts-btn ts-btn-primary" type="submit">Save spending controls</button></div>
-			</form>
-		} else {
-			<p class="ts-meta">Only organization owners and admins can change spending controls.</p>
+					<label class="ts-spending-excess" for="paid-excess">
+						<span class="ts-stack-sm"><strong>Allow usage beyond included plan resources</strong><span class="ts-hint" id="paid-excess-hint">Additional usage is billed according to your plan.</span></span>
+						<input class="ts-checkbox" id="paid-excess" type="checkbox" role="switch" name="paidExcess" value="true" checked?={ data.PaidExcess } aria-describedby="paid-excess-hint"/>
+					</label>
+				}
+			</fieldset>
 		}
+		@ui.Card(ui.CardProps{ID: "project-controls", Title: "Project", Description: "Choose a project and configure its price and operation limits."}) {
+			@ui.Field(ui.FieldProps{ID: "spending-project", Label: "Select project"}) {
+				<div class="ts-spending-select">
+					@icons.FolderOpen(18)
+					<select class="ts-select" id="spending-project" name="project" data-bind="spendingProject" disabled?={ len(data.SpendingProjects) == 0 }>
+						if len(data.SpendingProjects) == 0 {
+							<option value="">No projects yet</option>
+						}
+						for _, project := range data.SpendingProjects {
+							<option value={ project.ID } selected?={ project.ID == data.SelectedProject }>{ project.Name }</option>
+						}
+					</select>
+				</div>
+			}
+			for _, project := range data.SpendingProjects {
+				<div class="ts-spending-project" data-project-id={ project.ID } hidden?={ project.ID != data.SelectedProject } data-attr:hidden="$spendingProject !== el.dataset.projectId">
+					<fieldset class="ts-spending-fields" disabled?={ !data.CanManage }>
+						<legend class="ts-sr-only">{ project.Name + " project limits" }</legend>
+						@spendingLimitFields("project", "proj", project.ID, project.SpendCap, project.Operations)
+					</fieldset>
+					<p class="ts-hint">Current effective price limit: <strong>{ project.Effective }</strong>. The lowest organization or project price limit applies.</p>
+				</div>
+			}
+		}
+		@ui.Card(ui.CardProps{ID: "database-controls", Title: "Databases", Description: "Fine-tune limits for individual databases in the selected project."}) {
+			if len(data.SpendingProjects) == 0 {
+				@ui.Empty("No databases yet", "Create a project and database to configure database spending controls.")
+			}
+			for _, project := range data.SpendingProjects {
+				<div class="ts-spending-databases" data-project-id={ project.ID } hidden?={ project.ID != data.SelectedProject } data-attr:hidden="$spendingProject !== el.dataset.projectId">
+					if len(project.Databases) == 0 {
+						@ui.Empty("No databases yet", "Create a database in this project to configure its spending controls.") {
+							<a class="ts-link" href={ "/databases?project=" + url.QueryEscape(project.ID) }>View databases</a>
+						}
+					}
+					for _, database := range project.Databases {
+						<fieldset class="ts-spending-database ts-spending-fields" disabled?={ !data.CanManage }>
+							<legend class="ts-sr-only">{ database.Name + " database limits" }</legend>
+							<div class="ts-spending-database-heading">
+								<div class="ts-spending-identity">@icons.Database(18)<h3 class="ts-section-title ts-break">{ database.Name }</h3></div>
+								@ui.Badge("neutral", database.Region)
+							</div>
+							@spendingLimitFields("database", "db", database.ID, database.SpendCap, database.Operations)
+							<p class="ts-hint">Current effective price limit: <strong>{ database.Effective }</strong>. The lowest organization, project or database price limit applies.</p>
+						</fieldset>
+					}
+				</div>
+			}
+		}
+		<div class="ts-spending-actions">
+			<p class="ts-hint">Limits reset monthly. Leave a field empty or enter 0 for no limit.</p>
+			if data.CanManage {
+				<button class="ts-btn ts-btn-primary" type="submit">@icons.Save(16)<span>Save spending controls</span></button>
+			}
+		</div>
+	</form>
+}
+
+templ spendingLimitFields(kind, prefix, id, price string, operations core.OperationLimits) {
+	<div class="ts-spending-limit-grid">
+		@spendingPrice(kind+"-spend-cap-"+id, prefix+"Cap_"+id, price)
+		@spendingOperation(kind+"-read-limit-"+id, prefix+"Read_"+id, "Read Limit", "Reads per month", operations.ReadLimit)
+		@spendingOperation(kind+"-write-limit-"+id, prefix+"Write_"+id, "Write Limit", "Writes per month", operations.WriteLimit)
+		@spendingOperation(kind+"-replication-limit-"+id, prefix+"Replication_"+id, "Replication Limit", "Replications per month", operations.ReplicationLimit)
+	</div>
+}
+
+templ spendingPrice(id, name, value string) {
+	{{ field := ui.FieldProps{ID: id, Label: "Price limit (USD)", Hint: "USD per month"} }}
+	@ui.Field(field) {
+		<div class="ts-spending-price">
+			<span aria-hidden="true">$</span>
+			<input class="ts-input" id={ id } name={ name } inputmode="decimal" pattern="\d+(\.\d{1,2})?" value={ value } placeholder="No limit" { field.ControlAttrs()... }/>
+		</div>
 	}
 }
 
-templ capInput(id, name, value string) {
-	<input class="ts-input" id={ id } name={ name } inputmode="decimal" pattern="\d+(\.\d{1,2})?" value={ value }/>
+templ spendingOperation(id, name, label, hint string, value int64) {
+	{{ field := ui.FieldProps{ID: id, Label: label, Hint: hint} }}
+	@ui.Field(field) {
+		<input class="ts-input" id={ id } name={ name } inputmode="numeric" pattern="\d+" value={ operationValue(value) } placeholder="No limit" { field.ControlAttrs()... }/>
+	}
 }
 
 func usageTabHref(tab, project string) string {
