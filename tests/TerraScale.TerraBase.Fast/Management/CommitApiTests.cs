@@ -261,6 +261,7 @@ public sealed class CommitApiTests
         // Dashboard documents need the trusted service: the management service credential acting as the user.
         using var service = api.Service(api.User);
         var organization = await api.CreateOrganizationAsync(OrganizationName());
+        await api.SetPlanAsync(api.User, organization, "enterprise");
         var version = await VersionAsync(service, organization);
         var documents = Enumerable.Range(0, 8).Select(_ => NewId()).ToList();
 

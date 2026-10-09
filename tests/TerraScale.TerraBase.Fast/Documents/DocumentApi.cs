@@ -72,7 +72,7 @@ internal sealed class DocumentApi : IAsyncDisposable
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var management = await ManagementApi.StartAsync(configure, services);
+        var management = await ManagementApi.StartAsync(configure, services, managementCredential: true);
         Tenant? tenant = null;
         try
         {

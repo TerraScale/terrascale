@@ -25,10 +25,11 @@ public sealed class SubscriptionAdmissionTests
         var writes = new BlockedWrites(128);
         // This is a logical reservation budget, not an allocation: each real snapshot contains one small document.
         await using var api = await ManagementApi.StartAsync(
-            settings => settings["memory-budget"] = "17179869184", services: writes.Install, time: clock);
+            settings => settings["memory-budget"] = "17179869184", services: writes.Install, time: clock, managementCredential: true);
         using var deadline = Deadline();
         using var resources = new SubscriptionResources(api);
         var (database, text) = await SeedAsync(api, deadline.Token);
+        await api.SetPlanAsync(api.User, database.Organization, "enterprise", deadline.Token);
         await resources.WaitForCleanupAsync(null, deadline.Token);
         var baseline = resources.Reserved;
         using var client = Subscriber(api, database, clock);

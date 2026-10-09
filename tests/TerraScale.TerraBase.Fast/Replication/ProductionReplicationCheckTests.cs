@@ -11,7 +11,9 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using TerraBase.Features.Management;
 using TerraBase.Features.Management.Usage;
+using TerraBase.Tenancy;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Replication;
@@ -99,6 +101,7 @@ public sealed class ProductionReplicationCheckTests
             var faker = new Faker();
             var databases = InvalidConfigurations.ToDictionary(fault => fault, _ => "check-" + faker.Random.AlphaNumeric(8).ToLowerInvariant());
             var tenant = await ReplicationTenant.CreateAsync(server, [.. databases.Values], token);
+            await server.Services.GetRequiredService<IManagementService>().SetPlanAsync(tenant.UserId, tenant.OrganizationId, PlanTier.Enterprise, token);
             var secret = await tenant.KeyAsync(server, ["documents:read", "documents:write"], token);
             var member = server.ClientAddress!.Authority;
             using var certificate = tls.LoadServerCertificate();
@@ -533,7 +536,7 @@ public sealed class ProductionReplicationCheckTests
         private string Tools => Path.Combine(_directory, "bin");
 
         // The token is the test's deadline: it bounds provisioning and readiness (see TestDeadline for startup).
-        public async Task StartAsync(IReadOnlyList<string> scenarios, CancellationToken token)
+        public async Task StartAsync(string[] scenarios, CancellationToken token)
         {
             var primaryPort = TerraBaseTestServer.FreePort();
             var followerPort = TerraBaseTestServer.FreePort();
@@ -577,6 +580,10 @@ public sealed class ProductionReplicationCheckTests
             }
 
             var tenant = _tenant = await ReplicationTenant.CreateAsync(primary, [.. _databases.Values], token);
+            if (scenarios.Length > 1)
+            {
+                await primary.Services.GetRequiredService<IManagementService>().SetPlanAsync(tenant.UserId, tenant.OrganizationId, PlanTier.Enterprise, token);
+            }
             _secret = await tenant.KeyAsync(primary, ["documents:read", "documents:write"], token);
             using var reader = _tls.CreateClient(follower.ClientAddress!, _secret);
             // No fixture catalog copying or second key: the follower must serve the primary's catalog and key.

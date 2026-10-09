@@ -91,3 +91,12 @@ closed. Nothing is forcibly closed. An admitted copy can need further SQLite cal
 | `terrabase.storage.admitted` | Storage transactions and maintenance calls admitted |
 | `terrabase.storage.rejected` | Storage work rejected as busy (full admission or a 30 s writer wait), each a `503` |
 | `terrabase.storage.running` | SQLite calls running on the storage threads |
+
+## Organization shares
+
+[Organization QoS](qos.md) admits foreground request bodies, materialized results and retained cache
+entries against both process capacity and the current organization plan. CLOCK cache eviction is
+confined to the organization's partition, with a global 4096-entry and quarter-process byte ceiling.
+Downgrades trim retained entries before admitting the next request. Null/system reservations retain
+process limits without a commercial share. Shape responses share reference-counted result admission
+through each consumer's serialization; subscriptions release each event's result admission after flush.

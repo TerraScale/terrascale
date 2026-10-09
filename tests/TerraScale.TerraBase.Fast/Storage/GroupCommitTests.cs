@@ -1,11 +1,14 @@
 using System.Collections.Concurrent;
 using System.Net;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
 using TerraBase.Engine.Sqlite;
 using TerraBase.Fast.Documents;
+using TerraBase.Fast.Management;
+using TerraBase.Tenancy;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Storage;
@@ -15,9 +18,130 @@ namespace TerraBase.Fast.Storage;
 public sealed class GroupCommitTests
 {
     [Test]
+    public async Task Cancelling_a_native_mutation_rolls_back_only_its_grouped_write_and_reuses_admission()
+    {
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
+        deadline.CancelAfter(TimeSpan.FromSeconds(60));
+        using var cancel = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token);
+        using var release = new ManualResetEventSlim();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var aborted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var cancelledId = DocumentApi.NewId();
+        var hook = new UsageCommitHook();
+        await using var api = await DocumentApi.StartAsync(settings => settings["storage-queue"] = "6", services =>
+        {
+            services.AddHttpContextAccessor();
+            hook.InstallQuota(services);
+        }, deadline.Token);
+        await api.Management.SetPlanAsync(api.Tenant.User, api.Tenant.OrganizationId, "enterprise");
+        var store = await StoreAsync(api);
+        var engine = api.Server.Services.GetRequiredService<SqliteStorageEngine>();
+        var context = api.Server.Services.GetRequiredService<IHttpContextAccessor>();
+        CancellationTokenRegistration cancellationObserved = default;
+        hook.BeforeDocumentQuota = (_, token) =>
+        {
+            if (context.HttpContext!.Request.Path.Value!.EndsWith("/" + cancelledId, StringComparison.Ordinal))
+            {
+                // Registered before the mutation's native cancellation callback: LIFO cancellation means
+                // the signal arrives only after that callback has finished calling sqlite3_interrupt.
+                cancellationObserved = token.Register(() => aborted.TrySetResult());
+            }
+
+            return ValueTask.CompletedTask;
+        };
+
+        var session = engine.Pool.Rent(store) ?? throw new InvalidOperationException("the database has no idle session");
+        try
+        {
+            session.Connection.CreateFunction<string, int>("qos_pause_insert", id =>
+            {
+                if (id == cancelledId)
+                {
+                    entered.TrySetResult();
+                    release.Wait(deadline.Token);
+                }
+
+                return 0;
+            });
+            using var trigger = session.Connection.CreateCommand();
+            trigger.CommandText = "CREATE TEMP TRIGGER qos_pause_insert BEFORE INSERT ON documents BEGIN SELECT qos_pause_insert(NEW.id); END;";
+            trigger.ExecuteNonQuery();
+        }
+        finally
+        {
+            engine.Pool.Return(store, session);
+        }
+
+        var pending = new List<Task<HttpResponseMessage>>();
+        IStorageTransaction? held = await store.BeginTransactionAsync(write: true, deadline.Token);
+        try
+        {
+            Task<HttpResponseMessage> Put(string id, CancellationToken token)
+            {
+                return api.Client.PutAsJsonAsync(new Uri($"{api.Documents}/by-key?id={id}", UriKind.Relative), new { n = 1 }, token);
+            }
+
+            var primer = Put(DocumentApi.NewId(), deadline.Token);
+            pending.Add(primer);
+            await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(store.BatchedWrites == 1));
+            var firstId = DocumentApi.NewId();
+            var lastId = DocumentApi.NewId();
+            var first = Put(firstId, deadline.Token);
+            pending.Add(first);
+            await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(store.QueuedWrites == 1));
+            var cancelled = Put(cancelledId, cancel.Token);
+            pending.Add(cancelled);
+            await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(store.QueuedWrites == 2));
+            var last = Put(lastId, deadline.Token);
+            pending.Add(last);
+            await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(store.QueuedWrites == 3));
+            await held.DisposeAsync();
+            held = null;
+
+            await entered.Task.WaitAsync(deadline.Token);
+            await cancel.CancelAsync();
+            await aborted.Task.WaitAsync(deadline.Token);
+            release.Set();
+            await Assert.ThrowsAsync<TaskCanceledException>(() => cancelled);
+            using var primed = await primer.WaitAsync(deadline.Token);
+            using var firstResponse = await first.WaitAsync(deadline.Token);
+            using var lastResponse = await last.WaitAsync(deadline.Token);
+            await Assert.That(primed.StatusCode).IsEqualTo(HttpStatusCode.Created);
+            await Assert.That(firstResponse.StatusCode).IsEqualTo(HttpStatusCode.Created);
+            await Assert.That(lastResponse.StatusCode).IsEqualTo(HttpStatusCode.Created);
+            var firstBody = await firstResponse.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>(deadline.Token);
+            var lastBody = await lastResponse.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>(deadline.Token);
+            await Assert.That(firstBody.GetProperty("offset").GetString()).IsEqualTo(lastBody.GetProperty("offset").GetString());
+            await Assert.That((await api.GetAsync(firstId)).Status).IsEqualTo(HttpStatusCode.OK);
+            await Assert.That((await api.GetAsync(lastId)).Status).IsEqualTo(HttpStatusCode.OK);
+            await Assert.That((await api.GetAsync(cancelledId)).Status).IsEqualTo(HttpStatusCode.NotFound);
+            await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(engine.Io.Admitted == 0));
+            await Assert.That((await api.PutAsync(DocumentApi.NewId(), new { n = 2 })).Status).IsEqualTo(HttpStatusCode.Created);
+            await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(engine.Io.Admitted == 0));
+        }
+        finally
+        {
+            release.Set();
+            await cancel.CancelAsync();
+            if (held is not null)
+            {
+                await held.DisposeAsync();
+            }
+
+            foreach (var request in pending)
+            {
+                await StoragePoolTests.DisposeResponseAsync(request);
+            }
+
+            cancellationObserved.Dispose();
+        }
+    }
+
+    [Test]
     public async Task Writes_queued_together_commit_in_one_transaction_and_failures_roll_back_alone()
     {
         await using var api = await DocumentApi.StartAsync();
+        await api.Management.SetPlanAsync(api.Tenant.User, api.Tenant.OrganizationId, "enterprise");
         var existing = DocumentApi.NewId();
         var original = await api.PutAsync(existing, new { n = 0 });
         var store = await StoreAsync(api);
@@ -78,6 +202,7 @@ public sealed class GroupCommitTests
             services.AddKeyedSingleton<TimeProvider>(EngineExtensions.QueryDeadlineClock, clock);
             services.AddSingleton<ILoggerProvider>(logs);
         });
+        await api.Management.SetPlanAsync(api.Tenant.User, api.Tenant.OrganizationId, "enterprise");
         var store = await StoreAsync(api);
 
         // A write transaction holds the writer, idle between its calls, while a batch waits past the warning threshold.
@@ -103,6 +228,7 @@ public sealed class GroupCommitTests
     public async Task A_rolled_back_write_restores_what_an_earlier_write_of_its_batch_captured()
     {
         await using var api = await DocumentApi.StartAsync();
+        await api.Management.SetPlanAsync(api.Tenant.User, api.Tenant.OrganizationId, "enterprise");
         var existing = DocumentApi.NewId();
         await api.PutAsync(existing, new { n = 0 });
         var store = await StoreAsync(api);
@@ -159,6 +285,7 @@ public sealed class GroupCommitTests
     public async Task A_storage_thread_busy_with_a_long_read_does_not_hold_up_writes()
     {
         await using var api = await DocumentApi.StartAsync(settings => settings["storage-threads"] = "1");
+        await api.Management.SetPlanAsync(api.Tenant.User, api.Tenant.OrganizationId, "enterprise");
         await Assert.That((await api.PutAsync(DocumentApi.NewId(), new { n = 0 })).Status).IsEqualTo(HttpStatusCode.Created);
         var engine = api.Server.Services.GetRequiredService<SqliteStorageEngine>();
 

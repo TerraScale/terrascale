@@ -21,7 +21,7 @@ public sealed class PointInTimePlanTests
         using var oci = new FakeOci();
         var time = Clock();
         var probe = new StorageProbe();
-        await using var api = await ManagementApi.StartAsync(oci.Configure, services => Route(oci, probe, services), time);
+        await using var api = await ManagementApi.StartAsync(oci.Configure, services => Route(oci, probe, services), time, managementCredential: true);
         await api.Server.Services.GetRequiredService<IContinuousBackup>().RunOnceAsync(CancellationToken.None);
         var database = await api.CreateManagedDatabaseAsync();
         await api.VerifyProjectBindingAsync(database.Organization, database.Project);
@@ -77,9 +77,9 @@ public sealed class PointInTimePlanTests
         using var oci = new FakeOci();
         var time = Clock();
         var probe = new StorageProbe();
-        await using var api = await ManagementApi.StartAsync(oci.Configure, services => Route(oci, probe, services), time);
+        await using var api = await ManagementApi.StartAsync(oci.Configure, services => Route(oci, probe, services), time, managementCredential: true);
         var database = await api.CreateManagedDatabaseAsync();
-        (await api.Client.PutAsJsonAsync(Uri($"/v1/management/organizations/{database.Organization}/plan"), new { plan = "pro" })).EnsureSuccessStatusCode();
+        await api.SetPlanAsync(api.User, database.Organization, "pro");
         using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
         await ManagementApi.CreateCollectionAsync(data, database, "people");
         var text = new Faker().Lorem.Sentence();
@@ -233,7 +233,7 @@ public sealed class PointInTimePlanTests
         using var oci = new FakeOci();
         var time = Clock();
         var probe = new StorageProbe();
-        await using var api = await ManagementApi.StartAsync(oci.Configure, services => Route(oci, probe, services), time);
+        await using var api = await ManagementApi.StartAsync(oci.Configure, services => Route(oci, probe, services), time, managementCredential: true);
         // Finish startup discovery before creating the database; its LastShipped stays null without another pass.
         await api.Server.Services.GetRequiredService<IContinuousBackup>().RunOnceAsync(CancellationToken.None);
         var database = await api.CreateManagedDatabaseAsync();
@@ -291,7 +291,7 @@ public sealed class PointInTimePlanTests
         using var oci = new FakeOci();
         var time = Clock();
         var probe = new StorageProbe();
-        await using var api = await ManagementApi.StartAsync(oci.Configure, services => Route(oci, probe, services), time);
+        await using var api = await ManagementApi.StartAsync(oci.Configure, services => Route(oci, probe, services), time, managementCredential: true);
         await api.Server.Services.GetRequiredService<IContinuousBackup>().RunOnceAsync(CancellationToken.None);
         var database = await api.CreateManagedDatabaseAsync();
         var first = time.GetUtcNow().AddSeconds(-4);
@@ -338,7 +338,7 @@ public sealed class PointInTimePlanTests
         using var oci = new FakeOci();
         var time = Clock();
         var probe = new StorageProbe { NetworkFailure = network };
-        await using var api = await ManagementApi.StartAsync(oci.Configure, services => Route(oci, probe, services), time);
+        await using var api = await ManagementApi.StartAsync(oci.Configure, services => Route(oci, probe, services), time, managementCredential: true);
         await api.Server.Services.GetRequiredService<IContinuousBackup>().RunOnceAsync(CancellationToken.None);
         var database = await api.CreateManagedDatabaseAsync();
         var at = time.GetUtcNow();
@@ -368,7 +368,7 @@ public sealed class PointInTimePlanTests
         using var oci = new FakeOci();
         var time = Clock();
         var probe = new StorageProbe();
-        await using var api = await ManagementApi.StartAsync(oci.Configure, services => Route(oci, probe, services), time);
+        await using var api = await ManagementApi.StartAsync(oci.Configure, services => Route(oci, probe, services), time, managementCredential: true);
         var database = await api.CreateManagedDatabaseAsync();
         var backup = api.Server.Services.GetRequiredService<IContinuousBackup>();
         time.Advance(TimeSpan.FromSeconds(10));
@@ -394,7 +394,7 @@ public sealed class PointInTimePlanTests
         using var oci = new FakeOci();
         var time = Clock();
         var probe = new StorageProbe();
-        await using var api = await ManagementApi.StartAsync(oci.Configure, services => Route(oci, probe, services), time);
+        await using var api = await ManagementApi.StartAsync(oci.Configure, services => Route(oci, probe, services), time, managementCredential: true);
         var database = await api.CreateManagedDatabaseAsync();
         await api.Server.Services.GetRequiredService<IContinuousBackup>().RunOnceAsync(CancellationToken.None);
         probe.BlockPrefix = File(database) + "/snapshots/";

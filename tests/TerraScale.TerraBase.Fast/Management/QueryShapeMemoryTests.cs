@@ -7,6 +7,7 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Features.Management.Queries;
 using TerraBase.Features.Memory;
+using TerraBase.Features.Qos;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
@@ -154,9 +155,11 @@ public sealed class QueryShapeMemoryTests
 
         public ObservedReservation[] Active => [.. Reservations.Where(reservation => reservation.Active)];
 
-        public IMemoryReservation? TryReserve(MemoryLane lane, long bytes)
+        public IMemoryReservation? TryReserve(MemoryLane lane, long bytes) => TryReserve(lane, bytes, QosContext.Current);
+
+        public IMemoryReservation? TryReserve(MemoryLane lane, long bytes, TenantContext? tenant)
         {
-            if (inner.TryReserve(lane, bytes) is not { } admitted)
+            if (inner.TryReserve(lane, bytes, tenant) is not { } admitted)
             {
                 return null;
             }

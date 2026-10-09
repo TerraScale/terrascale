@@ -14,6 +14,7 @@ using TerraBase.Features.ApiKeys;
 using TerraBase.Features.Management;
 using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Memory;
+using TerraBase.Features.Qos;
 using TerraBase.Features.Replication;
 using TerraBase.Features.Replication.V1;
 using TerraBase.Primitives;
@@ -63,7 +64,7 @@ public sealed class CatalogForwardingTests
         using var jwt = tls.CreateClient(follower.ClientAddress!, Token(project, allScopes));
         using (var created = await jwt.PostAsJsonAsync(Relative(databases), new { name = "main" }))
         {
-            await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created);
+            await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created).Because(await created.Content.ReadAsStringAsync());
             await Assert.That(created.Headers.Location?.OriginalString).IsEqualTo(database);
             await Assert.That((await created.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("projectId").GetString()).IsEqualTo(project);
         }
@@ -636,7 +637,7 @@ public sealed class CatalogForwardingTests
         {
             content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
             using var large = await client.PatchAsync(Relative("/v1/management/organizations/large?expand=1"), content);
-            await Assert.That(large.StatusCode).IsEqualTo(HttpStatusCode.OK);
+            await Assert.That(large.StatusCode).IsEqualTo(HttpStatusCode.OK).Because(await large.Content.ReadAsStringAsync());
             await Assert.That(large.Headers.GetValues("X-Relayed").Single()).IsEqualTo("1");
             await Assert.That(large.Headers.ConnectionClose ?? false).IsFalse();
             await Assert.That((await large.Content.ReadAsByteArrayAsync()).SequenceEqual(body)).IsTrue();
@@ -1105,8 +1106,10 @@ public sealed class CatalogForwardingTests
     {
         public bool Refuse { get; set; }
 
-        public IMemoryReservation? TryReserve(MemoryLane lane, long bytes) =>
-            Refuse && lane == MemoryLane.Replication && bytes > 4096 ? null : inner.TryReserve(lane, bytes);
+        public IMemoryReservation? TryReserve(MemoryLane lane, long bytes) => TryReserve(lane, bytes, QosContext.Current);
+
+        public IMemoryReservation? TryReserve(MemoryLane lane, long bytes, TenantContext? tenant) =>
+            Refuse && lane == MemoryLane.Replication && bytes > 4096 ? null : inner.TryReserve(lane, bytes, tenant);
     }
 
     // Delivers every batch, but fails the first call as if its acknowledgement had been lost.

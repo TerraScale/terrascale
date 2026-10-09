@@ -65,10 +65,15 @@ internal sealed partial class SqliteStorageTransaction
                     return new CollectionChangePage(changes, HasMore: true);
                 }
 
+                if (reader.IsDBNull(4))
+                {
+                    ReserveJson(0);
+                }
+
                 var offset = reader.GetInt64(0);
                 var deleted = reader.IsDBNull(4);
                 var document = new StoredDocument(reader.GetString(2), reader.GetInt64(3),
-                    deleted ? ReadOnlyMemory<byte>.Empty : ReadShapeJson(reader, 4), Scope, Deleted: deleted, HistoryOffset: offset);
+                    deleted ? ReadOnlyMemory<byte>.Empty : ReadShapeJson(reader, 4, reader.GetInt64(6)), Scope, Deleted: deleted, HistoryOffset: offset);
                 changes.Add(new CollectionChange(offset, reader.GetInt64(1), document));
                 bytes += size;
             }

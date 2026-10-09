@@ -4,6 +4,7 @@ using TerraBase.Features.Management.Indexes;
 using TerraBase.Features.Management.Queries;
 using TerraBase.Features.Management.Schema;
 using TerraBase.Features.Management.Usage;
+using TerraBase.Features.Qos;
 using TerraBase.Features.Replication;
 using TerraBase.Tenancy;
 
@@ -23,6 +24,7 @@ public static class ManagementExtensions
         // Commits apply document operations; the document service reaches the catalog back through usage metering.
         services.AddSingleton(provider => new Lazy<IDocumentService>(provider.GetRequiredService<IDocumentService>));
         services.AddSingleton(provider => new Lazy<IQueryShapeTracker>(provider.GetRequiredService<IQueryShapeTracker>));
+        services.AddSingleton(provider => new Lazy<IStorageQuota>(provider.GetRequiredService<IStorageQuota>));
         services.AddHostedService(provider => provider.GetRequiredService<EngineManagementService>());
         services.AddSingleton<IManagementService>(provider => provider.GetRequiredService<EngineManagementService>());
         services.AddSingleton<IProjectCatalog>(provider => provider.GetRequiredService<EngineManagementService>());

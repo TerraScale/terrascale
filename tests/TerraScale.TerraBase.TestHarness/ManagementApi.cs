@@ -126,6 +126,14 @@ public sealed class ManagementApi : IAsyncDisposable
         return client;
     }
 
+    /// <summary>Publishes a resource plan through the trusted service listener, retaining owner authorization.</summary>
+    public async Task SetPlanAsync(string user, string organization, string plan, CancellationToken cancellationToken = default)
+    {
+        using var service = Service(user);
+        using var response = await service.PutAsJsonAsync(Uri($"/v1/management/organizations/{organization}/plan"), new { plan }, cancellationToken);
+        response.EnsureSuccessStatusCode();
+    }
+
     /// <summary>A client that sends <paramref name="token"/> as its bearer token, or no token when it is null.</summary>
     public HttpClient WithToken(string? token) => Tls.CreateClient(Server.ClientAddress!, token);
 

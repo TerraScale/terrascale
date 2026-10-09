@@ -61,8 +61,9 @@ public sealed class CredentialApiTests
     public async Task Keys_created_at_one_timestamp_paginate_in_committed_creation_order()
     {
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 4, 10, 30, 0, TimeSpan.Zero));
-        await using var api = await ManagementApi.StartAsync(time: time);
+        await using var api = await ManagementApi.StartAsync(time: time, managementCredential: true);
         var database = await api.CreateManagedDatabaseAsync();
+        await api.SetPlanAsync(api.User, database.Organization, "enterprise");
         var path = database.ProjectPath + "/api-keys";
         var issued = new List<string>();
         for (var i = 0; i < 16; i++)

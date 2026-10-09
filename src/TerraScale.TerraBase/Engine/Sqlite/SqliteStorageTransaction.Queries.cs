@@ -4,7 +4,6 @@ using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Microsoft.Data.Sqlite;
-using SQLitePCL;
 
 namespace TerraBase.Engine.Sqlite;
 
@@ -23,13 +22,22 @@ internal sealed partial class SqliteStorageTransaction
 
     public ValueTask<long> CountDocumentsAsync(string collection, CancellationToken cancellationToken) =>
         RunAsync(() => WithQueryBudget(() =>
-            (long)Command(SqliteStatements.CountDocuments, collection).ExecuteScalar()!, cancellationToken), cancellationToken);
+        {
+            using var command = Uncached(collection);
+            command.CommandText = ScansLimited
+                ? "SELECT count(*) FROM documents WHERE collection = $collection AND body IS NOT NULL AND tb_qos_scan(octet_length(body));"
+                : SqliteStatements.CountDocuments;
+            return (long)command.ExecuteScalar()!;
+        }, cancellationToken), cancellationToken);
 
     public ValueTask<IReadOnlyList<CollectionStats>> ListCollectionStatsAsync(CancellationToken cancellationToken) =>
         RunAsync(() => WithQueryBudget<IReadOnlyList<CollectionStats>>(() =>
         {
             var collections = new List<CollectionStats>();
-            using var reader = session.Command(SqliteStatements.ListCollectionStats, transaction).ExecuteReader();
+            using var command = PlainCommand(ScansLimited
+                ? SqliteStatements.ListCollectionStats.Replace("documents.body IS NOT NULL", "documents.body IS NOT NULL AND tb_qos_scan(octet_length(documents.body))", StringComparison.Ordinal)
+                : SqliteStatements.ListCollectionStats);
+            using var reader = command.ExecuteReader();
             while (reader.Read())
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -157,25 +165,16 @@ internal sealed partial class SqliteStorageTransaction
         """);
         using (command)
         {
-            raw.sqlite3_progress_handler(session.Connection.Handle, 1000, _ => cancellationToken.IsCancellationRequested ? 1 : 0, null);
             try
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 command.ExecuteNonQuery();
-            }
-            catch (SqliteException error) when (error.SqliteErrorCode == raw.SQLITE_INTERRUPT && cancellationToken.IsCancellationRequested)
-            {
-                _faulted = true;
-                throw new OperationCanceledException("index build canceled", error, cancellationToken);
+                cancellationToken.ThrowIfCancellationRequested();
             }
             catch
             {
                 _faulted = true;
                 throw;
-            }
-            finally
-            {
-                StopQueryBudget();
             }
         }
 
@@ -281,6 +280,13 @@ internal sealed partial class SqliteStorageTransaction
         // The visit runs before residual rejection, without wrapping predicates that SQLite can use as index constraints.
         var sql = new StringBuilder(select).Append(CultureInfo.InvariantCulture,
             $" WHERE collection = '{query.Collection}' AND {(observe ? "tb_query_scan() AND " : "")}body IS NOT NULL");
+        if (ScansLimited)
+        {
+            // Keep indexable predicates visible to the planner. Index seeks narrow the candidates;
+            // the scan guard precedes residual JSON predicates in SQLite's WHERE evaluation.
+            sql.Append(" AND tb_qos_scan(octet_length(body))");
+        }
+
         if (query.Filter is not null)
         {
             sql.Append(" AND ");

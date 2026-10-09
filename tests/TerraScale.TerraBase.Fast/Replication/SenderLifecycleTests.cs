@@ -7,9 +7,11 @@ using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
 using TerraBase.Fast.Storage;
-using TerraBase.Features.Replication;
+using TerraBase.Features.Management;
 using TerraBase.Features.Replication.V1;
+using TerraBase.Features.Replication;
 using TerraBase.Primitives;
+using TerraBase.Tenancy;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Replication;
@@ -334,6 +336,8 @@ public sealed class SenderLifecycleTests
             }))
             {
                 var tenant = await ReplicationTenant.CreateAsync(seed, "backlog");
+                await seed.Services.GetRequiredService<IManagementService>().SetPlanAsync(
+                    tenant.UserId, tenant.OrganizationId, PlanTier.Enterprise, TUnit.Core.TestContext.Current!.Execution.CancellationToken);
                 using var writer = clientTls.CreateClient(seed.ClientAddress!, await tenant.KeyAsync(seed, "documents:write"));
                 // 300 groups: the collection's creation and 299 writes.
                 await CreateAsync(tenant, writer);

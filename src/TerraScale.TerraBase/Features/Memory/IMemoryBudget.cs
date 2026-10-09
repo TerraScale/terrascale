@@ -1,3 +1,5 @@
+using TerraBase.Tenancy;
+
 namespace TerraBase.Features.Memory;
 
 /// <summary>Who a reservation is charged to. Bounded set; never a tenant-controlled value as a metric label.</summary>
@@ -26,6 +28,16 @@ public interface IMemoryReservation : IDisposable
 /// </summary>
 public interface IMemoryBudget
 {
-    /// <summary>Reserves <paramref name="bytes"/> or returns <see langword="null"/> when the lane is exhausted.</summary>
+    /// <summary>
+    /// Reserves bytes for the ambient QoS organization, or only the process for system work.
+    /// Transient operations and retained cache entries share the same admission limit; this is not a usage quota.
+    /// Returns null when either limit or the bounded reservation table is exhausted.
+    /// </summary>
     IMemoryReservation? TryReserve(MemoryLane lane, long bytes);
+
+    /// <summary>
+    /// Reserves bytes against both the process limit and the explicit organization's plan share.
+    /// A null tenant charges only the process, independently of the ambient request.
+    /// </summary>
+    IMemoryReservation? TryReserve(MemoryLane lane, long bytes, TenantContext? tenant);
 }
