@@ -22,6 +22,7 @@ import {
   qualificationFilename,
 } from "./npm-release-policy.js";
 import { inspectReleaseSource } from "./npm-release-source.js";
+import { qualifyRuntimeDependencies, requireRuntimeDependencyPins } from "./npm-runtime-dependencies.js";
 /** @import { NpmCli } from "./npm-cli-evidence.js" */
 
 /**
@@ -292,7 +293,7 @@ try {
     throw new Error(
       "Clean consumer did not install the exact candidate version.",
     );
-  const productionDependencies = installedSdk.dependencies ?? {};
+  const productionDependencies = await qualifyRuntimeDependencies(consumer, manifest.dependencies);
   const auditRun = await runNpmAllowFailure(
     npmCli,
     ["audit", "--omit=dev", "--json"],
@@ -380,10 +381,7 @@ try {
     },
     contract,
     runtimes,
-    dependencies: {
-      count: Object.keys(productionDependencies).length,
-      packages: productionDependencies,
-    },
+    dependencies: productionDependencies,
     license: {
       declared: manifest.license,
       fileSha256: sha256(Buffer.from(licenseText)),
@@ -504,10 +502,7 @@ function qualifyManifest(manifest) {
     throw new Error("Unexpected package name.");
   if (manifest.private !== false)
     throw new Error("Packed candidate must be public.");
-  if (Object.keys(manifest.dependencies ?? {}).length !== 0)
-    throw new Error(
-      "Runtime dependencies require explicit license qualification.",
-    );
+  requireRuntimeDependencyPins(manifest.dependencies);
   for (const name of [".", "./admin"]) {
     const entry = manifest.exports?.[name];
     if (typeof entry?.import !== "string" || typeof entry?.types !== "string")

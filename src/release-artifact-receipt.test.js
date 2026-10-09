@@ -18,6 +18,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { test } from "vitest";
+import { npmReleasePolicy } from "../scripts/npm-release-policy.js";
 
 const run = promisify(execFile);
 const repositoryRoot = path.resolve(
@@ -151,6 +152,22 @@ test.skipIf(process.version !== nodeVersions[24])(
           mutate: async () =>
             fixture.mutateQualification((receipt) => {
               receipt.release.nodeVersions["22"] = "v22.23.1";
+            }),
+        },
+        {
+          name: "runtime dependency license substitution",
+          mutate: async () =>
+            fixture.mutateQualification((receipt) => {
+              const ulid = receipt.dependencies.packages.ulid;
+              assert.ok(ulid);
+              ulid.fileSha256 = "0".repeat(64);
+            }),
+        },
+        {
+          name: "missing runtime dependency qualification",
+          mutate: async () =>
+            fixture.mutateQualification((receipt) => {
+              receipt.dependencies = { count: 0, packages: {} };
             }),
         },
         {
@@ -520,7 +537,7 @@ async function createCandidateFixture(checkout, workspace) {
         status: "passed",
       },
     ],
-    dependencies: { count: 0, packages: {} },
+    dependencies: { count: 1, packages: structuredClone(npmReleasePolicy.runtimeDependencies) },
     license: { declared: "Apache-2.0", fileSha256: sha256(licenseBytes) },
     security: {
       audit: {
@@ -960,7 +977,7 @@ function sha256(bytes) {
  *   version: string,
  *   status: string,
  * }[]} runtimes
- * @property {unknown} dependencies
+ * @property {{count: number, packages: Record<string, {version: string, license: string, fileSha256: string}>}} dependencies
  * @property {unknown} license
  * @property {unknown} security
  * @property {string} command
