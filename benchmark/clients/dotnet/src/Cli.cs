@@ -45,6 +45,11 @@ internal static class Cli
             await error.WriteLineAsync("INVALID_WORKLOAD: Cannot read a bounded, valid workload JSON object.");
             return 2;
         }
+        catch (Exception)
+        {
+            await error.WriteLineAsync("PREFLIGHT_FAILED: Unexpected internal failure; refusing to run.");
+            return 2;
+        }
     }
 
     internal static CliOptions Parse(string[] args)

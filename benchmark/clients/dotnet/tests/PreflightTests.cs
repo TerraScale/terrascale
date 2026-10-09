@@ -25,7 +25,9 @@ public sealed class PreflightTests
     [Arguments("txn.multi")]
     public async Task AllContractOperationsValidate(string op)
     {
-        var workload = Parse(Valid.Replace("doc.get", op));
+        var value = JsonNode.Parse(Valid)!;
+        value["mix"]![0]!["op"] = op;
+        var workload = Parse(value.ToJsonString());
         await Assert.That(workload.Mix[0].Op).IsEqualTo(op);
         await Assert.That(workload.Mix[0].DocSizeBytes).IsEqualTo(1024);
     }
@@ -84,6 +86,18 @@ public sealed class PreflightTests
         var value = JsonNode.Parse(Valid)!;
         value["mix"] = JsonNode.Parse(mix);
         await Assert.That(() => Parse(value.ToJsonString())).Throws<PreflightException>();
+    }
+
+    [Test]
+    public async Task EightMixEntriesFailTheCountLimitBeforeOperationValidation()
+    {
+        var value = JsonNode.Parse(Valid)!;
+        var mix = new JsonArray();
+        for (var i = 0; i < 8; i++)
+            mix.Add(new JsonObject { ["op"] = "doc.get", ["weight"] = i == 0 ? 16 : 12 });
+        value["mix"] = mix;
+        var failure = await Assert.That(() => Parse(value.ToJsonString())).Throws<PreflightException>();
+        await Assert.That(failure!.Message).IsEqualTo("mix must contain 1–7 distinct operations.");
     }
 
     [Test]
@@ -200,7 +214,7 @@ public sealed class PreflightTests
             if (existingOutput) await File.WriteAllTextAsync(results, "existing-evidence");
             using var output = new StringWriter();
             using var error = new StringWriter();
-            var code = await Cli.RunAsync(["run", "--workload", workload, "--region", "gru", "--out", results], output, error);
+            var code = await Cli.RunAsync(["run", "--workload", workload, "--region", "gru", "--out", results], output, error, () => "ci-host");
             await Assert.That(code).IsEqualTo(1);
             await Assert.That(error.ToString().StartsWith("SDK_BLOCKED:", StringComparison.Ordinal)).IsTrue();
             await Assert.That(error.ToString().Contains(SdkPrerequisites.Revision, StringComparison.Ordinal)).IsTrue();
@@ -224,7 +238,7 @@ public sealed class PreflightTests
             await File.WriteAllTextAsync(path, json);
             using var output = new StringWriter();
             using var error = new StringWriter();
-            await Assert.That(await Cli.RunAsync(["run", "--workload", path, "--region", "gru", "--out", path + ".jsonl"], output, error)).IsEqualTo(2);
+            await Assert.That(await Cli.RunAsync(["run", "--workload", path, "--region", "gru", "--out", path + ".jsonl"], output, error, () => "ci-host")).IsEqualTo(2);
             await Assert.That(error.ToString().Contains("do-not-print-me", StringComparison.Ordinal)).IsFalse();
         }
         finally { directory.Delete(recursive: true); }

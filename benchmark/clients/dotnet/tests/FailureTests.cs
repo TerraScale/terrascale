@@ -1,11 +1,57 @@
 using System.Diagnostics;
 using System.Net.Sockets;
+using System.Runtime.CompilerServices;
 using TUnit.Core;
+using TUnit.Core.Enums;
 
 namespace BenchClient.Tests;
 
 public sealed class FailureTests
 {
+    [Test]
+    public async Task UnexpectedFailureDoesNotExposeExceptionDetails()
+    {
+        using var output = new StringWriter();
+        using var error = new StringWriter();
+        var code = await Cli.RunAsync(
+            ["run", "--workload", "unused", "--region", "gru", "--out", "unused.jsonl"],
+            output, error, () => throw new TypeInitializationException("do-not-print-me", new Exception("secret")));
+        await Assert.That(code).IsEqualTo(2);
+        await Assert.That(error.ToString()).IsEqualTo("PREFLIGHT_FAILED: Unexpected internal failure; refusing to run." + Environment.NewLine);
+        await Assert.That(output.ToString()).IsEqualTo("");
+    }
+
+    [Test]
+    [RunOn(OS.Linux)]
+    public async Task LauncherDistinguishesKilledProcessFromDeadline()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        var launcher = ScriptPath("bench-client");
+        RequireTools("bash", "timeout");
+        var directory = Directory.CreateTempSubdirectory("dotnet-killed-");
+        try
+        {
+            var fakeDotnet = Path.Combine(directory.FullName, "dotnet");
+            await File.WriteAllTextAsync(fakeDotnet, "#!/usr/bin/env bash\nexit 137\n");
+            File.SetUnixFileMode(fakeDotnet, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            var start = new ProcessStartInfo("bash")
+            {
+                ArgumentList = { launcher },
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+            };
+            start.Environment["PATH"] = directory.FullName + Path.PathSeparator + Environment.GetEnvironmentVariable("PATH");
+            using var process = Process.Start(start)!;
+            var output = process.StandardOutput.ReadToEndAsync();
+            var error = process.StandardError.ReadToEndAsync();
+            await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
+            await Assert.That(process.ExitCode).IsEqualTo(137);
+            await Assert.That(await error).IsEqualTo("PREFLIGHT_FAILED: Preflight process was killed; resource exhaustion or forced termination may have occurred.\n");
+            await Assert.That(await output).IsEqualTo("");
+        }
+        finally { directory.Delete(recursive: true); }
+    }
+
     [Test]
     public async Task HostnameSocketFailureReturnsSafeDiagnosticBeforeInputIsRead()
     {
@@ -50,10 +96,15 @@ public sealed class FailureTests
     }
 
     [Test]
+    [RunOn(OS.Linux)]
     [Arguments(false)]
     [Arguments(true)]
     public async Task LauncherBoundsFifoOpenAndStalledRead(bool stalledWriter)
     {
+        var launcher = ScriptPath("bench-client");
+        RequireTools("bash", "mkfifo", "timeout", "dotnet", "sleep");
+        Skip.Unless(File.Exists(Path.Combine(Path.GetDirectoryName(launcher)!, "src/bin/Release/net10.0/bench-client.dll")),
+            "FIFO integration test requires the Release client build.");
         var directory = Directory.CreateTempSubdirectory("dotnet-fifo-");
         Process? writer = null;
         Process? client = null;
@@ -73,7 +124,6 @@ public sealed class FailureTests
                     RedirectStandardError = true,
                 });
 
-            var launcher = Path.GetFullPath("../../../../bench-client", AppContext.BaseDirectory);
             client = Process.Start(new ProcessStartInfo(launcher)
             {
                 ArgumentList = { "run", "--workload", path, "--region", "gru", "--out", results },
@@ -102,5 +152,19 @@ public sealed class FailureTests
             }
             directory.Delete(recursive: true);
         }
+    }
+
+    private static string ScriptPath(string name, [CallerFilePath] string source = "")
+    {
+        var path = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(source)!, "..", name));
+        Skip.Unless(File.Exists(path), "Shell integration test requires the source checkout.");
+        return path;
+    }
+
+    private static void RequireTools(params string[] names)
+    {
+        var directories = (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator);
+        foreach (var name in names)
+            Skip.Unless(directories.Any(directory => File.Exists(Path.Combine(directory, name))), $"Shell integration test requires {name}.");
     }
 }

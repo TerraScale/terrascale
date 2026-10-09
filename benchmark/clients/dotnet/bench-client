@@ -7,8 +7,11 @@ if timeout --kill-after=1s 5s dotnet "$client_root/src/bin/Release/net10.0/bench
 else
   client_exit=$?
 fi
-if [[ $client_exit == 124 || $client_exit == 137 ]]; then
+if [[ $client_exit == 124 ]]; then
   echo 'INVALID_WORKLOAD: Workload preflight exceeded its 5-second deadline.' >&2
   exit 2
+fi
+if [[ $client_exit == 137 ]]; then
+  echo 'PREFLIGHT_FAILED: Preflight process was killed; resource exhaustion or forced termination may have occurred.' >&2
 fi
 exit "$client_exit"

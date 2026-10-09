@@ -8,7 +8,7 @@ exits 0. Existing results remain intact.
 
 ## Build and check
 
-Requires Linux, Bash, GNU coreutils (`timeout`), the .NET 10.0.401 SDK (or newer
+Requires Linux, Bash, Git, GNU coreutils (`timeout`), util-linux (`flock`), the .NET 10.0.401 SDK (or newer
 10.0.4xx patch) and read access to the
 official private SDK Git repository. No SDK source is vendored. The production
 project references a separate checkout of the official `ts-dotnet` main build,
@@ -28,6 +28,10 @@ nice -n 19 ./bench-client run \
 merges, use a workload file from that branch. Do not substitute a legacy driver.
 The prepared checkout must remain clean; preparation refuses local changes and
 requires the pinned revision to be an ancestor of official `origin/main`.
+`make build`, `make test` and `make check` prepare a missing checkout before
+restore; a stamp inside `.sdk/.git` avoids fetching on every invocation.
+Preparation and verification serialize with `.sdk.lock`. If an
+interrupted clone leaves an unusable `.sdk`, move it aside before preparing again.
 Every build verifies the SDK origin, clean worktree and exact pinned HEAD before
 compilation, so diagnostics cannot silently report a different SDK source.
 `nice` is applied by the local caller, never embedded in the Makefile or CI.
@@ -39,6 +43,8 @@ The launcher bounds the entire preflight to five seconds, including hostname
 lookup, file opening and reads; termination escalates after one additional
 second. Deadline expiry exits 2 with a fixed diagnostic. Use the launcher rather
 than invoking the DLL directly to enforce this process deadline.
+Exit 137 reports a killed process and preserves the exit status; it cannot
+distinguish forced timeout termination from an external kill or resource exhaustion.
 
 ## Shared contract
 
