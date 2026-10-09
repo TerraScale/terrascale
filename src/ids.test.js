@@ -134,7 +134,43 @@ test("single hosted-auth entities require their ID without imposing it on acknow
       expect(() => validateTsAuthIds(value, route)).toThrow(TypeError);
   expect(() => validateTsAuthIds({ replayed: true }, "tsauth.webhooks.replayDeadLetter")).not.toThrow();
   expect(() => validateTsAuthIds({ data: [{ id }] }, "tsauth.users.list")).not.toThrow();
-  expect(() => validateTsAuthIds({ client: { id }, client_secret: null }, "tsauth.oauthClients.create")).not.toThrow();
+  expect(() => validateTsAuthIds({ client: { id, client_id: id }, client_secret: null }, "tsauth.oauthClients.create")).not.toThrow();
+});
+
+test("hosted-auth entity references are required on mutations and page entries", () => {
+  const schemas = [
+    { routes: ["createMembership", "updateMembership", "listMemberships"].map(name => `tsauth.organizations.${name}`),
+      references: { organization_id: id, user_id: id } },
+    { routes: ["createInvitation", "revokeInvitation", "listInvitations", "createDomain", "listDomains"].map(name => `tsauth.organizations.${name}`),
+      references: { organization_id: id } },
+    { routes: ["tsauth.auditEvents.list"], references: { instance_id: id } },
+    { routes: ["tsauth.webhooks.deadLetter"], references: { endpoint_id: id, event_id: id } },
+    { routes: ["create", "update", "list"].map(name => `tsauth.oauthClients.${name}`), references: { client_id: id } },
+    { routes: ["create", "update", "list"].map(name => `tsauth.oauthResources.${name}`), references: { introspection_client_id: id } },
+    { routes: ["tsauth.connections.create", "tsauth.connections.update", "tsauth.connections.list",
+      "tsauth.directories.create", "tsauth.directories.rotate", "tsauth.directories.list"], references: { org_id: null } },
+  ];
+  for (const { routes, references } of schemas) {
+    for (const route of routes) {
+      const entityId = route === "tsauth.webhooks.deadLetter" ? `${id}:${id}` : id;
+      const body = { id: entityId, ...references };
+      const page = route.endsWith(".list") || route.endsWith(".deadLetter") || /\.list[A-Z]/u.test(route);
+      const wrap = (/** @type {unknown} */ value) => page ? [value] : value;
+      expect(() => validateTsAuthIds(wrap(body), route)).not.toThrow();
+      for (const [field, reference] of Object.entries(references)) {
+        const omitted = Object.fromEntries(Object.entries(body).filter(([key]) => key !== field));
+        expect(() => validateTsAuthIds(wrap(omitted), route)).toThrow(TypeError);
+        for (const invalid of invalidIds) {
+          if (invalid === null && reference === null) continue;
+          expect(() => validateTsAuthIds(wrap({ ...body, [field]: invalid }), route)).toThrow(TypeError);
+        }
+      }
+    }
+  }
+  const membership = { id, organization_id: id, user_id: id, user: { id } };
+  expect(() => validateTsAuthIds([membership], "tsauth.organizations.listMemberships")).not.toThrow();
+  expect(() => validateTsAuthIds({ data: [{ id, instance_id: id, data: { id: "customer-key" } }] }, "tsauth.auditEvents.list")).not.toThrow();
+  expect(() => validateTsAuthIds({ data: [{ id }] }, "tsauth.auditEvents.list")).toThrow(TypeError);
 });
 
 test("conflict siblings obey the same key/payload separation as the winning document", () => {
@@ -157,6 +193,8 @@ test("wrapped OAuth responses validate entity and reference ULIDs", () => {
     const reference = field === "client" ? "client_id" : "introspection_client_id";
     const entity = { id, [reference]: id, public_metadata: { id: "customer-key" } };
     expect(() => validateTsAuthIds({ [field]: entity }, route)).not.toThrow();
+    const omittedReference = Object.fromEntries(Object.entries(entity).filter(([key]) => key !== reference));
+    expect(() => validateTsAuthIds({ [field]: omittedReference }, route)).toThrow(TypeError);
     for (const invalid of invalidIds) {
       expect(() => validateTsAuthIds({ [field]: { ...entity, id: invalid } }, route)).toThrow(TypeError);
       expect(() => validateTsAuthIds({ [field]: { ...entity, [reference]: invalid } }, route)).toThrow(TypeError);

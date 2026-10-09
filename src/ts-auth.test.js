@@ -158,6 +158,27 @@ test("enrollment and userinfo reject malformed successful response shapes", asyn
   }
 });
 
+test("missing membership, invitation and audit references return invalid-response", async () => {
+  const membership = { id: user.id, organization_id: user.id, user_id: user.id, role: "member", created_at: 1 };
+  const invitation = { id: user.id, organization_id: user.id, email: "ada@acme.test", role: "member", status: "pending", expires_at: 2, created_at: 1 };
+  const audit = { id: user.id, type: "user.created", data: {}, created_at: 1 };
+  for (const field of ["organization_id", "user_id"]) {
+    const body = Object.fromEntries(Object.entries(membership).filter(([key]) => key !== field));
+    const client = tsAuthClient(() => json(body), []);
+    const result = await client.organizations.createMembership(user.id, { user_id: user.id, role: "member" });
+    assert.equal(result.ok, false);
+    if (!result.ok) assert.equal(result.error.kind, "invalid-response");
+  }
+  const withoutOrganization = Object.fromEntries(Object.entries(invitation).filter(([key]) => key !== "organization_id"));
+  const invitationClient = tsAuthClient(() => json(withoutOrganization), []);
+  const auditClient = tsAuthClient(() => json({ data: [audit] }), []);
+  for (const result of [await invitationClient.organizations.createInvitation(user.id, { email: "ada@acme.test", role: "member" }),
+    await auditClient.auditEvents.list()]) {
+    assert.equal(result.ok, false);
+    if (!result.ok) assert.equal(result.error.kind, "invalid-response");
+  }
+});
+
 describe("ts-auth client", () => {
   test("public auth origin selects a regional endpoint and fails over safe reads", async () => {
     /** @type {Request[]} */

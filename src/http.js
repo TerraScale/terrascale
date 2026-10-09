@@ -234,6 +234,7 @@ export class TsAuthHttp {
               return err(options.routeName, {
                 kind: "invalid-response", code: "invalid_response",
                 message: "ts-auth returned a noncanonical entity ID.", status: response.status,
+                requestId: requestIdFrom(response.headers),
               }, response.status, response.headers);
             }
             return ok(

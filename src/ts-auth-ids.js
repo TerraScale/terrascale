@@ -13,6 +13,37 @@ const singleEntityRoutes = new Set([
   "tsauth.instance.get", "tsauth.instance.update",
 ]);
 
+const requiredRootReferences = new Map([
+  ["tsauth.oidc.userinfo", "sub"],
+  ["tsauth.organizations.enrollDomain", "org_id"],
+]);
+
+/** @type {ReadonlyMap<string, readonly string[]>} */
+const entityReferenceFields = new Map([
+  ["tsauth.organizations.createMembership", ["organization_id", "user_id"]],
+  ["tsauth.organizations.updateMembership", ["organization_id", "user_id"]],
+  ["tsauth.organizations.listMemberships", ["organization_id", "user_id"]],
+  ["tsauth.organizations.createInvitation", ["organization_id"]],
+  ["tsauth.organizations.revokeInvitation", ["organization_id"]],
+  ["tsauth.organizations.listInvitations", ["organization_id"]],
+  ["tsauth.organizations.createDomain", ["organization_id"]],
+  ["tsauth.organizations.listDomains", ["organization_id"]],
+  ["tsauth.auditEvents.list", ["instance_id"]],
+  ["tsauth.webhooks.deadLetter", ["endpoint_id", "event_id"]],
+  ["tsauth.oauthClients.create", ["client_id"]],
+  ["tsauth.oauthClients.update", ["client_id"]],
+  ["tsauth.oauthClients.list", ["client_id"]],
+  ["tsauth.oauthResources.create", ["introspection_client_id"]],
+  ["tsauth.oauthResources.update", ["introspection_client_id"]],
+  ["tsauth.oauthResources.list", ["introspection_client_id"]],
+  ["tsauth.connections.create", ["org_id"]],
+  ["tsauth.connections.update", ["org_id"]],
+  ["tsauth.connections.list", ["org_id"]],
+  ["tsauth.directories.create", ["org_id"]],
+  ["tsauth.directories.rotate", ["org_id"]],
+  ["tsauth.directories.list", ["org_id"]],
+]);
+
 /**
  * Validate the documented endpointId:eventId delivery selector.
  * @param {unknown} value
@@ -35,8 +66,7 @@ export function requireDeadLetterId(value) {
  * @returns {void}
  */
 export function validateTsAuthIds(value, route, entity = singleEntityRoutes.has(route)) {
-  const requiredReference = route === "tsauth.oidc.userinfo" ? "sub"
-    : route === "tsauth.organizations.enrollDomain" ? "org_id" : undefined;
+  const requiredReference = requiredRootReferences.get(route);
   if ((entity || requiredReference !== undefined) && (typeof value !== "object" || value === null || Array.isArray(value)))
     throw new TypeError("Hosted-auth response must be an object with its required ULID.");
   if (Array.isArray(value)) {
@@ -59,8 +89,10 @@ export function validateTsAuthIds(value, route, entity = singleEntityRoutes.has(
   const nullableOrgId = route.startsWith("tsauth.connections.") || route.startsWith("tsauth.directories.");
   if (/^tsauth\.(oauthClients|oauthResources|oidc)\./u.test(route))
     fields.push("client_id", "introspection_client_id", "sub", "sid", "jti");
+  const requiredFields = entityReferenceFields.get(route) ?? [];
+  const validateReferences = entity || Object.hasOwn(value, "id");
   for (const field of fields) {
-    if (Object.hasOwn(value, field)) {
+    if (Object.hasOwn(value, field) || (validateReferences && requiredFields.includes(field))) {
       const id = Reflect.get(value, field);
       if (field === "id" && deadLetter) requireDeadLetterId(id);
       else if (id !== null || !(field === "sid" || (field === "org_id" && nullableOrgId))) requireId(id, field);
@@ -72,11 +104,14 @@ export function validateTsAuthIds(value, route, entity = singleEntityRoutes.has(
   for (const field of ["passkeys", "clients", "resources"])
     if (Object.hasOwn(value, field)) validateTsAuthIds(Reflect.get(value, field), route);
   for (const field of ["organization", "user"]) {
-    if (Object.hasOwn(value, field) && Reflect.get(value, field) !== null)
-      validateTsAuthIds(Reflect.get(value, field), route, true);
+    if (Object.hasOwn(value, field) && Reflect.get(value, field) !== null) {
+      const relatedRoute = field === "organization" ? "tsauth.organizations.get" : "tsauth.users.get";
+      validateTsAuthIds(Reflect.get(value, field), relatedRoute, true);
+    }
   }
-  const oauthEntity = route.startsWith("tsauth.oauthClients.") ? "client"
-    : route.startsWith("tsauth.oauthResources.") ? "resource" : undefined;
+  let oauthEntity;
+  if (route.startsWith("tsauth.oauthClients.")) oauthEntity = "client";
+  else if (route.startsWith("tsauth.oauthResources.")) oauthEntity = "resource";
   if (oauthEntity !== undefined && Object.hasOwn(value, oauthEntity))
     validateTsAuthIds(Reflect.get(value, oauthEntity), route, true);
   if (Object.hasOwn(value, "allowed_client_ids")) {
